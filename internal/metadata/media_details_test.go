@@ -277,6 +277,66 @@ func TestEditionFromMetaExtractsRepackAndCleansEdition(t *testing.T) {
 	}
 }
 
+func TestEditionFromMetaStripsRepackAliasesFromEdition(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Release: api.ReleaseInfo{Edition: []string{"Director's", "Cut", "V3"}},
+	}
+
+	edition, repack := editionFromMeta(meta, mediaInfoDoc{})
+	if edition != "Director's Cut" {
+		t.Fatalf("expected cleaned edition without repack alias, got %q", edition)
+	}
+	if repack != "REPACK2" {
+		t.Fatalf("expected normalized repack alias, got %q", repack)
+	}
+}
+
+func TestEditionFromMetaExtractsRepackFromSourcePath(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{
+			name: "explicit repack2",
+			path: `C:\Movies\Melancholia.2011.REPACK2.1080p.BluRay.DTS.x264-DON`,
+			want: "REPACK2",
+		},
+		{
+			name: "v3 maps to repack2",
+			path: `C:\Movies\Melancholia.2011.V3.1080p.BluRay.DTS.x264-DON`,
+			want: "REPACK2",
+		},
+		{
+			name: "v4 maps to repack3",
+			path: `C:\Movies\Melancholia.2011.V4.1080p.BluRay.DTS.x264-DON`,
+			want: "REPACK3",
+		},
+		{
+			name: "proper2",
+			path: `C:\Movies\Melancholia.2011.PROPER2.1080p.BluRay.DTS.x264-DON`,
+			want: "PROPER2",
+		},
+		{
+			name: "parent path marker ignored",
+			path: `C:\Movies\REPACK\Melancholia.2011.1080p.BluRay.DTS.x264-DON`,
+			want: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			edition, repack := editionFromMeta(api.PreparedMetadata{SourcePath: tc.path}, mediaInfoDoc{})
+			if edition != "" {
+				t.Fatalf("expected empty edition, got %q", edition)
+			}
+			if repack != tc.want {
+				t.Fatalf("expected repack %q, got %q", tc.want, repack)
+			}
+		})
+	}
+}
+
 func TestMediaDurationSecondsParsesMediaInfoDurationFormats(t *testing.T) {
 	tests := []struct {
 		name string
@@ -444,6 +504,18 @@ func TestHDRFromMediaPrefersMediaInfoOverFilenameHDR(t *testing.T) {
 	})
 	if got != "HDR10+" {
 		t.Fatalf("expected MediaInfo HDR precedence, got %q", got)
+	}
+}
+
+func TestHDRFromMediaNormalizesPQTransferToHDR(t *testing.T) {
+	doc, err := loadMediaInfoDocFromJSONPayload(`{"media":{"track":[{"@type":"General"},{"@type":"Video","colour_primaries":"BT.2020","transfer_characteristics":"PQ"}]}}`)
+	if err != nil {
+		t.Fatalf("parse mediainfo: %v", err)
+	}
+
+	got := hdrFromMedia(doc, nil, api.PreparedMetadata{})
+	if got != "HDR" {
+		t.Fatalf("expected PQ transfer to normalize to HDR, got %q", got)
 	}
 }
 
@@ -667,6 +739,59 @@ func TestAudioFromMediaAddsDualAudioForEnglishAndOriginalLanguage(t *testing.T) 
 	audio, channels, commentary := audioFromMedia(meta, doc, nil)
 	if audio != "Dual-Audio DD 5.1" {
 		t.Fatalf("expected Dual-Audio DD 5.1, got %q", audio)
+	}
+	if channels != "5.1" || commentary {
+		t.Fatalf("expected 5.1 with no commentary, got channels=%q commentary=%t", channels, commentary)
+	}
+}
+
+func TestAudioFromMediaSkipsCommentaryTitleVariantsForDualAudio(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"MLP FBA","Format_AdditionalFeatures":"16-ch","Channels":"8","ChannelLayout":"L R C LFE Ls Rs Lb Rb","Language":"en","StreamOrder":"1"},{"@type":"Audio","Format":"AC-3","Channels":"2","ChannelLayout":"L R","Language":"ja","StreamOrder":"2","Title_String":"Director Commentary"}]}}`)
+	meta := api.PreparedMetadata{
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+		},
+	}
+
+	audio, channels, commentary := audioFromMedia(meta, doc, nil)
+	if audio != "Dubbed TrueHD 7.1 Atmos" {
+		t.Fatalf("expected commentary track to be ignored for dual-audio prefix, got %q", audio)
+	}
+	if channels != "7.1" || !commentary {
+		t.Fatalf("expected 7.1 with commentary detected, got channels=%q commentary=%t", channels, commentary)
+	}
+}
+
+func TestAudioFromMediaSkipsCompatibilityTitleStringForPrimaryAudio(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"2","ChannelLayout":"L R","StreamOrder":"0","Title_String":"Compatibility Track"},{"@type":"Audio","Format":"MLP FBA","Format_AdditionalFeatures":"16-ch","Channels":"8","ChannelLayout":"L R C LFE Ls Rs Lb Rb","StreamOrder":"1"}]}}`)
+
+	audio, channels, commentary := audioFromMedia(api.PreparedMetadata{}, doc, nil)
+	if audio != "TrueHD 7.1 Atmos" {
+		t.Fatalf("expected compatibility Title_String track to be ignored for primary audio, got %q", audio)
+	}
+	if channels != "7.1" || commentary {
+		t.Fatalf("expected 7.1 with no commentary, got channels=%q commentary=%t", channels, commentary)
+	}
+}
+
+func TestAudioFromMediaSkipsCommentaryTitleStringForPrimaryAudio(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"2","ChannelLayout":"L R","StreamOrder":"0","Title_String":"Director Commentary"},{"@type":"Audio","Format":"MLP FBA","Format_AdditionalFeatures":"16-ch","Channels":"8","ChannelLayout":"L R C LFE Ls Rs Lb Rb","StreamOrder":"1"}]}}`)
+
+	audio, channels, commentary := audioFromMedia(api.PreparedMetadata{}, doc, nil)
+	if audio != "TrueHD 7.1 Atmos" {
+		t.Fatalf("expected commentary Title_String track to be ignored for primary audio, got %q", audio)
+	}
+	if channels != "7.1" || !commentary {
+		t.Fatalf("expected 7.1 with commentary detected, got channels=%q commentary=%t", channels, commentary)
+	}
+}
+
+func TestAudioFromMediaDetectsAuro3DFromPrimaryAudioTitle(t *testing.T) {
+	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"2","ChannelLayout":"L R","StreamOrder":"0","Title_String":"Compatibility Track"},{"@type":"Audio","Format":"DTS","Channels":"6","ChannelLayout":"L R C LFE Ls Rs","StreamOrder":"1","Title_String":"Auro3D"}]}}`)
+
+	audio, channels, commentary := audioFromMedia(api.PreparedMetadata{}, doc, nil)
+	if audio != "DTS 5.1 Auro3D" {
+		t.Fatalf("expected selected primary audio title to drive Auro3D marker, got %q", audio)
 	}
 	if channels != "5.1" || commentary {
 		t.Fatalf("expected 5.1 with no commentary, got channels=%q commentary=%t", channels, commentary)
@@ -914,6 +1039,76 @@ func TestRefreshPreparedMetadataKeepsRepoForRulePersistence(t *testing.T) {
 	}
 }
 
+func TestRefreshPreparedMetadataNormalizesStaleMISettingsForNonEncodes(t *testing.T) {
+	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	cases := []struct {
+		name       string
+		meta       api.PreparedMetadata
+		wantBlock  bool
+		wantNormal bool
+	}{
+		{
+			name: "remux not blocked",
+			meta: api.PreparedMetadata{
+				Type:                   "REMUX",
+				ValidMediaInfoSettings: false,
+			},
+			wantNormal: true,
+		},
+		{
+			name: "bdmv not blocked",
+			meta: api.PreparedMetadata{
+				Type:                   "ENCODE",
+				DiscType:               "BDMV",
+				ValidMediaInfoSettings: false,
+			},
+			wantNormal: true,
+		},
+		{
+			name: "av1 encode not blocked",
+			meta: api.PreparedMetadata{
+				Type:                   "ENCODE",
+				VideoCodec:             "AV1",
+				ValidMediaInfoSettings: false,
+			},
+			wantNormal: true,
+		},
+		{
+			name: "genuine encode stays blocked",
+			meta: api.PreparedMetadata{
+				Type:                   "ENCODE",
+				VideoCodec:             "H.265",
+				ValidMediaInfoSettings: false,
+			},
+			wantBlock: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := tc.meta
+			meta.SourcePath = "/media/example.mkv"
+			meta.Trackers = []string{"AITHER"}
+			refreshed, err := svc.RefreshPreparedMetadata(context.Background(), meta)
+			if err != nil {
+				t.Fatalf("refresh prepared metadata: %v", err)
+			}
+			if tc.wantNormal && !refreshed.ValidMediaInfoSettings {
+				t.Fatalf("expected ValidMediaInfoSettings normalized to true")
+			}
+			blocked := false
+			for _, failure := range refreshed.TrackerRuleFailures["AITHER"] {
+				if failure.Rule == "require_valid_mi_setting" {
+					blocked = true
+				}
+			}
+			if blocked != tc.wantBlock {
+				t.Fatalf("require_valid_mi_setting blocked=%t, want %t (failures=%#v)", blocked, tc.wantBlock, refreshed.TrackerRuleFailures["AITHER"])
+			}
+		})
+	}
+}
+
 func TestAudioFromMediaUsesChannelsOriginalWhenPresent(t *testing.T) {
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"8 / 6","Channels_Original":"6","ChannelLayout":"L R C LFE Ls Rs","StreamOrder":"1"}]}}`)
 	audio, channels, _ := audioFromMedia(api.PreparedMetadata{}, doc, nil)
@@ -950,8 +1145,8 @@ func TestAudioFromMediaNormalizesBDInfoCodecWithAtmos(t *testing.T) {
 		}},
 	})
 
-	if audio != "TrueHD Atmos 7.1" {
-		t.Fatalf("expected normalized BDInfo audio to be TrueHD Atmos 7.1, got %q", audio)
+	if audio != "TrueHD 7.1 Atmos" {
+		t.Fatalf("expected normalized BDInfo audio to be TrueHD 7.1 Atmos, got %q", audio)
 	}
 	if channels != "7.1" || commentary {
 		t.Fatalf("expected channels=7.1 commentary=false, got channels=%q commentary=%t", channels, commentary)

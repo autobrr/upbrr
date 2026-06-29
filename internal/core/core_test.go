@@ -39,6 +39,23 @@ func hasUploadProgress(updates []api.UploadProgressUpdate, task string, status s
 	return false
 }
 
+func metadataProgressContainsOrdered(updates []api.MetadataProgressUpdate, want []api.MetadataProgressUpdate) bool {
+	if len(want) == 0 {
+		return true
+	}
+	next := 0
+	for _, update := range updates {
+		if update.Phase != want[next].Phase || update.Status != want[next].Status {
+			continue
+		}
+		next++
+		if next == len(want) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestFirstRequestedTracker(t *testing.T) {
 	t.Parallel()
 
@@ -1364,6 +1381,45 @@ func TestFetchMetadataPreviewRunsPathedSearchWithStoredTrackerData(t *testing.T)
 	}
 }
 
+func TestFetchMetadataPreviewEmitsTrackerClaimsAfterMediaDetails(t *testing.T) {
+	t.Parallel()
+
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Clients:    &stubClient{},
+		},
+		Repository: trackerRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	updates := make([]api.MetadataProgressUpdate, 0)
+	ctx := api.WithMetadataProgressReporter(context.Background(), func(update api.MetadataProgressUpdate) {
+		updates = append(updates, update)
+	})
+	_, err = core.FetchMetadataPreview(ctx, api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if err != nil {
+		t.Fatalf("fetch metadata preview: %v", err)
+	}
+
+	want := []api.MetadataProgressUpdate{
+		{Phase: "media-details", Status: "completed"},
+		{Phase: "tracker-claims", Status: "running"},
+		{Phase: "tracker-claims", Status: "completed"},
+		{Phase: "complete", Status: "completed"},
+	}
+	if !metadataProgressContainsOrdered(updates, want) {
+		t.Fatalf("expected ordered progress %v in %#v", want, updates)
+	}
+}
+
 func TestFetchMetadataPreviewSkipAutoTorrentSkipsPathedSearch(t *testing.T) {
 	t.Parallel()
 
@@ -1656,6 +1712,50 @@ func TestCheckDupesUsesPathedTrackerDataWithFreshStoredSnapshot(t *testing.T) {
 	}
 	if got := dupes.lastMeta.InfoHash; got != "abc123" {
 		t.Fatalf("expected pathed infohash, got %q", got)
+	}
+}
+
+func TestCheckDupesAppliesTrackerClaimsBeforeDupeCheck(t *testing.T) {
+	t.Parallel()
+
+	metaSvc := &stubMeta{
+		applyTrackerClaims: func(meta api.PreparedMetadata) api.PreparedMetadata {
+			meta.BlockedTrackers = map[string][]api.TrackerBlockReason{
+				"AITHER": {api.TrackerBlockReasonClaim},
+			}
+			return meta
+		},
+	}
+	dupes := &stubDupes{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   metaSvc,
+			Clients:    &stubClient{},
+			Dupes:      dupes,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	_, err = core.CheckDupes(context.Background(), api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeCLI,
+		Options: api.UploadOptions{
+			SkipAutoTorrent: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("check dupes: %v", err)
+	}
+	if metaSvc.trackerClaimsCalls != 1 {
+		t.Fatalf("expected tracker claims applied once, got %d calls", metaSvc.trackerClaimsCalls)
+	}
+	if got := dupes.lastMeta.BlockedTrackers["AITHER"]; len(got) != 1 || got[0] != api.TrackerBlockReasonClaim {
+		t.Fatalf("expected dupe check to receive claim-blocked metadata, got %#v", dupes.lastMeta.BlockedTrackers)
 	}
 }
 
@@ -4115,15 +4215,19 @@ func (s stubFS) ValidatePaths(_ context.Context, paths []string) ([]string, erro
 }
 
 type stubMeta struct {
-	calls        int
-	enrichCalls  int
-	refreshCalls int
-	resolveCalls int
-	options      api.UploadOptions
-	prepared     api.PreparedMetadata
-	enrichMeta   api.PreparedMetadata
-	enriched     api.PreparedMetadata
-	resolved     api.PreparedMetadata
+	calls              int
+	enrichCalls        int
+	refreshCalls       int
+	resolveCalls       int
+	trackerClaimsCalls int
+	options            api.UploadOptions
+	prepared           api.PreparedMetadata
+	enrichMeta         api.PreparedMetadata
+	enriched           api.PreparedMetadata
+	resolved           api.PreparedMetadata
+	// applyTrackerClaims lets tests inject the metadata mutation normally
+	// returned by claim checks.
+	applyTrackerClaims func(api.PreparedMetadata) api.PreparedMetadata
 }
 
 func (s *stubMeta) Prepare(_ context.Context, req api.Request) (api.PreparedMetadata, error) {
@@ -4179,6 +4283,14 @@ func (s *stubMeta) ResolveExternalIDs(_ context.Context, meta api.PreparedMetada
 }
 
 func (s *stubMeta) ApplyMediaDetails(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	return meta, nil
+}
+
+func (s *stubMeta) ApplyTrackerClaims(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	s.trackerClaimsCalls++
+	if s.applyTrackerClaims != nil {
+		return s.applyTrackerClaims(meta), nil
+	}
 	return meta, nil
 }
 

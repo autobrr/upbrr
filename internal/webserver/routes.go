@@ -21,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	xhtml "golang.org/x/net/html"
+
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/redaction"
 )
@@ -75,7 +77,35 @@ func clearSessionLogStopGenerationLocked(s *Server, sessionID string) {
 	}
 }
 
+// registerRoutes installs the embedded web UI under the configured external
+// base path. In base-path mode, root "/" redirects to the base path and root
+// API paths remain unavailable.
 func (s *Server) registerRoutes(mux *http.ServeMux) {
+	rootMux := http.NewServeMux()
+	s.registerRootRoutes(rootMux)
+
+	basePath := s.externalBasePath()
+	if basePath != "" {
+		mux.HandleFunc(basePath, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, basePath+"/", http.StatusMovedPermanently)
+		})
+		mux.Handle(basePath+"/", http.StripPrefix(basePath, rootMux))
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/" {
+				http.Redirect(w, r, basePath+"/", http.StatusFound)
+				return
+			}
+			http.NotFound(w, r)
+		})
+		return
+	}
+	mux.Handle("/", rootMux)
+}
+
+// registerRootRoutes installs the unprefixed API and UI routes. When a base
+// path is configured, the same handler is mounted under that prefix with the
+// prefix stripped before dispatch.
+func (s *Server) registerRootRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/status", func(w http.ResponseWriter, r *http.Request) { s.handleAuthStatus(w, r, session{}) })
 	mux.HandleFunc("/api/auth/bootstrap", func(w http.ResponseWriter, r *http.Request) { s.handleBootstrap(w, r, session{}) })
 	mux.HandleFunc("/api/auth/login", func(w http.ResponseWriter, r *http.Request) { s.handleLogin(w, r, session{}) })
@@ -93,15 +123,181 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 			return
 		}
 		if r.URL.Path == "/" {
-			http.ServeFileFS(w, r, s.assets, "index.html")
+			s.serveIndex(w, r)
 			return
 		}
-		if _, err := fsStat(s.assets, strings.TrimPrefix(path.Clean(r.URL.Path), "/")); err != nil {
-			http.ServeFileFS(w, r, s.assets, "index.html")
+		assetName := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+		if _, err := fsStat(s.assets, assetName); err != nil {
+			s.serveIndex(w, r)
+			return
+		}
+		if assetName == "index.html" {
+			s.serveIndex(w, r)
+			return
+		}
+		if assetName == "site.webmanifest" {
+			s.serveWebManifest(w, r)
 			return
 		}
 		fileServer.ServeHTTP(w, r)
 	})
+}
+
+// serveIndex injects the browser base-path contract into the SPA shell before
+// sending it. This keeps one embedded frontend build usable at root or under a
+// reverse-proxy path prefix.
+func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
+	raw, err := fs.ReadFile(s.assets, "index.html")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(rewriteIndexHTML(raw, s.externalBaseURLPath()))
+}
+
+// serveWebManifest prefixes root-absolute manifest asset paths with the active
+// external base path.
+func (s *Server) serveWebManifest(w http.ResponseWriter, r *http.Request) {
+	raw, err := fs.ReadFile(s.assets, "site.webmanifest")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/manifest+json")
+	_, _ = w.Write(rewriteRootAbsoluteAssetPaths(raw, s.externalBaseURLPath()))
+}
+
+// rewriteIndexHTML prefixes root-absolute asset links and injects
+// window.__UPBRR_BASE_URL__ before the closing head tag.
+func rewriteIndexHTML(raw []byte, baseURLPath string) []byte {
+	rewritten := rewriteRootAbsoluteAssetPaths(raw, baseURLPath)
+	baseScriptValue, err := json.Marshal(baseURLPath)
+	if err != nil {
+		return rewritten
+	}
+	injected := []byte("<script>window.__UPBRR_BASE_URL__=" + string(baseScriptValue) + ";</script>")
+	headClose := []byte("</head>")
+	idx := bytes.Index(bytes.ToLower(rewritten), headClose)
+	if idx < 0 {
+		return rewritten
+	}
+	next := make([]byte, 0, len(rewritten)+len(injected))
+	next = append(next, rewritten[:idx]...)
+	next = append(next, injected...)
+	next = append(next, rewritten[idx:]...)
+	return next
+}
+
+// rewriteRootAbsoluteAssetPaths rewrites known root-absolute HTML and manifest
+// asset references for reverse-proxy path deployments. JSON manifests are
+// rewritten structurally; other assets use known HTML/text patterns. Root mode
+// returns the original bytes unchanged.
+func rewriteRootAbsoluteAssetPaths(raw []byte, baseURLPath string) []byte {
+	baseURLPath = externalBaseURLPath(baseURLPath)
+	if baseURLPath == "/" {
+		return raw
+	}
+	if rewritten, ok := rewriteManifestRootAbsoluteAssetPaths(raw, baseURLPath); ok {
+		return rewritten
+	}
+	return rewriteHTMLRootAbsoluteAssetPaths(raw, baseURLPath)
+}
+
+// rewriteHTMLRootAbsoluteAssetPaths prefixes root-absolute href/src attributes
+// without inspecting script contents or other user-controlled text.
+func rewriteHTMLRootAbsoluteAssetPaths(raw []byte, baseURLPath string) []byte {
+	root, err := xhtml.Parse(bytes.NewReader(raw))
+	if err != nil {
+		return raw
+	}
+	if !rewriteHTMLNodeRootAbsoluteAssetPaths(root, baseURLPath) {
+		return raw
+	}
+	var out bytes.Buffer
+	if err := xhtml.Render(&out, root); err != nil {
+		return raw
+	}
+	return out.Bytes()
+}
+
+// rewriteHTMLNodeRootAbsoluteAssetPaths walks parsed HTML nodes in place and
+// reports whether any asset attribute changed.
+func rewriteHTMLNodeRootAbsoluteAssetPaths(node *xhtml.Node, baseURLPath string) bool {
+	if node == nil {
+		return false
+	}
+	changed := false
+	if node.Type == xhtml.ElementNode {
+		for idx := range node.Attr {
+			key := strings.ToLower(node.Attr[idx].Key)
+			if (key == "href" || key == "src") && isRootAbsoluteAssetPath(node.Attr[idx].Val) {
+				node.Attr[idx].Val = baseURLPath + strings.TrimPrefix(node.Attr[idx].Val, "/")
+				changed = true
+			}
+		}
+	}
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if rewriteHTMLNodeRootAbsoluteAssetPaths(child, baseURLPath) {
+			changed = true
+		}
+	}
+	return changed
+}
+
+// rewriteManifestRootAbsoluteAssetPaths parses a web manifest and prefixes
+// root-absolute path fields. It returns ok=false when raw is not manifest JSON.
+func rewriteManifestRootAbsoluteAssetPaths(raw []byte, baseURLPath string) ([]byte, bool) {
+	var manifest any
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return nil, false
+	}
+	if !rewriteManifestValueRootAbsoluteAssetPaths(manifest, baseURLPath) {
+		return raw, true
+	}
+	rewritten, err := json.Marshal(manifest)
+	if err != nil {
+		return nil, false
+	}
+	return rewritten, true
+}
+
+// rewriteManifestValueRootAbsoluteAssetPaths walks manifest objects and arrays,
+// rewriting path fields in place and reporting whether any value changed.
+func rewriteManifestValueRootAbsoluteAssetPaths(value any, baseURLPath string) bool {
+	changed := false
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, item := range typed {
+			if text, ok := item.(string); ok && isManifestPathKey(key) && isRootAbsoluteAssetPath(text) {
+				typed[key] = baseURLPath + strings.TrimPrefix(text, "/")
+				changed = true
+				continue
+			}
+			if rewriteManifestValueRootAbsoluteAssetPaths(item, baseURLPath) {
+				changed = true
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if rewriteManifestValueRootAbsoluteAssetPaths(item, baseURLPath) {
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
+// isManifestPathKey reports whether a manifest string field contains a
+// browser-visible URL path that must follow the configured base path.
+func isManifestPathKey(key string) bool {
+	return key == "src" || key == "start_url" || key == "scope"
+}
+
+// isRootAbsoluteAssetPath reports whether value is an app-root path rather than
+// a protocol-relative URL.
+func isRootAbsoluteAssetPath(value string) bool {
+	return strings.HasPrefix(value, "/") && !strings.HasPrefix(value, "//")
 }
 
 func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request, _ session) {
@@ -332,7 +528,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, current se
 		http.SetCookie(w, &http.Cookie{
 			Name:     sessionCookieName,
 			Value:    "",
-			Path:     "/",
+			Path:     s.sessionCookiePath(),
 			MaxAge:   -1,
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
@@ -709,7 +905,7 @@ func (s *Server) writeSessionCookie(w http.ResponseWriter, r *http.Request, curr
 	cookie := &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    current.ID,
-		Path:     "/",
+		Path:     s.sessionCookiePath(),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   s.requestScheme(r) == "https",
@@ -719,6 +915,15 @@ func (s *Server) writeSessionCookie(w http.ResponseWriter, r *http.Request, curr
 		cookie.MaxAge = max(1, int(time.Until(current.ExpiresAt).Seconds()))
 	}
 	http.SetCookie(w, cookie)
+}
+
+// sessionCookiePath scopes browser sessions to the configured external base
+// path, falling back to "/" for root and subdomain deployments.
+func (s *Server) sessionCookiePath() string {
+	if basePath := s.externalBasePath(); basePath != "" {
+		return basePath
+	}
+	return "/"
 }
 
 func (s *Server) allowAuthRequest(r *http.Request) bool {

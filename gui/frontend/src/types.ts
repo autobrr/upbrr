@@ -213,6 +213,12 @@ export type TVDBMetadata = {
   OverviewEnglish: string;
   FirstAired: string;
   Year: number;
+  /** True when Year is naming-eligible for TV release names. */
+  YearFromAlias: boolean;
+  /** TVDB source used for Year, such as first_aired, translation_name, translation_alias, extended_alias, or slug. */
+  YearSource: string;
+  /** "high" for explicit title or alias years; "low" for guarded slug-derived naming years. */
+  YearConfidence: string;
   Type: string;
   Status: string;
   Network: string;
@@ -282,6 +288,48 @@ export type ApplicationInfo = {
   goarch: string;
   uptime: string;
   uptimeSeconds: number;
+};
+
+/** Tracker auth support metadata returned by the app bridge. */
+export type TrackerAuthCapability = {
+  /** Normalized tracker code used in tracker auth bridge calls. */
+  trackerID: string;
+  displayName: string;
+  /** Compact capability label such as "cookies", "credential_login", or "api_key_cookies_login". */
+  authKind: string;
+  supportsCookieFile: boolean;
+  supportsLogin: boolean;
+  supportsAutoLogin: boolean;
+  supportsTOTP: boolean;
+  supportsManual2FA: boolean;
+  requiresAPIKey: boolean;
+  requiresPasskey: boolean;
+  /** Optional tracker-specific UI notes; Go bridge may serialize a nil slice as null. */
+  notes?: string[] | null;
+};
+
+/** Current tracker auth state returned after status, import, login, validation, 2FA, or delete actions. */
+export type TrackerAuthStatus = {
+  trackerID: string;
+  displayName: string;
+  /** Backend state string such as "configured", "has_cookies", or "login_required". */
+  state: string;
+  cookieCount: number;
+  /** RFC3339 UTC timestamp generated when the backend evaluated the status. */
+  lastCheckedAt: string;
+  /** Redacted failure text from the most recent local or remote auth check. */
+  lastError: string;
+  encryptedStorage: boolean;
+  needs2FA: boolean;
+  /** Opaque manual-2FA continuation token; empty unless needs2FA is true. */
+  challengeID: string;
+  message: string;
+};
+
+/** Optional login data for tracker auth flows. */
+export type TrackerAuthLoginRequest = {
+  /** One-time 2FA code for adapters that accept it during login. */
+  code?: string;
 };
 
 export type ExternalPreview = {
@@ -394,6 +442,12 @@ export type TrackerPreview = {
   UpdatedAt: string;
 };
 
+/** Upload rule failure attached to a tracker before dupe checking or upload. */
+export type RuleFailure = {
+  Rule: string;
+  Reason: string;
+};
+
 export type DupeEntry = {
   Name: string;
   SizeBytes: number;
@@ -504,6 +558,8 @@ export type MetadataPreview = {
   ExternalPreview: ExternalPreview[];
   Bluray?: BlurayMetadata;
   TrackerData: TrackerPreview[];
+  /** Preview-time upload rule failures keyed by normalized tracker code. */
+  TrackerRuleFailures?: Record<string, RuleFailure[]>;
 };
 
 export type MetadataProgressUpdate = {

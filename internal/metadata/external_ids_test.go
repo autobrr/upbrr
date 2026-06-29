@@ -368,9 +368,10 @@ func (s *stubTVDB) GetEpisodeTranslation(_ context.Context, episodeID int, _ str
 }
 
 type stubTVmaze struct {
-	result tvmaze.SearchResult
-	calls  int
-	inputs []tvmaze.SearchInput
+	result      tvmaze.SearchResult
+	episodeData *tvmaze.EpisodeData
+	calls       int
+	inputs      []tvmaze.SearchInput
 }
 
 func (s *stubTVmaze) Search(_ context.Context, input tvmaze.SearchInput) (tvmaze.SearchResult, error) {
@@ -380,7 +381,7 @@ func (s *stubTVmaze) Search(_ context.Context, input tvmaze.SearchInput) (tvmaze
 }
 
 func (s *stubTVmaze) GetEpisodeByNumber(_ context.Context, _, _, _ int, _ tvmaze.EpisodeLookupContext) (*tvmaze.EpisodeData, error) {
-	return nil, nil
+	return s.episodeData, nil
 }
 
 func (s *stubTVmaze) GetEpisodeByDate(_ context.Context, _ int, _ string) (*tvmaze.EpisodeData, error) {
@@ -1703,6 +1704,90 @@ func TestApplyTVEpisodeMetadataTVDBAliasYearApplied(t *testing.T) {
 	}
 }
 
+func TestApplyTVEpisodeMetadataTVDBAliasYearUsesLastYear(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	tmdbClient := &stubTMDB{}
+	tvdbClient := &stubTVDB{specificAlias: "Hunter x Hunter (1999) (2011)"}
+
+	meta := api.PreparedMetadata{
+		SourcePath: "/media/Hunter.x.Hunter.S01E01.mkv",
+	}
+	ids := &api.ExternalIDs{
+		TMDBID:   100,
+		TVDBID:   200,
+		Category: "TV",
+	}
+	external := &api.ExternalMetadata{
+		TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+		TVDB: &api.TVDBMetadata{TVDBID: 200},
+	}
+
+	_ = svc.applyTVEpisodeMetadata(context.Background(), meta, ids, external, tmdbClient, tvdbClient, &stubTVmaze{})
+
+	if external.TVDB.Name != "Hunter x Hunter" {
+		t.Fatalf("expected cleaned alias title, got %q", external.TVDB.Name)
+	}
+	if external.TVDB.Year != 2011 {
+		t.Fatalf("expected last alias year 2011, got %d", external.TVDB.Year)
+	}
+	if !external.TVDB.YearFromAlias {
+		t.Fatal("expected multi-year alias to mark YearFromAlias")
+	}
+}
+
+func TestApplyTVEpisodeMetadataTVDBAliasYearPreservesSource(t *testing.T) {
+	tests := []struct {
+		name       string
+		yearSource string
+		confidence string
+	}{
+		{name: "translation name", yearSource: "translation_name", confidence: "high"},
+		{name: "translation alias", yearSource: "translation_alias", confidence: "high"},
+		{name: "extended alias", yearSource: "extended_alias", confidence: "high"},
+		{name: "slug", yearSource: "slug", confidence: "low"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewService(&fakeRepo{})
+			tmdbClient := &stubTMDB{}
+			tvdbClient := &stubTVDB{
+				episodes: tvdb.EpisodesData{
+					SeriesYear:           2011,
+					SeriesYearSource:     tt.yearSource,
+					SeriesYearConfidence: tt.confidence,
+				},
+				specificAlias: "Hunter x Hunter (2011)",
+			}
+
+			meta := api.PreparedMetadata{
+				SourcePath: "/media/Hunter.x.Hunter.S01E01.mkv",
+			}
+			ids := &api.ExternalIDs{
+				TMDBID:   100,
+				TVDBID:   200,
+				Category: "TV",
+			}
+			external := &api.ExternalMetadata{
+				TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+				TVDB: &api.TVDBMetadata{TVDBID: 200},
+			}
+
+			_ = svc.applyTVEpisodeMetadata(context.Background(), meta, ids, external, tmdbClient, tvdbClient, &stubTVmaze{})
+
+			if external.TVDB.Year != 2011 {
+				t.Fatalf("expected alias year 2011, got %d", external.TVDB.Year)
+			}
+			if external.TVDB.YearSource != tt.yearSource {
+				t.Fatalf("expected preserved year source %q, got %q", tt.yearSource, external.TVDB.YearSource)
+			}
+			if external.TVDB.YearConfidence != tt.confidence {
+				t.Fatalf("expected preserved year confidence %q, got %q", tt.confidence, external.TVDB.YearConfidence)
+			}
+		})
+	}
+}
+
 func TestApplyTVEpisodeMetadataTVDBTitleOnlyAliasAppliedWithoutYear(t *testing.T) {
 	svc := NewService(&fakeRepo{})
 	tmdbClient := &stubTMDB{}
@@ -1809,9 +1894,12 @@ func TestApplyTVEpisodeMetadataTVDBEpisodeTranslationApplied(t *testing.T) {
 	if updated.EpisodeTitle != "" {
 		t.Fatalf("expected episode title blanked when title contains episode/tba, got %q", updated.EpisodeTitle)
 	}
+	if updated.EpisodeOverview != "English episode overview" {
+		t.Fatalf("expected english episode overview, got %q", updated.EpisodeOverview)
+	}
 }
 
-func TestApplyTVEpisodeMetadataTVDBEpisodeTitleFallsBackToOriginalWhenEnglishMissing(t *testing.T) {
+func TestApplyTVEpisodeMetadataTVDBEpisodeTitleSkipsOriginalWhenEnglishMissing(t *testing.T) {
 	svc := NewService(&fakeRepo{})
 	tmdbClient := &stubTMDB{}
 	tvdbClient := &stubTVDB{
@@ -1840,8 +1928,48 @@ func TestApplyTVEpisodeMetadataTVDBEpisodeTitleFallsBackToOriginalWhenEnglishMis
 
 	updated := svc.applyTVEpisodeMetadata(context.Background(), meta, ids, external, tmdbClient, tvdbClient, &stubTVmaze{})
 
-	if updated.EpisodeTitle != "Native Title 3" {
-		t.Fatalf("expected original episode title fallback, got %q", updated.EpisodeTitle)
+	if updated.EpisodeTitle != "" {
+		t.Fatalf("expected non-english original episode title to be skipped, got %q", updated.EpisodeTitle)
+	}
+	if updated.EpisodeOverview != "" {
+		t.Fatalf("expected non-english original episode overview to be skipped, got %q", updated.EpisodeOverview)
+	}
+}
+
+func TestApplyTVEpisodeMetadataDiscardsSeriesTitleAsEpisodeTitle(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	tmdbClient := &stubTMDB{}
+	tvmazeClient := &stubTVmaze{
+		episodeData: &tvmaze.EpisodeData{
+			EpisodeName:   "The Long Road",
+			SeasonNumber:  4,
+			EpisodeNumber: 11,
+		},
+	}
+
+	meta := api.PreparedMetadata{
+		SourcePath:   "/media/Re.ZERO.S04E11.mkv",
+		SeasonInt:    4,
+		EpisodeInt:   11,
+		EpisodeTitle: "Re:ZERO -Starting Life in Another World-",
+		ExternalIDs:  api.ExternalIDs{Category: "TV"},
+		ExternalMetadata: api.ExternalMetadata{
+			TVDB: &api.TVDBMetadata{NameEnglish: "Re: ZERO, Starting Life in Another World"},
+		},
+	}
+	ids := &api.ExternalIDs{
+		TVDBID:   200,
+		TVmazeID: 300,
+		Category: "TV",
+	}
+	external := &api.ExternalMetadata{
+		TVDB: &api.TVDBMetadata{TVDBID: 200, NameEnglish: "Re: ZERO, Starting Life in Another World"},
+	}
+
+	updated := svc.applyTVEpisodeMetadata(context.Background(), meta, ids, external, tmdbClient, &stubTVDB{}, tvmazeClient)
+
+	if updated.EpisodeTitle != "The Long Road" {
+		t.Fatalf("expected provider episode title to replace duplicate series title, got %q", updated.EpisodeTitle)
 	}
 }
 
@@ -1981,20 +2109,147 @@ func TestResolveExternalIDsTVDBSlugYearNotUsedForNamingYear(t *testing.T) {
 	}
 }
 
+func TestMapTVDBMetadataAPIYearDoesNotBecomeNamingYear(t *testing.T) {
+	mapped := mapTVDBMetadata(402296, "", tvdb.SeriesMetadata{
+		TVDBID:           402296,
+		Name:             "A Spy Among Friends",
+		NameEnglish:      "A Spy Among Friends",
+		SeriesYear:       2022,
+		FirstAired:       "2022-12-08",
+		OriginalLanguage: "eng",
+		HasEnglish:       true,
+	})
+
+	if mapped == nil {
+		t.Fatalf("expected mapped metadata")
+	}
+	if mapped.Year != 2022 {
+		t.Fatalf("expected first-aired tvdb year 2022, got %d", mapped.Year)
+	}
+	if mapped.YearFromAlias {
+		t.Fatalf("expected api year not to mark YearFromAlias")
+	}
+	if mapped.YearSource != "first_aired" {
+		t.Fatalf("expected first_aired year source, got %q", mapped.YearSource)
+	}
+}
+
+func TestMergeTVDBMetadataClearsStaleAliasYear(t *testing.T) {
+	target := &api.TVDBMetadata{
+		TVDBID:         402296,
+		Name:           "A Spy Among Friends",
+		Year:           2025,
+		YearFromAlias:  true,
+		YearSource:     "translation_alias",
+		YearConfidence: "high",
+	}
+	incoming := &api.TVDBMetadata{
+		TVDBID:     402296,
+		Name:       "A Spy Among Friends",
+		FirstAired: "2022-12-08",
+		Year:       2022,
+		YearSource: "first_aired",
+	}
+
+	mergeTVDBMetadata(target, incoming)
+
+	if target.Year != 2022 {
+		t.Fatalf("expected stale alias year replaced with incoming first-aired year, got %d", target.Year)
+	}
+	if target.YearFromAlias {
+		t.Fatalf("expected incoming non-alias metadata to clear YearFromAlias")
+	}
+	if target.YearSource != "first_aired" {
+		t.Fatalf("expected incoming non-alias year source, got %q", target.YearSource)
+	}
+	if target.YearConfidence != "" {
+		t.Fatalf("expected alias confidence cleared, got %q", target.YearConfidence)
+	}
+}
+
+func TestMergeTVDBMetadataPreservesAliasYearWhenIncomingHasNoYearSource(t *testing.T) {
+	target := &api.TVDBMetadata{
+		TVDBID:         200,
+		Name:           "Cats Eye",
+		Year:           2025,
+		YearFromAlias:  true,
+		YearSource:     "translation_alias",
+		YearConfidence: "high",
+	}
+	incoming := &api.TVDBMetadata{
+		TVDBID:      200,
+		NameEnglish: "Cat's Eye",
+	}
+
+	mergeTVDBMetadata(target, incoming)
+
+	if target.Year != 2025 {
+		t.Fatalf("expected alias year preserved, got %d", target.Year)
+	}
+	if !target.YearFromAlias {
+		t.Fatal("expected YearFromAlias preserved")
+	}
+	if target.YearSource != "translation_alias" {
+		t.Fatalf("expected alias year source preserved, got %q", target.YearSource)
+	}
+	if target.YearConfidence != "high" {
+		t.Fatalf("expected alias confidence preserved, got %q", target.YearConfidence)
+	}
+	if target.NameEnglish != "Cat's Eye" {
+		t.Fatalf("expected unrelated missing fields to merge, got %q", target.NameEnglish)
+	}
+}
+
+func TestMergeTVDBMetadataRefreshesAliasYear(t *testing.T) {
+	target := &api.TVDBMetadata{
+		TVDBID:         200,
+		Name:           "Cats Eye",
+		Year:           2024,
+		YearFromAlias:  true,
+		YearSource:     "extended_alias",
+		YearConfidence: "medium",
+	}
+	incoming := &api.TVDBMetadata{
+		TVDBID:         200,
+		Name:           "Cats Eye",
+		Year:           2025,
+		YearFromAlias:  true,
+		YearSource:     "translation_alias",
+		YearConfidence: "high",
+	}
+
+	mergeTVDBMetadata(target, incoming)
+
+	if target.Year != 2025 {
+		t.Fatalf("expected alias-derived year refreshed from incoming metadata, got %d", target.Year)
+	}
+	if !target.YearFromAlias {
+		t.Fatalf("expected alias-derived year provenance to remain set")
+	}
+	if target.YearSource != "translation_alias" {
+		t.Fatalf("expected incoming alias year source, got %q", target.YearSource)
+	}
+	if target.YearConfidence != "high" {
+		t.Fatalf("expected incoming alias confidence, got %q", target.YearConfidence)
+	}
+}
+
 func TestResolveExternalIDsTVDBExplicitSeriesYearUsedForNamingYear(t *testing.T) {
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{}
 	imdbClient := &stubIMDB{}
 	tvdbClient := &stubTVDB{
 		seriesMetadata: tvdb.SeriesMetadata{
-			TVDBID:           200,
-			Name:             "Cats Eye",
-			NameEnglish:      "Cats Eye",
-			SeriesYear:       2025,
-			Slug:             "cats-eye-2025",
-			FirstAired:       "2010-10-01",
-			OriginalLanguage: "jpn",
-			HasEnglish:       true,
+			TVDBID:               200,
+			Name:                 "Cats Eye",
+			NameEnglish:          "Cats Eye",
+			SeriesYear:           2025,
+			SeriesYearSource:     "translation_alias",
+			SeriesYearConfidence: "high",
+			Slug:                 "cats-eye-2025",
+			FirstAired:           "2010-10-01",
+			OriginalLanguage:     "jpn",
+			HasEnglish:           true,
 		},
 	}
 
@@ -2026,6 +2281,9 @@ func TestResolveExternalIDsTVDBExplicitSeriesYearUsedForNamingYear(t *testing.T)
 	}
 	if !result.ExternalMetadata.TVDB.YearFromAlias {
 		t.Fatalf("expected explicit series year to mark YearFromAlias")
+	}
+	if result.ExternalMetadata.TVDB.YearSource != "translation_alias" {
+		t.Fatalf("expected translation alias year source, got %q", result.ExternalMetadata.TVDB.YearSource)
 	}
 }
 

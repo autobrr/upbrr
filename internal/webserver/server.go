@@ -69,7 +69,10 @@ var (
 // It rejects development no-auth mode for non-loopback hosts.
 func New(opts Options) (*Server, error) {
 	cfg := opts.Config
-	cliCfg := normalizeCLIConfig(opts.CLIConfig)
+	cliCfg, err := normalizeCLIConfig(opts.CLIConfig)
+	if err != nil {
+		return nil, fmt.Errorf("webserver: %w", err)
+	}
 	if opts.DevelopmentNoAuth && !isDevelopmentNoAuthHost(cliCfg.Host) {
 		return nil, fmt.Errorf("webserver: --dev-no-auth requires a loopback host, got %q", cliCfg.Host)
 	}
@@ -304,11 +307,18 @@ func redactLoggedBrowserURLQuery(values url.Values) url.Values {
 	return redacted
 }
 
-// baseURL returns the URL opened in a browser. Explicit BaseURL wins; otherwise
-// the URL uses the effective listener port and a navigable host for wildcard binds.
+// baseURL returns the URL opened in a browser. Absolute BaseURL values win;
+// path-only BaseURL values reuse the effective local listener origin.
 func (s *Server) baseURL(addr net.Addr) string {
-	if strings.TrimSpace(s.cliCfg.BaseURL) != "" {
-		return strings.TrimSpace(s.cliCfg.BaseURL)
+	configuredBaseURL := strings.TrimSpace(s.cliCfg.BaseURL)
+	if normalized, err := NormalizeBaseURL(configuredBaseURL); err == nil {
+		configuredBaseURL = normalized
+	}
+	if configuredBaseURL != "" {
+		parsed, err := url.Parse(configuredBaseURL)
+		if err != nil || parsed.IsAbs() || parsed.Host != "" {
+			return configuredBaseURL
+		}
 	}
 	port := s.cliCfg.Port
 	if tcpAddr, ok := addr.(*net.TCPAddr); ok && tcpAddr.Port > 0 {
@@ -316,10 +326,15 @@ func (s *Server) baseURL(addr net.Addr) string {
 	}
 	host := browserHost(s.cliCfg.Host)
 	hostPort := net.JoinHostPort(host, strconv.Itoa(port))
-	if needsBrowserURLHostEscaping(host) {
+	browserPath := externalBasePath(configuredBaseURL)
+	if browserPath != "" {
+		browserPath += "/"
+	}
+	if needsBrowserURLHostEscaping(host) || browserPath != "" {
 		return (&url.URL{
 			Scheme: "http",
 			Host:   hostPort,
+			Path:   browserPath,
 		}).String()
 	}
 	return "http://" + hostPort

@@ -118,12 +118,14 @@ type cliOptions struct {
 }
 
 type serveOptions struct {
-	ConfigPath    string
-	Addr          string
-	Host          string
-	Port          int
-	PersistListen bool
-	DevNoAuth     bool
+	ConfigPath       string
+	Addr             string
+	Host             string
+	Port             int
+	BaseURL          string
+	PersistListen    bool
+	PersistWebConfig bool
+	DevNoAuth        bool
 }
 
 type cliHelpError struct {
@@ -509,7 +511,9 @@ func parseServeOptions(args []string) (serveOptions, map[string]bool, error) {
 	fs.StringVar(&opts.Addr, "addr", "", "Web UI listen address (host:port)")
 	fs.StringVar(&opts.Host, "host", "", "Web UI host to bind")
 	fs.Var(&decimalPortValue{target: &opts.Port}, "port", "Web UI port to bind")
+	fs.StringVar(&opts.BaseURL, "base-url", "", "External Web UI base URL or path, for example https://example.test/upbrr/ or /upbrr/")
 	fs.BoolVar(&opts.PersistListen, "persist-listen", false, "Persist Web UI listen host and port to web-config.json")
+	fs.BoolVar(&opts.PersistWebConfig, "persist-web-config", false, "Persist supplied Web UI serve settings to web-config.json")
 	fs.BoolVar(&opts.DevNoAuth, "dev-no-auth", false, "Development only: serve web UI without web authentication on loopback hosts")
 
 	if err := fs.Parse(args); err != nil {
@@ -534,7 +538,7 @@ func formatFlagUsage(fs *flag.FlagSet, usage string) string {
 		fmt.Fprint(&builder, "\nCommands:\n")
 		fmt.Fprint(&builder, "  serve [options]\n")
 		fmt.Fprint(&builder, "      Start the embedded web UI server\n")
-		fmt.Fprint(&builder, "      Options: --addr, --host, --port, --persist-listen, --dev-no-auth\n")
+		fmt.Fprint(&builder, "      Options: --addr, --host, --port, --base-url, --persist-web-config, --dev-no-auth\n")
 	}
 	fmt.Fprint(&builder, "\nOptions:\n")
 	sections := cliHelpSections(fs.Name())
@@ -586,7 +590,7 @@ func cliHelpSections(name string) []helpSection {
 	if name == "serve" {
 		return []helpSection{
 			{title: "Config", names: []string{"config"}},
-			{title: "Server", names: []string{"addr", "host", "port", "persist-listen"}},
+			{title: "Server", names: []string{"addr", "host", "port", "base-url", "persist-listen", "persist-web-config"}},
 			{title: "Development", names: []string{"dev-no-auth"}},
 		}
 	}

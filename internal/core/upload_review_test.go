@@ -110,6 +110,10 @@ func (*recordingReviewMetadata) ApplyMediaDetails(_ context.Context, meta api.Pr
 	return meta, nil
 }
 
+func (*recordingReviewMetadata) ApplyTrackerClaims(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	return meta, nil
+}
+
 type recordingReviewTorrent struct {
 	calls int
 	err   error

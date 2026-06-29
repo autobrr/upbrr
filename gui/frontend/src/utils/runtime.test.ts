@@ -32,6 +32,8 @@ describe("browser runtime bridge", () => {
   });
 
   afterEach(() => {
+    delete window.__UPBRR_BASE_URL__;
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -63,6 +65,32 @@ describe("browser runtime bridge", () => {
           Overrides: { TMDBID: 1 },
           NameOverrides: { Category: "MOVIE" },
         }),
+      }),
+    );
+  });
+
+  it("prefixes browser API calls with the injected base URL", async () => {
+    window.__UPBRR_BASE_URL__ = "/upbrr/";
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { browserAuth, initializeBrowserBridge, withBrowserBasePath } = await import("./runtime");
+    initializeBrowserBridge("csrf-token", true);
+
+    expect(withBrowserBasePath("/api/auth/status")).toBe("/upbrr/api/auth/status");
+
+    await browserAuth.status();
+    await (globalThis as any).go.guiapp.App.GetConfig();
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/upbrr/api/auth/status", {
+      credentials: "include",
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/upbrr/api/app/GetConfig",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
       }),
     );
   });
@@ -211,5 +239,136 @@ describe("browser runtime bridge", () => {
 
     initializeBrowserBridge("csrf-token", true, false);
     expect(isRuntimePathCaseInsensitive()).toBe(false);
+  });
+
+  it("rejects oversized decoded tracker cookie content before posting", async () => {
+    const originalCreateElement = document.createElement.bind(document);
+    const input = document.createElement("input");
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [new File(["x"], "cookies.txt")],
+    });
+    vi.spyOn(input, "click").mockImplementation(() => {
+      input.dispatchEvent(new Event("change"));
+    });
+    vi.spyOn(document, "createElement").mockImplementation((tagName: string) => {
+      if (tagName === "input") {
+        return input;
+      }
+      return originalCreateElement(tagName);
+    });
+    const readAsText = vi.fn();
+    vi.stubGlobal(
+      "FileReader",
+      vi.fn().mockImplementation(function (this: any) {
+        this.readAsText = readAsText.mockImplementation(() => {
+          Object.defineProperty(this, "result", {
+            configurable: true,
+            value: "x".repeat(1024 * 1024 + 1),
+          });
+          this.onload?.(new ProgressEvent("load"));
+        });
+      }),
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { initializeBrowserBridge } = await import("./runtime");
+    initializeBrowserBridge("csrf-token", true);
+
+    await expect((globalThis as any).go.guiapp.App.ImportTrackerAuthCookies("PTP")).rejects.toThrow(
+      "cookie file content exceeds 1048576 byte limit",
+    );
+    expect(readAsText).toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized raw tracker cookie files before decoding", async () => {
+    const originalCreateElement = document.createElement.bind(document);
+    const input = document.createElement("input");
+    const file = new File(["x"], "cookies.txt");
+    Object.defineProperty(file, "size", { configurable: true, value: 1024 * 1024 + 1 });
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [file],
+    });
+    vi.spyOn(input, "click").mockImplementation(() => {
+      input.dispatchEvent(new Event("change"));
+    });
+    vi.spyOn(document, "createElement").mockImplementation((tagName: string) => {
+      if (tagName === "input") {
+        return input;
+      }
+      return originalCreateElement(tagName);
+    });
+    const readAsText = vi.fn();
+    vi.stubGlobal(
+      "FileReader",
+      vi.fn().mockImplementation(function (this: any) {
+        this.readAsText = readAsText.mockImplementation(() => {
+          Object.defineProperty(this, "result", { configurable: true, value: "session=abc" });
+          this.onload?.(new ProgressEvent("load"));
+        });
+      }),
+    );
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ trackerID: "PTP" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { initializeBrowserBridge } = await import("./runtime");
+    initializeBrowserBridge("csrf-token", true);
+
+    await expect((globalThis as any).go.guiapp.App.ImportTrackerAuthCookies("PTP")).rejects.toThrow(
+      "cookie file content exceeds 1048576 byte limit",
+    );
+    expect(readAsText).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("posts valid tracker cookie files from the browser bridge", async () => {
+    const originalCreateElement = document.createElement.bind(document);
+    const input = document.createElement("input");
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [new File(["session=abc"], "cookies.txt")],
+    });
+    vi.spyOn(input, "click").mockImplementation(() => {
+      input.dispatchEvent(new Event("change"));
+    });
+    vi.spyOn(document, "createElement").mockImplementation((tagName: string) => {
+      if (tagName === "input") {
+        return input;
+      }
+      return originalCreateElement(tagName);
+    });
+    vi.stubGlobal(
+      "FileReader",
+      vi.fn().mockImplementation(function (this: any) {
+        this.readAsText = vi.fn(() => {
+          Object.defineProperty(this, "result", { configurable: true, value: "session=abc" });
+          this.onload?.(new ProgressEvent("load"));
+        });
+      }),
+    );
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ trackerID: "PTP" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { initializeBrowserBridge } = await import("./runtime");
+    initializeBrowserBridge("csrf-token", true);
+
+    await expect(
+      (globalThis as any).go.guiapp.App.ImportTrackerAuthCookies("PTP"),
+    ).resolves.toEqual({
+      trackerID: "PTP",
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/app/ImportTrackerAuthCookieContent",
+      expect.objectContaining({
+        body: JSON.stringify({
+          Tracker: "PTP",
+          FileName: "cookies.txt",
+          Content: "session=abc",
+        }),
+      }),
+    );
   });
 });

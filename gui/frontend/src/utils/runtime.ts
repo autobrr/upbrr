@@ -5,6 +5,12 @@ import { EventsOn as wailsEventsOn } from "../../wailsjs/runtime/runtime";
 
 type EventCallback = (payload: unknown) => void;
 
+declare global {
+  interface Window {
+    __UPBRR_BASE_URL__?: string;
+  }
+}
+
 const callbackMap = new Map<string, Set<EventCallback>>();
 const nativeBrowseAvailabilityListeners = new Set<() => void>();
 let eventStreamController: AbortController | null = null;
@@ -14,6 +20,10 @@ let csrfToken = "";
 let nativeBrowseEnabled = false;
 let caseInsensitivePaths = navigator.platform.toLowerCase().startsWith("win");
 
+// Mirrors trackerauth.MaxCookieImportContentBytes so browser imports reject
+// over-limit files before decode and over-limit decoded text before posting.
+const maxCookieImportContentBytes = 1024 * 1024;
+const encodedTextByteLength = (value: string) => new TextEncoder().encode(value).length;
 const sessionChangedMessage =
   "Web session changed in another tab. Reload this tab to continue with the active login.";
 
@@ -33,6 +43,30 @@ const parseJSONResponse = async <T>(response: Response): Promise<T | null> => {
 };
 
 const isAuthFailureStatus = (status: number) => status === 401 || status === 403;
+
+const normalizeBrowserBaseURL = (value: unknown) => {
+  if (typeof value !== "string") {
+    return "/";
+  }
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "/") {
+    return "/";
+  }
+  const path = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  return path.endsWith("/") ? path : `${path}/`;
+};
+
+const browserBaseURL = () => normalizeBrowserBaseURL(window.__UPBRR_BASE_URL__);
+
+/**
+ * Prefixes browser-mode API and event paths with the base URL injected by the
+ * embedded web server. Root and Wails desktop runtimes resolve to root paths.
+ */
+export const withBrowserBasePath = (path: string) => {
+  const baseURL = browserBaseURL();
+  const normalizedPath = path.startsWith("/") ? path.slice(1) : path;
+  return `${baseURL}${normalizedPath}`;
+};
 
 const setNativeBrowseEnabled = (enabled: boolean) => {
   if (nativeBrowseEnabled === enabled) {
@@ -56,7 +90,7 @@ const refreshBrowserAuthState = async () => {
   if (!browserMode) {
     return false;
   }
-  const response = await fetch("/api/auth/status", { credentials: "include" });
+  const response = await fetch(withBrowserBasePath("/api/auth/status"), { credentials: "include" });
   const payload = await parseJSONResponse<
     Record<string, unknown> & {
       authenticated?: boolean;
@@ -142,7 +176,7 @@ const scheduleEventStreamReconnect = () => {
 const runBrowserEventStream = async (controller: AbortController) => {
   let reconnect = true;
   try {
-    const response = await fetch("/api/events", {
+    const response = await fetch(withBrowserBasePath("/api/events"), {
       method: "GET",
       credentials: "include",
       headers: { "X-CSRF-Token": csrfToken },
@@ -236,10 +270,10 @@ const postJSON = async <T>(path: string, body?: unknown): Promise<T> => {
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  let response = await fetch(path, requestInit());
+  let response = await fetch(withBrowserBasePath(path), requestInit());
   let payload = await parseJSONResponse<T & { error?: string }>(response);
   if (!response.ok && isAuthFailureStatus(response.status) && (await refreshBrowserAuthState())) {
-    response = await fetch(path, requestInit());
+    response = await fetch(withBrowserBasePath(path), requestInit());
     payload = await parseJSONResponse<T & { error?: string }>(response);
   }
   if (!response.ok) {
@@ -577,6 +611,70 @@ export const initializeBrowserBridge = (
         UpdateLogExclusions: (patterns: string[]) =>
           call("UpdateLogExclusions", { Patterns: patterns }),
         ListKnownTrackers: () => call("ListKnownTrackers"),
+        ListTrackerAuthCapabilities: () => call("ListTrackerAuthCapabilities"),
+        GetTrackerAuthStatus: (tracker: string) =>
+          call("GetTrackerAuthStatus", { Tracker: tracker }),
+        ImportTrackerAuthCookies: async (tracker: string) => {
+          const fileData = await new Promise<{ name: string; content: string }>(
+            (resolve, reject) => {
+              const input = document.createElement("input");
+              input.type = "file";
+              input.accept = ".txt,.json";
+              input.onchange = () => {
+                const file = input.files?.[0];
+                if (!file) {
+                  resolve({ name: "", content: "" });
+                  return;
+                }
+                if (file.size > maxCookieImportContentBytes) {
+                  reject(
+                    new Error(
+                      `tracker auth: cookie file content exceeds ${maxCookieImportContentBytes} byte limit`,
+                    ),
+                  );
+                  return;
+                }
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const content = reader.result as string;
+                  if (encodedTextByteLength(content) > maxCookieImportContentBytes) {
+                    reject(
+                      new Error(
+                        `tracker auth: cookie file content exceeds ${maxCookieImportContentBytes} byte limit`,
+                      ),
+                    );
+                    return;
+                  }
+                  resolve({ name: file.name, content });
+                };
+                reader.onerror = () => reject(reader.error);
+                reader.readAsText(file);
+              };
+              input.addEventListener("cancel", () => resolve({ name: "", content: "" }));
+              input.click();
+            },
+          );
+          if (!fileData.name) {
+            return call("GetTrackerAuthStatus", { Tracker: tracker });
+          }
+          return call("ImportTrackerAuthCookieContent", {
+            Tracker: tracker,
+            FileName: fileData.name,
+            Content: fileData.content,
+          });
+        },
+        ImportTrackerAuthCookieContent: (tracker: string, fileName: string, content: string) =>
+          call("ImportTrackerAuthCookieContent", {
+            Tracker: tracker,
+            FileName: fileName,
+            Content: content,
+          }),
+        TestTrackerAuth: (tracker: string) => call("TestTrackerAuth", { Tracker: tracker }),
+        LoginTrackerAuth: (tracker: string, login: unknown) =>
+          call("LoginTrackerAuth", { Tracker: tracker, Login: login }),
+        SubmitTrackerAuth2FA: (challengeID: string, code: string) =>
+          call("SubmitTrackerAuth2FA", { ChallengeID: challengeID, Code: code }),
+        DeleteTrackerAuth: (tracker: string) => call("DeleteTrackerAuth", { Tracker: tracker }),
         GetImageHostPolicyMetadata: () => call("GetImageHostPolicyMetadata"),
         ListHistory: () => call("ListHistory"),
         GetHistoryOverview: (sourcePath: string) =>
@@ -620,11 +718,16 @@ export const initializeBrowserBridge = (
   recreateEventSource();
 };
 
+/** Returns whether app calls should use the browser HTTP bridge instead of Wails. */
 export const isBrowserMode = () => {
   browserMode = isWebUIRuntime();
   return browserMode;
 };
 
+/**
+ * Reports whether browser-mode callers can use host-native browse dialogs.
+ * Wails desktop mode always provides native browse support.
+ */
 export const isBrowserNativeBrowseAvailable = () => {
   if (!isBrowserMode()) {
     return true;
@@ -638,6 +741,9 @@ export const isBrowserNativeBrowseAvailable = () => {
  */
 export const isRuntimePathCaseInsensitive = () => caseInsensitivePaths;
 
+/**
+ * Subscribes to browser-mode native browse availability changes.
+ */
 export const subscribeBrowserNativeBrowseAvailability = (listener: () => void) => {
   nativeBrowseAvailabilityListeners.add(listener);
   return () => {
@@ -657,9 +763,15 @@ export const updateBrowserCSRFToken = (token: string, runtimeCaseInsensitivePath
   recreateEventSource();
 };
 
+/**
+ * Browser-mode auth calls that share the injected base path and cookie-bound
+ * CSRF handling used by the app bridge.
+ */
 export const browserAuth = {
   status: async () => {
-    const response = await fetch("/api/auth/status", { credentials: "include" });
+    const response = await fetch(withBrowserBasePath("/api/auth/status"), {
+      credentials: "include",
+    });
     const payload = await parseJSONResponse<Record<string, unknown> & { error?: string }>(response);
     if (!response.ok) {
       throw new Error(String(payload?.error || response.statusText || "Request failed"));

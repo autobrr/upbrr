@@ -6,6 +6,7 @@ package tvdb
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -54,8 +55,16 @@ func TestSpecificSeriesAliasDoesNotUseSlugFallback(t *testing.T) {
 		t.Fatalf("expected explicit alias year to win, got %q", got)
 	}
 
-	if got := specificSeriesAlias(EpisodesData{SeriesTitle: "Cats Eye", SeriesYear: 2025}); got != "Cats Eye (2025)" {
+	if got := specificSeriesAlias(EpisodesData{SeriesTitle: "Cats Eye", SeriesYear: 2025}); got != "Cats Eye" {
+		t.Fatalf("expected source-less series year to be ignored, got %q", got)
+	}
+
+	if got := specificSeriesAlias(EpisodesData{SeriesTitle: "Cats Eye", SeriesYear: 2025, SeriesYearSource: seriesYearSourceTranslationAlias}); got != "Cats Eye (2025)" {
 		t.Fatalf("expected explicit series title/year, got %q", got)
+	}
+
+	if got := specificSeriesAlias(EpisodesData{SeriesTitle: "Hunter x Hunter (2011)", SeriesYear: 2011, SeriesYearSource: seriesYearSourceTranslationName}); got != "Hunter x Hunter (2011)" {
+		t.Fatalf("expected title year not to be duplicated, got %q", got)
 	}
 }
 
@@ -195,6 +204,91 @@ func TestSearchSeriesAlwaysUsesEnglishLanguage(t *testing.T) {
 	}
 }
 
+func TestSearchSeriesDecodesStringAliases(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			_, _ = w.Write([]byte(`{"data":{"token":"token"}}`))
+		case "/search":
+			_, _ = w.Write([]byte(`{"data":[{"tvdb_id":252322,"name":"Hunter x Hunter","year":"2011","aliases":["Hunter x Hunter (2011)"]}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client(), nil, "api-key", "")
+	client.baseURL = server.URL
+
+	results, selected, err := client.SearchSeries(context.Background(), "Hunter x Hunter", "2011")
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if selected != 252322 {
+		t.Fatalf("expected selected id 252322, got %d", selected)
+	}
+	if len(results) != 1 || len(results[0].Aliases) != 1 {
+		t.Fatalf("expected decoded alias, got %#v", results)
+	}
+	if results[0].Aliases[0].Name != "Hunter x Hunter (2011)" || results[0].Aliases[0].Language != "eng" {
+		t.Fatalf("expected english string alias, got %#v", results[0].Aliases[0])
+	}
+}
+
+func TestGetJSONRejectsOversizedSuccessResponse(t *testing.T) {
+	client := NewClient(&http.Client{Transport: tvdbRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/login":
+			return tvdbTestResponse(http.StatusOK, `{"data":{"token":"token"}}`), nil
+		case "/oversized":
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(&repeatingReader{remaining: maxTVDBResponseBodyBytes + 1}),
+				Request:    req,
+			}, nil
+		default:
+			return tvdbTestResponse(http.StatusNotFound, ""), nil
+		}
+	})}, nil, "api-key", "")
+	client.baseURL = "https://tvdb.test"
+
+	var target map[string]any
+	err := client.getJSON(context.Background(), "/oversized", nil, &target)
+	if err == nil {
+		t.Fatal("expected oversized response error")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("expected oversized response error, got %v", err)
+	}
+}
+
+func TestGetJSONRejectsOversizedErrorResponse(t *testing.T) {
+	client := NewClient(&http.Client{Transport: tvdbRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/login":
+			return tvdbTestResponse(http.StatusOK, `{"data":{"token":"token"}}`), nil
+		case "/oversized":
+			return &http.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				Body:       io.NopCloser(&repeatingReader{remaining: maxTVDBResponseBodyBytes + 1}),
+				Request:    req,
+			}, nil
+		default:
+			return tvdbTestResponse(http.StatusNotFound, ""), nil
+		}
+	})}, nil, "api-key", "")
+	client.baseURL = "https://tvdb.test"
+
+	var target map[string]any
+	err := client.getJSON(context.Background(), "/oversized", nil, &target)
+	if err == nil {
+		t.Fatal("expected oversized response error")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("expected oversized response error, got %v", err)
+	}
+}
+
 func TestGetEpisodesLanguagePreference(t *testing.T) {
 	episodeLang := ""
 	extendedLang := ""
@@ -294,6 +388,38 @@ func TestGetEpisodesUsesTranslationSeriesMetadataWithoutSlugFallback(t *testing.
 	}
 }
 
+func TestGetEpisodesIgnoresAPIYearForNamingYear(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			_, _ = w.Write([]byte(`{"data":{"token":"token"}}`))
+		case "/series/12/episodes/default":
+			_, _ = w.Write([]byte(`{"data":{"episodes":[{"id":1,"seasonNumber":1,"number":1,"name":"Pilot"}],"slug":"a-spy-among-friends"}}`))
+		case "/series/12/extended":
+			_, _ = w.Write([]byte(`{"data":{"name":"A Spy Among Friends","slug":"a-spy-among-friends","year":2022,"firstAired":"2022-12-08","aliases":[]}}`))
+		case "/series/12/translations/eng":
+			_, _ = w.Write([]byte(`{"data":{"name":"A Spy Among Friends","aliases":[]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client(), nil, "api-key", "")
+	client.baseURL = server.URL
+
+	data, alias, err := client.GetEpisodes(context.Background(), 12, EpisodeQuery{Season: 1, Episode: 1})
+	if err != nil {
+		t.Fatalf("get episodes failed: %v", err)
+	}
+	if alias != "A Spy Among Friends" {
+		t.Fatalf("expected translated title without api year, got %q", alias)
+	}
+	if data.SeriesYear != 0 || data.SeriesYearSource != "" {
+		t.Fatalf("expected no naming year from api year, got year=%d source=%q", data.SeriesYear, data.SeriesYearSource)
+	}
+}
+
 func TestGetEpisodesUsesExplicitTranslationAliasYear(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -323,6 +449,278 @@ func TestGetEpisodesUsesExplicitTranslationAliasYear(t *testing.T) {
 	}
 	if data.SeriesYear != 2025 {
 		t.Fatalf("expected explicit series year 2025, got %d", data.SeriesYear)
+	}
+	if data.SeriesYearSource != seriesYearSourceTranslationAlias || data.SeriesYearConfidence != seriesYearConfidenceHigh {
+		t.Fatalf("expected translation alias source/high confidence, got source=%q confidence=%q", data.SeriesYearSource, data.SeriesYearConfidence)
+	}
+}
+
+func TestGetEpisodesUpgradesLegacyCachedAliasYearSource(t *testing.T) {
+	cacheDir := t.TempDir()
+	cachePath := filepath.Join(cacheDir, "12-eng.json")
+	if err := writeEpisodesCache(cachePath, EpisodesData{
+		Episodes: []Episode{
+			{ID: 1, SeasonNumber: 1, Number: 1, Name: "Pilot"},
+		},
+		Aliases: []Alias{
+			{Name: "Cat's Eye", Language: "eng"},
+			{Name: "Cat's Eye (2025)", Language: "eng"},
+		},
+		SeriesTitle: "Cat's Eye",
+		SeriesYear:  2025,
+	}); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "offline", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client(), nil, "api-key", cacheDir)
+	client.baseURL = server.URL
+
+	data, alias, err := client.GetEpisodes(context.Background(), 12, EpisodeQuery{Season: 1, Episode: 1})
+	if err != nil {
+		t.Fatalf("get episodes failed: %v", err)
+	}
+	if alias != "Cat's Eye (2025)" {
+		t.Fatalf("expected legacy cached alias year to remain naming-eligible, got %q", alias)
+	}
+	if data.SeriesYearSource != seriesYearSourceExtendedAlias || data.SeriesYearConfidence != seriesYearConfidenceHigh {
+		t.Fatalf("expected upgraded legacy source/high confidence, got source=%q confidence=%q", data.SeriesYearSource, data.SeriesYearConfidence)
+	}
+
+	refreshed, ok := readEpisodesCache(cachePath)
+	if !ok {
+		t.Fatalf("expected upgraded cache to be readable")
+	}
+	if refreshed.SeriesYearSource != seriesYearSourceExtendedAlias || refreshed.SeriesYearConfidence != seriesYearConfidenceHigh {
+		t.Fatalf("expected upgraded cache provenance, got source=%q confidence=%q", refreshed.SeriesYearSource, refreshed.SeriesYearConfidence)
+	}
+}
+
+func TestGetEpisodesDoesNotUpgradeUnprovenLegacyCachedYear(t *testing.T) {
+	cacheDir := t.TempDir()
+	if err := writeEpisodesCache(filepath.Join(cacheDir, "12-eng.json"), EpisodesData{
+		Episodes: []Episode{
+			{ID: 1, SeasonNumber: 1, Number: 1, Name: "Pilot"},
+		},
+		SeriesTitle: "A Spy Among Friends",
+		SeriesYear:  2022,
+	}); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "offline", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client(), nil, "api-key", cacheDir)
+	client.baseURL = server.URL
+
+	data, alias, err := client.GetEpisodes(context.Background(), 12, EpisodeQuery{Season: 1, Episode: 1})
+	if err != nil {
+		t.Fatalf("get episodes failed: %v", err)
+	}
+	if alias != "A Spy Among Friends" {
+		t.Fatalf("expected unproven cached year to stay out of alias, got %q", alias)
+	}
+	if data.SeriesYearSource != "" || data.SeriesYearConfidence != "" {
+		t.Fatalf("expected no legacy provenance without title/alias proof, got source=%q confidence=%q", data.SeriesYearSource, data.SeriesYearConfidence)
+	}
+}
+
+func TestSeriesTranslationMetadataUsesSelectedFallbackAliasYear(t *testing.T) {
+	t.Run("selected alias year", func(t *testing.T) {
+		got := seriesTranslationMetadata(seriesExtendedDataResponse{}, seriesTranslationDataResponse{
+			Aliases: []string{"Same Show (2020)", "Same Show (2024)"},
+		})
+
+		if got.title != "Same Show (2024)" {
+			t.Fatalf("expected selected fallback alias title, got %q", got.title)
+		}
+		if got.year != 2024 {
+			t.Fatalf("expected selected fallback alias year 2024, got %d", got.year)
+		}
+		if got.yearSource != seriesYearSourceTranslationAlias || got.yearConfidence != seriesYearConfidenceHigh {
+			t.Fatalf("expected translation alias source/high confidence, got source=%q confidence=%q", got.yearSource, got.yearConfidence)
+		}
+	})
+
+	t.Run("selected alias without year", func(t *testing.T) {
+		got := seriesTranslationMetadata(seriesExtendedDataResponse{}, seriesTranslationDataResponse{
+			Aliases: []string{"Same Show (2020)", "Same Show"},
+		})
+
+		if got.title != "Same Show" {
+			t.Fatalf("expected selected fallback alias title, got %q", got.title)
+		}
+		if got.year != 0 || got.yearSource != "" || got.yearConfidence != "" {
+			t.Fatalf("expected no year from unselected matching alias, got year=%d source=%q confidence=%q", got.year, got.yearSource, got.yearConfidence)
+		}
+	})
+
+	t.Run("clean selected alias uses extended alias year", func(t *testing.T) {
+		got := seriesTranslationMetadata(seriesExtendedDataResponse{
+			Aliases: []aliasResponse{
+				{Name: "Cats Eye (2025)", Language: "eng"},
+			},
+		}, seriesTranslationDataResponse{
+			Aliases: []string{"Cats Eye"},
+		})
+
+		if got.title != "Cats Eye" {
+			t.Fatalf("expected selected fallback alias title, got %q", got.title)
+		}
+		if got.year != 2025 {
+			t.Fatalf("expected extended alias year 2025, got %d", got.year)
+		}
+		if got.yearSource != seriesYearSourceExtendedAlias || got.yearConfidence != seriesYearConfidenceHigh {
+			t.Fatalf("expected extended alias source/high confidence, got source=%q confidence=%q", got.yearSource, got.yearConfidence)
+		}
+	})
+
+	t.Run("alias suffix year beats title year", func(t *testing.T) {
+		got := seriesTranslationMetadata(seriesExtendedDataResponse{}, seriesTranslationDataResponse{
+			Name:    "Hunter x Hunter (2011)",
+			Aliases: []string{"Hunter x Hunter (2011) (2024)"},
+		})
+
+		if got.title != "Hunter x Hunter (2011)" {
+			t.Fatalf("expected translation name title, got %q", got.title)
+		}
+		if got.year != 2011 || got.yearSource != seriesYearSourceTranslationName {
+			t.Fatalf("expected translation name year to win for explicit title, got year=%d source=%q", got.year, got.yearSource)
+		}
+
+		got = seriesTranslationMetadata(seriesExtendedDataResponse{}, seriesTranslationDataResponse{
+			Name:    "Hunter x Hunter 2011",
+			Aliases: []string{"Hunter x Hunter 2011 (2024)"},
+		})
+
+		if got.year != 2024 {
+			t.Fatalf("expected explicit alias suffix year 2024, got %d", got.year)
+		}
+		if got.yearSource != seriesYearSourceTranslationAlias || got.yearConfidence != seriesYearConfidenceHigh {
+			t.Fatalf("expected translation alias source/high confidence, got source=%q confidence=%q", got.yearSource, got.yearConfidence)
+		}
+	})
+}
+
+func TestSeriesTranslationMetadataUsesOnlyExplicitTranslationNameYear(t *testing.T) {
+	t.Run("parenthesized year", func(t *testing.T) {
+		got := seriesTranslationMetadata(seriesExtendedDataResponse{}, seriesTranslationDataResponse{
+			Name: "Hunter x Hunter (2011)",
+		})
+
+		if got.year != 2011 || got.yearSource != seriesYearSourceTranslationName {
+			t.Fatalf("expected explicit translation name year, got year=%d source=%q", got.year, got.yearSource)
+		}
+	})
+
+	t.Run("bare numeric title", func(t *testing.T) {
+		got := seriesTranslationMetadata(seriesExtendedDataResponse{}, seriesTranslationDataResponse{
+			Name: "Show 2024",
+		})
+
+		if got.title != "Show 2024" {
+			t.Fatalf("expected title preserved, got %q", got.title)
+		}
+		if got.year != 0 || got.yearSource != "" || got.yearConfidence != "" {
+			t.Fatalf("expected bare numeric title not to become naming year, got year=%d source=%q confidence=%q", got.year, got.yearSource, got.yearConfidence)
+		}
+	})
+}
+
+func TestGetEpisodesUsesTranslationNameYear(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			_, _ = w.Write([]byte(`{"data":{"token":"token"}}`))
+		case "/series/12/episodes/default":
+			_, _ = w.Write([]byte(`{"data":{"episodes":[{"id":1,"seasonNumber":1,"number":1,"name":"Pilot"}],"slug":"hunter-x-hunter-2011"}}`))
+		case "/series/12/extended":
+			_, _ = w.Write([]byte(`{"data":{"name":"ハンター×ハンター","slug":"hunter-x-hunter-2011","aliases":[]}}`))
+		case "/series/12/translations/eng":
+			_, _ = w.Write([]byte(`{"data":{"name":"Hunter x Hunter (2011)","aliases":[]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client(), nil, "api-key", "")
+	client.baseURL = server.URL
+
+	data, alias, err := client.GetEpisodes(context.Background(), 12, EpisodeQuery{Season: 1, Episode: 1})
+	if err != nil {
+		t.Fatalf("get episodes failed: %v", err)
+	}
+	if alias != "Hunter x Hunter (2011)" {
+		t.Fatalf("expected translation name year without duplication, got %q", alias)
+	}
+	if data.SeriesYear != 2011 || data.SeriesYearSource != seriesYearSourceTranslationName {
+		t.Fatalf("expected translation name year, got year=%d source=%q", data.SeriesYear, data.SeriesYearSource)
+	}
+}
+
+func TestGetEpisodesUsesSlugFallbackWhenNoEnglishEvidence(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			_, _ = w.Write([]byte(`{"data":{"token":"token"}}`))
+		case "/series/12/episodes/default":
+			_, _ = w.Write([]byte(`{"data":{"episodes":[{"id":1,"seasonNumber":1,"number":1,"name":"Pilot"}],"slug":"hunter-x-hunter-2011"}}`))
+		case "/series/12/extended":
+			_, _ = w.Write([]byte(`{"data":{"name":"ハンター×ハンター","slug":"hunter-x-hunter-2011","aliases":[]}}`))
+		case "/series/12/translations/eng":
+			_, _ = w.Write([]byte(`{"data":{"name":"","aliases":[]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client(), nil, "api-key", "")
+	client.baseURL = server.URL
+
+	data, _, err := client.GetEpisodes(context.Background(), 12, EpisodeQuery{Season: 1, Episode: 1})
+	if err != nil {
+		t.Fatalf("get episodes failed: %v", err)
+	}
+	if data.SeriesYear != 2011 || data.SeriesYearSource != seriesYearSourceSlug || data.SeriesYearConfidence != seriesYearConfidenceLow {
+		t.Fatalf("expected low-confidence slug year, got year=%d source=%q confidence=%q", data.SeriesYear, data.SeriesYearSource, data.SeriesYearConfidence)
+	}
+}
+
+func TestGetEpisodesRejectsMismatchedSlugFallback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			_, _ = w.Write([]byte(`{"data":{"token":"token"}}`))
+		case "/series/12/episodes/default":
+			_, _ = w.Write([]byte(`{"data":{"episodes":[{"id":1,"seasonNumber":1,"number":1,"name":"Pilot"}],"slug":"wrong-show-2025"}}`))
+		case "/series/12/extended":
+			_, _ = w.Write([]byte(`{"data":{"name":"Original Show","slug":"wrong-show-2025","aliases":[]}}`))
+		case "/series/12/translations/eng":
+			_, _ = w.Write([]byte(`{"data":{"name":"","aliases":[]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client(), nil, "api-key", "")
+	client.baseURL = server.URL
+
+	data, _, err := client.GetEpisodes(context.Background(), 12, EpisodeQuery{Season: 1, Episode: 1})
+	if err != nil {
+		t.Fatalf("get episodes failed: %v", err)
+	}
+	if data.SeriesYear != 0 || data.SeriesYearSource != "" {
+		t.Fatalf("expected mismatched slug year rejected, got year=%d source=%q", data.SeriesYear, data.SeriesYearSource)
 	}
 }
 
@@ -458,4 +856,36 @@ func TestGetEpisodeTranslation(t *testing.T) {
 	if translated.Overview != "English episode overview" {
 		t.Fatalf("expected translated overview, got %q", translated.Overview)
 	}
+}
+
+type tvdbRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f tvdbRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func tvdbTestResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     make(http.Header),
+	}
+}
+
+type repeatingReader struct {
+	remaining int64
+}
+
+func (r *repeatingReader) Read(p []byte) (int, error) {
+	if r.remaining <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > r.remaining {
+		p = p[:int(r.remaining)]
+	}
+	for i := range p {
+		p[i] = 'x'
+	}
+	r.remaining -= int64(len(p))
+	return len(p), nil
 }

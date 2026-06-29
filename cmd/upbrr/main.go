@@ -277,7 +277,7 @@ func run() error {
 			}
 			continue
 		}
-		if err := runInteractiveCLIPath(ctx, coreSvc, os.Args[1:], opts, visitedFlags, sourcePath, screens, cfg); err != nil {
+		if err := runInteractiveCLIPathWithLogger(ctx, coreSvc, os.Args[1:], opts, visitedFlags, sourcePath, screens, cfg, logger); err != nil {
 			return exitError(1, err)
 		}
 	}
@@ -379,8 +379,12 @@ func runServe(args []string) error {
 	if err != nil {
 		return err
 	}
+	envOpts, envVisited := readServeEnv()
 	if visitedFlags["persist-listen"] && !hasServeListenOverrides(visitedFlags) {
 		return errors.New("--persist-listen requires --addr, --host, or --port")
+	}
+	if visitedFlags["persist-web-config"] && !hasServeWebConfigOverrides(visitedFlags) && !hasServeEnvOverrides(envVisited) {
+		return errors.New("--persist-web-config requires --addr, --host, --port, --base-url, or UPBRR_WEB_* env")
 	}
 
 	configFlagProvided := visitedFlags["config"]
@@ -394,15 +398,20 @@ func runServe(args []string) error {
 		return err
 	}
 
-	webCfg, err := webserver.LoadCLIConfig(dbPath)
+	storedWebCfg, err := webserver.LoadCLIConfig(dbPath)
 	if err != nil {
 		return fmt.Errorf("upbrr: %w", err)
+	}
+	webCfg := storedWebCfg
+	webCfg, err = applyServeEnvOverrides(webCfg, envOpts, envVisited)
+	if err != nil {
+		return err
 	}
 	webCfg, err = applyServeOptionOverrides(webCfg, opts, visitedFlags)
 	if err != nil {
 		return err
 	}
-	persistWebCfg := webCfg
+	persistWebCfg := servePersistConfig(storedWebCfg, webCfg, visitedFlags)
 	if opts.DevNoAuth {
 		webCfg.OpenBrowser = false
 	}
@@ -417,7 +426,7 @@ func runServe(args []string) error {
 	}
 	defer server.Close()
 
-	if visitedFlags["persist-listen"] {
+	if visitedFlags["persist-listen"] || visitedFlags["persist-web-config"] {
 		return wrapUpbrrError(server.RunAfterListen(context.Background(), func() error {
 			if err := webserver.SaveCLIConfig(dbPath, persistWebCfg); err != nil {
 				return fmt.Errorf("save web config: %w", err)
@@ -435,9 +444,139 @@ func hasServeListenOverrides(visited map[string]bool) bool {
 	return visited["addr"] || visited["host"] || visited["port"]
 }
 
-// applyServeOptionOverrides returns webCfg with explicitly supplied serve listen
-// flags applied. --addr replaces both host and port; --host and --port may
-// update either field independently.
+// hasServeWebConfigOverrides reports whether serve flags that may be persisted
+// by --persist-web-config were provided.
+func hasServeWebConfigOverrides(visited map[string]bool) bool {
+	return hasServeListenOverrides(visited) || visited["base-url"]
+}
+
+// hasServeEnvOverrides reports whether any UPBRR_WEB_* setting can affect the
+// runtime web config. Env-derived settings are persisted only when
+// --persist-web-config is explicit.
+func hasServeEnvOverrides(visited map[string]bool) bool {
+	return visited["host"] || visited["port"] || visited["base-url"] || visited["open-browser"] || visited["trusted-proxies"]
+}
+
+// serveEnvOptions stores raw UPBRR_WEB_* values so each field can be validated
+// with the same parser used by the matching CLI flag.
+type serveEnvOptions struct {
+	Host           string
+	Port           string
+	BaseURL        string
+	OpenBrowser    string
+	TrustedProxies string
+}
+
+// readServeEnv returns configured UPBRR_WEB_* values plus visited markers that
+// distinguish an unset variable from an intentionally empty invalid value.
+func readServeEnv() (serveEnvOptions, map[string]bool) {
+	env := serveEnvOptions{}
+	visited := make(map[string]bool)
+	if value, ok := os.LookupEnv("UPBRR_WEB_HOST"); ok {
+		env.Host = value
+		visited["host"] = true
+	}
+	if value, ok := os.LookupEnv("UPBRR_WEB_PORT"); ok {
+		env.Port = value
+		visited["port"] = true
+	}
+	if value, ok := os.LookupEnv("UPBRR_WEB_BASE_URL"); ok {
+		env.BaseURL = value
+		visited["base-url"] = true
+	}
+	if value, ok := os.LookupEnv("UPBRR_WEB_OPEN_BROWSER"); ok {
+		env.OpenBrowser = value
+		visited["open-browser"] = true
+	}
+	if value, ok := os.LookupEnv("UPBRR_WEB_TRUSTED_PROXIES"); ok {
+		env.TrustedProxies = value
+		visited["trusted-proxies"] = true
+	}
+	return env, visited
+}
+
+// applyServeEnvOverrides applies environment-sourced web config after stored
+// config is loaded and before CLI flags are applied.
+func applyServeEnvOverrides(webCfg webserver.CLIConfig, env serveEnvOptions, visited map[string]bool) (webserver.CLIConfig, error) {
+	if visited["host"] {
+		host, err := parseServeHost(env.Host)
+		if err != nil {
+			return webserver.CLIConfig{}, fmt.Errorf("parse serve env: UPBRR_WEB_HOST: %w", err)
+		}
+		webCfg.Host = host
+	}
+	if visited["port"] {
+		port, err := parseServePort(env.Port)
+		if err != nil {
+			return webserver.CLIConfig{}, fmt.Errorf("parse serve env: UPBRR_WEB_PORT: %w", err)
+		}
+		webCfg.Port = port
+	}
+	if visited["base-url"] {
+		if strings.TrimSpace(env.BaseURL) == "" {
+			return webserver.CLIConfig{}, errors.New("parse serve env: UPBRR_WEB_BASE_URL cannot be empty")
+		}
+		baseURL, err := webserver.NormalizeBaseURL(env.BaseURL)
+		if err != nil {
+			return webserver.CLIConfig{}, fmt.Errorf("parse serve env: UPBRR_WEB_BASE_URL: %w", err)
+		}
+		webCfg.BaseURL = baseURL
+	}
+	if visited["open-browser"] {
+		openBrowser, err := parseServeBool(env.OpenBrowser)
+		if err != nil {
+			return webserver.CLIConfig{}, fmt.Errorf("parse serve env: UPBRR_WEB_OPEN_BROWSER: %w", err)
+		}
+		webCfg.OpenBrowser = openBrowser
+	}
+	if visited["trusted-proxies"] {
+		webCfg.TrustedProxies = splitCSV(env.TrustedProxies)
+	}
+	return webCfg, nil
+}
+
+// parseServeBool accepts common bool spellings used in container env files.
+func parseServeBool(value string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "t", "true", "y", "yes", "on":
+		return true, nil
+	case "0", "f", "false", "n", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid bool %q", value)
+	}
+}
+
+// servePersistConfig chooses the web config that should be saved after a
+// successful bind. --persist-listen saves only listen fields, while
+// --persist-web-config saves the full runtime web config.
+func servePersistConfig(storedWebCfg webserver.CLIConfig, runtimeWebCfg webserver.CLIConfig, visited map[string]bool) webserver.CLIConfig {
+	if visited["persist-web-config"] {
+		return runtimeWebCfg
+	}
+	if !visited["persist-listen"] {
+		return storedWebCfg
+	}
+
+	persisted := storedWebCfg
+	persisted.BaseURL = ""
+	if visited["addr"] {
+		persisted.Host = runtimeWebCfg.Host
+		persisted.Port = runtimeWebCfg.Port
+		return persisted
+	}
+	if visited["host"] {
+		persisted.Host = runtimeWebCfg.Host
+	}
+	if visited["port"] {
+		persisted.Port = runtimeWebCfg.Port
+	}
+	return persisted
+}
+
+// applyServeOptionOverrides returns webCfg with explicitly supplied serve flags
+// applied. --addr replaces both host and port and can be combined with
+// --base-url; --host and --port may update either listen field independently.
 func applyServeOptionOverrides(webCfg webserver.CLIConfig, opts serveOptions, visited map[string]bool) (webserver.CLIConfig, error) {
 	if visited["addr"] && (visited["host"] || visited["port"]) {
 		return webserver.CLIConfig{}, errors.New("--addr cannot be used with --host or --port")
@@ -450,10 +589,7 @@ func applyServeOptionOverrides(webCfg webserver.CLIConfig, opts serveOptions, vi
 		}
 		webCfg.Host = host
 		webCfg.Port = port
-		return webCfg, nil
-	}
-
-	if visited["host"] {
+	} else if visited["host"] {
 		host, err := parseServeHost(opts.Host)
 		if err != nil {
 			return webserver.CLIConfig{}, err
@@ -466,6 +602,16 @@ func applyServeOptionOverrides(webCfg webserver.CLIConfig, opts serveOptions, vi
 			return webserver.CLIConfig{}, err
 		}
 		webCfg.Port = port
+	}
+	if visited["base-url"] {
+		if strings.TrimSpace(opts.BaseURL) == "" {
+			return webserver.CLIConfig{}, errors.New("parse serve options: --base-url cannot be empty")
+		}
+		baseURL, err := webserver.NormalizeBaseURL(opts.BaseURL)
+		if err != nil {
+			return webserver.CLIConfig{}, fmt.Errorf("parse serve options: --base-url: %w", err)
+		}
+		webCfg.BaseURL = baseURL
 	}
 
 	return webCfg, nil

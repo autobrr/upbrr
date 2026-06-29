@@ -55,6 +55,7 @@ var migrationRegistry = []migrationStep{
 	{id: "2026_04_add_tracker_cookies", dependsOn: []string{"2026_04_normalize_description_overrides"}, apply: migrateAddTrackerCookies},
 	{id: "2026_04_add_release_category", dependsOn: []string{"2026_04_add_tracker_cookies"}, apply: migrateAddReleaseCategory},
 	{id: "2026_05_add_bluray_external_metadata", dependsOn: []string{"2026_04_add_release_category"}, apply: migrateAddBlurayExternalMetadata},
+	{id: "2026_06_add_tracker_auth_state", dependsOn: []string{"2026_05_add_bluray_external_metadata"}, apply: migrateAddTrackerAuthState},
 }
 
 var legacyVersionToMigrationIDs = map[int][]string{
@@ -329,6 +330,33 @@ func migrateAddBlurayExternalMetadata(ctx context.Context, exec migrationExecuto
 	if _, err := exec.ExecContext(ctx, `ALTER TABLE external_metadata ADD COLUMN bluray_json TEXT NOT NULL DEFAULT ""`); err != nil {
 		return fmt.Errorf("db: %w", err)
 	}
+	return nil
+}
+
+func migrateAddTrackerAuthState(ctx context.Context, exec migrationExecutor) error {
+	statements := []string{
+		`
+		CREATE TABLE IF NOT EXISTS tracker_auth_state (
+			tracker_id TEXT NOT NULL,
+			state_key TEXT NOT NULL,
+			encrypted_value TEXT NOT NULL,
+			nonce TEXT NOT NULL,
+			auth_tag TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY (tracker_id, state_key)
+		)
+		`,
+		`CREATE INDEX IF NOT EXISTS idx_tracker_auth_state_tracker_id ON tracker_auth_state (tracker_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_tracker_auth_state_updated_at ON tracker_auth_state (updated_at)`,
+	}
+
+	for _, statement := range statements {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("db: %w", err)
+		}
+	}
+
 	return nil
 }
 

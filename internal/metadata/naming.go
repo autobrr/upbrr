@@ -43,7 +43,7 @@ func BuildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 		resolution = ""
 	}
 
-	audio := strings.TrimSpace(req.Audio)
+	audio := normalizeAudioExtraOrder(strings.TrimSpace(req.Audio))
 	service := strings.TrimSpace(req.Service)
 	season := strings.TrimSpace(req.Season)
 	episode := strings.TrimSpace(req.Episode)
@@ -197,6 +197,9 @@ func BuildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	}
 }
 
+// releaseNameRequestFromMeta converts prepared metadata into the naming input,
+// omitting TV-pack season titles that are stored in EpisodeTitle only as scoped
+// metadata fallback text.
 func releaseNameRequestFromMeta(meta api.PreparedMetadata, logger api.Logger) api.ReleaseNameRequest {
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -262,13 +265,28 @@ func releaseNameRequestFromMeta(meta api.PreparedMetadata, logger api.Logger) ap
 	if strings.EqualFold(category, "TV") && year > 0 {
 		searchYear = strconv.Itoa(year)
 	}
+	tvdbYearSource := ""
+	tvdbYearFromAlias := false
+	if strings.EqualFold(category, "TV") && meta.ExternalMetadata.TVDB != nil {
+		tvdbYearSource = strings.TrimSpace(meta.ExternalMetadata.TVDB.YearSource)
+		tvdbYearFromAlias = meta.ExternalMetadata.TVDB.YearFromAlias
+	}
 
 	typeValue = normalizeReleaseTypeForCategory(category, typeValue, source, meta.SourcePath)
 
-	logger.Tracef("metadata: release name request resolved category=%q type=%q base_type=%q source=%q season=%q episode=%q date=%q tv_pack=%t", category, typeValue, baseType, source, strings.TrimSpace(meta.SeasonStr), strings.TrimSpace(meta.EpisodeStr), strings.TrimSpace(meta.DailyEpisodeDate), meta.TVPack)
+	logger.Tracef("metadata: release name request resolved category=%q type=%q base_type=%q source=%q season=%q episode=%q date=%q tv_pack=%t year=%d search_year=%q year_source=%q tvdb_year_from_alias=%t", category, typeValue, baseType, source, strings.TrimSpace(meta.SeasonStr), strings.TrimSpace(meta.EpisodeStr), strings.TrimSpace(meta.DailyEpisodeDate), meta.TVPack, year, searchYear, tvdbYearSource, tvdbYearFromAlias)
 
 	dailyDate := strings.TrimSpace(meta.DailyEpisodeDate)
 	manualDate := strings.EqualFold(category, "TV") && dailyDate != "" && !meta.TVPack
+	episodeTitle := strings.TrimSpace(meta.EpisodeTitle)
+	if meta.TVPack {
+		episodeTitle = ""
+	} else if titleIdentityKey(episodeTitle) != "" {
+		episodeTitleKey := titleIdentityKey(episodeTitle)
+		if episodeTitleKey == titleIdentityKey(title) || episodeTitleKey == titleIdentityKey(altTitle) {
+			episodeTitle = ""
+		}
+	}
 
 	return api.ReleaseNameRequest{
 		Category:      category,
@@ -289,7 +307,7 @@ func releaseNameRequestFromMeta(meta api.PreparedMetadata, logger api.Logger) ap
 		UHD:           meta.UHD,
 		HDR:           meta.HDR,
 		WebDV:         meta.WebDV,
-		EpisodeTitle:  strings.TrimSpace(meta.EpisodeTitle),
+		EpisodeTitle:  episodeTitle,
 		VideoCodec:    meta.VideoCodec,
 		VideoEncode:   meta.VideoEncode,
 		DiscType:      meta.DiscType,
@@ -416,6 +434,46 @@ func isKnownReleaseSource(source string) bool {
 func joinParts(parts ...string) string {
 	combined := strings.Join(parts, " ")
 	return strings.Join(strings.Fields(combined), " ")
+}
+
+// normalizeAudioExtraOrder keeps object-audio markers after the channel token
+// even when an override or parsed input supplied the older "Atmos 7.1" order.
+func normalizeAudioExtraOrder(value string) string {
+	fields := strings.Fields(strings.TrimSpace(value))
+	for idx := 0; idx < len(fields)-1; idx++ {
+		if !strings.EqualFold(fields[idx], "Atmos") || !isAudioChannelToken(fields[idx+1]) {
+			continue
+		}
+		fields[idx], fields[idx+1] = fields[idx+1], fields[idx]
+	}
+	return strings.Join(fields, " ")
+}
+
+// isAudioChannelToken reports whether value is a release-name channel token
+// that can be safely swapped before an adjacent Atmos marker.
+func isAudioChannelToken(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	if strings.EqualFold(trimmed, "Unknown") {
+		return true
+	}
+	parts := strings.Split(trimmed, ".")
+	if len(parts) < 2 || len(parts) > 3 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		for _, char := range part {
+			if char < '0' || char > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func sourceIn(source string, candidates ...string) bool {

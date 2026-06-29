@@ -70,6 +70,10 @@ var (
 	}
 )
 
+// ErrSubmitted2FARejected marks a PTP failure after a submitted manual 2FA code
+// reached the tracker and was rejected.
+var ErrSubmitted2FARejected = errors.New("trackers: PTP submitted 2FA rejected")
+
 type uploadState struct {
 	baseURL     string
 	uploadURL   string
@@ -674,6 +678,10 @@ func buildUploadFields(meta api.PreparedMetadata, description string, groupID st
 }
 
 func resolveSession(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string, baseURL string, logger api.Logger) (*http.Client, string, error) {
+	return resolveSessionLogin(ctx, trackerConfig, dbPath, baseURL, logger, api.TrackerAuthLoginRequest{})
+}
+
+func resolveSessionLogin(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string, baseURL string, logger api.Logger, login api.TrackerAuthLoginRequest) (*http.Client, string, error) {
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
@@ -684,9 +692,33 @@ func resolveSession(ctx context.Context, trackerConfig config.TrackerConfig, dbP
 		if tokenErr == nil {
 			return client, token, nil
 		}
-		_ = cookiepkg.DeleteTrackerCookies(ctx, dbPath, "PTP")
+		if strings.TrimSpace(trackerConfig.Username) == "" || strings.TrimSpace(trackerConfig.Password) == "" || strings.TrimSpace(normalizedAnnounceURL(trackerConfig.AnnounceURL)) == "" {
+			return nil, "", tokenErr
+		}
 	}
-	return loginAndFetchAntiCsrfToken(ctx, trackerConfig, dbPath, baseURL, logger)
+	return loginAndFetchAntiCsrfToken(ctx, trackerConfig, dbPath, baseURL, logger, login)
+}
+
+// ResolveSessionForTrackerAuth validates PTP stored cookies or logs in with
+// configured credentials. Credential login must produce an anti-CSRF token
+// before refreshed cookies are persisted.
+func ResolveSessionForTrackerAuth(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string) error {
+	return ResolveSessionForTrackerAuthLogin(ctx, trackerConfig, dbPath, api.TrackerAuthLoginRequest{})
+}
+
+// ResolveSessionForTrackerAuthLogin validates PTP stored cookies or logs in
+// with configured credentials. When PTP requires 2FA, login.Code is used before
+// falling back to the configured OTP URI; if neither yields a code, the error
+// is returned before stored cookies are replaced. A rejected submitted code
+// returns [ErrSubmitted2FARejected] with the login-failed error before refreshed
+// cookies are persisted.
+func ResolveSessionForTrackerAuthLogin(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string, login api.TrackerAuthLoginRequest) error {
+	baseURL := strings.TrimRight(strings.TrimSpace(trackerConfig.URL), "/")
+	if baseURL == "" {
+		baseURL = ptpBaseURL
+	}
+	_, _, err := resolveSessionLogin(ctx, trackerConfig, dbPath, baseURL, api.NopLogger{}, login)
+	return err
 }
 
 func fetchAntiCsrfToken(ctx context.Context, baseURL string, cookies map[string]string) (*http.Client, string, error) {
@@ -715,11 +747,7 @@ func fetchAntiCsrfToken(ctx context.Context, baseURL string, cookies map[string]
 	return client, token, nil
 }
 
-func loginAndFetchAntiCsrfToken(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string, baseURL string, logger api.Logger) (*http.Client, string, error) {
-	if logger == nil {
-		logger = api.NopLogger{}
-	}
-
+func loginAndFetchAntiCsrfToken(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string, baseURL string, _ api.Logger, login api.TrackerAuthLoginRequest) (*http.Client, string, error) {
 	username := strings.TrimSpace(trackerConfig.Username)
 	password := strings.TrimSpace(trackerConfig.Password)
 	announceURL := normalizedAnnounceURL(trackerConfig.AnnounceURL)
@@ -761,7 +789,7 @@ func loginAndFetchAntiCsrfToken(ctx context.Context, trackerConfig config.Tracke
 	switch strings.TrimSpace(stringFromAny(payload["Result"])) {
 	case "Ok":
 	case "TfaRequired":
-		code, codeErr := resolve2FACode(trackerConfig.OTPURI)
+		code, codeErr := resolvePTP2FACode(trackerConfig, login)
 		if codeErr != nil {
 			return nil, "", fmt.Errorf("trackers: PTP 2FA required: %w", codeErr)
 		}
@@ -783,20 +811,29 @@ func loginAndFetchAntiCsrfToken(ctx context.Context, trackerConfig config.Tracke
 			return nil, "", fmt.Errorf("trackers: PTP 2FA decode: %w", err)
 		}
 		if strings.TrimSpace(stringFromAny(payload["Result"])) != "Ok" {
-			return nil, "", errors.New("trackers: PTP login failed")
+			return nil, "", fmt.Errorf("trackers: PTP login failed: %w", ErrSubmitted2FARejected)
 		}
 	default:
 		return nil, "", errors.New("trackers: PTP login failed")
 	}
 
-	if err := saveCookies(ctx, dbPath, client, baseURL); err != nil {
-		logger.Warnf("trackers: PTP failed to persist login cookies: %v", err)
-	}
 	token := strings.TrimSpace(stringFromAny(payload["AntiCsrfToken"]))
 	if token == "" {
 		return nil, "", errors.New("trackers: PTP login missing anti csrf token")
 	}
+	if err := saveCookies(ctx, dbPath, client, baseURL); err != nil {
+		return nil, "", fmt.Errorf("trackers: PTP persist login cookies: %w", err)
+	}
 	return client, token, nil
+}
+
+// resolvePTP2FACode prefers a submitted manual code so users can continue a
+// browser-visible challenge when no reusable OTP URI is configured.
+func resolvePTP2FACode(trackerConfig config.TrackerConfig, login api.TrackerAuthLoginRequest) (string, error) {
+	if code := strings.TrimSpace(login.Code); code != "" {
+		return code, nil
+	}
+	return resolve2FACode(trackerConfig.OTPURI)
 }
 
 func requestAntiCsrfToken(ctx context.Context, client *http.Client, baseURL string) (string, error) {
@@ -914,12 +951,15 @@ func resolveFailurePath(meta api.PreparedMetadata, dbPath string) (string, error
 
 func loadCookies(ctx context.Context, dbPath string) (map[string]string, error) {
 	values, err := cookiepkg.LoadTrackerCookieMap(ctx, dbPath, "PTP")
-	return values, fmt.Errorf("trackers: %w", err)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: %w", err)
+	}
+	return values, nil
 }
 
 func saveCookies(ctx context.Context, dbPath string, client *http.Client, baseURL string) error {
 	if client == nil || client.Jar == nil {
-		return nil
+		return errors.New("trackers: PTP login returned no cookie jar")
 	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
@@ -930,10 +970,13 @@ func saveCookies(ctx context.Context, dbPath string, client *http.Client, baseUR
 		if cookie == nil || strings.TrimSpace(cookie.Name) == "" {
 			continue
 		}
-		cookies[strings.TrimSpace(cookie.Name)] = strings.TrimSpace(cookie.Value)
+		if strings.TrimSpace(cookie.Value) == "" {
+			continue
+		}
+		cookies[strings.TrimSpace(cookie.Name)] = cookie.Value
 	}
 	if len(cookies) == 0 {
-		return nil
+		return errors.New("trackers: PTP login returned no usable cookies")
 	}
 	return wrapTrackerError(cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "PTP", cookies))
 }
@@ -1344,6 +1387,8 @@ func compactError(value string) string {
 
 func stringFromAny(value any) string {
 	switch typed := value.(type) {
+	case nil:
+		return ""
 	case string:
 		return strings.TrimSpace(typed)
 	case float64:
