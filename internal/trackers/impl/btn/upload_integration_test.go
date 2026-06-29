@@ -81,7 +81,7 @@ func TestBTNUploadEndToEndSuccess(t *testing.T) {
 			_, _ = w.Write([]byte("ok"))
 		case r.URL.Path == "/upload.php" && r.Method == http.MethodGet:
 			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=new") {
-				handlerErrs.Errorf("expected refreshed cookie on upload validation, got %q", got)
+				handlerErrs.Errorf("expected refreshed cookie on upload validation")
 				http.Error(w, "handler assertion failed", http.StatusInternalServerError)
 				return
 			}
@@ -264,14 +264,14 @@ func TestBTNUploadUsesValidImportedCookiesWithoutCredentials(t *testing.T) {
 			http.NotFound(w, r)
 		case r.URL.Path == "/upload.php" && r.Method == http.MethodGet:
 			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=imported") {
-				handlerErrs.Errorf("expected imported cookie on upload validation, got %q", got)
+				handlerErrs.Errorf("expected imported cookie on upload validation")
 				http.Error(w, "handler assertion failed", http.StatusInternalServerError)
 				return
 			}
 			_, _ = w.Write([]byte(`<form action="/upload.php"><input name="file_input" /></form>`))
 		case r.URL.Path == "/upload.php" && r.Method == http.MethodPost:
 			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=imported") {
-				handlerErrs.Errorf("expected imported cookie on upload request, got %q", got)
+				handlerErrs.Errorf("expected imported cookie on upload request")
 				http.Error(w, "handler assertion failed", http.StatusInternalServerError)
 				return
 			}
@@ -637,7 +637,7 @@ func TestResolveSessionForTrackerAuthLoginPersistsCookies(t *testing.T) {
 			_, _ = w.Write([]byte("ok"))
 		case "/upload.php":
 			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=new") {
-				handlerErrs.Errorf("expected refreshed cookie on validation, got %q", got)
+				handlerErrs.Errorf("expected refreshed cookie on validation")
 				http.Error(w, "handler assertion failed", http.StatusInternalServerError)
 				return
 			}
@@ -679,7 +679,7 @@ func TestResolveSessionForTrackerAuthLoginIgnoresIncidentalTwoFactorText(t *test
 			_, _ = w.Write([]byte(`<html><p>Keep your two-factor recovery codes safe.</p></html>`))
 		case "/upload.php":
 			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=new") {
-				handlerErrs.Errorf("expected refreshed cookie on validation, got %q", got)
+				handlerErrs.Errorf("expected refreshed cookie on validation")
 				http.Error(w, "handler assertion failed", http.StatusInternalServerError)
 				return
 			}
