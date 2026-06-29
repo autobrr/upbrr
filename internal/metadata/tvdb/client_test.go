@@ -400,6 +400,83 @@ func TestGetEpisodesUsesExplicitTranslationAliasYear(t *testing.T) {
 	}
 }
 
+func TestGetEpisodesUpgradesLegacyCachedAliasYearSource(t *testing.T) {
+	cacheDir := t.TempDir()
+	cachePath := filepath.Join(cacheDir, "12-eng.json")
+	if err := writeEpisodesCache(cachePath, EpisodesData{
+		Episodes: []Episode{
+			{ID: 1, SeasonNumber: 1, Number: 1, Name: "Pilot"},
+		},
+		Aliases: []Alias{
+			{Name: "Cat's Eye", Language: "eng"},
+			{Name: "Cat's Eye (2025)", Language: "eng"},
+		},
+		SeriesTitle: "Cat's Eye",
+		SeriesYear:  2025,
+	}); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "offline", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client(), nil, "api-key", cacheDir)
+	client.baseURL = server.URL
+
+	data, alias, err := client.GetEpisodes(context.Background(), 12, EpisodeQuery{Season: 1, Episode: 1})
+	if err != nil {
+		t.Fatalf("get episodes failed: %v", err)
+	}
+	if alias != "Cat's Eye (2025)" {
+		t.Fatalf("expected legacy cached alias year to remain naming-eligible, got %q", alias)
+	}
+	if data.SeriesYearSource != seriesYearSourceExtendedAlias || data.SeriesYearConfidence != seriesYearConfidenceHigh {
+		t.Fatalf("expected upgraded legacy source/high confidence, got source=%q confidence=%q", data.SeriesYearSource, data.SeriesYearConfidence)
+	}
+
+	refreshed, ok := readEpisodesCache(cachePath)
+	if !ok {
+		t.Fatalf("expected upgraded cache to be readable")
+	}
+	if refreshed.SeriesYearSource != seriesYearSourceExtendedAlias || refreshed.SeriesYearConfidence != seriesYearConfidenceHigh {
+		t.Fatalf("expected upgraded cache provenance, got source=%q confidence=%q", refreshed.SeriesYearSource, refreshed.SeriesYearConfidence)
+	}
+}
+
+func TestGetEpisodesDoesNotUpgradeUnprovenLegacyCachedYear(t *testing.T) {
+	cacheDir := t.TempDir()
+	if err := writeEpisodesCache(filepath.Join(cacheDir, "12-eng.json"), EpisodesData{
+		Episodes: []Episode{
+			{ID: 1, SeasonNumber: 1, Number: 1, Name: "Pilot"},
+		},
+		SeriesTitle: "A Spy Among Friends",
+		SeriesYear:  2022,
+	}); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "offline", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client(), nil, "api-key", cacheDir)
+	client.baseURL = server.URL
+
+	data, alias, err := client.GetEpisodes(context.Background(), 12, EpisodeQuery{Season: 1, Episode: 1})
+	if err != nil {
+		t.Fatalf("get episodes failed: %v", err)
+	}
+	if alias != "A Spy Among Friends" {
+		t.Fatalf("expected unproven cached year to stay out of alias, got %q", alias)
+	}
+	if data.SeriesYearSource != "" || data.SeriesYearConfidence != "" {
+		t.Fatalf("expected no legacy provenance without title/alias proof, got source=%q confidence=%q", data.SeriesYearSource, data.SeriesYearConfidence)
+	}
+}
+
 func TestSeriesTranslationMetadataUsesSelectedFallbackAliasYear(t *testing.T) {
 	t.Run("selected alias year", func(t *testing.T) {
 		got := seriesTranslationMetadata(seriesExtendedDataResponse{}, seriesTranslationDataResponse{
@@ -447,6 +524,32 @@ func TestSeriesTranslationMetadataUsesSelectedFallbackAliasYear(t *testing.T) {
 		}
 		if got.yearSource != seriesYearSourceExtendedAlias || got.yearConfidence != seriesYearConfidenceHigh {
 			t.Fatalf("expected extended alias source/high confidence, got source=%q confidence=%q", got.yearSource, got.yearConfidence)
+		}
+	})
+
+	t.Run("alias suffix year beats title year", func(t *testing.T) {
+		got := seriesTranslationMetadata(seriesExtendedDataResponse{}, seriesTranslationDataResponse{
+			Name:    "Hunter x Hunter (2011)",
+			Aliases: []string{"Hunter x Hunter (2011) (2024)"},
+		})
+
+		if got.title != "Hunter x Hunter (2011)" {
+			t.Fatalf("expected translation name title, got %q", got.title)
+		}
+		if got.year != 2011 || got.yearSource != seriesYearSourceTranslationName {
+			t.Fatalf("expected translation name year to win for explicit title, got year=%d source=%q", got.year, got.yearSource)
+		}
+
+		got = seriesTranslationMetadata(seriesExtendedDataResponse{}, seriesTranslationDataResponse{
+			Name:    "Hunter x Hunter 2011",
+			Aliases: []string{"Hunter x Hunter 2011 (2024)"},
+		})
+
+		if got.year != 2024 {
+			t.Fatalf("expected explicit alias suffix year 2024, got %d", got.year)
+		}
+		if got.yearSource != seriesYearSourceTranslationAlias || got.yearConfidence != seriesYearConfidenceHigh {
+			t.Fatalf("expected translation alias source/high confidence, got source=%q confidence=%q", got.yearSource, got.yearConfidence)
 		}
 	})
 }

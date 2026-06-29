@@ -175,6 +175,10 @@ func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, quer
 				if c.logger != nil {
 					c.logger.Tracef("tvdb: episodes cache hit series_id=%d language=%s episodes=%d", seriesID, languageKey, len(cached.Episodes))
 				}
+				if upgraded, ok := applyLegacySeriesYearProvenance(cached); ok {
+					cached = upgraded
+					_ = writeEpisodesCache(cachePath, cached)
+				}
 				needsSeriesDetails := strings.TrimSpace(cached.SeriesTitle) == "" && cached.SeriesYear == 0
 				needsSeriesDetails = needsSeriesDetails || (cached.SeriesYear > 0 && strings.TrimSpace(cached.SeriesYearSource) == "")
 				if needsSeriesDetails {
@@ -858,8 +862,16 @@ func seriesTranslationMetadata(data seriesExtendedDataResponse, translation seri
 	return seriesMetadataFields{title: title}
 }
 
-// aliasYear returns the first standalone year embedded in an alias.
+// aliasYear returns the naming year carried by an alias. Parenthesized disambiguation years win over
+// earlier title years, while plain standalone years remain a fallback for aliases without parentheses.
 func aliasYear(alias string) (int, bool) {
+	if matches := yearAliasPattern.FindAllStringSubmatch(alias, -1); len(matches) > 0 {
+		year, err := strconv.Atoi(matches[len(matches)-1][1])
+		if err != nil {
+			return 0, false
+		}
+		return year, true
+	}
 	yearText := extractYearFromText(alias)
 	if yearText == "" {
 		return 0, false
@@ -1122,6 +1134,25 @@ func applySeriesDetails(data EpisodesData, details seriesDetails) EpisodesData {
 	return data
 }
 
+// applyLegacySeriesYearProvenance fills missing naming provenance for old episode caches only when the
+// cached title or English alias proves the cached year. It leaves source-less API years non-eligible.
+func applyLegacySeriesYearProvenance(data EpisodesData) (EpisodesData, bool) {
+	if data.SeriesYear <= 0 || strings.TrimSpace(data.SeriesYearSource) != "" {
+		return data, false
+	}
+	if year, ok := explicitTitleYear(data.SeriesTitle); ok && year == data.SeriesYear {
+		data.SeriesYearSource = seriesYearSourceTranslationName
+		data.SeriesYearConfidence = seriesYearConfidenceHigh
+		return data, true
+	}
+	if year, ok := matchingAliasYear(episodeAliasNames(data.Aliases), data.SeriesTitle); ok && year == data.SeriesYear {
+		data.SeriesYearSource = seriesYearSourceExtendedAlias
+		data.SeriesYearConfidence = seriesYearConfidenceHigh
+		return data, true
+	}
+	return data, false
+}
+
 func specificSeriesAlias(data EpisodesData) string {
 	title := strings.TrimSpace(data.SeriesTitle)
 	if title != "" {
@@ -1192,6 +1223,21 @@ func extractYearFromText(text string) string {
 		return trimmed[start:end]
 	}
 	return ""
+}
+
+// episodeAliasNames returns non-empty English episode-cache aliases for provenance checks.
+func episodeAliasNames(values []Alias) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if !isEnglishCode(value.Language) {
+			continue
+		}
+		name := strings.TrimSpace(value.Name)
+		if name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 func isASCIIDigit(ch byte) bool {
