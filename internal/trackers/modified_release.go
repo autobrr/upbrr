@@ -12,22 +12,26 @@ import (
 )
 
 // isRenamedRelease reports whether the source media was renamed away from its
-// original scene/P2P release name. The high-signal, low-false-positive case is a
-// grouped release (a trailing "-GROUP" tag, which scene/P2P releases always
-// dot-delimit) whose on-disk name has had its dots replaced with spaces — e.g. a
-// library manager rewriting "Fury.2014.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-HHWEB" to
-// spaces. Trackers reject such modified releases ([Modified Release] Renamed), so
-// detecting it lets us skip the upload before it is rejected.
+// original scene/P2P release name. Trackers reject such modified releases
+// ([Modified Release] Renamed), so detecting it lets us skip the upload before it
+// is rejected. Two independent, deliberately high-signal cases are checked:
 //
-// Detection is deliberately conservative to avoid false positives:
-//   - it only fires on whitespace renames (the dominant library-manager behavior);
-//     underscore/other separator renames are intentionally out of scope;
-//   - it requires the parsed group to actually appear as the trailing "-GROUP"
-//     suffix, so a mis-parsed token (e.g. an IMDb id) cannot trigger it;
-//   - it skips names containing parentheses/brackets/braces, which are markers of
-//     human/library naming (e.g. "Fury (2014) {imdb-tt2713180}"), never scene/P2P
-//     names;
-//   - it excludes personal releases and disc-based sources.
+//   - *arr id tokens: Radarr/Sonarr inject "{tmdb-…}", "{imdb-…}", or "{tvdb-…}"
+//     into renamed names (e.g. "Fury (2014) {imdb-tt2713180}"). These never occur
+//     in an original scene/P2P name, so their presence alone marks a rename. This
+//     is independent of the release group, which an *arr rename often strips.
+//
+//   - whitespace renames: a grouped release (a trailing "-GROUP" tag, which
+//     scene/P2P releases always dot-delimit) whose on-disk name has had its dots
+//     replaced with spaces — e.g. a library manager rewriting
+//     "Fury.2014.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-HHWEB" to spaces. This path is
+//     deliberately conservative: it only fires on whitespace (underscore/other
+//     separator renames are out of scope), requires the parsed group to be the
+//     actual trailing "-GROUP" suffix so a mis-parsed token (e.g. an id) cannot
+//     trigger it, and skips names with parentheses/brackets/braces (human/library
+//     naming markers) that lack an *arr id token.
+//
+// Personal releases and disc-based sources are excluded from both cases.
 //
 // Both the source path (folder) and the primary video file are checked, since the
 // tracker inspects the file (MediaInfo "Complete name") and the in-torrent names.
@@ -38,17 +42,44 @@ func isRenamedRelease(meta api.PreparedMetadata) (bool, string) {
 	if strings.TrimSpace(meta.DiscType) != "" {
 		return false, ""
 	}
+
+	names := candidateReleaseNames(meta)
+
+	// *arr id tokens mark a rename on their own, independent of the release group
+	// (which an *arr rename often strips), so check them before the group gate.
+	for _, name := range names {
+		if token := arrRenameToken(name); token != "" {
+			return true, fmt.Sprintf("source renamed by *arr (contains %q token): %q", token, name)
+		}
+	}
+
 	group := strings.TrimSpace(meta.Release.Group)
 	if group == "" {
 		return false, ""
 	}
-
-	for _, name := range candidateReleaseNames(meta) {
+	for _, name := range names {
 		if isRenamedReleaseName(name, group) {
 			return true, fmt.Sprintf("source renamed from original release name (contains spaces): %q", name)
 		}
 	}
 	return false, ""
+}
+
+// arrReleaseIDTokens are the Radarr/Sonarr id-injection tokens that appear in
+// renamed filenames (e.g. "Fury (2014) {imdb-tt2713180}") and never in an
+// original scene/P2P release name.
+var arrReleaseIDTokens = []string{"{tmdb-", "{imdb-", "{tvdb-"}
+
+// arrRenameToken returns the first *arr id-injection token present in name
+// (case-insensitive), or "" when none is found.
+func arrRenameToken(name string) string {
+	lower := strings.ToLower(name)
+	for _, token := range arrReleaseIDTokens {
+		if strings.Contains(lower, token) {
+			return token
+		}
+	}
+	return ""
 }
 
 // candidateReleaseNames returns the on-disk base names that should carry the

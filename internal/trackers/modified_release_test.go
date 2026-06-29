@@ -51,13 +51,69 @@ func TestIsRenamedRelease(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "plex/radarr library folder with id token is not flagged",
-			// rls mis-parses "tt2713180" as the group; the bracket marker + suffix
-			// guard must keep this from being treated as a rename.
+			name: "radarr-renamed folder with imdb token is flagged",
+			// *arr injects {imdb-…} when it renames; this is a modified release the
+			// tracker rejects, regardless of how rls parses the group.
 			meta: api.PreparedMetadata{
 				SourcePath: "/data/movies/Fury (2014) {imdb-tt2713180}",
 				Release:    api.ReleaseInfo{Group: "tt2713180"},
 			},
+			want: true,
+		},
+		{
+			name: "sonarr-renamed file with tmdb token is flagged",
+			meta: api.PreparedMetadata{
+				SourcePath: "/data/tv/Severance (2022) {tmdb-95396}/Severance S01E01 {tmdb-95396}.mkv",
+				VideoPath:  "/data/tv/Severance (2022) {tmdb-95396}/Severance S01E01 {tmdb-95396}.mkv",
+			},
+			want: true,
+		},
+		{
+			name: "tvdb token is flagged",
+			meta: api.PreparedMetadata{SourcePath: "/data/tv/Show (2020) {tvdb-360893}"},
+			want: true,
+		},
+		{
+			name: "arr token match is case-insensitive",
+			meta: api.PreparedMetadata{SourcePath: "/data/movies/Fury (2014) {IMDb-tt2713180}"},
+			want: true,
+		},
+		{
+			name: "arr token is flagged even when the group tag was stripped",
+			// *arr renames frequently drop the trailing -GROUP, so the token check
+			// must fire without a parsed group.
+			meta: api.PreparedMetadata{SourcePath: "/data/movies/Fury (2014) {tmdb-99861}"},
+			want: true,
+		},
+		{
+			name: "arr-renamed personal release is exempt",
+			meta: api.PreparedMetadata{
+				SourcePath:      "/data/movies/Fury (2014) {imdb-tt2713180}",
+				PersonalRelease: true,
+			},
+			want: false,
+		},
+		{
+			name: "arr-renamed disc source is exempt",
+			meta: api.PreparedMetadata{
+				SourcePath: "/data/movies/Fury (2014) {imdb-tt2713180}",
+				DiscType:   "BDMV",
+			},
+			want: false,
+		},
+		{
+			name: "edition-only brace token without an id token is not an arr rename",
+			// Only the {tmdb-/imdb-/tvdb-} id tokens mark an *arr rename; other
+			// braces (e.g. {edition-…}) must not trigger the token signal, and the
+			// spaces heuristic still skips bracketed names.
+			meta: grouped("/data/movies/Fury 2014 2160p WEB-DL {edition-Directors Cut}-HHWEB"),
+			want: false,
+		},
+		{
+			name: "parenthesized spaced library name without an id token is not flagged",
+			// Guards that the bracket marker still suppresses the whitespace
+			// heuristic when no *arr id token is present.
+			meta: grouped("/data/movies/Fury (2014) 2160p WEB-DL-HHWEB"),
 			want: false,
 		},
 		{
