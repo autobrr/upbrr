@@ -20,6 +20,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/pkg/api"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -801,6 +802,31 @@ func TestTrackerAuthBackendUsesRequestContext(t *testing.T) {
 	}
 	if !strings.Contains(status.LastError, "context canceled") {
 		t.Fatalf("expected context canceled status, got %#v", status)
+	}
+}
+
+func TestTrackerAuthBackendLoginBTNCookiesWithoutAPIPreservesMissingAPIStatus(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthWebTestDB(t)
+	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {
+		t.Fatalf("BootstrapAuthFile: %v", err)
+	}
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "BTN", map[string]string{"session": "abc"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	backend := &Backend{cfg: config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}}
+
+	status, err := backend.LoginTrackerAuth(ctx, "BTN", api.TrackerAuthLoginRequest{})
+	if err != nil {
+		t.Fatalf("LoginTrackerAuth: %v", err)
+	}
+	if status.State != "login_required" || status.CookieCount != 1 || !strings.Contains(status.Message, "API key is required") {
+		t.Fatalf("expected BTN cookie-only web login to preserve missing API status, got %#v", status)
+	}
+	if strings.Contains(status.Message, "username/password missing") {
+		t.Fatalf("missing credentials masked missing API status: %#v", status)
 	}
 }
 

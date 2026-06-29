@@ -267,8 +267,8 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (status api.Tr
 
 // Login runs credential-based tracker auth when supported and returns status for
 // missing credentials, unsupported remote login, or 2FA. Trackers with separate
-// API prerequisites, such as BTN, may complete credential auth while still
-// returning a prerequisite status instead of configured.
+// API prerequisites, such as BTN, keep the narrower prerequisite status when
+// credential login cannot proceed or completes without making the tracker ready.
 func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAuthLoginRequest) (status api.TrackerAuthStatus, err error) {
 	defer func() {
 		if err != nil {
@@ -290,7 +290,9 @@ func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAu
 	trackerCfg := mustTrackerConfig(s.cfg, spec.id)
 	status = s.statusForSpec(ctx, spec)
 	if status.State == StateLoginRequired && !hasUsableLoginConfig(spec, trackerCfg) {
-		status.Message = "username/password missing"
+		if !hasSpecificLoginBlocker(status) {
+			status.Message = "username/password missing"
+		}
 		return status, nil
 	}
 
@@ -578,6 +580,13 @@ func hasUsableLoginConfig(spec trackerSpec, cfg config.TrackerConfig) bool {
 		return false
 	}
 	return true
+}
+
+// hasSpecificLoginBlocker reports whether status already explains a prerequisite
+// more specific than the generic login-required message.
+func hasSpecificLoginBlocker(status api.TrackerAuthStatus) bool {
+	message := strings.TrimSpace(status.Message)
+	return message != "" && message != validationMessage(trackerSpec{}, status)
 }
 
 func (s *Service) encryptedStorageAvailable() bool {

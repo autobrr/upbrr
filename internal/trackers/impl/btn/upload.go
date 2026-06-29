@@ -887,14 +887,11 @@ func resolveBTN2FACode(cfg config.TrackerConfig, login api.TrackerAuthLoginReque
 	return resolve2FACode(strings.TrimSpace(cfg.OTPURI))
 }
 
-// btnLoginNeeds2FA recognizes login responses that ask for a BTN manual 2FA
-// code instead of accepting the submitted credentials.
+// btnLoginNeeds2FA recognizes BTN login responses that render the manual 2FA
+// challenge field instead of accepting the submitted credentials.
 func btnLoginNeeds2FA(body string) bool {
 	lower := strings.ToLower(body)
-	return strings.Contains(lower, "2fa required") ||
-		strings.Contains(lower, "two-factor") ||
-		strings.Contains(lower, "two factor") ||
-		strings.Contains(lower, "name=\"codenumber\"") ||
+	return strings.Contains(lower, "name=\"codenumber\"") ||
 		strings.Contains(lower, "name='codenumber'")
 }
 

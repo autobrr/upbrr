@@ -295,13 +295,19 @@ func TestValidateBTNRemoteSuccessRequiresAPIKey(t *testing.T) {
 	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "BTN", map[string]string{"session": "abc"}); err != nil {
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
+	handlerErr := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/upload.php" {
 			http.NotFound(w, r)
 			return
 		}
 		if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=abc") {
-			t.Fatalf("expected BTN session cookie, got %q", got)
+			select {
+			case handlerErr <- fmt.Errorf("expected BTN session cookie, got %q", got):
+			default:
+			}
+			http.Error(w, "unexpected cookie", http.StatusInternalServerError)
+			return
 		}
 		_, _ = w.Write([]byte(`<form action="/upload.php"><input name="file_input" /></form>`))
 	}))
@@ -313,6 +319,11 @@ func TestValidateBTNRemoteSuccessRequiresAPIKey(t *testing.T) {
 			"BTN": {URL: server.URL},
 		}},
 	}).Validate(ctx, "BTN")
+	select {
+	case err := <-handlerErr:
+		t.Fatal(err)
+	default:
+	}
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
@@ -1234,6 +1245,29 @@ func TestLoginBTNCredentialsWithoutAPIAttemptsSessionValidation(t *testing.T) {
 	}
 	if status.State != StateLoginRequired || !strings.Contains(status.Message, "API key is required") {
 		t.Fatalf("expected successful BTN login to preserve missing API status, got %#v", status)
+	}
+}
+
+func TestLoginBTNCookiesWithoutAPIPreservesMissingAPIStatus(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "BTN", map[string]string{"session": "abc"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+	}).Login(ctx, "BTN", api.TrackerAuthLoginRequest{})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if status.State != StateLoginRequired || status.CookieCount != 1 || !strings.Contains(status.Message, "API key is required") {
+		t.Fatalf("expected BTN cookie-only login to preserve missing API status, got %#v", status)
+	}
+	if strings.Contains(status.Message, "username/password missing") {
+		t.Fatalf("missing credentials masked missing API status: %#v", status)
 	}
 }
 

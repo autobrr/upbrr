@@ -660,6 +660,48 @@ func TestResolveSessionForTrackerAuthLoginPersistsCookies(t *testing.T) {
 	}
 }
 
+func TestResolveSessionForTrackerAuthLoginIgnoresIncidentalTwoFactorText(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newBTNAuthDB(t)
+	handlerErrs := newHTTPHandlerErrorRecorder(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login.php":
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			_, _ = w.Write([]byte(`<html><p>Keep your two-factor recovery codes safe.</p></html>`))
+		case "/upload.php":
+			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=new") {
+				handlerErrs.Errorf("expected refreshed cookie on validation, got %q", got)
+				http.Error(w, "handler assertion failed", http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`<form action="/upload.php"><input name="file_input" /></form>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	err := ResolveSessionForTrackerAuthLogin(ctx, config.TrackerConfig{
+		URL:      server.URL,
+		Username: "user",
+		Password: "pass",
+	}, dbPath, api.TrackerAuthLoginRequest{})
+	handlerErrs.Check()
+	if err != nil {
+		t.Fatalf("ResolveSessionForTrackerAuthLogin: %v", err)
+	}
+	values, err := loadBTNCookies(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("loadBTNCookies: %v", err)
+	}
+	if values["session"] != "new" {
+		t.Fatalf("expected persisted BTN cookies, got %#v", values)
+	}
+}
+
 func TestResolveSessionForTrackerAuthLoginRequiresManual2FA(t *testing.T) {
 	t.Parallel()
 
