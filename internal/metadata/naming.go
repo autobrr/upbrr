@@ -281,6 +281,11 @@ func releaseNameRequestFromMeta(meta api.PreparedMetadata, logger api.Logger) ap
 	episodeTitle := strings.TrimSpace(meta.EpisodeTitle)
 	if meta.TVPack {
 		episodeTitle = ""
+	} else if titleIdentityKey(episodeTitle) != "" {
+		episodeTitleKey := titleIdentityKey(episodeTitle)
+		if episodeTitleKey == titleIdentityKey(title) || episodeTitleKey == titleIdentityKey(altTitle) {
+			episodeTitle = ""
+		}
 	}
 
 	return api.ReleaseNameRequest{

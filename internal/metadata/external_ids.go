@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"golang.org/x/sync/errgroup"
 
@@ -1831,7 +1832,7 @@ func (s *Service) applyTVEpisodeMetadata(
 		meta.DailyEpisodeDate = dailyDate
 	}
 
-	episodeTitle := strings.TrimSpace(meta.EpisodeTitle)
+	episodeTitle := discardSeriesEpisodeTitle(strings.TrimSpace(meta.EpisodeTitle), meta, external)
 	episodeOverview := strings.TrimSpace(meta.EpisodeOverview)
 	episodeYear := meta.EpisodeYear
 
@@ -2092,6 +2093,62 @@ func isGenericEpisodeTitle(value string) bool {
 		return true
 	}
 	return genericEpisodePattern.MatchString(trimmed)
+}
+
+// discardSeriesEpisodeTitle clears parsed episode titles that duplicate a known
+// series title so provider episode titles can still populate the release name.
+func discardSeriesEpisodeTitle(episodeTitle string, meta api.PreparedMetadata, external *api.ExternalMetadata) string {
+	if episodeTitle == "" || !episodeTitleMatchesSeriesTitle(episodeTitle, meta, external) {
+		return episodeTitle
+	}
+	return ""
+}
+
+func episodeTitleMatchesSeriesTitle(episodeTitle string, meta api.PreparedMetadata, external *api.ExternalMetadata) bool {
+	episodeKey := titleIdentityKey(episodeTitle)
+	if len(episodeKey) < 6 {
+		return false
+	}
+	for _, title := range seriesTitleCandidates(meta, external) {
+		if episodeKey == titleIdentityKey(title) {
+			return true
+		}
+	}
+	return false
+}
+
+func seriesTitleCandidates(meta api.PreparedMetadata, external *api.ExternalMetadata) []string {
+	candidates := []string{
+		meta.Release.Title,
+		meta.Release.Subtitle,
+	}
+	if external == nil {
+		return candidates
+	}
+	if external.TMDB != nil {
+		candidates = append(candidates, external.TMDB.Title, external.TMDB.OriginalTitle)
+	}
+	if external.IMDB != nil {
+		candidates = append(candidates, external.IMDB.Title)
+	}
+	if external.TVDB != nil {
+		candidates = append(candidates, external.TVDB.Name, external.TVDB.NameEnglish)
+	}
+	if external.TVmaze != nil {
+		candidates = append(candidates, external.TVmaze.Name)
+	}
+	return candidates
+}
+
+// titleIdentityKey compares titles across punctuation and spacing differences.
+func titleIdentityKey(value string) string {
+	var builder strings.Builder
+	for _, r := range strings.TrimSpace(value) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			builder.WriteRune(unicode.ToLower(r))
+		}
+	}
+	return builder.String()
 }
 
 func sanitizeEpisodeTitle(value string) string {

@@ -368,9 +368,10 @@ func (s *stubTVDB) GetEpisodeTranslation(_ context.Context, episodeID int, _ str
 }
 
 type stubTVmaze struct {
-	result tvmaze.SearchResult
-	calls  int
-	inputs []tvmaze.SearchInput
+	result      tvmaze.SearchResult
+	episodeData *tvmaze.EpisodeData
+	calls       int
+	inputs      []tvmaze.SearchInput
 }
 
 func (s *stubTVmaze) Search(_ context.Context, input tvmaze.SearchInput) (tvmaze.SearchResult, error) {
@@ -380,7 +381,7 @@ func (s *stubTVmaze) Search(_ context.Context, input tvmaze.SearchInput) (tvmaze
 }
 
 func (s *stubTVmaze) GetEpisodeByNumber(_ context.Context, _, _, _ int, _ tvmaze.EpisodeLookupContext) (*tvmaze.EpisodeData, error) {
-	return nil, nil
+	return s.episodeData, nil
 }
 
 func (s *stubTVmaze) GetEpisodeByDate(_ context.Context, _ int, _ string) (*tvmaze.EpisodeData, error) {
@@ -1895,6 +1896,43 @@ func TestApplyTVEpisodeMetadataTVDBEpisodeTitleSkipsOriginalWhenEnglishMissing(t
 
 	if updated.EpisodeTitle != "" {
 		t.Fatalf("expected non-english original episode title to be skipped, got %q", updated.EpisodeTitle)
+	}
+}
+
+func TestApplyTVEpisodeMetadataDiscardsSeriesTitleAsEpisodeTitle(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	tmdbClient := &stubTMDB{}
+	tvmazeClient := &stubTVmaze{
+		episodeData: &tvmaze.EpisodeData{
+			EpisodeName:   "The Long Road",
+			SeasonNumber:  4,
+			EpisodeNumber: 11,
+		},
+	}
+
+	meta := api.PreparedMetadata{
+		SourcePath:   "/media/Re.ZERO.S04E11.mkv",
+		SeasonInt:    4,
+		EpisodeInt:   11,
+		EpisodeTitle: "Re:ZERO -Starting Life in Another World-",
+		ExternalIDs:  api.ExternalIDs{Category: "TV"},
+		ExternalMetadata: api.ExternalMetadata{
+			TVDB: &api.TVDBMetadata{NameEnglish: "Re: ZERO, Starting Life in Another World"},
+		},
+	}
+	ids := &api.ExternalIDs{
+		TVDBID:   200,
+		TVmazeID: 300,
+		Category: "TV",
+	}
+	external := &api.ExternalMetadata{
+		TVDB: &api.TVDBMetadata{TVDBID: 200, NameEnglish: "Re: ZERO, Starting Life in Another World"},
+	}
+
+	updated := svc.applyTVEpisodeMetadata(context.Background(), meta, ids, external, tmdbClient, &stubTVDB{}, tvmazeClient)
+
+	if updated.EpisodeTitle != "The Long Road" {
+		t.Fatalf("expected provider episode title to replace duplicate series title, got %q", updated.EpisodeTitle)
 	}
 }
 

@@ -173,6 +173,29 @@ func TestReleaseNameRequestFromMetaDefaultsToDailyForTVEpisode(t *testing.T) {
 	}
 }
 
+func TestReleaseNameRequestFromMetaOmitsSeriesTitleEpisodeTitle(t *testing.T) {
+	meta := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "TV"},
+		ExternalMetadata: api.ExternalMetadata{
+			TVDB: &api.TVDBMetadata{NameEnglish: "Re: ZERO, Starting Life in Another World"},
+		},
+		Type:         "ENCODE",
+		SeasonStr:    "S04",
+		EpisodeStr:   "E11",
+		EpisodeTitle: "Re:ZERO -Starting Life in Another World-",
+	}
+
+	req := releaseNameRequestFromMeta(meta, api.NopLogger{})
+	if req.EpisodeTitle != "" {
+		t.Fatalf("expected duplicate series episode title omitted, got %q", req.EpisodeTitle)
+	}
+
+	result := BuildReleaseName(req, api.NopLogger{})
+	if strings.Contains(result.NameNoTag, "Re:ZERO -Starting Life in Another World-") {
+		t.Fatalf("expected release name to omit duplicate episode title, got %q", result.NameNoTag)
+	}
+}
+
 func TestReleaseNameRequestFromMetaTVPackOmitsSeasonTitle(t *testing.T) {
 	meta := api.PreparedMetadata{
 		ExternalIDs: api.ExternalIDs{Category: "TV"},
