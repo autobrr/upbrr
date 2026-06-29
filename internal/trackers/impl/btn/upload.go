@@ -821,15 +821,14 @@ func cleanAndNormalizeBTNName(value string) string {
 	// 2. Replace plus in DD+
 	value = strings.ReplaceAll(value, "DD+", "DDP")
 
-	// 3. Atmos DDP normalization (e.g. DDP 5.1 Atmos -> DDPA5.1)
+	// 3. Atmos audio normalization (e.g. DDP 5.1 Atmos -> DDPA5.1)
 	value = regexp.MustCompile(`(?i)\.DDP\.(\d+(?:\.\d+)?)\.Atmos`).ReplaceAllString(value, `.DDPA$1`)
-
-	// 4. Atmos TrueHD normalization (e.g. TrueHD 7.1 Atmos -> TrueHDA7.1)
 	value = regexp.MustCompile(`(?i)\.TrueHD\.(\d+(?:\.\d+)?)\.Atmos`).ReplaceAllString(value, `.TrueHDA$1`)
 
-	// 5. Other Audio channel normalization
+	// 4. Other audio channel normalization
 	value = regexp.MustCompile(`\.DDP\.(\d)`).ReplaceAllString(value, `.DDP$1`)
 	value = regexp.MustCompile(`\.DD\.(\d)`).ReplaceAllString(value, `.DD$1`)
+	value = regexp.MustCompile(`\.AC3\.(\d)`).ReplaceAllString(value, `.AC3$1`)
 	value = regexp.MustCompile(`\.DTS\.(\d)`).ReplaceAllString(value, `.DTS$1`)
 	value = regexp.MustCompile(`\.AAC\.(\d)`).ReplaceAllString(value, `.AAC$1`)
 	value = regexp.MustCompile(`\.FLAC\.(\d)`).ReplaceAllString(value, `.FLAC$1`)
@@ -837,7 +836,7 @@ func cleanAndNormalizeBTNName(value string) string {
 	value = regexp.MustCompile(`(?i)\.PCM\.(\d)`).ReplaceAllString(value, `.PCM$1`)
 	value = regexp.MustCompile(`(?i)\.LPCM\.(\d)`).ReplaceAllString(value, `.LPCM$1`)
 
-	// 6. Remove non-alphanumeric characters (except dots and hyphens)
+	// 5. Remove non-alphanumeric characters (except dots and hyphens)
 	value = regexp.MustCompile(`[^a-zA-Z0-9.\-]`).ReplaceAllString(value, ".")
 
 	// Collapse any two or more dots
@@ -1016,7 +1015,7 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 		return errors.New("trackers: BTN API did not return DownloadURL")
 	}
 
-	if err := validateBTNAPIURL(ctx, downloadResult.Result.DownloadURL); err != nil {
+	if err := validateBTNAPIDownloadURL(ctx, apiURL, downloadResult.Result.DownloadURL); err != nil {
 		return fmt.Errorf("trackers: BTN API invalid download url: %w", err)
 	}
 
@@ -1027,7 +1026,7 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if err := validateBTNAPIURL(req.Context(), req.URL.String()); err != nil {
+			if err := validateBTNAPIDownloadURL(req.Context(), apiURL, req.URL.String()); err != nil {
 				return err
 			}
 			if len(via) >= 10 {
@@ -1488,4 +1487,31 @@ func validateBTNAPIURL(ctx context.Context, rawURL string) error {
 		}
 	}
 	return nil
+}
+
+func validateBTNAPIDownloadURL(ctx context.Context, apiURL string, rawURL string) error {
+	if err := validateBTNAPIURL(ctx, rawURL); err == nil {
+		return nil
+	} else if !sameOriginURL(apiURL, rawURL) {
+		return err
+	}
+	return nil
+}
+
+func sameOriginURL(first string, second string) bool {
+	firstURL, err := url.Parse(strings.TrimSpace(first))
+	if err != nil {
+		return false
+	}
+	secondURL, err := url.Parse(strings.TrimSpace(second))
+	if err != nil {
+		return false
+	}
+	scheme := strings.ToLower(secondURL.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return false
+	}
+	return strings.EqualFold(firstURL.Scheme, secondURL.Scheme) &&
+		strings.EqualFold(firstURL.Host, secondURL.Host) &&
+		firstURL.Host != ""
 }

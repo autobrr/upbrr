@@ -4,6 +4,7 @@
 package btn
 
 import (
+	"context"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -42,7 +43,7 @@ func TestCleanAndNormalizeBTNName(t *testing.T) {
 		},
 		{
 			input:    "Some.Movie.2023.DDP.5.1.Atmos.x264",
-			expected: "Some.Movie.2023.DDP5.1.Atmos.x264",
+			expected: "Some.Movie.2023.DDPA5.1.x264",
 		},
 		{
 			input:    "Another.Show..S02E03.DD.2.0.x264",
@@ -111,5 +112,20 @@ func TestResolveUploadNameGroupTag(t *testing.T) {
 				t.Errorf("resolveUploadName() = %q; expected %q", result, tc.expected)
 			}
 		})
+	}
+}
+
+func TestValidateBTNAPIDownloadURLAllowsOnlySameOriginPrivateFallback(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	if err := validateBTNAPIDownloadURL(ctx, "http://127.0.0.1:1/rpc", "http://127.0.0.1:1/mock-download"); err != nil {
+		t.Fatalf("expected same-origin private download URL to be allowed: %v", err)
+	}
+	if err := validateBTNAPIDownloadURL(ctx, "http://127.0.0.1:1/rpc", "http://127.0.0.1:2/mock-download"); err == nil {
+		t.Fatalf("expected cross-origin private download URL to be rejected")
+	}
+	if err := validateBTNAPIDownloadURL(ctx, "ftp://127.0.0.1/rpc", "ftp://127.0.0.1/mock-download"); err == nil {
+		t.Fatalf("expected unsupported same-origin scheme to be rejected")
 	}
 }
