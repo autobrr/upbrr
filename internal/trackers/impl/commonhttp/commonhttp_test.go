@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type stubCookieStore struct {
@@ -39,6 +41,31 @@ func TestLoadCookiesForTrackerUsesCookieStoreWhenNoStartupCookieExists(t *testin
 	}
 	if got["session"] != "from-db" {
 		t.Fatalf("expected cookie from store, got %#v", got)
+	}
+}
+
+func TestWriteFailureArtifactRedactsSensitiveBody(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "state", "upbrr.db")
+	meta := api.PreparedMetadata{SourcePath: filepath.Join(root, "source.mkv")}
+	body := []byte(`{"message":"failed","api_key":"secret-key","detail":"token=plain-secret"}`)
+
+	path, err := WriteFailureArtifact(meta, dbPath, "GPW", "upload_failure", body, ".json")
+	if err != nil {
+		t.Fatalf("WriteFailureArtifact: %v", err)
+	}
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read artifact: %v", err)
+	}
+	text := string(payload)
+	if strings.Contains(text, "secret-key") || strings.Contains(text, "plain-secret") {
+		t.Fatalf("artifact leaked secret body: %s", text)
+	}
+	if !strings.Contains(text, "[REDACTED]") {
+		t.Fatalf("expected redaction marker in artifact: %s", text)
 	}
 }
 

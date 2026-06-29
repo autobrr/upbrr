@@ -72,6 +72,24 @@ func TestRedactValueBareProxyPath(t *testing.T) {
 	}
 }
 
+func TestRedactValuePlainKeyValuePairs(t *testing.T) {
+	t.Parallel()
+
+	input := `api_key: tracker-secret token=plain-token Authorization=Bearer bearer-secret cookie: "session-secret" message=kept`
+	output := RedactValue(input, nil)
+
+	for _, secret := range []string{"tracker-secret", "plain-token", "bearer-secret", "session-secret"} {
+		if contains(output, secret) {
+			t.Fatalf("expected %q redacted, got %q", secret, output)
+		}
+	}
+	for _, marker := range []string{"api_key: [REDACTED]", "token=[REDACTED]", "Authorization=Bearer [REDACTED]", `cookie: "[REDACTED]"`, "message=kept"} {
+		if !contains(output, marker) {
+			t.Fatalf("expected marker %q in %q", marker, output)
+		}
+	}
+}
+
 func TestRedactPrivateInfoJSON(t *testing.T) {
 	t.Parallel()
 

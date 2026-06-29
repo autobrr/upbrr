@@ -351,6 +351,7 @@ func WriteFailureArtifact(meta api.PreparedMetadata, dbPath string, tracker stri
 		ext = ".txt"
 	}
 	path := filepath.Join(tmpDir, filename+ext)
+	body = []byte(redaction.RedactValue(string(body), nil))
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		return "", fmt.Errorf("write failure artifact: %w", err)
 	}
