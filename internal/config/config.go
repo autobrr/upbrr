@@ -49,6 +49,7 @@ type MainSettingsConfig struct {
 	DBPath              string `yaml:"db_path"`
 	UseFavicons         bool   `yaml:"use_favicons"`
 	FaviconOnly         bool   `yaml:"favicon_only"`
+	SceneDetection      bool   `yaml:"scene_detection"`
 }
 
 type mainSettingsConfigAlias MainSettingsConfig
@@ -57,6 +58,7 @@ func (c *MainSettingsConfig) UnmarshalYAML(value *yaml.Node) error {
 	var raw mainSettingsConfigAlias
 	raw.InputHistoryLimit = DefaultInputHistoryLimit
 	raw.UseFavicons = true
+	raw.SceneDetection = true
 	if err := value.Decode(&raw); err != nil {
 		return fmt.Errorf("config: decode main settings yaml: %w", err)
 	}
@@ -68,6 +70,7 @@ func (c *MainSettingsConfig) UnmarshalJSON(data []byte) error {
 	var raw mainSettingsConfigAlias
 	raw.InputHistoryLimit = DefaultInputHistoryLimit
 	raw.UseFavicons = true
+	raw.SceneDetection = true
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf("config: decode main settings json: %w", err)
 	}

@@ -42,6 +42,19 @@ func isRenamedRelease(meta api.PreparedMetadata) (bool, string) {
 		return false, ""
 	}
 
+	// srrdb scene detection (the imdb: fallback) authoritatively compares the
+	// on-disk basename to the canonical scene media filename and sets this when
+	// they differ. It is the strongest signal (a database match, not a heuristic),
+	// so it is checked first and independent of the release group an *arr rename
+	// may strip.
+	if meta.SceneRenamed {
+		reason := strings.TrimSpace(meta.SceneRenamedReason)
+		if reason == "" {
+			reason = "source renamed from original scene release name"
+		}
+		return true, reason
+	}
+
 	names := candidateReleaseNames(meta)
 
 	// *arr id tokens mark a rename on their own, independent of the release group

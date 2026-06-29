@@ -211,8 +211,13 @@ func NewService(repo db.MetadataRepository, opts ...Option) *Service {
 		service.cacheDir = cacheDir
 		service.nfoDir = nfoDir
 	}
-	if service.scene == nil {
-		service.scene = newSRRDBDetector(nil, "", service.cacheDir, service.nfoDir)
+	// Scene detection adds srrdb network fan-out to every prepared item, so it is
+	// gated by config (default on). Disabling it makes zero srrdb requests; an
+	// explicitly injected detector (WithSceneDetector) is always honored.
+	if service.scene == nil && service.cfg.MainSettings.SceneDetection {
+		detector := newSRRDBDetector(nil, "", service.cacheDir, service.nfoDir)
+		detector.logger = service.logger
+		service.scene = detector
 	}
 	if service.tracker == nil {
 		service.tracker = trackerdata.NewClient(service.cfg, service.logger, nil)
@@ -758,6 +763,8 @@ func applySceneResult(meta *api.PreparedMetadata, result SceneResult) {
 	}
 	meta.SceneNFOPath = result.NFOPath
 	meta.SceneNFONew = result.NFONew
+	meta.SceneRenamed = result.Renamed
+	meta.SceneRenamedReason = result.RenamedReason
 }
 
 // applyStoredSceneMetadata restores persisted scene fields when a detector

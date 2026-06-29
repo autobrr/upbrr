@@ -163,6 +163,35 @@ func TestIsRenamedRelease(t *testing.T) {
 			meta: grouped("/data/movies/Fury 2014 2160p MA WEB-DL DDP5.1 HDR H.265-HHWEB"),
 			want: true,
 		},
+		{
+			name: "srrdb rename signal flags a clean-looking name with no group",
+			// The imdb: fallback authoritatively confirmed a rename that the
+			// heuristics above cannot see (no group tag, no *arr token, no spaces).
+			meta: api.PreparedMetadata{
+				SourcePath:         "/data/movies/Fury.2014.1080p.BluRay.x264",
+				SceneRenamed:       true,
+				SceneRenamedReason: "source appears renamed or modified from its original release name; verify the file hash and source provenance",
+			},
+			want: true,
+		},
+		{
+			name: "srrdb rename signal is exempt for personal release",
+			meta: api.PreparedMetadata{
+				SourcePath:      "/data/movies/Fury.2014.1080p.BluRay.x264",
+				PersonalRelease: true,
+				SceneRenamed:    true,
+			},
+			want: false,
+		},
+		{
+			name: "srrdb rename signal is exempt for disc source",
+			meta: api.PreparedMetadata{
+				SourcePath:   "/data/movies/Fury.2014.1080p.BluRay.x264",
+				DiscType:     "BDMV",
+				SceneRenamed: true,
+			},
+			want: false,
+		},
 	}
 
 	for _, tc := range cases {

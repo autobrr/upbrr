@@ -753,6 +753,7 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     InputHistoryLimit: { key: "InputHistoryLimit", label: "Input history limit", type: "number" },
     UseFavicons: { key: "UseFavicons", label: "Use favicons" },
     FaviconOnly: { key: "FaviconOnly", label: "Favicon only" },
+    SceneDetection: { key: "SceneDetection", label: "Scene detection (srrdb)" },
   },
   Metadata: {
     BTNAPI: { key: "BTNAPI", advanced: true, sensitive: true },
