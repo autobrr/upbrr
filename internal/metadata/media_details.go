@@ -35,7 +35,7 @@ var numericPattern = regexp.MustCompile(`\d+`)
 var releaseTokenSeparatorPattern = regexp.MustCompile(`[^A-Z0-9]+`)
 
 // ApplyMediaDetails enriches prepared metadata from MediaInfo, BDInfo, filename
-// tokens, overrides, and tracker policies, then rebuilds the release name.
+// tokens, overrides, and tracker rules, then rebuilds the release name.
 func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	select {
 	case <-ctx.Done():
@@ -190,12 +190,14 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 	if err != nil {
 		return api.PreparedMetadata{}, err
 	}
-	meta, err = s.applyTrackerClaims(ctx, meta)
-	if err != nil {
-		return api.PreparedMetadata{}, err
-	}
 
 	return meta, nil
+}
+
+// ApplyTrackerClaims refreshes claim-based tracker blocks after media details
+// and tracker rules have populated the release attributes used for matching.
+func (s *Service) ApplyTrackerClaims(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	return s.applyTrackerClaims(ctx, meta)
 }
 
 // RefreshPreparedMetadata reapplies request-scoped audio, naming, rule, and

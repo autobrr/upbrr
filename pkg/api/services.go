@@ -30,6 +30,9 @@ type MetadataService interface {
 	ApplyArrData(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
 	ResolveExternalIDs(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
 	ApplyMediaDetails(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
+	// ApplyTrackerClaims applies claim-based tracker blocks using metadata that
+	// has already been enriched with media details and tracker rule state.
+	ApplyTrackerClaims(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
 }
 
 type TrackerService interface {

@@ -848,6 +848,7 @@ export default function InputPage(props: Props) {
     { key: "mediainfo-ids", label: "Apply MediaInfo IDs" },
     { key: "external-ids", label: "Resolve external IDs" },
     { key: "media-details", label: "Apply media details" },
+    { key: "tracker-claims", label: "Check tracker claims" },
     { key: "complete", label: "Complete" },
   ];
 

@@ -39,6 +39,23 @@ func hasUploadProgress(updates []api.UploadProgressUpdate, task string, status s
 	return false
 }
 
+func metadataProgressContainsOrdered(updates []api.MetadataProgressUpdate, want []api.MetadataProgressUpdate) bool {
+	if len(want) == 0 {
+		return true
+	}
+	next := 0
+	for _, update := range updates {
+		if update.Phase != want[next].Phase || update.Status != want[next].Status {
+			continue
+		}
+		next++
+		if next == len(want) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestFirstRequestedTracker(t *testing.T) {
 	t.Parallel()
 
@@ -1361,6 +1378,45 @@ func TestFetchMetadataPreviewRunsPathedSearchWithStoredTrackerData(t *testing.T)
 	}
 	if !containsCoreString(metaSvc.enrichMeta.TrackersRemove, "AITHER") {
 		t.Fatalf("expected fresh AITHER removal, got %v", metaSvc.enrichMeta.TrackersRemove)
+	}
+}
+
+func TestFetchMetadataPreviewEmitsTrackerClaimsAfterMediaDetails(t *testing.T) {
+	t.Parallel()
+
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Clients:    &stubClient{},
+		},
+		Repository: trackerRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	updates := make([]api.MetadataProgressUpdate, 0)
+	ctx := api.WithMetadataProgressReporter(context.Background(), func(update api.MetadataProgressUpdate) {
+		updates = append(updates, update)
+	})
+	_, err = core.FetchMetadataPreview(ctx, api.Request{
+		Paths: []string{"/tmp/a"},
+		Mode:  api.ModeGUI,
+	})
+	if err != nil {
+		t.Fatalf("fetch metadata preview: %v", err)
+	}
+
+	want := []api.MetadataProgressUpdate{
+		{Phase: "media-details", Status: "completed"},
+		{Phase: "tracker-claims", Status: "running"},
+		{Phase: "tracker-claims", Status: "completed"},
+		{Phase: "complete", Status: "completed"},
+	}
+	if !metadataProgressContainsOrdered(updates, want) {
+		t.Fatalf("expected ordered progress %v in %#v", want, updates)
 	}
 }
 
@@ -4179,6 +4235,10 @@ func (s *stubMeta) ResolveExternalIDs(_ context.Context, meta api.PreparedMetada
 }
 
 func (s *stubMeta) ApplyMediaDetails(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	return meta, nil
+}
+
+func (s *stubMeta) ApplyTrackerClaims(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	return meta, nil
 }
 

@@ -199,6 +199,10 @@ func (e2eMetadataService) ApplyMediaDetails(_ context.Context, meta api.Prepared
 	return meta, nil
 }
 
+func (e2eMetadataService) ApplyTrackerClaims(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	return meta, nil
+}
+
 type e2eTorrentService struct {
 	dbPath string
 }
