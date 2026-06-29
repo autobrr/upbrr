@@ -97,6 +97,13 @@ func (s *Service) logInfof(format string, args ...any) {
 	s.logger.Infof(format, args...)
 }
 
+func (s *Service) logTracef(format string, args ...any) {
+	if s == nil || s.logger == nil {
+		return
+	}
+	s.logger.Tracef(format, args...)
+}
+
 func (s *Service) logWarnf(format string, args ...any) {
 	if s == nil || s.logger == nil {
 		return
@@ -118,7 +125,11 @@ func (s *Service) logStatus(operation string, status api.TrackerAuthStatus) {
 		)
 		return
 	}
-	s.logInfof(
+	logf := s.logTracef
+	if operation == "login completed" && status.State == StateConfigured {
+		logf = s.logInfof
+	}
+	logf(
 		"tracker auth: %s tracker=%s state=%s cookies=%d encrypted_storage=%t needs_2fa=%t",
 		operation,
 		trackerLogID(status.TrackerID),
@@ -146,7 +157,7 @@ func (s *Service) Capabilities(_ context.Context) (caps []api.TrackerAuthCapabil
 			s.logWarnf("tracker auth: capabilities failed: %v", err)
 			return
 		}
-		s.logInfof("tracker auth: capabilities loaded count=%d", len(caps))
+		s.logTracef("tracker auth: capabilities loaded count=%d", len(caps))
 	}()
 	if err := s.validateTrackerConfigIDs(); err != nil {
 		return nil, err

@@ -28,12 +28,17 @@ import (
 
 type trackerAuthRecordingLogger struct {
 	api.NopLogger
-	info []string
-	warn []string
+	info  []string
+	trace []string
+	warn  []string
 }
 
 func (l *trackerAuthRecordingLogger) Infof(format string, args ...any) {
 	l.info = append(l.info, fmt.Sprintf(format, args...))
+}
+
+func (l *trackerAuthRecordingLogger) Tracef(format string, args ...any) {
+	l.trace = append(l.trace, fmt.Sprintf(format, args...))
 }
 
 func (l *trackerAuthRecordingLogger) Warnf(format string, args ...any) {
@@ -2154,18 +2159,30 @@ func TestTrackerAuthLogsOperationResultsWithoutSecrets(t *testing.T) {
 	if status.TrackerID != "MTV" {
 		t.Fatalf("expected MTV status, got %#v", status)
 	}
+	if _, err := service.Capabilities(context.Background()); err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
 	if _, err := service.ImportCookies(context.Background(), "AR", "cookies.json", "{bad"); err == nil {
 		t.Fatal("expected invalid cookie import to fail")
 	}
 
 	infoLog := strings.Join(logger.info, "\n")
+	traceLog := strings.Join(logger.trace, "\n")
 	warnLog := strings.Join(logger.warn, "\n")
-	allLogs := infoLog + "\n" + warnLog
-	if !strings.Contains(infoLog, "tracker auth: status checked tracker=MTV") {
-		t.Fatalf("expected status info log, got info=%q warn=%q", infoLog, warnLog)
+	allLogs := infoLog + "\n" + traceLog + "\n" + warnLog
+	if !strings.Contains(traceLog, "tracker auth: status checked tracker=MTV") {
+		t.Fatalf("expected status trace log, got info=%q trace=%q warn=%q", infoLog, traceLog, warnLog)
+	}
+	if !strings.Contains(traceLog, "tracker auth: capabilities loaded count=") {
+		t.Fatalf("expected capabilities trace log, got info=%q trace=%q warn=%q", infoLog, traceLog, warnLog)
+	}
+	for _, routine := range []string{"tracker auth: status checked tracker=MTV", "tracker auth: capabilities loaded count="} {
+		if strings.Contains(infoLog, routine) {
+			t.Fatalf("routine tracker auth log used info level: %s", infoLog)
+		}
 	}
 	if !strings.Contains(warnLog, "tracker auth: cookie import failed tracker=AR bytes=4") {
-		t.Fatalf("expected import warning log, got info=%q warn=%q", infoLog, warnLog)
+		t.Fatalf("expected import warning log, got info=%q trace=%q warn=%q", infoLog, traceLog, warnLog)
 	}
 	for _, secret := range []string{"secret-api-key", "secret-user", "secret-password", "{bad"} {
 		if strings.Contains(allLogs, secret) {
@@ -2192,6 +2209,26 @@ func TestTrackerAuthWarningStatusDoesNotLogSuccess(t *testing.T) {
 	}
 	if !strings.Contains(warnLog, "tracker auth: login completed warning tracker=MTV") {
 		t.Fatalf("expected warning log, got info=%q warn=%q", infoLog, warnLog)
+	}
+}
+
+func TestTrackerAuthConfiguredLoginStatusUsesInfo(t *testing.T) {
+	t.Parallel()
+
+	logger := &trackerAuthRecordingLogger{}
+	service := NewServiceWithLogger(config.Config{}, logger)
+	service.logStatus("login completed", api.TrackerAuthStatus{
+		TrackerID: "MTV",
+		State:     StateConfigured,
+	})
+
+	infoLog := strings.Join(logger.info, "\n")
+	traceLog := strings.Join(logger.trace, "\n")
+	if !strings.Contains(infoLog, "tracker auth: login completed tracker=MTV") {
+		t.Fatalf("expected successful login info log, got info=%q trace=%q", infoLog, traceLog)
+	}
+	if strings.Contains(traceLog, "tracker auth: login completed tracker=MTV") {
+		t.Fatalf("successful login logged at trace: info=%q trace=%q", infoLog, traceLog)
 	}
 }
 
