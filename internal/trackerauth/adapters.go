@@ -12,6 +12,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/trackers/impl/btn"
 	"github.com/autobrr/upbrr/internal/trackers/impl/mtv"
 	"github.com/autobrr/upbrr/internal/trackers/impl/ptp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/rtf"
@@ -31,6 +32,8 @@ func defaultAdapters() map[string]Adapter {
 		switch spec.id {
 		case "AR":
 			adapters[spec.id] = trackerAdapter{capability: validationOnlyCapability(spec), resolve: resolveARStoredSessionForTrackerAuth}
+		case "BTN":
+			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec), resolve: btn.ResolveSessionForTrackerAuthLogin}
 		case "FF":
 			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec), resolve: resolveFFSessionForTrackerAuth}
 		case "FL":
@@ -146,6 +149,9 @@ func classifyAdapterError(trackerID string, err error) error {
 	if validation, ok := asValidationError(err); ok {
 		return validation
 	}
+	if strings.EqualFold(trackerID, "BTN") && strings.Contains(strings.ToLower(err.Error()), "stored session confirmed invalid") {
+		return &ValidationError{TrackerID: trackerID, ConfirmedInvalid: true, Reason: "stored session expired", Err: err}
+	}
 	if isSubmitted2FARejected(err) {
 		return &ValidationError{TrackerID: trackerID, Transient: true, Submitted2FARejected: true, Reason: "submitted 2FA rejected", Err: err}
 	}
@@ -164,7 +170,7 @@ func classifyAdapterError(trackerID string, err error) error {
 }
 
 func isSubmitted2FARejected(err error) bool {
-	return errors.Is(err, ptp.ErrSubmitted2FARejected) || errors.Is(err, mtv.ErrSubmitted2FARejected)
+	return errors.Is(err, ptp.ErrSubmitted2FARejected) || errors.Is(err, mtv.ErrSubmitted2FARejected) || errors.Is(err, btn.ErrSubmitted2FARejected)
 }
 
 // contains2FARequiredText matches only the standalone "2FA required" phrase so

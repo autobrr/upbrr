@@ -65,8 +65,5 @@ func validateBTNRequest(req trackers.UploadRequest) error {
 	if strings.TrimSpace(config.ResolveBTNAPIToken(req.AppConfig)) == "" {
 		return errors.New("trackers: BTN requires trackers.BTN.api_key")
 	}
-	if strings.TrimSpace(req.TrackerConfig.Username) == "" || strings.TrimSpace(req.TrackerConfig.Password) == "" {
-		return errors.New("trackers: BTN missing username/password")
-	}
 	return nil
 }

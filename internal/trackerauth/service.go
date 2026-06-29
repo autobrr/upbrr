@@ -180,7 +180,8 @@ func (s *Service) Status(ctx context.Context, trackerID string) (status api.Trac
 
 // ImportCookies parses supplied cookie content, saves it for trackerID, and
 // returns refreshed auth status from persisted cookie/auth state. Parser errors
-// leave existing stored cookies unchanged.
+// leave existing stored cookies unchanged. BTN imports still report a missing
+// API-key prerequisite when cookies alone do not make the tracker upload-ready.
 func (s *Service) ImportCookies(ctx context.Context, trackerID string, fileName string, content string) (status api.TrackerAuthStatus, err error) {
 	defer func() {
 		if err != nil {
@@ -207,14 +208,18 @@ func (s *Service) ImportCookies(ctx context.Context, trackerID string, fileName 
 		return api.TrackerAuthStatus{}, fmt.Errorf("tracker auth: import %s cookies: %w", spec.id, err)
 	}
 	status = s.statusForSpec(ctx, spec)
-	status.State = StateHasCookies
-	status.Message = "cookies imported"
+	if status.State != StateLoginRequired || !isBTNSpec(spec) || !strings.Contains(status.Message, "API key is required") {
+		status.State = StateHasCookies
+		status.Message = "cookies imported"
+	}
 	return status, nil
 }
 
 // Validate returns tracker auth status after a remote validation check when the
 // tracker has an adapter. Confirmed-invalid stored sessions are deleted and
-// reported as login-required status without returning an error.
+// reported as login-required status without returning an error. BTN session
+// success remains login-required until the API token needed for torrent
+// resolution is configured.
 func (s *Service) Validate(ctx context.Context, trackerID string) (status api.TrackerAuthStatus, err error) {
 	defer func() {
 		if err != nil {
@@ -246,6 +251,11 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (status api.Tr
 			}
 			return status, nil
 		}
+		if isBTNSpec(spec) && !s.btnAPIKeyConfigured() {
+			status.State = StateLoginRequired
+			status.Message = btnMissingAPIKeyMessage()
+			return status, nil
+		}
 		status.State = StateConfigured
 		status.Message = "remote auth check succeeded"
 		return status, nil
@@ -254,7 +264,10 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (status api.Tr
 	return status, nil
 }
 
-// Login runs credential-based tracker auth when supported and returns status for missing credentials, unsupported remote login, or 2FA.
+// Login runs credential-based tracker auth when supported and returns status for
+// missing credentials, unsupported remote login, or 2FA. Trackers with separate
+// API prerequisites, such as BTN, may complete credential auth while still
+// returning a prerequisite status instead of configured.
 func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAuthLoginRequest) (status api.TrackerAuthStatus, err error) {
 	defer func() {
 		if err != nil {
@@ -273,8 +286,9 @@ func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAu
 	if !spec.login {
 		return api.TrackerAuthStatus{}, fmt.Errorf("tracker auth: %s does not support credential login", spec.id)
 	}
+	trackerCfg := mustTrackerConfig(s.cfg, spec.id)
 	status = s.statusForSpec(ctx, spec)
-	if status.State == StateLoginRequired {
+	if status.State == StateLoginRequired && !hasUsableLoginConfig(spec, trackerCfg) {
 		status.Message = "username/password missing"
 		return status, nil
 	}
@@ -282,7 +296,7 @@ func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAu
 	if _, ok := s.adapterFor(spec.id); ok {
 		session, ensureErr := s.EnsureSession(ctx, EnsureRequest{
 			TrackerID: spec.id,
-			Config:    mustTrackerConfig(s.cfg, spec.id),
+			Config:    trackerCfg,
 			DBPath:    s.cfg.MainSettings.DBPath,
 			AutoLogin: true,
 			Login:     req,
@@ -293,6 +307,9 @@ func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAu
 				status.ChallengeID = session.ChallengeID
 			}
 			return status, nil
+		}
+		if isBTNSpec(spec) && !s.btnAPIKeyConfigured() {
+			return s.statusForSpec(ctx, spec), nil
 		}
 		status.State = StateConfigured
 		status.Message = "remote login/auth check succeeded"
@@ -305,7 +322,8 @@ func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAu
 // Submit2FA completes an active manual 2FA challenge. Adapter failures return
 // refreshed status without consuming the challenge; only failures classified
 // with [ValidationError.Submitted2FARejected] keep the challenge visible for
-// another try.
+// another try. Successful challenge completion clears the challenge fields but
+// does not override separate tracker prerequisites such as BTN's API key.
 func (s *Service) Submit2FA(ctx context.Context, challengeID string, code string) (status api.TrackerAuthStatus, err error) {
 	logTrackerID := ""
 	defer func() {
@@ -362,12 +380,15 @@ func (s *Service) Submit2FA(ctx context.Context, challengeID string, code string
 	if err != nil {
 		return api.TrackerAuthStatus{}, err
 	}
-	if strings.TrimSpace(session.State) == "" || session.State == SessionStateReady {
+	missingBTNAPIKey := isBTNSpec(trackerSpec{id: challenge.TrackerID}) && !s.btnAPIKeyConfigured()
+	if (strings.TrimSpace(session.State) == "" || session.State == SessionStateReady) && !missingBTNAPIKey {
 		status.State = StateConfigured
 	}
 	status.Needs2FA = false
 	status.ChallengeID = ""
-	status.Message = "2FA auth completed"
+	if !missingBTNAPIKey {
+		status.Message = "2FA auth completed"
+	}
 	return status, nil
 }
 
@@ -449,6 +470,9 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 
 	cfg, hasCfg := trackerConfig(s.cfg, spec.id)
 	hasAPIKey := spec.apiKey && configAPIKey(cfg) != ""
+	if isBTNSpec(spec) {
+		hasAPIKey = s.btnAPIKeyConfigured()
+	}
 	hasPasskey := strings.TrimSpace(cfg.Passkey) != ""
 	hasCredentials := spec.login && hasCfg && hasUsableLoginConfig(spec, cfg)
 	if spec.cookies {
@@ -461,8 +485,12 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 		}
 	}
 
-	if hasAPIKey && (!isMTVSpec(spec) || status.CookieCount > 0 || hasCredentials) {
+	if hasAPIKey && (!uploadAuthNeedsCookiesOrLogin(spec) || hasCredentials || (isMTVSpec(spec) && status.CookieCount > 0)) {
 		status.State = StateConfigured
+	}
+	missingBTNAPIKey := isBTNSpec(spec) && !hasAPIKey && (status.CookieCount > 0 || hasCredentials)
+	if missingBTNAPIKey {
+		status.State = StateLoginRequired
 	}
 	if passkeyCoversAuth(spec) && hasPasskey {
 		status.State = StateConfigured
@@ -482,22 +510,56 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 			status.State = StateLoginRequired
 		}
 	}
-	if spec.cookies && status.CookieCount == 0 && !encryptedStorage && authStatusRequiresEncryptedStorage(spec, hasCredentials, hasAPIKey, hasPasskey) {
+	if !missingBTNAPIKey && spec.cookies && status.CookieCount == 0 && !encryptedStorage && authStatusRequiresEncryptedStorage(spec, hasCredentials, hasAPIKey, hasPasskey) {
 		status.State = StateEncryptedStorageUnavailable
 	}
 	status.Message = validationMessage(spec, status)
-	if isMTVSpec(spec) && hasAPIKey && status.CookieCount == 0 && !hasCredentials {
-		status.Message = "API key covers Torznab/search; imported cookies or login credentials required for upload auth"
+	if uploadAuthNeedsCookiesOrLogin(spec) && hasAPIKey && status.CookieCount == 0 && !hasCredentials {
+		status.Message = uploadAuthRequiredMessage(spec)
+	}
+	if missingBTNAPIKey {
+		status.Message = btnMissingAPIKeyMessage()
 	}
 	return status
+}
+
+// btnAPIKeyConfigured reports whether BTN has an API token in tracker config or
+// legacy metadata; a valid browser session is not upload-ready without it.
+func (s *Service) btnAPIKeyConfigured() bool {
+	return strings.TrimSpace(config.ResolveBTNAPIToken(s.cfg)) != ""
+}
+
+// btnMissingAPIKeyMessage is the shared user-visible status for BTN when
+// cookies or credentials can cover upload auth but torrent resolution cannot run.
+func btnMissingAPIKeyMessage() string {
+	return "API key is required for torrent resolution; imported cookies or login credentials cover upload auth"
 }
 
 func isMTVSpec(spec trackerSpec) bool {
 	return strings.EqualFold(spec.id, "MTV")
 }
 
+func isBTNSpec(spec trackerSpec) bool {
+	return strings.EqualFold(spec.id, "BTN")
+}
+
 func isHDBSpec(spec trackerSpec) bool {
 	return strings.EqualFold(spec.id, "HDB")
+}
+
+// uploadAuthNeedsCookiesOrLogin reports trackers where an API key is necessary
+// but does not prove upload-session readiness.
+func uploadAuthNeedsCookiesOrLogin(spec trackerSpec) bool {
+	return isMTVSpec(spec) || isBTNSpec(spec)
+}
+
+// uploadAuthRequiredMessage explains the split between API/search auth and
+// browser-session upload auth for trackers that need both.
+func uploadAuthRequiredMessage(spec trackerSpec) string {
+	if isBTNSpec(spec) {
+		return "API key covers torrent resolution; imported cookies or login credentials required for upload auth"
+	}
+	return "API key covers Torznab/search; imported cookies or login credentials required for upload auth"
 }
 
 func passkeyCoversAuth(spec trackerSpec) bool {
@@ -529,10 +591,10 @@ func authStatusRequiresEncryptedStorage(spec trackerSpec, hasCredentials bool, h
 	if passkeyCoversAuth(spec) && hasPasskey {
 		return false
 	}
-	if spec.apiKey && hasAPIKey && !isMTVSpec(spec) {
+	if spec.apiKey && hasAPIKey && !uploadAuthNeedsCookiesOrLogin(spec) {
 		return false
 	}
-	return !hasAPIKey || isMTVSpec(spec) || hasCredentials
+	return !hasAPIKey || uploadAuthNeedsCookiesOrLogin(spec) || hasCredentials
 }
 
 // specFor resolves built-in and configured tracker IDs through normalizeTrackerID
@@ -598,7 +660,7 @@ func (s *Service) specs() []trackerSpec {
 		if strings.TrimSpace(cfg.Username) != "" || strings.TrimSpace(cfg.Password) != "" {
 			if !ok || spec.login {
 				spec.login = true
-				spec.autoLogin = spec.autoLogin || spec.id == "AR" || spec.id == "FF" || spec.id == "FL" || spec.id == "MTV" || spec.id == "PTP" || spec.id == "RTF" || spec.id == "THR"
+				spec.autoLogin = spec.autoLogin || spec.id == "AR" || spec.id == "BTN" || spec.id == "FF" || spec.id == "FL" || spec.id == "MTV" || spec.id == "PTP" || spec.id == "RTF" || spec.id == "THR"
 				if spec.authKind == "config" {
 					spec.authKind = "credential_login"
 				}
@@ -621,6 +683,7 @@ func (s *Service) specs() []trackerSpec {
 func builtInSpecs() []trackerSpec {
 	return []trackerSpec{
 		{id: "AR", authKind: "cookies_login", cookies: true, login: true, autoLogin: true, needsCredentials: true},
+		{id: "BTN", authKind: "api_key_cookies_login_manual_2fa", cookies: true, login: true, autoLogin: true, totp: true, manual2FA: true, apiKey: true, needsCredentials: true, notes: []string{"API key is required for torrent resolution; cookies/login cover upload auth."}},
 		{id: "FF", authKind: "cookies_login", cookies: true, login: true, autoLogin: true, needsCredentials: true},
 		{id: "FL", authKind: "cookies_login", cookies: true, login: true, autoLogin: true, needsCredentials: true},
 		{id: "MTV", authKind: "api_key_cookies_login_manual_2fa", cookies: true, login: true, autoLogin: true, totp: true, manual2FA: true, apiKey: true, needsCredentials: true, notes: []string{"API key covers Torznab/search; cookies/login cover upload authkey."}},

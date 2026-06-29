@@ -19,6 +19,7 @@ const baseProps = {
   settingsError: "",
   trackerSelectionNames: [
     "AR",
+    "BTN",
     "COOKIE",
     "FAST",
     "FF",
@@ -183,6 +184,18 @@ describe("SettingsPage", () => {
               requiresPasskey: false,
             },
             {
+              trackerID: "BTN",
+              displayName: "BTN",
+              authKind: "api_key_cookies_login_manual_2fa",
+              supportsCookieFile: true,
+              supportsLogin: true,
+              supportsAutoLogin: true,
+              supportsTOTP: true,
+              supportsManual2FA: true,
+              requiresAPIKey: true,
+              requiresPasskey: false,
+            },
+            {
               trackerID: "AR",
               displayName: "AR",
               authKind: "cookies_login",
@@ -291,6 +304,7 @@ describe("SettingsPage", () => {
     );
 
     const mtvTitle = await screen.findByText("MTV");
+    const btnTitle = await screen.findByText("BTN");
     const arTitle = await screen.findByText("AR");
     const hdbTitle = await screen.findByText("HDB");
     const ffTitle = await screen.findByText("FF");
@@ -299,6 +313,7 @@ describe("SettingsPage", () => {
     const thrTitle = await screen.findByText("THR");
     const ascTitle = await screen.findByText("ASC");
     const mtvCard = mtvTitle.closest(".tracker-auth-card");
+    const btnCard = btnTitle.closest(".tracker-auth-card");
     const arCard = arTitle.closest(".tracker-auth-card");
     const hdbCard = hdbTitle.closest(".tracker-auth-card");
     const ffCard = ffTitle.closest(".tracker-auth-card");
@@ -308,6 +323,7 @@ describe("SettingsPage", () => {
     const ascCard = ascTitle.closest(".tracker-auth-card");
 
     expect(mtvCard).not.toBeNull();
+    expect(btnCard).not.toBeNull();
     expect(arCard).not.toBeNull();
     expect(hdbCard).not.toBeNull();
     expect(ffCard).not.toBeNull();
@@ -317,6 +333,9 @@ describe("SettingsPage", () => {
     expect(ascCard).not.toBeNull();
     expect(
       within(mtvCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
+    ).toBeInTheDocument();
+    expect(
+      within(btnCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
     ).toBeInTheDocument();
     expect(
       within(arCard as HTMLElement).getByRole("button", { name: "Check Auth" }),
