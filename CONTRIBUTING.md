@@ -247,6 +247,14 @@ Alternatively, `make precommit` and `make prepush` run the configured Lefthook c
 
 Keep log levels purposeful. `INFO` should provide concise, relevant progress or outcome details for end users during uploads and other top-level workflows. `DEBUG` should include richer decision-making context useful for developer troubleshooting. `TRACE` should capture near-complete operational flow for high-fidelity execution reporting.
 
+### Sensitive information
+
+Logging should be completely safe for blanket copy/pasting, without exposing any user sensitive credentials. Err on the side of caution.
+Tests should apply redaction for any potentially sensitive information, in order to prevent LLM consumption of personal information/credentials.
+Pay particular attention in API/HTTP/cookie type handling, ensuring redaction of headers and response bodies.
+Gaps fixes in /internal/redaction/redaction.go or /internal/logpolicy/checker.go are especially appreciated.
+Config values should be encrypted where appropriate, and only ever displayed in a redacted state.
+
 ### Path portability
 
 upbrr targets Windows, Linux, and macOS. Do not assume POSIX path behavior in Go code or tests unless the value is explicitly a torrent-internal path, URL path, or remote API payload path.
