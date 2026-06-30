@@ -131,7 +131,7 @@ func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
 	value = proxyPathRe.ReplaceAllString(value, `${1}[REDACTED]`)
 	value = queryParamRe.ReplaceAllString(value, `${1}[REDACTED]`)
 	value = keyValueQuotedRe.ReplaceAllStringFunc(value, redactQuotedKeyValue)
-	value = keyValuePlainRe.ReplaceAllString(value, `${1}${2}${3}[REDACTED]`)
+	value = keyValuePlainRe.ReplaceAllStringFunc(value, redactPlainKeyValue)
 	value = longHexTokenRe.ReplaceAllString(value, `[REDACTED]`)
 
 	_ = keys
@@ -148,6 +148,17 @@ func redactQuotedKeyValue(value string) string {
 		return value
 	}
 	return value[:matches[6]] + quoted[:1] + "[REDACTED]" + quoted[len(quoted)-1:]
+}
+
+func redactPlainKeyValue(value string) string {
+	matches := keyValuePlainRe.FindStringSubmatch(value)
+	if len(matches) < 5 {
+		return value
+	}
+	if strings.EqualFold(matches[4], "[REDACTED") || strings.EqualFold(matches[4], "[REDACTED]") {
+		return value
+	}
+	return matches[1] + matches[2] + matches[3] + "[REDACTED]"
 }
 
 // RedactPrivateInfo recursively redacts sensitive values in JSON-like data.

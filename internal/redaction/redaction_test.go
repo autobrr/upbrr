@@ -95,6 +95,20 @@ func TestRedactValuePlainKeyValuePairs(t *testing.T) {
 	}
 }
 
+func TestRedactValueDoesNotReredactRedactedQueryValues(t *testing.T) {
+	t.Parallel()
+
+	input := "https://tracker.example/upload?api_key=secret-key&passkey=secret-pass"
+	output := RedactValue(input, nil)
+
+	if contains(output, "[REDACTED]]") {
+		t.Fatalf("expected already-redacted query values to stay stable, got %q", output)
+	}
+	if !contains(output, "api_key=[REDACTED]&passkey=[REDACTED]") {
+		t.Fatalf("expected query values redacted once, got %q", output)
+	}
+}
+
 func TestRedactValueQuotedKeyValuePairsWithEscapedQuotes(t *testing.T) {
 	t.Parallel()
 
