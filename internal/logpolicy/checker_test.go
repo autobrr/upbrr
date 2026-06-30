@@ -29,7 +29,7 @@ func check(log logger, err error) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -76,10 +76,10 @@ func checkTest() {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(mainContent), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(mainContent), 0o600); err != nil {
 		t.Fatalf("write main sample file: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample_test.go"), []byte(testContent), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample_test.go"), []byte(testContent), 0o600); err != nil {
 		t.Fatalf("write test sample file: %v", err)
 	}
 
@@ -303,7 +303,7 @@ func safeResponsePreview([]byte) string { return "" }
 func UploadHTTPError(string, int, []byte) error { return nil }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -781,7 +781,7 @@ type testingT interface {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "redaction", "redaction_test.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "redaction", "redaction_test.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -942,7 +942,7 @@ func check(log logger, body []byte) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -977,7 +977,7 @@ func check(log logger, body []byte) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1013,7 +1013,7 @@ func check(log logger, body []byte) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1046,7 +1046,7 @@ func check() error {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1081,7 +1081,7 @@ func check() error {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1115,7 +1115,7 @@ func check(log logger, current user) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1152,7 +1152,7 @@ func check(log logger, current user) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1182,7 +1182,7 @@ func check(log logger, err error) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1236,7 +1236,7 @@ type testingT interface {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "services", "imagehosting", "uploaders_test.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "services", "imagehosting", "uploaders_test.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1278,7 +1278,7 @@ func check(log logger, current user) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1308,7 +1308,7 @@ func check(log logger, err error) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1341,7 +1341,7 @@ func check(log logger) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1374,7 +1374,7 @@ func check(log logger, tracker string) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1404,7 +1404,7 @@ func check(log logger, rate float64) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1433,7 +1433,7 @@ func TestCheckRepositoryInfofVerbosityBoundary(t *testing.T) {
 		"\tlog.Infof(\"" + aboveBoundary + "\")\n" +
 		"}\n"
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1469,7 +1469,7 @@ func check(log logger) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1505,7 +1505,7 @@ func check(log logger, tracker string) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1538,7 +1538,7 @@ func check(log logger) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1575,7 +1575,7 @@ func check(log logger, path string) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1610,7 +1610,7 @@ func check(log logger, path string) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1644,7 +1644,7 @@ func check(log logger, tracker string, host string, path string, title string) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1679,7 +1679,7 @@ func check(log logger, tracker string) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
@@ -1722,7 +1722,7 @@ func check(log logger, path string, client string, hash string) {
 }
 `
 
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 
