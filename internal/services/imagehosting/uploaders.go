@@ -1257,6 +1257,8 @@ func postMultipartRepeatedFileField(ctx context.Context, client *http.Client, ta
 	return bodyBytes, resp.StatusCode, nil
 }
 
+// readLimitedAndCloseResponseBody reads only the diagnostic preview cap from a
+// response body and always closes the body before returning.
 func readLimitedAndCloseResponseBody(resp *http.Response) ([]byte, error) {
 	if resp == nil || resp.Body == nil {
 		return nil, nil
@@ -1269,6 +1271,8 @@ func readLimitedAndCloseResponseBody(resp *http.Response) ([]byte, error) {
 	return body, nil
 }
 
+// safeResponsePreview returns a redacted, length-bounded response snippet for
+// upload errors and diagnostics.
 func safeResponsePreview(body []byte) string {
 	text := safeResponseMessage(string(body))
 	if len(text) > 200 {
@@ -1277,6 +1281,7 @@ func safeResponsePreview(body []byte) string {
 	return text
 }
 
+// safeResponseMessage redacts response text before it reaches errors or logs.
 func safeResponseMessage(value string) string {
 	return strings.TrimSpace(redaction.RedactValue(value, nil))
 }

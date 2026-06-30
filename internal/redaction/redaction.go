@@ -142,6 +142,8 @@ func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
 	return value
 }
 
+// redactQuotedKeyValue replaces the value part of a matched quoted secret
+// key/value pair while preserving the original quote style.
 func redactQuotedKeyValue(value string) string {
 	matches := keyValueQuotedRe.FindStringSubmatchIndex(value)
 	if len(matches) < 8 || matches[6] < 0 || matches[7] <= matches[6] {
@@ -154,6 +156,8 @@ func redactQuotedKeyValue(value string) string {
 	return value[:matches[6]] + quoted[:1] + "[REDACTED]" + quoted[len(quoted)-1:]
 }
 
+// redactPlainKeyValue replaces the value part of a matched unquoted secret
+// key/value pair without reprocessing an existing redaction marker.
 func redactPlainKeyValue(value string) string {
 	matches := keyValuePlainRe.FindStringSubmatch(value)
 	if len(matches) < 5 {
@@ -204,6 +208,8 @@ func RedactPrivateInfo(data any, sensitiveKeys map[string]struct{}) any {
 	}
 }
 
+// isSensitiveKey compares normalized key spellings so common variants such as
+// api_key, api-key, and apiKey share the same redaction behavior.
 func isSensitiveKey(key string, keys map[string]struct{}) bool {
 	if len(keys) == 0 {
 		return false
@@ -217,6 +223,8 @@ func isSensitiveKey(key string, keys map[string]struct{}) bool {
 	return false
 }
 
+// canonicalSensitiveKey removes separators and case from keys before matching
+// them against the sensitive-key set.
 func canonicalSensitiveKey(key string) string {
 	return strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(key)))
 }

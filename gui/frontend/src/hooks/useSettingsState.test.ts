@@ -194,11 +194,13 @@ function ImageHostingHarness() {
 
 let latestPayload = "";
 
+/** Captures save payloads without rendering secret-shaped values into DOM snapshots. */
 function PayloadCapture({ value }: { value: string | null }) {
   latestPayload = value ?? "";
   return null;
 }
 
+/** Parses the latest captured payload for focused assertions outside matcher output. */
 function readPayload<T>() {
   return JSON.parse(latestPayload || "{}") as T;
 }

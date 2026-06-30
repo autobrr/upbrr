@@ -839,6 +839,7 @@ const buildPathKey = (path: string[]) => path.join(".");
 
 const isEncryptedSecretEnvelope = (value: string) => value.startsWith(ENCRYPTED_SECRET_PREFIX);
 
+/** Masks secret-bearing config strings while retaining originals by config path for save payloads. */
 const maskSensitiveConfig = (input: ConfigMap) => {
   const originals: Record<string, string> = {};
   const walk = (value: ConfigValue, path: string[]): ConfigValue => {

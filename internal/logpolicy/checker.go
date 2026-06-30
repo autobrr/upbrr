@@ -129,6 +129,8 @@ type Violation struct {
 	Message string
 }
 
+// CheckRepository scans repo-owned Go and frontend test sources for logging and
+// shareable-output patterns that can expose secrets or unsafe diagnostics.
 func CheckRepository(root string) ([]Violation, error) {
 	internalRoot := filepath.Join(root, "internal")
 	if _, err := os.Stat(internalRoot); err != nil {
@@ -223,6 +225,8 @@ var (
 	frontendRawPayloadDOMRe         = regexp.MustCompile("[\"']data-testid[\"']\\s*:\\s*[\"']payload[\"'].*buildSavePayload\\(\\)|buildSavePayload\\(\\).*[\"']data-testid[\"']\\s*:\\s*[\"']payload[\"']")
 )
 
+// checkFrontendTestSensitiveMatchers scans frontend tests for assertions and DOM
+// fixtures that would print encrypted envelopes or save payloads in failure output.
 func checkFrontendTestSensitiveMatchers(root string) ([]Violation, error) {
 	frontendRoot := filepath.Join(root, "gui", "frontend", "src")
 	if _, err := os.Stat(frontendRoot); err != nil {
@@ -257,6 +261,8 @@ func checkFrontendTestSensitiveMatchers(root string) ([]Violation, error) {
 	return violations, nil
 }
 
+// checkFrontendTestSensitiveMatcherFile applies the frontend secret-output regex
+// checks to one test file and reports line-based violations.
 func checkFrontendTestSensitiveMatcherFile(root string, path string) ([]Violation, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -355,6 +361,8 @@ func checkCLISensitiveOutputFile(fset *token.FileSet, root string, path string) 
 	return violations, nil
 }
 
+// checkFile enforces production Go logging policy for internal packages,
+// including logger hygiene, sensitive dataflow, and bounded response-body use.
 func checkFile(fset *token.FileSet, root string, path string) ([]Violation, error) {
 	file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 	if err != nil {
@@ -457,6 +465,8 @@ func checkFile(fset *token.FileSet, root string, path string) ([]Violation, erro
 	return violations, nil
 }
 
+// checkTestFile enforces shareable test-output policy, including secret
+// dataflow and httptest handler fatal-call checks.
 func checkTestFile(fset *token.FileSet, root string, path string) ([]Violation, error) {
 	violations, err := checkSensitiveOutputFile(fset, root, path, true)
 	if err != nil {
@@ -503,10 +513,12 @@ type sensitiveModel struct {
 	testSensitiveFixture bool
 }
 
+// pushScope starts a lexical binding scope for sensitive-value dataflow.
 func (m *sensitiveModel) pushScope() {
 	m.scopes = append(m.scopes, make(map[string]sensitiveBinding))
 }
 
+// popScope drops the current lexical binding scope if one exists.
 func (m *sensitiveModel) popScope() {
 	if len(m.scopes) == 0 {
 		return
@@ -514,6 +526,7 @@ func (m *sensitiveModel) popScope() {
 	m.scopes = m.scopes[:len(m.scopes)-1]
 }
 
+// currentScope returns the active lexical scope, creating one for top-level use.
 func (m *sensitiveModel) currentScope() map[string]sensitiveBinding {
 	if len(m.scopes) == 0 {
 		m.pushScope()
@@ -521,10 +534,13 @@ func (m *sensitiveModel) currentScope() map[string]sensitiveBinding {
 	return m.scopes[len(m.scopes)-1]
 }
 
+// declare records a new binding in the current lexical scope.
 func (m *sensitiveModel) declare(name string, value sensitiveValue, sensitive bool) {
 	m.currentScope()[name] = sensitiveBinding{value: value, sensitive: sensitive}
 }
 
+// assign updates the nearest existing binding or declares one when assignment
+// targets a name not yet seen by the model.
 func (m *sensitiveModel) assign(name string, value sensitiveValue, sensitive bool) {
 	for i := len(m.scopes) - 1; i >= 0; i-- {
 		if _, ok := m.scopes[i][name]; ok {
@@ -535,6 +551,8 @@ func (m *sensitiveModel) assign(name string, value sensitiveValue, sensitive boo
 	m.declare(name, value, sensitive)
 }
 
+// lookup resolves a binding from innermost to outermost scope and returns
+// whether the current value is sensitive.
 func (m *sensitiveModel) lookup(name string) (sensitiveValue, bool) {
 	for i := len(m.scopes) - 1; i >= 0; i-- {
 		binding, ok := m.scopes[i][name]
@@ -553,6 +571,8 @@ type logpolicyAllow struct {
 	used   bool
 }
 
+// checkSensitiveOutputFile tracks sensitive values through one Go file and
+// flags values reaching logs, returned errors, test diagnostics, or artifacts.
 func checkSensitiveOutputFile(fset *token.FileSet, root string, path string, testFile bool) ([]Violation, error) {
 	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
@@ -611,6 +631,8 @@ type sensitiveOutputVisitor struct {
 	scopeStack      []bool
 }
 
+// Visit maintains lexical scope while scanning calls and assignments for
+// sensitive-value propagation.
 func (v *sensitiveOutputVisitor) Visit(node ast.Node) ast.Visitor {
 	if node == nil {
 		if len(v.scopeStack) == 0 {
@@ -641,6 +663,8 @@ func (v *sensitiveOutputVisitor) Visit(node ast.Node) ast.Visitor {
 	return v
 }
 
+// checkCall reports a violation when a modeled sensitive value reaches a sink
+// without a recognized sanitizing wrapper.
 func (v *sensitiveOutputVisitor) checkCall(call *ast.CallExpr) {
 	for _, sinkArg := range sensitiveSinkArgs(call, v.model.aliases, v.testFile, v.functionContext) {
 		if isSafeSensitiveOutputExpr(sinkArg.expr) {
@@ -677,6 +701,8 @@ func isSensitiveScopeNode(node ast.Node) bool {
 	}
 }
 
+// collectLogpolicyAllows indexes line-local allow comments and reports allows
+// that omit a required reason.
 func collectLogpolicyAllows(fset *token.FileSet, relPath string, file *ast.File) (map[int]*logpolicyAllow, []Violation) {
 	allows := make(map[int]*logpolicyAllow)
 	violations := make([]Violation, 0)
@@ -701,6 +727,8 @@ func collectLogpolicyAllows(fset *token.FileSet, relPath string, file *ast.File)
 	return allows, violations
 }
 
+// shouldSuppressLogpolicyViolation consumes a matching allow comment unless the
+// value is a never-allow header such as Cookie or Authorization.
 func shouldSuppressLogpolicyViolation(fset *token.FileSet, allows map[int]*logpolicyAllow, pos token.Pos, value sensitiveValue) bool {
 	if value.kind == sensitiveHTTPHeader && isNeverAllowHeader(value.label) {
 		return false
@@ -732,6 +760,8 @@ type sinkArg struct {
 	format        string
 }
 
+// sensitiveSinkArgs identifies call arguments whose values are user-shareable
+// output for logging, returned errors, test failure messages, or artifacts.
 func sensitiveSinkArgs(call *ast.CallExpr, aliases map[string]string, testFile bool, functionContext string) []sinkArg {
 	if len(call.Args) == 0 {
 		return nil
@@ -855,6 +885,8 @@ func isHTTPErrorSelector(selector *ast.SelectorExpr, aliases map[string]string) 
 	return ok && aliases[pkg.Name] == "net/http" && selector.Sel.Name == "Error"
 }
 
+// checkTestHandlerFatalCalls reports t.Fatal-style calls inside HTTP test
+// handlers, where the handler runs outside the test goroutine.
 func checkTestHandlerFatalCalls(fset *token.FileSet, root string, path string) ([]Violation, error) {
 	file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 	if err != nil {
@@ -938,6 +970,8 @@ func isHTTPRequestPointerType(expr ast.Expr, aliases map[string]string) bool {
 	return ok && aliases[pkg.Name] == "net/http"
 }
 
+// isTestingFatalCall recognizes fatal test methods on conventional testing
+// receivers used by handler fixtures.
 func isTestingFatalCall(call *ast.CallExpr) bool {
 	selector, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
@@ -960,6 +994,8 @@ func isTestingFatalCall(call *ast.CallExpr) bool {
 	}
 }
 
+// checkUnboundedResponseBodyUses flags response bodies that are read without a
+// limit before flowing into redaction, errors, or shareable artifacts.
 func checkUnboundedResponseBodyUses(fset *token.FileSet, relPath string, file *ast.File, aliases map[string]string) []Violation {
 	violations := make([]Violation, 0)
 	for _, decl := range file.Decls {
@@ -983,6 +1019,8 @@ func checkUnboundedResponseBodyUses(fset *token.FileSet, relPath string, file *a
 	return violations
 }
 
+// markUnboundedBodyAssignments updates body-read taint for assignment targets.
+// Single-call tuple assignments taint only the first return value.
 func markUnboundedBodyAssignments(stmt *ast.AssignStmt, aliases map[string]string, unboundedBodyVars map[string]struct{}) {
 	if len(stmt.Rhs) == 1 {
 		for index, target := range stmt.Lhs {
@@ -1012,6 +1050,8 @@ func markUnboundedBodyAssignments(stmt *ast.AssignStmt, aliases map[string]strin
 	}
 }
 
+// isUnboundedResponseBodyRead reports io.ReadAll(resp.Body)-style reads that do
+// not wrap the body with io.LimitReader.
 func isUnboundedResponseBodyRead(expr ast.Expr, aliases map[string]string) bool {
 	call, ok := expr.(*ast.CallExpr)
 	if !ok {
@@ -1034,6 +1074,8 @@ func isUnboundedResponseBodyRead(expr ast.Expr, aliases map[string]string) bool 
 	return isResponseBodyExpr(call.Args[0])
 }
 
+// isUnboundedResponseBodyUseCall reports uses where an unbounded body value is
+// about to become redacted output, an error message, or an artifact.
 func isUnboundedResponseBodyUseCall(call *ast.CallExpr, unboundedBodyVars map[string]struct{}) bool {
 	if len(unboundedBodyVars) == 0 {
 		return false
@@ -1056,6 +1098,8 @@ func isUnboundedResponseBodyUseCall(call *ast.CallExpr, unboundedBodyVars map[st
 	return false
 }
 
+// isResponseBodyErrorOrArtifactHelper recognizes helpers whose output may be
+// returned to users or written into diagnostic artifacts.
 func isResponseBodyErrorOrArtifactHelper(name string) bool {
 	switch name {
 	case "UploadHTTPError", "safeResponsePreview", "safeResponseMessage":
@@ -1065,6 +1109,8 @@ func isResponseBodyErrorOrArtifactHelper(name string) bool {
 	}
 }
 
+// isUnboundedResponseBodyHelperCallName recognizes legacy helpers known to read
+// a response body without enforcing the repo preview limit.
 func isUnboundedResponseBodyHelperCallName(name string) bool {
 	switch name {
 	case "readAndCloseResponseBody":
@@ -1074,6 +1120,8 @@ func isUnboundedResponseBodyHelperCallName(name string) bool {
 	}
 }
 
+// containsUnboundedBodyVar reports whether an expression references a currently
+// tainted unbounded response-body binding.
 func containsUnboundedBodyVar(expr ast.Expr, unboundedBodyVars map[string]struct{}) bool {
 	found := false
 	ast.Inspect(expr, func(node ast.Node) bool {
@@ -1090,6 +1138,7 @@ func containsUnboundedBodyVar(expr ast.Expr, unboundedBodyVars map[string]struct
 	return found
 }
 
+// isLimitReaderCall recognizes io.LimitReader wrappers that bound body reads.
 func isLimitReaderCall(expr ast.Expr, aliases map[string]string) bool {
 	call, ok := expr.(*ast.CallExpr)
 	if !ok {
@@ -1127,6 +1176,8 @@ func isSensitiveTestRawErrorContext(context string, format string) bool {
 		strings.Contains(lowerFormat, "upload rejected")
 }
 
+// markSensitiveAssignment propagates sensitivity through assignments and keeps
+// multi-return calls indexed to the assigned result positions.
 func markSensitiveAssignment(model *sensitiveModel, stmt *ast.AssignStmt) {
 	declare := stmt.Tok == token.DEFINE
 	for index, target := range stmt.Lhs {
@@ -1147,6 +1198,7 @@ func markSensitiveAssignment(model *sensitiveModel, stmt *ast.AssignStmt) {
 	}
 }
 
+// bind applies declaration or assignment semantics for one modeled identifier.
 func (m *sensitiveModel) bind(name string, value sensitiveValue, sensitive bool, declare bool) {
 	if declare {
 		m.declare(name, value, sensitive)
@@ -1155,6 +1207,8 @@ func (m *sensitiveModel) bind(name string, value sensitiveValue, sensitive bool,
 	m.assign(name, value, sensitive)
 }
 
+// markSensitiveRange treats range key and value variables as sensitive when the
+// ranged expression is sensitive.
 func markSensitiveRange(model *sensitiveModel, stmt *ast.RangeStmt) {
 	value, sensitive := sensitivityOfExpr(model, stmt.X)
 	for _, target := range []ast.Expr{stmt.Key, stmt.Value} {
@@ -1165,6 +1219,8 @@ func markSensitiveRange(model *sensitiveModel, stmt *ast.RangeStmt) {
 	}
 }
 
+// sensitivityOfExprResult returns the sensitivity of one assignment result,
+// preserving per-result behavior for known multi-return calls.
 func sensitivityOfExprResult(model *sensitiveModel, expr ast.Expr, resultIndex int) (sensitiveValue, bool) {
 	if call, ok := expr.(*ast.CallExpr); ok {
 		if value, sensitive := sensitivityOfKnownCallResult(model, call, resultIndex); sensitive {
@@ -1177,6 +1233,8 @@ func sensitivityOfExprResult(model *sensitiveModel, expr ast.Expr, resultIndex i
 	return sensitivityOfExpr(model, expr)
 }
 
+// sensitivityOfExpr classifies expressions that directly contain, derive from,
+// or propagate sensitive values.
 func sensitivityOfExpr(model *sensitiveModel, expr ast.Expr) (sensitiveValue, bool) {
 	if expr == nil || isSafeSensitiveOutputExpr(expr) {
 		return sensitiveValue{}, false
@@ -1240,6 +1298,8 @@ func sensitivityOfExpr(model *sensitiveModel, expr ast.Expr) (sensitiveValue, bo
 	return sensitiveValue{}, false
 }
 
+// isSensitivePropagatingCall recognizes wrappers that preserve the sensitive
+// content of their arguments instead of sanitizing it.
 func isSensitivePropagatingCall(model *sensitiveModel, call *ast.CallExpr) bool {
 	switch fun := call.Fun.(type) {
 	case *ast.Ident:
@@ -1257,6 +1317,7 @@ func isSensitivePropagatingCall(model *sensitiveModel, call *ast.CallExpr) bool 
 	return false
 }
 
+// firstSensitiveExpr returns the first sensitive expression in source order.
 func firstSensitiveExpr(model *sensitiveModel, exprs ...ast.Expr) (sensitiveValue, bool) {
 	for _, expr := range exprs {
 		if value, ok := sensitivityOfExpr(model, expr); ok {
@@ -1273,6 +1334,8 @@ func sensitivityOfPayloadIndex(model *sensitiveModel, index *ast.IndexExpr) (sen
 	return sensitiveValue{}, false
 }
 
+// sensitivityOfDirectCall classifies sensitive values produced directly by
+// header, form, query, cookie, URL, and body-read calls.
 func sensitivityOfDirectCall(model *sensitiveModel, call *ast.CallExpr) (sensitiveValue, bool) {
 	if value, ok := sensitivityOfKnownSensitiveCall(model, call); ok {
 		return value, true
@@ -1316,6 +1379,8 @@ func sensitivityOfDirectCall(model *sensitiveModel, call *ast.CallExpr) (sensiti
 	return sensitiveValue{}, false
 }
 
+// sensitivityOfKnownSensitiveCall classifies repo helper calls whose return
+// values carry cookies, response bodies, URLs, or credential-like strings.
 func sensitivityOfKnownSensitiveCall(model *sensitiveModel, call *ast.CallExpr) (sensitiveValue, bool) {
 	name := callName(call)
 	if value, ok := sensitivityOfSensitiveValueHelperCallName(name); ok {
@@ -1335,6 +1400,8 @@ func sensitivityOfKnownSensitiveCall(model *sensitiveModel, call *ast.CallExpr) 
 	return sensitiveValue{}, false
 }
 
+// sensitivityOfSensitiveValueHelperCallName classifies helper names that imply
+// the first returned value is a credential-like secret.
 func sensitivityOfSensitiveValueHelperCallName(name string) (sensitiveValue, bool) {
 	lower := strings.ToLower(strings.TrimSpace(name))
 	if !isSensitiveValueHelperName(lower) {
@@ -1409,6 +1476,8 @@ func sensitivityOfSecretBearingURLExpr(model *sensitiveModel, expr *ast.BinaryEx
 	return sensitiveValue{}, false
 }
 
+// sensitivityOfKnownCallResult models helpers where only the first return value
+// carries sensitive data and trailing returns such as errors are safe by default.
 func sensitivityOfKnownCallResult(model *sensitiveModel, call *ast.CallExpr, resultIndex int) (sensitiveValue, bool) {
 	if resultIndex != 0 {
 		return sensitiveValue{}, false
