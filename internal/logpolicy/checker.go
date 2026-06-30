@@ -1101,7 +1101,7 @@ func isSensitiveConfigFieldName(name string) bool {
 
 func isSensitiveEndpointFieldName(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "announceurl", "endpoint":
+	case "announce", "announcelist", "announceurl", "endpoint":
 		return true
 	default:
 		return false

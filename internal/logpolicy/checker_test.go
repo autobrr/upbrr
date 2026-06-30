@@ -425,13 +425,15 @@ type trackerConfig struct {
 	AnnounceURL string
 	URL string
 }
+type metaInfo struct{ Announce string }
 
-func check(t testingT, cfg config) {
+func check(t testingT, cfg config, meta metaInfo) {
 	t.Fatalf("TMDBAPI mismatch: got %q", cfg.TMDBAPI)
 	t.Fatalf("tracker API key mismatch: got %q", cfg.Trackers.Trackers["BTN"].APIKey)
 	t.Fatalf("tracker passkey mismatch: got %q", cfg.Trackers.Trackers["CZT"].Passkey)
 	t.Fatalf("tracker announce mismatch: got %q", cfg.Trackers.Trackers["CZT"].AnnounceURL)
 	t.Fatalf("tracker URL mismatch: got %q", cfg.Trackers.Trackers["BTN"].URL)
+	t.Fatalf("torrent announce mismatch: got %q", meta.Announce)
 }
 
 type testingT interface {
@@ -444,8 +446,8 @@ type testingT interface {
 	if err != nil {
 		t.Fatalf("CheckRepository returned error: %v", err)
 	}
-	if len(violations) != 5 {
-		t.Fatalf("expected 5 violations, got %d: %#v", len(violations), violations)
+	if len(violations) != 6 {
+		t.Fatalf("expected 6 violations, got %d: %#v", len(violations), violations)
 	}
 }
 

@@ -265,7 +265,7 @@ func TestResolveUploadTorrentPathReusesPreparedPTPArtifact(t *testing.T) {
 		t.Fatalf("load prepared artifact: %v", err)
 	}
 	if torrentMeta.Announce != "https://please.passthepopcorn.me/passkey/announce" {
-		t.Fatalf("expected prepared announce preserved, got %q", torrentMeta.Announce)
+		t.Fatal("expected prepared announce preserved")
 	}
 	info, err := torrentMeta.UnmarshalInfo()
 	if err != nil {
@@ -327,7 +327,7 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 					t.Fatalf("expected cleaned upload torrent created-by, got %q", uploadedMeta.CreatedBy)
 				}
 				if uploadedMeta.Announce != "" {
-					t.Fatalf("expected upload torrent announce stripped, got %q", uploadedMeta.Announce)
+					t.Fatal("expected upload torrent announce stripped")
 				}
 				if r.FormValue("AntiCsrfToken") != "csrf-token" {
 					t.Fatal("expected csrf token")
