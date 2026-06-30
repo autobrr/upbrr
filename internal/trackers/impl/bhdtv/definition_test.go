@@ -88,7 +88,7 @@ func TestUploadParsesViewAndWritesArtifact(t *testing.T) {
 			t.Fatalf("parse multipart: %v", err)
 		}
 		if got := r.FormValue("api_key"); got != "token" {
-			t.Fatalf("unexpected api key %q", got)
+			t.Fatal("unexpected api key")
 		}
 		if got := r.FormValue("cat"); got != "7" {
 			t.Fatalf("unexpected cat %q", got)

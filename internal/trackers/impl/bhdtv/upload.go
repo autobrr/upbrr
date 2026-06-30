@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -488,8 +489,6 @@ func normalizeResolution(value string) string {
 
 func cloneFields(fields map[string]string) map[string]string {
 	cloned := make(map[string]string, len(fields))
-	for key, value := range fields {
-		cloned[key] = value
-	}
+	maps.Copy(cloned, fields)
 	return cloned
 }

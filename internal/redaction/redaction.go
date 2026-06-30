@@ -36,9 +36,9 @@ var (
 	announcePathTokenRe = regexp.MustCompile(`(?i)(/announce(?:\.php)?/)([A-Za-z0-9]{10,})($|[/?#])`)
 	apiPathTokenRe      = regexp.MustCompile(`(?i)(/api/torrents/)([A-Za-z0-9]{10,})($|[/?#"])`)
 	proxyPathRe         = regexp.MustCompile(`(?i)(/proxy/)([^/\s?#"]+)`) // /proxy/<secret>
-	queryParamRe        = regexp.MustCompile(`(?i)([?&](api[_-]?key|api[_-]?token|auth|authkey|info_hash|key|passkey|rsskey|token|torrent_pass|uid|user|user_id|userid)=)[^&]+`)
-	keyValueQuotedRe    = regexp.MustCompile(`(?i)\b(api[_-]?key|api[_-]?token|authorization|auth|authkey|cookie|csrf|passkey|password|secret|token|torrent_pass)\b(\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`)
-	keyValuePlainRe     = regexp.MustCompile(`(?i)\b(api[_-]?key|api[_-]?token|authorization|auth|authkey|cookie|csrf|passkey|password|secret|token|torrent_pass)\b(\s*[:=]\s*)(bearer\s+)?([^"'\s,;)\]}]+)`)
+	queryParamRe        = regexp.MustCompile(`(?i)([?&](anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|auth|auth[_-]?key|csrf|info[_-]?hash|key|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass|uid|user|user[_-]?id|userid)=)[^&]+`)
+	keyValueQuotedRe    = regexp.MustCompile(`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass)\b(\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`)
+	keyValuePlainRe     = regexp.MustCompile(`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass)\b(\s*[:=]\s*)(bearer\s+)?([^"'\s,;)\]}]+)`)
 	longHexTokenRe      = regexp.MustCompile(`\b[a-fA-F0-9]{32,}\b`)
 )
 
@@ -193,11 +193,15 @@ func isSensitiveKey(key string, keys map[string]struct{}) bool {
 	if len(keys) == 0 {
 		return false
 	}
-	lower := strings.ToLower(key)
+	lower := canonicalSensitiveKey(key)
 	for candidate := range keys {
-		if strings.Contains(lower, candidate) {
+		if strings.Contains(lower, canonicalSensitiveKey(candidate)) {
 			return true
 		}
 	}
 	return false
+}
+
+func canonicalSensitiveKey(key string) string {
+	return strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(key)))
 }

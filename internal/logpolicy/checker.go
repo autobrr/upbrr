@@ -968,15 +968,20 @@ func sensitivityOfSensitiveValueHelperCallName(name string) (sensitiveValue, boo
 	if !isSensitiveValueHelperName(lower) {
 		return sensitiveValue{}, false
 	}
+	normalized := canonicalSensitiveKeyName(name)
 	switch {
-	case strings.Contains(lower, "apikey") || strings.Contains(lower, "api_key") || strings.Contains(lower, "api key"):
+	case strings.Contains(normalized, "apikey"):
 		return sensitiveValue{kind: sensitiveConfigField, label: "APIKey"}, true
-	case strings.Contains(lower, "token"):
+	case strings.Contains(normalized, "token"):
 		return sensitiveValue{kind: sensitiveConfigField, label: "token"}, true
-	case strings.Contains(lower, "passkey"):
+	case strings.Contains(normalized, "passkey"):
 		return sensitiveValue{kind: sensitiveConfigField, label: "passkey"}, true
-	case strings.Contains(lower, "authkey"):
+	case strings.Contains(normalized, "authkey"):
 		return sensitiveValue{kind: sensitiveConfigField, label: "authkey"}, true
+	case strings.Contains(normalized, "rsskey"):
+		return sensitiveValue{kind: sensitiveConfigField, label: "rsskey"}, true
+	case strings.Contains(normalized, "torrentpass"):
+		return sensitiveValue{kind: sensitiveConfigField, label: "torrentpass"}, true
 	default:
 		return sensitiveValue{}, false
 	}
@@ -1100,8 +1105,8 @@ func canonicalHeaderName(name string) string {
 }
 
 func isSensitiveFormKey(key string) bool {
-	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "password", "passkey", "token", "auth", "anticsrftoken":
+	switch canonicalSensitiveKeyName(key) {
+	case "password", "passkey", "token", "auth", "apikey", "apitoken", "authkey", "csrf", "anticsrftoken", "secret":
 		return true
 	default:
 		return false
@@ -1109,8 +1114,8 @@ func isSensitiveFormKey(key string) bool {
 }
 
 func isSensitiveQueryKey(key string) bool {
-	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "token", "apikey", "api_key", "api_token", "passkey", "authkey", "secret", "rsskey":
+	switch canonicalSensitiveKeyName(key) {
+	case "token", "apikey", "apitoken", "passkey", "authkey", "secret", "rsskey", "torrentpass", "password", "auth", "csrf", "anticsrftoken":
 		return true
 	default:
 		return false
@@ -1123,12 +1128,16 @@ func isConfigOwnerTestPath(relPath string) bool {
 }
 
 func isSensitiveConfigFieldName(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "apikey", "api_key", "password", "passkey", "token", "authkey", "anticsrftoken", "otpuri", "tmdbapi", "sonarrapikey", "radarrapikey", "qbitpass":
+	switch canonicalSensitiveKeyName(name) {
+	case "apikey", "apitoken", "password", "passkey", "token", "authkey", "anticsrftoken", "otpuri", "tmdbapi", "sonarrapikey", "radarrapikey", "qbitpass", "rsskey", "torrentpass", "secret":
 		return true
 	default:
 		return false
 	}
+}
+
+func canonicalSensitiveKeyName(name string) string {
+	return strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(name)))
 }
 
 func isSensitiveEndpointFieldName(name string) bool {
@@ -1188,11 +1197,16 @@ func binaryExprContainsSecretURLKey(expr ast.Expr) bool {
 		if err != nil {
 			return true
 		}
-		lower := strings.ToLower(value)
+		lower := canonicalSensitiveURLLiteral(value)
 		if strings.Contains(lower, "api_key=") ||
+			strings.Contains(lower, "apikey=") ||
 			strings.Contains(lower, "api_token=") ||
+			strings.Contains(lower, "apitoken=") ||
 			strings.Contains(lower, "passkey=") ||
 			strings.Contains(lower, "authkey=") ||
+			strings.Contains(lower, "rsskey=") ||
+			strings.Contains(lower, "torrentpass=") ||
+			strings.Contains(lower, "secret=") ||
 			strings.Contains(lower, "token=") {
 			found = true
 			return false
@@ -1200,6 +1214,10 @@ func binaryExprContainsSecretURLKey(expr ast.Expr) bool {
 		return true
 	})
 	return found
+}
+
+func canonicalSensitiveURLLiteral(value string) string {
+	return strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(value))
 }
 
 func containsSensitiveSelector(model *sensitiveModel, expr ast.Expr) bool {
@@ -1229,15 +1247,15 @@ func containsSensitiveFixtureLiteral(node ast.Node) bool {
 		if err != nil {
 			return true
 		}
-		lower := strings.ToLower(value)
+		lower := canonicalSensitiveURLLiteral(value)
 		if strings.Contains(lower, "hunter2") ||
 			strings.Contains(lower, "secret") ||
-			strings.Contains(lower, "api_key") ||
-			strings.Contains(lower, "api-key") ||
-			strings.Contains(lower, "api token") ||
-			strings.Contains(lower, "api_token") ||
+			strings.Contains(lower, "apikey") ||
+			strings.Contains(lower, "apitoken") ||
 			strings.Contains(lower, "passkey") ||
-			strings.Contains(lower, "authkey") {
+			strings.Contains(lower, "authkey") ||
+			strings.Contains(lower, "rsskey") ||
+			strings.Contains(lower, "torrentpass") {
 			found = true
 			return false
 		}

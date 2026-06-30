@@ -215,11 +215,32 @@ func check(t testingT, r *http.Request, resp *http.Response) error {
 	if got := r.FormValue("passkey"); got != "pass" {
 		return fmt.Errorf("expected passkey, got %q", got)
 	}
+	if got := r.FormValue("api-token"); got != "secret" {
+		return fmt.Errorf("expected api-token, got %q", got)
+	}
+	if got := r.FormValue("anti_csrf_token"); got != "secret" {
+		return fmt.Errorf("expected anti_csrf_token, got %q", got)
+	}
 	if got := r.URL.Query().Get("secret"); got != "secret" {
 		return fmt.Errorf("expected secret, got %q", got)
 	}
 	if got := r.URL.Query().Get("apikey"); got != "secret" {
 		return fmt.Errorf("expected apikey, got %q", got)
+	}
+	if got := r.URL.Query().Get("api-key"); got != "secret" {
+		return fmt.Errorf("expected api-key, got %q", got)
+	}
+	if got := r.URL.Query().Get("apiToken"); got != "secret" {
+		return fmt.Errorf("expected apiToken, got %q", got)
+	}
+	if got := r.URL.Query().Get("auth_key"); got != "secret" {
+		return fmt.Errorf("expected auth_key, got %q", got)
+	}
+	if got := r.URL.Query().Get("rss-key"); got != "secret" {
+		return fmt.Errorf("expected rss-key, got %q", got)
+	}
+	if got := r.URL.Query().Get("torrent-pass"); got != "secret" {
+		return fmt.Errorf("expected torrent-pass, got %q", got)
 	}
 	body, _ := io.ReadAll(resp.Body)
 	t.Fatalf("unexpected response body %s", string(body))
@@ -236,8 +257,8 @@ type testingT interface {
 	if err != nil {
 		t.Fatalf("CheckRepository returned error: %v", err)
 	}
-	if len(violations) != 5 {
-		t.Fatalf("expected 5 violations, got %d: %#v", len(violations), violations)
+	if len(violations) != 12 {
+		t.Fatalf("expected 12 violations, got %d: %#v", len(violations), violations)
 	}
 }
 
@@ -424,7 +445,13 @@ type config struct {
 type trackerSet struct{ Trackers map[string]trackerConfig }
 type trackerConfig struct {
 	APIKey string
+	APIToken string
+	AntiCSRFToken string
+	AuthKey string
 	Passkey string
+	RSSKey string
+	Secret string
+	TorrentPass string
 	AnnounceURL string
 	URL string
 }
@@ -433,7 +460,13 @@ type metaInfo struct{ Announce string }
 func check(t testingT, cfg config, meta metaInfo) {
 	t.Fatalf("TMDBAPI mismatch: got %q", cfg.TMDBAPI)
 	t.Fatalf("tracker API key mismatch: got %q", cfg.Trackers.Trackers["BTN"].APIKey)
+	t.Fatalf("tracker API token mismatch: got %q", cfg.Trackers.Trackers["BTN"].APIToken)
+	t.Fatalf("tracker anti-csrf token mismatch: got %q", cfg.Trackers.Trackers["BTN"].AntiCSRFToken)
+	t.Fatalf("tracker auth key mismatch: got %q", cfg.Trackers.Trackers["BTN"].AuthKey)
 	t.Fatalf("tracker passkey mismatch: got %q", cfg.Trackers.Trackers["CZT"].Passkey)
+	t.Fatalf("tracker RSS key mismatch: got %q", cfg.Trackers.Trackers["BTN"].RSSKey)
+	t.Fatalf("tracker secret mismatch: got %q", cfg.Trackers.Trackers["BTN"].Secret)
+	t.Fatalf("tracker torrent pass mismatch: got %q", cfg.Trackers.Trackers["BTN"].TorrentPass)
 	t.Fatalf("tracker announce mismatch: got %q", cfg.Trackers.Trackers["CZT"].AnnounceURL)
 	t.Fatalf("tracker URL mismatch: got %q", cfg.Trackers.Trackers["BTN"].URL)
 	t.Fatalf("torrent announce mismatch: got %q", meta.Announce)
@@ -449,8 +482,8 @@ type testingT interface {
 	if err != nil {
 		t.Fatalf("CheckRepository returned error: %v", err)
 	}
-	if len(violations) != 6 {
-		t.Fatalf("expected 6 violations, got %d: %#v", len(violations), violations)
+	if len(violations) != 12 {
+		t.Fatalf("expected 12 violations, got %d: %#v", len(violations), violations)
 	}
 }
 
@@ -459,11 +492,23 @@ func TestCheckRepositoryFlagsSensitiveHelperReturnOutput(t *testing.T) {
 	content := `package sample
 
 func check(t testingT) {
-	got := loadStoredRTFAPIKey()
-	t.Fatalf("stored token: %q", got)
+	apiKey := loadStoredRTFAPIKey()
+	t.Fatalf("stored token: %q", apiKey)
+	apiToken := refreshAPIToken()
+	t.Fatalf("refreshed token: %q", apiToken)
+	authKey := extractMTVAuthKey()
+	t.Fatalf("auth key: %q", authKey)
+	rssKey := getRSSKey()
+	t.Fatalf("rss key: %q", rssKey)
+	torrentPass := readTorrentPass()
+	t.Fatalf("torrent pass: %q", torrentPass)
 }
 
 func loadStoredRTFAPIKey() string { return "" }
+func refreshAPIToken() string { return "" }
+func extractMTVAuthKey() string { return "" }
+func getRSSKey() string { return "" }
+func readTorrentPass() string { return "" }
 
 type testingT interface {
 	Fatalf(string, ...any)
@@ -475,8 +520,8 @@ type testingT interface {
 	if err != nil {
 		t.Fatalf("CheckRepository returned error: %v", err)
 	}
-	if len(violations) != 1 {
-		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	if len(violations) != 5 {
+		t.Fatalf("expected 5 violations, got %d: %#v", len(violations), violations)
 	}
 }
 
@@ -487,6 +532,16 @@ func TestCheckRepositoryFlagsSecretBearingURLOutput(t *testing.T) {
 func check(t testingT, cfg trackerConfig) {
 	endpoint := "https://tracker.test/api?api_key=" + cfg.APIKey + "&action=upload"
 	t.Fatalf("endpoint: %s", endpoint)
+	hyphenEndpoint := "https://tracker.test/api?api-key=" + cfg.APIKey + "&action=upload"
+	t.Fatalf("endpoint: %s", hyphenEndpoint)
+	camelEndpoint := "https://tracker.test/api?apiToken=" + cfg.APIKey + "&action=upload"
+	t.Fatalf("endpoint: %s", camelEndpoint)
+	authEndpoint := "https://tracker.test/api?auth-key=" + cfg.APIKey + "&action=upload"
+	t.Fatalf("endpoint: %s", authEndpoint)
+	rssEndpoint := "https://tracker.test/api?rss_key=" + cfg.APIKey + "&action=upload"
+	t.Fatalf("endpoint: %s", rssEndpoint)
+	torrentPassEndpoint := "https://tracker.test/api?torrent-pass=" + cfg.APIKey + "&action=upload"
+	t.Fatalf("endpoint: %s", torrentPassEndpoint)
 }
 
 type trackerConfig struct{ APIKey string }
@@ -500,8 +555,8 @@ type testingT interface {
 	if err != nil {
 		t.Fatalf("CheckRepository returned error: %v", err)
 	}
-	if len(violations) != 1 {
-		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	if len(violations) != 6 {
+		t.Fatalf("expected 6 violations, got %d: %#v", len(violations), violations)
 	}
 	if !strings.Contains(violations[0].Message, "secret config field output") {
 		t.Fatalf("expected secret field violation, got %q", violations[0].Message)

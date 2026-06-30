@@ -8,7 +8,7 @@ import "testing"
 func TestRedactValueURLPatterns(t *testing.T) {
 	t.Parallel()
 
-	input := "https://tracker.example/0123456789abcdef/announce?passkey=secret&token=abc&info_hash=deadbeef&authkey=private&uid=123"
+	input := "https://tracker.example/0123456789abcdef/announce?passkey=secret&token=abc&info_hash=deadbeef&authkey=private&auth-key=private2&apiKey=api-secret&api-token=api-token-secret&rss_key=rss-secret&torrent-pass=torrent-secret&AntiCsrfToken=csrf-secret&uid=123"
 	output := RedactValue(input, nil)
 
 	if output == input {
@@ -17,7 +17,12 @@ func TestRedactValueURLPatterns(t *testing.T) {
 	if contains(output, "0123456789abcdef") {
 		t.Fatalf("expected passkey redacted, got %q", output)
 	}
-	if contains(output, "secret") || contains(output, "token=abc") || contains(output, "authkey=private") || contains(output, "uid=123") {
+	for _, secret := range []string{"secret", "token=abc", "authkey=private", "auth-key=private2", "api-secret", "api-token-secret", "rss-secret", "torrent-secret", "csrf-secret", "uid=123"} {
+		if contains(output, secret) {
+			t.Fatalf("expected query param %q redacted, got %q", secret, output)
+		}
+	}
+	if !contains(output, "apiKey=[REDACTED]") || !contains(output, "auth-key=[REDACTED]") || !contains(output, "torrent-pass=[REDACTED]") {
 		t.Fatalf("expected query params redacted, got %q", output)
 	}
 }
@@ -75,15 +80,15 @@ func TestRedactValueBareProxyPath(t *testing.T) {
 func TestRedactValuePlainKeyValuePairs(t *testing.T) {
 	t.Parallel()
 
-	input := `api_key: tracker-secret token=plain-token Authorization=Bearer bearer-secret cookie: "session-secret" message=kept`
+	input := `api_key: tracker-secret api-key=hyphen-secret apiToken: camel-secret auth_key=auth-secret rss-key=rss-secret torrentPass=torrent-secret AntiCsrfToken=csrf-secret token=plain-token Authorization=Bearer bearer-secret cookie: "session-secret" message=kept`
 	output := RedactValue(input, nil)
 
-	for _, secret := range []string{"tracker-secret", "plain-token", "bearer-secret", "session-secret"} {
+	for _, secret := range []string{"tracker-secret", "hyphen-secret", "camel-secret", "auth-secret", "rss-secret", "torrent-secret", "csrf-secret", "plain-token", "bearer-secret", "session-secret"} {
 		if contains(output, secret) {
 			t.Fatalf("expected %q redacted, got %q", secret, output)
 		}
 	}
-	for _, marker := range []string{"api_key: [REDACTED]", "token=[REDACTED]", "Authorization=Bearer [REDACTED]", `cookie: "[REDACTED]"`, "message=kept"} {
+	for _, marker := range []string{"api_key: [REDACTED]", "api-key=[REDACTED]", "apiToken: [REDACTED]", "auth_key=[REDACTED]", "rss-key=[REDACTED]", "torrentPass=[REDACTED]", "AntiCsrfToken=[REDACTED]", "token=[REDACTED]", "Authorization=Bearer [REDACTED]", `cookie: "[REDACTED]"`, "message=kept"} {
 		if !contains(output, marker) {
 			t.Fatalf("expected marker %q in %q", marker, output)
 		}
@@ -112,9 +117,13 @@ func TestRedactPrivateInfoJSON(t *testing.T) {
 	t.Parallel()
 
 	input := map[string]any{
-		"token":   "abc",
-		"nested":  map[string]any{"password": "secret"},
-		"entries": []any{"passkey", "value"},
+		"token":         "abc",
+		"apiKey":        "api-secret",
+		"auth_key":      "auth-secret",
+		"torrentPass":   "torrent-secret",
+		"AntiCsrfToken": "csrf-secret",
+		"nested":        map[string]any{"password": "secret", "rss-key": "rss-secret"},
+		"entries":       []any{"passkey", "value"},
 	}
 
 	redacted, ok := RedactPrivateInfo(input, nil).(map[string]any)
@@ -124,12 +133,20 @@ func TestRedactPrivateInfoJSON(t *testing.T) {
 	if redacted["token"] != "[REDACTED]" {
 		t.Fatalf("expected token redacted, got %#v", redacted["token"])
 	}
+	for _, key := range []string{"apiKey", "auth_key", "torrentPass", "AntiCsrfToken"} {
+		if redacted[key] != "[REDACTED]" {
+			t.Fatalf("expected %s redacted, got %#v", key, redacted[key])
+		}
+	}
 	nested, ok := redacted["nested"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected nested redacted value to be map[string]any")
 	}
 	if nested["password"] != "[REDACTED]" {
 		t.Fatalf("expected password redacted, got %#v", nested["password"])
+	}
+	if nested["rss-key"] != "[REDACTED]" {
+		t.Fatalf("expected rss-key redacted, got %#v", nested["rss-key"])
 	}
 }
 
