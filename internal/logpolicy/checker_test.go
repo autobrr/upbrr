@@ -490,6 +490,12 @@ func check(t testingT, logs string) {
 	}
 }
 
+func checkArtifact(t testingT, text string) {
+	if contains(text, "secret-key") {
+		t.Fatalf("artifact leaked secret body: %s", text)
+	}
+}
+
 func contains(string, string) bool { return false }
 
 type testingT interface {
@@ -502,11 +508,13 @@ type testingT interface {
 	if err != nil {
 		t.Fatalf("CheckRepository returned error: %v", err)
 	}
-	if len(violations) != 1 {
-		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	if len(violations) != 2 {
+		t.Fatalf("expected 2 violations, got %d: %#v", len(violations), violations)
 	}
-	if !strings.Contains(violations[0].Message, "sensitive output") {
-		t.Fatalf("expected sensitive output violation, got %q", violations[0].Message)
+	for _, violation := range violations {
+		if !strings.Contains(violation.Message, "sensitive output") {
+			t.Fatalf("expected sensitive output violation, got %q", violation.Message)
+		}
 	}
 }
 

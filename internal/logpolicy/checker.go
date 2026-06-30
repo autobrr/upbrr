@@ -1220,7 +1220,7 @@ func isTestLogBufferDumpExpr(expr ast.Expr) bool {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(ident.Name)) {
-	case "logs", "log":
+	case "logs", "log", "text":
 		return true
 	default:
 		return false

@@ -62,10 +62,10 @@ func TestWriteFailureArtifactRedactsSensitiveBody(t *testing.T) {
 	}
 	text := string(payload)
 	if strings.Contains(text, "secret-key") || strings.Contains(text, "plain-secret") {
-		t.Fatalf("artifact leaked secret body: %s", text)
+		t.Fatal("artifact leaked secret body")
 	}
 	if !strings.Contains(text, "[REDACTED]") {
-		t.Fatalf("expected redaction marker in artifact: %s", text)
+		t.Fatal("expected redaction marker in artifact")
 	}
 }
 
