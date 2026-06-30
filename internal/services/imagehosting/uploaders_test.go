@@ -592,9 +592,9 @@ func TestReadAndCloseResponseBodyClosesBody(t *testing.T) {
 		Body:       body,
 	}
 
-	payload, err := readAndCloseResponseBody(resp)
+	payload, err := readLimitedAndCloseResponseBody(resp)
 	if err != nil {
-		t.Fatalf("readAndCloseResponseBody returned error: %v", err)
+		t.Fatalf("readLimitedAndCloseResponseBody returned error: %v", err)
 	}
 	if string(payload) != "partial response" {
 		t.Fatalf("unexpected payload: %q", safeResponsePreview(payload))

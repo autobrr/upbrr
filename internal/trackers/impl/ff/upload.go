@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -76,7 +77,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	defer resp.Body.Close()
 	location := resp.Header.Get("Location")
 	match := idPattern.FindStringSubmatch(location)
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if resp.StatusCode == http.StatusFound && len(match) >= 2 {
 		id := match[1]
 		tURL := torrentURL + id
@@ -390,8 +391,6 @@ func isSD(meta api.PreparedMetadata) bool {
 
 func cloneFields(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
+	maps.Copy(out, in)
 	return out
 }

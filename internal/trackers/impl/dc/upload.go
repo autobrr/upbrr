@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -77,7 +78,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	defer resp.Body.Close()
 
-	responseBody, _ := io.ReadAll(resp.Body)
+	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	var decoded uploadResponse
 	if len(responseBody) > 0 {
 		if err := json.Unmarshal(responseBody, &decoded); err != nil {
@@ -377,8 +378,6 @@ func isSD(meta api.PreparedMetadata) bool {
 
 func cloneFields(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
+	maps.Copy(out, in)
 	return out
 }

@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -64,7 +65,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, fmt.Errorf("trackers: TL upload request: %w", err)
 	}
 	defer resp.Body.Close()
-	responseBody, _ := io.ReadAll(resp.Body)
+	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 
 	torrentID := ""
 	if req.TrackerConfig.APIUpload {
@@ -426,9 +427,7 @@ func boolWord(cond bool, yes string, no string) string {
 
 func cloneFields(input map[string]string) map[string]string {
 	out := make(map[string]string, len(input))
-	for key, value := range input {
-		out[key] = value
-	}
+	maps.Copy(out, input)
 	return out
 }
 

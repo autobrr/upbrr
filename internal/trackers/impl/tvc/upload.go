@@ -76,7 +76,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, fmt.Errorf("trackers: TVC upload request: %w", err)
 	}
 	defer resp.Body.Close()
-	responseBody, _ := io.ReadAll(resp.Body)
+	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if resp.StatusCode != http.StatusOK {
 		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "TVC", "upload_failure", responseBody, ".txt")
 		return api.UploadSummary{}, commonhttp.UploadHTTPError("TVC", resp.StatusCode, responseBody)

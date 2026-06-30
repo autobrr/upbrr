@@ -138,7 +138,8 @@ func TestSearchTorrentsCBRIncludesPendingAndFiltersTMDB(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
 		if got := r.URL.Query().Get("api_token"); got != "secret" {
-			t.Fatal("api token mismatch")
+			t.Error("api token mismatch")
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")

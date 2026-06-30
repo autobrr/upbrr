@@ -197,19 +197,24 @@ func TestLookupANTSendsAPIKeyHeader(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
 		if got := query.Get("apikey"); got != "" {
-			t.Fatal("apikey should not be sent as a query parameter")
+			t.Error("apikey should not be sent as a query parameter")
+			return
 		}
 		if got := query.Get("t"); got != "search" {
-			t.Fatalf("unexpected t query value: got %q want %q", got, "search")
+			t.Errorf("unexpected t query value: got %q want %q", got, "search")
+			return
 		}
 		if got := query.Get("filename"); got != "Example.Release.mkv" {
-			t.Fatalf("unexpected filename query value: got %q", got)
+			t.Errorf("unexpected filename query value: got %q", got)
+			return
 		}
 		if got := r.Header.Get("X-Api-Key"); got != "token" {
-			t.Fatal("unexpected X-API-Key header")
+			t.Error("unexpected X-API-Key header")
+			return
 		}
 		if got := r.Header.Get("User-Agent"); got == "" {
-			t.Fatal("expected User-Agent header")
+			t.Error("expected User-Agent header")
+			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"item": []map[string]any{

@@ -115,7 +115,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, fmt.Errorf("trackers: CZT upload request: %w", err)
 	}
 	defer resp.Body.Close()
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: CZT read upload response: %w", err)
 	}

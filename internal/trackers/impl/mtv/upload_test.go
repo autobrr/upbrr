@@ -239,7 +239,8 @@ func TestResolveSessionForTrackerAuthPostsLoginToRedirectedHost(t *testing.T) {
 		case r.URL.Path == "/login" && r.Method == http.MethodGet:
 			_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
 		case r.URL.Path == "/login" && r.Method == http.MethodPost && strings.HasPrefix(r.Host, "localhost:"):
-			t.Fatalf("login POST used original host")
+			t.Error("login POST used original host")
+			return
 		case r.URL.Path == "/login" && r.Method == http.MethodPost:
 			postedCanonicalLogin = true
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "fresh", Path: "/"})
@@ -293,11 +294,13 @@ func TestUploadPostsToRedirectedLoginHost(t *testing.T) {
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "fresh", Path: "/"})
 			_, _ = w.Write([]byte(`authkey=abcdefghijklmnopqrstuvwxyzABCDEF`))
 		case r.URL.Path == mtvUploadPath && r.Method == http.MethodPost && strings.HasPrefix(r.Host, "localhost:"):
-			t.Fatalf("upload POST used original host")
+			t.Error("upload POST used original host")
+			return
 		case r.URL.Path == mtvUploadPath && r.Method == http.MethodPost:
 			postedCanonicalUpload = true
 			if _, err := r.Cookie("session"); err != nil {
-				t.Fatalf("expected session cookie on canonical upload: %v", err)
+				t.Errorf("expected session cookie on canonical upload: %v", err)
+				return
 			}
 			http.Redirect(w, r, canonicalURL+"/torrents.php?id=1", http.StatusFound)
 		case r.URL.Path == "/torrents.php":
@@ -406,7 +409,8 @@ func TestResolveSessionForTrackerAuthLoginUsesManual2FACode(t *testing.T) {
 				return
 			}
 			if err := r.ParseForm(); err != nil {
-				t.Fatalf("ParseForm: %v", err)
+				t.Errorf("ParseForm: %v", err)
+				return
 			}
 			gotCode = r.FormValue("code")
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -73,7 +74,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()
 	}
-	responseBody, _ := io.ReadAll(resp.Body)
+	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	combined := finalURL + "\n" + string(responseBody)
 	id := ""
 	if match := detailsPattern.FindStringSubmatch(combined); len(match) >= 2 {
@@ -432,8 +433,6 @@ func boolString(value bool) string {
 
 func cloneFields(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
+	maps.Copy(out, in)
 	return out
 }

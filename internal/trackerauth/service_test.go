@@ -531,7 +531,8 @@ func TestValidateARStoredCookies(t *testing.T) {
 			return
 		}
 		if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=abc") {
-			t.Fatal("expected AR session cookie")
+			t.Error("expected AR session cookie")
+			return
 		}
 		_, _ = w.Write([]byte(`<a href="/torrents.php?action=download&id=1&auth=session-key">Download</a>`))
 	}))
@@ -603,10 +604,12 @@ func TestValidateFFLoginPersistsCookies(t *testing.T) {
 			_, _ = w.Write([]byte(`<input name="username">`))
 		case "/takelogin.php":
 			if err := r.ParseForm(); err != nil {
-				t.Fatalf("ParseForm: %v", err)
+				t.Errorf("ParseForm: %v", err)
+				return
 			}
 			if r.FormValue("username") != "user" || r.FormValue("password") != "pass" {
-				t.Fatalf("unexpected FF login form: %v", r.Form)
+				t.Error("unexpected FF login form")
+				return
 			}
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "valid", Path: "/"})
 			w.Header().Set("Location", "/index.php")
@@ -654,10 +657,12 @@ func TestValidateFLLoginPersistsCookies(t *testing.T) {
 			_, _ = w.Write([]byte(`<input name="validator" value="token">`))
 		case "/takelogin.php":
 			if err := r.ParseForm(); err != nil {
-				t.Fatalf("ParseForm: %v", err)
+				t.Errorf("ParseForm: %v", err)
+				return
 			}
 			if r.FormValue("validator") != "token" || r.FormValue("username") != "user" || r.FormValue("password") != "pass" {
-				t.Fatalf("unexpected FL login form: %v", r.Form)
+				t.Error("unexpected FL login form")
+				return
 			}
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "valid", Path: "/"})
 			_, _ = w.Write([]byte("Logout"))
@@ -705,10 +710,12 @@ func TestValidateTHRChecksCredentialLogin(t *testing.T) {
 			return
 		}
 		if err := r.ParseForm(); err != nil {
-			t.Fatalf("ParseForm: %v", err)
+			t.Errorf("ParseForm: %v", err)
+			return
 		}
 		if r.FormValue("username") != "user" || r.FormValue("password") != "pass" || r.FormValue("ssl") != "yes" {
-			t.Fatalf("unexpected THR login form: %v", r.Form)
+			t.Error("unexpected THR login form")
+			return
 		}
 		_, _ = w.Write([]byte(`<a href="logout.php">Logout</a>`))
 	}))
@@ -2171,22 +2178,22 @@ func TestTrackerAuthLogsOperationResultsWithoutSecrets(t *testing.T) {
 	warnLog := strings.Join(logger.warn, "\n")
 	allLogs := infoLog + "\n" + traceLog + "\n" + warnLog
 	if !strings.Contains(traceLog, "tracker auth: status checked tracker=MTV") {
-		t.Fatalf("expected status trace log, got info=%q trace=%q warn=%q", infoLog, traceLog, warnLog)
+		t.Fatal("expected status trace log")
 	}
 	if !strings.Contains(traceLog, "tracker auth: capabilities loaded count=") {
-		t.Fatalf("expected capabilities trace log, got info=%q trace=%q warn=%q", infoLog, traceLog, warnLog)
+		t.Fatal("expected capabilities trace log")
 	}
 	for _, routine := range []string{"tracker auth: status checked tracker=MTV", "tracker auth: capabilities loaded count="} {
 		if strings.Contains(infoLog, routine) {
-			t.Fatalf("routine tracker auth log used info level: %s", infoLog)
+			t.Fatal("routine tracker auth log used info level")
 		}
 	}
 	if !strings.Contains(warnLog, "tracker auth: cookie import failed tracker=AR bytes=4") {
-		t.Fatalf("expected import warning log, got info=%q trace=%q warn=%q", infoLog, traceLog, warnLog)
+		t.Fatal("expected import warning log")
 	}
 	for _, secret := range []string{"secret-api-key", "secret-user", "secret-password", "{bad"} {
 		if strings.Contains(allLogs, secret) {
-			t.Fatalf("tracker auth log leaked %q: %s", secret, allLogs)
+			t.Fatal("tracker auth log leaked secret")
 		}
 	}
 }

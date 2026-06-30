@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -82,7 +83,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()
 	}
-	responseBody, _ := io.ReadAll(resp.Body)
+	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	combined := finalURL + "\n" + string(responseBody)
 	match := idPattern.FindStringSubmatch(combined)
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 && len(match) >= 2 {
@@ -410,8 +411,6 @@ func supportsHDSResolution(value string) bool {
 
 func cloneFields(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
+	maps.Copy(out, in)
 	return out
 }

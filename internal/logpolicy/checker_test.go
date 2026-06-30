@@ -1031,7 +1031,7 @@ func TestCheckRepositoryFlagsUnboundedHelperResponseBodyPreview(t *testing.T) {
 import "fmt"
 
 func check() error {
-	body, _, err := postForm()
+	body, err := readAndCloseResponseBody()
 	if err != nil {
 		return err
 	}

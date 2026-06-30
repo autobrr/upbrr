@@ -382,10 +382,12 @@ func TestApplyTrackerClaimsBlocksAitherAndCachesClaims(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		if got := r.URL.Path; got != "/api/internals/claim" {
-			t.Fatalf("unexpected path %q", got)
+			t.Errorf("unexpected path %q", got)
+			return
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer aither-key" {
-			t.Fatal("unexpected auth header")
+			t.Error("unexpected auth header")
+			return
 		}
 		_, _ = w.Write([]byte(`{
 			"data":[

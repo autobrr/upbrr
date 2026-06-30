@@ -543,7 +543,7 @@ func (c *Client) postGraphQL(ctx context.Context, query string, target any) erro
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		payload, _ := io.ReadAll(resp.Body)
+		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 		return fmt.Errorf("imdb: http %d: %s", resp.StatusCode, strings.TrimSpace(redaction.RedactValue(string(payload), nil)))
 	}
 

@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -85,7 +86,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()
 	}
-	responseBody, _ := io.ReadAll(resp.Body)
+	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	id, success := successfulUploadResponse(finalURL, string(responseBody))
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 && success {
 		if id != "" {
@@ -437,8 +438,6 @@ func yesNo(value bool) string {
 
 func cloneFields(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
+	maps.Copy(out, in)
 	return out
 }

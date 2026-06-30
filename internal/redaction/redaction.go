@@ -39,6 +39,8 @@ var (
 	queryParamRe        = regexp.MustCompile(`(?i)([?&](anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|auth|auth[_-]?key|csrf|info[_-]?hash|key|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass|uid|user|user[_-]?id|userid)=)[^&]+`)
 	keyValueQuotedRe    = regexp.MustCompile(`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass)\b(\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`)
 	keyValuePlainRe     = regexp.MustCompile(`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass)\b(\s*[:=]\s*)(bearer\s+)?([^"'\s,;)\]}]+)`)
+	cookieTailRe        = regexp.MustCompile(`(?i)(\bcookie\b\s*[:=]\s*\[REDACTED\])(?:[;]\s*[^,\r\n]+)+`)
+	authTailRe          = regexp.MustCompile(`(?i)(\bauthorization\b\s*[:=]\s*bearer\s+\[REDACTED\])(?:,\s*[^,\s]+)+`)
 	longHexTokenRe      = regexp.MustCompile(`\b[a-fA-F0-9]{32,}\b`)
 )
 
@@ -132,6 +134,8 @@ func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
 	value = queryParamRe.ReplaceAllString(value, `${1}[REDACTED]`)
 	value = keyValueQuotedRe.ReplaceAllStringFunc(value, redactQuotedKeyValue)
 	value = keyValuePlainRe.ReplaceAllStringFunc(value, redactPlainKeyValue)
+	value = cookieTailRe.ReplaceAllString(value, `${1}`)
+	value = authTailRe.ReplaceAllString(value, `${1}`)
 	value = longHexTokenRe.ReplaceAllString(value, `[REDACTED]`)
 
 	_ = keys

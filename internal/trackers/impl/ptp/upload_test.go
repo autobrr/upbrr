@@ -221,7 +221,8 @@ func TestResolveSessionForTrackerAuthLoginUsesManual2FACode(t *testing.T) {
 			return
 		}
 		if err := r.ParseForm(); err != nil {
-			t.Fatalf("ParseForm: %v", err)
+			t.Errorf("ParseForm: %v", err)
+			return
 		}
 		loginRequests++
 		if loginRequests == 1 {

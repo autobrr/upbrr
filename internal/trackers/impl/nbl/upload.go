@@ -56,7 +56,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, err := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: NBL read response: %w", err)
 	}

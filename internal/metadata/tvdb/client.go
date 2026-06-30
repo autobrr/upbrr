@@ -1449,7 +1449,7 @@ func (c *Client) loginLocked(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxTVDBResponseBodyBytes+1))
 		return fmt.Errorf("tvdb: login http %d: %s", resp.StatusCode, strings.TrimSpace(redaction.RedactValue(string(body), nil)))
 	}
 

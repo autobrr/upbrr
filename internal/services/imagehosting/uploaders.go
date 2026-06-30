@@ -45,6 +45,8 @@ type namedBatchUploader interface {
 	UploadBatchWithName(ctx context.Context, imagePaths []string, galleryName string) ([]uploadResult, error)
 }
 
+const maxResponseBodyPreviewBytes int64 = 64 * 1024
+
 func newUploaderRegistry(cfg config.Config, client *http.Client) map[string]uploader {
 	client = httpclient.CloneWithTimeout(client, httpclient.UploadTimeout)
 	return map[string]uploader{
@@ -337,7 +339,7 @@ func imgboxGetCsrfAndCookie(ctx context.Context, client *http.Client) (string, s
 		closeResponseBody(resp)
 		return "", "", fmt.Errorf("imgbox send csrf request: %w", err)
 	}
-	body, err := readAndCloseResponseBody(resp)
+	body, err := readLimitedAndCloseResponseBody(resp)
 	if err != nil {
 		return "", "", err
 	}
@@ -373,7 +375,7 @@ func imgboxGetUploadToken(ctx context.Context, client *http.Client, csrfToken st
 		closeResponseBody(resp)
 		return imgboxUploadToken{}, fmt.Errorf("imgbox send token request: %w", err)
 	}
-	body, err := readAndCloseResponseBody(resp)
+	body, err := readLimitedAndCloseResponseBody(resp)
 	if err != nil {
 		return imgboxUploadToken{}, err
 	}
@@ -1135,7 +1137,7 @@ func postForm(ctx context.Context, client *http.Client, target string, data url.
 		closeResponseBody(resp)
 		return nil, 0, fmt.Errorf("image hosting: send form request to %s: %w", target, err)
 	}
-	body, err := readAndCloseResponseBody(resp)
+	body, err := readLimitedAndCloseResponseBody(resp)
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
@@ -1202,7 +1204,7 @@ func postMultipartWithFields(ctx context.Context, client *http.Client, target st
 		closeResponseBody(resp)
 		return nil, 0, fmt.Errorf("image hosting: send multipart request to %s: %w", target, err)
 	}
-	bodyBytes, err := readAndCloseResponseBody(resp)
+	bodyBytes, err := readLimitedAndCloseResponseBody(resp)
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
@@ -1248,19 +1250,19 @@ func postMultipartRepeatedFileField(ctx context.Context, client *http.Client, ta
 		closeResponseBody(resp)
 		return nil, 0, fmt.Errorf("image hosting: send multipart request to %s: %w", target, err)
 	}
-	bodyBytes, err := readAndCloseResponseBody(resp)
+	bodyBytes, err := readLimitedAndCloseResponseBody(resp)
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
 	return bodyBytes, resp.StatusCode, nil
 }
 
-func readAndCloseResponseBody(resp *http.Response) ([]byte, error) {
+func readLimitedAndCloseResponseBody(resp *http.Response) ([]byte, error) {
 	if resp == nil || resp.Body == nil {
 		return nil, nil
 	}
 	defer closeResponseBody(resp)
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyPreviewBytes))
 	if err != nil {
 		return nil, fmt.Errorf("image hosting: read response body: %w", err)
 	}

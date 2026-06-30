@@ -177,7 +177,7 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 
 	logger.Debugf("trackers: %s received HTTP %d response", trackerName, resp.StatusCode)
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if err != nil {
 		logger.Errorf("trackers: %s failed to read response body: %v", trackerName, err)
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s read response body: %w", trackerName, err)

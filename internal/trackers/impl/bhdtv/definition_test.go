@@ -85,19 +85,24 @@ func TestUploadParsesViewAndWritesArtifact(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseMultipartForm(2 << 20); err != nil {
-			t.Fatalf("parse multipart: %v", err)
+			t.Errorf("parse multipart: %v", err)
+			return
 		}
 		if got := r.FormValue("api_key"); got != "token" {
-			t.Fatal("unexpected api key")
+			t.Error("unexpected api key")
+			return
 		}
 		if got := r.FormValue("cat"); got != "7" {
-			t.Fatalf("unexpected cat %q", got)
+			t.Errorf("unexpected cat %q", got)
+			return
 		}
 		if got := r.FormValue("subcat"); got != "48" {
-			t.Fatalf("unexpected subcat %q", got)
+			t.Errorf("unexpected subcat %q", got)
+			return
 		}
 		if got := r.FormValue("resolution"); got != "4" {
-			t.Fatalf("unexpected resolution %q", got)
+			t.Errorf("unexpected resolution %q", got)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":{"view":"https://www.bit-hdtv.com/details.php?id=99"}}`))

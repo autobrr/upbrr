@@ -958,7 +958,7 @@ func isResponseBodyErrorOrArtifactHelper(name string) bool {
 
 func isUnboundedResponseBodyHelperCallName(name string) bool {
 	switch name {
-	case "postForm", "postMultipart", "postMultipartWithFields", "postMultipartRepeatedFileField", "readAndCloseResponseBody":
+	case "readAndCloseResponseBody":
 		return true
 	default:
 		return false

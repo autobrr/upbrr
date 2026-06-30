@@ -91,7 +91,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()
 	}
-	responseBody, _ := io.ReadAll(resp.Body)
+	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	match := idPattern.FindStringSubmatch(finalURL + "\n" + string(responseBody))
 	id := metautil.FirstNonEmptyTrimmed(matchValue(match, 1), matchValue(match, 2))
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 && id != "" {

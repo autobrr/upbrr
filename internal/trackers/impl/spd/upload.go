@@ -82,7 +82,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, fmt.Errorf("trackers: SPD upload request: %w", err)
 	}
 	defer resp.Body.Close()
-	responseBody, _ := io.ReadAll(resp.Body)
+	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 
 	var decoded uploadResponse
 	if err := json.Unmarshal(responseBody, &decoded); err != nil {

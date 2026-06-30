@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -71,7 +72,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, fmt.Errorf("trackers: PTS upload request: %w", err)
 	}
 	defer resp.Body.Close()
-	responseBody, _ := io.ReadAll(resp.Body)
+	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 
 	location := strings.TrimSpace(resp.Header.Get("Location"))
 	torrentID := parseUploadID(location, string(responseBody))
@@ -281,9 +282,7 @@ func questionnaireAnswers(meta api.PreparedMetadata) map[string]string {
 
 func cloneFields(input map[string]string) map[string]string {
 	out := make(map[string]string, len(input))
-	for key, value := range input {
-		out[key] = value
-	}
+	maps.Copy(out, input)
 	return out
 }
 
