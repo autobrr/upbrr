@@ -1538,11 +1538,14 @@ func isTestLogBufferDumpExpr(expr ast.Expr, relPath string) bool {
 		if !ok {
 			return true
 		}
-		switch strings.ToLower(strings.TrimSpace(ident.Name)) {
-		case "logs", "log", "text":
+		switch lower := strings.ToLower(strings.TrimSpace(ident.Name)); {
+		case lower == "log" || lower == "logs" || lower == "text" ||
+			lower == "alllogs" || lower == "infolog" || lower == "tracelog" ||
+			lower == "warnlog" || lower == "errorlog" || lower == "debuglog" ||
+			strings.HasSuffix(lower, "logs"):
 			found = true
 			return false
-		case "input", "output", "redacted", "secret":
+		case lower == "input" || lower == "output" || lower == "redacted" || lower == "secret":
 			if strings.HasPrefix(relPath, "internal/redaction/") {
 				found = true
 				return false

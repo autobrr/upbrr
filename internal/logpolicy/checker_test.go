@@ -716,6 +716,13 @@ func check(t testingT, logs string) {
 	}
 }
 
+func checkCombinedLogs(t testingT, infoLog string, traceLog string, warnLog string) {
+	allLogs := infoLog + "\n" + traceLog + "\n" + warnLog
+	if contains(allLogs, "secret-api-key") {
+		t.Fatalf("combined logs leaked secret: %s", allLogs)
+	}
+}
+
 func checkArtifact(t testingT, text string) {
 	if contains(text, "secret-key") {
 		t.Fatalf("artifact leaked secret body: %s", text)
@@ -734,8 +741,8 @@ type testingT interface {
 	if err != nil {
 		t.Fatalf("CheckRepository returned error: %v", err)
 	}
-	if len(violations) != 2 {
-		t.Fatalf("expected 2 violations, got %d: %#v", len(violations), violations)
+	if len(violations) != 3 {
+		t.Fatalf("expected 3 violations, got %d: %#v", len(violations), violations)
 	}
 	for _, violation := range violations {
 		if !strings.Contains(violation.Message, "sensitive output") {
