@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"maps"
 	"net/http"
 	"net/url"
@@ -72,7 +71,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, fmt.Errorf("trackers: PTS upload request: %w", err)
 	}
 	defer resp.Body.Close()
-	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusSeeOther, commonhttp.DefaultResponsePreviewBytes)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: PTS read upload response: %w", err)
+	}
 
 	location := strings.TrimSpace(resp.Header.Get("Location"))
 	torrentID := parseUploadID(location, string(responseBody))
@@ -100,8 +102,8 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		}, nil
 	}
 
-	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "PTS", "upload_failure", responseBody, ".html")
-	return api.UploadSummary{}, commonhttp.UploadHTTPError("PTS", resp.StatusCode, responseBody)
+	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "PTS", "upload_failure", responsePreview, ".html")
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("PTS", resp.StatusCode, responsePreview)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {

@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"net/http"
 	"net/url"
@@ -76,10 +75,13 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, fmt.Errorf("trackers: TVC upload request: %w", err)
 	}
 	defer resp.Body.Close()
-	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode == http.StatusOK, commonhttp.DefaultResponsePreviewBytes)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: TVC read upload response: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK {
-		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "TVC", "upload_failure", responseBody, ".txt")
-		return api.UploadSummary{}, commonhttp.UploadHTTPError("TVC", resp.StatusCode, responseBody)
+		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "TVC", "upload_failure", responsePreview, ".txt")
+		return api.UploadSummary{}, commonhttp.UploadHTTPError("TVC", resp.StatusCode, responsePreview)
 	}
 
 	payload := string(responseBody)

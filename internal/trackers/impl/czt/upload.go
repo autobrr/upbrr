@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"net/http"
 	"net/url"
@@ -115,7 +114,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, fmt.Errorf("trackers: CZT upload request: %w", err)
 	}
 	defer resp.Body.Close()
-	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode == http.StatusCreated, commonhttp.DefaultResponsePreviewBytes)
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: CZT read upload response: %w", err)
 	}
@@ -129,8 +128,8 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	// release name already exists; surface it as an error (the response still
 	// carries the existing torrent for callers who want to cross-seed).
 	if resp.StatusCode != http.StatusCreated {
-		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, trackerName, "upload_failure", responseBody, ".json")
-		return api.UploadSummary{}, commonhttp.UploadHTTPError(trackerName, resp.StatusCode, responseBody)
+		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, trackerName, "upload_failure", responsePreview, ".json")
+		return api.UploadSummary{}, commonhttp.UploadHTTPError(trackerName, resp.StatusCode, responsePreview)
 	}
 
 	torrentIDValue, err := parseCZTUploadID(responseBody)
@@ -138,8 +137,8 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, fmt.Errorf("trackers: CZT parse upload response id: %w", err)
 	}
 	if torrentIDValue <= 0 {
-		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, trackerName, "upload_failure", responseBody, ".json")
-		return api.UploadSummary{}, commonhttp.UploadHTTPError(trackerName, resp.StatusCode, responseBody)
+		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, trackerName, "upload_failure", responsePreview, ".json")
+		return api.UploadSummary{}, commonhttp.UploadHTTPError(trackerName, resp.StatusCode, responsePreview)
 	}
 
 	torrentID := strconv.Itoa(torrentIDValue)

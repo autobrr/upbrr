@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"maps"
 	"net/http"
 	"net/http/cookiejar"
@@ -65,7 +64,11 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, fmt.Errorf("trackers: TL upload request: %w", err)
 	}
 	defer resp.Body.Close()
-	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	successCandidate := resp.StatusCode == http.StatusFound || (req.TrackerConfig.APIUpload && resp.StatusCode >= 200 && resp.StatusCode < 300)
+	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, successCandidate, commonhttp.DefaultResponsePreviewBytes)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: TL read upload response: %w", err)
+	}
 
 	torrentID := ""
 	if req.TrackerConfig.APIUpload {
@@ -77,8 +80,8 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		torrentID = strings.TrimPrefix(strings.TrimSpace(resp.Header.Get("Location")), "/successfulupload?torrentID=")
 	}
 	if torrentID == "" {
-		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "TL", "upload_failure", responseBody, ".html")
-		return api.UploadSummary{}, commonhttp.UploadHTTPError("TL", resp.StatusCode, responseBody)
+		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "TL", "upload_failure", responsePreview, ".html")
+		return api.UploadSummary{}, commonhttp.UploadHTTPError("TL", resp.StatusCode, responsePreview)
 	}
 
 	urlValue := torrentURL + torrentID

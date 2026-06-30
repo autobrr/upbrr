@@ -276,6 +276,33 @@ func TestUploadResponseParseBoundaries(t *testing.T) {
 	}
 }
 
+func TestUploadSuccessParsesLargeResponse(t *testing.T) {
+	padding := strings.Repeat("a", 70*1024)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = fmt.Fprintf(
+			w,
+			`{"name":%q,"id":123,"download_url":"/download.php?id=123","torrent_b64":" "}`,
+			padding,
+		)
+	}))
+	defer server.Close()
+
+	result, err := upload(context.Background(), cztUploadRequest(t, server.URL))
+	if err != nil {
+		t.Fatalf("unexpected upload error: %v", err)
+	}
+	if result.Uploaded != 1 || len(result.UploadedTorrents) != 1 {
+		t.Fatalf("expected remote success without artifact failure, got %+v", result)
+	}
+	if result.UploadedTorrents[0].TorrentID != "123" {
+		t.Fatalf("expected torrent ID 123, got %q", result.UploadedTorrents[0].TorrentID)
+	}
+	if result.UploadedTorrents[0].DownloadURL != server.URL+"/download.php?id=123" {
+		t.Fatalf("expected download URL from large response, got %q", result.UploadedTorrents[0].DownloadURL)
+	}
+}
+
 func TestUploadResponseBadLocalFieldPreservesRemoteSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)

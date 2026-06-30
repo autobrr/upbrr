@@ -89,7 +89,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()
 	}
-	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 400, commonhttp.DefaultResponsePreviewBytes)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: BT read upload response: %w", err)
+	}
 	match := groupPattern.FindStringSubmatch(finalURL + "\n" + string(responseBody))
 	id := metautil.FirstNonEmptyTrimmed(matchValue(match, 1), matchValue(match, 2))
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 && id != "" {
@@ -115,8 +118,8 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 			}},
 		}, nil
 	}
-	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "BT", "upload_failure", responseBody, ".html")
-	return api.UploadSummary{}, commonhttp.UploadHTTPError("BT", resp.StatusCode, responseBody)
+	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "BT", "upload_failure", responsePreview, ".html")
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("BT", resp.StatusCode, responsePreview)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {

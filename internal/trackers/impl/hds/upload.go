@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"maps"
 	"net/http"
 	"path/filepath"
@@ -83,7 +82,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()
 	}
-	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 400, commonhttp.DefaultResponsePreviewBytes)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: HDS read upload response: %w", err)
+	}
 	combined := finalURL + "\n" + string(responseBody)
 	match := idPattern.FindStringSubmatch(combined)
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 && len(match) >= 2 {
@@ -111,8 +113,8 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		}, nil
 	}
 
-	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "HDS", "upload_failure", responseBody, ".html")
-	return api.UploadSummary{}, commonhttp.UploadHTTPError("HDS", resp.StatusCode, responseBody)
+	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "HDS", "upload_failure", responsePreview, ".html")
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("HDS", resp.StatusCode, responsePreview)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {

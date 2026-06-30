@@ -33,6 +33,10 @@ const maxHTTPErrorDetailLength = 700
 
 const maxHTTPErrorDetailDepth = 10
 
+// DefaultResponsePreviewBytes bounds tracker response bodies used for failure
+// artifacts and error text.
+const DefaultResponsePreviewBytes int64 = 64 * 1024
+
 var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
 
 // FileField describes one file part in a tracker multipart upload. FieldName is
@@ -322,6 +326,40 @@ func ApplyCookies(req *http.Request, cookies []*http.Cookie) {
 		}
 		req.AddCookie(cookie)
 	}
+}
+
+// ReadUploadResponseBody reads a full success-candidate response for parsers and
+// always returns a bounded preview for diagnostics. Non-success responses are
+// read only up to previewLimit.
+func ReadUploadResponseBody(resp *http.Response, successCandidate bool, previewLimit int64) ([]byte, []byte, error) {
+	if previewLimit <= 0 {
+		previewLimit = DefaultResponsePreviewBytes
+	}
+	var (
+		body []byte
+		err  error
+	)
+	if successCandidate {
+		body, err = io.ReadAll(resp.Body)
+	} else {
+		body, err = io.ReadAll(io.LimitReader(resp.Body, previewLimit))
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("read upload response body: %w", err)
+	}
+	return body, ResponseBodyPreview(body, previewLimit), nil
+}
+
+// ResponseBodyPreview returns body unchanged when it fits the limit, otherwise
+// it returns the prefix used for shareable diagnostics.
+func ResponseBodyPreview(body []byte, previewLimit int64) []byte {
+	if previewLimit <= 0 {
+		previewLimit = DefaultResponsePreviewBytes
+	}
+	if int64(len(body)) <= previewLimit {
+		return body
+	}
+	return body[:previewLimit]
 }
 
 // WriteFailureArtifact stores a tracker failure response under the release temp

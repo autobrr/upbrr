@@ -23,6 +23,7 @@ import (
 
 const (
 	arDefaultBaseURL  = "https://alpharatio.cc"
+	authPreviewBytes  = 64 * 1024
 	arBrowsePath      = "/torrents.php"
 	ffDefaultBaseURL  = "https://www.funfile.org"
 	ffLoginPath       = "/takelogin.php"
@@ -61,7 +62,7 @@ func resolveARStoredSessionForTrackerAuth(ctx context.Context, cfg config.Tracke
 		return &ValidationError{TrackerID: "AR", Transient: true, Reason: "remote validation unavailable", Err: fmt.Errorf("trackers: AR session validation request: %w", err)}
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	body, _ := readTrackerAuthResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 300)
 	if isLoginRedirect(resp) || resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || arLooksLoggedOut(string(body)) {
 		return &ValidationError{TrackerID: "AR", ConfirmedInvalid: true, Reason: "stored session expired", Err: fmt.Errorf("trackers: AR session validation failed status=%d", resp.StatusCode)}
 	}
@@ -107,7 +108,7 @@ func validateFFStoredCookies(ctx context.Context, baseURL string, values []*http
 		return &ValidationError{TrackerID: "FF", Transient: true, Reason: "remote validation unavailable", Err: fmt.Errorf("trackers: FF session validation request: %w", err)}
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	body, _ := readTrackerAuthResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 300)
 	if isLoginRedirect(resp) || resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || ffLooksLoggedOut(string(body)) {
 		return &ValidationError{TrackerID: "FF", ConfirmedInvalid: true, Reason: "stored session expired", Err: fmt.Errorf("trackers: FF session validation failed status=%d", resp.StatusCode)}
 	}
@@ -183,7 +184,7 @@ func validateFLStoredCookies(ctx context.Context, baseURL string, values []*http
 		return &ValidationError{TrackerID: "FL", Transient: true, Reason: "remote validation unavailable", Err: fmt.Errorf("trackers: FL session validation request: %w", err)}
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	body, _ := readTrackerAuthResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 300)
 	if isLoginRedirect(resp) || resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || flLooksLoggedOut(string(body)) {
 		return &ValidationError{TrackerID: "FL", ConfirmedInvalid: true, Reason: "stored session expired", Err: fmt.Errorf("trackers: FL session validation failed status=%d", resp.StatusCode)}
 	}
@@ -212,7 +213,7 @@ func loginFLForTrackerAuth(ctx context.Context, cfg config.TrackerConfig, dbPath
 	if err != nil {
 		return fmt.Errorf("trackers: FL login page request: %w", err)
 	}
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	body, readErr := readTrackerAuthResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 300)
 	resp.Body.Close()
 	if readErr != nil {
 		return fmt.Errorf("trackers: FL read login page response: %w", readErr)
@@ -273,7 +274,7 @@ func resolveHDBStoredSessionForTrackerAuth(ctx context.Context, cfg config.Track
 		return &ValidationError{TrackerID: "HDB", Transient: true, Reason: "remote validation unavailable", Err: fmt.Errorf("trackers: HDB session validation request: %w", err)}
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	body, _ := readTrackerAuthResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 300)
 	if isLoginRedirect(resp) || resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || hdbLooksLoggedOut(string(body)) {
 		return &ValidationError{TrackerID: "HDB", ConfirmedInvalid: true, Reason: "stored session expired", Err: fmt.Errorf("trackers: HDB session validation failed status=%d", resp.StatusCode)}
 	}
@@ -306,7 +307,7 @@ func resolveTHRSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConf
 		return fmt.Errorf("trackers: THR login request: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	body, _ := readTrackerAuthResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 400)
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
 		return &ValidationError{TrackerID: "THR", ConfirmedInvalid: true, Reason: "login failed", Err: fmt.Errorf("trackers: THR login failed status=%d", resp.StatusCode)}
 	}
@@ -314,6 +315,23 @@ func resolveTHRSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConf
 		return &ValidationError{TrackerID: "THR", ConfirmedInvalid: true, Reason: "login failed", Err: errors.New("trackers: THR login marker not found")}
 	}
 	return nil
+}
+
+// readTrackerAuthResponseBody reads full success-candidate auth pages for
+// marker parsing while keeping failed-status diagnostics bounded.
+func readTrackerAuthResponseBody(resp *http.Response, successCandidate bool) ([]byte, error) {
+	if successCandidate {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("trackers: read auth response body: %w", err)
+		}
+		return body, nil
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, authPreviewBytes))
+	if err != nil {
+		return nil, fmt.Errorf("trackers: read auth response preview: %w", err)
+	}
+	return body, nil
 }
 
 // shouldRefreshStoredCookiesWithCredentials reports whether stored cookies were

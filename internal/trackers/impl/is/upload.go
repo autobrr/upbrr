@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"maps"
 	"net/http"
 	"path/filepath"
@@ -86,7 +85,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()
 	}
-	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 400, commonhttp.DefaultResponsePreviewBytes)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: IS read upload response: %w", err)
+	}
 	id, success := successfulUploadResponse(finalURL, string(responseBody))
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 && success {
 		if id != "" {
@@ -114,8 +116,8 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		}
 		return api.UploadSummary{Uploaded: 1}, nil
 	}
-	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "IS", "upload_failure", responseBody, ".html")
-	return api.UploadSummary{}, commonhttp.UploadHTTPError("IS", resp.StatusCode, responseBody)
+	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "IS", "upload_failure", responsePreview, ".html")
+	return api.UploadSummary{}, commonhttp.UploadHTTPError("IS", resp.StatusCode, responsePreview)
 }
 
 func successfulUploadResponse(finalURL string, responseBody string) (string, bool) {

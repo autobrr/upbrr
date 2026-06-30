@@ -6,6 +6,8 @@ package commonhttp
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +26,39 @@ func (s stubCookieStore) GetAllTrackerCookies(context.Context, string, []byte) (
 		return nil, s.err
 	}
 	return s.cookies, nil
+}
+
+func TestReadUploadResponseBodyUsesFullSuccessAndBoundedFailurePreview(t *testing.T) {
+	t.Parallel()
+
+	large := strings.Repeat("a", int(DefaultResponsePreviewBytes)+32)
+	successResp := &http.Response{Body: ioNopCloser(large)}
+	body, preview, err := ReadUploadResponseBody(successResp, true, DefaultResponsePreviewBytes)
+	if err != nil {
+		t.Fatalf("ReadUploadResponseBody success: %v", err)
+	}
+	if len(body) != len(large) {
+		t.Fatalf("expected full success body length %d, got %d", len(large), len(body))
+	}
+	if int64(len(preview)) != DefaultResponsePreviewBytes {
+		t.Fatalf("expected bounded preview length %d, got %d", DefaultResponsePreviewBytes, len(preview))
+	}
+
+	failureResp := &http.Response{Body: ioNopCloser(large)}
+	body, preview, err = ReadUploadResponseBody(failureResp, false, DefaultResponsePreviewBytes)
+	if err != nil {
+		t.Fatalf("ReadUploadResponseBody failure: %v", err)
+	}
+	if int64(len(body)) != DefaultResponsePreviewBytes {
+		t.Fatalf("expected bounded failure body length %d, got %d", DefaultResponsePreviewBytes, len(body))
+	}
+	if string(preview) != string(body) {
+		t.Fatal("expected failure preview to match bounded body")
+	}
+}
+
+func ioNopCloser(value string) io.ReadCloser {
+	return io.NopCloser(strings.NewReader(value))
 }
 
 func TestLoadCookiesForTrackerUsesCookieStoreWhenNoStartupCookieExists(t *testing.T) {
