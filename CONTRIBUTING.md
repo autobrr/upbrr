@@ -243,6 +243,10 @@ Alternatively, `make precommit` and `make prepush` run the configured Lefthook c
 - `pkg/api` holds request/response types shared across surfaces.
 - The repo currently includes generated and built assets in a few locations; review changes carefully and avoid committing build output by accident.
 
+### Logging levels
+
+Keep log levels purposeful. `INFO` should provide concise, relevant progress or outcome details for end users during uploads and other top-level workflows. `DEBUG` should include richer decision-making context useful for developer troubleshooting. `TRACE` should capture near-complete operational flow for high-fidelity execution reporting.
+
 ### Path portability
 
 upbrr targets Windows, Linux, and macOS. Do not assume POSIX path behavior in Go code or tests unless the value is explicitly a torrent-internal path, URL path, or remote API payload path.
