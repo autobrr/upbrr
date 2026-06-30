@@ -470,7 +470,7 @@ func checkSensitiveOutputFile(fset *token.FileSet, root string, path string, tes
 			aliases:              aliases,
 			relPath:              relPath,
 			testFile:             testFile,
-			testSensitiveFixture: testFile && containsSensitiveFixtureLiteral(fn.Body),
+			testSensitiveFixture: testFile && (containsSensitiveFixtureLiteral(fn.Body) || isRedactionTestPath(relPath)),
 		}
 		functionContext := strings.ToLower(relPath + " " + fn.Name.Name)
 		ast.Walk(&sensitiveOutputVisitor{
@@ -543,7 +543,7 @@ func (v *sensitiveOutputVisitor) checkCall(call *ast.CallExpr) {
 			value = sensitiveValue{kind: sensitiveRawError, label: "raw error"}
 			ok = true
 		}
-		if !ok && v.testFile && v.model.testSensitiveFixture && isTestLogBufferDumpExpr(sinkArg.expr) {
+		if !ok && v.testFile && v.model.testSensitiveFixture && isTestLogBufferDumpExpr(sinkArg.expr, v.model.relPath) {
 			value = sensitiveValue{kind: sensitiveGeneric, label: "test log buffer"}
 			ok = true
 		}
@@ -1264,17 +1264,32 @@ func containsSensitiveFixtureLiteral(node ast.Node) bool {
 	return found
 }
 
-func isTestLogBufferDumpExpr(expr ast.Expr) bool {
-	ident, ok := expr.(*ast.Ident)
-	if !ok {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(ident.Name)) {
-	case "logs", "log", "text":
-		return true
-	default:
-		return false
-	}
+func isRedactionTestPath(relPath string) bool {
+	return strings.HasPrefix(relPath, "internal/redaction/") && strings.HasSuffix(relPath, "_test.go")
+}
+
+func isTestLogBufferDumpExpr(expr ast.Expr, relPath string) bool {
+	found := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		ident, ok := node.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		switch strings.ToLower(strings.TrimSpace(ident.Name)) {
+		case "logs", "log", "text":
+			found = true
+			return false
+		case "input", "output", "redacted", "secret":
+			if strings.HasPrefix(relPath, "internal/redaction/") {
+				found = true
+				return false
+			}
+			return true
+		default:
+			return true
+		}
+	})
+	return found
 }
 
 func isSafeSensitiveOutputExpr(expr ast.Expr) bool {

@@ -604,6 +604,54 @@ type testingT interface {
 	}
 }
 
+func TestCheckRepositoryFlagsRedactionFixtureOutputDump(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "redaction"), 0o755); err != nil {
+		t.Fatalf("mkdir internal redaction: %v", err)
+	}
+
+	content := `package redaction
+
+func check(t testingT) {
+	input := "token=secret"
+	output := RedactValue(input, nil)
+	if output == input {
+		t.Fatalf("expected redaction, got %q", output)
+	}
+	for _, secret := range []string{"secret"} {
+		if contains(output, secret) {
+			t.Fatalf("expected %q redacted", secret)
+		}
+	}
+	redacted := RedactPrivateInfo(map[string]any{"token": "secret"}, nil).(map[string]any)
+	if redacted["token"] != "[REDACTED]" {
+		t.Fatalf("expected token redacted, got %#v", redacted["token"])
+	}
+}
+
+type testingT interface {
+	Fatalf(string, ...any)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "redaction", "redaction_test.go"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 3 {
+		t.Fatalf("expected 3 violations, got %d: %#v", len(violations), violations)
+	}
+	for _, violation := range violations {
+		if !strings.Contains(violation.Message, "sensitive output") {
+			t.Fatalf("expected sensitive output violation, got %q", violation.Message)
+		}
+	}
+}
+
 func TestCheckRepositoryFlagsRawDryRunDetailsOutput(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
