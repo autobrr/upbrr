@@ -321,6 +321,44 @@ func UploadHTTPError(string, int, []byte) error { return nil }
 	}
 }
 
+func TestCheckRepositoryDoesNotTreatReadAllErrorAsResponseBody(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+
+	content := `package sample
+
+import (
+	"io"
+	"net/http"
+
+	"github.com/autobrr/upbrr/internal/redaction"
+)
+
+func check(resp *http.Response) string {
+	body, err := io.ReadAll(resp.Body)
+	_ = body
+	if err != nil {
+		return redaction.RedactValue(err.Error(), nil)
+	}
+	return ""
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
 func TestCheckRepositoryKeepsSensitiveBindingsLexicallyScoped(t *testing.T) {
 	root := t.TempDir()
 	content := `package sample

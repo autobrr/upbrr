@@ -984,16 +984,27 @@ func checkUnboundedResponseBodyUses(fset *token.FileSet, relPath string, file *a
 }
 
 func markUnboundedBodyAssignments(stmt *ast.AssignStmt, aliases map[string]string, unboundedBodyVars map[string]struct{}) {
+	if len(stmt.Rhs) == 1 {
+		for index, target := range stmt.Lhs {
+			ident, ok := target.(*ast.Ident)
+			if !ok || ident.Name == "_" {
+				continue
+			}
+			if index == 0 && isUnboundedResponseBodyRead(stmt.Rhs[0], aliases) {
+				unboundedBodyVars[ident.Name] = struct{}{}
+				continue
+			}
+			delete(unboundedBodyVars, ident.Name)
+		}
+		return
+	}
+
 	for index, target := range stmt.Lhs {
 		ident, ok := target.(*ast.Ident)
 		if !ok || ident.Name == "_" {
 			continue
 		}
-		rhsIndex := index
-		if len(stmt.Rhs) == 1 {
-			rhsIndex = 0
-		}
-		if rhsIndex >= len(stmt.Rhs) || !isUnboundedResponseBodyRead(stmt.Rhs[rhsIndex], aliases) {
+		if index >= len(stmt.Rhs) || !isUnboundedResponseBodyRead(stmt.Rhs[index], aliases) {
 			delete(unboundedBodyVars, ident.Name)
 			continue
 		}
