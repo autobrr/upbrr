@@ -238,6 +238,85 @@ type testingT interface {
 	}
 }
 
+func TestCheckRepositoryKeepsSensitiveBindingsLexicallyScoped(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+import (
+	"net/http"
+	"testing"
+)
+
+func checkInnerSensitiveDoesNotLeak(t *testing.T, r *http.Request) {
+	got := "safe"
+	if true {
+		got := r.Header.Get("Cookie")
+		_ = got
+	}
+	t.Fatalf("expected safe value, got %q", got)
+}
+
+func checkInnerSafeDoesNotClearOuterSensitive(t *testing.T, r *http.Request) {
+	got := r.Header.Get("Cookie")
+	if true {
+		got := "safe"
+		t.Logf("inner value: %q", got)
+	}
+	t.Fatalf("expected cookie, got %q", got)
+}
+
+func checkRangeSensitiveDoesNotLeak(t *testing.T, r *http.Request) {
+	got := "safe"
+	for _, got := range r.Cookies() {
+		_ = got
+	}
+	t.Fatalf("expected safe value, got %q", got)
+}
+`
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "HTTP header") {
+		t.Fatalf("expected outer sensitive cookie violation, got %#v", violations[0])
+	}
+}
+
+func TestCheckRepositoryFlagsNonFormatTestOutputMethods(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+import (
+	"io"
+	"net/http"
+	"testing"
+)
+
+func check(t *testing.T, r *http.Request, resp *http.Response) {
+	auth := r.Header.Get("Authorization")
+	t.Fatal(auth)
+	cookies := []*http.Cookie{{Name: "session", Value: "secret"}}
+	t.Error(cookies)
+	body, _ := io.ReadAll(resp.Body)
+	t.Log(body)
+}
+`
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 3 {
+		t.Fatalf("expected 3 violations, got %d: %#v", len(violations), violations)
+	}
+}
+
 func TestCheckRepositoryAllowsLogpolicyAllowForNonHeaderSensitiveOutput(t *testing.T) {
 	root := t.TempDir()
 	content := `package sample

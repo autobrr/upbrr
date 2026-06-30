@@ -176,8 +176,8 @@ func (u *imgboxUploader) Upload(ctx context.Context, imagePath string) (uploadRe
 	}
 	if !response.OK && len(response.Files) == 0 {
 		errMsg := "unknown error"
-		if response.Error != "" {
-			errMsg = safeResponseMessage(response.Error)
+		if message := safeResponseMessage(response.Error); message != "" {
+			errMsg = message
 		}
 		bodyStr := safeResponsePreview(body)
 		return uploadResult{}, fmt.Errorf("imgbox upload rejected: %s (response: %s)", errMsg, bodyStr)

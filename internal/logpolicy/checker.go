@@ -382,12 +382,60 @@ type sensitiveValue struct {
 	label string
 }
 
+type sensitiveBinding struct {
+	value     sensitiveValue
+	sensitive bool
+}
+
 type sensitiveModel struct {
 	aliases              map[string]string
-	vars                 map[string]sensitiveValue
+	scopes               []map[string]sensitiveBinding
 	relPath              string
 	testFile             bool
 	testSensitiveFixture bool
+}
+
+func (m *sensitiveModel) pushScope() {
+	m.scopes = append(m.scopes, make(map[string]sensitiveBinding))
+}
+
+func (m *sensitiveModel) popScope() {
+	if len(m.scopes) == 0 {
+		return
+	}
+	m.scopes = m.scopes[:len(m.scopes)-1]
+}
+
+func (m *sensitiveModel) currentScope() map[string]sensitiveBinding {
+	if len(m.scopes) == 0 {
+		m.pushScope()
+	}
+	return m.scopes[len(m.scopes)-1]
+}
+
+func (m *sensitiveModel) declare(name string, value sensitiveValue, sensitive bool) {
+	m.currentScope()[name] = sensitiveBinding{value: value, sensitive: sensitive}
+}
+
+func (m *sensitiveModel) assign(name string, value sensitiveValue, sensitive bool) {
+	for i := len(m.scopes) - 1; i >= 0; i-- {
+		if _, ok := m.scopes[i][name]; ok {
+			m.scopes[i][name] = sensitiveBinding{value: value, sensitive: sensitive}
+			return
+		}
+	}
+	m.declare(name, value, sensitive)
+}
+
+func (m *sensitiveModel) lookup(name string) (sensitiveValue, bool) {
+	for i := len(m.scopes) - 1; i >= 0; i-- {
+		binding, ok := m.scopes[i][name]
+		if !ok {
+			continue
+		}
+		return binding.value, binding.sensitive
+	}
+	return sensitiveValue{}, false
 }
 
 type logpolicyAllow struct {
@@ -420,46 +468,19 @@ func checkSensitiveOutputFile(fset *token.FileSet, root string, path string, tes
 		}
 		model := sensitiveModel{
 			aliases:              aliases,
-			vars:                 make(map[string]sensitiveValue),
 			relPath:              relPath,
 			testFile:             testFile,
 			testSensitiveFixture: testFile && containsSensitiveFixtureLiteral(fn.Body),
 		}
 		functionContext := strings.ToLower(relPath + " " + fn.Name.Name)
-		ast.Inspect(fn.Body, func(node ast.Node) bool {
-			switch typed := node.(type) {
-			case *ast.AssignStmt:
-				markSensitiveAssignment(model, typed.Lhs, typed.Rhs)
-			case *ast.RangeStmt:
-				markSensitiveRange(model, typed)
-			case *ast.CallExpr:
-				for _, sinkArg := range sensitiveSinkArgs(typed, model.aliases, testFile, functionContext) {
-					if isSafeSensitiveOutputExpr(sinkArg.expr) {
-						continue
-					}
-					value, ok := sensitivityOfExpr(model, sinkArg.expr)
-					if !ok && sinkArg.forceRawError {
-						value = sensitiveValue{kind: sensitiveRawError, label: "raw error"}
-						ok = true
-					}
-					if !ok && testFile && model.testSensitiveFixture && isTestLogBufferDumpExpr(sinkArg.expr) {
-						value = sensitiveValue{kind: sensitiveGeneric, label: "test log buffer"}
-						ok = true
-					}
-					if !ok {
-						continue
-					}
-					if value.kind == sensitiveBody && isRawErrorLikeExpr(sinkArg.expr) {
-						continue
-					}
-					if shouldSuppressLogpolicyViolation(fset, allows, sinkArg.expr.Pos(), value) {
-						continue
-					}
-					violations = append(violations, violationAt(fset, relPath, sinkArg.expr.Pos(), sensitiveOutputMessage(value)))
-				}
-			}
-			return true
-		})
+		ast.Walk(&sensitiveOutputVisitor{
+			fset:            fset,
+			allows:          allows,
+			violations:      &violations,
+			model:           &model,
+			testFile:        testFile,
+			functionContext: functionContext,
+		}, fn.Body)
 	}
 
 	for _, allow := range allows {
@@ -470,6 +491,82 @@ func checkSensitiveOutputFile(fset *token.FileSet, root string, path string, tes
 	}
 
 	return violations, nil
+}
+
+type sensitiveOutputVisitor struct {
+	fset            *token.FileSet
+	allows          map[int]*logpolicyAllow
+	violations      *[]Violation
+	model           *sensitiveModel
+	testFile        bool
+	functionContext string
+	scopeStack      []bool
+}
+
+func (v *sensitiveOutputVisitor) Visit(node ast.Node) ast.Visitor {
+	if node == nil {
+		if len(v.scopeStack) == 0 {
+			return nil
+		}
+		pushedScope := v.scopeStack[len(v.scopeStack)-1]
+		v.scopeStack = v.scopeStack[:len(v.scopeStack)-1]
+		if pushedScope {
+			v.model.popScope()
+		}
+		return nil
+	}
+
+	pushedScope := isSensitiveScopeNode(node)
+	if pushedScope {
+		v.model.pushScope()
+	}
+	v.scopeStack = append(v.scopeStack, pushedScope)
+
+	switch typed := node.(type) {
+	case *ast.AssignStmt:
+		markSensitiveAssignment(v.model, typed)
+	case *ast.RangeStmt:
+		markSensitiveRange(v.model, typed)
+	case *ast.CallExpr:
+		v.checkCall(typed)
+	}
+	return v
+}
+
+func (v *sensitiveOutputVisitor) checkCall(call *ast.CallExpr) {
+	for _, sinkArg := range sensitiveSinkArgs(call, v.model.aliases, v.testFile, v.functionContext) {
+		if isSafeSensitiveOutputExpr(sinkArg.expr) {
+			continue
+		}
+		value, ok := sensitivityOfExpr(v.model, sinkArg.expr)
+		if !ok && sinkArg.forceRawError {
+			value = sensitiveValue{kind: sensitiveRawError, label: "raw error"}
+			ok = true
+		}
+		if !ok && v.testFile && v.model.testSensitiveFixture && isTestLogBufferDumpExpr(sinkArg.expr) {
+			value = sensitiveValue{kind: sensitiveGeneric, label: "test log buffer"}
+			ok = true
+		}
+		if !ok {
+			continue
+		}
+		if value.kind == sensitiveBody && isRawErrorLikeExpr(sinkArg.expr) {
+			continue
+		}
+		if shouldSuppressLogpolicyViolation(v.fset, v.allows, sinkArg.expr.Pos(), value) {
+			continue
+		}
+		*v.violations = append(*v.violations, violationAt(v.fset, v.model.relPath, sinkArg.expr.Pos(), sensitiveOutputMessage(value)))
+	}
+}
+
+func isSensitiveScopeNode(node ast.Node) bool {
+	switch node.(type) {
+	case *ast.BlockStmt, *ast.IfStmt, *ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt, *ast.CaseClause, *ast.CommClause:
+		return true
+	default:
+		return false
+	}
 }
 
 func collectLogpolicyAllows(fset *token.FileSet, relPath string, file *ast.File) (map[int]*logpolicyAllow, []Violation) {
@@ -575,8 +672,11 @@ func sensitiveSinkArgs(call *ast.CallExpr, aliases map[string]string, testFile b
 			return sinkArgsWithFormat(call.Args[1:], false, stringArgValue(call, 0))
 		}
 	}
-	if testFile && isTestAssertionOutputMethod(selector.Sel.Name) && hasStringArg(call, 0) {
-		return sinkArgsWithFormat(call.Args[1:], false, stringArgValue(call, 0))
+	if testFile && isTestAssertionOutputMethod(selector.Sel.Name) {
+		if isTestAssertionFormatOutputMethod(selector.Sel.Name) && hasStringArg(call, 0) {
+			return sinkArgsWithFormat(call.Args[1:], false, stringArgValue(call, 0))
+		}
+		return sinkArgs(call.Args, false)
 	}
 
 	return nil
@@ -619,6 +719,15 @@ func stringArgValue(call *ast.CallExpr, index int) string {
 
 func isTestAssertionOutputMethod(name string) bool {
 	switch name {
+	case "Fatal", "Fatalf", "Error", "Errorf", "Log", "Logf":
+		return true
+	default:
+		return false
+	}
+}
+
+func isTestAssertionFormatOutputMethod(name string) bool {
+	switch name {
 	case "Fatalf", "Errorf", "Logf":
 		return true
 	default:
@@ -646,43 +755,45 @@ func isSensitiveHTTPErrorContext(context string) bool {
 	return false
 }
 
-func markSensitiveAssignment(model sensitiveModel, lhs []ast.Expr, rhs []ast.Expr) {
-	for index, target := range lhs {
+func markSensitiveAssignment(model *sensitiveModel, stmt *ast.AssignStmt) {
+	declare := stmt.Tok == token.DEFINE
+	for index, target := range stmt.Lhs {
 		ident, ok := target.(*ast.Ident)
 		if !ok || ident.Name == "_" {
 			continue
 		}
 		rhsIndex := index
-		if len(rhs) == 1 {
+		if len(stmt.Rhs) == 1 {
 			rhsIndex = 0
 		}
-		if rhsIndex >= len(rhs) {
-			delete(model.vars, ident.Name)
+		if rhsIndex >= len(stmt.Rhs) {
+			model.bind(ident.Name, sensitiveValue{}, false, declare)
 			continue
 		}
-		value, sensitive := sensitivityOfExprResult(model, rhs[rhsIndex], index)
-		if !sensitive {
-			delete(model.vars, ident.Name)
-			continue
-		}
-		model.vars[ident.Name] = value
+		value, sensitive := sensitivityOfExprResult(model, stmt.Rhs[rhsIndex], index)
+		model.bind(ident.Name, value, sensitive, declare)
 	}
 }
 
-func markSensitiveRange(model sensitiveModel, stmt *ast.RangeStmt) {
-	value, ok := sensitivityOfExpr(model, stmt.X)
-	if !ok {
+func (m *sensitiveModel) bind(name string, value sensitiveValue, sensitive bool, declare bool) {
+	if declare {
+		m.declare(name, value, sensitive)
 		return
 	}
+	m.assign(name, value, sensitive)
+}
+
+func markSensitiveRange(model *sensitiveModel, stmt *ast.RangeStmt) {
+	value, sensitive := sensitivityOfExpr(model, stmt.X)
 	for _, target := range []ast.Expr{stmt.Key, stmt.Value} {
 		ident, ok := target.(*ast.Ident)
 		if ok && ident.Name != "_" {
-			model.vars[ident.Name] = value
+			model.bind(ident.Name, value, sensitive, stmt.Tok == token.DEFINE)
 		}
 	}
 }
 
-func sensitivityOfExprResult(model sensitiveModel, expr ast.Expr, resultIndex int) (sensitiveValue, bool) {
+func sensitivityOfExprResult(model *sensitiveModel, expr ast.Expr, resultIndex int) (sensitiveValue, bool) {
 	if call, ok := expr.(*ast.CallExpr); ok {
 		if value, sensitive := sensitivityOfKnownCallResult(model, call, resultIndex); sensitive {
 			return value, true
@@ -694,14 +805,13 @@ func sensitivityOfExprResult(model sensitiveModel, expr ast.Expr, resultIndex in
 	return sensitivityOfExpr(model, expr)
 }
 
-func sensitivityOfExpr(model sensitiveModel, expr ast.Expr) (sensitiveValue, bool) {
+func sensitivityOfExpr(model *sensitiveModel, expr ast.Expr) (sensitiveValue, bool) {
 	if expr == nil || isSafeSensitiveOutputExpr(expr) {
 		return sensitiveValue{}, false
 	}
 	switch typed := expr.(type) {
 	case *ast.Ident:
-		value, ok := model.vars[typed.Name]
-		return value, ok
+		return model.lookup(typed.Name)
 	case *ast.ParenExpr:
 		return sensitivityOfExpr(model, typed.X)
 	case *ast.UnaryExpr:
@@ -758,7 +868,7 @@ func sensitivityOfExpr(model sensitiveModel, expr ast.Expr) (sensitiveValue, boo
 	return sensitiveValue{}, false
 }
 
-func isSensitivePropagatingCall(model sensitiveModel, call *ast.CallExpr) bool {
+func isSensitivePropagatingCall(model *sensitiveModel, call *ast.CallExpr) bool {
 	switch fun := call.Fun.(type) {
 	case *ast.Ident:
 		return fun.Name == "string"
@@ -775,7 +885,7 @@ func isSensitivePropagatingCall(model sensitiveModel, call *ast.CallExpr) bool {
 	return false
 }
 
-func firstSensitiveExpr(model sensitiveModel, exprs ...ast.Expr) (sensitiveValue, bool) {
+func firstSensitiveExpr(model *sensitiveModel, exprs ...ast.Expr) (sensitiveValue, bool) {
 	for _, expr := range exprs {
 		if value, ok := sensitivityOfExpr(model, expr); ok {
 			return value, true
@@ -784,14 +894,14 @@ func firstSensitiveExpr(model sensitiveModel, exprs ...ast.Expr) (sensitiveValue
 	return sensitiveValue{}, false
 }
 
-func sensitivityOfPayloadIndex(model sensitiveModel, index *ast.IndexExpr) (sensitiveValue, bool) {
+func sensitivityOfPayloadIndex(model *sensitiveModel, index *ast.IndexExpr) (sensitiveValue, bool) {
 	if value, ok := sensitivityOfExpr(model, index.X); ok {
 		return value, true
 	}
 	return sensitiveValue{}, false
 }
 
-func sensitivityOfDirectCall(model sensitiveModel, call *ast.CallExpr) (sensitiveValue, bool) {
+func sensitivityOfDirectCall(model *sensitiveModel, call *ast.CallExpr) (sensitiveValue, bool) {
 	if value, ok := sensitivityOfKnownSensitiveCall(model, call); ok {
 		return value, true
 	}
@@ -834,7 +944,7 @@ func sensitivityOfDirectCall(model sensitiveModel, call *ast.CallExpr) (sensitiv
 	return sensitiveValue{}, false
 }
 
-func sensitivityOfKnownSensitiveCall(model sensitiveModel, call *ast.CallExpr) (sensitiveValue, bool) {
+func sensitivityOfKnownSensitiveCall(model *sensitiveModel, call *ast.CallExpr) (sensitiveValue, bool) {
 	switch callName(call) {
 	case "LoadTrackerCookieMap", "LoadTrackerHTTPCookies", "CookieMapToHTTPCookies", "CookiesToMap", "httpCookiesToMap", "cookiesFromJar", "btnCookiesFromJar":
 		return sensitiveValue{kind: sensitiveCookieContainer, label: "cookies"}, true
@@ -860,7 +970,7 @@ func callName(call *ast.CallExpr) string {
 	}
 }
 
-func sensitivityOfSelectorExpr(model sensitiveModel, selector *ast.SelectorExpr) (sensitiveValue, bool) {
+func sensitivityOfSelectorExpr(model *sensitiveModel, selector *ast.SelectorExpr) (sensitiveValue, bool) {
 	name := strings.TrimSpace(selector.Sel.Name)
 	if model.testFile && isConfigOwnerTestPath(model.relPath) {
 		return sensitiveValue{}, false
@@ -877,7 +987,7 @@ func sensitivityOfSelectorExpr(model sensitiveModel, selector *ast.SelectorExpr)
 	return sensitiveValue{}, false
 }
 
-func sensitivityOfSecretBearingURLExpr(model sensitiveModel, expr *ast.BinaryExpr) (sensitiveValue, bool) {
+func sensitivityOfSecretBearingURLExpr(model *sensitiveModel, expr *ast.BinaryExpr) (sensitiveValue, bool) {
 	if !binaryExprContainsSecretURLKey(expr) {
 		return sensitiveValue{}, false
 	}
@@ -890,7 +1000,7 @@ func sensitivityOfSecretBearingURLExpr(model sensitiveModel, expr *ast.BinaryExp
 	return sensitiveValue{}, false
 }
 
-func sensitivityOfKnownCallResult(model sensitiveModel, call *ast.CallExpr, resultIndex int) (sensitiveValue, bool) {
+func sensitivityOfKnownCallResult(model *sensitiveModel, call *ast.CallExpr, resultIndex int) (sensitiveValue, bool) {
 	if resultIndex != 0 {
 		return sensitiveValue{}, false
 	}
@@ -1011,7 +1121,7 @@ func isCookieCompositeType(expr ast.Expr) bool {
 	}
 }
 
-func isSensitiveURLReceiver(model sensitiveModel, expr ast.Expr) bool {
+func isSensitiveURLReceiver(model *sensitiveModel, expr ast.Expr) bool {
 	if _, ok := sensitivityOfExpr(model, expr); ok {
 		return true
 	}
@@ -1060,7 +1170,7 @@ func binaryExprContainsSecretURLKey(expr ast.Expr) bool {
 	return found
 }
 
-func containsSensitiveSelector(model sensitiveModel, expr ast.Expr) bool {
+func containsSensitiveSelector(model *sensitiveModel, expr ast.Expr) bool {
 	found := false
 	ast.Inspect(expr, func(node ast.Node) bool {
 		selector, ok := node.(*ast.SelectorExpr)

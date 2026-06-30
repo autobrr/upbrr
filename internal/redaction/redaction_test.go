@@ -90,6 +90,24 @@ func TestRedactValuePlainKeyValuePairs(t *testing.T) {
 	}
 }
 
+func TestRedactValueQuotedKeyValuePairsWithEscapedQuotes(t *testing.T) {
+	t.Parallel()
+
+	input := `token="alpha\"bravo" password='charlie\'delta' message=kept`
+	output := RedactValue(input, nil)
+
+	for _, secret := range []string{"alpha", "bravo", "charlie", "delta"} {
+		if contains(output, secret) {
+			t.Fatalf("expected %q redacted, got %q", secret, output)
+		}
+	}
+	for _, marker := range []string{`token="[REDACTED]"`, `password='[REDACTED]'`, "message=kept"} {
+		if !contains(output, marker) {
+			t.Fatalf("expected marker %q in %q", marker, output)
+		}
+	}
+}
+
 func TestRedactPrivateInfoJSON(t *testing.T) {
 	t.Parallel()
 

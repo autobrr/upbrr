@@ -37,7 +37,7 @@ var (
 	apiPathTokenRe      = regexp.MustCompile(`(?i)(/api/torrents/)([A-Za-z0-9]{10,})($|[/?#"])`)
 	proxyPathRe         = regexp.MustCompile(`(?i)(/proxy/)([^/\s?#"]+)`) // /proxy/<secret>
 	queryParamRe        = regexp.MustCompile(`(?i)([?&](api[_-]?key|api[_-]?token|auth|authkey|info_hash|key|passkey|rsskey|token|torrent_pass|uid|user|user_id|userid)=)[^&]+`)
-	keyValueQuotedRe    = regexp.MustCompile(`(?i)\b(api[_-]?key|api[_-]?token|authorization|auth|authkey|cookie|csrf|passkey|password|secret|token|torrent_pass)\b(\s*[:=]\s*)(["'])([^"']*)(["'])`)
+	keyValueQuotedRe    = regexp.MustCompile(`(?i)\b(api[_-]?key|api[_-]?token|authorization|auth|authkey|cookie|csrf|passkey|password|secret|token|torrent_pass)\b(\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`)
 	keyValuePlainRe     = regexp.MustCompile(`(?i)\b(api[_-]?key|api[_-]?token|authorization|auth|authkey|cookie|csrf|passkey|password|secret|token|torrent_pass)\b(\s*[:=]\s*)(bearer\s+)?([^"'\s,;)\]}]+)`)
 	longHexTokenRe      = regexp.MustCompile(`\b[a-fA-F0-9]{32,}\b`)
 )
@@ -130,12 +130,24 @@ func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
 	value = apiPathTokenRe.ReplaceAllString(value, `${1}[REDACTED]${3}`)
 	value = proxyPathRe.ReplaceAllString(value, `${1}[REDACTED]`)
 	value = queryParamRe.ReplaceAllString(value, `${1}[REDACTED]`)
-	value = keyValueQuotedRe.ReplaceAllString(value, `${1}${2}${3}[REDACTED]${5}`)
+	value = keyValueQuotedRe.ReplaceAllStringFunc(value, redactQuotedKeyValue)
 	value = keyValuePlainRe.ReplaceAllString(value, `${1}${2}${3}[REDACTED]`)
 	value = longHexTokenRe.ReplaceAllString(value, `[REDACTED]`)
 
 	_ = keys
 	return value
+}
+
+func redactQuotedKeyValue(value string) string {
+	matches := keyValueQuotedRe.FindStringSubmatchIndex(value)
+	if len(matches) < 8 || matches[6] < 0 || matches[7] <= matches[6] {
+		return value
+	}
+	quoted := value[matches[6]:matches[7]]
+	if len(quoted) < 2 {
+		return value
+	}
+	return value[:matches[6]] + quoted[:1] + "[REDACTED]" + quoted[len(quoted)-1:]
 }
 
 // RedactPrivateInfo recursively redacts sensitive values in JSON-like data.
