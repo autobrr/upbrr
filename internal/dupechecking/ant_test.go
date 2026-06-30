@@ -21,7 +21,7 @@ func TestANTHandlerSendsAPIKeyHeader(t *testing.T) {
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			query := req.URL.Query()
 			if got := query.Get("apikey"); got != "" {
-				t.Fatalf("apikey should not be sent as a query parameter, got %q", got)
+				t.Fatal("apikey should not be sent as a query parameter")
 			}
 			assertQueryParam(t, query, "t", "search")
 			assertQueryParam(t, query, "o", "json")

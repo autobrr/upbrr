@@ -254,6 +254,7 @@ Tests should apply redaction for any potentially sensitive information, in order
 Pay particular attention in API/HTTP/cookie type handling, ensuring redaction of headers and response bodies.
 Gaps fixes in /internal/redaction/redaction.go or /internal/logpolicy/checker.go are especially appreciated.
 Config values should be encrypted where appropriate, and only ever displayed in a redacted state.
+If an endpoint supports GET/query style and POST/bearer style handling, use the endpoint that puts sensitive credentials in the HTTPS packet, rather than as a plain url parameter.
 
 ### Path portability
 

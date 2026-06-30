@@ -218,6 +218,9 @@ func check(t testingT, r *http.Request, resp *http.Response) error {
 	if got := r.URL.Query().Get("secret"); got != "secret" {
 		return fmt.Errorf("expected secret, got %q", got)
 	}
+	if got := r.URL.Query().Get("apikey"); got != "secret" {
+		return fmt.Errorf("expected apikey, got %q", got)
+	}
 	body, _ := io.ReadAll(resp.Body)
 	t.Fatalf("unexpected response body %s", string(body))
 	return nil
@@ -233,8 +236,8 @@ type testingT interface {
 	if err != nil {
 		t.Fatalf("CheckRepository returned error: %v", err)
 	}
-	if len(violations) != 4 {
-		t.Fatalf("expected 4 violations, got %d: %#v", len(violations), violations)
+	if len(violations) != 5 {
+		t.Fatalf("expected 5 violations, got %d: %#v", len(violations), violations)
 	}
 }
 

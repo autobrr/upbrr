@@ -197,7 +197,7 @@ func TestLookupANTSendsAPIKeyHeader(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
 		if got := query.Get("apikey"); got != "" {
-			t.Fatalf("apikey should not be sent as a query parameter, got %q", got)
+			t.Fatal("apikey should not be sent as a query parameter")
 		}
 		if got := query.Get("t"); got != "search" {
 			t.Fatalf("unexpected t query value: got %q want %q", got, "search")

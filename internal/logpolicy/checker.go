@@ -1110,7 +1110,7 @@ func isSensitiveFormKey(key string) bool {
 
 func isSensitiveQueryKey(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "token", "api_key", "api_token", "passkey", "authkey", "secret", "rsskey":
+	case "token", "apikey", "api_key", "api_token", "passkey", "authkey", "secret", "rsskey":
 		return true
 	default:
 		return false
