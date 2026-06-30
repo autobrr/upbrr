@@ -55,7 +55,7 @@ func TestExtractMTVAuthKeyMatchesUploadAssistantShape(t *testing.T) {
 			t.Parallel()
 
 			if got := extractMTVAuthKey(body); got != auth {
-				t.Fatalf("expected %q, got %q", auth, got)
+				t.Fatal("expected extracted auth key")
 			}
 		})
 	}

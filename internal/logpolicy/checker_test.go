@@ -451,6 +451,32 @@ type testingT interface {
 	}
 }
 
+func TestCheckRepositoryFlagsSensitiveHelperReturnOutput(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+func check(t testingT) {
+	got := loadStoredRTFAPIKey()
+	t.Fatalf("stored token: %q", got)
+}
+
+func loadStoredRTFAPIKey() string { return "" }
+
+type testingT interface {
+	Fatalf(string, ...any)
+}
+`
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+}
+
 func TestCheckRepositoryFlagsSecretBearingURLOutput(t *testing.T) {
 	root := t.TempDir()
 	content := `package sample

@@ -140,7 +140,7 @@ func TestWriteAuthKeyUsesEncryptedStateAndDeletesLegacyFile(t *testing.T) {
 		t.Fatalf("writeAuthKey: %v", err)
 	}
 	if got := readAuthKey(context.Background(), dbPath); got != "encrypted-key" {
-		t.Fatalf("readAuthKey: got %q", got)
+		t.Fatal("expected encrypted auth key")
 	}
 	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
 		t.Fatalf("expected legacy auth key removed, stat err=%v", err)
@@ -188,7 +188,7 @@ func TestWriteAuthKeyFallsBackToExistingLegacyFileWhenWebAuthUnavailable(t *test
 		t.Fatalf("writeAuthKey: %v", err)
 	}
 	if got := readAuthKey(context.Background(), dbPath); got != "updated-legacy-key" {
-		t.Fatalf("readAuthKey: got %q", got)
+		t.Fatal("expected updated legacy auth key")
 	}
 }
 
@@ -204,7 +204,7 @@ func TestWriteAuthKeySucceedsWhenLegacyFileAbsent(t *testing.T) {
 		t.Fatalf("writeAuthKey: %v", err)
 	}
 	if got := readAuthKey(context.Background(), dbPath); got != "encrypted-key" {
-		t.Fatalf("readAuthKey: got %q", got)
+		t.Fatal("expected encrypted auth key")
 	}
 }
 

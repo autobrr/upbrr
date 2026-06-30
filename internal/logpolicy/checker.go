@@ -945,7 +945,11 @@ func sensitivityOfDirectCall(model *sensitiveModel, call *ast.CallExpr) (sensiti
 }
 
 func sensitivityOfKnownSensitiveCall(model *sensitiveModel, call *ast.CallExpr) (sensitiveValue, bool) {
-	switch callName(call) {
+	name := callName(call)
+	if value, ok := sensitivityOfSensitiveValueHelperCallName(name); ok {
+		return value, true
+	}
+	switch name {
 	case "LoadTrackerCookieMap", "LoadTrackerHTTPCookies", "CookieMapToHTTPCookies", "CookiesToMap", "httpCookiesToMap", "cookiesFromJar", "btnCookiesFromJar":
 		return sensitiveValue{kind: sensitiveCookieContainer, label: "cookies"}, true
 	case "postForm", "postMultipart", "postMultipartWithFields", "postMultipartRepeatedFileField", "readAndCloseResponseBody",
@@ -957,6 +961,34 @@ func sensitivityOfKnownSensitiveCall(model *sensitiveModel, call *ast.CallExpr) 
 		}
 	}
 	return sensitiveValue{}, false
+}
+
+func sensitivityOfSensitiveValueHelperCallName(name string) (sensitiveValue, bool) {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if !isSensitiveValueHelperName(lower) {
+		return sensitiveValue{}, false
+	}
+	switch {
+	case strings.Contains(lower, "apikey") || strings.Contains(lower, "api_key") || strings.Contains(lower, "api key"):
+		return sensitiveValue{kind: sensitiveConfigField, label: "APIKey"}, true
+	case strings.Contains(lower, "token"):
+		return sensitiveValue{kind: sensitiveConfigField, label: "token"}, true
+	case strings.Contains(lower, "passkey"):
+		return sensitiveValue{kind: sensitiveConfigField, label: "passkey"}, true
+	case strings.Contains(lower, "authkey"):
+		return sensitiveValue{kind: sensitiveConfigField, label: "authkey"}, true
+	default:
+		return sensitiveValue{}, false
+	}
+}
+
+func isSensitiveValueHelperName(name string) bool {
+	for _, prefix := range []string{"load", "get", "read", "fetch", "lookup", "extract", "parse", "generate", "refresh", "create", "new", "stored", "current"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func callName(call *ast.CallExpr) string {
