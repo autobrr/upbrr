@@ -250,11 +250,11 @@ Keep log levels purposeful. `INFO` should provide concise, relevant progress or 
 ### Sensitive information
 
 Logging should be completely safe for blanket copy/pasting, without exposing any user sensitive credentials. Err on the side of caution.
-Tests should apply redaction for any potentially sensitive information, in order to prevent LLM consumption of personal information/credentials.
+Tests should apply redaction for any potentially sensitive information, to prevent LLM consumption of personal information/credentials.
 Pay particular attention in API/HTTP/cookie type handling, ensuring redaction of headers and response bodies.
-Gaps fixes in /internal/redaction/redaction.go or /internal/logpolicy/checker.go are especially appreciated.
+Gaps fixes in `internal/redaction/redaction.go` or `internal/logpolicy/checker.go` are especially appreciated.
 Config values should be encrypted where appropriate, and only ever displayed in a redacted state.
-If an endpoint supports GET/query style and POST/bearer style handling, use the endpoint that puts sensitive credentials in the HTTPS packet, rather than as a plain url parameter.
+If an endpoint supports GET/query style and POST/bearer style handling, use the endpoint that puts sensitive credentials into a secure packet, rather than as a plain URL parameter.
 
 ### Path portability
 

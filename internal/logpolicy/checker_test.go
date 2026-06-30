@@ -1006,6 +1006,62 @@ func check(log logger, err error) {
 	}
 }
 
+func TestCheckRepositoryFlagsUploadRejectionErrorOutputInTests(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "services", "imagehosting"), 0o755); err != nil {
+		t.Fatalf("mkdir imagehosting sample: %v", err)
+	}
+
+	content := `package imagehosting
+
+import (
+	"context"
+	"strings"
+)
+
+type uploader struct{}
+
+func (u uploader) Upload(context.Context, string) (string, error) {
+	return "", nil
+}
+
+func TestImgboxUploadRejectedUsesFallbackAfterSanitizingError(t testingT) {
+	_, err := uploader{}.Upload(context.Background(), "shot.png")
+	if err == nil {
+		t.Fatal("expected rejected upload to fail")
+	}
+	if !strings.Contains(err.Error(), "imgbox upload rejected: unknown error") {
+		t.Fatalf("expected unknown error fallback, got %v", err)
+	}
+	if strings.Contains(err.Error(), "imgbox upload rejected:  ") {
+		t.Fatalf("rejection message must not be whitespace-only: %v", err)
+	}
+}
+
+type testingT interface {
+	Fatal(...any)
+	Fatalf(string, ...any)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "services", "imagehosting", "uploaders_test.go"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 2 {
+		t.Fatalf("expected 2 violations, got %d: %#v", len(violations), violations)
+	}
+	for _, violation := range violations {
+		if !strings.Contains(violation.Message, "raw errors") {
+			t.Fatalf("expected raw error violation, got %q", violation.Message)
+		}
+	}
+}
+
 func TestCheckRepositoryAllowsStableCodesInAuthSensitiveLogs(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
@@ -1499,7 +1555,7 @@ func writeInternalFixture(t *testing.T, root string, content string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir internal sample: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "sample_test.go"), []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "sample_test.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
 }

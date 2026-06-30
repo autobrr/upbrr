@@ -674,7 +674,9 @@ func sensitiveSinkArgs(call *ast.CallExpr, aliases map[string]string, testFile b
 	}
 	if testFile && isTestAssertionOutputMethod(selector.Sel.Name) {
 		if isTestAssertionFormatOutputMethod(selector.Sel.Name) && hasStringArg(call, 0) {
-			return sinkArgsWithFormat(call.Args[1:], false, stringArgValue(call, 0))
+			format := stringArgValue(call, 0)
+			forceRawError := isSensitiveTestRawErrorContext(functionContext, format)
+			return sinkArgsWithFormat(call.Args[1:], forceRawError, format)
 		}
 		return sinkArgs(call.Args, false)
 	}
@@ -689,7 +691,7 @@ func sinkArgs(exprs []ast.Expr, forceRawError bool) []sinkArg {
 func sinkArgsWithFormat(exprs []ast.Expr, forceRawError bool, format string) []sinkArg {
 	result := make([]sinkArg, 0, len(exprs))
 	for _, expr := range exprs {
-		result = append(result, sinkArg{expr: expr, forceRawError: forceRawError, format: format})
+		result = append(result, sinkArg{expr: expr, forceRawError: forceRawError && isRawErrorLikeExpr(expr), format: format})
 	}
 	return result
 }
@@ -753,6 +755,20 @@ func isSensitiveHTTPErrorContext(context string) bool {
 		}
 	}
 	return false
+}
+
+func isSensitiveTestRawErrorContext(context string, format string) bool {
+	normalized := canonicalSensitiveKeyName(context)
+	if !strings.Contains(normalized, "uploadrejected") &&
+		!strings.Contains(normalized, "uploadrejection") &&
+		!strings.Contains(normalized, "rejectionmessage") &&
+		!strings.Contains(normalized, "sanitizingerror") {
+		return false
+	}
+	lowerFormat := strings.ToLower(format)
+	return strings.Contains(lowerFormat, "fallback") ||
+		strings.Contains(lowerFormat, "rejection message") ||
+		strings.Contains(lowerFormat, "upload rejected")
 }
 
 func markSensitiveAssignment(model *sensitiveModel, stmt *ast.AssignStmt) {
@@ -1375,7 +1391,7 @@ func sensitiveOutputMessage(value sensitiveValue) string {
 	case sensitiveBody:
 		return "request/response body output must be redacted before printing"
 	case sensitiveRawError:
-		return "auth/cookie/token handler errors must not expose raw errors in responses"
+		return "remote/auth/cookie/token errors must not expose raw errors in logs or responses"
 	case sensitiveGeneric:
 		return "sensitive output must be redacted or replaced with stable state"
 	default:

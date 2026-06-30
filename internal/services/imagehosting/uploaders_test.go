@@ -205,7 +205,7 @@ func TestHDBUploadBatchChunksLargeUploads(t *testing.T) {
 func TestImgboxUploadRejectedUsesFallbackAfterSanitizingError(t *testing.T) {
 	tmpDir := t.TempDir()
 	imagePath := filepath.Join(tmpDir, "shot.png")
-	if err := os.WriteFile(imagePath, []byte("testdata"), 0o644); err != nil {
+	if err := os.WriteFile(imagePath, []byte("testdata"), 0o600); err != nil {
 		t.Fatalf("write temp file: %v", err)
 	}
 
@@ -244,10 +244,10 @@ func TestImgboxUploadRejectedUsesFallbackAfterSanitizingError(t *testing.T) {
 		t.Fatal("expected rejected upload to fail")
 	}
 	if !strings.Contains(err.Error(), "imgbox upload rejected: unknown error") {
-		t.Fatalf("expected unknown error fallback, got %v", err)
+		t.Fatal("expected unknown error fallback")
 	}
 	if strings.Contains(err.Error(), "imgbox upload rejected:  ") {
-		t.Fatalf("rejection message must not be whitespace-only: %v", err)
+		t.Fatal("rejection message must not be whitespace-only")
 	}
 }
 
