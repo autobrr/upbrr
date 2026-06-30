@@ -667,6 +667,7 @@ const trackerHasAdvancedFields = Object.values(trackerSchemas).some((fields) =>
 );
 
 const REDACTED_VALUE = "[REDACTED]";
+const ENCRYPTED_SECRET_PREFIX = "upbrr-enc:v1:";
 const trackerActivationKeys = new Set([
   "APIKey",
   "ApiUser",
@@ -836,6 +837,8 @@ const isSensitiveKeyName = (key: string) => {
 
 const buildPathKey = (path: string[]) => path.join(".");
 
+const isEncryptedSecretEnvelope = (value: string) => value.startsWith(ENCRYPTED_SECRET_PREFIX);
+
 const maskSensitiveConfig = (input: ConfigMap) => {
   const originals: Record<string, string> = {};
   const walk = (value: ConfigValue, path: string[]): ConfigValue => {
@@ -852,7 +855,7 @@ const maskSensitiveConfig = (input: ConfigMap) => {
     }
     if (typeof value === "string") {
       const key = path[path.length - 1] || "";
-      if (value && isSensitiveKeyName(key)) {
+      if (value && (isSensitiveKeyName(key) || isEncryptedSecretEnvelope(value))) {
         originals[buildPathKey(path)] = value;
         return REDACTED_VALUE;
       }
@@ -1322,7 +1325,10 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     });
 
     const key = path[path.length - 1] || "";
-    if (typeof value === "string" && isSensitiveKeyName(key)) {
+    if (
+      typeof value === "string" &&
+      (isSensitiveKeyName(key) || sensitiveValues[buildPathKey(path)] !== undefined)
+    ) {
       setSensitiveValues((prev) => {
         const next = { ...prev };
         const pathKey = buildPathKey(path);

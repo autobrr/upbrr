@@ -670,6 +670,61 @@ describe("Tracker client selectors", () => {
     expect(screen.getByText("1/1")).toBeInTheDocument();
   });
 
+  it("masks encrypted envelopes on tracker URL fields and preserves them for saves", async () => {
+    const encryptedURL = "upbrr-enc:v1:encrypted-btn-url";
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              Trackers: {
+                DefaultTrackers: [],
+                PreferredTracker: "",
+                Trackers: {
+                  BTN: {
+                    APIKey: "tracker-token",
+                    URL: encryptedURL,
+                    Username: "",
+                    Password: "",
+                  },
+                },
+              },
+            }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => ["BTN"],
+          GetImageHostPolicyMetadata: async () => ({}),
+        },
+      },
+    };
+
+    render(createElement(TrackerSettingsHarness));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("BTN", { selector: ".settings-card__summary-name" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText("BTN", { selector: ".settings-card__summary-name" }));
+
+    expect(screen.getByLabelText("URL")).toHaveValue("[REDACTED]");
+
+    let payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+      Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
+    };
+    expect(payload.Trackers?.Trackers?.BTN?.URL).toBe(encryptedURL);
+
+    fireEvent.change(screen.getByLabelText("URL"), {
+      target: { value: "https://btn.example" },
+    });
+
+    await waitFor(() => expect(screen.getByLabelText("URL")).toHaveValue("https://btn.example"));
+
+    payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+      Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
+    };
+    expect(payload.Trackers?.Trackers?.BTN?.URL).toBe("https://btn.example");
+  });
+
   it("shows Lostimg as an LST image host only when configured in image hosting", async () => {
     (globalThis as typeof globalThis & { go?: any }).go = {
       guiapp: {
