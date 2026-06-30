@@ -722,8 +722,12 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckFailsUnattendedAuthRequired(t *testi
 	if err == nil {
 		t.Fatal("expected unattended auth-required error")
 	}
-	if !strings.Contains(err.Error(), "tracker auth HDB not ready before dupe check") {
-		t.Fatalf("unexpected error: %v", err)
+	got := err.Error()
+	if !strings.Contains(got, "unattended") {
+		t.Fatal("expected auth-required error to name unattended mode")
+	}
+	if !strings.Contains(got, "login credentials or imported cookies required") {
+		t.Fatal("expected auth-required error to include required user action")
 	}
 }
 
