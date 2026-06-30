@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
@@ -660,13 +661,27 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		return nil, fmt.Errorf("trackers: BTN dropdown mapping failed format=%q bitrate=%q media=%q", format, bitrate, media)
 	}
 
+	title := metautil.FirstNonEmptyTrimmed(fields["title"])
+	if resolveUploadType(req.Meta) == "Season" && title != "" {
+		isNumeric := true
+		for _, r := range title {
+			if r < '0' || r > '9' {
+				isNumeric = false
+				break
+			}
+		}
+		if isNumeric {
+			title = "Season " + title
+		}
+	}
+
 	payload := map[string]string{
 		"submit":       "true",
 		"type":         resolveUploadType(req.Meta),
 		"scenename":    applyBTNNameMapping(resolveUploadName(req.Meta), bitrate, media),
 		"seriesid":     metautil.FirstNonEmptyTrimmed(fields["seriesid"]),
 		"artist":       metautil.FirstNonEmptyTrimmed(fields["artist"]),
-		"title":        metautil.FirstNonEmptyTrimmed(fields["title"]),
+		"title":        title,
 		"actors":       metautil.FirstNonEmptyTrimmed(fields["actors"]),
 		"origin":       resolveOrigin(resolveUploadName(req.Meta)),
 		"year":         metautil.FirstNonEmptyTrimmed(fields["year"]),
@@ -699,29 +714,29 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 	return clean, nil
 }
 
-func extractAutofillFields(html string) map[string]string {
+func extractAutofillFields(htmlRaw string) map[string]string {
 	fields := map[string]string{}
-	for _, match := range btnInputPattern.FindAllStringSubmatch(html, -1) {
+	for _, match := range btnInputPattern.FindAllStringSubmatch(htmlRaw, -1) {
 		if len(match) < 3 {
 			continue
 		}
-		fields[strings.ToLower(strings.TrimSpace(match[1]))] = strings.TrimSpace(match[2])
+		fields[strings.ToLower(strings.TrimSpace(match[1]))] = html.UnescapeString(strings.TrimSpace(match[2]))
 	}
-	if match := btnTextAreaPattern.FindStringSubmatch(html); len(match) > 1 {
-		fields["album_desc"] = strings.TrimSpace(stripHTML(match[1]))
+	if match := btnTextAreaPattern.FindStringSubmatch(htmlRaw); len(match) > 1 {
+		fields["album_desc"] = html.UnescapeString(strings.TrimSpace(stripHTML(match[1])))
 	}
-	for _, selectMatch := range btnSelectPattern.FindAllStringSubmatch(html, -1) {
+	for _, selectMatch := range btnSelectPattern.FindAllStringSubmatch(htmlRaw, -1) {
 		if len(selectMatch) < 3 {
 			continue
 		}
 		name := strings.ToLower(strings.TrimSpace(selectMatch[1]))
 		body := selectMatch[2]
 		if selected := btnSelectedOptionRegex.FindStringSubmatch(body); len(selected) > 1 {
-			fields[name] = strings.TrimSpace(selected[1])
+			fields[name] = html.UnescapeString(strings.TrimSpace(selected[1]))
 			continue
 		}
 		if first := btnOptionValueRegex.FindStringSubmatch(body); len(first) > 1 {
-			fields[name] = strings.TrimSpace(first[1])
+			fields[name] = html.UnescapeString(strings.TrimSpace(first[1]))
 		}
 	}
 	return fields
