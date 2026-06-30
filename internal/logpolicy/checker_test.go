@@ -850,26 +850,54 @@ func TestCheckRepositoryFlagsFrontendEncryptedEnvelopeMatcherOutput(t *testing.T
 	content := `import { expect, it } from "vitest";
 
 it("preserves encrypted URL", () => {
-  const encryptedURL = "upbrr-enc:v1:encrypted-btn-url";
+  const encryptedURL: string = "upbrr-enc:v1:encrypted-btn-url";
   const payload = { URL: encryptedURL };
-  expect(payload.URL).toBe(encryptedURL);
+  expect(payload.URL).toBe(
+    encryptedURL,
+  );
+  expect(payload.URL).toEqual("upbrr-enc:v1:literal-envelope");
   expect(payload.URL === encryptedURL).toBe(true);
-  createElement("pre", { "data-testid": "payload" }, state.buildSavePayload() ?? "");
+  createElement(
+    "pre",
+    { "data-testid": "payload" },
+    state.buildSavePayload() ?? "",
+  );
 });
 `
 
 	if err := os.WriteFile(filepath.Join(testDir, "useSettingsState.test.ts"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write frontend test file: %v", err)
 	}
+	tsxContent := `import { expect, it } from "vitest";
+
+it("renders payload", () => {
+  return <pre data-testid="payload">{state.buildSavePayload()}</pre>;
+});
+
+it("renders payload with expression attribute", () => {
+  return (
+    <pre data-testid={"payload"}>
+      {state.buildSavePayload()}
+    </pre>
+  );
+});
+`
+
+	if err := os.WriteFile(filepath.Join(testDir, "useSettingsState.test.tsx"), []byte(tsxContent), 0o644); err != nil {
+		t.Fatalf("write frontend tsx test file: %v", err)
+	}
 
 	violations, err := CheckRepository(root)
 	if err != nil {
 		t.Fatalf("CheckRepository returned error: %v", err)
 	}
-	if len(violations) != 2 {
-		t.Fatalf("expected 2 violations, got %d: %#v", len(violations), violations)
+	if len(violations) != 5 {
+		t.Fatalf("expected 5 violations, got %d: %#v", len(violations), violations)
 	}
-	messages := []string{violations[0].Message, violations[1].Message}
+	messages := make([]string, 0, len(violations))
+	for _, violation := range violations {
+		messages = append(messages, violation.Message)
+	}
 	joined := strings.Join(messages, "\n")
 	if !strings.Contains(joined, "encrypted envelope") {
 		t.Fatalf("expected encrypted envelope violation, got %q", joined)

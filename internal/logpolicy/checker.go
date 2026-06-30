@@ -220,9 +220,11 @@ func CheckRepository(root string) ([]Violation, error) {
 }
 
 var (
-	frontendEncryptedEnvelopeDeclRe = regexp.MustCompile("\\b(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*[\"'`]upbrr-enc:")
-	frontendDirectEnvelopeMatcherRe = regexp.MustCompile("\\.(?:toBe|toEqual|toStrictEqual|toContain|toMatch)\\(\\s*(?:[\"'`]upbrr-enc:|([A-Za-z_$][\\w$]*))")
-	frontendRawPayloadDOMRe         = regexp.MustCompile("[\"']data-testid[\"']\\s*:\\s*[\"']payload[\"'].*buildSavePayload\\(\\)|buildSavePayload\\(\\).*[\"']data-testid[\"']\\s*:\\s*[\"']payload[\"']")
+	// Frontend secret-output patterns scan complete TS/TSX test files so
+	// typed declarations, multiline matchers, and JSX attributes are covered.
+	frontendEncryptedEnvelopeDeclRe = regexp.MustCompile("\\b(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*(?::[^=;]+)?=\\s*[\"'`]upbrr-enc:")
+	frontendDirectEnvelopeMatcherRe = regexp.MustCompile("\\.(?:toBe|toEqual|toStrictEqual|toContain|toMatch)\\s*\\(\\s*(?:[\"'`]upbrr-enc:|([A-Za-z_$][\\w$]*))")
+	frontendRawPayloadDOMRe         = regexp.MustCompile("(?s)(?:[\"']data-testid[\"']\\s*:\\s*[\"']payload[\"'][^;]*buildSavePayload\\s*\\(\\)|buildSavePayload\\s*\\(\\)[^;]*[\"']data-testid[\"']\\s*:\\s*[\"']payload[\"']|data-testid\\s*=\\s*(?:[\"']payload[\"']|\\{\\s*[\"']payload[\"']\\s*\\})[^;]*buildSavePayload\\s*\\(\\)|buildSavePayload\\s*\\(\\)[^;]*data-testid\\s*=\\s*(?:[\"']payload[\"']|\\{\\s*[\"']payload[\"']\\s*\\}))")
 )
 
 // checkFrontendTestSensitiveMatchers scans frontend tests for assertions and DOM
@@ -262,12 +264,13 @@ func checkFrontendTestSensitiveMatchers(root string) ([]Violation, error) {
 }
 
 // checkFrontendTestSensitiveMatcherFile applies the frontend secret-output regex
-// checks to one test file and reports line-based violations.
+// checks to one full test file and reports source-positioned violations.
 func checkFrontendTestSensitiveMatcherFile(root string, path string) ([]Violation, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
+	text := string(content)
 	relPath, err := filepath.Rel(root, path)
 	if err != nil {
 		relPath = path
@@ -275,44 +278,56 @@ func checkFrontendTestSensitiveMatcherFile(root string, path string) ([]Violatio
 	relPath = filepath.ToSlash(relPath)
 
 	encryptedNames := make(map[string]struct{})
-	for _, match := range frontendEncryptedEnvelopeDeclRe.FindAllSubmatch(content, -1) {
+	for _, match := range frontendEncryptedEnvelopeDeclRe.FindAllStringSubmatch(text, -1) {
 		if len(match) > 1 {
-			encryptedNames[string(match[1])] = struct{}{}
+			encryptedNames[match[1]] = struct{}{}
 		}
 	}
 
 	violations := make([]Violation, 0)
-	for index, line := range strings.Split(string(content), "\n") {
-		match := frontendDirectEnvelopeMatcherRe.FindStringSubmatchIndex(line)
-		if match == nil {
-			continue
-		}
+	for _, match := range frontendDirectEnvelopeMatcherRe.FindAllStringSubmatchIndex(text, -1) {
 		if match[2] >= 0 {
-			name := line[match[2]:match[3]]
+			name := text[match[2]:match[3]]
 			if _, ok := encryptedNames[name]; !ok {
 				continue
 			}
 		}
+		line, column := lineColumnForOffset(content, match[0])
 		violations = append(violations, Violation{
 			File:    relPath,
-			Line:    index + 1,
-			Column:  match[0] + 1,
+			Line:    line,
+			Column:  column,
 			Message: "frontend test assertions must not print encrypted envelope values; assert a boolean predicate or use static sanitized failure text",
 		})
 	}
-	for index, line := range strings.Split(string(content), "\n") {
-		match := frontendRawPayloadDOMRe.FindStringIndex(line)
-		if match == nil {
-			continue
-		}
+	for _, match := range frontendRawPayloadDOMRe.FindAllStringIndex(text, -1) {
+		line, column := lineColumnForOffset(content, match[0])
 		violations = append(violations, Violation{
 			File:    relPath,
-			Line:    index + 1,
-			Column:  match[0] + 1,
+			Line:    line,
+			Column:  column,
 			Message: "frontend tests must not render raw save payloads into the DOM; Testing Library failures can dump secret payload content",
 		})
 	}
 	return violations, nil
+}
+
+// lineColumnForOffset converts a byte offset in scanner input into one-based
+// line and column values for diagnostics.
+func lineColumnForOffset(content []byte, offset int) (int, int) {
+	line, column := 1, 1
+	for index, value := range content {
+		if index >= offset {
+			break
+		}
+		if value == '\n' {
+			line++
+			column = 1
+			continue
+		}
+		column++
+	}
+	return line, column
 }
 
 // checkCLISensitiveOutputFile flags raw dry-run endpoint and payload printing in
