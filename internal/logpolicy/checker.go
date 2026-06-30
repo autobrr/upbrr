@@ -198,6 +198,12 @@ func CheckRepository(root string) ([]Violation, error) {
 		return nil, fmt.Errorf("logpolicy: stat cmd/upbrr root: %w", err)
 	}
 
+	frontendViolations, err := checkFrontendTestSensitiveMatchers(root)
+	if err != nil {
+		return nil, err
+	}
+	violations = append(violations, frontendViolations...)
+
 	sort.Slice(violations, func(i, j int) bool {
 		if violations[i].File != violations[j].File {
 			return violations[i].File < violations[j].File
@@ -208,6 +214,98 @@ func CheckRepository(root string) ([]Violation, error) {
 		return violations[i].Column < violations[j].Column
 	})
 
+	return violations, nil
+}
+
+var (
+	frontendEncryptedEnvelopeDeclRe = regexp.MustCompile("\\b(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*[\"'`]upbrr-enc:")
+	frontendDirectEnvelopeMatcherRe = regexp.MustCompile("\\.(?:toBe|toEqual|toStrictEqual|toContain|toMatch)\\(\\s*(?:[\"'`]upbrr-enc:|([A-Za-z_$][\\w$]*))")
+	frontendRawPayloadDOMRe         = regexp.MustCompile("[\"']data-testid[\"']\\s*:\\s*[\"']payload[\"'].*buildSavePayload\\(\\)|buildSavePayload\\(\\).*[\"']data-testid[\"']\\s*:\\s*[\"']payload[\"']")
+)
+
+func checkFrontendTestSensitiveMatchers(root string) ([]Violation, error) {
+	frontendRoot := filepath.Join(root, "gui", "frontend", "src")
+	if _, err := os.Stat(frontendRoot); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("logpolicy: stat frontend root: %w", err)
+	}
+
+	violations := make([]Violation, 0)
+	err := filepath.WalkDir(frontendRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(path, ".test.ts") && !strings.HasSuffix(path, ".test.tsx") {
+			return nil
+		}
+
+		fileViolations, err := checkFrontendTestSensitiveMatcherFile(root, path)
+		if err != nil {
+			return err
+		}
+		violations = append(violations, fileViolations...)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("logpolicy: walk frontend tests: %w", err)
+	}
+	return violations, nil
+}
+
+func checkFrontendTestSensitiveMatcherFile(root string, path string) ([]Violation, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	relPath, err := filepath.Rel(root, path)
+	if err != nil {
+		relPath = path
+	}
+	relPath = filepath.ToSlash(relPath)
+
+	encryptedNames := make(map[string]struct{})
+	for _, match := range frontendEncryptedEnvelopeDeclRe.FindAllSubmatch(content, -1) {
+		if len(match) > 1 {
+			encryptedNames[string(match[1])] = struct{}{}
+		}
+	}
+
+	violations := make([]Violation, 0)
+	for index, line := range strings.Split(string(content), "\n") {
+		match := frontendDirectEnvelopeMatcherRe.FindStringSubmatchIndex(line)
+		if match == nil {
+			continue
+		}
+		if match[2] >= 0 {
+			name := line[match[2]:match[3]]
+			if _, ok := encryptedNames[name]; !ok {
+				continue
+			}
+		}
+		violations = append(violations, Violation{
+			File:    relPath,
+			Line:    index + 1,
+			Column:  match[0] + 1,
+			Message: "frontend test assertions must not print encrypted envelope values; assert a boolean predicate or use static sanitized failure text",
+		})
+	}
+	for index, line := range strings.Split(string(content), "\n") {
+		match := frontendRawPayloadDOMRe.FindStringIndex(line)
+		if match == nil {
+			continue
+		}
+		violations = append(violations, Violation{
+			File:    relPath,
+			Line:    index + 1,
+			Column:  match[0] + 1,
+			Message: "frontend tests must not render raw save payloads into the DOM; Testing Library failures can dump secret payload content",
+		})
+	}
 	return violations, nil
 }
 

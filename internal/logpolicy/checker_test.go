@@ -799,6 +799,48 @@ type testingT interface {
 	}
 }
 
+func TestCheckRepositoryFlagsFrontendEncryptedEnvelopeMatcherOutput(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	testDir := filepath.Join(root, "gui", "frontend", "src", "hooks")
+	if err := os.MkdirAll(testDir, 0o755); err != nil {
+		t.Fatalf("mkdir frontend test dir: %v", err)
+	}
+
+	content := `import { expect, it } from "vitest";
+
+it("preserves encrypted URL", () => {
+  const encryptedURL = "upbrr-enc:v1:encrypted-btn-url";
+  const payload = { URL: encryptedURL };
+  expect(payload.URL).toBe(encryptedURL);
+  expect(payload.URL === encryptedURL).toBe(true);
+  createElement("pre", { "data-testid": "payload" }, state.buildSavePayload() ?? "");
+});
+`
+
+	if err := os.WriteFile(filepath.Join(testDir, "useSettingsState.test.ts"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write frontend test file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 2 {
+		t.Fatalf("expected 2 violations, got %d: %#v", len(violations), violations)
+	}
+	messages := []string{violations[0].Message, violations[1].Message}
+	joined := strings.Join(messages, "\n")
+	if !strings.Contains(joined, "encrypted envelope") {
+		t.Fatalf("expected encrypted envelope violation, got %q", joined)
+	}
+	if !strings.Contains(joined, "raw save payloads into the DOM") {
+		t.Fatalf("expected raw payload DOM violation, got %q", joined)
+	}
+}
+
 func TestCheckRepositoryFlagsRawDryRunDetailsOutput(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {

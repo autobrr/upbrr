@@ -14,6 +14,7 @@ import {
 
 afterEach(() => {
   cleanup();
+  latestPayload = "";
   delete (globalThis as typeof globalThis & { go?: any }).go;
 });
 
@@ -134,7 +135,7 @@ function TorrentClientsHarness() {
     "div",
     null,
     state.renderTorrentClientsSection(false),
-    createElement("pre", { "data-testid": "payload" }, state.buildSavePayload() ?? ""),
+    createElement(PayloadCapture, { value: state.buildSavePayload() }),
   );
 }
 
@@ -154,7 +155,7 @@ function ClientSetupHarness() {
     ...Object.entries(clientSetup).map(([key, value]) =>
       state.renderField(key, value, ["ClientSetup", key], meta[key]),
     ),
-    createElement("pre", { "data-testid": "payload" }, state.buildSavePayload() ?? ""),
+    createElement(PayloadCapture, { value: state.buildSavePayload() }),
   );
 }
 
@@ -165,7 +166,7 @@ function TrackerSettingsHarness() {
     "div",
     null,
     state.renderTrackerSection(false),
-    createElement("pre", { "data-testid": "payload" }, state.buildSavePayload() ?? ""),
+    createElement(PayloadCapture, { value: state.buildSavePayload() }),
   );
 }
 
@@ -176,7 +177,7 @@ function TrackerSettingsAdvancedHarness() {
     "div",
     null,
     state.renderTrackerSection(true),
-    createElement("pre", { "data-testid": "payload" }, state.buildSavePayload() ?? ""),
+    createElement(PayloadCapture, { value: state.buildSavePayload() }),
   );
 }
 
@@ -187,8 +188,19 @@ function ImageHostingHarness() {
     "div",
     null,
     state.renderImageHostingSection(),
-    createElement("pre", { "data-testid": "payload" }, state.buildSavePayload() ?? ""),
+    createElement(PayloadCapture, { value: state.buildSavePayload() }),
   );
+}
+
+let latestPayload = "";
+
+function PayloadCapture({ value }: { value: string | null }) {
+  latestPayload = value ?? "";
+  return null;
+}
+
+function readPayload<T>() {
+  return JSON.parse(latestPayload || "{}") as T;
 }
 
 function AdvancedFieldMetaHarness() {
@@ -304,9 +316,9 @@ describe("renderTorrentClientsSection", () => {
       expect(watchScope.getByLabelText("Watch folder")).toHaveValue("/watch/new"),
     );
 
-    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    const payload = readPayload<{
       TorrentClients?: Record<string, Record<string, unknown>>;
-    };
+    }>();
     expect(payload.TorrentClients?.watcher).toEqual({
       Type: "watch",
       WatchFolder: "/watch/new",
@@ -366,9 +378,9 @@ describe("ClientSetup client selectors", () => {
     fireEvent.change(defaultClientSelect, { target: { value: "" } });
     await waitFor(() => expect(defaultClientSelect).toHaveValue(""));
 
-    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    const payload = readPayload<{
       ClientSetup?: { DefaultClient?: string };
-    };
+    }>();
     expect(payload.ClientSetup?.DefaultClient).toBe("");
   });
 
@@ -420,13 +432,13 @@ describe("ClientSetup client selectors", () => {
 
     await waitFor(() => expect(screen.getByLabelText("Default client")).toHaveValue("watcher"));
 
-    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    const payload = readPayload<{
       ClientSetup?: {
         DefaultClient?: string;
         InjectClients?: string[];
         SearchClients?: string[];
       };
-    };
+    }>();
     expect(payload.ClientSetup?.DefaultClient).toBe("watcher");
     expect(payload.ClientSetup?.InjectClients).toEqual(["watcher"]);
     expect(payload.ClientSetup?.SearchClients).toEqual(["watcher"]);
@@ -474,9 +486,9 @@ describe("Tracker client selectors", () => {
     expect(screen.queryByLabelText("API key")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Passkey")).toHaveValue("[REDACTED]");
 
-    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    const payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
-    };
+    }>();
     expect(payload.Trackers?.Trackers?.CZT).toMatchObject({
       Passkey: "user-passkey",
     });
@@ -519,9 +531,9 @@ describe("Tracker client selectors", () => {
       ).toBeInTheDocument(),
     );
 
-    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    const payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
-    };
+    }>();
     expect(payload.Trackers?.Trackers?.CZT).toMatchObject({
       Passkey: "",
     });
@@ -593,9 +605,9 @@ describe("Tracker client selectors", () => {
 
     await waitFor(() => expect(screen.getByLabelText("Torrent client")).toHaveValue("watcher"));
 
-    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    const payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
-    };
+    }>();
     expect(payload.Trackers?.Trackers?.AITHER?.TorrentClient).toBe("watcher");
   });
 
@@ -708,10 +720,10 @@ describe("Tracker client selectors", () => {
 
     expect(screen.getByLabelText("URL")).toHaveValue("[REDACTED]");
 
-    let payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    let payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
-    };
-    expect(payload.Trackers?.Trackers?.BTN?.URL).toBe(encryptedURL);
+    }>();
+    expect(payload.Trackers?.Trackers?.BTN?.URL === encryptedURL).toBe(true);
 
     fireEvent.change(screen.getByLabelText("URL"), {
       target: { value: "https://btn.example" },
@@ -719,9 +731,9 @@ describe("Tracker client selectors", () => {
 
     await waitFor(() => expect(screen.getByLabelText("URL")).toHaveValue("https://btn.example"));
 
-    payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
-    };
+    }>();
     expect(payload.Trackers?.Trackers?.BTN?.URL).toBe("https://btn.example");
   });
 
@@ -870,9 +882,9 @@ describe("Tracker client selectors", () => {
 
     await waitFor(() => expect(screen.getByLabelText("Image API")).toHaveValue("secret"));
 
-    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    const payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
-    };
+    }>();
     expect(payload.Trackers?.Trackers?.RF?.ImgAPI).toBe("secret");
   });
 
@@ -1016,12 +1028,12 @@ describe("Image hosting settings", () => {
 
     await waitFor(() => expect(screen.getByLabelText("LST Lostimg")).toBeChecked());
 
-    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    const payload = readPayload<{
       ImageHosting?: {
         LostimgEnabled?: boolean;
         LostimgAPI?: string;
       };
-    };
+    }>();
     expect(payload.ImageHosting?.LostimgEnabled).toBe(true);
     expect(payload.ImageHosting?.LostimgAPI).toBe("secret");
   });
@@ -1070,9 +1082,9 @@ describe("Image hosting settings", () => {
 
     await waitFor(() => expect(screen.getByLabelText("RF Reelflix")).toBeChecked());
 
-    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    const payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
-    };
+    }>();
     expect(payload.Trackers?.Trackers?.RF?.ImageHost).toBe("reelflix");
     expect(payload.Trackers?.Trackers?.RF?.ImgAPI).toBe("secret");
   });
