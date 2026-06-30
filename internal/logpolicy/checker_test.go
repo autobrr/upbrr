@@ -400,6 +400,87 @@ func check(t *testing.T, r *http.Request, resp *http.Response) {
 	}
 }
 
+func TestCheckRepositoryFlagsFatalCallsInHTTPTestHandlers(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestHandlerFatal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ok" {
+			t.Fatal("unexpected path")
+		}
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+	}))
+	t.Cleanup(server.Close)
+}
+
+func TestNormalFatal(t *testing.T) {
+	if false {
+		t.Fatal("ordinary test goroutine failure")
+	}
+}
+`
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 2 {
+		t.Fatalf("expected 2 violations, got %d: %#v", len(violations), violations)
+	}
+	for _, violation := range violations {
+		if !strings.Contains(violation.Message, "request goroutine") {
+			t.Fatalf("expected handler fatal violation, got %q", violation.Message)
+		}
+	}
+}
+
+func TestCheckRepositoryAllowsHandlerErrorsRecordedOutsideRequestGoroutine(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestHandlerErrorRecorder(t *testing.T) {
+	var handlerErr error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ok" {
+			handlerErr = errUnexpectedPath
+			return
+		}
+	}))
+	t.Cleanup(server.Close)
+	if handlerErr != nil {
+		t.Fatalf("handler error: %v", handlerErr)
+	}
+}
+
+var errUnexpectedPath error
+`
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
 func TestCheckRepositoryAllowsLogpolicyAllowForNonHeaderSensitiveOutput(t *testing.T) {
 	root := t.TempDir()
 	content := `package sample

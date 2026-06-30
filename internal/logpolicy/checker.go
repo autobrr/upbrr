@@ -360,7 +360,16 @@ func checkFile(fset *token.FileSet, root string, path string) ([]Violation, erro
 }
 
 func checkTestFile(fset *token.FileSet, root string, path string) ([]Violation, error) {
-	return checkSensitiveOutputFile(fset, root, path, true)
+	violations, err := checkSensitiveOutputFile(fset, root, path, true)
+	if err != nil {
+		return nil, err
+	}
+	handlerViolations, err := checkTestHandlerFatalCalls(fset, root, path)
+	if err != nil {
+		return nil, err
+	}
+	violations = append(violations, handlerViolations...)
+	return violations, nil
 }
 
 type sensitiveKind string
@@ -746,6 +755,111 @@ func isFmtSelector(selector *ast.SelectorExpr, aliases map[string]string, name s
 func isHTTPErrorSelector(selector *ast.SelectorExpr, aliases map[string]string) bool {
 	pkg, ok := selector.X.(*ast.Ident)
 	return ok && aliases[pkg.Name] == "net/http" && selector.Sel.Name == "Error"
+}
+
+func checkTestHandlerFatalCalls(fset *token.FileSet, root string, path string) ([]Violation, error) {
+	file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	aliases := importAliases(file)
+	relPath, err := filepath.Rel(root, path)
+	if err != nil {
+		relPath = path
+	}
+	relPath = filepath.ToSlash(relPath)
+
+	violations := make([]Violation, 0)
+	ast.Inspect(file, func(node ast.Node) bool {
+		lit, ok := node.(*ast.FuncLit)
+		if !ok || !isHTTPHandlerFuncLit(lit, aliases) {
+			return true
+		}
+		ast.Inspect(lit.Body, func(handlerNode ast.Node) bool {
+			if nested, ok := handlerNode.(*ast.FuncLit); ok && nested != lit {
+				return false
+			}
+			call, ok := handlerNode.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if isTestingFatalCall(call) {
+				violations = append(violations, violationAt(fset, relPath, call.Pos(), "httptest handlers must not call t.Fatal/t.Fatalf from the request goroutine; record the error and assert from the test goroutine"))
+			}
+			return true
+		})
+		return false
+	})
+	return violations, nil
+}
+
+func isHTTPHandlerFuncLit(lit *ast.FuncLit, aliases map[string]string) bool {
+	if lit.Type == nil || lit.Type.Params == nil {
+		return false
+	}
+	paramTypes := expandedParamTypes(lit.Type.Params.List)
+	if len(paramTypes) != 2 {
+		return false
+	}
+	return isHTTPResponseWriterType(paramTypes[0], aliases) && isHTTPRequestPointerType(paramTypes[1], aliases)
+}
+
+func expandedParamTypes(fields []*ast.Field) []ast.Expr {
+	result := make([]ast.Expr, 0, len(fields))
+	for _, field := range fields {
+		count := len(field.Names)
+		if count == 0 {
+			count = 1
+		}
+		for range count {
+			result = append(result, field.Type)
+		}
+	}
+	return result
+}
+
+func isHTTPResponseWriterType(expr ast.Expr, aliases map[string]string) bool {
+	selector, ok := expr.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "ResponseWriter" {
+		return false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	return ok && aliases[pkg.Name] == "net/http"
+}
+
+func isHTTPRequestPointerType(expr ast.Expr, aliases map[string]string) bool {
+	star, ok := expr.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	selector, ok := star.X.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "Request" {
+		return false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	return ok && aliases[pkg.Name] == "net/http"
+}
+
+func isTestingFatalCall(call *ast.CallExpr) bool {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	switch selector.Sel.Name {
+	case "Fatal", "Fatalf", "FailNow":
+	default:
+		return false
+	}
+	receiver, ok := selector.X.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	switch strings.ToLower(receiver.Name) {
+	case "t", "tb":
+		return true
+	default:
+		return false
+	}
 }
 
 func checkUnboundedResponseBodyUses(fset *token.FileSet, relPath string, file *ast.File, aliases map[string]string) []Violation {
