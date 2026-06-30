@@ -62,7 +62,10 @@ func resolveARStoredSessionForTrackerAuth(ctx context.Context, cfg config.Tracke
 		return &ValidationError{TrackerID: "AR", Transient: true, Reason: "remote validation unavailable", Err: fmt.Errorf("trackers: AR session validation request: %w", err)}
 	}
 	defer resp.Body.Close()
-	body, _ := readTrackerAuthResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 300)
+	body, readErr := readTrackerAuthResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 300)
+	if readErr != nil {
+		return &ValidationError{TrackerID: "AR", Transient: true, Reason: "remote validation unavailable", Err: readErr}
+	}
 	if isLoginRedirect(resp) || resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || arLooksLoggedOut(string(body)) {
 		return &ValidationError{TrackerID: "AR", ConfirmedInvalid: true, Reason: "stored session expired", Err: fmt.Errorf("trackers: AR session validation failed status=%d", resp.StatusCode)}
 	}
@@ -108,7 +111,10 @@ func validateFFStoredCookies(ctx context.Context, baseURL string, values []*http
 		return &ValidationError{TrackerID: "FF", Transient: true, Reason: "remote validation unavailable", Err: fmt.Errorf("trackers: FF session validation request: %w", err)}
 	}
 	defer resp.Body.Close()
-	body, _ := readTrackerAuthResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 300)
+	body, readErr := readTrackerAuthResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 300)
+	if readErr != nil {
+		return &ValidationError{TrackerID: "FF", Transient: true, Reason: "remote validation unavailable", Err: readErr}
+	}
 	if isLoginRedirect(resp) || resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || ffLooksLoggedOut(string(body)) {
 		return &ValidationError{TrackerID: "FF", ConfirmedInvalid: true, Reason: "stored session expired", Err: fmt.Errorf("trackers: FF session validation failed status=%d", resp.StatusCode)}
 	}
@@ -184,7 +190,10 @@ func validateFLStoredCookies(ctx context.Context, baseURL string, values []*http
 		return &ValidationError{TrackerID: "FL", Transient: true, Reason: "remote validation unavailable", Err: fmt.Errorf("trackers: FL session validation request: %w", err)}
 	}
 	defer resp.Body.Close()
-	body, _ := readTrackerAuthResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 300)
+	body, readErr := readTrackerAuthResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 300)
+	if readErr != nil {
+		return &ValidationError{TrackerID: "FL", Transient: true, Reason: "remote validation unavailable", Err: readErr}
+	}
 	if isLoginRedirect(resp) || resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || flLooksLoggedOut(string(body)) {
 		return &ValidationError{TrackerID: "FL", ConfirmedInvalid: true, Reason: "stored session expired", Err: fmt.Errorf("trackers: FL session validation failed status=%d", resp.StatusCode)}
 	}
@@ -274,7 +283,10 @@ func resolveHDBStoredSessionForTrackerAuth(ctx context.Context, cfg config.Track
 		return &ValidationError{TrackerID: "HDB", Transient: true, Reason: "remote validation unavailable", Err: fmt.Errorf("trackers: HDB session validation request: %w", err)}
 	}
 	defer resp.Body.Close()
-	body, _ := readTrackerAuthResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 300)
+	body, readErr := readTrackerAuthResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 300)
+	if readErr != nil {
+		return &ValidationError{TrackerID: "HDB", Transient: true, Reason: "remote validation unavailable", Err: readErr}
+	}
 	if isLoginRedirect(resp) || resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || hdbLooksLoggedOut(string(body)) {
 		return &ValidationError{TrackerID: "HDB", ConfirmedInvalid: true, Reason: "stored session expired", Err: fmt.Errorf("trackers: HDB session validation failed status=%d", resp.StatusCode)}
 	}
@@ -307,7 +319,10 @@ func resolveTHRSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConf
 		return fmt.Errorf("trackers: THR login request: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := readTrackerAuthResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 400)
+	body, readErr := readTrackerAuthResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 400)
+	if readErr != nil {
+		return &ValidationError{TrackerID: "THR", Transient: true, Reason: "remote validation unavailable", Err: readErr}
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
 		return &ValidationError{TrackerID: "THR", ConfirmedInvalid: true, Reason: "login failed", Err: fmt.Errorf("trackers: THR login failed status=%d", resp.StatusCode)}
 	}
