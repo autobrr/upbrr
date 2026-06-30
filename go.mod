@@ -28,7 +28,7 @@ replace github.com/anacrolix/dht/v2 => github.com/anacrolix/dht/v2 v2.24.0
 
 replace github.com/autobrr/go-bdinfo => github.com/Audionut/go-bdinfo v0.2.1-0.20260628010705-5a98a8bb3c49
 
-replace github.com/autobrr/go-mediainfo => github.com/Audionut/go-mediainfo v0.2.2-0.20260628053221-f40c1afb1843
+replace github.com/autobrr/go-mediainfo => github.com/Audionut/go-mediainfo v0.2.2-0.20260630084446-a4ab53524a44
 
 require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
