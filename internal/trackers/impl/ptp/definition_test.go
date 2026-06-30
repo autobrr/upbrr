@@ -265,7 +265,7 @@ func TestResolveUploadTorrentPathReusesPreparedPTPArtifact(t *testing.T) {
 		t.Fatalf("load prepared artifact: %v", err)
 	}
 	if torrentMeta.Announce != "https://please.passthepopcorn.me/passkey/announce" {
-		t.Fatalf("expected prepared announce preserved, got %q", torrentMeta.Announce)
+		t.Fatal("expected prepared announce preserved")
 	}
 	info, err := torrentMeta.UnmarshalInfo()
 	if err != nil {
@@ -287,10 +287,12 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 		switch r.URL.RequestURI() {
 		case ptpLoginPath:
 			if err := r.ParseForm(); err != nil {
-				t.Fatalf("parse login: %v", err)
+				t.Errorf("parse login: %v", err)
+				return
 			}
 			if r.FormValue("username") != "user" || r.FormValue("password") != "pass" {
-				t.Fatalf("unexpected login credentials")
+				t.Error("unexpected login credentials")
+				return
 			}
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "cookievalue", Path: "/"})
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -301,39 +303,49 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 			switch r.URL.Path {
 			case ptpUploadPath:
 				if err := r.ParseMultipartForm(5 << 20); err != nil {
-					t.Fatalf("parse multipart: %v", err)
+					t.Errorf("parse multipart: %v", err)
+					return
 				}
 				files := r.MultipartForm.File["file_input"]
 				if len(files) != 1 {
-					t.Fatalf("expected one torrent file, got %d", len(files))
+					t.Errorf("expected one torrent file, got %d", len(files))
+					return
 				}
 				uploaded, err := files[0].Open()
 				if err != nil {
-					t.Fatalf("open uploaded torrent: %v", err)
+					t.Errorf("open uploaded torrent: %v", err)
+					return
 				}
 				defer uploaded.Close()
 				payload, err := io.ReadAll(uploaded)
 				if err != nil {
-					t.Fatalf("read uploaded torrent: %v", err)
+					t.Errorf("read uploaded torrent: %v", err)
+					return
 				}
 				uploadedMeta, err := metainfo.Load(bytes.NewReader(payload))
 				if err != nil {
-					t.Fatalf("load uploaded torrent: %v", err)
+					t.Errorf("load uploaded torrent: %v", err)
+					return
 				}
 				if uploadedMeta.Comment != "upbrr" {
-					t.Fatalf("expected cleaned upload torrent comment, got %q", uploadedMeta.Comment)
+					t.Errorf("expected cleaned upload torrent comment, got %q", uploadedMeta.Comment)
+					return
 				}
 				if uploadedMeta.CreatedBy != "uploaded with upbrr" {
-					t.Fatalf("expected cleaned upload torrent created-by, got %q", uploadedMeta.CreatedBy)
+					t.Errorf("expected cleaned upload torrent created-by, got %q", uploadedMeta.CreatedBy)
+					return
 				}
 				if uploadedMeta.Announce != "" {
-					t.Fatalf("expected upload torrent announce stripped, got %q", uploadedMeta.Announce)
+					t.Error("expected upload torrent announce stripped")
+					return
 				}
 				if r.FormValue("AntiCsrfToken") != "csrf-token" {
-					t.Fatalf("expected csrf token, got %q", r.FormValue("AntiCsrfToken"))
+					t.Error("expected csrf token")
+					return
 				}
 				if r.FormValue("title") != "Movie" {
-					t.Fatalf("expected new-group title field")
+					t.Error("expected new-group title field")
+					return
 				}
 				http.Redirect(w, r, "/torrents.php?id=555&torrentid=666", http.StatusFound)
 			case ptpTorrentPath:
@@ -411,10 +423,12 @@ func TestLoginAndFetchAntiCsrfTokenHandles2FA(t *testing.T) {
 			return
 		}
 		if err := r.ParseForm(); err != nil {
-			t.Fatalf("parse login: %v", err)
+			t.Errorf("parse login: %v", err)
+			return
 		}
 		if r.FormValue("username") != "user" || r.FormValue("password") != "pass" || r.FormValue("passkey") != "passkey" || r.FormValue("keeplogged") != "1" {
-			t.Fatalf("unexpected login form: %v", r.Form)
+			t.Error("unexpected login form")
+			return
 		}
 		if r.FormValue("TfaCode") == "" {
 			_ = json.NewEncoder(w).Encode(map[string]any{"Result": "TfaRequired"})
@@ -422,11 +436,13 @@ func TestLoginAndFetchAntiCsrfTokenHandles2FA(t *testing.T) {
 		}
 		secondLogin = true
 		if r.FormValue("TfaType") != "normal" {
-			t.Fatalf("expected TfaType normal, got %q", r.FormValue("TfaType"))
+			t.Errorf("expected TfaType normal, got %q", r.FormValue("TfaType"))
+			return
 		}
 		code := r.FormValue("TfaCode")
 		if len(code) != 6 || strings.Trim(code, "0123456789") != "" {
-			t.Fatalf("expected six digit TfaCode, got %q", code)
+			t.Errorf("expected six digit TfaCode, got %q", code)
+			return
 		}
 		http.SetCookie(w, &http.Cookie{Name: "session", Value: "cookievalue", Path: "/"})
 		_ = json.NewEncoder(w).Encode(map[string]any{

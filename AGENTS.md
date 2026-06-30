@@ -48,6 +48,16 @@ Before commit, also run `git diff --check`, changed-package `make gofix-check-ch
 - CLI `cmd/upbrr`; core `internal/core`; services `internal/services`; trackers `internal/trackers`; config `internal/config`.
 - Wails `gui`, `internal/guiapp`; embedded web/API `internal/webserver`; API contracts `pkg/api`; frontend `gui/frontend`.
 
+## Logging Levels
+
+- Keep log levels purposeful across CLI, GUI, embedded web, frontend, tests, and tooling.
+- Add logs for operator-visible progress and decision points, not just final errors. Good logs answer what operation started, what external/local check ran, what decision was made, and how many items were affected.
+- `INFO` should provide concise, relevant progress or outcome details for end users during uploads and other top-level workflows.
+- Warnings should cover failed or blocked outcomes that require attention.
+- `DEBUG` should include richer decision-making context useful for developer troubleshooting.
+- `TRACE` should capture near-complete operational flow for high-fidelity execution reporting.
+- Prefer stable key/value-style fields in message strings (`tracker=%s state=%s decision=%s count=%d`) so logs are searchable.
+
 ## Non-Negotiables
 
 - Keep changes narrow; fix root cause; do not revert user changes.

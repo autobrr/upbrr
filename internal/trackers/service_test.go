@@ -2152,7 +2152,7 @@ func assertTrackerArtifact(t *testing.T, torrentPath string, wantAnnounce string
 		t.Fatalf("load tracker artifact: %v", err)
 	}
 	if torrentMeta.Announce != wantAnnounce {
-		t.Fatalf("expected announce %q, got %q", wantAnnounce, torrentMeta.Announce)
+		t.Fatal("expected tracker artifact announce")
 	}
 	info, err := torrentMeta.UnmarshalInfo()
 	if err != nil {

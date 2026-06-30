@@ -42,6 +42,7 @@ type closeCounterCore struct {
 	importedMeta api.PreparedMetadata
 	importedReq  api.Request
 	fetchReq     api.Request
+	dupeSummary  api.DupeCheckSummary
 	uploads      []uploadPreparedResponse
 	uploadCalls  int
 }
@@ -90,7 +91,7 @@ func (c *closeCounterCore) FetchTrackerDryRunPreview(context.Context, api.Reques
 }
 
 func (c *closeCounterCore) CheckDupes(context.Context, api.Request) (api.DupeCheckSummary, error) {
-	return api.DupeCheckSummary{}, nil
+	return c.dupeSummary, nil
 }
 
 func (c *closeCounterCore) BuildUploadReview(context.Context, api.Request) (api.UploadReview, error) {
@@ -569,6 +570,43 @@ func TestRunTrackerUploadJobCountsPartialErrorAndContinues(t *testing.T) {
 	}
 }
 
+func TestRunDupeCheckJobSplitsGroupedPathedResultsIntoTrackerStates(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &closeCounterCore{dupeSummary: api.DupeCheckSummary{
+		SourcePath: `C:\Media\Movie.mkv`,
+		Results: []api.DupeCheckResult{
+			{
+				Tracker:  "AITHER, BLU",
+				HasDupes: true,
+				Status:   "completed",
+				Notes:    []string{"pathed torrent match found; skipping dupe search"},
+			},
+			{Tracker: "RF", Status: "completed"},
+		},
+	}}
+	job := newDupeCheckJobTestJob(coreSvc.dupeSummary.SourcePath, []string{"AITHER", "BLU", "RF"})
+	app := &App{core: coreSvc}
+
+	app.runDupeCheckJob(context.Background(), nil, job)
+
+	if got := job.completedCount; got != 3 {
+		t.Fatalf("expected all trackers completed, got %d", got)
+	}
+	if _, ok := job.states["AITHER, BLU"]; ok {
+		t.Fatal("did not expect grouped tracker state")
+	}
+	for _, tracker := range []string{"AITHER", "BLU"} {
+		state := job.states[tracker]
+		if got := state.Status; got != "completed" {
+			t.Fatalf("expected %s completed, got %q", tracker, got)
+		}
+		if got := state.Result.Tracker; got != tracker {
+			t.Fatalf("expected %s result tracker, got %q", tracker, got)
+		}
+	}
+}
+
 func TestRunTrackerUploadJobIgnoresNegativeUploadedCount(t *testing.T) {
 	app := &App{}
 	coreSvc := &closeCounterCore{uploads: []uploadPreparedResponse{
@@ -689,6 +727,22 @@ func newTrackerUploadJobTestJob(coreSvc api.Core, trackers []string) *trackerUpl
 	}
 	for _, tracker := range trackers {
 		job.states[tracker] = TrackerUploadTrackerState{Tracker: tracker, Status: "queued", Message: "queued"}
+	}
+	return job
+}
+
+func newDupeCheckJobTestJob(sourcePath string, trackers []string) *dupeCheckJob {
+	job := &dupeCheckJob{
+		id:         "dupe-job",
+		sourcePath: sourcePath,
+		trackers:   trackers,
+		states:     make(map[string]DupeCheckTrackerState, len(trackers)),
+		totalCount: len(trackers),
+		status:     "queued",
+		startedAt:  time.Now().UTC(),
+	}
+	for _, tracker := range trackers {
+		job.states[tracker] = DupeCheckTrackerState{Tracker: tracker, Status: "queued", Message: "queued"}
 	}
 	return job
 }

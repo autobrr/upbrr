@@ -51,10 +51,10 @@ func TestResolveUploadTorrentPathWritesCleanBaseCopy(t *testing.T) {
 
 	cleaned := readTestMetaInfo(t, got)
 	if cleaned.Announce != "" {
-		t.Fatalf("expected announce cleared, got %q", cleaned.Announce)
+		t.Fatal("expected announce cleared")
 	}
 	if len(cleaned.AnnounceList) != 0 {
-		t.Fatalf("expected announce-list cleared, got %#v", cleaned.AnnounceList)
+		t.Fatal("expected announce-list cleared")
 	}
 	if len(cleaned.Nodes) != 0 {
 		t.Fatalf("expected nodes cleared, got %#v", cleaned.Nodes)
@@ -179,10 +179,10 @@ func TestWriteUploadTorrentPreservesPieceLayers(t *testing.T) {
 		t.Fatalf("expected piece layers preserved, got %#v", cleaned.PieceLayers)
 	}
 	if cleaned.Announce != "" {
-		t.Fatalf("expected announce cleared, got %q", cleaned.Announce)
+		t.Fatal("expected announce cleared")
 	}
 	if len(cleaned.AnnounceList) != 0 {
-		t.Fatalf("expected announce-list cleared, got %#v", cleaned.AnnounceList)
+		t.Fatal("expected announce-list cleared")
 	}
 	if len(cleaned.Nodes) != 0 {
 		t.Fatalf("expected nodes cleared, got %#v", cleaned.Nodes)
@@ -227,7 +227,7 @@ func TestResolveUploadTorrentPathWithoutCleanTargetLeavesOriginalUnchanged(t *te
 
 	original := readTestMetaInfo(t, torrentPath)
 	if original.Announce != "https://tracker.example/announce" {
-		t.Fatalf("expected original announce unchanged, got %q", original.Announce)
+		t.Fatal("expected original announce unchanged")
 	}
 	if original.Comment != "private tracker comment" {
 		t.Fatalf("expected original comment unchanged, got %q", original.Comment)
@@ -255,10 +255,10 @@ func TestWritePersonalizedTorrentSetsTrackerFields(t *testing.T) {
 
 	updated := readTestMetaInfo(t, outputPath)
 	if updated.Announce != "https://new.example/announce" {
-		t.Fatalf("expected announce set, got %q", updated.Announce)
+		t.Fatal("expected announce set")
 	}
 	if len(updated.AnnounceList) != 1 || len(updated.AnnounceList[0]) != 1 || updated.AnnounceList[0][0] != "https://new.example/announce" {
-		t.Fatalf("expected announce-list set, got %#v", updated.AnnounceList)
+		t.Fatal("expected announce-list set")
 	}
 	if updated.Comment != "https://tracker.example/torrents/123" {
 		t.Fatalf("expected tracker comment, got %q", updated.Comment)
@@ -305,7 +305,7 @@ func TestPrepareTrackerUploadTorrentCreatesSpecificArtifact(t *testing.T) {
 
 	artifact := readTestMetaInfo(t, meta.TorrentPath)
 	if artifact.Announce != "https://new.example/announce" {
-		t.Fatalf("expected announce set, got %q", artifact.Announce)
+		t.Fatal("expected announce set")
 	}
 	assertInfoSource(t, artifact, "HDBits")
 
@@ -315,7 +315,7 @@ func TestPrepareTrackerUploadTorrentCreatesSpecificArtifact(t *testing.T) {
 	}
 	cleaned := readTestMetaInfo(t, cleanBase)
 	if cleaned.Announce != "" {
-		t.Fatalf("expected clean base announce cleared, got %q", cleaned.Announce)
+		t.Fatal("expected clean base announce cleared")
 	}
 	assertInfoSource(t, cleaned, "")
 }
@@ -340,7 +340,7 @@ func TestPrepareTrackerUploadTorrentUsesDefaultAnnounce(t *testing.T) {
 	}
 	artifact := readTestMetaInfo(t, meta.TorrentPath)
 	if artifact.Announce != "https://tracker.avistaz.to/announce" {
-		t.Fatalf("expected default announce, got %q", artifact.Announce)
+		t.Fatal("expected default announce")
 	}
 	assertInfoSource(t, artifact, "AvistaZ")
 }
@@ -382,7 +382,7 @@ func TestPrepareDryRunInjectionTorrentCreatesGenericTrackerArtifact(t *testing.T
 
 	artifact := readTestMetaInfo(t, meta.TorrentPath)
 	if artifact.Announce != "https://luminarr.me/announce/passkey" {
-		t.Fatalf("expected announce set, got %q", artifact.Announce)
+		t.Fatal("expected announce set")
 	}
 	assertInfoSource(t, artifact, "LUME")
 }

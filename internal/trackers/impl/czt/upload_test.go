@@ -276,6 +276,33 @@ func TestUploadResponseParseBoundaries(t *testing.T) {
 	}
 }
 
+func TestUploadSuccessParsesLargeResponse(t *testing.T) {
+	padding := strings.Repeat("a", 70*1024)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = fmt.Fprintf(
+			w,
+			`{"name":%q,"id":123,"download_url":"/download.php?id=123","torrent_b64":" "}`,
+			padding,
+		)
+	}))
+	defer server.Close()
+
+	result, err := upload(context.Background(), cztUploadRequest(t, server.URL))
+	if err != nil {
+		t.Fatalf("unexpected upload error: %v", err)
+	}
+	if result.Uploaded != 1 || len(result.UploadedTorrents) != 1 {
+		t.Fatalf("expected remote success without artifact failure, got %+v", result)
+	}
+	if result.UploadedTorrents[0].TorrentID != "123" {
+		t.Fatalf("expected torrent ID 123, got %q", result.UploadedTorrents[0].TorrentID)
+	}
+	if result.UploadedTorrents[0].DownloadURL != server.URL+"/download.php?id=123" {
+		t.Fatalf("expected download URL from large response, got %q", result.UploadedTorrents[0].DownloadURL)
+	}
+}
+
 func TestUploadResponseBadLocalFieldPreservesRemoteSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)
@@ -880,13 +907,13 @@ func assertCZTUploadRequest(r *http.Request, expectedPath string) error {
 		return fmt.Errorf("expected upload path %q, got %q", expectedPath, r.URL.Path)
 	}
 	if got := r.Header.Get("Authorization"); got != "" {
-		return fmt.Errorf("expected no authorization header, got %q", got)
+		return errors.New("expected no authorization header")
 	}
 	if err := r.ParseMultipartForm(5 << 20); err != nil {
 		return fmt.Errorf("parse multipart: %w", err)
 	}
 	if got := r.FormValue("passkey"); got != "pass" {
-		return fmt.Errorf("expected passkey form field, got %q", got)
+		return errors.New("expected passkey form field")
 	}
 	if got := r.FormValue("user_descr"); !strings.Contains(got, "[img]https://img.example/raw.jpg[/img]") {
 		return fmt.Errorf("expected raw screenshot img tag in payload, got %q", got)

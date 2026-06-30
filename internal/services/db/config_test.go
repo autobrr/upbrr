@@ -54,7 +54,7 @@ func TestConfigSectionSaveLoad(t *testing.T) {
 
 	// Verify.
 	if loaded.TMDBAPI != testSettings.TMDBAPI {
-		t.Errorf("TMDBAPI mismatch: got %s, want %s", loaded.TMDBAPI, testSettings.TMDBAPI)
+		t.Error("TMDBAPI mismatch")
 	}
 	if loaded.DBPath != testSettings.DBPath {
 		t.Errorf("DBPath mismatch: got %s, want %s", loaded.DBPath, testSettings.DBPath)

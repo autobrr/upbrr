@@ -254,24 +254,24 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	defer resp.Body.Close()
 
-	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-	if err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: BTN read upload response: %w", err)
-	}
 	finalURL := ""
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()
 	}
 	matches := btnSuccessURLPattern.FindStringSubmatch(finalURL)
 	if len(matches) < 2 {
-		matches = btnSuccessURLPattern.FindStringSubmatch(string(responseBody))
-	}
-	if len(matches) < 2 {
-		failurePath, _ := commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "BTN", "upload-failure", responseBody, ".html")
-		if failurePath != "" {
-			return api.UploadSummary{}, fmt.Errorf("%w failure=%s", commonhttp.UploadHTTPErrorWithURL("BTN", resp.StatusCode, finalURL, responseBody), failurePath)
+		responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 400, 2048)
+		if err != nil {
+			return api.UploadSummary{}, fmt.Errorf("trackers: BTN read upload response: %w", err)
 		}
-		return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("BTN", resp.StatusCode, finalURL, responseBody)
+		matches = btnSuccessURLPattern.FindStringSubmatch(string(responseBody))
+		if len(matches) < 2 {
+			failurePath, _ := commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "BTN", "upload-failure", responsePreview, ".html")
+			if failurePath != "" {
+				return api.UploadSummary{}, fmt.Errorf("%w failure=%s", commonhttp.UploadHTTPErrorWithURL("BTN", resp.StatusCode, finalURL, responsePreview), failurePath)
+			}
+			return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("BTN", resp.StatusCode, finalURL, responsePreview)
+		}
 	}
 
 	groupID := strings.TrimSpace(matches[1])

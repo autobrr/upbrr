@@ -202,6 +202,55 @@ func TestHDBUploadBatchChunksLargeUploads(t *testing.T) {
 	}
 }
 
+func TestImgboxUploadRejectedUsesFallbackAfterSanitizingError(t *testing.T) {
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "shot.png")
+	if err := os.WriteFile(imagePath, []byte("testdata"), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.String() {
+			case "https://imgbox.com/":
+				header := make(http.Header)
+				header.Add("Set-Cookie", "session=abc; Path=/")
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     header,
+					Body:       io.NopCloser(strings.NewReader(`<input name="authenticity_token" value="csrf-token">`)),
+				}, nil
+			case "https://imgbox.com/ajax/token/generate":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"token_id":"1","token_secret":"secret","gallery_id":"2","gallery_secret":"gallery"}`)),
+				}, nil
+			case "https://imgbox.com/upload/process":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"ok":false,"error":"   "}`)),
+				}, nil
+			default:
+				t.Fatalf("unexpected request URL: %s", req.URL.String())
+				return nil, nil
+			}
+		}),
+	}
+
+	_, err := (&imgboxUploader{client: client}).Upload(context.Background(), imagePath)
+	if err == nil {
+		t.Fatal("expected rejected upload to fail")
+	}
+	if !strings.Contains(err.Error(), "imgbox upload rejected: unknown error") {
+		t.Fatal("expected unknown error fallback")
+	}
+	if strings.Contains(err.Error(), "imgbox upload rejected:  ") {
+		t.Fatal("rejection message must not be whitespace-only")
+	}
+}
+
 func TestParseHDBUploadResultsMultipleMatches(t *testing.T) {
 	results, err := parseHDBUploadResults([]byte(
 		"[url=https://img.hdbits.org/a1][img]https://t.hdbits.org/a1.jpg[/img][/url]\n" +
@@ -326,7 +375,7 @@ func TestLostimgUploaderPostsRepeatedFileFields(t *testing.T) {
 				t.Fatalf("unexpected request URL: %s", req.URL.String())
 			}
 			if got := req.Header.Get("Authorization"); got != "Bearer secret" {
-				t.Fatalf("expected bearer auth, got %q", got)
+				t.Fatal("expected bearer auth")
 			}
 			mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
 			if err != nil {
@@ -478,7 +527,7 @@ func TestReelflixUploaderPostsSourceWithAPIKey(t *testing.T) {
 				t.Fatalf("unexpected request URL: %s", req.URL.String())
 			}
 			if got := req.Header.Get("X-Api-Key"); got != "secret" {
-				t.Fatalf("expected X-API-Key, got %q", got)
+				t.Fatal("expected X-API-Key")
 			}
 			mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
 			if err != nil {
@@ -543,12 +592,12 @@ func TestReadAndCloseResponseBodyClosesBody(t *testing.T) {
 		Body:       body,
 	}
 
-	payload, err := readAndCloseResponseBody(resp)
+	payload, err := readLimitedAndCloseResponseBody(resp)
 	if err != nil {
-		t.Fatalf("readAndCloseResponseBody returned error: %v", err)
+		t.Fatalf("readLimitedAndCloseResponseBody returned error: %v", err)
 	}
 	if string(payload) != "partial response" {
-		t.Fatalf("unexpected payload: %q", string(payload))
+		t.Fatalf("unexpected payload: %q", safeResponsePreview(payload))
 	}
 	if !body.closed {
 		t.Fatal("expected response body to be closed")

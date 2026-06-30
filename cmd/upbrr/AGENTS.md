@@ -23,6 +23,7 @@ Add touched service/tracker/internal packages to focused `go test` runs.
 
 ## CLI Output / Logging
 
+- Follow root log-level guidance for CLI logs and stdout/stderr.
 - User-facing stdout/stderr may be copied into issues. Do not print credentials, usernames, passwords, tokens, API keys, auth keys, passkeys, cookie values, 2FA codes, challenge IDs, refreshed API tokens, or secret payloads.
 - CLI dry-run stdout is shareable debug material: redact endpoints and payload values with the existing safe dry-run helpers before printing.
 - Tracker-auth CLI logs should make the pre-dupe auth flow reconstructable without secrets: capability load count, auth-check start with tracker count, validation start per managed tracker with `tracker` and `auth_kind`, status result with `state`, cookie count, encrypted-storage availability and `needs_2fa`, per-tracker decision, and final ready/skipped counts.

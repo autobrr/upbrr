@@ -8,6 +8,7 @@ internal/webserver/assets/
 internal/guiapp/assets/*
 !internal/guiapp/assets/.keep
 dist/
+docs/
 tmp/
 .trunk/
 *.exe

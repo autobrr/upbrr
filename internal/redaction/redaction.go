@@ -36,7 +36,11 @@ var (
 	announcePathTokenRe = regexp.MustCompile(`(?i)(/announce(?:\.php)?/)([A-Za-z0-9]{10,})($|[/?#])`)
 	apiPathTokenRe      = regexp.MustCompile(`(?i)(/api/torrents/)([A-Za-z0-9]{10,})($|[/?#"])`)
 	proxyPathRe         = regexp.MustCompile(`(?i)(/proxy/)([^/\s?#"]+)`) // /proxy/<secret>
-	queryParamRe        = regexp.MustCompile(`(?i)([?&](api[_-]?key|api[_-]?token|auth|authkey|info_hash|key|passkey|rsskey|token|torrent_pass|uid|user|user_id|userid)=)[^&]+`)
+	queryParamRe        = regexp.MustCompile(`(?i)([?&](anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|auth|auth[_-]?key|csrf|info[_-]?hash|key|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass|uid|user|user[_-]?id|userid)=)[^&]+`)
+	keyValueQuotedRe    = regexp.MustCompile(`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass)\b(\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`)
+	keyValuePlainRe     = regexp.MustCompile(`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass)\b(\s*[:=]\s*)(bearer\s+)?([^"'\s,;)\]}]+)`)
+	cookieTailRe        = regexp.MustCompile(`(?i)(\bcookie\b\s*[:=]\s*\[REDACTED\])(?:[;]\s*[^,\r\n]+)+`)
+	authTailRe          = regexp.MustCompile(`(?i)(\bauthorization\b\s*[:=]\s*bearer\s+\[REDACTED\])(?:,\s*[^,\s]+)+`)
 	longHexTokenRe      = regexp.MustCompile(`\b[a-fA-F0-9]{32,}\b`)
 )
 
@@ -128,10 +132,41 @@ func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
 	value = apiPathTokenRe.ReplaceAllString(value, `${1}[REDACTED]${3}`)
 	value = proxyPathRe.ReplaceAllString(value, `${1}[REDACTED]`)
 	value = queryParamRe.ReplaceAllString(value, `${1}[REDACTED]`)
+	value = keyValueQuotedRe.ReplaceAllStringFunc(value, redactQuotedKeyValue)
+	value = keyValuePlainRe.ReplaceAllStringFunc(value, redactPlainKeyValue)
+	value = cookieTailRe.ReplaceAllString(value, `${1}`)
+	value = authTailRe.ReplaceAllString(value, `${1}`)
 	value = longHexTokenRe.ReplaceAllString(value, `[REDACTED]`)
 
 	_ = keys
 	return value
+}
+
+// redactQuotedKeyValue replaces the value part of a matched quoted secret
+// key/value pair while preserving the original quote style.
+func redactQuotedKeyValue(value string) string {
+	matches := keyValueQuotedRe.FindStringSubmatchIndex(value)
+	if len(matches) < 8 || matches[6] < 0 || matches[7] <= matches[6] {
+		return value
+	}
+	quoted := value[matches[6]:matches[7]]
+	if len(quoted) < 2 {
+		return value
+	}
+	return value[:matches[6]] + quoted[:1] + "[REDACTED]" + quoted[len(quoted)-1:]
+}
+
+// redactPlainKeyValue replaces the value part of a matched unquoted secret
+// key/value pair without reprocessing an existing redaction marker.
+func redactPlainKeyValue(value string) string {
+	matches := keyValuePlainRe.FindStringSubmatch(value)
+	if len(matches) < 5 {
+		return value
+	}
+	if strings.EqualFold(matches[4], "[REDACTED") || strings.EqualFold(matches[4], "[REDACTED]") {
+		return value
+	}
+	return matches[1] + matches[2] + matches[3] + "[REDACTED]"
 }
 
 // RedactPrivateInfo recursively redacts sensitive values in JSON-like data.
@@ -173,15 +208,23 @@ func RedactPrivateInfo(data any, sensitiveKeys map[string]struct{}) any {
 	}
 }
 
+// isSensitiveKey compares normalized key spellings so common variants such as
+// api_key, api-key, and apiKey share the same redaction behavior.
 func isSensitiveKey(key string, keys map[string]struct{}) bool {
 	if len(keys) == 0 {
 		return false
 	}
-	lower := strings.ToLower(key)
+	lower := canonicalSensitiveKey(key)
 	for candidate := range keys {
-		if strings.Contains(lower, candidate) {
+		if strings.Contains(lower, canonicalSensitiveKey(candidate)) {
 			return true
 		}
 	}
 	return false
+}
+
+// canonicalSensitiveKey removes separators and case from keys before matching
+// them against the sensitive-key set.
+func canonicalSensitiveKey(key string) string {
+	return strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(key)))
 }

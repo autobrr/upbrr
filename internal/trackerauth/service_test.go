@@ -28,12 +28,17 @@ import (
 
 type trackerAuthRecordingLogger struct {
 	api.NopLogger
-	info []string
-	warn []string
+	info  []string
+	trace []string
+	warn  []string
 }
 
 func (l *trackerAuthRecordingLogger) Infof(format string, args ...any) {
 	l.info = append(l.info, fmt.Sprintf(format, args...))
+}
+
+func (l *trackerAuthRecordingLogger) Tracef(format string, args ...any) {
+	l.trace = append(l.trace, fmt.Sprintf(format, args...))
 }
 
 func (l *trackerAuthRecordingLogger) Warnf(format string, args ...any) {
@@ -257,7 +262,7 @@ func TestValidateBTNStoredCookiesPromotesRemoteSuccess(t *testing.T) {
 		}
 		if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=abc") {
 			select {
-			case handlerErr <- fmt.Errorf("expected BTN session cookie, got %q", got):
+			case handlerErr <- errors.New("expected BTN session cookie"):
 			default:
 			}
 			http.Error(w, "unexpected cookie", http.StatusInternalServerError)
@@ -303,7 +308,7 @@ func TestValidateBTNRemoteSuccessRequiresAPIKey(t *testing.T) {
 		}
 		if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=abc") {
 			select {
-			case handlerErr <- fmt.Errorf("expected BTN session cookie, got %q", got):
+			case handlerErr <- errors.New("expected BTN session cookie"):
 			default:
 			}
 			http.Error(w, "unexpected cookie", http.StatusInternalServerError)
@@ -346,7 +351,7 @@ func TestValidateBTNMissingAPIAfterCookieRefreshUpdatesCookieCount(t *testing.T)
 		case "/upload.php":
 			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=new") {
 				select {
-				case handlerErr <- fmt.Errorf("expected refreshed BTN session cookie, got %q", got):
+				case handlerErr <- errors.New("expected refreshed BTN session cookie"):
 				default:
 				}
 				http.Error(w, "unexpected cookie", http.StatusInternalServerError)
@@ -502,13 +507,13 @@ func TestValidateRTFRefreshesExpiredAPIKey(t *testing.T) {
 		t.Fatalf("expected successful RTF auth validation, got %#v", status)
 	}
 	if testedToken != "old-token" {
-		t.Fatalf("expected old token validation, got %q", testedToken)
+		t.Fatal("expected old token validation")
 	}
 	if !loginCalled {
 		t.Fatal("expected expired API key to trigger RTF login")
 	}
 	if got := loadStoredTrackerConfig(t, dbPath).Trackers.Trackers["RTF"].APIKey; got != "new-token" {
-		t.Fatalf("expected refreshed token persisted, got %q", got)
+		t.Fatal("expected refreshed token persisted")
 	}
 }
 
@@ -526,7 +531,8 @@ func TestValidateARStoredCookies(t *testing.T) {
 			return
 		}
 		if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=abc") {
-			t.Fatalf("expected AR session cookie, got %q", got)
+			t.Error("expected AR session cookie")
+			return
 		}
 		_, _ = w.Write([]byte(`<a href="/torrents.php?action=download&id=1&auth=session-key">Download</a>`))
 	}))
@@ -598,10 +604,12 @@ func TestValidateFFLoginPersistsCookies(t *testing.T) {
 			_, _ = w.Write([]byte(`<input name="username">`))
 		case "/takelogin.php":
 			if err := r.ParseForm(); err != nil {
-				t.Fatalf("ParseForm: %v", err)
+				t.Errorf("ParseForm: %v", err)
+				return
 			}
 			if r.FormValue("username") != "user" || r.FormValue("password") != "pass" {
-				t.Fatalf("unexpected FF login form: %v", r.Form)
+				t.Error("unexpected FF login form")
+				return
 			}
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "valid", Path: "/"})
 			w.Header().Set("Location", "/index.php")
@@ -631,7 +639,7 @@ func TestValidateFFLoginPersistsCookies(t *testing.T) {
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if values["session"] != "valid" {
-		t.Fatalf("expected saved FF login cookies, got %#v", values)
+		t.Fatal("expected saved FF login cookies")
 	}
 }
 
@@ -649,10 +657,12 @@ func TestValidateFLLoginPersistsCookies(t *testing.T) {
 			_, _ = w.Write([]byte(`<input name="validator" value="token">`))
 		case "/takelogin.php":
 			if err := r.ParseForm(); err != nil {
-				t.Fatalf("ParseForm: %v", err)
+				t.Errorf("ParseForm: %v", err)
+				return
 			}
 			if r.FormValue("validator") != "token" || r.FormValue("username") != "user" || r.FormValue("password") != "pass" {
-				t.Fatalf("unexpected FL login form: %v", r.Form)
+				t.Error("unexpected FL login form")
+				return
 			}
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "valid", Path: "/"})
 			_, _ = w.Write([]byte("Logout"))
@@ -687,7 +697,7 @@ func TestValidateFLLoginPersistsCookies(t *testing.T) {
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if values["session"] != "valid" {
-		t.Fatalf("expected saved FL login cookies, got %#v", values)
+		t.Fatal("expected saved FL login cookies")
 	}
 }
 
@@ -700,10 +710,12 @@ func TestValidateTHRChecksCredentialLogin(t *testing.T) {
 			return
 		}
 		if err := r.ParseForm(); err != nil {
-			t.Fatalf("ParseForm: %v", err)
+			t.Errorf("ParseForm: %v", err)
+			return
 		}
 		if r.FormValue("username") != "user" || r.FormValue("password") != "pass" || r.FormValue("ssl") != "yes" {
-			t.Fatalf("unexpected THR login form: %v", r.Form)
+			t.Error("unexpected THR login form")
+			return
 		}
 		_, _ = w.Write([]byte(`<a href="logout.php">Logout</a>`))
 	}))
@@ -1872,7 +1884,7 @@ func TestCookiesToMapPreservesCookieValueWhitespace(t *testing.T) {
 
 	got := CookiesToMap([]*http.Cookie{{Name: " session ", Value: " abc "}})
 	if got["session"] != " abc " {
-		t.Fatalf("cookie value was normalized: %#v", got)
+		t.Fatal("cookie value was normalized")
 	}
 }
 
@@ -1983,7 +1995,7 @@ func TestImportCookiesRejectsMalformedArrayEntryWithoutReplacingCookies(t *testi
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if values["session"] != "existing" {
-		t.Fatalf("existing cookies changed after failed import: %#v", values)
+		t.Fatal("existing cookies changed after failed import")
 	}
 }
 
@@ -2010,7 +2022,7 @@ func TestImportCookiesRejectsOverCapWithoutReplacingCookies(t *testing.T) {
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if values["session"] != "existing" {
-		t.Fatalf("existing cookies changed after failed import: %#v", values)
+		t.Fatal("existing cookies changed after failed import")
 	}
 }
 
@@ -2154,22 +2166,34 @@ func TestTrackerAuthLogsOperationResultsWithoutSecrets(t *testing.T) {
 	if status.TrackerID != "MTV" {
 		t.Fatalf("expected MTV status, got %#v", status)
 	}
+	if _, err := service.Capabilities(context.Background()); err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
 	if _, err := service.ImportCookies(context.Background(), "AR", "cookies.json", "{bad"); err == nil {
 		t.Fatal("expected invalid cookie import to fail")
 	}
 
 	infoLog := strings.Join(logger.info, "\n")
+	traceLog := strings.Join(logger.trace, "\n")
 	warnLog := strings.Join(logger.warn, "\n")
-	allLogs := infoLog + "\n" + warnLog
-	if !strings.Contains(infoLog, "tracker auth: status checked tracker=MTV") {
-		t.Fatalf("expected status info log, got info=%q warn=%q", infoLog, warnLog)
+	allLogs := infoLog + "\n" + traceLog + "\n" + warnLog
+	if !strings.Contains(traceLog, "tracker auth: status checked tracker=MTV") {
+		t.Fatal("expected status trace log")
+	}
+	if !strings.Contains(traceLog, "tracker auth: capabilities loaded count=") {
+		t.Fatal("expected capabilities trace log")
+	}
+	for _, routine := range []string{"tracker auth: status checked tracker=MTV", "tracker auth: capabilities loaded count="} {
+		if strings.Contains(infoLog, routine) {
+			t.Fatal("routine tracker auth log used info level")
+		}
 	}
 	if !strings.Contains(warnLog, "tracker auth: cookie import failed tracker=AR bytes=4") {
-		t.Fatalf("expected import warning log, got info=%q warn=%q", infoLog, warnLog)
+		t.Fatal("expected import warning log")
 	}
 	for _, secret := range []string{"secret-api-key", "secret-user", "secret-password", "{bad"} {
 		if strings.Contains(allLogs, secret) {
-			t.Fatalf("tracker auth log leaked %q: %s", secret, allLogs)
+			t.Fatal("tracker auth log leaked secret")
 		}
 	}
 }
@@ -2192,6 +2216,26 @@ func TestTrackerAuthWarningStatusDoesNotLogSuccess(t *testing.T) {
 	}
 	if !strings.Contains(warnLog, "tracker auth: login completed warning tracker=MTV") {
 		t.Fatalf("expected warning log, got info=%q warn=%q", infoLog, warnLog)
+	}
+}
+
+func TestTrackerAuthConfiguredLoginStatusUsesInfo(t *testing.T) {
+	t.Parallel()
+
+	logger := &trackerAuthRecordingLogger{}
+	service := NewServiceWithLogger(config.Config{}, logger)
+	service.logStatus("login completed", api.TrackerAuthStatus{
+		TrackerID: "MTV",
+		State:     StateConfigured,
+	})
+
+	infoLog := strings.Join(logger.info, "\n")
+	traceLog := strings.Join(logger.trace, "\n")
+	if !strings.Contains(infoLog, "tracker auth: login completed tracker=MTV") {
+		t.Fatalf("expected successful login info log, got info=%q trace=%q", infoLog, traceLog)
+	}
+	if strings.Contains(traceLog, "tracker auth: login completed tracker=MTV") {
+		t.Fatalf("successful login logged at trace: info=%q trace=%q", infoLog, traceLog)
 	}
 }
 
@@ -2516,7 +2560,7 @@ func TestDeleteARCookieFailureRestoresAuthState(t *testing.T) {
 		t.Fatalf("expected AR cookies to be restored: %v", err)
 	}
 	if cookieValues["session"] != "abc" {
-		t.Fatalf("unexpected restored AR cookies: %#v", cookieValues)
+		t.Fatal("unexpected restored AR cookies")
 	}
 }
 
@@ -2589,7 +2633,7 @@ func TestEnsureSessionPreservesMTVCookiesOnInvalidLookingAdapterText(t *testing.
 				t.Fatalf("LoadTrackerCookieMap: %v", err)
 			}
 			if values[cookieName] != "abc" {
-				t.Fatalf("expected invalid-looking adapter text to preserve cookies, got %#v", values)
+				t.Fatal("expected invalid-looking adapter text to preserve cookies")
 			}
 		})
 	}
@@ -2635,7 +2679,7 @@ func TestValidateTransientAdapterFailurePreservesCookieCount(t *testing.T) {
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if values["session"] != "abc" {
-		t.Fatalf("expected transient adapter failure to preserve cookies, got %#v", values)
+		t.Fatal("expected transient adapter failure to preserve cookies")
 	}
 }
 

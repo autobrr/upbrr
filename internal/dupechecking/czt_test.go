@@ -501,7 +501,7 @@ func assertCZTSearchRequest(r *http.Request, title string) error {
 		return fmt.Errorf("type query: got %q", got)
 	}
 	if got := r.URL.Query().Get("passkey"); got != "passkey123" {
-		return fmt.Errorf("passkey query: got %q", got)
+		return errors.New("passkey query mismatch")
 	}
 	if got := r.URL.Query().Get("query"); got != title {
 		return fmt.Errorf("query: got %q", got)

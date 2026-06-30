@@ -10,11 +10,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -464,11 +466,8 @@ func resolveType(meta api.PreparedMetadata) string {
 
 func resolveEdition(meta api.PreparedMetadata, tags []string) (bool, string) {
 	edition := strings.TrimSpace(meta.Edition)
-	for _, tag := range tags {
-		if tag == "Hybrid" {
-			edition = strings.TrimSpace(strings.ReplaceAll(edition, "Hybrid", ""))
-			break
-		}
+	if slices.Contains(tags, "Hybrid") {
+		edition = strings.TrimSpace(strings.ReplaceAll(edition, "Hybrid", ""))
 	}
 	if edition == "" {
 		return false, ""
@@ -593,9 +592,7 @@ func boolFlag(value bool) string {
 
 func cloneFields(input map[string]string) map[string]string {
 	out := make(map[string]string, len(input))
-	for key, value := range input {
-		out[key] = value
-	}
+	maps.Copy(out, input)
 	return out
 }
 

@@ -102,14 +102,14 @@ func TestExtractCodeBlocksUsesUniqueNonAliasingPlaceholders(t *testing.T) {
 			t.Fatalf("expected token for block %d", i)
 		}
 		if strings.Contains(builder.String(), block.token) {
-			t.Fatalf("expected generated token %q to be absent from original input", block.token)
+			t.Fatalf("expected generated token for block %d to be absent from original input", i)
 		}
 		for j, other := range blocks {
 			if i == j {
 				continue
 			}
 			if strings.Contains(other.token, block.token) {
-				t.Fatalf("expected token %q not to alias %q", block.token, other.token)
+				t.Fatalf("expected token for block %d not to alias block %d", i, j)
 			}
 		}
 	}

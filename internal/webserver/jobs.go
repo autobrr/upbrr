@@ -334,20 +334,22 @@ func (b *Backend) runDupeCheckJob(ctx context.Context, job *dupeCheckJob) {
 	}
 	job.summary = summary
 	for _, result := range summary.Results {
-		tracker := strings.ToUpper(strings.TrimSpace(result.Tracker))
-		state := job.states[tracker]
-		if !isDupeTerminalStatus(state.Status) {
-			job.completedCount++
+		for _, tracker := range dupeResultTrackerNames(result) {
+			state := job.states[tracker]
+			if !isDupeTerminalStatus(state.Status) {
+				job.completedCount++
+			}
+			state.Tracker = tracker
+			state.Status = resultStatus(result)
+			state.Message = resultMessage(result)
+			state.Result = result
+			state.Result.Tracker = tracker
+			if state.StartedAt == "" {
+				state.StartedAt = job.startedAt.Format(time.RFC3339)
+			}
+			state.FinishedAt = job.finishedAt.Format(time.RFC3339)
+			job.states[tracker] = state
 		}
-		state.Tracker = tracker
-		state.Status = resultStatus(result)
-		state.Message = resultMessage(result)
-		state.Result = result
-		if state.StartedAt == "" {
-			state.StartedAt = job.startedAt.Format(time.RFC3339)
-		}
-		state.FinishedAt = job.finishedAt.Format(time.RFC3339)
-		job.states[tracker] = state
 	}
 	if hasFailedDupeState(job.states) {
 		job.status = "completed_with_errors"
@@ -760,6 +762,26 @@ func upsertDupeSummaryResult(summary *api.DupeCheckSummary, result api.DupeCheck
 		}
 	}
 	summary.Results = append(summary.Results, result)
+}
+
+// dupeResultTrackerNames expands grouped dupe summary labels into the
+// per-tracker state keys used by frontend snapshots.
+func dupeResultTrackerNames(result api.DupeCheckResult) []string {
+	trackers := strings.Split(result.Tracker, ",")
+	names := make([]string, 0, len(trackers))
+	seen := make(map[string]struct{}, len(trackers))
+	for _, tracker := range trackers {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	return names
 }
 
 func hasFailedDupeState(states map[string]DupeCheckTrackerState) bool {

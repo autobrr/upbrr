@@ -89,23 +89,29 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 			uploadSeen = true
 			if ct := r.Header.Get("Content-Type"); !strings.Contains(ct, "multipart/form-data") {
 				t.Errorf("expected multipart content-type, got %q", ct)
+				return
 			}
 			if err := r.ParseMultipartForm(5 << 20); err != nil {
-				t.Fatalf("parse multipart: %v", err)
+				t.Errorf("parse multipart: %v", err)
+				return
 			}
 			if r.FormValue("name") == "" {
-				t.Fatal("expected upload name field")
+				t.Error("expected upload name field")
+				return
 			}
 			if descr := r.FormValue("descr"); !strings.Contains(descr, "https://t.hdbits.org/rehosted.jpg") {
-				t.Fatalf("expected provided rehosted screenshot in description, got %q", descr)
+				t.Errorf("expected provided rehosted screenshot in description, got %q", descr)
+				return
 			}
 			files := r.MultipartForm.File["file"]
 			if len(files) == 0 {
-				t.Fatal("expected torrent file in multipart form")
+				t.Error("expected torrent file in multipart form")
+				return
 			}
 			f, err := files[0].Open()
 			if err != nil {
-				t.Fatalf("open uploaded file: %v", err)
+				t.Errorf("open uploaded file: %v", err)
+				return
 			}
 			_, _ = io.ReadAll(f)
 			_ = f.Close()
@@ -116,7 +122,8 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 		case strings.HasPrefix(r.URL.Path, "/download.php/"):
 			downloadSeen = true
 			if r.URL.Query().Get("id") != "123" {
-				t.Fatalf("expected id=123, got %q", r.URL.Query().Get("id"))
+				t.Errorf("expected id=123, got %q", r.URL.Query().Get("id"))
+				return
 			}
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("reseed-torrent-bytes"))

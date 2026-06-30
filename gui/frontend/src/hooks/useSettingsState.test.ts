@@ -14,6 +14,7 @@ import {
 
 afterEach(() => {
   cleanup();
+  latestPayload = "";
   delete (globalThis as typeof globalThis & { go?: any }).go;
 });
 
@@ -134,7 +135,7 @@ function TorrentClientsHarness() {
     "div",
     null,
     state.renderTorrentClientsSection(false),
-    createElement("pre", { "data-testid": "payload" }, state.buildSavePayload() ?? ""),
+    createElement(PayloadCapture, { value: state.buildSavePayload() }),
   );
 }
 
@@ -154,7 +155,7 @@ function ClientSetupHarness() {
     ...Object.entries(clientSetup).map(([key, value]) =>
       state.renderField(key, value, ["ClientSetup", key], meta[key]),
     ),
-    createElement("pre", { "data-testid": "payload" }, state.buildSavePayload() ?? ""),
+    createElement(PayloadCapture, { value: state.buildSavePayload() }),
   );
 }
 
@@ -165,7 +166,7 @@ function TrackerSettingsHarness() {
     "div",
     null,
     state.renderTrackerSection(false),
-    createElement("pre", { "data-testid": "payload" }, state.buildSavePayload() ?? ""),
+    createElement(PayloadCapture, { value: state.buildSavePayload() }),
   );
 }
 
@@ -176,7 +177,7 @@ function TrackerSettingsAdvancedHarness() {
     "div",
     null,
     state.renderTrackerSection(true),
-    createElement("pre", { "data-testid": "payload" }, state.buildSavePayload() ?? ""),
+    createElement(PayloadCapture, { value: state.buildSavePayload() }),
   );
 }
 
@@ -187,8 +188,21 @@ function ImageHostingHarness() {
     "div",
     null,
     state.renderImageHostingSection(),
-    createElement("pre", { "data-testid": "payload" }, state.buildSavePayload() ?? ""),
+    createElement(PayloadCapture, { value: state.buildSavePayload() }),
   );
+}
+
+let latestPayload = "";
+
+/** Captures save payloads without rendering secret-shaped values into DOM snapshots. */
+function PayloadCapture({ value }: { value: string | null }) {
+  latestPayload = value ?? "";
+  return null;
+}
+
+/** Parses the latest captured payload for focused assertions outside matcher output. */
+function readPayload<T>() {
+  return JSON.parse(latestPayload || "{}") as T;
 }
 
 function AdvancedFieldMetaHarness() {
@@ -304,9 +318,9 @@ describe("renderTorrentClientsSection", () => {
       expect(watchScope.getByLabelText("Watch folder")).toHaveValue("/watch/new"),
     );
 
-    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    const payload = readPayload<{
       TorrentClients?: Record<string, Record<string, unknown>>;
-    };
+    }>();
     expect(payload.TorrentClients?.watcher).toEqual({
       Type: "watch",
       WatchFolder: "/watch/new",
@@ -366,9 +380,9 @@ describe("ClientSetup client selectors", () => {
     fireEvent.change(defaultClientSelect, { target: { value: "" } });
     await waitFor(() => expect(defaultClientSelect).toHaveValue(""));
 
-    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    const payload = readPayload<{
       ClientSetup?: { DefaultClient?: string };
-    };
+    }>();
     expect(payload.ClientSetup?.DefaultClient).toBe("");
   });
 
@@ -420,13 +434,13 @@ describe("ClientSetup client selectors", () => {
 
     await waitFor(() => expect(screen.getByLabelText("Default client")).toHaveValue("watcher"));
 
-    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    const payload = readPayload<{
       ClientSetup?: {
         DefaultClient?: string;
         InjectClients?: string[];
         SearchClients?: string[];
       };
-    };
+    }>();
     expect(payload.ClientSetup?.DefaultClient).toBe("watcher");
     expect(payload.ClientSetup?.InjectClients).toEqual(["watcher"]);
     expect(payload.ClientSetup?.SearchClients).toEqual(["watcher"]);
@@ -474,9 +488,9 @@ describe("Tracker client selectors", () => {
     expect(screen.queryByLabelText("API key")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Passkey")).toHaveValue("[REDACTED]");
 
-    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    const payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
-    };
+    }>();
     expect(payload.Trackers?.Trackers?.CZT).toMatchObject({
       Passkey: "user-passkey",
     });
@@ -519,9 +533,9 @@ describe("Tracker client selectors", () => {
       ).toBeInTheDocument(),
     );
 
-    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    const payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
-    };
+    }>();
     expect(payload.Trackers?.Trackers?.CZT).toMatchObject({
       Passkey: "",
     });
@@ -593,9 +607,9 @@ describe("Tracker client selectors", () => {
 
     await waitFor(() => expect(screen.getByLabelText("Torrent client")).toHaveValue("watcher"));
 
-    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    const payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
-    };
+    }>();
     expect(payload.Trackers?.Trackers?.AITHER?.TorrentClient).toBe("watcher");
   });
 
@@ -668,6 +682,61 @@ describe("Tracker client selectors", () => {
     expect(screen.queryByText("AITHER", { selector: ".settings-card__summary-name" })).toBeNull();
     expect(screen.queryByText("BLU", { selector: ".settings-card__summary-name" })).toBeNull();
     expect(screen.getByText("1/1")).toBeInTheDocument();
+  });
+
+  it("masks encrypted envelopes on tracker URL fields and preserves them for saves", async () => {
+    const encryptedURL = "upbrr-enc:v1:encrypted-btn-url";
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              Trackers: {
+                DefaultTrackers: [],
+                PreferredTracker: "",
+                Trackers: {
+                  BTN: {
+                    APIKey: "tracker-token",
+                    URL: encryptedURL,
+                    Username: "",
+                    Password: "",
+                  },
+                },
+              },
+            }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => ["BTN"],
+          GetImageHostPolicyMetadata: async () => ({}),
+        },
+      },
+    };
+
+    render(createElement(TrackerSettingsHarness));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("BTN", { selector: ".settings-card__summary-name" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText("BTN", { selector: ".settings-card__summary-name" }));
+
+    expect(screen.getByLabelText("URL")).toHaveValue("[REDACTED]");
+
+    let payload = readPayload<{
+      Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
+    }>();
+    expect(payload.Trackers?.Trackers?.BTN?.URL === encryptedURL).toBe(true);
+
+    fireEvent.change(screen.getByLabelText("URL"), {
+      target: { value: "https://btn.example" },
+    });
+
+    await waitFor(() => expect(screen.getByLabelText("URL")).toHaveValue("https://btn.example"));
+
+    payload = readPayload<{
+      Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
+    }>();
+    expect(payload.Trackers?.Trackers?.BTN?.URL).toBe("https://btn.example");
   });
 
   it("shows Lostimg as an LST image host only when configured in image hosting", async () => {
@@ -815,9 +884,9 @@ describe("Tracker client selectors", () => {
 
     await waitFor(() => expect(screen.getByLabelText("Image API")).toHaveValue("secret"));
 
-    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    const payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
-    };
+    }>();
     expect(payload.Trackers?.Trackers?.RF?.ImgAPI).toBe("secret");
   });
 
@@ -961,12 +1030,12 @@ describe("Image hosting settings", () => {
 
     await waitFor(() => expect(screen.getByLabelText("LST Lostimg")).toBeChecked());
 
-    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    const payload = readPayload<{
       ImageHosting?: {
         LostimgEnabled?: boolean;
         LostimgAPI?: string;
       };
-    };
+    }>();
     expect(payload.ImageHosting?.LostimgEnabled).toBe(true);
     expect(payload.ImageHosting?.LostimgAPI).toBe("secret");
   });
@@ -1015,9 +1084,9 @@ describe("Image hosting settings", () => {
 
     await waitFor(() => expect(screen.getByLabelText("RF Reelflix")).toBeChecked());
 
-    const payload = JSON.parse(screen.getByTestId("payload").textContent ?? "{}") as {
+    const payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
-    };
+    }>();
     expect(payload.Trackers?.Trackers?.RF?.ImageHost).toBe("reelflix");
     expect(payload.Trackers?.Trackers?.RF?.ImgAPI).toBe("secret");
   });

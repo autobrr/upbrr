@@ -66,10 +66,12 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 			_, _ = w.Write([]byte("...authkey=1234567890abcdef1234567890abcdef..."))
 		case "/upload.php":
 			if err := r.ParseMultipartForm(5 << 20); err != nil {
-				t.Fatalf("parse multipart: %v", err)
+				t.Errorf("parse multipart: %v", err)
+				return
 			}
 			if r.FormValue("auth") == "" {
-				t.Fatal("expected auth field")
+				t.Error("expected auth field")
+				return
 			}
 			http.Redirect(w, r, "/torrents.php?id=55", http.StatusFound)
 		case "/torrents.php":
@@ -121,10 +123,12 @@ func TestDefinitionUploadLoginBootstrapSuccess(t *testing.T) {
 				return
 			}
 			if err := r.ParseForm(); err != nil {
-				t.Fatalf("parse login form: %v", err)
+				t.Errorf("parse login form: %v", err)
+				return
 			}
 			if r.FormValue("username") != "user" || r.FormValue("password") != "pass" {
-				t.Fatalf("unexpected login creds user=%q pass=%q", r.FormValue("username"), r.FormValue("password"))
+				t.Error("unexpected login credentials")
+				return
 			}
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "cookievalue", Path: "/"})
 			http.Redirect(w, r, "/index.php", http.StatusFound)
@@ -137,15 +141,18 @@ func TestDefinitionUploadLoginBootstrapSuccess(t *testing.T) {
 			_, _ = w.Write([]byte("...authkey=abcdefabcdefabcdefabcdefabcdefab..."))
 		case "/upload.php":
 			if err := r.ParseMultipartForm(5 << 20); err != nil {
-				t.Fatalf("parse multipart: %v", err)
+				t.Errorf("parse multipart: %v", err)
+				return
 			}
 			if r.FormValue("auth") == "" {
-				t.Fatal("expected auth field")
+				t.Error("expected auth field")
+				return
 			}
 			http.Redirect(w, r, "/torrents.php?id=99", http.StatusFound)
 		case "/torrents.php":
 			if _, err := url.ParseRequestURI(r.RequestURI); err != nil {
-				t.Fatalf("invalid request uri: %v", err)
+				t.Errorf("invalid request uri: %v", err)
+				return
 			}
 			w.WriteHeader(http.StatusOK)
 		default:

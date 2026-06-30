@@ -595,7 +595,7 @@ func TestTrackersConfigCZTPasskeyFieldsRoundTrip(t *testing.T) {
 	}
 	text := string(data)
 	if !strings.Contains(text, "passkey: user-passkey") {
-		t.Fatalf("yaml export missing CZT passkey in:\n%s", text)
+		t.Fatal("yaml export missing CZT passkey")
 	}
 	if strings.Contains(text, "url: https://czteam.example") {
 		t.Fatalf("yaml CZT should not include url")

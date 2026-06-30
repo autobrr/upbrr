@@ -141,13 +141,15 @@ func TestUploadRetriesInvalidIMDb(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if calls == 1 {
 			if imdbID != "456" {
-				t.Fatalf("expected first imdb_id 456, got %q", imdbID)
+				t.Errorf("expected first imdb_id 456, got %q", imdbID)
+				return
 			}
 			_, _ = fmt.Fprint(w, `{"status_code":0,"status_message":"Invalid imdb_id"}`)
 			return
 		}
 		if imdbID != "1" {
-			t.Fatalf("expected retried imdb_id 1, got %q", imdbID)
+			t.Errorf("expected retried imdb_id 1, got %q", imdbID)
+			return
 		}
 		_, _ = fmt.Fprint(w, `{"status_code":1,"status_message":"https://beyond-hd.me/torrent/download/example.7890.torrent"}`)
 	}))

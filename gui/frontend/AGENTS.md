@@ -38,6 +38,13 @@ pnpm --dir gui/frontend run build
 - Preserve CLI, Wails, and embedded web parity when changing request shapes, upload options, prepared metadata, or runtime bridge behavior.
 - Match existing component state patterns before adding new abstraction.
 
+## Frontend Output / Logging
+
+- Follow root log-level guidance for browser-visible diagnostics and runtime bridge logging.
+- Do not expose credentials, tokens, API keys, passkeys, cookies, 2FA codes, challenge IDs, or secret payloads in console output, UI errors, toasts, test failure text, or debug panels.
+- Avoid permanent `console.*` diagnostics. If a diagnostic is intentionally kept, make it dev-scoped, concise, and redacted.
+- User-facing errors should be stable outcomes or next steps; detailed troubleshooting context belongs in developer diagnostics.
+
 ## Styling
 
 - Prefer Tailwind utilities for touched local layout/spacing.

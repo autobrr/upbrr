@@ -6,10 +6,14 @@ package commonhttp
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type stubCookieStore struct {
@@ -22,6 +26,39 @@ func (s stubCookieStore) GetAllTrackerCookies(context.Context, string, []byte) (
 		return nil, s.err
 	}
 	return s.cookies, nil
+}
+
+func TestReadUploadResponseBodyUsesFullSuccessAndBoundedFailurePreview(t *testing.T) {
+	t.Parallel()
+
+	large := strings.Repeat("a", int(DefaultResponsePreviewBytes)+32)
+	successResp := &http.Response{Body: ioNopCloser(large)}
+	body, preview, err := ReadUploadResponseBody(successResp, true, DefaultResponsePreviewBytes)
+	if err != nil {
+		t.Fatalf("ReadUploadResponseBody success: %v", err)
+	}
+	if len(body) != len(large) {
+		t.Fatalf("expected full success body length %d, got %d", len(large), len(body))
+	}
+	if int64(len(preview)) != DefaultResponsePreviewBytes {
+		t.Fatalf("expected bounded preview length %d, got %d", DefaultResponsePreviewBytes, len(preview))
+	}
+
+	failureResp := &http.Response{Body: ioNopCloser(large)}
+	body, preview, err = ReadUploadResponseBody(failureResp, false, DefaultResponsePreviewBytes)
+	if err != nil {
+		t.Fatalf("ReadUploadResponseBody failure: %v", err)
+	}
+	if int64(len(body)) != DefaultResponsePreviewBytes {
+		t.Fatalf("expected bounded failure body length %d, got %d", DefaultResponsePreviewBytes, len(body))
+	}
+	if string(preview) != string(body) {
+		t.Fatal("expected failure preview to match bounded body")
+	}
+}
+
+func ioNopCloser(value string) io.ReadCloser {
+	return io.NopCloser(strings.NewReader(value))
 }
 
 func TestLoadCookiesForTrackerUsesCookieStoreWhenNoStartupCookieExists(t *testing.T) {
@@ -39,6 +76,31 @@ func TestLoadCookiesForTrackerUsesCookieStoreWhenNoStartupCookieExists(t *testin
 	}
 	if got["session"] != "from-db" {
 		t.Fatalf("expected cookie from store, got %#v", got)
+	}
+}
+
+func TestWriteFailureArtifactRedactsSensitiveBody(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "state", "upbrr.db")
+	meta := api.PreparedMetadata{SourcePath: filepath.Join(root, "source.mkv")}
+	body := []byte(`{"message":"failed","api_key":"secret-key","detail":"token=plain-secret"}`)
+
+	path, err := WriteFailureArtifact(meta, dbPath, "GPW", "upload_failure", body, ".json")
+	if err != nil {
+		t.Fatalf("WriteFailureArtifact: %v", err)
+	}
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read artifact: %v", err)
+	}
+	text := string(payload)
+	if strings.Contains(text, "secret-key") || strings.Contains(text, "plain-secret") {
+		t.Fatal("artifact leaked secret body")
+	}
+	if !strings.Contains(text, "[REDACTED]") {
+		t.Fatal("expected redaction marker in artifact")
 	}
 }
 

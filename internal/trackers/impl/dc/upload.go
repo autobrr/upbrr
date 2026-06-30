@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -77,12 +78,15 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	defer resp.Body.Close()
 
-	responseBody, _ := io.ReadAll(resp.Body)
+	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 300, commonhttp.DefaultResponsePreviewBytes)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: DC read upload response: %w", err)
+	}
 	var decoded uploadResponse
 	if len(responseBody) > 0 {
 		if err := json.Unmarshal(responseBody, &decoded); err != nil {
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-				return api.UploadSummary{}, commonhttp.UploadHTTPError("DC", resp.StatusCode, responseBody)
+				return api.UploadSummary{}, commonhttp.UploadHTTPError("DC", resp.StatusCode, responsePreview)
 			}
 			return api.UploadSummary{}, fmt.Errorf("trackers: DC decode response: %w", err)
 		}
@@ -113,10 +117,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		}, nil
 	}
 
-	if _, artifactErr := commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "DC", "upload_failure", responseBody, ".json"); artifactErr != nil && req.Logger != nil {
+	if _, artifactErr := commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "DC", "upload_failure", responsePreview, ".json"); artifactErr != nil && req.Logger != nil {
 		req.Logger.Warnf("trackers: DC failure artifact write failed: %v", artifactErr)
 	}
-	message := metautil.FirstNonEmptyTrimmed(commonhttp.ExtractHTTPErrorDetail(responseBody), commonhttp.RedactErrorDetail(decoded.Message), commonhttp.RedactErrorDetail(string(responseBody)), "upload failed")
+	message := metautil.FirstNonEmptyTrimmed(commonhttp.ExtractHTTPErrorDetail(responsePreview), commonhttp.RedactErrorDetail(decoded.Message), commonhttp.RedactErrorDetail(string(responsePreview)), "upload failed")
 	return api.UploadSummary{}, fmt.Errorf("trackers: DC %s", message)
 }
 
@@ -377,8 +381,6 @@ func isSD(meta api.PreparedMetadata) bool {
 
 func cloneFields(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
+	maps.Copy(out, in)
 	return out
 }

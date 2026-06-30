@@ -21,13 +21,13 @@ func TestANTHandlerSendsAPIKeyHeader(t *testing.T) {
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			query := req.URL.Query()
 			if got := query.Get("apikey"); got != "" {
-				t.Fatalf("apikey should not be sent as a query parameter, got %q", got)
+				t.Fatal("apikey should not be sent as a query parameter")
 			}
 			assertQueryParam(t, query, "t", "search")
 			assertQueryParam(t, query, "o", "json")
 			assertQueryParam(t, query, "tmdb", "123")
 			if got := req.Header.Get("X-Api-Key"); got != "token" {
-				t.Fatalf("unexpected X-API-Key header: got %q want %q", got, "token")
+				t.Fatal("unexpected X-API-Key header")
 			}
 			if got := req.Header.Get("User-Agent"); got == "" {
 				t.Fatal("expected User-Agent header")

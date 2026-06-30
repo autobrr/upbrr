@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -378,7 +379,7 @@ func postE2ETrackerUpload(ctx context.Context, endpoint string, tracker string, 
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("e2e tracker: status %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
+		return fmt.Errorf("e2e tracker: status %d: %s", resp.StatusCode, strings.TrimSpace(redaction.RedactValue(string(payload), nil)))
 	}
 	return nil
 }
@@ -461,7 +462,7 @@ func postE2EImageUpload(ctx context.Context, endpoint string, host string, image
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		payload, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("e2e image: status %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
+		return fmt.Errorf("e2e image: status %d: %s", resp.StatusCode, strings.TrimSpace(redaction.RedactValue(string(payload), nil)))
 	}
 	return nil
 }

@@ -108,7 +108,7 @@ func TestPersistLoginCookiesRejectsEmptyJarWithoutReplacingCookies(t *testing.T)
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if values["session"] != "existing" {
-		t.Fatalf("empty jar must preserve previous cookies, got %#v", values)
+		t.Fatal("empty jar must preserve previous cookies")
 	}
 }
 
@@ -140,7 +140,7 @@ func TestWriteAuthKeyUsesEncryptedStateAndDeletesLegacyFile(t *testing.T) {
 		t.Fatalf("writeAuthKey: %v", err)
 	}
 	if got := readAuthKey(context.Background(), dbPath); got != "encrypted-key" {
-		t.Fatalf("readAuthKey: got %q", got)
+		t.Fatal("expected encrypted auth key")
 	}
 	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
 		t.Fatalf("expected legacy auth key removed, stat err=%v", err)
@@ -188,7 +188,7 @@ func TestWriteAuthKeyFallsBackToExistingLegacyFileWhenWebAuthUnavailable(t *test
 		t.Fatalf("writeAuthKey: %v", err)
 	}
 	if got := readAuthKey(context.Background(), dbPath); got != "updated-legacy-key" {
-		t.Fatalf("readAuthKey: got %q", got)
+		t.Fatal("expected updated legacy auth key")
 	}
 }
 
@@ -204,7 +204,7 @@ func TestWriteAuthKeySucceedsWhenLegacyFileAbsent(t *testing.T) {
 		t.Fatalf("writeAuthKey: %v", err)
 	}
 	if got := readAuthKey(context.Background(), dbPath); got != "encrypted-key" {
-		t.Fatalf("readAuthKey: got %q", got)
+		t.Fatal("expected encrypted auth key")
 	}
 }
 
@@ -249,7 +249,7 @@ func TestPersistLoginAuthRestoresPreviousCookiesWhenAuthKeyWriteFails(t *testing
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if values["session"] != "existing" {
-		t.Fatalf("expected previous cookies restored, got %#v", values)
+		t.Fatal("expected previous cookies restored")
 	}
 }
 
@@ -285,7 +285,7 @@ func TestPersistLoginAuthRestoresPreviousCookiesWhenCallerContextCanceledDuringW
 		t.Fatalf("LoadTrackerCookieMap: %v", err)
 	}
 	if values["session"] != "existing" {
-		t.Fatalf("expected previous cookies restored after cancellation, got %#v", values)
+		t.Fatal("expected previous cookies restored after cancellation")
 	}
 }
 

@@ -100,16 +100,16 @@ func TestUploadRefreshesExpiredAPIKeyAndPersistsIt(t *testing.T) {
 		t.Fatalf("expected upload success, got %#v", summary)
 	}
 	if testedToken != "old-token" {
-		t.Fatalf("expected old token to be tested, got %q", testedToken)
+		t.Fatal("expected old token to be tested")
 	}
 	if !loginCalled {
 		t.Fatal("expected expired token to trigger API login")
 	}
 	if uploadToken != "new-token" {
-		t.Fatalf("expected upload to use refreshed token, got %q", uploadToken)
+		t.Fatal("expected upload to use refreshed token")
 	}
 	if got := loadStoredRTFAPIKey(t, dbPath); got != "new-token" {
-		t.Fatalf("expected refreshed token persisted, got %q", got)
+		t.Fatal("expected refreshed token persisted")
 	}
 }
 
@@ -154,7 +154,7 @@ func TestUploadBlockedExpiredAPIKeyDoesNotRefreshOrPersist(t *testing.T) {
 		t.Fatalf("blocked upload must not call RTF auth or upload endpoints, got %d requests", requests)
 	}
 	if got := loadStoredRTFAPIKey(t, dbPath); got != "old-token" {
-		t.Fatalf("blocked upload must leave stored token unchanged, got %q", got)
+		t.Fatal("blocked upload must leave stored token unchanged")
 	}
 }
 
@@ -202,7 +202,7 @@ func TestUploadUsesValidAPIKeyWithoutRefresh(t *testing.T) {
 		t.Fatal("valid token should not trigger API login")
 	}
 	if uploadToken != "valid-token" {
-		t.Fatalf("expected upload to use original token, got %q", uploadToken)
+		t.Fatal("expected upload to use original token")
 	}
 }
 
@@ -254,10 +254,10 @@ func TestUploadGeneratesMissingAPIKeyFromCredentials(t *testing.T) {
 		t.Fatal("missing token should refresh directly without API test")
 	}
 	if uploadToken != "generated-token" {
-		t.Fatalf("expected upload to use generated token, got %q", uploadToken)
+		t.Fatal("expected upload to use generated token")
 	}
 	if got := loadStoredRTFAPIKey(t, dbPath); got != "generated-token" {
-		t.Fatalf("expected generated token persisted, got %q", got)
+		t.Fatal("expected generated token persisted")
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -566,8 +567,8 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 		return errNotFound
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("tmdb: http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+		return fmt.Errorf("tmdb: http %d: %s", resp.StatusCode, strings.TrimSpace(redaction.RedactValue(string(body), nil)))
 	}
 
 	decoder := json.NewDecoder(resp.Body)

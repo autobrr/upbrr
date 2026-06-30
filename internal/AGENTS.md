@@ -67,15 +67,7 @@ Preserve behavior across CLI, Wails GUI, and embedded web unless intentionally c
 ## Logging / Redaction
 
 - Use context-aware APIs where meaningful.
-- Add logs for operator-visible progress and decision points, not just final errors. Good logs answer what operation started, what external/local check ran, what decision was made, and how many items were affected.
-- Use `Infof` for high-level lifecycle and outcomes: capability/config loaded counts, validation/import/login/delete completed, pre-dupe auth start/complete, selected ready/skipped counts.
-- Use `Warnf` for failed or blocked outcomes that require attention: capability load failure, validation/login/import/delete failure, unattended auth block, skipped tracker after failed 2FA, failed persistence of refreshed auth material.
-- Use `Debugf` for diagnostic filtering details that are useful but not normal operator milestones, such as a tracker skipped before auth because preview rule failures already excluded it.
-- Use `Tracef` for granular step-by-step execution flow when needed; do not put noisy per-step internals at info level.
-- Prefer stable key/value-style fields in message strings (`tracker=%s state=%s decision=%s count=%d`) so logs are searchable.
-- For tracker auth, log safe decisions/status only: tracker ID, auth kind, state, cookie count, encrypted-storage availability, 2FA-needed boolean, ready/keep/skip/blocked/prompt decisions, and aggregate counts.
-- Log both the action and resulting status when auth state can change: after cookie import, remote validation, credential login, 2FA submit, and delete.
-- For manual 2FA flows, log prompt/submit outcomes and whether another prompt is needed; never log the submitted code or challenge ID.
+- Follow root log-level guidance with backend logger methods: `Infof`, `Warnf`, `Debugf`, and `Tracef`.
 - Redact auth status text, remote response details, URLs, and raw errors before logging when they can contain secrets; use `internal/redaction.RedactValue` or tracker/common redaction helpers.
 - No stdlib print/log under `internal/**`.
 - Satisfy `cmd/logpolicy`.

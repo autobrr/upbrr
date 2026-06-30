@@ -928,7 +928,7 @@ func TestTrackerAuthDeleteCanceledContextDoesNotDeleteCookies(t *testing.T) {
 		t.Fatalf("LoadTrackerCookieMap: %v", loadErr)
 	}
 	if values["session"] != "abc" {
-		t.Fatalf("canceled delete changed cookies: %#v", values)
+		t.Fatal("canceled delete changed cookies")
 	}
 }
 

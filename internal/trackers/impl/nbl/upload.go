@@ -56,12 +56,12 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, err := io.ReadAll(resp.Body)
+	bodyBytes, bodyPreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 300, commonhttp.DefaultResponsePreviewBytes)
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: NBL read response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return api.UploadSummary{}, commonhttp.UploadHTTPError("NBL", resp.StatusCode, bodyBytes)
+		return api.UploadSummary{}, commonhttp.UploadHTTPError("NBL", resp.StatusCode, bodyPreview)
 	}
 
 	payload := map[string]any{}

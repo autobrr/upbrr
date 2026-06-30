@@ -24,6 +24,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/redaction"
 )
 
 type uploadResult struct {
@@ -43,6 +44,8 @@ type batchUploader interface {
 type namedBatchUploader interface {
 	UploadBatchWithName(ctx context.Context, imagePaths []string, galleryName string) ([]uploadResult, error)
 }
+
+const maxResponseBodyPreviewBytes int64 = 64 * 1024
 
 func newUploaderRegistry(cfg config.Config, client *http.Client) map[string]uploader {
 	client = httpclient.CloneWithTimeout(client, httpclient.UploadTimeout)
@@ -155,10 +158,7 @@ func (u *imgboxUploader) Upload(ctx context.Context, imagePath string) (uploadRe
 	}
 	if status != http.StatusOK {
 		// Try to extract error message from response
-		bodyStr := string(body)
-		if len(bodyStr) > 200 {
-			bodyStr = bodyStr[:200] + "..."
-		}
+		bodyStr := safeResponsePreview(body)
 		return uploadResult{}, fmt.Errorf("imgbox upload failed with status %d, response: %s", status, bodyStr)
 	}
 
@@ -173,21 +173,15 @@ func (u *imgboxUploader) Upload(ctx context.Context, imagePath string) (uploadRe
 		Error string `json:"error"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
-		bodyStr := string(body)
-		if len(bodyStr) > 200 {
-			bodyStr = bodyStr[:200] + "..."
-		}
+		bodyStr := safeResponsePreview(body)
 		return uploadResult{}, fmt.Errorf("imgbox invalid JSON response: %w, body: %s", err, bodyStr)
 	}
 	if !response.OK && len(response.Files) == 0 {
 		errMsg := "unknown error"
-		if response.Error != "" {
-			errMsg = response.Error
+		if message := safeResponseMessage(response.Error); message != "" {
+			errMsg = message
 		}
-		bodyStr := string(body)
-		if len(bodyStr) > 200 {
-			bodyStr = bodyStr[:200] + "..."
-		}
+		bodyStr := safeResponsePreview(body)
 		return uploadResult{}, fmt.Errorf("imgbox upload rejected: %s (response: %s)", errMsg, bodyStr)
 	}
 	if len(response.Files) == 0 {
@@ -345,7 +339,7 @@ func imgboxGetCsrfAndCookie(ctx context.Context, client *http.Client) (string, s
 		closeResponseBody(resp)
 		return "", "", fmt.Errorf("imgbox send csrf request: %w", err)
 	}
-	body, err := readAndCloseResponseBody(resp)
+	body, err := readLimitedAndCloseResponseBody(resp)
 	if err != nil {
 		return "", "", err
 	}
@@ -381,23 +375,17 @@ func imgboxGetUploadToken(ctx context.Context, client *http.Client, csrfToken st
 		closeResponseBody(resp)
 		return imgboxUploadToken{}, fmt.Errorf("imgbox send token request: %w", err)
 	}
-	body, err := readAndCloseResponseBody(resp)
+	body, err := readLimitedAndCloseResponseBody(resp)
 	if err != nil {
 		return imgboxUploadToken{}, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		bodyStr := string(body)
-		if len(bodyStr) > 200 {
-			bodyStr = bodyStr[:200] + "..."
-		}
+		bodyStr := safeResponsePreview(body)
 		return imgboxUploadToken{}, fmt.Errorf("imgbox token request failed with status %d, response: %s", resp.StatusCode, bodyStr)
 	}
 	var tokenResp map[string]any
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		bodyStr := string(body)
-		if len(bodyStr) > 200 {
-			bodyStr = bodyStr[:200] + "..."
-		}
+		bodyStr := safeResponsePreview(body)
 		return imgboxUploadToken{}, fmt.Errorf("imgbox token response invalid JSON: %w, body: %s", err, bodyStr)
 	}
 	return imgboxUploadToken{
@@ -676,7 +664,7 @@ func (u *ptScreensUploader) Upload(ctx context.Context, imagePath string) (uploa
 		return uploadResult{}, fmt.Errorf("ptscreens invalid response: %w", err)
 	}
 	if response.Image.URL == "" {
-		return uploadResult{}, fmt.Errorf("ptscreens upload failed: %s", strings.TrimSpace(response.Error.Message))
+		return uploadResult{}, fmt.Errorf("ptscreens upload failed: %s", safeResponseMessage(response.Error.Message))
 	}
 
 	return uploadResult{
@@ -764,7 +752,7 @@ func (u *thrUploader) Upload(ctx context.Context, imagePath string) (uploadResul
 	}
 	imageURL := strings.TrimSpace(response.Image.URL)
 	if imageURL == "" {
-		message := strings.TrimSpace(response.Error.Message)
+		message := safeResponseMessage(response.Error.Message)
 		if message == "" {
 			message = "thr upload failed"
 		}
@@ -825,8 +813,8 @@ func (u *lostimgUploader) uploadBatch(ctx context.Context, imagePaths []string) 
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("lostimg invalid response: %w", err)
 	}
-	if strings.TrimSpace(response.Error) != "" {
-		return nil, fmt.Errorf("lostimg upload failed: %s", strings.TrimSpace(response.Error))
+	if safeResponseMessage(response.Error) != "" {
+		return nil, fmt.Errorf("lostimg upload failed: %s", safeResponseMessage(response.Error))
 	}
 
 	urls := response.URLs
@@ -959,7 +947,7 @@ func (u *passTheImageUploader) Upload(ctx context.Context, imagePath string) (up
 		return uploadResult{}, fmt.Errorf("passtheimage invalid response: %w", err)
 	}
 	if response.StatusCode != http.StatusOK {
-		message := strings.TrimSpace(response.Error.Message)
+		message := safeResponseMessage(response.Error.Message)
 		if message == "" {
 			message = "passtheimage upload failed"
 		}
@@ -1011,7 +999,7 @@ func (u *reelflixUploader) Upload(ctx context.Context, imagePath string) (upload
 		return uploadResult{}, fmt.Errorf("reelflix invalid response: %w", err)
 	}
 	if response.StatusCode != 0 && response.StatusCode != http.StatusOK {
-		message := strings.TrimSpace(response.Error.Message)
+		message := safeResponseMessage(response.Error.Message)
 		if message == "" {
 			message = "reelflix upload failed"
 		}
@@ -1122,9 +1110,9 @@ func (u *shareXUploader) Upload(ctx context.Context, imagePath string) (uploadRe
 		link = strings.TrimSpace(response.Link)
 	}
 	if link == "" {
-		message := strings.TrimSpace(response.Message)
+		message := safeResponseMessage(response.Message)
 		if message == "" {
-			message = strings.TrimSpace(response.Error)
+			message = safeResponseMessage(response.Error)
 		}
 		if message == "" {
 			message = "sharex upload failed"
@@ -1149,7 +1137,7 @@ func postForm(ctx context.Context, client *http.Client, target string, data url.
 		closeResponseBody(resp)
 		return nil, 0, fmt.Errorf("image hosting: send form request to %s: %w", target, err)
 	}
-	body, err := readAndCloseResponseBody(resp)
+	body, err := readLimitedAndCloseResponseBody(resp)
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
@@ -1216,7 +1204,7 @@ func postMultipartWithFields(ctx context.Context, client *http.Client, target st
 		closeResponseBody(resp)
 		return nil, 0, fmt.Errorf("image hosting: send multipart request to %s: %w", target, err)
 	}
-	bodyBytes, err := readAndCloseResponseBody(resp)
+	bodyBytes, err := readLimitedAndCloseResponseBody(resp)
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
@@ -1262,23 +1250,40 @@ func postMultipartRepeatedFileField(ctx context.Context, client *http.Client, ta
 		closeResponseBody(resp)
 		return nil, 0, fmt.Errorf("image hosting: send multipart request to %s: %w", target, err)
 	}
-	bodyBytes, err := readAndCloseResponseBody(resp)
+	bodyBytes, err := readLimitedAndCloseResponseBody(resp)
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
 	return bodyBytes, resp.StatusCode, nil
 }
 
-func readAndCloseResponseBody(resp *http.Response) ([]byte, error) {
+// readLimitedAndCloseResponseBody reads only the diagnostic preview cap from a
+// response body and always closes the body before returning.
+func readLimitedAndCloseResponseBody(resp *http.Response) ([]byte, error) {
 	if resp == nil || resp.Body == nil {
 		return nil, nil
 	}
 	defer closeResponseBody(resp)
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyPreviewBytes))
 	if err != nil {
 		return nil, fmt.Errorf("image hosting: read response body: %w", err)
 	}
 	return body, nil
+}
+
+// safeResponsePreview returns a redacted, length-bounded response snippet for
+// upload errors and diagnostics.
+func safeResponsePreview(body []byte) string {
+	text := safeResponseMessage(string(body))
+	if len(text) > 200 {
+		text = strings.TrimSpace(text[:200]) + "..."
+	}
+	return text
+}
+
+// safeResponseMessage redacts response text before it reaches errors or logs.
+func safeResponseMessage(value string) string {
+	return strings.TrimSpace(redaction.RedactValue(value, nil))
 }
 
 func closeResponseBody(resp *http.Response) {

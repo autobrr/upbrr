@@ -446,7 +446,7 @@ func handleCLITrackerAuthStatusWithLogger(ctx context.Context, reader *bufio.Rea
 	message := cliTrackerAuthStatusMessage(status)
 	if isUnattendedNoConfirm(req) {
 		logger.Warnf("cli auth: tracker=%s decision=blocked reason=%s unattended=true", trackerID, cliAuthStatusMessageForLog(status))
-		return status, false, fmt.Errorf("upbrr: tracker auth %s not ready before dupe check: %s", trackerID, message)
+		return status, false, fmt.Errorf("upbrr: unattended tracker auth %s not ready before dupe check: %s", trackerID, message)
 	}
 	fmt.Printf("Skipping %s before dupe check: tracker auth not ready (%s).\n", trackerID, message)
 	return status, false, nil

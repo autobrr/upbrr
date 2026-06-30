@@ -177,16 +177,16 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 
 	logger.Debugf("trackers: %s received HTTP %d response", trackerName, resp.StatusCode)
 
-	body, err := io.ReadAll(resp.Body)
+	body, bodyPreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices, commonhttp.DefaultResponsePreviewBytes)
 	if err != nil {
 		logger.Errorf("trackers: %s failed to read response body: %v", trackerName, err)
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s read response body: %w", trackerName, err)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		err := commonhttp.UploadHTTPError(trackerName, resp.StatusCode, body)
+		err := commonhttp.UploadHTTPError(trackerName, resp.StatusCode, bodyPreview)
 		logger.Errorf("trackers: %s upload request failed: %v", trackerName, err)
-		if len(body) > 0 {
-			logger.Tracef("trackers: %s response body: %s", trackerName, redaction.RedactValue(string(body), nil))
+		if len(bodyPreview) > 0 {
+			logger.Tracef("trackers: %s response body: %s", trackerName, redaction.RedactValue(string(bodyPreview), nil))
 		}
 		return api.UploadSummary{}, err
 	}
@@ -194,11 +194,11 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 	var result unit3dUploadResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		logger.Errorf("trackers: %s failed to parse response JSON: %v", trackerName, err)
-		logger.Tracef("trackers: %s response body: %s", trackerName, redaction.RedactValue(string(body), nil))
+		logger.Tracef("trackers: %s response body: %s", trackerName, redaction.RedactValue(string(bodyPreview), nil))
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s response json: %w", trackerName, err)
 	}
 	if !result.Success {
-		message := commonhttp.ExtractHTTPErrorDetail(body)
+		message := commonhttp.ExtractHTTPErrorDetail(bodyPreview)
 		if message == "" {
 			message = commonhttp.RedactErrorDetail(result.Message)
 		}

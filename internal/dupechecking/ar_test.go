@@ -51,7 +51,7 @@ func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 				t.Fatalf("expected User-Agent header")
 			}
 			if raw := req.Header.Get("Cookie"); !strings.Contains(raw, "session=abc123") {
-				t.Fatalf("expected cookie header to include session token, got %q", raw)
+				t.Fatal("expected cookie header to include session token")
 			}
 
 			body := `{"status":"success","response":{"results":[{"groupName":"Movie.Title.2023.1080p.BluRay-GRP","size":123456789,"fileCount":1,"groupId":44,"torrentId":55}]}}`

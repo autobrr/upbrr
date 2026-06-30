@@ -228,7 +228,7 @@ func TestNormalizeExportableConfigDoesNotMutateSource(t *testing.T) {
 	normalized.Trackers.DefaultTrackers[0] = "BTN"
 
 	if got := source.Trackers.Trackers["AITHER"].APIKey; got != "source-token" {
-		t.Fatalf("source tracker map mutated: got %q", got)
+		t.Fatal("source tracker map mutated")
 	}
 	if got := source.Trackers.DefaultTrackers[0]; got != "AITHER" {
 		t.Fatalf("source default tracker slice mutated: got %q", got)
@@ -376,7 +376,7 @@ func TestBackendGetConfigDatabaseConfigUsesSingleRuntimeSnapshotForDBPath(t *tes
 			t.Fatalf("expected DB-loaded screens=%d, got %d", stored.ScreenshotHandling.Screens, exported.ScreenshotHandling.Screens)
 		}
 		if exported.MainSettings.TMDBAPI != stored.MainSettings.TMDBAPI {
-			t.Fatalf("expected DB-loaded TMDB API, got %q", exported.MainSettings.TMDBAPI)
+			t.Fatal("expected DB-loaded TMDB API")
 		}
 		if exported.MainSettings.DBPath != wantDBPath {
 			t.Fatalf("DBPath fallback: got %q want %q", exported.MainSettings.DBPath, wantDBPath)
@@ -707,7 +707,7 @@ func TestBackendSaveConfigAfterInvalidStartupMigratesLegacyCookies(t *testing.T)
 		t.Fatalf("load migrated tracker cookies: %v", err)
 	}
 	if got := values["session"]; got != "from-legacy" {
-		t.Fatalf("migrated session cookie: got %q want %q", got, "from-legacy")
+		t.Fatal("migrated session cookie mismatch")
 	}
 }
 
@@ -753,7 +753,7 @@ func TestBackendSaveConfigRetriesLegacyCookieMigrationAfterAuthAppears(t *testin
 		t.Fatalf("load migrated tracker cookies: %v", err)
 	}
 	if got := values["session"]; got != "from-retry" {
-		t.Fatalf("migrated session cookie after retry: got %q want %q", got, "from-retry")
+		t.Fatal("migrated session cookie after retry mismatch")
 	}
 }
 
