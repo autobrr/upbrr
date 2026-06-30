@@ -348,6 +348,7 @@ func checkFile(fset *token.FileSet, root string, path string) ([]Violation, erro
 
 		return true
 	})
+	violations = append(violations, checkUnboundedResponseBodyUses(fset, relPath, file, aliases)...)
 
 	sensitiveViolations, err := checkSensitiveOutputFile(fset, root, path, false)
 	if err != nil {
@@ -745,6 +746,138 @@ func isFmtSelector(selector *ast.SelectorExpr, aliases map[string]string, name s
 func isHTTPErrorSelector(selector *ast.SelectorExpr, aliases map[string]string) bool {
 	pkg, ok := selector.X.(*ast.Ident)
 	return ok && aliases[pkg.Name] == "net/http" && selector.Sel.Name == "Error"
+}
+
+func checkUnboundedResponseBodyUses(fset *token.FileSet, relPath string, file *ast.File, aliases map[string]string) []Violation {
+	violations := make([]Violation, 0)
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		unboundedBodyVars := make(map[string]struct{})
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			switch typed := node.(type) {
+			case *ast.AssignStmt:
+				markUnboundedBodyAssignments(typed, aliases, unboundedBodyVars)
+			case *ast.CallExpr:
+				if isUnboundedResponseBodyUseCall(typed, unboundedBodyVars) {
+					violations = append(violations, violationAt(fset, relPath, typed.Pos(), "response body reads used for logs/errors/artifacts must be bounded before redaction"))
+				}
+			}
+			return true
+		})
+	}
+	return violations
+}
+
+func markUnboundedBodyAssignments(stmt *ast.AssignStmt, aliases map[string]string, unboundedBodyVars map[string]struct{}) {
+	for index, target := range stmt.Lhs {
+		ident, ok := target.(*ast.Ident)
+		if !ok || ident.Name == "_" {
+			continue
+		}
+		rhsIndex := index
+		if len(stmt.Rhs) == 1 {
+			rhsIndex = 0
+		}
+		if rhsIndex >= len(stmt.Rhs) || !isUnboundedResponseBodyRead(stmt.Rhs[rhsIndex], aliases) {
+			delete(unboundedBodyVars, ident.Name)
+			continue
+		}
+		unboundedBodyVars[ident.Name] = struct{}{}
+	}
+}
+
+func isUnboundedResponseBodyRead(expr ast.Expr, aliases map[string]string) bool {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	if isUnboundedResponseBodyHelperCallName(callName(call)) {
+		return true
+	}
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	if !ok || aliases[pkg.Name] != "io" || selector.Sel.Name != "ReadAll" || len(call.Args) != 1 {
+		return false
+	}
+	if isLimitReaderCall(call.Args[0], aliases) {
+		return false
+	}
+	return isResponseBodyExpr(call.Args[0])
+}
+
+func isUnboundedResponseBodyUseCall(call *ast.CallExpr, unboundedBodyVars map[string]struct{}) bool {
+	if len(unboundedBodyVars) == 0 {
+		return false
+	}
+	if isRedactionCall(call) {
+		for _, arg := range call.Args {
+			if containsUnboundedBodyVar(arg, unboundedBodyVars) {
+				return true
+			}
+		}
+	}
+	name := callName(call)
+	if isResponseBodyErrorOrArtifactHelper(name) {
+		for _, arg := range call.Args {
+			if containsUnboundedBodyVar(arg, unboundedBodyVars) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isResponseBodyErrorOrArtifactHelper(name string) bool {
+	switch name {
+	case "UploadHTTPError", "safeResponsePreview", "safeResponseMessage":
+		return true
+	default:
+		return false
+	}
+}
+
+func isUnboundedResponseBodyHelperCallName(name string) bool {
+	switch name {
+	case "postForm", "postMultipart", "postMultipartWithFields", "postMultipartRepeatedFileField", "readAndCloseResponseBody":
+		return true
+	default:
+		return false
+	}
+}
+
+func containsUnboundedBodyVar(expr ast.Expr, unboundedBodyVars map[string]struct{}) bool {
+	found := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		ident, ok := node.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		if _, ok := unboundedBodyVars[ident.Name]; ok {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func isLimitReaderCall(expr ast.Expr, aliases map[string]string) bool {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	return ok && aliases[pkg.Name] == "io" && selector.Sel.Name == "LimitReader"
 }
 
 func isSensitiveHTTPErrorContext(context string) bool {

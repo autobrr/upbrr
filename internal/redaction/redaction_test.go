@@ -95,6 +95,19 @@ func TestRedactValuePlainKeyValuePairs(t *testing.T) {
 	}
 }
 
+func TestRedactValueDelimitedAuthAndCookieTails(t *testing.T) {
+	t.Parallel()
+
+	input := `Cookie: uid=first-secret; session=second-secret, Authorization=Bearer alpha-secret,beta-secret token=third-secret`
+	output := RedactValue(input, nil)
+
+	for _, secret := range []string{"first-secret", "second-secret", "alpha-secret", "beta-secret", "third-secret"} {
+		if contains(output, secret) {
+			t.Fatal("expected delimited auth and cookie tails redacted")
+		}
+	}
+}
+
 func TestRedactValueDoesNotReredactRedactedQueryValues(t *testing.T) {
 	t.Parallel()
 

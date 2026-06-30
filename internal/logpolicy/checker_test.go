@@ -262,6 +262,65 @@ type testingT interface {
 	}
 }
 
+func TestCheckRepositoryFlagsUnboundedResponseBodyReads(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+
+	content := `package sample
+
+import (
+	"fmt"
+	"io"
+	"net/http"
+
+	"github.com/autobrr/upbrr/internal/redaction"
+)
+
+func unsafe(resp *http.Response) error {
+	body, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("sample: http %d: %s", resp.StatusCode, redaction.RedactValue(string(body), nil))
+}
+
+func viaHelper(resp *http.Response) error {
+	body, _ := readAndCloseResponseBody(resp)
+	return fmt.Errorf("sample: http %d: %s", resp.StatusCode, safeResponsePreview(body))
+}
+
+func uploadError(resp *http.Response) error {
+	body, _ := io.ReadAll(resp.Body)
+	return UploadHTTPError("GPW", resp.StatusCode, body)
+}
+
+func safe(resp *http.Response) error {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	return fmt.Errorf("sample: http %d: %s", resp.StatusCode, redaction.RedactValue(string(body), nil))
+}
+
+func readAndCloseResponseBody(*http.Response) ([]byte, error) { return nil, nil }
+func safeResponsePreview([]byte) string { return "" }
+func UploadHTTPError(string, int, []byte) error { return nil }
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 3 {
+		t.Fatalf("expected 3 violations, got %d: %#v", len(violations), violations)
+	}
+	for _, violation := range violations {
+		if !strings.Contains(violation.Message, "must be bounded before redaction") {
+			t.Fatalf("expected bounded-read violation, got %q", violation.Message)
+		}
+	}
+}
+
 func TestCheckRepositoryKeepsSensitiveBindingsLexicallyScoped(t *testing.T) {
 	root := t.TempDir()
 	content := `package sample
@@ -873,7 +932,7 @@ func check() error {
 	}
 }
 
-func TestCheckRepositoryAllowsSafeHelperResponseBodyError(t *testing.T) {
+func TestCheckRepositoryFlagsUnboundedHelperResponseBodyPreview(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
 		t.Fatalf("mkdir internal sample: %v", err)
@@ -900,8 +959,11 @@ func check() error {
 	if err != nil {
 		t.Fatalf("CheckRepository returned error: %v", err)
 	}
-	if len(violations) != 0 {
-		t.Fatalf("expected no violations, got %#v", violations)
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "must be bounded before redaction") {
+		t.Fatalf("expected bounded-read violation, got %q", violations[0].Message)
 	}
 }
 
