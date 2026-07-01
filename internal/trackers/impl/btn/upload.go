@@ -72,6 +72,12 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if err := validateBTNRequest(req); err != nil {
 		return api.UploadSummary{}, err
 	}
+	if message, err := validateBTNTVPayloadMetadata(req.Meta); err != nil {
+		if req.Logger != nil {
+			req.Logger.Warnf("trackers: BTN %s", message)
+		}
+		return api.UploadSummary{}, err
+	}
 
 	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
@@ -91,11 +97,6 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	data, err := prepareUploadData(ctx, req, uploadCtx)
 	if err != nil {
 		return api.UploadSummary{}, err
-	}
-	if req.Logger != nil {
-		if message := btnTVPayloadMetadataMessage(req.Meta); message != "" {
-			req.Logger.Warnf("trackers: BTN %s", message)
-		}
 	}
 
 	body, contentType, err := commonhttp.BuildMultipartPayload(data, []commonhttp.FileField{{FieldName: "file_input", Path: torrentPath, FileName: "torrent.torrent"}})
@@ -204,7 +205,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 
 	message := "dry-run payload generated"
 	status := "ready"
-	if metadataMessage := btnTVPayloadMetadataMessage(req.Meta); metadataMessage != "" {
+	if metadataMessage, err := validateBTNTVPayloadMetadata(req.Meta); err != nil {
 		message += "; " + metadataMessage
 		status = "blocked"
 	}
@@ -590,6 +591,17 @@ func buildAlbumDesc(meta api.PreparedMetadata, fields map[string]string) string 
 	season, episode := meta.CanonicalSeasonEpisode()
 	episodeTitle := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.EpisodeTitle), "TBA")
 	return strings.TrimSpace(fmt.Sprintf("Episode Name: %s\nEpisode Title: %s\nSeason: %d\nEpisode: %d\nAired: %s\n\nEpisode overview: %s", episodeTitle, episodeTitle, season, episode, aired, overview))
+}
+
+// validateBTNTVPayloadMetadata returns the shared BTN TV metadata block reason
+// used by live upload and dry-run when canonical season or episode data is
+// missing.
+func validateBTNTVPayloadMetadata(meta api.PreparedMetadata) (string, error) {
+	message := btnTVPayloadMetadataMessage(meta)
+	if message == "" {
+		return "", nil
+	}
+	return message, errors.New("trackers: BTN " + message)
 }
 
 func resolveUploadType(meta api.PreparedMetadata) string {

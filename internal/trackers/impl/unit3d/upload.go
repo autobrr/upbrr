@@ -111,8 +111,9 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 		logger.Errorf("trackers: %s failed to build upload data: %v", trackerName, err)
 		return api.UploadSummary{}, err
 	}
-	if message := unit3DTVPayloadMetadataMessage(req.Meta, data); message != "" {
+	if message, err := validateUnit3DTVPayloadMetadata(trackerName, req.Meta, data); err != nil {
 		logger.Warnf("trackers: %s %s", trackerName, message)
+		return api.UploadSummary{}, err
 	}
 	category := resolveUnit3DCategory(req.Meta)
 	_, hasTVDB := data["tvdb"]
@@ -438,7 +439,7 @@ func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (a
 
 	message := "dry-run payload generated"
 	status := "ready"
-	if metadataMessage := unit3DTVPayloadMetadataMessage(req.Meta, data); metadataMessage != "" {
+	if metadataMessage, err := validateUnit3DTVPayloadMetadata(trackerName, req.Meta, data); err != nil {
 		message += "; " + metadataMessage
 		status = "blocked"
 	}
@@ -1003,6 +1004,17 @@ func resolveEpisode(meta api.PreparedMetadata) string {
 		return "0"
 	}
 	return formatOptionalInt(meta.EpisodeInt)
+}
+
+// validateUnit3DTVPayloadMetadata returns the shared Unit3D TV metadata block
+// reason used by live upload and dry-run when canonical season or episode data
+// is missing from payload fields that would otherwise be submitted as zero.
+func validateUnit3DTVPayloadMetadata(trackerName string, meta api.PreparedMetadata, data map[string]string) (string, error) {
+	message := unit3DTVPayloadMetadataMessage(meta, data)
+	if message == "" {
+		return "", nil
+	}
+	return message, fmt.Errorf("trackers: %s %s", trackerName, message)
 }
 
 // unit3DTVPayloadMetadataMessage explains when Unit3D TV fields are present but
