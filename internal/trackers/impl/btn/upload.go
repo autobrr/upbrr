@@ -171,6 +171,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}, nil
 }
 
+// buildUploadDryRun returns a BTN preview entry with the exact payload that
+// would be submitted locally. TV payloads that would serialize missing
+// canonical season or episode metadata as zero are returned as blocked so the
+// operator sees the remediation before upload.
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
 	if err := validateBTNRequest(req); err != nil {
 		return api.TrackerDryRunEntry{}, err
@@ -199,13 +203,15 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}
 
 	message := "dry-run payload generated"
+	status := "ready"
 	if metadataMessage := btnTVPayloadMetadataMessage(req.Meta); metadataMessage != "" {
 		message += "; " + metadataMessage
+		status = "blocked"
 	}
 
 	return api.TrackerDryRunEntry{
 		Tracker:          "BTN",
-		Status:           "ready",
+		Status:           status,
 		Message:          message,
 		ReleaseName:      resolveUploadName(req.Meta),
 		DescriptionGroup: "btn",
@@ -596,10 +602,10 @@ func resolveUploadType(meta api.PreparedMetadata) string {
 	return "Season"
 }
 
-// btnTVPayloadMetadataMessage returns dry-run/log feedback when BTN will send
-// zero-valued TV season or episode fields because canonical metadata is absent.
-// Parsed release values are reported only as ignored signals and must not feed
-// tracker payload construction.
+// btnTVPayloadMetadataMessage explains when BTN will send zero-valued TV season
+// or episode fields because canonical metadata is absent. Parsed release values
+// are reported only as ignored signals, and the message includes the operator
+// action required by blocked dry-run entries.
 func btnTVPayloadMetadataMessage(meta api.PreparedMetadata) string {
 	if !strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") {
 		return ""
@@ -625,6 +631,7 @@ func btnTVPayloadMetadataMessage(meta api.PreparedMetadata) string {
 	if len(ignored) > 0 {
 		message += " and ignores parsed " + strings.Join(ignored, "/") + " fallback"
 	}
+	message += "; refresh metadata or correct canonical season/episode before upload"
 	return message
 }
 

@@ -52,7 +52,7 @@ func TestBTNUploadPayloadUsesCanonicalSeasonEpisodeOnly(t *testing.T) {
 	if strings.Contains(desc, "Season: 4") || strings.Contains(desc, "Episode: 9") {
 		t.Fatalf("album description used parsed fallback values: %q", desc)
 	}
-	if got := btnTVPayloadMetadataMessage(meta); got != "canonical TV season/episode missing; tracker payload uses 0 and ignores parsed season/episode fallback" {
+	if got := btnTVPayloadMetadataMessage(meta); got != "canonical TV season/episode missing; tracker payload uses 0 and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload" {
 		t.Fatalf("unexpected metadata message %q", got)
 	}
 }

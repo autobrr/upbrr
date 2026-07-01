@@ -422,6 +422,29 @@ func TestBTNDryRunRequiresUploadAuthPrerequisites(t *testing.T) {
 	}
 }
 
+func TestBTNDryRunBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
+	t.Parallel()
+
+	req := newBTNDryRunTestRequest(t, newBTNAuthDB(t))
+	req.TrackerConfig.Username = "user"
+	req.TrackerConfig.Password = "pass"
+	req.Meta.SeasonInt = 0
+	req.Meta.EpisodeInt = 0
+	req.Meta.Release.Season = 1
+	req.Meta.Release.Episode = 1
+
+	entry, err := buildUploadDryRun(context.Background(), req)
+	if err != nil {
+		t.Fatalf("BuildUploadDryRun: %v", err)
+	}
+	if entry.Status != "blocked" {
+		t.Fatalf("expected canonical TV metadata gap to block dry-run, got %#v", entry)
+	}
+	if !strings.Contains(entry.Message, "canonical TV season/episode missing; tracker payload uses 0 and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload") {
+		t.Fatalf("expected canonical metadata message, got %q", entry.Message)
+	}
+}
+
 func TestResolveSessionForTrackerAuthLoginStorageErrorPreventsLogin(t *testing.T) {
 	t.Parallel()
 

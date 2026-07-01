@@ -345,6 +345,10 @@ func isNumericID(value string) bool {
 	return true
 }
 
+// buildUploadDryRunUnit3D returns a Unit3D preview entry with the payload,
+// files, and endpoint that would be used locally. TV payloads with zero-valued
+// canonical season or episode metadata are returned as blocked because the
+// payload no longer satisfies upload prerequisites.
 func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
 	select {
 	case <-ctx.Done():
@@ -433,13 +437,15 @@ func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (a
 	}
 
 	message := "dry-run payload generated"
+	status := "ready"
 	if metadataMessage := unit3DTVPayloadMetadataMessage(req.Meta, data); metadataMessage != "" {
 		message += "; " + metadataMessage
+		status = "blocked"
 	}
 
 	return api.TrackerDryRunEntry{
 		Tracker:          trackerName,
-		Status:           "ready",
+		Status:           status,
 		Message:          message,
 		ReleaseName:      name,
 		DescriptionGroup: "unit3d",
@@ -999,10 +1005,10 @@ func resolveEpisode(meta api.PreparedMetadata) string {
 	return formatOptionalInt(meta.EpisodeInt)
 }
 
-// unit3DTVPayloadMetadataMessage returns dry-run/log feedback when Unit3D TV
-// fields are present but canonical season or episode metadata is missing.
-// Parsed release and manual naming values are reported only as ignored signals
-// and must not feed tracker payload construction.
+// unit3DTVPayloadMetadataMessage explains when Unit3D TV fields are present but
+// canonical season or episode metadata is missing. Parsed release and manual
+// naming values are reported only as ignored signals, and the message includes
+// the operator action required by blocked dry-run entries.
 func unit3DTVPayloadMetadataMessage(meta api.PreparedMetadata, data map[string]string) string {
 	if _, hasSeason := data["season_number"]; !hasSeason {
 		return ""
@@ -1032,6 +1038,7 @@ func unit3DTVPayloadMetadataMessage(meta api.PreparedMetadata, data map[string]s
 	if len(ignored) > 0 {
 		message += " and ignores parsed " + strings.Join(ignored, "/") + " fallback"
 	}
+	message += "; refresh metadata or correct canonical season/episode before upload"
 	return message
 }
 

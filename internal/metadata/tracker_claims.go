@@ -338,8 +338,11 @@ type trackerClaimMatchTarget struct {
 	isTV       bool
 }
 
+// trackerClaimTarget builds the canonical upload identity used to compare
+// tracker-side claim records. TV claim matching requires provider-resolved
+// season metadata and intentionally ignores parsed release fallbacks.
 func trackerClaimTarget(meta api.PreparedMetadata) (trackerClaimMatchTarget, bool) {
-	season, _ := meta.SeasonEpisodeWithParsedFallback()
+	season, _ := meta.CanonicalSeasonEpisode()
 	target := trackerClaimMatchTarget{
 		tmdbID:     meta.ExternalIDs.TMDBID,
 		season:     season,

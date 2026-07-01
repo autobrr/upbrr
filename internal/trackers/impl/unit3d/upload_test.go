@@ -381,8 +381,57 @@ func TestBuildUnit3DDataTVOmitsParsedReleaseSeasonEpisodeFallback(t *testing.T) 
 	if got := data["tvdb"]; got != "789" {
 		t.Fatalf("expected tvdb=789, got %q", got)
 	}
-	if got := unit3DTVPayloadMetadataMessage(req.Meta, data); got != "canonical TV season/episode missing; tracker payload uses 0 and ignores parsed season/episode fallback" {
+	if got := unit3DTVPayloadMetadataMessage(req.Meta, data); got != "canonical TV season/episode missing; tracker payload uses 0 and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload" {
 		t.Fatalf("unexpected metadata message %q", got)
+	}
+}
+
+func TestBuildUnit3DDryRunBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
+	tempDir := t.TempDir()
+	mediaInfoPath := filepath.Join(tempDir, "mediainfo.txt")
+	if err := os.WriteFile(mediaInfoPath, []byte("General\nComplete name: show"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+	torrentPath := filepath.Join(tempDir, "show.torrent")
+	if err := os.WriteFile(torrentPath, []byte("d8:announce13:https://x.ee"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	entry, err := buildUploadDryRunUnit3D(context.Background(), trackers.UploadRequest{
+		Tracker: "AITHER",
+		TrackerConfig: config.TrackerConfig{
+			APIKey: "test-key",
+		},
+		Meta: api.PreparedMetadata{
+			ReleaseName:            "Daily.Show.2025.07.01.1080p.WEB-DL-GRP",
+			TorrentPath:            torrentPath,
+			MediaInfoTextPath:      mediaInfoPath,
+			ValidMediaInfoSettings: true,
+			ExternalIDs: api.ExternalIDs{
+				Category: "TV",
+				TVDBID:   789,
+			},
+			Type: "WEBDL",
+			Release: api.ReleaseInfo{
+				Category:   "TV",
+				Season:     2025,
+				Episode:    701,
+				Resolution: "1080p",
+			},
+		},
+		Assets: &trackers.DescriptionAssets{
+			Description: "description",
+			Final:       true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build Unit3D dry-run: %v", err)
+	}
+	if entry.Status != "blocked" {
+		t.Fatalf("expected canonical TV metadata gap to block dry-run, got %#v", entry)
+	}
+	if !strings.Contains(entry.Message, "canonical TV season/episode missing; tracker payload uses 0 and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload") {
+		t.Fatalf("expected canonical metadata message, got %q", entry.Message)
 	}
 }
 
