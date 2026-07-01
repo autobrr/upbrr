@@ -154,6 +154,15 @@ func TestIsRenamedRelease(t *testing.T) {
 			},
 			want: true,
 		},
+		{
+			name: "spaced folder retaining dotted tokens is still flagged",
+			// A library rename that converts most separators to spaces but leaves
+			// dotted tokens (DDP5.1, H.265) must not have its trailing "-GROUP" tag
+			// stripped by extension handling on the directory basename (filepath.Ext
+			// would otherwise treat ".265-HHWEB" as an extension).
+			meta: grouped("/data/movies/Fury 2014 2160p MA WEB-DL DDP5.1 HDR H.265-HHWEB"),
+			want: true,
+		},
 	}
 
 	for _, tc := range cases {

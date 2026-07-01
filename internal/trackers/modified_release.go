@@ -4,7 +4,6 @@
 package trackers
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -48,8 +47,8 @@ func isRenamedRelease(meta api.PreparedMetadata) (bool, string) {
 	// *arr id tokens mark a rename on their own, independent of the release group
 	// (which an *arr rename often strips), so check them before the group gate.
 	for _, name := range names {
-		if token := arrRenameToken(name); token != "" {
-			return true, fmt.Sprintf("source renamed by *arr (contains %q token): %q", token, name)
+		if arrRenameToken(name) != "" {
+			return true, modifiedReleaseReason
 		}
 	}
 
@@ -59,11 +58,17 @@ func isRenamedRelease(meta api.PreparedMetadata) (bool, string) {
 	}
 	for _, name := range names {
 		if isRenamedReleaseName(name, group) {
-			return true, fmt.Sprintf("source renamed from original release name (contains spaces): %q", name)
+			return true, modifiedReleaseReason
 		}
 	}
 	return false, ""
 }
+
+// modifiedReleaseReason is deliberately generic: it discloses neither the
+// on-disk name nor which signal fired, so a modified release cannot be trivially
+// resolved by renaming the file back. The source should be investigated (file
+// hash, provenance) rather than papered over with a rename.
+const modifiedReleaseReason = "source appears renamed or modified from its original release name; verify the file hash and source provenance"
 
 // arrReleaseIDTokens are the Radarr/Sonarr id-injection tokens that appear in
 // renamed filenames (e.g. "Fury (2014) {imdb-tt2713180}") and never in an
@@ -82,9 +87,20 @@ func arrRenameToken(name string) string {
 	return ""
 }
 
+// mediaFileExtensions are the on-disk media file extensions whose suffix is
+// stripped from a candidate release name. A source path is frequently a
+// directory whose dotted name legitimately ends in a token like "H.265-GROUP",
+// so the extension must only be removed for actual media files — otherwise
+// filepath.Ext would strip that trailing token and hide the "-GROUP" tag.
+var mediaFileExtensions = map[string]struct{}{
+	".mkv": {}, ".mp4": {}, ".avi": {}, ".ts": {}, ".m2ts": {}, ".m4v": {},
+	".mov": {}, ".wmv": {}, ".mpg": {}, ".mpeg": {}, ".vob": {}, ".iso": {},
+}
+
 // candidateReleaseNames returns the on-disk base names that should carry the
-// release name (the source path and the primary video file), with any media
-// extension stripped.
+// release name (the source path and the primary video file). A recognized media
+// file extension is stripped; a directory basename is kept whole so dotted
+// tokens in a renamed folder name are preserved.
 func candidateReleaseNames(meta api.PreparedMetadata) []string {
 	names := make([]string, 0, 2)
 	seen := make(map[string]struct{}, 2)
@@ -93,7 +109,11 @@ func candidateReleaseNames(meta api.PreparedMetadata) []string {
 		if base == "" || base == "." || base == string(filepath.Separator) {
 			continue
 		}
-		base = strings.TrimSuffix(base, filepath.Ext(base))
+		if ext := filepath.Ext(base); ext != "" {
+			if _, ok := mediaFileExtensions[strings.ToLower(ext)]; ok {
+				base = strings.TrimSuffix(base, ext)
+			}
+		}
 		if _, ok := seen[base]; ok {
 			continue
 		}
