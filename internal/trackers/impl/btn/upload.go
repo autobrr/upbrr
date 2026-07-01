@@ -92,6 +92,11 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
+	if req.Logger != nil {
+		if message := btnTVPayloadMetadataMessage(req.Meta); message != "" {
+			req.Logger.Warnf("trackers: BTN %s", message)
+		}
+	}
 
 	body, contentType, err := commonhttp.BuildMultipartPayload(data, []commonhttp.FileField{{FieldName: "file_input", Path: torrentPath, FileName: "torrent.torrent"}})
 	if err != nil {
@@ -193,10 +198,15 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		return api.TrackerDryRunEntry{}, err
 	}
 
+	message := "dry-run payload generated"
+	if metadataMessage := btnTVPayloadMetadataMessage(req.Meta); metadataMessage != "" {
+		message += "; " + metadataMessage
+	}
+
 	return api.TrackerDryRunEntry{
 		Tracker:          "BTN",
 		Status:           "ready",
-		Message:          "dry-run payload generated",
+		Message:          message,
 		ReleaseName:      resolveUploadName(req.Meta),
 		DescriptionGroup: "btn",
 		Description:      payload["release_desc"],
@@ -571,7 +581,7 @@ func buildAlbumDesc(meta api.PreparedMetadata, fields map[string]string) string 
 	}
 	overview := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.EpisodeOverview), strings.TrimSpace(fields["album_desc"]))
 	aired := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.TVDBAiredDate), strings.TrimSpace(meta.DailyEpisodeDate), "TBA")
-	season, episode := meta.SeasonEpisodeWithParsedFallback()
+	season, episode := meta.CanonicalSeasonEpisode()
 	episodeTitle := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.EpisodeTitle), "TBA")
 	return strings.TrimSpace(fmt.Sprintf("Episode Name: %s\nEpisode Title: %s\nSeason: %d\nEpisode: %d\nAired: %s\n\nEpisode overview: %s", episodeTitle, episodeTitle, season, episode, aired, overview))
 }
@@ -580,11 +590,42 @@ func resolveUploadType(meta api.PreparedMetadata) string {
 	if meta.TVPack {
 		return "Season"
 	}
-	_, episode := meta.SeasonEpisodeWithParsedFallback()
-	if episode > 0 {
+	if meta.EpisodeInt > 0 {
 		return "Episode"
 	}
 	return "Season"
+}
+
+// btnTVPayloadMetadataMessage returns dry-run/log feedback when BTN will send
+// zero-valued TV season or episode fields because canonical metadata is absent.
+// Parsed release values are reported only as ignored signals and must not feed
+// tracker payload construction.
+func btnTVPayloadMetadataMessage(meta api.PreparedMetadata) string {
+	if !strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") {
+		return ""
+	}
+	missing := make([]string, 0, 2)
+	ignored := make([]string, 0, 2)
+	if meta.SeasonInt <= 0 {
+		missing = append(missing, "season")
+		if meta.Release.Season > 0 {
+			ignored = append(ignored, "season")
+		}
+	}
+	if meta.EpisodeInt <= 0 && !meta.TVPack {
+		missing = append(missing, "episode")
+		if meta.Release.Episode > 0 {
+			ignored = append(ignored, "episode")
+		}
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	message := "canonical TV " + strings.Join(missing, "/") + " missing; tracker payload uses 0"
+	if len(ignored) > 0 {
+		message += " and ignores parsed " + strings.Join(ignored, "/") + " fallback"
+	}
+	return message
 }
 
 func resolveOrigin(releaseName string) string {

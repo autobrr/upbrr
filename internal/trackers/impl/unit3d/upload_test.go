@@ -348,7 +348,7 @@ func TestBuildUnit3DDataTVIncludesTVOnlyFields(t *testing.T) {
 	}
 }
 
-func TestBuildUnit3DDataTVUsesParsedReleaseSeasonEpisodeFallback(t *testing.T) {
+func TestBuildUnit3DDataTVOmitsParsedReleaseSeasonEpisodeFallback(t *testing.T) {
 	req := trackers.UploadRequest{
 		Tracker: "AITHER",
 		Meta: api.PreparedMetadata{
@@ -372,14 +372,17 @@ func TestBuildUnit3DDataTVUsesParsedReleaseSeasonEpisodeFallback(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	if got := data["season_number"]; got != "2025" {
-		t.Fatalf("expected season_number=2025, got %q", got)
+	if got := data["season_number"]; got != "0" {
+		t.Fatalf("expected season_number=0, got %q", got)
 	}
-	if got := data["episode_number"]; got != "701" {
-		t.Fatalf("expected episode_number=701, got %q", got)
+	if got := data["episode_number"]; got != "0" {
+		t.Fatalf("expected episode_number=0, got %q", got)
 	}
 	if got := data["tvdb"]; got != "789" {
 		t.Fatalf("expected tvdb=789, got %q", got)
+	}
+	if got := unit3DTVPayloadMetadataMessage(req.Meta, data); got != "canonical TV season/episode missing; tracker payload uses 0 and ignores parsed season/episode fallback" {
+		t.Fatalf("unexpected metadata message %q", got)
 	}
 }
 
