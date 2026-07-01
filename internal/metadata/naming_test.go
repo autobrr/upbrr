@@ -417,6 +417,43 @@ func TestReleaseNameRequestFromMetaTVSearchYearComesFromTVDB(t *testing.T) {
 	}
 }
 
+func TestReleaseNameRequestFromMetaTVStripsBracketedTVDBYear(t *testing.T) {
+	sourceName := "Example.Show.2024.S01.720p.NF.WEB-DL.DDP5.1.x264-GRP"
+	meta := api.PreparedMetadata{
+		SourcePath:  sourceName,
+		ExternalIDs: api.ExternalIDs{Category: "TV"},
+		Type:        "WEBDL",
+		Source:      "Web",
+		Audio:       "DD+ 5.1 Atmos",
+		VideoEncode: "H.264",
+		Service:     "NF",
+		SeasonStr:   "S01",
+		TVPack:      true,
+		Release: api.ReleaseInfo{
+			Title:      "Example Show",
+			Year:       2024,
+			Resolution: "720p",
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			TVDB: &api.TVDBMetadata{NameEnglish: "Example Show (2024)", Year: 2024, YearFromAlias: true},
+		},
+		Tag: "-GRP",
+	}
+
+	req := releaseNameRequestFromMeta(meta, api.NopLogger{})
+	if req.Title != "Example Show" {
+		t.Fatalf("expected bracketed year stripped from tvdb title, got %q", req.Title)
+	}
+	if req.SearchYear != "2024" {
+		t.Fatalf("expected tv search year, got %q", req.SearchYear)
+	}
+	result := BuildReleaseName(req, api.NopLogger{})
+	expected := "Example Show 2024 S01 720p NF WEB-DL DD+ 5.1 Atmos H.264-GRP"
+	if result.Name != expected {
+		t.Fatalf("expected release name %q, got %q", expected, result.Name)
+	}
+}
+
 func TestReleaseNameRequestFromMetaTVOmitsSearchYearWhenTVDBYearNotAliasDerived(t *testing.T) {
 	meta := api.PreparedMetadata{
 		SourcePath:  `D:\Shows\Example.Show.S01E01.1080p.BluRay.x264`,
@@ -482,6 +519,26 @@ func TestBuildReleaseNameTVUsesSearchYearOverRequestYear(t *testing.T) {
 	}
 	if strings.Contains(result.NameNoTag, "1999") {
 		t.Fatalf("expected tv release name to ignore request year when search year is set, got %q", result.NameNoTag)
+	}
+}
+
+func TestBuildReleaseNameTVStripsDuplicateParentheticalSearchYear(t *testing.T) {
+	result := BuildReleaseName(api.ReleaseNameRequest{
+		Category:    "TV",
+		Type:        "WEBDL",
+		Title:       "Example Show (2024)",
+		SearchYear:  "2024",
+		Season:      "S01",
+		Resolution:  "1080p",
+		Service:     "NF",
+		Audio:       "AAC 2.0",
+		VideoEncode: "H.264",
+		Tag:         "-GRP",
+	}, api.NopLogger{})
+
+	expected := "Example Show 2024 S01 1080p NF WEB-DL AAC 2.0 H.264-GRP"
+	if result.Name != expected {
+		t.Fatalf("expected release name %q, got %q", expected, result.Name)
 	}
 }
 

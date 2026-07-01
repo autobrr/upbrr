@@ -387,6 +387,13 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	if visited["limit-queue"] && opts.LimitQueue < 0 {
 		return cliOptions{}, nil, nil, errors.New("limit-queue must be >= 0")
 	}
+	if visited["queue"] {
+		trimmed := strings.TrimSpace(opts.QueueName)
+		if trimmed == "" {
+			return cliOptions{}, nil, nil, errors.New("--queue requires a non-empty queue name")
+		}
+		opts.QueueName = trimmed
+	}
 	if opts.ExportConfigPlaintext && !visited["export-config"] {
 		return cliOptions{}, nil, nil, errors.New("--export-config-plaintext requires --export-config")
 	}

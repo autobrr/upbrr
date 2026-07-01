@@ -32,21 +32,6 @@ var ruleResolutionOrder = map[string]int{
 
 func EvaluateRules(ctx context.Context, tracker string, meta api.PreparedMetadata, logger api.Logger) []api.RuleFailure {
 	name := strings.ToUpper(strings.TrimSpace(tracker))
-	switch name {
-	case "AZ":
-		return evaluateAZFamilyRules(name, meta)
-	case "CZ":
-		return evaluateAZFamilyRules(name, meta)
-	case "PHD":
-		return evaluateAZFamilyRules(name, meta)
-	}
-	rules, ok := additional.RulesFor(name)
-	// UNIT3D-known trackers without a tracker-specific RuleSet must still reach
-	// the MediaInfo-settings check below (rules is the zero value for them, which
-	// no-ops every other rule), so don't bail early when the tracker is known.
-	if !ok && name != "PTP" && !unit3dmeta.IsKnown(name) {
-		return nil
-	}
 
 	failures := make([]api.RuleFailure, 0)
 	addFailure := func(rule, reason string) {
@@ -55,6 +40,35 @@ func EvaluateRules(ctx context.Context, tracker string, meta api.PreparedMetadat
 			trimmed = "rule requirement not met"
 		}
 		failures = append(failures, api.RuleFailure{Rule: rule, Reason: trimmed})
+	}
+
+	// Renamed/modified releases are rejected by trackers regardless of family, so
+	// evaluate this before the family-specific gates below. It is enabled for all
+	// trackers by default (skipsModifiedReleaseCheck exempts special cases) and is
+	// overridable via IgnoreTrackerRuleFailuresFor like any other rule failure.
+	if !skipsModifiedReleaseCheck(name) {
+		if renamed, reason := isRenamedRelease(meta); renamed {
+			addFailure("modified_release", reason)
+		}
+	}
+
+	switch name {
+	case "AZ", "CZ", "PHD":
+		return append(failures, evaluateAZFamilyRules(name, meta)...)
+	}
+	rules, ok := additional.RulesFor(name)
+	// UNIT3D-known trackers without a tracker-specific RuleSet must still reach
+	// the MediaInfo-settings check below (rules is the zero value for them, which
+	// no-ops every other rule), so don't bail early when the tracker is known.
+	if !ok && name != "PTP" && !unit3dmeta.IsKnown(name) {
+		// Preserve the nil contract for trackers without their own rule set: the
+		// consumer (applyTrackerRules) treats a nil result as "not evaluated, keep
+		// pre-existing failures" but an empty slice as "evaluated, clear failures".
+		// Only return a slice when this rule actually produced a failure.
+		if len(failures) > 0 {
+			return failures
+		}
+		return nil
 	}
 
 	if rules.RequireUniqueID && !meta.ValidMediaInfo {

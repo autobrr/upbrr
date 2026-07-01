@@ -5,6 +5,7 @@ package trackers
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -523,5 +524,81 @@ func TestEvaluateRulesLSTRequiresValidMIAndLanguage(t *testing.T) {
 	failures := EvaluateRules(context.Background(), "LST", meta, nil)
 	if len(failures) < 2 {
 		t.Fatalf("expected at least 2 failures, got %#v", failures)
+	}
+}
+
+func findRuleFailure(failures []api.RuleFailure, rule string) (api.RuleFailure, bool) {
+	for _, f := range failures {
+		if f.Rule == rule {
+			return f, true
+		}
+	}
+	return api.RuleFailure{}, false
+}
+
+func hasRuleFailure(failures []api.RuleFailure, rule string) bool {
+	_, ok := findRuleFailure(failures, rule)
+	return ok
+}
+
+func TestEvaluateRulesModifiedReleaseAcrossFamilies(t *testing.T) {
+	t.Parallel()
+
+	renamed := api.PreparedMetadata{
+		SourcePath: "/data/movies/Fury 2014 2160p MA WEB-DL DDP5 1 HDR H 265-HHWEB",
+		Release:    api.ReleaseInfo{Group: "HHWEB"},
+	}
+	clean := api.PreparedMetadata{
+		SourcePath: "/data/movies/Fury.2014.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-HHWEB",
+		Release:    api.ReleaseInfo{Group: "HHWEB"},
+	}
+
+	// Covers a UNIT3D tracker (LST), a non-UNIT3D tracker (PTP), an AZ-family
+	// tracker (PHD), and a tracker with no rule set of its own (HDB) to prove the
+	// rule fires across every family.
+	for _, tracker := range []string{"LST", "PTP", "PHD", "HDB"} {
+		t.Run(tracker, func(t *testing.T) {
+			t.Parallel()
+			got := EvaluateRules(context.Background(), tracker, renamed, nil)
+			failure, ok := findRuleFailure(got, "modified_release")
+			if !ok {
+				t.Fatalf("expected modified_release failure for %s, got %#v", tracker, got)
+			}
+			if !strings.Contains(failure.Reason, "renamed") {
+				t.Fatalf("expected a meaningful reason mentioning 'renamed' for %s, got %q", tracker, failure.Reason)
+			}
+			if clean := EvaluateRules(context.Background(), tracker, clean, nil); hasRuleFailure(clean, "modified_release") {
+				t.Fatalf("did not expect modified_release failure for clean release on %s, got %#v", tracker, clean)
+			}
+		})
+	}
+}
+
+// TestEvaluateRulesPreservesNilForTrackerWithoutFailures guards the contract that
+// applyTrackerRules relies on: a tracker with no rule set and no rule failure must
+// return nil (not an empty slice), so the consumer preserves pre-existing failures
+// (e.g. audio_bloat) instead of clearing them.
+func TestEvaluateRulesPreservesNilForTrackerWithoutFailures(t *testing.T) {
+	t.Parallel()
+
+	clean := api.PreparedMetadata{
+		SourcePath: "/data/movies/Fury.2014.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-HHWEB",
+		Release:    api.ReleaseInfo{Group: "HHWEB"},
+	}
+	// MTV is non-UNIT3D, not PTP, and has no rule set of its own.
+	if got := EvaluateRules(context.Background(), "MTV", clean, nil); got != nil {
+		t.Fatalf("expected nil for a tracker without failures, got %#v", got)
+	}
+}
+
+func TestEvaluateRulesModifiedReleaseExemptsManual(t *testing.T) {
+	t.Parallel()
+
+	renamed := api.PreparedMetadata{
+		SourcePath: "/data/movies/Fury 2014 2160p MA WEB-DL DDP5 1 HDR H 265-HHWEB",
+		Release:    api.ReleaseInfo{Group: "HHWEB"},
+	}
+	if got := EvaluateRules(context.Background(), "MANUAL", renamed, nil); hasRuleFailure(got, "modified_release") {
+		t.Fatalf("expected MANUAL to be exempt from modified_release, got %#v", got)
 	}
 }
