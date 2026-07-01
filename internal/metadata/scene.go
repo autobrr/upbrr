@@ -202,8 +202,11 @@ func sceneLocalCandidates(meta api.PreparedMetadata) sceneCandidates {
 func (d *srrdbDetector) Detect(ctx context.Context, meta api.PreparedMetadata) (SceneResult, error) {
 	cands := sceneLocalCandidates(meta)
 	if cands.empty() {
+		d.log().Tracef("metadata: scene detection skipped: no local candidates")
 		return SceneResult{}, nil
 	}
+	imdbID := sceneIMDbID(meta)
+	d.log().Debugf("metadata: scene detection start imdb=%d folders=%d files=%d media_present=%t", imdbID, len(cands.folders), len(cands.files), strings.TrimSpace(cands.mediaFilename) != "")
 
 	// Detection now runs after external-ID resolution (ApplyMediaDetails), so a
 	// resolved IMDb id is normally available. The IMDb-keyed search returns the
@@ -211,7 +214,7 @@ func (d *srrdbDetector) Detect(ctx context.Context, meta api.PreparedMetadata) (
 	// robust primary path. If it yields no confident match (e.g. truncated results
 	// or srrdb not keying the release to this id), fall through to the exact r:
 	// search, which is also the fallback when no IMDb id is known.
-	if imdbID := sceneIMDbID(meta); imdbID > 0 {
+	if imdbID > 0 {
 		result, err := d.detectViaIMDB(ctx, meta, cands, imdbID)
 		if err != nil {
 			return result, err
@@ -227,6 +230,7 @@ func (d *srrdbDetector) Detect(ctx context.Context, meta api.PreparedMetadata) (
 // the local folder/filename, then verifies the media filename. Strictly
 // best-effort: every failure returns a no-match (except context cancellation).
 func (d *srrdbDetector) detectViaIMDB(ctx context.Context, meta api.PreparedMetadata, cands sceneCandidates, imdbID int) (SceneResult, error) {
+	d.log().Tracef("metadata: scene imdb search start imdb=%d", imdbID)
 	releases, err := d.fetchIMDBReleases(ctx, imdbID)
 	if err != nil {
 		if isContextError(ctx, err) {
@@ -236,12 +240,14 @@ func (d *srrdbDetector) detectViaIMDB(ctx context.Context, meta api.PreparedMeta
 		return SceneResult{}, nil
 	}
 	if len(releases) == 0 {
+		d.log().Debugf("metadata: scene imdb search no results imdb=%d", imdbID)
 		return SceneResult{}, nil
 	}
+	d.log().Debugf("metadata: scene imdb search results imdb=%d count=%d", imdbID, len(releases))
 
 	best, source := selectSceneRelease(meta, cands, releases)
 	if best == nil {
-		d.log().Debugf("metadata: scene imdb no confident candidate imdb=%d candidates=%d folders=%v files=%v", imdbID, len(releases), cands.folders, cands.files)
+		d.log().Debugf("metadata: scene imdb no confident candidate imdb=%d candidates=%d folders=%d files=%d", imdbID, len(releases), len(cands.folders), len(cands.files))
 		return SceneResult{}, nil
 	}
 	return d.finishSceneMatch(ctx, cands, *best, source, "imdb")
@@ -253,6 +259,7 @@ func (d *srrdbDetector) detectViaR(ctx context.Context, cands sceneCandidates) (
 	names := make([]string, 0, len(cands.folders)+len(cands.files))
 	names = append(names, cands.folders...)
 	names = append(names, cands.files...)
+	d.log().Debugf("metadata: scene r search start candidates=%d", len(names))
 	for _, name := range names {
 		release, ok, err := d.searchExactR(ctx, name)
 		if err != nil {
@@ -266,6 +273,7 @@ func (d *srrdbDetector) detectViaR(ctx context.Context, cands sceneCandidates) (
 			return d.finishSceneMatch(ctx, cands, release, "r", "r")
 		}
 	}
+	d.log().Debugf("metadata: scene r search no match candidates=%d", len(names))
 	return SceneResult{}, nil
 }
 
@@ -275,6 +283,7 @@ func (d *srrdbDetector) searchExactR(ctx context.Context, name string) (srrdbSea
 	if trimmed == "" {
 		return srrdbSearchResult{}, false, nil
 	}
+	d.log().Tracef("metadata: scene r search candidate=%q", trimmed)
 	endpoint := fmt.Sprintf("%s/v1/search/r:%s", strings.TrimRight(d.baseURL, "/"), url.PathEscape(trimmed))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -287,6 +296,7 @@ func (d *srrdbDetector) searchExactR(ctx context.Context, name string) (srrdbSea
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		d.log().Tracef("metadata: scene r search candidate=%q status=%d", trimmed, resp.StatusCode)
 		return srrdbSearchResult{}, false, nil
 	}
 	var payload srrdbResponse
@@ -294,8 +304,10 @@ func (d *srrdbDetector) searchExactR(ctx context.Context, name string) (srrdbSea
 		return srrdbSearchResult{}, false, fmt.Errorf("scene: decode r search: %w", err)
 	}
 	if payload.ResultsCount <= 0 || len(payload.Results) == 0 {
+		d.log().Tracef("metadata: scene r search candidate=%q results=0", trimmed)
 		return srrdbSearchResult{}, false, nil
 	}
+	d.log().Tracef("metadata: scene r search candidate=%q results=%d selected=%q", trimmed, len(payload.Results), payload.Results[0].Release)
 	return payload.Results[0], true, nil
 }
 
@@ -333,7 +345,7 @@ func (d *srrdbDetector) finishSceneMatch(ctx context.Context, cands sceneCandida
 		reason = sceneRenamedReason
 		d.log().Infof("metadata: scene release renamed or modified via=%s", matchSource)
 	}
-	d.log().Debugf("metadata: scene matched mode=%s via=%s release=%q folders=%v media=%q renamed=%t", mode, matchSource, release.Release, cands.folders, cands.mediaFilename, renamed)
+	d.log().Debugf("metadata: scene matched mode=%s via=%s release=%q folders=%v media=%q has_nfo=%t renamed=%t", mode, matchSource, release.Release, cands.folders, cands.mediaFilename, strings.EqualFold(release.HasNFO, "yes"), renamed)
 	return d.buildSceneResult(ctx, release, renamed, reason)
 }
 
@@ -355,6 +367,7 @@ func (d *srrdbDetector) buildSceneResult(ctx context.Context, result srrdbSearch
 		Renamed:       renamed,
 		RenamedReason: renamedReason,
 	}
+	d.log().Tracef("metadata: scene result imdb=%d has_nfo=%q renamed=%t", scene.IMDBID, result.HasNFO, scene.Renamed)
 	if strings.EqualFold(result.HasNFO, "yes") {
 		path, downloaded, err := d.fetchNFO(ctx, result.Release)
 		if err != nil && isContextError(ctx, err) {
@@ -363,6 +376,7 @@ func (d *srrdbDetector) buildSceneResult(ctx context.Context, result srrdbSearch
 		if path != "" {
 			scene.NFOPath = path
 			scene.NFONew = downloaded
+			d.log().Tracef("metadata: scene nfo attached downloaded=%t", downloaded)
 			if nfoIDs, readErr := parseNFOExternalIDs(path); readErr == nil {
 				scene.TMDBID = nfoIDs.TMDBID
 				if scene.IMDBID == 0 {
@@ -373,11 +387,17 @@ func (d *srrdbDetector) buildSceneResult(ctx context.Context, result srrdbSearch
 				scene.MALID = nfoIDs.MALID
 				scene.Service = nfoIDs.Service
 				scene.ServiceLongName = nfoIDs.ServiceLongName
+				d.log().Tracef("metadata: scene nfo ids tmdb=%d imdb=%d tvdb=%d tvmaze=%d mal=%d service_present=%t", scene.TMDBID, scene.IMDBID, scene.TVDBID, scene.TVmazeID, scene.MALID, scene.Service != "")
+			} else {
+				d.log().Debugf("metadata: scene nfo id parse failed: %v", readErr)
 			}
 		}
 		if err != nil {
+			d.log().Debugf("metadata: scene nfo side effect failed: %v", err)
 			return scene, newSceneNFOError(err)
 		}
+	} else {
+		d.log().Debugf("metadata: scene nfo not advertised has_nfo=%q", result.HasNFO)
 	}
 
 	return scene, nil
@@ -637,9 +657,12 @@ func (d *srrdbDetector) fetchNFO(ctx context.Context, release string) (string, b
 	if trimmed == "" {
 		return "", false, nil
 	}
+	d.log().Tracef("metadata: scene nfo lookup start release=%q", trimmed)
 	fileBase := strings.ToLower(trimmed)
+	detailsNFO := false
 	var detailsErr error
 	if details, err := d.fetchDetails(ctx, trimmed); err == nil {
+		d.log().Tracef("metadata: scene nfo details loaded release=%q files=%d", trimmed, len(details.Files))
 		for _, file := range details.Files {
 			name := strings.TrimSpace(file.Name)
 			if strings.HasSuffix(strings.ToLower(name), ".nfo") {
@@ -647,55 +670,70 @@ func (d *srrdbDetector) fetchNFO(ctx context.Context, release string) (string, b
 				if strings.TrimSpace(base) != "" {
 					fileBase = strings.ToLower(base)
 				}
+				detailsNFO = true
+				d.log().Tracef("metadata: scene nfo details selected release=%q file=%q", trimmed, name)
 				break
 			}
 		}
 	} else if isContextError(ctx, err) {
 		return "", false, err
 	} else {
+		d.log().Debugf("metadata: scene nfo details failed release=%q: %v", trimmed, err)
 		detailsErr = err
 	}
 
 	cacheDir := d.cacheDir
 	if cacheDir == "" {
+		d.log().Debugf("metadata: scene nfo cache unavailable release=%q reason=missing_cache_dir", trimmed)
 		return "", false, errors.Join(detailsErr, errors.New("scene: nfo cache: missing cache dir"))
 	}
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		d.log().Debugf("metadata: scene nfo cache unavailable release=%q: %v", trimmed, err)
 		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: nfo cache: %w", err))
 	}
 	nfoDir := d.nfoDir
 	if nfoDir == "" {
+		d.log().Debugf("metadata: scene nfo dir unavailable release=%q reason=missing_nfo_dir", trimmed)
 		return "", false, errors.Join(detailsErr, errors.New("scene: nfo cache: missing nfo dir"))
 	}
 	if err := os.MkdirAll(nfoDir, 0o700); err != nil {
+		d.log().Debugf("metadata: scene nfo dir unavailable release=%q: %v", trimmed, err)
 		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: nfo dir: %w", err))
 	}
 	path := filepath.Join(nfoDir, fileBase+".nfo")
 	if _, err := os.Stat(path); err == nil {
+		d.log().Debugf("metadata: scene nfo cache hit release=%q path=%s details_error=%t", trimmed, path, detailsErr != nil)
 		return path, false, detailsErr
 	}
 
+	d.log().Tracef("metadata: scene nfo downloading release=%q file=%q details_nfo=%t details_error=%t", trimmed, fileBase+".nfo", detailsNFO, detailsErr != nil)
 	nfoURL := fmt.Sprintf("https://www.srrdb.com/download/file/%s/%s.nfo", url.PathEscape(trimmed), url.PathEscape(fileBase))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, nfoURL, nil)
 	if err != nil {
+		d.log().Debugf("metadata: scene nfo request build failed release=%q: %v", trimmed, err)
 		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: build nfo request: %w", err))
 	}
 	setSRRDBHeaders(req)
 	resp, err := d.client.Do(req)
 	if err != nil {
+		d.log().Debugf("metadata: scene nfo request failed release=%q: %v", trimmed, err)
 		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: nfo request: %w", err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		d.log().Debugf("metadata: scene nfo unavailable release=%q status=%d details_error=%t", trimmed, resp.StatusCode, detailsErr != nil)
 		return "", false, detailsErr
 	}
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
+		d.log().Debugf("metadata: scene nfo read failed release=%q: %v", trimmed, err)
 		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: read nfo: %w", err))
 	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
+		d.log().Debugf("metadata: scene nfo write failed release=%q path=%s: %v", trimmed, path, err)
 		return "", false, errors.Join(detailsErr, fmt.Errorf("scene: write nfo: %w", err))
 	}
+	d.log().Debugf("metadata: scene nfo downloaded release=%q path=%s bytes=%d details_error=%t", trimmed, path, len(data), detailsErr != nil)
 	return path, true, detailsErr
 }
 
@@ -708,11 +746,14 @@ func (d *srrdbDetector) fetchDetails(ctx context.Context, release string) (srrdb
 			if cached, err := os.ReadFile(cachePath); err == nil {
 				var payload srrdbDetailsResponse
 				if err := json.Unmarshal(cached, &payload); err == nil {
+					d.log().Tracef("metadata: scene details cache hit release=%q path=%s", release, cachePath)
 					return payload, nil
 				}
+				d.log().Debugf("metadata: scene details cache invalid release=%q path=%s: %v", release, cachePath, err)
 			}
 		}
 	}
+	d.log().Tracef("metadata: scene details fetch release=%q", release)
 	endpoint := fmt.Sprintf("%s/v1/details/%s", strings.TrimRight(d.baseURL, "/"), url.PathEscape(release))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -725,6 +766,7 @@ func (d *srrdbDetector) fetchDetails(ctx context.Context, release string) (srrdb
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		d.log().Tracef("metadata: scene details fetch status release=%q status=%d", release, resp.StatusCode)
 		return srrdbDetailsResponse{}, nil
 	}
 	var payload srrdbDetailsResponse
@@ -736,6 +778,7 @@ func (d *srrdbDetector) fetchDetails(ctx context.Context, release string) (srrdb
 			_ = os.WriteFile(cachePath, data, 0o600)
 		}
 	}
+	d.log().Tracef("metadata: scene details fetched release=%q files=%d archived=%d", release, len(payload.Files), len(payload.ArchivedFiles))
 	return payload, nil
 }
 
@@ -809,6 +852,7 @@ func (d *srrdbDetector) fetchIMDBReleases(ctx context.Context, imdbID int) ([]sr
 		}
 		all = append(all, payload.Results...)
 		total = payload.ResultsCount
+		d.log().Tracef("metadata: scene imdb search page imdb=%d page=%d results=%d total=%d collected=%d", imdbID, page, len(payload.Results), total, len(all))
 		if len(payload.Results) < srrdbIMDBPageSize {
 			break
 		}
@@ -839,6 +883,7 @@ func (d *srrdbDetector) fetchIMDBReleasePage(ctx context.Context, imdbID, page i
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		d.log().Tracef("metadata: scene imdb search status imdb=%d page=%d status=%d", imdbID, page, resp.StatusCode)
 		return srrdbIMDBSearchResponse{}, nil
 	}
 	var payload srrdbIMDBSearchResponse

@@ -6,6 +6,7 @@ package metadata
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,23 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+type sceneLogRecorder struct {
+	api.NopLogger
+	lines []string
+}
+
+func (r *sceneLogRecorder) Debugf(format string, args ...any) {
+	r.lines = append(r.lines, fmt.Sprintf(format, args...))
+}
+
+func (r *sceneLogRecorder) Tracef(format string, args ...any) {
+	r.lines = append(r.lines, fmt.Sprintf(format, args...))
+}
+
+func (r *sceneLogRecorder) join() string {
+	return strings.Join(r.lines, "\n")
 }
 
 func TestSceneDetectorSRRDB(t *testing.T) {
@@ -83,6 +101,62 @@ func TestSceneDetectorSRRDBFetchesIMDbWhenSearchOmitsIt(t *testing.T) {
 	}
 	if result.IMDBID != 7654321 {
 		t.Fatalf("unexpected imdb id: %d", result.IMDBID)
+	}
+}
+
+func TestSceneDetectorSRRDBLogsNFODownloadLifecycle(t *testing.T) {
+	handler := http.NewServeMux()
+	handler.HandleFunc("/v1/search/r:Example.Release", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"resultsCount":1,"results":[{"release":"Example.Release.2024.1080p-WEB","imdbId":"1234567","hasNFO":"yes"}]}`))
+	})
+	handler.HandleFunc("/v1/details/Example.Release.2024.1080p-WEB", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"files":[{"name":"Example.Release.Custom.NFO"}]}`))
+	})
+
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	client := server.Client()
+	baseTransport := client.Transport
+	if baseTransport == nil {
+		baseTransport = http.DefaultTransport
+	}
+	client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if strings.EqualFold(req.URL.Host, "www.srrdb.com") {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("URL: https://www.imdb.com/title/tt1234567/")),
+				Request:    req,
+			}, nil
+		}
+		return baseTransport.RoundTrip(req)
+	})
+
+	logger := &sceneLogRecorder{}
+	detector := newSRRDBDetector(client, server.URL, t.TempDir(), t.TempDir())
+	detector.logger = logger
+
+	result, err := detector.Detect(context.Background(), api.PreparedMetadata{VideoPath: "/data/Example.Release.mkv"})
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if result.NFOPath == "" || !result.NFONew {
+		t.Fatalf("expected downloaded NFO, got path=%q new=%t", result.NFOPath, result.NFONew)
+	}
+	logs := logger.join()
+	for _, want := range []string{
+		"metadata: scene nfo lookup start",
+		"metadata: scene nfo details selected",
+		"metadata: scene nfo downloading",
+		"metadata: scene nfo downloaded",
+		"metadata: scene nfo attached downloaded=true",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected log %q in:\n%s", want, logs)
+		}
 	}
 }
 
@@ -379,8 +453,8 @@ func (h srrdbFallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		page := 1
-		if idx := strings.Index(path, "page:"); idx >= 0 {
-			if p, err := strconv.Atoi(path[idx+len("page:"):]); err == nil {
+		if _, after, ok := strings.Cut(path, "page:"); ok {
+			if p, err := strconv.Atoi(after); err == nil {
 				page = p
 			}
 		}
@@ -549,7 +623,7 @@ func TestSceneDetectorIMDBFallbackPaginates(t *testing.T) {
 	// Page 1 is full (40 wrong-resolution entries); the match is only on page 2.
 	var page1 strings.Builder
 	page1.WriteString(`{"resultsCount":41,"results":[`)
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		if i > 0 {
 			page1.WriteString(",")
 		}
