@@ -571,14 +571,7 @@ func buildAlbumDesc(meta api.PreparedMetadata, fields map[string]string) string 
 	}
 	overview := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.EpisodeOverview), strings.TrimSpace(fields["album_desc"]))
 	aired := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.TVDBAiredDate), strings.TrimSpace(meta.DailyEpisodeDate), "TBA")
-	season := meta.SeasonInt
-	episode := meta.EpisodeInt
-	if season <= 0 {
-		season = meta.Release.Season
-	}
-	if episode <= 0 {
-		episode = meta.Release.Episode
-	}
+	season, episode := meta.SeasonEpisodeWithParsedFallback()
 	episodeTitle := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.EpisodeTitle), "TBA")
 	return strings.TrimSpace(fmt.Sprintf("Episode Name: %s\nEpisode Title: %s\nSeason: %d\nEpisode: %d\nAired: %s\n\nEpisode overview: %s", episodeTitle, episodeTitle, season, episode, aired, overview))
 }
@@ -587,7 +580,8 @@ func resolveUploadType(meta api.PreparedMetadata) string {
 	if meta.TVPack {
 		return "Season"
 	}
-	if meta.EpisodeInt > 0 || meta.Release.Episode > 0 {
+	_, episode := meta.SeasonEpisodeWithParsedFallback()
+	if episode > 0 {
 		return "Episode"
 	}
 	return "Season"

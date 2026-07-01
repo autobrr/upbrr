@@ -539,7 +539,7 @@ func inferCategoryFromMetadata(meta api.PreparedMetadata) string {
 	if meta.ExternalMetadata.TVDB != nil || meta.ExternalMetadata.TVmaze != nil {
 		return "TV"
 	}
-	if meta.SeasonInt > 0 || meta.EpisodeInt > 0 || meta.Release.Season > 0 || meta.Release.Episode > 0 {
+	if meta.HasTVSeasonEpisodeSignal() {
 		return "TV"
 	}
 	if category := normalizeNamingCategory(meta.Release.Category); category != "" {

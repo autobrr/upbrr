@@ -79,6 +79,10 @@ const (
 	TrackerBlockReasonAudio TrackerBlockReason = "audio"
 )
 
+// PreparedMetadata contains the shared metadata snapshot used across CLI, GUI,
+// embedded web, and tracker upload flows. Release preserves parsed release-name
+// data; SeasonInt and EpisodeInt carry canonical TV identity after metadata
+// parsing and provider/date remapping.
 type PreparedMetadata struct {
 	SourcePath                  string
 	SourceLookupURL             string
@@ -214,6 +218,34 @@ type PreparedMetadata struct {
 	IgnoreTrackerRuleFailures   bool
 	TrackerRuleFailures         map[string][]RuleFailure
 	BDInfo                      map[string]any
+}
+
+// CanonicalSeasonEpisode returns the provider-resolved TV season/episode used
+// for upload identity and naming.
+func (m PreparedMetadata) CanonicalSeasonEpisode() (int, int) {
+	return m.SeasonInt, m.EpisodeInt
+}
+
+// SeasonEpisodeWithParsedFallback returns canonical season/episode values and
+// falls back to release-name parsed values only when canonical values are
+// unavailable. Use this for TV classification and lookup fallbacks, not for
+// canonical upload naming.
+func (m PreparedMetadata) SeasonEpisodeWithParsedFallback() (int, int) {
+	season, episode := m.CanonicalSeasonEpisode()
+	if season <= 0 {
+		season = m.Release.Season
+	}
+	if episode <= 0 {
+		episode = m.Release.Episode
+	}
+	return season, episode
+}
+
+// HasTVSeasonEpisodeSignal reports whether either canonical metadata or the
+// parsed release name carries a season/episode hint.
+func (m PreparedMetadata) HasTVSeasonEpisodeSignal() bool {
+	season, episode := m.SeasonEpisodeWithParsedFallback()
+	return season > 0 || episode > 0
 }
 
 type MetadataOverrides struct {
@@ -678,6 +710,8 @@ type TrackerMatch struct {
 	TrackerID string
 }
 
+// ReleaseInfo preserves release-name parser output before provider metadata can
+// remap episode identity.
 type ReleaseInfo struct {
 	Category   string
 	Type       string

@@ -348,6 +348,41 @@ func TestBuildUnit3DDataTVIncludesTVOnlyFields(t *testing.T) {
 	}
 }
 
+func TestBuildUnit3DDataTVUsesParsedReleaseSeasonEpisodeFallback(t *testing.T) {
+	req := trackers.UploadRequest{
+		Tracker: "AITHER",
+		Meta: api.PreparedMetadata{
+			ReleaseName: "Daily.Show.2025.07.01.1080p.WEB-DL-GRP",
+			ExternalIDs: api.ExternalIDs{
+				Category: "TV",
+				TVDBID:   789,
+			},
+			Type: "WEBDL",
+			Release: api.ReleaseInfo{
+				Category:   "TV",
+				Season:     2025,
+				Episode:    701,
+				Resolution: "1080p",
+			},
+		},
+	}
+
+	data, err := buildUnit3DData(req, "name", "desc", "mi", "")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if got := data["season_number"]; got != "2025" {
+		t.Fatalf("expected season_number=2025, got %q", got)
+	}
+	if got := data["episode_number"]; got != "701" {
+		t.Fatalf("expected episode_number=701, got %q", got)
+	}
+	if got := data["tvdb"]; got != "789" {
+		t.Fatalf("expected tvdb=789, got %q", got)
+	}
+}
+
 func TestBuildUnit3DDataFailsOnUnknownType(t *testing.T) {
 	req := trackers.UploadRequest{
 		Tracker: "AITHER",

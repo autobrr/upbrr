@@ -769,7 +769,7 @@ func resolveUnit3DCategory(meta api.PreparedMetadata) string {
 	if category := canonicalUnit3DCategory(meta.Release.Category); category != "" {
 		return category
 	}
-	if meta.SeasonInt > 0 || meta.EpisodeInt > 0 || meta.Release.Season > 0 || meta.Release.Episode > 0 {
+	if meta.HasTVSeasonEpisodeSignal() {
 		return "TV"
 	}
 	if hasSeasonEpisode(meta.ReleaseName) {
@@ -927,7 +927,7 @@ func shouldIncludeUnit3DTVFields(meta api.PreparedMetadata, category string) boo
 	if strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "TV") {
 		return true
 	}
-	if meta.SeasonInt > 0 || meta.EpisodeInt > 0 || meta.Release.Season > 0 || meta.Release.Episode > 0 {
+	if meta.HasTVSeasonEpisodeSignal() {
 		return true
 	}
 
@@ -975,6 +975,9 @@ func detectResolution(value string) string {
 	return ""
 }
 
+// resolveSeason returns the Unit3D payload season value. Manual overrides and
+// canonical provider metadata win; parsed release data is only a payload
+// fallback for trackers that require TV fields before provider remapping exists.
 func resolveSeason(meta api.PreparedMetadata) string {
 	if meta.ReleaseNameOverrides.Season != nil {
 		if override := parseSeasonEpisodeToken(*meta.ReleaseNameOverrides.Season, "S"); override > 0 {
@@ -984,6 +987,9 @@ func resolveSeason(meta api.PreparedMetadata) string {
 	if meta.SeasonInt > 0 {
 		return formatOptionalInt(meta.SeasonInt)
 	}
+	if meta.Release.Season > 0 {
+		return formatOptionalInt(meta.Release.Season)
+	}
 	season, _ := parseSeasonEpisode(meta.ReleaseName)
 	if season == 0 {
 		return "0"
@@ -991,6 +997,9 @@ func resolveSeason(meta api.PreparedMetadata) string {
 	return formatOptionalInt(season)
 }
 
+// resolveEpisode returns the Unit3D payload episode value. Manual overrides and
+// canonical provider metadata win; parsed release data is only a payload
+// fallback for trackers that require TV fields before provider remapping exists.
 func resolveEpisode(meta api.PreparedMetadata) string {
 	if meta.ReleaseNameOverrides.Episode != nil {
 		if override := parseSeasonEpisodeToken(*meta.ReleaseNameOverrides.Episode, "E"); override > 0 {
@@ -999,6 +1008,9 @@ func resolveEpisode(meta api.PreparedMetadata) string {
 	}
 	if meta.EpisodeInt > 0 {
 		return formatOptionalInt(meta.EpisodeInt)
+	}
+	if meta.Release.Episode > 0 {
+		return formatOptionalInt(meta.Release.Episode)
 	}
 	_, episode := parseSeasonEpisode(meta.ReleaseName)
 	if episode == 0 {
