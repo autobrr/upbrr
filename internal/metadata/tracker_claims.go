@@ -338,17 +338,18 @@ type trackerClaimMatchTarget struct {
 	isTV       bool
 }
 
+// trackerClaimTarget builds the canonical upload identity used to compare
+// tracker-side claim records. TV claim matching requires provider-resolved
+// season metadata and intentionally ignores parsed release fallbacks.
 func trackerClaimTarget(meta api.PreparedMetadata) (trackerClaimMatchTarget, bool) {
+	season, _ := meta.CanonicalSeasonEpisode()
 	target := trackerClaimMatchTarget{
 		tmdbID:     meta.ExternalIDs.TMDBID,
-		season:     meta.SeasonInt,
+		season:     season,
 		category:   trackerdata.CanonicalUnit3DCategory(resolveTrackerClaimCategory(meta)),
 		typeName:   trackerdata.CanonicalUnit3DType(resolveTrackerClaimType(meta)),
 		resolution: trackerdata.CanonicalUnit3DResolution(resolveTrackerClaimResolution(meta)),
 		isTV:       isTVCategory(meta),
-	}
-	if target.season == 0 {
-		target.season = meta.Release.Season
 	}
 	if target.tmdbID == 0 || target.typeName == "" || target.resolution == "" {
 		return trackerClaimMatchTarget{}, false
@@ -612,10 +613,7 @@ func decodeTrackerClaimValue(raw json.RawMessage, namesByID func(string) []strin
 }
 
 func isTVCategory(meta api.PreparedMetadata) bool {
-	return meta.SeasonInt > 0 ||
-		meta.EpisodeInt > 0 ||
-		meta.Release.Season > 0 ||
-		meta.Release.Episode > 0 ||
+	return meta.HasTVSeasonEpisodeSignal() ||
 		meta.TVPack ||
 		strings.TrimSpace(meta.DailyEpisodeDate) != ""
 }

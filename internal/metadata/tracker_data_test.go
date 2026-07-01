@@ -509,6 +509,53 @@ func TestApplyTrackerClaimsDoesNotBlockOnSemanticMismatch(t *testing.T) {
 	}
 }
 
+func TestApplyTrackerClaimsDoesNotUseParsedSeasonFallbackForUploadIdentity(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"data":[
+				{"attributes":{"title":"Example Show","season":2,"tmdb_id":4242,"categories":["2"],"resolutions":["3"],"types":["4"]}}
+			],
+			"meta":{"next_cursor":""}
+		}`))
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "db.sqlite")},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"AITHER": {
+					APIKey:      "aither-key",
+					AnnounceURL: server.URL + "/announce",
+				},
+			},
+		},
+	}
+
+	svc := NewService(&fakeRepo{}, WithConfig(cfg))
+	meta := api.PreparedMetadata{
+		SourcePath: "/media/Example.Show.S02E03.mkv",
+		Trackers:   []string{"AITHER"},
+		Type:       "WEBDL",
+		Release:    api.ReleaseInfo{Resolution: "1080p", Season: 2, Episode: 3},
+		ExternalIDs: api.ExternalIDs{
+			TMDBID:   4242,
+			Category: "TV",
+		},
+	}
+
+	result, err := svc.applyTrackerClaims(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("apply tracker claims: %v", err)
+	}
+	if len(result.BlockedTrackers["AITHER"]) != 0 {
+		t.Fatalf("expected parsed-only season not to create claim block, got %#v", result.BlockedTrackers)
+	}
+}
+
 func TestApplyTrackerClaimsUsesRequestedBTNWhenTrackerIDsContainDifferentTracker(t *testing.T) {
 	t.Parallel()
 

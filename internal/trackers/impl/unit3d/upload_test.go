@@ -5,9 +5,14 @@ package unit3d
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -15,6 +20,37 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+// captureUnit3DLogger records warning messages from upload paths that may
+// return before reaching the HTTP test server.
+type captureUnit3DLogger struct {
+	mu       sync.Mutex
+	warnings []string
+}
+
+func (l *captureUnit3DLogger) Tracef(string, ...any) {}
+func (l *captureUnit3DLogger) Debugf(string, ...any) {}
+func (l *captureUnit3DLogger) Infof(string, ...any)  {}
+
+func (l *captureUnit3DLogger) Warnf(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.warnings = append(l.warnings, fmt.Sprintf(format, args...))
+}
+
+func (l *captureUnit3DLogger) Errorf(string, ...any) {}
+
+// containsWarning reports whether any captured warning contains value.
+func (l *captureUnit3DLogger) containsWarning(value string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, warning := range l.warnings {
+		if strings.Contains(warning, value) {
+			return true
+		}
+	}
+	return false
+}
 
 func TestResolveUnit3DCategory(t *testing.T) {
 	tests := []struct {
@@ -345,6 +381,156 @@ func TestBuildUnit3DDataTVIncludesTVOnlyFields(t *testing.T) {
 	}
 	if got := data["tvdb"]; got != "789" {
 		t.Fatalf("expected tvdb=789, got %q", got)
+	}
+}
+
+func TestBuildUnit3DDataTVOmitsParsedReleaseSeasonEpisodeFallback(t *testing.T) {
+	req := trackers.UploadRequest{
+		Tracker: "AITHER",
+		Meta: api.PreparedMetadata{
+			ReleaseName: "Daily.Show.2025.07.01.1080p.WEB-DL-GRP",
+			ExternalIDs: api.ExternalIDs{
+				Category: "TV",
+				TVDBID:   789,
+			},
+			Type: "WEBDL",
+			Release: api.ReleaseInfo{
+				Category:   "TV",
+				Season:     2025,
+				Episode:    701,
+				Resolution: "1080p",
+			},
+		},
+	}
+
+	data, err := buildUnit3DData(req, "name", "desc", "mi", "")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if got := data["season_number"]; got != "0" {
+		t.Fatalf("expected season_number=0, got %q", got)
+	}
+	if got := data["episode_number"]; got != "0" {
+		t.Fatalf("expected episode_number=0, got %q", got)
+	}
+	if got := data["tvdb"]; got != "789" {
+		t.Fatalf("expected tvdb=789, got %q", got)
+	}
+	if got := unit3DTVPayloadMetadataMessage(req.Meta, data); got != "canonical TV season/episode missing; tracker payload uses 0 and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload" {
+		t.Fatalf("unexpected metadata message %q", got)
+	}
+}
+
+func TestBuildUnit3DDryRunBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
+	tempDir := t.TempDir()
+	mediaInfoPath := filepath.Join(tempDir, "mediainfo.txt")
+	if err := os.WriteFile(mediaInfoPath, []byte("General\nComplete name: show"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+	torrentPath := filepath.Join(tempDir, "show.torrent")
+	if err := os.WriteFile(torrentPath, []byte("d8:announce13:https://x.ee"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	entry, err := buildUploadDryRunUnit3D(context.Background(), trackers.UploadRequest{
+		Tracker: "AITHER",
+		TrackerConfig: config.TrackerConfig{
+			APIKey: "test-key",
+		},
+		Meta: api.PreparedMetadata{
+			ReleaseName:            "Daily.Show.2025.07.01.1080p.WEB-DL-GRP",
+			TorrentPath:            torrentPath,
+			MediaInfoTextPath:      mediaInfoPath,
+			ValidMediaInfoSettings: true,
+			ExternalIDs: api.ExternalIDs{
+				Category: "TV",
+				TVDBID:   789,
+			},
+			Type: "WEBDL",
+			Release: api.ReleaseInfo{
+				Category:   "TV",
+				Season:     2025,
+				Episode:    701,
+				Resolution: "1080p",
+			},
+		},
+		Assets: &trackers.DescriptionAssets{
+			Description: "description",
+			Final:       true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build Unit3D dry-run: %v", err)
+	}
+	if entry.Status != "blocked" {
+		t.Fatalf("expected canonical TV metadata gap to block dry-run, got %#v", entry)
+	}
+	if !strings.Contains(entry.Message, "canonical TV season/episode missing; tracker payload uses 0 and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload") {
+		t.Fatalf("expected canonical metadata message, got %q", entry.Message)
+	}
+}
+
+func TestUploadUnit3DBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
+	tempDir := t.TempDir()
+	mediaInfoPath := filepath.Join(tempDir, "mediainfo.txt")
+	if err := os.WriteFile(mediaInfoPath, []byte("General\nComplete name: show"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+	torrentPath := filepath.Join(tempDir, "show.torrent")
+	if err := os.WriteFile(torrentPath, []byte("d8:announce13:https://x.ee"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	var requestCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCalls.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	logger := &captureUnit3DLogger{}
+	_, err := uploadUnit3D(context.Background(), trackers.UploadRequest{
+		Tracker: "AITHER",
+		TrackerConfig: config.TrackerConfig{
+			URL:    server.URL,
+			APIKey: "test-key",
+		},
+		Logger: logger,
+		Meta: api.PreparedMetadata{
+			ReleaseName:            "Daily.Show.2025.07.01.1080p.WEB-DL-GRP",
+			TorrentPath:            torrentPath,
+			MediaInfoTextPath:      mediaInfoPath,
+			ValidMediaInfoSettings: true,
+			ExternalIDs: api.ExternalIDs{
+				Category: "TV",
+				TVDBID:   789,
+			},
+			Type: "WEBDL",
+			Release: api.ReleaseInfo{
+				Category:   "TV",
+				Season:     2025,
+				Episode:    701,
+				Resolution: "1080p",
+			},
+		},
+		Assets: &trackers.DescriptionAssets{
+			Description: "description",
+			Final:       true,
+		},
+	})
+	if err == nil {
+		t.Fatal("expected canonical TV metadata gap to block upload")
+	}
+	want := "canonical TV season/episode missing; tracker payload uses 0 and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("expected canonical metadata error, got %v", err)
+	}
+	if !logger.containsWarning(want) {
+		t.Fatal("expected canonical metadata warning")
+	}
+	if requestCalls.Load() != 0 {
+		t.Fatalf("expected upload to fail before remote calls, got %d calls", requestCalls.Load())
 	}
 }
 

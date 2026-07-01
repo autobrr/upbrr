@@ -1726,6 +1726,10 @@ func mapTVmazeMetadata(result tvmaze.SearchResult) *api.TVmazeMetadata {
 	}
 }
 
+// applyTVEpisodeMetadata enriches TV episode fields from provider data.
+// Parsed release season/episode values may seed provider lookups, but only
+// canonical metadata or provider-confirmed mappings are persisted back to
+// SeasonInt and EpisodeInt.
 func (s *Service) applyTVEpisodeMetadata(
 	ctx context.Context,
 	meta api.PreparedMetadata,
@@ -1757,14 +1761,8 @@ func (s *Service) applyTVEpisodeMetadata(
 		ids.Category = "TV"
 	}
 
-	season := meta.SeasonInt
-	if season == 0 {
-		season = meta.Release.Season
-	}
-	episode := meta.EpisodeInt
-	if episode == 0 {
-		episode = meta.Release.Episode
-	}
+	fallbackSeason, fallbackEpisode := meta.SeasonEpisodeWithParsedFallback()
+	season, episode := meta.CanonicalSeasonEpisode()
 	initialSeason := season
 	initialEpisode := episode
 	initialSeasonStr := strings.TrimSpace(meta.SeasonStr)
@@ -1844,9 +1842,11 @@ func (s *Service) applyTVEpisodeMetadata(
 	tmdbEpisodeOverview := ""
 
 	if ids.TVDBID != 0 {
+		querySeason := metautil.FirstInt(season, fallbackSeason)
+		queryEpisode := metautil.FirstInt(episode, fallbackEpisode)
 		query := tvdb.EpisodeQuery{
-			Season:    season,
-			Episode:   episode,
+			Season:    querySeason,
+			Episode:   queryEpisode,
 			AiredDate: dailyDate,
 			Debug:     meta.Options.Debug,
 		}
@@ -1931,10 +1931,10 @@ func (s *Service) applyTVEpisodeMetadata(
 					if episodeYear == 0 {
 						episodeYear = match.Year
 					}
-					if season == 0 && match.SeasonNumber > 0 {
+					if match.SeasonNumber > 0 {
 						season = match.SeasonNumber
 					}
-					if episode == 0 && match.EpisodeNumber > 0 {
+					if match.EpisodeNumber > 0 {
 						episode = match.EpisodeNumber
 					}
 				}
@@ -1949,8 +1949,8 @@ func (s *Service) applyTVEpisodeMetadata(
 		var err error
 		if dailyDate != "" {
 			epData, err = tvmazeClient.GetEpisodeByDate(ctx, ids.TVmazeID, dailyDate)
-		} else if season > 0 && episode > 0 {
-			epData, err = tvmazeClient.GetEpisodeByNumber(ctx, ids.TVmazeID, season, episode, tvmaze.EpisodeLookupContext{
+		} else if lookupSeason, lookupEpisode := metautil.FirstInt(season, fallbackSeason), metautil.FirstInt(episode, fallbackEpisode); lookupSeason > 0 && lookupEpisode > 0 {
+			epData, err = tvmazeClient.GetEpisodeByNumber(ctx, ids.TVmazeID, lookupSeason, lookupEpisode, tvmaze.EpisodeLookupContext{
 				ManualDate: dailyDate,
 				Debug:      meta.Options.Debug,
 			})
@@ -1961,10 +1961,10 @@ func (s *Service) applyTVEpisodeMetadata(
 		if epData != nil {
 			tvmazeEpisodeTitle = strings.TrimSpace(epData.EpisodeName)
 			tvmazeEpisodeOverview = strings.TrimSpace(epData.Overview)
-			if season == 0 && epData.SeasonNumber > 0 {
+			if epData.SeasonNumber > 0 {
 				season = epData.SeasonNumber
 			}
-			if episode == 0 && epData.EpisodeNumber > 0 {
+			if epData.EpisodeNumber > 0 {
 				episode = epData.EpisodeNumber
 			}
 			if episodeYear == 0 {
@@ -1976,10 +1976,18 @@ func (s *Service) applyTVEpisodeMetadata(
 	}
 
 	if ids.TMDBID != 0 {
-		if !meta.TVPack && season > 0 && episode > 0 {
-			if details, err := tmdbClient.GetEpisodeDetails(ctx, ids.TMDBID, season, episode); err == nil {
+		lookupSeason := metautil.FirstInt(season, fallbackSeason)
+		lookupEpisode := metautil.FirstInt(episode, fallbackEpisode)
+		if !meta.TVPack && lookupSeason > 0 && lookupEpisode > 0 {
+			if details, err := tmdbClient.GetEpisodeDetails(ctx, ids.TMDBID, lookupSeason, lookupEpisode); err == nil {
 				tmdbEpisodeTitle = strings.TrimSpace(details.Name)
 				tmdbEpisodeOverview = strings.TrimSpace(details.Overview)
+				if details.SeasonNumber > 0 {
+					season = details.SeasonNumber
+				}
+				if details.EpisodeNumber > 0 {
+					episode = details.EpisodeNumber
+				}
 				if episodeYear == 0 {
 					if parsedYear := parseYearFromDate(details.AirDate); parsedYear > 0 {
 						episodeYear = parsedYear
@@ -1989,8 +1997,11 @@ func (s *Service) applyTVEpisodeMetadata(
 				s.logger.Debugf("metadata: tmdb episode details lookup failed: %v", err)
 			}
 		}
-		if meta.TVPack && season > 0 {
-			if details, err := tmdbClient.GetSeasonDetails(ctx, ids.TMDBID, season); err == nil {
+		if meta.TVPack && lookupSeason > 0 {
+			if details, err := tmdbClient.GetSeasonDetails(ctx, ids.TMDBID, lookupSeason); err == nil {
+				if details.SeasonNumber > 0 {
+					season = details.SeasonNumber
+				}
 				if tmdbEpisodeTitle == "" {
 					tmdbEpisodeTitle = strings.TrimSpace(details.Name)
 				}
@@ -2206,7 +2217,7 @@ func isLikelyTV(meta api.PreparedMetadata) bool {
 	if strings.EqualFold(meta.MediaInfoCategory, "TV") || strings.EqualFold(meta.ExternalIDs.Category, "TV") {
 		return true
 	}
-	if meta.SeasonInt > 0 || meta.EpisodeInt > 0 || meta.Release.Season > 0 || meta.Release.Episode > 0 {
+	if meta.HasTVSeasonEpisodeSignal() {
 		return true
 	}
 	if strings.TrimSpace(meta.DailyEpisodeDate) != "" {
