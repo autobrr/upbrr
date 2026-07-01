@@ -984,13 +984,11 @@ func resolveSeason(meta api.PreparedMetadata) string {
 			return formatOptionalInt(override)
 		}
 	}
-	if meta.SeasonInt > 0 {
-		return formatOptionalInt(meta.SeasonInt)
+	season, _ := meta.SeasonEpisodeWithParsedFallback()
+	if season > 0 {
+		return formatOptionalInt(season)
 	}
-	if meta.Release.Season > 0 {
-		return formatOptionalInt(meta.Release.Season)
-	}
-	season, _ := parseSeasonEpisode(meta.ReleaseName)
+	season, _ = parseSeasonEpisode(meta.ReleaseName)
 	if season == 0 {
 		return "0"
 	}
@@ -1006,13 +1004,11 @@ func resolveEpisode(meta api.PreparedMetadata) string {
 			return formatOptionalInt(override)
 		}
 	}
-	if meta.EpisodeInt > 0 {
-		return formatOptionalInt(meta.EpisodeInt)
+	_, episode := meta.SeasonEpisodeWithParsedFallback()
+	if episode > 0 {
+		return formatOptionalInt(episode)
 	}
-	if meta.Release.Episode > 0 {
-		return formatOptionalInt(meta.Release.Episode)
-	}
-	_, episode := parseSeasonEpisode(meta.ReleaseName)
+	_, episode = parseSeasonEpisode(meta.ReleaseName)
 	if episode == 0 {
 		return "0"
 	}

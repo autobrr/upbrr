@@ -227,9 +227,10 @@ func (m PreparedMetadata) CanonicalSeasonEpisode() (int, int) {
 }
 
 // SeasonEpisodeWithParsedFallback returns canonical season/episode values and
-// falls back to release-name parsed values only when canonical values are
-// unavailable. Use this for TV classification and lookup fallbacks, not for
-// canonical upload naming.
+// falls back to release-name parsed values independently for each missing
+// field. The returned season and episode can come from different sources, so
+// callers must not treat the pair as source-consistent. Use this for TV
+// classification and lookup fallbacks, not for canonical upload naming.
 func (m PreparedMetadata) SeasonEpisodeWithParsedFallback() (int, int) {
 	season, episode := m.CanonicalSeasonEpisode()
 	if season <= 0 {
