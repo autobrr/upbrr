@@ -22,6 +22,8 @@ import type {
   IMDBReleaseDate,
   IMDBSeasonSummary,
   MetadataPreview,
+  MetadataOverrideEditState,
+  MetadataOverrideTouchedState,
   MetadataProgressUpdate,
   ReleaseNameEditState,
   ReleaseNameTouchedState,
@@ -590,6 +592,9 @@ type Props = Readonly<{
   releaseEdits: ReleaseNameEditState;
   setReleaseEdits: Dispatch<SetStateAction<ReleaseNameEditState>>;
   markReleaseTouched: (key: keyof ReleaseNameTouchedState) => void;
+  metadataEdits: MetadataOverrideEditState;
+  setMetadataEdits: Dispatch<SetStateAction<MetadataOverrideEditState>>;
+  markMetadataTouched: (key: keyof MetadataOverrideTouchedState) => void;
   idOverrideState: OverrideState<Record<string, unknown>>;
   releaseOverrideState: OverrideState<Record<string, unknown>>;
   showExternalIDInputUI: boolean;
@@ -637,6 +642,9 @@ export default function InputPage(props: Props) {
     releaseEdits,
     setReleaseEdits,
     markReleaseTouched,
+    metadataEdits,
+    setMetadataEdits,
+    markMetadataTouched,
     idOverrideState,
     releaseOverrideState,
     showExternalIDInputUI,
@@ -1591,6 +1599,68 @@ export default function InputPage(props: Props) {
                         }}
                       />
                     </div>
+                  </div>
+                </div>
+                <div className="settings-subgroup">
+                  <div className="settings-subgroup__title">Metadata overrides</div>
+                  <div className="settings-grid">
+                    <div className="settings-field">
+                      <label htmlFor="metadata-distributor">Distributor</label>
+                      <input
+                        id="metadata-distributor"
+                        value={metadataEdits.distributor}
+                        onChange={(event) => {
+                          setMetadataEdits((prev) => ({
+                            ...prev,
+                            distributor: event.target.value,
+                          }));
+                          markMetadataTouched("distributor");
+                        }}
+                        placeholder="Criterion"
+                      />
+                    </div>
+                    <div className="settings-field">
+                      <label htmlFor="metadata-original-language">Original language</label>
+                      <input
+                        id="metadata-original-language"
+                        value={metadataEdits.originalLanguage}
+                        onChange={(event) => {
+                          setMetadataEdits((prev) => ({
+                            ...prev,
+                            originalLanguage: event.target.value,
+                          }));
+                          markMetadataTouched("originalLanguage");
+                        }}
+                        placeholder="ja"
+                      />
+                    </div>
+                    {[
+                      ["metadata-personal-release", "Personal release", "personalRelease"],
+                      ["metadata-commentary", "Commentary", "commentary"],
+                      ["metadata-webdv", "WEB-DV", "webDV"],
+                      ["metadata-stream-optimized", "Stream optimized", "streamOptimized"],
+                      ["metadata-anime", "Anime", "anime"],
+                    ].map(([id, label, key]) => (
+                      <div className="settings-field" key={id}>
+                        <label htmlFor={id}>{label}</label>
+                        <select
+                          id={id}
+                          className={compactInputClass}
+                          value={metadataEdits[key as keyof MetadataOverrideEditState]}
+                          onChange={(event) => {
+                            setMetadataEdits((prev) => ({
+                              ...prev,
+                              [key]: event.target.value as "" | "true" | "false",
+                            }));
+                            markMetadataTouched(key as keyof MetadataOverrideTouchedState);
+                          }}
+                        >
+                          <option value="">Auto</option>
+                          <option value="true">Yes</option>
+                          <option value="false">No</option>
+                        </select>
+                      </div>
+                    ))}
                   </div>
                 </div>
                 {idOverrideState?.invalid ? (

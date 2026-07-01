@@ -180,7 +180,10 @@ func (b *Backend) DetectDiscType(ctx context.Context, path string) (string, erro
 	return wrapWebResult(filesystem.DetectDiscType(ctx, path))
 }
 
-func (b *Backend) FetchMetadata(sessionID string, path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, confirmBDMVRescan bool) (api.MetadataPreview, error) {
+// FetchMetadata builds an embedded-web metadata preview under ctx. Request
+// cancellation remains the parent of the preview timeout so disconnected browser
+// calls can stop core metadata work and progress emission.
+func (b *Backend) FetchMetadata(ctx context.Context, sessionID string, path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, trackersList []string, confirmBDMVRescan bool) (api.MetadataPreview, error) {
 	rt, err := b.requireRuntime()
 	if err != nil {
 		return api.MetadataPreview{}, err
@@ -190,7 +193,7 @@ func (b *Backend) FetchMetadata(sessionID string, path string, sourceLookupURL s
 		return api.MetadataPreview{}, errors.New("path is required")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	progressCtx := api.WithMetadataProgressReporter(ctx, func(update api.MetadataProgressUpdate) {
 		if strings.TrimSpace(update.Path) == "" {
@@ -211,6 +214,7 @@ func (b *Backend) FetchMetadata(sessionID string, path string, sourceLookupURL s
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 		ConfirmBDMVRescan:    confirmBDMVRescan,
 	}
 
@@ -221,7 +225,7 @@ type blurayCandidateSelector interface {
 	SelectBlurayCandidate(ctx context.Context, sourcePath string, releaseID string) (api.MetadataPreview, error)
 }
 
-func (b *Backend) SelectBlurayCandidate(path string, releaseID string) (api.MetadataPreview, error) {
+func (b *Backend) SelectBlurayCandidate(ctx context.Context, path string, releaseID string) (api.MetadataPreview, error) {
 	if strings.TrimSpace(path) == "" {
 		return api.MetadataPreview{}, errors.New("path is required")
 	}
@@ -235,12 +239,12 @@ func (b *Backend) SelectBlurayCandidate(path string, releaseID string) (api.Meta
 	if !ok {
 		return api.MetadataPreview{}, errors.New("blu-ray candidate selection is unavailable in this build")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	return wrapWebResult(selector.SelectBlurayCandidate(ctx, path, releaseID))
 }
 
-func (b *Backend) ResetMetadata(sessionID string, path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, confirmBDMVRescan bool) (api.MetadataPreview, error) {
+func (b *Backend) ResetMetadata(ctx context.Context, sessionID string, path string, sourceLookupURL string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, trackersList []string, confirmBDMVRescan bool) (api.MetadataPreview, error) {
 	if err := b.requireCore(); err != nil {
 		return api.MetadataPreview{}, err
 	}
@@ -252,7 +256,7 @@ func (b *Backend) ResetMetadata(sessionID string, path string, sourceLookupURL s
 		return api.MetadataPreview{}, errors.New("path is required")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	progressCtx := api.WithMetadataProgressReporter(ctx, func(update api.MetadataProgressUpdate) {
 		if strings.TrimSpace(update.Path) == "" {
@@ -336,16 +340,17 @@ func (b *Backend) ResetMetadata(sessionID string, path string, sourceLookupURL s
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 		ConfirmBDMVRescan:    confirmBDMVRescan,
 	}
 	return wrapWebResult(b.currentCore().FetchMetadataPreview(progressCtx, req))
 }
 
-func (b *Backend) CheckDupes(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string) (api.DupeCheckSummary, error) {
+func (b *Backend) CheckDupes(ctx context.Context, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, trackersList []string) (api.DupeCheckSummary, error) {
 	if err := b.requireCore(); err != nil {
 		return api.DupeCheckSummary{}, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	req := api.Request{
 		Paths:    []string{strings.TrimSpace(path)},
@@ -355,15 +360,19 @@ func (b *Backend) CheckDupes(path string, overrides api.ExternalIDOverrides, nam
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 	return wrapWebResult(b.currentCore().CheckDupes(ctx, req))
 }
 
-func (b *Backend) FetchPreparation(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, ignoreDupesFor []string) (api.PreparationPreview, error) {
+// FetchPreparation builds an embedded-web preparation preview for a host source
+// path. External ID, release-name, and metadata overrides come from the current
+// browser request and are applied before BDInfo playlist preparation runs.
+func (b *Backend) FetchPreparation(ctx context.Context, sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, trackersList []string, ignoreDupesFor []string) (api.PreparationPreview, error) {
 	if err := b.requireCore(); err != nil {
 		return api.PreparationPreview{}, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	req := api.Request{
 		Paths:          []string{strings.TrimSpace(path)},
@@ -374,6 +383,7 @@ func (b *Backend) FetchPreparation(sessionID string, path string, overrides api.
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 	progressCtx := bdinfo.WithProgressReporter(ctx, func(line string) {
 		if strings.TrimSpace(line) == "" {
@@ -387,7 +397,7 @@ func (b *Backend) FetchPreparation(sessionID string, path string, overrides api.
 	return wrapWebResult(b.currentCore().FetchPreparationPreview(progressCtx, req))
 }
 
-func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
+func (b *Backend) FetchTrackerDryRun(ctx context.Context, sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, trackersList []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
 	rt, err := b.requireRuntime()
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
@@ -397,7 +407,9 @@ func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides ap
 		return api.TrackerDryRunPreview{}, err
 	}
 	b.logDebugf("web: tracker dry-run request path=%s debug=%t no_seed=%t run_log_level=%s", strings.TrimSpace(path), debug, noSeed, runOpts.RunLogLevel)
-	runCore, runLogger, err := b.buildRunCoreFromSnapshot(rt, runOpts)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
+	defer cancel()
+	runCore, runLogger, err := b.buildRunCoreFromSnapshot(ctx, rt, runOpts)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
@@ -405,8 +417,6 @@ func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides ap
 		_ = runCore.Close()
 		_ = runLogger.Close()
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
 	req := api.Request{
 		Paths:                       []string{strings.TrimSpace(path)},
 		Mode:                        api.ModeGUI,
@@ -417,6 +427,7 @@ func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides ap
 		Options:                     buildRunUploadOptions(rt.cfg, runOpts),
 		ExternalIDOverrides:         overrides,
 		ReleaseNameOverrides:        nameOverrides,
+		MetadataOverrides:           metadataOverrides,
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(questionnaireAnswers),
 	}
 	req.Options.DryRun = true
@@ -438,11 +449,11 @@ func (b *Backend) FetchTrackerDryRun(sessionID string, path string, overrides ap
 	return wrapWebResult(runCore.FetchTrackerDryRunPreview(progressCtx, req))
 }
 
-func (b *Backend) FetchDescriptionBuilder(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, ignoreDupesFor []string) (api.DescriptionBuilderPreview, error) {
+func (b *Backend) FetchDescriptionBuilder(ctx context.Context, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, trackersList []string, ignoreDupesFor []string) (api.DescriptionBuilderPreview, error) {
 	if err := b.requireCore(); err != nil {
 		return api.DescriptionBuilderPreview{}, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	req := api.Request{
 		Paths:          []string{strings.TrimSpace(path)},
@@ -453,6 +464,7 @@ func (b *Backend) FetchDescriptionBuilder(path string, overrides api.ExternalIDO
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 	return wrapWebResult(b.currentCore().FetchDescriptionBuilderPreview(ctx, req))
 }
@@ -466,11 +478,11 @@ func (b *Backend) RenderDescription(raw string) (string, error) {
 	return wrapWebResult(b.currentCore().RenderDescription(ctx, raw))
 }
 
-func (b *Backend) SaveDescriptionOverride(path string, groupKey string, raw string, trackers []string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) (api.DescriptionBuilderGroup, error) {
+func (b *Backend) SaveDescriptionOverride(ctx context.Context, path string, groupKey string, raw string, trackers []string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides) (api.DescriptionBuilderGroup, error) {
 	if err := b.requireCore(); err != nil {
 		return api.DescriptionBuilderGroup{}, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	return wrapWebResult(b.currentCore().SaveDescriptionOverride(ctx, api.Request{
 		Paths:                    []string{strings.TrimSpace(path)},
@@ -479,6 +491,7 @@ func (b *Backend) SaveDescriptionOverride(path string, groupKey string, raw stri
 		Trackers:                 append([]string{}, trackers...),
 		ExternalIDOverrides:      overrides,
 		ReleaseNameOverrides:     nameOverrides,
+		MetadataOverrides:        metadataOverrides,
 	}, raw))
 }
 
@@ -533,11 +546,13 @@ func (b *Backend) BrowseDirectoryWithinRoots(path string, mode string, roots []s
 	return wrapWebResult(guishared.BrowseDirectoryWithinRoots(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback, roots))
 }
 
-func (b *Backend) FetchScreenshotPlan(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) (api.ScreenshotPlan, error) {
+// FetchScreenshotPlan builds screenshot planning data under ctx and applies the
+// embedded-web preview timeout without detaching from request cancellation.
+func (b *Backend) FetchScreenshotPlan(ctx context.Context, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides) (api.ScreenshotPlan, error) {
 	if err := b.requireCore(); err != nil {
 		return api.ScreenshotPlan{}, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	req := api.Request{
 		Paths:   []string{path},
@@ -546,15 +561,16 @@ func (b *Backend) FetchScreenshotPlan(path string, overrides api.ExternalIDOverr
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 	return wrapWebResult(b.currentCore().FetchScreenshotPlan(ctx, req))
 }
 
-func (b *Backend) GenerateScreenshots(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, selections []api.ScreenshotSelection, purpose api.ScreenshotPurpose) (api.ScreenshotResult, error) {
+func (b *Backend) GenerateScreenshots(ctx context.Context, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, selections []api.ScreenshotSelection, purpose api.ScreenshotPurpose) (api.ScreenshotResult, error) {
 	if err := b.requireCore(); err != nil {
 		return api.ScreenshotResult{}, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	req := api.Request{
 		Paths:   []string{path},
@@ -563,15 +579,16 @@ func (b *Backend) GenerateScreenshots(path string, overrides api.ExternalIDOverr
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 	return wrapWebResult(b.currentCore().GenerateScreenshots(ctx, req, selections, purpose))
 }
 
-func (b *Backend) PreviewScreenshotFrame(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, timestampSeconds float64) (string, error) {
+func (b *Backend) PreviewScreenshotFrame(ctx context.Context, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, timestampSeconds float64) (string, error) {
 	if err := b.requireCore(); err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	req := api.Request{
 		Paths:   []string{path},
@@ -580,6 +597,7 @@ func (b *Backend) PreviewScreenshotFrame(path string, overrides api.ExternalIDOv
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 	preview, err := b.currentCore().PreviewScreenshotFrame(ctx, req, timestampSeconds)
 	if err != nil {
@@ -588,11 +606,11 @@ func (b *Backend) PreviewScreenshotFrame(path string, overrides api.ExternalIDOv
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(preview.ImageBytes), nil
 }
 
-func (b *Backend) DeleteScreenshot(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, imagePath string) error {
+func (b *Backend) DeleteScreenshot(ctx context.Context, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, imagePath string) error {
 	if err := b.requireCore(); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	return wrapWebError(b.currentCore().DeleteScreenshot(ctx, api.Request{
 		Paths:   []string{path},
@@ -601,14 +619,15 @@ func (b *Backend) DeleteScreenshot(path string, overrides api.ExternalIDOverride
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}, imagePath))
 }
 
-func (b *Backend) DeleteTrackerImageURL(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, imageURL string) error {
+func (b *Backend) DeleteTrackerImageURL(ctx context.Context, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, imageURL string) error {
 	if err := b.requireCore(); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	return wrapWebError(b.currentCore().DeleteTrackerImageURL(ctx, api.Request{
 		Paths:   []string{path},
@@ -617,14 +636,15 @@ func (b *Backend) DeleteTrackerImageURL(path string, overrides api.ExternalIDOve
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}, imageURL))
 }
 
-func (b *Backend) SaveFinalScreenshotSelections(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, images []api.ScreenshotImage) error {
+func (b *Backend) SaveFinalScreenshotSelections(ctx context.Context, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, images []api.ScreenshotImage) error {
 	if err := b.requireCore(); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	return wrapWebError(b.currentCore().SaveFinalScreenshotSelections(ctx, api.Request{
 		Paths:   []string{path},
@@ -633,14 +653,15 @@ func (b *Backend) SaveFinalScreenshotSelections(path string, overrides api.Exter
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}, images))
 }
 
-func (b *Backend) ImportMenuImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, paths []string) error {
+func (b *Backend) ImportMenuImages(ctx context.Context, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, paths []string) error {
 	if err := b.requireCore(); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	return wrapWebError(b.currentCore().ImportMenuImages(ctx, api.Request{
 		Paths:   []string{path},
@@ -649,6 +670,7 @@ func (b *Backend) ImportMenuImages(path string, overrides api.ExternalIDOverride
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}, paths))
 }
 
@@ -667,12 +689,14 @@ func (b *Backend) ReadScreenshotImage(path string) (string, error) {
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(payload), nil
 }
 
-func (b *Backend) ListUploadCandidates(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) ([]api.ScreenshotImage, error) {
+// ListUploadCandidates returns screenshots available for image-host upload
+// under ctx so browser request cancellation can stop candidate discovery.
+func (b *Backend) ListUploadCandidates(ctx context.Context, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides) ([]api.ScreenshotImage, error) {
 	rt, err := b.requireRuntime()
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	return wrapWebResult(rt.core.ListUploadCandidates(ctx, api.Request{
 		Paths:   []string{path},
@@ -681,15 +705,16 @@ func (b *Backend) ListUploadCandidates(path string, overrides api.ExternalIDOver
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}))
 }
 
-func (b *Backend) ListUploadedImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides) ([]api.UploadedImageLink, error) {
+func (b *Backend) ListUploadedImages(ctx context.Context, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides) ([]api.UploadedImageLink, error) {
 	rt, err := b.requireRuntime()
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	return wrapWebResult(rt.core.ListUploadedImages(ctx, api.Request{
 		Paths:   []string{path},
@@ -698,15 +723,16 @@ func (b *Backend) ListUploadedImages(path string, overrides api.ExternalIDOverri
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}))
 }
 
-func (b *Backend) UploadImages(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackersList []string, host string, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
+func (b *Backend) UploadImages(ctx context.Context, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, trackersList []string, host string, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
 	rt, err := b.requireRuntime()
 	if err != nil {
 		return api.UploadImagesResult{}, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
+	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	return wrapWebResult(rt.core.UploadImages(ctx, api.Request{
 		Paths:   []string{path},
@@ -715,6 +741,7 @@ func (b *Backend) UploadImages(path string, overrides api.ExternalIDOverrides, n
 
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 		Trackers:             append([]string{}, trackersList...),
 	}, host, images))
 }
@@ -1377,13 +1404,13 @@ func (b *Backend) buildRunOptions(debug bool, noSeed bool, runLogLevel string) (
 // buildRunCoreFromSnapshot creates a per-run core and logger from the same
 // runtime snapshot used to build upload options. The transient core skips
 // startup-only legacy cookie migration while sharing the backend repository.
-func (b *Backend) buildRunCoreFromSnapshot(rt backendRuntimeSnapshot, opts runOptions) (api.Core, *logging.Logger, error) {
+func (b *Backend) buildRunCoreFromSnapshot(ctx context.Context, rt backendRuntimeSnapshot, opts runOptions) (api.Core, *logging.Logger, error) {
 	effectiveLogLevel := logging.ResolveEffectiveLevel(rt.cfg.Logging.Level, opts.RunLogLevel, opts.Debug)
 	logger, err := logging.NewWithLevel(rt.cfg.Logging, rt.cfg.MainSettings.DBPath, effectiveLogLevel)
 	if err != nil {
 		return nil, nil, fmt.Errorf("web: %w", err)
 	}
-	coreSvc, err := core.New(api.CoreDependencies{
+	coreSvc, err := core.NewWithContext(ctx, api.CoreDependencies{
 		Config: rt.cfg,
 		Logger: logger,
 		Services: api.ServiceSet{

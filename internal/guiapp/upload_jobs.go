@@ -80,6 +80,7 @@ type trackerUploadJob struct {
 	logger               interface{ Close() error }
 	overrides            api.ExternalIDOverrides
 	nameOverrides        api.ReleaseNameOverrides
+	metadataOverrides    api.MetadataOverrides
 	questionnaireAnswers map[string]map[string]string
 	descriptionGroups    []api.DescriptionBuilderGroup
 	trackers             []string
@@ -105,6 +106,7 @@ type trackerUploadRetryRequest struct {
 	sourcePath           string
 	overrides            api.ExternalIDOverrides
 	nameOverrides        api.ReleaseNameOverrides
+	metadataOverrides    api.MetadataOverrides
 	questionnaireAnswers map[string]map[string]string
 	descriptionGroups    []api.DescriptionBuilderGroup
 	failedTrackers       []string
@@ -153,6 +155,7 @@ func trackerUploadRetryRequestFromJob(job *trackerUploadJob) (trackerUploadRetry
 		sourcePath:           job.sourcePath,
 		overrides:            job.overrides,
 		nameOverrides:        job.nameOverrides,
+		metadataOverrides:    job.metadataOverrides,
 		questionnaireAnswers: cloneQuestionnaireAnswers(job.questionnaireAnswers),
 		descriptionGroups:    api.CloneDescriptionBuilderGroups(job.descriptionGroups),
 		failedTrackers:       append([]string(nil), job.failedTrackers...),
@@ -164,13 +167,14 @@ func trackerUploadRetryRequestFromJob(job *trackerUploadJob) (trackerUploadRetry
 
 // StartTrackerUpload starts a Wails upload job for selected trackers and
 // returns its job ID. Snapshots preserve partial upload counts returned with
-// later tracker errors or cancellation. The job captures upload options at
-// start time so failed-tracker retries reuse the original option set.
-func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (string, error) {
-	return a.startTrackerUpload(path, overrides, nameOverrides, trackers, ignoreDupesFor, questionnaireAnswers, descriptionGroups, debug, noSeed, runLogLevel, nil)
+// later tracker errors or cancellation. The job captures metadata overrides and
+// upload options at start time so failed-tracker retries reuse the original
+// request instead of current UI state.
+func (a *App) StartTrackerUpload(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (string, error) {
+	return a.startTrackerUpload(path, overrides, nameOverrides, metadataOverrides, trackers, ignoreDupesFor, questionnaireAnswers, descriptionGroups, debug, noSeed, runLogLevel, nil)
 }
 
-func (a *App) startTrackerUpload(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string, uploadOptions *api.UploadOptions) (string, error) {
+func (a *App) startTrackerUpload(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, metadataOverrides api.MetadataOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string, uploadOptions *api.UploadOptions) (string, error) {
 	rt, err := a.requireRuntime()
 	if err != nil {
 		return "", err
@@ -202,6 +206,7 @@ func (a *App) startTrackerUpload(path string, overrides api.ExternalIDOverrides,
 		IgnoreDupesFor:       normalizeTrackerList(ignoreDupesFor),
 		ExternalIDOverrides:  overrides,
 		ReleaseNameOverrides: nameOverrides,
+		MetadataOverrides:    metadataOverrides,
 	}
 	if err := guishared.SeedRunCorePreparedMeta(baseCtx, rt.core, runCore, seedReq); err != nil {
 		_ = runCore.Close()
@@ -223,6 +228,7 @@ func (a *App) startTrackerUpload(path string, overrides api.ExternalIDOverrides,
 		logger:               runLogger,
 		overrides:            overrides,
 		nameOverrides:        nameOverrides,
+		metadataOverrides:    metadataOverrides,
 		questionnaireAnswers: cloneQuestionnaireAnswers(questionnaireAnswers),
 		descriptionGroups:    api.CloneDescriptionBuilderGroups(descriptionGroups),
 		trackers:             resolvedTrackers,
@@ -270,8 +276,9 @@ func (a *App) CancelTrackerUpload(jobID string) error {
 
 // RetryFailedTrackerUpload starts a new Wails upload job for trackers that
 // failed in the original job. The retry reuses the original job's run options,
-// upload options, questionnaire answers, description groups, and ignore-dupe
-// list instead of rebuilding them from current settings.
+// upload options, metadata overrides, questionnaire answers, description
+// groups, and ignore-dupe list instead of rebuilding them from current
+// settings.
 func (a *App) RetryFailedTrackerUpload(jobID string) (string, error) {
 	if a == nil {
 		return "", errors.New("app not initialized")
@@ -291,7 +298,7 @@ func (a *App) RetryFailedTrackerUpload(jobID string) (string, error) {
 		return "", err
 	}
 
-	return a.startTrackerUpload(retry.sourcePath, retry.overrides, retry.nameOverrides, retry.failedTrackers, retry.ignoreDupesFor, retry.questionnaireAnswers, retry.descriptionGroups, retry.runOptions.Debug, retry.runOptions.NoSeed, retry.runOptions.RunLogLevel, &retry.uploadOptions)
+	return a.startTrackerUpload(retry.sourcePath, retry.overrides, retry.nameOverrides, retry.metadataOverrides, retry.failedTrackers, retry.ignoreDupesFor, retry.questionnaireAnswers, retry.descriptionGroups, retry.runOptions.Debug, retry.runOptions.NoSeed, retry.runOptions.RunLogLevel, &retry.uploadOptions)
 }
 
 // GetTrackerUploadSnapshot returns the current Wails tracker upload job state.
@@ -406,8 +413,7 @@ func (a *App) runTrackerUploadJob(ctx context.Context, eventCtx context.Context,
 	job.cancel = nil
 	job.mu.Unlock()
 	if err := job.closeResources(); err != nil {
-		a.failTrackerUploadJob(eventCtx, job, err.Error())
-		return
+		recordTrackerUploadCleanupError(job, err.Error())
 	}
 	a.emitTrackerUploadSnapshot(eventCtx, job)
 }
@@ -469,6 +475,7 @@ func (a *App) runSingleTrackerUpload(ctx context.Context, job *trackerUploadJob,
 		Options:                     job.uploadOptions,
 		ExternalIDOverrides:         job.overrides,
 		ReleaseNameOverrides:        job.nameOverrides,
+		MetadataOverrides:           job.metadataOverrides,
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(job.questionnaireAnswers),
 	}
 
@@ -553,6 +560,29 @@ func (a *App) failTrackerUploadJob(eventCtx context.Context, job *trackerUploadJ
 		job.mu.Unlock()
 	}
 	a.emitTrackerUploadSnapshot(eventCtx, job)
+}
+
+// recordTrackerUploadCleanupError surfaces post-terminal cleanup failures
+// without changing a completed, completed-with-errors, or canceled job status.
+func recordTrackerUploadCleanupError(job *trackerUploadJob, message string) {
+	if job == nil {
+		return
+	}
+
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return
+	}
+
+	job.mu.Lock()
+	defer job.mu.Unlock()
+	if job.errorMessage == "" {
+		job.errorMessage = message
+		return
+	}
+	if !strings.Contains(job.errorMessage, message) {
+		job.errorMessage += "; " + message
+	}
 }
 
 // closeTrackerUploadResource converts Close panics into redacted errors for

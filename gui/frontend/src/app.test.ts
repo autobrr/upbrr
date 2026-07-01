@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { createElement } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App, { hasExplicitEmptyReleaseTrackerSelection, ruleBlockingTrackerLabels } from "./app";
@@ -12,12 +12,18 @@ import type {
   DupeCheckSnapshot,
   DupeEntry,
   DupeMatch,
+  ExternalPreview,
   MetadataPreview,
+  ScreenshotImage,
   ScreenshotPlan,
+  ScreenshotPurpose,
+  ScreenshotResult,
+  ScreenshotSelection,
   TrackerUploadSnapshot,
 } from "./types";
 import { isRuntimePathCaseInsensitive, updateBrowserCSRFToken } from "./utils/runtime";
 import { hasFilteredEmptyUploadTrackerSelection } from "./utils/trackerSelection";
+import { EventsOn } from "../wailsjs/runtime/runtime";
 
 vi.mock("../wailsjs/runtime/runtime", () => ({
   EventsOn: vi.fn(() => () => undefined),
@@ -29,6 +35,7 @@ const defaultPathCaseInsensitive = isRuntimePathCaseInsensitive();
 
 afterEach(() => {
   cleanup();
+  vi.clearAllMocks();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   updateBrowserCSRFToken("", defaultPathCaseInsensitive);
@@ -40,16 +47,52 @@ type FetchMetadata = (
   sourceLookupURL: string,
   overrides: unknown,
   nameOverrides: unknown,
+  metadataOverrides: unknown,
   trackers: string[],
 ) => Promise<MetadataPreview>;
 
 type ResetMetadata = FetchMetadata;
 type SaveConfig = (config: string) => Promise<void>;
-type FetchScreenshotPlan = (sourcePath: string) => Promise<ScreenshotPlan>;
+type FetchScreenshotPlan = (
+  sourcePath: string,
+  overrides: unknown,
+  nameOverrides: unknown,
+  metadataOverrides: unknown,
+) => Promise<ScreenshotPlan>;
+type SaveFinalScreenshotSelections = (
+  sourcePath: string,
+  overrides: unknown,
+  nameOverrides: unknown,
+  metadataOverrides: unknown,
+  images: ScreenshotImage[],
+) => Promise<void>;
+type GenerateScreenshots = (
+  sourcePath: string,
+  overrides: unknown,
+  nameOverrides: unknown,
+  metadataOverrides: unknown,
+  selections: ScreenshotSelection[],
+  purpose: ScreenshotPurpose,
+) => Promise<ScreenshotResult>;
+type PreviewScreenshotFrame = (
+  sourcePath: string,
+  overrides: unknown,
+  nameOverrides: unknown,
+  metadataOverrides: unknown,
+  timestampSeconds: number,
+) => Promise<string>;
+type ListUploadCandidates = (
+  sourcePath: string,
+  overrides: unknown,
+  nameOverrides: unknown,
+  metadataOverrides: unknown,
+) => Promise<ScreenshotImage[]>;
+type ReadScreenshotImage = (imagePath: string) => Promise<string>;
 type FetchDescriptionBuilder = (
   sourcePath: string,
   overrides: unknown,
   nameOverrides: unknown,
+  metadataOverrides: unknown,
   trackers: string[],
   ignoreDupesFor: string[],
 ) => Promise<DescriptionBuilderPreview>;
@@ -57,14 +100,36 @@ type FetchPreparation = (
   sourcePath: string,
   overrides: unknown,
   nameOverrides: unknown,
+  metadataOverrides: unknown,
   trackers: string[],
   ignoreDupesFor: string[],
 ) => Promise<unknown>;
 type DetectDiscType = (sourcePath: string) => Promise<string>;
+type StartDupeCheck = (...args: unknown[]) => Promise<string>;
 type StartTrackerUpload = (...args: unknown[]) => Promise<string>;
 type RetryFailedTrackerUpload = (jobID: string) => Promise<string>;
 type CancelTrackerUpload = (jobID: string) => Promise<void>;
 type GetTrackerUploadSnapshot = (jobID: string) => Promise<TrackerUploadSnapshot>;
+
+const deferred = <T>() => {
+  let resolve: (value: T | PromiseLike<T>) => void = () => undefined;
+  let reject: (reason?: unknown) => void = () => undefined;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
+const runtimeEventHandler = (eventName: string) => {
+  const call = vi
+    .mocked(EventsOn)
+    .mock.calls.find(([registeredName]) => registeredName === eventName);
+  if (!call) {
+    throw new Error(`Missing runtime event subscription for ${eventName}`);
+  }
+  return call[1] as (payload: unknown) => void;
+};
 
 const metadataPreview = (sourcePath: string): MetadataPreview => ({
   SourcePath: sourcePath,
@@ -92,6 +157,36 @@ const metadataPreview = (sourcePath: string): MetadataPreview => ({
   ExternalIDInfo: [],
   ExternalPreview: [],
   TrackerData: [],
+});
+
+const externalPreview = (provider: string, id: number, title: string): ExternalPreview => ({
+  Provider: provider,
+  ID: id,
+  Source: "metadata",
+  Title: title,
+  Year: 2026,
+  Overview: `${title} overview`,
+  PosterURL: "",
+  BackdropURL: "",
+  Category: "movie",
+  OriginalTitle: title,
+  ReleaseDate: "",
+  FirstAirDate: "",
+  LastAirDate: "",
+  OriginalLanguage: "",
+  TMDBType: "",
+  Runtime: 0,
+  Genres: "",
+  Keywords: "",
+  YouTube: "",
+  IMDBType: "",
+  Rating: 0,
+  RatingCount: 0,
+  RuntimeMinutes: 0,
+  Country: "",
+  Premiered: "",
+  IMDBID: provider === "imdb" ? id : 0,
+  TVDBID: 0,
 });
 
 const screenshotPlan = (sourcePath: string): ScreenshotPlan => ({
@@ -215,9 +310,15 @@ const installAppBridge = (
     resetMetadata?: ResetMetadata;
     saveConfig?: SaveConfig;
     fetchScreenshotPlan?: FetchScreenshotPlan;
+    saveFinalScreenshotSelections?: SaveFinalScreenshotSelections;
+    generateScreenshots?: GenerateScreenshots;
+    previewScreenshotFrame?: PreviewScreenshotFrame;
+    listUploadCandidates?: ListUploadCandidates;
+    readScreenshotImage?: ReadScreenshotImage;
     fetchDescriptionBuilder?: FetchDescriptionBuilder;
     fetchPreparation?: FetchPreparation;
     browseFolder?: () => Promise<string>;
+    startDupeCheck?: StartDupeCheck;
     getDupeCheckSnapshot?: () => Promise<DupeCheckSnapshot>;
     detectDiscType?: DetectDiscType;
     startTrackerUpload?: StartTrackerUpload;
@@ -265,6 +366,29 @@ const installAppBridge = (
         SaveConfig: options.saveConfig ?? (async () => undefined),
         FetchScreenshotPlan:
           options.fetchScreenshotPlan ?? (async (sourcePath: string) => screenshotPlan(sourcePath)),
+        GenerateScreenshots:
+          options.generateScreenshots ??
+          (async (
+            sourcePath: string,
+            _overrides: unknown,
+            _nameOverrides: unknown,
+            _metadataOverrides: unknown,
+            _selections: ScreenshotSelection[],
+            purpose: ScreenshotPurpose,
+          ) => ({
+            SourcePath: sourcePath,
+            Purpose: purpose,
+            Images: [],
+            Tonemapped: false,
+            UsedLibplacebo: false,
+            Errors: [],
+          })),
+        PreviewScreenshotFrame:
+          options.previewScreenshotFrame ?? (async () => "data:image/png;base64,PREVIEW=="),
+        SaveFinalScreenshotSelections:
+          options.saveFinalScreenshotSelections ?? (async () => undefined),
+        ReadScreenshotImage: options.readScreenshotImage ?? (async () => "data:image/png;base64,"),
+        ListUploadCandidates: options.listUploadCandidates ?? (async () => []),
         FetchDescriptionBuilder:
           options.fetchDescriptionBuilder ??
           (async (sourcePath: string) => descriptionBuilderPreview(sourcePath)),
@@ -280,7 +404,7 @@ const installAppBridge = (
           },
         ],
         SavePlaylistSelection: async () => undefined,
-        StartDupeCheck: async () => "dupe-job-1",
+        StartDupeCheck: options.startDupeCheck ?? (async () => "dupe-job-1"),
         GetDupeCheckSnapshot: options.getDupeCheckSnapshot ?? (async () => dupeCheckSnapshot()),
         StartTrackerUpload: options.startTrackerUpload ?? (async () => "upload-job-1"),
         RetryFailedTrackerUpload: options.retryFailedTrackerUpload ?? (async () => "upload-job-2"),
@@ -433,6 +557,551 @@ describe("hasFilteredEmptyUploadTrackerSelection", () => {
 });
 
 describe("metadata tracker payloads", () => {
+  it("sends metadata overrides from edit controls", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    installAppBridge(fetchMetadata);
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("Distributor"), {
+      target: { value: "Criterion" },
+    });
+    fireEvent.change(screen.getByLabelText("Original language"), {
+      target: { value: "ja" },
+    });
+    fireEvent.change(screen.getByLabelText("Anime"), {
+      target: { value: "false" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(2));
+    expect(fetchMetadata.mock.calls[1][4]).toEqual({
+      Distributor: "Criterion",
+      OriginalLanguage: "ja",
+      Anime: false,
+    });
+  });
+
+  it("omits boolean metadata overrides when edit controls return to Auto", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    installAppBridge(fetchMetadata);
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("Distributor"), {
+      target: { value: "   " },
+    });
+    fireEvent.change(screen.getByLabelText("Original language"), {
+      target: { value: "   " },
+    });
+    fireEvent.change(screen.getByLabelText("Anime"), {
+      target: { value: "false" },
+    });
+    fireEvent.change(screen.getByLabelText("Anime"), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(2));
+    expect(fetchMetadata.mock.calls[1][4]).toEqual({
+      Distributor: "",
+      OriginalLanguage: "",
+    });
+  });
+
+  it("does not clear inferred metadata flags when Auto is selected after an edit", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    installAppBridge(fetchMetadata);
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("Anime"), {
+      target: { value: "false" },
+    });
+    fireEvent.change(screen.getByLabelText("Anime"), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(2));
+    expect(fetchMetadata.mock.calls[1][4]).toEqual({});
+  });
+
+  it("clears metadata override edits when the source path changes", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    installAppBridge(fetchMetadata);
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Old" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("Distributor"), {
+      target: { value: "Criterion" },
+    });
+    fireEvent.change(screen.getByLabelText("Anime"), {
+      target: { value: "false" },
+    });
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\New" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(2));
+    expect(fetchMetadata.mock.calls[1][0]).toBe("C:\\media\\New");
+    expect(fetchMetadata.mock.calls[1][4]).toEqual({});
+  });
+
+  it("keeps provider display order separate from the initial selected provider", async () => {
+    const preview: MetadataPreview = {
+      ...metadataPreview("C:\\media\\Example"),
+      ExternalIDs: {
+        ...metadataPreview("C:\\media\\Example").ExternalIDs,
+        TMDBID: 456,
+        IMDBID: 123,
+      },
+      ExternalIDInfo: [
+        { Provider: "imdb", ID: 123, Source: "metadata" },
+        { Provider: "tmdb", ID: 456, Source: "metadata" },
+      ],
+      ExternalPreview: [
+        externalPreview("imdb", 123, "IMDB first result"),
+        externalPreview("tmdb", 456, "TMDB display result"),
+      ],
+    };
+    const fetchMetadata = vi.fn<FetchMetadata>(async () => preview);
+    installAppBridge(fetchMetadata);
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+
+    expect(await screen.findByText("IMDB first result")).toBeInTheDocument();
+    expect(screen.queryByText("TMDB display result")).not.toBeInTheDocument();
+
+    const tmdbCard = screen.getByText("TMDB").closest("button");
+    const imdbCard = screen.getByText("IMDB").closest("button");
+    if (!tmdbCard || !imdbCard) {
+      throw new Error("Expected TMDB and IMDB provider cards");
+    }
+    expect(
+      Boolean(tmdbCard.compareDocumentPosition(imdbCard) & Node.DOCUMENT_POSITION_FOLLOWING),
+    ).toBe(true);
+  });
+
+  it("applies metadata progress listener payloads for the active source path", async () => {
+    const pendingMetadata = deferred<MetadataPreview>();
+    const fetchMetadata = vi.fn<FetchMetadata>(() => pendingMetadata.promise);
+    installAppBridge(fetchMetadata);
+    vi.stubGlobal("runtime", {});
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+
+    const metadataProgress = runtimeEventHandler("metadata:progress");
+    await act(async () => {
+      metadataProgress({
+        path: "C:\\media\\Example",
+        phase: "external-ids",
+        status: "running",
+        message: "Resolving IDs",
+        timestamp: "2026-06-17T00:00:00Z",
+      });
+    });
+
+    expect(screen.getByText("Metadata progress")).toBeInTheDocument();
+    expect(screen.getByText("Resolve external IDs")).toBeInTheDocument();
+    expect(screen.getByText("Running")).toBeInTheDocument();
+
+    await act(async () => {
+      metadataProgress({
+        path: "C:\\media\\Other",
+        phase: "media-details",
+        status: "failed",
+        message: "Wrong source",
+        timestamp: "2026-06-17T00:00:01Z",
+      });
+    });
+
+    expect(screen.queryByText("Failed")).not.toBeInTheDocument();
+
+    await act(async () => {
+      metadataProgress({
+        path: "C:\\media\\Example",
+        phase: "complete",
+        status: "completed",
+        message: "Done",
+        timestamp: "2026-06-17T00:00:02Z",
+      });
+    });
+
+    expect(screen.queryByText("Metadata progress")).not.toBeInTheDocument();
+
+    await act(async () => {
+      pendingMetadata.resolve(metadataPreview("C:\\media\\Example"));
+      await pendingMetadata.promise;
+    });
+  });
+
+  it("applies dupe job progress listener payloads for the active job", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    const startDupeCheck = vi.fn<StartDupeCheck>(async () => "dupe-job-1");
+    const runningSnapshot: DupeCheckSnapshot = {
+      ...dupeCheckSnapshot(),
+      status: "running",
+      completedCount: 1,
+      summary: {
+        SourcePath: "C:\\media\\Example",
+        Results: [],
+        Notes: [],
+      },
+      finishedAt: "",
+    };
+    const getDupeCheckSnapshot = vi.fn(async () => runningSnapshot);
+    installAppBridge(fetchMetadata, {
+      startDupeCheck,
+      getDupeCheckSnapshot,
+    });
+    vi.stubGlobal("runtime", {});
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+
+    await waitFor(() => expect(startDupeCheck).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(vi.mocked(EventsOn)).toHaveBeenCalledWith("dupe:job:dupe-job-1", expect.any(Function)),
+    );
+    expect(
+      await screen.findByText("Tracker search progress: 1/2 trackers complete"),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      runtimeEventHandler("dupe:job:dupe-job-1")(dupeCheckSnapshot("C:\\media\\Example"));
+    });
+
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+    expect(
+      screen.queryByText("Tracker search progress: 1/2 trackers complete"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("saves screenshot selections with the overrides used to load the plan", async () => {
+    const existingImage: ScreenshotImage = {
+      Index: 0,
+      TimestampSeconds: 10,
+      Path: "C:\\media\\Example\\screen-001.png",
+      Width: 1920,
+      Height: 1080,
+      SizeBytes: 1024,
+    };
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    const fetchScreenshotPlan = vi.fn<FetchScreenshotPlan>(async (sourcePath) => ({
+      ...screenshotPlan(sourcePath),
+      ExistingScreenshots: [existingImage],
+    }));
+    const saveFinalScreenshotSelections = vi.fn<SaveFinalScreenshotSelections>(
+      async () => undefined,
+    );
+    const readScreenshotImage = vi.fn<ReadScreenshotImage>(
+      async () => "data:image/png;base64,AA==",
+    );
+    installAppBridge(fetchMetadata, {
+      fetchScreenshotPlan,
+      saveFinalScreenshotSelections,
+      readScreenshotImage,
+    });
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("TMDB ID"), { target: { value: "12345" } });
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "movie" } });
+    fireEvent.change(screen.getByLabelText("Distributor"), {
+      target: { value: "Loaded Distributor" },
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Screenshots" }));
+
+    await waitFor(() => expect(fetchScreenshotPlan).toHaveBeenCalledTimes(1));
+    expect(fetchScreenshotPlan.mock.calls[0][1]).toEqual({ TMDBID: 12345 });
+    expect(fetchScreenshotPlan.mock.calls[0][2]).toEqual({ Category: "movie" });
+    expect(fetchScreenshotPlan.mock.calls[0][3]).toEqual({
+      Distributor: "Loaded Distributor",
+    });
+    await screen.findByRole("button", { name: "Add to final" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("TMDB ID"), { target: { value: "67890" } });
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "tv" } });
+    fireEvent.change(screen.getByLabelText("Distributor"), {
+      target: { value: "Drifted Distributor" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Screenshots" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add to final" }));
+
+    await waitFor(() => expect(saveFinalScreenshotSelections).toHaveBeenCalledTimes(1));
+    expect(saveFinalScreenshotSelections.mock.calls[0][1]).toEqual({ TMDBID: 12345 });
+    expect(saveFinalScreenshotSelections.mock.calls[0][2]).toEqual({ Category: "movie" });
+    expect(saveFinalScreenshotSelections.mock.calls[0][3]).toEqual({
+      Distributor: "Loaded Distributor",
+    });
+  });
+
+  it("ignores stale screenshot plan completions after the source path changes", async () => {
+    const existingImage: ScreenshotImage = {
+      Index: 0,
+      TimestampSeconds: 10,
+      Path: "C:\\media\\Old\\screen-001.png",
+      Width: 1920,
+      Height: 1080,
+      SizeBytes: 1024,
+    };
+    const pendingPlan = deferred<ScreenshotPlan>();
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    const fetchScreenshotPlan = vi.fn<FetchScreenshotPlan>(() => pendingPlan.promise);
+    const readScreenshotImage = vi.fn<ReadScreenshotImage>(
+      async () => "data:image/png;base64,OLD==",
+    );
+    installAppBridge(fetchMetadata, {
+      fetchScreenshotPlan,
+      readScreenshotImage,
+    });
+
+    render(createElement(App));
+
+    const sourcePath = screen.getByLabelText("Source path");
+    fireEvent.change(sourcePath, {
+      target: { value: "C:\\media\\Old" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Screenshots" }));
+    await waitFor(() => expect(fetchScreenshotPlan).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\New" },
+    });
+
+    await act(async () => {
+      pendingPlan.resolve({
+        ...screenshotPlan("C:\\media\\Old"),
+        ExistingScreenshots: [existingImage],
+      });
+      await pendingPlan.promise;
+    });
+
+    expect(readScreenshotImage).not.toHaveBeenCalled();
+    expect(screen.queryByText("Existing Captures")).not.toBeInTheDocument();
+    expect(screen.queryByAltText("Existing 1")).not.toBeInTheDocument();
+  });
+
+  it("previews and captures screenshots with the overrides used to load the plan", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    const fetchScreenshotPlan = vi.fn<FetchScreenshotPlan>(async (sourcePath) => ({
+      ...screenshotPlan(sourcePath),
+      SuggestedSelections: [
+        {
+          Index: 0,
+          TimestampSeconds: 10,
+          Frame: 240,
+          Source: "auto",
+        },
+      ],
+    }));
+    const previewScreenshotFrame = vi.fn<PreviewScreenshotFrame>(
+      async () => "data:image/png;base64,PREVIEW==",
+    );
+    const generateScreenshots = vi.fn<GenerateScreenshots>(
+      async (sourcePath, _overrides, _nameOverrides, _metadataOverrides, _selections, purpose) => ({
+        SourcePath: sourcePath,
+        Purpose: purpose,
+        Images: [],
+        Tonemapped: false,
+        UsedLibplacebo: false,
+        Errors: [],
+      }),
+    );
+    const listUploadCandidates = vi.fn<ListUploadCandidates>(async () => []);
+    installAppBridge(fetchMetadata, {
+      fetchScreenshotPlan,
+      previewScreenshotFrame,
+      generateScreenshots,
+      listUploadCandidates,
+    });
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("TMDB ID"), { target: { value: "12345" } });
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "movie" } });
+    fireEvent.change(screen.getByLabelText("Distributor"), {
+      target: { value: "Loaded Distributor" },
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Screenshots" }));
+    await waitFor(() => expect(fetchScreenshotPlan).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("TMDB ID"), { target: { value: "67890" } });
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "tv" } });
+    fireEvent.change(screen.getByLabelText("Distributor"), {
+      target: { value: "Drifted Distributor" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Screenshots" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Run preview" }));
+    await waitFor(() => expect(previewScreenshotFrame).toHaveBeenCalledTimes(1));
+    expect(previewScreenshotFrame.mock.calls[0][1]).toEqual({ TMDBID: 12345 });
+    expect(previewScreenshotFrame.mock.calls[0][2]).toEqual({ Category: "movie" });
+    expect(previewScreenshotFrame.mock.calls[0][3]).toEqual({
+      Distributor: "Loaded Distributor",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Generate screenshots" }));
+    await waitFor(() => expect(generateScreenshots).toHaveBeenCalledTimes(1));
+    expect(generateScreenshots.mock.calls[0][1]).toEqual({ TMDBID: 12345 });
+    expect(generateScreenshots.mock.calls[0][2]).toEqual({ Category: "movie" });
+    expect(generateScreenshots.mock.calls[0][3]).toEqual({
+      Distributor: "Loaded Distributor",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Upload Images" }));
+    await waitFor(() => expect(listUploadCandidates).toHaveBeenCalledTimes(1));
+    expect(listUploadCandidates.mock.calls[0][1]).toEqual({ TMDBID: 12345 });
+    expect(listUploadCandidates.mock.calls[0][2]).toEqual({ Category: "movie" });
+    expect(listUploadCandidates.mock.calls[0][3]).toEqual({
+      Distributor: "Loaded Distributor",
+    });
+  });
+
+  it("ignores stale upload candidate completions after leaving the upload path context", async () => {
+    const uploadImage: ScreenshotImage = {
+      Index: 0,
+      TimestampSeconds: 10,
+      Path: "C:\\media\\Old\\screen-001.png",
+      Width: 1920,
+      Height: 1080,
+      SizeBytes: 1024,
+    };
+    const pendingCandidates = deferred<ScreenshotImage[]>();
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    const fetchScreenshotPlan = vi.fn<FetchScreenshotPlan>(async (sourcePath) =>
+      screenshotPlan(sourcePath),
+    );
+    const listUploadCandidates = vi.fn<ListUploadCandidates>(() => pendingCandidates.promise);
+    const readScreenshotImage = vi.fn<ReadScreenshotImage>(
+      async () => "data:image/png;base64,OLD==",
+    );
+    installAppBridge(fetchMetadata, {
+      fetchScreenshotPlan,
+      listUploadCandidates,
+      readScreenshotImage,
+    });
+
+    render(createElement(App));
+
+    const sourcePath = screen.getByLabelText("Source path");
+    fireEvent.change(sourcePath, {
+      target: { value: "C:\\media\\Old" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Screenshots" }));
+    await waitFor(() => expect(fetchScreenshotPlan).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Upload Images" }));
+    await waitFor(() => expect(listUploadCandidates).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.change(sourcePath, {
+      target: { value: "C:\\media\\New" },
+    });
+
+    await act(async () => {
+      pendingCandidates.resolve([uploadImage]);
+      await pendingCandidates.promise;
+    });
+
+    expect(readScreenshotImage).not.toHaveBeenCalled();
+    expect(screen.queryByText("Available Images")).not.toBeInTheDocument();
+    expect(screen.queryByAltText("Upload candidate")).not.toBeInTheDocument();
+  });
+
   it("excludes dupe-blocked upload targets from metadata fetches", async () => {
     const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
     installAppBridge(fetchMetadata);
@@ -450,7 +1119,7 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
 
     await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(2));
-    expect(fetchMetadata.mock.calls[1][4]).toEqual(["AITHER", "BLU"]);
+    expect(fetchMetadata.mock.calls[1][5]).toEqual(["AITHER", "BLU"]);
 
     fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
     fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
@@ -461,7 +1130,7 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
 
     await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(3));
-    expect(fetchMetadata.mock.calls[2][4]).toEqual(["AITHER"]);
+    expect(fetchMetadata.mock.calls[2][5]).toEqual(["AITHER"]);
   });
 
   it("does not apply dupe blocks from a previous path to metadata fetches", async () => {
@@ -489,7 +1158,7 @@ describe("metadata tracker payloads", () => {
 
     await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(2));
     expect(fetchMetadata.mock.calls[1][0]).toBe("C:\\media\\Other");
-    expect(fetchMetadata.mock.calls[1][4]).toEqual(["AITHER", "BLU"]);
+    expect(fetchMetadata.mock.calls[1][5]).toEqual(["AITHER", "BLU"]);
   });
 
   it("keeps current upload disables when stale dupe state came from another path", async () => {
@@ -518,7 +1187,7 @@ describe("metadata tracker payloads", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
     await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(2));
-    expect(fetchMetadata.mock.calls[1][4]).toEqual(["AITHER", "BLU"]);
+    expect(fetchMetadata.mock.calls[1][5]).toEqual(["AITHER", "BLU"]);
 
     fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
     fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
@@ -537,7 +1206,7 @@ describe("metadata tracker payloads", () => {
 
     await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(3));
     expect(fetchMetadata.mock.calls[2][0]).toBe("C:\\media\\Other");
-    expect(fetchMetadata.mock.calls[2][4]).toEqual(["BLU"]);
+    expect(fetchMetadata.mock.calls[2][5]).toEqual(["BLU"]);
   });
 
   it("blocks metadata fetch when all selected trackers are filtered out", async () => {
@@ -655,8 +1324,41 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Confirm Selection" }));
 
     await waitFor(() => expect(fetchPreparation).toHaveBeenCalledTimes(1));
-    expect(fetchPreparation.mock.calls[0][3]).toEqual(["AITHER"]);
-    expect(fetchPreparation.mock.calls[0][4]).toEqual([]);
+    expect(fetchPreparation.mock.calls[0][4]).toEqual(["AITHER"]);
+    expect(fetchPreparation.mock.calls[0][5]).toEqual([]);
+  });
+
+  it("sends edited overrides when preparing selected playlists", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    const fetchPreparation = vi.fn<FetchPreparation>(async () => ({}));
+    installAppBridge(fetchMetadata, { fetchPreparation });
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+    await screen.findByText("2/2");
+
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    fireEvent.change(screen.getByLabelText("TMDB ID"), { target: { value: "12345" } });
+    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "BluRay" } });
+    fireEvent.change(screen.getByLabelText("Distributor"), { target: { value: "Criterion" } });
+    fireEvent.change(screen.getByLabelText("Anime"), { target: { value: "false" } });
+    fireEvent.click(screen.getByRole("button", { name: "Browse folder" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm Selection" }));
+
+    await waitFor(() => expect(fetchPreparation).toHaveBeenCalledTimes(1));
+    expect(fetchPreparation.mock.calls[0][1]).toEqual({ TMDBID: 12345 });
+    expect(fetchPreparation.mock.calls[0][2]).toEqual({ Source: "BluRay" });
+    expect(fetchPreparation.mock.calls[0][3]).toEqual({
+      Distributor: "Criterion",
+      Anime: false,
+    });
+    expect(fetchPreparation.mock.calls[0][4]).toEqual(["AITHER", "BLU"]);
+    expect(fetchPreparation.mock.calls[0][5]).toEqual([]);
   });
 
   it("does not apply previous path dupe blocks when preparing selected playlists", async () => {
@@ -685,8 +1387,8 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Confirm Selection" }));
 
     await waitFor(() => expect(fetchPreparation).toHaveBeenCalledTimes(1));
-    expect(fetchPreparation.mock.calls[0][3]).toEqual(["AITHER", "BLU"]);
-    expect(fetchPreparation.mock.calls[0][4]).toEqual([]);
+    expect(fetchPreparation.mock.calls[0][4]).toEqual(["AITHER", "BLU"]);
+    expect(fetchPreparation.mock.calls[0][5]).toEqual([]);
   });
 
   it.each([
@@ -735,8 +1437,8 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Confirm Selection" }));
 
     await waitFor(() => expect(fetchPreparation).toHaveBeenCalledTimes(1));
-    expect(fetchPreparation.mock.calls[0][3]).toEqual(["AITHER"]);
-    expect(fetchPreparation.mock.calls[0][4]).toEqual([]);
+    expect(fetchPreparation.mock.calls[0][4]).toEqual(["AITHER"]);
+    expect(fetchPreparation.mock.calls[0][5]).toEqual([]);
   });
 });
 
@@ -774,6 +1476,46 @@ describe("tracker upload job tracking", () => {
     await waitFor(() => expect(screen.getByText("Error: start failed")).toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
     expect(getTrackerUploadSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("clears previous upload job state before a failed replacement start resolves", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    let rejectSecondStart: (reason: Error) => void = () => undefined;
+    const startTrackerUpload = vi
+      .fn<StartTrackerUpload>()
+      .mockResolvedValueOnce("upload-job-1")
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((_resolve, reject) => {
+            rejectSecondStart = reject;
+          }),
+      );
+    const getTrackerUploadSnapshot = vi.fn<GetTrackerUploadSnapshot>().mockResolvedValueOnce(
+      trackerUploadSnapshot("upload-job-1", "failed", {
+        failedTrackers: ["AITHER"],
+        error: "upload failed",
+        finishedAt: "2026-06-17T00:00:01Z",
+      }),
+    );
+    await openTrackerUploadPage(fetchMetadata, { startTrackerUpload, getTrackerUploadSnapshot });
+    fireEvent.click(screen.getByRole("button", { name: "Start Upload" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Retry Failed" })).toBeEnabled());
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Start Upload" }));
+
+    expect(startTrackerUpload).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+      await Promise.resolve();
+    });
+    expect(getTrackerUploadSnapshot).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      rejectSecondStart(new Error("start failed"));
+    });
+    expect(screen.getByText("Error: start failed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Retry Failed" })).toBeDisabled();
   });
 
   it("keeps retry upload tracking alive when replacement bootstrap snapshot loading fails", async () => {

@@ -45,6 +45,34 @@ export type ReleaseNameOverrides = {
   Region?: string | null;
 };
 
+/**
+ * Caller-forced metadata facts sent to Go entrypoints.
+ * Omitted or null fields leave inferred/prepared metadata unchanged.
+ */
+export type MetadataOverrides = {
+  Distributor?: string | null;
+  OriginalLanguage?: string | null;
+  PersonalRelease?: boolean | null;
+  Commentary?: boolean | null;
+  WebDV?: boolean | null;
+  StreamOptimized?: boolean | null;
+  Anime?: boolean | null;
+  /** Field names explicitly reset by the user; absent fields continue using prepared metadata. */
+  Clear?: string[] | null;
+};
+
+/**
+ * Normalized override payloads captured when a screenshot plan is loaded.
+ *
+ * Screenshot preview, capture, selection persistence, and upload-image flows reuse this
+ * tuple so later edits in the input form cannot drift from the plan context.
+ */
+export type ScreenshotOverrideSnapshot = {
+  external: ExternalIDOverrides;
+  release: ReleaseNameOverrides;
+  metadata: MetadataOverrides;
+};
+
 export type ExternalIDInfo = {
   Provider: string;
   ID: number;
@@ -960,6 +988,28 @@ export type ReleaseNameTouchedState = {
   noDual: boolean;
   dualAudio: boolean;
   region: boolean;
+};
+
+/** Form state for editable metadata override controls before normalization. */
+export type MetadataOverrideEditState = {
+  distributor: string;
+  originalLanguage: string;
+  personalRelease: "" | "true" | "false";
+  commentary: "" | "true" | "false";
+  webDV: "" | "true" | "false";
+  streamOptimized: "" | "true" | "false";
+  anime: "" | "true" | "false";
+};
+
+/** Tracks which metadata override controls should be sent to backend requests. */
+export type MetadataOverrideTouchedState = {
+  distributor: boolean;
+  originalLanguage: boolean;
+  personalRelease: boolean;
+  commentary: boolean;
+  webDV: boolean;
+  streamOptimized: boolean;
+  anime: boolean;
 };
 
 export type ReleaseNameIDEditState = {

@@ -1301,6 +1301,38 @@ func TestFetchTrackerDryRunPreviewUsesCanonicalDescriptionGroups(t *testing.T) {
 	}
 }
 
+func TestOverrideSignatureIncludesUseSeasonEpisode(t *testing.T) {
+	t.Parallel()
+
+	useSeasonEpisode := true
+	withOverride := overrideSignature(
+		api.ExternalIDOverrides{},
+		api.ReleaseNameOverrides{UseSeasonEpisode: &useSeasonEpisode},
+		api.MetadataOverrides{},
+		api.TrackerConfigOverrides{},
+		api.TrackerSiteOverrides{},
+		api.ClientOverrides{},
+		api.TorrentOverrides{},
+		api.ImageHostOverrides{},
+	)
+	withoutOverride := overrideSignature(
+		api.ExternalIDOverrides{},
+		api.ReleaseNameOverrides{},
+		api.MetadataOverrides{},
+		api.TrackerConfigOverrides{},
+		api.TrackerSiteOverrides{},
+		api.ClientOverrides{},
+		api.TorrentOverrides{},
+		api.ImageHostOverrides{},
+	)
+	if withOverride == withoutOverride {
+		t.Fatalf("expected use season episode to affect signature")
+	}
+	if !strings.Contains(withOverride, "useSeasonEpisode=true") {
+		t.Fatalf("expected use season episode field in signature, got %q", withOverride)
+	}
+}
+
 func TestResolveCanonicalDescriptionGroupsSkipsDefaultsWhenExplicitSelectionResolvesEmpty(t *testing.T) {
 	t.Parallel()
 

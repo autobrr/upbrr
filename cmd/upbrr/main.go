@@ -1012,27 +1012,28 @@ func resolveExportDBPath(configPath string, configProvided bool) (string, error)
 }
 
 type releaseOverrideInput struct {
-	Category     string
-	Type         string
-	Source       string
-	Resolution   string
-	Tag          string
-	Service      string
-	Edition      string
-	Season       string
-	Episode      string
-	EpisodeTitle string
-	ManualYear   int
-	ManualDate   string
-	NoSeason     bool
-	NoYear       bool
-	NoAKA        bool
-	NoTag        bool
-	NoEdition    bool
-	NoDub        bool
-	NoDual       bool
-	DualAudio    bool
-	Region       string
+	Category         string
+	Type             string
+	Source           string
+	Resolution       string
+	Tag              string
+	Service          string
+	Edition          string
+	Season           string
+	Episode          string
+	EpisodeTitle     string
+	ManualYear       int
+	ManualDate       string
+	UseSeasonEpisode bool
+	NoSeason         bool
+	NoYear           bool
+	NoAKA            bool
+	NoTag            bool
+	NoEdition        bool
+	NoDub            bool
+	NoDual           bool
+	DualAudio        bool
+	Region           string
 }
 
 func buildReleaseNameOverrides(visited map[string]bool, input releaseOverrideInput) api.ReleaseNameOverrides {
@@ -1072,6 +1073,9 @@ func buildReleaseNameOverrides(visited map[string]bool, input releaseOverrideInp
 	}
 	if visited["daily"] {
 		overrides.ManualDate = stringPtr(input.ManualDate)
+	}
+	if visited["season-episode"] {
+		overrides.UseSeasonEpisode = boolPtr(input.UseSeasonEpisode)
 	}
 	if visited["no-season"] {
 		overrides.NoSeason = boolPtr(input.NoSeason)

@@ -51,6 +51,7 @@ type cliOptions struct {
 	EpisodeTitle          string
 	ManualYear            int
 	ManualDate            string
+	UseSeasonEpisode      bool
 	NoSeason              bool
 	NoYear                bool
 	NoAKA                 bool
@@ -199,6 +200,8 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.IntVar(&opts.ManualYear, "manual-year", 0, "Override release year")
 	fs.IntVar(&opts.ManualYear, "year", 0, "Override release year")
 	fs.StringVar(&opts.ManualDate, "daily", "", "Set daily episode air date")
+	fs.BoolVar(&opts.UseSeasonEpisode, "season-episode", false, "Use season/episode naming for daily releases")
+	fs.BoolVar(&opts.UseSeasonEpisode, "use-season-episode", false, "Use season/episode naming for daily releases")
 	fs.BoolVar(&opts.NoSeason, "no-season", false, "Remove season and episode from name")
 	fs.BoolVar(&opts.NoYear, "no-year", false, "Remove year from name")
 	fs.BoolVar(&opts.NoAKA, "no-aka", false, "Remove AKA from name")
@@ -476,6 +479,7 @@ func cliFlagAliases() map[string]string {
 		"manual-episode-title": "episode-title",
 		"met":                  "episode-title",
 		"year":                 "manual-year",
+		"use-season-episode":   "season-episode",
 		"reg":                  "region",
 		"df":                   "descfile",
 		"pb":                   "desclink",
@@ -612,7 +616,7 @@ func cliHelpSections(name string) []helpSection {
 		{title: "Tracker IDs", names: []string{"ptp", "blu", "aither", "lst", "oe", "hdb", "btn", "bhd", "ulcx"}},
 		{title: "Release Overrides", names: []string{
 			"category", "type", "source", "resolution", "tag", "service", "distributor", "original-language",
-			"edition", "season", "episode", "episode-title", "manual-year", "daily", "region", "no-season", "no-year",
+			"edition", "season", "episode", "episode-title", "manual-year", "daily", "season-episode", "region", "no-season", "no-year",
 			"no-aka", "no-tag", "no-edition", "no-dub", "no-dual", "dual-audio",
 		}},
 		{title: "Metadata IDs", names: []string{"tmdb", "imdb", "mal", "tvdb", "tvmaze"}},
@@ -734,27 +738,28 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, s
 			InteractionMode: opts.interactionMode(),
 		},
 		ReleaseNameOverrides: buildReleaseNameOverrides(visited, releaseOverrideInput{
-			Category:     opts.Category,
-			Type:         opts.Type,
-			Source:       opts.Source,
-			Resolution:   opts.Resolution,
-			Tag:          opts.Tag,
-			Service:      opts.Service,
-			Edition:      opts.Edition,
-			Season:       opts.Season,
-			Episode:      opts.Episode,
-			EpisodeTitle: opts.EpisodeTitle,
-			ManualYear:   opts.ManualYear,
-			ManualDate:   opts.ManualDate,
-			NoSeason:     opts.NoSeason,
-			NoYear:       opts.NoYear,
-			NoAKA:        opts.NoAKA,
-			NoTag:        opts.NoTag,
-			NoEdition:    opts.NoEdition,
-			NoDub:        opts.NoDub,
-			NoDual:       opts.NoDual,
-			DualAudio:    opts.DualAudio,
-			Region:       opts.Region,
+			Category:         opts.Category,
+			Type:             opts.Type,
+			Source:           opts.Source,
+			Resolution:       opts.Resolution,
+			Tag:              opts.Tag,
+			Service:          opts.Service,
+			Edition:          opts.Edition,
+			Season:           opts.Season,
+			Episode:          opts.Episode,
+			EpisodeTitle:     opts.EpisodeTitle,
+			ManualYear:       opts.ManualYear,
+			ManualDate:       opts.ManualDate,
+			UseSeasonEpisode: opts.UseSeasonEpisode,
+			NoSeason:         opts.NoSeason,
+			NoYear:           opts.NoYear,
+			NoAKA:            opts.NoAKA,
+			NoTag:            opts.NoTag,
+			NoEdition:        opts.NoEdition,
+			NoDub:            opts.NoDub,
+			NoDual:           opts.NoDual,
+			DualAudio:        opts.DualAudio,
+			Region:           opts.Region,
 		}),
 		SkipDupeCheck:          opts.SkipDupeCheck,
 		SkipDupeAsActual:       opts.SkipDupeAsActual,
@@ -791,7 +796,7 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, s
 		return api.Request{}, err
 	}
 	req.TrackerIDOverrides = trackerIDs
-	if visited["tmdb"] {
+	if visited["tmdb"] && !visited["category"] {
 		_, category, err := parseTMDBID(opts.TMDB)
 		if err != nil {
 			return api.Request{}, err

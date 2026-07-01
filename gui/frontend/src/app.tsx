@@ -38,12 +38,14 @@ import type {
   DupeCheckResult,
   DupeCheckSnapshot,
   DupeCheckSummary,
-  ExternalIDInfo,
   ExternalIDOverrides,
   ExternalIDs,
   HistoryEntry,
   HistoryOverview,
   ImageHostPolicyMetadata,
+  MetadataOverrideEditState,
+  MetadataOverrides,
+  MetadataOverrideTouchedState,
   MetadataPreview,
   MetadataProgressUpdate,
   PreparationPreview,
@@ -51,6 +53,7 @@ import type {
   ReleaseNameOverrides,
   ReleaseNameTouchedState,
   ScreenshotImage,
+  ScreenshotOverrideSnapshot,
   ScreenshotPlan,
   ScreenshotPreviewImage,
   ScreenshotPurpose,
@@ -91,6 +94,7 @@ import {
   hasFilteredEmptyUploadTrackerSelection as hasFilteredEmptyUploadTrackerSelectionState,
   resolveSelectedUploadTrackers,
 } from "./utils/trackerSelection";
+import { normalizeMetadataOverrides, normalizeOverrides, normalizeReleaseOverrides } from "./utils";
 
 const appLayoutClass =
   "relative z-[1] block min-h-screen ml-[204px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
@@ -412,6 +416,7 @@ declare global {
               sourceLookupURL: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               trackers: string[],
             ) => Promise<MetadataPreview>;
             ResetMetadata: (
@@ -419,6 +424,7 @@ declare global {
               sourceLookupURL: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               trackers: string[],
             ) => Promise<MetadataPreview>;
             SelectBlurayCandidate: (path: string, releaseID: string) => Promise<MetadataPreview>;
@@ -426,6 +432,7 @@ declare global {
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               trackers: string[],
               ignoreDupesFor: string[],
             ) => Promise<DescriptionBuilderPreview>;
@@ -433,6 +440,7 @@ declare global {
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               trackers: string[],
               ignoreDupesFor: string[],
             ) => Promise<PreparationPreview>;
@@ -440,6 +448,7 @@ declare global {
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               trackers: string[],
               ignoreDupesFor: string[],
               questionnaireAnswers: Record<string, Record<string, string>>,
@@ -452,12 +461,14 @@ declare global {
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               trackers: string[],
             ) => Promise<DupeCheckSummary>;
             StartDupeCheck: (
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               trackers: string[],
             ) => Promise<string>;
             CancelDupeCheck: (jobID: string) => Promise<void>;
@@ -466,11 +477,13 @@ declare global {
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
             ) => Promise<ScreenshotPlan>;
             GenerateScreenshots: (
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               selections: ScreenshotSelection[],
               purpose: ScreenshotPurpose,
             ) => Promise<ScreenshotResult>;
@@ -478,24 +491,28 @@ declare global {
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               timestampSeconds: number,
             ) => Promise<string>;
             DeleteScreenshot: (
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               imagePath: string,
             ) => Promise<void>;
             SaveFinalScreenshotSelections: (
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               images: ScreenshotImage[],
             ) => Promise<void>;
             ImportMenuImages: (
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               paths: string[],
             ) => Promise<void>;
             ReadScreenshotImage: (path: string) => Promise<string>;
@@ -503,16 +520,19 @@ declare global {
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
             ) => Promise<ScreenshotImage[]>;
             ListUploadedImages: (
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
             ) => Promise<UploadedImageLink[]>;
             UploadImages: (
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               trackers: string[],
               host: string,
               images: ScreenshotImage[],
@@ -526,6 +546,7 @@ declare global {
               trackers: string[],
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
             ) => Promise<DescriptionBuilderPreview["Groups"][number]>;
             DiscoverPlaylists: (path: string) => Promise<any[]>;
             SavePlaylistSelection: (
@@ -574,6 +595,7 @@ declare global {
               path: string,
               overrides: ExternalIDOverrides,
               nameOverrides: ReleaseNameOverrides,
+              metadataOverrides: MetadataOverrides,
               trackers: string[],
               ignoreDupesFor: string[],
               questionnaireAnswers: Record<string, Record<string, string>>,
@@ -603,21 +625,6 @@ const parseIDInput = (provider: string, value: string) => {
   return Number(normalized);
 };
 
-const providerOrder = ["tmdb", "imdb", "tvdb", "tvmaze"] as const;
-
-const filterAndOrderExternalIDs = (info: ExternalIDInfo[]) => {
-  const orderIndex = new Map<string, number>(
-    providerOrder.map((provider, index) => [provider, index]),
-  );
-
-  return [...info].sort((left, right) => {
-    const leftIndex = orderIndex.get(left.Provider) ?? providerOrder.length;
-    const rightIndex = orderIndex.get(right.Provider) ?? providerOrder.length;
-    if (leftIndex !== rightIndex) return leftIndex - rightIndex;
-    return left.Provider.localeCompare(right.Provider);
-  });
-};
-
 const formatNumber = (value: number) => (value ? value.toString() : "");
 
 const buildIDEditState = (ids: ExternalIDs) => ({
@@ -626,6 +633,23 @@ const buildIDEditState = (ids: ExternalIDs) => ({
   tvdb: formatNumber(ids.TVDBID),
   tvmaze: formatNumber(ids.TVmazeID),
 });
+
+/**
+ * Picks the initially opened metadata preview from backend result order.
+ *
+ * External ID cards may render in a fixed provider display order, so this must
+ * not reuse that sorted list when deciding which provider the backend selected.
+ */
+const defaultSelectedProviderForPreview = (result: MetadataPreview) => {
+  const ids = result.ExternalIDInfo || [];
+  const previews = result.ExternalPreview || [];
+  const previewProviders = new Set(previews.map((item) => item.Provider).filter(Boolean));
+  const firstIDWithPreview = ids.find(
+    (item) => item.Provider && (previewProviders.size === 0 || previewProviders.has(item.Provider)),
+  );
+  if (firstIDWithPreview?.Provider) return firstIDWithPreview.Provider;
+  return previews.find((item) => item.Provider)?.Provider || "";
+};
 
 const buildReleaseEditState = (overrides?: ReleaseNameOverrides): ReleaseNameEditState => ({
   category: overrides?.Category ?? "",
@@ -678,6 +702,53 @@ const buildReleaseTouchedState = (overrides?: ReleaseNameOverrides): ReleaseName
   region: overrides?.Region !== undefined && overrides?.Region !== null,
 });
 
+const buildMetadataEditState = (overrides?: MetadataOverrides): MetadataOverrideEditState => ({
+  distributor: overrides?.Distributor ?? "",
+  originalLanguage: overrides?.OriginalLanguage ?? "",
+  personalRelease: boolOverrideEditValue(overrides?.PersonalRelease),
+  commentary: boolOverrideEditValue(overrides?.Commentary),
+  webDV: boolOverrideEditValue(overrides?.WebDV),
+  streamOptimized: boolOverrideEditValue(overrides?.StreamOptimized),
+  anime: boolOverrideEditValue(overrides?.Anime),
+});
+
+/** Returns metadata fields carried by an explicit Clear override payload. */
+const metadataOverrideClears = (overrides?: MetadataOverrides) =>
+  new Set((overrides?.Clear || []).map((field) => String(field || "").trim()));
+
+const buildMetadataTouchedState = (overrides?: MetadataOverrides): MetadataOverrideTouchedState => {
+  const clears = metadataOverrideClears(overrides);
+  return {
+    distributor:
+      (overrides?.Distributor !== undefined && overrides?.Distributor !== null) ||
+      clears.has("Distributor"),
+    originalLanguage:
+      (overrides?.OriginalLanguage !== undefined && overrides?.OriginalLanguage !== null) ||
+      clears.has("OriginalLanguage"),
+    personalRelease:
+      (overrides?.PersonalRelease !== undefined && overrides?.PersonalRelease !== null) ||
+      clears.has("PersonalRelease"),
+    commentary:
+      (overrides?.Commentary !== undefined && overrides?.Commentary !== null) ||
+      clears.has("Commentary"),
+    webDV: (overrides?.WebDV !== undefined && overrides?.WebDV !== null) || clears.has("WebDV"),
+    streamOptimized:
+      (overrides?.StreamOptimized !== undefined && overrides?.StreamOptimized !== null) ||
+      clears.has("StreamOptimized"),
+    anime: (overrides?.Anime !== undefined && overrides?.Anime !== null) || clears.has("Anime"),
+  };
+};
+
+const boolOverrideEditValue = (value?: boolean | null): "" | "true" | "false" => {
+  if (value === undefined || value === null) return "";
+  return value ? "true" : "false";
+};
+
+const parseBoolOverrideEditValue = (value: "" | "true" | "false") => {
+  if (value === "") return null;
+  return value === "true";
+};
+
 const normalizeTag = (value: string) => {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -713,6 +784,8 @@ export default function App() {
     () => true,
   );
   const [path, setPath] = useState("");
+  const activePathRef = useRef(path.trim());
+  activePathRef.current = path.trim();
   const [sourcePathHistory, setSourcePathHistory] = useState<SourcePathHistoryEntry[]>(() => {
     try {
       return normalizeSourcePathHistory(
@@ -738,6 +811,8 @@ export default function App() {
   const [releaseTouched, setReleaseTouched] = useState(() =>
     buildReleaseTouchedState(emptyPreview.ReleaseNameOverrides),
   );
+  const [metadataEdits, setMetadataEdits] = useState(() => buildMetadataEditState({}));
+  const [metadataTouched, setMetadataTouched] = useState(() => buildMetadataTouchedState({}));
   const [showExternalIDInputUI, setShowExternalIDInputUI] = useState(true);
   const [selectedProvider, setSelectedProvider] = useState<string>("");
   const [activeTab, setActiveTab] = useState("input");
@@ -766,6 +841,7 @@ export default function App() {
   // same tick as a fetch/reset request are not dropped by a stale React closure.
   const metadataProgressActiveRef = useRef(false);
   const metadataProgressTargetRef = useRef("");
+  const uploadCandidatesRequestIdRef = useRef(0);
   const [dupeSummary, setDupeSummary] = useState<DupeCheckSummary>(emptyDupeSummary);
   const [dupeLoading, setDupeLoading] = useState(false);
   const [dupeError, setDupeError] = useState("");
@@ -929,10 +1005,21 @@ export default function App() {
     [inputHistoryLimit, persistSourcePathHistory],
   );
 
-  const handleSourcePathChange = useCallback((value: string) => {
-    setPath(value);
-    setSourcePathMode(undefined);
+  const resetMetadataOverrideState = useCallback(() => {
+    setMetadataEdits(buildMetadataEditState({}));
+    setMetadataTouched(buildMetadataTouchedState({}));
   }, []);
+
+  const handleSourcePathChange = useCallback(
+    (value: string) => {
+      if (!isSourcePathContextMatch(path, value, isRuntimePathCaseInsensitive())) {
+        resetMetadataOverrideState();
+      }
+      setPath(value);
+      setSourcePathMode(undefined);
+    },
+    [path, resetMetadataOverrideState],
+  );
 
   useEffect(() => {
     setSourcePathHistory((prev) => {
@@ -1383,11 +1470,49 @@ export default function App() {
     return { overrides, dirty, invalid };
   }, [releaseEdits, releaseTouched, preview.ReleaseNameOverrides]);
 
+  const metadataOverrideState = useMemo(() => {
+    const overrides: MetadataOverrides = {};
+    const distributor = metadataEdits.distributor.trim();
+    const originalLanguage = metadataEdits.originalLanguage.trim();
+    if (metadataTouched.distributor) {
+      overrides.Distributor = distributor;
+    }
+    if (metadataTouched.originalLanguage) {
+      overrides.OriginalLanguage = originalLanguage;
+    }
+    const personalRelease = parseBoolOverrideEditValue(metadataEdits.personalRelease);
+    const commentary = parseBoolOverrideEditValue(metadataEdits.commentary);
+    const webDV = parseBoolOverrideEditValue(metadataEdits.webDV);
+    const streamOptimized = parseBoolOverrideEditValue(metadataEdits.streamOptimized);
+    const anime = parseBoolOverrideEditValue(metadataEdits.anime);
+    if (metadataTouched.personalRelease) {
+      if (personalRelease !== null) overrides.PersonalRelease = personalRelease;
+    }
+    if (metadataTouched.commentary) {
+      if (commentary !== null) overrides.Commentary = commentary;
+    }
+    if (metadataTouched.webDV) {
+      if (webDV !== null) overrides.WebDV = webDV;
+    }
+    if (metadataTouched.streamOptimized) {
+      if (streamOptimized !== null) overrides.StreamOptimized = streamOptimized;
+    }
+    if (metadataTouched.anime) {
+      if (anime !== null) overrides.Anime = anime;
+    }
+    return {
+      overrides,
+      dirty: Object.keys(overrides).length > 0,
+      invalid: false,
+    };
+  }, [metadataEdits, metadataTouched]);
+
   // Screenshot workflow hook (now idOverrideState/releaseOverrideState are defined)
   const screenshots = useScreenshots({
     path,
     idOverrideState,
     releaseOverrideState,
+    metadataOverrideState,
   });
 
   // Destructure commonly used screenshot variables
@@ -1408,6 +1533,7 @@ export default function App() {
     setExistingImages,
     resetScreenshotState: resetScreenshots,
     handleDeleteTrackerImageURL,
+    getLoadedScreenshotOverrides,
   } = screenshots;
 
   /**
@@ -1518,9 +1644,13 @@ export default function App() {
     path,
     idOverrideState,
     releaseOverrideState,
+    metadataOverrideState,
     uploadCandidates: screenshots.uploadCandidates,
     configuredImageHosts,
     selectedTrackers: selectedUploadImageTrackers,
+    screenshotOverrideSnapshot: screenshots.screenshotPlan
+      ? getLoadedScreenshotOverrides()
+      : undefined,
   });
   const {
     refreshUploadedImages,
@@ -1835,97 +1965,13 @@ export default function App() {
   const refreshDisabled =
     loading ||
     !path.trim() ||
-    (!idOverrideState?.dirty && !releaseOverrideState?.dirty && !sourceLookupURL.trim()) ||
+    (!idOverrideState?.dirty &&
+      !releaseOverrideState?.dirty &&
+      !metadataOverrideState?.dirty &&
+      !sourceLookupURL.trim()) ||
     idOverrideState?.invalid ||
-    releaseOverrideState?.invalid;
-
-  const normalizeOverrides = (overrides: ExternalIDOverrides) => {
-    const payload: ExternalIDOverrides = {};
-    if (overrides.TMDBID !== null && overrides.TMDBID !== undefined) {
-      payload.TMDBID = overrides.TMDBID;
-    }
-    if (overrides.IMDBID !== null && overrides.IMDBID !== undefined) {
-      payload.IMDBID = overrides.IMDBID;
-    }
-    if (overrides.TVDBID !== null && overrides.TVDBID !== undefined) {
-      payload.TVDBID = overrides.TVDBID;
-    }
-    if (overrides.TVmazeID !== null && overrides.TVmazeID !== undefined) {
-      payload.TVmazeID = overrides.TVmazeID;
-    }
-    return payload;
-  };
-
-  const normalizeReleaseOverrides = (overrides: ReleaseNameOverrides) => {
-    const payload: ReleaseNameOverrides = {};
-    if (overrides.Category !== null && overrides.Category !== undefined) {
-      payload.Category = overrides.Category;
-    }
-    if (overrides.Type !== null && overrides.Type !== undefined) {
-      payload.Type = overrides.Type;
-    }
-    if (overrides.Source !== null && overrides.Source !== undefined) {
-      payload.Source = overrides.Source;
-    }
-    if (overrides.Resolution !== null && overrides.Resolution !== undefined) {
-      payload.Resolution = overrides.Resolution;
-    }
-    if (overrides.Tag !== null && overrides.Tag !== undefined) {
-      payload.Tag = overrides.Tag;
-    }
-    if (overrides.Service !== null && overrides.Service !== undefined) {
-      payload.Service = overrides.Service;
-    }
-    if (overrides.Edition !== null && overrides.Edition !== undefined) {
-      payload.Edition = overrides.Edition;
-    }
-    if (overrides.Season !== null && overrides.Season !== undefined) {
-      payload.Season = overrides.Season;
-    }
-    if (overrides.Episode !== null && overrides.Episode !== undefined) {
-      payload.Episode = overrides.Episode;
-    }
-    if (overrides.EpisodeTitle !== null && overrides.EpisodeTitle !== undefined) {
-      payload.EpisodeTitle = overrides.EpisodeTitle;
-    }
-    if (overrides.ManualYear !== null && overrides.ManualYear !== undefined) {
-      payload.ManualYear = overrides.ManualYear;
-    }
-    if (overrides.ManualDate !== null && overrides.ManualDate !== undefined) {
-      payload.ManualDate = overrides.ManualDate;
-    }
-    if (overrides.UseSeasonEpisode !== null && overrides.UseSeasonEpisode !== undefined) {
-      payload.UseSeasonEpisode = overrides.UseSeasonEpisode;
-    }
-    if (overrides.NoSeason !== null && overrides.NoSeason !== undefined) {
-      payload.NoSeason = overrides.NoSeason;
-    }
-    if (overrides.NoYear !== null && overrides.NoYear !== undefined) {
-      payload.NoYear = overrides.NoYear;
-    }
-    if (overrides.NoAKA !== null && overrides.NoAKA !== undefined) {
-      payload.NoAKA = overrides.NoAKA;
-    }
-    if (overrides.NoTag !== null && overrides.NoTag !== undefined) {
-      payload.NoTag = overrides.NoTag;
-    }
-    if (overrides.NoEdition !== null && overrides.NoEdition !== undefined) {
-      payload.NoEdition = overrides.NoEdition;
-    }
-    if (overrides.NoDub !== null && overrides.NoDub !== undefined) {
-      payload.NoDub = overrides.NoDub;
-    }
-    if (overrides.NoDual !== null && overrides.NoDual !== undefined) {
-      payload.NoDual = overrides.NoDual;
-    }
-    if (overrides.DualAudio !== null && overrides.DualAudio !== undefined) {
-      payload.DualAudio = overrides.DualAudio;
-    }
-    if (overrides.Region !== null && overrides.Region !== undefined) {
-      payload.Region = overrides.Region;
-    }
-    return payload;
-  };
+    releaseOverrideState?.invalid ||
+    metadataOverrideState?.invalid;
 
   const applyPreviewResult = (
     result: MetadataPreview,
@@ -1939,12 +1985,7 @@ export default function App() {
     setIdEdits(buildIDEditState(result.ExternalIDs));
     setReleaseEdits(buildReleaseEditState(result.ReleaseNameOverrides || {}));
     setReleaseTouched(buildReleaseTouchedState(result.ReleaseNameOverrides || {}));
-    const orderedIDs = filterAndOrderExternalIDs(result.ExternalIDInfo || []);
-    if (orderedIDs.length > 0) {
-      setSelectedProvider(orderedIDs[0].Provider);
-    } else {
-      setSelectedProvider("");
-    }
+    setSelectedProvider(defaultSelectedProviderForPreview(result));
     setDupeSummary(emptyDupeSummary);
     setDupeError("");
     setBuilderPreview(emptyDescriptionBuilder);
@@ -2144,6 +2185,9 @@ export default function App() {
       return null;
     }
     const selectedMode = mode ?? inferSourcePathMode(trimmedPath);
+    if (!isSourcePathContextMatch(path, trimmedPath, isRuntimePathCaseInsensitive())) {
+      resetMetadataOverrideState();
+    }
     setPath(trimmedPath);
     setSourcePathMode(selectedMode);
     rememberSourcePath(trimmedPath, selectedMode);
@@ -2217,7 +2261,14 @@ export default function App() {
       return false;
     }
     try {
-      await fetcher(path.trim(), {}, {}, selectedTrackers, []);
+      await fetcher(
+        path.trim(),
+        normalizeOverrides(idOverrideState?.overrides || {}),
+        normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+        normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
+        selectedTrackers,
+        [],
+      );
       return true;
     } catch (err) {
       setPlaylistPreparationError(String(err));
@@ -2244,6 +2295,7 @@ export default function App() {
   const runFetch = async (
     overrides: ExternalIDOverrides,
     nameOverrides: ReleaseNameOverrides,
+    metadataOverrides: MetadataOverrides,
     hideExternalIDInputUIOnSuccess = false,
     options: { targetPath?: string; targetMode?: SourcePathMode; switchToInput?: boolean } = {},
   ) => {
@@ -2283,6 +2335,7 @@ export default function App() {
         sourceLookupURL.trim(),
         normalizeOverrides(overrides),
         normalizeReleaseOverrides(nameOverrides),
+        normalizeMetadataOverrides(metadataOverrides),
         selectedTrackers,
       );
       applyPreviewResult(result, { switchToInput: options.switchToInput });
@@ -2301,7 +2354,12 @@ export default function App() {
   };
 
   const handleFetch = async () => {
-    await runFetch({}, {}, false);
+    await runFetch(
+      idOverrideState?.overrides || {},
+      releaseOverrideState?.overrides || {},
+      metadataOverrideState?.overrides || {},
+      false,
+    );
   };
 
   const handleSourcePathDrop = async (paths: string[]) => {
@@ -2319,7 +2377,7 @@ export default function App() {
     if (!selection || selection.waitsForPlaylistSelection) {
       return;
     }
-    await runFetch({}, {}, false, {
+    await runFetch({}, {}, {}, false, {
       targetPath: selection.path,
       targetMode: selection.mode,
     });
@@ -2352,17 +2410,28 @@ export default function App() {
     setIdEdits(buildIDEditState(emptyPreview.ExternalIDs));
     setReleaseEdits(buildReleaseEditState({}));
     setReleaseTouched(buildReleaseTouchedState({}));
+    setMetadataEdits(buildMetadataEditState({}));
+    setMetadataTouched(buildMetadataTouchedState({}));
   };
 
   const handleRefresh = async () => {
     if (
-      (!idOverrideState?.dirty && !releaseOverrideState?.dirty && !sourceLookupURL.trim()) ||
+      (!idOverrideState?.dirty &&
+        !releaseOverrideState?.dirty &&
+        !metadataOverrideState?.dirty &&
+        !sourceLookupURL.trim()) ||
       idOverrideState?.invalid ||
-      releaseOverrideState?.invalid
+      releaseOverrideState?.invalid ||
+      metadataOverrideState?.invalid
     ) {
       return;
     }
-    await runFetch(idOverrideState?.overrides || {}, releaseOverrideState?.overrides || {}, true);
+    await runFetch(
+      idOverrideState?.overrides || {},
+      releaseOverrideState?.overrides || {},
+      metadataOverrideState?.overrides || {},
+      true,
+    );
   };
 
   const handleResetMetadata = async () => {
@@ -2397,7 +2466,14 @@ export default function App() {
     setLoading(true);
     setMetadataResetting(true);
     try {
-      const result = await resetter(targetPath, sourceLookupURL.trim(), {}, {}, selectedTrackers);
+      const result = await resetter(
+        targetPath,
+        sourceLookupURL.trim(),
+        {},
+        {},
+        {},
+        selectedTrackers,
+      );
       applyPreviewResult(result);
       setShowExternalIDInputUI(true);
     } catch (err) {
@@ -2494,6 +2570,7 @@ export default function App() {
           path.trim(),
           normalizeOverrides(overrides),
           normalizeReleaseOverrides(nameOverrides),
+          normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
           selectedTrackers,
           ignoredDupeTrackers,
         );
@@ -2534,6 +2611,7 @@ export default function App() {
       selectedUploadImageTrackers,
       ignoredDupeTrackers,
       refreshUploadedImages,
+      metadataOverrideState,
     ],
   );
 
@@ -2595,6 +2673,7 @@ export default function App() {
         currentGroup.Trackers || [],
         normalizeOverrides(overrides),
         normalizeReleaseOverrides(nameOverrides),
+        normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
       );
       setBuilderPreview((prev) => upsertBuilderGroup(prev, updatedGroup));
       setBuilderRawByGroup((prev) => ({ ...prev, [groupKey]: updatedGroup.RawDescription || "" }));
@@ -2660,6 +2739,7 @@ export default function App() {
         currentGroup.Trackers || [],
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+        normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
       );
       const nextPreview = upsertBuilderGroup(builderPreview, updatedGroup);
       const shouldRefreshDryRun =
@@ -2698,10 +2778,12 @@ export default function App() {
     if (!runner) {
       throw new Error("Screenshot capture is unavailable in this build.");
     }
+    const screenshotOverrides = getLoadedScreenshotOverrides();
     return runner(
       path.trim(),
-      normalizeOverrides(idOverrideState?.overrides || {}),
-      normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+      screenshotOverrides.external,
+      screenshotOverrides.release,
+      screenshotOverrides.metadata,
       selections,
       purpose,
     );
@@ -2724,6 +2806,7 @@ export default function App() {
       sourceLookupURL.trim(),
       normalizeOverrides(idOverrideState?.overrides || {}),
       normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+      normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
       selectedTrackers,
     );
   };
@@ -2778,10 +2861,12 @@ export default function App() {
     setLivePreviewLoading(true);
     const timestamp = clampPreviewSeconds(timestampSeconds);
     try {
+      const screenshotOverrides = getLoadedScreenshotOverrides();
       const dataUri = await previewer(
         path.trim(),
-        normalizeOverrides(idOverrideState?.overrides || {}),
-        normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+        screenshotOverrides.external,
+        screenshotOverrides.release,
+        screenshotOverrides.metadata,
         timestamp,
       );
       if (livePreviewRequestId.current !== requestId) {
@@ -3059,6 +3144,7 @@ export default function App() {
         path.trim(),
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+        normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
         selectedTrackers,
       );
     } catch (err) {
@@ -3188,6 +3274,7 @@ export default function App() {
       path: normalizedPath,
       external: normalizeOverrides(idOverrideState?.overrides || {}),
       release: normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+      metadata: normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
     });
     if (builderAutoRequestKey === requestKey) return;
     setBuilderAutoRequestKey(requestKey);
@@ -3201,6 +3288,7 @@ export default function App() {
     path,
     idOverrideState,
     releaseOverrideState,
+    metadataOverrideState,
     builderAutoRequestKey,
     runDescriptionBuilder,
   ]);
@@ -3240,13 +3328,36 @@ export default function App() {
   useEffect(() => {
     if (activeTab !== "upload_images") return;
     if (!path.trim()) return;
+    if (dupeChecked && !screenshots.screenshotPlan) return;
+    // Candidate previews are loaded in multiple awaits; keep only the latest
+    // request for the current source path eligible to update upload state.
+    const requestId = uploadCandidatesRequestIdRef.current + 1;
+    uploadCandidatesRequestIdRef.current = requestId;
+    let canceled = false;
+    const isCurrentRequest = () =>
+      !canceled &&
+      uploadCandidatesRequestIdRef.current === requestId &&
+      activePathRef.current === path.trim();
+
     const loadUploadCandidates = async () => {
       try {
+        const sourcePath = path.trim();
+        const screenshotOverrides: ScreenshotOverrideSnapshot = screenshots.screenshotPlan
+          ? getLoadedScreenshotOverrides()
+          : {
+              external: normalizeOverrides(idOverrideState?.overrides || {}),
+              release: normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+              metadata: normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
+            };
         const candidates = await globalThis.go?.guiapp?.App?.ListUploadCandidates(
-          path.trim(),
-          normalizeOverrides(idOverrideState?.overrides || {}),
-          normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+          sourcePath,
+          screenshotOverrides.external,
+          screenshotOverrides.release,
+          screenshotOverrides.metadata,
         );
+        if (!isCurrentRequest()) {
+          return;
+        }
         if (!candidates || candidates.length === 0) {
           setExistingImages([]);
           await refreshUploadedImages();
@@ -3261,6 +3372,9 @@ export default function App() {
             }
           }),
         );
+        if (!isCurrentRequest()) {
+          return;
+        }
         setExistingImages(
           previews.filter((entry): entry is ScreenshotPreviewImage => Boolean(entry)),
         );
@@ -3270,11 +3384,21 @@ export default function App() {
       }
     };
     loadUploadCandidates();
+    return () => {
+      canceled = true;
+      if (uploadCandidatesRequestIdRef.current === requestId) {
+        uploadCandidatesRequestIdRef.current += 1;
+      }
+    };
   }, [
     activeTab,
     path,
+    dupeChecked,
+    screenshots.screenshotPlan,
     idOverrideState,
     releaseOverrideState,
+    metadataOverrideState,
+    getLoadedScreenshotOverrides,
     setExistingImages,
     readScreenshotImage,
     refreshUploadedImages,
@@ -3446,6 +3570,11 @@ export default function App() {
     }
   }, []);
 
+  const clearTrackerUploadJob = useCallback(() => {
+    setTrackerUploadJobID("");
+    setTrackerUploadSnapshot(null);
+  }, []);
+
   const handleStartTrackerUpload = useCallback(async () => {
     setTrackerUploadError("");
     const starter = globalThis.go?.guiapp?.App?.StartTrackerUpload;
@@ -3496,13 +3625,14 @@ export default function App() {
       return;
     }
     setTrackerUploadRunning(true);
-    setTrackerUploadSnapshot(null);
+    clearTrackerUploadJob();
     let jobID = "";
     try {
       jobID = await starter(
         path.trim(),
         normalizeOverrides(idOverrideState?.overrides || {}),
         normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+        normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
         selectedTrackers,
         ignoredDupeTrackers,
         cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
@@ -3513,6 +3643,7 @@ export default function App() {
       );
     } catch (err) {
       setTrackerUploadRunning(false);
+      clearTrackerUploadJob();
       setTrackerUploadError(String(err));
       return;
     }
@@ -3529,6 +3660,7 @@ export default function App() {
     path,
     idOverrideState,
     releaseOverrideState,
+    metadataOverrideState,
     getSelectedUploadTrackers,
     ignoredDupeTrackers,
     trackerDryRunPreview,
@@ -3538,6 +3670,7 @@ export default function App() {
     uploadSkipClientInjection,
     runLogLevel,
     applyTrackerUploadSnapshot,
+    clearTrackerUploadJob,
   ]);
 
   const runTrackerDryRun = useCallback(
@@ -3598,6 +3731,7 @@ export default function App() {
           path.trim(),
           normalizeOverrides(idOverrideState?.overrides || {}),
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+          normalizeMetadataOverrides(metadataOverrideState?.overrides || {}),
           selectedTrackers,
           ignoredDupeTrackers,
           cloneQuestionnaireAnswers(trackerQuestionnaireAnswers),
@@ -3638,6 +3772,7 @@ export default function App() {
       path,
       idOverrideState,
       releaseOverrideState,
+      metadataOverrideState,
       getSelectedUploadTrackers,
       ignoredDupeTrackers,
       trackerQuestionnaireAnswers,
@@ -3780,6 +3915,10 @@ export default function App() {
 
   const markReleaseTouched = (key: keyof ReleaseNameTouchedState) => {
     setReleaseTouched((prev) => ({ ...prev, [key]: true }));
+  };
+
+  const markMetadataTouched = (key: keyof MetadataOverrideTouchedState) => {
+    setMetadataTouched((prev) => ({ ...prev, [key]: true }));
   };
 
   const applyScreenshotSettings = async () => {
@@ -4269,6 +4408,7 @@ export default function App() {
               path={path}
               overrides={idOverrideState?.overrides || {}}
               nameOverrides={releaseOverrideState?.overrides || {}}
+              metadataOverrides={metadataOverrideState?.overrides || {}}
               browseAvailable={browserNativeBrowseAvailable}
               onImportComplete={() => {
                 setActiveTab("upload_images");
@@ -4411,6 +4551,9 @@ export default function App() {
               releaseEdits={releaseEdits}
               setReleaseEdits={setReleaseEdits}
               markReleaseTouched={markReleaseTouched}
+              metadataEdits={metadataEdits}
+              setMetadataEdits={setMetadataEdits}
+              markMetadataTouched={markMetadataTouched}
               idOverrideState={idOverrideState}
               releaseOverrideState={releaseOverrideState}
               showExternalIDInputUI={showExternalIDInputUI}

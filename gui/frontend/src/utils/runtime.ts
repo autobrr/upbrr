@@ -321,6 +321,7 @@ export const initializeBrowserBridge = (
           sourceLookupURL: string,
           overrides: unknown,
           nameOverrides: unknown,
+          metadataOverrides: unknown,
           trackers: string[],
         ) =>
           call("FetchMetadata", {
@@ -328,6 +329,7 @@ export const initializeBrowserBridge = (
             SourceLookupURL: sourceLookupURL,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
             Trackers: trackers,
           }),
         ResetMetadata: (
@@ -335,6 +337,7 @@ export const initializeBrowserBridge = (
           sourceLookupURL: string,
           overrides: unknown,
           nameOverrides: unknown,
+          metadataOverrides: unknown,
           trackers: string[],
         ) =>
           call("ResetMetadata", {
@@ -342,6 +345,7 @@ export const initializeBrowserBridge = (
             SourceLookupURL: sourceLookupURL,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
             Trackers: trackers,
           }),
         SelectBlurayCandidate: (path: string, releaseID: string) =>
@@ -353,6 +357,7 @@ export const initializeBrowserBridge = (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
+          metadataOverrides: unknown,
           trackers: string[],
           ignoreDupesFor: string[],
         ) =>
@@ -360,6 +365,7 @@ export const initializeBrowserBridge = (
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
             Trackers: trackers,
             IgnoreDupesFor: ignoreDupesFor,
           }),
@@ -367,6 +373,7 @@ export const initializeBrowserBridge = (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
+          metadataOverrides: unknown,
           trackers: string[],
           ignoreDupesFor: string[],
         ) =>
@@ -374,6 +381,7 @@ export const initializeBrowserBridge = (
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
             Trackers: trackers,
             IgnoreDupesFor: ignoreDupesFor,
           }),
@@ -381,6 +389,7 @@ export const initializeBrowserBridge = (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
+          metadataOverrides: unknown,
           trackers: string[],
           ignoreDupesFor: string[],
           questionnaireAnswers: Record<string, Record<string, string>>,
@@ -393,6 +402,7 @@ export const initializeBrowserBridge = (
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
             Trackers: trackers,
             IgnoreDupesFor: ignoreDupesFor,
             QuestionnaireAnswers: questionnaireAnswers,
@@ -405,38 +415,49 @@ export const initializeBrowserBridge = (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
+          metadataOverrides: unknown,
           trackers: string[],
         ) =>
           call("CheckDupes", {
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
             Trackers: trackers,
           }),
         StartDupeCheck: (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
+          metadataOverrides: unknown,
           trackers: string[],
         ) =>
           call("StartDupeCheck", {
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
             Trackers: trackers,
           }),
         CancelDupeCheck: (jobID: string) => call("CancelDupeCheck", { JobID: jobID }),
         GetDupeCheckSnapshot: (jobID: string) => call("GetDupeCheckSnapshot", { JobID: jobID }),
-        FetchScreenshotPlan: (path: string, overrides: unknown, nameOverrides: unknown) =>
+        FetchScreenshotPlan: (
+          path: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          metadataOverrides: unknown,
+        ) =>
           call("FetchScreenshotPlan", {
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
           }),
         GenerateScreenshots: (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
+          metadataOverrides: unknown,
           selections: unknown,
           purpose: string,
         ) =>
@@ -444,6 +465,7 @@ export const initializeBrowserBridge = (
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
             Selections: selections,
             Purpose: purpose,
           }),
@@ -451,67 +473,88 @@ export const initializeBrowserBridge = (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
+          metadataOverrides: unknown,
           timestampSeconds: number,
         ) =>
           call("PreviewScreenshotFrame", {
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
             TimestampSeconds: timestampSeconds,
           }),
         DeleteScreenshot: (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
+          metadataOverrides: unknown,
           imagePath: string,
         ) =>
           call("DeleteScreenshot", {
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
             ImagePath: imagePath,
           }),
         SaveFinalScreenshotSelections: (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
+          metadataOverrides: unknown,
           images: unknown,
         ) =>
           call("SaveFinalScreenshotSelections", {
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
             Images: images,
           }),
         ImportMenuImages: (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
+          metadataOverrides: unknown,
           paths: string[],
         ) =>
           call("ImportMenuImages", {
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
             Paths: paths,
           }),
         ReadScreenshotImage: (path: string) => call("ReadScreenshotImage", { Path: path }),
-        ListUploadCandidates: (path: string, overrides: unknown, nameOverrides: unknown) =>
+        ListUploadCandidates: (
+          path: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          metadataOverrides: unknown,
+        ) =>
           call("ListUploadCandidates", {
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
           }),
-        ListUploadedImages: (path: string, overrides: unknown, nameOverrides: unknown) =>
+        ListUploadedImages: (
+          path: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          metadataOverrides: unknown,
+        ) =>
           call("ListUploadedImages", {
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
           }),
         UploadImages: (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
+          metadataOverrides: unknown,
           trackers: string[],
           host: string,
           images: unknown,
@@ -520,6 +563,7 @@ export const initializeBrowserBridge = (
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
             Trackers: trackers,
             Host: host,
             Images: images,
@@ -530,12 +574,14 @@ export const initializeBrowserBridge = (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
+          metadataOverrides: unknown,
           url: string,
         ) =>
           call("DeleteTrackerImageURL", {
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
             URL: url,
           }),
         RenderDescription: (raw: string) => call("RenderDescription", { Raw: raw }),
@@ -546,6 +592,7 @@ export const initializeBrowserBridge = (
           trackers: string[],
           overrides: unknown,
           nameOverrides: unknown,
+          metadataOverrides: unknown,
         ) =>
           call("SaveDescriptionOverride", {
             Path: path,
@@ -554,6 +601,7 @@ export const initializeBrowserBridge = (
             Trackers: trackers,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
           }),
         DiscoverPlaylists: (path: string) => call("DiscoverPlaylists", { Path: path }),
         SavePlaylistSelection: (path: string, playlists: string[], useAll: boolean) =>
@@ -685,6 +733,7 @@ export const initializeBrowserBridge = (
           path: string,
           overrides: unknown,
           nameOverrides: unknown,
+          metadataOverrides: unknown,
           trackers: string[],
           ignoreDupesFor: string[],
           questionnaireAnswers: Record<string, Record<string, string>>,
@@ -697,6 +746,7 @@ export const initializeBrowserBridge = (
             Path: path,
             Overrides: overrides,
             NameOverrides: nameOverrides,
+            MetadataOverrides: metadataOverrides,
             Trackers: trackers,
             IgnoreDupesFor: ignoreDupesFor,
             QuestionnaireAnswers: questionnaireAnswers,

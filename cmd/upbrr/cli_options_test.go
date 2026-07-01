@@ -706,6 +706,34 @@ func TestBuildCLIRequestTMDBCompatibilityParsing(t *testing.T) {
 	}
 }
 
+func TestBuildCLIRequestExplicitCategoryBeatsTMDBInference(t *testing.T) {
+	opts, visited, paths, err := parseCLIOptions([]string{"--category", "tv", "--tmdb", "movie/123", "movie.mkv"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	req, err := buildCLIRequest(opts, visited, paths, 4)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if req.ReleaseNameOverrides.Category == nil || *req.ReleaseNameOverrides.Category != "tv" {
+		t.Fatalf("expected explicit category to win, got %#v", req.ReleaseNameOverrides.Category)
+	}
+}
+
+func TestBuildCLIRequestUseSeasonEpisodeOverride(t *testing.T) {
+	opts, visited, paths, err := parseCLIOptions([]string{"--season-episode", "show.mkv"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	req, err := buildCLIRequest(opts, visited, paths, 4)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if req.ReleaseNameOverrides.UseSeasonEpisode == nil || !*req.ReleaseNameOverrides.UseSeasonEpisode {
+		t.Fatalf("expected use season episode override, got %#v", req.ReleaseNameOverrides.UseSeasonEpisode)
+	}
+}
+
 func TestParseCLIOptionsRejectsInvalidTMDBCompatibilityValue(t *testing.T) {
 	if _, _, _, err := parseCLIOptions([]string{"--tmdb", "movie/not-a-number", "movie.mkv"}); err == nil {
 		t.Fatal("expected invalid tmdb compatibility input to fail")

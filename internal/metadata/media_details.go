@@ -257,6 +257,7 @@ func applyMetadataOverrides(meta *api.PreparedMetadata) {
 	}
 
 	overrides := meta.MetadataOverrides
+	clearMetadataOverrideFields(meta, overrides.Clear)
 	if overrides.Distributor != nil {
 		meta.Distributor = normalizeDistributor(*overrides.Distributor)
 	}
@@ -288,9 +289,6 @@ func applyOriginalLanguageOverride(meta *api.PreparedMetadata, language *string)
 	}
 
 	trimmed := strings.TrimSpace(*language)
-	if trimmed == "" {
-		return
-	}
 	if meta.ExternalMetadata.TMDB != nil {
 		meta.ExternalMetadata.TMDB.OriginalLanguage = trimmed
 	}
@@ -302,6 +300,33 @@ func applyOriginalLanguageOverride(meta *api.PreparedMetadata, language *string)
 	}
 	if meta.ExternalMetadata.TVmaze != nil {
 		meta.ExternalMetadata.TVmaze.Language = trimmed
+	}
+}
+
+// clearMetadataOverrideFields resets prepared metadata fields that the caller
+// explicitly cleared before media-detail overrides are applied.
+func clearMetadataOverrideFields(meta *api.PreparedMetadata, fields []string) {
+	if meta == nil {
+		return
+	}
+	for _, field := range fields {
+		switch strings.ToLower(strings.TrimSpace(field)) {
+		case "distributor":
+			meta.Distributor = ""
+		case "originallanguage":
+			empty := ""
+			applyOriginalLanguageOverride(meta, &empty)
+		case "personalrelease":
+			meta.PersonalRelease = false
+		case "commentary":
+			meta.HasCommentary = false
+		case "webdv":
+			meta.WebDV = false
+		case "streamoptimized":
+			meta.StreamOptimized = 0
+		case "anime":
+			meta.Anime = false
+		}
 	}
 }
 
