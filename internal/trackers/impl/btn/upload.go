@@ -216,6 +216,12 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if err := validateBTNRequest(req); err != nil {
 		return api.UploadSummary{}, err
 	}
+	if message, err := validateBTNTVPayloadMetadata(req.Meta); err != nil {
+		if req.Logger != nil {
+			req.Logger.Warnf("trackers: BTN %s", message)
+		}
+		return api.UploadSummary{}, err
+	}
 
 	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
 	if err != nil {
@@ -314,6 +320,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}, nil
 }
 
+// buildUploadDryRun returns a BTN preview entry with the exact payload that
+// would be submitted locally. TV payloads that would serialize missing
+// canonical season or episode metadata as zero are returned as blocked so the
+// operator sees the remediation before upload.
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
 	if err := validateBTNRequest(req); err != nil {
 		return api.TrackerDryRunEntry{}, err
@@ -344,10 +354,17 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		return api.TrackerDryRunEntry{}, err
 	}
 
+	message := "dry-run payload generated"
+	status := "ready"
+	if metadataMessage, err := validateBTNTVPayloadMetadata(req.Meta); err != nil {
+		message += "; " + metadataMessage
+		status = "blocked"
+	}
+
 	return api.TrackerDryRunEntry{
 		Tracker:          "BTN",
-		Status:           "ready",
-		Message:          "dry-run payload generated",
+		Status:           status,
+		Message:          message,
 		ReleaseName:      resolveUploadName(req.Meta),
 		DescriptionGroup: "btn",
 		Description:      payload["release_desc"],
@@ -771,26 +788,63 @@ func buildAlbumDesc(meta api.PreparedMetadata, fields map[string]string) string 
 	}
 	overview := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.EpisodeOverview), strings.TrimSpace(fields["album_desc"]))
 	aired := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.TVDBAiredDate), strings.TrimSpace(meta.DailyEpisodeDate), "TBA")
-	season := meta.SeasonInt
-	episode := meta.EpisodeInt
-	if season <= 0 {
-		season = meta.Release.Season
-	}
-	if episode <= 0 {
-		episode = meta.Release.Episode
-	}
+	season, episode := meta.CanonicalSeasonEpisode()
 	episodeTitle := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.EpisodeTitle), "TBA")
 	return strings.TrimSpace(fmt.Sprintf("Episode Name: %s\nEpisode Title: %s\nSeason: %d\nEpisode: %d\nAired: %s\n\nEpisode overview: %s", episodeTitle, episodeTitle, season, episode, aired, overview))
+}
+
+// validateBTNTVPayloadMetadata returns the shared BTN TV metadata block reason
+// used by live upload and dry-run when canonical season or episode data is
+// missing.
+func validateBTNTVPayloadMetadata(meta api.PreparedMetadata) (string, error) {
+	message := btnTVPayloadMetadataMessage(meta)
+	if message == "" {
+		return "", nil
+	}
+	return message, errors.New("trackers: BTN " + message)
 }
 
 func resolveUploadType(meta api.PreparedMetadata) string {
 	if meta.TVPack {
 		return "Season"
 	}
-	if meta.EpisodeInt > 0 || meta.Release.Episode > 0 {
+	if meta.EpisodeInt > 0 {
 		return "Episode"
 	}
 	return "Season"
+}
+
+// btnTVPayloadMetadataMessage explains when BTN will send zero-valued TV season
+// or episode fields because canonical metadata is absent. Parsed release values
+// are reported only as ignored signals, and the message includes the operator
+// action required by blocked dry-run entries.
+func btnTVPayloadMetadataMessage(meta api.PreparedMetadata) string {
+	if !strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") {
+		return ""
+	}
+	missing := make([]string, 0, 2)
+	ignored := make([]string, 0, 2)
+	if meta.SeasonInt <= 0 {
+		missing = append(missing, "season")
+		if meta.Release.Season > 0 {
+			ignored = append(ignored, "season")
+		}
+	}
+	if meta.EpisodeInt <= 0 && !meta.TVPack {
+		missing = append(missing, "episode")
+		if meta.Release.Episode > 0 {
+			ignored = append(ignored, "episode")
+		}
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	message := "canonical TV " + strings.Join(missing, "/") + " missing; tracker payload uses 0"
+	if len(ignored) > 0 {
+		message += " and ignores parsed " + strings.Join(ignored, "/") + " fallback"
+	}
+	message += "; refresh metadata or correct canonical season/episode before upload"
+	return message
 }
 
 func resolveOrigin(releaseName string) string {

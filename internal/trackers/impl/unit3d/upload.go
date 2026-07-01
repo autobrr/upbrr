@@ -111,6 +111,10 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 		logger.Errorf("trackers: %s failed to build upload data: %v", trackerName, err)
 		return api.UploadSummary{}, err
 	}
+	if message, err := validateUnit3DTVPayloadMetadata(trackerName, req.Meta, data); err != nil {
+		logger.Warnf("trackers: %s %s", trackerName, message)
+		return api.UploadSummary{}, err
+	}
 	category := resolveUnit3DCategory(req.Meta)
 	_, hasTVDB := data["tvdb"]
 	_, hasSeason := data["season_number"]
@@ -342,6 +346,10 @@ func isNumericID(value string) bool {
 	return true
 }
 
+// buildUploadDryRunUnit3D returns a Unit3D preview entry with the payload,
+// files, and endpoint that would be used locally. TV payloads with zero-valued
+// canonical season or episode metadata are returned as blocked because the
+// payload no longer satisfies upload prerequisites.
 func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
 	select {
 	case <-ctx.Done():
@@ -429,10 +437,17 @@ func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (a
 		files = append(files, api.TrackerDryRunFile{Field: "nfo", Path: nfoPath, Present: true})
 	}
 
+	message := "dry-run payload generated"
+	status := "ready"
+	if metadataMessage, err := validateUnit3DTVPayloadMetadata(trackerName, req.Meta, data); err != nil {
+		message += "; " + metadataMessage
+		status = "blocked"
+	}
+
 	return api.TrackerDryRunEntry{
 		Tracker:          trackerName,
-		Status:           "ready",
-		Message:          "dry-run payload generated",
+		Status:           status,
+		Message:          message,
 		ReleaseName:      name,
 		DescriptionGroup: "unit3d",
 		Description:      description,
@@ -769,7 +784,7 @@ func resolveUnit3DCategory(meta api.PreparedMetadata) string {
 	if category := canonicalUnit3DCategory(meta.Release.Category); category != "" {
 		return category
 	}
-	if meta.SeasonInt > 0 || meta.EpisodeInt > 0 || meta.Release.Season > 0 || meta.Release.Episode > 0 {
+	if meta.HasTVSeasonEpisodeSignal() {
 		return "TV"
 	}
 	if hasSeasonEpisode(meta.ReleaseName) {
@@ -927,7 +942,7 @@ func shouldIncludeUnit3DTVFields(meta api.PreparedMetadata, category string) boo
 	if strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "TV") {
 		return true
 	}
-	if meta.SeasonInt > 0 || meta.EpisodeInt > 0 || meta.Release.Season > 0 || meta.Release.Episode > 0 {
+	if meta.HasTVSeasonEpisodeSignal() {
 		return true
 	}
 
@@ -975,36 +990,90 @@ func detectResolution(value string) string {
 	return ""
 }
 
+// resolveSeason returns the Unit3D payload season value from SeasonInt only.
 func resolveSeason(meta api.PreparedMetadata) string {
-	if meta.ReleaseNameOverrides.Season != nil {
-		if override := parseSeasonEpisodeToken(*meta.ReleaseNameOverrides.Season, "S"); override > 0 {
-			return formatOptionalInt(override)
-		}
-	}
-	if meta.SeasonInt > 0 {
-		return formatOptionalInt(meta.SeasonInt)
-	}
-	season, _ := parseSeasonEpisode(meta.ReleaseName)
-	if season == 0 {
+	if meta.SeasonInt <= 0 {
 		return "0"
 	}
-	return formatOptionalInt(season)
+	return formatOptionalInt(meta.SeasonInt)
 }
 
+// resolveEpisode returns the Unit3D payload episode value from EpisodeInt only.
 func resolveEpisode(meta api.PreparedMetadata) string {
-	if meta.ReleaseNameOverrides.Episode != nil {
-		if override := parseSeasonEpisodeToken(*meta.ReleaseNameOverrides.Episode, "E"); override > 0 {
-			return formatOptionalInt(override)
-		}
-	}
-	if meta.EpisodeInt > 0 {
-		return formatOptionalInt(meta.EpisodeInt)
-	}
-	_, episode := parseSeasonEpisode(meta.ReleaseName)
-	if episode == 0 {
+	if meta.EpisodeInt <= 0 {
 		return "0"
 	}
-	return formatOptionalInt(episode)
+	return formatOptionalInt(meta.EpisodeInt)
+}
+
+// validateUnit3DTVPayloadMetadata returns the shared Unit3D TV metadata block
+// reason used by live upload and dry-run when canonical season or episode data
+// is missing from payload fields that would otherwise be submitted as zero.
+func validateUnit3DTVPayloadMetadata(trackerName string, meta api.PreparedMetadata, data map[string]string) (string, error) {
+	message := unit3DTVPayloadMetadataMessage(meta, data)
+	if message == "" {
+		return "", nil
+	}
+	return message, fmt.Errorf("trackers: %s %s", trackerName, message)
+}
+
+// unit3DTVPayloadMetadataMessage explains when Unit3D TV fields are present but
+// canonical season or episode metadata is missing. Parsed release and manual
+// naming values are reported only as ignored signals, and the message includes
+// the operator action required by blocked dry-run entries.
+func unit3DTVPayloadMetadataMessage(meta api.PreparedMetadata, data map[string]string) string {
+	if _, hasSeason := data["season_number"]; !hasSeason {
+		return ""
+	}
+	if _, hasEpisode := data["episode_number"]; !hasEpisode {
+		return ""
+	}
+
+	missing := make([]string, 0, 2)
+	ignored := make([]string, 0, 2)
+	if meta.SeasonInt <= 0 {
+		missing = append(missing, "season")
+		if hasParsedSeasonSignal(meta) {
+			ignored = append(ignored, "season")
+		}
+	}
+	if meta.EpisodeInt <= 0 && !meta.TVPack {
+		missing = append(missing, "episode")
+		if hasParsedEpisodeSignal(meta) {
+			ignored = append(ignored, "episode")
+		}
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	message := "canonical TV " + strings.Join(missing, "/") + " missing; tracker payload uses 0"
+	if len(ignored) > 0 {
+		message += " and ignores parsed " + strings.Join(ignored, "/") + " fallback"
+	}
+	message += "; refresh metadata or correct canonical season/episode before upload"
+	return message
+}
+
+func hasParsedSeasonSignal(meta api.PreparedMetadata) bool {
+	if meta.Release.Season > 0 {
+		return true
+	}
+	if meta.ReleaseNameOverrides.Season != nil && parseSeasonEpisodeToken(*meta.ReleaseNameOverrides.Season, "S") > 0 {
+		return true
+	}
+	season, _ := parseSeasonEpisode(meta.ReleaseName)
+	return season > 0
+}
+
+func hasParsedEpisodeSignal(meta api.PreparedMetadata) bool {
+	if meta.Release.Episode > 0 {
+		return true
+	}
+	if meta.ReleaseNameOverrides.Episode != nil && parseSeasonEpisodeToken(*meta.ReleaseNameOverrides.Episode, "E") > 0 {
+		return true
+	}
+	_, episode := parseSeasonEpisode(meta.ReleaseName)
+	return episode > 0
 }
 
 var seasonEpisodePattern = regexp.MustCompile(`(?i)S(\d{1,2})(?:E(\d{1,2}))?`)

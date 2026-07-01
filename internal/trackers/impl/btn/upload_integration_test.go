@@ -60,6 +60,37 @@ func (r *httpHandlerErrorRecorder) Check() {
 	}
 }
 
+// captureBTNLogger records warning messages from upload paths that may return
+// before reaching the HTTP test server.
+type captureBTNLogger struct {
+	mu       sync.Mutex
+	warnings []string
+}
+
+func (l *captureBTNLogger) Tracef(string, ...any) {}
+func (l *captureBTNLogger) Debugf(string, ...any) {}
+func (l *captureBTNLogger) Infof(string, ...any)  {}
+
+func (l *captureBTNLogger) Warnf(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.warnings = append(l.warnings, fmt.Sprintf(format, args...))
+}
+
+func (l *captureBTNLogger) Errorf(string, ...any) {}
+
+// containsWarning reports whether any captured warning contains value.
+func (l *captureBTNLogger) containsWarning(value string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, warning := range l.warnings {
+		if strings.Contains(warning, value) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestBTNUploadEndToEndSuccess(t *testing.T) {
 	t.Parallel()
 
@@ -425,6 +456,66 @@ func TestBTNDryRunRequiresUploadAuthPrerequisites(t *testing.T) {
 	}
 	if entry.Status != "ready" {
 		t.Fatalf("expected stored cookies to satisfy dry-run upload auth prerequisites, got %#v", entry)
+	}
+}
+
+func TestBTNDryRunBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
+	t.Parallel()
+
+	req := newBTNDryRunTestRequest(t, newBTNAuthDB(t))
+	req.TrackerConfig.Username = "user"
+	req.TrackerConfig.Password = "pass"
+	req.Meta.SeasonInt = 0
+	req.Meta.EpisodeInt = 0
+	req.Meta.Release.Season = 1
+	req.Meta.Release.Episode = 1
+
+	entry, err := buildUploadDryRun(context.Background(), req)
+	if err != nil {
+		t.Fatalf("BuildUploadDryRun: %v", err)
+	}
+	if entry.Status != "blocked" {
+		t.Fatalf("expected canonical TV metadata gap to block dry-run, got %#v", entry)
+	}
+	if !strings.Contains(entry.Message, "canonical TV season/episode missing; tracker payload uses 0 and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload") {
+		t.Fatalf("expected canonical metadata message, got %q", entry.Message)
+	}
+}
+
+func TestBTNUploadBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
+	t.Parallel()
+
+	var requestCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCalls.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	logger := &captureBTNLogger{}
+	req := newBTNDryRunTestRequest(t, newBTNAuthDB(t))
+	req.TrackerConfig.URL = server.URL
+	req.TrackerConfig.Username = "user"
+	req.TrackerConfig.Password = "pass"
+	req.Logger = logger
+	req.Meta.SeasonInt = 0
+	req.Meta.EpisodeInt = 0
+	req.Meta.Release.Season = 1
+	req.Meta.Release.Episode = 1
+
+	_, err := upload(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected canonical TV metadata gap to block upload")
+	}
+	want := "canonical TV season/episode missing; tracker payload uses 0 and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("expected canonical metadata error, got %v", err)
+	}
+	if !logger.containsWarning(want) {
+		t.Fatal("expected canonical metadata warning")
+	}
+	if requestCalls.Load() != 0 {
+		t.Fatalf("expected upload to fail before remote calls, got %d calls", requestCalls.Load())
 	}
 }
 

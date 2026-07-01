@@ -5,6 +5,7 @@ package btn
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -185,5 +186,48 @@ func TestValidateBTNAPIDownloadURLAllowsOnlySameOriginPrivateFallback(t *testing
 	}
 	if err := validateBTNAPIDownloadURL(ctx, "ftp://127.0.0.1/rpc", "ftp://127.0.0.1/mock-download"); err == nil {
 		t.Fatalf("expected unsupported same-origin scheme to be rejected")
+	}
+}
+
+func TestBTNUploadPayloadUsesCanonicalSeasonEpisodeOnly(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "TV"},
+		Release:     api.ReleaseInfo{Season: 4, Episode: 9},
+	}
+
+	if got := resolveUploadType(meta); got != "Season" {
+		t.Fatalf("expected upload type Season without canonical episode, got %q", got)
+	}
+	desc := buildAlbumDesc(meta, map[string]string{"album_desc": "fallback overview"})
+	for _, value := range []string{"Season: 0", "Episode: 0"} {
+		if !strings.Contains(desc, value) {
+			t.Fatalf("expected album description to contain %q, got %q", value, desc)
+		}
+	}
+	if strings.Contains(desc, "Season: 4") || strings.Contains(desc, "Episode: 9") {
+		t.Fatalf("album description used parsed fallback values: %q", desc)
+	}
+	if got := btnTVPayloadMetadataMessage(meta); got != "canonical TV season/episode missing; tracker payload uses 0 and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload" {
+		t.Fatalf("unexpected metadata message %q", got)
+	}
+}
+
+func TestBTNUploadTypeUsesCanonicalEpisode(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "TV"},
+		SeasonInt:   4,
+		EpisodeInt:  9,
+		Release:     api.ReleaseInfo{Season: 1, Episode: 2},
+	}
+
+	if got := resolveUploadType(meta); got != "Episode" {
+		t.Fatalf("expected upload type Episode, got %q", got)
+	}
+	if got := btnTVPayloadMetadataMessage(meta); got != "" {
+		t.Fatalf("unexpected metadata message %q", got)
 	}
 }

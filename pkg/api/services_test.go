@@ -8,6 +8,29 @@ import (
 	"testing"
 )
 
+func TestPreparedMetadataSeasonEpisodeHelpers(t *testing.T) {
+	meta := PreparedMetadata{
+		SeasonInt: 9,
+		Release: ReleaseInfo{
+			Season:  1,
+			Episode: 2,
+		},
+	}
+
+	canonicalSeason, canonicalEpisode := meta.CanonicalSeasonEpisode()
+	if canonicalSeason != 9 || canonicalEpisode != 0 {
+		t.Fatalf("canonical season/episode = %d/%d, want 9/0", canonicalSeason, canonicalEpisode)
+	}
+
+	fallbackSeason, fallbackEpisode := meta.SeasonEpisodeWithParsedFallback()
+	if fallbackSeason != 9 || fallbackEpisode != 2 {
+		t.Fatalf("fallback season/episode = %d/%d, want 9/2", fallbackSeason, fallbackEpisode)
+	}
+	if !meta.HasTVSeasonEpisodeSignal() {
+		t.Fatalf("expected parsed release episode to provide TV signal")
+	}
+}
+
 func TestTMDBMetadataMarshalLocalizedTitlesAsObject(t *testing.T) {
 	tests := []struct {
 		name            string

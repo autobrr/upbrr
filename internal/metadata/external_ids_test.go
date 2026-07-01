@@ -1586,6 +1586,37 @@ func TestApplyTVEpisodeMetadataDailyMappingNoMatchDoesNotCoerceEpisode(t *testin
 	}
 }
 
+func TestApplyTVEpisodeMetadataDailyMappingNoMatchDoesNotPersistParsedFallback(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	tmdbClient := &stubTMDB{}
+
+	meta := api.PreparedMetadata{
+		SourcePath:       "/media/Daily.Show.2024-01-15.mkv",
+		DailyEpisodeDate: "2024-01-15",
+		Release: api.ReleaseInfo{
+			Category: "TV",
+			Season:   2024,
+			Episode:  115,
+		},
+	}
+	ids := &api.ExternalIDs{
+		TMDBID:   100,
+		Category: "TV",
+	}
+
+	updated := svc.applyTVEpisodeMetadata(context.Background(), meta, ids, nil, tmdbClient, &stubTVDB{}, &stubTVmaze{})
+	if updated.SeasonInt != 0 || updated.EpisodeInt != 0 {
+		t.Fatalf("expected parsed fallback not to persist as canonical season/episode, got %d/%d", updated.SeasonInt, updated.EpisodeInt)
+	}
+	if updated.SeasonStr != "" || updated.EpisodeStr != "" {
+		t.Fatalf("expected empty formatted season/episode, got %q/%q", updated.SeasonStr, updated.EpisodeStr)
+	}
+	fallbackSeason, fallbackEpisode := updated.SeasonEpisodeWithParsedFallback()
+	if fallbackSeason != 2024 || fallbackEpisode != 115 {
+		t.Fatalf("expected parsed fallback 2024/115 to remain available, got %d/%d", fallbackSeason, fallbackEpisode)
+	}
+}
+
 func TestApplyTVEpisodeMetadataUseSeasonEpisodePrefersTMDBDateMapping(t *testing.T) {
 	svc := NewService(&fakeRepo{})
 	tmdbClient := &stubTMDB{dailySeason: 2, dailyEpisode: 7}
