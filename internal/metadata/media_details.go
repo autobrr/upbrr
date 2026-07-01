@@ -21,6 +21,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -190,7 +191,13 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 	// name is rebuilt — so the srrdb imdb: lookup has a resolved IMDb id and full
 	// normalized metadata, and so rename/scene fields are populated before tracker
 	// rules (which read meta.Scene / meta.SceneNFOPath / meta.SceneRenamed).
-	meta = s.applySceneDetection(ctx, meta)
+	meta, err = s.applySceneDetection(ctx, meta)
+	if err != nil {
+		return api.PreparedMetadata{}, err
+	}
+	// Scene detection can supply the service (from the NFO), which WEB release
+	// names embed, so rebuild once more to fold in scene-derived metadata.
+	RebuildReleaseName(&meta, s.logger)
 
 	meta, err = s.applyTrackerRules(ctx, meta)
 	if err != nil {
@@ -201,31 +208,34 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 }
 
 // applySceneDetection runs srrdb scene/rename detection and copies the result
-// onto meta. It is strictly best-effort: srrdb being slow or down, or any
-// non-cancellation error, never fails ApplyMediaDetails. Detection is gated by
-// config (scene_detection) via a nil detector.
-func (s *Service) applySceneDetection(ctx context.Context, meta api.PreparedMetadata) api.PreparedMetadata {
+// onto meta. It is best-effort for transient srrdb/network failures (skip scene,
+// never block the upload), but context cancellation/deadline is propagated so the
+// pipeline aborts rather than continuing into tracker rules. Detection is gated
+// by config (scene_detection) via a nil detector.
+func (s *Service) applySceneDetection(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	if s.scene == nil {
-		return meta
+		return meta, nil
 	}
 	result, err := s.scene.Detect(ctx, meta)
 	if err != nil {
 		switch {
+		case isContextError(ctx, err):
+			return meta, fmt.Errorf("metadata: scene detect: %w", err)
 		case isSceneNFOError(err):
 			if s.logger != nil {
-				s.logger.Warnf("metadata: scene nfo side effect failed: %v", err)
+				s.logger.Warnf("metadata: scene nfo side effect failed: %s", redaction.RedactValue(err.Error(), nil))
 			}
 			// The primary match may still be present alongside a recoverable NFO
 			// side-effect error; apply it when it carries data.
 			if !sceneResultHasData(result) {
-				return meta
+				return meta, nil
 			}
 		default:
-			// Context cancellation or any transient failure: skip scene, never block.
+			// Transient srrdb/network failure: skip scene, never block the upload.
 			if s.logger != nil {
-				s.logger.Debugf("metadata: scene detect skipped: %v", err)
+				s.logger.Debugf("metadata: scene detect skipped: %s", redaction.RedactValue(err.Error(), nil))
 			}
-			return meta
+			return meta, nil
 		}
 	}
 	applySceneResult(&meta, result)
@@ -246,7 +256,7 @@ func (s *Service) applySceneDetection(ctx context.Context, meta api.PreparedMeta
 			}
 		}
 	}
-	return meta
+	return meta, nil
 }
 
 // ApplyTrackerClaims refreshes claim-based tracker blocks after media details

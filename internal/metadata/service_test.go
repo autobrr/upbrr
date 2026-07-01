@@ -112,7 +112,10 @@ func TestApplySceneDetectionCopiesResultAfterRecoverableNFOFailure(t *testing.T)
 		WithLogger(logger),
 	)
 
-	meta := service.applySceneDetection(context.Background(), api.PreparedMetadata{})
+	meta, err := service.applySceneDetection(context.Background(), api.PreparedMetadata{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !meta.Scene || meta.SceneName != "Example.Release.2024.1080p-WEB" {
 		t.Fatalf("expected scene result copied, got scene=%t name=%q", meta.Scene, meta.SceneName)
 	}
@@ -131,14 +134,33 @@ func TestApplySceneDetectionBackfillsIMDbID(t *testing.T) {
 		WithSceneDetector(staticSceneDetector{result: SceneResult{IsScene: true, IMDBID: 132245}}),
 	)
 	// No externally-resolved id: the scene-discovered id backfills ExternalIDs.
-	meta := service.applySceneDetection(context.Background(), api.PreparedMetadata{})
+	meta, err := service.applySceneDetection(context.Background(), api.PreparedMetadata{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if meta.ExternalIDs.IMDBID != 132245 {
 		t.Fatalf("expected scene imdb backfilled, got %d", meta.ExternalIDs.IMDBID)
 	}
 	// An already-resolved id is not overwritten.
-	meta = service.applySceneDetection(context.Background(), api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 999}})
+	meta, err = service.applySceneDetection(context.Background(), api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 999}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if meta.ExternalIDs.IMDBID != 999 {
 		t.Fatalf("expected resolved imdb preserved, got %d", meta.ExternalIDs.IMDBID)
+	}
+}
+
+func TestApplySceneDetectionPropagatesCancellation(t *testing.T) {
+	t.Parallel()
+
+	// Context cancellation must abort the pipeline, not be swallowed as a soft
+	// srrdb failure that continues into tracker rules.
+	service := NewService(&stubRepo{},
+		WithSceneDetector(staticSceneDetector{err: context.Canceled}),
+	)
+	if _, err := service.applySceneDetection(context.Background(), api.PreparedMetadata{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation propagated, got %v", err)
 	}
 }
 
@@ -358,7 +380,10 @@ func TestApplySceneDetectionAppliesServiceFromNFO(t *testing.T) {
 		WithSceneDetector(staticSceneDetector{result: SceneResult{IsScene: true, Service: "iT", ServiceLongName: "iTunes"}}),
 	)
 
-	meta := service.applySceneDetection(context.Background(), api.PreparedMetadata{})
+	meta, err := service.applySceneDetection(context.Background(), api.PreparedMetadata{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if meta.Service != "iT" {
 		t.Fatalf("expected iT service from scene nfo, got %q", meta.Service)
 	}

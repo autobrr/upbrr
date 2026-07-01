@@ -208,9 +208,17 @@ func (d *srrdbDetector) Detect(ctx context.Context, meta api.PreparedMetadata) (
 	// Detection now runs after external-ID resolution (ApplyMediaDetails), so a
 	// resolved IMDb id is normally available. The IMDb-keyed search returns the
 	// full scene release set for the title regardless of filename, which is the
-	// robust primary path; the exact r: search is only a no-IMDb fallback.
+	// robust primary path. If it yields no confident match (e.g. truncated results
+	// or srrdb not keying the release to this id), fall through to the exact r:
+	// search, which is also the fallback when no IMDb id is known.
 	if imdbID := sceneIMDbID(meta); imdbID > 0 {
-		return d.detectViaIMDB(ctx, meta, cands, imdbID)
+		result, err := d.detectViaIMDB(ctx, meta, cands, imdbID)
+		if err != nil {
+			return result, err
+		}
+		if result.IsScene {
+			return result, nil
+		}
 	}
 	return d.detectViaR(ctx, cands)
 }
@@ -760,9 +768,12 @@ func (d *srrdbDetector) fetchIMDB(ctx context.Context, release string) (srrdbIMD
 const (
 	// srrdbIMDBPageSize is the observed per-page cap of the imdb: search.
 	srrdbIMDBPageSize = 40
-	// srrdbIMDBMaxPages bounds the imdb: fan-out so a title with a very large
-	// release history can never trigger an unbounded number of requests.
-	srrdbIMDBMaxPages = 5
+	// srrdbIMDBMaxPages is a safety backstop on the imdb: fan-out. Pagination
+	// normally stops naturally once resultsCount is collected; this only bounds a
+	// pathological response. It is set well above any real title's scene release
+	// count (the largest observed are well under 100) so completeness is not the
+	// limiting factor — 25 pages = 1000 releases.
+	srrdbIMDBMaxPages = 25
 )
 
 // sceneIMDbID returns the resolved IMDb id on meta in precedence order. Detection

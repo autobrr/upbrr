@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -353,8 +354,9 @@ func TestSceneDetectorSRRDBNFOContextCancellationIsFatal(t *testing.T) {
 type srrdbFallbackHandler struct {
 	imdbPages map[int]string // page -> JSON body for /v1/search/imdb:<id>/...
 	details   map[string]string
-	rEmpty    bool // r: search returns an empty result set (forces the fallback)
-	imdbStat  int  // non-zero overrides the imdb: search status code
+	rResults  map[string]string // r:<name> -> JSON body (name is the unescaped search term)
+	imdbStat  int               // non-zero overrides the imdb: search status code
+	imdbHits  *atomic.Int32     // when set, counts /v1/search/imdb: requests
 }
 
 func (h srrdbFallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -362,12 +364,16 @@ func (h srrdbFallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	path := r.URL.Path
 	switch {
 	case strings.Contains(path, "/v1/search/r:"):
-		if h.rEmpty {
-			_, _ = w.Write([]byte(`{"resultsCount":0,"results":[]}`))
+		name := path[strings.Index(path, "/v1/search/r:")+len("/v1/search/r:"):]
+		if body, ok := h.rResults[name]; ok {
+			_, _ = w.Write([]byte(body))
 			return
 		}
 		_, _ = w.Write([]byte(`{"resultsCount":0,"results":[]}`))
 	case strings.Contains(path, "/v1/search/imdb:"):
+		if h.imdbHits != nil {
+			h.imdbHits.Add(1)
+		}
 		if h.imdbStat != 0 {
 			w.WriteHeader(h.imdbStat)
 			return
@@ -411,7 +417,6 @@ func renamedSceneMeta(videoPath string) api.PreparedMetadata {
 
 func TestSceneDetectorIMDBFallbackDetectsRename(t *testing.T) {
 	handler := srrdbFallbackHandler{
-		rEmpty: true,
 		imdbPages: map[int]string{
 			1: `{"resultsCount":1,"results":[{"release":"Fury.2014.1080p.BluRay.x264-GRP","imdbId":"111161","hasNFO":"no","isForeign":"no"}]}`,
 		},
@@ -446,7 +451,6 @@ func TestSceneDetectorIMDBFallbackDetectsRename(t *testing.T) {
 
 func TestSceneDetectorIMDBFallbackUnmodifiedNotRenamed(t *testing.T) {
 	handler := srrdbFallbackHandler{
-		rEmpty: true,
 		imdbPages: map[int]string{
 			1: `{"resultsCount":1,"results":[{"release":"Fury.2014.1080p.BluRay.x264-GRP","imdbId":"111161","hasNFO":"no"}]}`,
 		},
@@ -474,7 +478,6 @@ func TestSceneDetectorIMDBFallbackUnmodifiedNotRenamed(t *testing.T) {
 
 func TestSceneDetectorIMDBFallbackCaseOnlyDiffIsRenamed(t *testing.T) {
 	handler := srrdbFallbackHandler{
-		rEmpty: true,
 		imdbPages: map[int]string{
 			1: `{"resultsCount":1,"results":[{"release":"Fury.2014.1080p.BluRay.x264-GRP","imdbId":"111161","hasNFO":"no"}]}`,
 		},
@@ -504,7 +507,6 @@ func TestSceneDetectorDrivenFolderMatchDetectsRenamedFile(t *testing.T) {
 	// differs from the archived scene filename ⇒ scene + renamed.
 	const release = "Driven.2001.1080p.BluRay.x264-MOOVEE"
 	handler := srrdbFallbackHandler{
-		rEmpty: true,
 		imdbPages: map[int]string{
 			1: `{"resultsCount":3,"results":[` +
 				`{"release":"Driven.2001.German.DL.1080p.BluRay.x264-DETAiLS","imdbId":"0132245","isForeign":"yes"},` +
@@ -556,7 +558,6 @@ func TestSceneDetectorIMDBFallbackPaginates(t *testing.T) {
 	page1.WriteString(`]}`)
 
 	handler := srrdbFallbackHandler{
-		rEmpty: true,
 		imdbPages: map[int]string{
 			1: page1.String(),
 			2: `{"resultsCount":41,"results":[{"release":"Fury.2014.1080p.BluRay.x264-GRP","imdbId":"111161"}]}`,
@@ -579,7 +580,7 @@ func TestSceneDetectorIMDBFallbackPaginates(t *testing.T) {
 }
 
 func TestSceneDetectorIMDBFallbackSoftFailsOnError(t *testing.T) {
-	handler := srrdbFallbackHandler{rEmpty: true, imdbStat: http.StatusInternalServerError}
+	handler := srrdbFallbackHandler{imdbStat: http.StatusInternalServerError}
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
@@ -663,7 +664,8 @@ func TestSceneDetectorRSearchSoftFailsOnMalformedBody(t *testing.T) {
 }
 
 func TestSceneDetectorIMDBFallbackSkippedWithoutIMDbID(t *testing.T) {
-	handler := srrdbFallbackHandler{rEmpty: true}
+	imdbHits := &atomic.Int32{}
+	handler := srrdbFallbackHandler{imdbHits: imdbHits}
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
@@ -677,12 +679,48 @@ func TestSceneDetectorIMDBFallbackSkippedWithoutIMDbID(t *testing.T) {
 	if result.IsScene {
 		t.Fatalf("expected no fallback without an imdb id, got %#v", result)
 	}
+	if got := imdbHits.Load(); got != 0 {
+		t.Fatalf("expected no imdb: request without an imdb id, got %d", got)
+	}
+}
+
+func TestSceneDetectorFallsBackToRWhenIMDbFindsNoMatch(t *testing.T) {
+	// IMDb id is known, but the imdb: search returns only a non-matching release;
+	// Detect must fall through to the exact r: folder search rather than give up.
+	const release = "Driven.2001.1080p.BluRay.x264-MOOVEE"
+	handler := srrdbFallbackHandler{
+		imdbPages: map[int]string{
+			1: `{"resultsCount":1,"results":[{"release":"Driven.2001.720p.BluRay.x264-CiNEFiLE","imdbId":"0132245"}]}`,
+		},
+		rResults: map[string]string{
+			release: `{"resultsCount":1,"results":[{"release":"` + release + `","imdbId":"0132245"}]}`,
+		},
+		details: map[string]string{
+			release: `{"archived-files":[{"name":"driven.2001.1080p.bluray.x264-moovee.mkv","size":4695029966}]}`,
+		},
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	meta := api.PreparedMetadata{
+		SourcePath:  "/data/" + release,
+		VideoPath:   "/data/" + release + "/driven.2001.1080p.bluray.x264-moovee.mkv",
+		ExternalIDs: api.ExternalIDs{IMDBID: 132245},
+		Release:     api.ReleaseInfo{Resolution: "1080p", Year: 2001, Group: "MOOVEE"},
+	}
+	detector := newSRRDBDetector(server.Client(), server.URL, t.TempDir(), t.TempDir())
+	result, err := detector.Detect(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if !result.IsScene || result.SceneName != release {
+		t.Fatalf("expected r: fallback match %q after imdb miss, got %#v", release, result)
+	}
 }
 
 func TestSceneDetectorIMDBFallbackNoConfidentCandidate(t *testing.T) {
 	// Only wrong-resolution releases exist for the title: no confident match.
 	handler := srrdbFallbackHandler{
-		rEmpty: true,
 		imdbPages: map[int]string{
 			1: `{"resultsCount":2,"results":[{"release":"Fury.2014.720p.BluRay.x264-GRP","imdbId":"111161"},{"release":"Fury.2014.480p.DVDRip.x264-GRP","imdbId":"111161"}]}`,
 		},

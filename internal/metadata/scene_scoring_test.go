@@ -4,6 +4,7 @@
 package metadata
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -222,13 +223,16 @@ func TestFormatSRRDBIMDbID(t *testing.T) {
 func TestSceneLocalCandidates(t *testing.T) {
 	t.Parallel()
 
+	base := t.TempDir()
+
 	// Folder release: SourcePath is the release folder, VideoPath the media file.
+	const folder = "Driven.2001.1080p.BluRay.x264-MOOVEE"
 	c := sceneLocalCandidates(api.PreparedMetadata{
-		SourcePath: "/data/Driven.2001.1080p.BluRay.x264-MOOVEE",
-		VideoPath:  "/data/Driven.2001.1080p.BluRay.x264-MOOVEE/moovee-driven.mkv",
+		SourcePath: filepath.Join(base, folder),
+		VideoPath:  filepath.Join(base, folder, "moovee-driven.mkv"),
 	})
-	if len(c.folders) != 1 || c.folders[0] != "Driven.2001.1080p.BluRay.x264-MOOVEE" {
-		t.Fatalf("folder candidates = %v, want [Driven.2001.1080p.BluRay.x264-MOOVEE]", c.folders)
+	if len(c.folders) != 1 || c.folders[0] != folder {
+		t.Fatalf("folder candidates = %v, want [%s]", c.folders, folder)
 	}
 	if len(c.files) != 1 || c.files[0] != "moovee-driven" {
 		t.Fatalf("file candidates = %v, want [moovee-driven]", c.files)
@@ -238,10 +242,8 @@ func TestSceneLocalCandidates(t *testing.T) {
 	}
 
 	// Single-file release: SourcePath == VideoPath, no folder candidate.
-	single := sceneLocalCandidates(api.PreparedMetadata{
-		SourcePath: "/data/movie.2020.1080p.bluray.x264-grp.mkv",
-		VideoPath:  "/data/movie.2020.1080p.bluray.x264-grp.mkv",
-	})
+	singlePath := filepath.Join(base, "movie.2020.1080p.bluray.x264-grp.mkv")
+	single := sceneLocalCandidates(api.PreparedMetadata{SourcePath: singlePath, VideoPath: singlePath})
 	if len(single.folders) != 0 {
 		t.Fatalf("single-file folder candidates = %v, want none", single.folders)
 	}

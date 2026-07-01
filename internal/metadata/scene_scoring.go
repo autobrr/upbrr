@@ -103,13 +103,19 @@ func scoreSceneCandidate(meta api.PreparedMetadata, wantRes string, localForeign
 		score += scoreTokenField(codec, tokens)
 	}
 
-	score += scoreEditions(rel.Edition, tokens)
+	editionScore, editionConflict := scoreEditions(rel.Edition, tokens)
+	score += editionScore
 
+	// A foreign-language/dub candidate is a different release from an
+	// English/original-language local one; treat it as an incompatibility, not just
+	// a score penalty, so it cannot be matched (and then flagged as renamed).
+	foreignConflict := false
 	if strings.EqualFold(strings.TrimSpace(cand.IsForeign), "yes") {
 		if localForeign {
 			score++
 		} else {
 			score -= 3
+			foreignConflict = true
 		}
 	}
 
@@ -117,7 +123,9 @@ func scoreSceneCandidate(meta api.PreparedMetadata, wantRes string, localForeign
 	// among {resolution matched, year matched, group matched}. Two signals is the
 	// false-positive guard: a single agreement (e.g. only the year, when the local
 	// resolution is unknown) is too weak to confidently claim a scene match and
-	// then flag a rename.
+	// then flag a rename. Foreign/edition incompatibilities are hard failures: a
+	// mismatched edition or foreign variant is the wrong release regardless of how
+	// many other signals agree.
 	strong := 0
 	if resMatched {
 		strong++
@@ -128,7 +136,7 @@ func scoreSceneCandidate(meta api.PreparedMetadata, wantRes string, localForeign
 	if groupOK {
 		strong++
 	}
-	eligible := resOK && strong >= 2
+	eligible := resOK && strong >= 2 && !foreignConflict && !editionConflict
 	return score, eligible
 }
 
@@ -146,10 +154,11 @@ func scoreTokenField(value string, tokens map[string]struct{}) int {
 	return 0
 }
 
-// scoreEditions rewards matching edition markers and penalises mismatches so an
-// "Extended" candidate is not chosen for a theatrical local release (and vice
-// versa) — the multi-edition disambiguation case.
-func scoreEditions(localEditions []string, tokens map[string]struct{}) int {
+// scoreEditions rewards matching edition markers and reports an incompatibility
+// so an "Extended" candidate is not chosen for a theatrical local release (and
+// vice versa) — the multi-edition disambiguation case. conflict is true when the
+// candidate and local disagree on any edition marker.
+func scoreEditions(localEditions []string, tokens map[string]struct{}) (score int, conflict bool) {
 	local := make(map[string]struct{})
 	for _, edition := range localEditions {
 		for _, part := range sceneTokenSplit.Split(strings.ToLower(strings.TrimSpace(edition)), -1) {
@@ -158,7 +167,6 @@ func scoreEditions(localEditions []string, tokens map[string]struct{}) int {
 			}
 		}
 	}
-	score := 0
 	for _, kw := range sceneEditionKeywords {
 		_, inCand := tokens[kw]
 		_, inLocal := local[kw]
@@ -167,11 +175,13 @@ func scoreEditions(localEditions []string, tokens map[string]struct{}) int {
 			score += 2
 		case inCand && !inLocal:
 			score -= 2
+			conflict = true
 		case !inCand && inLocal:
 			score--
+			conflict = true
 		}
 	}
-	return score
+	return score, conflict
 }
 
 // releaseLooksForeign reports whether the local release is itself a
