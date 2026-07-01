@@ -35,15 +35,12 @@ var sceneForeignKeywords = []string{
 	"dual", "vff", "vfq", "truefrench", "subbed", "dubbed",
 }
 
-// bestSceneCandidate picks the scene release that best matches the parsed local
+// bestSceneCandidate picks the scene release that best matches the prepared
 // metadata, or (nil, 0) when no candidate clears the structural eligibility bar.
-// Eligibility — not just the highest score — is what guards against
+// Eligibility, not just the highest score, is what guards against
 // false-flagging a non-scene release.
 func bestSceneCandidate(meta api.PreparedMetadata, localBase string, candidates []srrdbSearchResult) (*srrdbSearchResult, int) {
-	wantRes := strings.ToLower(strings.TrimSpace(meta.Release.Resolution))
-	if wantRes == "" {
-		wantRes = scanSceneResolution(localBase)
-	}
+	wantRes := sceneResolution(meta, localBase)
 	localForeign := releaseLooksForeign(meta, localBase)
 
 	bestIdx := -1
@@ -64,12 +61,11 @@ func bestSceneCandidate(meta api.PreparedMetadata, localBase string, candidates 
 	return &candidates[bestIdx], bestScore
 }
 
-// scoreSceneCandidate scores one candidate against the parsed release tokens.
+// scoreSceneCandidate scores one candidate against the effective release tokens.
 // Eligibility is false for structural conflicts such as resolution mismatch,
 // known-group mismatch, foreign-language mismatch, or edition mismatch.
 func scoreSceneCandidate(meta api.PreparedMetadata, wantRes string, localForeign bool, cand srrdbSearchResult) (int, bool) {
 	tokens := sceneTokens(cand.Release)
-	rel := meta.Release
 	score := 0
 
 	resOK := true
@@ -84,8 +80,8 @@ func scoreSceneCandidate(meta api.PreparedMetadata, wantRes string, localForeign
 	}
 
 	yearOK := false
-	if rel.Year > 0 {
-		if _, ok := tokens[strconv.Itoa(rel.Year)]; ok {
+	if year := sceneYear(meta); year > 0 {
+		if _, ok := tokens[strconv.Itoa(year)]; ok {
 			score += 3
 			yearOK = true
 		}
@@ -103,12 +99,12 @@ func scoreSceneCandidate(meta api.PreparedMetadata, wantRes string, localForeign
 		}
 	}
 
-	score += scoreTokenField(rel.Source, tokens)
-	for _, codec := range rel.Codec {
+	score += scoreTokenField(sceneSource(meta), tokens)
+	for _, codec := range sceneCodecs(meta) {
 		score += scoreTokenField(codec, tokens)
 	}
 
-	editionScore, editionConflict := scoreEditions(rel.Edition, tokens)
+	editionScore, editionConflict := scoreEditions(sceneEditions(meta), tokens)
 	score += editionScore
 
 	// A foreign-language/dub candidate is a different release from an
@@ -143,6 +139,106 @@ func scoreSceneCandidate(meta api.PreparedMetadata, wantRes string, localForeign
 	}
 	eligible := resOK && strong >= 2 && !groupConflict && !foreignConflict && !editionConflict
 	return score, eligible
+}
+
+// sceneResolution returns the normalized resolution available after media
+// details and release-name overrides, falling back to the local name when needed.
+func sceneResolution(meta api.PreparedMetadata, localBase string) string {
+	if meta.ReleaseNameOverrides.Resolution != nil {
+		if resolution := strings.ToLower(strings.TrimSpace(*meta.ReleaseNameOverrides.Resolution)); resolution != "" {
+			return resolution
+		}
+	}
+	for _, value := range []string{
+		meta.Release.Resolution,
+		meta.ReleaseNameNoTag,
+		meta.ReleaseNameClean,
+		meta.ReleaseName,
+		localBase,
+	} {
+		if resolution := scanSceneResolution(value); resolution != "" {
+			return resolution
+		}
+	}
+	return ""
+}
+
+// sceneYear returns the best title year known after tracker, Arr, and external
+// metadata enrichment. Parsed filename year is only one possible source.
+func sceneYear(meta api.PreparedMetadata) int {
+	if meta.ReleaseNameOverrides.ManualYear != nil && *meta.ReleaseNameOverrides.ManualYear > 0 {
+		return *meta.ReleaseNameOverrides.ManualYear
+	}
+	if meta.Release.Year > 0 {
+		return meta.Release.Year
+	}
+	if meta.ArrYear > 0 {
+		return meta.ArrYear
+	}
+	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Year > 0 {
+		return meta.ExternalMetadata.TMDB.Year
+	}
+	if meta.ExternalMetadata.IMDB != nil && meta.ExternalMetadata.IMDB.Year > 0 {
+		return meta.ExternalMetadata.IMDB.Year
+	}
+	if meta.ExternalMetadata.TVDB != nil && meta.ExternalMetadata.TVDB.Year > 0 {
+		return meta.ExternalMetadata.TVDB.Year
+	}
+	if meta.ExternalMetadata.TVmaze != nil {
+		return parseSceneYearPrefix(meta.ExternalMetadata.TVmaze.Premiered)
+	}
+	return 0
+}
+
+// parseSceneYearPrefix accepts YYYY-prefixed date strings such as TVmaze's
+// Premiered value and returns 0 when no valid positive year is present.
+func parseSceneYearPrefix(value string) int {
+	trimmed := strings.TrimSpace(value)
+	if len(trimmed) < 4 {
+		return 0
+	}
+	year, err := strconv.Atoi(trimmed[:4])
+	if err != nil || year <= 0 {
+		return 0
+	}
+	return year
+}
+
+// sceneSource returns the source label used for scoring, preferring manual
+// release-name overrides before the normalized media source and parsed source.
+func sceneSource(meta api.PreparedMetadata) string {
+	if meta.ReleaseNameOverrides.Source != nil {
+		if source := strings.TrimSpace(*meta.ReleaseNameOverrides.Source); source != "" {
+			return source
+		}
+	}
+	if source := strings.TrimSpace(meta.Source); source != "" {
+		return source
+	}
+	return strings.TrimSpace(meta.Release.Source)
+}
+
+// sceneCodecs returns every codec-like token known after media analysis so
+// parsed filename codecs and MediaInfo-derived codecs can both influence ties.
+func sceneCodecs(meta api.PreparedMetadata) []string {
+	values := make([]string, 0, len(meta.Release.Codec)+2)
+	values = append(values, meta.Release.Codec...)
+	values = append(values, meta.VideoEncode, meta.VideoCodec)
+	return values
+}
+
+// sceneEditions returns the effective edition markers for mismatch checks,
+// preferring manual naming overrides before normalized and parsed editions.
+func sceneEditions(meta api.PreparedMetadata) []string {
+	if meta.ReleaseNameOverrides.Edition != nil {
+		if edition := strings.TrimSpace(*meta.ReleaseNameOverrides.Edition); edition != "" {
+			return []string{edition}
+		}
+	}
+	if edition := strings.TrimSpace(meta.Edition); edition != "" {
+		return []string{edition}
+	}
+	return meta.Release.Edition
 }
 
 // scoreTokenField awards a point when any token of a parsed field (e.g. source
@@ -222,13 +318,20 @@ func releaseLooksForeign(meta api.PreparedMetadata, localBase string) bool {
 	return false
 }
 
-// sceneGroup resolves the parsed release group, falling back to the trailing tag
-// like the tracker rules do.
+// sceneGroup resolves the effective release group used for scene matching.
+// Manual release-name tag overrides win over parsed groups, because they also
+// drive the rebuilt upload name.
 func sceneGroup(meta api.PreparedMetadata) string {
+	if meta.ReleaseNameOverrides.Tag != nil {
+		return strings.TrimPrefix(strings.TrimSpace(*meta.ReleaseNameOverrides.Tag), "-")
+	}
+	if tag := strings.TrimSpace(meta.Tag); tag != "" {
+		return strings.TrimPrefix(tag, "-")
+	}
 	if group := strings.TrimSpace(meta.Release.Group); group != "" {
 		return group
 	}
-	return strings.TrimPrefix(strings.TrimSpace(meta.Tag), "-")
+	return ""
 }
 
 // sceneReleaseGroup returns the trailing scene group after the final dash.

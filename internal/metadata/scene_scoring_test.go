@@ -13,10 +13,13 @@ import (
 func TestBestSceneCandidate(t *testing.T) {
 	t.Parallel()
 
+	manualTag := "-MOOVEE"
 	cases := []struct {
 		name      string
+		meta      api.PreparedMetadata
 		release   api.ReleaseInfo
 		tag       string
+		overrides api.ReleaseNameOverrides
 		localBase string
 		cands     []srrdbSearchResult
 		wantPick  string // "" means expect no confident match
@@ -110,6 +113,43 @@ func TestBestSceneCandidate(t *testing.T) {
 			wantPick: "Movie.2015.1080p.WEB-DL.H.264-MONKEE",
 		},
 		{
+			name:      "manual tag override wins over parsed filename group",
+			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2001, Group: "driven", Source: "BluRay", Codec: []string{"x264"}},
+			tag:       "-driven",
+			overrides: api.ReleaseNameOverrides{Tag: &manualTag},
+			localBase: "moovee-driven",
+			cands: []srrdbSearchResult{
+				{Release: "Driven.2001.1080p.BluRay.x264-MOOVEE", IsForeign: "no"},
+			},
+			wantPick: "Driven.2001.1080p.BluRay.x264-MOOVEE",
+		},
+		{
+			name: "external metadata year participates when parser year is missing",
+			meta: api.PreparedMetadata{
+				Release:          api.ReleaseInfo{Resolution: "1080p"},
+				ExternalMetadata: api.ExternalMetadata{TMDB: &api.TMDBMetadata{Year: 2001}},
+			},
+			localBase: "moovee-driven",
+			cands: []srrdbSearchResult{
+				{Release: "Driven.2001.1080p.BluRay.x264-MOOVEE", IsForeign: "no"},
+			},
+			wantPick: "Driven.2001.1080p.BluRay.x264-MOOVEE",
+		},
+		{
+			name: "media-derived codec participates when parser codec is missing",
+			meta: api.PreparedMetadata{
+				Release:          api.ReleaseInfo{Resolution: "1080p"},
+				ExternalMetadata: api.ExternalMetadata{TMDB: &api.TMDBMetadata{Year: 2001}},
+				VideoEncode:      "x264",
+			},
+			localBase: "Driven 2001 1080p",
+			cands: []srrdbSearchResult{
+				{Release: "Driven.2001.1080p.BluRay.x265-OTHER", IsForeign: "no"},
+				{Release: "Driven.2001.1080p.BluRay.x264-MOOVEE", IsForeign: "no"},
+			},
+			wantPick: "Driven.2001.1080p.BluRay.x264-MOOVEE",
+		},
+		{
 			name:      "no candidate at the right resolution is not matched",
 			release:   api.ReleaseInfo{Resolution: "2160p", Year: 2014, Group: "GRP"},
 			localBase: "Movie 2014 2160p BluRay x265 GRP",
@@ -133,7 +173,18 @@ func TestBestSceneCandidate(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			meta := api.PreparedMetadata{Release: tc.release, Tag: tc.tag}
+			meta := api.PreparedMetadata{Release: tc.release, Tag: tc.tag, ReleaseNameOverrides: tc.overrides}
+			if tc.meta.SourcePath != "" ||
+				tc.meta.VideoPath != "" ||
+				tc.meta.Release.Resolution != "" ||
+				tc.meta.ExternalMetadata.TMDB != nil ||
+				tc.meta.ExternalMetadata.IMDB != nil ||
+				tc.meta.ExternalMetadata.TVDB != nil ||
+				tc.meta.ExternalMetadata.TVmaze != nil ||
+				tc.meta.VideoEncode != "" ||
+				tc.meta.VideoCodec != "" {
+				meta = tc.meta
+			}
 			best, score := bestSceneCandidate(meta, tc.localBase, tc.cands)
 			if tc.wantPick == "" {
 				if best != nil {
