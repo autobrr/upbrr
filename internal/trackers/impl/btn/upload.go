@@ -608,10 +608,18 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		autofillPayload.Set("auto_series", strconv.Itoa(req.Meta.ExternalMetadata.TVDB.TVDBID))
 
 		if uploadType == "Episode" {
-			seasonPart := fmt.Sprintf("S%02d", req.Meta.Release.Season)
+			season := req.Meta.Release.Season
+			if season <= 0 {
+				season = req.Meta.SeasonInt
+			}
+			seasonPart := fmt.Sprintf("S%02d", season)
+			episode := req.Meta.Release.Episode
+			if episode <= 0 {
+				episode = req.Meta.EpisodeInt
+			}
 			episodePart := ""
-			if req.Meta.Release.Episode > 0 {
-				episodePart = fmt.Sprintf("E%02d", req.Meta.Release.Episode)
+			if episode > 0 {
+				episodePart = fmt.Sprintf("E%02d", episode)
 			}
 			autofillPayload.Set("auto_title", seasonPart+episodePart)
 		} else {

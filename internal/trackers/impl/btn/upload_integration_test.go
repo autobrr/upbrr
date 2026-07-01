@@ -541,6 +541,94 @@ func TestBTNPrepareUploadDataFailsOnAutofillFailure(t *testing.T) {
 	}
 }
 
+func TestBTNPrepareUploadDataUsesEpisodeIntForTVDBAutoTitle(t *testing.T) {
+	t.Parallel()
+
+	handlerErrs := newHTTPHandlerErrorRecorder(t)
+	var formMu sync.Mutex
+	autofillForm := map[string]string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/upload.php":
+			if err := r.ParseForm(); err != nil {
+				handlerErrs.Errorf("parse autofill form: %v", err)
+				http.Error(w, "handler assertion failed", http.StatusInternalServerError)
+				return
+			}
+			formMu.Lock()
+			autofillForm["scene_yesno"] = r.PostForm.Get("scene_yesno")
+			autofillForm["auto_series"] = r.PostForm.Get("auto_series")
+			autofillForm["auto_title"] = r.PostForm.Get("auto_title")
+			formMu.Unlock()
+			_, _ = io.WriteString(w, `
+				<input name="artist" value="Example Show">
+				<input name="title" value="Episode Seven">
+				<input name="seriesid" value="12345">
+				<select name="format"><option selected value="MKV">MKV</option></select>
+				<select name="bitrate"><option selected value="H.265">H.265</option></select>
+				<select name="media"><option selected value="WEB-DL">WEB-DL</option></select>
+			`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	uploadCtx := uploadContext{
+		baseURL:   server.URL,
+		uploadURL: server.URL + "/upload.php",
+		client:    server.Client(),
+	}
+	req := trackers.UploadRequest{
+		Meta: api.PreparedMetadata{
+			ReleaseName:         "Example.Show.S02E07.1080p.WEB-DL.x265-GRP",
+			Type:                "WEBDL",
+			Source:              "WEB-DL",
+			Container:           "MKV",
+			VideoEncode:         "x265",
+			VideoCodec:          "HEVC",
+			SeasonInt:           2,
+			EpisodeInt:          7,
+			EpisodeTitle:        "Episode Seven",
+			EpisodeOverview:     "Overview",
+			DescriptionOverride: "Description",
+			ExternalIDs:         api.ExternalIDs{Category: "TV"},
+			ExternalMetadata: api.ExternalMetadata{
+				TVDB: &api.TVDBMetadata{TVDBID: 12345, OriginalLanguage: "en"},
+			},
+			Release: api.ReleaseInfo{
+				Resolution: "1080p",
+				Season:     2,
+			},
+			Tag: "GRP",
+		},
+	}
+
+	payload, err := prepareUploadData(context.Background(), req, uploadCtx)
+	handlerErrs.Check()
+	if err != nil {
+		t.Fatalf("prepareUploadData: %v", err)
+	}
+	if payload["type"] != "Episode" {
+		t.Fatalf("expected Episode upload type, got %q", payload["type"])
+	}
+
+	formMu.Lock()
+	gotAutoTitle := autofillForm["auto_title"]
+	gotAutoSeries := autofillForm["auto_series"]
+	gotScene := autofillForm["scene_yesno"]
+	formMu.Unlock()
+	if gotScene != "No" {
+		t.Fatalf("expected TVDB autofill scene flag, got %q", gotScene)
+	}
+	if gotAutoSeries != "12345" {
+		t.Fatalf("expected TVDB series id, got %q", gotAutoSeries)
+	}
+	if gotAutoTitle != "S02E07" {
+		t.Fatalf("expected auto_title S02E07, got %q", gotAutoTitle)
+	}
+}
+
 func TestBTNUploadCredentialLoginDoesNotPersistInvalidSession(t *testing.T) {
 	t.Parallel()
 
