@@ -50,7 +50,7 @@ func isRenamedRelease(meta api.PreparedMetadata) (bool, string) {
 	if meta.SceneRenamed {
 		reason := strings.TrimSpace(meta.SceneRenamedReason)
 		if reason == "" {
-			reason = "source renamed from original scene release name"
+			reason = modifiedReleaseReason
 		}
 		return true, reason
 	}

@@ -257,10 +257,16 @@ func (d *srrdbDetector) detectViaIMDB(ctx context.Context, meta api.PreparedMeta
 
 	renamed, reason := d.detectRename(ctx, best.Release, localBase)
 	if renamed {
-		d.log().Infof("metadata: scene release renamed imdb=%d release=%q", imdbID, best.Release)
+		d.log().Infof("metadata: scene release renamed or modified imdb=%d", imdbID)
 	}
 	return d.buildSceneResult(ctx, *best, renamed, reason)
 }
+
+// sceneRenamedReason is intentionally generic: it does not disclose the
+// canonical scene name, so the fix is not simply "rename the file back". A
+// modified release should be investigated (hash/provenance) rather than papered
+// over with a rename.
+const sceneRenamedReason = "source does not match its original scene release name (renamed or modified); verify the file hash and source provenance"
 
 // detectRename compares the canonical media filename(s) recorded for a scene
 // release against the on-disk basename. It is conservative: a name that matches
@@ -271,11 +277,10 @@ func (d *srrdbDetector) detectRename(ctx context.Context, release, localBase str
 	if err != nil {
 		return false, ""
 	}
-	canonical := canonicalMediaBase(details.ArchivedFiles, localBase)
-	if canonical == "" {
+	if canonicalMediaBase(details.ArchivedFiles, localBase) == "" {
 		return false, ""
 	}
-	return true, fmt.Sprintf("source renamed from scene release: on-disk %q does not match canonical %q", localBase, canonical)
+	return true, sceneRenamedReason
 }
 
 // isContextError reports cancellation and deadline errors from err or ctx.
