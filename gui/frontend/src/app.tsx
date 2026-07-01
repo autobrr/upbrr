@@ -4092,7 +4092,7 @@ export default function App() {
               <div className="grid min-w-0 gap-0.5">
                 {applicationInfo?.version ? (
                   <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[var(--text)]">
-                    v{applicationInfo.version}
+                    {applicationInfo.version}
                   </span>
                 ) : null}
                 <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
