@@ -673,6 +673,22 @@ func TestParseCLIOptionsRejectsNegativeQueueLimit(t *testing.T) {
 	}
 }
 
+func TestParseCLIOptionsWhitespaceQueueRejected(t *testing.T) {
+	if _, _, _, err := parseCLIOptions([]string{"--queue", "   ", "movie.mkv"}); err == nil {
+		t.Fatal("expected whitespace-only --queue to fail")
+	}
+}
+
+func TestParseCLIOptionsQueueTrimsAndStores(t *testing.T) {
+	opts, _, _, err := parseCLIOptions([]string{"--queue", "  daily  ", "root"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if opts.QueueName != "daily" {
+		t.Fatalf("expected trimmed queue name %q, got %q", "daily", opts.QueueName)
+	}
+}
+
 func TestBuildCLIRequestTMDBCompatibilityParsing(t *testing.T) {
 	opts, visited, paths, err := parseCLIOptions([]string{"--tmdb", "movie/123", "movie.mkv"})
 	if err != nil {

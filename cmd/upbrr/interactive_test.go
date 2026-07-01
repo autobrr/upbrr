@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
@@ -1140,6 +1141,111 @@ func TestHandleBDMVPlaylistSelectionReturnsSaveErrorInUnattendedSinglePlaylist(t
 	}
 }
 
+func TestHandleBDMVPlaylistSelectionGivesEachDiscFreshDeadline(t *testing.T) {
+	t.Parallel()
+
+	// Two BDMV discs so the per-disc deadline loop runs more than once.
+	roots := make([]string, 2)
+	for i := range roots {
+		root := t.TempDir()
+		if err := os.Mkdir(filepath.Join(root, "BDMV"), 0o755); err != nil {
+			t.Fatalf("mkdir BDMV: %v", err)
+		}
+		roots[i] = root
+	}
+	coreSvc := &cliCoreForTest{
+		playlistSelectionErr: internalerrors.ErrNotFound,
+		playlists: []api.PlaylistInfo{
+			{File: "00001.mpls", Duration: 7200, Score: 1},
+		},
+	}
+
+	start := time.Now()
+	// UseLargestPlaylist auto-selects without prompting, keeping discovery on the
+	// per-disc deadline path for every disc.
+	err := handleBDMVPlaylistSelection(context.Background(), roots, coreSvc, config.Config{
+		Metadata: config.MetadataConfig{UseLargestPlaylist: true},
+	}, api.NopLogger{}, cliOptions{Unattended: true})
+	if err != nil {
+		t.Fatalf("handleBDMVPlaylistSelection: %v", err)
+	}
+
+	if len(coreSvc.discoverPlaylistDLs) != len(roots) {
+		t.Fatalf("expected %d discovery calls, got %d", len(roots), len(coreSvc.discoverPlaylistDLs))
+	}
+	upper := start.Add(cliDiscDiscoveryTimeout + time.Minute)
+	for i, dl := range coreSvc.discoverPlaylistDLs {
+		// Each disc must get its OWN bounded deadline (parent ctx has none); a
+		// regression that shared one setup context would fail the freshness or
+		// ordering checks below.
+		if dl.IsZero() {
+			t.Fatalf("disc %d discovery had no deadline (expected per-disc cliDiscDiscoveryTimeout)", i)
+		}
+		if dl.Before(start) || dl.After(upper) {
+			t.Fatalf("disc %d deadline %v outside expected window (%v, %v]", i, dl, start, upper)
+		}
+		if i > 0 && dl.Before(coreSvc.discoverPlaylistDLs[i-1]) {
+			t.Fatalf("disc %d deadline %v is earlier than disc %d %v; deadline not refreshed per disc", i, dl, i-1, coreSvc.discoverPlaylistDLs[i-1])
+		}
+	}
+}
+
+func TestHandleBDMVPlaylistSelectionReturnsOnPromptSaveCtxErr(t *testing.T) {
+	// Drives the three SavePlaylistSelection guards inside the interactive prompt
+	// loop (empty-input auto-select, 'ALL', individual indices). Requires >1
+	// playlist + attended mode to reach the prompt, and real stdin, so it cannot
+	// run in parallel (mutates os.Stdin/os.Stdout).
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("open devnull: %v", err)
+	}
+	defer devNull.Close()
+	oldStdin, oldStdout := os.Stdin, os.Stdout
+	os.Stdout = devNull
+	defer func() { os.Stdin, os.Stdout = oldStdin, oldStdout }()
+
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{name: "empty auto-select", input: "\n"},
+		{name: "all", input: "all\n"},
+		{name: "individual index", input: "0\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.Mkdir(filepath.Join(root, "BDMV"), 0o755); err != nil {
+				t.Fatalf("mkdir BDMV: %v", err)
+			}
+			stdinPath := filepath.Join(root, "stdin.txt")
+			if err := os.WriteFile(stdinPath, []byte(tc.input), 0o600); err != nil {
+				t.Fatalf("write stdin: %v", err)
+			}
+			stdinFile, err := os.Open(stdinPath)
+			if err != nil {
+				t.Fatalf("open stdin: %v", err)
+			}
+			defer stdinFile.Close()
+			os.Stdin = stdinFile
+
+			coreSvc := &cliCoreForTest{
+				playlistSelectionErr: internalerrors.ErrNotFound,
+				playlists: []api.PlaylistInfo{
+					{File: "00001.mpls", Duration: 7200, Score: 1},
+					{File: "00002.mpls", Duration: 7100, Score: 0.9},
+				},
+				savePlaylistErr: context.Canceled,
+			}
+
+			err = handleBDMVPlaylistSelection(context.Background(), []string{root}, coreSvc, config.Config{}, api.NopLogger{}, cliOptions{})
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected prompt-loop save to surface context.Canceled, got %v", err)
+			}
+		})
+	}
+}
+
 func TestMaybeEditCLIDescriptionsSavesEditedGroupOnRequest(t *testing.T) {
 	coreSvc := &cliCoreForTest{
 		review: api.UploadReview{Trackers: []api.TrackerReview{{
@@ -1299,10 +1405,13 @@ type cliCoreForTest struct {
 	playlists              []api.PlaylistInfo
 	savedPlaylists         []string
 	savePlaylistErr        error
+	discoverPlaylistsErr   error
+	discoverPlaylistDLs    []time.Time
 	descriptionPreview     api.DescriptionBuilderPreview
 	savedDescriptionRaw    []string
 	savedDescriptionReqs   []api.Request
 	savedDescriptionGroup  api.DescriptionBuilderGroup
+	runUploadFunc          func(ctx context.Context, req api.Request) (api.Result, error)
 }
 
 type cliTrackerAuthForTest struct {
@@ -1371,15 +1480,23 @@ func (c *cliCoreForTest) RunUpload(context.Context, api.Request) (api.Result, er
 	return api.Result{}, nil
 }
 
-func (c *cliCoreForTest) RunUploadPrepared(_ context.Context, req api.Request) (api.Result, error) {
+func (c *cliCoreForTest) RunUploadPrepared(ctx context.Context, req api.Request) (api.Result, error) {
 	c.recordRequest("upload", req)
 	c.runUploadPreparedCalls++
+	if c.runUploadFunc != nil {
+		return c.runUploadFunc(ctx, req)
+	}
 	return api.Result{UploadedCount: 1}, nil
 }
 
-func (c *cliCoreForTest) FetchMetadataPreview(_ context.Context, req api.Request) (api.MetadataPreview, error) {
+func (c *cliCoreForTest) FetchMetadataPreview(ctx context.Context, req api.Request) (api.MetadataPreview, error) {
 	c.callOrder = append(c.callOrder, "preview")
 	c.recordRequest("preview", req)
+	// Honor the caller's context so tests can assert it is threaded through to the
+	// first core call (no-op when callers pass context.Background()).
+	if err := ctx.Err(); err != nil {
+		return api.MetadataPreview{}, fmt.Errorf("preview: %w", err)
+	}
 	if len(req.Paths) > 0 {
 		c.previewPaths = append(c.previewPaths, req.Paths[0])
 	}
@@ -1482,8 +1599,10 @@ func (c *cliCoreForTest) ImportMenuImages(context.Context, api.Request, []string
 	return nil
 }
 
-func (c *cliCoreForTest) DiscoverPlaylists(context.Context, string) ([]api.PlaylistInfo, error) {
-	return c.playlists, nil
+func (c *cliCoreForTest) DiscoverPlaylists(ctx context.Context, _ string) ([]api.PlaylistInfo, error) {
+	dl, _ := ctx.Deadline()
+	c.discoverPlaylistDLs = append(c.discoverPlaylistDLs, dl)
+	return c.playlists, c.discoverPlaylistsErr
 }
 
 func (c *cliCoreForTest) SavePlaylistSelection(_ context.Context, _ string, playlists []string, _ bool) error {
