@@ -132,68 +132,120 @@ func TestBestSceneCandidate(t *testing.T) {
 	}
 }
 
-func TestCanonicalMediaBase(t *testing.T) {
+func TestArchivedMediaRenamed(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name      string
-		archived  []srrdbArchivedFile
-		localBase string
-		want      string
+		name        string
+		archived    []srrdbArchivedFile
+		localMedia  string
+		wantRenamed bool
+		wantMatched bool
 	}{
 		{
-			name: "renamed local basename returns canonical media name",
+			name: "renamed local filename is flagged",
 			archived: []srrdbArchivedFile{
-				{Name: "fury.2014.1080p.bluray.x264-grp.nfo", Size: 100},
-				{Name: "fury.2014.1080p.bluray.x264-grp.mkv", Size: 8000000000},
+				{Name: "driven.2001.1080p.bluray.x264-moovee.nfo", Size: 100},
+				{Name: "driven.2001.1080p.bluray.x264-moovee.mkv", Size: 8000000000},
 			},
-			localBase: "Fury 2014 1080p BluRay x264 GRP",
-			want:      "fury.2014.1080p.bluray.x264-grp",
+			localMedia:  "moovee-driven.mkv",
+			wantRenamed: true,
+			wantMatched: true,
 		},
 		{
-			name: "matching basename (case aside) is not a rename",
+			name: "exact case-sensitive filename match is not renamed",
 			archived: []srrdbArchivedFile{
-				{Name: "Fury.2014.1080p.BluRay.x264-GRP.mkv", Size: 8000000000},
+				{Name: "driven.2001.1080p.bluray.x264-moovee.mkv", Size: 8000000000},
 			},
-			localBase: "fury.2014.1080p.bluray.x264-grp",
-			want:      "",
+			localMedia:  "driven.2001.1080p.bluray.x264-moovee.mkv",
+			wantRenamed: false,
+			wantMatched: true,
 		},
 		{
-			name: "season pack: local episode matching a canonical file is not a rename",
+			name: "casing-only difference is treated as renamed (srrdb authoritative)",
+			archived: []srrdbArchivedFile{
+				{Name: "driven.2001.1080p.bluray.x264-moovee.mkv", Size: 8000000000},
+			},
+			localMedia:  "Driven.2001.1080p.BluRay.x264-MOOVEE.mkv",
+			wantRenamed: true,
+			wantMatched: true,
+		},
+		{
+			name: "season pack: local episode matching a canonical file is not renamed",
 			archived: []srrdbArchivedFile{
 				{Name: "show.s01e01.1080p.web-dl-grp.mkv", Size: 2000000000},
 				{Name: "show.s01e02.1080p.web-dl-grp.mkv", Size: 2100000000},
 			},
-			localBase: "Show.S01E02.1080p.WEB-DL-GRP",
-			want:      "",
+			localMedia:  "show.s01e02.1080p.web-dl-grp.mkv",
+			wantRenamed: false,
+			wantMatched: true,
 		},
 		{
-			name: "no media files yields no verdict",
+			name: "no archived media member yields no verdict",
 			archived: []srrdbArchivedFile{
 				{Name: "release.nfo", Size: 100},
 				{Name: "sample/something.txt", Size: 10},
 			},
-			localBase: "Whatever",
-			want:      "",
-		},
-		{
-			name:      "largest media file is chosen as representative",
-			localBase: "renamed name",
-			archived: []srrdbArchivedFile{
-				{Name: "movie-sample.mkv", Size: 50000000},
-				{Name: "movie.2014.1080p.bluray.x264-grp.mkv", Size: 9000000000},
-			},
-			want: "movie.2014.1080p.bluray.x264-grp",
+			localMedia:  "whatever.mkv",
+			wantRenamed: false,
+			wantMatched: false,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := canonicalMediaBase(tc.archived, tc.localBase)
-			if got != tc.want {
-				t.Fatalf("canonicalMediaBase = %q, want %q", got, tc.want)
+			renamed, matched := archivedMediaRenamed(tc.archived, tc.localMedia)
+			if renamed != tc.wantRenamed || matched != tc.wantMatched {
+				t.Fatalf("archivedMediaRenamed = (renamed=%t matched=%t), want (renamed=%t matched=%t)", renamed, matched, tc.wantRenamed, tc.wantMatched)
 			}
 		})
+	}
+}
+
+func TestFormatSRRDBIMDbID(t *testing.T) {
+	t.Parallel()
+	cases := map[int]string{
+		132245:  "tt0132245",
+		111161:  "tt0111161",
+		6946580: "tt6946580",
+		0:       "",
+		-5:      "",
+	}
+	for id, want := range cases {
+		if got := formatSRRDBIMDbID(id); got != want {
+			t.Fatalf("formatSRRDBIMDbID(%d) = %q, want %q", id, got, want)
+		}
+	}
+}
+
+func TestSceneLocalCandidates(t *testing.T) {
+	t.Parallel()
+
+	// Folder release: SourcePath is the release folder, VideoPath the media file.
+	c := sceneLocalCandidates(api.PreparedMetadata{
+		SourcePath: "/data/Driven.2001.1080p.BluRay.x264-MOOVEE",
+		VideoPath:  "/data/Driven.2001.1080p.BluRay.x264-MOOVEE/moovee-driven.mkv",
+	})
+	if len(c.folders) != 1 || c.folders[0] != "Driven.2001.1080p.BluRay.x264-MOOVEE" {
+		t.Fatalf("folder candidates = %v, want [Driven.2001.1080p.BluRay.x264-MOOVEE]", c.folders)
+	}
+	if len(c.files) != 1 || c.files[0] != "moovee-driven" {
+		t.Fatalf("file candidates = %v, want [moovee-driven]", c.files)
+	}
+	if c.mediaFilename != "moovee-driven.mkv" {
+		t.Fatalf("mediaFilename = %q, want moovee-driven.mkv", c.mediaFilename)
+	}
+
+	// Single-file release: SourcePath == VideoPath, no folder candidate.
+	single := sceneLocalCandidates(api.PreparedMetadata{
+		SourcePath: "/data/movie.2020.1080p.bluray.x264-grp.mkv",
+		VideoPath:  "/data/movie.2020.1080p.bluray.x264-grp.mkv",
+	})
+	if len(single.folders) != 0 {
+		t.Fatalf("single-file folder candidates = %v, want none", single.folders)
+	}
+	if len(single.files) != 1 || single.files[0] != "movie.2020.1080p.bluray.x264-grp" {
+		t.Fatalf("single-file file candidates = %v", single.files)
 	}
 }

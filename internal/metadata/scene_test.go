@@ -458,9 +458,9 @@ func TestSceneDetectorIMDBFallbackUnmodifiedNotRenamed(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	detector := newSRRDBDetector(server.Client(), server.URL, t.TempDir(), t.TempDir())
-	// On-disk name equals the canonical media basename (case aside), so although
-	// the r: search missed, this must not be flagged as renamed.
-	result, err := detector.Detect(context.Background(), renamedSceneMeta("/data/fury.2014.1080p.bluray.x264-grp.mkv"))
+	// On-disk media filename exactly matches the archived scene media filename, so
+	// this must not be flagged as renamed.
+	result, err := detector.Detect(context.Background(), renamedSceneMeta("/data/Fury.2014.1080p.BluRay.x264-GRP.mkv"))
 	if err != nil {
 		t.Fatalf("Detect error: %v", err)
 	}
@@ -469,6 +469,77 @@ func TestSceneDetectorIMDBFallbackUnmodifiedNotRenamed(t *testing.T) {
 	}
 	if result.Renamed {
 		t.Fatalf("did not expect a rename verdict, reason=%q", result.RenamedReason)
+	}
+}
+
+func TestSceneDetectorIMDBFallbackCaseOnlyDiffIsRenamed(t *testing.T) {
+	handler := srrdbFallbackHandler{
+		rEmpty: true,
+		imdbPages: map[int]string{
+			1: `{"resultsCount":1,"results":[{"release":"Fury.2014.1080p.BluRay.x264-GRP","imdbId":"111161","hasNFO":"no"}]}`,
+		},
+		details: map[string]string{
+			"Fury.2014.1080p.BluRay.x264-GRP": `{"archived-files":[{"name":"fury.2014.1080p.bluray.x264-grp.mkv","size":8000000000}]}`,
+		},
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	detector := newSRRDBDetector(server.Client(), server.URL, t.TempDir(), t.TempDir())
+	// Local media filename matches the archived one except for casing; srrdb is
+	// authoritative, so a casing-only difference is a rename.
+	result, err := detector.Detect(context.Background(), renamedSceneMeta("/data/Fury.2014.1080p.BluRay.x264-GRP.mkv"))
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if !result.IsScene || !result.Renamed {
+		t.Fatalf("expected scene + renamed on casing-only difference, got %#v", result)
+	}
+}
+
+func TestSceneDetectorDrivenFolderMatchDetectsRenamedFile(t *testing.T) {
+	// The maintainer's case: folder is the canonical scene name; the media file
+	// inside is renamed. IMDb tt0132245 is resolved; the imdb: search returns the
+	// release set; the folder candidate selects the exact release; the media file
+	// differs from the archived scene filename ⇒ scene + renamed.
+	const release = "Driven.2001.1080p.BluRay.x264-MOOVEE"
+	handler := srrdbFallbackHandler{
+		rEmpty: true,
+		imdbPages: map[int]string{
+			1: `{"resultsCount":3,"results":[` +
+				`{"release":"Driven.2001.German.DL.1080p.BluRay.x264-DETAiLS","imdbId":"0132245","isForeign":"yes"},` +
+				`{"release":"Driven.2001.1080p.BluRay.x264-MOOVEE","imdbId":"0132245","isForeign":"no"},` +
+				`{"release":"Driven.2001.720p.BluRay.x264-CiNEFiLE","imdbId":"0132245","isForeign":"no"}]}`,
+		},
+		details: map[string]string{
+			release: `{"archived-files":[{"name":"driven.2001.1080p.bluray.x264-moovee.mkv","crc":"9CDDBFCD","size":4695029966}]}`,
+		},
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	meta := api.PreparedMetadata{
+		SourcePath:  "/data/Driven.2001.1080p.BluRay.x264-MOOVEE",
+		VideoPath:   "/data/Driven.2001.1080p.BluRay.x264-MOOVEE/moovee-driven.mkv",
+		ExternalIDs: api.ExternalIDs{IMDBID: 132245},
+		Release:     api.ReleaseInfo{Resolution: "1080p", Year: 2001, Group: "MOOVEE", Source: "BluRay", Codec: []string{"x264"}, Language: []string{"English"}},
+	}
+	detector := newSRRDBDetector(server.Client(), server.URL, t.TempDir(), t.TempDir())
+	result, err := detector.Detect(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if !result.IsScene {
+		t.Fatalf("expected scene match via folder candidate")
+	}
+	if result.SceneName != release {
+		t.Fatalf("expected release %q, got %q", release, result.SceneName)
+	}
+	if result.IMDBID != 132245 {
+		t.Fatalf("expected imdb 132245, got %d", result.IMDBID)
+	}
+	if !result.Renamed || strings.TrimSpace(result.RenamedReason) == "" {
+		t.Fatalf("expected renamed verdict for renamed media file, got %#v", result)
 	}
 }
 
@@ -523,18 +594,52 @@ func TestSceneDetectorIMDBFallbackSoftFailsOnError(t *testing.T) {
 }
 
 func TestSceneDetectorRSearchSoftFailsOnNetworkError(t *testing.T) {
-	// srrdb unreachable on the initial r: search must not block an upload.
+	// srrdb unreachable on the r: fallback (no imdb) must not block an upload.
 	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return nil, errors.New("connection refused")
 	})}
 	detector := newSRRDBDetector(client, "https://api.srrdb.com", t.TempDir(), t.TempDir())
 
-	result, err := detector.Detect(context.Background(), renamedSceneMeta("/data/Fury 2014 1080p BluRay x264 GRP.mkv"))
+	meta := renamedSceneMeta("/data/Fury 2014 1080p BluRay x264 GRP.mkv")
+	meta.ExternalIDs = api.ExternalIDs{} // force the r: fallback path
+	result, err := detector.Detect(context.Background(), meta)
 	if err != nil {
 		t.Fatalf("expected soft-fail (nil error) on r: network error, got %v", err)
 	}
 	if result.IsScene || result.Renamed {
 		t.Fatalf("expected no scene match on srrdb outage, got %#v", result)
+	}
+}
+
+func TestSceneDetectorRFallbackFolderFirstWhenNoIMDb(t *testing.T) {
+	// No imdb id: the r: fallback tries the canonical folder candidate first.
+	const release = "Driven.2001.1080p.BluRay.x264-MOOVEE"
+	handler := http.NewServeMux()
+	handler.HandleFunc("/v1/search/r:"+release, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"resultsCount":1,"results":[{"release":"` + release + `","imdbId":"0132245"}]}`))
+	})
+	handler.HandleFunc("/v1/details/"+release, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"archived-files":[{"name":"driven.2001.1080p.bluray.x264-moovee.mkv","size":4695029966}]}`))
+	})
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	meta := api.PreparedMetadata{
+		SourcePath: "/data/" + release,
+		VideoPath:  "/data/" + release + "/driven.2001.1080p.bluray.x264-moovee.mkv",
+	}
+	detector := newSRRDBDetector(server.Client(), server.URL, t.TempDir(), t.TempDir())
+	result, err := detector.Detect(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if !result.IsScene || result.SceneName != release {
+		t.Fatalf("expected r: folder match %q, got %#v", release, result)
+	}
+	if result.Renamed {
+		t.Fatalf("did not expect rename (media filename matches archived), got reason=%q", result.RenamedReason)
 	}
 }
 

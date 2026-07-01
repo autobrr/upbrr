@@ -124,58 +124,209 @@ func setSRRDBHeaders(req *http.Request) {
 	req.Header.Set("User-Agent", srrdbUserAgent)
 }
 
+// formatSRRDBIMDbID renders an IMDb id in srrdb's required zero-padded tt form
+// (132245 -> "tt0132245"). Integer storage drops leading zeroes and srrdb rejects
+// an unpadded numeric id ("Invalid value for imdb"), so the query must re-pad.
+// Returns "" for a non-positive id.
+func formatSRRDBIMDbID(id int) string {
+	if id <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("tt%07d", id)
+}
+
+// sceneCandidates holds the local on-disk name signals used to select and verify
+// a scene release. folders are release-folder basenames kept whole (so dotted
+// tokens survive); files are media basenames with the media extension stripped;
+// mediaFilename is the on-disk media basename WITH extension for the
+// case-sensitive rename comparison.
+type sceneCandidates struct {
+	folders       []string
+	files         []string
+	mediaFilename string
+}
+
+func (c sceneCandidates) empty() bool {
+	return len(c.folders) == 0 && len(c.files) == 0
+}
+
+// primaryLocalBase returns the most descriptive local name for scoring/foreign
+// heuristics: the folder when known, else the file.
+func (c sceneCandidates) primaryLocalBase() string {
+	if len(c.folders) > 0 {
+		return c.folders[0]
+	}
+	if len(c.files) > 0 {
+		return c.files[0]
+	}
+	return ""
+}
+
+// sceneLocalCandidates derives folder and file name candidates from the prepared
+// paths. VideoPath is the primary media file; SourcePath is the release root — a
+// folder for folder releases (its basename is the canonical dotted name) or the
+// media file itself for single-file releases.
+func sceneLocalCandidates(meta api.PreparedMetadata) sceneCandidates {
+	video := strings.TrimSpace(meta.VideoPath)
+	source := strings.TrimSpace(meta.SourcePath)
+	var c sceneCandidates
+
+	addFile := func(base string) {
+		if stem := stripSceneMediaExt(base); stem != "" && !containsFold(c.files, stem) {
+			c.files = append(c.files, stem)
+		}
+	}
+
+	if video != "" {
+		base := pathutil.Base(video)
+		c.mediaFilename = strings.TrimSpace(base)
+		addFile(base)
+	}
+	if source != "" && !pathutil.SamePath(source, video) {
+		base := pathutil.Base(source)
+		switch {
+		case looksLikeSceneMediaFile(base):
+			addFile(base)
+			if c.mediaFilename == "" {
+				c.mediaFilename = strings.TrimSpace(base)
+			}
+		case base != "" && base != ".":
+			if !containsFold(c.folders, base) {
+				c.folders = append(c.folders, base)
+			}
+		}
+	}
+	return c
+}
+
 func (d *srrdbDetector) Detect(ctx context.Context, meta api.PreparedMetadata) (SceneResult, error) {
-	base := sceneBase(meta)
-	if base == "" {
+	cands := sceneLocalCandidates(meta)
+	if cands.empty() {
 		return SceneResult{}, nil
 	}
 
-	endpoint := fmt.Sprintf("%s/v1/search/r:%s", strings.TrimRight(d.baseURL, "/"), url.PathEscape(base))
+	// Detection now runs after external-ID resolution (ApplyMediaDetails), so a
+	// resolved IMDb id is normally available. The IMDb-keyed search returns the
+	// full scene release set for the title regardless of filename, which is the
+	// robust primary path; the exact r: search is only a no-IMDb fallback.
+	if imdbID := sceneIMDbID(meta); imdbID > 0 {
+		return d.detectViaIMDB(ctx, meta, cands, imdbID)
+	}
+	return d.detectViaR(ctx, cands)
+}
+
+// detectViaIMDB lists every scene release for the title, selects the one matching
+// the local folder/filename, then verifies the media filename. Strictly
+// best-effort: every failure returns a no-match (except context cancellation).
+func (d *srrdbDetector) detectViaIMDB(ctx context.Context, meta api.PreparedMetadata, cands sceneCandidates, imdbID int) (SceneResult, error) {
+	releases, err := d.fetchIMDBReleases(ctx, imdbID)
+	if err != nil {
+		if isContextError(ctx, err) {
+			return SceneResult{}, err
+		}
+		d.log().Debugf("metadata: scene imdb search soft-failed imdb=%d: %v", imdbID, err)
+		return SceneResult{}, nil
+	}
+	if len(releases) == 0 {
+		return SceneResult{}, nil
+	}
+
+	best, source := selectSceneRelease(meta, cands, releases)
+	if best == nil {
+		d.log().Debugf("metadata: scene imdb no confident candidate imdb=%d candidates=%d folders=%v files=%v", imdbID, len(releases), cands.folders, cands.files)
+		return SceneResult{}, nil
+	}
+	return d.finishSceneMatch(ctx, cands, *best, source, "imdb")
+}
+
+// detectViaR is the no-IMDb fallback: an exact r: lookup over the folder
+// candidates (the canonical dotted name) first, then the media filename.
+func (d *srrdbDetector) detectViaR(ctx context.Context, cands sceneCandidates) (SceneResult, error) {
+	names := make([]string, 0, len(cands.folders)+len(cands.files))
+	names = append(names, cands.folders...)
+	names = append(names, cands.files...)
+	for _, name := range names {
+		release, ok, err := d.searchExactR(ctx, name)
+		if err != nil {
+			if isContextError(ctx, err) {
+				return SceneResult{}, err
+			}
+			d.log().Debugf("metadata: scene r: search soft-failed name=%q: %v", name, err)
+			return SceneResult{}, nil
+		}
+		if ok {
+			return d.finishSceneMatch(ctx, cands, release, "r", "r")
+		}
+	}
+	return SceneResult{}, nil
+}
+
+// searchExactR performs a single exact r: search and returns the first result.
+func (d *srrdbDetector) searchExactR(ctx context.Context, name string) (srrdbSearchResult, bool, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return srrdbSearchResult{}, false, nil
+	}
+	endpoint := fmt.Sprintf("%s/v1/search/r:%s", strings.TrimRight(d.baseURL, "/"), url.PathEscape(trimmed))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return SceneResult{}, fmt.Errorf("scene: build request: %w", err)
+		return srrdbSearchResult{}, false, fmt.Errorf("scene: build r search request: %w", err)
 	}
 	setSRRDBHeaders(req)
-
 	resp, err := d.client.Do(req)
 	if err != nil {
-		// srrdb being unreachable/slow must never block an upload, so soft-fail the
-		// r: search the same way the imdb: fallback does. Context cancellation still
-		// propagates as fatal.
-		if isContextError(ctx, err) {
-			return SceneResult{}, fmt.Errorf("scene: srrdb request: %w", err)
-		}
-		d.log().Debugf("metadata: scene r: search soft-failed: %v", err)
-		return SceneResult{}, nil
+		return srrdbSearchResult{}, false, fmt.Errorf("scene: r search request: %w", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
-		return SceneResult{}, nil
+		return srrdbSearchResult{}, false, nil
 	}
-
 	var payload srrdbResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		// A truncated/malformed body is a transient srrdb failure, not an
-		// upload-blocking condition; soft-fail unless the context was cancelled.
-		if isContextError(ctx, err) {
-			return SceneResult{}, fmt.Errorf("scene: decode response: %w", err)
-		}
-		d.log().Debugf("metadata: scene r: decode soft-failed: %v", err)
-		return SceneResult{}, nil
+		return srrdbSearchResult{}, false, fmt.Errorf("scene: decode r search: %w", err)
 	}
-
 	if payload.ResultsCount <= 0 || len(payload.Results) == 0 {
-		// The exact dotted-name search missed. A renamed/modified scene release
-		// deviates from its canonical name, so fall back to an IMDb-keyed lookup
-		// (independent of filename) and match locally. Stays entirely soft: srrdb
-		// being unreachable or returning nothing must never block an upload.
-		return d.detectViaIMDB(ctx, meta, base)
+		return srrdbSearchResult{}, false, nil
 	}
+	return payload.Results[0], true, nil
+}
 
-	// The exact r: name matched, so the on-disk name is already canonical (case
-	// differences aside) and is by definition not renamed.
-	return d.buildSceneResult(ctx, payload.Results[0], false, "")
+// selectSceneRelease picks the srrdb release that matches the local names, using
+// case-insensitive equality (only for selecting the right release when local
+// casing differs): exact folder match, then exact filename/release-name match,
+// then metadata scoring to break ties / reject weak candidates.
+func selectSceneRelease(meta api.PreparedMetadata, cands sceneCandidates, releases []srrdbSearchResult) (*srrdbSearchResult, string) {
+	for _, folder := range cands.folders {
+		for i := range releases {
+			if strings.EqualFold(strings.TrimSpace(releases[i].Release), folder) {
+				return &releases[i], "folder"
+			}
+		}
+	}
+	for _, file := range cands.files {
+		for i := range releases {
+			if strings.EqualFold(strings.TrimSpace(releases[i].Release), file) {
+				return &releases[i], "filename"
+			}
+		}
+	}
+	if best, _ := bestSceneCandidate(meta, cands.primaryLocalBase(), releases); best != nil {
+		return best, "score"
+	}
+	return nil, ""
+}
+
+// finishSceneMatch verifies the media filename against the selected release and
+// builds the SceneResult.
+func (d *srrdbDetector) finishSceneMatch(ctx context.Context, cands sceneCandidates, release srrdbSearchResult, matchSource, mode string) (SceneResult, error) {
+	renamed := d.detectRenamed(ctx, release.Release, cands)
+	reason := ""
+	if renamed {
+		reason = sceneRenamedReason
+		d.log().Infof("metadata: scene release renamed or modified via=%s", matchSource)
+	}
+	d.log().Debugf("metadata: scene matched mode=%s via=%s release=%q folders=%v media=%q renamed=%t", mode, matchSource, release.Release, cands.folders, cands.mediaFilename, renamed)
+	return d.buildSceneResult(ctx, release, renamed, reason)
 }
 
 // buildSceneResult turns a matched srrdb release into a SceneResult, resolving the
@@ -224,63 +375,110 @@ func (d *srrdbDetector) buildSceneResult(ctx context.Context, result srrdbSearch
 	return scene, nil
 }
 
-// detectViaIMDB is the renamed-release fallback: keyed off an already-known IMDb
-// id, it lists every scene release for the title, score-matches the best
-// candidate against the parsed release tokens, then compares the canonical media
-// filename to the on-disk basename to flag a rename. It is strictly best-effort —
-// every failure path returns a no-match (except context cancellation), never an
-// error that could block an upload.
-func (d *srrdbDetector) detectViaIMDB(ctx context.Context, meta api.PreparedMetadata, localBase string) (SceneResult, error) {
-	imdbID := sceneIMDbID(meta)
-	if imdbID == 0 {
-		return SceneResult{}, nil
-	}
-
-	releases, err := d.fetchIMDBReleases(ctx, imdbID)
-	if err != nil {
-		if isContextError(ctx, err) {
-			return SceneResult{}, err
-		}
-		d.log().Debugf("metadata: scene imdb fallback soft-failed imdb=%d: %v", imdbID, err)
-		return SceneResult{}, nil
-	}
-	if len(releases) == 0 {
-		return SceneResult{}, nil
-	}
-
-	best, score := bestSceneCandidate(meta, localBase, releases)
-	if best == nil {
-		d.log().Debugf("metadata: scene imdb fallback no confident candidate imdb=%d candidates=%d", imdbID, len(releases))
-		return SceneResult{}, nil
-	}
-	d.log().Debugf("metadata: scene imdb fallback matched imdb=%d candidates=%d release=%q score=%d", imdbID, len(releases), best.Release, score)
-
-	renamed, reason := d.detectRename(ctx, best.Release, localBase)
-	if renamed {
-		d.log().Infof("metadata: scene release renamed or modified imdb=%d", imdbID)
-	}
-	return d.buildSceneResult(ctx, *best, renamed, reason)
-}
-
 // sceneRenamedReason is intentionally generic: it does not disclose the
 // canonical scene name, so the fix is not simply "rename the file back". A
 // modified release should be investigated (hash/provenance) rather than papered
 // over with a rename.
 const sceneRenamedReason = "source does not match its original scene release name (renamed or modified); verify the file hash and source provenance"
 
-// detectRename compares the canonical media filename(s) recorded for a scene
-// release against the on-disk basename. It is conservative: a name that matches
-// any canonical media file (case differences tolerated, like srrdb's r: search),
-// or any inability to read the release details, yields "not renamed".
-func (d *srrdbDetector) detectRename(ctx context.Context, release, localBase string) (bool, string) {
+// detectRenamed reports whether the local media file was renamed/modified from
+// the selected scene release. The local media filename is compared to the
+// release's archived media filenames CASE-SENSITIVELY — srrdb archived names are
+// authoritative, so a casing-only difference is a rename. It is conservative: no
+// media file to compare, no archived media, or any details-fetch failure yields
+// "not renamed".
+func (d *srrdbDetector) detectRenamed(ctx context.Context, release string, cands sceneCandidates) bool {
+	local := strings.TrimSpace(cands.mediaFilename)
+	if local == "" {
+		return false
+	}
 	details, err := d.fetchDetails(ctx, release)
 	if err != nil {
-		return false, ""
+		return false
 	}
-	if canonicalMediaBase(details.ArchivedFiles, localBase) == "" {
-		return false, ""
+	renamed, matched := archivedMediaRenamed(details.ArchivedFiles, local)
+	if !matched {
+		return false
 	}
-	return true, sceneRenamedReason
+	return renamed
+}
+
+// archivedMediaRenamed reports whether the local media filename fails to match
+// (case-sensitively) any archived scene media filename. matched is false when the
+// release has no identifiable media member to compare against.
+func archivedMediaRenamed(archived []srrdbArchivedFile, localMediaFilename string) (renamed, matched bool) {
+	want := strings.TrimSpace(localMediaFilename)
+	found := false
+	for _, file := range archived {
+		base, ok := archivedMediaName(file.Name)
+		if !ok {
+			continue
+		}
+		found = true
+		if base == want { // case-sensitive: srrdb is authoritative
+			return false, true
+		}
+	}
+	if !found {
+		return false, false
+	}
+	return true, true
+}
+
+// archivedMediaName returns the original-case basename (with extension) of an
+// archived media member, or ok=false for non-media members. srrdb archive names
+// are slash-data, handled with plain string ops (no local-path API).
+func archivedMediaName(name string) (string, bool) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "", false
+	}
+	if idx := strings.LastIndexAny(trimmed, "/\\"); idx >= 0 {
+		trimmed = trimmed[idx+1:]
+	}
+	dot := strings.LastIndex(trimmed, ".")
+	if dot <= 0 {
+		return "", false
+	}
+	if _, isMedia := sceneMediaExtensions[strings.ToLower(trimmed[dot:])]; !isMedia {
+		return "", false
+	}
+	return trimmed, true
+}
+
+// stripSceneMediaExt removes a recognized media extension from a basename,
+// returning the stem; a name without a media extension is returned unchanged so
+// folder-like names keep their dotted tokens.
+func stripSceneMediaExt(base string) string {
+	trimmed := strings.TrimSpace(base)
+	if dot := strings.LastIndex(trimmed, "."); dot > 0 {
+		if _, ok := sceneMediaExtensions[strings.ToLower(trimmed[dot:])]; ok {
+			return strings.TrimSpace(trimmed[:dot])
+		}
+	}
+	return trimmed
+}
+
+// looksLikeSceneMediaFile reports whether a basename ends in a recognized media
+// extension.
+func looksLikeSceneMediaFile(base string) bool {
+	trimmed := strings.TrimSpace(base)
+	dot := strings.LastIndex(trimmed, ".")
+	if dot <= 0 {
+		return false
+	}
+	_, ok := sceneMediaExtensions[strings.ToLower(trimmed[dot:])]
+	return ok
+}
+
+// containsFold reports case-insensitive membership.
+func containsFold(list []string, want string) bool {
+	for _, v := range list {
+		if strings.EqualFold(v, want) {
+			return true
+		}
+	}
+	return false
 }
 
 // isContextError reports cancellation and deadline errors from err or ctx.
@@ -426,23 +624,6 @@ func parseNFOService(text string) (string, string) {
 	return "", ""
 }
 
-func sceneBase(meta api.PreparedMetadata) string {
-	candidate := strings.TrimSpace(meta.VideoPath)
-	if candidate == "" {
-		candidate = strings.TrimSpace(meta.SourcePath)
-	}
-	if candidate == "" {
-		return ""
-	}
-
-	base := pathutil.Base(candidate)
-	ext := filepath.Ext(base)
-	if ext != "" {
-		base = strings.TrimSuffix(base, ext)
-	}
-	return strings.TrimSpace(base)
-}
-
 func (d *srrdbDetector) fetchNFO(ctx context.Context, release string) (string, bool, error) {
 	trimmed := strings.TrimSpace(release)
 	if trimmed == "" {
@@ -584,10 +765,10 @@ const (
 	srrdbIMDBMaxPages = 5
 )
 
-// sceneIMDbID returns the IMDb id already resolved on meta at scene-detection
-// time (Prepare runs before ResolveExternalIDs), in precedence order. A source
-// lookup URL or a prior persisted resolution is what makes the rename fallback
-// possible; 0 means "no id known" and the fallback is skipped.
+// sceneIMDbID returns the resolved IMDb id on meta in precedence order. Detection
+// runs in ApplyMediaDetails, after ResolveExternalIDs, so meta.ExternalIDs.IMDBID
+// is normally populated; 0 means "no id known" and the imdb: search is skipped in
+// favor of the r: fallback.
 func sceneIMDbID(meta api.PreparedMetadata) int {
 	if id := meta.ExternalIDOverrides.IMDBID; id != nil && *id > 0 {
 		return *id
@@ -631,7 +812,11 @@ func (d *srrdbDetector) fetchIMDBReleases(ctx context.Context, imdbID int) ([]sr
 }
 
 func (d *srrdbDetector) fetchIMDBReleasePage(ctx context.Context, imdbID, page int) (srrdbIMDBSearchResponse, error) {
-	endpoint := fmt.Sprintf("%s/v1/search/imdb:%d/order:date/page:%d", strings.TrimRight(d.baseURL, "/"), imdbID, page)
+	imdb := formatSRRDBIMDbID(imdbID)
+	if imdb == "" {
+		return srrdbIMDBSearchResponse{}, nil
+	}
+	endpoint := fmt.Sprintf("%s/v1/search/imdb:%s/order:date/page:%d", strings.TrimRight(d.baseURL, "/"), imdb, page)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return srrdbIMDBSearchResponse{}, fmt.Errorf("scene: build imdb search request: %w", err)
@@ -657,49 +842,4 @@ func (d *srrdbDetector) fetchIMDBReleasePage(ctx context.Context, imdbID, page i
 var sceneMediaExtensions = map[string]struct{}{
 	".mkv": {}, ".mp4": {}, ".avi": {}, ".ts": {}, ".m2ts": {},
 	".vob": {}, ".iso": {}, ".wmv": {}, ".mov": {}, ".m4v": {},
-}
-
-// canonicalMediaBase reports the canonical media basename to flag as a rename, or
-// "" when the on-disk basename matches a canonical media file (case differences
-// tolerated, like srrdb's r: search) or no media file can be identified. The
-// representative name returned is the largest matching media file.
-func canonicalMediaBase(archived []srrdbArchivedFile, localBase string) string {
-	wantBase := strings.TrimSpace(localBase)
-	representative := ""
-	var representativeSize int64 = -1
-	for _, file := range archived {
-		stem, ext, ok := sceneMediaStem(file.Name)
-		if !ok {
-			continue
-		}
-		if _, isMedia := sceneMediaExtensions[ext]; !isMedia {
-			continue
-		}
-		if strings.EqualFold(stem, wantBase) {
-			return ""
-		}
-		if file.Size > representativeSize {
-			representativeSize = file.Size
-			representative = stem
-		}
-	}
-	return representative
-}
-
-// sceneMediaStem splits an srrdb archive member name (slash-data, never a local
-// path) into its trimmed basename stem and lower-cased extension using plain
-// string operations so no filesystem path API is applied to remote data.
-func sceneMediaStem(name string) (stem, ext string, ok bool) {
-	trimmed := strings.TrimSpace(name)
-	if trimmed == "" {
-		return "", "", false
-	}
-	if idx := strings.LastIndexAny(trimmed, "/\\"); idx >= 0 {
-		trimmed = trimmed[idx+1:]
-	}
-	dot := strings.LastIndex(trimmed, ".")
-	if dot <= 0 {
-		return "", "", false
-	}
-	return strings.TrimSpace(trimmed[:dot]), strings.ToLower(trimmed[dot:]), true
 }

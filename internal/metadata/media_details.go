@@ -186,12 +186,67 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 	ApplyRequestScopedAudioPolicy(&meta, s.cfg, s.logger)
 	RebuildReleaseName(&meta, s.logger)
 
+	// Scene detection runs here — after external IDs are resolved and the release
+	// name is rebuilt — so the srrdb imdb: lookup has a resolved IMDb id and full
+	// normalized metadata, and so rename/scene fields are populated before tracker
+	// rules (which read meta.Scene / meta.SceneNFOPath / meta.SceneRenamed).
+	meta = s.applySceneDetection(ctx, meta)
+
 	meta, err = s.applyTrackerRules(ctx, meta)
 	if err != nil {
 		return api.PreparedMetadata{}, err
 	}
 
 	return meta, nil
+}
+
+// applySceneDetection runs srrdb scene/rename detection and copies the result
+// onto meta. It is strictly best-effort: srrdb being slow or down, or any
+// non-cancellation error, never fails ApplyMediaDetails. Detection is gated by
+// config (scene_detection) via a nil detector.
+func (s *Service) applySceneDetection(ctx context.Context, meta api.PreparedMetadata) api.PreparedMetadata {
+	if s.scene == nil {
+		return meta
+	}
+	result, err := s.scene.Detect(ctx, meta)
+	if err != nil {
+		switch {
+		case isSceneNFOError(err):
+			if s.logger != nil {
+				s.logger.Warnf("metadata: scene nfo side effect failed: %v", err)
+			}
+			// The primary match may still be present alongside a recoverable NFO
+			// side-effect error; apply it when it carries data.
+			if !sceneResultHasData(result) {
+				return meta
+			}
+		default:
+			// Context cancellation or any transient failure: skip scene, never block.
+			if s.logger != nil {
+				s.logger.Debugf("metadata: scene detect skipped: %v", err)
+			}
+			return meta
+		}
+	}
+	applySceneResult(&meta, result)
+	// Detection now runs after ID resolution, so backfill a scene-discovered IMDb
+	// id only when resolution found none, so upload payloads still carry it.
+	if meta.ExternalIDs.IMDBID == 0 && result.IMDBID > 0 {
+		meta.ExternalIDs.IMDBID = result.IMDBID
+	}
+	if s.logger != nil {
+		if meta.Scene {
+			s.logger.Debugf("metadata: scene release detected name=%q imdb=%d renamed=%t", meta.SceneName, meta.SceneIMDB, meta.SceneRenamed)
+		}
+		if meta.SceneNFOPath != "" {
+			if meta.SceneNFONew {
+				s.logger.Debugf("metadata: scene nfo downloaded %s", meta.SceneNFOPath)
+			} else {
+				s.logger.Debugf("metadata: scene nfo found %s", meta.SceneNFOPath)
+			}
+		}
+	}
+	return meta
 }
 
 // ApplyTrackerClaims refreshes claim-based tracker blocks after media details
