@@ -36,9 +36,9 @@ var sceneForeignKeywords = []string{
 }
 
 // bestSceneCandidate picks the scene release that best matches the parsed local
-// metadata, or (nil, 0) when no candidate clears the structural eligibility bar
-// (matching resolution plus year or group agreement). Eligibility — not just the
-// highest score — is what guards against false-flagging a non-scene release.
+// metadata, or (nil, 0) when no candidate clears the structural eligibility bar.
+// Eligibility — not just the highest score — is what guards against
+// false-flagging a non-scene release.
 func bestSceneCandidate(meta api.PreparedMetadata, localBase string, candidates []srrdbSearchResult) (*srrdbSearchResult, int) {
 	wantRes := strings.ToLower(strings.TrimSpace(meta.Release.Resolution))
 	if wantRes == "" {
@@ -64,8 +64,9 @@ func bestSceneCandidate(meta api.PreparedMetadata, localBase string, candidates 
 	return &candidates[bestIdx], bestScore
 }
 
-// scoreSceneCandidate scores one candidate against the parsed release tokens and
-// reports whether it is structurally eligible to be considered a match.
+// scoreSceneCandidate scores one candidate against the parsed release tokens.
+// Eligibility is false for structural conflicts such as resolution mismatch,
+// known-group mismatch, foreign-language mismatch, or edition mismatch.
 func scoreSceneCandidate(meta api.PreparedMetadata, wantRes string, localForeign bool, cand srrdbSearchResult) (int, bool) {
 	tokens := sceneTokens(cand.Release)
 	rel := meta.Release
@@ -90,11 +91,15 @@ func scoreSceneCandidate(meta api.PreparedMetadata, wantRes string, localForeign
 		}
 	}
 
+	group := sceneGroup(meta)
 	groupOK := false
-	if group := sceneGroup(meta); group != "" {
-		if strings.HasSuffix(strings.ToUpper(strings.TrimSpace(cand.Release)), "-"+strings.ToUpper(group)) {
+	groupConflict := false
+	if group != "" {
+		if strings.EqualFold(sceneReleaseGroup(cand.Release), group) {
 			score += 3
 			groupOK = true
+		} else {
+			groupConflict = true
 		}
 	}
 
@@ -123,9 +128,9 @@ func scoreSceneCandidate(meta api.PreparedMetadata, wantRes string, localForeign
 	// among {resolution matched, year matched, group matched}. Two signals is the
 	// false-positive guard: a single agreement (e.g. only the year, when the local
 	// resolution is unknown) is too weak to confidently claim a scene match and
-	// then flag a rename. Foreign/edition incompatibilities are hard failures: a
-	// mismatched edition or foreign variant is the wrong release regardless of how
-	// many other signals agree.
+	// then flag a rename. A known local group must match; a different scene group
+	// is a different release, regardless of title/year/resolution agreement.
+	// Foreign/edition incompatibilities are hard failures for the same reason.
 	strong := 0
 	if resMatched {
 		strong++
@@ -136,7 +141,7 @@ func scoreSceneCandidate(meta api.PreparedMetadata, wantRes string, localForeign
 	if groupOK {
 		strong++
 	}
-	eligible := resOK && strong >= 2 && !foreignConflict && !editionConflict
+	eligible := resOK && strong >= 2 && !groupConflict && !foreignConflict && !editionConflict
 	return score, eligible
 }
 
@@ -224,6 +229,16 @@ func sceneGroup(meta api.PreparedMetadata) string {
 		return group
 	}
 	return strings.TrimPrefix(strings.TrimSpace(meta.Tag), "-")
+}
+
+// sceneReleaseGroup returns the trailing scene group after the final dash.
+// Releases without a dash have no group for scoring purposes.
+func sceneReleaseGroup(release string) string {
+	trimmed := strings.TrimSpace(release)
+	if idx := strings.LastIndex(trimmed, "-"); idx >= 0 {
+		return strings.TrimSpace(trimmed[idx+1:])
+	}
+	return ""
 }
 
 func sceneTokens(value string) map[string]struct{} {

@@ -92,6 +92,24 @@ func TestBestSceneCandidate(t *testing.T) {
 			wantPick: "",
 		},
 		{
+			name:      "known local group must match candidate group",
+			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2015, Group: "monkee", Source: "WEB-DL", Codec: []string{"H.264"}},
+			localBase: "7 Days in Hell 2015 1080p AMZN WEB-DL DD+ 5.1 H.264-monkee",
+			cands: []srrdbSearchResult{
+				{Release: "7.Days.in.Hell.2015.1080p.WEB.H264-DiMEPiECE", IsForeign: "no"},
+			},
+			wantPick: "",
+		},
+		{
+			name:      "known local group match is case-insensitive",
+			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2015, Group: "monkee", Source: "WEB-DL", Codec: []string{"H.264"}},
+			localBase: "Movie 2015 1080p WEB-DL H.264-monkee",
+			cands: []srrdbSearchResult{
+				{Release: "Movie.2015.1080p.WEB-DL.H.264-MONKEE", IsForeign: "no"},
+			},
+			wantPick: "Movie.2015.1080p.WEB-DL.H.264-MONKEE",
+		},
+		{
 			name:      "no candidate at the right resolution is not matched",
 			release:   api.ReleaseInfo{Resolution: "2160p", Year: 2014, Group: "GRP"},
 			localBase: "Movie 2014 2160p BluRay x265 GRP",
