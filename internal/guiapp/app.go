@@ -471,7 +471,7 @@ func (a *App) ResetMetadata(path string, sourceLookupURL string, overrides api.E
 		removed, err := removeIfWithinRoot(tmpRoot, filePath, false)
 		if err != nil {
 			if logger != nil {
-				logger.Warnf("gui: reset metadata remove file failed path=%q err=%v", filePath, err)
+				logger.Warnf("gui: reset metadata remove file failed path=%q err=%s", filePath, redaction.RedactValue(err.Error(), nil))
 			}
 			continue
 		}
@@ -484,7 +484,7 @@ func (a *App) ResetMetadata(path string, sourceLookupURL string, overrides api.E
 		removed, err := removeIfWithinRoot(tmpRoot, dir, true)
 		if err != nil {
 			if logger != nil {
-				logger.Warnf("gui: reset metadata remove tmp dir failed path=%q err=%v", dir, err)
+				logger.Warnf("gui: reset metadata remove tmp dir failed path=%q err=%s", dir, redaction.RedactValue(err.Error(), nil))
 			}
 			continue
 		}
@@ -654,7 +654,7 @@ func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides,
 	defer func() {
 		if err != nil {
 			if logger := a.currentLogger(); logger != nil {
-				logger.Warnf("gui: tracker dry-run blocked err=%v", err)
+				logger.Warnf("gui: tracker dry-run blocked err=%s", redaction.RedactValue(err.Error(), nil))
 			}
 		}
 	}()

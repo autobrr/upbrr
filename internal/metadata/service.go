@@ -24,6 +24,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/seasonep"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackerdata"
@@ -282,7 +283,7 @@ func applyTorrentOverridesToPreparedMeta(meta *api.PreparedMetadata) {
 func (s *Service) Prepare(ctx context.Context, req api.Request) (meta api.PreparedMetadata, err error) {
 	defer func() {
 		if err != nil {
-			s.logger.Warnf("metadata: preparation blocked err=%v", err)
+			s.logger.Warnf("metadata: preparation blocked err=%s", redaction.RedactValue(err.Error(), nil))
 		}
 	}()
 
@@ -394,7 +395,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (meta api.Prepar
 				found = true
 				s.logger.Debugf("metadata: found playlist selection at normalized BDMV path: %s", bdmvNorm)
 			} else {
-				s.logger.Debugf("metadata: no playlist selection found, err=%v", err)
+				s.logger.Debugf("metadata: no playlist selection found, err=%s", redaction.RedactValue(fmt.Sprint(err), nil))
 			}
 		}
 

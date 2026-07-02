@@ -23,6 +23,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/torrent"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -198,7 +199,7 @@ type torrentDataValidation struct {
 func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMetadata) (result api.ClientSearchResult, err error) {
 	defer func() {
 		if err != nil {
-			s.logger.Warnf("clients: pathed search blocked err=%v", err)
+			s.logger.Warnf("clients: pathed search blocked err=%s", redaction.RedactValue(err.Error(), nil))
 		}
 	}()
 

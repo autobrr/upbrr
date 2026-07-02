@@ -19,6 +19,7 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -360,7 +361,7 @@ dispatchLoop:
 
 			if normalizedHost == "imgbox" {
 				if err != nil {
-					s.logger.Debugf("imgbox: upload failed file=%s duration=%v err=%v", fileName, uploadDuration, err)
+					s.logger.Debugf("imgbox: upload failed file=%s duration=%v err=%s", fileName, uploadDuration, redaction.RedactValue(err.Error(), nil))
 				} else {
 					s.logger.Debugf("imgbox: upload succeeded file=%s duration=%v", fileName, uploadDuration)
 					s.logger.Tracef("imgbox: thumbnail URL: %s", uploaded.ImgURL)
@@ -370,7 +371,7 @@ dispatchLoop:
 			}
 
 			if err != nil {
-				s.logger.Warnf("image hosting: upload failed file=%s err=%v", fileName, err)
+				s.logger.Warnf("image hosting: upload failed file=%s err=%s", fileName, redaction.RedactValue(err.Error(), nil))
 				mu.Lock()
 				failures = append(failures, fmt.Sprintf("image upload %s: %v", fileName, err))
 				mu.Unlock()

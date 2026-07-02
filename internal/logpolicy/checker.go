@@ -171,6 +171,8 @@ var infoVerboseSignals = []string{
 	"traceback",
 }
 
+var rawErrorLogFieldRe = regexp.MustCompile(`(?:^|[\s,;])(?:err|error)=%`)
+
 type Violation struct {
 	File    string
 	Line    int
@@ -667,6 +669,16 @@ func checkFile(fset *token.FileSet, root string, path string) ([]Violation, erro
 			for _, arg := range call.Args[1:] {
 				if isUnsafeBodyLikeExpr(arg, sanitizedVars) {
 					appendLogpolicyViolation(fset, relPath, allows, &violations, arg.Pos(), "response body log arguments must be redacted before logging")
+				}
+			}
+		}
+		if hasRawErrorLogField(lowerFormat) {
+			for _, arg := range call.Args[1:] {
+				if isSafeSensitiveOutputExpr(arg) {
+					continue
+				}
+				if isRawErrorLikeExpr(arg) {
+					appendLogpolicyViolation(fset, relPath, allows, &violations, arg.Pos(), "raw error log fields must be redacted before logging")
 				}
 			}
 		}
@@ -2726,6 +2738,10 @@ func isSensitiveUsernameName(name string) bool {
 func isErrorLikeName(name string) bool {
 	lower := strings.ToLower(strings.TrimSpace(name))
 	return lower == "err" || lower == "error" || strings.HasSuffix(lower, "err") || strings.HasSuffix(lower, "error")
+}
+
+func hasRawErrorLogField(lowerFormat string) bool {
+	return rawErrorLogFieldRe.MatchString(lowerFormat)
 }
 
 func isAuthSensitiveFormat(lowerFormat string) bool {

@@ -31,6 +31,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -153,7 +154,7 @@ func (s *Service) loadBTNClaimedTitles(ctx context.Context, cachePath string, ca
 	cached, fetchedAt, cacheErr := readBTNClaimedCache(cachePath)
 	if cacheErr != nil {
 		if s.logger != nil && !errors.Is(cacheErr, os.ErrNotExist) {
-			s.logger.Warnf("metadata: BTN claims cache read failed path=%s err=%v", cachePath, cacheErr)
+			s.logger.Warnf("metadata: BTN claims cache read failed path=%s err=%s", cachePath, redaction.RedactValue(cacheErr.Error(), nil))
 		}
 	} else if s.logger != nil {
 		s.logger.Debugf("metadata: BTN claims cache loaded path=%s titles=%d fetched_at=%d", cachePath, len(cached), fetchedAt)

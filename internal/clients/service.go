@@ -49,7 +49,7 @@ func NewService(cfg config.Config, logger api.Logger) *Service {
 func (s *Service) Inject(ctx context.Context, meta api.PreparedMetadata, torrent api.TorrentResult) (err error) {
 	defer func() {
 		if err != nil {
-			s.logger.Warnf("clients: injection blocked err=%v", err)
+			s.logger.Warnf("clients: injection blocked err=%s", redaction.RedactValue(err.Error(), nil))
 		}
 	}()
 

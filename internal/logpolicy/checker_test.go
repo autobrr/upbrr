@@ -1509,6 +1509,101 @@ func check(log logger, err error) {
 	}
 }
 
+func TestCheckRepositoryFlagsRawErrorLogFields(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+
+	content := `package sample
+
+type logger struct{}
+
+func (logger) Warnf(string, ...any) {}
+
+func check(log logger, err error) {
+	log.Warnf("core: upload prepared blocked err=%v", err)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "raw error log fields") {
+		t.Fatalf("expected raw error log field violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryAllowsRedactedErrorLogFields(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+
+	content := `package sample
+
+import "github.com/autobrr/upbrr/internal/redaction"
+
+type logger struct{}
+
+func (logger) Warnf(string, ...any) {}
+
+func check(log logger, err error) {
+	log.Warnf("core: upload prepared blocked err=%s", redaction.RedactValue(err.Error(), nil))
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryAllowsBooleanErrorStateLogFields(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+
+	content := `package sample
+
+type logger struct{}
+
+func (logger) Debugf(string, ...any) {}
+
+func check(log logger, detailsErr error) {
+	log.Debugf("metadata: scene nfo downloaded details_error=%t", detailsErr != nil)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
 func TestCheckRepositoryFlagsUploadRejectionErrorOutputInTests(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "services", "imagehosting"), 0o755); err != nil {

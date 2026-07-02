@@ -31,6 +31,7 @@ import (
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/description"
@@ -202,7 +203,7 @@ func (c *Core) RunUpload(ctx context.Context, req api.Request) (api.Result, erro
 func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (result api.Result, err error) {
 	defer func() {
 		if err != nil {
-			c.logger.Warnf("core: upload prepared blocked err=%v", err)
+			c.logger.Warnf("core: upload prepared blocked err=%s", redaction.RedactValue(err.Error(), nil))
 		}
 	}()
 
@@ -499,7 +500,7 @@ func firstRequestedTracker(trackers []string) string {
 func (c *Core) CheckDupes(ctx context.Context, req api.Request) (summary api.DupeCheckSummary, err error) {
 	defer func() {
 		if err != nil {
-			c.logger.Warnf("core: dupe check blocked err=%v", err)
+			c.logger.Warnf("core: dupe check blocked err=%s", redaction.RedactValue(err.Error(), nil))
 		}
 	}()
 
@@ -1739,7 +1740,7 @@ func (c *Core) DeleteUploadedImage(ctx context.Context, req api.Request, imagePa
 func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (preview api.MetadataPreview, err error) {
 	defer func() {
 		if err != nil {
-			c.logger.Warnf("core: metadata preview blocked err=%v", err)
+			c.logger.Warnf("core: metadata preview blocked err=%s", redaction.RedactValue(err.Error(), nil))
 		}
 	}()
 
@@ -1963,7 +1964,7 @@ func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (previ
 func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (preview api.PreparationPreview, err error) {
 	defer func() {
 		if err != nil {
-			c.logger.Warnf("core: preparation preview blocked err=%v", err)
+			c.logger.Warnf("core: preparation preview blocked err=%s", redaction.RedactValue(err.Error(), nil))
 		}
 	}()
 
@@ -2050,7 +2051,7 @@ func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (pr
 func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (preview api.TrackerDryRunPreview, err error) {
 	defer func() {
 		if err != nil {
-			c.logger.Warnf("core: tracker dry-run blocked err=%v", err)
+			c.logger.Warnf("core: tracker dry-run blocked err=%s", redaction.RedactValue(err.Error(), nil))
 		}
 	}()
 
@@ -3246,7 +3247,7 @@ func cacheableGUIPreparedMetaRequest(req api.Request) bool {
 func (c *Core) ExportGUICachedPreparedMeta(ctx context.Context, req api.Request) (meta api.PreparedMetadata, ok bool, err error) {
 	defer func() {
 		if err != nil {
-			c.logger.Warnf("core: gui prepared metadata export blocked err=%v", err)
+			c.logger.Warnf("core: gui prepared metadata export blocked err=%s", redaction.RedactValue(err.Error(), nil))
 		}
 	}()
 
@@ -3271,7 +3272,7 @@ func (c *Core) ExportGUICachedPreparedMeta(ctx context.Context, req api.Request)
 func (c *Core) ImportPreparedMetadataForGUI(ctx context.Context, req api.Request, meta api.PreparedMetadata) (err error) {
 	defer func() {
 		if err != nil {
-			c.logger.Warnf("core: gui prepared metadata import blocked err=%v", err)
+			c.logger.Warnf("core: gui prepared metadata import blocked err=%s", redaction.RedactValue(err.Error(), nil))
 		}
 	}()
 

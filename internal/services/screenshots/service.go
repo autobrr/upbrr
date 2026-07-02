@@ -26,6 +26,7 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/imagehost"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -62,7 +63,7 @@ func NewServiceWithRepo(cfg config.Config, logger api.Logger, tmpRoot string, ru
 func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int) (plan api.ScreenshotPlan, err error) {
 	defer func() {
 		if err != nil {
-			s.logger.Warnf("screenshots: planning blocked err=%v", err)
+			s.logger.Warnf("screenshots: planning blocked err=%s", redaction.RedactValue(err.Error(), nil))
 		}
 	}()
 
@@ -209,7 +210,7 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, selections []api.ScreenshotSelection, purpose api.ScreenshotPurpose) (result api.ScreenshotResult, err error) {
 	defer func() {
 		if err != nil {
-			s.logger.Warnf("screenshots: capture blocked err=%v", err)
+			s.logger.Warnf("screenshots: capture blocked err=%s", redaction.RedactValue(err.Error(), nil))
 		}
 	}()
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -77,7 +78,7 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 				return trackers.DescriptionResult{}, fmt.Errorf("trackers: %w", err)
 			}
 			if req.Logger != nil {
-				req.Logger.Warnf("trackers: description assets failed tracker=%s err=%v", d.name, err)
+				req.Logger.Warnf("trackers: description assets failed tracker=%s err=%s", d.name, redaction.RedactValue(err.Error(), nil))
 			}
 			assets = trackers.DescriptionAssets{}
 		}
