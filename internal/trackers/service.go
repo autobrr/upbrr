@@ -14,6 +14,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/description"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -109,7 +110,7 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 				if IsInternalGroup(s.cfg, tracker, meta) {
 					status = "pending-internal"
 					if s.logger != nil {
-						s.logger.Infof("trackers: %s marked internal for %s", tracker, meta.Tag)
+						s.logger.Infof("trackers: marked internal tracker=%s tag=%s", tracker, meta.Tag)
 					}
 				}
 				err := s.repo.CreateUploadRecord(ctx, db.UploadRecord{
@@ -122,7 +123,7 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 					return api.UploadSummary{}, fmt.Errorf("trackers: record %s: %w", tracker, err)
 				}
 				if err := s.repo.UpdateLatestUploadRecordStatus(ctx, meta.SourcePath, tracker, "failed"); err != nil {
-					s.logger.Warnf("trackers: status update %s (failed): %v", tracker, err)
+					s.logger.Warnf("trackers: status update failed tracker=%s status=failed err=%s", tracker, redaction.RedactValue(err.Error(), nil))
 				}
 			}
 		}
@@ -154,7 +155,7 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 			recordMu.Unlock()
 
 			if err := s.repo.UpdateLatestUploadRecordStatus(updateCtx, meta.SourcePath, trimmedTracker, trimmedStatus); err != nil {
-				s.logger.Warnf("trackers: status update %s (%s): %v", trimmedTracker, trimmedStatus, err)
+				s.logger.Warnf("trackers: status update failed tracker=%s status=%s err=%s", trimmedTracker, trimmedStatus, redaction.RedactValue(err.Error(), nil))
 				recordMu.Lock()
 				recordStatuses[trimmedTracker] = recordStatusState{status: trimmedStatus}
 				recordMu.Unlock()
@@ -201,7 +202,7 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 			if IsInternalGroup(s.cfg, tracker, meta) {
 				status = "pending-internal"
 				if s.logger != nil {
-					s.logger.Infof("trackers: %s marked internal for %s", tracker, meta.Tag)
+					s.logger.Infof("trackers: marked internal tracker=%s tag=%s", tracker, meta.Tag)
 				}
 			}
 			err := s.repo.CreateUploadRecord(ctx, db.UploadRecord{
@@ -688,11 +689,11 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		return api.PreparationPreview{}, errors.New("trackers: registry not configured")
 	}
 
-	s.logger.Debugf("trackers: building preparation for %d trackers", len(resolved))
+	s.logger.Debugf("trackers: preparation decision=build trackers=%d", len(resolved))
 
 	preloaded, err := preloadDescriptionAssetData(ctx, meta, s.repo)
 	if err != nil {
-		s.logger.Warnf("trackers: preparation preload failed for %s: %v", meta.SourcePath, err)
+		s.logger.Warnf("trackers: preparation preload failed source=%s err=%s", meta.SourcePath, redaction.RedactValue(err.Error(), nil))
 		preloaded = nil
 	}
 	preferredImageHosts := preparationImageHostPreferences(s.cfg, meta, resolved, s.logger)
@@ -707,7 +708,7 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 	if preflightUploaded {
 		refreshed, reloadErr := preloadDescriptionAssetData(ctx, meta, s.repo)
 		if reloadErr != nil {
-			s.logger.Warnf("trackers: preparation preload reload failed for %s: %v", meta.SourcePath, reloadErr)
+			s.logger.Warnf("trackers: preparation preload reload failed source=%s err=%s", meta.SourcePath, redaction.RedactValue(reloadErr.Error(), nil))
 		} else {
 			preloaded = refreshed
 		}
@@ -740,7 +741,7 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		entry.Trackers = append(entry.Trackers, tracker)
 		placeholderCount++
 		if note != "" {
-			s.logger.Warnf("trackers: preparation placeholder for %s (%s)", tracker, note)
+			s.logger.Warnf("trackers: preparation placeholder tracker=%s note=%s", tracker, note)
 		} else {
 			s.logger.Warnf("trackers: preparation placeholder for %s", tracker)
 		}
@@ -782,7 +783,7 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 				preferredImageHosts[key],
 			)
 			if err != nil {
-				s.logger.Warnf("trackers: preparation image host resolution failed for %s: %v", tracker, err)
+				s.logger.Warnf("trackers: preparation image host resolution failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
 				placeholder("", tracker, fmt.Sprintf("image host error: %v", err), api.ImageHostFeedback{})
 				continue
 			}
@@ -794,7 +795,7 @@ func (s *Service) BuildPreparation(ctx context.Context, meta api.PreparedMetadat
 		}
 		assets, err := resolveDescriptionAssets(ctx, tracker, meta, s.repo, s.logger, preloaded)
 		if err != nil {
-			s.logger.Warnf("trackers: preparation assets failed for %s: %v", tracker, err)
+			s.logger.Warnf("trackers: preparation assets failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
 			assets = DescriptionAssets{}
 		}
 		applyResolvedDescriptionScreenshots(ctx, meta, s.repo, preloaded, &assets, resolution.screenshots)
@@ -936,11 +937,11 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 		return nil, errors.New("trackers: registry not configured")
 	}
 
-	s.logger.Debugf("trackers: building upload dry-run for %d trackers", len(resolved))
+	s.logger.Debugf("trackers: dry-run decision=build trackers=%d", len(resolved))
 
 	preloaded, err := preloadDescriptionAssetData(ctx, meta, s.repo)
 	if err != nil {
-		s.logger.Warnf("trackers: dry-run preload failed for %s: %v", meta.SourcePath, err)
+		s.logger.Warnf("trackers: dry-run preload failed source=%s err=%s", meta.SourcePath, redaction.RedactValue(err.Error(), nil))
 		preloaded = nil
 	}
 
@@ -979,7 +980,7 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 		}
 		resolution, err := ensureDescriptionImageHostWithData(ctx, tracker, trackerMeta, s.cfg, trackerCfg, s.repo, s.images, s.logger, preloaded)
 		if err != nil {
-			s.logger.Warnf("trackers: dry-run image host resolution failed for %s: %v", tracker, err)
+			s.logger.Warnf("trackers: dry-run image host resolution failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
 			entry.Status = "error"
 			entry.Message = err.Error()
 			results = append(results, entry)

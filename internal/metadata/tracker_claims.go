@@ -104,7 +104,11 @@ func (s *Service) applyTrackerClaims(ctx context.Context, meta api.PreparedMetad
 			Reason: trackerClaimFailureReason(tracker, meta, s),
 		})
 		if s.logger != nil {
-			s.logger.Warnf("metadata: tracker claim match found for %s", tracker)
+			if strings.EqualFold(tracker, "BTN") {
+				s.logger.Debugf("metadata: tracker claim match found tracker=%s", tracker)
+			} else {
+				s.logger.Warnf("metadata: tracker claim match found tracker=%s decision=blocked reason=%s", tracker, trackerClaimRuleActive)
+			}
 		}
 	}
 

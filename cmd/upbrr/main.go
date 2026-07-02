@@ -40,7 +40,7 @@ var (
 func main() {
 	exitCode := 0
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		printTerminalError(err)
 		var cliErr *cliExitError
 		if errors.As(err, &cliErr) {
 			exitCode = cliErr.code
@@ -51,6 +51,19 @@ func main() {
 	if exitCode != 0 {
 		os.Exit(exitCode)
 	}
+}
+
+// printTerminalError writes a sanitized CLI error diagnostic to stderr.
+func printTerminalError(err error) {
+	if err == nil {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "error: %s\n", logging.SanitizeMessage(err.Error()))
+}
+
+// printTerminalWarning writes a sanitized CLI warning diagnostic to stderr.
+func printTerminalWarning(warning string) {
+	fmt.Fprintf(os.Stderr, "warning: %s\n", logging.SanitizeMessage(warning))
 }
 
 type cliExitError struct {
@@ -158,7 +171,7 @@ func run() error {
 		if err := createCLIAuthFile(os.Stdin, os.Stdout, dbPath); err != nil {
 			return exitError(1, err)
 		}
-		fmt.Printf("created %s\n", webserver.AuthFilePath(dbPath))
+		fmt.Printf("created %s\n", formatPathLabel(webserver.AuthFilePath(dbPath)))
 		return nil
 	}
 
@@ -167,7 +180,7 @@ func run() error {
 		if err := exportConfigToYAML(ctx, opts.ConfigPath, configFlagProvided, opts.ExportConfigPath, opts.ExportConfigPlaintext); err != nil {
 			return exitError(1, err)
 		}
-		fmt.Printf("exported config to %s\n", opts.ExportConfigPath)
+		fmt.Printf("exported config to %s\n", formatPathLabel(opts.ExportConfigPath))
 		return nil
 	}
 
@@ -211,7 +224,7 @@ func run() error {
 	}
 	defer func() {
 		if err := logger.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			printTerminalError(err)
 		}
 	}()
 	screens := opts.Screens
@@ -245,7 +258,7 @@ func run() error {
 	}
 	defer func() {
 		if err := coreSvc.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			printTerminalError(err)
 		}
 	}()
 
@@ -1147,7 +1160,7 @@ func deleteCLIStoredReleases(ctx context.Context, coreSvc api.Core, paths []stri
 		if err := coreSvc.DeleteHistoryRelease(ctx, sourcePath); err != nil {
 			return fmt.Errorf("delete stored data for %q: %w", sourcePath, err)
 		}
-		fmt.Printf("deleted stored database content for %s\n", sourcePath)
+		fmt.Printf("deleted stored database content for %s\n", formatPathLabel(sourcePath))
 	}
 	return nil
 }
@@ -1208,6 +1221,8 @@ func cliHasExternalIDOverrides(overrides api.ExternalIDOverrides) bool {
 		overrides.MALID != nil
 }
 
+// buildCLIUploadDebugReviews builds one review per original CLI source path,
+// preserving the original display path while using any prepared resolved path.
 func buildCLIUploadDebugReviews(ctx context.Context, coreSvc api.Core, sourcePaths []string, uploadReq api.Request) ([]api.UploadReview, error) {
 	reviews := make([]api.UploadReview, 0, len(sourcePaths))
 	for idx, sourcePath := range sourcePaths {
@@ -1435,7 +1450,7 @@ func handleBDMVDiscSelection(discCtx context.Context, promptCtx context.Context,
 	// Display top 5 playlists
 	topCount := min(len(playlists), 5)
 
-	fmt.Printf("\nAvailable playlists for %s:\n", absPath)
+	fmt.Printf("\nAvailable playlists for %s:\n", formatPathLabel(absPath))
 	for i := range topCount {
 		p := playlists[i]
 		durationStr := formatDuration(p.Duration)
@@ -1546,7 +1561,7 @@ func importConfig(ctx context.Context, importPath, configPath string, configProv
 	}
 
 	for _, w := range warnings {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+		printTerminalWarning(w)
 	}
 
 	dbPath, err := resolveExportDBPath(configPath, configProvided)
@@ -1565,9 +1580,9 @@ func importConfig(ctx context.Context, importPath, configPath string, configProv
 	}
 
 	if len(warnings) > 0 {
-		fmt.Printf("imported config from %s (%d warnings)\n", importPath, len(warnings))
+		fmt.Printf("imported config from %s (%d warnings)\n", formatPathLabel(importPath), len(warnings))
 	} else {
-		fmt.Printf("imported config from %s\n", importPath)
+		fmt.Printf("imported config from %s\n", formatPathLabel(importPath))
 	}
 	return nil
 }

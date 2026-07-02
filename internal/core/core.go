@@ -31,6 +31,7 @@ import (
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/description"
@@ -54,6 +55,7 @@ type Core struct {
 
 type dupeCacheEntry struct {
 	meta             api.PreparedMetadata
+	dupeSummary      api.DupeCheckSummary
 	signature        string
 	updatedAt        time.Time
 	requestRefreshed bool
@@ -198,7 +200,13 @@ func (c *Core) RunUpload(ctx context.Context, req api.Request) (api.Result, erro
 // side effects, while omitted tracker selections retain configured default behavior.
 // If a later path fails or the context is canceled after earlier uploads complete,
 // the returned result preserves the uploaded count accumulated before the error.
-func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (api.Result, error) {
+func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (result api.Result, err error) {
+	defer func() {
+		if err != nil {
+			c.logger.Warnf("core: upload prepared blocked err=%s", redaction.RedactValue(err.Error(), nil))
+		}
+	}()
+
 	req = normalizeExecutionRequest(req)
 	resolvedReq, err := c.resolveDescriptionOverrideRequest(ctx, req)
 	if err != nil {
@@ -267,7 +275,7 @@ func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (api.Resu
 		}
 	}
 
-	c.logger.Debugf("core: upload-only complete with %d uploaded", totalUploaded)
+	c.logger.Infof("core: upload-only complete uploaded=%d", totalUploaded)
 	return api.Result{UploadedCount: totalUploaded}, nil
 }
 
@@ -279,7 +287,7 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 	if err != nil {
 		return 0, err
 	}
-	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, meta.TrackersRemove, c.logger, false, false)
+	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, trackerResolutionRemoveForRequest(meta, req), c.logger, false, false)
 	if explicitEmpty {
 		c.logger.Debugf("core: upload prepared explicit trackers resolved empty source=%s", meta.SourcePath)
 		return 0, nil
@@ -317,17 +325,18 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 					return 0, err
 				}
 			} else {
-				entries, err := c.services.Trackers.BuildUploadDryRun(ctx, meta, resolvedTrackers)
+				dryRunMeta := trackerDebugProcessingMeta(meta, req)
+				entries, err := c.services.Trackers.BuildUploadDryRun(ctx, dryRunMeta, resolvedTrackers)
 				if err != nil {
 					return 0, fmt.Errorf("core: %w", err)
 				}
-				annotateDryRunReleaseNames(meta, entries)
-				if err := c.injectTrackerDryRunTorrents(ctx, req, meta, entries, torrent); err != nil {
+				annotateDryRunReleaseNames(dryRunMeta, entries)
+				if err := c.injectTrackerDryRunTorrents(ctx, req, dryRunMeta, entries, torrent); err != nil {
 					return 0, err
 				}
 			}
 		}
-		c.logger.Debugf("core: dry-run or debug enabled, skipping tracker upload")
+		c.logger.Infof("core: dry-run or debug enabled, skipping tracker upload source=%s", meta.SourcePath)
 		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "upload", "completed", "Dry run complete")
 		return 0, nil
 	}
@@ -488,7 +497,13 @@ func firstRequestedTracker(trackers []string) string {
 	return ""
 }
 
-func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSummary, error) {
+func (c *Core) CheckDupes(ctx context.Context, req api.Request) (summary api.DupeCheckSummary, err error) {
+	defer func() {
+		if err != nil {
+			c.logger.Warnf("core: dupe check blocked err=%s", redaction.RedactValue(err.Error(), nil))
+		}
+	}()
+
 	req = normalizeExecutionRequest(req)
 	if len(req.Paths) == 0 {
 		return api.DupeCheckSummary{}, internalerrors.ErrInvalidInput
@@ -535,7 +550,7 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 			}
 			summary = appendPathedDupeResults(summary, matchedTrackers)
 			applyDupeSummaryToPreparedMeta(&cached, summary)
-			c.storeRefreshedDupeCache(cached.SourcePath, overrideSignature(cached.ExternalIDOverrides, cached.ReleaseNameOverrides, cached.MetadataOverrides, cached.TrackerConfigOverrides, cached.TrackerSiteOverrides, cached.ClientOverrides, cached.TorrentOverrides, cached.ImageHostOverrides, cached.ScreenshotOverrides), cached)
+			c.storeRefreshedDupeCacheWithDupeSummary(cached.SourcePath, overrideSignature(cached.ExternalIDOverrides, cached.ReleaseNameOverrides, cached.MetadataOverrides, cached.TrackerConfigOverrides, cached.TrackerSiteOverrides, cached.ClientOverrides, cached.TorrentOverrides, cached.ImageHostOverrides, cached.ScreenshotOverrides), cached, summary)
 			return summary, nil
 		}
 		if req.Mode == api.ModeGUI {
@@ -654,13 +669,13 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 	matchedTrackers := mergeTrackerRemovals(nil, meta.MatchedTrackers)
 	removeTrackers := mergeTrackerRemovals(req.TrackersRemove, matchedTrackers)
 	resolvedTrackers := trackers.ResolveTrackers(c.cfg, req.Trackers, removeTrackers, c.logger)
-	summary, err := c.services.Dupes.Check(ctx, meta, resolvedTrackers)
+	summary, err = c.services.Dupes.Check(ctx, meta, resolvedTrackers)
 	if err != nil {
 		return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
 	}
 	summary = appendPathedDupeResults(summary, matchedTrackers)
 	applyDupeSummaryToPreparedMeta(&meta, summary)
-	c.storeRefreshedDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
+	c.storeRefreshedDupeCacheWithDupeSummary(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta, summary)
 	return summary, nil
 }
 
@@ -1714,7 +1729,7 @@ func (c *Core) DeleteUploadedImage(ctx context.Context, req api.Request, imagePa
 		return internalerrors.ErrInvalidInput
 	}
 
-	c.logger.Debugf("core: deleting uploaded image %s (%s)", imagePath, host)
+	c.logger.Debugf("core: deleting uploaded image path=%s host=%s", imagePath, host)
 	return wrapCoreError(c.repo.DeleteUploadedImage(ctx, uniquePaths[0], imagePath, host))
 }
 
@@ -1722,7 +1737,13 @@ func (c *Core) DeleteUploadedImage(ctx context.Context, req api.Request, imagePa
 // emits metadata progress, and stores the refreshed prepared metadata cache entry.
 // An empty tracker request is not an explicit "no trackers" request; downstream
 // tracker resolution can still use configured defaults.
-func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.MetadataPreview, error) {
+func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (preview api.MetadataPreview, err error) {
+	defer func() {
+		if err != nil {
+			c.logger.Warnf("core: metadata preview blocked err=%s", redaction.RedactValue(err.Error(), nil))
+		}
+	}()
+
 	req = normalizeExecutionRequest(req)
 	if len(req.Paths) == 0 {
 		return api.MetadataPreview{}, internalerrors.ErrInvalidInput
@@ -1940,7 +1961,13 @@ func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.M
 // FetchPreparationPreview builds the tracker preparation preview for one validated
 // source path. Explicit tracker selections limit preparation to those trackers;
 // selections that resolve empty return an empty preview.
-func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (api.PreparationPreview, error) {
+func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (preview api.PreparationPreview, err error) {
+	defer func() {
+		if err != nil {
+			c.logger.Warnf("core: preparation preview blocked err=%s", redaction.RedactValue(err.Error(), nil))
+		}
+	}()
+
 	resolvedReq, err := c.resolveDescriptionOverrideRequest(ctx, req)
 	if err != nil {
 		return api.PreparationPreview{}, err
@@ -2021,7 +2048,13 @@ func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (ap
 
 // FetchTrackerDryRunPreview builds per-tracker dry-run upload entries from cached
 // prepared metadata, creating torrents and cache state only after selected trackers resolve.
-func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (api.TrackerDryRunPreview, error) {
+func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (preview api.TrackerDryRunPreview, err error) {
+	defer func() {
+		if err != nil {
+			c.logger.Warnf("core: tracker dry-run blocked err=%s", redaction.RedactValue(err.Error(), nil))
+		}
+	}()
+
 	req = normalizeExecutionRequest(req)
 	resolvedReq, err := c.resolveDescriptionOverrideRequest(ctx, req)
 	if err != nil {
@@ -2113,7 +2146,7 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 		return api.TrackerDryRunPreview{}, fmt.Errorf("core: tracker dry-run requires prepared metadata for %s", uniquePaths[0])
 	}
 	c.logger.Debugf("core: tracker dry-run using cached prepared metadata for %s meta_no_seed=%t req_no_seed=%t", uniquePaths[0], meta.Options.NoSeed, singleReq.Options.NoSeed)
-	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, meta.TrackersRemove, c.logger, false, false)
+	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, trackerResolutionRemoveForRequest(meta, singleReq), c.logger, false, false)
 	if explicitEmpty {
 		c.logger.Debugf("core: tracker dry-run explicit trackers resolved empty source=%s", meta.SourcePath)
 		return api.TrackerDryRunPreview{SourcePath: meta.SourcePath, Trackers: []api.TrackerDryRunEntry{}}, nil
@@ -2130,16 +2163,17 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 	}
 	meta.TorrentPath = torrent.Path
 
-	entries, err := c.services.Trackers.BuildUploadDryRun(ctx, meta, resolvedTrackers)
+	dryRunMeta := trackerDebugProcessingMeta(meta, singleReq)
+	entries, err := c.services.Trackers.BuildUploadDryRun(ctx, dryRunMeta, resolvedTrackers)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, fmt.Errorf("core: %w", err)
 	}
-	annotateDryRunReleaseNames(meta, entries)
+	annotateDryRunReleaseNames(dryRunMeta, entries)
 
 	c.logger.Debugf("core: tracker dry-run torrent ready for %s path=%s no_seed=%t", meta.SourcePath, torrent.Path, meta.Options.NoSeed)
 	if meta.Options.NoSeed {
 		c.logger.Debugf("core: tracker dry-run skipping client injection for %s: no-seed enabled", meta.SourcePath)
-	} else if err := c.injectTrackerDryRunTorrents(ctx, singleReq, meta, entries, torrent); err != nil {
+	} else if err := c.injectTrackerDryRunTorrents(ctx, singleReq, dryRunMeta, entries, torrent); err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
 
@@ -2148,6 +2182,8 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 	return api.TrackerDryRunPreview{SourcePath: meta.SourcePath, Trackers: entries}, nil
 }
 
+// injectTrackerDryRunTorrents injects only ready dry-run tracker torrents into
+// configured clients so debug runs can exercise client handling without upload.
 func (c *Core) injectTrackerDryRunTorrents(ctx context.Context, req api.Request, meta api.PreparedMetadata, entries []api.TrackerDryRunEntry, fallback api.TorrentResult) error {
 	ready := make([]api.TrackerDryRunEntry, 0, len(entries))
 	for _, entry := range entries {
@@ -2190,6 +2226,9 @@ func (c *Core) injectTrackerDryRunTorrents(ctx context.Context, req api.Request,
 	return nil
 }
 
+// prepareDryRunInjectionMeta returns metadata pointing at the tracker-specific
+// dry-run torrent artifact when one exists, preserving the base torrent as a
+// fallback for client injection.
 func (c *Core) prepareDryRunInjectionMeta(meta api.PreparedMetadata, trackerName string, torrentPath string) (api.PreparedMetadata, error) {
 	injectMeta := meta
 	if trimmed := strings.TrimSpace(torrentPath); trimmed != "" {
@@ -2209,6 +2248,8 @@ func (c *Core) prepareDryRunInjectionMeta(meta api.PreparedMetadata, trackerName
 	return prepared, nil
 }
 
+// trackerDryRunTorrentPath returns the present torrent file path advertised by
+// a dry-run payload, ignoring other upload file fields.
 func trackerDryRunTorrentPath(entry api.TrackerDryRunEntry) string {
 	for _, file := range entry.Files {
 		if strings.EqualFold(strings.TrimSpace(file.Field), "torrent") && file.Present {
@@ -2218,6 +2259,8 @@ func trackerDryRunTorrentPath(entry api.TrackerDryRunEntry) string {
 	return ""
 }
 
+// annotateDryRunReleaseNames records whether each tracker-specific dry-run
+// upload name differs from the prepared release name.
 func annotateDryRunReleaseNames(meta api.PreparedMetadata, entries []api.TrackerDryRunEntry) {
 	original := strings.TrimSpace(meta.ReleaseName)
 	if original == "" {
@@ -2666,6 +2709,7 @@ func (c *Core) SelectBlurayCandidate(ctx context.Context, sourcePath string, rel
 	if external.Bluray == nil || !external.Bluray.SelectCandidate(trimmedReleaseID, false, "manual") {
 		return api.MetadataPreview{}, internalerrors.ErrNotFound
 	}
+	c.logger.Debugf("core: bluray candidate decision=selected source=%s release_id=%s", trimmedPath, trimmedReleaseID)
 	external.UpdatedAt = time.Now().UTC()
 	external.Bluray.UpdatedAt = external.UpdatedAt
 
@@ -2732,20 +2776,24 @@ func applyBlurayCandidateToPreparedMeta(meta *api.PreparedMetadata) {
 }
 
 func (c *Core) storeDupeCache(path string, signature string, meta api.PreparedMetadata) {
-	c.storeDupeCacheEntry(path, signature, meta, false)
+	c.storeDupeCacheEntry(path, signature, meta, false, api.DupeCheckSummary{})
 }
 
 func (c *Core) storeRefreshedDupeCache(path string, signature string, meta api.PreparedMetadata) {
-	c.storeDupeCacheEntry(path, signature, meta, true)
+	c.storeDupeCacheEntry(path, signature, meta, true, api.DupeCheckSummary{})
 }
 
-func (c *Core) storeDupeCacheEntry(path string, signature string, meta api.PreparedMetadata, requestRefreshed bool) {
+func (c *Core) storeRefreshedDupeCacheWithDupeSummary(path string, signature string, meta api.PreparedMetadata, summary api.DupeCheckSummary) {
+	c.storeDupeCacheEntry(path, signature, meta, true, summary)
+}
+
+func (c *Core) storeDupeCacheEntry(path string, signature string, meta api.PreparedMetadata, requestRefreshed bool, summary api.DupeCheckSummary) {
 	if strings.TrimSpace(path) == "" {
 		return
 	}
 	c.dupeMu.Lock()
 	defer c.dupeMu.Unlock()
-	c.dupeCache[path] = dupeCacheEntry{meta: meta, signature: signature, updatedAt: time.Now().UTC(), requestRefreshed: requestRefreshed}
+	c.dupeCache[path] = dupeCacheEntry{meta: meta, dupeSummary: deepCopyDupeCheckSummary(summary), signature: signature, updatedAt: time.Now().UTC(), requestRefreshed: requestRefreshed}
 }
 
 func (c *Core) clearDupeCache(path string) {
@@ -3196,7 +3244,13 @@ func cacheableGUIPreparedMetaRequest(req api.Request) bool {
 
 // ExportGUICachedPreparedMeta exposes the resolved GUI prepared metadata cache entry
 // so callers can hand off metadata to isolated per-run cores.
-func (c *Core) ExportGUICachedPreparedMeta(ctx context.Context, req api.Request) (api.PreparedMetadata, bool, error) {
+func (c *Core) ExportGUICachedPreparedMeta(ctx context.Context, req api.Request) (meta api.PreparedMetadata, ok bool, err error) {
+	defer func() {
+		if err != nil {
+			c.logger.Warnf("core: gui prepared metadata export blocked err=%s", redaction.RedactValue(err.Error(), nil))
+		}
+	}()
+
 	if err := ctx.Err(); err != nil {
 		return api.PreparedMetadata{}, false, fmt.Errorf("core: export cached prepared metadata canceled: %w", err)
 	}
@@ -3204,7 +3258,7 @@ func (c *Core) ExportGUICachedPreparedMeta(ctx context.Context, req api.Request)
 	if err != nil {
 		return api.PreparedMetadata{}, false, err
 	}
-	meta, ok := c.lookupGUICachedMeta(req, path)
+	meta, ok = c.lookupGUICachedMeta(req, path)
 	if !ok {
 		c.logger.Debugf("core: gui prepared metadata export miss path=%s", path)
 		return api.PreparedMetadata{}, false, nil
@@ -3215,7 +3269,13 @@ func (c *Core) ExportGUICachedPreparedMeta(ctx context.Context, req api.Request)
 
 // ImportPreparedMetadataForGUI stores prepared metadata on a per-run core so GUI dry-run
 // and upload-only flows can reuse metadata prepared on the long-lived GUI core.
-func (c *Core) ImportPreparedMetadataForGUI(ctx context.Context, req api.Request, meta api.PreparedMetadata) error {
+func (c *Core) ImportPreparedMetadataForGUI(ctx context.Context, req api.Request, meta api.PreparedMetadata) (err error) {
+	defer func() {
+		if err != nil {
+			c.logger.Warnf("core: gui prepared metadata import blocked err=%s", redaction.RedactValue(err.Error(), nil))
+		}
+	}()
+
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("core: import prepared metadata canceled: %w", err)
 	}
@@ -3724,19 +3784,19 @@ func (c *Core) LoadPlaylistSelection(ctx context.Context, sourcePath string) (ap
 	}
 
 	normalizedPath := filepath.ToSlash(filepath.Clean(sourcePath))
-	c.logger.Debugf("core: loading playlist selection for %q (normalized: %q)", sourcePath, normalizedPath)
+	c.logger.Debugf("core: loading playlist selection source=%q normalized=%q", sourcePath, normalizedPath)
 
 	selection, err := c.repo.GetPlaylistSelection(ctx, normalizedPath)
 	if err != nil {
 		if errors.Is(err, internalerrors.ErrNotFound) {
-			c.logger.Debugf("core: no playlist selection found for %q", sourcePath)
+			c.logger.Debugf("core: playlist selection decision=not_found source=%q", sourcePath)
 			return api.PlaylistSelection{}, internalerrors.ErrNotFound
 		}
 		c.logger.Warnf("core: load playlist selection failed: %v", err)
 		return api.PlaylistSelection{}, fmt.Errorf("core: %w", err)
 	}
 
-	c.logger.Debugf("core: loaded playlist selection for %q: %d playlists, useAll=%v", sourcePath, len(selection.SelectedPlaylists), selection.UseAll)
+	c.logger.Debugf("core: playlist selection decision=loaded source=%q playlists=%d use_all=%v", sourcePath, len(selection.SelectedPlaylists), selection.UseAll)
 	return selection, nil
 }
 
@@ -4615,9 +4675,33 @@ func mergeTrackerRemovals(existing []string, additions []string) []string {
 // for pre-application explicit-empty checks. Request dupe bypasses are applied
 // first so ignored or skipped matched trackers can still resolve when selected.
 func requestPreparedMetaTrackersRemove(meta api.PreparedMetadata, req api.Request) []string {
+	if req.Options.Debug {
+		return mergeTrackerRemovals(nil, req.TrackersRemove)
+	}
 	metaRemove, matched := duplicateTrackerStateForRequest(meta, req)
 	remove := mergeTrackerRemovals(req.TrackersRemove, metaRemove)
 	return mergeTrackerRemovals(remove, matched)
+}
+
+// trackerResolutionRemoveForRequest returns the tracker removal set for final
+// tracker resolution. Debug mode ignores prepared block state so artifact and
+// client dry-runs can still cover all requested trackers.
+func trackerResolutionRemoveForRequest(meta api.PreparedMetadata, req api.Request) []string {
+	if req.Options.Debug {
+		return mergeTrackerRemovals(nil, req.TrackersRemove)
+	}
+	return meta.TrackersRemove
+}
+
+// trackerDebugProcessingMeta clears rule and dupe block state for debug-mode
+// artifact generation while leaving normal upload processing unchanged.
+func trackerDebugProcessingMeta(meta api.PreparedMetadata, req api.Request) api.PreparedMetadata {
+	if !req.Options.Debug {
+		return meta
+	}
+	meta.IgnoreTrackerRuleFailures = true
+	meta.BlockedTrackers = nil
+	return meta
 }
 
 func normalizeExecutionRequest(req api.Request) api.Request {
@@ -4645,11 +4729,12 @@ func (c *Core) resolveCanonicalDescriptionGroups(ctx context.Context, meta api.P
 		return nil, errors.New("core: tracker service not configured")
 	}
 
-	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, meta.TrackersRemove, c.logger, false, false)
+	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, trackerResolutionRemoveForRequest(meta, req), c.logger, false, false)
 	if explicitEmpty {
 		return nil, nil
 	}
-	prep, err := c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers)
+	prepMeta := trackerDebugProcessingMeta(meta, req)
+	prep, err := c.services.Trackers.BuildPreparation(ctx, prepMeta, resolvedTrackers)
 	if err != nil {
 		return nil, fmt.Errorf("core: %w", err)
 	}

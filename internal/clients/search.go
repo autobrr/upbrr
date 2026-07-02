@@ -23,6 +23,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/torrent"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -195,13 +196,19 @@ type torrentDataValidation struct {
 	reason      string
 }
 
-func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMetadata) (api.ClientSearchResult, error) {
+func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMetadata) (result api.ClientSearchResult, err error) {
+	defer func() {
+		if err != nil {
+			s.logger.Warnf("clients: pathed search blocked err=%s", redaction.RedactValue(err.Error(), nil))
+		}
+	}()
+
 	if strings.TrimSpace(meta.SourcePath) == "" {
 		return api.ClientSearchResult{}, internalerrors.ErrInvalidInput
 	}
 
 	constraints := resolvePieceConstraints(s.cfg)
-	result := api.ClientSearchResult{PieceSizeConstraint: constraints.label}
+	result = api.ClientSearchResult{PieceSizeConstraint: constraints.label}
 	s.logger.Tracef("clients: pathed search start source=%s constraints=%q", meta.SourcePath, constraints.label)
 
 	clients, usedFallback := resolveSearchClients(s.cfg, meta.ClientOverrides)

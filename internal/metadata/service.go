@@ -24,6 +24,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/seasonep"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackerdata"
@@ -279,7 +280,13 @@ func applyTorrentOverridesToPreparedMeta(meta *api.PreparedMetadata) {
 	}
 }
 
-func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMetadata, error) {
+func (s *Service) Prepare(ctx context.Context, req api.Request) (meta api.PreparedMetadata, err error) {
+	defer func() {
+		if err != nil {
+			s.logger.Warnf("metadata: preparation blocked err=%s", redaction.RedactValue(err.Error(), nil))
+		}
+	}()
+
 	select {
 	case <-ctx.Done():
 		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -326,7 +333,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 		s.logger.Tracef("metadata: normalized path %s", abs)
 	}
 
-	meta := api.PreparedMetadata{
+	meta = api.PreparedMetadata{
 		SourcePath:             primary,
 		SourceLookupURL:        strings.TrimSpace(req.SourceLookupURL),
 		Paths:                  normalizedPaths,
@@ -388,12 +395,12 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 				found = true
 				s.logger.Debugf("metadata: found playlist selection at normalized BDMV path: %s", bdmvNorm)
 			} else {
-				s.logger.Debugf("metadata: no playlist selection found, err=%v", err)
+				s.logger.Debugf("metadata: no playlist selection found, err=%s", redaction.RedactValue(fmt.Sprint(err), nil))
 			}
 		}
 
 		if found && len(sel.SelectedPlaylists) > 0 {
-			s.logger.Debugf("metadata: found playlist selection with %d playlists at %s", len(sel.SelectedPlaylists), playlistPath)
+			s.logger.Debugf("metadata: found playlist selection playlists=%d path=%s", len(sel.SelectedPlaylists), playlistPath)
 			selectedPlaylists, derr := loadSelectedBDMVPlaylists(ctx, playlistPath, sel.SelectedPlaylists)
 			if derr != nil {
 				return api.PreparedMetadata{}, fmt.Errorf("metadata: discover selected playlists: %w", derr)
@@ -444,7 +451,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 			} else if mainFile != "" && len(m2tsFiles) > 0 {
 				meta.VideoPath = mainFile
 				meta.FileList = m2tsFiles
-				s.logger.Debugf("metadata: extracted %d m2ts files from playlist, using %s as main", len(m2tsFiles), filepath.Base(mainFile))
+				s.logger.Debugf("metadata: extracted m2ts files count=%d main=%s", len(m2tsFiles), filepath.Base(mainFile))
 			}
 		}
 	}

@@ -194,6 +194,51 @@ func TestRunInteractiveCLIPathDebugHandlesScreenshotsBeforeReview(t *testing.T) 
 	}
 }
 
+func TestRunInteractiveCLIPathDebugProcessesAllCheckedTrackers(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &cliCoreForTest{
+		previewResponses: []api.MetadataPreview{{
+			SourcePath: "Example.Release.2026.1080p-GRP",
+			TrackerData: []api.TrackerPreview{{
+				Tracker: "AITHER",
+				Matched: true,
+			}},
+		}},
+		dupeSummary: api.DupeCheckSummary{
+			Results: []api.DupeCheckResult{
+				{Tracker: "AITHER", Status: "completed", HasDupes: true},
+				{Tracker: "BLU", Status: "skipped", Skipped: true, SkipReason: "rule check failed"},
+				{Tracker: "DP", Status: "completed"},
+			},
+		},
+		review: api.UploadReview{Trackers: []api.TrackerReview{
+			{Tracker: "AITHER"},
+			{Tracker: "BLU"},
+			{Tracker: "DP"},
+		}},
+	}
+	err := runInteractiveCLIPath(context.Background(), coreSvc, cliOptions{Unattended: true, Debug: true}, map[string]bool{}, "Example.Release.2026.1080p-GRP", config.Config{
+		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU", "DP"}},
+	})
+	if err != nil {
+		t.Fatalf("runInteractiveCLIPath: %v", err)
+	}
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,screenshot-plan,review" {
+		t.Fatalf("expected debug to run checks and continue to review, got %s", got)
+	}
+	uploadReq := coreSvc.requests[len(coreSvc.requests)-1].req
+	if got := strings.Join(uploadReq.Trackers, ","); got != "AITHER,BLU,DP" {
+		t.Fatalf("expected debug upload to keep all trackers, got %s", got)
+	}
+	if got := strings.Join(uploadReq.IgnoreDupesFor, ","); got != "AITHER,BLU,DP" {
+		t.Fatalf("expected debug upload to ignore dupe blocks for all trackers, got %s", got)
+	}
+	if got := strings.Join(uploadReq.IgnoreTrackerRuleFailuresFor, ","); got != "AITHER,BLU,DP" {
+		t.Fatalf("expected debug upload to ignore rule blocks for all trackers, got %s", got)
+	}
+}
+
 func TestRunInteractiveCLIPathUsesResolvedPreviewSourceForPreparedUpload(t *testing.T) {
 	t.Parallel()
 
@@ -600,17 +645,40 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckLogsRedactedDecisions(t *testing.T) 
 		t.Fatalf("expected only ready PTP to continue, got %#v", got)
 	}
 
-	logs := strings.Join(append(append([]string{}, logger.info...), logger.warn...), "\n")
-	for _, expected := range []string{
-		"cli auth: pre-dupe check start trackers=2",
+	infoLogs := strings.Join(logger.info, "\n")
+	for _, notExpected := range []string{
+		"cli auth: pre-dupe auth check start trackers=2",
+		"cli auth: pre-dupe check complete ready=1 skipped=1",
 		"cli auth: validating tracker=PTP auth_kind=credential_login",
 		"cli auth: tracker=PTP decision=ready state=configured",
-		"cli auth: tracker=HDB decision=skip state=login_required",
 	} {
-		if !strings.Contains(logs, expected) {
-			t.Fatalf("expected log %q", expected)
+		if strings.Contains(infoLogs, notExpected) {
+			t.Fatalf("did not expect debug auth detail in info log %q", notExpected)
 		}
 	}
+
+	debugLogs := strings.Join(logger.debug, "\n")
+	for _, expected := range []string{
+		"cli auth: pre-dupe auth check start trackers=2",
+		"cli auth: validating tracker=PTP auth_kind=credential_login",
+		"cli auth: tracker=PTP decision=ready state=configured",
+		"cli auth: validation result tracker=PTP state=configured cookies=2 encrypted_storage=true needs_2fa=false",
+		"cli auth: pre-dupe check complete ready=1 skipped=1",
+	} {
+		if !strings.Contains(debugLogs, expected) {
+			t.Fatalf("expected debug log %q", expected)
+		}
+	}
+
+	warnLogs := strings.Join(logger.warn, "\n")
+	for _, expected := range []string{
+		"cli auth: tracker=HDB decision=skip state=login_required",
+	} {
+		if !strings.Contains(warnLogs, expected) {
+			t.Fatalf("expected warn log %q", expected)
+		}
+	}
+	logs := strings.Join([]string{infoLogs, debugLogs, warnLogs}, "\n")
 	if strings.Contains(logs, "hunter2") {
 		t.Fatal("auth logs leaked password")
 	}
@@ -893,6 +961,91 @@ func TestPromptTrackerDupeReviewApprovesUserSkippedDupeChecksInUnattendedMode(t 
 	}
 }
 
+func TestPromptTrackerDupeReviewGroupsUnattendedOutput(t *testing.T) {
+	req := api.Request{
+		Trackers: []string{"AITHER", "ANT", "DP", "OTW", "MTV"},
+		Options:  api.UploadOptions{InteractionMode: api.InteractionModeUnattended},
+	}
+	summary := api.DupeCheckSummary{
+		Results: []api.DupeCheckResult{
+			{
+				Tracker:  "AITHER",
+				Status:   "completed",
+				HasDupes: true,
+				Filtered: []api.DupeEntry{{
+					Name: "Example Release 2026 S01 720p WEB-DL H.264-ALT",
+					Link: "https://aither.cc/torrents/431991",
+				}},
+			},
+			{
+				Tracker:    "ANT",
+				Status:     "skipped",
+				Skipped:    true,
+				SkipReason: "rule check failed: category tv is not movie",
+			},
+			{Tracker: "DP", Status: "completed"},
+			{
+				Tracker: "OTW",
+				Status:  "completed",
+				Raw: []api.DupeEntry{{
+					Name: "Example Release 2026 S01 2160p WEB-DL H.265-ALT2",
+					Link: "https://oldtoons.world/torrents/54225",
+				}},
+			},
+			{
+				Tracker:  "MTV",
+				Status:   "completed",
+				HasDupes: true,
+				Filtered: []api.DupeEntry{{
+					Name: "Example.Release.2026.S01.720p.WEB-DL.H264-OTHER",
+					Link: "https://www.morethantv.me/torrents.php?id=1112946&torrentid=1014650",
+				}},
+			},
+		},
+	}
+
+	var approved []string
+	var err error
+	output := captureStdout(t, func() {
+		approved, _, _, err = promptTrackerDupeReview(
+			bufio.NewReader(strings.NewReader("")),
+			summary,
+			req,
+			req.Trackers,
+			nil,
+		)
+	})
+	if err != nil {
+		t.Fatalf("promptTrackerDupeReview: %v", err)
+	}
+	if strings.Join(approved, ",") != "DP,OTW" {
+		t.Fatalf("expected only passed trackers approved, got %#v", approved)
+	}
+	for _, expected := range []string{
+		"Dupe check summary:",
+		"Skipped due to tracker rules/conditions: ANT",
+		"Found potential dupes on: AITHER, MTV",
+		"Trackers passed all checks: DP, OTW",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected output %q in:\n%s", expected, output)
+		}
+	}
+	for _, notExpected := range []string{
+		"\n[AITHER]\n",
+		"Skipping AITHER due to dupe/rule check result.",
+		"Skipping ANT due to dupe/rule check result.",
+		"rule check failed: category tv is not movie",
+		"Example Release 2026 S01 720p WEB-DL H.264-ALT",
+		"Example.Release.2026.S01.720p.WEB-DL.H264-OTHER",
+		"Example Release 2026 S01 2160p WEB-DL H.265-ALT2",
+	} {
+		if strings.Contains(output, notExpected) {
+			t.Fatalf("did not expect output %q in:\n%s", notExpected, output)
+		}
+	}
+}
+
 func TestPromptTrackerDupeReviewSkipsAllRuleBlockedTrackersUnattended(t *testing.T) {
 	t.Parallel()
 
@@ -952,7 +1105,7 @@ func TestPromptTrackerDupeReviewShowsTrackerNamingChange(t *testing.T) {
 		}
 	})
 
-	expected := "AITHER changes name to Movie.2026.1080p.WEB-DL.x264-GRP\nUpload to AITHER? [y/N]: "
+	expected := "AITHER release name changed: Movie.2026.1080p.WEB-DL.H264-GRP -> Movie.2026.1080p.WEB-DL.x264-GRP\nUpload to AITHER? [y/N]: "
 	if !strings.Contains(output, expected) {
 		t.Fatalf("expected naming change in prompt %q, got %q", expected, output)
 	}
@@ -1038,6 +1191,30 @@ func TestPromptTrackerQuestionnairesRejectsBlankRequiredUnattendedDefault(t *tes
 	}
 	if !strings.Contains(err.Error(), "unattended upload requires ANT Type questionnaire value for ANT") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPromptTrackerQuestionnairesDebugUnattendedAllowsBlankRequiredDefault(t *testing.T) {
+	t.Parallel()
+
+	answers, changed, err := promptTrackerQuestionnaires(bufio.NewReader(strings.NewReader("")), api.UploadReview{
+		Trackers: []api.TrackerReview{{
+			Tracker: "ANT",
+			Questionnaire: &api.TrackerQuestionnaire{Fields: []api.TrackerQuestionnaireField{{
+				Key:      "type",
+				Label:    "ANT Type",
+				Required: true,
+			}}},
+		}},
+	}, cliOptions{Unattended: true, Debug: true})
+	if err != nil {
+		t.Fatalf("expected debug unattended questionnaire to continue, got %v", err)
+	}
+	if changed {
+		t.Fatal("expected debug unattended questionnaire defaults to be unchanged")
+	}
+	if answers["ANT"]["type"] != "" {
+		t.Fatalf("expected blank debug questionnaire answer to be preserved, got %#v", answers)
 	}
 }
 
@@ -1471,6 +1648,8 @@ func (c *cliCoreForTest) recordRequest(name string, req api.Request) {
 	copyReq.Paths = append([]string(nil), req.Paths...)
 	copyReq.Trackers = append([]string(nil), req.Trackers...)
 	copyReq.TrackersRemove = append([]string(nil), req.TrackersRemove...)
+	copyReq.IgnoreDupesFor = append([]string(nil), req.IgnoreDupesFor...)
+	copyReq.IgnoreTrackerRuleFailuresFor = append([]string(nil), req.IgnoreTrackerRuleFailuresFor...)
 	copyReq.DescriptionGroups = api.CloneDescriptionBuilderGroups(req.DescriptionGroups)
 	copyReq.ExternalIDSelections = cloneCLIExternalIDSelectionsForTest(req.ExternalIDSelections)
 	c.requests = append(c.requests, cliCoreRequestForTest{name: name, req: copyReq})

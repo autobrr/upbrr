@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/autobrr/upbrr/internal/guiapp"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -35,7 +36,7 @@ func main() {
 		ConfigPath:     *configPath,
 		ConfigProvided: configFlagProvided,
 	}); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error: %s\n", logging.SanitizeMessage(err.Error()))
 		os.Exit(1)
 	}
 }
