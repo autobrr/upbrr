@@ -103,7 +103,9 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 		entry, _, found := c.lookupGUICachedMetaEntry(singleReq, uniquePaths[0])
 		if found {
 			ok = true
-			cachedDebugDupeSummary = deepCopyDupeCheckSummary(entry.dupeSummary)
+			if entry.requestRefreshed && cachedPreparedMetaMatchesRequest(entry.meta, singleReq, uniquePaths[0]) {
+				cachedDebugDupeSummary = deepCopyDupeCheckSummary(entry.dupeSummary)
+			}
 			meta, err = c.applyRequestToCachedPreparedMeta(ctx, entry.meta, singleReq)
 			if err != nil {
 				return api.UploadReview{}, err

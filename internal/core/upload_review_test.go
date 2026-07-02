@@ -559,16 +559,17 @@ func TestBuildUploadReviewDebugReusesCachedDupeSummary(t *testing.T) {
 	}
 	coreSvc.storeRefreshedDupeCacheWithDupeSummary("source.mkv", "", api.PreparedMetadata{
 		SourcePath: "source.mkv",
+		Mode:       api.ModeCLI,
 		Trackers:   []string{"AITHER", "BLU"},
+		Options:    api.UploadOptions{Debug: true, Screens: 1, InteractionMode: api.InteractionModeInteractive},
 		Tag:        "-GROUP",
 	}, cachedSummary)
 
 	review, err := coreSvc.BuildUploadReview(context.Background(), api.Request{
-		Paths:          []string{"source.mkv"},
-		Mode:           api.ModeCLI,
-		Trackers:       []string{"AITHER", "BLU"},
-		IgnoreDupesFor: []string{"AITHER", "BLU"},
-		Options:        api.UploadOptions{Debug: true},
+		Paths:    []string{"source.mkv"},
+		Mode:     api.ModeCLI,
+		Trackers: []string{"AITHER", "BLU"},
+		Options:  api.UploadOptions{Debug: true},
 	})
 	if err != nil {
 		t.Fatalf("build upload review: %v", err)
@@ -581,6 +582,63 @@ func TestBuildUploadReviewDebugReusesCachedDupeSummary(t *testing.T) {
 	}
 	if !review.Trackers[0].DupeCheck.HasDupes {
 		t.Fatalf("expected cached AITHER dupe result")
+	}
+}
+
+func TestBuildUploadReviewDebugRefreshesDupeSummaryWhenCacheRequestDiffers(t *testing.T) {
+	t.Parallel()
+
+	dupes := &reviewDupes{summary: api.DupeCheckSummary{
+		SourcePath: "source.mkv",
+		Results: []api.DupeCheckResult{
+			{Tracker: "AITHER", Status: "completed", Notes: []string{"fresh"}},
+			{Tracker: "BLU", Status: "completed"},
+		},
+	}}
+	coreSvc, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Dupes:      dupes,
+			Torrents:   &stubTorrent{},
+			Trackers:   reviewTrackers{},
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	coreSvc.storeRefreshedDupeCacheWithDupeSummary("source.mkv", "", api.PreparedMetadata{
+		SourcePath: "source.mkv",
+		Mode:       api.ModeGUI,
+		Trackers:   []string{"AITHER", "BLU"},
+		Options:    api.UploadOptions{Debug: true, Screens: 1, InteractionMode: api.InteractionModeInteractive},
+	}, api.DupeCheckSummary{
+		SourcePath: "source.mkv",
+		Results: []api.DupeCheckResult{
+			{Tracker: "AITHER", HasDupes: true, Status: "completed", Notes: []string{"stale"}},
+			{Tracker: "BLU", Status: "completed"},
+		},
+	})
+
+	review, err := coreSvc.BuildUploadReview(context.Background(), api.Request{
+		Paths:    []string{"source.mkv"},
+		Mode:     api.ModeCLI,
+		Trackers: []string{"AITHER", "BLU"},
+		Options:  api.UploadOptions{Debug: true},
+	})
+	if err != nil {
+		t.Fatalf("build upload review: %v", err)
+	}
+	if dupes.calls != 1 {
+		t.Fatalf("expected stale debug dupe summary to be refreshed, called dupe service %d time(s)", dupes.calls)
+	}
+	if review.Trackers[0].DupeCheck.HasDupes {
+		t.Fatalf("expected fresh AITHER dupe result, got %#v", review.Trackers[0].DupeCheck)
+	}
+	if !slices.Contains(review.Trackers[0].DupeCheck.Notes, "fresh") {
+		t.Fatalf("expected fresh dupe result notes, got %#v", review.Trackers[0].DupeCheck)
 	}
 }
 
@@ -697,7 +755,9 @@ func TestBuildUploadReviewDebugDoesNotAddDefaultsForExplicitTrackersOutsideGUI(t
 	}
 	coreSvc.storeRefreshedDupeCacheWithDupeSummary("/tmp/a", "", api.PreparedMetadata{
 		SourcePath: "/tmp/a",
+		Mode:       api.ModeCLI,
 		Trackers:   []string{"AITHER"},
+		Options:    api.UploadOptions{Debug: true, Screens: 1, InteractionMode: api.InteractionModeInteractive},
 	}, api.DupeCheckSummary{
 		SourcePath: "/tmp/a",
 		Results:    []api.DupeCheckResult{{Tracker: "AITHER", Status: "completed"}},

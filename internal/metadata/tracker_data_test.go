@@ -411,7 +411,8 @@ func TestApplyTrackerClaimsBlocksAitherAndCachesClaims(t *testing.T) {
 		},
 	}
 
-	svc := NewService(&fakeRepo{}, WithConfig(cfg))
+	logger := &recordingLogger{}
+	svc := NewService(&fakeRepo{}, WithConfig(cfg), WithLogger(logger))
 	meta := api.PreparedMetadata{
 		SourcePath: "/media/Example.Show.S02E03.mkv",
 		Trackers:   []string{"AITHER"},
@@ -432,6 +433,14 @@ func TestApplyTrackerClaimsBlocksAitherAndCachesClaims(t *testing.T) {
 	}
 	if got := result.BlockedTrackers["AITHER"]; len(got) != 1 || got[0] != api.TrackerBlockReasonClaim {
 		t.Fatalf("expected AITHER claim block, got %#v", result.BlockedTrackers)
+	}
+	if len(logger.warnings) != 1 {
+		t.Fatalf("expected one AITHER claim warning, got %#v", logger.warnings)
+	}
+	if !strings.Contains(logger.warnings[0], "metadata: tracker claim match found tracker=AITHER") ||
+		!strings.Contains(logger.warnings[0], "decision=blocked") ||
+		!strings.Contains(logger.warnings[0], "reason=claim_active") {
+		t.Fatalf("unexpected AITHER claim warning: %#v", logger.warnings)
 	}
 
 	cachePath := filepath.Join(tempDir, "cache", "banned", "AITHER_claimed_releases.json")
