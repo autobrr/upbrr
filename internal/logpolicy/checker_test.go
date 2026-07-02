@@ -1,6 +1,9 @@
 package logpolicy
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1803,6 +1806,194 @@ func check(log logger, path string, client string, hash string) {
 		if !strings.Contains(v.Message, "execution flow reporting") {
 			t.Fatalf("expected execution flow debug violation, got %q", v.Message)
 		}
+	}
+}
+
+func TestCheckRepositoryFlagsWorkflowFunctionWithoutLogging(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+import (
+	"errors"
+	"fmt"
+)
+
+type logger struct{}
+type client struct{}
+
+func (client) Upload(string) error { return nil }
+
+func uploadTracker(log logger, c client, path string) error {
+	if path == "" {
+		return errors.New("missing path")
+	}
+	for _, candidate := range []string{path} {
+		if err := c.Upload(candidate); err != nil {
+			return fmt.Errorf("upload candidate: %w", err)
+		}
+	}
+	return nil
+}
+`
+	writeInternalProductionFixture(t, root, content)
+	summary := summarizeFixtureFunction(t, content, "uploadTracker")
+	if !summary.isWorkflowLike() {
+		t.Fatalf("expected workflow-like summary, got loggerAccess=%t workflowName=%t operations=%d branches=%d loops=%d errorReturns=%d scoreThreshold=%d", summary.loggerAccess, summary.workflowName, summary.operationCalls, summary.branches, summary.loops, summary.errorReturns, workflowLogScoreThreshold)
+	}
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, filepath.Join(root, "internal", "sample", "sample.go"), content, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn.Name.Name == "uploadTracker" {
+			parsedSummary := summarizeWorkflowFunction(fn)
+			if !parsedSummary.isWorkflowLike() {
+				t.Fatalf("expected parsed workflow-like summary, got loggerAccess=%t workflowName=%t operations=%d branches=%d loops=%d errorReturns=%d", parsedSummary.loggerAccess, parsedSummary.workflowName, parsedSummary.operationCalls, parsedSummary.branches, parsedSummary.loops, parsedSummary.errorReturns)
+			}
+		}
+	}
+	workflowViolations := checkWorkflowLoggingCoverage(fset, "internal/sample/sample.go", file, map[int]*logpolicyAllow{})
+	if len(workflowViolations) == 0 {
+		t.Fatalf("expected direct workflow violation")
+	}
+	fileViolations, err := checkFile(token.NewFileSet(), root, filepath.Join(root, "internal", "sample", "sample.go"))
+	if err != nil {
+		t.Fatalf("checkFile returned error: %v", err)
+	}
+	if len(fileViolations) == 0 {
+		t.Fatalf("expected direct checkFile violation")
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "workflow-like function has no logging") {
+		t.Fatalf("expected missing workflow logging violation, got %q", violations[0].Message)
+	}
+}
+
+func summarizeFixtureFunction(t *testing.T, content string, name string) workflowLogSummary {
+	t.Helper()
+
+	file, err := parser.ParseFile(token.NewFileSet(), "sample.go", content, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn.Name.Name == name {
+			return summarizeWorkflowFunction(fn)
+		}
+	}
+	t.Fatalf("function %s not found", name)
+	return workflowLogSummary{}
+}
+
+func TestCheckRepositoryAllowsWorkflowLoggingSuppression(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+import (
+	"errors"
+	"fmt"
+)
+
+type logger struct{}
+type client struct{}
+
+func (client) Upload(string) error { return nil }
+
+//logpolicy:allow workflow delegates logging to caller with per-item context
+func uploadTracker(log logger, c client, path string) error {
+	if path == "" {
+		return errors.New("missing path")
+	}
+	for _, candidate := range []string{path} {
+		if err := c.Upload(candidate); err != nil {
+			return fmt.Errorf("upload candidate: %w", err)
+		}
+	}
+	return nil
+}
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryFlagsWarnfRoutineProgressMessages(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+
+func (logger) Warnf(string, ...any) {}
+
+func check(log logger, tracker string) {
+	log.Warnf("upload completed tracker=%s", tracker)
+}
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "routine progress") {
+		t.Fatalf("expected routine progress warning violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryFlagsTracefUserOutcomeMessages(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+
+func (logger) Tracef(string, ...any) {}
+
+func check(log logger, tracker string) {
+	log.Tracef("upload completed tracker=%s", tracker)
+}
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "user-visible outcome") {
+		t.Fatalf("expected trace outcome violation, got %q", violations[0].Message)
+	}
+}
+
+func writeInternalProductionFixture(t *testing.T, root string, content string) {
+	t.Helper()
+
+	dir := filepath.Join(root, "internal", "sample")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sample.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
 	}
 }
 

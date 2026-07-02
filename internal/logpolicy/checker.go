@@ -47,7 +47,13 @@ var bareFormats = map[string]struct{}{
 	"%q":  {},
 }
 
-const maxInfoFormatLength = 180
+const (
+	maxInfoFormatLength            = 180
+	workflowLogScoreThreshold      = 4
+	enableWorkflowBranchErrorCheck = false
+	enableWorkflowDecisionCheck    = false
+	enableWorkflowStableFieldCheck = false
+)
 
 var infoErrorOnlyPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\berror\b`),
@@ -63,6 +69,11 @@ var infoErrorOnlyPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\bcan't\b`),
 	regexp.MustCompile(`\bdenied\b`),
 	regexp.MustCompile(`\brejected\b`),
+	regexp.MustCompile(`\bblocked\b`),
+	regexp.MustCompile(`\baborted\b`),
+	regexp.MustCompile(`\bunavailable\b`),
+	regexp.MustCompile(`\bnot ready\b`),
+	regexp.MustCompile(`\brequires?\b`),
 }
 
 var infoErrorExemptions = []*regexp.Regexp{
@@ -107,6 +118,44 @@ var infoShouldBeDebugPatterns = []*regexp.Regexp{
 
 var debugErrorOrientedPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\bsearch failed\b.*\bstatus=(?:\d+|%d)\b`),
+}
+
+var warnRoutineProgressPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\bcompleted\b`),
+	regexp.MustCompile(`\bstarted\b`),
+	regexp.MustCompile(`\bselected\b`),
+	regexp.MustCompile(`\bloaded\b`),
+	regexp.MustCompile(`\bresolved\b`),
+	regexp.MustCompile(`\bvalidated\b`),
+	regexp.MustCompile(`\bsaved\b`),
+	regexp.MustCompile(`\busing\b`),
+	regexp.MustCompile(`\bfound\b`),
+}
+
+var warnAttentionPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\berror\b`),
+	regexp.MustCompile(`\bfailed\b`),
+	regexp.MustCompile(`\bfailures?\b`),
+	regexp.MustCompile(`\bblocked\b`),
+	regexp.MustCompile(`\baborted\b`),
+	regexp.MustCompile(`\brejected\b`),
+	regexp.MustCompile(`\bdenied\b`),
+	regexp.MustCompile(`\bunavailable\b`),
+	regexp.MustCompile(`\bnot ready\b`),
+	regexp.MustCompile(`\brequires?\b`),
+	regexp.MustCompile(`\bskipp?ed\b`),
+	regexp.MustCompile(`\bmatch found\b`),
+	regexp.MustCompile(`\bno ready\b`),
+}
+
+var traceUserOutcomePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\bupload completed\b`),
+	regexp.MustCompile(`\baccepted\b`),
+	regexp.MustCompile(`\baborted\b`),
+	regexp.MustCompile(`\bfailed\b`),
+	regexp.MustCompile(`\bblocked\b`),
+	regexp.MustCompile(`\bready\b`),
+	regexp.MustCompile(`\bsaved config\b`),
 }
 
 var infoRoutineCheckPatterns = []*regexp.Regexp{
@@ -379,7 +428,7 @@ func checkCLISensitiveOutputFile(fset *token.FileSet, root string, path string) 
 // checkFile enforces production Go logging policy for internal packages,
 // including logger hygiene, sensitive dataflow, and bounded response-body use.
 func checkFile(fset *token.FileSet, root string, path string) ([]Violation, error) {
-	file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+	file, err := parser.ParseFile(fset, path, nil, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
@@ -393,6 +442,8 @@ func checkFile(fset *token.FileSet, root string, path string) ([]Violation, erro
 	relPath = filepath.ToSlash(relPath)
 
 	violations := make([]Violation, 0)
+	allows, allowViolations := collectLogpolicyAllows(fset, relPath, file)
+	violations = append(violations, allowViolations...)
 	ast.Inspect(file, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
 		if !ok {
@@ -408,7 +459,7 @@ func checkFile(fset *token.FileSet, root string, path string) ([]Violation, erro
 			importPath := aliases[packageName.Name]
 			if methods, found := disallowedStdlibCalls[importPath]; found {
 				if _, banned := methods[selector.Sel.Name]; banned {
-					violations = append(violations, violationAt(fset, relPath, selector.Sel.Pos(), fmt.Sprintf("use the project logger instead of %s.%s in internal packages", packageName.Name, selector.Sel.Name)))
+					appendLogpolicyViolation(fset, relPath, allows, &violations, selector.Sel.Pos(), fmt.Sprintf("use the project logger instead of %s.%s in internal packages", packageName.Name, selector.Sel.Name))
 				}
 			}
 			if importPath != "" {
@@ -435,47 +486,56 @@ func checkFile(fset *token.FileSet, root string, path string) ([]Violation, erro
 		trimmed := strings.TrimSpace(format)
 		lowerFormat := strings.ToLower(trimmed)
 		if _, bare := bareFormats[trimmed]; bare {
-			violations = append(violations, violationAt(fset, relPath, firstArg.Pos(), selector.Sel.Name+" must include contextual text instead of logging a bare format string"))
+			appendLogpolicyViolation(fset, relPath, allows, &violations, firstArg.Pos(), selector.Sel.Name+" must include contextual text instead of logging a bare format string")
 		}
 		if selector.Sel.Name == "Infof" {
 			for _, message := range infoLevelHygieneViolations(lowerFormat, trimmed) {
-				violations = append(violations, violationAt(fset, relPath, firstArg.Pos(), message))
+				appendLogpolicyViolation(fset, relPath, allows, &violations, firstArg.Pos(), message)
 			}
 		}
 		if selector.Sel.Name == "Debugf" {
 			for _, message := range debugLevelHygieneViolations(lowerFormat) {
-				violations = append(violations, violationAt(fset, relPath, firstArg.Pos(), message))
+				appendLogpolicyViolation(fset, relPath, allows, &violations, firstArg.Pos(), message)
+			}
+		}
+		if selector.Sel.Name == "Warnf" {
+			for _, message := range warnLevelHygieneViolations(lowerFormat) {
+				appendLogpolicyViolation(fset, relPath, allows, &violations, firstArg.Pos(), message)
+			}
+		}
+		if selector.Sel.Name == "Tracef" {
+			for _, message := range traceLevelHygieneViolations(lowerFormat) {
+				appendLogpolicyViolation(fset, relPath, allows, &violations, firstArg.Pos(), message)
 			}
 		}
 		if strings.Contains(lowerFormat, "response body") {
 			for _, arg := range call.Args[1:] {
 				if isUnsafeBodyLikeExpr(arg, sanitizedVars) {
-					violations = append(violations, violationAt(fset, relPath, arg.Pos(), "response body log arguments must be redacted before logging"))
+					appendLogpolicyViolation(fset, relPath, allows, &violations, arg.Pos(), "response body log arguments must be redacted before logging")
 				}
 			}
 		}
 		for _, arg := range call.Args[1:] {
 			if isUnsafeUsernameLikeExpr(arg, sanitizedVars) {
-				violations = append(violations, violationAt(fset, relPath, arg.Pos(), "username log arguments must be redacted before logging"))
+				appendLogpolicyViolation(fset, relPath, allows, &violations, arg.Pos(), "username log arguments must be redacted before logging")
 			}
 		}
 		if isAuthSensitiveFormat(lowerFormat) {
 			for _, arg := range call.Args[1:] {
 				if isRawErrorLikeExpr(arg) {
-					violations = append(violations, violationAt(fset, relPath, arg.Pos(), "auth-sensitive log arguments must not include raw errors; log a stable incident code and operator-safe context instead"))
+					appendLogpolicyViolation(fset, relPath, allows, &violations, arg.Pos(), "auth-sensitive log arguments must not include raw errors; log a stable incident code and operator-safe context instead")
 				}
 			}
 		}
 
 		return true
 	})
+	violations = append(violations, checkWorkflowLoggingCoverage(fset, relPath, file, allows)...)
 	violations = append(violations, checkUnboundedResponseBodyUses(fset, relPath, file, aliases)...)
 
-	sensitiveViolations, err := checkSensitiveOutputFile(fset, root, path, false)
-	if err != nil {
-		return nil, err
-	}
+	sensitiveViolations := checkSensitiveOutputParsed(fset, relPath, file, aliases, allows, false)
 	violations = append(violations, sensitiveViolations...)
+	violations = append(violations, unusedLogpolicyAllowViolations(fset, relPath, allows)...)
 
 	return violations, nil
 }
@@ -603,7 +663,14 @@ func checkSensitiveOutputFile(fset *token.FileSet, root string, path string, tes
 	allows, allowViolations := collectLogpolicyAllows(fset, relPath, file)
 	violations := append([]Violation(nil), allowViolations...)
 	aliases := importAliases(file)
+	violations = append(violations, checkSensitiveOutputParsed(fset, relPath, file, aliases, allows, testFile)...)
+	violations = append(violations, unusedLogpolicyAllowViolations(fset, relPath, allows)...)
 
+	return violations, nil
+}
+
+func checkSensitiveOutputParsed(fset *token.FileSet, relPath string, file *ast.File, aliases map[string]string, allows map[int]*logpolicyAllow, testFile bool) []Violation {
+	violations := make([]Violation, 0)
 	for _, decl := range file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok || fn.Body == nil {
@@ -626,6 +693,11 @@ func checkSensitiveOutputFile(fset *token.FileSet, root string, path string, tes
 		}, fn.Body)
 	}
 
+	return violations
+}
+
+func unusedLogpolicyAllowViolations(fset *token.FileSet, relPath string, allows map[int]*logpolicyAllow) []Violation {
+	violations := make([]Violation, 0)
 	for _, allow := range allows {
 		if allow.reason == "" || allow.used {
 			continue
@@ -633,7 +705,7 @@ func checkSensitiveOutputFile(fset *token.FileSet, root string, path string, tes
 		violations = append(violations, violationAt(fset, relPath, allow.pos, "unused logpolicy allow comment"))
 	}
 
-	return violations, nil
+	return violations
 }
 
 type sensitiveOutputVisitor struct {
@@ -748,6 +820,10 @@ func shouldSuppressLogpolicyViolation(fset *token.FileSet, allows map[int]*logpo
 	if value.kind == sensitiveHTTPHeader && isNeverAllowHeader(value.label) {
 		return false
 	}
+	return shouldSuppressLogpolicyPosition(fset, allows, pos)
+}
+
+func shouldSuppressLogpolicyPosition(fset *token.FileSet, allows map[int]*logpolicyAllow, pos token.Pos) bool {
 	line := fset.Position(pos).Line
 	for _, candidateLine := range []int{line, line - 1} {
 		allow := allows[candidateLine]
@@ -758,6 +834,13 @@ func shouldSuppressLogpolicyViolation(fset *token.FileSet, allows map[int]*logpo
 		return true
 	}
 	return false
+}
+
+func appendLogpolicyViolation(fset *token.FileSet, relPath string, allows map[int]*logpolicyAllow, violations *[]Violation, pos token.Pos, message string) {
+	if shouldSuppressLogpolicyPosition(fset, allows, pos) {
+		return
+	}
+	*violations = append(*violations, violationAt(fset, relPath, pos, message))
 }
 
 func isNeverAllowHeader(label string) bool {
@@ -2300,4 +2383,353 @@ func isErrorOrientedDebugMessage(lowerFormat string) bool {
 		}
 	}
 	return false
+}
+
+func warnLevelHygieneViolations(lowerFormat string) []string {
+	if !isRoutineProgressWarnMessage(lowerFormat) {
+		return nil
+	}
+	return []string{"Warnf appears to report routine progress; use Infof/Debugf unless user attention is required"}
+}
+
+func isRoutineProgressWarnMessage(lowerFormat string) bool {
+	for _, pattern := range warnAttentionPatterns {
+		if pattern.MatchString(lowerFormat) {
+			return false
+		}
+	}
+	for _, pattern := range warnRoutineProgressPatterns {
+		if pattern.MatchString(lowerFormat) {
+			return true
+		}
+	}
+	return false
+}
+
+func traceLevelHygieneViolations(lowerFormat string) []string {
+	for _, pattern := range traceUserOutcomePatterns {
+		if pattern.MatchString(lowerFormat) {
+			return []string{"Tracef appears to report user-visible outcome; use Infof/Warnf/Errorf"}
+		}
+	}
+	return nil
+}
+
+type workflowLogSummary struct {
+	fn                  *ast.FuncDecl
+	explicitLoggerParam bool
+	loggerAccess        bool
+	workflowName        bool
+	branches            int
+	loops               int
+	errorReturns        int
+	operationCalls      int
+	decisionSignals     int
+	loggerCalls         map[string]int
+	logViolations       []workflowLogViolation
+	statementCount      int
+	nodeCount           int
+	directWrappedErrors bool
+}
+
+type workflowLogViolation struct {
+	pos     token.Pos
+	message string
+}
+
+// checkWorkflowLoggingCoverage catches likely workflow functions that have
+// logger access but omit progress, decision, or failure logging.
+func checkWorkflowLoggingCoverage(fset *token.FileSet, relPath string, file *ast.File, allows map[int]*logpolicyAllow) []Violation {
+	violations := make([]Violation, 0)
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		summary := summarizeWorkflowFunction(fn)
+		if !summary.isWorkflowLike() {
+			continue
+		}
+		if summary.explicitLoggerParam && summary.totalLoggerCalls() == 0 {
+			appendLogpolicyViolation(fset, relPath, allows, &violations, fn.Name.Pos(), "workflow-like function has no logging; add Infof/Warnf/Debugf/Tracef progress or decision logs, or add logpolicy allow with reason")
+		}
+		if enableWorkflowBranchErrorCheck && summary.errorReturns > 0 && summary.totalLoggerCalls() > 0 && summary.loggerCalls["Warnf"] == 0 && summary.loggerCalls["Errorf"] == 0 && !summary.directWrappedErrors {
+			appendLogpolicyViolation(fset, relPath, allows, &violations, fn.Name.Pos(), "workflow-like function has branch error returns without Warnf/Errorf blocked-outcome logging")
+		}
+		if enableWorkflowDecisionCheck && summary.decisionSignals > 0 && summary.totalLoggerCalls() == 0 {
+			appendLogpolicyViolation(fset, relPath, allows, &violations, fn.Name.Pos(), "workflow decision lacks logging; add stable decision/state context at Debugf, Infof, or Warnf")
+		}
+		for _, logViolation := range summary.logViolations {
+			appendLogpolicyViolation(fset, relPath, allows, &violations, logViolation.pos, logViolation.message)
+		}
+	}
+	return violations
+}
+
+func summarizeWorkflowFunction(fn *ast.FuncDecl) workflowLogSummary {
+	explicitLoggerParam := functionHasLoggerParam(fn)
+	summary := workflowLogSummary{
+		fn:                  fn,
+		explicitLoggerParam: explicitLoggerParam,
+		loggerAccess:        explicitLoggerParam,
+		workflowName:        isWorkflowName(fn.Name.Name),
+		loggerCalls:         map[string]int{},
+		statementCount:      len(fn.Body.List),
+	}
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		if node == nil {
+			return true
+		}
+		summary.nodeCount++
+		switch typed := node.(type) {
+		case *ast.IfStmt, *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt:
+			summary.branches++
+			if containsDecisionSignal(typed) {
+				summary.decisionSignals++
+			}
+		case *ast.ForStmt, *ast.RangeStmt:
+			summary.loops++
+		case *ast.ReturnStmt:
+			if isNonNilErrorReturn(typed) {
+				summary.errorReturns++
+				if isDirectWrappedErrorReturn(typed) {
+					summary.directWrappedErrors = true
+				}
+			}
+		case *ast.CallExpr:
+			level, loggerCall := loggerCallLevel(typed)
+			if loggerCall {
+				summary.loggerAccess = true
+				summary.loggerCalls[level]++
+				if enableWorkflowStableFieldCheck {
+					summary.logViolations = append(summary.logViolations, workflowLogFieldViolations(typed, level)...)
+				}
+				return true
+			}
+			if isWorkflowOperationCall(typed) {
+				summary.operationCalls++
+			}
+			if containsDecisionSignal(typed) {
+				summary.decisionSignals++
+			}
+		}
+		return true
+	})
+	return summary
+}
+
+func (s workflowLogSummary) totalLoggerCalls() int {
+	total := 0
+	for _, count := range s.loggerCalls {
+		total += count
+	}
+	return total
+}
+
+func (s workflowLogSummary) isWorkflowLike() bool {
+	if !s.loggerAccess || isExcludedWorkflowHelper(s.fn.Name.Name) {
+		return false
+	}
+	if s.nodeCount < 25 && s.statementCount < 15 && !s.workflowName {
+		return false
+	}
+	score := 0
+	if s.workflowName {
+		score++
+	}
+	score += minInt(s.operationCalls, 3)
+	score += minInt(s.branches, 2)
+	score += minInt(s.loops, 2)
+	score += minInt(s.errorReturns, 2)
+	if isEntrypointWorkflowName(s.fn.Name.Name) {
+		score += 2
+	}
+	return score >= workflowLogScoreThreshold
+}
+
+func functionHasLoggerParam(fn *ast.FuncDecl) bool {
+	if fn.Type == nil || fn.Type.Params == nil {
+		return false
+	}
+	for _, field := range fn.Type.Params.List {
+		for _, name := range field.Names {
+			if name.Name == "log" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func loggerCallLevel(call *ast.CallExpr) (string, bool) {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return "", false
+	}
+	if pkg, ok := selector.X.(*ast.Ident); ok {
+		switch pkg.Name {
+		case "fmt", "errors":
+			return "", false
+		}
+	}
+	if _, ok := loggerMethods[selector.Sel.Name]; ok {
+		return selector.Sel.Name, true
+	}
+	return "", false
+}
+
+func workflowLogFieldViolations(call *ast.CallExpr, level string) []workflowLogViolation {
+	if level != "Infof" && level != "Warnf" && level != "Debugf" {
+		return nil
+	}
+	if len(call.Args) < 3 {
+		return nil
+	}
+	format := stringArgValue(call, 0)
+	if format == "" || hasStableKeyValueField(format) || countFormatVerbs(format) < 2 {
+		return nil
+	}
+	return []workflowLogViolation{{
+		pos:     call.Args[0].Pos(),
+		message: "workflow log with multiple values should use stable key=value fields",
+	}}
+}
+
+func countFormatVerbs(format string) int {
+	count := 0
+	escaped := false
+	for i := 0; i < len(format); i++ {
+		if format[i] != '%' {
+			continue
+		}
+		if escaped {
+			escaped = false
+			continue
+		}
+		if i+1 < len(format) && format[i+1] == '%' {
+			escaped = true
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+func hasStableKeyValueField(format string) bool {
+	return regexp.MustCompile(`\b[a-zA-Z][a-zA-Z0-9_]*=%`).MatchString(format)
+}
+
+func isNonNilErrorReturn(ret *ast.ReturnStmt) bool {
+	for _, result := range ret.Results {
+		if ident, ok := result.(*ast.Ident); ok {
+			if ident.Name == "nil" {
+				continue
+			}
+			if isErrorLikeName(ident.Name) {
+				return true
+			}
+		}
+		if call, ok := result.(*ast.CallExpr); ok {
+			if isErrorFactoryCall(call) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isDirectWrappedErrorReturn(ret *ast.ReturnStmt) bool {
+	if len(ret.Results) != 1 {
+		return false
+	}
+	call, ok := ret.Results[0].(*ast.CallExpr)
+	return ok && isErrorFactoryCall(call)
+}
+
+func isErrorFactoryCall(call *ast.CallExpr) bool {
+	if selector, ok := call.Fun.(*ast.SelectorExpr); ok {
+		if pkg, ok := selector.X.(*ast.Ident); ok {
+			return (pkg.Name == "fmt" && selector.Sel.Name == "Errorf") || (pkg.Name == "errors" && selector.Sel.Name == "New")
+		}
+	}
+	return false
+}
+
+func isWorkflowOperationCall(call *ast.CallExpr) bool {
+	name := strings.ToLower(callName(call))
+	if name == "" {
+		return false
+	}
+	signals := []string{"upload", "search", "check", "validate", "load", "save", "read", "write", "request", "post", "get", "create", "build", "resolve", "migrate", "discover", "generate", "submit", "start", "run", "decode"}
+	for _, signal := range signals {
+		if strings.Contains(name, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsDecisionSignal(node ast.Node) bool {
+	found := false
+	ast.Inspect(node, func(inner ast.Node) bool {
+		if found || inner == nil {
+			return false
+		}
+		switch typed := inner.(type) {
+		case *ast.Ident:
+			found = isDecisionSignal(typed.Name)
+		case *ast.BasicLit:
+			if typed.Kind == token.STRING {
+				value, err := strconv.Unquote(typed.Value)
+				found = err == nil && isDecisionSignal(value)
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+func isDecisionSignal(value string) bool {
+	lower := strings.ToLower(value)
+	signals := []string{"skip", "selected", "ready", "blocked", "fallback", "retry", "prompt", "dryrun", "dry_run", "unattended", "auth", "dupe", "rule", "decision"}
+	for _, signal := range signals {
+		if strings.Contains(lower, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+func isWorkflowName(name string) bool {
+	lower := strings.ToLower(name)
+	signals := []string{"run", "upload", "prepare", "process", "execute", "build", "resolve", "search", "validate", "check", "import", "export", "save", "load", "migrate", "discover", "generate", "create", "submit", "start", "tracker", "torrent", "dupe", "auth", "metadata", "screenshot", "image", "client", "queue", "config", "database", "runtime"}
+	for _, signal := range signals {
+		if strings.Contains(lower, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+func isEntrypointWorkflowName(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.HasPrefix(lower, "run") || strings.HasPrefix(lower, "start") || strings.HasPrefix(lower, "upload") || strings.HasPrefix(lower, "process")
+}
+
+func isExcludedWorkflowHelper(name string) bool {
+	lower := strings.ToLower(name)
+	prefixes := []string{"string", "error", "marshal", "unmarshal", "format", "redact", "sanitize", "normalize", "clone", "copy"}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return lower == "len" || lower == "less" || lower == "swap"
+}
+
+func minInt(a int, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
