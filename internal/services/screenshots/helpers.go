@@ -607,7 +607,7 @@ func buildScreenshotSelections(count int, durationSeconds float64, frameRate flo
 	}
 
 	selections := make([]api.ScreenshotSelection, 0, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		frame := startFrame + (i * interval)
 		timestamp := float64(frame) / frameRate
 		selections = append(selections, api.ScreenshotSelection{

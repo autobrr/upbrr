@@ -198,7 +198,13 @@ func (c *Core) RunUpload(ctx context.Context, req api.Request) (api.Result, erro
 // side effects, while omitted tracker selections retain configured default behavior.
 // If a later path fails or the context is canceled after earlier uploads complete,
 // the returned result preserves the uploaded count accumulated before the error.
-func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (api.Result, error) {
+func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (result api.Result, err error) {
+	defer func() {
+		if err != nil {
+			c.logger.Warnf("core: upload prepared blocked err=%v", err)
+		}
+	}()
+
 	req = normalizeExecutionRequest(req)
 	resolvedReq, err := c.resolveDescriptionOverrideRequest(ctx, req)
 	if err != nil {
@@ -488,7 +494,13 @@ func firstRequestedTracker(trackers []string) string {
 	return ""
 }
 
-func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSummary, error) {
+func (c *Core) CheckDupes(ctx context.Context, req api.Request) (summary api.DupeCheckSummary, err error) {
+	defer func() {
+		if err != nil {
+			c.logger.Warnf("core: dupe check blocked err=%v", err)
+		}
+	}()
+
 	req = normalizeExecutionRequest(req)
 	if len(req.Paths) == 0 {
 		return api.DupeCheckSummary{}, internalerrors.ErrInvalidInput
@@ -654,7 +666,7 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSu
 	matchedTrackers := mergeTrackerRemovals(nil, meta.MatchedTrackers)
 	removeTrackers := mergeTrackerRemovals(req.TrackersRemove, matchedTrackers)
 	resolvedTrackers := trackers.ResolveTrackers(c.cfg, req.Trackers, removeTrackers, c.logger)
-	summary, err := c.services.Dupes.Check(ctx, meta, resolvedTrackers)
+	summary, err = c.services.Dupes.Check(ctx, meta, resolvedTrackers)
 	if err != nil {
 		return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
 	}
@@ -1714,7 +1726,7 @@ func (c *Core) DeleteUploadedImage(ctx context.Context, req api.Request, imagePa
 		return internalerrors.ErrInvalidInput
 	}
 
-	c.logger.Debugf("core: deleting uploaded image %s (%s)", imagePath, host)
+	c.logger.Debugf("core: deleting uploaded image path=%s host=%s", imagePath, host)
 	return wrapCoreError(c.repo.DeleteUploadedImage(ctx, uniquePaths[0], imagePath, host))
 }
 
@@ -1722,7 +1734,13 @@ func (c *Core) DeleteUploadedImage(ctx context.Context, req api.Request, imagePa
 // emits metadata progress, and stores the refreshed prepared metadata cache entry.
 // An empty tracker request is not an explicit "no trackers" request; downstream
 // tracker resolution can still use configured defaults.
-func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.MetadataPreview, error) {
+func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (preview api.MetadataPreview, err error) {
+	defer func() {
+		if err != nil {
+			c.logger.Warnf("core: metadata preview blocked err=%v", err)
+		}
+	}()
+
 	req = normalizeExecutionRequest(req)
 	if len(req.Paths) == 0 {
 		return api.MetadataPreview{}, internalerrors.ErrInvalidInput
@@ -1940,7 +1958,13 @@ func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (api.M
 // FetchPreparationPreview builds the tracker preparation preview for one validated
 // source path. Explicit tracker selections limit preparation to those trackers;
 // selections that resolve empty return an empty preview.
-func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (api.PreparationPreview, error) {
+func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (preview api.PreparationPreview, err error) {
+	defer func() {
+		if err != nil {
+			c.logger.Warnf("core: preparation preview blocked err=%v", err)
+		}
+	}()
+
 	resolvedReq, err := c.resolveDescriptionOverrideRequest(ctx, req)
 	if err != nil {
 		return api.PreparationPreview{}, err
@@ -2021,7 +2045,13 @@ func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (ap
 
 // FetchTrackerDryRunPreview builds per-tracker dry-run upload entries from cached
 // prepared metadata, creating torrents and cache state only after selected trackers resolve.
-func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (api.TrackerDryRunPreview, error) {
+func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (preview api.TrackerDryRunPreview, err error) {
+	defer func() {
+		if err != nil {
+			c.logger.Warnf("core: tracker dry-run blocked err=%v", err)
+		}
+	}()
+
 	req = normalizeExecutionRequest(req)
 	resolvedReq, err := c.resolveDescriptionOverrideRequest(ctx, req)
 	if err != nil {
@@ -2666,6 +2696,7 @@ func (c *Core) SelectBlurayCandidate(ctx context.Context, sourcePath string, rel
 	if external.Bluray == nil || !external.Bluray.SelectCandidate(trimmedReleaseID, false, "manual") {
 		return api.MetadataPreview{}, internalerrors.ErrNotFound
 	}
+	c.logger.Debugf("core: bluray candidate decision=selected source=%s release_id=%s", trimmedPath, trimmedReleaseID)
 	external.UpdatedAt = time.Now().UTC()
 	external.Bluray.UpdatedAt = external.UpdatedAt
 
@@ -3196,7 +3227,13 @@ func cacheableGUIPreparedMetaRequest(req api.Request) bool {
 
 // ExportGUICachedPreparedMeta exposes the resolved GUI prepared metadata cache entry
 // so callers can hand off metadata to isolated per-run cores.
-func (c *Core) ExportGUICachedPreparedMeta(ctx context.Context, req api.Request) (api.PreparedMetadata, bool, error) {
+func (c *Core) ExportGUICachedPreparedMeta(ctx context.Context, req api.Request) (meta api.PreparedMetadata, ok bool, err error) {
+	defer func() {
+		if err != nil {
+			c.logger.Warnf("core: gui prepared metadata export blocked err=%v", err)
+		}
+	}()
+
 	if err := ctx.Err(); err != nil {
 		return api.PreparedMetadata{}, false, fmt.Errorf("core: export cached prepared metadata canceled: %w", err)
 	}
@@ -3204,7 +3241,7 @@ func (c *Core) ExportGUICachedPreparedMeta(ctx context.Context, req api.Request)
 	if err != nil {
 		return api.PreparedMetadata{}, false, err
 	}
-	meta, ok := c.lookupGUICachedMeta(req, path)
+	meta, ok = c.lookupGUICachedMeta(req, path)
 	if !ok {
 		c.logger.Debugf("core: gui prepared metadata export miss path=%s", path)
 		return api.PreparedMetadata{}, false, nil
@@ -3215,7 +3252,13 @@ func (c *Core) ExportGUICachedPreparedMeta(ctx context.Context, req api.Request)
 
 // ImportPreparedMetadataForGUI stores prepared metadata on a per-run core so GUI dry-run
 // and upload-only flows can reuse metadata prepared on the long-lived GUI core.
-func (c *Core) ImportPreparedMetadataForGUI(ctx context.Context, req api.Request, meta api.PreparedMetadata) error {
+func (c *Core) ImportPreparedMetadataForGUI(ctx context.Context, req api.Request, meta api.PreparedMetadata) (err error) {
+	defer func() {
+		if err != nil {
+			c.logger.Warnf("core: gui prepared metadata import blocked err=%v", err)
+		}
+	}()
+
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("core: import prepared metadata canceled: %w", err)
 	}
@@ -3724,19 +3767,19 @@ func (c *Core) LoadPlaylistSelection(ctx context.Context, sourcePath string) (ap
 	}
 
 	normalizedPath := filepath.ToSlash(filepath.Clean(sourcePath))
-	c.logger.Debugf("core: loading playlist selection for %q (normalized: %q)", sourcePath, normalizedPath)
+	c.logger.Debugf("core: loading playlist selection source=%q normalized=%q", sourcePath, normalizedPath)
 
 	selection, err := c.repo.GetPlaylistSelection(ctx, normalizedPath)
 	if err != nil {
 		if errors.Is(err, internalerrors.ErrNotFound) {
-			c.logger.Debugf("core: no playlist selection found for %q", sourcePath)
+			c.logger.Debugf("core: playlist selection decision=not_found source=%q", sourcePath)
 			return api.PlaylistSelection{}, internalerrors.ErrNotFound
 		}
 		c.logger.Warnf("core: load playlist selection failed: %v", err)
 		return api.PlaylistSelection{}, fmt.Errorf("core: %w", err)
 	}
 
-	c.logger.Debugf("core: loaded playlist selection for %q: %d playlists, useAll=%v", sourcePath, len(selection.SelectedPlaylists), selection.UseAll)
+	c.logger.Debugf("core: playlist selection decision=loaded source=%q playlists=%d use_all=%v", sourcePath, len(selection.SelectedPlaylists), selection.UseAll)
 	return selection, nil
 }
 

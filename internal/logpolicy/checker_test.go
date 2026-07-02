@@ -1933,6 +1933,371 @@ func uploadTracker(log logger, c client, path string) error {
 	}
 }
 
+func TestCheckRepositoryFlagsWorkflowBranchErrorWithoutWarnLogging(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+type client struct{}
+type result struct{}
+
+func (logger) Infof(string, ...any) {}
+func (client) Upload(string) error { return nil }
+
+func uploadTracker(log logger, c client, path string) (result, error) {
+	log.Infof("upload started path=%s", path)
+	if path == "" {
+		return result{}, errMissingPath
+	}
+	if err := c.Upload(path); err != nil {
+		return result{}, err
+	}
+	return result{}, nil
+}
+
+var errMissingPath error
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "without Warnf/Errorf") {
+		t.Fatalf("expected branch error logging violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryAllowsWorkflowBranchErrorWithWarnLogging(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+type client struct{}
+type result struct{}
+
+func (logger) Infof(string, ...any) {}
+func (logger) Warnf(string, ...any) {}
+func (client) Upload(string) error { return nil }
+
+func uploadTracker(log logger, c client, path string) (result, error) {
+	log.Infof("upload started path=%s", path)
+	if path == "" {
+		log.Warnf("upload blocked reason=missing_path")
+		return result{}, errMissingPath
+	}
+	if err := c.Upload(path); err != nil {
+		log.Warnf("upload blocked reason=client_error")
+		return result{}, err
+	}
+	return result{}, nil
+}
+
+var errMissingPath error
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryFlagsExportedReceiverWorkflowBranchError(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+type Service struct{ logger logger }
+type client struct{}
+
+func (logger) Infof(string, ...any) {}
+func (client) Upload(string) error { return nil }
+
+func (s *Service) Upload(ctx context, c client, path string) error {
+	s.logger.Infof("upload started path=%s", path)
+	if path == "" {
+		return errMissingPath
+	}
+	if err := c.Upload(path); err != nil {
+		return err
+	}
+	return nil
+}
+
+type context struct{}
+var errMissingPath error
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "without Warnf/Errorf") {
+		t.Fatalf("expected branch error logging violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryAllowsUnexportedReceiverWorkflowBranchError(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+type service struct{ logger logger }
+type client struct{}
+
+func (logger) Infof(string, ...any) {}
+func (client) Upload(string) error { return nil }
+
+func (s *service) Upload(ctx context, c client, path string) error {
+	s.logger.Infof("upload started path=%s", path)
+	if path == "" {
+		return errMissingPath
+	}
+	if err := c.Upload(path); err != nil {
+		return err
+	}
+	return nil
+}
+
+type context struct{}
+var errMissingPath error
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryAllowsClientReceiverWorkflowBranchError(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+type Client struct{ logger logger }
+type remote struct{}
+
+func (logger) Infof(string, ...any) {}
+func (remote) Request(string) error { return nil }
+
+func (c *Client) Upload(ctx context, r remote, path string) error {
+	c.logger.Infof("upload started path=%s", path)
+	if path == "" {
+		return errMissingPath
+	}
+	if err := r.Request(path); err != nil {
+		return err
+	}
+	return nil
+}
+
+type context struct{}
+var errMissingPath error
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryAllowsReceiverWorkflowContextualErrorReturns(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+import "fmt"
+
+type logger struct{}
+type Service struct{ logger logger }
+type client struct{}
+type result struct{}
+
+func (logger) Infof(string, ...any) {}
+func (client) Upload(string) error { return nil }
+
+func (s *Service) Upload(ctx context, c client, path string) (result, error) {
+	s.logger.Infof("upload started path=%s", path)
+	if path == "" {
+		return result{}, fmt.Errorf("missing path")
+	}
+	if err := c.Upload(path); err != nil {
+		return result{}, fmt.Errorf("upload: %w", err)
+	}
+	return result{}, nil
+}
+
+type context struct{}
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryFlagsWorkflowDecisionWithoutDecisionLogging(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+type client struct{}
+
+func (logger) Infof(string, ...any) {}
+func (logger) Warnf(string, ...any) {}
+func (client) Upload(string) error { return nil }
+
+func uploadTracker(log logger, c client, path string, skipUpload bool) error {
+	log.Infof("upload started path=%s", path)
+	if skipUpload {
+		return nil
+	}
+	if err := c.Upload(path); err != nil {
+		log.Warnf("upload failed path=%s", path)
+		return err
+	}
+	return nil
+}
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "workflow decision lacks logging") {
+		t.Fatalf("expected workflow decision logging violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryAllowsWorkflowDecisionLogging(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+type client struct{}
+
+func (logger) Infof(string, ...any) {}
+func (logger) Warnf(string, ...any) {}
+func (logger) Debugf(string, ...any) {}
+func (client) Upload(string) error { return nil }
+
+func uploadTracker(log logger, c client, path string, skipUpload bool) error {
+	log.Infof("upload started path=%s", path)
+	if skipUpload {
+		log.Debugf("upload decision=skip path=%s", path)
+		return nil
+	}
+	if err := c.Upload(path); err != nil {
+		log.Warnf("upload failed path=%s", path)
+		return err
+	}
+	return nil
+}
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryFlagsWorkflowLogsWithoutStableFields(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+type client struct{}
+
+func (logger) Infof(string, ...any) {}
+func (client) Upload(string) {}
+
+func uploadTracker(log logger, c client, paths []string) error {
+	log.Infof("upload selected %s %d", paths[0], len(paths))
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		c.Upload(path)
+	}
+	return nil
+}
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "stable key=value fields") {
+		t.Fatalf("expected stable-field violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryAllowsWorkflowLogsWithStableFields(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+type client struct{}
+
+func (logger) Infof(string, ...any) {}
+func (client) Upload(string) {}
+
+func uploadTracker(log logger, c client, paths []string) error {
+	log.Infof("upload selected path=%s count=%d", paths[0], len(paths))
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		c.Upload(path)
+	}
+	return nil
+}
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
 func TestCheckRepositoryFlagsWarnfRoutineProgressMessages(t *testing.T) {
 	root := t.TempDir()
 	content := `package sample

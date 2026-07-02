@@ -50,9 +50,9 @@ var bareFormats = map[string]struct{}{
 const (
 	maxInfoFormatLength            = 180
 	workflowLogScoreThreshold      = 4
-	enableWorkflowBranchErrorCheck = false
-	enableWorkflowDecisionCheck    = false
-	enableWorkflowStableFieldCheck = false
+	enableWorkflowBranchErrorCheck = true
+	enableWorkflowDecisionCheck    = true
+	enableWorkflowStableFieldCheck = true
 )
 
 var infoErrorOnlyPatterns = []*regexp.Regexp{
@@ -2416,20 +2416,22 @@ func traceLevelHygieneViolations(lowerFormat string) []string {
 }
 
 type workflowLogSummary struct {
-	fn                  *ast.FuncDecl
-	explicitLoggerParam bool
-	loggerAccess        bool
-	workflowName        bool
-	branches            int
-	loops               int
-	errorReturns        int
-	operationCalls      int
-	decisionSignals     int
-	loggerCalls         map[string]int
-	logViolations       []workflowLogViolation
-	statementCount      int
-	nodeCount           int
-	directWrappedErrors bool
+	fn                     *ast.FuncDecl
+	explicitLoggerParam    bool
+	receiverBoundary       bool
+	loggerAccess           bool
+	workflowName           bool
+	branches               int
+	loops                  int
+	errorReturns           int
+	contextualErrorReturns int
+	operationCalls         int
+	decisionSignals        int
+	decisionLoggerCalls    int
+	loggerCalls            map[string]int
+	logViolations          []workflowLogViolation
+	statementCount         int
+	nodeCount              int
 }
 
 type workflowLogViolation struct {
@@ -2453,10 +2455,10 @@ func checkWorkflowLoggingCoverage(fset *token.FileSet, relPath string, file *ast
 		if summary.explicitLoggerParam && summary.totalLoggerCalls() == 0 {
 			appendLogpolicyViolation(fset, relPath, allows, &violations, fn.Name.Pos(), "workflow-like function has no logging; add Infof/Warnf/Debugf/Tracef progress or decision logs, or add logpolicy allow with reason")
 		}
-		if enableWorkflowBranchErrorCheck && summary.errorReturns > 0 && summary.totalLoggerCalls() > 0 && summary.loggerCalls["Warnf"] == 0 && summary.loggerCalls["Errorf"] == 0 && !summary.directWrappedErrors {
+		if enableWorkflowBranchErrorCheck && summary.enforceWorkflowLogChecks() && summary.errorReturns > 0 && summary.contextualErrorReturns < summary.errorReturns && summary.totalLoggerCalls() > 0 && summary.loggerCalls["Warnf"] == 0 && summary.loggerCalls["Errorf"] == 0 {
 			appendLogpolicyViolation(fset, relPath, allows, &violations, fn.Name.Pos(), "workflow-like function has branch error returns without Warnf/Errorf blocked-outcome logging")
 		}
-		if enableWorkflowDecisionCheck && summary.decisionSignals > 0 && summary.totalLoggerCalls() == 0 {
+		if enableWorkflowDecisionCheck && summary.enforceWorkflowLogChecks() && summary.decisionSignals > 0 && summary.totalLoggerCalls() > 0 && summary.decisionLoggerCalls == 0 {
 			appendLogpolicyViolation(fset, relPath, allows, &violations, fn.Name.Pos(), "workflow decision lacks logging; add stable decision/state context at Debugf, Infof, or Warnf")
 		}
 		for _, logViolation := range summary.logViolations {
@@ -2471,6 +2473,7 @@ func summarizeWorkflowFunction(fn *ast.FuncDecl) workflowLogSummary {
 	summary := workflowLogSummary{
 		fn:                  fn,
 		explicitLoggerParam: explicitLoggerParam,
+		receiverBoundary:    isReceiverWorkflowBoundary(fn),
 		loggerAccess:        explicitLoggerParam,
 		workflowName:        isWorkflowName(fn.Name.Name),
 		loggerCalls:         map[string]int{},
@@ -2492,8 +2495,8 @@ func summarizeWorkflowFunction(fn *ast.FuncDecl) workflowLogSummary {
 		case *ast.ReturnStmt:
 			if isNonNilErrorReturn(typed) {
 				summary.errorReturns++
-				if isDirectWrappedErrorReturn(typed) {
-					summary.directWrappedErrors = true
+				if hasContextualErrorReturn(typed) {
+					summary.contextualErrorReturns++
 				}
 			}
 		case *ast.CallExpr:
@@ -2501,7 +2504,10 @@ func summarizeWorkflowFunction(fn *ast.FuncDecl) workflowLogSummary {
 			if loggerCall {
 				summary.loggerAccess = true
 				summary.loggerCalls[level]++
-				if enableWorkflowStableFieldCheck {
+				if loggerCallHasDecisionSignal(typed) {
+					summary.decisionLoggerCalls++
+				}
+				if enableWorkflowStableFieldCheck && summary.enforceWorkflowLogChecks() {
 					summary.logViolations = append(summary.logViolations, workflowLogFieldViolations(typed, level)...)
 				}
 				return true
@@ -2526,6 +2532,10 @@ func (s workflowLogSummary) totalLoggerCalls() int {
 	return total
 }
 
+func (s workflowLogSummary) enforceWorkflowLogChecks() bool {
+	return s.explicitLoggerParam || s.receiverBoundary
+}
+
 func (s workflowLogSummary) isWorkflowLike() bool {
 	if !s.loggerAccess || isExcludedWorkflowHelper(s.fn.Name.Name) {
 		return false
@@ -2545,6 +2555,46 @@ func (s workflowLogSummary) isWorkflowLike() bool {
 		score += 2
 	}
 	return score >= workflowLogScoreThreshold
+}
+
+func isReceiverWorkflowBoundary(fn *ast.FuncDecl) bool {
+	if fn == nil || fn.Recv == nil || !fn.Name.IsExported() {
+		return false
+	}
+	receiver := receiverTypeName(fn)
+	if receiver == "" || !ast.IsExported(receiver) || isExcludedWorkflowReceiver(receiver) {
+		return false
+	}
+	return true
+}
+
+func receiverTypeName(fn *ast.FuncDecl) string {
+	if fn == nil || fn.Recv == nil || len(fn.Recv.List) == 0 {
+		return ""
+	}
+	return exprTypeName(fn.Recv.List[0].Type)
+}
+
+func exprTypeName(expr ast.Expr) string {
+	switch typed := expr.(type) {
+	case *ast.Ident:
+		return typed.Name
+	case *ast.StarExpr:
+		return exprTypeName(typed.X)
+	default:
+		return ""
+	}
+}
+
+func isExcludedWorkflowReceiver(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if lower == "" {
+		return true
+	}
+	if strings.HasSuffix(lower, "client") || strings.Contains(lower, "detector") || strings.Contains(lower, "repository") {
+		return true
+	}
+	return false
 }
 
 func functionHasLoggerParam(fn *ast.FuncDecl) bool {
@@ -2595,6 +2645,14 @@ func workflowLogFieldViolations(call *ast.CallExpr, level string) []workflowLogV
 	}}
 }
 
+func loggerCallHasDecisionSignal(call *ast.CallExpr) bool {
+	if len(call.Args) == 0 {
+		return false
+	}
+	format := stringArgValue(call, 0)
+	return format != "" && isDecisionSignal(format)
+}
+
 func countFormatVerbs(format string) int {
 	count := 0
 	escaped := false
@@ -2638,12 +2696,14 @@ func isNonNilErrorReturn(ret *ast.ReturnStmt) bool {
 	return false
 }
 
-func isDirectWrappedErrorReturn(ret *ast.ReturnStmt) bool {
-	if len(ret.Results) != 1 {
-		return false
+func hasContextualErrorReturn(ret *ast.ReturnStmt) bool {
+	for _, result := range ret.Results {
+		call, ok := result.(*ast.CallExpr)
+		if ok && isErrorFactoryCall(call) {
+			return true
+		}
 	}
-	call, ok := ret.Results[0].(*ast.CallExpr)
-	return ok && isErrorFactoryCall(call)
+	return false
 }
 
 func isErrorFactoryCall(call *ast.CallExpr) bool {

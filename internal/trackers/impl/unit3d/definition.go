@@ -52,7 +52,7 @@ func (d *Definition) BuildUploadDryRun(ctx context.Context, req trackers.UploadR
 	default:
 	}
 	if req.Logger != nil {
-		req.Logger.Infof("trackers: %s dry-run not implemented (unit3d scaffold)", d.name)
+		req.Logger.Infof("trackers: dry-run decision=not_implemented tracker=%s", d.name)
 	}
 	return api.TrackerDryRunEntry{}, internalerrors.ErrNotImplemented
 }
@@ -77,7 +77,7 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 				return trackers.DescriptionResult{}, fmt.Errorf("trackers: %w", err)
 			}
 			if req.Logger != nil {
-				req.Logger.Warnf("trackers: %s description assets failed: %v", d.name, err)
+				req.Logger.Warnf("trackers: description assets failed tracker=%s err=%v", d.name, err)
 			}
 			assets = trackers.DescriptionAssets{}
 		}

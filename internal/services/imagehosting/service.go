@@ -174,7 +174,7 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.PreparedMetadata)
 		return images[i].TimestampSeconds < images[j].TimestampSeconds
 	})
 
-	s.logger.Debugf("image hosting: returning %d candidate images (%d previously uploaded)", len(images), len(uploadedByPath))
+	s.logger.Debugf("image hosting: returning candidate images count=%d uploaded=%d", len(images), len(uploadedByPath))
 	return images, nil
 }
 
@@ -213,7 +213,7 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata, host st
 		return nil, fmt.Errorf("image hosting: upload canceled: %w", err)
 	}
 
-	s.logger.Infof("image hosting: uploading %d images to %s", len(images), normalizedHost)
+	s.logger.Infof("image hosting: uploading images count=%d host=%s", len(images), normalizedHost)
 	s.logger.Debugf("image hosting: source path %s", meta.SourcePath)
 
 	unique := make([]imageCandidate, 0, len(images))
@@ -345,7 +345,7 @@ dispatchLoop:
 				return
 			}
 			fileName := filepath.Base(candidate.Path)
-			s.logger.Debugf("image hosting: uploading %s to %s (%.2f KB)", fileName, normalizedHost, float64(candidate.SizeBytes)/1024.0)
+			s.logger.Debugf("image hosting: uploading image file=%s host=%s size_kb=%.2f", fileName, normalizedHost, float64(candidate.SizeBytes)/1024.0)
 
 			// Add detailed debug logging for imgbox
 			if normalizedHost == "imgbox" {
@@ -360,9 +360,9 @@ dispatchLoop:
 
 			if normalizedHost == "imgbox" {
 				if err != nil {
-					s.logger.Debugf("imgbox: upload failed for %s after %v: %v", fileName, uploadDuration, err)
+					s.logger.Debugf("imgbox: upload failed file=%s duration=%v err=%v", fileName, uploadDuration, err)
 				} else {
-					s.logger.Debugf("imgbox: upload succeeded for %s in %v", fileName, uploadDuration)
+					s.logger.Debugf("imgbox: upload succeeded file=%s duration=%v", fileName, uploadDuration)
 					s.logger.Tracef("imgbox: thumbnail URL: %s", uploaded.ImgURL)
 					s.logger.Tracef("imgbox: original URL: %s", uploaded.RawURL)
 					s.logger.Tracef("imgbox: image URL: %s", uploaded.WebURL)
@@ -370,7 +370,7 @@ dispatchLoop:
 			}
 
 			if err != nil {
-				s.logger.Warnf("image hosting: upload failed for %s: %v", fileName, err)
+				s.logger.Warnf("image hosting: upload failed file=%s err=%v", fileName, err)
 				mu.Lock()
 				failures = append(failures, fmt.Sprintf("image upload %s: %v", fileName, err))
 				mu.Unlock()
@@ -407,7 +407,7 @@ dispatchLoop:
 				},
 			})
 			mu.Unlock()
-			s.logger.Debugf("image hosting: successfully uploaded %s in %v", fileName, uploadDuration)
+			s.logger.Debugf("image hosting: successfully uploaded file=%s duration=%v", fileName, uploadDuration)
 		})
 	}
 
@@ -419,7 +419,7 @@ dispatchLoop:
 	totalDuration := time.Since(uploadStart)
 	orderedResults := orderedUploadResults(results)
 	if len(orderedResults) > 0 {
-		s.logger.Infof("image hosting: completed %d uploads to %s in %v (avg: %v per image)", len(orderedResults), normalizedHost, totalDuration, totalDuration/time.Duration(len(orderedResults)))
+		s.logger.Infof("image hosting: completed uploads count=%d host=%s duration=%v avg=%v", len(orderedResults), normalizedHost, totalDuration, totalDuration/time.Duration(len(orderedResults)))
 	}
 
 	if s.repo != nil && len(orderedResults) > 0 {
@@ -438,7 +438,7 @@ dispatchLoop:
 	}
 
 	if len(failures) > 0 {
-		s.logger.Warnf("image hosting: upload batch completed with %d failures and %d successes", len(failures), len(orderedResults))
+		s.logger.Warnf("image hosting: upload batch completed failures=%d successes=%d", len(failures), len(orderedResults))
 		return orderedResults, fmt.Errorf("image hosting: %d of %d uploads failed: %s", len(failures), len(unique), strings.Join(failures, "; "))
 	}
 

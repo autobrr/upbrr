@@ -195,13 +195,19 @@ type torrentDataValidation struct {
 	reason      string
 }
 
-func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMetadata) (api.ClientSearchResult, error) {
+func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.PreparedMetadata) (result api.ClientSearchResult, err error) {
+	defer func() {
+		if err != nil {
+			s.logger.Warnf("clients: pathed search blocked err=%v", err)
+		}
+	}()
+
 	if strings.TrimSpace(meta.SourcePath) == "" {
 		return api.ClientSearchResult{}, internalerrors.ErrInvalidInput
 	}
 
 	constraints := resolvePieceConstraints(s.cfg)
-	result := api.ClientSearchResult{PieceSizeConstraint: constraints.label}
+	result = api.ClientSearchResult{PieceSizeConstraint: constraints.label}
 	s.logger.Tracef("clients: pathed search start source=%s constraints=%q", meta.SourcePath, constraints.label)
 
 	clients, usedFallback := resolveSearchClients(s.cfg, meta.ClientOverrides)

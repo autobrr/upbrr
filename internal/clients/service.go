@@ -46,7 +46,13 @@ func NewService(cfg config.Config, logger api.Logger) *Service {
 // can select one; explicit tracker or caller selections that resolve only to
 // watch-folder clients return [internalerrors.ErrInvalidInput] instead of a
 // successful no-op.
-func (s *Service) Inject(ctx context.Context, meta api.PreparedMetadata, torrent api.TorrentResult) error {
+func (s *Service) Inject(ctx context.Context, meta api.PreparedMetadata, torrent api.TorrentResult) (err error) {
+	defer func() {
+		if err != nil {
+			s.logger.Warnf("clients: injection blocked err=%v", err)
+		}
+	}()
+
 	select {
 	case <-ctx.Done():
 		return fmt.Errorf("context canceled: %w", ctx.Err())
@@ -93,7 +99,7 @@ func (s *Service) Inject(ctx context.Context, meta api.PreparedMetadata, torrent
 	for _, name := range clientNames {
 		client := applyClientOverrides(clients[name], clientOverrides)
 		clientType := strings.ToLower(strings.TrimSpace(client.ClientType()))
-		s.logger.Debugf("clients: processing client %s (%s)", name, clientType)
+		s.logger.Debugf("clients: processing client name=%s type=%s", name, clientType)
 		// Watch folders can still consume a local torrent file when URL metadata
 		// is also present. Skip only URL-only input before any injection delay so
 		// a skipped client cannot fail a successful URL add.

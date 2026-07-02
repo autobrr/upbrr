@@ -14,6 +14,7 @@ import (
 	"os"
 	"path" //nolint:depguard // Extracts URL path components from screenshot URLs.
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,14 +59,20 @@ func NewServiceWithRepo(cfg config.Config, logger api.Logger, tmpRoot string, ru
 	return &Service{cfg: cfg, logger: logger, tmpRoot: tmpRoot, runner: runner, repo: repo}
 }
 
-func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int) (api.ScreenshotPlan, error) {
+func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int) (plan api.ScreenshotPlan, err error) {
+	defer func() {
+		if err != nil {
+			s.logger.Warnf("screenshots: planning blocked err=%v", err)
+		}
+	}()
+
 	select {
 	case <-ctx.Done():
 		return api.ScreenshotPlan{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
-	plan := api.ScreenshotPlan{
+	plan = api.ScreenshotPlan{
 		SourcePath: meta.SourcePath,
 		DiscType:   meta.DiscType,
 	}
@@ -142,7 +149,7 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 				}
 				kept++
 			}
-			s.logger.Debugf("screenshots: found %d existing screenshots in database (%d on disk)", len(dbScreenshots), kept)
+			s.logger.Debugf("screenshots: found existing screenshots db=%d disk=%d", len(dbScreenshots), kept)
 		}
 	}
 
@@ -150,7 +157,7 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 		existingIndices = make(map[int]struct{})
 	}
 	if len(missingIndexTimestamps) > 0 && len(baselineSelections) > 0 {
-		sort.Slice(missingIndexTimestamps, func(i, j int) bool { return missingIndexTimestamps[i] < missingIndexTimestamps[j] })
+		slices.Sort(missingIndexTimestamps)
 		for _, existingTs := range missingIndexTimestamps {
 			bestIndex := -1
 			bestDiff := 0.0
@@ -199,7 +206,13 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 	return plan, nil
 }
 
-func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, selections []api.ScreenshotSelection, purpose api.ScreenshotPurpose) (api.ScreenshotResult, error) {
+func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, selections []api.ScreenshotSelection, purpose api.ScreenshotPurpose) (result api.ScreenshotResult, err error) {
+	defer func() {
+		if err != nil {
+			s.logger.Warnf("screenshots: capture blocked err=%v", err)
+		}
+	}()
+
 	select {
 	case <-ctx.Done():
 		return api.ScreenshotResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -225,7 +238,7 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 		return api.ScreenshotResult{}, fmt.Errorf("screenshots: %w", err)
 	}
 
-	result := api.ScreenshotResult{
+	result = api.ScreenshotResult{
 		SourcePath: meta.SourcePath,
 		Purpose:    purpose,
 	}
@@ -1057,10 +1070,7 @@ func parseScreenshotIndexStrict(path string, base string) (int, bool) {
 }
 
 func buildScreenshotFilename(base string, index int, timestampSeconds float64, purpose api.ScreenshotPurpose) string {
-	ms := int64(timestampSeconds * 1000)
-	if ms < 0 {
-		ms = 0
-	}
+	ms := max(int64(timestampSeconds*1000), 0)
 	stamp := fmt.Sprintf("ss_%08d", ms)
 	if purpose == api.ScreenshotPurposePreview {
 		return fmt.Sprintf("%s-preview-%02d-%s-%d.png", base, index, stamp, time.Now().UnixNano())
@@ -1076,8 +1086,8 @@ func parseScreenshotTimestamp(path string, base string) float64 {
 		name = strings.TrimPrefix(name, prefix)
 	}
 	name = strings.TrimPrefix(name, "preview-")
-	parts := strings.Split(name, "-")
-	for _, part := range parts {
+	parts := strings.SplitSeq(name, "-")
+	for part := range parts {
 		if !strings.HasPrefix(part, "ss_") {
 			continue
 		}
