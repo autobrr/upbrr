@@ -563,8 +563,9 @@ func TestApplyTrackerClaimsUsesRequestedBTNWhenTrackerIDsContainDifferentTracker
 	cfg := config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "db.sqlite")},
 	}
+	logger := &recordingLogger{}
 
-	svc := NewService(&fakeRepo{}, WithConfig(cfg))
+	svc := NewService(&fakeRepo{}, WithConfig(cfg), WithLogger(logger))
 
 	cachePath := filepath.Join(tempDir, "cache", "banned", "BTN_claimed_releases.json")
 	if err := writeBTNClaimedCacheFixture(cachePath, time.Now().Unix(), map[string]struct{}{
@@ -605,6 +606,14 @@ func TestApplyTrackerClaimsUsesRequestedBTNWhenTrackerIDsContainDifferentTracker
 	}
 	if !strings.Contains(strings.ToLower(failures[0].Reason), "hours remain") {
 		t.Fatalf("expected BTN claim failure reason to include hours remaining, got %#v", failures)
+	}
+	if len(logger.warnings) != 1 {
+		t.Fatalf("expected one BTN claim warning, got %#v", logger.warnings)
+	}
+	if !strings.Contains(logger.warnings[0], "metadata: BTN claim match found") ||
+		!strings.Contains(logger.warnings[0], "cache_ttl=48h0m0s") ||
+		strings.Contains(logger.warnings[0], "tracker claim match found") {
+		t.Fatalf("unexpected BTN claim warning: %#v", logger.warnings)
 	}
 }
 

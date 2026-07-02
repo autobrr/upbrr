@@ -601,15 +601,9 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckLogsRedactedDecisions(t *testing.T) 
 	}
 
 	infoLogs := strings.Join(logger.info, "\n")
-	for _, expected := range []string{
+	for _, notExpected := range []string{
 		"cli auth: pre-dupe auth check start trackers=2",
 		"cli auth: pre-dupe check complete ready=1 skipped=1",
-	} {
-		if !strings.Contains(infoLogs, expected) {
-			t.Fatalf("expected info log %q", expected)
-		}
-	}
-	for _, notExpected := range []string{
 		"cli auth: validating tracker=PTP auth_kind=credential_login",
 		"cli auth: tracker=PTP decision=ready state=configured",
 	} {
@@ -620,9 +614,11 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckLogsRedactedDecisions(t *testing.T) 
 
 	debugLogs := strings.Join(logger.debug, "\n")
 	for _, expected := range []string{
+		"cli auth: pre-dupe auth check start trackers=2",
 		"cli auth: validating tracker=PTP auth_kind=credential_login",
 		"cli auth: tracker=PTP decision=ready state=configured",
 		"cli auth: validation result tracker=PTP state=configured cookies=2 encrypted_storage=true needs_2fa=false",
+		"cli auth: pre-dupe check complete ready=1 skipped=1",
 	} {
 		if !strings.Contains(debugLogs, expected) {
 			t.Fatalf("expected debug log %q", expected)
@@ -920,6 +916,91 @@ func TestPromptTrackerDupeReviewApprovesUserSkippedDupeChecksInUnattendedMode(t 
 	}
 }
 
+func TestPromptTrackerDupeReviewGroupsUnattendedOutput(t *testing.T) {
+	req := api.Request{
+		Trackers: []string{"AITHER", "ANT", "DP", "OTW", "MTV"},
+		Options:  api.UploadOptions{InteractionMode: api.InteractionModeUnattended},
+	}
+	summary := api.DupeCheckSummary{
+		Results: []api.DupeCheckResult{
+			{
+				Tracker:  "AITHER",
+				Status:   "completed",
+				HasDupes: true,
+				Filtered: []api.DupeEntry{{
+					Name: "Avatar the Last Airbender 2024 S01 720p NF WEB-DL DD+ 5.1 Atmos H.264-Kitsune",
+					Link: "https://aither.cc/torrents/431991",
+				}},
+			},
+			{
+				Tracker:    "ANT",
+				Status:     "skipped",
+				Skipped:    true,
+				SkipReason: "rule check failed: category tv is not movie",
+			},
+			{Tracker: "DP", Status: "completed"},
+			{
+				Tracker: "OTW",
+				Status:  "completed",
+				Raw: []api.DupeEntry{{
+					Name: "Avatar The Last Airbender 2024 S01 2160p WEB-DL MULTi DD+ 5.1 Atmos H.265-SPWEB",
+					Link: "https://oldtoons.world/torrents/54225",
+				}},
+			},
+			{
+				Tracker:  "MTV",
+				Status:   "completed",
+				HasDupes: true,
+				Filtered: []api.DupeEntry{{
+					Name: "Avatar.The.Last.Airbender.S01.720p.NF.WEB-DL.DDP5.1.x264-LiTTLEBLUEMAN",
+					Link: "https://www.morethantv.me/torrents.php?id=1112946&torrentid=1014650",
+				}},
+			},
+		},
+	}
+
+	var approved []string
+	var err error
+	output := captureStdout(t, func() {
+		approved, _, _, err = promptTrackerDupeReview(
+			bufio.NewReader(strings.NewReader("")),
+			summary,
+			req,
+			req.Trackers,
+			nil,
+		)
+	})
+	if err != nil {
+		t.Fatalf("promptTrackerDupeReview: %v", err)
+	}
+	if strings.Join(approved, ",") != "DP,OTW" {
+		t.Fatalf("expected only passed trackers approved, got %#v", approved)
+	}
+	for _, expected := range []string{
+		"Dupe check summary:",
+		"Skipped due to tracker rules/conditions: ANT",
+		"Found potential dupes on: AITHER, MTV",
+		"Trackers passed all checks: DP, OTW",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected output %q in:\n%s", expected, output)
+		}
+	}
+	for _, notExpected := range []string{
+		"\n[AITHER]\n",
+		"Skipping AITHER due to dupe/rule check result.",
+		"Skipping ANT due to dupe/rule check result.",
+		"rule check failed: category tv is not movie",
+		"Avatar the Last Airbender 2024 S01 720p NF WEB-DL DD+ 5.1 Atmos H.264-Kitsune",
+		"Avatar.The.Last.Airbender.S01.720p.NF.WEB-DL.DDP5.1.x264-LiTTLEBLUEMAN",
+		"Avatar The Last Airbender 2024 S01 2160p WEB-DL MULTi DD+ 5.1 Atmos H.265-SPWEB",
+	} {
+		if strings.Contains(output, notExpected) {
+			t.Fatalf("did not expect output %q in:\n%s", notExpected, output)
+		}
+	}
+}
+
 func TestPromptTrackerDupeReviewSkipsAllRuleBlockedTrackersUnattended(t *testing.T) {
 	t.Parallel()
 
@@ -979,7 +1060,7 @@ func TestPromptTrackerDupeReviewShowsTrackerNamingChange(t *testing.T) {
 		}
 	})
 
-	expected := "AITHER changes name to Movie.2026.1080p.WEB-DL.x264-GRP\nUpload to AITHER? [y/N]: "
+	expected := "AITHER release name changed: Movie.2026.1080p.WEB-DL.H264-GRP -> Movie.2026.1080p.WEB-DL.x264-GRP\nUpload to AITHER? [y/N]: "
 	if !strings.Contains(output, expected) {
 		t.Fatalf("expected naming change in prompt %q, got %q", expected, output)
 	}

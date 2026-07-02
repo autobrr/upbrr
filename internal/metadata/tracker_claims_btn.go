@@ -124,7 +124,7 @@ func (p btnTrackerClaimProvider) hasClaim(ctx context.Context, s *Service, track
 	}
 
 	if s.logger != nil {
-		s.logger.Warnf("metadata: BTN claimed show blocked title=%q threshold_hours=%d", matchedTitle, thresholdHours)
+		s.logger.Warnf("metadata: BTN claim match found title=%q threshold_hours=%d cache_ttl=%s", matchedTitle, thresholdHours, p.cacheTTL())
 	}
 	return true, nil
 }

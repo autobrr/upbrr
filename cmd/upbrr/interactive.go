@@ -369,7 +369,7 @@ func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx context.Context
 		authCheckTrackers = append(authCheckTrackers, name)
 	}
 
-	logger.Infof("cli auth: pre-dupe auth check start trackers=%d", len(authCheckTrackers))
+	logger.Debugf("cli auth: pre-dupe auth check start trackers=%d", len(authCheckTrackers))
 	for _, name := range authCheckTrackers {
 		capability := capabilityByTracker[name]
 
@@ -404,7 +404,7 @@ func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx context.Context
 			ready = append(ready, name)
 		}
 	}
-	logger.Infof("cli auth: pre-dupe check complete ready=%d skipped=%d", len(ready), len(trackerNames)-len(ready))
+	logger.Debugf("cli auth: pre-dupe check complete ready=%d skipped=%d", len(ready), len(trackerNames)-len(ready))
 	return ready, nil
 }
 
@@ -672,6 +672,11 @@ func promptTrackerDupeReview(reader *bufio.Reader, summary api.DupeCheckSummary,
 	approved := make([]string, 0, len(trackers))
 	ignoreDupesFor := make([]string, 0)
 	ruleOverrides := make([]string, 0)
+	if isUnattendedNoConfirm(req) {
+		approved = append(approved, printUnattendedDupeReviewSummary(resultByTracker, trackers)...)
+		return approved, ignoreDupesFor, ruleOverrides, nil
+	}
+
 	for _, tracker := range trackers {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
 		if name == "" {
@@ -691,15 +696,6 @@ func promptTrackerDupeReview(reader *bufio.Reader, summary api.DupeCheckSummary,
 		}
 
 		blocked := dupeResultNeedsConfirmation(result, hasResult)
-		if isUnattendedNoConfirm(req) {
-			if blocked {
-				fmt.Printf("Skipping %s due to dupe/rule check result.\n", name)
-				continue
-			}
-			approved = append(approved, name)
-			continue
-		}
-
 		prompt := buildTrackerUploadPrompt(name, false, namePreview[name])
 		if blocked {
 			prompt = buildTrackerUploadPrompt(name, true, namePreview[name])
@@ -722,19 +718,67 @@ func promptTrackerDupeReview(reader *bufio.Reader, summary api.DupeCheckSummary,
 	return approved, ignoreDupesFor, ruleOverrides, nil
 }
 
+type unattendedDupeReviewBlock struct {
+	tracker string
+}
+
+func printUnattendedDupeReviewSummary(resultByTracker map[string]api.DupeCheckResult, trackers []string) []string {
+	approved := make([]string, 0, len(trackers))
+	dupeBlocked := make([]unattendedDupeReviewBlock, 0)
+	skipped := make([]unattendedDupeReviewBlock, 0)
+
+	for _, tracker := range trackers {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name == "" {
+			continue
+		}
+		result, hasResult := resultByTracker[name]
+		if hasResult && dupeResultSkipsPrompt(result) {
+			continue
+		}
+		if !dupeResultNeedsConfirmation(result, hasResult) {
+			approved = append(approved, name)
+			continue
+		}
+		block := unattendedDupeReviewBlock{
+			tracker: name,
+		}
+		if result.HasDupes {
+			dupeBlocked = append(dupeBlocked, block)
+			continue
+		}
+		skipped = append(skipped, block)
+	}
+
+	fmt.Println()
+	fmt.Println("Dupe check summary:")
+	if len(skipped) > 0 {
+		fmt.Printf("Skipped due to tracker rules/conditions: %s\n", strings.Join(unattendedDupeBlockTrackers(skipped), ", "))
+	}
+	if len(dupeBlocked) > 0 {
+		fmt.Printf("Found potential dupes on: %s\n", strings.Join(unattendedDupeBlockTrackers(dupeBlocked), ", "))
+	}
+	if len(approved) > 0 {
+		fmt.Printf("Trackers passed all checks: %s\n", strings.Join(approved, ", "))
+	}
+	return approved
+}
+
+func unattendedDupeBlockTrackers(blocks []unattendedDupeReviewBlock) []string {
+	trackers := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		trackers = append(trackers, block.tracker)
+	}
+	return trackers
+}
+
 func buildTrackerUploadPrompt(tracker string, blocked bool, dryRun api.TrackerDryRunEntry) string {
 	action := "Upload to " + tracker
 	if blocked {
 		action += " anyway"
 	}
-	if dryRun.ReleaseNameChanged {
-		uploadName := strings.TrimSpace(dryRun.UploadReleaseName)
-		if uploadName == "" {
-			uploadName = strings.TrimSpace(dryRun.ReleaseName)
-		}
-		if uploadName != "" {
-			return fmt.Sprintf("%s changes name to %s\n%s? [y/N]: ", tracker, uploadName, action)
-		}
+	if change := trackerReleaseNameChangeLine(dryRun); change != "" {
+		return fmt.Sprintf("%s %s\n%s? [y/N]: ", tracker, change, action)
 	}
 	return action + "? [y/N]: "
 }
@@ -1063,22 +1107,19 @@ func isUnattendedNoConfirm(req api.Request) bool {
 }
 
 func printMetadataPreview(preview api.MetadataPreview) {
-	fmt.Printf("\nSource: %s\n", preview.SourcePath)
-	fmt.Printf("Release: %s\n", preview.ReleaseName)
+	fmt.Println()
+	fmt.Println("Release details")
+	fmt.Printf("Source: %s\n", preview.SourcePath)
+	fmt.Printf("Upload name: %s\n", preview.ReleaseName)
+	if external := primaryMetadataPreview(preview); external != nil {
+		printMetadataDatabaseInfo(*external, preview)
+	}
 	if preview.TrackerName != "" {
 		fmt.Printf("Tracker data from: %s\n", preview.TrackerName)
 	}
-	if preview.ExternalIDs.TMDBID != 0 {
-		fmt.Printf("TMDB: %d\n", preview.ExternalIDs.TMDBID)
-	}
-	if preview.ExternalIDs.IMDBID != 0 {
-		fmt.Printf("IMDb: tt%07d\n", preview.ExternalIDs.IMDBID)
-	}
-	if preview.ExternalIDs.TVDBID != 0 {
-		fmt.Printf("TVDB: %d\n", preview.ExternalIDs.TVDBID)
-	}
-	if preview.ExternalIDs.TVmazeID != 0 {
-		fmt.Printf("TVmaze: %d\n", preview.ExternalIDs.TVmazeID)
+	printMetadataExternalIDs(preview)
+	if len(preview.ExternalIDCandidates.TMDB) > 0 || len(preview.ExternalIDCandidates.IMDB) > 0 {
+		fmt.Println("Candidate IDs available; use override args if needed.")
 	}
 	if len(preview.Warnings) > 0 {
 		fmt.Println("Warnings:")
@@ -1086,9 +1127,173 @@ func printMetadataPreview(preview api.MetadataPreview) {
 			fmt.Printf("- %s\n", warning)
 		}
 	}
-	if len(preview.ExternalIDCandidates.TMDB) > 0 || len(preview.ExternalIDCandidates.IMDB) > 0 {
-		fmt.Println("Candidate IDs available; use override args if needed.")
+}
+
+func printMetadataDatabaseInfo(external api.ExternalPreview, preview api.MetadataPreview) {
+	fmt.Println()
+	fmt.Println("Database info")
+	title := strings.TrimSpace(external.Title)
+	if title == "" {
+		title = strings.TrimSpace(preview.ReleaseName)
 	}
+	if title != "" && external.Year != 0 {
+		fmt.Printf("Title: %s (%d)\n", title, external.Year)
+	} else if title != "" {
+		fmt.Printf("Title: %s\n", title)
+	}
+	if overview := summarizeMetadataText(external.Overview, 260); overview != "" {
+		fmt.Printf("Overview: %s\n", overview)
+	}
+	if genres := strings.TrimSpace(external.Genres); genres != "" {
+		fmt.Printf("Genres: %s\n", genres)
+	}
+	if category := metadataPreviewCategory(external, preview); category != "" {
+		fmt.Printf("Category: %s\n", category)
+	}
+	if date := metadataPreviewDate(external); date != "" {
+		fmt.Printf("Date: %s\n", date)
+	}
+	if runtime := metadataPreviewRuntime(external); runtime != "" {
+		fmt.Printf("Runtime: %s\n", runtime)
+	}
+	if external.Rating != 0 {
+		if external.RatingCount != 0 {
+			fmt.Printf("Rating: %.1f (%d votes)\n", external.Rating, external.RatingCount)
+		} else {
+			fmt.Printf("Rating: %.1f\n", external.Rating)
+		}
+	}
+}
+
+func printMetadataExternalIDs(preview api.MetadataPreview) {
+	printedHeader := false
+	printHeader := func() {
+		if printedHeader {
+			return
+		}
+		fmt.Println()
+		fmt.Println("External IDs")
+		printedHeader = true
+	}
+	if preview.ExternalIDs.TMDBID != 0 {
+		printHeader()
+		fmt.Printf("TMDB: %s\n", tmdbURL(preview.ExternalIDs.TMDBID, metadataPreviewTMDBCategory(preview)))
+	}
+	if preview.ExternalIDs.IMDBID != 0 {
+		printHeader()
+		fmt.Printf("IMDb: https://www.imdb.com/title/tt%07d\n", preview.ExternalIDs.IMDBID)
+	}
+	if preview.ExternalIDs.TVDBID != 0 {
+		printHeader()
+		fmt.Printf("TVDB: https://www.thetvdb.com/?id=%d&tab=series\n", preview.ExternalIDs.TVDBID)
+	}
+	if preview.ExternalIDs.TVmazeID != 0 {
+		printHeader()
+		fmt.Printf("TVmaze: https://www.tvmaze.com/shows/%d\n", preview.ExternalIDs.TVmazeID)
+	}
+}
+
+func primaryMetadataPreview(preview api.MetadataPreview) *api.ExternalPreview {
+	preferred := []string{"tmdb", "tvdb", "imdb", "tvmaze"}
+	for _, provider := range preferred {
+		for i := range preview.ExternalPreview {
+			external := &preview.ExternalPreview[i]
+			if strings.EqualFold(strings.TrimSpace(external.Provider), provider) && metadataPreviewHasDetails(*external) {
+				return external
+			}
+		}
+	}
+	for i := range preview.ExternalPreview {
+		if metadataPreviewHasDetails(preview.ExternalPreview[i]) {
+			return &preview.ExternalPreview[i]
+		}
+	}
+	return nil
+}
+
+func metadataPreviewHasDetails(external api.ExternalPreview) bool {
+	return strings.TrimSpace(external.Title) != "" ||
+		strings.TrimSpace(external.Overview) != "" ||
+		strings.TrimSpace(external.Genres) != "" ||
+		external.Year != 0 ||
+		external.Rating != 0 ||
+		external.Runtime != 0 ||
+		external.RuntimeMinutes != 0
+}
+
+func metadataPreviewCategory(external api.ExternalPreview, preview api.MetadataPreview) string {
+	if category := strings.TrimSpace(external.Category); category != "" {
+		return strings.ToUpper(category)
+	}
+	if category := strings.TrimSpace(preview.ExternalIDs.Category); category != "" {
+		return strings.ToUpper(category)
+	}
+	if tmdbType := strings.TrimSpace(external.TMDBType); tmdbType != "" {
+		return strings.ToUpper(tmdbType)
+	}
+	if imdbType := strings.TrimSpace(external.IMDBType); imdbType != "" {
+		return strings.ToUpper(imdbType)
+	}
+	return ""
+}
+
+func metadataPreviewDate(external api.ExternalPreview) string {
+	for _, value := range []string{external.ReleaseDate, external.FirstAirDate, external.Premiered} {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func metadataPreviewRuntime(external api.ExternalPreview) string {
+	runtime := external.Runtime
+	if runtime == 0 {
+		runtime = external.RuntimeMinutes
+	}
+	if runtime == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d min", runtime)
+}
+
+func metadataPreviewTMDBCategory(preview api.MetadataPreview) string {
+	for _, external := range preview.ExternalPreview {
+		if !strings.EqualFold(strings.TrimSpace(external.Provider), "tmdb") {
+			continue
+		}
+		if category := strings.TrimSpace(external.Category); category != "" {
+			return category
+		}
+		if tmdbType := strings.TrimSpace(external.TMDBType); tmdbType != "" {
+			return tmdbType
+		}
+	}
+	if category := strings.TrimSpace(preview.ExternalIDs.Category); category != "" {
+		return category
+	}
+	return "movie"
+}
+
+func tmdbURL(id int, category string) string {
+	switch strings.ToLower(strings.TrimSpace(category)) {
+	case "tv", "series", "show":
+		return fmt.Sprintf("https://www.themoviedb.org/tv/%d", id)
+	default:
+		return fmt.Sprintf("https://www.themoviedb.org/movie/%d", id)
+	}
+}
+
+func summarizeMetadataText(value string, limit int) string {
+	compact := strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if compact == "" || limit <= 0 {
+		return compact
+	}
+	runes := []rune(compact)
+	if len(runes) <= limit {
+		return compact
+	}
+	return string(runes[:limit]) + "..."
 }
 
 func printDupeResult(result api.DupeCheckResult) {
@@ -1121,16 +1326,10 @@ func printDryRunSummary(entry api.TrackerDryRunEntry) {
 		fmt.Printf(" (%s)", entry.Message)
 	}
 	fmt.Println()
-	if entry.ReleaseName != "" {
+	if change := trackerReleaseNameChangeLine(entry); change != "" {
+		fmt.Printf("Tracker %s\n", change)
+	} else if entry.ReleaseName != "" {
 		fmt.Printf("Tracker release name: %s\n", entry.ReleaseName)
-	}
-	if len(entry.Payload) > 0 {
-		keys := make([]string, 0, len(entry.Payload))
-		for key := range entry.Payload {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		fmt.Printf("Payload fields: %s\n", strings.Join(keys, ", "))
 	}
 	if imageMessage := strings.TrimSpace(entry.ImageHost.Message); imageMessage != "" && (entry.ImageHost.Reuploaded || strings.EqualFold(entry.ImageHost.Status, "warning")) {
 		fmt.Printf("Images: %s\n", imageMessage)
@@ -1188,9 +1387,6 @@ func printDryRunUploadReview(review api.UploadReview, req api.Request) {
 }
 
 func printDryRunDetails(entry api.TrackerDryRunEntry) {
-	if strings.TrimSpace(entry.Endpoint) != "" {
-		fmt.Printf("Endpoint: %s\n", safeDryRunEndpoint(entry.Endpoint))
-	}
 	if len(entry.Files) > 0 {
 		fmt.Println("Files:")
 		for _, file := range entry.Files {
@@ -1217,6 +1413,34 @@ func printDryRunDetails(entry api.TrackerDryRunEntry) {
 	}
 }
 
+func trackerReleaseNameChangeLine(entry api.TrackerDryRunEntry) string {
+	if !entry.ReleaseNameChanged {
+		return ""
+	}
+	originalName := strings.TrimSpace(entry.OriginalReleaseName)
+	uploadName := strings.TrimSpace(entry.UploadReleaseName)
+	if uploadName == "" {
+		uploadName = strings.TrimSpace(entry.ReleaseName)
+	}
+	if originalName == "" {
+		originalName = strings.TrimSpace(entry.ReleaseName)
+	}
+	if originalName == "" && uploadName == "" {
+		return ""
+	}
+	if originalName == "" {
+		originalName = "(unknown)"
+	}
+	if uploadName == "" {
+		uploadName = "(unknown)"
+	}
+	line := fmt.Sprintf("release name changed: %s -> %s", originalName, uploadName)
+	if reason := strings.TrimSpace(entry.ReleaseNameChangeReason); reason != "" {
+		line += fmt.Sprintf(" (reason: %s)", reason)
+	}
+	return line
+}
+
 // formatDryRunPayloadValue returns a log-safe preview for a dry-run payload
 // field, redacting sensitive keys before applying body summarization/truncation.
 func formatDryRunPayloadValue(key string, value string) string {
@@ -1237,12 +1461,6 @@ func formatDryRunPayloadValue(key string, value string) string {
 		return compact
 	}
 	return fmt.Sprintf("%s... [%d bytes total]", string(compactRunes[:dryRunPayloadPreviewLimit]), len(trimmed))
-}
-
-// safeDryRunEndpoint returns a dry-run endpoint suitable for CLI output,
-// preserving the URL shape while redacting credential-like path/query values.
-func safeDryRunEndpoint(value string) string {
-	return redaction.RedactValue(strings.TrimSpace(value), nil)
 }
 
 func summarizeDryRunBody(value string) string {

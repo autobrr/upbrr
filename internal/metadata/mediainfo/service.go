@@ -98,7 +98,7 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 				return Result{}, err
 			}
 			if s.logger != nil {
-				s.logger.Infof("mediainfo: reusing existing artifacts from %s", tmpDir)
+				s.logger.Debugf("mediainfo: reusing existing artifacts from %s", tmpDir)
 			}
 			return Result{JSONPath: jsonPath, TextPath: textPath, IFOPath: target.IFOPath, VOBPath: target.VOBPath, VOBSet: target.VOBSet, VOBText: vobText, VOBJSON: vobJSON}, nil
 		}

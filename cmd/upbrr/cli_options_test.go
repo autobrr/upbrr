@@ -918,9 +918,24 @@ func TestPrintDryRunSummary(t *testing.T) {
 			contains: []string{
 				"Dry run: ready (looks good)",
 				"Tracker release name: Movie.2024.1080p",
-				"Payload fields: category, name",
 				"Images: reuploaded to imgbox",
 				"Image host warning: pixhost failed: temporary failure",
+			},
+		},
+		{
+			name: "prints release name changes",
+			entry: api.TrackerDryRunEntry{
+				Tracker:                 "AITHER",
+				Status:                  "ready",
+				ReleaseName:             "Movie.2024.1080p.WEB-DL.x264-GRP",
+				OriginalReleaseName:     "Movie.2024.1080p.WEB-DL.H264-GRP",
+				UploadReleaseName:       "Movie.2024.1080p.WEB-DL.x264-GRP",
+				ReleaseNameChanged:      true,
+				ReleaseNameChangeReason: "tracker naming policy",
+			},
+			contains: []string{
+				"Dry run: ready",
+				"Tracker release name changed: Movie.2024.1080p.WEB-DL.H264-GRP -> Movie.2024.1080p.WEB-DL.x264-GRP (reason: tracker naming policy)",
 			},
 		},
 		{
@@ -946,6 +961,60 @@ func TestPrintDryRunSummary(t *testing.T) {
 	}
 }
 
+func TestPrintMetadataPreviewShowsRichReleaseDetails(t *testing.T) {
+	output := captureStdout(t, func() {
+		printMetadataPreview(api.MetadataPreview{
+			SourcePath:  "D:\\temp\\Avatar.The.Last.Airbender.2024.S01.720p.NF.WEB-DL.DDP5.1.x264-NTb",
+			ReleaseName: "Avatar: The Last Airbender 2024 S01 720p NF WEB-DL DD+ 5.1 Atmos H.264-NTb",
+			TrackerName: "LST",
+			ExternalIDs: api.ExternalIDs{
+				TMDBID:   82452,
+				IMDBID:   9018736,
+				TVDBID:   385925,
+				TVmazeID: 38753,
+				Category: "TV",
+			},
+			ExternalPreview: []api.ExternalPreview{{
+				Provider:     "tmdb",
+				ID:           82452,
+				Title:        "Avatar: The Last Airbender",
+				Year:         2024,
+				Overview:     "A young boy known as the Avatar must master the four elemental powers to save a world at war.",
+				Genres:       "Action & Adventure, Sci-Fi & Fantasy",
+				Category:     "TV",
+				FirstAirDate: "2024-02-22",
+				Runtime:      55,
+				Rating:       7.9,
+				RatingCount:  1200,
+			}},
+		})
+	})
+
+	for _, expected := range []string{
+		"Release details",
+		"Source: D:\\temp\\Avatar.The.Last.Airbender.2024.S01.720p.NF.WEB-DL.DDP5.1.x264-NTb",
+		"Upload name: Avatar: The Last Airbender 2024 S01 720p NF WEB-DL DD+ 5.1 Atmos H.264-NTb",
+		"Database info",
+		"Title: Avatar: The Last Airbender (2024)",
+		"Overview: A young boy known as the Avatar must master the four elemental powers to save a world at war.",
+		"Genres: Action & Adventure, Sci-Fi & Fantasy",
+		"Category: TV",
+		"Date: 2024-02-22",
+		"Runtime: 55 min",
+		"Rating: 7.9 (1200 votes)",
+		"Tracker data from: LST",
+		"External IDs",
+		"TMDB: https://www.themoviedb.org/tv/82452",
+		"IMDb: https://www.imdb.com/title/tt9018736",
+		"TVDB: https://www.thetvdb.com/?id=385925&tab=series",
+		"TVmaze: https://www.tvmaze.com/shows/38753",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected output to contain %q, got %q", expected, output)
+		}
+	}
+}
+
 func TestPrintDryRunDetails(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -954,7 +1023,7 @@ func TestPrintDryRunDetails(t *testing.T) {
 		notContains []string
 	}{
 		{
-			name: "prints endpoint files payload and condenses body fields",
+			name: "prints files payload and condenses body fields",
 			entry: api.TrackerDryRunEntry{
 				Endpoint: "https://tracker.test/upload",
 				Files: []api.TrackerDryRunFile{
@@ -970,7 +1039,6 @@ func TestPrintDryRunDetails(t *testing.T) {
 				Description: "line 1\nline 2",
 			},
 			contains: []string{
-				"Endpoint: https://tracker.test/upload",
 				"Files:",
 				"- torrent [present]: C:\\tmp\\file.torrent",
 				"- nfo [missing]: (none)",
@@ -981,6 +1049,8 @@ func TestPrintDryRunDetails(t *testing.T) {
 				"- name: Movie.2024",
 			},
 			notContains: []string{
+				"Endpoint:",
+				"https://tracker.test/upload",
 				"line 1\nline 2",
 				"General\nComplete name",
 			},
@@ -1033,7 +1103,6 @@ func TestPrintDryRunDetailsRedactsSensitiveEndpointAndPayload(t *testing.T) {
 		}
 	}
 	for _, expected := range []string{
-		"Endpoint: https://tracker.test/api/upload?api_key=[REDACTED]&passkey=[REDACTED]",
 		"- api_key: [REDACTED]",
 		"- auth: [REDACTED]",
 		"- name: Movie.2024",
@@ -1043,6 +1112,9 @@ func TestPrintDryRunDetailsRedactsSensitiveEndpointAndPayload(t *testing.T) {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected redacted output to contain %q, got %q", expected, output)
 		}
+	}
+	if strings.Contains(output, "Endpoint:") {
+		t.Fatalf("expected endpoint to be omitted from dry-run details")
 	}
 }
 
@@ -1069,11 +1141,15 @@ func TestPrintDebugUploadReview(t *testing.T) {
 			{
 				Tracker: "BLU",
 				DryRun: api.TrackerDryRunEntry{
-					Tracker:     "BLU",
-					Status:      "ready",
-					Endpoint:    "https://blu.test/upload",
-					Payload:     map[string]string{"name": "Movie.2024"},
-					Description: "test description",
+					Tracker:             "BLU",
+					Status:              "ready",
+					Endpoint:            "https://blu.test/upload",
+					ReleaseName:         "Movie.2024",
+					OriginalReleaseName: "Movie 2024",
+					UploadReleaseName:   "Movie.2024",
+					ReleaseNameChanged:  true,
+					Payload:             map[string]string{"name": "Movie.2024"},
+					Description:         "test description",
 				},
 			},
 			{
@@ -1092,13 +1168,21 @@ func TestPrintDebugUploadReview(t *testing.T) {
 		"[Debug Dry Run] C:\\releases\\movie",
 		"[BLU Debug Payload]",
 		"Dry run: ready",
-		"Endpoint: https://blu.test/upload",
+		"Tracker release name changed: Movie 2024 -> Movie.2024",
 		"- name: Movie.2024",
 		"[HDB Debug Payload]",
 		"Banned group: group banned",
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected output to contain %q, got %q", expected, output)
+		}
+	}
+	for _, unexpected := range []string{
+		"Endpoint:",
+		"Payload fields:",
+	} {
+		if strings.Contains(output, unexpected) {
+			t.Fatalf("expected output not to contain %q, got %q", unexpected, output)
 		}
 	}
 }
