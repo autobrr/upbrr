@@ -1935,34 +1935,34 @@ func isAllUpperEditionWord(value string) bool {
 // cleanEditionText normalizes parser-derived edition text and drops filename
 // tokens that are not meaningful release-name editions.
 func cleanEditionText(edition string) string {
-	edition = strings.TrimSpace(strings.ReplaceAll(edition, ",", " "))
-	if edition == "" {
-		return ""
-	}
-	lower := strings.ToLower(edition)
-	if lower == "cut" || lower == "approximate" || len(edition) < 6 {
-		return ""
-	}
-	if strings.Contains(lower, "edition") {
-		edition = editionWordPattern.ReplaceAllString(edition, "")
-	}
-	lower = strings.ToLower(edition)
-	if strings.Contains(lower, "extended") && !strings.Contains(lower, "in1") && !strings.Contains(edition, "/") {
-		edition = "Extended"
-	}
-	edition = editionBadTokenPattern.ReplaceAllString(edition, "")
-	return cleanEditionResidue(edition)
+	return cleanEditionTextWithOptions(edition, cleanEditionTextOptions{
+		shouldDrop: func(edition string) bool {
+			return len(edition) < 6
+		},
+		stripBadTokens: true,
+	})
 }
 
 // cleanIMDbEditionText normalizes IMDb runtime edition attributes while
 // preserving IMDb-specific labels that the parser cleanup would otherwise drop.
 func cleanIMDbEditionText(edition string) string {
+	return cleanEditionTextWithOptions(edition, cleanEditionTextOptions{})
+}
+
+type cleanEditionTextOptions struct {
+	shouldDrop     func(string) bool
+	stripBadTokens bool
+}
+
+// cleanEditionTextWithOptions applies preprocessing shared by parser and IMDb
+// edition normalization before final residue cleanup.
+func cleanEditionTextWithOptions(edition string, opts cleanEditionTextOptions) string {
 	edition = strings.TrimSpace(strings.ReplaceAll(edition, ",", " "))
 	if edition == "" {
 		return ""
 	}
 	lower := strings.ToLower(edition)
-	if lower == "cut" || lower == "approximate" {
+	if lower == "cut" || lower == "approximate" || opts.shouldDrop != nil && opts.shouldDrop(edition) {
 		return ""
 	}
 	if strings.Contains(lower, "edition") {
@@ -1971,6 +1971,9 @@ func cleanIMDbEditionText(edition string) string {
 	lower = strings.ToLower(edition)
 	if strings.Contains(lower, "extended") && !strings.Contains(lower, "in1") && !strings.Contains(edition, "/") {
 		edition = "Extended"
+	}
+	if opts.stripBadTokens {
+		edition = editionBadTokenPattern.ReplaceAllString(edition, "")
 	}
 	return cleanEditionResidue(edition)
 }
