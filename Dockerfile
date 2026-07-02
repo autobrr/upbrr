@@ -47,7 +47,10 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 FROM alpine:3.23
 
-RUN apk add --no-cache ca-certificates ffmpeg mesa-vulkan-swrast vulkan-loader
+# fontconfig + a font are required by ffmpeg's drawtext filter (screenshot frame
+# overlays); without them capture fails with "Cannot find a valid font for the
+# family Sans". See issue #180.
+RUN apk add --no-cache ca-certificates ffmpeg fontconfig font-dejavu mesa-vulkan-swrast vulkan-loader
 
 # Run as a non-root user and give it a writable config dir. chown happens before
 # VOLUME so anonymous/named volumes inherit the ownership.
