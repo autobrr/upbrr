@@ -926,11 +926,19 @@ import "fmt"
 type dryRun struct {
 	Endpoint string
 	Payload map[string]string
+	Files []dryRunFile
+}
+
+type dryRunFile struct {
+	Path string
 }
 
 func printDryRunDetails(entry dryRun, key string) {
 	fmt.Printf("Endpoint: %s\n", entry.Endpoint)
 	fmt.Printf("- %s: %s\n", key, entry.Payload[key])
+	for _, file := range entry.Files {
+		fmt.Printf("- torrent [present]: %s\n", file.Path)
+	}
 }
 `
 
@@ -942,15 +950,22 @@ func printDryRunDetails(entry dryRun, key string) {
 	if err != nil {
 		t.Fatalf("CheckRepository returned error: %v", err)
 	}
-	if len(violations) != 2 {
-		t.Fatalf("expected 2 violations, got %d: %#v", len(violations), violations)
+	if len(violations) != 3 {
+		t.Fatalf("expected 3 violations, got %d: %#v", len(violations), violations)
 	}
-	joined := violations[0].Message + "\n" + violations[1].Message
+	messages := make([]string, 0, len(violations))
+	for _, violation := range violations {
+		messages = append(messages, violation.Message)
+	}
+	joined := strings.Join(messages, "\n")
 	if !strings.Contains(joined, "dry-run endpoint output") {
 		t.Fatalf("expected endpoint redaction violation, got %q", joined)
 	}
 	if !strings.Contains(joined, "dry-run payload output") {
 		t.Fatalf("expected payload redaction violation, got %q", joined)
+	}
+	if !strings.Contains(joined, "dry-run file path output") {
+		t.Fatalf("expected file path output violation, got %q", joined)
 	}
 }
 
@@ -970,18 +985,106 @@ import "fmt"
 type dryRun struct {
 	Endpoint string
 	Payload map[string]string
+	Files []dryRunFile
+}
+
+type dryRunFile struct {
+	Path string
 }
 
 func safeDryRunEndpoint(value string) string { return value }
 func formatDryRunPayloadValue(key string, value string) string { return value }
+func formatDryRunFilePath(value string) string { return value }
 
 func printDryRunDetails(entry dryRun, key string) {
 	fmt.Printf("Endpoint: %s\n", safeDryRunEndpoint(entry.Endpoint))
 	fmt.Printf("- %s: %s\n", key, formatDryRunPayloadValue(key, entry.Payload[key]))
+	for _, file := range entry.Files {
+		fmt.Printf("- torrent [present]: %s\n", formatDryRunFilePath(file.Path))
+	}
 }
 `
 
 	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "interactive.go"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryFlagsLocalPathCLIOutput(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+
+	content := `package main
+
+import "fmt"
+
+type preview struct {
+	SourcePath string
+}
+
+func printReleaseDetails(p preview, sourcePath string) {
+	fmt.Printf("Source: %s\n", p.SourcePath)
+	fmt.Printf("Input: %s\n", sourcePath)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "interactive.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 2 {
+		t.Fatalf("expected 2 violations, got %d: %#v", len(violations), violations)
+	}
+	for _, violation := range violations {
+		if !strings.Contains(violation.Message, "local filesystem path output") {
+			t.Fatalf("expected local path output violation, got %q", violation.Message)
+		}
+	}
+}
+
+func TestCheckRepositoryAllowsLabeledLocalPathCLIOutput(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+
+	content := `package main
+
+import "fmt"
+
+type preview struct {
+	SourcePath string
+}
+
+func formatPathLabel(value string) string { return value }
+
+func printReleaseDetails(p preview, sourcePath string) {
+	fmt.Printf("Source: %s\n", formatPathLabel(p.SourcePath))
+	fmt.Printf("Input: %s\n", formatPathLabel(sourcePath))
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "interactive.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
 	}
 

@@ -226,18 +226,113 @@ func (l *Logger) logf(level Level, label string, format string, args ...any) {
 		return
 	}
 
-	formatted := fmt.Sprintf(format, args...)
+	formatted := sanitizeLogMessage(fmt.Sprintf(format, args...))
 	prefix := label + ": "
 	if level <= LevelWarn {
-		l.consoleErr.Printf(prefix+format, args...)
+		l.consoleErr.Print(prefix + formatted)
 	} else {
-		l.consoleOut.Printf(prefix+format, args...)
+		l.consoleOut.Print(prefix + formatted)
 	}
 	if l.file != nil {
-		l.file.Printf(prefix+format, args...)
+		l.file.Print(prefix + formatted)
 	}
 
 	l.record(label, formatted)
+}
+
+func sanitizeLogMessage(message string) string {
+	if strings.TrimSpace(message) == "" {
+		return message
+	}
+	var builder strings.Builder
+	for index := 0; index < len(message); {
+		if isWindowsDrivePathStart(message, index) || isUNCPathStart(message, index) || isUnixLocalPathStart(message, index) {
+			end := localPathEnd(message, index)
+			builder.WriteString(localPathLogLabel(message[index:end]))
+			index = end
+			continue
+		}
+		builder.WriteByte(message[index])
+		index++
+	}
+	return builder.String()
+}
+
+func isWindowsDrivePathStart(value string, index int) bool {
+	return index+2 < len(value) &&
+		((value[index] >= 'A' && value[index] <= 'Z') || (value[index] >= 'a' && value[index] <= 'z')) &&
+		value[index+1] == ':' &&
+		(value[index+2] == '\\' || value[index+2] == '/')
+}
+
+func isUNCPathStart(value string, index int) bool {
+	return index+2 < len(value) && value[index] == '\\' && value[index+1] == '\\'
+}
+
+func isUnixLocalPathStart(value string, index int) bool {
+	if index >= len(value) || value[index] != '/' {
+		return false
+	}
+	if index > 0 && value[index-1] == ':' {
+		return false
+	}
+	for _, prefix := range []string{"/home/", "/Users/", "/mnt/", "/media/", "/tmp/", "/var/", "/Volumes/"} {
+		if strings.HasPrefix(value[index:], prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func localPathEnd(value string, start int) int {
+	for index := start; index < len(value); index++ {
+		switch value[index] {
+		case '\r', '\n', '\t', '"', '\'', '`', ',', ';', ')', ']', '}':
+			return index
+		case ' ':
+			if nextLooksLikeLogField(value, index+1) {
+				return index
+			}
+		}
+	}
+	return len(value)
+}
+
+func nextLooksLikeLogField(value string, index int) bool {
+	for index < len(value) && value[index] == ' ' {
+		index++
+	}
+	if index >= len(value) {
+		return false
+	}
+	for ; index < len(value); index++ {
+		ch := value[index]
+		if ch == '=' {
+			return true
+		}
+		if !isLogFieldNameChar(ch) {
+			return false
+		}
+	}
+	return false
+}
+
+func isLogFieldNameChar(ch byte) bool {
+	return ch == '_' || ch == '-' || ch >= '0' && ch <= '9' || ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z'
+}
+
+func localPathLogLabel(value string) string {
+	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), "\\", "/"))
+	switch {
+	case strings.Contains(normalized, "/.upbrr/tmp/"):
+		return "[db tmp]"
+	case strings.Contains(normalized, "/.upbrr/cache/"):
+		return "[db cache]"
+	case strings.Contains(normalized, "/.upbrr/logs/"):
+		return "[db logs]"
+	default:
+		return "[local path]"
+	}
 }
 
 func (l *Logger) record(label string, message string) {
@@ -278,10 +373,7 @@ func (l *Logger) Recent(limit int) []Entry {
 	if limit <= 0 || limit > len(l.buffer) {
 		limit = len(l.buffer)
 	}
-	start := len(l.buffer) - limit
-	if start < 0 {
-		start = 0
-	}
+	start := max(len(l.buffer)-limit, 0)
 	entries := make([]Entry, limit)
 	copy(entries, l.buffer[start:])
 	return entries

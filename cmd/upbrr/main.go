@@ -158,7 +158,7 @@ func run() error {
 		if err := createCLIAuthFile(os.Stdin, os.Stdout, dbPath); err != nil {
 			return exitError(1, err)
 		}
-		fmt.Printf("created %s\n", webserver.AuthFilePath(dbPath))
+		fmt.Printf("created %s\n", formatPathLabel(webserver.AuthFilePath(dbPath)))
 		return nil
 	}
 
@@ -167,7 +167,7 @@ func run() error {
 		if err := exportConfigToYAML(ctx, opts.ConfigPath, configFlagProvided, opts.ExportConfigPath, opts.ExportConfigPlaintext); err != nil {
 			return exitError(1, err)
 		}
-		fmt.Printf("exported config to %s\n", opts.ExportConfigPath)
+		fmt.Printf("exported config to %s\n", formatPathLabel(opts.ExportConfigPath))
 		return nil
 	}
 
@@ -1147,7 +1147,7 @@ func deleteCLIStoredReleases(ctx context.Context, coreSvc api.Core, paths []stri
 		if err := coreSvc.DeleteHistoryRelease(ctx, sourcePath); err != nil {
 			return fmt.Errorf("delete stored data for %q: %w", sourcePath, err)
 		}
-		fmt.Printf("deleted stored database content for %s\n", sourcePath)
+		fmt.Printf("deleted stored database content for %s\n", formatPathLabel(sourcePath))
 	}
 	return nil
 }
@@ -1435,7 +1435,7 @@ func handleBDMVDiscSelection(discCtx context.Context, promptCtx context.Context,
 	// Display top 5 playlists
 	topCount := min(len(playlists), 5)
 
-	fmt.Printf("\nAvailable playlists for %s:\n", absPath)
+	fmt.Printf("\nAvailable playlists for %s:\n", formatPathLabel(absPath))
 	for i := range topCount {
 		p := playlists[i]
 		durationStr := formatDuration(p.Duration)
@@ -1565,9 +1565,9 @@ func importConfig(ctx context.Context, importPath, configPath string, configProv
 	}
 
 	if len(warnings) > 0 {
-		fmt.Printf("imported config from %s (%d warnings)\n", importPath, len(warnings))
+		fmt.Printf("imported config from %s (%d warnings)\n", formatPathLabel(importPath), len(warnings))
 	} else {
-		fmt.Printf("imported config from %s\n", importPath)
+		fmt.Printf("imported config from %s\n", formatPathLabel(importPath))
 	}
 	return nil
 }

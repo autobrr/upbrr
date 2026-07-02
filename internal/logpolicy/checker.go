@@ -394,6 +394,8 @@ func checkCLISensitiveOutputFile(fset *token.FileSet, root string, path string) 
 	}
 	relPath = filepath.ToSlash(relPath)
 
+	dryRunFileVars := collectDryRunFileVars(file)
+	localPathVars := collectLocalPathVars(file, aliases)
 	violations := make([]Violation, 0)
 	ast.Inspect(file, func(node ast.Node) bool {
 		call, ok := node.(*ast.CallExpr)
@@ -412,6 +414,12 @@ func checkCLISensitiveOutputFile(fset *token.FileSet, root string, path string) 
 			if isDryRunPayloadValueExpr(arg) && !isSafeDryRunOutputExpr(arg) {
 				violations = append(violations, violationAt(fset, relPath, arg.Pos(), "dry-run payload output must be redacted before printing"))
 			}
+			if containsDryRunFilePathExpr(arg, dryRunFileVars) && !isSafeDryRunOutputExpr(arg) {
+				violations = append(violations, violationAt(fset, relPath, arg.Pos(), "dry-run file path output must be reduced to a DB-relative or basename label before printing"))
+			}
+			if containsLocalPathOutputExpr(arg, localPathVars, aliases) && !isSafeLocalPathOutputExpr(arg) {
+				violations = append(violations, violationAt(fset, relPath, arg.Pos(), "local filesystem path output must be reduced to a stable path label before printing"))
+			}
 		}
 		if strings.Contains(strings.ToLower(format), "endpoint:") {
 			for _, arg := range call.Args[1:] {
@@ -423,6 +431,71 @@ func checkCLISensitiveOutputFile(fset *token.FileSet, root string, path string) 
 		return true
 	})
 	return violations, nil
+}
+
+func collectDryRunFileVars(file *ast.File) map[string]struct{} {
+	vars := make(map[string]struct{})
+	ast.Inspect(file, func(node ast.Node) bool {
+		stmt, ok := node.(*ast.RangeStmt)
+		if !ok {
+			return true
+		}
+		selector, ok := stmt.X.(*ast.SelectorExpr)
+		if !ok || selector.Sel.Name != "Files" {
+			return true
+		}
+		value, ok := stmt.Value.(*ast.Ident)
+		if !ok || value.Name == "_" {
+			return true
+		}
+		vars[value.Name] = struct{}{}
+		return true
+	})
+	return vars
+}
+
+func collectLocalPathVars(file *ast.File, aliases map[string]string) map[string]struct{} {
+	vars := make(map[string]struct{})
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch typed := node.(type) {
+		case *ast.FuncDecl:
+			if typed.Type == nil || typed.Type.Params == nil {
+				return true
+			}
+			for _, field := range typed.Type.Params.List {
+				for _, name := range field.Names {
+					if isLocalPathIdentName(name.Name) {
+						vars[name.Name] = struct{}{}
+					}
+				}
+			}
+		case *ast.AssignStmt:
+			for index, lhs := range typed.Lhs {
+				ident, ok := lhs.(*ast.Ident)
+				if !ok || ident.Name == "_" {
+					continue
+				}
+				if isLocalPathIdentName(ident.Name) {
+					vars[ident.Name] = struct{}{}
+					continue
+				}
+				if index < len(typed.Rhs) && isLocalPathExpr(typed.Rhs[index], vars, aliases) {
+					vars[ident.Name] = struct{}{}
+				}
+			}
+		case *ast.RangeStmt:
+			if isLocalPathExpr(typed.X, vars, aliases) {
+				for _, expr := range []ast.Expr{typed.Key, typed.Value} {
+					ident, ok := expr.(*ast.Ident)
+					if ok && ident.Name != "_" {
+						vars[ident.Name] = struct{}{}
+					}
+				}
+			}
+		}
+		return true
+	})
+	return vars
 }
 
 // checkFile enforces production Go logging policy for internal packages,
@@ -2169,6 +2242,157 @@ func isDryRunEndpointExprNode(node ast.Node) bool {
 	return ok && selector.Sel.Name == "Endpoint"
 }
 
+func containsLocalPathOutputExpr(expr ast.Expr, localPathVars map[string]struct{}, aliases map[string]string) bool {
+	found := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		if found || node == nil {
+			return false
+		}
+		if call, ok := node.(*ast.CallExpr); ok && isSafeLocalPathOutputCall(call, aliases) {
+			return false
+		}
+		if exprNode, ok := node.(ast.Expr); ok && isLocalPathExpr(exprNode, localPathVars, aliases) {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func isSafeLocalPathOutputExpr(expr ast.Expr) bool {
+	call, ok := expr.(*ast.CallExpr)
+	return ok && isSafeLocalPathOutputCall(call, nil)
+}
+
+func isSafeLocalPathOutputCall(call *ast.CallExpr, aliases map[string]string) bool {
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		switch fun.Name {
+		case "formatDryRunFilePath", "formatLogPath", "formatPathLabel", "formatSourceLabel", "sourcePathLabel", "pathLabel":
+			return true
+		default:
+			return false
+		}
+	case *ast.SelectorExpr:
+		pkg, ok := fun.X.(*ast.Ident)
+		if !ok {
+			return false
+		}
+		importPath := ""
+		if aliases != nil {
+			importPath = aliases[pkg.Name]
+		}
+		return (importPath == "path/filepath" || pkg.Name == "filepath") && fun.Sel.Name == "Base" ||
+			(importPath == "github.com/autobrr/upbrr/internal/pathutil" || pkg.Name == "pathutil") && fun.Sel.Name == "Base"
+	default:
+		return false
+	}
+}
+
+func isLocalPathExpr(expr ast.Expr, localPathVars map[string]struct{}, aliases map[string]string) bool {
+	switch typed := expr.(type) {
+	case *ast.Ident:
+		if _, ok := localPathVars[typed.Name]; ok {
+			return true
+		}
+		return isLocalPathIdentName(typed.Name)
+	case *ast.SelectorExpr:
+		if isLocalPathFieldName(typed.Sel.Name) {
+			return true
+		}
+		return isLocalPathExpr(typed.X, localPathVars, aliases)
+	case *ast.CallExpr:
+		return isLocalPathProducingCall(typed, aliases)
+	case *ast.ParenExpr:
+		return isLocalPathExpr(typed.X, localPathVars, aliases)
+	case *ast.UnaryExpr:
+		return isLocalPathExpr(typed.X, localPathVars, aliases)
+	case *ast.IndexExpr:
+		return isLocalPathExpr(typed.X, localPathVars, aliases)
+	}
+	return false
+}
+
+func isLocalPathProducingCall(call *ast.CallExpr, aliases map[string]string) bool {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if ok {
+		if pkg, pkgOK := selector.X.(*ast.Ident); pkgOK {
+			switch aliases[pkg.Name] {
+			case "path/filepath":
+				switch selector.Sel.Name {
+				case "Abs", "Clean", "Dir", "Join":
+					return true
+				}
+			case "github.com/autobrr/upbrr/internal/services/db":
+				return selector.Sel.Name == "Subdir"
+			case "github.com/autobrr/upbrr/internal/paths":
+				return strings.Contains(strings.ToLower(selector.Sel.Name), "path") || selector.Sel.Name == "ReleaseTempDir"
+			}
+		}
+	}
+	name := strings.ToLower(callName(call))
+	return strings.Contains(name, "torrentpath") ||
+		strings.Contains(name, "artifactpath") ||
+		strings.Contains(name, "failurepath") ||
+		strings.Contains(name, "temppath") ||
+		strings.Contains(name, "releasedir")
+}
+
+func isLocalPathIdentName(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if lower == "" || lower == "path" {
+		return false
+	}
+	if strings.Contains(lower, "url") || strings.Contains(lower, "uri") || strings.Contains(lower, "route") || strings.Contains(lower, "endpoint") {
+		return false
+	}
+	switch lower {
+	case "tmpdir", "tmproot", "cachedir", "logdir", "output", "target", "candidate", "guessed":
+		return true
+	}
+	return strings.HasSuffix(lower, "path")
+}
+
+func isLocalPathFieldName(name string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	switch normalized {
+	case "sourcepath", "torrentpath", "clienttorrentpath", "mediainfotextpath", "mediainfojsonpath", "dbpath":
+		return true
+	default:
+		return false
+	}
+}
+
+func containsDryRunFilePathExpr(expr ast.Expr, dryRunFileVars map[string]struct{}) bool {
+	found := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		if isDryRunFilePathExprNode(node, dryRunFileVars) {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func isDryRunFilePathExprNode(node ast.Node, dryRunFileVars map[string]struct{}) bool {
+	selector, ok := node.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "Path" {
+		return false
+	}
+	if ident, ok := selector.X.(*ast.Ident); ok {
+		_, found := dryRunFileVars[ident.Name]
+		return found
+	}
+	index, ok := selector.X.(*ast.IndexExpr)
+	if !ok {
+		return false
+	}
+	filesSelector, ok := index.X.(*ast.SelectorExpr)
+	return ok && filesSelector.Sel.Name == "Files"
+}
+
 // isDryRunPayloadValueExpr reports direct reads from TrackerDryRunEntry-style
 // Payload maps, which may contain tracker credentials or secret URLs.
 func isDryRunPayloadValueExpr(expr ast.Expr) bool {
@@ -2203,7 +2427,7 @@ func isSafeDryRunOutputExpr(expr ast.Expr) bool {
 		return false
 	}
 	switch ident.Name {
-	case "safeDryRunEndpoint", "formatDryRunPayloadValue":
+	case "safeDryRunEndpoint", "formatDryRunPayloadValue", "formatDryRunFilePath":
 		return true
 	default:
 		return false

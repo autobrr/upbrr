@@ -16,7 +16,6 @@ import (
 	"unicode"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackerauth"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -130,7 +129,7 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 
 	candidateTrackers, removalBase := resolveCLIUploadTrackers(currentVisited, req, metadataPreview, cfg)
 	if len(candidateTrackers) == 0 {
-		fmt.Printf("No trackers configured for %s\n", sourcePath)
+		fmt.Printf("No trackers configured for %s\n", formatPathLabel(sourcePath))
 		return nil
 	}
 	req.Trackers = candidateTrackers
@@ -144,7 +143,7 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 	req.TrackersRemove = appendTrackerRemovals(req.TrackersRemove, unselectedTrackers(req.Trackers, candidateTrackers)...)
 	req.Trackers = candidateTrackers
 	if len(candidateTrackers) == 0 {
-		fmt.Printf("No trackers selected for %s\n", sourcePath)
+		fmt.Printf("No trackers selected for %s\n", formatPathLabel(sourcePath))
 		return nil
 	}
 
@@ -165,7 +164,7 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 		}
 	}
 	if len(approved) == 0 {
-		fmt.Printf("No trackers selected for %s\n", sourcePath)
+		fmt.Printf("No trackers selected for %s\n", formatPathLabel(sourcePath))
 		return nil
 	}
 
@@ -184,7 +183,7 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 		req.TrackersRemove = appendTrackerRemovals(req.TrackersRemove, unselectedTrackers(candidateTrackers, approved)...)
 	}
 	if len(approved) == 0 {
-		fmt.Printf("No trackers selected for %s\n", sourcePath)
+		fmt.Printf("No trackers selected for %s\n", formatPathLabel(sourcePath))
 		return nil
 	}
 
@@ -975,7 +974,7 @@ func runSiteCheckCLIPath(ctx context.Context, coreSvc api.Core, opts cliOptions,
 		printDebugUploadReview(review)
 	}
 
-	fmt.Printf("\n[Site Check] %s\n", sourcePath)
+	fmt.Printf("\n[Site Check] %s\n", formatPathLabel(sourcePath))
 	for _, tracker := range review.Trackers {
 		fmt.Printf("\n[%s]\n", tracker.Tracker)
 		if tracker.Banned {
@@ -1132,7 +1131,7 @@ func printMetadataPreview(preview api.MetadataPreview, debug bool) {
 	if debug {
 		fmt.Println("Debug mode: no actual tracker uploads will be processed.")
 	}
-	fmt.Printf("Source: %s\n", preview.SourcePath)
+	fmt.Printf("Source: %s\n", formatPathLabel(preview.SourcePath))
 	fmt.Printf("Upload name: %s\n", preview.ReleaseName)
 	if external := primaryMetadataPreview(preview); external != nil {
 		printMetadataDatabaseInfo(*external, preview)
@@ -1376,7 +1375,7 @@ func printDryRunSummary(entry api.TrackerDryRunEntry) {
 }
 
 func printDebugUploadReview(review api.UploadReview) {
-	fmt.Printf("\n[Debug Dry Run] %s\n", review.SourcePath)
+	fmt.Printf("\n[Debug Dry Run] %s\n", formatPathLabel(review.SourcePath))
 	for _, tracker := range review.Trackers {
 		fmt.Printf("\n[%s Debug Payload]\n", tracker.Tracker)
 		if tracker.Banned {
@@ -1389,7 +1388,7 @@ func printDebugUploadReview(review api.UploadReview) {
 }
 
 func printDryRunUploadReview(review api.UploadReview, req api.Request) {
-	fmt.Printf("\n[Dry Run] %s\n", review.SourcePath)
+	fmt.Printf("\n[Dry Run] %s\n", formatPathLabel(review.SourcePath))
 	for _, tracker := range review.Trackers {
 		fmt.Printf("\n[%s]\n", tracker.Tracker)
 		if tracker.Banned {
@@ -1417,7 +1416,7 @@ func printDryRunDetails(entry api.TrackerDryRunEntry) {
 			if file.Present {
 				status = "present"
 			}
-			fmt.Printf("- %s [%s]: %s\n", file.Field, status, metautil.FirstNonEmptyTrimmed(strings.TrimSpace(file.Path), "(none)"))
+			fmt.Printf("- %s [%s]: %s\n", file.Field, status, formatDryRunFilePath(file.Path))
 		}
 	}
 	if len(entry.Payload) > 0 {
@@ -1433,6 +1432,41 @@ func printDryRunDetails(entry api.TrackerDryRunEntry) {
 	}
 	if message := strings.TrimSpace(entry.Description); message != "" && !payloadIncludesDescription(entry.Payload) {
 		fmt.Printf("Description: %s\n", summarizeDryRunBody(message))
+	}
+}
+
+func formatDryRunFilePath(value string) string {
+	return formatPathLabel(value)
+}
+
+func formatPathLabel(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "(none)"
+	}
+	switch {
+	case isPathUnderAppSubdir(trimmed, "tmp"):
+		return "[db tmp]"
+	case isPathUnderAppSubdir(trimmed, "cache"):
+		return "[db cache]"
+	case isPathUnderAppSubdir(trimmed, "logs"):
+		return "[db logs]"
+	default:
+		return "[local path]"
+	}
+}
+
+func isPathUnderAppSubdir(value string, subdir string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), "\\", "/"))
+	switch strings.ToLower(strings.TrimSpace(subdir)) {
+	case "tmp":
+		return strings.Contains(normalized, "/.upbrr/tmp/")
+	case "cache":
+		return strings.Contains(normalized, "/.upbrr/cache/")
+	case "logs":
+		return strings.Contains(normalized, "/.upbrr/logs/")
+	default:
+		return false
 	}
 }
 

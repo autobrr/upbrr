@@ -993,7 +993,7 @@ func TestPrintMetadataPreviewShowsRichReleaseDetails(t *testing.T) {
 	for _, expected := range []string{
 		"Release details",
 		"Debug mode: no actual tracker uploads will be processed.",
-		"Source: C:\\path\\to\\Example.Release.2026.S01.1080p.WEB-DL-GRP",
+		"Source: [local path]",
 		"Upload name: Example Release 2026 S01 1080p WEB-DL H.264-GRP",
 		"Database info",
 		"Title: Example Release (2026)",
@@ -1041,7 +1041,7 @@ func TestPrintDryRunDetails(t *testing.T) {
 			},
 			contains: []string{
 				"Files:",
-				"- torrent [present]: C:\\tmp\\file.torrent",
+				"- torrent [present]: [local path]",
 				"- nfo [missing]: (none)",
 				"Payload:",
 				"- category: MOVIE",
@@ -1166,7 +1166,7 @@ func TestPrintDebugUploadReview(t *testing.T) {
 	})
 
 	for _, expected := range []string{
-		"[Debug Dry Run] C:\\releases\\movie",
+		"[Debug Dry Run] [local path]",
 		"[BLU Debug Payload]",
 		"Dry run: ready",
 		"Tracker release name changed: Movie 2024 -> Movie.2024",
