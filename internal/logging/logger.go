@@ -379,15 +379,16 @@ func isLogFieldNameChar(ch byte) bool {
 }
 
 func localPathLogLabel(value string) string {
-	if label, ok := dbRelativePathLabel(value); ok {
+	if label, ok := DBRelativePathLabel(value); ok {
 		return label
 	}
 	return "[local path]"
 }
 
-// dbRelativePathLabel keeps the app DB subdirectory and basename context while
-// stripping the user-specific filesystem prefix.
-func dbRelativePathLabel(value string) (string, bool) {
+// DBRelativePathLabel returns a slash-normalized .upbrr tmp/cache/log suffix
+// when value is inside a known app DB subdirectory. The boolean is false for
+// ordinary local paths that should be replaced with a generic label.
+func DBRelativePathLabel(value string) (string, bool) {
 	trimmed := strings.TrimSpace(value)
 	normalized := strings.ToLower(strings.ReplaceAll(trimmed, "\\", "/"))
 	original := strings.ReplaceAll(trimmed, "\\", "/")

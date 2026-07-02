@@ -16,6 +16,7 @@ import (
 	"unicode"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackerauth"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -1504,32 +1505,16 @@ func formatDryRunFilePath(value string) string {
 }
 
 // formatPathLabel keeps CLI output shareable by hiding ordinary local paths
-// while preserving app DB-relative tmp/cache/log paths from .upbrr onward.
+// while preserving labels accepted by [logging.DBRelativePathLabel].
 func formatPathLabel(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return "(none)"
 	}
-	if label, ok := dbRelativePathLabel(trimmed); ok {
+	if label, ok := logging.DBRelativePathLabel(trimmed); ok {
 		return label
 	}
 	return "[local path]"
-}
-
-// dbRelativePathLabel returns the slash-normalized .upbrr/tmp, .upbrr/cache, or
-// .upbrr/logs suffix when a path is inside a known app DB subdirectory.
-func dbRelativePathLabel(value string) (string, bool) {
-	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), "\\", "/"))
-	original := strings.ReplaceAll(strings.TrimSpace(value), "\\", "/")
-	for _, marker := range []string{".upbrr/tmp/", ".upbrr/cache/", ".upbrr/logs/"} {
-		if strings.HasPrefix(normalized, marker) {
-			return original, true
-		}
-		if index := strings.Index(normalized, "/"+marker); index >= 0 {
-			return original[index+1:], true
-		}
-	}
-	return "", false
 }
 
 // trackerReleaseNameChangeLine returns the CLI-facing release-name change text,

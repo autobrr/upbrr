@@ -2488,7 +2488,7 @@ func isTerminalStderrOutputCall(call *ast.CallExpr, aliases map[string]string) b
 }
 
 // isUnsafeTerminalDiagnosticArg reports stderr diagnostic args that include raw
-// errors or warning text without a recognized sanitizer.
+// error, warning, status, or message text without a recognized sanitizer.
 func isUnsafeTerminalDiagnosticArg(format string, expr ast.Expr, aliases map[string]string) bool {
 	if isSafeTerminalDiagnosticExpr(expr, aliases) {
 		return false
@@ -2496,14 +2496,14 @@ func isUnsafeTerminalDiagnosticArg(format string, expr ast.Expr, aliases map[str
 	if containsRawTerminalDiagnosticExpr(expr, aliases) {
 		return true
 	}
-	if strings.Contains(strings.ToLower(format), "warning") && containsWarningLikeExpr(expr) {
+	if (format == "" || strings.Contains(strings.ToLower(format), "warning")) && containsWarningLikeExpr(expr) {
 		return true
 	}
 	return false
 }
 
-// containsRawTerminalDiagnosticExpr detects error-like values while respecting
-// sanitizer calls nested inside larger diagnostic expressions.
+// containsRawTerminalDiagnosticExpr detects diagnostic-looking values while
+// respecting sanitizer calls nested inside larger diagnostic expressions.
 func containsRawTerminalDiagnosticExpr(expr ast.Expr, aliases map[string]string) bool {
 	if isSafeTerminalDiagnosticExpr(expr, aliases) {
 		return false
@@ -2518,12 +2518,12 @@ func containsRawTerminalDiagnosticExpr(expr ast.Expr, aliases map[string]string)
 		}
 		switch typed := node.(type) {
 		case *ast.Ident:
-			if isErrorLikeName(typed.Name) {
+			if isDiagnosticLikeName(typed.Name) {
 				raw = true
 				return false
 			}
 		case *ast.SelectorExpr:
-			if isErrorLikeName(typed.Sel.Name) {
+			if isDiagnosticLikeName(typed.Sel.Name) {
 				raw = true
 				return false
 			}
@@ -2538,25 +2538,48 @@ func containsRawTerminalDiagnosticExpr(expr ast.Expr, aliases map[string]string)
 	return raw
 }
 
+// containsWarningLikeExpr detects warning fields and variables, including
+// selector fields passed to free-form stderr output calls.
 func containsWarningLikeExpr(expr ast.Expr) bool {
 	found := false
 	ast.Inspect(expr, func(node ast.Node) bool {
 		if found || node == nil {
 			return false
 		}
-		ident, ok := node.(*ast.Ident)
-		if ok && isWarningLikeName(ident.Name) {
-			found = true
-			return false
+		switch typed := node.(type) {
+		case *ast.Ident:
+			if !isWarningLikeName(typed.Name) {
+				return true
+			}
+		case *ast.SelectorExpr:
+			if !isWarningLikeName(typed.Sel.Name) {
+				return true
+			}
+		default:
+			return true
 		}
-		return true
+		found = true
+		return false
 	})
 	return found
+}
+
+// isDiagnosticLikeName reports names that usually carry user-facing diagnostic
+// text and must be sanitized before terminal output.
+func isDiagnosticLikeName(name string) bool {
+	return isErrorLikeName(name) || isWarningLikeName(name) || isStatusMessageLikeName(name)
 }
 
 func isWarningLikeName(name string) bool {
 	lower := strings.ToLower(strings.TrimSpace(name))
 	return lower == "w" || lower == "warning" || lower == "warn" || strings.HasSuffix(lower, "warning") || strings.HasSuffix(lower, "warn")
+}
+
+// isStatusMessageLikeName reports status/message fields that can contain
+// free-form remote or runtime diagnostic text.
+func isStatusMessageLikeName(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	return lower == "message" || lower == "status" || strings.HasSuffix(lower, "message") || strings.HasSuffix(lower, "status")
 }
 
 func isSafeTerminalDiagnosticExpr(expr ast.Expr, aliases map[string]string) bool {

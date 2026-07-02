@@ -1399,6 +1399,101 @@ func warnings() []string { return nil }
 	}
 }
 
+func TestCheckRepositoryFlagsRawTerminalDiagnosticFields(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+
+	content := `package main
+
+import (
+	"fmt"
+	"os"
+)
+
+type diagnostic struct {
+	Warning string
+	Message string
+	Status string
+	Error string
+}
+
+func printDiagnostic(status diagnostic) {
+	fmt.Fprint(os.Stderr, status.Warning)
+	fmt.Fprintln(os.Stderr, status.Message)
+	fmt.Fprintln(os.Stderr, status.Status)
+	fmt.Fprintln(os.Stderr, status.Error)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "main.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write CLI sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 4 {
+		t.Fatalf("expected 4 violations, got %d: %#v", len(violations), violations)
+	}
+	for _, violation := range violations {
+		if !strings.Contains(violation.Message, "terminal error/warning output") {
+			t.Fatalf("expected terminal diagnostic violation, got %q", violation.Message)
+		}
+	}
+}
+
+func TestCheckRepositoryAllowsSanitizedTerminalDiagnosticFields(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+
+	content := `package main
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/autobrr/upbrr/internal/logging"
+)
+
+type diagnostic struct {
+	Warning string
+	Message string
+	Status string
+	Error string
+}
+
+func printDiagnostic(status diagnostic) {
+	fmt.Fprint(os.Stderr, logging.SanitizeMessage(status.Warning))
+	fmt.Fprintln(os.Stderr, logging.SanitizeMessage(status.Message))
+	fmt.Fprintln(os.Stderr, logging.SanitizeMessage(status.Status))
+	fmt.Fprintln(os.Stderr, logging.SanitizeMessage(status.Error))
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "main.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write CLI sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
 func TestCheckRepositoryFlagsRawResponseBodyLogging(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
