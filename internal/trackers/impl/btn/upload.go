@@ -13,9 +13,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -23,6 +26,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+
+	"golang.org/x/text/runes"
+	"golang.org/x/text/transform"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
@@ -49,6 +57,116 @@ var (
 	btnSelectedOptionRegex = regexp.MustCompile(`(?is)<option[^>]*selected[^>]*value=["']([^"']+)["']`)
 	btnOptionValueRegex    = regexp.MustCompile(`(?is)<option[^>]*value=["']([^"']+)["']`)
 	btnSuccessURLPattern   = regexp.MustCompile(`torrents\.php\?id=(\d+)(?:&torrentid=(\d+))?`)
+	btnCountryMap          = map[string]string{
+		"se": "1", "swe": "1", "sweden": "1",
+		"us": "2", "usa": "2", "united states": "2", "united states of america": "2",
+		"ru": "3", "rus": "3", "russia": "3",
+		"fi": "4", "fin": "4", "finland": "4",
+		"ca": "5", "can": "5", "canada": "5",
+		"fr": "6", "fra": "6", "france": "6",
+		"de": "7", "deu": "7", "germany": "7",
+		"cn": "8", "chn": "8", "china": "8",
+		"it": "9", "ita": "9", "italy": "9",
+		"dk": "10", "dnk": "10", "denmark": "10",
+		"no": "11", "nor": "11", "norway": "11",
+		"gb": "12", "uk": "12", "gbr": "12", "united kingdom": "12",
+		"ie": "13", "irl": "13", "ireland": "13",
+		"pl": "14", "pol": "14", "poland": "14",
+		"nl": "15", "nld": "15", "netherlands": "15",
+		"be": "16", "bel": "16", "belgium": "16",
+		"jp": "17", "jpn": "17", "japan": "17",
+		"br": "18", "bra": "18", "brazil": "18",
+		"ar": "19", "arg": "19", "argentina": "19",
+		"au": "20", "aus": "20", "australia": "20",
+		"nz": "21", "nzl": "21", "new zealand": "21",
+		"es": "22", "esp": "22", "spain": "22",
+		"pt": "23", "prt": "23", "portugal": "23",
+		"mx": "24", "mex": "24", "mexico": "24",
+		"sg": "25", "sgp": "25", "singapore": "25",
+		"za": "26", "zaf": "26", "south africa": "26",
+		"kr": "27", "kor": "27", "south korea": "27",
+		"jm": "28", "jam": "28", "jamaica": "28",
+		"lu": "29", "lux": "29", "luxembourg": "29",
+		"hk": "30", "hkg": "30", "hong kong": "30",
+		"bz": "31", "blz": "31", "belize": "31",
+		"dz": "32", "dza": "32", "algeria": "32",
+		"ao": "33", "ago": "33", "angola": "33",
+		"at": "34", "aut": "34", "austria": "34",
+		"yu": "35", "yug": "35", "yugoslavia": "35",
+		"ws": "36", "wsm": "36", "western samoa": "36",
+		"my": "37", "mys": "37", "malaysia": "37",
+		"do": "38", "dom": "38", "dominican republic": "38",
+		"gr": "39", "grc": "39", "greece": "39",
+		"gt": "40", "gtm": "40", "guatemala": "40",
+		"il": "41", "isr": "41", "israel": "41",
+		"pk": "42", "pak": "42", "pakistan": "42",
+		"cz": "43", "cze": "43", "czech republic": "43",
+		"rs": "44", "srb": "44", "serbia": "44",
+		"sc": "45", "syc": "45", "seychelles": "45",
+		"tw": "46", "twn": "46", "taiwan": "46",
+		"pr": "47", "pri": "47", "puerto rico": "47",
+		"cl": "48", "chl": "48", "chile": "48",
+		"cu": "49", "cub": "49", "cuba": "49",
+		"cg": "50", "cog": "50", "congo": "50",
+		"af": "51", "afg": "51", "afghanistan": "51",
+		"tr": "52", "tur": "52", "turkey": "52",
+		"uz": "53", "uzb": "53", "uzbekistan": "53",
+		"ch": "54", "che": "54", "switzerland": "54",
+		"ki": "55", "kir": "55", "kiribati": "55",
+		"ph": "56", "phl": "56", "philippines": "56",
+		"bf": "57", "bfa": "57", "burkina faso": "57",
+		"ng": "58", "nga": "58", "nigeria": "58",
+		"is": "59", "isl": "59", "iceland": "59",
+		"nr": "60", "nru": "60", "nauru": "60",
+		"si": "61", "svn": "61", "slovenia": "61",
+		"al": "62", "alb": "62", "albania": "62",
+		"tm": "63", "tkm": "63", "turkmenistan": "63",
+		"ba": "64", "bih": "64", "bosnia herzegovina": "64",
+		"ad": "65", "and": "65", "andorra": "65",
+		"lt": "66", "ltu": "66", "lithuania": "66",
+		"in": "67", "ind": "67", "india": "67",
+		"an": "68", "ant": "68", "netherlands antilles": "68",
+		"ua": "69", "ukr": "69", "ukraine": "69",
+		"ve": "70", "ven": "70", "venezuela": "70",
+		"hu": "71", "hun": "71", "hungary": "71",
+		"ro": "72", "rou": "72", "romania": "72",
+		"vu": "73", "vut": "73", "vanuatu": "73",
+		"vn": "74", "vnm": "74", "vietnam": "74",
+		"tt": "75", "tto": "75", "trinidad": "75",
+		"hn": "76", "hnd": "76", "honduras": "76",
+		"kg": "77", "kgz": "77", "kyrgyzstan": "77",
+		"ec": "78", "ecu": "78", "ecuador": "78",
+		"bs": "79", "bhs": "79", "bahamas": "79",
+		"pe": "80", "per": "80", "peru": "80",
+		"kh": "81", "khm": "81", "cambodia": "81",
+		"bb": "82", "brb": "82", "barbados": "82",
+		"bd": "83", "bgd": "83", "bangladesh": "83",
+		"la": "84", "lao": "84", "laos": "84",
+		"uy": "85", "ury": "85", "uruguay": "85",
+		"ag": "86", "atg": "86", "antigua barbuda": "86",
+		"py": "87", "pry": "87", "paraguay": "87",
+		"su": "88", "sun": "88", "soviet": "88",
+		"th": "89", "tha": "89", "thailand": "89",
+		"sn": "90", "sen": "90", "senegal": "90",
+		"tg": "91", "tgo": "91", "togo": "91",
+		"kp": "92", "prk": "92", "north korea": "92",
+		"hr": "93", "hrv": "93", "croatia": "93",
+		"ee": "94", "est": "94", "estonia": "94",
+		"co": "95", "col": "95", "colombia": "95",
+		"lb": "96", "lbn": "96", "lebanon": "96",
+		"lv": "97", "lva": "97", "latvia": "97",
+		"cr": "98", "cri": "98", "costa rica": "98",
+		"eg": "99", "egy": "99", "egypt": "99",
+		"bg": "100", "bgr": "100", "bulgaria": "100",
+		"mk": "103", "mkd": "103", "macedonia": "103",
+		"kw": "104", "kwt": "104", "kuwait": "104",
+		"lk": "105", "lka": "105", "sri lanka": "105",
+		"ir": "106", "irn": "106", "iran": "106",
+		"sa": "108", "sau": "108", "saudi arabia": "108",
+		"sk": "110", "svk": "110", "slovakia": "110",
+		"id": "111", "idn": "111", "indonesia": "111",
+		"bn": "113", "brn": "113", "brunei": "113",
+	}
 )
 
 // ErrSubmitted2FARejected marks a BTN failure after a submitted manual 2FA code
@@ -66,6 +184,32 @@ type uploadContext struct {
 	apiToken  string
 	apiURL    string
 	client    *http.Client
+}
+
+// btnNameNormalizationRule applies one ordered rewrite to the BTN scene name.
+type btnNameNormalizationRule struct {
+	pattern     *regexp.Regexp
+	replacement string
+}
+
+// btnNameNormalizationRules normalizes release-name tokens after whitespace and
+// DD+ cleanup. The order is significant: Atmos-specific compaction must happen
+// before generic audio channel joins, and dot collapse must run after character
+// replacement.
+var btnNameNormalizationRules = []btnNameNormalizationRule{
+	{pattern: regexp.MustCompile(`(?i)\.DDP\.(\d+(?:\.\d+)?)\.Atmos`), replacement: `.DDPA$1`},
+	{pattern: regexp.MustCompile(`(?i)\.TrueHD\.(\d+(?:\.\d+)?)\.Atmos`), replacement: `.TrueHDA$1`},
+	{pattern: regexp.MustCompile(`\.DDP\.(\d)`), replacement: `.DDP$1`},
+	{pattern: regexp.MustCompile(`\.DD\.(\d)`), replacement: `.DD$1`},
+	{pattern: regexp.MustCompile(`\.AC3\.(\d)`), replacement: `.AC3$1`},
+	{pattern: regexp.MustCompile(`\.DTS\.(\d)`), replacement: `.DTS$1`},
+	{pattern: regexp.MustCompile(`\.AAC\.(\d)`), replacement: `.AAC$1`},
+	{pattern: regexp.MustCompile(`\.FLAC\.(\d)`), replacement: `.FLAC$1`},
+	{pattern: regexp.MustCompile(`(?i)\.TrueHD\.(\d)`), replacement: `.TrueHD$1`},
+	{pattern: regexp.MustCompile(`(?i)\.PCM\.(\d)`), replacement: `.PCM$1`},
+	{pattern: regexp.MustCompile(`(?i)\.LPCM\.(\d)`), replacement: `.LPCM$1`},
+	{pattern: regexp.MustCompile(`[^a-zA-Z0-9.\-]`), replacement: `.`},
+	{pattern: regexp.MustCompile(`\.{2,}`), replacement: `.`},
 }
 
 func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
@@ -139,9 +283,6 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 
 	groupID := strings.TrimSpace(matches[1])
 	torrentID := strings.TrimSpace(matches[2])
-	if torrentID == "" {
-		torrentID = groupID
-	}
 	torrentURL := strings.TrimRight(uploadCtx.baseURL, "/") + "/torrents.php?id=" + url.QueryEscape(groupID)
 	if torrentID != "" {
 		torrentURL += "&torrentid=" + url.QueryEscape(torrentID)
@@ -151,10 +292,17 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
-	if err := downloadTrackerTorrent(ctx, uploadCtx.client, uploadCtx.baseURL, torrentID, trackerTorrentPath); err != nil {
-		if req.Logger != nil {
-			req.Logger.Warnf("trackers: BTN torrent download fallback to API search: %v", err)
+
+	if torrentID != "" {
+		if err := downloadTrackerTorrent(ctx, uploadCtx.client, uploadCtx.baseURL, torrentID, trackerTorrentPath); err != nil {
+			if req.Logger != nil {
+				req.Logger.Warnf("trackers: BTN torrent download fallback to API search: %s", commonhttp.RedactErrorDetail(err.Error()))
+			}
+			if err := resolveAndDownloadViaAPI(ctx, uploadCtx.apiURL, uploadCtx.apiToken, req, groupID, trackerTorrentPath); err != nil {
+				return api.UploadSummary{}, err
+			}
 		}
+	} else {
 		if err := resolveAndDownloadViaAPI(ctx, uploadCtx.apiURL, uploadCtx.apiToken, req, groupID, trackerTorrentPath); err != nil {
 			return api.UploadSummary{}, err
 		}
@@ -196,6 +344,9 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		"origin":       resolveOrigin(resolveUploadName(req.Meta)),
 		"release_desc": strings.TrimSpace(req.Meta.DescriptionOverride),
 		"tvdb":         "autofilled",
+	}
+	if resolveFastTorrent(req.TrackerConfig) {
+		payload["fasttorrent"] = "on"
 	}
 
 	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
@@ -465,10 +616,36 @@ func validateBTNClientSession(ctx context.Context, client *http.Client, baseURL 
 
 func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCtx uploadContext) (map[string]string, error) {
 	autofillPayload := url.Values{}
-	autofillPayload.Set("type", resolveUploadType(req.Meta))
-	autofillPayload.Set("scene_yesno", "yes")
-	autofillPayload.Set("autofill", resolveUploadName(req.Meta))
+	uploadType := resolveUploadType(req.Meta)
+	autofillPayload.Set("type", uploadType)
 	autofillPayload.Set("tvdb", "Get Info")
+
+	if req.Meta.ExternalMetadata.TVDB != nil && req.Meta.ExternalMetadata.TVDB.TVDBID > 0 {
+		autofillPayload.Set("scene_yesno", "No")
+		autofillPayload.Set("auto_series", strconv.Itoa(req.Meta.ExternalMetadata.TVDB.TVDBID))
+
+		if uploadType == "Episode" {
+			season := req.Meta.Release.Season
+			if season <= 0 {
+				season = req.Meta.SeasonInt
+			}
+			seasonPart := fmt.Sprintf("S%02d", season)
+			episode := req.Meta.Release.Episode
+			if episode <= 0 {
+				episode = req.Meta.EpisodeInt
+			}
+			episodePart := ""
+			if episode > 0 {
+				episodePart = fmt.Sprintf("E%02d", episode)
+			}
+			autofillPayload.Set("auto_title", seasonPart+episodePart)
+		} else {
+			autofillPayload.Set("auto_season", strconv.Itoa(req.Meta.Release.Season))
+		}
+	} else {
+		autofillPayload.Set("scene_yesno", "Yes")
+		autofillPayload.Set("autofill", resolveUploadName(req.Meta))
+	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadCtx.uploadURL, strings.NewReader(autofillPayload.Encode()))
 	if err != nil {
@@ -490,7 +667,7 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		return nil, fmt.Errorf("trackers: BTN read autofill response: %w", err)
 	}
 	fields := extractAutofillFields(string(htmlPayload))
-	if !validateAutofill(fields) {
+	if !validateAutofill(fields, uploadType) {
 		return nil, errors.New("trackers: BTN autofill validation failed")
 	}
 
@@ -509,13 +686,27 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		return nil, fmt.Errorf("trackers: BTN dropdown mapping failed format=%q bitrate=%q media=%q", format, bitrate, media)
 	}
 
+	title := metautil.FirstNonEmptyTrimmed(fields["title"])
+	if resolveUploadType(req.Meta) == "Season" && title != "" {
+		isNumeric := true
+		for _, r := range title {
+			if r < '0' || r > '9' {
+				isNumeric = false
+				break
+			}
+		}
+		if isNumeric {
+			title = "Season " + title
+		}
+	}
+
 	payload := map[string]string{
 		"submit":       "true",
 		"type":         resolveUploadType(req.Meta),
 		"scenename":    applyBTNNameMapping(resolveUploadName(req.Meta), bitrate, media),
 		"seriesid":     metautil.FirstNonEmptyTrimmed(fields["seriesid"]),
 		"artist":       metautil.FirstNonEmptyTrimmed(fields["artist"]),
-		"title":        metautil.FirstNonEmptyTrimmed(fields["title"]),
+		"title":        title,
 		"actors":       metautil.FirstNonEmptyTrimmed(fields["actors"]),
 		"origin":       resolveOrigin(resolveUploadName(req.Meta)),
 		"year":         metautil.FirstNonEmptyTrimmed(fields["year"]),
@@ -525,12 +716,18 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		"format":       format,
 		"bitrate":      bitrate,
 		"media":        media,
-		"resolution":   metautil.FirstNonEmptyTrimmed(fields["resolution"], "SD"),
+		"resolution":   mapResolution(req.Meta),
 		"release_desc": description,
 		"tvdb":         "autofilled",
 	}
+	if resolveFastTorrent(req.TrackerConfig) {
+		payload["fasttorrent"] = "on"
+	}
 	if req.Meta.ExternalMetadata.TVDB != nil && !strings.EqualFold(strings.TrimSpace(req.Meta.ExternalMetadata.TVDB.OriginalLanguage), "en") {
 		payload["foreign"] = "on"
+		if countryID := resolveCountryID(req.Meta); countryID != "" {
+			payload["country"] = countryID
+		}
 	}
 	clean := make(map[string]string, len(payload))
 	for key, value := range payload {
@@ -542,38 +739,41 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 	return clean, nil
 }
 
-func extractAutofillFields(html string) map[string]string {
+func extractAutofillFields(htmlRaw string) map[string]string {
 	fields := map[string]string{}
-	for _, match := range btnInputPattern.FindAllStringSubmatch(html, -1) {
+	for _, match := range btnInputPattern.FindAllStringSubmatch(htmlRaw, -1) {
 		if len(match) < 3 {
 			continue
 		}
-		fields[strings.ToLower(strings.TrimSpace(match[1]))] = strings.TrimSpace(match[2])
+		fields[strings.ToLower(strings.TrimSpace(match[1]))] = html.UnescapeString(strings.TrimSpace(match[2]))
 	}
-	if match := btnTextAreaPattern.FindStringSubmatch(html); len(match) > 1 {
-		fields["album_desc"] = strings.TrimSpace(stripHTML(match[1]))
+	if match := btnTextAreaPattern.FindStringSubmatch(htmlRaw); len(match) > 1 {
+		fields["album_desc"] = html.UnescapeString(strings.TrimSpace(stripHTML(match[1])))
 	}
-	for _, selectMatch := range btnSelectPattern.FindAllStringSubmatch(html, -1) {
+	for _, selectMatch := range btnSelectPattern.FindAllStringSubmatch(htmlRaw, -1) {
 		if len(selectMatch) < 3 {
 			continue
 		}
 		name := strings.ToLower(strings.TrimSpace(selectMatch[1]))
 		body := selectMatch[2]
 		if selected := btnSelectedOptionRegex.FindStringSubmatch(body); len(selected) > 1 {
-			fields[name] = strings.TrimSpace(selected[1])
+			fields[name] = html.UnescapeString(strings.TrimSpace(selected[1]))
 			continue
 		}
 		if first := btnOptionValueRegex.FindStringSubmatch(body); len(first) > 1 {
-			fields[name] = strings.TrimSpace(first[1])
+			fields[name] = html.UnescapeString(strings.TrimSpace(first[1]))
 		}
 	}
 	return fields
 }
 
-func validateAutofill(fields map[string]string) bool {
+func validateAutofill(fields map[string]string, uploadType string) bool {
 	artist := strings.TrimSpace(fields["artist"])
 	title := strings.TrimSpace(fields["title"])
-	if artist == "" || title == "" {
+	if artist == "" {
+		return false
+	}
+	if uploadType == "Episode" && title == "" {
 		return false
 	}
 	if strings.EqualFold(artist, "autofill fail") || strings.EqualFold(title, "autofill fail") {
@@ -659,17 +859,101 @@ func resolveOrigin(releaseName string) string {
 	}
 }
 
+func stripEpisodeTitle(name string, episodeTitle string) string {
+	if episodeTitle == "" || name == "" {
+		return name
+	}
+	// uncleaned episodeTitle is embedded directly into ReleaseName.
+	return strings.ReplaceAll(name, episodeTitle, "")
+}
+
 func resolveUploadName(meta api.PreparedMetadata) string {
-	if name := strings.TrimSpace(meta.ReleaseName); name != "" {
+	var name string
+	if n := strings.TrimSpace(meta.ReleaseName); n != "" {
+		name = n
+	} else if n := strings.TrimSpace(meta.ReleaseNameNoTag); n != "" {
+		name = n
+	} else if n := strings.TrimSpace(meta.Filename); n != "" {
+		name = n
+	} else {
+		name = pathutil.Base(meta.SourcePath)
+	}
+	name = stripEpisodeTitle(name, meta.EpisodeTitle)
+	name = cleanAndNormalizeBTNName(name)
+	return applyBTNNoGroupSuffix(name, meta)
+}
+
+// applyBTNNoGroupSuffix preserves a valid prepared group tag for no-tag names
+// and falls back to BTN's NOGRP marker when no usable tag is available.
+func applyBTNNoGroupSuffix(name string, meta api.PreparedMetadata) string {
+	tag := strings.TrimSpace(strings.TrimPrefix(meta.Tag, "-"))
+
+	if tag != "" && !isNoGroupTag(tag) {
+		if selectedBTNReleaseNameNoTag(name, meta) || !hasBTNGroupSuffix(name) {
+			return strings.TrimRight(name, ".-") + "-" + tag
+		}
 		return name
 	}
-	if name := strings.TrimSpace(meta.ReleaseNameNoTag); name != "" {
-		return name
+
+	noGroupPattern := regexp.MustCompile(`(?i)-(nogrp|nogroup|unknown|unk)$`)
+	normalizedName := noGroupPattern.ReplaceAllString(name, "")
+	normalizedName = strings.TrimRight(normalizedName, ".-")
+
+	return normalizedName + "-NOGRP"
+}
+
+// selectedBTNReleaseNameNoTag reports whether name is the normalized
+// ReleaseNameNoTag value chosen by resolveUploadName.
+func selectedBTNReleaseNameNoTag(name string, meta api.PreparedMetadata) bool {
+	if strings.TrimSpace(meta.ReleaseName) != "" || strings.TrimSpace(meta.ReleaseNameNoTag) == "" {
+		return false
 	}
-	if name := strings.TrimSpace(meta.Filename); name != "" {
-		return name
+	candidate := stripEpisodeTitle(strings.TrimSpace(meta.ReleaseNameNoTag), meta.EpisodeTitle)
+	candidate = cleanAndNormalizeBTNName(candidate)
+	return strings.TrimSpace(name) == candidate
+}
+
+// hasBTNGroupSuffix reports whether name already ends with a hyphenated BTN
+// group suffix.
+func hasBTNGroupSuffix(name string) bool {
+	return regexp.MustCompile(`-[^-.\s]+$`).MatchString(strings.TrimSpace(name))
+}
+
+func isNoGroupTag(tag string) bool {
+	value := strings.ToLower(strings.TrimSpace(tag))
+	switch value {
+	case "nogrp", "nogroup", "unknown", "unk":
+		return true
+	default:
+		return false
 	}
-	return pathutil.Base(meta.SourcePath)
+}
+
+func removeDiacritics(s string) string {
+	t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+	result, _, _ := transform.String(t, s)
+	return result
+}
+
+// cleanAndNormalizeBTNName converts prepared release names into BTN scene-name
+// syntax. It removes diacritics, uses dots as token separators, compacts known
+// audio channel tokens, and keeps hyphens for group tags.
+func cleanAndNormalizeBTNName(value string) string {
+	// 0. Remove diacritics
+	value = removeDiacritics(value)
+
+	// 1. Dot normalization (spaces to dots, collapse dots)
+	value = strings.Join(strings.Fields(value), " ")
+	value = strings.ReplaceAll(value, " ", ".")
+
+	// 2. Replace plus in DD+
+	value = strings.ReplaceAll(value, "DD+", "DDP")
+
+	for _, rule := range btnNameNormalizationRules {
+		value = rule.pattern.ReplaceAllString(value, rule.replacement)
+	}
+
+	return strings.TrimSpace(value)
 }
 
 func resolveTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error) {
@@ -749,6 +1033,10 @@ func downloadTrackerTorrent(ctx context.Context, client *http.Client, baseURL st
 	return nil
 }
 
+// resolveAndDownloadViaAPI finds the uploaded torrent through BTN's JSON-RPC
+// API, validates the returned DownloadURL, and writes the fetched bencoded
+// torrent to outputPath. It is used when the post-upload HTML flow cannot
+// provide a usable torrent download.
 func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken string, req trackers.UploadRequest, groupID string, outputPath string) error {
 	if strings.TrimSpace(apiToken) == "" {
 		return errors.New("trackers: BTN api token missing for torrent resolution")
@@ -827,7 +1115,50 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 		return fmt.Errorf("trackers: BTN API download request: %w", err)
 	}
 	defer downloadResp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(downloadResp.Body, 8*1024*1024))
+	if downloadResp.StatusCode < 200 || downloadResp.StatusCode >= 300 {
+		return fmt.Errorf("trackers: BTN API download failed status=%d", downloadResp.StatusCode)
+	}
+	var downloadResult struct {
+		Result struct {
+			DownloadURL string `json:"DownloadURL"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(downloadResp.Body).Decode(&downloadResult); err != nil {
+		return fmt.Errorf("trackers: BTN API decode download response: %w", err)
+	}
+	if downloadResult.Result.DownloadURL == "" {
+		return errors.New("trackers: BTN API did not return DownloadURL")
+	}
+
+	if err := validateBTNAPIDownloadURL(ctx, apiURL, downloadResult.Result.DownloadURL); err != nil {
+		return fmt.Errorf("trackers: BTN API invalid download url: %w", err)
+	}
+
+	dlReq, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadResult.Result.DownloadURL, nil)
+	if err != nil {
+		return fmt.Errorf("trackers: BTN API torrent fetch request build: %w", err)
+	}
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if err := validateBTNAPIDownloadURL(req.Context(), apiURL, req.URL.String()); err != nil {
+				return err
+			}
+			if len(via) >= 10 {
+				return errors.New("stopped after 10 redirects")
+			}
+			return nil
+		},
+	}
+	dlResp, err := client.Do(dlReq)
+	if err != nil {
+		return fmt.Errorf("trackers: BTN API torrent fetch request: %w", err)
+	}
+	defer dlResp.Body.Close()
+	if dlResp.StatusCode < 200 || dlResp.StatusCode >= 300 {
+		return fmt.Errorf("trackers: BTN API download fetch failed status=%d", dlResp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(dlResp.Body, 8*1024*1024))
 	if err != nil {
 		return fmt.Errorf("trackers: BTN API read torrent response: %w", err)
 	}
@@ -1038,6 +1369,20 @@ func resolveBTNAPIURL(cfg config.TrackerConfig) string {
 	return btnAPIRPCURL
 }
 
+func resolveFastTorrent(cfg config.TrackerConfig) bool {
+	if cfg.Unknown != nil {
+		if raw, ok := cfg.Unknown["fast_torrent"]; ok {
+			if b, ok := raw.(bool); ok {
+				return b
+			}
+			if s, ok := raw.(string); ok {
+				return strings.EqualFold(strings.TrimSpace(s), "true") || strings.TrimSpace(s) == "1"
+			}
+		}
+	}
+	return false
+}
+
 func stripHTML(value string) string {
 	replacer := strings.NewReplacer("<br>", "\n", "<br/>", "\n", "<br />", "\n")
 	cleaned := replacer.Replace(value)
@@ -1126,6 +1471,21 @@ func mapSource(meta api.PreparedMetadata, fields map[string]string) string {
 	return ""
 }
 
+func mapResolution(meta api.PreparedMetadata) string {
+	switch strings.ToLower(strings.TrimSpace(meta.Release.Resolution)) {
+	case "2160p", "4320p", "8640p", "4k", "8k":
+		return "2160p"
+	case "1080p", "1440p":
+		return "1080p"
+	case "1080i":
+		return "1080i"
+	case "720p":
+		return "720p"
+	default:
+		return "SD"
+	}
+}
+
 func applyBTNNameMapping(releaseName string, mappedCodec string, mappedSource string) string {
 	updated := releaseName
 	if mappedSource != "" {
@@ -1149,4 +1509,133 @@ func applyBTNNameMapping(releaseName string, mappedCodec string, mappedSource st
 		}
 	}
 	return updated
+}
+
+// resolveCountryID extracts country information from external metadata and returns the BTN country ID.
+// It tries TVDB first, then TMDB, then IMDB. Returns empty string if no country is found.
+// All inputs are normalized to lowercase before matching to handle:
+// - TVDB alpha-3 codes (e.g., "usa") - converted to alpha-2 then mapped
+// - TMDB alpha-2 codes (e.g., "US") - normalized to lowercase then mapped
+// - IMDB country names (e.g., "United States") - normalized to lowercase then matched
+func resolveCountryID(meta api.PreparedMetadata) string {
+	var countryStr string
+
+	// Try TVDB first (ISO 3166-1 alpha-3, lowercase)
+	if meta.ExternalMetadata.TVDB != nil && meta.ExternalMetadata.TVDB.OriginalCountry != "" {
+		countryStr = meta.ExternalMetadata.TVDB.OriginalCountry
+	}
+
+	// Fall back to TMDB (ISO 3166-1 alpha-2, uppercase)
+	if countryStr == "" && meta.ExternalMetadata.TMDB != nil && len(meta.ExternalMetadata.TMDB.OriginCountry) > 0 {
+		countryStr = meta.ExternalMetadata.TMDB.OriginCountry[0]
+	}
+
+	// Fall back to IMDB (full country names)
+	if countryStr == "" && meta.ExternalMetadata.IMDB != nil && meta.ExternalMetadata.IMDB.Country != "" {
+		// IMDB can have multiple countries separated by commas, take the first one
+		parts := strings.Split(meta.ExternalMetadata.IMDB.Country, ",")
+		if len(parts) > 0 {
+			countryStr = strings.TrimSpace(parts[0])
+		}
+	}
+
+	if countryStr == "" {
+		return ""
+	}
+
+	// Normalize to lowercase for all lookups
+	normalized := strings.ToLower(strings.TrimSpace(countryStr))
+
+	// Try direct lookup (handles alpha-2 codes, alpha-3 codes, and country names)
+	if id, ok := btnCountryMap[normalized]; ok {
+		return id
+	}
+
+	// Try partial name matching for fuzzy country name variations
+	// (e.g., "united states of america" partially matches "united states").
+	// Only match against longer names to prevent false positives from short codes.
+	for key, id := range btnCountryMap {
+		if len(key) > 3 && (strings.Contains(normalized, key) || strings.Contains(key, normalized)) {
+			return id
+		}
+	}
+
+	return ""
+}
+
+// validateBTNAPIURL accepts only HTTP(S) URLs that resolve to public addresses.
+// It rejects localhost, scoped hosts, private IPs, and DNS results that point to
+// private or otherwise non-routable addresses before a BTN-provided URL is
+// fetched.
+func validateBTNAPIURL(ctx context.Context, rawURL string) error {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return fmt.Errorf("parse url: %w", err)
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("unsupported scheme %q", parsed.Scheme)
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		return errors.New("missing host")
+	}
+	lowerHost := strings.ToLower(host)
+	if lowerHost == "localhost" || strings.HasSuffix(lowerHost, ".localhost") || strings.Contains(lowerHost, "%") {
+		return fmt.Errorf("blocked private host %q", host)
+	}
+
+	if addr, err := netip.ParseAddr(host); err == nil {
+		addr = addr.Unmap()
+		if !addr.IsValid() || !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsMulticast() || addr.IsUnspecified() {
+			return fmt.Errorf("blocked private address %q", addr)
+		}
+		return nil
+	}
+
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return fmt.Errorf("resolve host %q: %w", host, err)
+	}
+	for _, item := range addrs {
+		if addr, ok := netip.AddrFromSlice(item.IP); ok {
+			addr = addr.Unmap()
+			if !addr.IsValid() || !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsMulticast() || addr.IsUnspecified() {
+				return fmt.Errorf("host %q resolved to blocked address %q", host, addr)
+			}
+		}
+	}
+	return nil
+}
+
+// validateBTNAPIDownloadURL applies public-address validation to a BTN API
+// DownloadURL, but permits a same-origin private URL when the caller explicitly
+// configured the API endpoint to that private origin. The same-origin exception
+// keeps local test servers usable without allowing arbitrary private redirects.
+func validateBTNAPIDownloadURL(ctx context.Context, apiURL string, rawURL string) error {
+	if err := validateBTNAPIURL(ctx, rawURL); err == nil {
+		return nil
+	} else if !sameOriginURL(apiURL, rawURL) {
+		return err
+	}
+	return nil
+}
+
+// sameOriginURL reports whether two HTTP(S) URLs have the same scheme and host.
+func sameOriginURL(first string, second string) bool {
+	firstURL, err := url.Parse(strings.TrimSpace(first))
+	if err != nil {
+		return false
+	}
+	secondURL, err := url.Parse(strings.TrimSpace(second))
+	if err != nil {
+		return false
+	}
+	scheme := strings.ToLower(secondURL.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return false
+	}
+	return strings.EqualFold(firstURL.Scheme, secondURL.Scheme) &&
+		strings.EqualFold(firstURL.Host, secondURL.Host) &&
+		firstURL.Host != ""
 }
