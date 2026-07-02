@@ -1107,6 +1107,85 @@ func printReleaseDetails(p preview, sourcePath string) {
 	}
 }
 
+func TestCheckRepositoryAllowsGenericCLIOutputNamesWithoutPathSource(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+
+	content := `package main
+
+import "fmt"
+
+func printDecision(candidate string, target string, output string, guessed string) {
+	selected := candidate
+	result := output
+	fmt.Printf("candidate=%s target=%s output=%s guessed=%s\n", selected, target, result, guessed)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "interactive.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryFlagsGenericCLIOutputNamesFromPathSources(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+
+	content := `package main
+
+import (
+	"fmt"
+	"path/filepath"
+)
+
+func printPath(root string) {
+	candidate := filepath.Join(root, "candidate")
+	target := candidate
+	output := target
+	guessed := output
+	fmt.Println(candidate)
+	fmt.Println(target)
+	fmt.Println(output)
+	fmt.Println(guessed)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "interactive.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 4 {
+		t.Fatalf("expected 4 violations, got %d: %#v", len(violations), violations)
+	}
+	for _, violation := range violations {
+		if !strings.Contains(violation.Message, "local filesystem path output") {
+			t.Fatalf("expected local path output violation, got %q", violation.Message)
+		}
+	}
+}
+
 func TestCheckRepositoryFlagsProjectLoggerWithoutCentralPathSanitization(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "logging"), 0o755); err != nil {

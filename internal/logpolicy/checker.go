@@ -712,11 +712,11 @@ func collectLocalPathVars(file *ast.File, aliases map[string]string) map[string]
 				if !ok || ident.Name == "_" {
 					continue
 				}
-				if isLocalPathIdentName(ident.Name) {
+				if index < len(typed.Rhs) && isLocalPathExpr(typed.Rhs[index], vars, aliases) {
 					vars[ident.Name] = struct{}{}
 					continue
 				}
-				if index < len(typed.Rhs) && isLocalPathExpr(typed.Rhs[index], vars, aliases) {
+				if isLocalPathIdentName(ident.Name) {
 					vars[ident.Name] = struct{}{}
 				}
 			}
@@ -2768,7 +2768,7 @@ func isLocalPathIdentName(name string) bool {
 		return false
 	}
 	switch lower {
-	case "tmpdir", "tmproot", "cachedir", "logdir", "output", "target", "candidate", "guessed":
+	case "tmpdir", "tmproot", "cachedir", "logdir":
 		return true
 	}
 	return strings.HasSuffix(lower, "path")
