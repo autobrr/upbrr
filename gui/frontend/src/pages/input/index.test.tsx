@@ -1,7 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { useState } from "react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { MetadataPreview, ReleaseNameEditState, ReleaseNameTouchedState } from "../../types";
@@ -123,5 +124,98 @@ describe("InputPage metadata progress", () => {
 
     expect(screen.getByText("Retry tracker data")).toBeInTheDocument();
     expect(screen.getByText("Running")).toBeInTheDocument();
+  });
+});
+
+describe("InputPage tracker selection", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("selects and deselects all configured trackers", () => {
+    function Harness() {
+      const [releasePageTrackerSelection, setReleasePageTrackerSelection] = useState<
+        Record<string, boolean>
+      >({
+        AITHER: true,
+        BLU: false,
+      });
+
+      return (
+        <InputPage
+          path="C:\\media\\Example.mkv"
+          handleSourcePathChange={vi.fn()}
+          sourcePathHistory={[]}
+          handleSourcePathHistorySelect={vi.fn()}
+          sourceLookupURL=""
+          setSourceLookupURL={vi.fn()}
+          browseAvailable={false}
+          handleBrowseFile={vi.fn()}
+          handleBrowseFolder={vi.fn()}
+          handleFetch={vi.fn()}
+          handleRefresh={vi.fn()}
+          handleResetMetadata={vi.fn()}
+          loading={false}
+          metadataResetting={false}
+          metadataProgressActive={false}
+          metadataProgressUpdates={[]}
+          error=""
+          preview={preview}
+          trackerUploadItems={[
+            { name: "AITHER", config: {} },
+            { name: "BLU", config: {} },
+          ]}
+          releasePageTrackerSelection={releasePageTrackerSelection}
+          setReleasePageTrackerSelection={setReleasePageTrackerSelection}
+          idEdits={{ tmdb: "", imdb: "", tvdb: "", tvmaze: "" }}
+          setIdEdits={vi.fn()}
+          releaseEdits={releaseEdits}
+          setReleaseEdits={vi.fn()}
+          markReleaseTouched={vi.fn<(key: keyof ReleaseNameTouchedState) => void>()}
+          idOverrideState={{ overrides: {}, dirty: false, invalid: false }}
+          releaseOverrideState={{ overrides: {}, dirty: false, invalid: false }}
+          showExternalIDInputUI={false}
+          refreshDisabled={false}
+          selectedProvider=""
+          setSelectedProvider={vi.fn()}
+          setLightboxImage={vi.fn()}
+          setLightboxAlt={vi.fn()}
+          runDebug={false}
+          setRunDebug={vi.fn()}
+          runLogLevel=""
+          setRunLogLevel={vi.fn()}
+          runLogLevelTouched={false}
+          setRunLogLevelTouched={vi.fn()}
+          trackerIconSrcByName={{}}
+        />
+      );
+    }
+
+    render(<Harness />);
+
+    expect(screen.getByText("1/2")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "AITHER" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByRole("checkbox", { name: "BLU" })).toHaveAttribute("aria-checked", "false");
+
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+
+    expect(screen.getByText("2/2")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "AITHER" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByRole("checkbox", { name: "BLU" })).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Deselect all" }));
+
+    expect(screen.getByText("0/2")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "AITHER" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    expect(screen.getByRole("checkbox", { name: "BLU" })).toHaveAttribute("aria-checked", "false");
   });
 });

@@ -1575,6 +1575,12 @@ export default function App() {
     setLiveCaptureLoading(false);
   }, [resetScreenshots, resetUploadState]);
 
+  /**
+   * Clears release-specific workflow state after the loaded release is no longer current.
+   *
+   * Input tracker selections are intentionally preserved so the next metadata fetch keeps the
+   * user's configured/default tracker choices.
+   */
   const resetFreshWorkflowState = useCallback(
     (nextActiveTab = "input") => {
       setPath("");
@@ -1633,7 +1639,6 @@ export default function App() {
       setTrackerDryRunPreview(emptyTrackerDryRun);
       setTrackerDryRunProgress(null);
       setTrackerQuestionnaireAnswers({});
-      setReleasePageTrackerSelection({});
       setRunDebug(false);
       setRunLogLevel(configuredRunLogLevel);
       setRunLogLevelTouched(false);

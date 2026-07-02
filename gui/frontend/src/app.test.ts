@@ -12,6 +12,8 @@ import type {
   DupeCheckSnapshot,
   DupeEntry,
   DupeMatch,
+  HistoryEntry,
+  HistoryOverview,
   MetadataPreview,
   ScreenshotPlan,
   TrackerUploadSnapshot,
@@ -65,6 +67,9 @@ type StartTrackerUpload = (...args: unknown[]) => Promise<string>;
 type RetryFailedTrackerUpload = (jobID: string) => Promise<string>;
 type CancelTrackerUpload = (jobID: string) => Promise<void>;
 type GetTrackerUploadSnapshot = (jobID: string) => Promise<TrackerUploadSnapshot>;
+type ListHistory = () => Promise<HistoryEntry[]>;
+type GetHistoryOverview = (sourcePath: string) => Promise<HistoryOverview>;
+type DeleteHistoryRelease = (sourcePath: string) => Promise<void>;
 
 const metadataPreview = (sourcePath: string): MetadataPreview => ({
   SourcePath: sourcePath,
@@ -209,6 +214,51 @@ const dupeCheckSnapshot = (sourcePath = "C:\\media\\Example"): DupeCheckSnapshot
   finishedAt: "2026-06-17T00:00:01Z",
 });
 
+const historyEntry = (sourcePath: string): HistoryEntry => ({
+  SourcePath: sourcePath,
+  ReleaseTitle: "Example Release",
+  ReleaseSource: "WEB",
+  ReleaseResolution: "1080p",
+  MetadataUpdatedAt: "2026-06-17T00:00:00Z",
+  LatestUploadStatus: "",
+  LatestUploadAt: "",
+  RuleFailureCount: 0,
+});
+
+const historyOverview = (sourcePath: string): HistoryOverview => ({
+  SourcePath: sourcePath,
+  ReleaseTitle: "Example Release",
+  ReleaseSource: "WEB",
+  ReleaseResolution: "1080p",
+  MetadataUpdatedAt: "2026-06-17T00:00:00Z",
+  LatestUploadStatus: "",
+  LatestUploadAt: "",
+  StatusLabel: "Stored",
+  Metadata: {},
+  ExternalIDs: metadataPreview(sourcePath).ExternalIDs,
+  ExternalMetadata: {},
+  ReleaseNameOverrides: {},
+  DescriptionOverride: {
+    SourcePath: sourcePath,
+    GroupKey: "",
+    Description: "",
+    UpdatedAt: "",
+  },
+  DescriptionOverrides: [],
+  PlaylistSelection: {
+    SourcePath: sourcePath,
+    SelectedPlaylists: [],
+    UseAll: false,
+    UpdatedAt: "",
+  },
+  TrackerMetadata: [],
+  TrackerRuleFailures: [],
+  Screenshots: [],
+  FinalSelections: [],
+  UploadedImages: [],
+  UploadHistory: [],
+});
+
 const installAppBridge = (
   fetchMetadata: FetchMetadata,
   options: {
@@ -224,6 +274,9 @@ const installAppBridge = (
     retryFailedTrackerUpload?: RetryFailedTrackerUpload;
     cancelTrackerUpload?: CancelTrackerUpload;
     getTrackerUploadSnapshot?: GetTrackerUploadSnapshot;
+    listHistory?: ListHistory;
+    getHistoryOverview?: GetHistoryOverview;
+    deleteHistoryRelease?: DeleteHistoryRelease;
   } = {},
 ) => {
   const storage = new Map<string, string>();
@@ -288,6 +341,10 @@ const installAppBridge = (
         GetTrackerUploadSnapshot:
           options.getTrackerUploadSnapshot ??
           (async (jobID: string) => trackerUploadSnapshot(jobID, "completed")),
+        ListHistory: options.listHistory ?? (async () => []),
+        GetHistoryOverview:
+          options.getHistoryOverview ?? (async (sourcePath: string) => historyOverview(sourcePath)),
+        DeleteHistoryRelease: options.deleteHistoryRelease ?? (async () => undefined),
       },
     },
   };
@@ -538,6 +595,47 @@ describe("metadata tracker payloads", () => {
     await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(3));
     expect(fetchMetadata.mock.calls[2][0]).toBe("C:\\media\\Other");
     expect(fetchMetadata.mock.calls[2][4]).toEqual(["BLU"]);
+  });
+
+  it("keeps input tracker selections after deleting the current history release", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    const deletedPath = "C:\\media\\Example";
+    const listHistory = vi
+      .fn<ListHistory>()
+      .mockResolvedValueOnce([historyEntry(deletedPath)])
+      .mockResolvedValue([]);
+    const deleteHistoryRelease = vi.fn<DeleteHistoryRelease>(async () => undefined);
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirm);
+    installAppBridge(fetchMetadata, {
+      listHistory,
+      getHistoryOverview: async (sourcePath) => historyOverview(sourcePath),
+      deleteHistoryRelease,
+    });
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: deletedPath },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+    await screen.findByText("2/2");
+
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    await screen.findByRole("button", { name: /Example Release/ });
+    fireEvent.click(await screen.findByRole("button", { name: "Remove from database" }));
+    await waitFor(() => expect(deleteHistoryRelease).toHaveBeenCalledWith(deletedPath));
+
+    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Other" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(2));
+    expect(fetchMetadata.mock.calls[1][4]).toEqual(["AITHER", "BLU"]);
+    await screen.findByText("2/2");
   });
 
   it("blocks metadata fetch when all selected trackers are filtered out", async () => {
