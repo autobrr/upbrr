@@ -249,7 +249,7 @@ func (s *Service) injectWatchFolder(ctx context.Context, name, folder, torrentPa
 	default:
 	}
 
-	s.logger.Infof("clients: copied torrent to watch folder %s", destPath)
+	s.logger.Infof("clients: copied torrent to watch folder path=%s", destPath)
 	return nil
 }
 
@@ -332,7 +332,7 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 			return fmt.Errorf("clients: %s qbit add torrent file: %w", name, err)
 		}
 
-		s.logger.Infof("clients: added torrent file to qbit client %s for %s", name, meta.SourcePath)
+		s.logger.Infof("clients: added torrent file to qbit client=%s tracker=%s source=%s", name, logTracker(torrent.Tracker), meta.SourcePath)
 		return nil
 	}
 
@@ -342,11 +342,19 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 			s.cleanupFailedLinkStaging(name, torrent.Tracker, staging)
 			return fmt.Errorf("clients: %s qbit add torrent URL: %w", name, err)
 		}
-		s.logger.Infof("clients: added tracker torrent URL to qbit client %s for %s", name, meta.SourcePath)
+		s.logger.Infof("clients: added tracker torrent URL to qbit client=%s tracker=%s source=%s", name, logTracker(torrent.Tracker), meta.SourcePath)
 		return nil
 	}
 
 	return internalerrors.ErrInvalidInput
+}
+
+func logTracker(tracker string) string {
+	tracker = strings.TrimSpace(tracker)
+	if tracker == "" {
+		return "none"
+	}
+	return tracker
 }
 
 // qbitInjectClientConfig preserves configured auth and TLS behavior while

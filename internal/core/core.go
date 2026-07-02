@@ -273,7 +273,7 @@ func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (result a
 		}
 	}
 
-	c.logger.Debugf("core: upload-only complete with %d uploaded", totalUploaded)
+	c.logger.Infof("core: upload-only complete uploaded=%d", totalUploaded)
 	return api.Result{UploadedCount: totalUploaded}, nil
 }
 
@@ -333,7 +333,7 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 				}
 			}
 		}
-		c.logger.Debugf("core: dry-run or debug enabled, skipping tracker upload")
+		c.logger.Infof("core: dry-run or debug enabled, skipping tracker upload source=%s", meta.SourcePath)
 		emitPreparedUploadProgress(ctx, req, meta.SourcePath, "", "upload", "completed", "Dry run complete")
 		return 0, nil
 	}
