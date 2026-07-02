@@ -848,7 +848,7 @@ func TestEnrichTrackerDataDeprioritizesBTNWhenKeepingImages(t *testing.T) {
 	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
 
 	meta := api.PreparedMetadata{
-		SourcePath: `D:\temp\Love.Through.A.Prism.S01.1080p.NF.WEB-DL.DDP5.1.DV.H.265-ppkhoa`,
+		SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026.S01.1080p.WEB-DL-GRP"),
 		TrackerIDs: map[string]string{
 			"btn": "2167358",
 			"bhd": "513053",
@@ -894,7 +894,7 @@ func TestEnrichTrackerDataKeepsBTNAsFallbackWhenKeepingImages(t *testing.T) {
 	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
 
 	meta := api.PreparedMetadata{
-		SourcePath: `D:\temp\Love.Through.A.Prism.S01.1080p.NF.WEB-DL.DDP5.1.DV.H.265-ppkhoa`,
+		SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026.S01.1080p.WEB-DL-GRP"),
 		TrackerIDs: map[string]string{
 			"btn": "2167358",
 			"bhd": "513053",

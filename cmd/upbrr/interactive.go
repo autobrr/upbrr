@@ -81,7 +81,7 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 		}
 		metadataPreview = preview
 
-		printMetadataPreview(preview)
+		printMetadataPreview(preview, currentOpts.Debug)
 		if currentOpts.Unattended && !currentOpts.UnattendedConfirm {
 			break
 		}
@@ -1106,9 +1106,12 @@ func isUnattendedNoConfirm(req api.Request) bool {
 	return req.Options.InteractionMode == api.InteractionModeUnattended
 }
 
-func printMetadataPreview(preview api.MetadataPreview) {
+func printMetadataPreview(preview api.MetadataPreview, debug bool) {
 	fmt.Println()
 	fmt.Println("Release details")
+	if debug {
+		fmt.Println("Debug mode: no actual tracker uploads will be processed.")
+	}
 	fmt.Printf("Source: %s\n", preview.SourcePath)
 	fmt.Printf("Upload name: %s\n", preview.ReleaseName)
 	if external := primaryMetadataPreview(preview); external != nil {

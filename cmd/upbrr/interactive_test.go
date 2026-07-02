@@ -928,7 +928,7 @@ func TestPromptTrackerDupeReviewGroupsUnattendedOutput(t *testing.T) {
 				Status:   "completed",
 				HasDupes: true,
 				Filtered: []api.DupeEntry{{
-					Name: "Avatar the Last Airbender 2024 S01 720p NF WEB-DL DD+ 5.1 Atmos H.264-Kitsune",
+					Name: "Example Release 2026 S01 720p WEB-DL H.264-ALT",
 					Link: "https://aither.cc/torrents/431991",
 				}},
 			},
@@ -943,7 +943,7 @@ func TestPromptTrackerDupeReviewGroupsUnattendedOutput(t *testing.T) {
 				Tracker: "OTW",
 				Status:  "completed",
 				Raw: []api.DupeEntry{{
-					Name: "Avatar The Last Airbender 2024 S01 2160p WEB-DL MULTi DD+ 5.1 Atmos H.265-SPWEB",
+					Name: "Example Release 2026 S01 2160p WEB-DL H.265-ALT2",
 					Link: "https://oldtoons.world/torrents/54225",
 				}},
 			},
@@ -952,7 +952,7 @@ func TestPromptTrackerDupeReviewGroupsUnattendedOutput(t *testing.T) {
 				Status:   "completed",
 				HasDupes: true,
 				Filtered: []api.DupeEntry{{
-					Name: "Avatar.The.Last.Airbender.S01.720p.NF.WEB-DL.DDP5.1.x264-LiTTLEBLUEMAN",
+					Name: "Example.Release.2026.S01.720p.WEB-DL.H264-OTHER",
 					Link: "https://www.morethantv.me/torrents.php?id=1112946&torrentid=1014650",
 				}},
 			},
@@ -991,9 +991,9 @@ func TestPromptTrackerDupeReviewGroupsUnattendedOutput(t *testing.T) {
 		"Skipping AITHER due to dupe/rule check result.",
 		"Skipping ANT due to dupe/rule check result.",
 		"rule check failed: category tv is not movie",
-		"Avatar the Last Airbender 2024 S01 720p NF WEB-DL DD+ 5.1 Atmos H.264-Kitsune",
-		"Avatar.The.Last.Airbender.S01.720p.NF.WEB-DL.DDP5.1.x264-LiTTLEBLUEMAN",
-		"Avatar The Last Airbender 2024 S01 2160p WEB-DL MULTi DD+ 5.1 Atmos H.265-SPWEB",
+		"Example Release 2026 S01 720p WEB-DL H.264-ALT",
+		"Example.Release.2026.S01.720p.WEB-DL.H264-OTHER",
+		"Example Release 2026 S01 2160p WEB-DL H.265-ALT2",
 	} {
 		if strings.Contains(output, notExpected) {
 			t.Fatalf("did not expect output %q in:\n%s", notExpected, output)
