@@ -731,6 +731,8 @@ type unattendedDupeReviewBlock struct {
 	tracker string
 }
 
+// printUnattendedDupeReviewSummary emits the compact no-prompt dupe summary and
+// returns only trackers that passed checks without requiring user confirmation.
 func printUnattendedDupeReviewSummary(resultByTracker map[string]api.DupeCheckResult, trackers []string) []string {
 	approved := make([]string, 0, len(trackers))
 	dupeBlocked := make([]unattendedDupeReviewBlock, 0)
@@ -773,6 +775,8 @@ func printUnattendedDupeReviewSummary(resultByTracker map[string]api.DupeCheckRe
 	return approved
 }
 
+// unattendedDupeBlockTrackers extracts tracker codes for grouped unattended
+// output; detailed rule and dupe lines stay out of no-prompt summaries.
 func unattendedDupeBlockTrackers(blocks []unattendedDupeReviewBlock) []string {
 	trackers := make([]string, 0, len(blocks))
 	for _, block := range blocks {
@@ -1125,6 +1129,8 @@ func isUnattendedNoConfirm(req api.Request) bool {
 	return req.Options.InteractionMode == api.InteractionModeUnattended
 }
 
+// printMetadataPreview writes the pre-upload confirmation details shown by the
+// CLI, including a debug-mode notice when tracker uploads will not run.
 func printMetadataPreview(preview api.MetadataPreview, debug bool) {
 	fmt.Println()
 	fmt.Println("Release details")
@@ -1343,6 +1349,8 @@ func printDryRunSummary(entry api.TrackerDryRunEntry) {
 	writeDryRunSummary(os.Stdout, entry)
 }
 
+// writeDryRunSummary writes the same safe dry-run summary as printDryRunSummary
+// to an arbitrary writer so debug payload sections can be grouped by content.
 func writeDryRunSummary(w io.Writer, entry api.TrackerDryRunEntry) {
 	if strings.TrimSpace(entry.Tracker) == "" {
 		return
@@ -1386,11 +1394,16 @@ func printDebugUploadReview(review api.UploadReview) {
 	}
 }
 
+// debugPayloadGroup represents one rendered debug payload body and the trackers
+// that share it.
 type debugPayloadGroup struct {
 	trackers []string
 	body     string
 }
 
+// groupDebugPayloads groups trackers by rendered debug payload text. Release
+// name changes are part of that text, so tracker-specific naming changes remain
+// in separate sections.
 func groupDebugPayloads(trackers []api.TrackerReview) []debugPayloadGroup {
 	groups := make([]debugPayloadGroup, 0, len(trackers))
 	groupByBody := make(map[string]int, len(trackers))
@@ -1409,6 +1422,8 @@ func groupDebugPayloads(trackers []api.TrackerReview) []debugPayloadGroup {
 	return groups
 }
 
+// renderDebugPayloadBody returns the exact body printed below a debug payload
+// header, excluding the tracker list header used for grouping.
 func renderDebugPayloadBody(tracker api.TrackerReview) string {
 	var builder strings.Builder
 	if tracker.Banned {
@@ -1420,6 +1435,8 @@ func renderDebugPayloadBody(tracker api.TrackerReview) string {
 	return builder.String()
 }
 
+// debugPayloadTrackerLabel normalizes the tracker label used in grouped debug
+// payload headers while preserving a visible placeholder for malformed entries.
 func debugPayloadTrackerLabel(tracker api.TrackerReview) string {
 	label := strings.TrimSpace(tracker.Tracker)
 	if label == "" {
@@ -1453,6 +1470,8 @@ func printDryRunDetails(entry api.TrackerDryRunEntry) {
 	writeDryRunDetails(os.Stdout, entry)
 }
 
+// writeDryRunDetails writes redacted dry-run files, payload fields, and
+// description summaries to an arbitrary writer.
 func writeDryRunDetails(w io.Writer, entry api.TrackerDryRunEntry) {
 	if len(entry.Files) > 0 {
 		fmt.Fprintln(w, "Files:")
@@ -1484,6 +1503,8 @@ func formatDryRunFilePath(value string) string {
 	return formatPathLabel(value)
 }
 
+// formatPathLabel keeps CLI output shareable by hiding ordinary local paths
+// while preserving app DB-relative tmp/cache/log paths from .upbrr onward.
 func formatPathLabel(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -1495,6 +1516,8 @@ func formatPathLabel(value string) string {
 	return "[local path]"
 }
 
+// dbRelativePathLabel returns the slash-normalized .upbrr/tmp, .upbrr/cache, or
+// .upbrr/logs suffix when a path is inside a known app DB subdirectory.
 func dbRelativePathLabel(value string) (string, bool) {
 	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), "\\", "/"))
 	original := strings.ReplaceAll(strings.TrimSpace(value), "\\", "/")
@@ -1509,6 +1532,8 @@ func dbRelativePathLabel(value string) (string, bool) {
 	return "", false
 }
 
+// trackerReleaseNameChangeLine returns the CLI-facing release-name change text,
+// or an empty string when the tracker did not apply a different upload name.
 func trackerReleaseNameChangeLine(entry api.TrackerDryRunEntry) string {
 	if !entry.ReleaseNameChanged {
 		return ""
@@ -1606,6 +1631,8 @@ func isSensitiveDryRunPayloadField(key string) bool {
 	return sensitive
 }
 
+// normalizedSensitiveDryRunPayloadKey removes separators before exact matching
+// so aliases like api_key and apiKey redact without treating keywords as key.
 func normalizedSensitiveDryRunPayloadKey(key string) string {
 	var builder strings.Builder
 	for _, r := range strings.ToLower(strings.TrimSpace(key)) {
@@ -1616,6 +1643,8 @@ func normalizedSensitiveDryRunPayloadKey(key string) string {
 	return builder.String()
 }
 
+// sensitiveDryRunPayloadKeys lists exact normalized dry-run payload field names
+// whose values must be suppressed instead of printed as previews.
 var sensitiveDryRunPayloadKeys = map[string]struct{}{
 	"anticsrftoken":        {},
 	"accesstoken":          {},

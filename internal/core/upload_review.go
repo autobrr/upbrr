@@ -624,6 +624,8 @@ func mapDupeResults(results []api.DupeCheckResult) map[string]api.DupeCheckResul
 	return mapped
 }
 
+// debugDupeSummaryCoversTrackers reports whether cached dupe-check results
+// already cover every tracker needed by a debug review.
 func debugDupeSummaryCoversTrackers(summary api.DupeCheckSummary, req api.Request, trackers []string) bool {
 	if !req.Options.Debug || len(summary.Results) == 0 || len(trackers) == 0 {
 		return false

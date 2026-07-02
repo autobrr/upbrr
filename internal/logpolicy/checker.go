@@ -471,6 +471,8 @@ func checkCLISensitiveOutputFile(fset *token.FileSet, root string, path string) 
 	return violations, nil
 }
 
+// checkTerminalSensitiveOutputFile scans command-style entrypoints for terminal
+// diagnostics that can expose raw errors, warnings, or unsafe path text.
 func checkTerminalSensitiveOutputFile(fset *token.FileSet, root string, path string) ([]Violation, error) {
 	file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 	if err != nil {
@@ -501,6 +503,8 @@ func checkTerminalSensitiveOutputFile(fset *token.FileSet, root string, path str
 	return violations, nil
 }
 
+// collectDryRunFileVars tracks range variables bound to dry-run file entries so
+// file.Path output can be required to pass through a path label formatter.
 func collectDryRunFileVars(file *ast.File) map[string]struct{} {
 	vars := make(map[string]struct{})
 	ast.Inspect(file, func(node ast.Node) bool {
@@ -522,6 +526,8 @@ func collectDryRunFileVars(file *ast.File) map[string]struct{} {
 	return vars
 }
 
+// collectLocalPathVars tracks identifiers that likely contain host filesystem
+// paths, including values derived from filepath and app DB path helpers.
 func collectLocalPathVars(file *ast.File, aliases map[string]string) map[string]struct{} {
 	vars := make(map[string]struct{})
 	ast.Inspect(file, func(node ast.Node) bool {
@@ -818,6 +824,8 @@ func checkSensitiveOutputFile(fset *token.FileSet, root string, path string, tes
 	return violations, nil
 }
 
+// checkSensitiveOutputParsed runs the sensitive-value visitor after import
+// aliases and inline allow directives have been collected for the file.
 func checkSensitiveOutputParsed(fset *token.FileSet, relPath string, file *ast.File, aliases map[string]string, allows map[int]*logpolicyAllow, testFile bool) []Violation {
 	violations := make([]Violation, 0)
 	for _, decl := range file.Decls {
@@ -845,6 +853,8 @@ func checkSensitiveOutputParsed(fset *token.FileSet, relPath string, file *ast.F
 	return violations
 }
 
+// unusedLogpolicyAllowViolations reports suppressions that did not match an
+// active finding, keeping allow comments tied to current checker output.
 func unusedLogpolicyAllowViolations(fset *token.FileSet, relPath string, allows map[int]*logpolicyAllow) []Violation {
 	violations := make([]Violation, 0)
 	for _, allow := range allows {
@@ -2304,6 +2314,8 @@ func isTerminalStderrOutputCall(call *ast.CallExpr, aliases map[string]string) b
 	return ok && aliases[pkg.Name] == "os"
 }
 
+// isUnsafeTerminalDiagnosticArg reports stderr diagnostic args that include raw
+// errors or warning text without a recognized sanitizer.
 func isUnsafeTerminalDiagnosticArg(format string, expr ast.Expr, aliases map[string]string) bool {
 	if isSafeTerminalDiagnosticExpr(expr, aliases) {
 		return false
@@ -2317,6 +2329,8 @@ func isUnsafeTerminalDiagnosticArg(format string, expr ast.Expr, aliases map[str
 	return false
 }
 
+// containsRawTerminalDiagnosticExpr detects error-like values while respecting
+// sanitizer calls nested inside larger diagnostic expressions.
 func containsRawTerminalDiagnosticExpr(expr ast.Expr, aliases map[string]string) bool {
 	if isSafeTerminalDiagnosticExpr(expr, aliases) {
 		return false
@@ -2396,6 +2410,8 @@ func isSafeTerminalDiagnosticExpr(expr ast.Expr, aliases map[string]string) bool
 	}
 }
 
+// fmtOutputArgs returns only user-visible fmt arguments, excluding writers and
+// format strings according to the specific print method.
 func fmtOutputArgs(call *ast.CallExpr) []ast.Expr {
 	if call == nil || len(call.Args) == 0 {
 		return nil
@@ -2469,6 +2485,8 @@ func isDryRunEndpointExprNode(node ast.Node) bool {
 	return ok && selector.Sel.Name == "Endpoint"
 }
 
+// containsLocalPathOutputExpr reports output expressions that include likely
+// local filesystem paths not wrapped by an approved path-label formatter.
 func containsLocalPathOutputExpr(expr ast.Expr, localPathVars map[string]struct{}, aliases map[string]string) bool {
 	found := false
 	ast.Inspect(expr, func(node ast.Node) bool {
@@ -2517,6 +2535,8 @@ func isSafeLocalPathOutputCall(call *ast.CallExpr, aliases map[string]string) bo
 	}
 }
 
+// isLocalPathExpr recognizes host filesystem path expressions while avoiding
+// URL, URI, route, and endpoint names.
 func isLocalPathExpr(expr ast.Expr, localPathVars map[string]struct{}, aliases map[string]string) bool {
 	switch typed := expr.(type) {
 	case *ast.Ident:
@@ -2866,6 +2886,8 @@ func traceLevelHygieneViolations(lowerFormat string) []string {
 	return nil
 }
 
+// workflowLogSummary records structural signals used to decide whether a
+// function is workflow-like enough to require progress and decision logging.
 type workflowLogSummary struct {
 	fn                     *ast.FuncDecl
 	explicitLoggerParam    bool
@@ -2885,6 +2907,8 @@ type workflowLogSummary struct {
 	nodeCount              int
 }
 
+// workflowLogViolation stores a workflow logging finding before allow-comment
+// filtering is applied at the source position.
 type workflowLogViolation struct {
 	pos     token.Pos
 	message string

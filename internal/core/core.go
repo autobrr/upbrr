@@ -2181,6 +2181,8 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 	return api.TrackerDryRunPreview{SourcePath: meta.SourcePath, Trackers: entries}, nil
 }
 
+// injectTrackerDryRunTorrents injects only ready dry-run tracker torrents into
+// configured clients so debug runs can exercise client handling without upload.
 func (c *Core) injectTrackerDryRunTorrents(ctx context.Context, req api.Request, meta api.PreparedMetadata, entries []api.TrackerDryRunEntry, fallback api.TorrentResult) error {
 	ready := make([]api.TrackerDryRunEntry, 0, len(entries))
 	for _, entry := range entries {
@@ -2223,6 +2225,9 @@ func (c *Core) injectTrackerDryRunTorrents(ctx context.Context, req api.Request,
 	return nil
 }
 
+// prepareDryRunInjectionMeta returns metadata pointing at the tracker-specific
+// dry-run torrent artifact when one exists, preserving the base torrent as a
+// fallback for client injection.
 func (c *Core) prepareDryRunInjectionMeta(meta api.PreparedMetadata, trackerName string, torrentPath string) (api.PreparedMetadata, error) {
 	injectMeta := meta
 	if trimmed := strings.TrimSpace(torrentPath); trimmed != "" {
@@ -2242,6 +2247,8 @@ func (c *Core) prepareDryRunInjectionMeta(meta api.PreparedMetadata, trackerName
 	return prepared, nil
 }
 
+// trackerDryRunTorrentPath returns the present torrent file path advertised by
+// a dry-run payload, ignoring other upload file fields.
 func trackerDryRunTorrentPath(entry api.TrackerDryRunEntry) string {
 	for _, file := range entry.Files {
 		if strings.EqualFold(strings.TrimSpace(file.Field), "torrent") && file.Present {
@@ -2251,6 +2258,8 @@ func trackerDryRunTorrentPath(entry api.TrackerDryRunEntry) string {
 	return ""
 }
 
+// annotateDryRunReleaseNames records whether each tracker-specific dry-run
+// upload name differs from the prepared release name.
 func annotateDryRunReleaseNames(meta api.PreparedMetadata, entries []api.TrackerDryRunEntry) {
 	original := strings.TrimSpace(meta.ReleaseName)
 	if original == "" {
@@ -4673,6 +4682,9 @@ func requestPreparedMetaTrackersRemove(meta api.PreparedMetadata, req api.Reques
 	return mergeTrackerRemovals(remove, matched)
 }
 
+// trackerResolutionRemoveForRequest returns the tracker removal set for final
+// tracker resolution. Debug mode ignores prepared block state so artifact and
+// client dry-runs can still cover all requested trackers.
 func trackerResolutionRemoveForRequest(meta api.PreparedMetadata, req api.Request) []string {
 	if req.Options.Debug {
 		return mergeTrackerRemovals(nil, req.TrackersRemove)
@@ -4680,6 +4692,8 @@ func trackerResolutionRemoveForRequest(meta api.PreparedMetadata, req api.Reques
 	return meta.TrackersRemove
 }
 
+// trackerDebugProcessingMeta clears rule and dupe block state for debug-mode
+// artifact generation while leaving normal upload processing unchanged.
 func trackerDebugProcessingMeta(meta api.PreparedMetadata, req api.Request) api.PreparedMetadata {
 	if !req.Options.Debug {
 		return meta

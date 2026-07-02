@@ -646,6 +646,10 @@ func (a *App) FetchPreparation(path string, overrides api.ExternalIDOverrides, n
 	return wrapGUIResult(a.currentCore().FetchPreparationPreview(progressCtx, req))
 }
 
+// FetchTrackerDryRun builds tracker upload payload previews for a GUI-selected
+// path. It seeds a run-scoped core snapshot, emits upload/BDInfo progress
+// events, and rejects on missing paths, run-option errors, preparation errors,
+// or dry-run build failures.
 func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (preview api.TrackerDryRunPreview, err error) {
 	defer func() {
 		if err != nil {

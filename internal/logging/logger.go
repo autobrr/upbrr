@@ -241,7 +241,9 @@ func (l *Logger) logf(level Level, label string, format string, args ...any) {
 }
 
 // SanitizeMessage replaces local filesystem paths in user-shareable log or
-// terminal output with stable labels.
+// terminal output with stable labels. Paths under known app DB tmp/cache/log
+// directories keep only their .upbrr-relative suffix; other local paths become
+// [local path].
 func SanitizeMessage(message string) string {
 	if strings.TrimSpace(message) == "" {
 		return message
@@ -331,6 +333,8 @@ func localPathLogLabel(value string) string {
 	return "[local path]"
 }
 
+// dbRelativePathLabel keeps the app DB subdirectory and basename context while
+// stripping the user-specific filesystem prefix.
 func dbRelativePathLabel(value string) (string, bool) {
 	trimmed := strings.TrimSpace(value)
 	normalized := strings.ToLower(strings.ReplaceAll(trimmed, "\\", "/"))

@@ -53,6 +53,7 @@ func main() {
 	}
 }
 
+// printTerminalError writes a sanitized CLI error diagnostic to stderr.
 func printTerminalError(err error) {
 	if err == nil {
 		return
@@ -60,6 +61,7 @@ func printTerminalError(err error) {
 	fmt.Fprintf(os.Stderr, "error: %s\n", logging.SanitizeMessage(err.Error()))
 }
 
+// printTerminalWarning writes a sanitized CLI warning diagnostic to stderr.
 func printTerminalWarning(warning string) {
 	fmt.Fprintf(os.Stderr, "warning: %s\n", logging.SanitizeMessage(warning))
 }
@@ -1219,6 +1221,8 @@ func cliHasExternalIDOverrides(overrides api.ExternalIDOverrides) bool {
 		overrides.MALID != nil
 }
 
+// buildCLIUploadDebugReviews builds one review per original CLI source path,
+// preserving the original display path while using any prepared resolved path.
 func buildCLIUploadDebugReviews(ctx context.Context, coreSvc api.Core, sourcePaths []string, uploadReq api.Request) ([]api.UploadReview, error) {
 	reviews := make([]api.UploadReview, 0, len(sourcePaths))
 	for idx, sourcePath := range sourcePaths {
