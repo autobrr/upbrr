@@ -36,7 +36,7 @@ func TestLoggerSanitizesLocalPaths(t *testing.T) {
 	}
 	logger.SetConsoleOutput(&stdout, &stderr)
 
-	logger.Debugf("source=%s artifact=%s tracker=%s", `D:\media\Example.Release.2026-GRP`, `C:\Users\Tester\.upbrr\tmp\Example.Release.2026-GRP\file.torrent`, "ABC")
+	logger.Debugf("source=%s artifact=%s tracker=%s", `D:\media\Example.Release.2026-GRP`, `C:\Users\Tester\.upbrr\tmp\file.torrent`, "ABC")
 
 	console := stdout.String()
 	for _, leaked := range []string{`D:\media`, `C:\Users`, "Example.Release.2026-GRP"} {
@@ -44,7 +44,7 @@ func TestLoggerSanitizesLocalPaths(t *testing.T) {
 			t.Fatalf("expected console log to redact local path details")
 		}
 	}
-	for _, expected := range []string{"source=[local path]", "artifact=[db tmp]", "tracker=ABC"} {
+	for _, expected := range []string{"source=[local path]", "artifact=.upbrr/tmp/file.torrent", "tracker=ABC"} {
 		if !strings.Contains(console, expected) {
 			t.Fatalf("expected console log to contain %q, got %q", expected, console)
 		}
@@ -57,7 +57,7 @@ func TestLoggerSanitizesLocalPaths(t *testing.T) {
 	if strings.Contains(recent[0].Message, `D:\media`) || strings.Contains(recent[0].Message, "Example.Release.2026-GRP") {
 		t.Fatalf("expected buffered log to redact local path details")
 	}
-	if !strings.Contains(recent[0].Message, "source=[local path] artifact=[db tmp] tracker=ABC") {
+	if !strings.Contains(recent[0].Message, "source=[local path] artifact=.upbrr/tmp/file.torrent tracker=ABC") {
 		t.Fatalf("unexpected buffered log message: %q", recent[0].Message)
 	}
 }
@@ -71,7 +71,7 @@ func TestSanitizeLogMessageHandlesUnixLocalPaths(t *testing.T) {
 			t.Fatalf("expected sanitized message to redact %q from %q", leaked, got)
 		}
 	}
-	for _, expected := range []string{"cache=[db cache]", "source=[local path]", "tracker=ABC"} {
+	for _, expected := range []string{"cache=.upbrr/cache/banned/file.json", "source=[local path]", "tracker=ABC"} {
 		if !strings.Contains(got, expected) {
 			t.Fatalf("expected sanitized message to contain %q, got %q", expected, got)
 		}

@@ -1028,31 +1028,37 @@ func TestPrintDryRunDetails(t *testing.T) {
 			entry: api.TrackerDryRunEntry{
 				Endpoint: "https://tracker.test/upload",
 				Files: []api.TrackerDryRunFile{
-					{Field: "torrent", Path: "C:\\tmp\\file.torrent", Present: true},
+					{Field: "torrent", Path: "C:\\Users\\Tester\\.upbrr\\tmp\\file.torrent", Present: true},
 					{Field: "nfo", Path: "", Present: false},
 				},
 				Payload: map[string]string{
 					"category":    "MOVIE",
 					"description": "line 1\nline 2",
+					"keywords":    "movie, webdl",
 					"mediainfo":   "General\nComplete name: Movie.2024.mkv",
 					"name":        "Movie.2024",
+					"passkey":     "secret-passkey",
 				},
 				Description: "line 1\nline 2",
 			},
 			contains: []string{
 				"Files:",
-				"- torrent [present]: [local path]",
+				"- torrent [present]: .upbrr/tmp/file.torrent",
 				"- nfo [missing]: (none)",
 				"Payload:",
 				"- category: MOVIE",
 				"- description: [13 bytes, 2 lines omitted]",
+				"- keywords: movie, webdl",
 				"- mediainfo: [37 bytes, 2 lines omitted]",
 				"- name: Movie.2024",
+				"- passkey: [REDACTED]",
 			},
 			notContains: []string{
+				"C:\\Users\\Tester",
 				"Endpoint:",
 				"https://tracker.test/upload",
 				"line 1\nline 2",
+				"secret-passkey",
 				"General\nComplete name",
 			},
 		},
@@ -1091,6 +1097,7 @@ func TestPrintDryRunDetailsRedactsSensitiveEndpointAndPayload(t *testing.T) {
 			Payload: map[string]string{
 				"api_key":  "secret-key",
 				"auth":     "secret-auth",
+				"keywords": "movie, webdl",
 				"name":     "Movie.2024",
 				"passkey":  "secret-pass",
 				"announce": "https://tracker.test/announce?passkey=secret-pass",
@@ -1106,6 +1113,7 @@ func TestPrintDryRunDetailsRedactsSensitiveEndpointAndPayload(t *testing.T) {
 	for _, expected := range []string{
 		"- api_key: [REDACTED]",
 		"- auth: [REDACTED]",
+		"- keywords: movie, webdl",
 		"- name: Movie.2024",
 		"- passkey: [REDACTED]",
 		"- announce: https://tracker.test/announce?passkey=[REDACTED]",
@@ -1116,6 +1124,36 @@ func TestPrintDryRunDetailsRedactsSensitiveEndpointAndPayload(t *testing.T) {
 	}
 	if strings.Contains(output, "Endpoint:") {
 		t.Fatalf("expected endpoint to be omitted from dry-run details")
+	}
+}
+
+func TestFormatPathLabelKeepsDBRelativePath(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "windows db tmp path",
+			input: `C:\Users\Tester\.upbrr\tmp\file.torrent`,
+			want:  ".upbrr/tmp/file.torrent",
+		},
+		{
+			name:  "unix db cache path",
+			input: "/home/tester/.upbrr/cache/banned/file.json",
+			want:  ".upbrr/cache/banned/file.json",
+		},
+		{
+			name:  "outside db path",
+			input: `D:\media\Example.Release.2026-GRP`,
+			want:  "[local path]",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatPathLabel(tt.input); got != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, got)
+			}
+		})
 	}
 }
 

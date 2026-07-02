@@ -325,17 +325,25 @@ func isLogFieldNameChar(ch byte) bool {
 }
 
 func localPathLogLabel(value string) string {
-	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), "\\", "/"))
-	switch {
-	case strings.Contains(normalized, "/.upbrr/tmp/"):
-		return "[db tmp]"
-	case strings.Contains(normalized, "/.upbrr/cache/"):
-		return "[db cache]"
-	case strings.Contains(normalized, "/.upbrr/logs/"):
-		return "[db logs]"
-	default:
-		return "[local path]"
+	if label, ok := dbRelativePathLabel(value); ok {
+		return label
 	}
+	return "[local path]"
+}
+
+func dbRelativePathLabel(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	normalized := strings.ToLower(strings.ReplaceAll(trimmed, "\\", "/"))
+	original := strings.ReplaceAll(trimmed, "\\", "/")
+	for _, marker := range []string{".upbrr/tmp/", ".upbrr/cache/", ".upbrr/logs/"} {
+		if strings.HasPrefix(normalized, marker) {
+			return original, true
+		}
+		if index := strings.Index(normalized, "/"+marker); index >= 0 {
+			return original[index+1:], true
+		}
+	}
+	return "", false
 }
 
 func (l *Logger) record(label string, message string) {

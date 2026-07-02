@@ -1444,30 +1444,24 @@ func formatPathLabel(value string) string {
 	if trimmed == "" {
 		return "(none)"
 	}
-	switch {
-	case isPathUnderAppSubdir(trimmed, "tmp"):
-		return "[db tmp]"
-	case isPathUnderAppSubdir(trimmed, "cache"):
-		return "[db cache]"
-	case isPathUnderAppSubdir(trimmed, "logs"):
-		return "[db logs]"
-	default:
-		return "[local path]"
+	if label, ok := dbRelativePathLabel(trimmed); ok {
+		return label
 	}
+	return "[local path]"
 }
 
-func isPathUnderAppSubdir(value string, subdir string) bool {
+func dbRelativePathLabel(value string) (string, bool) {
 	normalized := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), "\\", "/"))
-	switch strings.ToLower(strings.TrimSpace(subdir)) {
-	case "tmp":
-		return strings.Contains(normalized, "/.upbrr/tmp/")
-	case "cache":
-		return strings.Contains(normalized, "/.upbrr/cache/")
-	case "logs":
-		return strings.Contains(normalized, "/.upbrr/logs/")
-	default:
-		return false
+	original := strings.ReplaceAll(strings.TrimSpace(value), "\\", "/")
+	for _, marker := range []string{".upbrr/tmp/", ".upbrr/cache/", ".upbrr/logs/"} {
+		if strings.HasPrefix(normalized, marker) {
+			return original, true
+		}
+		if index := strings.Index(normalized, "/"+marker); index >= 0 {
+			return original[index+1:], true
+		}
 	}
+	return "", false
 }
 
 func trackerReleaseNameChangeLine(entry api.TrackerDryRunEntry) string {
@@ -1563,13 +1557,52 @@ func normalizedDryRunPayloadKey(key string) string {
 // isSensitiveDryRunPayloadField reports whether a dry-run payload key should
 // suppress its value entirely instead of showing a redacted preview.
 func isSensitiveDryRunPayloadField(key string) bool {
-	normalized := normalizedDryRunPayloadKey(key)
-	for sensitive := range redaction.DefaultSensitiveKeys {
-		if strings.Contains(normalized, sensitive) {
-			return true
+	_, sensitive := sensitiveDryRunPayloadKeys[normalizedSensitiveDryRunPayloadKey(key)]
+	return sensitive
+}
+
+func normalizedSensitiveDryRunPayloadKey(key string) string {
+	var builder strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(key)) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			builder.WriteRune(r)
 		}
 	}
-	return false
+	return builder.String()
+}
+
+var sensitiveDryRunPayloadKeys = map[string]struct{}{
+	"anticsrftoken":        {},
+	"accesstoken":          {},
+	"apikey":               {},
+	"apitoken":             {},
+	"auth":                 {},
+	"authorization":        {},
+	"authkey":              {},
+	"authtoken":            {},
+	"cookie":               {},
+	"csrf":                 {},
+	"email":                {},
+	"infohash":             {},
+	"key":                  {},
+	"passkey":              {},
+	"password":             {},
+	"passwordconfirm":      {},
+	"passwordconfirmation": {},
+	"popcron":              {},
+	"refreshtoken":         {},
+	"rsskey":               {},
+	"secret":               {},
+	"secretkey":            {},
+	"sessionkey":           {},
+	"sessiontoken":         {},
+	"token":                {},
+	"torrentpass":          {},
+	"torrentpasskey":       {},
+	"uid":                  {},
+	"user":                 {},
+	"userid":               {},
+	"username":             {},
 }
 
 func promptYesNo(reader *bufio.Reader, prompt string, defaultYes bool) (bool, error) {
