@@ -1932,6 +1932,8 @@ func isAllUpperEditionWord(value string) bool {
 	return hasLetter
 }
 
+// cleanEditionText normalizes parser-derived edition text and drops filename
+// tokens that are not meaningful release-name editions.
 func cleanEditionText(edition string) string {
 	edition = strings.TrimSpace(strings.ReplaceAll(edition, ",", " "))
 	if edition == "" {
@@ -1949,10 +1951,11 @@ func cleanEditionText(edition string) string {
 		edition = "Extended"
 	}
 	edition = editionBadTokenPattern.ReplaceAllString(edition, "")
-	edition = editionWhitespacePattern.ReplaceAllString(edition, " ")
-	return strings.TrimSpace(edition)
+	return cleanEditionResidue(edition)
 }
 
+// cleanIMDbEditionText normalizes IMDb runtime edition attributes while
+// preserving IMDb-specific labels that the parser cleanup would otherwise drop.
 func cleanIMDbEditionText(edition string) string {
 	edition = strings.TrimSpace(strings.ReplaceAll(edition, ",", " "))
 	if edition == "" {
@@ -1969,7 +1972,14 @@ func cleanIMDbEditionText(edition string) string {
 	if strings.Contains(lower, "extended") && !strings.Contains(lower, "in1") && !strings.Contains(edition, "/") {
 		edition = "Extended"
 	}
+	return cleanEditionResidue(edition)
+}
+
+// cleanEditionResidue removes separator-only leftovers after edition token
+// cleanup, such as ". ." from stripped "Limited.Edition" markers.
+func cleanEditionResidue(edition string) string {
 	edition = editionWhitespacePattern.ReplaceAllString(edition, " ")
+	edition = strings.Trim(edition, " ._-+/()[]{}")
 	return strings.TrimSpace(edition)
 }
 

@@ -277,6 +277,31 @@ func TestEditionFromMetaExtractsRepackAndCleansEdition(t *testing.T) {
 	}
 }
 
+func TestEditionFromMetaDropsPunctuationOnlyEditionResidue(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Release: api.ReleaseInfo{Edition: []string{"Limited.Edition", "Limited.Edition"}},
+	}
+
+	edition, repack := editionFromMeta(meta, mediaInfoDoc{})
+	if edition != "" {
+		t.Fatalf("expected punctuation-only edition residue to be dropped, got %q", edition)
+	}
+	if repack != "" {
+		t.Fatalf("expected no repack, got %q", repack)
+	}
+}
+
+func TestEditionFromMetaTrimsPunctuationAroundKeptEdition(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Release: api.ReleaseInfo{Edition: []string{"Limited.Edition", "Extended.Edition"}},
+	}
+
+	edition, _ := editionFromMeta(meta, mediaInfoDoc{})
+	if edition != "Extended" {
+		t.Fatalf("expected punctuation around kept edition to be trimmed, got %q", edition)
+	}
+}
+
 func TestEditionFromMetaStripsRepackAliasesFromEdition(t *testing.T) {
 	meta := api.PreparedMetadata{
 		Release: api.ReleaseInfo{Edition: []string{"Director's", "Cut", "V3"}},
