@@ -75,10 +75,11 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 
 	signature := overrideSignature(singleReq.ExternalIDOverrides, singleReq.ReleaseNameOverrides, singleReq.MetadataOverrides, singleReq.TrackerConfigOverrides, singleReq.TrackerSiteOverrides, singleReq.ClientOverrides, singleReq.TorrentOverrides, singleReq.ImageHostOverrides, singleReq.ScreenshotOverrides)
 	var (
-		baseMeta   api.PreparedMetadata
-		baseMetaOK bool
-		meta       api.PreparedMetadata
-		ok         bool
+		baseMeta               api.PreparedMetadata
+		baseMetaOK             bool
+		cachedDebugDupeSummary api.DupeCheckSummary
+		meta                   api.PreparedMetadata
+		ok                     bool
 	)
 	if req.Mode == api.ModeGUI {
 		entry, _, found := c.lookupGUICachedMetaEntry(singleReq, uniquePaths[0])
@@ -99,9 +100,11 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 			}
 		}
 	} else {
-		meta, ok = c.getDupeCache(uniquePaths[0], signature)
-		if ok {
-			meta, err = c.applyRequestToCachedPreparedMeta(ctx, meta, singleReq)
+		entry, _, found := c.lookupGUICachedMetaEntry(singleReq, uniquePaths[0])
+		if found {
+			ok = true
+			cachedDebugDupeSummary = deepCopyDupeCheckSummary(entry.dupeSummary)
+			meta, err = c.applyRequestToCachedPreparedMeta(ctx, entry.meta, singleReq)
 			if err != nil {
 				return api.UploadReview{}, err
 			}
@@ -140,11 +143,16 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 			}
 		}
 	} else {
-		summary, err := c.services.Dupes.Check(ctx, meta, resolvedTrackers)
-		if err != nil {
-			return api.UploadReview{}, fmt.Errorf("core: %w", err)
+		var summary api.DupeCheckSummary
+		if debugDupeSummaryCoversTrackers(cachedDebugDupeSummary, singleReq, resolvedTrackers) {
+			summary = cachedDebugDupeSummary
+		} else {
+			summary, err = c.services.Dupes.Check(ctx, meta, resolvedTrackers)
+			if err != nil {
+				return api.UploadReview{}, fmt.Errorf("core: %w", err)
+			}
+			summary = appendPathedDupeResults(summary, meta.MatchedTrackers)
 		}
-		summary = appendPathedDupeResults(summary, meta.MatchedTrackers)
 		applyDupeSummaryToPreparedMeta(&meta, summary)
 		meta.BlockedTrackers = removeTrackerBlockReasonForTrackers(meta.BlockedTrackers, api.TrackerBlockReasonDupe, singleReq.IgnoreDupesFor)
 		meta.CrossSeedTorrents = removeCrossSeedTorrentsForTrackers(meta.CrossSeedTorrents, singleReq.IgnoreDupesFor)
@@ -242,10 +250,10 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 }
 
 // resolveUploadReviewTrackers applies GUI replacement semantics while allowing
-// non-GUI review flows to include or fall back to configured defaults unless
-// site upload pins one tracker.
+// non-debug, non-GUI review flows to include or fall back to configured defaults
+// unless site upload pins one tracker.
 func (c *Core) resolveUploadReviewTrackers(req api.Request, meta api.PreparedMetadata) ([]string, bool) {
-	includeDefaults := req.Mode != api.ModeGUI && strings.TrimSpace(req.Execution.SiteUploadTracker) == ""
+	includeDefaults := req.Mode != api.ModeGUI && strings.TrimSpace(req.Execution.SiteUploadTracker) == "" && !req.Options.Debug
 	remove := trackerResolutionRemoveForRequest(meta, req)
 	if req.Mode == api.ModeGUI && len(req.Trackers) > 0 && len(meta.MatchedTrackers) > 0 {
 		reviewedMatchedTrackers := make([]string, 0, len(req.Trackers))
@@ -614,6 +622,80 @@ func mapDupeResults(results []api.DupeCheckResult) map[string]api.DupeCheckResul
 		}
 	}
 	return mapped
+}
+
+func debugDupeSummaryCoversTrackers(summary api.DupeCheckSummary, req api.Request, trackers []string) bool {
+	if !req.Options.Debug || len(summary.Results) == 0 || len(trackers) == 0 {
+		return false
+	}
+
+	covered := make(map[string]struct{}, len(summary.Results))
+	for _, result := range summary.Results {
+		resultTrackers := splitTrackerLabel(result.Tracker)
+		if len(resultTrackers) == 0 {
+			name := strings.ToUpper(strings.TrimSpace(result.Tracker))
+			if name != "" {
+				covered[name] = struct{}{}
+			}
+			continue
+		}
+		for _, tracker := range resultTrackers {
+			covered[tracker] = struct{}{}
+		}
+	}
+	for _, tracker := range trackers {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name == "" {
+			continue
+		}
+		if _, ok := covered[name]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func deepCopyDupeCheckSummary(summary api.DupeCheckSummary) api.DupeCheckSummary {
+	copied := summary
+	copied.Notes = append([]string(nil), summary.Notes...)
+	if len(summary.Results) == 0 {
+		copied.Results = nil
+		return copied
+	}
+	copied.Results = make([]api.DupeCheckResult, len(summary.Results))
+	for idx, result := range summary.Results {
+		copied.Results[idx] = deepCopyDupeCheckResult(result)
+	}
+	return copied
+}
+
+func deepCopyDupeCheckResult(result api.DupeCheckResult) api.DupeCheckResult {
+	copied := result
+	copied.Raw = deepCopyDupeEntries(result.Raw)
+	copied.Filtered = deepCopyDupeEntries(result.Filtered)
+	copied.Match = deepCopyDupeMatch(result.Match)
+	copied.Notes = append([]string(nil), result.Notes...)
+	copied.SkipRules = append([]string(nil), result.SkipRules...)
+	return copied
+}
+
+func deepCopyDupeEntries(entries []api.DupeEntry) []api.DupeEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	copied := make([]api.DupeEntry, len(entries))
+	for idx, entry := range entries {
+		copied[idx] = entry
+		copied[idx].Files = append([]string(nil), entry.Files...)
+		copied[idx].Flags = append([]string(nil), entry.Flags...)
+	}
+	return copied
+}
+
+func deepCopyDupeMatch(match api.DupeMatch) api.DupeMatch {
+	copied := match
+	copied.MatchedEpisodeIDs = append([]api.DupeEpisodeMatch(nil), match.MatchedEpisodeIDs...)
+	return copied
 }
 
 func cloneTrackerQuestionnaireAnswers(input map[string]map[string]string) map[string]map[string]string {

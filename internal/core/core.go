@@ -54,6 +54,7 @@ type Core struct {
 
 type dupeCacheEntry struct {
 	meta             api.PreparedMetadata
+	dupeSummary      api.DupeCheckSummary
 	signature        string
 	updatedAt        time.Time
 	requestRefreshed bool
@@ -548,7 +549,7 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (summary api.Dup
 			}
 			summary = appendPathedDupeResults(summary, matchedTrackers)
 			applyDupeSummaryToPreparedMeta(&cached, summary)
-			c.storeRefreshedDupeCache(cached.SourcePath, overrideSignature(cached.ExternalIDOverrides, cached.ReleaseNameOverrides, cached.MetadataOverrides, cached.TrackerConfigOverrides, cached.TrackerSiteOverrides, cached.ClientOverrides, cached.TorrentOverrides, cached.ImageHostOverrides, cached.ScreenshotOverrides), cached)
+			c.storeRefreshedDupeCacheWithDupeSummary(cached.SourcePath, overrideSignature(cached.ExternalIDOverrides, cached.ReleaseNameOverrides, cached.MetadataOverrides, cached.TrackerConfigOverrides, cached.TrackerSiteOverrides, cached.ClientOverrides, cached.TorrentOverrides, cached.ImageHostOverrides, cached.ScreenshotOverrides), cached, summary)
 			return summary, nil
 		}
 		if req.Mode == api.ModeGUI {
@@ -673,7 +674,7 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (summary api.Dup
 	}
 	summary = appendPathedDupeResults(summary, matchedTrackers)
 	applyDupeSummaryToPreparedMeta(&meta, summary)
-	c.storeRefreshedDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
+	c.storeRefreshedDupeCacheWithDupeSummary(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta, summary)
 	return summary, nil
 }
 
@@ -2765,20 +2766,24 @@ func applyBlurayCandidateToPreparedMeta(meta *api.PreparedMetadata) {
 }
 
 func (c *Core) storeDupeCache(path string, signature string, meta api.PreparedMetadata) {
-	c.storeDupeCacheEntry(path, signature, meta, false)
+	c.storeDupeCacheEntry(path, signature, meta, false, api.DupeCheckSummary{})
 }
 
 func (c *Core) storeRefreshedDupeCache(path string, signature string, meta api.PreparedMetadata) {
-	c.storeDupeCacheEntry(path, signature, meta, true)
+	c.storeDupeCacheEntry(path, signature, meta, true, api.DupeCheckSummary{})
 }
 
-func (c *Core) storeDupeCacheEntry(path string, signature string, meta api.PreparedMetadata, requestRefreshed bool) {
+func (c *Core) storeRefreshedDupeCacheWithDupeSummary(path string, signature string, meta api.PreparedMetadata, summary api.DupeCheckSummary) {
+	c.storeDupeCacheEntry(path, signature, meta, true, summary)
+}
+
+func (c *Core) storeDupeCacheEntry(path string, signature string, meta api.PreparedMetadata, requestRefreshed bool, summary api.DupeCheckSummary) {
 	if strings.TrimSpace(path) == "" {
 		return
 	}
 	c.dupeMu.Lock()
 	defer c.dupeMu.Unlock()
-	c.dupeCache[path] = dupeCacheEntry{meta: meta, signature: signature, updatedAt: time.Now().UTC(), requestRefreshed: requestRefreshed}
+	c.dupeCache[path] = dupeCacheEntry{meta: meta, dupeSummary: deepCopyDupeCheckSummary(summary), signature: signature, updatedAt: time.Now().UTC(), requestRefreshed: requestRefreshed}
 }
 
 func (c *Core) clearDupeCache(path string) {
