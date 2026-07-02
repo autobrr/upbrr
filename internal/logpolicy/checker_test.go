@@ -1107,6 +1107,73 @@ func printReleaseDetails(p preview, sourcePath string) {
 	}
 }
 
+func TestCheckRepositoryFlagsProjectLoggerWithoutCentralPathSanitization(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "logging"), 0o755); err != nil {
+		t.Fatalf("mkdir internal logging: %v", err)
+	}
+
+	content := `package logging
+
+import "fmt"
+
+type Logger struct{}
+
+func (l *Logger) logf(format string, args ...any) {
+	formatted := fmt.Sprintf(format, args...)
+	_ = formatted
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "logging", "logger.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write logger file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "SanitizeMessage") {
+		t.Fatalf("expected central sanitizer violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryAllowsProjectLoggerWithCentralPathSanitization(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "logging"), 0o755); err != nil {
+		t.Fatalf("mkdir internal logging: %v", err)
+	}
+
+	content := `package logging
+
+import "fmt"
+
+type Logger struct{}
+
+func SanitizeMessage(message string) string { return message }
+
+func (l *Logger) logf(format string, args ...any) {
+	formatted := SanitizeMessage(fmt.Sprintf(format, args...))
+	_ = formatted
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "logging", "logger.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write logger file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
 func TestCheckRepositoryFlagsRawTerminalErrorOutput(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {

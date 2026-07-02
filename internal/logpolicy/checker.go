@@ -218,6 +218,12 @@ func CheckRepository(root string) ([]Violation, error) {
 		return nil, fmt.Errorf("logpolicy: walk repository: %w", err)
 	}
 
+	loggerViolations, err := checkProjectLoggerPathSanitization(fset, root)
+	if err != nil {
+		return nil, err
+	}
+	violations = append(violations, loggerViolations...)
+
 	cmdRoot := filepath.Join(root, "cmd", "upbrr")
 	if _, err := os.Stat(cmdRoot); err == nil {
 		err = filepath.WalkDir(cmdRoot, func(path string, entry os.DirEntry, walkErr error) error {
@@ -299,6 +305,115 @@ func CheckRepository(root string) ([]Violation, error) {
 	})
 
 	return violations, nil
+}
+
+// checkProjectLoggerPathSanitization guards the central logger path sanitizer
+// that protects all project logger output, including internal Debugf/Infof/etc.
+func checkProjectLoggerPathSanitization(fset *token.FileSet, root string) ([]Violation, error) {
+	path := filepath.Join(root, "internal", "logging", "logger.go")
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("logpolicy: stat logger: %w", err)
+	}
+
+	file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	relPath, err := filepath.Rel(root, path)
+	if err != nil {
+		relPath = path
+	}
+	relPath = filepath.ToSlash(relPath)
+
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name == nil || fn.Name.Name != "logf" || fn.Body == nil {
+			continue
+		}
+		if logfFormatsThroughSanitizeMessage(fn.Body) {
+			return nil, nil
+		}
+		return []Violation{violationAt(fset, relPath, fn.Name.Pos(), "project logger logf must sanitize formatted messages with SanitizeMessage before output")}, nil
+	}
+
+	return []Violation{violationAt(fset, relPath, file.Package, "project logger logf not found; logger output path sanitization cannot be verified")}, nil
+}
+
+func logfFormatsThroughSanitizeMessage(body *ast.BlockStmt) bool {
+	found := false
+	ast.Inspect(body, func(node ast.Node) bool {
+		if found || node == nil {
+			return false
+		}
+		switch typed := node.(type) {
+		case *ast.AssignStmt:
+			for index, lhs := range typed.Lhs {
+				ident, ok := lhs.(*ast.Ident)
+				if !ok || ident.Name != "formatted" {
+					continue
+				}
+				rhsIndex := index
+				if len(typed.Rhs) == 1 {
+					rhsIndex = 0
+				}
+				if rhsIndex < len(typed.Rhs) && isSanitizeMessageSprintfCall(typed.Rhs[rhsIndex]) {
+					found = true
+					return false
+				}
+			}
+		case *ast.ValueSpec:
+			for index, name := range typed.Names {
+				if name == nil || name.Name != "formatted" || index >= len(typed.Values) {
+					continue
+				}
+				if isSanitizeMessageSprintfCall(typed.Values[index]) {
+					found = true
+					return false
+				}
+			}
+		}
+		return true
+	})
+	return found
+}
+
+func isSanitizeMessageSprintfCall(expr ast.Expr) bool {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok || len(call.Args) == 0 {
+		return false
+	}
+	ident, ok := call.Fun.(*ast.Ident)
+	if !ok || ident.Name != "SanitizeMessage" {
+		return false
+	}
+	return containsFmtSprintfCall(call.Args[0])
+}
+
+func containsFmtSprintfCall(expr ast.Expr) bool {
+	found := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		if found || node == nil {
+			return false
+		}
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || selector.Sel.Name != "Sprintf" {
+			return true
+		}
+		pkg, ok := selector.X.(*ast.Ident)
+		if ok && pkg.Name == "fmt" {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
 }
 
 var (
