@@ -369,11 +369,11 @@ func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx context.Context
 		authCheckTrackers = append(authCheckTrackers, name)
 	}
 
-	logger.Infof("cli auth: pre-dupe check start trackers=%d", len(authCheckTrackers))
+	logger.Infof("cli auth: pre-dupe auth check start trackers=%d", len(authCheckTrackers))
 	for _, name := range authCheckTrackers {
 		capability := capabilityByTracker[name]
 
-		logger.Infof("cli auth: validating tracker=%s auth_kind=%s", name, cliAuthLogField(capability.AuthKind))
+		logger.Debugf("cli auth: validating tracker=%s auth_kind=%s", name, cliAuthLogField(capability.AuthKind))
 		status, err := authSvc.Validate(ctx, name)
 		if err != nil {
 			logger.Warnf("cli auth: validation failed tracker=%s error=%s", name, cliAuthLogError(err))
@@ -385,7 +385,7 @@ func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx context.Context
 			return nil, err
 		}
 		if cliTrackerAuthReady(status) {
-			logger.Infof("cli auth: tracker=%s decision=ready state=%s", name, cliAuthLogField(status.State))
+			logger.Debugf("cli auth: tracker=%s decision=ready state=%s", name, cliAuthLogField(status.State))
 			readyByTracker[name] = struct{}{}
 			continue
 		}
@@ -476,7 +476,7 @@ func promptCLITrackerAuth2FAWithLogger(ctx context.Context, reader *bufio.Reader
 		status = nextStatus
 		logCLITrackerAuthStatus(logger, "2fa result", status)
 		if cliTrackerAuthReady(status) {
-			logger.Infof("cli auth: tracker=%s decision=ready state=%s", trackerID, cliAuthLogField(status.State))
+			logger.Debugf("cli auth: tracker=%s decision=ready state=%s", trackerID, cliAuthLogField(status.State))
 			fmt.Printf("%s auth ready.\n", trackerID)
 			return status, true, nil
 		}
@@ -501,7 +501,7 @@ func cliAuthLogger(logger api.Logger) api.Logger {
 // cookie count, encrypted-storage availability, and whether 2FA is still needed.
 func logCLITrackerAuthStatus(logger api.Logger, operation string, status api.TrackerAuthStatus) {
 	logger = cliAuthLogger(logger)
-	logger.Infof(
+	logger.Debugf(
 		"cli auth: %s tracker=%s state=%s cookies=%d encrypted_storage=%t needs_2fa=%t",
 		cliAuthLogField(operation),
 		cliAuthLogTrackerID(status.TrackerID),

@@ -600,17 +600,44 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckLogsRedactedDecisions(t *testing.T) 
 		t.Fatalf("expected only ready PTP to continue, got %#v", got)
 	}
 
-	logs := strings.Join(append(append([]string{}, logger.info...), logger.warn...), "\n")
+	infoLogs := strings.Join(logger.info, "\n")
 	for _, expected := range []string{
-		"cli auth: pre-dupe check start trackers=2",
-		"cli auth: validating tracker=PTP auth_kind=credential_login",
-		"cli auth: tracker=PTP decision=ready state=configured",
-		"cli auth: tracker=HDB decision=skip state=login_required",
+		"cli auth: pre-dupe auth check start trackers=2",
+		"cli auth: pre-dupe check complete ready=1 skipped=1",
 	} {
-		if !strings.Contains(logs, expected) {
-			t.Fatalf("expected log %q", expected)
+		if !strings.Contains(infoLogs, expected) {
+			t.Fatalf("expected info log %q", expected)
 		}
 	}
+	for _, notExpected := range []string{
+		"cli auth: validating tracker=PTP auth_kind=credential_login",
+		"cli auth: tracker=PTP decision=ready state=configured",
+	} {
+		if strings.Contains(infoLogs, notExpected) {
+			t.Fatalf("did not expect debug auth detail in info log %q", notExpected)
+		}
+	}
+
+	debugLogs := strings.Join(logger.debug, "\n")
+	for _, expected := range []string{
+		"cli auth: validating tracker=PTP auth_kind=credential_login",
+		"cli auth: tracker=PTP decision=ready state=configured",
+		"cli auth: validation result tracker=PTP state=configured cookies=2 encrypted_storage=true needs_2fa=false",
+	} {
+		if !strings.Contains(debugLogs, expected) {
+			t.Fatalf("expected debug log %q", expected)
+		}
+	}
+
+	warnLogs := strings.Join(logger.warn, "\n")
+	for _, expected := range []string{
+		"cli auth: tracker=HDB decision=skip state=login_required",
+	} {
+		if !strings.Contains(warnLogs, expected) {
+			t.Fatalf("expected warn log %q", expected)
+		}
+	}
+	logs := strings.Join([]string{infoLogs, debugLogs, warnLogs}, "\n")
 	if strings.Contains(logs, "hunter2") {
 		t.Fatal("auth logs leaked password")
 	}
