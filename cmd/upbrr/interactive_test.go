@@ -194,6 +194,51 @@ func TestRunInteractiveCLIPathDebugHandlesScreenshotsBeforeReview(t *testing.T) 
 	}
 }
 
+func TestRunInteractiveCLIPathDebugProcessesAllCheckedTrackers(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &cliCoreForTest{
+		previewResponses: []api.MetadataPreview{{
+			SourcePath: "Example.Release.2026.1080p-GRP",
+			TrackerData: []api.TrackerPreview{{
+				Tracker: "AITHER",
+				Matched: true,
+			}},
+		}},
+		dupeSummary: api.DupeCheckSummary{
+			Results: []api.DupeCheckResult{
+				{Tracker: "AITHER", Status: "completed", HasDupes: true},
+				{Tracker: "BLU", Status: "skipped", Skipped: true, SkipReason: "rule check failed"},
+				{Tracker: "DP", Status: "completed"},
+			},
+		},
+		review: api.UploadReview{Trackers: []api.TrackerReview{
+			{Tracker: "AITHER"},
+			{Tracker: "BLU"},
+			{Tracker: "DP"},
+		}},
+	}
+	err := runInteractiveCLIPath(context.Background(), coreSvc, cliOptions{Unattended: true, Debug: true}, map[string]bool{}, "Example.Release.2026.1080p-GRP", config.Config{
+		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU", "DP"}},
+	})
+	if err != nil {
+		t.Fatalf("runInteractiveCLIPath: %v", err)
+	}
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,screenshot-plan,review" {
+		t.Fatalf("expected debug to run checks and continue to review, got %s", got)
+	}
+	uploadReq := coreSvc.requests[len(coreSvc.requests)-1].req
+	if got := strings.Join(uploadReq.Trackers, ","); got != "AITHER,BLU,DP" {
+		t.Fatalf("expected debug upload to keep all trackers, got %s", got)
+	}
+	if got := strings.Join(uploadReq.IgnoreDupesFor, ","); got != "AITHER,BLU,DP" {
+		t.Fatalf("expected debug upload to ignore dupe blocks for all trackers, got %s", got)
+	}
+	if got := strings.Join(uploadReq.IgnoreTrackerRuleFailuresFor, ","); got != "AITHER,BLU,DP" {
+		t.Fatalf("expected debug upload to ignore rule blocks for all trackers, got %s", got)
+	}
+}
+
 func TestRunInteractiveCLIPathUsesResolvedPreviewSourceForPreparedUpload(t *testing.T) {
 	t.Parallel()
 
@@ -1149,6 +1194,30 @@ func TestPromptTrackerQuestionnairesRejectsBlankRequiredUnattendedDefault(t *tes
 	}
 }
 
+func TestPromptTrackerQuestionnairesDebugUnattendedAllowsBlankRequiredDefault(t *testing.T) {
+	t.Parallel()
+
+	answers, changed, err := promptTrackerQuestionnaires(bufio.NewReader(strings.NewReader("")), api.UploadReview{
+		Trackers: []api.TrackerReview{{
+			Tracker: "ANT",
+			Questionnaire: &api.TrackerQuestionnaire{Fields: []api.TrackerQuestionnaireField{{
+				Key:      "type",
+				Label:    "ANT Type",
+				Required: true,
+			}}},
+		}},
+	}, cliOptions{Unattended: true, Debug: true})
+	if err != nil {
+		t.Fatalf("expected debug unattended questionnaire to continue, got %v", err)
+	}
+	if changed {
+		t.Fatal("expected debug unattended questionnaire defaults to be unchanged")
+	}
+	if answers["ANT"]["type"] != "" {
+		t.Fatalf("expected blank debug questionnaire answer to be preserved, got %#v", answers)
+	}
+}
+
 func TestHandleBDMVPlaylistSelectionDoesNotPromptInUnattendedMode(t *testing.T) {
 	t.Parallel()
 
@@ -1579,6 +1648,8 @@ func (c *cliCoreForTest) recordRequest(name string, req api.Request) {
 	copyReq.Paths = append([]string(nil), req.Paths...)
 	copyReq.Trackers = append([]string(nil), req.Trackers...)
 	copyReq.TrackersRemove = append([]string(nil), req.TrackersRemove...)
+	copyReq.IgnoreDupesFor = append([]string(nil), req.IgnoreDupesFor...)
+	copyReq.IgnoreTrackerRuleFailuresFor = append([]string(nil), req.IgnoreTrackerRuleFailuresFor...)
 	copyReq.DescriptionGroups = api.CloneDescriptionBuilderGroups(req.DescriptionGroups)
 	copyReq.ExternalIDSelections = cloneCLIExternalIDSelectionsForTest(req.ExternalIDSelections)
 	c.requests = append(c.requests, cliCoreRequestForTest{name: name, req: copyReq})

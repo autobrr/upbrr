@@ -285,7 +285,7 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 	if err != nil {
 		return 0, err
 	}
-	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, meta.TrackersRemove, c.logger, false, false)
+	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, trackerResolutionRemoveForRequest(meta, req), c.logger, false, false)
 	if explicitEmpty {
 		c.logger.Debugf("core: upload prepared explicit trackers resolved empty source=%s", meta.SourcePath)
 		return 0, nil
@@ -323,12 +323,13 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 					return 0, err
 				}
 			} else {
-				entries, err := c.services.Trackers.BuildUploadDryRun(ctx, meta, resolvedTrackers)
+				dryRunMeta := trackerDebugProcessingMeta(meta, req)
+				entries, err := c.services.Trackers.BuildUploadDryRun(ctx, dryRunMeta, resolvedTrackers)
 				if err != nil {
 					return 0, fmt.Errorf("core: %w", err)
 				}
-				annotateDryRunReleaseNames(meta, entries)
-				if err := c.injectTrackerDryRunTorrents(ctx, req, meta, entries, torrent); err != nil {
+				annotateDryRunReleaseNames(dryRunMeta, entries)
+				if err := c.injectTrackerDryRunTorrents(ctx, req, dryRunMeta, entries, torrent); err != nil {
 					return 0, err
 				}
 			}
@@ -2143,7 +2144,7 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 		return api.TrackerDryRunPreview{}, fmt.Errorf("core: tracker dry-run requires prepared metadata for %s", uniquePaths[0])
 	}
 	c.logger.Debugf("core: tracker dry-run using cached prepared metadata for %s meta_no_seed=%t req_no_seed=%t", uniquePaths[0], meta.Options.NoSeed, singleReq.Options.NoSeed)
-	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, meta.TrackersRemove, c.logger, false, false)
+	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, trackerResolutionRemoveForRequest(meta, singleReq), c.logger, false, false)
 	if explicitEmpty {
 		c.logger.Debugf("core: tracker dry-run explicit trackers resolved empty source=%s", meta.SourcePath)
 		return api.TrackerDryRunPreview{SourcePath: meta.SourcePath, Trackers: []api.TrackerDryRunEntry{}}, nil
@@ -2160,16 +2161,17 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 	}
 	meta.TorrentPath = torrent.Path
 
-	entries, err := c.services.Trackers.BuildUploadDryRun(ctx, meta, resolvedTrackers)
+	dryRunMeta := trackerDebugProcessingMeta(meta, singleReq)
+	entries, err := c.services.Trackers.BuildUploadDryRun(ctx, dryRunMeta, resolvedTrackers)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, fmt.Errorf("core: %w", err)
 	}
-	annotateDryRunReleaseNames(meta, entries)
+	annotateDryRunReleaseNames(dryRunMeta, entries)
 
 	c.logger.Debugf("core: tracker dry-run torrent ready for %s path=%s no_seed=%t", meta.SourcePath, torrent.Path, meta.Options.NoSeed)
 	if meta.Options.NoSeed {
 		c.logger.Debugf("core: tracker dry-run skipping client injection for %s: no-seed enabled", meta.SourcePath)
-	} else if err := c.injectTrackerDryRunTorrents(ctx, singleReq, meta, entries, torrent); err != nil {
+	} else if err := c.injectTrackerDryRunTorrents(ctx, singleReq, dryRunMeta, entries, torrent); err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
 
@@ -4658,9 +4660,28 @@ func mergeTrackerRemovals(existing []string, additions []string) []string {
 // for pre-application explicit-empty checks. Request dupe bypasses are applied
 // first so ignored or skipped matched trackers can still resolve when selected.
 func requestPreparedMetaTrackersRemove(meta api.PreparedMetadata, req api.Request) []string {
+	if req.Options.Debug {
+		return mergeTrackerRemovals(nil, req.TrackersRemove)
+	}
 	metaRemove, matched := duplicateTrackerStateForRequest(meta, req)
 	remove := mergeTrackerRemovals(req.TrackersRemove, metaRemove)
 	return mergeTrackerRemovals(remove, matched)
+}
+
+func trackerResolutionRemoveForRequest(meta api.PreparedMetadata, req api.Request) []string {
+	if req.Options.Debug {
+		return mergeTrackerRemovals(nil, req.TrackersRemove)
+	}
+	return meta.TrackersRemove
+}
+
+func trackerDebugProcessingMeta(meta api.PreparedMetadata, req api.Request) api.PreparedMetadata {
+	if !req.Options.Debug {
+		return meta
+	}
+	meta.IgnoreTrackerRuleFailures = true
+	meta.BlockedTrackers = nil
+	return meta
 }
 
 func normalizeExecutionRequest(req api.Request) api.Request {
@@ -4688,11 +4709,12 @@ func (c *Core) resolveCanonicalDescriptionGroups(ctx context.Context, meta api.P
 		return nil, errors.New("core: tracker service not configured")
 	}
 
-	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, meta.TrackersRemove, c.logger, false, false)
+	resolvedTrackers, explicitEmpty := resolveTrackersPreservingExplicitEmpty(c.cfg, req.Trackers, trackerResolutionRemoveForRequest(meta, req), c.logger, false, false)
 	if explicitEmpty {
 		return nil, nil
 	}
-	prep, err := c.services.Trackers.BuildPreparation(ctx, meta, resolvedTrackers)
+	prepMeta := trackerDebugProcessingMeta(meta, req)
+	prep, err := c.services.Trackers.BuildPreparation(ctx, prepMeta, resolvedTrackers)
 	if err != nil {
 		return nil, fmt.Errorf("core: %w", err)
 	}

@@ -465,6 +465,63 @@ func TestBuildUploadReviewMarksBlockedTrackersInDryRun(t *testing.T) {
 	}
 }
 
+func TestBuildUploadReviewDebugBuildsPayloadsForBlockedTrackers(t *testing.T) {
+	t.Parallel()
+
+	trackersSvc := &recordingReviewTrackers{
+		entries: []api.TrackerDryRunEntry{
+			{Tracker: "AITHER", Status: "ready", Payload: map[string]string{"name": "example"}},
+			{Tracker: "BLU", Status: "ready", Payload: map[string]string{"name": "example"}},
+		},
+	}
+	coreSvc, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Dupes:      &reviewDupes{},
+			Torrents:   &stubTorrent{},
+			Trackers:   trackersSvc,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	coreSvc.storeDupeCache("source.mkv", "", api.PreparedMetadata{
+		SourcePath:     "source.mkv",
+		TrackersRemove: []string{"AITHER"},
+		BlockedTrackers: map[string][]api.TrackerBlockReason{
+			"AITHER": {api.TrackerBlockReasonClaim},
+		},
+	})
+
+	review, err := coreSvc.BuildUploadReview(context.Background(), api.Request{
+		Paths:    []string{"source.mkv"},
+		Mode:     api.ModeCLI,
+		Trackers: []string{"AITHER", "BLU"},
+		Options:  api.UploadOptions{Debug: true},
+	})
+	if err != nil {
+		t.Fatalf("build upload review: %v", err)
+	}
+	if !slices.Equal(trackersSvc.lastTrackers, []string{"AITHER", "BLU"}) {
+		t.Fatalf("expected debug review dry-run for all trackers, got %#v", trackersSvc.lastTrackers)
+	}
+	if len(trackersSvc.lastMeta.BlockedTrackers) != 0 {
+		t.Fatalf("expected debug review dry-run metadata to ignore blocks, got %#v", trackersSvc.lastMeta.BlockedTrackers)
+	}
+	if len(review.Trackers) != 2 {
+		t.Fatalf("expected both tracker reviews, got %#v", review.Trackers)
+	}
+	if review.Trackers[0].Tracker != "AITHER" || review.Trackers[0].DryRun.Payload["name"] != "example" {
+		t.Fatalf("expected AITHER payload to be preserved, got %#v", review.Trackers[0])
+	}
+	if review.Trackers[0].DryRun.Status != "blocked" {
+		t.Fatalf("expected review to keep blocked status, got %#v", review.Trackers[0].DryRun)
+	}
+}
+
 func TestBuildUploadReviewReturnsEmptyWhenSelectedTrackersResolveEmpty(t *testing.T) {
 	t.Parallel()
 

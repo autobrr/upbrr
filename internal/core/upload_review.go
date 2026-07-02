@@ -167,7 +167,7 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 		}
 	}
 
-	dryRunMeta := meta
+	dryRunMeta := trackerDebugProcessingMeta(meta, singleReq)
 	dryRunMeta.IgnoreTrackerRuleFailures = true
 	torrent, err := c.services.Torrents.Create(ctx, dryRunMeta)
 	if err != nil {
@@ -246,7 +246,7 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 // site upload pins one tracker.
 func (c *Core) resolveUploadReviewTrackers(req api.Request, meta api.PreparedMetadata) ([]string, bool) {
 	includeDefaults := req.Mode != api.ModeGUI && strings.TrimSpace(req.Execution.SiteUploadTracker) == ""
-	remove := meta.TrackersRemove
+	remove := trackerResolutionRemoveForRequest(meta, req)
 	if req.Mode == api.ModeGUI && len(req.Trackers) > 0 && len(meta.MatchedTrackers) > 0 {
 		reviewedMatchedTrackers := make([]string, 0, len(req.Trackers))
 		for _, tracker := range req.Trackers {

@@ -152,9 +152,17 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 	if err != nil {
 		return err
 	}
-	approved, ignoreDupesFor, ruleOverrides, err := promptTrackerDupeReview(reader, dupeSummary, req, candidateTrackers, nil)
-	if err != nil {
-		return err
+	var approved, ignoreDupesFor, ruleOverrides []string
+	if req.Options.Debug {
+		printUnattendedDupeReviewSummary(mapDupeResultsByTracker(dupeSummary), candidateTrackers)
+		approved = appendTrackerRemovals(nil, candidateTrackers...)
+		ignoreDupesFor = appendTrackerRemovals(nil, candidateTrackers...)
+		ruleOverrides = appendTrackerRemovals(nil, candidateTrackers...)
+	} else {
+		approved, ignoreDupesFor, ruleOverrides, err = promptTrackerDupeReview(reader, dupeSummary, req, candidateTrackers, nil)
+		if err != nil {
+			return err
+		}
 	}
 	if len(approved) == 0 {
 		fmt.Printf("No trackers selected for %s\n", sourcePath)
@@ -235,7 +243,9 @@ func resolvedCLIMetadataSourcePath(input string, preview api.MetadataPreview) st
 
 func resolveCLIUploadTrackers(visited map[string]bool, req api.Request, preview api.MetadataPreview, cfg config.Config) ([]string, []string) {
 	remove := append([]string{}, req.TrackersRemove...)
-	remove = append(remove, matchedPreviewTrackers(preview)...)
+	if !req.Options.Debug {
+		remove = append(remove, matchedPreviewTrackers(preview)...)
+	}
 	removalBase := trackers.ResolveTrackersWithDefaults(cfg, req.Trackers, remove, api.NopLogger{})
 	available := removalBase
 	if visited["trackers"] || req.Execution.SiteUploadTracker != "" {
@@ -1004,6 +1014,11 @@ func promptTrackerQuestionnaires(reader *bufio.Reader, review api.UploadReview, 
 			defaultValue := strings.TrimSpace(field.Value)
 			if opts.Unattended && !opts.UnattendedConfirm {
 				if field.Required && defaultValue == "" {
+					if opts.Debug {
+						fmt.Printf("Debug mode: %s questionnaire value missing for %s; continuing without prompt.\n", questionnaireFieldLabel(field), tracker.Tracker)
+						values[field.Key] = ""
+						continue
+					}
 					return nil, false, fmt.Errorf("upbrr: unattended upload requires %s questionnaire value for %s", questionnaireFieldLabel(field), tracker.Tracker)
 				}
 				values[field.Key] = defaultValue
@@ -1072,6 +1087,11 @@ func runDoubleDupeCheck(ctx context.Context, reader *bufio.Reader, coreSvc api.C
 		}
 		fmt.Printf("\nDouble dupe check flagged %s:\n", tracker)
 		printDupeResult(result)
+		if req.Options.Debug {
+			fmt.Printf("Debug mode: keeping %s despite second dupe check.\n", tracker)
+			filtered = append(filtered, tracker)
+			continue
+		}
 		if req.SkipDupeAsActual || isUnattendedNoConfirm(req) {
 			fmt.Printf("Skipping %s due to second dupe check.\n", tracker)
 			continue

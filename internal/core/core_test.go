@@ -3386,6 +3386,84 @@ func TestFetchTrackerDryRunPreviewUsesCachedMetadata(t *testing.T) {
 	}
 }
 
+func TestRunUploadPreparedDebugDryRunIgnoresCheckBlocksForArtifacts(t *testing.T) {
+	t.Parallel()
+
+	source := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP")
+	aitherTorrent := filepath.Join(t.TempDir(), "aither.torrent")
+	bluTorrent := filepath.Join(t.TempDir(), "blu.torrent")
+	client := &stubClient{}
+	tracker := &stubTrackers{dryRunEntries: []api.TrackerDryRunEntry{
+		{
+			Tracker: "AITHER",
+			Status:  "ready",
+			Files: []api.TrackerDryRunFile{{
+				Field:   "torrent",
+				Path:    aitherTorrent,
+				Present: true,
+			}},
+		},
+		{
+			Tracker: "BLU",
+			Status:  "ready",
+			Files: []api.TrackerDryRunFile{{
+				Field:   "torrent",
+				Path:    bluTorrent,
+				Present: true,
+			}},
+		},
+	}}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    client,
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	core.storeDupeCache(source, "", api.PreparedMetadata{
+		SourcePath:     source,
+		TrackersRemove: []string{"AITHER"},
+		BlockedTrackers: map[string][]api.TrackerBlockReason{
+			"AITHER": {api.TrackerBlockReasonClaim},
+		},
+		TrackerRuleFailures: map[string][]api.RuleFailure{
+			"AITHER": {{Rule: "example_rule", Reason: "example reason"}},
+		},
+	})
+
+	_, err = core.RunUploadPrepared(context.Background(), api.Request{
+		Paths:    []string{source},
+		Mode:     api.ModeCLI,
+		Trackers: []string{"AITHER", "BLU"},
+		Options:  api.UploadOptions{Debug: true},
+	})
+	if err != nil {
+		t.Fatalf("run upload prepared: %v", err)
+	}
+	if tracker.dryRunCalls != 1 {
+		t.Fatalf("expected one dry-run build, got %d", tracker.dryRunCalls)
+	}
+	if !slices.Equal(tracker.lastTrackers, []string{"AITHER", "BLU"}) {
+		t.Fatalf("expected debug dry-run for all trackers, got %#v", tracker.lastTrackers)
+	}
+	if !tracker.lastMeta.IgnoreTrackerRuleFailures {
+		t.Fatalf("expected debug dry-run metadata to ignore rule failures")
+	}
+	if len(tracker.lastMeta.BlockedTrackers) != 0 {
+		t.Fatalf("expected debug dry-run metadata to ignore tracker blocks, got %#v", tracker.lastMeta.BlockedTrackers)
+	}
+	if got := len(client.injected); got != 2 {
+		t.Fatalf("expected client injection for both debug tracker torrents, got %d", got)
+	}
+}
+
 func TestFetchTrackerDryRunPreviewNoSeedSkipsClient(t *testing.T) {
 	t.Parallel()
 
