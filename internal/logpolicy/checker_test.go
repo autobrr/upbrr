@@ -845,6 +845,9 @@ func TestCheckRepositoryFlagsFrontendEncryptedEnvelopeMatcherOutput(t *testing.T
 	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
 		t.Fatalf("mkdir internal: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
 	testDir := filepath.Join(root, "gui", "frontend", "src", "hooks")
 	if err := os.MkdirAll(testDir, 0o755); err != nil {
 		t.Fatalf("mkdir frontend test dir: %v", err)
@@ -914,6 +917,9 @@ func TestCheckRepositoryFlagsRawDryRunDetailsOutput(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
 		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
 		t.Fatalf("mkdir cmd upbrr: %v", err)
@@ -1038,6 +1044,8 @@ type preview struct {
 func printReleaseDetails(p preview, sourcePath string) {
 	fmt.Printf("Source: %s\n", p.SourcePath)
 	fmt.Printf("Input: %s\n", sourcePath)
+	fmt.Println(p.SourcePath)
+	fmt.Print(sourcePath)
 }
 `
 
@@ -1049,8 +1057,8 @@ func printReleaseDetails(p preview, sourcePath string) {
 	if err != nil {
 		t.Fatalf("CheckRepository returned error: %v", err)
 	}
-	if len(violations) != 2 {
-		t.Fatalf("expected 2 violations, got %d: %#v", len(violations), violations)
+	if len(violations) != 4 {
+		t.Fatalf("expected 4 violations, got %d: %#v", len(violations), violations)
 	}
 	for _, violation := range violations {
 		if !strings.Contains(violation.Message, "local filesystem path output") {
@@ -1081,11 +1089,142 @@ func formatPathLabel(value string) string { return value }
 func printReleaseDetails(p preview, sourcePath string) {
 	fmt.Printf("Source: %s\n", formatPathLabel(p.SourcePath))
 	fmt.Printf("Input: %s\n", formatPathLabel(sourcePath))
+	fmt.Println(formatPathLabel(p.SourcePath))
+	fmt.Print(formatPathLabel(sourcePath))
 }
 `
 
 	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "interactive.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryFlagsRawTerminalErrorOutput(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "gui"), 0o755); err != nil {
+		t.Fatalf("mkdir gui: %v", err)
+	}
+
+	cliContent := `package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintln(os.Stderr, err)
+	}
+}
+
+func run() error { return nil }
+`
+	guiContent := `package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintln(os.Stderr, err)
+	}
+}
+
+func run() error { return nil }
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "main.go"), []byte(cliContent), 0o600); err != nil {
+		t.Fatalf("write CLI sample file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "gui", "main.go"), []byte(guiContent), 0o600); err != nil {
+		t.Fatalf("write GUI sample file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(guiContent), 0o600); err != nil {
+		t.Fatalf("write internal sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 6 {
+		t.Fatalf("expected 6 violations, got %d: %#v", len(violations), violations)
+	}
+	for _, violation := range violations {
+		if !strings.Contains(violation.Message, "terminal error/warning output") {
+			t.Fatalf("expected terminal diagnostic violation, got %q", violation.Message)
+		}
+	}
+}
+
+func TestCheckRepositoryAllowsSanitizedTerminalOutput(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "gui"), 0o755); err != nil {
+		t.Fatalf("mkdir gui: %v", err)
+	}
+
+	content := `package main
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/autobrr/upbrr/internal/logging"
+)
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", logging.SanitizeMessage(err.Error()))
+		fmt.Fprintln(os.Stderr, logging.SanitizeMessage(err.Error()))
+	}
+	for _, w := range warnings() {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", logging.SanitizeMessage(w))
+	}
+}
+
+func run() error { return nil }
+func warnings() []string { return nil }
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "main.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write CLI sample file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "gui", "main.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write GUI sample file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write internal sample file: %v", err)
 	}
 
 	violations, err := CheckRepository(root)

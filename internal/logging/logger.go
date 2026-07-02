@@ -226,7 +226,7 @@ func (l *Logger) logf(level Level, label string, format string, args ...any) {
 		return
 	}
 
-	formatted := sanitizeLogMessage(fmt.Sprintf(format, args...))
+	formatted := SanitizeMessage(fmt.Sprintf(format, args...))
 	prefix := label + ": "
 	if level <= LevelWarn {
 		l.consoleErr.Print(prefix + formatted)
@@ -240,7 +240,9 @@ func (l *Logger) logf(level Level, label string, format string, args ...any) {
 	l.record(label, formatted)
 }
 
-func sanitizeLogMessage(message string) string {
+// SanitizeMessage replaces local filesystem paths in user-shareable log or
+// terminal output with stable labels.
+func SanitizeMessage(message string) string {
 	if strings.TrimSpace(message) == "" {
 		return message
 	}
@@ -260,6 +262,7 @@ func sanitizeLogMessage(message string) string {
 
 func isWindowsDrivePathStart(value string, index int) bool {
 	return index+2 < len(value) &&
+		(index == 0 || !isLogFieldNameChar(value[index-1])) &&
 		((value[index] >= 'A' && value[index] <= 'Z') || (value[index] >= 'a' && value[index] <= 'z')) &&
 		value[index+1] == ':' &&
 		(value[index+2] == '\\' || value[index+2] == '/')

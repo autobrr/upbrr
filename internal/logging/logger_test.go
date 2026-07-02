@@ -65,7 +65,7 @@ func TestLoggerSanitizesLocalPaths(t *testing.T) {
 func TestSanitizeLogMessageHandlesUnixLocalPaths(t *testing.T) {
 	t.Parallel()
 
-	got := sanitizeLogMessage("cache=/home/tester/.upbrr/cache/banned/file.json source=/media/releases/Example.Release.2026-GRP tracker=ABC")
+	got := SanitizeMessage("cache=/home/tester/.upbrr/cache/banned/file.json source=/media/releases/Example.Release.2026-GRP tracker=ABC")
 	for _, leaked := range []string{"/home/tester", "/media/releases", "Example.Release.2026-GRP"} {
 		if strings.Contains(got, leaked) {
 			t.Fatalf("expected sanitized message to redact %q from %q", leaked, got)
@@ -75,5 +75,17 @@ func TestSanitizeLogMessageHandlesUnixLocalPaths(t *testing.T) {
 		if !strings.Contains(got, expected) {
 			t.Fatalf("expected sanitized message to contain %q, got %q", expected, got)
 		}
+	}
+}
+
+func TestSanitizeLogMessagePreservesURLs(t *testing.T) {
+	t.Parallel()
+
+	got := SanitizeMessage("web: serving web UI on 127.0.0.1:7480 (browser URL http://127.0.0.1:7480/app)")
+	if strings.Contains(got, "[local path]") {
+		t.Fatalf("expected URL to remain intact, got %q", got)
+	}
+	if !strings.Contains(got, "http://127.0.0.1:7480/app") {
+		t.Fatalf("expected URL to remain intact, got %q", got)
 	}
 }

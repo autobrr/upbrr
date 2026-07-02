@@ -40,7 +40,7 @@ var (
 func main() {
 	exitCode := 0
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		printTerminalError(err)
 		var cliErr *cliExitError
 		if errors.As(err, &cliErr) {
 			exitCode = cliErr.code
@@ -51,6 +51,17 @@ func main() {
 	if exitCode != 0 {
 		os.Exit(exitCode)
 	}
+}
+
+func printTerminalError(err error) {
+	if err == nil {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "error: %s\n", logging.SanitizeMessage(err.Error()))
+}
+
+func printTerminalWarning(warning string) {
+	fmt.Fprintf(os.Stderr, "warning: %s\n", logging.SanitizeMessage(warning))
 }
 
 type cliExitError struct {
@@ -211,7 +222,7 @@ func run() error {
 	}
 	defer func() {
 		if err := logger.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			printTerminalError(err)
 		}
 	}()
 	screens := opts.Screens
@@ -245,7 +256,7 @@ func run() error {
 	}
 	defer func() {
 		if err := coreSvc.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			printTerminalError(err)
 		}
 	}()
 
@@ -1546,7 +1557,7 @@ func importConfig(ctx context.Context, importPath, configPath string, configProv
 	}
 
 	for _, w := range warnings {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+		printTerminalWarning(w)
 	}
 
 	dbPath, err := resolveExportDBPath(configPath, configProvided)

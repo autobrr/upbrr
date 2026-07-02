@@ -249,6 +249,37 @@ func CheckRepository(root string) ([]Violation, error) {
 		return nil, fmt.Errorf("logpolicy: stat cmd/upbrr root: %w", err)
 	}
 
+	guiRoot := filepath.Join(root, "gui")
+	if _, err := os.Stat(guiRoot); err == nil {
+		err = filepath.WalkDir(guiRoot, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				switch entry.Name() {
+				case "frontend", "build":
+					return filepath.SkipDir
+				default:
+					return nil
+				}
+			}
+			if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			fileViolations, err := checkTerminalSensitiveOutputFile(fset, root, path)
+			if err != nil {
+				return err
+			}
+			violations = append(violations, fileViolations...)
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("logpolicy: walk gui: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("logpolicy: stat gui root: %w", err)
+	}
+
 	frontendViolations, err := checkFrontendTestSensitiveMatchers(root)
 	if err != nil {
 		return nil, err
@@ -410,7 +441,14 @@ func checkCLISensitiveOutputFile(fset *token.FileSet, root string, path string) 
 			return true
 		}
 		format := cliOutputFormat(call)
-		for _, arg := range call.Args[1:] {
+		if isTerminalStderrOutputCall(call, aliases) {
+			for _, arg := range fmtOutputArgs(call) {
+				if isUnsafeTerminalDiagnosticArg(format, arg, aliases) {
+					violations = append(violations, violationAt(fset, relPath, arg.Pos(), "terminal error/warning output must be sanitized before printing"))
+				}
+			}
+		}
+		for _, arg := range fmtOutputArgs(call) {
 			if isDryRunPayloadValueExpr(arg) && !isSafeDryRunOutputExpr(arg) {
 				violations = append(violations, violationAt(fset, relPath, arg.Pos(), "dry-run payload output must be redacted before printing"))
 			}
@@ -422,10 +460,40 @@ func checkCLISensitiveOutputFile(fset *token.FileSet, root string, path string) 
 			}
 		}
 		if strings.Contains(strings.ToLower(format), "endpoint:") {
-			for _, arg := range call.Args[1:] {
+			for _, arg := range fmtOutputArgs(call) {
 				if !isSafeDryRunOutputExpr(arg) && containsEndpointExpr(arg) {
 					violations = append(violations, violationAt(fset, relPath, arg.Pos(), "dry-run endpoint output must be redacted before printing"))
 				}
+			}
+		}
+		return true
+	})
+	return violations, nil
+}
+
+func checkTerminalSensitiveOutputFile(fset *token.FileSet, root string, path string) ([]Violation, error) {
+	file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+
+	aliases := importAliases(file)
+	relPath, err := filepath.Rel(root, path)
+	if err != nil {
+		relPath = path
+	}
+	relPath = filepath.ToSlash(relPath)
+
+	violations := make([]Violation, 0)
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok || !isTerminalStderrOutputCall(call, aliases) {
+			return true
+		}
+		format := cliOutputFormat(call)
+		for _, arg := range fmtOutputArgs(call) {
+			if isUnsafeTerminalDiagnosticArg(format, arg, aliases) {
+				violations = append(violations, violationAt(fset, relPath, arg.Pos(), "terminal error/warning output must be sanitized before printing"))
 			}
 		}
 		return true
@@ -533,6 +601,14 @@ func checkFile(fset *token.FileSet, root string, path string) ([]Violation, erro
 			if methods, found := disallowedStdlibCalls[importPath]; found {
 				if _, banned := methods[selector.Sel.Name]; banned {
 					appendLogpolicyViolation(fset, relPath, allows, &violations, selector.Sel.Pos(), fmt.Sprintf("use the project logger instead of %s.%s in internal packages", packageName.Name, selector.Sel.Name))
+				}
+			}
+			if isTerminalStderrOutputCall(call, aliases) {
+				format := cliOutputFormat(call)
+				for _, arg := range fmtOutputArgs(call) {
+					if isUnsafeTerminalDiagnosticArg(format, arg, aliases) {
+						appendLogpolicyViolation(fset, relPath, allows, &violations, arg.Pos(), "terminal error/warning output must be sanitized before printing")
+					}
 				}
 			}
 			if importPath != "" {
@@ -2203,10 +2279,145 @@ func isFmtPrintSelector(selector *ast.SelectorExpr, aliases map[string]string) b
 		return false
 	}
 	switch selector.Sel.Name {
-	case "Print", "Printf", "Println":
+	case "Print", "Printf", "Println", "Fprint", "Fprintf", "Fprintln":
 		return true
 	default:
 		return false
+	}
+}
+
+func isTerminalStderrOutputCall(call *ast.CallExpr, aliases map[string]string) bool {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || !isFmtPrintSelector(selector, aliases) || len(call.Args) == 0 {
+		return false
+	}
+	switch selector.Sel.Name {
+	case "Fprint", "Fprintf", "Fprintln":
+	default:
+		return false
+	}
+	target, ok := call.Args[0].(*ast.SelectorExpr)
+	if !ok || target.Sel.Name != "Stderr" {
+		return false
+	}
+	pkg, ok := target.X.(*ast.Ident)
+	return ok && aliases[pkg.Name] == "os"
+}
+
+func isUnsafeTerminalDiagnosticArg(format string, expr ast.Expr, aliases map[string]string) bool {
+	if isSafeTerminalDiagnosticExpr(expr, aliases) {
+		return false
+	}
+	if containsRawTerminalDiagnosticExpr(expr, aliases) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(format), "warning") && containsWarningLikeExpr(expr) {
+		return true
+	}
+	return false
+}
+
+func containsRawTerminalDiagnosticExpr(expr ast.Expr, aliases map[string]string) bool {
+	if isSafeTerminalDiagnosticExpr(expr, aliases) {
+		return false
+	}
+	raw := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		if raw || node == nil {
+			return false
+		}
+		if exprNode, ok := node.(ast.Expr); ok && isSafeTerminalDiagnosticExpr(exprNode, aliases) {
+			return false
+		}
+		switch typed := node.(type) {
+		case *ast.Ident:
+			if isErrorLikeName(typed.Name) {
+				raw = true
+				return false
+			}
+		case *ast.SelectorExpr:
+			if isErrorLikeName(typed.Sel.Name) {
+				raw = true
+				return false
+			}
+		case *ast.CallExpr:
+			if selector, ok := typed.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "Error" {
+				raw = true
+				return false
+			}
+		}
+		return true
+	})
+	return raw
+}
+
+func containsWarningLikeExpr(expr ast.Expr) bool {
+	found := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		if found || node == nil {
+			return false
+		}
+		ident, ok := node.(*ast.Ident)
+		if ok && isWarningLikeName(ident.Name) {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+func isWarningLikeName(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	return lower == "w" || lower == "warning" || lower == "warn" || strings.HasSuffix(lower, "warning") || strings.HasSuffix(lower, "warn")
+}
+
+func isSafeTerminalDiagnosticExpr(expr ast.Expr, aliases map[string]string) bool {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		switch fun.Name {
+		case "formatTerminalDiagnostic", "formatTerminalError", "formatTerminalWarning", "sanitizeTerminalDiagnostic":
+			return true
+		default:
+			return false
+		}
+	case *ast.SelectorExpr:
+		pkg, ok := fun.X.(*ast.Ident)
+		if !ok {
+			return false
+		}
+		return aliases[pkg.Name] == "github.com/autobrr/upbrr/internal/logging" && fun.Sel.Name == "SanitizeMessage"
+	default:
+		return false
+	}
+}
+
+func fmtOutputArgs(call *ast.CallExpr) []ast.Expr {
+	if call == nil || len(call.Args) == 0 {
+		return nil
+	}
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil
+	}
+	switch selector.Sel.Name {
+	case "Print", "Println":
+		return call.Args
+	case "Printf":
+		return call.Args[1:]
+	case "Fprint", "Fprintln":
+		return call.Args[1:]
+	case "Fprintf":
+		if len(call.Args) <= 2 {
+			return nil
+		}
+		return call.Args[2:]
+	default:
+		return nil
 	}
 }
 
@@ -2214,7 +2425,23 @@ func cliOutputFormat(call *ast.CallExpr) string {
 	if len(call.Args) == 0 {
 		return ""
 	}
-	firstArg, ok := call.Args[0].(*ast.BasicLit)
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return ""
+	}
+	var formatIndex int
+	switch selector.Sel.Name {
+	case "Printf":
+		formatIndex = 0
+	case "Fprintf":
+		formatIndex = 1
+	default:
+		return ""
+	}
+	if formatIndex >= len(call.Args) {
+		return ""
+	}
+	firstArg, ok := call.Args[formatIndex].(*ast.BasicLit)
 	if !ok || firstArg.Kind != token.STRING {
 		return ""
 	}
