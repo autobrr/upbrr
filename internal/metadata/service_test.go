@@ -351,6 +351,57 @@ func TestResolveServiceMGMPlus(t *testing.T) {
 	}
 }
 
+func TestResolveServiceIgnoresTitleServiceTokens(t *testing.T) {
+	t.Parallel()
+
+	service, longName, filename := resolveService(api.PreparedMetadata{
+		SourcePath: `/releases/Example.Show.S01E01.Netflix.and.Chill.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv`,
+	})
+	if service != "" {
+		t.Fatalf("expected no service from episode title, got %q", service)
+	}
+	if longName != "" {
+		t.Fatalf("expected no long name from episode title, got %q", longName)
+	}
+	if filename == "" {
+		t.Fatalf("expected filename to be preserved")
+	}
+}
+
+func TestResolveServiceUsesAliasAdjacentToWebSource(t *testing.T) {
+	t.Parallel()
+
+	service, longName, filename := resolveService(api.PreparedMetadata{
+		SourcePath: `/releases/Netflix.Documentary.2026.1080p.AMZN.WEB-DL.DDP5.1.H.264-GRP.mkv`,
+	})
+	if service != "AMZN" {
+		t.Fatalf("expected AMZN adjacent to WEB-DL, got %q", service)
+	}
+	if longName != "Amazon Prime" {
+		t.Fatalf("expected Amazon Prime long name, got %q", longName)
+	}
+	if filename == "" {
+		t.Fatalf("expected filename to be preserved")
+	}
+}
+
+func TestResolveServicePrefersLongestAdjacentAlias(t *testing.T) {
+	t.Parallel()
+
+	service, longName, filename := resolveService(api.PreparedMetadata{
+		SourcePath: `/releases/Example.Movie.2026.1080p.Apple.TV+.WEB-DL.DDP5.1.H.264-GRP.mkv`,
+	})
+	if service != "ATVP" {
+		t.Fatalf("expected ATVP service, got %q", service)
+	}
+	if longName != "Apple TV+" {
+		t.Fatalf("expected Apple TV+ long name, got %q", longName)
+	}
+	if filename == "" {
+		t.Fatalf("expected filename to be preserved")
+	}
+}
+
 func TestResolveServiceValue(t *testing.T) {
 	t.Parallel()
 
