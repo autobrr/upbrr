@@ -1226,6 +1226,71 @@ func TestPrintDebugUploadReview(t *testing.T) {
 	}
 }
 
+func TestPrintDebugUploadReviewGroupsIdenticalPayloads(t *testing.T) {
+	review := api.UploadReview{
+		SourcePath: "C:\\releases\\movie",
+		Trackers: []api.TrackerReview{
+			{
+				Tracker: "BLU",
+				DryRun: api.TrackerDryRunEntry{
+					Tracker:     "BLU",
+					Status:      "ready",
+					ReleaseName: "Movie.2024",
+					Payload:     map[string]string{"category": "MOVIE", "name": "Movie.2024"},
+				},
+			},
+			{
+				Tracker: "SP",
+				DryRun: api.TrackerDryRunEntry{
+					Tracker:     "SP",
+					Status:      "ready",
+					ReleaseName: "Movie.2024",
+					Payload:     map[string]string{"category": "MOVIE", "name": "Movie.2024"},
+				},
+			},
+			{
+				Tracker: "HDB",
+				DryRun: api.TrackerDryRunEntry{
+					Tracker:             "HDB",
+					Status:              "ready",
+					ReleaseName:         "Movie-2024",
+					OriginalReleaseName: "Movie 2024",
+					UploadReleaseName:   "Movie-2024",
+					ReleaseNameChanged:  true,
+					Payload:             map[string]string{"category": "MOVIE", "name": "Movie-2024"},
+				},
+			},
+		},
+	}
+
+	output := captureStdout(t, func() {
+		printDebugUploadReview(review)
+	})
+
+	for _, expected := range []string{
+		"[BLU, SP Debug Payload]",
+		"[HDB Debug Payload]",
+		"Tracker release name changed: Movie 2024 -> Movie-2024",
+		"- name: Movie.2024",
+		"- name: Movie-2024",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected output to contain %q, got %q", expected, output)
+		}
+	}
+	for _, unexpected := range []string{
+		"[BLU Debug Payload]",
+		"[SP Debug Payload]",
+	} {
+		if strings.Contains(output, unexpected) {
+			t.Fatalf("expected output not to contain %q, got %q", unexpected, output)
+		}
+	}
+	if count := strings.Count(output, "- name: Movie.2024"); count != 1 {
+		t.Fatalf("expected grouped payload to print once, got %d occurrences in %q", count, output)
+	}
+}
+
 func TestBuildCLIRequestTrackerSiteOverrides(t *testing.T) {
 	opts, visited, paths, err := parseCLIOptions([]string{
 		"--foreign",

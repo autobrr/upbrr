@@ -1340,21 +1340,25 @@ func printDupeResult(result api.DupeCheckResult) {
 }
 
 func printDryRunSummary(entry api.TrackerDryRunEntry) {
+	writeDryRunSummary(os.Stdout, entry)
+}
+
+func writeDryRunSummary(w io.Writer, entry api.TrackerDryRunEntry) {
 	if strings.TrimSpace(entry.Tracker) == "" {
 		return
 	}
-	fmt.Printf("Dry run: %s", entry.Status)
+	fmt.Fprintf(w, "Dry run: %s", entry.Status)
 	if entry.Message != "" {
-		fmt.Printf(" (%s)", entry.Message)
+		fmt.Fprintf(w, " (%s)", entry.Message)
 	}
-	fmt.Println()
+	fmt.Fprintln(w)
 	if change := trackerReleaseNameChangeLine(entry); change != "" {
-		fmt.Printf("Tracker %s\n", change)
+		fmt.Fprintf(w, "Tracker %s\n", change)
 	} else if entry.ReleaseName != "" {
-		fmt.Printf("Tracker release name: %s\n", entry.ReleaseName)
+		fmt.Fprintf(w, "Tracker release name: %s\n", entry.ReleaseName)
 	}
 	if imageMessage := strings.TrimSpace(entry.ImageHost.Message); imageMessage != "" && (entry.ImageHost.Reuploaded || strings.EqualFold(entry.ImageHost.Status, "warning")) {
-		fmt.Printf("Images: %s\n", imageMessage)
+		fmt.Fprintf(w, "Images: %s\n", imageMessage)
 	}
 	for _, warning := range entry.ImageHost.Warnings {
 		host := strings.TrimSpace(warning.Host)
@@ -1363,28 +1367,65 @@ func printDryRunSummary(entry api.TrackerDryRunEntry) {
 			continue
 		}
 		if host == "" {
-			fmt.Printf("Image host warning: %s\n", warningMessage)
+			fmt.Fprintf(w, "Image host warning: %s\n", warningMessage)
 			continue
 		}
 		if warningMessage == "" {
-			fmt.Printf("Image host warning: %s failed\n", host)
+			fmt.Fprintf(w, "Image host warning: %s failed\n", host)
 			continue
 		}
-		fmt.Printf("Image host warning: %s failed: %s\n", host, warningMessage)
+		fmt.Fprintf(w, "Image host warning: %s failed: %s\n", host, warningMessage)
 	}
 }
 
 func printDebugUploadReview(review api.UploadReview) {
 	fmt.Printf("\n[Debug Dry Run] %s\n", formatPathLabel(review.SourcePath))
-	for _, tracker := range review.Trackers {
-		fmt.Printf("\n[%s Debug Payload]\n", tracker.Tracker)
-		if tracker.Banned {
-			fmt.Printf("Banned group: %s\n", tracker.BannedReason)
+	for _, group := range groupDebugPayloads(review.Trackers) {
+		fmt.Printf("\n[%s Debug Payload]\n", strings.Join(group.trackers, ", "))
+		fmt.Print(group.body)
+	}
+}
+
+type debugPayloadGroup struct {
+	trackers []string
+	body     string
+}
+
+func groupDebugPayloads(trackers []api.TrackerReview) []debugPayloadGroup {
+	groups := make([]debugPayloadGroup, 0, len(trackers))
+	groupByBody := make(map[string]int, len(trackers))
+	for _, tracker := range trackers {
+		body := renderDebugPayloadBody(tracker)
+		if index, ok := groupByBody[body]; ok {
+			groups[index].trackers = append(groups[index].trackers, debugPayloadTrackerLabel(tracker))
 			continue
 		}
-		printDryRunSummary(tracker.DryRun)
-		printDryRunDetails(tracker.DryRun)
+		groupByBody[body] = len(groups)
+		groups = append(groups, debugPayloadGroup{
+			trackers: []string{debugPayloadTrackerLabel(tracker)},
+			body:     body,
+		})
 	}
+	return groups
+}
+
+func renderDebugPayloadBody(tracker api.TrackerReview) string {
+	var builder strings.Builder
+	if tracker.Banned {
+		fmt.Fprintf(&builder, "Banned group: %s\n", tracker.BannedReason)
+		return builder.String()
+	}
+	writeDryRunSummary(&builder, tracker.DryRun)
+	writeDryRunDetails(&builder, tracker.DryRun)
+	return builder.String()
+}
+
+func debugPayloadTrackerLabel(tracker api.TrackerReview) string {
+	label := strings.TrimSpace(tracker.Tracker)
+	if label == "" {
+		return "(unknown)"
+	}
+	return label
 }
 
 func printDryRunUploadReview(review api.UploadReview, req api.Request) {
@@ -1409,29 +1450,33 @@ func printDryRunUploadReview(review api.UploadReview, req api.Request) {
 }
 
 func printDryRunDetails(entry api.TrackerDryRunEntry) {
+	writeDryRunDetails(os.Stdout, entry)
+}
+
+func writeDryRunDetails(w io.Writer, entry api.TrackerDryRunEntry) {
 	if len(entry.Files) > 0 {
-		fmt.Println("Files:")
+		fmt.Fprintln(w, "Files:")
 		for _, file := range entry.Files {
 			status := "missing"
 			if file.Present {
 				status = "present"
 			}
-			fmt.Printf("- %s [%s]: %s\n", file.Field, status, formatDryRunFilePath(file.Path))
+			fmt.Fprintf(w, "- %s [%s]: %s\n", file.Field, status, formatDryRunFilePath(file.Path))
 		}
 	}
 	if len(entry.Payload) > 0 {
-		fmt.Println("Payload:")
+		fmt.Fprintln(w, "Payload:")
 		keys := make([]string, 0, len(entry.Payload))
 		for key := range entry.Payload {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			fmt.Printf("- %s: %s\n", key, formatDryRunPayloadValue(key, entry.Payload[key]))
+			fmt.Fprintf(w, "- %s: %s\n", key, formatDryRunPayloadValue(key, entry.Payload[key]))
 		}
 	}
 	if message := strings.TrimSpace(entry.Description); message != "" && !payloadIncludesDescription(entry.Payload) {
-		fmt.Printf("Description: %s\n", summarizeDryRunBody(message))
+		fmt.Fprintf(w, "Description: %s\n", summarizeDryRunBody(message))
 	}
 }
 
