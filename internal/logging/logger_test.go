@@ -81,11 +81,28 @@ func TestSanitizeLogMessageHandlesUnixLocalPaths(t *testing.T) {
 func TestSanitizeLogMessagePreservesURLs(t *testing.T) {
 	t.Parallel()
 
-	got := SanitizeMessage("web: serving web UI on 127.0.0.1:7480 (browser URL http://127.0.0.1:7480/app)")
-	if strings.Contains(got, "[local path]") {
-		t.Fatalf("expected URL to remain intact, got %q", got)
+	cases := []string{
+		"web: serving web UI on 127.0.0.1:7480 (browser URL http://127.0.0.1:7480/app)",
+		"image=https://img.example.com/media/poster.jpg tracker=ABC",
+		"image=https://img.example.com/tmp/poster.jpg tracker=ABC",
+		"image=https://img.example.com/home/user/poster.jpg tracker=ABC",
+		"image=https://img.example.com/Users/tester/poster.jpg tracker=ABC",
 	}
-	if !strings.Contains(got, "http://127.0.0.1:7480/app") {
-		t.Fatalf("expected URL to remain intact, got %q", got)
+	for _, tc := range cases {
+		got := SanitizeMessage(tc)
+		if strings.Contains(got, "[local path]") {
+			t.Fatalf("expected URL to remain intact, got %q", got)
+		}
+		if got != tc {
+			t.Fatalf("expected URL to remain intact, got %q", got)
+		}
+	}
+
+	got := SanitizeMessage("image=https://img.example.com/media/poster.jpg source=/media/releases/Example.Release.2026-GRP")
+	if strings.Contains(got, "/media/releases") || strings.Contains(got, "Example.Release.2026-GRP") {
+		t.Fatalf("expected local path after URL to be redacted, got %q", got)
+	}
+	if !strings.Contains(got, "image=https://img.example.com/media/poster.jpg source=[local path]") {
+		t.Fatalf("expected URL preserved and local path redacted, got %q", got)
 	}
 }

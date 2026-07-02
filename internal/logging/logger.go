@@ -250,6 +250,11 @@ func SanitizeMessage(message string) string {
 	}
 	var builder strings.Builder
 	for index := 0; index < len(message); {
+		if end, ok := urlSpanEnd(message, index); ok {
+			builder.WriteString(message[index:end])
+			index = end
+			continue
+		}
 		if isWindowsDrivePathStart(message, index) || isUNCPathStart(message, index) || isUnixLocalPathStart(message, index) {
 			end := localPathEnd(message, index)
 			builder.WriteString(localPathLogLabel(message[index:end]))
@@ -287,6 +292,53 @@ func isUnixLocalPathStart(value string, index int) bool {
 		}
 	}
 	return false
+}
+
+// urlSpanEnd returns the end of a URL that starts at index. Sanitization copies
+// URL spans intact before local path matching so URL path components such as
+// /media/ are not mistaken for host filesystem paths.
+func urlSpanEnd(value string, index int) (int, bool) {
+	if index >= len(value) || !isURLSchemeStart(value[index]) {
+		return 0, false
+	}
+	for schemeEnd := index + 1; schemeEnd < len(value); schemeEnd++ {
+		ch := value[schemeEnd]
+		if isURLSchemeChar(ch) {
+			continue
+		}
+		if ch != ':' || schemeEnd+2 >= len(value) || value[schemeEnd+1] != '/' || value[schemeEnd+2] != '/' {
+			return 0, false
+		}
+		for end := schemeEnd + 3; end < len(value); end++ {
+			if isURLEndDelimiter(value[end]) {
+				return end, true
+			}
+		}
+		return len(value), true
+	}
+	return 0, false
+}
+
+func isURLSchemeStart(ch byte) bool {
+	return ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z'
+}
+
+func isURLSchemeChar(ch byte) bool {
+	return ch >= 'A' && ch <= 'Z' ||
+		ch >= 'a' && ch <= 'z' ||
+		ch >= '0' && ch <= '9' ||
+		ch == '+' ||
+		ch == '-' ||
+		ch == '.'
+}
+
+func isURLEndDelimiter(ch byte) bool {
+	switch ch {
+	case ' ', '\r', '\n', '\t', '"', '\'', '`':
+		return true
+	default:
+		return false
+	}
 }
 
 func localPathEnd(value string, start int) int {

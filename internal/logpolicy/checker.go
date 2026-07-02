@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/autobrr/upbrr/internal/logging"
 )
 
 var disallowedStdlibCalls = map[string]map[string]struct{}{
@@ -328,20 +330,62 @@ func checkProjectLoggerPathSanitization(fset *token.FileSet, root string) ([]Vio
 	}
 	relPath = filepath.ToSlash(relPath)
 
+	violations := checkProjectLoggerURLPathPreservation(
+		fset,
+		relPath,
+		functionPosition(file, "SanitizeMessage", file.Package),
+		logging.SanitizeMessage,
+	)
+
 	for _, decl := range file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok || fn.Name == nil || fn.Name.Name != "logf" || fn.Body == nil {
 			continue
 		}
 		if logfFormatsThroughSanitizeMessage(fn.Body) {
-			return nil, nil
+			return violations, nil
 		}
-		return []Violation{violationAt(fset, relPath, fn.Name.Pos(), "project logger logf must sanitize formatted messages with SanitizeMessage before output")}, nil
+		violations = append(violations, violationAt(fset, relPath, fn.Name.Pos(), "project logger logf must sanitize formatted messages with SanitizeMessage before output"))
+		return violations, nil
 	}
 
-	return []Violation{violationAt(fset, relPath, file.Package, "project logger logf not found; logger output path sanitization cannot be verified")}, nil
+	violations = append(violations, violationAt(fset, relPath, file.Package, "project logger logf not found; logger output path sanitization cannot be verified"))
+	return violations, nil
 }
 
+// checkProjectLoggerURLPathPreservation runs behavioral fixtures against the
+// real logger sanitizer so logpolicy fails when URL path segments are redacted
+// as local filesystem paths.
+func checkProjectLoggerURLPathPreservation(fset *token.FileSet, relPath string, pos token.Pos, sanitize func(string) string) []Violation {
+	for _, value := range []string{
+		"url=https://img.example.com/media/poster.jpg",
+		"url=https://img.example.com/tmp/poster.jpg",
+		"url=https://img.example.com/home/user/poster.jpg",
+		"url=https://img.example.com/Users/tester/poster.jpg",
+	} {
+		sanitized := sanitize(value)
+		if sanitized != value {
+			return []Violation{violationAt(fset, relPath, pos, "project logger sanitizer must preserve URL path segments before local path redaction")}
+		}
+	}
+	return nil
+}
+
+// functionPosition anchors behavioral sanitizer violations at the named
+// declaration when it exists, falling back to the package position for malformed
+// or partial fixtures.
+func functionPosition(file *ast.File, name string, fallback token.Pos) token.Pos {
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn.Name != nil && fn.Name.Name == name {
+			return fn.Name.Pos()
+		}
+	}
+	return fallback
+}
+
+// logfFormatsThroughSanitizeMessage reports whether logf assigns formatted log
+// text from SanitizeMessage(fmt.Sprintf(...)) before output.
 func logfFormatsThroughSanitizeMessage(body *ast.BlockStmt) bool {
 	found := false
 	ast.Inspect(body, func(node ast.Node) bool {
@@ -380,6 +424,8 @@ func logfFormatsThroughSanitizeMessage(body *ast.BlockStmt) bool {
 	return found
 }
 
+// isSanitizeMessageSprintfCall accepts direct SanitizeMessage calls whose first
+// argument contains fmt.Sprintf, including nested expressions.
 func isSanitizeMessageSprintfCall(expr ast.Expr) bool {
 	call, ok := expr.(*ast.CallExpr)
 	if !ok || len(call.Args) == 0 {

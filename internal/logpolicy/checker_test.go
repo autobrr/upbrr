@@ -1174,6 +1174,23 @@ func (l *Logger) logf(format string, args ...any) {
 	}
 }
 
+func TestProjectLoggerURLPathPreservationFlagsSanitizerRegression(t *testing.T) {
+	t.Parallel()
+
+	violations := checkProjectLoggerURLPathPreservation(
+		token.NewFileSet(),
+		"internal/logging/logger.go",
+		token.NoPos,
+		func(string) string { return "url=https://img.example.com/[local path]" },
+	)
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "preserve URL path segments") {
+		t.Fatalf("expected URL path preservation violation, got %q", violations[0].Message)
+	}
+}
+
 func TestCheckRepositoryFlagsRawTerminalErrorOutput(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
