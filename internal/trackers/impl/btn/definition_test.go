@@ -507,6 +507,42 @@ func TestResolveBTNTagsUsesAutofillThenTVDBGenres(t *testing.T) {
 	}
 }
 
+func TestResolveBTNImageUsesAutofillThenMetadataPosters(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ExternalMetadata: api.ExternalMetadata{
+			TVDB:   &api.TVDBMetadata{Poster: "https://img.example/tvdb.jpg"},
+			IMDB:   &api.IMDBMetadata{Cover: "https://img.example/imdb.jpg"},
+			TVmaze: &api.TVmazeMetadata{Poster: "https://img.example/tvmaze.jpg", PosterMedium: "https://img.example/tvmaze-medium.jpg"},
+			TMDB:   &api.TMDBMetadata{Poster: "https://img.example/tmdb.jpg"},
+		},
+	}
+	if got := resolveBTNImage(meta, map[string]string{"image": "https://img.example/autofill.jpg"}); got != "https://img.example/autofill.jpg" {
+		t.Fatalf("expected autofill poster, got %q", got)
+	}
+	if got := resolveBTNImage(meta, map[string]string{}); got != "https://img.example/tvdb.jpg" {
+		t.Fatalf("expected TVDB poster, got %q", got)
+	}
+
+	meta.ExternalMetadata.TVDB = nil
+	if got := resolveBTNImage(meta, map[string]string{}); got != "https://img.example/imdb.jpg" {
+		t.Fatalf("expected IMDb poster, got %q", got)
+	}
+	meta.ExternalMetadata.IMDB = nil
+	if got := resolveBTNImage(meta, map[string]string{}); got != "https://img.example/tvmaze.jpg" {
+		t.Fatalf("expected TVmaze poster, got %q", got)
+	}
+	meta.ExternalMetadata.TVmaze.Poster = ""
+	if got := resolveBTNImage(meta, map[string]string{}); got != "https://img.example/tvmaze-medium.jpg" {
+		t.Fatalf("expected TVmaze medium poster, got %q", got)
+	}
+	meta.ExternalMetadata.TVmaze = nil
+	if got := resolveBTNImage(meta, map[string]string{}); got != "https://img.example/tmdb.jpg" {
+		t.Fatalf("expected TMDB poster, got %q", got)
+	}
+}
+
 func TestDecodeBTNAPIJSONRejectsDuplicateKeysAndLargeBodies(t *testing.T) {
 	t.Parallel()
 

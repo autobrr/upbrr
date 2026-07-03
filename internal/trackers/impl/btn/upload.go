@@ -720,7 +720,7 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		"origin":       resolveOrigin(resolveUploadName(req.Meta)),
 		"year":         metautil.FirstNonEmptyTrimmed(fields["year"]),
 		"tags":         resolveBTNTags(req.Meta, fields),
-		"image":        metautil.FirstNonEmptyTrimmed(fields["image"]),
+		"image":        resolveBTNImage(req.Meta, fields),
 		"album_desc":   buildAlbumDesc(req.Meta, fields),
 		"format":       format,
 		"bitrate":      bitrate,
@@ -774,6 +774,36 @@ func resolveBTNTags(meta api.PreparedMetadata, fields map[string]string) string 
 		return ""
 	}
 	return mapBTNTVDBGenres(meta.ExternalMetadata.TVDB.Genres)
+}
+
+// resolveBTNImage keeps BTN autofill poster data when present. Empty autofill
+// falls back through TVDB, IMDb, TVmaze, then TMDB poster metadata.
+func resolveBTNImage(meta api.PreparedMetadata, fields map[string]string) string {
+	if image := strings.TrimSpace(fields["image"]); image != "" {
+		return image
+	}
+	if meta.ExternalMetadata.TVDB != nil {
+		if poster := strings.TrimSpace(meta.ExternalMetadata.TVDB.Poster); poster != "" {
+			return poster
+		}
+	}
+	if meta.ExternalMetadata.IMDB != nil {
+		if poster := strings.TrimSpace(meta.ExternalMetadata.IMDB.Cover); poster != "" {
+			return poster
+		}
+	}
+	if meta.ExternalMetadata.TVmaze != nil {
+		if poster := strings.TrimSpace(meta.ExternalMetadata.TVmaze.Poster); poster != "" {
+			return poster
+		}
+		if poster := strings.TrimSpace(meta.ExternalMetadata.TVmaze.PosterMedium); poster != "" {
+			return poster
+		}
+	}
+	if meta.ExternalMetadata.TMDB != nil {
+		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Poster)
+	}
+	return ""
 }
 
 // mapBTNTVDBGenres converts TVDB genre text to comma-separated BTN genre tags.
