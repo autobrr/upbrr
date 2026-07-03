@@ -18,6 +18,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/anacrolix/torrent/bencode"
+	"github.com/anacrolix/torrent/metainfo"
+
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
@@ -295,6 +298,84 @@ func TestBTNUploadEndToEndSuccess(t *testing.T) {
 	}
 	if got := uploadFormValues["scenename"]; !strings.Contains(got, "H.265") || strings.Contains(got, "x265") {
 		t.Fatalf("expected scenename codec remap to H.265, got %q", got)
+	}
+}
+
+func TestBTNUploadAnnounceURLWritesTorrentArtifact(t *testing.T) {
+	t.Parallel()
+
+	var downloadCalls atomic.Int32
+	var apiCalls atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/login.php" && r.Method == http.MethodPost:
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		case r.URL.Path == "/upload.php" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`<form action="/upload.php"><input name="file_input" /></form>`))
+		case r.URL.Path == "/upload.php" && r.Method == http.MethodPost:
+			contentType := r.Header.Get("Content-Type")
+			if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+				_, _ = w.Write([]byte(`
+					<input name="artist" value="Example Show" />
+					<input name="title" value="Episode One" />
+					<input name="seriesid" value="999" />
+					<textarea name="album_desc">Episode overview: TBA</textarea>
+					<select name="format"><option selected value="MKV">MKV</option></select>
+					<select name="bitrate"><option selected value="H.265">H.265</option></select>
+					<select name="media"><option selected value="WEB-DL">WEB-DL</option></select>
+					<select name="resolution"><option selected value="1080p">1080p</option></select>
+				`))
+				return
+			}
+			w.Header().Set("Location", "/torrents.php?id=123&torrentid=456")
+			w.WriteHeader(http.StatusFound)
+		case r.URL.Path == "/torrents.php" && r.URL.Query().Get("action") == "download":
+			downloadCalls.Add(1)
+			http.NotFound(w, r)
+		case r.URL.Path == "/rpc":
+			apiCalls.Add(1)
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	req := newBTNUploadTestRequest(t, server.URL)
+	torrentPath := filepath.Join(t.TempDir(), "input.torrent")
+	writeBTNTestTorrent(t, torrentPath)
+	req.Meta.TorrentPath = torrentPath
+	req.TrackerConfig.AnnounceURL = "https://tracker.btn.example/announce/passkey"
+
+	summary, err := upload(context.Background(), req)
+	if err != nil {
+		t.Fatalf("upload failed: %v", err)
+	}
+	if downloadCalls.Load() != 0 {
+		t.Fatalf("expected no BTN torrent download calls, got %d", downloadCalls.Load())
+	}
+	if apiCalls.Load() != 0 {
+		t.Fatalf("expected no API fallback calls, got %d", apiCalls.Load())
+	}
+	if got := summary.UploadedTorrents[0].TorrentID; got != "456" {
+		t.Fatalf("expected torrent id 456, got %q", got)
+	}
+
+	torrentMeta, err := metainfo.LoadFromFile(summary.UploadedTorrents[0].TorrentPath)
+	if err != nil {
+		t.Fatalf("read BTN artifact: %v", err)
+	}
+	if torrentMeta.Announce != "https://tracker.btn.example/announce/passkey" {
+		t.Fatal("expected BTN announce URL")
+	}
+	if len(torrentMeta.AnnounceList) != 1 || len(torrentMeta.AnnounceList[0]) != 1 || torrentMeta.AnnounceList[0][0] != "https://tracker.btn.example/announce/passkey" {
+		t.Fatal("expected BTN announce-list")
+	}
+	if torrentMeta.Comment != summary.UploadedTorrents[0].TorrentURL {
+		t.Fatalf("expected torrent comment to reference BTN URL, got %q", torrentMeta.Comment)
 	}
 }
 
@@ -1523,6 +1604,37 @@ func newBTNUploadTestRequest(t *testing.T, serverURL string) trackers.UploadRequ
 				"BTN": {APIKey: strings.Repeat("x", 30)},
 			}},
 		},
+	}
+}
+
+func writeBTNTestTorrent(t *testing.T, torrentPath string) {
+	t.Helper()
+
+	infoBytes, err := bencode.Marshal(map[string]any{
+		"name":         "Example.Show.S01E01.mkv",
+		"length":       int64(1),
+		"piece length": int64(16 * 1024),
+		"pieces":       strings.Repeat("\x00", 20),
+	})
+	if err != nil {
+		t.Fatalf("marshal torrent info: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(torrentPath), 0o700); err != nil {
+		t.Fatalf("create torrent dir: %v", err)
+	}
+	file, err := os.OpenFile(torrentPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		t.Fatalf("create torrent: %v", err)
+	}
+	defer file.Close()
+
+	torrentMeta := metainfo.MetaInfo{
+		Announce:     "https://old.example/announce",
+		AnnounceList: metainfo.AnnounceList{{"https://old.example/announce"}},
+		InfoBytes:    infoBytes,
+	}
+	if err := torrentMeta.Write(file); err != nil {
+		t.Fatalf("write torrent: %v", err)
 	}
 }
 

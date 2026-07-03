@@ -207,6 +207,7 @@ trackers:
   BTN:
     link_dir_name: ""
     api_key: ""
+    announce_url: ""
     username: ""
     password: ""
     url: "https://backup.landof.tv"

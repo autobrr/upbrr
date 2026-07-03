@@ -323,6 +323,13 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	torrentURL := buildBTNTorrentURL(uploadCtx.baseURL, groupID, torrentID)
 
+	if announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announceURL != "" && torrentID != "" && !torrentDownloaded {
+		if err := writeBTNTorrentArtifact(torrentPath, trackerTorrentPath, announceURL, torrentURL); err != nil {
+			return api.UploadSummary{}, err
+		}
+		torrentDownloaded = true
+	}
+
 	if torrentID != "" && !torrentDownloaded {
 		if err := downloadTrackerTorrent(ctx, uploadCtx.client, uploadCtx.baseURL, torrentID, trackerTorrentPath); err != nil {
 			if req.Logger != nil {
@@ -1412,6 +1419,19 @@ func resolveTrackerTorrentPath(meta api.PreparedMetadata, dbPath string, tracker
 	return filepath.Join(tmpDir, base+"."+name+".torrent"), nil
 }
 
+// writeBTNTorrentArtifact rewrites the uploaded torrent with the configured BTN
+// announce URL once the canonical torrent URL is known. A successful write lets
+// upload skip downloading BTN's generated torrent file.
+func writeBTNTorrentArtifact(sourcePath string, outputPath string, announceURL string, torrentURL string) error {
+	if err := trackers.WritePersonalizedTorrent(sourcePath, outputPath, announceURL, torrentURL, "BTN"); err != nil {
+		return fmt.Errorf("trackers: BTN write torrent artifact: %w", err)
+	}
+	return nil
+}
+
+// downloadTrackerTorrent fetches BTN's generated torrent file for uploads that
+// do not have a configured announce URL. Non-torrent responses are rejected so
+// callers can fall back to API resolution.
 func downloadTrackerTorrent(ctx context.Context, client *http.Client, baseURL string, torrentID string, outputPath string) error {
 	if strings.TrimSpace(torrentID) == "" {
 		return errors.New("trackers: BTN torrent_id missing")

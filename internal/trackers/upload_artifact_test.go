@@ -345,6 +345,34 @@ func TestPrepareTrackerUploadTorrentUsesDefaultAnnounce(t *testing.T) {
 	assertInfoSource(t, artifact, "AvistaZ")
 }
 
+func TestPrepareTrackerUploadTorrentUsesBTNAnnounceURL(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "Release.mkv")
+	if err := os.WriteFile(sourcePath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	baseTorrentPath := filepath.Join(tmp, "base.torrent")
+	writeTestMetaInfo(t, baseTorrentPath, metainfo.MetaInfo{InfoBytes: testInfoBytes(t, "")})
+
+	meta, err := PrepareTrackerUploadTorrent(api.PreparedMetadata{
+		SourcePath:  sourcePath,
+		TorrentPath: baseTorrentPath,
+	}, filepath.Join(tmp, "state", "upbrr.db"), "BTN", config.TrackerConfig{AnnounceURL: "https://tracker.btn.example/announce/passkey"})
+	if err != nil {
+		t.Fatalf("prepare tracker torrent: %v", err)
+	}
+	if meta.TorrentPath == "" || meta.TorrentPath == baseTorrentPath {
+		t.Fatalf("expected BTN tracker artifact path, got %q", meta.TorrentPath)
+	}
+	artifact := readTestMetaInfo(t, meta.TorrentPath)
+	if artifact.Announce != "https://tracker.btn.example/announce/passkey" {
+		t.Fatal("expected BTN announce set")
+	}
+	assertInfoSource(t, artifact, "BTN")
+}
+
 func TestPrepareTrackerUploadTorrentNoSpecLeavesMetaUnchanged(t *testing.T) {
 	t.Parallel()
 
