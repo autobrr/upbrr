@@ -371,31 +371,52 @@ func TestResolveServiceIgnoresTitleServiceTokens(t *testing.T) {
 func TestResolveServiceUsesAliasAdjacentToWebSource(t *testing.T) {
 	t.Parallel()
 
-	service, longName, filename := resolveService(api.PreparedMetadata{
-		SourcePath: `/releases/Netflix.Documentary.2026.1080p.AMZN.WEB-DL.DDP5.1.H.264-GRP.mkv`,
-	})
-	if service != "AMZN" {
-		t.Fatalf("expected AMZN adjacent to WEB-DL, got %q", service)
+	tests := []struct {
+		name       string
+		sourcePath string
+	}{
+		{
+			name:       "web dl with separator",
+			sourcePath: `/releases/Netflix.Documentary.2026.1080p.AMZN.WEB-DL.DDP5.1.H.264-GRP.mkv`,
+		},
+		{
+			name:       "split web dl",
+			sourcePath: `/releases/Netflix.Documentary.2026.1080p.AMZN WEB DL DDP5.1 H.264-GRP.mkv`,
+		},
+		{
+			name:       "split web rip",
+			sourcePath: `/releases/Netflix.Documentary.2026.1080p.AMZN WEB RIP DDP5.1 H.264-GRP.mkv`,
+		},
+		{
+			name:       "compact webrip",
+			sourcePath: `/releases/Netflix.Documentary.2026.1080p.AMZN.WEBRip.DDP5.1.H.264-GRP.mkv`,
+		},
 	}
-	if longName != "Amazon Prime" {
-		t.Fatalf("expected Amazon Prime long name, got %q", longName)
-	}
-	if filename == "" {
-		t.Fatalf("expected filename to be preserved")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertResolvedService(t, tt.sourcePath, "AMZN", "Amazon Prime")
+		})
 	}
 }
 
 func TestResolveServicePrefersLongestAdjacentAlias(t *testing.T) {
 	t.Parallel()
 
+	assertResolvedService(t, `/releases/Example.Movie.2026.1080p.Apple.TV+.WEB-DL.DDP5.1.H.264-GRP.mkv`, "ATVP", "Apple TV+")
+}
+
+func assertResolvedService(t *testing.T, sourcePath, wantService, wantLongName string) {
+	t.Helper()
+
 	service, longName, filename := resolveService(api.PreparedMetadata{
-		SourcePath: `/releases/Example.Movie.2026.1080p.Apple.TV+.WEB-DL.DDP5.1.H.264-GRP.mkv`,
+		SourcePath: sourcePath,
 	})
-	if service != "ATVP" {
-		t.Fatalf("expected ATVP service, got %q", service)
+	if service != wantService {
+		t.Fatalf("expected %s service, got %q", wantService, service)
 	}
-	if longName != "Apple TV+" {
-		t.Fatalf("expected Apple TV+ long name, got %q", longName)
+	if longName != wantLongName {
+		t.Fatalf("expected %s long name, got %q", wantLongName, longName)
 	}
 	if filename == "" {
 		t.Fatalf("expected filename to be preserved")
