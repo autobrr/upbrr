@@ -432,6 +432,62 @@ func TestBTNAPIDownloadOriginRejectsSameHostPrivateRebind(t *testing.T) {
 	}
 }
 
+func TestBTNDropdownMappingsPreferMetadataThenAutofill(t *testing.T) {
+	t.Parallel()
+
+	autofillFields := map[string]string{
+		"format":     "MP4",
+		"bitrate":    "H.264",
+		"media":      "HDTV",
+		"resolution": "2160p",
+	}
+	metadata := api.PreparedMetadata{
+		Container:   "mkv",
+		VideoEncode: "x265",
+		Source:      "WEB-DL",
+		Type:        "WEBDL",
+		Release:     api.ReleaseInfo{Resolution: "1080p"},
+	}
+	if got := mapContainer(metadata, autofillFields); got != "MKV" {
+		t.Fatalf("expected metadata format, got %q", got)
+	}
+	if got := mapCodec(metadata, autofillFields); got != "H.265" {
+		t.Fatalf("expected metadata bitrate, got %q", got)
+	}
+	if got := mapSource(metadata, autofillFields); got != "WEB-DL" {
+		t.Fatalf("expected metadata media, got %q", got)
+	}
+	if got := mapResolution(metadata, autofillFields); got != "1080p" {
+		t.Fatalf("expected metadata resolution, got %q", got)
+	}
+
+	invalidMetadata := api.PreparedMetadata{
+		Container:   "unknown-container",
+		VideoEncode: "unknown-codec",
+		Source:      "unknown-source",
+		Type:        "unknown-type",
+		Release:     api.ReleaseInfo{Resolution: "unknown-resolution"},
+	}
+	if got := mapContainer(invalidMetadata, autofillFields); got != "MP4" {
+		t.Fatalf("expected autofill format, got %q", got)
+	}
+	if got := mapCodec(invalidMetadata, autofillFields); got != "H.264" {
+		t.Fatalf("expected autofill bitrate, got %q", got)
+	}
+	if got := mapSource(invalidMetadata, autofillFields); got != "HDTV" {
+		t.Fatalf("expected autofill media, got %q", got)
+	}
+	if got := mapResolution(invalidMetadata, autofillFields); got != "2160p" {
+		t.Fatalf("expected autofill resolution, got %q", got)
+	}
+	if got := mapResolution(api.PreparedMetadata{Release: api.ReleaseInfo{Resolution: "Portable Device"}}, autofillFields); got != "Portable Device" {
+		t.Fatalf("expected metadata portable-device resolution, got %q", got)
+	}
+	if got := mapResolution(api.PreparedMetadata{Release: api.ReleaseInfo{Resolution: "Mixed"}}, autofillFields); got != "Mixed" {
+		t.Fatalf("expected metadata mixed resolution, got %q", got)
+	}
+}
+
 func TestDecodeBTNAPIJSONRejectsDuplicateKeysAndLargeBodies(t *testing.T) {
 	t.Parallel()
 

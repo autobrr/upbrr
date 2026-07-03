@@ -704,8 +704,11 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		}
 	}
 
-	resolution := mapResolution(req.Meta)
-	logBTNResolutionMismatch(req.Logger, resolution, fields["resolution"])
+	resolution := mapResolution(req.Meta, fields)
+	logBTNAutofillMismatch(req.Logger, "format", format, fields["format"])
+	logBTNAutofillMismatch(req.Logger, "bitrate", bitrate, fields["bitrate"])
+	logBTNAutofillMismatch(req.Logger, "media", media, fields["media"])
+	logBTNAutofillMismatch(req.Logger, "resolution", resolution, fields["resolution"])
 	payload := map[string]string{
 		"submit":       "true",
 		"type":         resolveUploadType(req.Meta),
@@ -745,19 +748,20 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 	return clean, nil
 }
 
-// logBTNResolutionMismatch records when BTN autofill selected a different
-// resolution than local metadata. The upload still uses metadata because
+// logBTNAutofillMismatch records when BTN autofill selected a different
+// dropdown value than local metadata. The upload still uses metadata because
 // autofill runs before MediaInfo or final upload fields are submitted.
-func logBTNResolutionMismatch(logger api.Logger, metadataResolution string, autofillResolution string) {
+func logBTNAutofillMismatch(logger api.Logger, field string, metadataValue string, autofillValue string) {
 	if logger == nil {
 		return
 	}
-	metadataResolution = strings.TrimSpace(metadataResolution)
-	autofillResolution = strings.TrimSpace(autofillResolution)
-	if metadataResolution == "" || autofillResolution == "" || metadataResolution == autofillResolution {
+	field = strings.TrimSpace(field)
+	metadataValue = strings.TrimSpace(metadataValue)
+	autofillValue = strings.TrimSpace(autofillValue)
+	if field == "" || metadataValue == "" || autofillValue == "" || metadataValue == autofillValue {
 		return
 	}
-	logger.Infof("trackers: BTN autofill resolution mismatch metadata_resolution=%q autofill_resolution=%q decision=metadata", metadataResolution, autofillResolution)
+	logger.Infof("trackers: BTN autofill %s mismatch metadata_%s=%q autofill_%s=%q decision=metadata", field, field, metadataValue, field, autofillValue)
 }
 
 func extractAutofillFields(htmlRaw string) map[string]string {
@@ -1596,6 +1600,8 @@ func stripHTML(value string) string {
 	return strings.TrimSpace(cleaned)
 }
 
+// mapContainer maps local container metadata to BTN's format dropdown. Autofill
+// is used only when metadata does not resolve to a BTN-supported value.
 func mapContainer(meta api.PreparedMetadata, fields map[string]string) string {
 	allowed := map[string]struct{}{"AVI": {}, "MKV": {}, "VOB": {}, "MPEG": {}, "MP4": {}, "ISO": {}, "WMV": {}, "TS": {}, "M4V": {}, "M2TS": {}, "Mixed": {}}
 	container := strings.ToLower(strings.TrimSpace(meta.Container))
@@ -1614,6 +1620,8 @@ func mapContainer(meta api.PreparedMetadata, fields map[string]string) string {
 	return ""
 }
 
+// mapCodec maps local video codec metadata to BTN's bitrate dropdown. Autofill
+// is used only when metadata does not resolve to a BTN-supported value.
 func mapCodec(meta api.PreparedMetadata, fields map[string]string) string {
 	allowed := map[string]struct{}{"XViD": {}, "MPEG2": {}, "DiVX": {}, "DVDR": {}, "VC-1": {}, "H.264": {}, "H.265": {}, "WMV": {}, "BD": {}, "x264-Hi10P": {}, "VP9": {}, "Mixed": {}}
 	videoEncode := strings.ToLower(strings.TrimSpace(meta.VideoEncode))
@@ -1645,6 +1653,8 @@ func mapCodec(meta api.PreparedMetadata, fields map[string]string) string {
 	return ""
 }
 
+// mapSource maps local source metadata to BTN's media dropdown. Autofill is
+// used only when metadata does not resolve to a BTN-supported value.
 func mapSource(meta api.PreparedMetadata, fields map[string]string) string {
 	allowed := map[string]struct{}{"HDTV": {}, "PDTV": {}, "DSR": {}, "DVDRip": {}, "TVRip": {}, "VHSRip": {}, "Bluray": {}, "BDRip": {}, "BRRip": {}, "DVD5": {}, "DVD9": {}, "HDDVD": {}, "WEB-DL": {}, "WEBRip": {}, "BD5": {}, "BD9": {}, "BD25": {}, "BD50": {}, "Mixed": {}, "Unknown": {}}
 	source := strings.ToLower(strings.TrimSpace(meta.Source))
@@ -1677,10 +1687,9 @@ func mapSource(meta api.PreparedMetadata, fields map[string]string) string {
 	return ""
 }
 
-// mapResolution returns the BTN resolution value derived from local metadata.
-// BTN autofill runs before MediaInfo or final upload fields are submitted, so
-// its selected resolution is not used as the source of truth.
-func mapResolution(meta api.PreparedMetadata) string {
+// mapResolution returns the BTN resolution value derived from local metadata,
+// falling back to BTN autofill only when metadata does not map to a BTN option.
+func mapResolution(meta api.PreparedMetadata, fields map[string]string) string {
 	switch strings.ToLower(strings.TrimSpace(meta.Release.Resolution)) {
 	case "2160p", "4320p", "8640p", "4k", "8k":
 		return "2160p"
@@ -1690,6 +1699,16 @@ func mapResolution(meta api.PreparedMetadata) string {
 		return "1080i"
 	case "720p":
 		return "720p"
+	case "sd":
+		return "SD"
+	case "portable device":
+		return "Portable Device"
+	case "mixed":
+		return "Mixed"
+	}
+	switch strings.TrimSpace(fields["resolution"]) {
+	case "SD", "720p", "1080p", "1080i", "2160p", "Portable Device", "Mixed":
+		return strings.TrimSpace(fields["resolution"])
 	default:
 		return "SD"
 	}

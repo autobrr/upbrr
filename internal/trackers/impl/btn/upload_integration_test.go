@@ -676,9 +676,9 @@ func TestBTNPrepareUploadDataUsesEpisodeIntForTVDBAutoTitle(t *testing.T) {
 				<input name="tags" value="autofill">
 				<input name="image" value="https://img.example/autofill.jpg">
 				<textarea name="album_desc">Autofill overview</textarea>
-				<select name="bitrate"><option selected value="H.265">H.265</option></select>
-				<select name="format"><option selected value="MKV">MKV</option></select>
-				<select name="media"><option selected value="WEB-DL">WEB-DL</option></select>
+				<select name="bitrate"><option selected value="H.264">H.264</option></select>
+				<select name="format"><option selected value="MP4">MP4</option></select>
+				<select name="media"><option selected value="HDTV">HDTV</option></select>
 				<select name="resolution"><option selected value="2160p">2160p</option></select>
 			`)
 		default:
@@ -761,8 +761,26 @@ func TestBTNPrepareUploadDataUsesEpisodeIntForTVDBAutoTitle(t *testing.T) {
 	if payload["image"] != "https://img.example/autofill.jpg" {
 		t.Fatalf("expected BTN autofill image, got %q", payload["image"])
 	}
+	if payload["format"] != "MKV" {
+		t.Fatalf("expected metadata format, got %q", payload["format"])
+	}
+	if payload["bitrate"] != "H.265" {
+		t.Fatalf("expected metadata bitrate, got %q", payload["bitrate"])
+	}
+	if payload["media"] != "WEB-DL" {
+		t.Fatalf("expected metadata media, got %q", payload["media"])
+	}
 	if payload["resolution"] != "1080p" {
 		t.Fatalf("expected metadata resolution, got %q", payload["resolution"])
+	}
+	if !logger.containsInfo(`BTN autofill format mismatch metadata_format="MKV" autofill_format="MP4" decision=metadata`) {
+		t.Fatal("expected format mismatch info log")
+	}
+	if !logger.containsInfo(`BTN autofill bitrate mismatch metadata_bitrate="H.265" autofill_bitrate="H.264" decision=metadata`) {
+		t.Fatal("expected bitrate mismatch info log")
+	}
+	if !logger.containsInfo(`BTN autofill media mismatch metadata_media="WEB-DL" autofill_media="HDTV" decision=metadata`) {
+		t.Fatal("expected media mismatch info log")
 	}
 	if !logger.containsInfo(`BTN autofill resolution mismatch metadata_resolution="1080p" autofill_resolution="2160p" decision=metadata`) {
 		t.Fatal("expected resolution mismatch info log")
