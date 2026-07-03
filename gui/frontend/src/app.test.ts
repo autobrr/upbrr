@@ -521,6 +521,36 @@ describe("metadata tracker payloads", () => {
     expect(fetchMetadata.mock.calls[2][4]).toEqual(["AITHER"]);
   });
 
+  it("restores dupe-ignored trackers for description builder requests", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    const fetchDescriptionBuilder = vi.fn<FetchDescriptionBuilder>(async (sourcePath) =>
+      descriptionBuilderPreview(sourcePath),
+    );
+    installAppBridge(fetchMetadata, { fetchDescriptionBuilder });
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+    await screen.findByText("2/2");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("switch", { name: "Ignore dupes for BLU" }));
+    await waitFor(() => expect(screen.getByText("Available for upload: 2")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Description Builder" }));
+
+    await waitFor(() => expect(fetchDescriptionBuilder).toHaveBeenCalledTimes(1));
+    expect(fetchDescriptionBuilder.mock.calls[0][3]).toEqual(["AITHER", "BLU"]);
+    expect(fetchDescriptionBuilder.mock.calls[0][4]).toEqual(["blu"]);
+  });
+
   it("does not apply dupe blocks from a previous path to metadata fetches", async () => {
     const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
     installAppBridge(fetchMetadata);
