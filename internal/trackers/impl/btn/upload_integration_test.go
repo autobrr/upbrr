@@ -652,11 +652,15 @@ func TestBTNPrepareUploadDataUsesEpisodeIntForTVDBAutoTitle(t *testing.T) {
 			autofillForm["auto_title"] = r.PostForm.Get("auto_title")
 			formMu.Unlock()
 			_, _ = io.WriteString(w, `
-				<input name="artist" value="Example Show">
-				<input name="title" value="Episode Seven">
-				<input name="seriesid" value="12345">
-				<select name="format"><option selected value="MKV">MKV</option></select>
+				<input name="artist" value="Autofill Show">
+				<input name="title" value="Autofill Episode">
+				<input name="seriesid" value="99999">
+				<input name="year" value="1999">
+				<input name="tags" value="autofill">
+				<input name="image" value="https://img.example/autofill.jpg">
+				<textarea name="album_desc">Autofill overview</textarea>
 				<select name="bitrate"><option selected value="H.265">H.265</option></select>
+				<select name="format"><option selected value="MKV">MKV</option></select>
 				<select name="media"><option selected value="WEB-DL">WEB-DL</option></select>
 			`)
 		default:
@@ -685,7 +689,22 @@ func TestBTNPrepareUploadDataUsesEpisodeIntForTVDBAutoTitle(t *testing.T) {
 			DescriptionOverride: "Description",
 			ExternalIDs:         api.ExternalIDs{Category: "TV"},
 			ExternalMetadata: api.ExternalMetadata{
-				TVDB: &api.TVDBMetadata{TVDBID: 12345, OriginalLanguage: "en", EpisodeSeason: 4, EpisodeNumber: 12},
+				TVDB: &api.TVDBMetadata{
+					TVDBID:                 12345,
+					Name:                   "Native Show",
+					NameEnglish:            "English Show",
+					Year:                   2026,
+					Poster:                 "https://img.example/tvdb.jpg",
+					Genres:                 "drama mystery",
+					OriginalLanguage:       "jpn",
+					EpisodeSeason:          4,
+					EpisodeNumber:          12,
+					EpisodeName:            "Native Episode",
+					EpisodeNameEnglish:     "English Episode",
+					EpisodeOverview:        "Native overview",
+					EpisodeOverviewEnglish: "English overview",
+					EpisodeAired:           "2026-02-03",
+				},
 			},
 			Release: api.ReleaseInfo{
 				Resolution: "1080p",
@@ -703,6 +722,29 @@ func TestBTNPrepareUploadDataUsesEpisodeIntForTVDBAutoTitle(t *testing.T) {
 	}
 	if payload["type"] != "Episode" {
 		t.Fatalf("expected Episode upload type, got %q", payload["type"])
+	}
+	if payload["seriesid"] != "99999" {
+		t.Fatalf("expected BTN autofill series id in payload, got %q", payload["seriesid"])
+	}
+	if payload["artist"] != "Autofill Show" {
+		t.Fatalf("expected BTN autofill series title, got %q", payload["artist"])
+	}
+	if payload["title"] != "Autofill Episode" {
+		t.Fatalf("expected BTN autofill episode title, got %q", payload["title"])
+	}
+	if payload["year"] != "1999" {
+		t.Fatalf("expected BTN autofill year, got %q", payload["year"])
+	}
+	if payload["tags"] != "autofill" {
+		t.Fatalf("expected BTN autofill tags, got %q", payload["tags"])
+	}
+	if payload["image"] != "https://img.example/autofill.jpg" {
+		t.Fatalf("expected BTN autofill image, got %q", payload["image"])
+	}
+	for _, value := range []string{"English Episode", "Season: 4", "Episode: 12", "Aired: 2026-02-03", "English overview"} {
+		if !strings.Contains(payload["album_desc"], value) {
+			t.Fatalf("expected album_desc to contain %q, got %q", value, payload["album_desc"])
+		}
 	}
 
 	formMu.Lock()

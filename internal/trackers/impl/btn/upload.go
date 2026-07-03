@@ -774,15 +774,52 @@ func validateAutofill(fields map[string]string, uploadType string) bool {
 	return true
 }
 
+// preferredBTNTVDBEpisodeTitle returns TVDB's English episode title when it is
+// available, falling back to the original-language title.
+func preferredBTNTVDBEpisodeTitle(tvdb *api.TVDBMetadata) string {
+	if tvdb == nil {
+		return ""
+	}
+	return metautil.FirstNonEmptyTrimmed(strings.TrimSpace(tvdb.EpisodeNameEnglish), strings.TrimSpace(tvdb.EpisodeName))
+}
+
+// preferredBTNTVDBOverview returns TVDB episode overview text before series
+// overview text, using English translations before original-language values.
+func preferredBTNTVDBOverview(tvdb *api.TVDBMetadata) string {
+	if tvdb == nil {
+		return ""
+	}
+	return metautil.FirstNonEmptyTrimmed(
+		strings.TrimSpace(tvdb.EpisodeOverviewEnglish),
+		strings.TrimSpace(tvdb.EpisodeOverview),
+		strings.TrimSpace(tvdb.OverviewEnglish),
+		strings.TrimSpace(tvdb.Overview),
+	)
+}
+
+// buildAlbumDesc builds the BTN description block for TV uploads from metadata
+// that BTN does not provide through autofill. TVDB episode metadata wins for
+// title, overview, aired date, season, and episode when present; BTN autofill
+// fields remain the fallback source.
 func buildAlbumDesc(meta api.PreparedMetadata, fields map[string]string) string {
 	if !strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") {
 		return metautil.FirstNonEmptyTrimmed(fields["album_desc"])
 	}
-	overview := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.EpisodeOverview), strings.TrimSpace(fields["album_desc"]))
-	aired := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.TVDBAiredDate), strings.TrimSpace(meta.DailyEpisodeDate), "TBA")
+	tvdb := meta.ExternalMetadata.TVDB
+	overview := metautil.FirstNonEmptyTrimmed(preferredBTNTVDBOverview(tvdb), strings.TrimSpace(meta.EpisodeOverview), strings.TrimSpace(fields["album_desc"]))
+	aired := metautil.FirstNonEmptyTrimmed(btnTVDBEpisodeAired(tvdb), strings.TrimSpace(meta.TVDBAiredDate), strings.TrimSpace(meta.DailyEpisodeDate), "TBA")
 	season, episode := resolveBTNTVSeasonEpisode(meta)
-	episodeTitle := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.EpisodeTitle), "TBA")
+	episodeTitle := metautil.FirstNonEmptyTrimmed(preferredBTNTVDBEpisodeTitle(tvdb), strings.TrimSpace(meta.EpisodeTitle), "TBA")
 	return strings.TrimSpace(fmt.Sprintf("Episode Name: %s\nEpisode Title: %s\nSeason: %d\nEpisode: %d\nAired: %s\n\nEpisode overview: %s", episodeTitle, episodeTitle, season, episode, aired, overview))
+}
+
+// btnTVDBEpisodeAired returns the TVDB episode air date used in BTN-generated
+// description text. An empty value leaves metadata date fallbacks in control.
+func btnTVDBEpisodeAired(tvdb *api.TVDBMetadata) string {
+	if tvdb == nil {
+		return ""
+	}
+	return strings.TrimSpace(tvdb.EpisodeAired)
 }
 
 // validateBTNTVPayloadMetadata returns the shared BTN TV metadata block reason
@@ -807,6 +844,9 @@ func resolveUploadType(meta api.PreparedMetadata) string {
 	return "Season"
 }
 
+// resolveBTNTVSeasonEpisode returns the season and episode numbers BTN should
+// use for generated request and description fields. TVDB episode numbers win
+// over metadata ints; missing TVDB values fall back independently.
 func resolveBTNTVSeasonEpisode(meta api.PreparedMetadata) (int, int) {
 	season, episode := meta.CanonicalSeasonEpisode()
 	if meta.ExternalMetadata.TVDB == nil {
