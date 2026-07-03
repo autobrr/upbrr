@@ -5,6 +5,7 @@ package trackers
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -371,6 +372,38 @@ func TestPrepareTrackerUploadTorrentUsesBTNAnnounceURL(t *testing.T) {
 		t.Fatal("expected BTN announce set")
 	}
 	assertInfoSource(t, artifact, "BTN")
+}
+
+func TestPrepareTrackerUploadTorrentSkipsBTNWithoutAnnounceURL(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "Release.mkv")
+	if err := os.WriteFile(sourcePath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	baseTorrentPath := filepath.Join(tmp, "base.torrent")
+	writeTestMetaInfo(t, baseTorrentPath, metainfo.MetaInfo{InfoBytes: testInfoBytes(t, "")})
+
+	dbPath := filepath.Join(tmp, "state", "upbrr.db")
+	meta := api.PreparedMetadata{
+		SourcePath:  sourcePath,
+		TorrentPath: baseTorrentPath,
+	}
+	got, err := PrepareTrackerUploadTorrent(meta, dbPath, "BTN", config.TrackerConfig{})
+	if err != nil {
+		t.Fatalf("prepare tracker torrent: %v", err)
+	}
+	if got.TorrentPath != baseTorrentPath {
+		t.Fatalf("expected BTN torrent path unchanged without announce URL, got %q", got.TorrentPath)
+	}
+	artifactPath, err := ResolveTrackerTorrentArtifactPath(meta, dbPath, "BTN")
+	if err != nil {
+		t.Fatalf("resolve BTN artifact path: %v", err)
+	}
+	if _, err := os.Stat(artifactPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("expected no BTN artifact without announce URL")
+	}
 }
 
 func TestPrepareTrackerUploadTorrentNoSpecLeavesMetaUnchanged(t *testing.T) {
