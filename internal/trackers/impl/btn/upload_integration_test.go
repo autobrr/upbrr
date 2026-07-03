@@ -857,7 +857,7 @@ func TestBTNPrepareUploadDataUsesSeasonIntForTVDBSeasonPack(t *testing.T) {
 			DescriptionOverride: "Description",
 			ExternalIDs:         api.ExternalIDs{Category: "TV"},
 			ExternalMetadata: api.ExternalMetadata{
-				TVDB: &api.TVDBMetadata{TVDBID: 12345, OriginalLanguage: "en", EpisodeSeason: 5},
+				TVDB: &api.TVDBMetadata{TVDBID: 12345, OriginalLanguage: "en", EpisodeSeason: 5, Genres: "Drama, Science-Fiction"},
 			},
 			Release: api.ReleaseInfo{
 				Resolution: "1080p",
@@ -874,6 +874,9 @@ func TestBTNPrepareUploadDataUsesSeasonIntForTVDBSeasonPack(t *testing.T) {
 	}
 	if payload["type"] != "Season" {
 		t.Fatalf("expected Season upload type, got %q", payload["type"])
+	}
+	if payload["tags"] != "Drama, Science Fiction" {
+		t.Fatalf("expected TVDB genre tags, got %q", payload["tags"])
 	}
 
 	formMu.Lock()

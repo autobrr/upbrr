@@ -488,6 +488,25 @@ func TestBTNDropdownMappingsPreferMetadataThenAutofill(t *testing.T) {
 	}
 }
 
+func TestResolveBTNTagsUsesAutofillThenTVDBGenres(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ExternalMetadata: api.ExternalMetadata{
+			TVDB: &api.TVDBMetadata{Genres: "Drama, Science-Fiction, Mystery, Unlisted"},
+		},
+	}
+	if got := resolveBTNTags(meta, map[string]string{"tags": "Drama, Comedy"}); got != "Drama, Comedy" {
+		t.Fatalf("expected autofill tags, got %q", got)
+	}
+	if got := resolveBTNTags(meta, map[string]string{}); got != "Drama, Mystery, Science Fiction" {
+		t.Fatalf("expected TVDB fallback tags, got %q", got)
+	}
+	if got := resolveBTNTags(api.PreparedMetadata{}, map[string]string{}); got != "" {
+		t.Fatalf("expected empty tags without autofill or TVDB genres, got %q", got)
+	}
+}
+
 func TestDecodeBTNAPIJSONRejectsDuplicateKeysAndLargeBodies(t *testing.T) {
 	t.Parallel()
 

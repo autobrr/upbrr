@@ -719,7 +719,7 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		"actors":       metautil.FirstNonEmptyTrimmed(fields["actors"]),
 		"origin":       resolveOrigin(resolveUploadName(req.Meta)),
 		"year":         metautil.FirstNonEmptyTrimmed(fields["year"]),
-		"tags":         metautil.FirstNonEmptyTrimmed(fields["tags"], "action"),
+		"tags":         resolveBTNTags(req.Meta, fields),
 		"image":        metautil.FirstNonEmptyTrimmed(fields["image"]),
 		"album_desc":   buildAlbumDesc(req.Meta, fields),
 		"format":       format,
@@ -762,6 +762,103 @@ func logBTNAutofillMismatch(logger api.Logger, field string, metadataValue strin
 		return
 	}
 	logger.Infof("trackers: BTN autofill %s mismatch metadata_%s=%q autofill_%s=%q decision=metadata", field, field, metadataValue, field, autofillValue)
+}
+
+// resolveBTNTags keeps BTN autofill genres when present and otherwise maps
+// TVDB genres to BTN-supported tag labels.
+func resolveBTNTags(meta api.PreparedMetadata, fields map[string]string) string {
+	if tags := strings.TrimSpace(fields["tags"]); tags != "" {
+		return tags
+	}
+	if meta.ExternalMetadata.TVDB == nil {
+		return ""
+	}
+	return mapBTNTVDBGenres(meta.ExternalMetadata.TVDB.Genres)
+}
+
+// mapBTNTVDBGenres converts TVDB genre text to comma-separated BTN genre tags.
+// Unrecognized genres are omitted instead of being submitted as free-form tags.
+func mapBTNTVDBGenres(genres string) string {
+	normalized := normalizeBTNGenreText(genres)
+	if normalized == "" {
+		return ""
+	}
+	type genreAlias struct {
+		label   string
+		aliases []string
+	}
+	allowed := []genreAlias{
+		{label: "Action", aliases: []string{"action"}},
+		{label: "Adventure", aliases: []string{"adventure"}},
+		{label: "Animation", aliases: []string{"animation"}},
+		{label: "Anime", aliases: []string{"anime"}},
+		{label: "Awards Show", aliases: []string{"awards show"}},
+		{label: "Children", aliases: []string{"children", "kids"}},
+		{label: "Comedy", aliases: []string{"comedy"}},
+		{label: "Crime", aliases: []string{"crime"}},
+		{label: "Documentary", aliases: []string{"documentary"}},
+		{label: "Drama", aliases: []string{"drama"}},
+		{label: "Family", aliases: []string{"family"}},
+		{label: "Fantasy", aliases: []string{"fantasy"}},
+		{label: "Food", aliases: []string{"food"}},
+		{label: "Game Show", aliases: []string{"game show"}},
+		{label: "History", aliases: []string{"history"}},
+		{label: "Home and Garden", aliases: []string{"home and garden", "home garden"}},
+		{label: "Horror", aliases: []string{"horror"}},
+		{label: "Indie", aliases: []string{"indie"}},
+		{label: "Martial Arts", aliases: []string{"martial arts"}},
+		{label: "Mini-Series", aliases: []string{"mini series", "miniseries"}},
+		{label: "Musical", aliases: []string{"musical", "music"}},
+		{label: "Mystery", aliases: []string{"mystery"}},
+		{label: "News", aliases: []string{"news"}},
+		{label: "Podcast", aliases: []string{"podcast"}},
+		{label: "Reality", aliases: []string{"reality"}},
+		{label: "Romance", aliases: []string{"romance"}},
+		{label: "Science Fiction", aliases: []string{"science fiction", "sci fi", "scifi"}},
+		{label: "Soap", aliases: []string{"soap"}},
+		{label: "Sport", aliases: []string{"sport", "sports"}},
+		{label: "Suspense", aliases: []string{"suspense"}},
+		{label: "Talk Show", aliases: []string{"talk show"}},
+		{label: "Thriller", aliases: []string{"thriller"}},
+		{label: "Travel", aliases: []string{"travel"}},
+		{label: "War", aliases: []string{"war"}},
+		{label: "Western", aliases: []string{"western"}},
+	}
+	tags := make([]string, 0, len(allowed))
+	for _, genre := range allowed {
+		for _, alias := range genre.aliases {
+			if normalizedBTNGenreContains(normalized, alias) {
+				tags = append(tags, genre.label)
+				break
+			}
+		}
+	}
+	return strings.Join(tags, ", ")
+}
+
+// normalizeBTNGenreText lowercases and strips common separators so source
+// genre text and local aliases can be compared consistently.
+func normalizeBTNGenreText(value string) string {
+	replacer := strings.NewReplacer(
+		"&", " and ",
+		"/", " ",
+		";", " ",
+		":", " ",
+		".", " ",
+		",", " ",
+		"-", " ",
+		"_", " ",
+		"(", " ",
+		")", " ",
+	)
+	return strings.Join(strings.Fields(replacer.Replace(strings.ToLower(strings.TrimSpace(value)))), " ")
+}
+
+// normalizedBTNGenreContains reports whether a normalized genre list contains
+// an alias as a complete token sequence.
+func normalizedBTNGenreContains(normalized string, alias string) bool {
+	alias = normalizeBTNGenreText(alias)
+	return strings.Contains(" "+normalized+" ", " "+alias+" ")
 }
 
 func extractAutofillFields(htmlRaw string) map[string]string {
