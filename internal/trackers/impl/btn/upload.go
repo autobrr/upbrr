@@ -615,8 +615,13 @@ func validateBTNClientSession(ctx context.Context, client *http.Client, baseURL 
 }
 
 func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCtx uploadContext) (map[string]string, error) {
+	if _, err := validateBTNTVPayloadMetadata(req.Meta); err != nil {
+		return nil, err
+	}
+
 	autofillPayload := url.Values{}
 	uploadType := resolveUploadType(req.Meta)
+	season, episode := resolveBTNTVSeasonEpisode(req.Meta)
 	autofillPayload.Set("type", uploadType)
 	autofillPayload.Set("tvdb", "Get Info")
 
@@ -625,22 +630,9 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		autofillPayload.Set("auto_series", strconv.Itoa(req.Meta.ExternalMetadata.TVDB.TVDBID))
 
 		if uploadType == "Episode" {
-			season := req.Meta.Release.Season
-			if season <= 0 {
-				season = req.Meta.SeasonInt
-			}
-			seasonPart := fmt.Sprintf("S%02d", season)
-			episode := req.Meta.Release.Episode
-			if episode <= 0 {
-				episode = req.Meta.EpisodeInt
-			}
-			episodePart := ""
-			if episode > 0 {
-				episodePart = fmt.Sprintf("E%02d", episode)
-			}
-			autofillPayload.Set("auto_title", seasonPart+episodePart)
+			autofillPayload.Set("auto_title", fmt.Sprintf("S%02dE%02d", season, episode))
 		} else {
-			autofillPayload.Set("auto_season", strconv.Itoa(req.Meta.Release.Season))
+			autofillPayload.Set("auto_season", strconv.Itoa(season))
 		}
 	} else {
 		autofillPayload.Set("scene_yesno", "Yes")
@@ -788,14 +780,14 @@ func buildAlbumDesc(meta api.PreparedMetadata, fields map[string]string) string 
 	}
 	overview := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.EpisodeOverview), strings.TrimSpace(fields["album_desc"]))
 	aired := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.TVDBAiredDate), strings.TrimSpace(meta.DailyEpisodeDate), "TBA")
-	season, episode := meta.CanonicalSeasonEpisode()
+	season, episode := resolveBTNTVSeasonEpisode(meta)
 	episodeTitle := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.EpisodeTitle), "TBA")
 	return strings.TrimSpace(fmt.Sprintf("Episode Name: %s\nEpisode Title: %s\nSeason: %d\nEpisode: %d\nAired: %s\n\nEpisode overview: %s", episodeTitle, episodeTitle, season, episode, aired, overview))
 }
 
 // validateBTNTVPayloadMetadata returns the shared BTN TV metadata block reason
-// used by live upload and dry-run when canonical season or episode data is
-// missing.
+// used by live upload, autofill, and dry-run when canonical season or episode
+// data is missing.
 func validateBTNTVPayloadMetadata(meta api.PreparedMetadata) (string, error) {
 	message := btnTVPayloadMetadataMessage(meta)
 	if message == "" {
@@ -808,29 +800,45 @@ func resolveUploadType(meta api.PreparedMetadata) string {
 	if meta.TVPack {
 		return "Season"
 	}
-	if meta.EpisodeInt > 0 {
+	_, episode := resolveBTNTVSeasonEpisode(meta)
+	if episode > 0 {
 		return "Episode"
 	}
 	return "Season"
 }
 
-// btnTVPayloadMetadataMessage explains when BTN will send zero-valued TV season
-// or episode fields because canonical metadata is absent. Parsed release values
-// are reported only as ignored signals, and the message includes the operator
-// action required by blocked dry-run entries.
+func resolveBTNTVSeasonEpisode(meta api.PreparedMetadata) (int, int) {
+	season, episode := meta.CanonicalSeasonEpisode()
+	if meta.ExternalMetadata.TVDB == nil {
+		return season, episode
+	}
+	if meta.ExternalMetadata.TVDB.EpisodeSeason > 0 {
+		season = meta.ExternalMetadata.TVDB.EpisodeSeason
+	}
+	if meta.ExternalMetadata.TVDB.EpisodeNumber > 0 {
+		episode = meta.ExternalMetadata.TVDB.EpisodeNumber
+	}
+	return season, episode
+}
+
+// btnTVPayloadMetadataMessage explains when BTN cannot build TV season or
+// episode fields because canonical metadata is absent. Parsed release values are
+// reported only as ignored signals, and the message includes the operator action
+// required by blocked dry-run entries.
 func btnTVPayloadMetadataMessage(meta api.PreparedMetadata) string {
 	if !strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") {
 		return ""
 	}
 	missing := make([]string, 0, 2)
 	ignored := make([]string, 0, 2)
-	if meta.SeasonInt <= 0 {
+	season, episode := resolveBTNTVSeasonEpisode(meta)
+	if season <= 0 {
 		missing = append(missing, "season")
 		if meta.Release.Season > 0 {
 			ignored = append(ignored, "season")
 		}
 	}
-	if meta.EpisodeInt <= 0 && !meta.TVPack {
+	if episode <= 0 && !meta.TVPack {
 		missing = append(missing, "episode")
 		if meta.Release.Episode > 0 {
 			ignored = append(ignored, "episode")
@@ -839,7 +847,7 @@ func btnTVPayloadMetadataMessage(meta api.PreparedMetadata) string {
 	if len(missing) == 0 {
 		return ""
 	}
-	message := "canonical TV " + strings.Join(missing, "/") + " missing; tracker payload uses 0"
+	message := "canonical TV " + strings.Join(missing, "/") + " missing; BTN upload requires TVDB or metadata season/episode ints"
 	if len(ignored) > 0 {
 		message += " and ignores parsed " + strings.Join(ignored, "/") + " fallback"
 	}

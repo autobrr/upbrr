@@ -209,7 +209,7 @@ func TestBTNUploadPayloadUsesCanonicalSeasonEpisodeOnly(t *testing.T) {
 	if strings.Contains(desc, "Season: 4") || strings.Contains(desc, "Episode: 9") {
 		t.Fatalf("album description used parsed fallback values: %q", desc)
 	}
-	if got := btnTVPayloadMetadataMessage(meta); got != "canonical TV season/episode missing; tracker payload uses 0 and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload" {
+	if got := btnTVPayloadMetadataMessage(meta); got != "canonical TV season/episode missing; BTN upload requires TVDB or metadata season/episode ints and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload" {
 		t.Fatalf("unexpected metadata message %q", got)
 	}
 }
@@ -229,5 +229,36 @@ func TestBTNUploadTypeUsesCanonicalEpisode(t *testing.T) {
 	}
 	if got := btnTVPayloadMetadataMessage(meta); got != "" {
 		t.Fatalf("unexpected metadata message %q", got)
+	}
+}
+
+func TestResolveBTNTVSeasonEpisodePrefersTVDBThenMetadata(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		SeasonInt:  2,
+		EpisodeInt: 7,
+		ExternalMetadata: api.ExternalMetadata{
+			TVDB: &api.TVDBMetadata{EpisodeSeason: 4, EpisodeNumber: 12},
+		},
+	}
+
+	season, episode := resolveBTNTVSeasonEpisode(meta)
+	if season != 4 || episode != 12 {
+		t.Fatalf("expected TVDB season/episode 4/12, got %d/%d", season, episode)
+	}
+	if got := btnTVPayloadMetadataMessage(api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "TV"},
+		ExternalMetadata: api.ExternalMetadata{
+			TVDB: &api.TVDBMetadata{EpisodeSeason: 4, EpisodeNumber: 12},
+		},
+	}); got != "" {
+		t.Fatalf("expected TVDB season/episode to satisfy BTN metadata check, got %q", got)
+	}
+
+	meta.ExternalMetadata.TVDB = nil
+	season, episode = resolveBTNTVSeasonEpisode(meta)
+	if season != 2 || episode != 7 {
+		t.Fatalf("expected metadata season/episode 2/7, got %d/%d", season, episode)
 	}
 }

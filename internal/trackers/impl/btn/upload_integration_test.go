@@ -477,7 +477,7 @@ func TestBTNDryRunBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
 	if entry.Status != "blocked" {
 		t.Fatalf("expected canonical TV metadata gap to block dry-run, got %#v", entry)
 	}
-	if !strings.Contains(entry.Message, "canonical TV season/episode missing; tracker payload uses 0 and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload") {
+	if !strings.Contains(entry.Message, "canonical TV season/episode missing; BTN upload requires TVDB or metadata season/episode ints and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload") {
 		t.Fatalf("expected canonical metadata message, got %q", entry.Message)
 	}
 }
@@ -507,7 +507,7 @@ func TestBTNUploadBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected canonical TV metadata gap to block upload")
 	}
-	want := "canonical TV season/episode missing; tracker payload uses 0 and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload"
+	want := "canonical TV season/episode missing; BTN upload requires TVDB or metadata season/episode ints and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload"
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("expected canonical metadata error, got %v", err)
 	}
@@ -685,11 +685,12 @@ func TestBTNPrepareUploadDataUsesEpisodeIntForTVDBAutoTitle(t *testing.T) {
 			DescriptionOverride: "Description",
 			ExternalIDs:         api.ExternalIDs{Category: "TV"},
 			ExternalMetadata: api.ExternalMetadata{
-				TVDB: &api.TVDBMetadata{TVDBID: 12345, OriginalLanguage: "en"},
+				TVDB: &api.TVDBMetadata{TVDBID: 12345, OriginalLanguage: "en", EpisodeSeason: 4, EpisodeNumber: 12},
 			},
 			Release: api.ReleaseInfo{
 				Resolution: "1080p",
-				Season:     2,
+				Season:     9,
+				Episode:    9,
 			},
 			Tag: "GRP",
 		},
@@ -715,8 +716,141 @@ func TestBTNPrepareUploadDataUsesEpisodeIntForTVDBAutoTitle(t *testing.T) {
 	if gotAutoSeries != "12345" {
 		t.Fatalf("expected TVDB series id, got %q", gotAutoSeries)
 	}
-	if gotAutoTitle != "S02E07" {
-		t.Fatalf("expected auto_title S02E07, got %q", gotAutoTitle)
+	if gotAutoTitle != "S04E12" {
+		t.Fatalf("expected auto_title S04E12, got %q", gotAutoTitle)
+	}
+}
+
+func TestBTNPrepareUploadDataUsesSeasonIntForTVDBSeasonPack(t *testing.T) {
+	t.Parallel()
+
+	handlerErrs := newHTTPHandlerErrorRecorder(t)
+	var formMu sync.Mutex
+	autofillForm := map[string]string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/upload.php":
+			if err := r.ParseForm(); err != nil {
+				handlerErrs.Errorf("parse autofill form: %v", err)
+				http.Error(w, "handler assertion failed", http.StatusInternalServerError)
+				return
+			}
+			formMu.Lock()
+			autofillForm["scene_yesno"] = r.PostForm.Get("scene_yesno")
+			autofillForm["auto_series"] = r.PostForm.Get("auto_series")
+			autofillForm["auto_season"] = r.PostForm.Get("auto_season")
+			formMu.Unlock()
+			_, _ = io.WriteString(w, `
+				<input name="artist" value="Example Show">
+				<input name="seriesid" value="12345">
+				<select name="format"><option selected value="MKV">MKV</option></select>
+				<select name="bitrate"><option selected value="H.265">H.265</option></select>
+				<select name="media"><option selected value="WEB-DL">WEB-DL</option></select>
+			`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	uploadCtx := uploadContext{
+		baseURL:   server.URL,
+		uploadURL: server.URL + "/upload.php",
+		client:    server.Client(),
+	}
+	req := trackers.UploadRequest{
+		Meta: api.PreparedMetadata{
+			ReleaseName:         "Example.Show.S03.1080p.WEB-DL.x265-GRP",
+			Type:                "WEBDL",
+			Source:              "WEB-DL",
+			Container:           "MKV",
+			VideoEncode:         "x265",
+			VideoCodec:          "HEVC",
+			SeasonInt:           3,
+			TVPack:              true,
+			DescriptionOverride: "Description",
+			ExternalIDs:         api.ExternalIDs{Category: "TV"},
+			ExternalMetadata: api.ExternalMetadata{
+				TVDB: &api.TVDBMetadata{TVDBID: 12345, OriginalLanguage: "en", EpisodeSeason: 5},
+			},
+			Release: api.ReleaseInfo{
+				Resolution: "1080p",
+				Season:     8,
+			},
+			Tag: "GRP",
+		},
+	}
+
+	payload, err := prepareUploadData(context.Background(), req, uploadCtx)
+	handlerErrs.Check()
+	if err != nil {
+		t.Fatalf("prepareUploadData: %v", err)
+	}
+	if payload["type"] != "Season" {
+		t.Fatalf("expected Season upload type, got %q", payload["type"])
+	}
+
+	formMu.Lock()
+	gotAutoSeason := autofillForm["auto_season"]
+	gotAutoSeries := autofillForm["auto_series"]
+	gotScene := autofillForm["scene_yesno"]
+	formMu.Unlock()
+	if gotScene != "No" {
+		t.Fatalf("expected TVDB autofill scene flag, got %q", gotScene)
+	}
+	if gotAutoSeries != "12345" {
+		t.Fatalf("expected TVDB series id, got %q", gotAutoSeries)
+	}
+	if gotAutoSeason != "5" {
+		t.Fatalf("expected auto_season 5, got %q", gotAutoSeason)
+	}
+}
+
+func TestBTNPrepareUploadDataBlocksMissingCanonicalTVMetadataBeforeAutofill(t *testing.T) {
+	t.Parallel()
+
+	var requestCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCalls.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	uploadCtx := uploadContext{
+		baseURL:   server.URL,
+		uploadURL: server.URL + "/upload.php",
+		client:    server.Client(),
+	}
+	req := trackers.UploadRequest{
+		Meta: api.PreparedMetadata{
+			ReleaseName: "Example.Show.S01E01.1080p.WEB-DL.x265-GRP",
+			Type:        "WEBDL",
+			Source:      "WEB-DL",
+			Container:   "MKV",
+			VideoEncode: "x265",
+			VideoCodec:  "HEVC",
+			ExternalIDs: api.ExternalIDs{Category: "TV"},
+			ExternalMetadata: api.ExternalMetadata{
+				TVDB: &api.TVDBMetadata{TVDBID: 12345, OriginalLanguage: "en"},
+			},
+			Release: api.ReleaseInfo{
+				Resolution: "1080p",
+				Season:     1,
+				Episode:    1,
+			},
+			Tag: "GRP",
+		},
+	}
+
+	_, err := prepareUploadData(context.Background(), req, uploadCtx)
+	if err == nil {
+		t.Fatal("expected canonical TV metadata error")
+	}
+	if !strings.Contains(err.Error(), "canonical TV season/episode missing") {
+		t.Fatalf("expected canonical metadata error, got %v", err)
+	}
+	if requestCalls.Load() != 0 {
+		t.Fatalf("expected metadata error before autofill HTTP call, got %d calls", requestCalls.Load())
 	}
 }
 
