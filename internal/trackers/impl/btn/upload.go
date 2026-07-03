@@ -971,6 +971,12 @@ func applyBTNNoGroupSuffix(name string, meta api.PreparedMetadata) string {
 		return name
 	}
 
+	// Preserve an existing release-name suffix when parsing did not provide a
+	// group tag; only known placeholder suffixes should be normalized below.
+	if tag == "" && hasBTNGroupSuffix(name) && !hasBTNNoGroupSuffix(name) {
+		return name
+	}
+
 	noGroupPattern := regexp.MustCompile(`(?i)-(nogrp|nogroup|unknown|unk)$`)
 	normalizedName := noGroupPattern.ReplaceAllString(name, "")
 	normalizedName = strings.TrimRight(normalizedName, ".-")
@@ -993,6 +999,12 @@ func selectedBTNReleaseNameNoTag(name string, meta api.PreparedMetadata) bool {
 // group suffix.
 func hasBTNGroupSuffix(name string) bool {
 	return regexp.MustCompile(`-[^-.\s]+$`).MatchString(strings.TrimSpace(name))
+}
+
+// hasBTNNoGroupSuffix reports whether name ends with a placeholder group suffix
+// that BTN should normalize to NOGRP.
+func hasBTNNoGroupSuffix(name string) bool {
+	return regexp.MustCompile(`(?i)-(nogrp|nogroup|unknown|unk)$`).MatchString(strings.TrimSpace(name))
 }
 
 func isNoGroupTag(tag string) bool {
