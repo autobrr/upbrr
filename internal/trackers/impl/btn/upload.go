@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1145,17 +1146,7 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 	if err := json.NewDecoder(apiResp.Body).Decode(&response); err != nil {
 		return fmt.Errorf("trackers: BTN decode torrent search response: %w", err)
 	}
-	selectedID := ""
-	for id, torrentData := range response.Result.Torrents {
-		if strings.TrimSpace(groupID) != "" {
-			torrentGroup := metautil.FirstNonEmptyTrimmed(fmt.Sprint(torrentData["GroupID"]), fmt.Sprint(torrentData["groupId"]))
-			if strings.TrimSpace(torrentGroup) != strings.TrimSpace(groupID) {
-				continue
-			}
-		}
-		selectedID = strings.TrimSpace(id)
-		break
-	}
+	selectedID := selectBTNAPITorrentID(response.Result.Torrents, releaseName, groupID)
 	if selectedID == "" {
 		return errors.New("trackers: BTN API did not return a matching torrent id")
 	}
@@ -1674,6 +1665,105 @@ func validateBTNAPIURL(ctx context.Context, rawURL string) error {
 		}
 	}
 	return nil
+}
+
+// selectBTNAPITorrentID returns the BTN torrent id that matches the uploaded
+// release. It prefers an exact release-name match inside the uploaded group and
+// only accepts a group-only match when that group has a single candidate.
+func selectBTNAPITorrentID(torrents map[string]map[string]any, releaseName string, groupID string) string {
+	expectedRelease := normalizeBTNAPIMatchValue(releaseName)
+	expectedGroup := strings.TrimSpace(groupID)
+
+	ids := make([]string, 0, len(torrents))
+	for id := range torrents {
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			ids = append(ids, trimmed)
+		}
+	}
+	sortBTNAPITorrentIDs(ids)
+
+	groupMatches := make([]string, 0, len(ids))
+	for _, id := range ids {
+		torrentData := torrents[id]
+		if expectedGroup != "" {
+			torrentGroup := metautil.FirstNonEmptyTrimmed(
+				btnAPIStringField(torrentData, "GroupID"),
+				btnAPIStringField(torrentData, "groupId"),
+				btnAPIStringField(torrentData, "GroupId"),
+				btnAPIStringField(torrentData, "group_id"),
+			)
+			if strings.TrimSpace(torrentGroup) != expectedGroup {
+				continue
+			}
+		}
+		groupMatches = append(groupMatches, id)
+		if expectedRelease != "" && btnAPITorrentMatchesRelease(torrentData, expectedRelease) {
+			return id
+		}
+	}
+	if len(groupMatches) == 1 {
+		return groupMatches[0]
+	}
+	return ""
+}
+
+// sortBTNAPITorrentIDs orders API result ids deterministically, newest numeric
+// ids first when all compared ids are numeric.
+func sortBTNAPITorrentIDs(ids []string) {
+	sort.Slice(ids, func(i, j int) bool {
+		left, leftErr := strconv.Atoi(ids[i])
+		right, rightErr := strconv.Atoi(ids[j])
+		if leftErr == nil && rightErr == nil {
+			return left > right
+		}
+		return ids[i] > ids[j]
+	})
+}
+
+// btnAPITorrentMatchesRelease reports whether a known BTN API name field is an
+// exact normalized match for the release name we uploaded.
+func btnAPITorrentMatchesRelease(torrentData map[string]any, expectedRelease string) bool {
+	for _, field := range []string{"ReleaseName", "releaseName", "TorrentName", "torrentName", "Name", "name", "Release", "release"} {
+		if normalizeBTNAPIMatchValue(btnAPIStringField(torrentData, field)) == expectedRelease {
+			return true
+		}
+	}
+	return false
+}
+
+// btnAPIStringField returns an API field as a trimmed string. Missing or null
+// fields produce an empty value; numeric fields keep their decimal form.
+func btnAPIStringField(data map[string]any, field string) string {
+	if data == nil {
+		return ""
+	}
+	value, ok := data[field]
+	if !ok || value == nil {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case json.Number:
+		return typed.String()
+	case float64:
+		if typed == float64(int64(typed)) {
+			return strconv.FormatInt(int64(typed), 10)
+		}
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(typed)
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	default:
+		return strings.TrimSpace(fmt.Sprint(value))
+	}
+}
+
+// normalizeBTNAPIMatchValue canonicalizes BTN API comparison values for exact,
+// case-insensitive release-name matching.
+func normalizeBTNAPIMatchValue(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 // validateBTNAPIDownloadURL applies public-address validation to a BTN API

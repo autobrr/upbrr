@@ -1140,6 +1140,7 @@ func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
 
 	var apiSearchCalls atomic.Int32
 	var apiDownloadCalls atomic.Int32
+	var apiDownloadID atomic.Value
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -1171,15 +1172,21 @@ func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
 			_, _ = w.Write([]byte("<html>not a torrent</html>"))
 		case r.URL.Path == "/rpc" && r.Method == http.MethodPost:
 			var rpc struct {
-				Method string `json:"method"`
+				Method string            `json:"method"`
+				Params []json.RawMessage `json:"params"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&rpc)
 			switch rpc.Method {
 			case "getTorrentsSearch":
 				apiSearchCalls.Add(1)
-				_, _ = w.Write([]byte(`{"result":{"torrents":{"777":{"GroupID":"123"}}}}`))
+				_, _ = w.Write([]byte(`{"result":{"torrents":{"779":{"GroupID":"123","ReleaseName":"Example.Show.S01E01.1080p.WEB-DL.x265-GRP"},"778":{"GroupID":"123","ReleaseName":"Example.Show.S01E01.720p.WEB-DL.x265-GRP"},"777":{"GroupID":"999","ReleaseName":"Example.Show.S01E01.1080p.WEB-DL.x265-GRP"}}}}`))
 			case "getTorrentById":
 				apiDownloadCalls.Add(1)
+				var selectedID string
+				if len(rpc.Params) > 1 {
+					_ = json.Unmarshal(rpc.Params[1], &selectedID)
+				}
+				apiDownloadID.Store(selectedID)
 				_, _ = w.Write([]byte(`{"result":{"DownloadURL":"http://` + r.Host + `/mock-download"}}`))
 			default:
 				http.NotFound(w, r)
@@ -1268,6 +1275,9 @@ func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
 	}
 	if apiDownloadCalls.Load() != 1 {
 		t.Fatalf("expected one API download call, got %d", apiDownloadCalls.Load())
+	}
+	if got, _ := apiDownloadID.Load().(string); got != "779" {
+		t.Fatalf("expected exact API fallback torrent id 779, got %q", got)
 	}
 }
 
