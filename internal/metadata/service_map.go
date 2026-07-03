@@ -7,6 +7,8 @@ package metadata
 // token used in generated release names.
 func serviceCodeMap() map[string]string {
 	return map[string]string{
+		"3SAT":                             "3SAT",
+		"3Sat":                             "3SAT",
 		"9NOW":                             "9NOW",
 		"9Now":                             "9NOW",
 		"AND":                              "AND",
@@ -30,6 +32,10 @@ func serviceCodeMap() map[string]string {
 		"Animal Planet":                    "ANPL",
 		"AOL":                              "AOL",
 		"ARD":                              "ARD",
+		"ARD Mediathek":                    "ARD",
+		"ARDP":                             "ARDP",
+		"ARD Plus":                         "ARDP",
+		"ARTE":                             "ARTE",
 		"AS":                               "AS",
 		"Adult Swim":                       "AS",
 		"ATK":                              "ATK",
@@ -190,6 +196,7 @@ func serviceCodeMap() map[string]string {
 		"ITV":                              "ITV",
 		"JOYN":                             "JOYN",
 		"KAYO":                             "KAYO",
+		"KiKA":                             "KiKA",
 		"KNOW":                             "KNOW",
 		"Knowledge Network":                "KNOW",
 		"KNPY":                             "KNPY",

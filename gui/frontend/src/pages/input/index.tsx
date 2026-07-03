@@ -705,6 +705,23 @@ export default function InputPage(props: Props) {
       ),
     [trackerUploadItems, releasePageTrackerSelection],
   );
+  const allTrackersSelected =
+    trackerUploadItems.length > 0 && selectedTrackerCount === trackerUploadItems.length;
+
+  /**
+   * Applies one selection state to every currently configured input tracker.
+   *
+   * Existing selection entries for trackers outside the visible config list are left untouched.
+   */
+  const setAllTrackersSelected = (selected: boolean) => {
+    setReleasePageTrackerSelection((prev) => {
+      const next = { ...prev };
+      trackerUploadItems.forEach((tracker) => {
+        next[tracker.name] = selected;
+      });
+      return next;
+    });
+  };
 
   const discHint = useMemo(() => {
     const trimmed = path.trim();
@@ -1231,33 +1248,51 @@ export default function InputPage(props: Props) {
                   {trackerUploadItems.length === 0 ? (
                     <p className="muted">No configured tracker entries found.</p>
                   ) : (
-                    <div className="tracker-pills">
-                      {trackerUploadItems.map((tracker) => {
-                        const iconSrc = trackerIconFor(trackerIconSrcByName, tracker.name);
-                        return (
-                          <PillCheckbox
-                            aria-label={tracker.name}
-                            key={tracker.name}
-                            checked={Boolean(releasePageTrackerSelection[tracker.name])}
-                            onCheckedChange={(checked) =>
-                              setReleasePageTrackerSelection((prev) => ({
-                                ...prev,
-                                [tracker.name]: checked,
-                              }))
-                            }
-                          >
-                            <span className="flex items-center gap-1.5">
-                              <TrackerIconImage
-                                tracker={tracker.name}
-                                iconSrc={iconSrc}
-                                enabled={useFavicons}
-                              />
-                              {faviconOnly && useFavicons ? null : tracker.name}
-                            </span>
-                          </PillCheckbox>
-                        );
-                      })}
-                    </div>
+                    <>
+                      <div className="mb-2 flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          onClick={() => setAllTrackersSelected(true)}
+                          disabled={allTrackersSelected}
+                        >
+                          Select all
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={() => setAllTrackersSelected(false)}
+                          disabled={selectedTrackerCount === 0}
+                        >
+                          Deselect all
+                        </Button>
+                      </div>
+                      <div className="tracker-pills">
+                        {trackerUploadItems.map((tracker) => {
+                          const iconSrc = trackerIconFor(trackerIconSrcByName, tracker.name);
+                          return (
+                            <PillCheckbox
+                              aria-label={tracker.name}
+                              key={tracker.name}
+                              checked={Boolean(releasePageTrackerSelection[tracker.name])}
+                              onCheckedChange={(checked) =>
+                                setReleasePageTrackerSelection((prev) => ({
+                                  ...prev,
+                                  [tracker.name]: checked,
+                                }))
+                              }
+                            >
+                              <span className="flex items-center gap-1.5">
+                                <TrackerIconImage
+                                  tracker={tracker.name}
+                                  iconSrc={iconSrc}
+                                  enabled={useFavicons}
+                                />
+                                {faviconOnly && useFavicons ? null : tracker.name}
+                              </span>
+                            </PillCheckbox>
+                          );
+                        })}
+                      </div>
+                    </>
                   )}
                 </div>
               </div>

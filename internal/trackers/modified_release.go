@@ -16,14 +16,14 @@ import (
 // is rejected. Two independent, deliberately high-signal cases are checked:
 //
 //   - *arr id tokens: Radarr/Sonarr inject "{tmdb-…}", "{imdb-…}", or "{tvdb-…}"
-//     into renamed names (e.g. "Fury (2014) {imdb-tt2713180}"). These never occur
+//     into renamed names (e.g. "Example Movie (2026) {imdb-tt1234567}"). These never occur
 //     in an original scene/P2P name, so their presence alone marks a rename. This
 //     is independent of the release group, which an *arr rename often strips.
 //
 //   - whitespace renames: a grouped release (a trailing "-GROUP" tag, which
 //     scene/P2P releases always dot-delimit) whose on-disk name has had its dots
 //     replaced with spaces — e.g. a library manager rewriting
-//     "Fury.2014.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-HHWEB" to spaces. This path is
+//     "Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP" to spaces. This path is
 //     deliberately conservative: it only fires on whitespace (underscore/other
 //     separator renames are out of scope), requires the parsed group to be the
 //     actual trailing "-GROUP" suffix so a mis-parsed token (e.g. an id) cannot
@@ -40,6 +40,19 @@ func isRenamedRelease(meta api.PreparedMetadata) (bool, string) {
 	}
 	if strings.TrimSpace(meta.DiscType) != "" {
 		return false, ""
+	}
+
+	// srrdb scene detection (the imdb: fallback) authoritatively compares the
+	// on-disk basename to the canonical scene media filename and sets this when
+	// they differ. It is the strongest signal (a database match, not a heuristic),
+	// so it is checked first and independent of the release group an *arr rename
+	// may strip.
+	if meta.SceneRenamed {
+		reason := strings.TrimSpace(meta.SceneRenamedReason)
+		if reason == "" {
+			reason = modifiedReleaseReason
+		}
+		return true, reason
 	}
 
 	names := candidateReleaseNames(meta)
@@ -71,7 +84,7 @@ func isRenamedRelease(meta api.PreparedMetadata) (bool, string) {
 const modifiedReleaseReason = "source appears renamed or modified from its original release name; verify the file hash and source provenance"
 
 // arrReleaseIDTokens are the Radarr/Sonarr id-injection tokens that appear in
-// renamed filenames (e.g. "Fury (2014) {imdb-tt2713180}") and never in an
+// renamed filenames (e.g. "Example Movie (2026) {imdb-tt1234567}") and never in an
 // original scene/P2P release name.
 var arrReleaseIDTokens = []string{"{tmdb-", "{imdb-", "{tvdb-"}
 

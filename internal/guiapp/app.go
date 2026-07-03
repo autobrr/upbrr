@@ -429,7 +429,7 @@ func (a *App) ResetMetadata(path string, sourceLookupURL string, overrides api.E
 	}
 	artifactPaths = slices.Compact(artifactPaths)
 	if logger != nil {
-		logger.Debugf("gui: reset metadata collected artifacts path=%s files=%d", trimmedPath, len(artifactPaths))
+		logger.Debugf("gui: reset metadata decision=collect_artifacts path=%s files=%d", trimmedPath, len(artifactPaths))
 	}
 
 	tmpDirs := make(map[string]struct{})
@@ -471,7 +471,7 @@ func (a *App) ResetMetadata(path string, sourceLookupURL string, overrides api.E
 		removed, err := removeIfWithinRoot(tmpRoot, filePath, false)
 		if err != nil {
 			if logger != nil {
-				logger.Warnf("gui: reset metadata remove file failed %q: %v", filePath, err)
+				logger.Warnf("gui: reset metadata remove file failed path=%q err=%s", filePath, redaction.RedactValue(err.Error(), nil))
 			}
 			continue
 		}
@@ -484,7 +484,7 @@ func (a *App) ResetMetadata(path string, sourceLookupURL string, overrides api.E
 		removed, err := removeIfWithinRoot(tmpRoot, dir, true)
 		if err != nil {
 			if logger != nil {
-				logger.Warnf("gui: reset metadata remove tmp dir failed %q: %v", dir, err)
+				logger.Warnf("gui: reset metadata remove tmp dir failed path=%q err=%s", dir, redaction.RedactValue(err.Error(), nil))
 			}
 			continue
 		}
@@ -646,7 +646,19 @@ func (a *App) FetchPreparation(path string, overrides api.ExternalIDOverrides, n
 	return wrapGUIResult(a.currentCore().FetchPreparationPreview(progressCtx, req))
 }
 
-func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (api.TrackerDryRunPreview, error) {
+// FetchTrackerDryRun builds tracker upload payload previews for a GUI-selected
+// path. It seeds a run-scoped core snapshot, emits upload/BDInfo progress
+// events, and rejects on missing paths, run-option errors, preparation errors,
+// or dry-run build failures.
+func (a *App) FetchTrackerDryRun(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (preview api.TrackerDryRunPreview, err error) {
+	defer func() {
+		if err != nil {
+			if logger := a.currentLogger(); logger != nil {
+				logger.Warnf("gui: tracker dry-run blocked err=%s", redaction.RedactValue(err.Error(), nil))
+			}
+		}
+	}()
+
 	rt, err := a.requireRuntime()
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err

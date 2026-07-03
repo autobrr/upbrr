@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 )
 
 var (
@@ -22,7 +23,11 @@ func initTrackers() {
 	initOnce.Do(func() {
 		cfg, err := config.LoadEmbeddedDefaultConfig()
 		if err != nil || cfg == nil || len(cfg.Trackers.Trackers) == 0 {
-			_, _ = fmt.Fprintf(os.Stderr, "unit3dmeta: error loading embedded default config: %v\n", err)
+			message := "no trackers configured"
+			if err != nil {
+				message = err.Error()
+			}
+			_, _ = fmt.Fprintf(os.Stderr, "unit3dmeta: error loading embedded default config: %s\n", logging.SanitizeMessage(message))
 			return
 		}
 

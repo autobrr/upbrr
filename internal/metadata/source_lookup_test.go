@@ -32,12 +32,12 @@ func TestResolveSourceLookupURLMedia(t *testing.T) {
 		provider string
 		id       int
 	}{
-		{name: "imdb", url: "https://www.imdb.com/title/tt0944947/", provider: "imdb", id: 944947},
-		{name: "tmdb", url: "https://www.themoviedb.org/movie/550-fight-club", provider: "tmdb", id: 550},
-		{name: "tvmaze", url: "https://www.tvmaze.com/shows/82/game-of-thrones", provider: "tvmaze", id: 82},
-		{name: "tvdb", url: "https://thetvdb.com/series/121361", provider: "tvdb", id: 121361},
-		{name: "tvdb query", url: "https://www.thetvdb.com/?tab=series&id=303904", provider: "tvdb", id: 303904},
-		{name: "mal anime", url: "https://myanimelist.net/anime/5114/Fullmetal_Alchemist__Brotherhood", provider: "mal", id: 5114},
+		{name: "imdb", url: "https://www.imdb.com/title/tt1234567/", provider: "imdb", id: 1234567},
+		{name: "tmdb", url: "https://www.themoviedb.org/movie/765432-example-movie", provider: "tmdb", id: 765432},
+		{name: "tvmaze", url: "https://www.tvmaze.com/shows/12345/example-show", provider: "tvmaze", id: 12345},
+		{name: "tvdb", url: "https://thetvdb.com/series/456789", provider: "tvdb", id: 456789},
+		{name: "tvdb query", url: "https://www.thetvdb.com/?tab=series&id=456790", provider: "tvdb", id: 456790},
+		{name: "mal anime", url: "https://myanimelist.net/anime/54321/example-anime", provider: "mal", id: 54321},
 	}
 
 	for _, tc := range cases {
@@ -97,7 +97,7 @@ func TestApplySourceLookupOverrideTracker(t *testing.T) {
 
 func TestApplySourceLookupOverrideMedia(t *testing.T) {
 	meta := api.PreparedMetadata{
-		SourceLookupURL: "https://www.imdb.com/title/tt0108778/",
+		SourceLookupURL: "https://www.imdb.com/title/tt7654321/",
 		Trackers:        []string{"AITHER"},
 		TrackerIDs:      map[string]string{"aither": "101"},
 	}
@@ -110,8 +110,8 @@ func TestApplySourceLookupOverrideMedia(t *testing.T) {
 	if meta.SourceLookupMode != "media" {
 		t.Fatalf("expected media mode, got %q", meta.SourceLookupMode)
 	}
-	if meta.ExternalIDOverrides.IMDBID == nil || *meta.ExternalIDOverrides.IMDBID != 108778 {
-		t.Fatalf("expected imdb override 108778, got %#v", meta.ExternalIDOverrides.IMDBID)
+	if meta.ExternalIDOverrides.IMDBID == nil || *meta.ExternalIDOverrides.IMDBID != 7654321 {
+		t.Fatalf("expected imdb override 7654321, got %#v", meta.ExternalIDOverrides.IMDBID)
 	}
 	if len(meta.Trackers) != 0 {
 		t.Fatalf("expected trackers cleared for media url, got %v", meta.Trackers)

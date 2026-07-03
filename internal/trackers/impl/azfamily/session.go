@@ -15,6 +15,7 @@ import (
 
 	xhtml "golang.org/x/net/html"
 
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -53,7 +54,7 @@ func newSession(ctx context.Context, site siteDefinition, dbPath string, logger 
 	defer resp.Body.Close()
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if readErr != nil && logger != nil {
-		logger.Debugf("trackers: %s cookie validation body read failed status=%d err=%v", site.Name, resp.StatusCode, readErr)
+		logger.Debugf("trackers: %s cookie validation body read failed status=%d err=%s", site.Name, resp.StatusCode, redaction.RedactValue(readErr.Error(), nil))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || strings.Contains(strings.ToLower(string(body)), "page not found") {
 		return sessionState{}, fmt.Errorf("trackers: %s missing valid cookies", site.Name)

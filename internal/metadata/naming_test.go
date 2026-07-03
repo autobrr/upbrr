@@ -15,21 +15,21 @@ func TestBuildReleaseNameMovieWebDL(t *testing.T) {
 	result := BuildReleaseName(api.ReleaseNameRequest{
 		Category:    "MOVIE",
 		Type:        "WEBDL",
-		Title:       "The Rip",
+		Title:       "Example Movie",
 		Year:        2026,
 		Resolution:  "2160p",
 		Service:     "NF",
 		Audio:       "DD+5.1",
 		HDR:         "HDR",
 		VideoEncode: "H.265",
-		Tag:         "-MJOLNiR",
+		Tag:         "-GRP",
 	}, api.NopLogger{})
 
-	expectedName := "The Rip 2026 2160p NF WEB-DL DD+5.1 HDR H.265-MJOLNiR"
+	expectedName := "Example Movie 2026 2160p NF WEB-DL DD+5.1 HDR H.265-GRP"
 	if result.Name != expectedName {
 		t.Fatalf("expected name %q, got %q", expectedName, result.Name)
 	}
-	if result.NameNoTag != "The Rip 2026 2160p NF WEB-DL DD+5.1 HDR H.265" {
+	if result.NameNoTag != "Example Movie 2026 2160p NF WEB-DL DD+5.1 HDR H.265" {
 		t.Fatalf("expected name without tag, got %q", result.NameNoTag)
 	}
 	if result.CleanName == "" {
@@ -44,7 +44,7 @@ func TestBuildReleaseNameMovieBareWebEncodeUsesWebDLNaming(t *testing.T) {
 	result := BuildReleaseName(api.ReleaseNameRequest{
 		Category:    "MOVIE",
 		Type:        "ENCODE",
-		Title:       "Greenland 2: Migration",
+		Title:       "Example Movie 2: Migration",
 		Year:        2026,
 		Resolution:  "2160p",
 		Service:     "iT",
@@ -52,10 +52,10 @@ func TestBuildReleaseNameMovieBareWebEncodeUsesWebDLNaming(t *testing.T) {
 		Audio:       "DD+ Atmos 5.1",
 		HDR:         "HDR10+",
 		VideoEncode: "x265",
-		Tag:         "-ETHEL",
+		Tag:         "-GRP",
 	}, api.NopLogger{})
 
-	expectedName := "Greenland 2: Migration 2026 2160p iT WEB-DL DD+ 5.1 Atmos HDR10+ x265-ETHEL"
+	expectedName := "Example Movie 2: Migration 2026 2160p iT WEB-DL DD+ 5.1 Atmos HDR10+ x265-GRP"
 	if result.Name != expectedName {
 		t.Fatalf("expected name %q, got %q", expectedName, result.Name)
 	}
@@ -88,14 +88,14 @@ func TestBuildReleaseNameEncodeFallsBackToVideoCodec(t *testing.T) {
 	result := BuildReleaseName(api.ReleaseNameRequest{
 		Category:   "MOVIE",
 		Type:       "ENCODE",
-		Title:      "Tears of Steel",
-		Year:       2012,
+		Title:      "Example Animation",
+		Year:       2026,
 		Resolution: "1080p",
 		Audio:      "VORBIS 2.0",
 		VideoCodec: "VP8",
 	}, api.NopLogger{})
 
-	expected := "Tears of Steel 2012 1080p VORBIS 2.0 VP8"
+	expected := "Example Animation 2026 1080p VORBIS 2.0 VP8"
 	if result.NameNoTag != expected {
 		t.Fatalf("expected %q, got %q", expected, result.NameNoTag)
 	}
@@ -200,7 +200,7 @@ func TestReleaseNameRequestFromMetaTVPackOmitsSeasonTitle(t *testing.T) {
 	meta := api.PreparedMetadata{
 		ExternalIDs: api.ExternalIDs{Category: "TV"},
 		Release: api.ReleaseInfo{
-			Title:      "A Spy Among Friends",
+			Title:      "Example Spy Show",
 			Resolution: "2160p",
 		},
 		Type:         "WEBDL",
@@ -226,19 +226,19 @@ func TestReleaseNameRequestFromMetaTVPackOmitsSeasonTitle(t *testing.T) {
 	if strings.Contains(result.NameNoTag, "2022") {
 		t.Fatalf("expected tv pack name to omit ordinary tvdb year, got %q", result.NameNoTag)
 	}
-	if !containsAll(result.NameNoTag, []string{"A Spy Among Friends", "S01", "MGMP", "WEB-DL"}) {
+	if !containsAll(result.NameNoTag, []string{"Example Spy Show", "S01", "MGMP", "WEB-DL"}) {
 		t.Fatalf("expected tv pack name to keep season and service tokens, got %q", result.NameNoTag)
 	}
 }
 
 func TestReleaseNameRequestFromMetaFallsBackMovieCategory(t *testing.T) {
 	meta := api.PreparedMetadata{
-		SourcePath: `D:\Movies\1982 - Fitzcarraldo [DVD9.PAL]`,
+		SourcePath: `D:\Movies\2026 - Example Movie [DVD9.PAL]`,
 		DiscType:   "DVD",
 		Type:       "DISC",
 		Source:     "DVD",
 		Release: api.ReleaseInfo{
-			Title: "Fitzcarraldo",
+			Title: "Example Movie",
 			Year:  1982,
 			Size:  "DVD9",
 		},
@@ -267,13 +267,13 @@ func TestReleaseNameRequestFromMetaIgnoresUnsupportedReleaseCategory(t *testing.
 	for _, tc := range testCases {
 		t.Run(tc.category, func(t *testing.T) {
 			meta := api.PreparedMetadata{
-				SourcePath: `D:\Movies\1982 - Fitzcarraldo [DVD9.PAL]`,
+				SourcePath: `D:\Movies\2026 - Example Movie [DVD9.PAL]`,
 				DiscType:   "DVD",
 				Type:       "DISC",
 				Source:     "DVD",
 				Release: api.ReleaseInfo{
 					Category: tc.category,
-					Title:    "Fitzcarraldo",
+					Title:    "Example Movie",
 					Year:     1982,
 					Size:     "DVD9",
 				},
@@ -544,30 +544,30 @@ func TestBuildReleaseNameTVStripsDuplicateParentheticalSearchYear(t *testing.T) 
 
 func TestReleaseNameRequestFromMetaMovieKeepsParsedYearWhenTVDBMetadataPresent(t *testing.T) {
 	meta := api.PreparedMetadata{
-		SourcePath:  `D:\Movies\Young.Guns.1988.720p.BluRay.x264-HANDJOB.mkv`,
+		SourcePath:  `D:\Movies\Example.Movie.2026.720p.BluRay.x264-GRP.mkv`,
 		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
 		Type:        "ENCODE",
 		Source:      "BluRay",
 		Audio:       "DD 5.1",
 		VideoCodec:  "AVC",
 		Release: api.ReleaseInfo{
-			Title:      "Young Guns",
-			Year:       1988,
+			Title:      "Example Movie",
+			Year:       2026,
 			Resolution: "720p",
 		},
 		ExternalMetadata: api.ExternalMetadata{
-			TMDB: &api.TMDBMetadata{Title: "Young Guns", Year: 1988},
+			TMDB: &api.TMDBMetadata{Title: "Example Movie", Year: 2026},
 			TVDB: &api.TVDBMetadata{},
 		},
 	}
 
 	req := releaseNameRequestFromMeta(meta, api.NopLogger{})
-	if req.Year != 1988 {
+	if req.Year != 2026 {
 		t.Fatalf("expected movie request year to remain parsed year, got %d", req.Year)
 	}
 
 	result := BuildReleaseName(req, api.NopLogger{})
-	if !strings.Contains(result.NameNoTag, "1988") {
+	if !strings.Contains(result.NameNoTag, "2026") {
 		t.Fatalf("expected movie release name to include parsed year, got %q", result.NameNoTag)
 	}
 }

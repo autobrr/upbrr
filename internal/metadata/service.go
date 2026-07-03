@@ -24,6 +24,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/seasonep"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackerdata"
@@ -211,8 +212,13 @@ func NewService(repo db.MetadataRepository, opts ...Option) *Service {
 		service.cacheDir = cacheDir
 		service.nfoDir = nfoDir
 	}
-	if service.scene == nil {
-		service.scene = newSRRDBDetector(nil, "", service.cacheDir, service.nfoDir)
+	// Scene detection adds srrdb network fan-out to every prepared item, so it is
+	// gated by config (default on). Disabling it makes zero srrdb requests; an
+	// explicitly injected detector (WithSceneDetector) is always honored.
+	if service.scene == nil && service.cfg.MainSettings.SceneDetection {
+		detector := newSRRDBDetector(nil, "", service.cacheDir, service.nfoDir)
+		detector.logger = service.logger
+		service.scene = detector
 	}
 	if service.tracker == nil {
 		service.tracker = trackerdata.NewClient(service.cfg, service.logger, nil)
@@ -274,7 +280,13 @@ func applyTorrentOverridesToPreparedMeta(meta *api.PreparedMetadata) {
 	}
 }
 
-func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMetadata, error) {
+func (s *Service) Prepare(ctx context.Context, req api.Request) (meta api.PreparedMetadata, err error) {
+	defer func() {
+		if err != nil {
+			s.logger.Warnf("metadata: preparation blocked err=%s", redaction.RedactValue(err.Error(), nil))
+		}
+	}()
+
 	select {
 	case <-ctx.Done():
 		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -321,7 +333,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 		s.logger.Tracef("metadata: normalized path %s", abs)
 	}
 
-	meta := api.PreparedMetadata{
+	meta = api.PreparedMetadata{
 		SourcePath:             primary,
 		SourceLookupURL:        strings.TrimSpace(req.SourceLookupURL),
 		Paths:                  normalizedPaths,
@@ -383,12 +395,12 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 				found = true
 				s.logger.Debugf("metadata: found playlist selection at normalized BDMV path: %s", bdmvNorm)
 			} else {
-				s.logger.Debugf("metadata: no playlist selection found, err=%v", err)
+				s.logger.Debugf("metadata: no playlist selection found, err=%s", redaction.RedactValue(fmt.Sprint(err), nil))
 			}
 		}
 
 		if found && len(sel.SelectedPlaylists) > 0 {
-			s.logger.Debugf("metadata: found playlist selection with %d playlists at %s", len(sel.SelectedPlaylists), playlistPath)
+			s.logger.Debugf("metadata: found playlist selection playlists=%d path=%s", len(sel.SelectedPlaylists), playlistPath)
 			selectedPlaylists, derr := loadSelectedBDMVPlaylists(ctx, playlistPath, sel.SelectedPlaylists)
 			if derr != nil {
 				return api.PreparedMetadata{}, fmt.Errorf("metadata: discover selected playlists: %w", derr)
@@ -439,7 +451,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 			} else if mainFile != "" && len(m2tsFiles) > 0 {
 				meta.VideoPath = mainFile
 				meta.FileList = m2tsFiles
-				s.logger.Debugf("metadata: extracted %d m2ts files from playlist, using %s as main", len(m2tsFiles), filepath.Base(mainFile))
+				s.logger.Debugf("metadata: extracted m2ts files count=%d main=%s", len(m2tsFiles), filepath.Base(mainFile))
 			}
 		}
 	}
@@ -490,11 +502,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 	s.logger.Debugf("metadata: source size %d bytes", size)
 
 	storedInfoHash := ""
-	var storedMetadata db.FileMetadata
-	hasStoredMetadata := false
 	if existing, err := s.repo.GetByPath(ctx, primary); err == nil {
-		storedMetadata = existing
-		hasStoredMetadata = true
 		meta.StoredUpdatedAt = existing.UpdatedAt
 		if metadataFingerprintMatches(primary, meta, existing) {
 			meta.StoredDataFresh = true
@@ -523,51 +531,10 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 		}
 	}
 
-	if s.scene != nil {
-		result, err := s.scene.Detect(ctx, meta)
-		recoverableNFOError := false
-		if err != nil {
-			if isSceneNFOError(err) {
-				recoverableNFOError = true
-				s.logger.Warnf("metadata: scene nfo side effect failed: %v", err)
-			} else {
-				return api.PreparedMetadata{}, fmt.Errorf("metadata: scene detect: %w", err)
-			}
-		}
-		if !recoverableNFOError || sceneResultHasData(result) {
-			applySceneResult(&meta, result)
-		} else if hasStoredMetadata {
-			applyStoredSceneMetadata(&meta, storedMetadata)
-		}
-		if meta.Scene {
-			s.logger.Debugf("metadata: scene release detected")
-		}
-		if meta.SceneTMDBID > 0 {
-			s.logger.Debugf("metadata: scene tmdb detected %d", meta.SceneTMDBID)
-		}
-		if meta.SceneIMDB > 0 {
-			s.logger.Debugf("metadata: scene imdb detected %d", meta.SceneIMDB)
-		}
-		if meta.SceneTVDBID > 0 {
-			s.logger.Debugf("metadata: scene tvdb detected %d", meta.SceneTVDBID)
-		}
-		if meta.SceneTVmazeID > 0 {
-			s.logger.Debugf("metadata: scene tvmaze detected %d", meta.SceneTVmazeID)
-		}
-		if meta.SceneMALID > 0 {
-			s.logger.Debugf("metadata: scene mal detected %d", meta.SceneMALID)
-		}
-		if meta.Service != "" && strings.TrimSpace(result.Service) != "" {
-			s.logger.Debugf("metadata: scene service detected %q", meta.Service)
-		}
-		if meta.SceneNFOPath != "" {
-			if meta.SceneNFONew {
-				s.logger.Debugf("metadata: scene nfo downloaded %s", meta.SceneNFOPath)
-			} else {
-				s.logger.Debugf("metadata: scene nfo found %s", meta.SceneNFOPath)
-			}
-		}
-	}
+	// Scene detection was moved out of Prepare into ApplyMediaDetails: it needs a
+	// resolved IMDb id and the rebuilt release name (both produced after
+	// ResolveExternalIDs), so running it here — before tracker/external-ID
+	// resolution — missed renamed releases entirely.
 	if release.Title != "" || release.Alt != "" || release.Subtitle != "" || release.Artist != "" || release.Year != 0 || release.Month != 0 || release.Day != 0 || release.Source != "" || release.Resolution != "" || release.Ext != "" || release.Site != "" || release.Genre != "" || release.Channels != "" || release.Collection != "" || release.Region != "" || release.Size != "" || release.Group != "" || release.Disc != "" || release.Type != "" || release.Category != "" || len(release.Codec) > 0 || len(release.Audio) > 0 || len(release.HDR) > 0 || len(release.Language) > 0 {
 		s.logger.Debugf(
 			"metadata: release parsed category=%q type=%q artist=%q title=%q subtitle=%q alt=%q year=%d month=%d day=%d source=%q resolution=%q codec=%v audio=%v hdr=%v ext=%q language=%v site=%q genre=%q channels=%q collection=%q region=%q size=%q group=%q disc=%q",
@@ -688,9 +655,6 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (api.PreparedMet
 		VideoPath:  meta.VideoPath,
 		FileList:   meta.FileList,
 		SourceSize: meta.SourceSize,
-		Scene:      meta.Scene,
-		SceneName:  meta.SceneName,
-		SceneIMDB:  meta.SceneIMDB,
 		Category:   api.NormalizeCategory(meta.Release.Category),
 		Type:       meta.Release.Type,
 		Artist:     meta.Release.Artist,
@@ -758,14 +722,8 @@ func applySceneResult(meta *api.PreparedMetadata, result SceneResult) {
 	}
 	meta.SceneNFOPath = result.NFOPath
 	meta.SceneNFONew = result.NFONew
-}
-
-// applyStoredSceneMetadata restores persisted scene fields when a detector
-// returns only a recoverable side-effect error and no fresh scene data.
-func applyStoredSceneMetadata(meta *api.PreparedMetadata, stored db.FileMetadata) {
-	meta.Scene = stored.Scene
-	meta.SceneName = stored.SceneName
-	meta.SceneIMDB = stored.SceneIMDB
+	meta.SceneRenamed = result.Renamed
+	meta.SceneRenamedReason = result.RenamedReason
 }
 
 // extractM2TSFromPlaylist parses selected playlist files and extracts m2ts file references.

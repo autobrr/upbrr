@@ -394,11 +394,11 @@ func TestGetEpisodesIgnoresAPIYearForNamingYear(t *testing.T) {
 		case "/login":
 			_, _ = w.Write([]byte(`{"data":{"token":"token"}}`))
 		case "/series/12/episodes/default":
-			_, _ = w.Write([]byte(`{"data":{"episodes":[{"id":1,"seasonNumber":1,"number":1,"name":"Pilot"}],"slug":"a-spy-among-friends"}}`))
+			_, _ = w.Write([]byte(`{"data":{"episodes":[{"id":1,"seasonNumber":1,"number":1,"name":"Pilot"}],"slug":"example-spy-show"}}`))
 		case "/series/12/extended":
-			_, _ = w.Write([]byte(`{"data":{"name":"A Spy Among Friends","slug":"a-spy-among-friends","year":2022,"firstAired":"2022-12-08","aliases":[]}}`))
+			_, _ = w.Write([]byte(`{"data":{"name":"Example Spy Show","slug":"example-spy-show","year":2026,"firstAired":"2026-12-08","aliases":[]}}`))
 		case "/series/12/translations/eng":
-			_, _ = w.Write([]byte(`{"data":{"name":"A Spy Among Friends","aliases":[]}}`))
+			_, _ = w.Write([]byte(`{"data":{"name":"Example Spy Show","aliases":[]}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -412,7 +412,7 @@ func TestGetEpisodesIgnoresAPIYearForNamingYear(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get episodes failed: %v", err)
 	}
-	if alias != "A Spy Among Friends" {
+	if alias != "Example Spy Show" {
 		t.Fatalf("expected translated title without api year, got %q", alias)
 	}
 	if data.SeriesYear != 0 || data.SeriesYearSource != "" {
@@ -506,8 +506,8 @@ func TestGetEpisodesDoesNotUpgradeUnprovenLegacyCachedYear(t *testing.T) {
 		Episodes: []Episode{
 			{ID: 1, SeasonNumber: 1, Number: 1, Name: "Pilot"},
 		},
-		SeriesTitle: "A Spy Among Friends",
-		SeriesYear:  2022,
+		SeriesTitle: "Example Spy Show",
+		SeriesYear:  2026,
 	}); err != nil {
 		t.Fatalf("write cache: %v", err)
 	}
@@ -524,7 +524,7 @@ func TestGetEpisodesDoesNotUpgradeUnprovenLegacyCachedYear(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get episodes failed: %v", err)
 	}
-	if alias != "A Spy Among Friends" {
+	if alias != "Example Spy Show" {
 		t.Fatalf("expected unproven cached year to stay out of alias, got %q", alias)
 	}
 	if data.SeriesYearSource != "" || data.SeriesYearConfidence != "" {

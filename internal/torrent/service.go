@@ -22,6 +22,7 @@ import (
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/torrentmeta"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -59,7 +60,7 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 		s.logger.Debugf("torrent: ignoring nohash because rehash is enabled for %s", source)
 		reuseOnly = false
 	}
-	s.logger.Debugf("torrent: reuse scan for %s force_rehash=%t reuse_only=%t", source, forceRehash, reuseOnly)
+	s.logger.Debugf("torrent: reuse decision=scan source=%s force_rehash=%t reuse_only=%t", source, forceRehash, reuseOnly)
 	emitTorrentProgress(ctx, meta, "running", "Checking reusable torrent")
 
 	clientTorrent := strings.TrimSpace(meta.ClientTorrentPath)
@@ -148,7 +149,7 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 	if createSpec.cleanupPath != "" {
 		defer func() {
 			if err := os.RemoveAll(createSpec.cleanupPath); err != nil {
-				s.logger.Warnf("torrent: failed to remove staging path %s: %v", createSpec.cleanupPath, err)
+				s.logger.Warnf("torrent: failed to remove staging path path=%s err=%s", createSpec.cleanupPath, redaction.RedactValue(err.Error(), nil))
 			}
 		}()
 	}

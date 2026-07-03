@@ -918,9 +918,24 @@ func TestPrintDryRunSummary(t *testing.T) {
 			contains: []string{
 				"Dry run: ready (looks good)",
 				"Tracker release name: Movie.2024.1080p",
-				"Payload fields: category, name",
 				"Images: reuploaded to imgbox",
 				"Image host warning: pixhost failed: temporary failure",
+			},
+		},
+		{
+			name: "prints release name changes",
+			entry: api.TrackerDryRunEntry{
+				Tracker:                 "AITHER",
+				Status:                  "ready",
+				ReleaseName:             "Movie.2024.1080p.WEB-DL.x264-GRP",
+				OriginalReleaseName:     "Movie.2024.1080p.WEB-DL.H264-GRP",
+				UploadReleaseName:       "Movie.2024.1080p.WEB-DL.x264-GRP",
+				ReleaseNameChanged:      true,
+				ReleaseNameChangeReason: "tracker naming policy",
+			},
+			contains: []string{
+				"Dry run: ready",
+				"Tracker release name changed: Movie.2024.1080p.WEB-DL.H264-GRP -> Movie.2024.1080p.WEB-DL.x264-GRP (reason: tracker naming policy)",
 			},
 		},
 		{
@@ -946,6 +961,61 @@ func TestPrintDryRunSummary(t *testing.T) {
 	}
 }
 
+func TestPrintMetadataPreviewShowsRichReleaseDetails(t *testing.T) {
+	output := captureStdout(t, func() {
+		printMetadataPreview(api.MetadataPreview{
+			SourcePath:  "C:\\path\\to\\Example.Release.2026.S01.1080p.WEB-DL-GRP",
+			ReleaseName: "Example Release 2026 S01 1080p WEB-DL H.264-GRP",
+			TrackerName: "LST",
+			ExternalIDs: api.ExternalIDs{
+				TMDBID:   123456,
+				IMDBID:   7654321,
+				TVDBID:   234567,
+				TVmazeID: 34567,
+				Category: "TV",
+			},
+			ExternalPreview: []api.ExternalPreview{{
+				Provider:     "tmdb",
+				ID:           123456,
+				Title:        "Example Release",
+				Year:         2026,
+				Overview:     "Example overview for a fictional series used in CLI preview output.",
+				Genres:       "Drama, Mystery",
+				Category:     "TV",
+				FirstAirDate: "2026-02-22",
+				Runtime:      55,
+				Rating:       7.9,
+				RatingCount:  1200,
+			}},
+		}, true)
+	})
+
+	for _, expected := range []string{
+		"Release details",
+		"Debug mode: no actual tracker uploads will be processed.",
+		"Source: [local path]",
+		"Upload name: Example Release 2026 S01 1080p WEB-DL H.264-GRP",
+		"Database info",
+		"Title: Example Release (2026)",
+		"Overview: Example overview for a fictional series used in CLI preview output.",
+		"Genres: Drama, Mystery",
+		"Category: TV",
+		"Date: 2026-02-22",
+		"Runtime: 55 min",
+		"Rating: 7.9 (1200 votes)",
+		"Tracker data from: LST",
+		"External IDs",
+		"TMDB: https://www.themoviedb.org/tv/123456",
+		"IMDb: https://www.imdb.com/title/tt7654321",
+		"TVDB: https://www.thetvdb.com/?id=234567&tab=series",
+		"TVmaze: https://www.tvmaze.com/shows/34567",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected output to contain %q, got %q", expected, output)
+		}
+	}
+}
+
 func TestPrintDryRunDetails(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -954,34 +1024,41 @@ func TestPrintDryRunDetails(t *testing.T) {
 		notContains []string
 	}{
 		{
-			name: "prints endpoint files payload and condenses body fields",
+			name: "prints files payload and condenses body fields",
 			entry: api.TrackerDryRunEntry{
 				Endpoint: "https://tracker.test/upload",
 				Files: []api.TrackerDryRunFile{
-					{Field: "torrent", Path: "C:\\tmp\\file.torrent", Present: true},
+					{Field: "torrent", Path: "C:\\Users\\Tester\\.upbrr\\tmp\\file.torrent", Present: true},
 					{Field: "nfo", Path: "", Present: false},
 				},
 				Payload: map[string]string{
 					"category":    "MOVIE",
 					"description": "line 1\nline 2",
+					"keywords":    "movie, webdl",
 					"mediainfo":   "General\nComplete name: Movie.2024.mkv",
 					"name":        "Movie.2024",
+					"passkey":     "secret-passkey",
 				},
 				Description: "line 1\nline 2",
 			},
 			contains: []string{
-				"Endpoint: https://tracker.test/upload",
 				"Files:",
-				"- torrent [present]: C:\\tmp\\file.torrent",
+				"- torrent [present]: .upbrr/tmp/file.torrent",
 				"- nfo [missing]: (none)",
 				"Payload:",
 				"- category: MOVIE",
 				"- description: [13 bytes, 2 lines omitted]",
+				"- keywords: movie, webdl",
 				"- mediainfo: [37 bytes, 2 lines omitted]",
 				"- name: Movie.2024",
+				"- passkey: [REDACTED]",
 			},
 			notContains: []string{
+				"C:\\Users\\Tester",
+				"Endpoint:",
+				"https://tracker.test/upload",
 				"line 1\nline 2",
+				"secret-passkey",
 				"General\nComplete name",
 			},
 		},
@@ -1020,6 +1097,7 @@ func TestPrintDryRunDetailsRedactsSensitiveEndpointAndPayload(t *testing.T) {
 			Payload: map[string]string{
 				"api_key":  "secret-key",
 				"auth":     "secret-auth",
+				"keywords": "movie, webdl",
 				"name":     "Movie.2024",
 				"passkey":  "secret-pass",
 				"announce": "https://tracker.test/announce?passkey=secret-pass",
@@ -1033,9 +1111,9 @@ func TestPrintDryRunDetailsRedactsSensitiveEndpointAndPayload(t *testing.T) {
 		}
 	}
 	for _, expected := range []string{
-		"Endpoint: https://tracker.test/api/upload?api_key=[REDACTED]&passkey=[REDACTED]",
 		"- api_key: [REDACTED]",
 		"- auth: [REDACTED]",
+		"- keywords: movie, webdl",
 		"- name: Movie.2024",
 		"- passkey: [REDACTED]",
 		"- announce: https://tracker.test/announce?passkey=[REDACTED]",
@@ -1043,6 +1121,39 @@ func TestPrintDryRunDetailsRedactsSensitiveEndpointAndPayload(t *testing.T) {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected redacted output to contain %q, got %q", expected, output)
 		}
+	}
+	if strings.Contains(output, "Endpoint:") {
+		t.Fatalf("expected endpoint to be omitted from dry-run details")
+	}
+}
+
+func TestFormatPathLabelKeepsDBRelativePath(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "windows db tmp path",
+			input: `C:\Users\Tester\.upbrr\tmp\file.torrent`,
+			want:  ".upbrr/tmp/file.torrent",
+		},
+		{
+			name:  "unix db cache path",
+			input: "/home/tester/.upbrr/cache/banned/file.json",
+			want:  ".upbrr/cache/banned/file.json",
+		},
+		{
+			name:  "outside db path",
+			input: `D:\media\Example.Release.2026-GRP`,
+			want:  "[local path]",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatPathLabel(tt.input); got != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, got)
+			}
+		})
 	}
 }
 
@@ -1069,11 +1180,15 @@ func TestPrintDebugUploadReview(t *testing.T) {
 			{
 				Tracker: "BLU",
 				DryRun: api.TrackerDryRunEntry{
-					Tracker:     "BLU",
-					Status:      "ready",
-					Endpoint:    "https://blu.test/upload",
-					Payload:     map[string]string{"name": "Movie.2024"},
-					Description: "test description",
+					Tracker:             "BLU",
+					Status:              "ready",
+					Endpoint:            "https://blu.test/upload",
+					ReleaseName:         "Movie.2024",
+					OriginalReleaseName: "Movie 2024",
+					UploadReleaseName:   "Movie.2024",
+					ReleaseNameChanged:  true,
+					Payload:             map[string]string{"name": "Movie.2024"},
+					Description:         "test description",
 				},
 			},
 			{
@@ -1089,10 +1204,10 @@ func TestPrintDebugUploadReview(t *testing.T) {
 	})
 
 	for _, expected := range []string{
-		"[Debug Dry Run] C:\\releases\\movie",
+		"[Debug Dry Run] [local path]",
 		"[BLU Debug Payload]",
 		"Dry run: ready",
-		"Endpoint: https://blu.test/upload",
+		"Tracker release name changed: Movie 2024 -> Movie.2024",
 		"- name: Movie.2024",
 		"[HDB Debug Payload]",
 		"Banned group: group banned",
@@ -1100,6 +1215,79 @@ func TestPrintDebugUploadReview(t *testing.T) {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected output to contain %q, got %q", expected, output)
 		}
+	}
+	for _, unexpected := range []string{
+		"Endpoint:",
+		"Payload fields:",
+	} {
+		if strings.Contains(output, unexpected) {
+			t.Fatalf("expected output not to contain %q, got %q", unexpected, output)
+		}
+	}
+}
+
+func TestPrintDebugUploadReviewGroupsIdenticalPayloads(t *testing.T) {
+	review := api.UploadReview{
+		SourcePath: "C:\\releases\\movie",
+		Trackers: []api.TrackerReview{
+			{
+				Tracker: "BLU",
+				DryRun: api.TrackerDryRunEntry{
+					Tracker:     "BLU",
+					Status:      "ready",
+					ReleaseName: "Movie.2024",
+					Payload:     map[string]string{"category": "MOVIE", "name": "Movie.2024"},
+				},
+			},
+			{
+				Tracker: "SP",
+				DryRun: api.TrackerDryRunEntry{
+					Tracker:     "SP",
+					Status:      "ready",
+					ReleaseName: "Movie.2024",
+					Payload:     map[string]string{"category": "MOVIE", "name": "Movie.2024"},
+				},
+			},
+			{
+				Tracker: "HDB",
+				DryRun: api.TrackerDryRunEntry{
+					Tracker:             "HDB",
+					Status:              "ready",
+					ReleaseName:         "Movie-2024",
+					OriginalReleaseName: "Movie 2024",
+					UploadReleaseName:   "Movie-2024",
+					ReleaseNameChanged:  true,
+					Payload:             map[string]string{"category": "MOVIE", "name": "Movie-2024"},
+				},
+			},
+		},
+	}
+
+	output := captureStdout(t, func() {
+		printDebugUploadReview(review)
+	})
+
+	for _, expected := range []string{
+		"[BLU, SP Debug Payload]",
+		"[HDB Debug Payload]",
+		"Tracker release name changed: Movie 2024 -> Movie-2024",
+		"- name: Movie.2024",
+		"- name: Movie-2024",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected output to contain %q, got %q", expected, output)
+		}
+	}
+	for _, unexpected := range []string{
+		"[BLU Debug Payload]",
+		"[SP Debug Payload]",
+	} {
+		if strings.Contains(output, unexpected) {
+			t.Fatalf("expected output not to contain %q, got %q", unexpected, output)
+		}
+	}
+	if count := strings.Count(output, "- name: Movie.2024"); count != 1 {
+		t.Fatalf("expected grouped payload to print once, got %d occurrences in %q", count, output)
 	}
 }
 

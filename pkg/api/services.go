@@ -113,6 +113,8 @@ type PreparedMetadata struct {
 	SceneMALID                  int
 	SceneNFOPath                string
 	SceneNFONew                 bool
+	SceneRenamed                bool
+	SceneRenamedReason          string
 	Mode                        Mode
 	DescriptionGroups           []DescriptionBuilderGroup
 	Trackers                    []string

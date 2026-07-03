@@ -1,6 +1,9 @@
 package logpolicy
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -842,6 +845,9 @@ func TestCheckRepositoryFlagsFrontendEncryptedEnvelopeMatcherOutput(t *testing.T
 	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
 		t.Fatalf("mkdir internal: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
 	testDir := filepath.Join(root, "gui", "frontend", "src", "hooks")
 	if err := os.MkdirAll(testDir, 0o755); err != nil {
 		t.Fatalf("mkdir frontend test dir: %v", err)
@@ -912,6 +918,9 @@ func TestCheckRepositoryFlagsRawDryRunDetailsOutput(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
 		t.Fatalf("mkdir internal: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
 	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
 		t.Fatalf("mkdir cmd upbrr: %v", err)
 	}
@@ -923,11 +932,19 @@ import "fmt"
 type dryRun struct {
 	Endpoint string
 	Payload map[string]string
+	Files []dryRunFile
+}
+
+type dryRunFile struct {
+	Path string
 }
 
 func printDryRunDetails(entry dryRun, key string) {
 	fmt.Printf("Endpoint: %s\n", entry.Endpoint)
 	fmt.Printf("- %s: %s\n", key, entry.Payload[key])
+	for _, file := range entry.Files {
+		fmt.Printf("- torrent [present]: %s\n", file.Path)
+	}
 }
 `
 
@@ -939,15 +956,22 @@ func printDryRunDetails(entry dryRun, key string) {
 	if err != nil {
 		t.Fatalf("CheckRepository returned error: %v", err)
 	}
-	if len(violations) != 2 {
-		t.Fatalf("expected 2 violations, got %d: %#v", len(violations), violations)
+	if len(violations) != 3 {
+		t.Fatalf("expected 3 violations, got %d: %#v", len(violations), violations)
 	}
-	joined := violations[0].Message + "\n" + violations[1].Message
+	messages := make([]string, 0, len(violations))
+	for _, violation := range violations {
+		messages = append(messages, violation.Message)
+	}
+	joined := strings.Join(messages, "\n")
 	if !strings.Contains(joined, "dry-run endpoint output") {
 		t.Fatalf("expected endpoint redaction violation, got %q", joined)
 	}
 	if !strings.Contains(joined, "dry-run payload output") {
 		t.Fatalf("expected payload redaction violation, got %q", joined)
+	}
+	if !strings.Contains(joined, "dry-run file path output") {
+		t.Fatalf("expected file path output violation, got %q", joined)
 	}
 }
 
@@ -967,19 +991,498 @@ import "fmt"
 type dryRun struct {
 	Endpoint string
 	Payload map[string]string
+	Files []dryRunFile
+}
+
+type dryRunFile struct {
+	Path string
 }
 
 func safeDryRunEndpoint(value string) string { return value }
 func formatDryRunPayloadValue(key string, value string) string { return value }
+func formatDryRunFilePath(value string) string { return value }
 
 func printDryRunDetails(entry dryRun, key string) {
 	fmt.Printf("Endpoint: %s\n", safeDryRunEndpoint(entry.Endpoint))
 	fmt.Printf("- %s: %s\n", key, formatDryRunPayloadValue(key, entry.Payload[key]))
+	for _, file := range entry.Files {
+		fmt.Printf("- torrent [present]: %s\n", formatDryRunFilePath(file.Path))
+	}
 }
 `
 
 	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "interactive.go"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryFlagsLocalPathCLIOutput(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+
+	content := `package main
+
+import "fmt"
+
+type preview struct {
+	SourcePath string
+}
+
+func printReleaseDetails(p preview, sourcePath string) {
+	fmt.Printf("Source: %s\n", p.SourcePath)
+	fmt.Printf("Input: %s\n", sourcePath)
+	fmt.Println(p.SourcePath)
+	fmt.Print(sourcePath)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "interactive.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 4 {
+		t.Fatalf("expected 4 violations, got %d: %#v", len(violations), violations)
+	}
+	for _, violation := range violations {
+		if !strings.Contains(violation.Message, "local filesystem path output") {
+			t.Fatalf("expected local path output violation, got %q", violation.Message)
+		}
+	}
+}
+
+func TestCheckRepositoryAllowsLabeledLocalPathCLIOutput(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+
+	content := `package main
+
+import "fmt"
+
+type preview struct {
+	SourcePath string
+}
+
+func formatPathLabel(value string) string { return value }
+
+func printReleaseDetails(p preview, sourcePath string) {
+	fmt.Printf("Source: %s\n", formatPathLabel(p.SourcePath))
+	fmt.Printf("Input: %s\n", formatPathLabel(sourcePath))
+	fmt.Println(formatPathLabel(p.SourcePath))
+	fmt.Print(formatPathLabel(sourcePath))
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "interactive.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryAllowsGenericCLIOutputNamesWithoutPathSource(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+
+	content := `package main
+
+import "fmt"
+
+func printDecision(candidate string, target string, output string, guessed string) {
+	selected := candidate
+	result := output
+	fmt.Printf("candidate=%s target=%s output=%s guessed=%s\n", selected, target, result, guessed)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "interactive.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryFlagsGenericCLIOutputNamesFromPathSources(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+
+	content := `package main
+
+import (
+	"fmt"
+	"path/filepath"
+)
+
+func printPath(root string) {
+	candidate := filepath.Join(root, "candidate")
+	target := candidate
+	output := target
+	guessed := output
+	fmt.Println(candidate)
+	fmt.Println(target)
+	fmt.Println(output)
+	fmt.Println(guessed)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "interactive.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 4 {
+		t.Fatalf("expected 4 violations, got %d: %#v", len(violations), violations)
+	}
+	for _, violation := range violations {
+		if !strings.Contains(violation.Message, "local filesystem path output") {
+			t.Fatalf("expected local path output violation, got %q", violation.Message)
+		}
+	}
+}
+
+func TestCheckRepositoryFlagsProjectLoggerWithoutCentralPathSanitization(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "logging"), 0o755); err != nil {
+		t.Fatalf("mkdir internal logging: %v", err)
+	}
+
+	content := `package logging
+
+import "fmt"
+
+type Logger struct{}
+
+func (l *Logger) logf(format string, args ...any) {
+	formatted := fmt.Sprintf(format, args...)
+	_ = formatted
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "logging", "logger.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write logger file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "SanitizeMessage") {
+		t.Fatalf("expected central sanitizer violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryAllowsProjectLoggerWithCentralPathSanitization(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "logging"), 0o755); err != nil {
+		t.Fatalf("mkdir internal logging: %v", err)
+	}
+
+	content := `package logging
+
+import "fmt"
+
+type Logger struct{}
+
+func SanitizeMessage(message string) string { return message }
+
+func (l *Logger) logf(format string, args ...any) {
+	formatted := SanitizeMessage(fmt.Sprintf(format, args...))
+	_ = formatted
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "logging", "logger.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write logger file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestProjectLoggerURLPathPreservationFlagsSanitizerRegression(t *testing.T) {
+	t.Parallel()
+
+	violations := checkProjectLoggerURLPathPreservation(
+		token.NewFileSet(),
+		"internal/logging/logger.go",
+		token.NoPos,
+		func(string) string { return "url=https://img.example.com/[local path]" },
+	)
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "preserve URL path segments") {
+		t.Fatalf("expected URL path preservation violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryFlagsRawTerminalErrorOutput(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "gui"), 0o755); err != nil {
+		t.Fatalf("mkdir gui: %v", err)
+	}
+
+	cliContent := `package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintln(os.Stderr, err)
+	}
+}
+
+func run() error { return nil }
+`
+	guiContent := `package main
+
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintln(os.Stderr, err)
+	}
+}
+
+func run() error { return nil }
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "main.go"), []byte(cliContent), 0o600); err != nil {
+		t.Fatalf("write CLI sample file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "gui", "main.go"), []byte(guiContent), 0o600); err != nil {
+		t.Fatalf("write GUI sample file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(guiContent), 0o600); err != nil {
+		t.Fatalf("write internal sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 6 {
+		t.Fatalf("expected 6 violations, got %d: %#v", len(violations), violations)
+	}
+	for _, violation := range violations {
+		if !strings.Contains(violation.Message, "terminal error/warning output") {
+			t.Fatalf("expected terminal diagnostic violation, got %q", violation.Message)
+		}
+	}
+}
+
+func TestCheckRepositoryAllowsSanitizedTerminalOutput(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "gui"), 0o755); err != nil {
+		t.Fatalf("mkdir gui: %v", err)
+	}
+
+	content := `package main
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/autobrr/upbrr/internal/logging"
+)
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", logging.SanitizeMessage(err.Error()))
+		fmt.Fprintln(os.Stderr, logging.SanitizeMessage(err.Error()))
+	}
+	for _, w := range warnings() {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", logging.SanitizeMessage(w))
+	}
+}
+
+func run() error { return nil }
+func warnings() []string { return nil }
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "main.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write CLI sample file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "gui", "main.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write GUI sample file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write internal sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryFlagsRawTerminalDiagnosticFields(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+
+	content := `package main
+
+import (
+	"fmt"
+	"os"
+)
+
+type diagnostic struct {
+	Warning string
+	Message string
+	Status string
+	Error string
+}
+
+func printDiagnostic(status diagnostic) {
+	fmt.Fprint(os.Stderr, status.Warning)
+	fmt.Fprintln(os.Stderr, status.Message)
+	fmt.Fprintln(os.Stderr, status.Status)
+	fmt.Fprintln(os.Stderr, status.Error)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "main.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write CLI sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 4 {
+		t.Fatalf("expected 4 violations, got %d: %#v", len(violations), violations)
+	}
+	for _, violation := range violations {
+		if !strings.Contains(violation.Message, "terminal error/warning output") {
+			t.Fatalf("expected terminal diagnostic violation, got %q", violation.Message)
+		}
+	}
+}
+
+func TestCheckRepositoryAllowsSanitizedTerminalDiagnosticFields(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
+		t.Fatalf("mkdir cmd upbrr: %v", err)
+	}
+
+	content := `package main
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/autobrr/upbrr/internal/logging"
+)
+
+type diagnostic struct {
+	Warning string
+	Message string
+	Status string
+	Error string
+}
+
+func printDiagnostic(status diagnostic) {
+	fmt.Fprint(os.Stderr, logging.SanitizeMessage(status.Warning))
+	fmt.Fprintln(os.Stderr, logging.SanitizeMessage(status.Message))
+	fmt.Fprintln(os.Stderr, logging.SanitizeMessage(status.Status))
+	fmt.Fprintln(os.Stderr, logging.SanitizeMessage(status.Error))
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "main.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write CLI sample file: %v", err)
 	}
 
 	violations, err := CheckRepository(root)
@@ -1261,6 +1764,101 @@ func check(log logger, err error) {
 	}
 	if !strings.Contains(violations[0].Message, "auth-sensitive log arguments") {
 		t.Fatalf("expected auth-sensitive raw error violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryFlagsRawErrorLogFields(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+
+	content := `package sample
+
+type logger struct{}
+
+func (logger) Warnf(string, ...any) {}
+
+func check(log logger, err error) {
+	log.Warnf("core: upload prepared blocked err=%v", err)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "raw error log fields") {
+		t.Fatalf("expected raw error log field violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryAllowsRedactedErrorLogFields(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+
+	content := `package sample
+
+import "github.com/autobrr/upbrr/internal/redaction"
+
+type logger struct{}
+
+func (logger) Warnf(string, ...any) {}
+
+func check(log logger, err error) {
+	log.Warnf("core: upload prepared blocked err=%s", redaction.RedactValue(err.Error(), nil))
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryAllowsBooleanErrorStateLogFields(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+
+	content := `package sample
+
+type logger struct{}
+
+func (logger) Debugf(string, ...any) {}
+
+func check(log logger, detailsErr error) {
+	log.Debugf("metadata: scene nfo downloaded details_error=%t", detailsErr != nil)
+}
+`
+
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write sample file: %v", err)
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
 	}
 }
 
@@ -1803,6 +2401,559 @@ func check(log logger, path string, client string, hash string) {
 		if !strings.Contains(v.Message, "execution flow reporting") {
 			t.Fatalf("expected execution flow debug violation, got %q", v.Message)
 		}
+	}
+}
+
+func TestCheckRepositoryFlagsWorkflowFunctionWithoutLogging(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+import (
+	"errors"
+	"fmt"
+)
+
+type logger struct{}
+type client struct{}
+
+func (client) Upload(string) error { return nil }
+
+func uploadTracker(log logger, c client, path string) error {
+	if path == "" {
+		return errors.New("missing path")
+	}
+	for _, candidate := range []string{path} {
+		if err := c.Upload(candidate); err != nil {
+			return fmt.Errorf("upload candidate: %w", err)
+		}
+	}
+	return nil
+}
+`
+	writeInternalProductionFixture(t, root, content)
+	summary := summarizeFixtureFunction(t, content, "uploadTracker")
+	if !summary.isWorkflowLike() {
+		t.Fatalf("expected workflow-like summary, got loggerAccess=%t workflowName=%t operations=%d branches=%d loops=%d errorReturns=%d scoreThreshold=%d", summary.loggerAccess, summary.workflowName, summary.operationCalls, summary.branches, summary.loops, summary.errorReturns, workflowLogScoreThreshold)
+	}
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, filepath.Join(root, "internal", "sample", "sample.go"), content, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn.Name.Name == "uploadTracker" {
+			parsedSummary := summarizeWorkflowFunction(fn)
+			if !parsedSummary.isWorkflowLike() {
+				t.Fatalf("expected parsed workflow-like summary, got loggerAccess=%t workflowName=%t operations=%d branches=%d loops=%d errorReturns=%d", parsedSummary.loggerAccess, parsedSummary.workflowName, parsedSummary.operationCalls, parsedSummary.branches, parsedSummary.loops, parsedSummary.errorReturns)
+			}
+		}
+	}
+	workflowViolations := checkWorkflowLoggingCoverage(fset, "internal/sample/sample.go", file, map[int]*logpolicyAllow{})
+	if len(workflowViolations) == 0 {
+		t.Fatalf("expected direct workflow violation")
+	}
+	fileViolations, err := checkFile(token.NewFileSet(), root, filepath.Join(root, "internal", "sample", "sample.go"))
+	if err != nil {
+		t.Fatalf("checkFile returned error: %v", err)
+	}
+	if len(fileViolations) == 0 {
+		t.Fatalf("expected direct checkFile violation")
+	}
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "workflow-like function has no logging") {
+		t.Fatalf("expected missing workflow logging violation, got %q", violations[0].Message)
+	}
+}
+
+func summarizeFixtureFunction(t *testing.T, content string, name string) workflowLogSummary {
+	t.Helper()
+
+	file, err := parser.ParseFile(token.NewFileSet(), "sample.go", content, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn.Name.Name == name {
+			return summarizeWorkflowFunction(fn)
+		}
+	}
+	t.Fatalf("function %s not found", name)
+	return workflowLogSummary{}
+}
+
+func TestCheckRepositoryAllowsWorkflowLoggingSuppression(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+import (
+	"errors"
+	"fmt"
+)
+
+type logger struct{}
+type client struct{}
+
+func (client) Upload(string) error { return nil }
+
+//logpolicy:allow workflow delegates logging to caller with per-item context
+func uploadTracker(log logger, c client, path string) error {
+	if path == "" {
+		return errors.New("missing path")
+	}
+	for _, candidate := range []string{path} {
+		if err := c.Upload(candidate); err != nil {
+			return fmt.Errorf("upload candidate: %w", err)
+		}
+	}
+	return nil
+}
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryFlagsWorkflowBranchErrorWithoutWarnLogging(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+type client struct{}
+type result struct{}
+
+func (logger) Infof(string, ...any) {}
+func (client) Upload(string) error { return nil }
+
+func uploadTracker(log logger, c client, path string) (result, error) {
+	log.Infof("upload started path=%s", path)
+	if path == "" {
+		return result{}, errMissingPath
+	}
+	if err := c.Upload(path); err != nil {
+		return result{}, err
+	}
+	return result{}, nil
+}
+
+var errMissingPath error
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "without Warnf/Errorf") {
+		t.Fatalf("expected branch error logging violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryAllowsWorkflowBranchErrorWithWarnLogging(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+type client struct{}
+type result struct{}
+
+func (logger) Infof(string, ...any) {}
+func (logger) Warnf(string, ...any) {}
+func (client) Upload(string) error { return nil }
+
+func uploadTracker(log logger, c client, path string) (result, error) {
+	log.Infof("upload started path=%s", path)
+	if path == "" {
+		log.Warnf("upload blocked reason=missing_path")
+		return result{}, errMissingPath
+	}
+	if err := c.Upload(path); err != nil {
+		log.Warnf("upload blocked reason=client_error")
+		return result{}, err
+	}
+	return result{}, nil
+}
+
+var errMissingPath error
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryFlagsExportedReceiverWorkflowBranchError(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+type Service struct{ logger logger }
+type client struct{}
+
+func (logger) Infof(string, ...any) {}
+func (client) Upload(string) error { return nil }
+
+func (s *Service) Upload(ctx context, c client, path string) error {
+	s.logger.Infof("upload started path=%s", path)
+	if path == "" {
+		return errMissingPath
+	}
+	if err := c.Upload(path); err != nil {
+		return err
+	}
+	return nil
+}
+
+type context struct{}
+var errMissingPath error
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "without Warnf/Errorf") {
+		t.Fatalf("expected branch error logging violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryAllowsUnexportedReceiverWorkflowBranchError(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+type service struct{ logger logger }
+type client struct{}
+
+func (logger) Infof(string, ...any) {}
+func (client) Upload(string) error { return nil }
+
+func (s *service) Upload(ctx context, c client, path string) error {
+	s.logger.Infof("upload started path=%s", path)
+	if path == "" {
+		return errMissingPath
+	}
+	if err := c.Upload(path); err != nil {
+		return err
+	}
+	return nil
+}
+
+type context struct{}
+var errMissingPath error
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryAllowsClientReceiverWorkflowBranchError(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+type Client struct{ logger logger }
+type remote struct{}
+
+func (logger) Infof(string, ...any) {}
+func (remote) Request(string) error { return nil }
+
+func (c *Client) Upload(ctx context, r remote, path string) error {
+	c.logger.Infof("upload started path=%s", path)
+	if path == "" {
+		return errMissingPath
+	}
+	if err := r.Request(path); err != nil {
+		return err
+	}
+	return nil
+}
+
+type context struct{}
+var errMissingPath error
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryAllowsReceiverWorkflowContextualErrorReturns(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+import "fmt"
+
+type logger struct{}
+type Service struct{ logger logger }
+type client struct{}
+type result struct{}
+
+func (logger) Infof(string, ...any) {}
+func (client) Upload(string) error { return nil }
+
+func (s *Service) Upload(ctx context, c client, path string) (result, error) {
+	s.logger.Infof("upload started path=%s", path)
+	if path == "" {
+		return result{}, fmt.Errorf("missing path")
+	}
+	if err := c.Upload(path); err != nil {
+		return result{}, fmt.Errorf("upload: %w", err)
+	}
+	return result{}, nil
+}
+
+type context struct{}
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryFlagsWorkflowDecisionWithoutDecisionLogging(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+type client struct{}
+
+func (logger) Infof(string, ...any) {}
+func (logger) Warnf(string, ...any) {}
+func (client) Upload(string) error { return nil }
+
+func uploadTracker(log logger, c client, path string, skipUpload bool) error {
+	log.Infof("upload started path=%s", path)
+	if skipUpload {
+		return nil
+	}
+	if err := c.Upload(path); err != nil {
+		log.Warnf("upload failed path=%s", path)
+		return err
+	}
+	return nil
+}
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "workflow decision lacks logging") {
+		t.Fatalf("expected workflow decision logging violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryAllowsWorkflowDecisionLogging(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+type client struct{}
+
+func (logger) Infof(string, ...any) {}
+func (logger) Warnf(string, ...any) {}
+func (logger) Debugf(string, ...any) {}
+func (client) Upload(string) error { return nil }
+
+func uploadTracker(log logger, c client, path string, skipUpload bool) error {
+	log.Infof("upload started path=%s", path)
+	if skipUpload {
+		log.Debugf("upload decision=skip path=%s", path)
+		return nil
+	}
+	if err := c.Upload(path); err != nil {
+		log.Warnf("upload failed path=%s", path)
+		return err
+	}
+	return nil
+}
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryFlagsWorkflowLogsWithoutStableFields(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+type client struct{}
+
+func (logger) Infof(string, ...any) {}
+func (client) Upload(string) {}
+
+func uploadTracker(log logger, c client, paths []string) error {
+	log.Infof("upload selected %s %d", paths[0], len(paths))
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		c.Upload(path)
+	}
+	return nil
+}
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "stable key=value fields") {
+		t.Fatalf("expected stable-field violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryAllowsWorkflowLogsWithStableFields(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+type client struct{}
+
+func (logger) Infof(string, ...any) {}
+func (client) Upload(string) {}
+
+func uploadTracker(log logger, c client, paths []string) error {
+	log.Infof("upload selected path=%s count=%d", paths[0], len(paths))
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		c.Upload(path)
+	}
+	return nil
+}
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryFlagsWarnfRoutineProgressMessages(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+
+func (logger) Warnf(string, ...any) {}
+
+func check(log logger, tracker string) {
+	log.Warnf("upload completed tracker=%s", tracker)
+}
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "routine progress") {
+		t.Fatalf("expected routine progress warning violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryFlagsTracefUserOutcomeMessages(t *testing.T) {
+	root := t.TempDir()
+	content := `package sample
+
+type logger struct{}
+
+func (logger) Tracef(string, ...any) {}
+
+func check(log logger, tracker string) {
+	log.Tracef("upload completed tracker=%s", tracker)
+}
+`
+	writeInternalProductionFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "user-visible outcome") {
+		t.Fatalf("expected trace outcome violation, got %q", violations[0].Message)
+	}
+}
+
+func writeInternalProductionFixture(t *testing.T, root string, content string) {
+	t.Helper()
+
+	dir := filepath.Join(root, "internal", "sample")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir internal sample: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sample.go"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
 	}
 }
 

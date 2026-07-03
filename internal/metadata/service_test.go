@@ -92,24 +92,13 @@ func TestPrepare(t *testing.T) {
 	}
 }
 
-func TestPrepareCopiesSceneResultAfterRecoverableNFOFailure(t *testing.T) {
+func TestApplySceneDetectionCopiesResultAfterRecoverableNFOFailure(t *testing.T) {
 	t.Parallel()
 
-	base := t.TempDir()
-	path := filepath.Join(base, "Example.Release")
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-	videoPath := filepath.Join(path, "Example.Release.mkv")
-	if err := os.WriteFile(videoPath, []byte("video"), 0o600); err != nil {
-		t.Fatalf("write video failed: %v", err)
-	}
-
+	// Scene detection runs in ApplyMediaDetails now; applySceneDetection is the
+	// plumbing that copies the result and surfaces a recoverable NFO side effect.
 	logger := &recordingLogger{}
-	repo := &stubRepo{}
-	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
-	service := NewService(repo,
-		WithMediaInfoExporter(&stubMediaInfo{}),
+	service := NewService(&stubRepo{},
 		WithSceneDetector(staticSceneDetector{
 			result: SceneResult{
 				IsScene:   true,
@@ -121,15 +110,11 @@ func TestPrepareCopiesSceneResultAfterRecoverableNFOFailure(t *testing.T) {
 			err: newSceneNFOError(errors.New("scene: write nfo: permission denied")),
 		}),
 		WithLogger(logger),
-		WithConfig(cfg),
 	)
 
-	meta, err := service.Prepare(context.Background(), api.Request{
-		Paths: []string{path},
-		Mode:  api.ModeCLI,
-	})
+	meta, err := service.applySceneDetection(context.Background(), api.PreparedMetadata{})
 	if err != nil {
-		t.Fatalf("prepare failed: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if !meta.Scene || meta.SceneName != "Example.Release.2024.1080p-WEB" {
 		t.Fatalf("expected scene result copied, got scene=%t name=%q", meta.Scene, meta.SceneName)
@@ -142,53 +127,40 @@ func TestPrepareCopiesSceneResultAfterRecoverableNFOFailure(t *testing.T) {
 	}
 }
 
-func TestPrepareRetainsStoredSceneMetadataAfterZeroRecoverableNFOFailure(t *testing.T) {
+func TestApplySceneDetectionBackfillsIMDbID(t *testing.T) {
 	t.Parallel()
 
-	base := t.TempDir()
-	path := filepath.Join(base, "Cached.Scene.Release")
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-	videoPath := filepath.Join(path, "Cached.Scene.Release.mkv")
-	if err := os.WriteFile(videoPath, []byte("video"), 0o600); err != nil {
-		t.Fatalf("write video failed: %v", err)
-	}
-
-	logger := &recordingLogger{}
-	repo := &stubRepo{
-		existing: db.FileMetadata{
-			Path:      videoPath,
-			Scene:     true,
-			SceneName: "Cached.Scene.Release.2024.1080p-WEB",
-			SceneIMDB: 7654321,
-		},
-	}
-	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
-	service := NewService(repo,
-		WithMediaInfoExporter(&stubMediaInfo{}),
-		WithSceneDetector(staticSceneDetector{
-			err: newSceneNFOError(errors.New("scene: write nfo: permission denied")),
-		}),
-		WithLogger(logger),
-		WithConfig(cfg),
+	service := NewService(&stubRepo{},
+		WithSceneDetector(staticSceneDetector{result: SceneResult{IsScene: true, IMDBID: 132245}}),
 	)
-
-	meta, err := service.Prepare(context.Background(), api.Request{
-		Paths: []string{path},
-		Mode:  api.ModeCLI,
-	})
+	// No externally-resolved id: the scene-discovered id backfills ExternalIDs.
+	meta, err := service.applySceneDetection(context.Background(), api.PreparedMetadata{})
 	if err != nil {
-		t.Fatalf("prepare failed: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !meta.Scene || meta.SceneName != "Cached.Scene.Release.2024.1080p-WEB" || meta.SceneIMDB != 7654321 {
-		t.Fatalf("expected stored scene metadata retained, got scene=%t name=%q imdb=%d", meta.Scene, meta.SceneName, meta.SceneIMDB)
+	if meta.ExternalIDs.IMDBID != 132245 {
+		t.Fatalf("expected scene imdb backfilled, got %d", meta.ExternalIDs.IMDBID)
 	}
-	if !repo.saved.Scene || repo.saved.SceneName != "Cached.Scene.Release.2024.1080p-WEB" || repo.saved.SceneIMDB != 7654321 {
-		t.Fatalf("expected saved scene metadata retained, got scene=%t name=%q imdb=%d", repo.saved.Scene, repo.saved.SceneName, repo.saved.SceneIMDB)
+	// An already-resolved id is not overwritten.
+	meta, err = service.applySceneDetection(context.Background(), api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 999}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(logger.warnings) != 1 || !strings.Contains(logger.warnings[0], "scene nfo side effect failed") {
-		t.Fatalf("expected visible NFO warning, got %#v", logger.warnings)
+	if meta.ExternalIDs.IMDBID != 999 {
+		t.Fatalf("expected resolved imdb preserved, got %d", meta.ExternalIDs.IMDBID)
+	}
+}
+
+func TestApplySceneDetectionPropagatesCancellation(t *testing.T) {
+	t.Parallel()
+
+	// Context cancellation must abort the pipeline, not be swallowed as a soft
+	// srrdb failure that continues into tracker rules.
+	service := NewService(&stubRepo{},
+		WithSceneDetector(staticSceneDetector{err: context.Canceled}),
+	)
+	if _, err := service.applySceneDetection(context.Background(), api.PreparedMetadata{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation propagated, got %v", err)
 	}
 }
 
@@ -366,13 +338,85 @@ func TestResolveServiceMGMPlus(t *testing.T) {
 	t.Parallel()
 
 	service, longName, filename := resolveService(api.PreparedMetadata{
-		SourcePath: `D:\TV\A.Spy.Among.Friends.S01.2160p.MGMP.WEB-DL.DDP5.1.H.265-XEBEC`,
+		SourcePath: `D:\TV\Example.Spy.Show.S01.2160p.MGMP.WEB-DL.DDP5.1.H.265-GRP`,
 	})
 	if service != "MGMP" {
 		t.Fatalf("expected MGMP service, got %q", service)
 	}
 	if longName != "MGM Plus" {
 		t.Fatalf("expected MGM Plus long name, got %q", longName)
+	}
+	if filename == "" {
+		t.Fatalf("expected filename to be preserved")
+	}
+}
+
+func TestResolveServiceIgnoresTitleServiceTokens(t *testing.T) {
+	t.Parallel()
+
+	service, longName, filename := resolveService(api.PreparedMetadata{
+		SourcePath: `/releases/Example.Show.S01E01.Netflix.and.Chill.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv`,
+	})
+	if service != "" {
+		t.Fatalf("expected no service from episode title, got %q", service)
+	}
+	if longName != "" {
+		t.Fatalf("expected no long name from episode title, got %q", longName)
+	}
+	if filename == "" {
+		t.Fatalf("expected filename to be preserved")
+	}
+}
+
+func TestResolveServiceUsesAliasAdjacentToWebSource(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		sourcePath string
+	}{
+		{
+			name:       "web dl with separator",
+			sourcePath: `/releases/Netflix.Documentary.2026.1080p.AMZN.WEB-DL.DDP5.1.H.264-GRP.mkv`,
+		},
+		{
+			name:       "split web dl",
+			sourcePath: `/releases/Netflix.Documentary.2026.1080p.AMZN WEB DL DDP5.1 H.264-GRP.mkv`,
+		},
+		{
+			name:       "split web rip",
+			sourcePath: `/releases/Netflix.Documentary.2026.1080p.AMZN WEB RIP DDP5.1 H.264-GRP.mkv`,
+		},
+		{
+			name:       "compact webrip",
+			sourcePath: `/releases/Netflix.Documentary.2026.1080p.AMZN.WEBRip.DDP5.1.H.264-GRP.mkv`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertResolvedService(t, tt.sourcePath, "AMZN", "Amazon Prime")
+		})
+	}
+}
+
+func TestResolveServicePrefersLongestAdjacentAlias(t *testing.T) {
+	t.Parallel()
+
+	assertResolvedService(t, `/releases/Example.Movie.2026.1080p.Apple.TV+.WEB-DL.DDP5.1.H.264-GRP.mkv`, "ATVP", "Apple TV+")
+}
+
+func assertResolvedService(t *testing.T, sourcePath, wantService, wantLongName string) {
+	t.Helper()
+
+	service, longName, filename := resolveService(api.PreparedMetadata{
+		SourcePath: sourcePath,
+	})
+	if service != wantService {
+		t.Fatalf("expected %s service, got %q", wantService, service)
+	}
+	if longName != wantLongName {
+		t.Fatalf("expected %s long name, got %q", wantLongName, longName)
 	}
 	if filename == "" {
 		t.Fatalf("expected filename to be preserved")
@@ -401,27 +445,16 @@ func TestResolveServiceValue(t *testing.T) {
 	}
 }
 
-func TestPrepareAppliesSceneServiceFromNFO(t *testing.T) {
-	base := t.TempDir()
-	path := filepath.Join(base, "Greenland.2.Migration.2026.HDR.2160p.WEB.h265-ETHEL.mkv")
-	if err := os.WriteFile(path, []byte("video"), 0o644); err != nil {
-		t.Fatalf("write video failed: %v", err)
-	}
+func TestApplySceneDetectionAppliesServiceFromNFO(t *testing.T) {
+	t.Parallel()
 
-	repo := &stubRepo{}
-	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
-	service := NewService(repo,
-		WithMediaInfoExporter(&stubMediaInfo{}),
+	service := NewService(&stubRepo{},
 		WithSceneDetector(staticSceneDetector{result: SceneResult{IsScene: true, Service: "iT", ServiceLongName: "iTunes"}}),
-		WithConfig(cfg),
 	)
 
-	meta, err := service.Prepare(context.Background(), api.Request{
-		Paths: []string{path},
-		Mode:  api.ModeCLI,
-	})
+	meta, err := service.applySceneDetection(context.Background(), api.PreparedMetadata{})
 	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if meta.Service != "iT" {
 		t.Fatalf("expected iT service from scene nfo, got %q", meta.Service)

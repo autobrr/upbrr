@@ -3358,7 +3358,7 @@ func TestFetchTrackerDryRunPreviewUsesCachedMetadata(t *testing.T) {
 		t.Fatalf("new core: %v", err)
 	}
 
-	prepared := api.PreparedMetadata{SourcePath: "/tmp/a", ReleaseName: "Watcher 2160p WEB-DL DD+ 5.1-FLUX"}
+	prepared := api.PreparedMetadata{SourcePath: "/tmp/a", ReleaseName: "Example Movie 2160p WEB-DL DD+ 5.1-GRP"}
 	core.storeDupeCache("/tmp/a", "", prepared)
 
 	preview, err := core.FetchTrackerDryRunPreview(context.Background(), api.Request{
@@ -3383,6 +3383,84 @@ func TestFetchTrackerDryRunPreviewUsesCachedMetadata(t *testing.T) {
 	}
 	if len(client.injected) != 1 || client.injected[0].Tracker != "AITHER" || client.injected[0].Path != "/tmp/aither.torrent" {
 		t.Fatalf("expected tracker dry-run injection artifact, got %#v", client.injected)
+	}
+}
+
+func TestRunUploadPreparedDebugDryRunIgnoresCheckBlocksForArtifacts(t *testing.T) {
+	t.Parallel()
+
+	source := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP")
+	aitherTorrent := filepath.Join(t.TempDir(), "aither.torrent")
+	bluTorrent := filepath.Join(t.TempDir(), "blu.torrent")
+	client := &stubClient{}
+	tracker := &stubTrackers{dryRunEntries: []api.TrackerDryRunEntry{
+		{
+			Tracker: "AITHER",
+			Status:  "ready",
+			Files: []api.TrackerDryRunFile{{
+				Field:   "torrent",
+				Path:    aitherTorrent,
+				Present: true,
+			}},
+		},
+		{
+			Tracker: "BLU",
+			Status:  "ready",
+			Files: []api.TrackerDryRunFile{{
+				Field:   "torrent",
+				Path:    bluTorrent,
+				Present: true,
+			}},
+		},
+	}}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    client,
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	core.storeDupeCache(source, "", api.PreparedMetadata{
+		SourcePath:     source,
+		TrackersRemove: []string{"AITHER"},
+		BlockedTrackers: map[string][]api.TrackerBlockReason{
+			"AITHER": {api.TrackerBlockReasonClaim},
+		},
+		TrackerRuleFailures: map[string][]api.RuleFailure{
+			"AITHER": {{Rule: "example_rule", Reason: "example reason"}},
+		},
+	})
+
+	_, err = core.RunUploadPrepared(context.Background(), api.Request{
+		Paths:    []string{source},
+		Mode:     api.ModeCLI,
+		Trackers: []string{"AITHER", "BLU"},
+		Options:  api.UploadOptions{Debug: true},
+	})
+	if err != nil {
+		t.Fatalf("run upload prepared: %v", err)
+	}
+	if tracker.dryRunCalls != 1 {
+		t.Fatalf("expected one dry-run build, got %d", tracker.dryRunCalls)
+	}
+	if !slices.Equal(tracker.lastTrackers, []string{"AITHER", "BLU"}) {
+		t.Fatalf("expected debug dry-run for all trackers, got %#v", tracker.lastTrackers)
+	}
+	if !tracker.lastMeta.IgnoreTrackerRuleFailures {
+		t.Fatalf("expected debug dry-run metadata to ignore rule failures")
+	}
+	if len(tracker.lastMeta.BlockedTrackers) != 0 {
+		t.Fatalf("expected debug dry-run metadata to ignore tracker blocks, got %#v", tracker.lastMeta.BlockedTrackers)
+	}
+	if got := len(client.injected); got != 2 {
+		t.Fatalf("expected client injection for both debug tracker torrents, got %d", got)
 	}
 }
 
@@ -3498,7 +3576,7 @@ func TestFetchTrackerDryRunPreviewAnnotatesReleaseNameChange(t *testing.T) {
 
 	tracker := &stubTrackers{dryRunEntries: []api.TrackerDryRunEntry{{
 		Tracker:     "AITHER",
-		ReleaseName: "Watcher.2160p.WEB-DL.DDP5.1-FLUX",
+		ReleaseName: "Example.Movie.2160p.WEB-DL.DDP5.1-GRP",
 	}}}
 	core, err := New(api.CoreDependencies{
 		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
@@ -3517,7 +3595,7 @@ func TestFetchTrackerDryRunPreviewAnnotatesReleaseNameChange(t *testing.T) {
 
 	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{
 		SourcePath:  "/tmp/a",
-		ReleaseName: "Watcher 2160p WEB-DL DD+ 5.1-FLUX",
+		ReleaseName: "Example Movie 2160p WEB-DL DD+ 5.1-GRP",
 		Trackers:    []string{"AITHER", "BLU"},
 	})
 
@@ -3539,10 +3617,10 @@ func TestFetchTrackerDryRunPreviewAnnotatesReleaseNameChange(t *testing.T) {
 	if !entry.ReleaseNameChanged {
 		t.Fatalf("expected release name change annotation, got %#v", entry)
 	}
-	if entry.OriginalReleaseName != "Watcher 2160p WEB-DL DD+ 5.1-FLUX" {
+	if entry.OriginalReleaseName != "Example Movie 2160p WEB-DL DD+ 5.1-GRP" {
 		t.Fatalf("expected original release name, got %q", entry.OriginalReleaseName)
 	}
-	if entry.UploadReleaseName != "Watcher.2160p.WEB-DL.DDP5.1-FLUX" {
+	if entry.UploadReleaseName != "Example.Movie.2160p.WEB-DL.DDP5.1-GRP" {
 		t.Fatalf("expected upload release name, got %q", entry.UploadReleaseName)
 	}
 }

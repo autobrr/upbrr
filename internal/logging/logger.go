@@ -226,18 +226,181 @@ func (l *Logger) logf(level Level, label string, format string, args ...any) {
 		return
 	}
 
-	formatted := fmt.Sprintf(format, args...)
+	formatted := SanitizeMessage(fmt.Sprintf(format, args...))
 	prefix := label + ": "
 	if level <= LevelWarn {
-		l.consoleErr.Printf(prefix+format, args...)
+		l.consoleErr.Print(prefix + formatted)
 	} else {
-		l.consoleOut.Printf(prefix+format, args...)
+		l.consoleOut.Print(prefix + formatted)
 	}
 	if l.file != nil {
-		l.file.Printf(prefix+format, args...)
+		l.file.Print(prefix + formatted)
 	}
 
 	l.record(label, formatted)
+}
+
+// SanitizeMessage replaces local filesystem paths in user-shareable log or
+// terminal output with stable labels. Paths under known app DB tmp/cache/log
+// directories keep only their .upbrr-relative suffix; other local paths become
+// [local path].
+func SanitizeMessage(message string) string {
+	if strings.TrimSpace(message) == "" {
+		return message
+	}
+	var builder strings.Builder
+	for index := 0; index < len(message); {
+		if end, ok := urlSpanEnd(message, index); ok {
+			builder.WriteString(message[index:end])
+			index = end
+			continue
+		}
+		if isWindowsDrivePathStart(message, index) || isUNCPathStart(message, index) || isUnixLocalPathStart(message, index) {
+			end := localPathEnd(message, index)
+			builder.WriteString(localPathLogLabel(message[index:end]))
+			index = end
+			continue
+		}
+		builder.WriteByte(message[index])
+		index++
+	}
+	return builder.String()
+}
+
+func isWindowsDrivePathStart(value string, index int) bool {
+	return index+2 < len(value) &&
+		(index == 0 || !isLogFieldNameChar(value[index-1])) &&
+		((value[index] >= 'A' && value[index] <= 'Z') || (value[index] >= 'a' && value[index] <= 'z')) &&
+		value[index+1] == ':' &&
+		(value[index+2] == '\\' || value[index+2] == '/')
+}
+
+func isUNCPathStart(value string, index int) bool {
+	return index+2 < len(value) && value[index] == '\\' && value[index+1] == '\\'
+}
+
+func isUnixLocalPathStart(value string, index int) bool {
+	if index >= len(value) || value[index] != '/' {
+		return false
+	}
+	if index > 0 && value[index-1] == ':' {
+		return false
+	}
+	for _, prefix := range []string{"/home/", "/Users/", "/mnt/", "/media/", "/tmp/", "/var/", "/Volumes/"} {
+		if strings.HasPrefix(value[index:], prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// urlSpanEnd returns the end of a URL that starts at index. Sanitization copies
+// URL spans intact before local path matching so URL path components such as
+// /media/ are not mistaken for host filesystem paths.
+func urlSpanEnd(value string, index int) (int, bool) {
+	if index >= len(value) || !isURLSchemeStart(value[index]) {
+		return 0, false
+	}
+	for schemeEnd := index + 1; schemeEnd < len(value); schemeEnd++ {
+		ch := value[schemeEnd]
+		if isURLSchemeChar(ch) {
+			continue
+		}
+		if ch != ':' || schemeEnd+2 >= len(value) || value[schemeEnd+1] != '/' || value[schemeEnd+2] != '/' {
+			return 0, false
+		}
+		for end := schemeEnd + 3; end < len(value); end++ {
+			if isURLEndDelimiter(value[end]) {
+				return end, true
+			}
+		}
+		return len(value), true
+	}
+	return 0, false
+}
+
+func isURLSchemeStart(ch byte) bool {
+	return ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z'
+}
+
+func isURLSchemeChar(ch byte) bool {
+	return ch >= 'A' && ch <= 'Z' ||
+		ch >= 'a' && ch <= 'z' ||
+		ch >= '0' && ch <= '9' ||
+		ch == '+' ||
+		ch == '-' ||
+		ch == '.'
+}
+
+func isURLEndDelimiter(ch byte) bool {
+	switch ch {
+	case ' ', '\r', '\n', '\t', '"', '\'', '`':
+		return true
+	default:
+		return false
+	}
+}
+
+func localPathEnd(value string, start int) int {
+	for index := start; index < len(value); index++ {
+		switch value[index] {
+		case '\r', '\n', '\t', '"', '\'', '`', ',', ';', ')', ']', '}':
+			return index
+		case ' ':
+			if nextLooksLikeLogField(value, index+1) {
+				return index
+			}
+		}
+	}
+	return len(value)
+}
+
+func nextLooksLikeLogField(value string, index int) bool {
+	for index < len(value) && value[index] == ' ' {
+		index++
+	}
+	if index >= len(value) {
+		return false
+	}
+	for ; index < len(value); index++ {
+		ch := value[index]
+		if ch == '=' {
+			return true
+		}
+		if !isLogFieldNameChar(ch) {
+			return false
+		}
+	}
+	return false
+}
+
+func isLogFieldNameChar(ch byte) bool {
+	return ch == '_' || ch == '-' || ch >= '0' && ch <= '9' || ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z'
+}
+
+func localPathLogLabel(value string) string {
+	if label, ok := DBRelativePathLabel(value); ok {
+		return label
+	}
+	return "[local path]"
+}
+
+// DBRelativePathLabel returns a slash-normalized .upbrr tmp/cache/log suffix
+// when value is inside a known app DB subdirectory. The boolean is false for
+// ordinary local paths that should be replaced with a generic label.
+func DBRelativePathLabel(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	normalized := strings.ToLower(strings.ReplaceAll(trimmed, "\\", "/"))
+	original := strings.ReplaceAll(trimmed, "\\", "/")
+	for _, marker := range []string{".upbrr/tmp/", ".upbrr/cache/", ".upbrr/logs/"} {
+		if strings.HasPrefix(normalized, marker) {
+			return original, true
+		}
+		if index := strings.Index(normalized, "/"+marker); index >= 0 {
+			return original[index+1:], true
+		}
+	}
+	return "", false
 }
 
 func (l *Logger) record(label string, message string) {
@@ -278,10 +441,7 @@ func (l *Logger) Recent(limit int) []Entry {
 	if limit <= 0 || limit > len(l.buffer) {
 		limit = len(l.buffer)
 	}
-	start := len(l.buffer) - limit
-	if start < 0 {
-		start = 0
-	}
+	start := max(len(l.buffer)-limit, 0)
 	entries := make([]Entry, limit)
 	copy(entries, l.buffer[start:])
 	return entries

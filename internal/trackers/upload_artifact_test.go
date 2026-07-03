@@ -391,12 +391,12 @@ func TestResolveTrackerTorrentArtifactPathPrefixesTrackerName(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
-	sourcePath := filepath.Join(tmp, "A.Better.Life.2011.BluRay.1080p.DTS.x264-CHD.mkv")
+	sourcePath := filepath.Join(tmp, "Example.Movie.2026.BluRay.1080p.DTS.x264-GRP.mkv")
 	got, err := ResolveTrackerTorrentArtifactPath(api.PreparedMetadata{SourcePath: sourcePath}, filepath.Join(tmp, "state", "upbrr.db"), "MTV")
 	if err != nil {
 		t.Fatalf("resolve tracker torrent artifact: %v", err)
 	}
-	if filepath.Base(got) != "[mtv].A.Better.Life.2011.BluRay.1080p.DTS.x264-CHD.mkv.torrent" {
+	if filepath.Base(got) != "[mtv].Example.Movie.2026.BluRay.1080p.DTS.x264-GRP.mkv.torrent" {
 		t.Fatalf("expected tracker-prefixed artifact name, got %q", filepath.Base(got))
 	}
 }

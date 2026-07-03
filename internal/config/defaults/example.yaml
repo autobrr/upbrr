@@ -5,6 +5,7 @@ main_settings:
   tracker_pass_checks: 1
   input_history_limit: 20
   db_path: ""
+  scene_detection: true
 
 image_hosting:
   img_host_1: ""

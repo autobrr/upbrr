@@ -16,7 +16,7 @@ import (
 	"unicode"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackerauth"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -81,7 +81,7 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 		}
 		metadataPreview = preview
 
-		printMetadataPreview(preview)
+		printMetadataPreview(preview, currentOpts.Debug)
 		if currentOpts.Unattended && !currentOpts.UnattendedConfirm {
 			break
 		}
@@ -130,7 +130,7 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 
 	candidateTrackers, removalBase := resolveCLIUploadTrackers(currentVisited, req, metadataPreview, cfg)
 	if len(candidateTrackers) == 0 {
-		fmt.Printf("No trackers configured for %s\n", sourcePath)
+		fmt.Printf("No trackers configured for %s\n", formatPathLabel(sourcePath))
 		return nil
 	}
 	req.Trackers = candidateTrackers
@@ -144,7 +144,7 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 	req.TrackersRemove = appendTrackerRemovals(req.TrackersRemove, unselectedTrackers(req.Trackers, candidateTrackers)...)
 	req.Trackers = candidateTrackers
 	if len(candidateTrackers) == 0 {
-		fmt.Printf("No trackers selected for %s\n", sourcePath)
+		fmt.Printf("No trackers selected for %s\n", formatPathLabel(sourcePath))
 		return nil
 	}
 
@@ -152,12 +152,20 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 	if err != nil {
 		return err
 	}
-	approved, ignoreDupesFor, ruleOverrides, err := promptTrackerDupeReview(reader, dupeSummary, req, candidateTrackers, nil)
-	if err != nil {
-		return err
+	var approved, ignoreDupesFor, ruleOverrides []string
+	if req.Options.Debug {
+		printUnattendedDupeReviewSummary(mapDupeResultsByTracker(dupeSummary), candidateTrackers)
+		approved = appendTrackerRemovals(nil, candidateTrackers...)
+		ignoreDupesFor = appendTrackerRemovals(nil, candidateTrackers...)
+		ruleOverrides = appendTrackerRemovals(nil, candidateTrackers...)
+	} else {
+		approved, ignoreDupesFor, ruleOverrides, err = promptTrackerDupeReview(reader, dupeSummary, req, candidateTrackers, nil)
+		if err != nil {
+			return err
+		}
 	}
 	if len(approved) == 0 {
-		fmt.Printf("No trackers selected for %s\n", sourcePath)
+		fmt.Printf("No trackers selected for %s\n", formatPathLabel(sourcePath))
 		return nil
 	}
 
@@ -176,7 +184,7 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 		req.TrackersRemove = appendTrackerRemovals(req.TrackersRemove, unselectedTrackers(candidateTrackers, approved)...)
 	}
 	if len(approved) == 0 {
-		fmt.Printf("No trackers selected for %s\n", sourcePath)
+		fmt.Printf("No trackers selected for %s\n", formatPathLabel(sourcePath))
 		return nil
 	}
 
@@ -235,7 +243,9 @@ func resolvedCLIMetadataSourcePath(input string, preview api.MetadataPreview) st
 
 func resolveCLIUploadTrackers(visited map[string]bool, req api.Request, preview api.MetadataPreview, cfg config.Config) ([]string, []string) {
 	remove := append([]string{}, req.TrackersRemove...)
-	remove = append(remove, matchedPreviewTrackers(preview)...)
+	if !req.Options.Debug {
+		remove = append(remove, matchedPreviewTrackers(preview)...)
+	}
 	removalBase := trackers.ResolveTrackersWithDefaults(cfg, req.Trackers, remove, api.NopLogger{})
 	available := removalBase
 	if visited["trackers"] || req.Execution.SiteUploadTracker != "" {
@@ -369,11 +379,11 @@ func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx context.Context
 		authCheckTrackers = append(authCheckTrackers, name)
 	}
 
-	logger.Infof("cli auth: pre-dupe check start trackers=%d", len(authCheckTrackers))
+	logger.Debugf("cli auth: pre-dupe auth check start trackers=%d", len(authCheckTrackers))
 	for _, name := range authCheckTrackers {
 		capability := capabilityByTracker[name]
 
-		logger.Infof("cli auth: validating tracker=%s auth_kind=%s", name, cliAuthLogField(capability.AuthKind))
+		logger.Debugf("cli auth: validating tracker=%s auth_kind=%s", name, cliAuthLogField(capability.AuthKind))
 		status, err := authSvc.Validate(ctx, name)
 		if err != nil {
 			logger.Warnf("cli auth: validation failed tracker=%s error=%s", name, cliAuthLogError(err))
@@ -385,7 +395,7 @@ func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx context.Context
 			return nil, err
 		}
 		if cliTrackerAuthReady(status) {
-			logger.Infof("cli auth: tracker=%s decision=ready state=%s", name, cliAuthLogField(status.State))
+			logger.Debugf("cli auth: tracker=%s decision=ready state=%s", name, cliAuthLogField(status.State))
 			readyByTracker[name] = struct{}{}
 			continue
 		}
@@ -404,7 +414,7 @@ func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx context.Context
 			ready = append(ready, name)
 		}
 	}
-	logger.Infof("cli auth: pre-dupe check complete ready=%d skipped=%d", len(ready), len(trackerNames)-len(ready))
+	logger.Debugf("cli auth: pre-dupe check complete ready=%d skipped=%d", len(ready), len(trackerNames)-len(ready))
 	return ready, nil
 }
 
@@ -476,7 +486,7 @@ func promptCLITrackerAuth2FAWithLogger(ctx context.Context, reader *bufio.Reader
 		status = nextStatus
 		logCLITrackerAuthStatus(logger, "2fa result", status)
 		if cliTrackerAuthReady(status) {
-			logger.Infof("cli auth: tracker=%s decision=ready state=%s", trackerID, cliAuthLogField(status.State))
+			logger.Debugf("cli auth: tracker=%s decision=ready state=%s", trackerID, cliAuthLogField(status.State))
 			fmt.Printf("%s auth ready.\n", trackerID)
 			return status, true, nil
 		}
@@ -501,7 +511,7 @@ func cliAuthLogger(logger api.Logger) api.Logger {
 // cookie count, encrypted-storage availability, and whether 2FA is still needed.
 func logCLITrackerAuthStatus(logger api.Logger, operation string, status api.TrackerAuthStatus) {
 	logger = cliAuthLogger(logger)
-	logger.Infof(
+	logger.Debugf(
 		"cli auth: %s tracker=%s state=%s cookies=%d encrypted_storage=%t needs_2fa=%t",
 		cliAuthLogField(operation),
 		cliAuthLogTrackerID(status.TrackerID),
@@ -672,6 +682,11 @@ func promptTrackerDupeReview(reader *bufio.Reader, summary api.DupeCheckSummary,
 	approved := make([]string, 0, len(trackers))
 	ignoreDupesFor := make([]string, 0)
 	ruleOverrides := make([]string, 0)
+	if isUnattendedNoConfirm(req) {
+		approved = append(approved, printUnattendedDupeReviewSummary(resultByTracker, trackers)...)
+		return approved, ignoreDupesFor, ruleOverrides, nil
+	}
+
 	for _, tracker := range trackers {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
 		if name == "" {
@@ -691,15 +706,6 @@ func promptTrackerDupeReview(reader *bufio.Reader, summary api.DupeCheckSummary,
 		}
 
 		blocked := dupeResultNeedsConfirmation(result, hasResult)
-		if isUnattendedNoConfirm(req) {
-			if blocked {
-				fmt.Printf("Skipping %s due to dupe/rule check result.\n", name)
-				continue
-			}
-			approved = append(approved, name)
-			continue
-		}
-
 		prompt := buildTrackerUploadPrompt(name, false, namePreview[name])
 		if blocked {
 			prompt = buildTrackerUploadPrompt(name, true, namePreview[name])
@@ -722,19 +728,71 @@ func promptTrackerDupeReview(reader *bufio.Reader, summary api.DupeCheckSummary,
 	return approved, ignoreDupesFor, ruleOverrides, nil
 }
 
+type unattendedDupeReviewBlock struct {
+	tracker string
+}
+
+// printUnattendedDupeReviewSummary emits the compact no-prompt dupe summary and
+// returns only trackers that passed checks without requiring user confirmation.
+func printUnattendedDupeReviewSummary(resultByTracker map[string]api.DupeCheckResult, trackers []string) []string {
+	approved := make([]string, 0, len(trackers))
+	dupeBlocked := make([]unattendedDupeReviewBlock, 0)
+	skipped := make([]unattendedDupeReviewBlock, 0)
+
+	for _, tracker := range trackers {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name == "" {
+			continue
+		}
+		result, hasResult := resultByTracker[name]
+		if hasResult && dupeResultSkipsPrompt(result) {
+			continue
+		}
+		if !dupeResultNeedsConfirmation(result, hasResult) {
+			approved = append(approved, name)
+			continue
+		}
+		block := unattendedDupeReviewBlock{
+			tracker: name,
+		}
+		if result.HasDupes {
+			dupeBlocked = append(dupeBlocked, block)
+			continue
+		}
+		skipped = append(skipped, block)
+	}
+
+	fmt.Println()
+	fmt.Println("Dupe check summary:")
+	if len(skipped) > 0 {
+		fmt.Printf("Skipped due to tracker rules/conditions: %s\n", strings.Join(unattendedDupeBlockTrackers(skipped), ", "))
+	}
+	if len(dupeBlocked) > 0 {
+		fmt.Printf("Found potential dupes on: %s\n", strings.Join(unattendedDupeBlockTrackers(dupeBlocked), ", "))
+	}
+	if len(approved) > 0 {
+		fmt.Printf("Trackers passed all checks: %s\n", strings.Join(approved, ", "))
+	}
+	return approved
+}
+
+// unattendedDupeBlockTrackers extracts tracker codes for grouped unattended
+// output; detailed rule and dupe lines stay out of no-prompt summaries.
+func unattendedDupeBlockTrackers(blocks []unattendedDupeReviewBlock) []string {
+	trackers := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		trackers = append(trackers, block.tracker)
+	}
+	return trackers
+}
+
 func buildTrackerUploadPrompt(tracker string, blocked bool, dryRun api.TrackerDryRunEntry) string {
 	action := "Upload to " + tracker
 	if blocked {
 		action += " anyway"
 	}
-	if dryRun.ReleaseNameChanged {
-		uploadName := strings.TrimSpace(dryRun.UploadReleaseName)
-		if uploadName == "" {
-			uploadName = strings.TrimSpace(dryRun.ReleaseName)
-		}
-		if uploadName != "" {
-			return fmt.Sprintf("%s changes name to %s\n%s? [y/N]: ", tracker, uploadName, action)
-		}
+	if change := trackerReleaseNameChangeLine(dryRun); change != "" {
+		return fmt.Sprintf("%s %s\n%s? [y/N]: ", tracker, change, action)
 	}
 	return action + "? [y/N]: "
 }
@@ -921,7 +979,7 @@ func runSiteCheckCLIPath(ctx context.Context, coreSvc api.Core, opts cliOptions,
 		printDebugUploadReview(review)
 	}
 
-	fmt.Printf("\n[Site Check] %s\n", sourcePath)
+	fmt.Printf("\n[Site Check] %s\n", formatPathLabel(sourcePath))
 	for _, tracker := range review.Trackers {
 		fmt.Printf("\n[%s]\n", tracker.Tracker)
 		if tracker.Banned {
@@ -960,6 +1018,11 @@ func promptTrackerQuestionnaires(reader *bufio.Reader, review api.UploadReview, 
 			defaultValue := strings.TrimSpace(field.Value)
 			if opts.Unattended && !opts.UnattendedConfirm {
 				if field.Required && defaultValue == "" {
+					if opts.Debug {
+						fmt.Printf("Debug mode: %s questionnaire value missing for %s; continuing without prompt.\n", questionnaireFieldLabel(field), tracker.Tracker)
+						values[field.Key] = ""
+						continue
+					}
 					return nil, false, fmt.Errorf("upbrr: unattended upload requires %s questionnaire value for %s", questionnaireFieldLabel(field), tracker.Tracker)
 				}
 				values[field.Key] = defaultValue
@@ -1028,6 +1091,11 @@ func runDoubleDupeCheck(ctx context.Context, reader *bufio.Reader, coreSvc api.C
 		}
 		fmt.Printf("\nDouble dupe check flagged %s:\n", tracker)
 		printDupeResult(result)
+		if req.Options.Debug {
+			fmt.Printf("Debug mode: keeping %s despite second dupe check.\n", tracker)
+			filtered = append(filtered, tracker)
+			continue
+		}
 		if req.SkipDupeAsActual || isUnattendedNoConfirm(req) {
 			fmt.Printf("Skipping %s due to second dupe check.\n", tracker)
 			continue
@@ -1062,23 +1130,25 @@ func isUnattendedNoConfirm(req api.Request) bool {
 	return req.Options.InteractionMode == api.InteractionModeUnattended
 }
 
-func printMetadataPreview(preview api.MetadataPreview) {
-	fmt.Printf("\nSource: %s\n", preview.SourcePath)
-	fmt.Printf("Release: %s\n", preview.ReleaseName)
+// printMetadataPreview writes the pre-upload confirmation details shown by the
+// CLI, including a debug-mode notice when tracker uploads will not run.
+func printMetadataPreview(preview api.MetadataPreview, debug bool) {
+	fmt.Println()
+	fmt.Println("Release details")
+	if debug {
+		fmt.Println("Debug mode: no actual tracker uploads will be processed.")
+	}
+	fmt.Printf("Source: %s\n", formatPathLabel(preview.SourcePath))
+	fmt.Printf("Upload name: %s\n", preview.ReleaseName)
+	if external := primaryMetadataPreview(preview); external != nil {
+		printMetadataDatabaseInfo(*external, preview)
+	}
 	if preview.TrackerName != "" {
 		fmt.Printf("Tracker data from: %s\n", preview.TrackerName)
 	}
-	if preview.ExternalIDs.TMDBID != 0 {
-		fmt.Printf("TMDB: %d\n", preview.ExternalIDs.TMDBID)
-	}
-	if preview.ExternalIDs.IMDBID != 0 {
-		fmt.Printf("IMDb: tt%07d\n", preview.ExternalIDs.IMDBID)
-	}
-	if preview.ExternalIDs.TVDBID != 0 {
-		fmt.Printf("TVDB: %d\n", preview.ExternalIDs.TVDBID)
-	}
-	if preview.ExternalIDs.TVmazeID != 0 {
-		fmt.Printf("TVmaze: %d\n", preview.ExternalIDs.TVmazeID)
+	printMetadataExternalIDs(preview)
+	if len(preview.ExternalIDCandidates.TMDB) > 0 || len(preview.ExternalIDCandidates.IMDB) > 0 {
+		fmt.Println("Candidate IDs available; use override args if needed.")
 	}
 	if len(preview.Warnings) > 0 {
 		fmt.Println("Warnings:")
@@ -1086,9 +1156,173 @@ func printMetadataPreview(preview api.MetadataPreview) {
 			fmt.Printf("- %s\n", warning)
 		}
 	}
-	if len(preview.ExternalIDCandidates.TMDB) > 0 || len(preview.ExternalIDCandidates.IMDB) > 0 {
-		fmt.Println("Candidate IDs available; use override args if needed.")
+}
+
+func printMetadataDatabaseInfo(external api.ExternalPreview, preview api.MetadataPreview) {
+	fmt.Println()
+	fmt.Println("Database info")
+	title := strings.TrimSpace(external.Title)
+	if title == "" {
+		title = strings.TrimSpace(preview.ReleaseName)
 	}
+	if title != "" && external.Year != 0 {
+		fmt.Printf("Title: %s (%d)\n", title, external.Year)
+	} else if title != "" {
+		fmt.Printf("Title: %s\n", title)
+	}
+	if overview := summarizeMetadataText(external.Overview, 260); overview != "" {
+		fmt.Printf("Overview: %s\n", overview)
+	}
+	if genres := strings.TrimSpace(external.Genres); genres != "" {
+		fmt.Printf("Genres: %s\n", genres)
+	}
+	if category := metadataPreviewCategory(external, preview); category != "" {
+		fmt.Printf("Category: %s\n", category)
+	}
+	if date := metadataPreviewDate(external); date != "" {
+		fmt.Printf("Date: %s\n", date)
+	}
+	if runtime := metadataPreviewRuntime(external); runtime != "" {
+		fmt.Printf("Runtime: %s\n", runtime)
+	}
+	if external.Rating != 0 {
+		if external.RatingCount != 0 {
+			fmt.Printf("Rating: %.1f (%d votes)\n", external.Rating, external.RatingCount)
+		} else {
+			fmt.Printf("Rating: %.1f\n", external.Rating)
+		}
+	}
+}
+
+func printMetadataExternalIDs(preview api.MetadataPreview) {
+	printedHeader := false
+	printHeader := func() {
+		if printedHeader {
+			return
+		}
+		fmt.Println()
+		fmt.Println("External IDs")
+		printedHeader = true
+	}
+	if preview.ExternalIDs.TMDBID != 0 {
+		printHeader()
+		fmt.Printf("TMDB: %s\n", tmdbURL(preview.ExternalIDs.TMDBID, metadataPreviewTMDBCategory(preview)))
+	}
+	if preview.ExternalIDs.IMDBID != 0 {
+		printHeader()
+		fmt.Printf("IMDb: https://www.imdb.com/title/tt%07d\n", preview.ExternalIDs.IMDBID)
+	}
+	if preview.ExternalIDs.TVDBID != 0 {
+		printHeader()
+		fmt.Printf("TVDB: https://www.thetvdb.com/?id=%d&tab=series\n", preview.ExternalIDs.TVDBID)
+	}
+	if preview.ExternalIDs.TVmazeID != 0 {
+		printHeader()
+		fmt.Printf("TVmaze: https://www.tvmaze.com/shows/%d\n", preview.ExternalIDs.TVmazeID)
+	}
+}
+
+func primaryMetadataPreview(preview api.MetadataPreview) *api.ExternalPreview {
+	preferred := []string{"tmdb", "tvdb", "imdb", "tvmaze"}
+	for _, provider := range preferred {
+		for i := range preview.ExternalPreview {
+			external := &preview.ExternalPreview[i]
+			if strings.EqualFold(strings.TrimSpace(external.Provider), provider) && metadataPreviewHasDetails(*external) {
+				return external
+			}
+		}
+	}
+	for i := range preview.ExternalPreview {
+		if metadataPreviewHasDetails(preview.ExternalPreview[i]) {
+			return &preview.ExternalPreview[i]
+		}
+	}
+	return nil
+}
+
+func metadataPreviewHasDetails(external api.ExternalPreview) bool {
+	return strings.TrimSpace(external.Title) != "" ||
+		strings.TrimSpace(external.Overview) != "" ||
+		strings.TrimSpace(external.Genres) != "" ||
+		external.Year != 0 ||
+		external.Rating != 0 ||
+		external.Runtime != 0 ||
+		external.RuntimeMinutes != 0
+}
+
+func metadataPreviewCategory(external api.ExternalPreview, preview api.MetadataPreview) string {
+	if category := strings.TrimSpace(external.Category); category != "" {
+		return strings.ToUpper(category)
+	}
+	if category := strings.TrimSpace(preview.ExternalIDs.Category); category != "" {
+		return strings.ToUpper(category)
+	}
+	if tmdbType := strings.TrimSpace(external.TMDBType); tmdbType != "" {
+		return strings.ToUpper(tmdbType)
+	}
+	if imdbType := strings.TrimSpace(external.IMDBType); imdbType != "" {
+		return strings.ToUpper(imdbType)
+	}
+	return ""
+}
+
+func metadataPreviewDate(external api.ExternalPreview) string {
+	for _, value := range []string{external.ReleaseDate, external.FirstAirDate, external.Premiered} {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func metadataPreviewRuntime(external api.ExternalPreview) string {
+	runtime := external.Runtime
+	if runtime == 0 {
+		runtime = external.RuntimeMinutes
+	}
+	if runtime == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d min", runtime)
+}
+
+func metadataPreviewTMDBCategory(preview api.MetadataPreview) string {
+	for _, external := range preview.ExternalPreview {
+		if !strings.EqualFold(strings.TrimSpace(external.Provider), "tmdb") {
+			continue
+		}
+		if category := strings.TrimSpace(external.Category); category != "" {
+			return category
+		}
+		if tmdbType := strings.TrimSpace(external.TMDBType); tmdbType != "" {
+			return tmdbType
+		}
+	}
+	if category := strings.TrimSpace(preview.ExternalIDs.Category); category != "" {
+		return category
+	}
+	return "movie"
+}
+
+func tmdbURL(id int, category string) string {
+	switch strings.ToLower(strings.TrimSpace(category)) {
+	case "tv", "series", "show":
+		return fmt.Sprintf("https://www.themoviedb.org/tv/%d", id)
+	default:
+		return fmt.Sprintf("https://www.themoviedb.org/movie/%d", id)
+	}
+}
+
+func summarizeMetadataText(value string, limit int) string {
+	compact := strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if compact == "" || limit <= 0 {
+		return compact
+	}
+	runes := []rune(compact)
+	if len(runes) <= limit {
+		return compact
+	}
+	return string(runes[:limit]) + "..."
 }
 
 func printDupeResult(result api.DupeCheckResult) {
@@ -1113,27 +1347,27 @@ func printDupeResult(result api.DupeCheckResult) {
 }
 
 func printDryRunSummary(entry api.TrackerDryRunEntry) {
+	writeDryRunSummary(os.Stdout, entry)
+}
+
+// writeDryRunSummary writes the same safe dry-run summary as printDryRunSummary
+// to an arbitrary writer so debug payload sections can be grouped by content.
+func writeDryRunSummary(w io.Writer, entry api.TrackerDryRunEntry) {
 	if strings.TrimSpace(entry.Tracker) == "" {
 		return
 	}
-	fmt.Printf("Dry run: %s", entry.Status)
+	fmt.Fprintf(w, "Dry run: %s", entry.Status)
 	if entry.Message != "" {
-		fmt.Printf(" (%s)", entry.Message)
+		fmt.Fprintf(w, " (%s)", entry.Message)
 	}
-	fmt.Println()
-	if entry.ReleaseName != "" {
-		fmt.Printf("Tracker release name: %s\n", entry.ReleaseName)
-	}
-	if len(entry.Payload) > 0 {
-		keys := make([]string, 0, len(entry.Payload))
-		for key := range entry.Payload {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		fmt.Printf("Payload fields: %s\n", strings.Join(keys, ", "))
+	fmt.Fprintln(w)
+	if change := trackerReleaseNameChangeLine(entry); change != "" {
+		fmt.Fprintf(w, "Tracker %s\n", change)
+	} else if entry.ReleaseName != "" {
+		fmt.Fprintf(w, "Tracker release name: %s\n", entry.ReleaseName)
 	}
 	if imageMessage := strings.TrimSpace(entry.ImageHost.Message); imageMessage != "" && (entry.ImageHost.Reuploaded || strings.EqualFold(entry.ImageHost.Status, "warning")) {
-		fmt.Printf("Images: %s\n", imageMessage)
+		fmt.Fprintf(w, "Images: %s\n", imageMessage)
 	}
 	for _, warning := range entry.ImageHost.Warnings {
 		host := strings.TrimSpace(warning.Host)
@@ -1142,32 +1376,78 @@ func printDryRunSummary(entry api.TrackerDryRunEntry) {
 			continue
 		}
 		if host == "" {
-			fmt.Printf("Image host warning: %s\n", warningMessage)
+			fmt.Fprintf(w, "Image host warning: %s\n", warningMessage)
 			continue
 		}
 		if warningMessage == "" {
-			fmt.Printf("Image host warning: %s failed\n", host)
+			fmt.Fprintf(w, "Image host warning: %s failed\n", host)
 			continue
 		}
-		fmt.Printf("Image host warning: %s failed: %s\n", host, warningMessage)
+		fmt.Fprintf(w, "Image host warning: %s failed: %s\n", host, warningMessage)
 	}
 }
 
 func printDebugUploadReview(review api.UploadReview) {
-	fmt.Printf("\n[Debug Dry Run] %s\n", review.SourcePath)
-	for _, tracker := range review.Trackers {
-		fmt.Printf("\n[%s Debug Payload]\n", tracker.Tracker)
-		if tracker.Banned {
-			fmt.Printf("Banned group: %s\n", tracker.BannedReason)
-			continue
-		}
-		printDryRunSummary(tracker.DryRun)
-		printDryRunDetails(tracker.DryRun)
+	fmt.Printf("\n[Debug Dry Run] %s\n", formatPathLabel(review.SourcePath))
+	for _, group := range groupDebugPayloads(review.Trackers) {
+		fmt.Printf("\n[%s Debug Payload]\n", strings.Join(group.trackers, ", "))
+		fmt.Print(group.body)
 	}
 }
 
+// debugPayloadGroup represents one rendered debug payload body and the trackers
+// that share it.
+type debugPayloadGroup struct {
+	trackers []string
+	body     string
+}
+
+// groupDebugPayloads groups trackers by rendered debug payload text. Release
+// name changes are part of that text, so tracker-specific naming changes remain
+// in separate sections.
+func groupDebugPayloads(trackers []api.TrackerReview) []debugPayloadGroup {
+	groups := make([]debugPayloadGroup, 0, len(trackers))
+	groupByBody := make(map[string]int, len(trackers))
+	for _, tracker := range trackers {
+		body := renderDebugPayloadBody(tracker)
+		if index, ok := groupByBody[body]; ok {
+			groups[index].trackers = append(groups[index].trackers, debugPayloadTrackerLabel(tracker))
+			continue
+		}
+		groupByBody[body] = len(groups)
+		groups = append(groups, debugPayloadGroup{
+			trackers: []string{debugPayloadTrackerLabel(tracker)},
+			body:     body,
+		})
+	}
+	return groups
+}
+
+// renderDebugPayloadBody returns the exact body printed below a debug payload
+// header, excluding the tracker list header used for grouping.
+func renderDebugPayloadBody(tracker api.TrackerReview) string {
+	var builder strings.Builder
+	if tracker.Banned {
+		fmt.Fprintf(&builder, "Banned group: %s\n", tracker.BannedReason)
+		return builder.String()
+	}
+	writeDryRunSummary(&builder, tracker.DryRun)
+	writeDryRunDetails(&builder, tracker.DryRun)
+	return builder.String()
+}
+
+// debugPayloadTrackerLabel normalizes the tracker label used in grouped debug
+// payload headers while preserving a visible placeholder for malformed entries.
+func debugPayloadTrackerLabel(tracker api.TrackerReview) string {
+	label := strings.TrimSpace(tracker.Tracker)
+	if label == "" {
+		return "(unknown)"
+	}
+	return label
+}
+
 func printDryRunUploadReview(review api.UploadReview, req api.Request) {
-	fmt.Printf("\n[Dry Run] %s\n", review.SourcePath)
+	fmt.Printf("\n[Dry Run] %s\n", formatPathLabel(review.SourcePath))
 	for _, tracker := range review.Trackers {
 		fmt.Printf("\n[%s]\n", tracker.Tracker)
 		if tracker.Banned {
@@ -1188,33 +1468,83 @@ func printDryRunUploadReview(review api.UploadReview, req api.Request) {
 }
 
 func printDryRunDetails(entry api.TrackerDryRunEntry) {
-	if strings.TrimSpace(entry.Endpoint) != "" {
-		fmt.Printf("Endpoint: %s\n", safeDryRunEndpoint(entry.Endpoint))
-	}
+	writeDryRunDetails(os.Stdout, entry)
+}
+
+// writeDryRunDetails writes redacted dry-run files, payload fields, and
+// description summaries to an arbitrary writer.
+func writeDryRunDetails(w io.Writer, entry api.TrackerDryRunEntry) {
 	if len(entry.Files) > 0 {
-		fmt.Println("Files:")
+		fmt.Fprintln(w, "Files:")
 		for _, file := range entry.Files {
 			status := "missing"
 			if file.Present {
 				status = "present"
 			}
-			fmt.Printf("- %s [%s]: %s\n", file.Field, status, metautil.FirstNonEmptyTrimmed(strings.TrimSpace(file.Path), "(none)"))
+			fmt.Fprintf(w, "- %s [%s]: %s\n", file.Field, status, formatDryRunFilePath(file.Path))
 		}
 	}
 	if len(entry.Payload) > 0 {
-		fmt.Println("Payload:")
+		fmt.Fprintln(w, "Payload:")
 		keys := make([]string, 0, len(entry.Payload))
 		for key := range entry.Payload {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			fmt.Printf("- %s: %s\n", key, formatDryRunPayloadValue(key, entry.Payload[key]))
+			fmt.Fprintf(w, "- %s: %s\n", key, formatDryRunPayloadValue(key, entry.Payload[key]))
 		}
 	}
 	if message := strings.TrimSpace(entry.Description); message != "" && !payloadIncludesDescription(entry.Payload) {
-		fmt.Printf("Description: %s\n", summarizeDryRunBody(message))
+		fmt.Fprintf(w, "Description: %s\n", summarizeDryRunBody(message))
 	}
+}
+
+func formatDryRunFilePath(value string) string {
+	return formatPathLabel(value)
+}
+
+// formatPathLabel keeps CLI output shareable by hiding ordinary local paths
+// while preserving labels accepted by [logging.DBRelativePathLabel].
+func formatPathLabel(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "(none)"
+	}
+	if label, ok := logging.DBRelativePathLabel(trimmed); ok {
+		return label
+	}
+	return "[local path]"
+}
+
+// trackerReleaseNameChangeLine returns the CLI-facing release-name change text,
+// or an empty string when the tracker did not apply a different upload name.
+func trackerReleaseNameChangeLine(entry api.TrackerDryRunEntry) string {
+	if !entry.ReleaseNameChanged {
+		return ""
+	}
+	originalName := strings.TrimSpace(entry.OriginalReleaseName)
+	uploadName := strings.TrimSpace(entry.UploadReleaseName)
+	if uploadName == "" {
+		uploadName = strings.TrimSpace(entry.ReleaseName)
+	}
+	if originalName == "" {
+		originalName = strings.TrimSpace(entry.ReleaseName)
+	}
+	if originalName == "" && uploadName == "" {
+		return ""
+	}
+	if originalName == "" {
+		originalName = "(unknown)"
+	}
+	if uploadName == "" {
+		uploadName = "(unknown)"
+	}
+	line := fmt.Sprintf("release name changed: %s -> %s", originalName, uploadName)
+	if reason := strings.TrimSpace(entry.ReleaseNameChangeReason); reason != "" {
+		line += fmt.Sprintf(" (reason: %s)", reason)
+	}
+	return line
 }
 
 // formatDryRunPayloadValue returns a log-safe preview for a dry-run payload
@@ -1237,12 +1567,6 @@ func formatDryRunPayloadValue(key string, value string) string {
 		return compact
 	}
 	return fmt.Sprintf("%s... [%d bytes total]", string(compactRunes[:dryRunPayloadPreviewLimit]), len(trimmed))
-}
-
-// safeDryRunEndpoint returns a dry-run endpoint suitable for CLI output,
-// preserving the URL shape while redacting credential-like path/query values.
-func safeDryRunEndpoint(value string) string {
-	return redaction.RedactValue(strings.TrimSpace(value), nil)
 }
 
 func summarizeDryRunBody(value string) string {
@@ -1288,13 +1612,56 @@ func normalizedDryRunPayloadKey(key string) string {
 // isSensitiveDryRunPayloadField reports whether a dry-run payload key should
 // suppress its value entirely instead of showing a redacted preview.
 func isSensitiveDryRunPayloadField(key string) bool {
-	normalized := normalizedDryRunPayloadKey(key)
-	for sensitive := range redaction.DefaultSensitiveKeys {
-		if strings.Contains(normalized, sensitive) {
-			return true
+	_, sensitive := sensitiveDryRunPayloadKeys[normalizedSensitiveDryRunPayloadKey(key)]
+	return sensitive
+}
+
+// normalizedSensitiveDryRunPayloadKey removes separators before exact matching
+// so aliases like api_key and apiKey redact without treating keywords as key.
+func normalizedSensitiveDryRunPayloadKey(key string) string {
+	var builder strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(key)) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			builder.WriteRune(r)
 		}
 	}
-	return false
+	return builder.String()
+}
+
+// sensitiveDryRunPayloadKeys lists exact normalized dry-run payload field names
+// whose values must be suppressed instead of printed as previews.
+var sensitiveDryRunPayloadKeys = map[string]struct{}{
+	"anticsrftoken":        {},
+	"accesstoken":          {},
+	"apikey":               {},
+	"apitoken":             {},
+	"auth":                 {},
+	"authorization":        {},
+	"authkey":              {},
+	"authtoken":            {},
+	"cookie":               {},
+	"csrf":                 {},
+	"email":                {},
+	"infohash":             {},
+	"key":                  {},
+	"passkey":              {},
+	"password":             {},
+	"passwordconfirm":      {},
+	"passwordconfirmation": {},
+	"popcron":              {},
+	"refreshtoken":         {},
+	"rsskey":               {},
+	"secret":               {},
+	"secretkey":            {},
+	"sessionkey":           {},
+	"sessiontoken":         {},
+	"token":                {},
+	"torrentpass":          {},
+	"torrentpasskey":       {},
+	"uid":                  {},
+	"user":                 {},
+	"userid":               {},
+	"username":             {},
 }
 
 func promptYesNo(reader *bufio.Reader, prompt string, defaultYes bool) (bool, error) {

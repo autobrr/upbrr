@@ -84,7 +84,7 @@ func trackerRecordFor(trackerData []api.TrackerMetadata, tracker string) (api.Tr
 
 func TestTrackerLookupFileNameHonorsSkipWithoutTrackerID(t *testing.T) {
 	meta := api.PreparedMetadata{
-		SourcePath: `D:\Movies\From.S04E01.2160p.WEB.h265-ETHEL.mkv`,
+		SourcePath: `D:\Movies\Example.Show.S04E01.2160p.WEB.h265-GRP.mkv`,
 	}
 
 	if got := trackerLookupFileName(meta, "", true); got != "" {
@@ -94,20 +94,20 @@ func TestTrackerLookupFileNameHonorsSkipWithoutTrackerID(t *testing.T) {
 
 func TestTrackerLookupFileNameKeepsFilenameWhenDefaultEnabled(t *testing.T) {
 	meta := api.PreparedMetadata{
-		SourcePath: `D:\Movies\From.S04E01.2160p.WEB.h265-ETHEL.mkv`,
+		SourcePath: `D:\Movies\Example.Show.S04E01.2160p.WEB.h265-GRP.mkv`,
 	}
 
-	if got := trackerLookupFileName(meta, "", false); got != "From.S04E01.2160p.WEB.h265-ETHEL.mkv" {
+	if got := trackerLookupFileName(meta, "", false); got != "Example.Show.S04E01.2160p.WEB.h265-GRP.mkv" {
 		t.Fatalf("expected filename lookup to remain enabled by default, got %q", got)
 	}
 }
 
 func TestTrackerLookupFileNameKeepsFilenameWithTrackerID(t *testing.T) {
 	meta := api.PreparedMetadata{
-		SourcePath: `D:\Movies\From.S04E01.2160p.WEB.h265-ETHEL.mkv`,
+		SourcePath: `D:\Movies\Example.Show.S04E01.2160p.WEB.h265-GRP.mkv`,
 	}
 
-	if got := trackerLookupFileName(meta, "12345", true); got != "From.S04E01.2160p.WEB.h265-ETHEL.mkv" {
+	if got := trackerLookupFileName(meta, "12345", true); got != "Example.Show.S04E01.2160p.WEB.h265-GRP.mkv" {
 		t.Fatalf("expected filename to remain available with tracker id, got %q", got)
 	}
 }
@@ -135,7 +135,7 @@ func TestEnrichTrackerDataStopsAfterFirstPriorityIDWinner(t *testing.T) {
 	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
 
 	meta := api.PreparedMetadata{
-		SourcePath: `D:\Movies\A.Better.Life.2011.BluRay.1080p.DTS.x264-CHD`,
+		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
 		TrackerIDs: map[string]string{
 			"ant": "101",
 			"hdb": "202",
@@ -190,7 +190,7 @@ func TestEnrichTrackerDataPreferredTrackerOverridesStaticPriority(t *testing.T) 
 	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
 
 	meta := api.PreparedMetadata{
-		SourcePath: `D:\Movies\A.Better.Life.2011.BluRay.1080p.DTS.x264-CHD`,
+		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
 		TrackerIDs: map[string]string{
 			"ant": "101",
 			"hdb": "202",
@@ -235,7 +235,7 @@ func TestEnrichTrackerDataUsesConcurrentWinnerWithoutClientTrackerIDs(t *testing
 	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
 
 	meta := api.PreparedMetadata{
-		SourcePath: `D:\Movies\A.Better.Life.2011.BluRay.1080p.DTS.x264-CHD`,
+		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
 		Trackers:   []string{"ANT", "HDB"},
 	}
 
@@ -291,7 +291,7 @@ func TestEnrichTrackerDataPreferredTrackerIsSourceOfTruthWithoutClientTrackerIDs
 	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
 
 	meta := api.PreparedMetadata{
-		SourcePath: `D:\Movies\A.Better.Life.2011.BluRay.1080p.DTS.x264-CHD`,
+		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
 		Trackers:   []string{"ANT", "HDB"},
 		Options:    api.UploadOptions{KeepImages: true},
 	}
@@ -349,7 +349,7 @@ func TestEnrichTrackerDataContinuesUntilIDsFound(t *testing.T) {
 	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
 
 	meta := api.PreparedMetadata{
-		SourcePath: `D:\Movies\A.Better.Life.2011.BluRay.1080p.DTS.x264-CHD`,
+		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
 		TrackerIDs: map[string]string{
 			"ant": "101",
 			"hdb": "202",
@@ -411,7 +411,8 @@ func TestApplyTrackerClaimsBlocksAitherAndCachesClaims(t *testing.T) {
 		},
 	}
 
-	svc := NewService(&fakeRepo{}, WithConfig(cfg))
+	logger := &recordingLogger{}
+	svc := NewService(&fakeRepo{}, WithConfig(cfg), WithLogger(logger))
 	meta := api.PreparedMetadata{
 		SourcePath: "/media/Example.Show.S02E03.mkv",
 		Trackers:   []string{"AITHER"},
@@ -432,6 +433,14 @@ func TestApplyTrackerClaimsBlocksAitherAndCachesClaims(t *testing.T) {
 	}
 	if got := result.BlockedTrackers["AITHER"]; len(got) != 1 || got[0] != api.TrackerBlockReasonClaim {
 		t.Fatalf("expected AITHER claim block, got %#v", result.BlockedTrackers)
+	}
+	if len(logger.warnings) != 1 {
+		t.Fatalf("expected one AITHER claim warning, got %#v", logger.warnings)
+	}
+	if !strings.Contains(logger.warnings[0], "metadata: tracker claim match found tracker=AITHER") ||
+		!strings.Contains(logger.warnings[0], "decision=blocked") ||
+		!strings.Contains(logger.warnings[0], "reason=claim_active") {
+		t.Fatalf("unexpected AITHER claim warning: %#v", logger.warnings)
 	}
 
 	cachePath := filepath.Join(tempDir, "cache", "banned", "AITHER_claimed_releases.json")
@@ -563,8 +572,9 @@ func TestApplyTrackerClaimsUsesRequestedBTNWhenTrackerIDsContainDifferentTracker
 	cfg := config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "db.sqlite")},
 	}
+	logger := &recordingLogger{}
 
-	svc := NewService(&fakeRepo{}, WithConfig(cfg))
+	svc := NewService(&fakeRepo{}, WithConfig(cfg), WithLogger(logger))
 
 	cachePath := filepath.Join(tempDir, "cache", "banned", "BTN_claimed_releases.json")
 	if err := writeBTNClaimedCacheFixture(cachePath, time.Now().Unix(), map[string]struct{}{
@@ -605,6 +615,14 @@ func TestApplyTrackerClaimsUsesRequestedBTNWhenTrackerIDsContainDifferentTracker
 	}
 	if !strings.Contains(strings.ToLower(failures[0].Reason), "hours remain") {
 		t.Fatalf("expected BTN claim failure reason to include hours remaining, got %#v", failures)
+	}
+	if len(logger.warnings) != 1 {
+		t.Fatalf("expected one BTN claim warning, got %#v", logger.warnings)
+	}
+	if !strings.Contains(logger.warnings[0], "metadata: BTN claim match found") ||
+		!strings.Contains(logger.warnings[0], "cache_ttl=48h0m0s") ||
+		strings.Contains(logger.warnings[0], "tracker claim match found") {
+		t.Fatalf("unexpected BTN claim warning: %#v", logger.warnings)
 	}
 }
 
@@ -798,7 +816,7 @@ func TestEnrichTrackerDataSkipsLookupWhenStoredFresh(t *testing.T) {
 	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
 
 	meta := api.PreparedMetadata{
-		SourcePath:      `D:\Movies\A.Better.Life.2011.BluRay.1080p.DTS.x264-CHD`,
+		SourcePath:      `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
 		StoredDataFresh: true,
 		Trackers:        []string{"ANT"},
 	}
@@ -839,7 +857,7 @@ func TestEnrichTrackerDataDeprioritizesBTNWhenKeepingImages(t *testing.T) {
 	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
 
 	meta := api.PreparedMetadata{
-		SourcePath: `D:\temp\Love.Through.A.Prism.S01.1080p.NF.WEB-DL.DDP5.1.DV.H.265-ppkhoa`,
+		SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026.S01.1080p.WEB-DL-GRP"),
 		TrackerIDs: map[string]string{
 			"btn": "2167358",
 			"bhd": "513053",
@@ -885,7 +903,7 @@ func TestEnrichTrackerDataKeepsBTNAsFallbackWhenKeepingImages(t *testing.T) {
 	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
 
 	meta := api.PreparedMetadata{
-		SourcePath: `D:\temp\Love.Through.A.Prism.S01.1080p.NF.WEB-DL.DDP5.1.DV.H.265-ppkhoa`,
+		SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026.S01.1080p.WEB-DL-GRP"),
 		TrackerIDs: map[string]string{
 			"btn": "2167358",
 			"bhd": "513053",
@@ -930,7 +948,7 @@ func TestEnrichTrackerDataKeepsDescriptionFromSingleTracker(t *testing.T) {
 	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
 
 	meta := api.PreparedMetadata{
-		SourcePath: `D:\Movies\A.Better.Life.2011.BluRay.1080p.DTS.x264-CHD`,
+		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
 		TrackerIDs: map[string]string{
 			"ant": "101",
 			"hdb": "202",
