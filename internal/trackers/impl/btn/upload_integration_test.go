@@ -1314,6 +1314,218 @@ func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
 	}
 }
 
+func TestBTNUploadFollowsIntermediateDetailPage(t *testing.T) {
+	t.Parallel()
+
+	var downloadCalls atomic.Int32
+	var detailCalls atomic.Int32
+	var apiCalls atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/login.php" && r.Method == http.MethodPost:
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		case r.URL.Path == "/upload.php" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`<form action="/upload.php"><input name="file_input" /></form>`))
+		case r.URL.Path == "/upload.php" && r.Method == http.MethodPost:
+			contentType := r.Header.Get("Content-Type")
+			if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+				_, _ = w.Write([]byte(`
+					<input name="artist" value="Example Show" />
+					<input name="title" value="Episode One" />
+					<input name="seriesid" value="999" />
+					<textarea name="album_desc">Episode overview: TBA</textarea>
+					<select name="format"><option selected value="MKV">MKV</option></select>
+					<select name="bitrate"><option selected value="H.265">H.265</option></select>
+					<select name="media"><option selected value="WEB-DL">WEB-DL</option></select>
+					<select name="resolution"><option selected value="1080p">1080p</option></select>
+				`))
+				return
+			}
+			_, _ = w.Write([]byte(`
+				<p>Warning you need to download the torrent file before continuing.</p>
+				<form action="/torrents.php?id=123"><button>Continue</button></form>
+			`))
+		case r.URL.Path == "/torrents.php" && r.URL.Query().Get("action") == "download":
+			downloadCalls.Add(1)
+			_, _ = w.Write([]byte("d8:announce13:https://x.ee"))
+		case r.URL.Path == "/torrents.php" && r.URL.Query().Get("id") == "123":
+			detailCalls.Add(1)
+			_, _ = w.Write([]byte(`<a href="/torrents.php?id=123&amp;torrentid=456">Uploaded torrent</a>`))
+		case r.URL.Path == "/rpc":
+			apiCalls.Add(1)
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	req := newBTNUploadTestRequest(t, server.URL)
+	summary, err := upload(context.Background(), req)
+	if err != nil {
+		t.Fatalf("upload failed: %v", err)
+	}
+	if got := summary.UploadedTorrents[0].TorrentID; got != "456" {
+		t.Fatalf("expected intermediate torrent id 456, got %q", got)
+	}
+	if got := summary.UploadedTorrents[0].TorrentURL; !strings.Contains(got, "id=123") || !strings.Contains(got, "torrentid=456") {
+		t.Fatalf("expected canonical torrent URL from detail page, got %q", got)
+	}
+	payload, err := os.ReadFile(summary.UploadedTorrents[0].TorrentPath)
+	if err != nil {
+		t.Fatalf("expected tracker torrent file: %v", err)
+	}
+	if len(payload) == 0 || payload[0] != 'd' {
+		t.Fatalf("expected bencode torrent payload from resolved torrent download")
+	}
+	if downloadCalls.Load() != 1 {
+		t.Fatalf("expected one resolved torrent download call, got %d", downloadCalls.Load())
+	}
+	if detailCalls.Load() != 1 {
+		t.Fatalf("expected one detail page call, got %d", detailCalls.Load())
+	}
+	if apiCalls.Load() != 0 {
+		t.Fatalf("expected no API calls, got %d", apiCalls.Load())
+	}
+}
+
+func TestBTNUploadIntermediateFailureFallsBackToAPI(t *testing.T) {
+	t.Parallel()
+
+	var apiSearchCalls atomic.Int32
+	var apiDownloadCalls atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/login.php" && r.Method == http.MethodPost:
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		case r.URL.Path == "/upload.php" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`<form action="/upload.php"><input name="file_input" /></form>`))
+		case r.URL.Path == "/upload.php" && r.Method == http.MethodPost:
+			contentType := r.Header.Get("Content-Type")
+			if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+				_, _ = w.Write([]byte(`
+					<input name="artist" value="Example Show" />
+					<input name="title" value="Episode One" />
+					<input name="seriesid" value="999" />
+					<textarea name="album_desc">Episode overview: TBA</textarea>
+					<select name="format"><option selected value="MKV">MKV</option></select>
+					<select name="bitrate"><option selected value="H.265">H.265</option></select>
+					<select name="media"><option selected value="WEB-DL">WEB-DL</option></select>
+					<select name="resolution"><option selected value="1080p">1080p</option></select>
+				`))
+				return
+			}
+			_, _ = w.Write([]byte(`
+				<p>Warning you need to download the torrent file before continuing.</p>
+				<form action="/torrents.php?id=123"><button>Continue</button></form>
+			`))
+		case r.URL.Path == "/torrents.php" && r.URL.Query().Get("id") == "123":
+			http.Error(w, "detail unavailable", http.StatusInternalServerError)
+		case r.URL.Path == "/rpc" && r.Method == http.MethodPost:
+			var rpc struct {
+				Method string            `json:"method"`
+				Params []json.RawMessage `json:"params"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&rpc)
+			switch rpc.Method {
+			case "getTorrentsSearch":
+				apiSearchCalls.Add(1)
+				_, _ = w.Write([]byte(`{"result":{"torrents":{"779":{"GroupID":"123","ReleaseName":"Example.Show.S01E01.1080p.WEB-DL.x265-GRP"}}}}`))
+			case "getTorrentById":
+				apiDownloadCalls.Add(1)
+				_, _ = w.Write([]byte(`{"result":{"DownloadURL":"http://` + r.Host + `/mock-download"}}`))
+			default:
+				http.NotFound(w, r)
+			}
+		case r.URL.Path == "/mock-download":
+			_, _ = w.Write([]byte("d8:announce13:https://x.ee"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	req := newBTNUploadTestRequest(t, server.URL)
+	req.TrackerConfig.Unknown = map[string]any{"api_url": server.URL + "/rpc"}
+	summary, err := upload(context.Background(), req)
+	if err != nil {
+		t.Fatalf("upload failed: %v", err)
+	}
+	if got := summary.UploadedTorrents[0].TorrentID; got != "779" {
+		t.Fatalf("expected API fallback torrent id 779, got %q", got)
+	}
+	if got := summary.UploadedTorrents[0].TorrentURL; !strings.Contains(got, "id=123") || !strings.Contains(got, "torrentid=779") {
+		t.Fatalf("expected API fallback canonical URL, got %q", got)
+	}
+	if apiSearchCalls.Load() != 1 {
+		t.Fatalf("expected one API search call, got %d", apiSearchCalls.Load())
+	}
+	if apiDownloadCalls.Load() != 1 {
+		t.Fatalf("expected one API download call, got %d", apiDownloadCalls.Load())
+	}
+}
+
+func newBTNUploadTestRequest(t *testing.T, serverURL string) trackers.UploadRequest {
+	t.Helper()
+
+	tempDir := t.TempDir()
+	dbPath := newBTNAuthDB(t)
+	sourcePath := filepath.Join(tempDir, "Example.Show.S01E01.mkv")
+	if err := os.WriteFile(sourcePath, []byte("video"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	torrentPath := filepath.Join(tempDir, "input.torrent")
+	if err := os.WriteFile(torrentPath, []byte("d8:announce13:https://x.ee"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	return trackers.UploadRequest{
+		Tracker: "BTN",
+		Meta: api.PreparedMetadata{
+			SourcePath:          sourcePath,
+			TorrentPath:         torrentPath,
+			ReleaseName:         "Example.Show.S01E01.1080p.WEB-DL.x265-GRP",
+			Type:                "WEBDL",
+			Source:              "WEB-DL",
+			Container:           "MKV",
+			VideoEncode:         "x265",
+			VideoCodec:          "HEVC",
+			SeasonInt:           1,
+			EpisodeInt:          1,
+			EpisodeTitle:        "Episode One",
+			EpisodeOverview:     "Overview",
+			TVDBAiredDate:       "2025-01-01",
+			DescriptionOverride: "[b]Test[/b] description",
+			ExternalIDs: api.ExternalIDs{
+				Category: "TV",
+			},
+			Release: api.ReleaseInfo{
+				Resolution: "1080p",
+				Season:     1,
+				Episode:    1,
+			},
+			Tag: "GRP",
+		},
+		TrackerConfig: config.TrackerConfig{
+			URL:      serverURL,
+			Username: "user",
+			Password: "pass",
+		},
+		AppConfig: config.Config{
+			MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+			Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+				"BTN": {APIKey: strings.Repeat("x", 30)},
+			}},
+		},
+	}
+}
+
 func newBTNAuthDB(t *testing.T) string {
 	t.Helper()
 
