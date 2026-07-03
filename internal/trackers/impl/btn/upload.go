@@ -692,6 +692,8 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		}
 	}
 
+	resolution := mapResolution(req.Meta)
+	logBTNResolutionMismatch(req.Logger, resolution, fields["resolution"])
 	payload := map[string]string{
 		"submit":       "true",
 		"type":         resolveUploadType(req.Meta),
@@ -708,7 +710,7 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		"format":       format,
 		"bitrate":      bitrate,
 		"media":        media,
-		"resolution":   mapResolution(req.Meta),
+		"resolution":   resolution,
 		"release_desc": description,
 		"tvdb":         "autofilled",
 	}
@@ -729,6 +731,21 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		clean[key] = value
 	}
 	return clean, nil
+}
+
+// logBTNResolutionMismatch records when BTN autofill selected a different
+// resolution than local metadata. The upload still uses metadata because
+// autofill runs before MediaInfo or final upload fields are submitted.
+func logBTNResolutionMismatch(logger api.Logger, metadataResolution string, autofillResolution string) {
+	if logger == nil {
+		return
+	}
+	metadataResolution = strings.TrimSpace(metadataResolution)
+	autofillResolution = strings.TrimSpace(autofillResolution)
+	if metadataResolution == "" || autofillResolution == "" || metadataResolution == autofillResolution {
+		return
+	}
+	logger.Infof("trackers: BTN autofill resolution mismatch metadata_resolution=%q autofill_resolution=%q decision=metadata", metadataResolution, autofillResolution)
 }
 
 func extractAutofillFields(htmlRaw string) map[string]string {
@@ -1519,6 +1536,9 @@ func mapSource(meta api.PreparedMetadata, fields map[string]string) string {
 	return ""
 }
 
+// mapResolution returns the BTN resolution value derived from local metadata.
+// BTN autofill runs before MediaInfo or final upload fields are submitted, so
+// its selected resolution is not used as the source of truth.
 func mapResolution(meta api.PreparedMetadata) string {
 	switch strings.ToLower(strings.TrimSpace(meta.Release.Resolution)) {
 	case "2160p", "4320p", "8640p", "4k", "8k":

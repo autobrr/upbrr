@@ -60,16 +60,21 @@ func (r *httpHandlerErrorRecorder) Check() {
 	}
 }
 
-// captureBTNLogger records warning messages from upload paths that may return
-// before reaching the HTTP test server.
+// captureBTNLogger records selected log messages from upload paths under test.
 type captureBTNLogger struct {
 	mu       sync.Mutex
+	infos    []string
 	warnings []string
 }
 
 func (l *captureBTNLogger) Tracef(string, ...any) {}
 func (l *captureBTNLogger) Debugf(string, ...any) {}
-func (l *captureBTNLogger) Infof(string, ...any)  {}
+
+func (l *captureBTNLogger) Infof(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.infos = append(l.infos, fmt.Sprintf(format, args...))
+}
 
 func (l *captureBTNLogger) Warnf(format string, args ...any) {
 	l.mu.Lock()
@@ -78,6 +83,18 @@ func (l *captureBTNLogger) Warnf(format string, args ...any) {
 }
 
 func (l *captureBTNLogger) Errorf(string, ...any) {}
+
+// containsInfo reports whether any captured info message contains value.
+func (l *captureBTNLogger) containsInfo(value string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, info := range l.infos {
+		if strings.Contains(info, value) {
+			return true
+		}
+	}
+	return false
+}
 
 // containsWarning reports whether any captured warning contains value.
 func (l *captureBTNLogger) containsWarning(value string) bool {
@@ -662,6 +679,7 @@ func TestBTNPrepareUploadDataUsesEpisodeIntForTVDBAutoTitle(t *testing.T) {
 				<select name="bitrate"><option selected value="H.265">H.265</option></select>
 				<select name="format"><option selected value="MKV">MKV</option></select>
 				<select name="media"><option selected value="WEB-DL">WEB-DL</option></select>
+				<select name="resolution"><option selected value="2160p">2160p</option></select>
 			`)
 		default:
 			http.NotFound(w, r)
@@ -674,7 +692,9 @@ func TestBTNPrepareUploadDataUsesEpisodeIntForTVDBAutoTitle(t *testing.T) {
 		uploadURL: server.URL + "/upload.php",
 		client:    server.Client(),
 	}
+	logger := &captureBTNLogger{}
 	req := trackers.UploadRequest{
+		Logger: logger,
 		Meta: api.PreparedMetadata{
 			ReleaseName:         "Example.Show.S02E07.1080p.WEB-DL.x265-GRP",
 			Type:                "WEBDL",
@@ -740,6 +760,12 @@ func TestBTNPrepareUploadDataUsesEpisodeIntForTVDBAutoTitle(t *testing.T) {
 	}
 	if payload["image"] != "https://img.example/autofill.jpg" {
 		t.Fatalf("expected BTN autofill image, got %q", payload["image"])
+	}
+	if payload["resolution"] != "1080p" {
+		t.Fatalf("expected metadata resolution, got %q", payload["resolution"])
+	}
+	if !logger.containsInfo(`BTN autofill resolution mismatch metadata_resolution="1080p" autofill_resolution="2160p" decision=metadata`) {
+		t.Fatal("expected resolution mismatch info log")
 	}
 	for _, value := range []string{"English Episode", "Season: 4", "Episode: 12", "Aired: 2026-02-03", "English overview"} {
 		if !strings.Contains(payload["album_desc"], value) {
