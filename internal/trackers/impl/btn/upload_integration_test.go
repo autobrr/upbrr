@@ -1263,6 +1263,15 @@ func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
 	if len(summary.UploadedTorrents) != 1 {
 		t.Fatalf("expected one uploaded torrent, got %d", len(summary.UploadedTorrents))
 	}
+	if got := summary.UploadedTorrents[0].TorrentID; got != "779" {
+		t.Fatalf("expected summary fallback torrent id 779, got %q", got)
+	}
+	if got := summary.UploadedTorrents[0].TorrentURL; !strings.Contains(got, "torrentid=779") || strings.Contains(got, "torrentid=456") {
+		t.Fatalf("expected summary URL to use fallback torrent id")
+	}
+	if got := summary.UploadedTorrents[0].DownloadURL; !strings.Contains(got, "torrentid=779") || strings.Contains(got, "torrentid=456") {
+		t.Fatalf("expected summary download URL to use fallback torrent id")
+	}
 	payload, err := os.ReadFile(summary.UploadedTorrents[0].TorrentPath)
 	if err != nil {
 		t.Fatalf("expected tracker torrent file: %v", err)

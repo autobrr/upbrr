@@ -284,10 +284,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 
 	groupID := strings.TrimSpace(matches[1])
 	torrentID := strings.TrimSpace(matches[2])
-	torrentURL := strings.TrimRight(uploadCtx.baseURL, "/") + "/torrents.php?id=" + url.QueryEscape(groupID)
-	if torrentID != "" {
-		torrentURL += "&torrentid=" + url.QueryEscape(torrentID)
-	}
+	torrentURL := buildBTNTorrentURL(uploadCtx.baseURL, groupID, torrentID)
 
 	trackerTorrentPath, err := resolveTrackerTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath, "BTN")
 	if err != nil {
@@ -299,14 +296,20 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 			if req.Logger != nil {
 				req.Logger.Warnf("trackers: BTN torrent download fallback to API search: %s", commonhttp.RedactErrorDetail(err.Error()))
 			}
-			if err := resolveAndDownloadViaAPI(ctx, uploadCtx.apiURL, uploadCtx.apiToken, req, groupID, trackerTorrentPath); err != nil {
+			selectedID, err := resolveAndDownloadViaAPI(ctx, uploadCtx.apiURL, uploadCtx.apiToken, req, groupID, trackerTorrentPath)
+			if err != nil {
 				return api.UploadSummary{}, err
 			}
+			torrentID = selectedID
+			torrentURL = buildBTNTorrentURL(uploadCtx.baseURL, groupID, torrentID)
 		}
 	} else {
-		if err := resolveAndDownloadViaAPI(ctx, uploadCtx.apiURL, uploadCtx.apiToken, req, groupID, trackerTorrentPath); err != nil {
+		selectedID, err := resolveAndDownloadViaAPI(ctx, uploadCtx.apiURL, uploadCtx.apiToken, req, groupID, trackerTorrentPath)
+		if err != nil {
 			return api.UploadSummary{}, err
 		}
+		torrentID = selectedID
+		torrentURL = buildBTNTorrentURL(uploadCtx.baseURL, groupID, torrentID)
 	}
 
 	return api.UploadSummary{
@@ -1121,13 +1124,23 @@ func downloadTrackerTorrent(ctx context.Context, client *http.Client, baseURL st
 	return nil
 }
 
+// buildBTNTorrentURL returns BTN's canonical torrent detail URL for a group and
+// optional torrent id.
+func buildBTNTorrentURL(baseURL string, groupID string, torrentID string) string {
+	torrentURL := strings.TrimRight(baseURL, "/") + "/torrents.php?id=" + url.QueryEscape(strings.TrimSpace(groupID))
+	if strings.TrimSpace(torrentID) != "" {
+		torrentURL += "&torrentid=" + url.QueryEscape(strings.TrimSpace(torrentID))
+	}
+	return torrentURL
+}
+
 // resolveAndDownloadViaAPI finds the uploaded torrent through BTN's JSON-RPC
 // API, validates the returned DownloadURL, and writes the fetched bencoded
-// torrent to outputPath. It is used when the post-upload HTML flow cannot
-// provide a usable torrent download.
-func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken string, req trackers.UploadRequest, groupID string, outputPath string) error {
+// torrent to outputPath. The selected BTN torrent id is returned so upload
+// summaries reflect the torrent that was actually downloaded.
+func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken string, req trackers.UploadRequest, groupID string, outputPath string) (string, error) {
 	if strings.TrimSpace(apiToken) == "" {
-		return errors.New("trackers: BTN api token missing for torrent resolution")
+		return "", errors.New("trackers: BTN api token missing for torrent resolution")
 	}
 	if strings.TrimSpace(apiURL) == "" {
 		apiURL = btnAPIRPCURL
@@ -1145,20 +1158,20 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("trackers: BTN API search encode: %w", err)
+		return "", fmt.Errorf("trackers: BTN API search encode: %w", err)
 	}
 	apiReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(encoded))
 	if err != nil {
-		return fmt.Errorf("trackers: BTN API search request build: %w", err)
+		return "", fmt.Errorf("trackers: BTN API search request build: %w", err)
 	}
 	apiReq.Header.Set("Content-Type", "application/json")
 	apiResp, err := (&http.Client{Timeout: 30 * time.Second}).Do(apiReq)
 	if err != nil {
-		return fmt.Errorf("trackers: BTN API search request: %w", err)
+		return "", fmt.Errorf("trackers: BTN API search request: %w", err)
 	}
 	defer apiResp.Body.Close()
 	if apiResp.StatusCode < 200 || apiResp.StatusCode >= 300 {
-		return fmt.Errorf("trackers: BTN API search failed status=%d", apiResp.StatusCode)
+		return "", fmt.Errorf("trackers: BTN API search failed status=%d", apiResp.StatusCode)
 	}
 	var response struct {
 		Result struct {
@@ -1166,11 +1179,11 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 		} `json:"result"`
 	}
 	if err := json.NewDecoder(apiResp.Body).Decode(&response); err != nil {
-		return fmt.Errorf("trackers: BTN decode torrent search response: %w", err)
+		return "", fmt.Errorf("trackers: BTN decode torrent search response: %w", err)
 	}
 	selectedID := selectBTNAPITorrentID(response.Result.Torrents, releaseName, groupID)
 	if selectedID == "" {
-		return errors.New("trackers: BTN API did not return a matching torrent id")
+		return "", errors.New("trackers: BTN API did not return a matching torrent id")
 	}
 
 	downloadPayload := map[string]any{
@@ -1181,20 +1194,20 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 	}
 	downloadEncoded, err := json.Marshal(downloadPayload)
 	if err != nil {
-		return fmt.Errorf("trackers: BTN API download encode: %w", err)
+		return "", fmt.Errorf("trackers: BTN API download encode: %w", err)
 	}
 	downloadReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(downloadEncoded))
 	if err != nil {
-		return fmt.Errorf("trackers: BTN API download request build: %w", err)
+		return "", fmt.Errorf("trackers: BTN API download request build: %w", err)
 	}
 	downloadReq.Header.Set("Content-Type", "application/json")
 	downloadResp, err := (&http.Client{Timeout: 30 * time.Second}).Do(downloadReq)
 	if err != nil {
-		return fmt.Errorf("trackers: BTN API download request: %w", err)
+		return "", fmt.Errorf("trackers: BTN API download request: %w", err)
 	}
 	defer downloadResp.Body.Close()
 	if downloadResp.StatusCode < 200 || downloadResp.StatusCode >= 300 {
-		return fmt.Errorf("trackers: BTN API download failed status=%d", downloadResp.StatusCode)
+		return "", fmt.Errorf("trackers: BTN API download failed status=%d", downloadResp.StatusCode)
 	}
 	var downloadResult struct {
 		Result struct {
@@ -1202,19 +1215,19 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 		} `json:"result"`
 	}
 	if err := json.NewDecoder(downloadResp.Body).Decode(&downloadResult); err != nil {
-		return fmt.Errorf("trackers: BTN API decode download response: %w", err)
+		return "", fmt.Errorf("trackers: BTN API decode download response: %w", err)
 	}
 	if downloadResult.Result.DownloadURL == "" {
-		return errors.New("trackers: BTN API did not return DownloadURL")
+		return "", errors.New("trackers: BTN API did not return DownloadURL")
 	}
 
 	if err := validateBTNAPIDownloadURL(ctx, apiURL, downloadResult.Result.DownloadURL); err != nil {
-		return fmt.Errorf("trackers: BTN API invalid download url: %w", err)
+		return "", fmt.Errorf("trackers: BTN API invalid download url: %w", err)
 	}
 
 	dlReq, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadResult.Result.DownloadURL, nil)
 	if err != nil {
-		return fmt.Errorf("trackers: BTN API torrent fetch request build: %w", err)
+		return "", fmt.Errorf("trackers: BTN API torrent fetch request build: %w", err)
 	}
 	client := &http.Client{
 		Timeout: 30 * time.Second,
@@ -1230,26 +1243,26 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 	}
 	dlResp, err := client.Do(dlReq)
 	if err != nil {
-		return fmt.Errorf("trackers: BTN API torrent fetch request: %w", err)
+		return "", fmt.Errorf("trackers: BTN API torrent fetch request: %w", err)
 	}
 	defer dlResp.Body.Close()
 	if dlResp.StatusCode < 200 || dlResp.StatusCode >= 300 {
-		return fmt.Errorf("trackers: BTN API download fetch failed status=%d", dlResp.StatusCode)
+		return "", fmt.Errorf("trackers: BTN API download fetch failed status=%d", dlResp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(dlResp.Body, 8*1024*1024))
 	if err != nil {
-		return fmt.Errorf("trackers: BTN API read torrent response: %w", err)
+		return "", fmt.Errorf("trackers: BTN API read torrent response: %w", err)
 	}
 	if len(body) == 0 || body[0] != 'd' {
-		return errors.New("trackers: BTN API did not return torrent payload")
+		return "", errors.New("trackers: BTN API did not return torrent payload")
 	}
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o700); err != nil {
-		return fmt.Errorf("trackers: BTN API create torrent output dir: %w", err)
+		return "", fmt.Errorf("trackers: BTN API create torrent output dir: %w", err)
 	}
 	if err := os.WriteFile(outputPath, body, 0o600); err != nil {
-		return fmt.Errorf("trackers: BTN API write torrent output: %w", err)
+		return "", fmt.Errorf("trackers: BTN API write torrent output: %w", err)
 	}
-	return nil
+	return selectedID, nil
 }
 
 // loadBTNCookiesIntoJar best-effort seeds an upload client with persisted BTN
