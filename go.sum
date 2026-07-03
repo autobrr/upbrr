@@ -4,10 +4,6 @@ crawshaw.io/iox v0.0.0-20181124134642-c51c3df30797/go.mod h1:sXBiorCo8c46JlQV3oX
 crawshaw.io/sqlite v0.3.2/go.mod h1:igAO5JulrQ1DbdZdtVq48mnZUBAPOeFzer7VhDWNtW4=
 git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 h1:N3IGoHHp9pb6mj1cbXbuaSXV/UMKwmbKLf53nQmtqMA=
 git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3/go.mod h1:QtOLZGz8olr4qH2vWK0QH0w0O4T9fEIjMuWpKUsH7nc=
-github.com/Audionut/go-bdinfo v0.2.1-0.20260628010705-5a98a8bb3c49 h1:ttgpoP4Fw1cpAf7zt60rsY2S/T0W3xPQo+ymiAXOk+Y=
-github.com/Audionut/go-bdinfo v0.2.1-0.20260628010705-5a98a8bb3c49/go.mod h1:LvWQ9miDSoeSvJ2vyttB1pYicDl5+eTZ5snvqH7OmZA=
-github.com/Audionut/go-mediainfo v0.2.2-0.20260630084446-a4ab53524a44 h1:Ou1evTjAtGdEwC/KlC7fTlz0Nvlbwek71N4w152GtK8=
-github.com/Audionut/go-mediainfo v0.2.2-0.20260630084446-a4ab53524a44/go.mod h1:xVXgHDAYYpIeGQCQCdTBpoiY/O3tojJfflK+rrbzclQ=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/Masterminds/semver v1.5.0 h1:H65muMkzWKEuNDnfl9d70GUjFniHKHRbFPGBuZ3QEww=
 github.com/Masterminds/semver v1.5.0/go.mod h1:MB6lktGJrhw8PrUyiEoblNEGEQ+RzHPF078ddwwvV3Y=
@@ -48,6 +44,10 @@ github.com/anacrolix/tagflag v1.1.0/go.mod h1:Scxs9CV10NQatSmbyjqmqmeQNwGzlNe0CM
 github.com/anacrolix/torrent v1.61.0 h1:vxo+B4SwnoP5AQWbhvnTYIaTgPSX+llYUVuQVsN4Jg8=
 github.com/anacrolix/torrent v1.61.0/go.mod h1:yKUKuZSSDdyOsCbuH+rDOpswl/g546gICapdrU7aUmQ=
 github.com/apache/thrift v0.12.0/go.mod h1:cp2SuWMxlEZw2r+iP2GNCdIi4C1qmUzdZFSVb+bacwQ=
+github.com/autobrr/go-bdinfo v0.3.2-0.20260630110520-88d4a8ab6880 h1:p55pQampC+aNv9krb63Yw4WnhOf2KTIFt2SgbR2QDpk=
+github.com/autobrr/go-bdinfo v0.3.2-0.20260630110520-88d4a8ab6880/go.mod h1:LvWQ9miDSoeSvJ2vyttB1pYicDl5+eTZ5snvqH7OmZA=
+github.com/autobrr/go-mediainfo v0.4.1-0.20260630103922-303b38db88c1 h1:eliWJ/4RufnGKh0tp+ydF/O3wMVaXXuSHyYfFuTuzUE=
+github.com/autobrr/go-mediainfo v0.4.1-0.20260630103922-303b38db88c1/go.mod h1:xVXgHDAYYpIeGQCQCdTBpoiY/O3tojJfflK+rrbzclQ=
 github.com/autobrr/go-qbittorrent v1.16.0 h1:H0zwzLOaCxvJTxJ3xe4+hV3rFSuxucsgKQxsGHydXCU=
 github.com/autobrr/go-qbittorrent v1.16.0/go.mod h1:s36a75VlatWPpHI+pNg4Ta6eB3fRxQvTZPfgMtOsQfY=
 github.com/autobrr/mkbrr v1.23.0 h1:g9RhZqT78u9726ifDt+KP8VhPNNm1pxmL8Y4L9wa2yk=
