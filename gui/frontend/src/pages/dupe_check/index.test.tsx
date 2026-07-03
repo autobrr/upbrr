@@ -14,7 +14,7 @@ afterEach(() => {
 
 const dupeSummaryFor = (trackers: string[], notes: string[] = []) =>
   ({
-    SourcePath: "C:\\Media\\Watcher.mkv",
+    SourcePath: "C:\\Media\\Example.Movie.mkv",
     Results: trackers.map((tracker) => ({
       Tracker: tracker,
       Raw: [],
@@ -42,7 +42,7 @@ const renderPage = (
 ) =>
   render(
     <DupeCheckPage
-      path="C:\\Media\\Watcher.mkv"
+      path="C:\\Media\\Example.Movie.mkv"
       dupeLoading={false}
       dupeError=""
       dupeSummary={dupeSummary}
@@ -155,7 +155,7 @@ describe("DupeCheckPage", () => {
 
   it("counts split tracker labels on grouped rule-failure rows", () => {
     renderPage({
-      SourcePath: "C:\\Media\\Watcher.mkv",
+      SourcePath: "C:\\Media\\Example.Movie.mkv",
       Results: [
         ruleSkippedResult("AITHER, DP", "rule check failed: missing language data"),
         completedResult("ANT"),
@@ -173,7 +173,7 @@ describe("DupeCheckPage", () => {
   it("prefers per-tracker snapshot results over grouped rule-failure summary rows", () => {
     renderPage(
       {
-        SourcePath: "C:\\Media\\Watcher.mkv",
+        SourcePath: "C:\\Media\\Example.Movie.mkv",
         Results: [
           ruleSkippedResult(
             "AITHER, DP",

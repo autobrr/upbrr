@@ -125,7 +125,7 @@ func setSRRDBHeaders(req *http.Request) {
 }
 
 // formatSRRDBIMDbID renders an IMDb id in srrdb's required zero-padded tt form
-// (132245 -> "tt0132245"). Integer storage drops leading zeroes and srrdb rejects
+// (12345 -> "tt0012345"). Integer storage drops leading zeroes and srrdb rejects
 // an unpadded numeric id ("Invalid value for imdb"), so the query must re-pad.
 // Returns "" for a non-positive id.
 func formatSRRDBIMDbID(id int) string {

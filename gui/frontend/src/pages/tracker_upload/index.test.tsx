@@ -13,9 +13,9 @@ afterEach(() => {
 });
 
 const preview = {
-  SourcePath: "C:\\Media\\Watcher.mkv",
+  SourcePath: "C:\\Media\\Example.Movie.mkv",
   TrackerName: "",
-  ReleaseName: "Watcher 2160p WEB-DL DD+ 5.1-FLUX",
+  ReleaseName: "Example Movie 2160p WEB-DL DD+ 5.1-GRP",
   Warnings: [],
   ReleaseNameOverrides: {},
   ExternalIDs: {
@@ -41,15 +41,15 @@ const preview = {
 } satisfies MetadataPreview;
 
 const dryRunPreview: TrackerDryRunPreview = {
-  SourcePath: "C:\\Media\\Watcher.mkv",
+  SourcePath: "C:\\Media\\Example.Movie.mkv",
   Trackers: [
     {
       Tracker: "AITHER",
       Status: "ready",
       Message: "",
-      ReleaseName: "Watcher.2160p.WEB-DL.DDP5.1-FLUX",
-      OriginalReleaseName: "Watcher 2160p WEB-DL DD+ 5.1-FLUX",
-      UploadReleaseName: "Watcher.2160p.WEB-DL.DDP5.1-FLUX",
+      ReleaseName: "Example.Movie.2160p.WEB-DL.DDP5.1-GRP",
+      OriginalReleaseName: "Example Movie 2160p WEB-DL DD+ 5.1-GRP",
+      UploadReleaseName: "Example.Movie.2160p.WEB-DL.DDP5.1-GRP",
       ReleaseNameChanged: true,
       ReleaseNameChangeReason: "tracker naming rules",
       DescriptionGroup: "",
@@ -105,9 +105,11 @@ describe("TrackerUploadPage", () => {
 
     expect(screen.getByText("Name changed")).toBeTruthy();
     expect(screen.getByText(/Original:/).textContent).toContain(
-      "Watcher 2160p WEB-DL DD+ 5.1-FLUX",
+      "Example Movie 2160p WEB-DL DD+ 5.1-GRP",
     );
-    expect(screen.getByText(/Upload:/).textContent).toContain("Watcher.2160p.WEB-DL.DDP5.1-FLUX");
+    expect(screen.getByText(/Upload:/).textContent).toContain(
+      "Example.Movie.2160p.WEB-DL.DDP5.1-GRP",
+    );
   });
 
   it("does not show stale dry-run naming changes for disabled trackers", () => {
@@ -154,14 +156,14 @@ describe("TrackerUploadPage", () => {
     rerender(
       <TrackerUploadPage
         {...baseProps}
-        namingOverrides={[["AITHER", "Watcher custom"]]}
+        namingOverrides={[["AITHER", "Example custom"]]}
         onRunDryRun={firstRun}
       />,
     );
     rerender(
       <TrackerUploadPage
         {...baseProps}
-        namingOverrides={[["AITHER", "Watcher custom"]]}
+        namingOverrides={[["AITHER", "Example custom"]]}
         onRunDryRun={secondRun}
       />,
     );
@@ -184,7 +186,7 @@ describe("TrackerUploadPage", () => {
       <TrackerUploadPage
         {...baseProps}
         dryRunLoading={true}
-        namingOverrides={[["AITHER", "Watcher custom"]]}
+        namingOverrides={[["AITHER", "Example custom"]]}
         onRunDryRun={onRunDryRun}
       />,
     );
@@ -196,7 +198,7 @@ describe("TrackerUploadPage", () => {
     rerender(
       <TrackerUploadPage
         {...baseProps}
-        namingOverrides={[["AITHER", "Watcher custom"]]}
+        namingOverrides={[["AITHER", "Example custom"]]}
         onRunDryRun={onRunDryRun}
       />,
     );

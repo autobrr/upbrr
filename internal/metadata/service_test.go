@@ -338,7 +338,7 @@ func TestResolveServiceMGMPlus(t *testing.T) {
 	t.Parallel()
 
 	service, longName, filename := resolveService(api.PreparedMetadata{
-		SourcePath: `D:\TV\A.Spy.Among.Friends.S01.2160p.MGMP.WEB-DL.DDP5.1.H.265-XEBEC`,
+		SourcePath: `D:\TV\Example.Spy.Show.S01.2160p.MGMP.WEB-DL.DDP5.1.H.265-GRP`,
 	})
 	if service != "MGMP" {
 		t.Fatalf("expected MGMP service, got %q", service)

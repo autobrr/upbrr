@@ -57,7 +57,7 @@ func TestRenderCodeAllowsNestedColorTags(t *testing.T) {
 
 [color=#e6c07b]"Release Notes":[/color]
   [color=#61afef]Sources:[/color]
-    - [color=#61afef]"Source(1)":[/color] [color=#abb2bf]"Double.Impact.1991.2160p.UHD.Blu-ray.Remux.DV.HDR.HEVC.FLAC2.0-CiNEPHiLES (Video, Audio, Subs) Thanks!"[/color][/code]`
+    - [color=#61afef]"Source(1)":[/color] [color=#abb2bf]"Example.Movie.2026.2160p.UHD.Blu-ray.Remux.DV.HDR.HEVC.FLAC2.0-GRP (Video, Audio, Subs) Thanks!"[/color][/code]`
 	rendered := Render(input)
 
 	for _, expected := range []string{

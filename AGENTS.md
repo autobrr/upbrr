@@ -64,5 +64,6 @@ Before commit, also run `git diff --check`, changed-package `make gofix-check-ch
 - Preserve CLI, Wails GUI, and embedded web parity.
 - Preserve CLI `--unattended` / `--unattended_confirm` (`--uac`) safety: `--unattended` must not prompt; `--unattended_confirm` may ask required confirmation/manual inputs. No hidden prompts/confirms or ambiguous fallthrough.
 - Never log credentials/tokens/API keys/cookies/secret payloads; use repo redaction/logging policy.
+- Shareable examples, diagnostics, docs, and test fixtures must not use real release names, real movie/show titles, or real provider IDs. Use synthetic placeholders such as `Example Release 2026`, `Example.Release.2026.1080p-GRP`, and `tt1234567`. Prefer generic group tags such as `GRP` when the group is incidental; real group names are allowed when relevant to behavior. Production domain lists such as tracker banned groups may keep real values when those values are required behavior.
 - Do not commit generated/local output: `dist/`, `gui/frontend/dist/`, `gui/build/bin/`, populated `internal/guiapp/assets`, Playwright reports/results, repo-local `tmp/`.
 - `.github/workflows/*.yml` files are active; `.yml22` files are disabled templates.

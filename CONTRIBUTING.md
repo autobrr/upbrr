@@ -243,6 +243,20 @@ Alternatively, `make precommit` and `make prepush` run the configured Lefthook c
 - `pkg/api` holds request/response types shared across surfaces.
 - The repo currently includes generated and built assets in a few locations; review changes carefully and avoid committing build output by accident.
 
+### Shareable fixtures and examples
+
+Examples, docs, diagnostics, test fixtures, and failure artifacts should be safe to copy into issues, CI logs, and AI tools. Do not use real release names, real movie/show titles, or real provider IDs in shareable material.
+
+Use synthetic placeholders instead:
+
+- `Example Release 2026`
+- `Example.Release.2026.1080p-GRP`
+- `C:\path\to\release`
+- `tt1234567`
+
+Production domain data may keep real values when behavior depends on them, such as tracker banned-group lists or official tracker constants.
+Prefer generic group tags such as `GRP` when the group is incidental; real group names are fine when they are relevant to behavior.
+
 ### Logging levels
 
 Keep log levels purposeful. `INFO` should provide concise, relevant progress or outcome details for end users during uploads and other top-level workflows. `DEBUG` should include richer decision-making context useful for developer troubleshooting. `TRACE` should capture near-complete operational flow for high-fidelity execution reporting.
