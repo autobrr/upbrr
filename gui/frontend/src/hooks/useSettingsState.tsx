@@ -312,6 +312,7 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
     trackerFieldMeta.APIKey,
+    trackerFieldMeta.AnnounceURL,
     trackerFieldMeta.Username,
     trackerFieldMeta.Password,
     trackerFieldMeta.URL,
