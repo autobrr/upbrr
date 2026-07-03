@@ -4,6 +4,7 @@
 package btn
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -407,6 +408,61 @@ func TestValidateBTNAPIDownloadURLAllowsOnlySameOriginPrivateFallback(t *testing
 	}
 	if err := validateBTNAPIDownloadURL(ctx, "ftp://127.0.0.1/rpc", "ftp://127.0.0.1/mock-download"); err == nil {
 		t.Fatalf("expected unsupported same-origin scheme to be rejected")
+	}
+}
+
+func TestDecodeBTNAPIJSONRejectsDuplicateKeysAndLargeBodies(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		payload     []byte
+		expectedErr string
+	}{
+		{
+			name:        "root duplicate",
+			payload:     []byte(`{"result":{},"result":{}}`),
+			expectedErr: `duplicate JSON object key "result"`,
+		},
+		{
+			name:        "nested duplicate",
+			payload:     []byte(`{"result":{"DownloadURL":"https://example.test/one","DownloadURL":"https://example.test/two"}}`),
+			expectedErr: `duplicate JSON object key "DownloadURL" at "result"`,
+		},
+		{
+			name:        "oversized",
+			payload:     bytes.Repeat([]byte(" "), btnAPIJSONMaxBytes+1),
+			expectedErr: "response body exceeds",
+		},
+		{
+			name:        "multiple values",
+			payload:     []byte(`{} {}`),
+			expectedErr: "multiple JSON values",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var decoded struct {
+				Result map[string]any `json:"result"`
+			}
+			err := decodeBTNAPIJSON(bytes.NewReader(tc.payload), &decoded)
+			if err == nil || !strings.Contains(err.Error(), tc.expectedErr) {
+				t.Fatalf("expected error containing %q", tc.expectedErr)
+			}
+		})
+	}
+
+	var decoded struct {
+		Result struct {
+			DownloadURL string `json:"DownloadURL"`
+		} `json:"result"`
+	}
+	if err := decodeBTNAPIJSON(strings.NewReader(`{"result":{"DownloadURL":"https://example.test/download"}}`), &decoded); err != nil {
+		t.Fatalf("decode valid BTN API JSON: %v", err)
+	}
+	if decoded.Result.DownloadURL != "https://example.test/download" {
+		t.Fatalf("unexpected decoded DownloadURL")
 	}
 }
 

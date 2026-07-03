@@ -45,10 +45,11 @@ import (
 )
 
 const (
-	btnDefaultBaseURL = "https://backup.landof.tv"
-	btnUploadPath     = "/upload.php"
-	btnLoginPath      = "/login.php"
-	btnAPIRPCURL      = "https://api.broadcasthe.net/"
+	btnDefaultBaseURL  = "https://backup.landof.tv"
+	btnUploadPath      = "/upload.php"
+	btnLoginPath       = "/login.php"
+	btnAPIRPCURL       = "https://api.broadcasthe.net/"
+	btnAPIJSONMaxBytes = 1024 * 1024
 )
 
 var (
@@ -1141,6 +1142,109 @@ func buildBTNTorrentURL(baseURL string, groupID string, torrentID string) string
 	return torrentURL
 }
 
+// decodeBTNAPIJSON reads a bounded BTN JSON-RPC response, rejects duplicate
+// object keys, and unmarshals the single JSON value into dest.
+func decodeBTNAPIJSON(r io.Reader, dest any) error {
+	payload, err := io.ReadAll(io.LimitReader(r, btnAPIJSONMaxBytes+1))
+	if err != nil {
+		return fmt.Errorf("read response body: %w", err)
+	}
+	if len(payload) > btnAPIJSONMaxBytes {
+		return fmt.Errorf("response body exceeds %d bytes", btnAPIJSONMaxBytes)
+	}
+	if err := validateBTNJSONNoDuplicateObjectNames(payload); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(payload, dest); err != nil {
+		return fmt.Errorf("unmarshal response body: %w", err)
+	}
+	return nil
+}
+
+// validateBTNJSONNoDuplicateObjectNames scans one JSON value before unmarshal
+// so duplicate object names cannot collapse into the last decoded value.
+func validateBTNJSONNoDuplicateObjectNames(payload []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(payload))
+	dec.UseNumber()
+	if err := validateBTNJSONValueNoDuplicateObjectNames(dec, ""); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return fmt.Errorf("read trailing JSON token: %w", err)
+	}
+	return nil
+}
+
+// validateBTNJSONValueNoDuplicateObjectNames consumes one JSON value and
+// reports duplicate object member names with their object path.
+func validateBTNJSONValueNoDuplicateObjectNames(dec *json.Decoder, path string) error {
+	token, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("read JSON token at %q: %w", path, err)
+	}
+	delim, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+
+	switch delim {
+	case '{':
+		seen := map[string]struct{}{}
+		for dec.More() {
+			keyToken, err := dec.Token()
+			if err != nil {
+				return fmt.Errorf("read JSON object key at %q: %w", path, err)
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return fmt.Errorf("invalid JSON object key at %q", path)
+			}
+			if _, exists := seen[key]; exists {
+				if path == "" {
+					return fmt.Errorf("duplicate JSON object key %q", key)
+				}
+				return fmt.Errorf("duplicate JSON object key %q at %q", key, path)
+			}
+			seen[key] = struct{}{}
+			childPath := key
+			if path != "" {
+				childPath = path + "." + key
+			}
+			if err := validateBTNJSONValueNoDuplicateObjectNames(dec, childPath); err != nil {
+				return err
+			}
+		}
+		return consumeBTNJSONDelim(dec, '}')
+	case '[':
+		index := 0
+		for dec.More() {
+			childPath := fmt.Sprintf("%s[%d]", path, index)
+			if err := validateBTNJSONValueNoDuplicateObjectNames(dec, childPath); err != nil {
+				return err
+			}
+			index++
+		}
+		return consumeBTNJSONDelim(dec, ']')
+	default:
+		return fmt.Errorf("unexpected JSON delimiter %q at %q", delim, path)
+	}
+}
+
+// consumeBTNJSONDelim consumes and verifies a JSON closing delimiter.
+func consumeBTNJSONDelim(dec *json.Decoder, want json.Delim) error {
+	token, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("read JSON delimiter %q: %w", want, err)
+	}
+	if delim, ok := token.(json.Delim); !ok || delim != want {
+		return fmt.Errorf("expected JSON delimiter %q", want)
+	}
+	return nil
+}
+
 // resolveAndDownloadViaAPI finds the uploaded torrent through BTN's JSON-RPC
 // API, validates the returned DownloadURL, and writes the fetched bencoded
 // torrent to outputPath. The selected BTN torrent id is returned so upload
@@ -1185,7 +1289,7 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 			Torrents map[string]map[string]any `json:"torrents"`
 		} `json:"result"`
 	}
-	if err := json.NewDecoder(apiResp.Body).Decode(&response); err != nil {
+	if err := decodeBTNAPIJSON(apiResp.Body, &response); err != nil {
 		return "", fmt.Errorf("trackers: BTN decode torrent search response: %w", err)
 	}
 	selectedID := selectBTNAPITorrentID(response.Result.Torrents, releaseName, groupID)
@@ -1221,7 +1325,7 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 			DownloadURL string `json:"DownloadURL"`
 		} `json:"result"`
 	}
-	if err := json.NewDecoder(downloadResp.Body).Decode(&downloadResult); err != nil {
+	if err := decodeBTNAPIJSON(downloadResp.Body, &downloadResult); err != nil {
 		return "", fmt.Errorf("trackers: BTN API decode download response: %w", err)
 	}
 	if downloadResult.Result.DownloadURL == "" {
