@@ -6,6 +6,7 @@ package btn
 import (
 	"bytes"
 	"context"
+	"net"
 	"strings"
 	"testing"
 
@@ -408,6 +409,26 @@ func TestValidateBTNAPIDownloadURLAllowsOnlySameOriginPrivateFallback(t *testing
 	}
 	if err := validateBTNAPIDownloadURL(ctx, "ftp://127.0.0.1/rpc", "ftp://127.0.0.1/mock-download"); err == nil {
 		t.Fatalf("expected unsupported same-origin scheme to be rejected")
+	}
+}
+
+func TestBTNAPIDownloadOriginRejectsSameHostPrivateRebind(t *testing.T) {
+	ctx := context.Background()
+	lookupCalls := 0
+	lookup := func(context.Context, string) ([]net.IPAddr, error) {
+		lookupCalls++
+		if lookupCalls == 1 {
+			return []net.IPAddr{{IP: net.IPv4(93, 184, 216, 34)}}, nil
+		}
+		return []net.IPAddr{{IP: net.IPv4(10, 0, 0, 7)}}, nil
+	}
+
+	origin, err := newBTNAPIDownloadOriginWithLookup(ctx, "https://api.example.test/rpc", lookup)
+	if err != nil {
+		t.Fatalf("pin BTN API origin: %v", err)
+	}
+	if err := origin.validateDownloadURL(ctx, "https://api.example.test/download"); err == nil {
+		t.Fatalf("expected same-host private rebind to be rejected")
 	}
 }
 

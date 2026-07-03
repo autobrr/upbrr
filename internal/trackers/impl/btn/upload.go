@@ -1256,6 +1256,10 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 	if strings.TrimSpace(apiURL) == "" {
 		apiURL = btnAPIRPCURL
 	}
+	downloadOrigin, err := newBTNAPIDownloadOrigin(ctx, apiURL)
+	if err != nil {
+		return "", fmt.Errorf("trackers: BTN API download origin: %w", err)
+	}
 	releaseName := resolveUploadName(req.Meta)
 	filter := map[string]any{"searchstr": releaseName}
 	if strings.TrimSpace(groupID) != "" {
@@ -1332,7 +1336,7 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 		return "", errors.New("trackers: BTN API did not return DownloadURL")
 	}
 
-	if err := validateBTNAPIDownloadURL(ctx, apiURL, downloadResult.Result.DownloadURL); err != nil {
+	if err := downloadOrigin.validateDownloadURL(ctx, downloadResult.Result.DownloadURL); err != nil {
 		return "", fmt.Errorf("trackers: BTN API invalid download url: %w", err)
 	}
 
@@ -1343,7 +1347,7 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if err := validateBTNAPIDownloadURL(req.Context(), apiURL, req.URL.String()); err != nil {
+			if err := downloadOrigin.validateDownloadURL(req.Context(), req.URL.String()); err != nil {
 				return err
 			}
 			if len(via) >= 10 {
@@ -1770,46 +1774,49 @@ func normalizeBTNCountryAlias(value string) string {
 	return strings.Join(strings.Fields(normalized), " ")
 }
 
-// validateBTNAPIURL accepts only HTTP(S) URLs that resolve to public addresses.
-// It rejects localhost, scoped hosts, private IPs, and DNS results that point to
-// private or otherwise non-routable addresses before a BTN-provided URL is
-// fetched.
-func validateBTNAPIURL(ctx context.Context, rawURL string) error {
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil {
-		return fmt.Errorf("parse url: %w", err)
-	}
-	scheme := strings.ToLower(parsed.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return fmt.Errorf("unsupported scheme %q", parsed.Scheme)
-	}
+// btnLookupIPAddrFunc matches net.Resolver lookups so tests can model DNS
+// changes without relying on external name service.
+type btnLookupIPAddrFunc func(context.Context, string) ([]net.IPAddr, error)
+
+// btnAPIDownloadOrigin records the resolved BTN API origin that download URLs
+// may reuse when they would otherwise fail public-address validation.
+type btnAPIDownloadOrigin struct {
+	scheme string
+	host   string
+	addrs  map[netip.Addr]struct{}
+	lookup btnLookupIPAddrFunc
+}
+
+// resolveBTNURLAddrs resolves a URL host to unmapped IP addresses, preserving
+// literal IP hosts without DNS.
+func resolveBTNURLAddrs(ctx context.Context, parsed *url.URL, lookup btnLookupIPAddrFunc) ([]netip.Addr, error) {
 	host := strings.TrimSpace(parsed.Hostname())
-	if host == "" {
-		return errors.New("missing host")
-	}
-	lowerHost := strings.ToLower(host)
-	if lowerHost == "localhost" || strings.HasSuffix(lowerHost, ".localhost") || strings.Contains(lowerHost, "%") {
-		return fmt.Errorf("blocked private host %q", host)
-	}
-
 	if addr, err := netip.ParseAddr(host); err == nil {
-		addr = addr.Unmap()
-		if !addr.IsValid() || !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsMulticast() || addr.IsUnspecified() {
-			return fmt.Errorf("blocked private address %q", addr)
-		}
-		return nil
+		return []netip.Addr{addr.Unmap()}, nil
 	}
 
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	resolved, err := lookup(ctx, host)
 	if err != nil {
-		return fmt.Errorf("resolve host %q: %w", host, err)
+		return nil, fmt.Errorf("resolve host %q: %w", host, err)
 	}
-	for _, item := range addrs {
+	addrs := make([]netip.Addr, 0, len(resolved))
+	for _, item := range resolved {
 		if addr, ok := netip.AddrFromSlice(item.IP); ok {
-			addr = addr.Unmap()
-			if !addr.IsValid() || !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsMulticast() || addr.IsUnspecified() {
-				return fmt.Errorf("host %q resolved to blocked address %q", host, addr)
-			}
+			addrs = append(addrs, addr.Unmap())
+		}
+	}
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("host %q resolved to no usable addresses", host)
+	}
+	return addrs, nil
+}
+
+// validateBTNPublicResolvedAddrs rejects private, loopback, link-local,
+// multicast, unspecified, and otherwise non-global-unicast addresses.
+func validateBTNPublicResolvedAddrs(host string, addrs []netip.Addr) error {
+	for _, addr := range addrs {
+		if !addr.IsValid() || !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsMulticast() || addr.IsUnspecified() {
+			return fmt.Errorf("host %q resolved to blocked address %q", host, addr)
 		}
 	}
 	return nil
@@ -1916,32 +1923,101 @@ func normalizeBTNAPIMatchValue(value string) string {
 
 // validateBTNAPIDownloadURL applies public-address validation to a BTN API
 // DownloadURL, but permits a same-origin private URL when the caller explicitly
-// configured the API endpoint to that private origin. The same-origin exception
-// keeps local test servers usable without allowing arbitrary private redirects.
+// configured the API endpoint to that pinned private address. The pinned-origin
+// exception keeps local test servers usable without allowing arbitrary private
+// redirects or same-host DNS rebinding.
 func validateBTNAPIDownloadURL(ctx context.Context, apiURL string, rawURL string) error {
-	if err := validateBTNAPIURL(ctx, rawURL); err == nil {
-		return nil
-	} else if !sameOriginURL(apiURL, rawURL) {
+	origin, err := newBTNAPIDownloadOrigin(ctx, apiURL)
+	if err != nil {
 		return err
 	}
+	return origin.validateDownloadURL(ctx, rawURL)
+}
+
+func newBTNAPIDownloadOrigin(ctx context.Context, apiURL string) (*btnAPIDownloadOrigin, error) {
+	return newBTNAPIDownloadOriginWithLookup(ctx, apiURL, net.DefaultResolver.LookupIPAddr)
+}
+
+// newBTNAPIDownloadOriginWithLookup parses and pins the API URL's scheme, host,
+// and current resolved addresses for later download redirect validation.
+func newBTNAPIDownloadOriginWithLookup(ctx context.Context, apiURL string, lookup btnLookupIPAddrFunc) (*btnAPIDownloadOrigin, error) {
+	parsed, err := url.Parse(strings.TrimSpace(apiURL))
+	if err != nil {
+		return nil, fmt.Errorf("parse url: %w", err)
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return nil, fmt.Errorf("unsupported scheme %q", parsed.Scheme)
+	}
+	if strings.TrimSpace(parsed.Hostname()) == "" {
+		return nil, errors.New("missing host")
+	}
+	if strings.Contains(parsed.Hostname(), "%") {
+		return nil, fmt.Errorf("blocked private host %q", parsed.Hostname())
+	}
+	addrs, err := resolveBTNURLAddrs(ctx, parsed, lookup)
+	if err != nil {
+		return nil, err
+	}
+	pinned := make(map[netip.Addr]struct{}, len(addrs))
+	for _, addr := range addrs {
+		pinned[addr] = struct{}{}
+	}
+	return &btnAPIDownloadOrigin{
+		scheme: scheme,
+		host:   parsed.Host,
+		addrs:  pinned,
+		lookup: lookup,
+	}, nil
+}
+
+// validateDownloadURL accepts public HTTP(S) destinations and otherwise only
+// permits same-origin destinations that still resolve to the pinned API address.
+func (origin *btnAPIDownloadOrigin) validateDownloadURL(ctx context.Context, rawURL string) error {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return fmt.Errorf("parse url: %w", err)
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("unsupported scheme %q", parsed.Scheme)
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		return errors.New("missing host")
+	}
+	addrs, err := resolveBTNURLAddrs(ctx, parsed, origin.lookup)
+	if err != nil {
+		return err
+	}
+	publicErr := validateBTNPublicResolvedAddrs(host, addrs)
+	lowerHost := strings.ToLower(host)
+	if publicErr == nil && lowerHost != "localhost" && !strings.HasSuffix(lowerHost, ".localhost") && !strings.Contains(lowerHost, "%") {
+		return nil
+	}
+
+	if !origin.sameOrigin(parsed) {
+		if publicErr != nil {
+			return publicErr
+		}
+		return fmt.Errorf("blocked private host %q", host)
+	}
+
+	for _, addr := range addrs {
+		if _, ok := origin.addrs[addr]; !ok {
+			return fmt.Errorf("blocked address %q not pinned to BTN API origin", addr)
+		}
+	}
+
 	return nil
 }
 
-// sameOriginURL reports whether two HTTP(S) URLs have the same scheme and host.
-func sameOriginURL(first string, second string) bool {
-	firstURL, err := url.Parse(strings.TrimSpace(first))
-	if err != nil {
+// sameOrigin reports whether a URL has the pinned API origin's scheme and host.
+func (origin *btnAPIDownloadOrigin) sameOrigin(parsed *url.URL) bool {
+	if origin == nil || parsed == nil {
 		return false
 	}
-	secondURL, err := url.Parse(strings.TrimSpace(second))
-	if err != nil {
-		return false
-	}
-	scheme := strings.ToLower(secondURL.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return false
-	}
-	return strings.EqualFold(firstURL.Scheme, secondURL.Scheme) &&
-		strings.EqualFold(firstURL.Host, secondURL.Host) &&
-		firstURL.Host != ""
+	return strings.EqualFold(origin.scheme, parsed.Scheme) &&
+		strings.EqualFold(origin.host, parsed.Host) &&
+		origin.host != ""
 }
