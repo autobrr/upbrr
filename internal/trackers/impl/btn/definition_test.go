@@ -632,12 +632,13 @@ func TestBTNDropdownMappingsPreferMetadataThenAutofill(t *testing.T) {
 	}
 }
 
-func TestResolveBTNTagsUsesAutofillThenTVDBGenres(t *testing.T) {
+func TestResolveBTNTagsUsesAutofillThenMetadataGenres(t *testing.T) {
 	t.Parallel()
 
 	meta := api.PreparedMetadata{
 		ExternalMetadata: api.ExternalMetadata{
 			TVDB: &api.TVDBMetadata{Genres: "Drama, Science-Fiction, Mystery, Unlisted"},
+			IMDB: &api.IMDBMetadata{Genres: "Comedy, Crime"},
 		},
 	}
 	if got := resolveBTNTags(meta, map[string]string{"tags": "Drama, Comedy"}); got != "Drama, Comedy" {
@@ -646,8 +647,13 @@ func TestResolveBTNTagsUsesAutofillThenTVDBGenres(t *testing.T) {
 	if got := resolveBTNTags(meta, map[string]string{}); got != "Drama, Mystery, Science Fiction" {
 		t.Fatalf("expected TVDB fallback tags, got %q", got)
 	}
+
+	meta.ExternalMetadata.TVDB.Genres = ""
+	if got := resolveBTNTags(meta, map[string]string{}); got != "Comedy, Crime" {
+		t.Fatalf("expected IMDb fallback tags, got %q", got)
+	}
 	if got := resolveBTNTags(api.PreparedMetadata{}, map[string]string{}); got != "" {
-		t.Fatalf("expected empty tags without autofill or TVDB genres, got %q", got)
+		t.Fatalf("expected empty tags without autofill or provider genres, got %q", got)
 	}
 }
 
@@ -785,7 +791,7 @@ func TestBTNUploadTypeUsesCanonicalEpisode(t *testing.T) {
 	}
 }
 
-func TestResolveBTNTVSeasonEpisodePrefersTVDBThenMetadata(t *testing.T) {
+func TestResolveBTNTVSeasonEpisodePrefersTVDBThenIMDBThenMetadata(t *testing.T) {
 	t.Parallel()
 
 	meta := api.PreparedMetadata{
@@ -809,9 +815,80 @@ func TestResolveBTNTVSeasonEpisodePrefersTVDBThenMetadata(t *testing.T) {
 		t.Fatalf("expected TVDB season/episode to satisfy BTN metadata check, got %q", got)
 	}
 
+	meta.ExternalMetadata.TVDB = &api.TVDBMetadata{}
+	meta.ExternalMetadata.IMDB = &api.IMDBMetadata{Episodes: []api.IMDBEpisode{{Season: 2, EpisodeText: "E07"}}}
+	season, episode = resolveBTNTVSeasonEpisode(meta)
+	if season != 2 || episode != 7 {
+		t.Fatalf("expected IMDb season/episode 2/7, got %d/%d", season, episode)
+	}
+
+	if got := btnTVPayloadMetadataMessage(api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "TV"},
+		ExternalMetadata: api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{Episodes: []api.IMDBEpisode{{Season: 3, EpisodeText: "Episode 8"}}},
+		},
+	}); got != "" {
+		t.Fatalf("expected sole IMDb episode to satisfy BTN metadata check, got %q", got)
+	}
+
 	meta.ExternalMetadata.TVDB = nil
+	meta.ExternalMetadata.IMDB = nil
 	season, episode = resolveBTNTVSeasonEpisode(meta)
 	if season != 2 || episode != 7 {
 		t.Fatalf("expected metadata season/episode 2/7, got %d/%d", season, episode)
+	}
+}
+
+func TestBuildAlbumDescFallsBackToIMDBEpisodeMetadata(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ExternalIDs:     api.ExternalIDs{Category: "TV"},
+		SeasonInt:       2,
+		EpisodeInt:      7,
+		EpisodeTitle:    "Metadata Episode",
+		EpisodeOverview: "Metadata overview",
+		ExternalMetadata: api.ExternalMetadata{
+			TVDB: &api.TVDBMetadata{},
+			IMDB: &api.IMDBMetadata{
+				Plot: "IMDb overview",
+				Episodes: []api.IMDBEpisode{{
+					Title:       "IMDb Episode",
+					Season:      2,
+					EpisodeText: "7",
+					ReleaseDate: api.IMDBReleaseDate{Year: 2026, Month: 3, Day: 4},
+				}},
+			},
+		},
+	}
+
+	desc := buildAlbumDesc(meta, map[string]string{"album_desc": "Autofill overview"})
+	for _, value := range []string{"IMDb Episode", "Season: 2", "Episode: 7", "Aired: 2026-03-04", "IMDb overview"} {
+		if !strings.Contains(desc, value) {
+			t.Fatalf("expected album_desc to contain %q, got %q", value, desc)
+		}
+	}
+}
+
+func TestResolveBTNOriginalLanguageUsesTVDBThenIMDB(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ExternalMetadata: api.ExternalMetadata{
+			TVDB: &api.TVDBMetadata{OriginalLanguage: "jpn"},
+			IMDB: &api.IMDBMetadata{OriginalLanguage: "fra"},
+		},
+	}
+	if got := resolveBTNOriginalLanguage(meta); got != "jpn" {
+		t.Fatalf("expected TVDB language, got %q", got)
+	}
+	meta.ExternalMetadata.TVDB.OriginalLanguage = ""
+	if got := resolveBTNOriginalLanguage(meta); got != "fra" {
+		t.Fatalf("expected IMDb fallback language, got %q", got)
+	}
+	for _, value := range []string{"en", "eng", "English"} {
+		if !isBTNEnglishLanguage(value) {
+			t.Fatalf("expected %q to be treated as English", value)
+		}
 	}
 }

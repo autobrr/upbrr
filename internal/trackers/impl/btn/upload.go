@@ -61,6 +61,7 @@ var (
 	btnOptionValueRegex    = regexp.MustCompile(`(?is)<option[^>]*value=["']([^"']+)["']`)
 	btnSuccessURLPattern   = regexp.MustCompile(`torrents\.php\?id=(\d+)(?:&torrentid=(\d+))?`)
 	btnHTMLURLAttrPattern  = regexp.MustCompile(`(?is)\b(?:href|action)=["']([^"']+)["']`)
+	btnIMDBEpisodePattern  = regexp.MustCompile(`(?i)(?:^|\bE|episode\s*)(\d{1,4})(?:\b|$)`)
 	// btnCountryMap maps normalized BTN country option labels and exact
 	// metadata-source country codes to BTN's country select values.
 	btnCountryMap = map[string]string{
@@ -757,7 +758,7 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 	if resolveFastTorrent(req.TrackerConfig) {
 		payload["fasttorrent"] = "on"
 	}
-	if req.Meta.ExternalMetadata.TVDB != nil && !strings.EqualFold(strings.TrimSpace(req.Meta.ExternalMetadata.TVDB.OriginalLanguage), "en") {
+	if language := resolveBTNOriginalLanguage(req.Meta); language != "" && !isBTNEnglishLanguage(language) {
 		payload["foreign"] = "on"
 		if countryID := resolveCountryID(req.Meta); countryID != "" {
 			payload["country"] = countryID
@@ -790,15 +791,20 @@ func logBTNAutofillMismatch(logger api.Logger, field string, metadataValue strin
 }
 
 // resolveBTNTags keeps BTN autofill genres when present and otherwise maps
-// TVDB genres to BTN-supported tag labels.
+// TVDB then IMDb genres to BTN-supported tag labels.
 func resolveBTNTags(meta api.PreparedMetadata, fields map[string]string) string {
 	if tags := strings.TrimSpace(fields["tags"]); tags != "" {
 		return tags
 	}
-	if meta.ExternalMetadata.TVDB == nil {
-		return ""
+	if meta.ExternalMetadata.TVDB != nil {
+		if tags := mapBTNGenres(meta.ExternalMetadata.TVDB.Genres); tags != "" {
+			return tags
+		}
 	}
-	return mapBTNTVDBGenres(meta.ExternalMetadata.TVDB.Genres)
+	if meta.ExternalMetadata.IMDB != nil {
+		return mapBTNGenres(meta.ExternalMetadata.IMDB.Genres)
+	}
+	return ""
 }
 
 // resolveBTNImage keeps BTN autofill poster data when present. Empty autofill
@@ -831,9 +837,9 @@ func resolveBTNImage(meta api.PreparedMetadata, fields map[string]string) string
 	return ""
 }
 
-// mapBTNTVDBGenres converts TVDB genre text to comma-separated BTN genre tags.
+// mapBTNGenres converts provider genre text to comma-separated BTN genre tags.
 // Unrecognized genres are omitted instead of being submitted as free-form tags.
-func mapBTNTVDBGenres(genres string) string {
+func mapBTNGenres(genres string) string {
 	normalized := normalizeBTNGenreText(genres)
 	if normalized == "" {
 		return ""
@@ -968,6 +974,15 @@ func preferredBTNTVDBEpisodeTitle(tvdb *api.TVDBMetadata) string {
 	return metautil.FirstNonEmptyTrimmed(strings.TrimSpace(tvdb.EpisodeNameEnglish), strings.TrimSpace(tvdb.EpisodeName))
 }
 
+// preferredBTNIMDBEpisodeTitle returns the selected IMDb episode title when an
+// episode-specific IMDb entry can be matched to the upload metadata.
+func preferredBTNIMDBEpisodeTitle(meta api.PreparedMetadata) string {
+	if episode := preferredBTNIMDBEpisode(meta); episode != nil {
+		return strings.TrimSpace(episode.Title)
+	}
+	return ""
+}
+
 // preferredBTNTVDBOverview returns TVDB episode overview text before series
 // overview text, using English translations before original-language values.
 func preferredBTNTVDBOverview(tvdb *api.TVDBMetadata) string {
@@ -982,19 +997,28 @@ func preferredBTNTVDBOverview(tvdb *api.TVDBMetadata) string {
 	)
 }
 
+// preferredBTNIMDBOverview returns IMDb plot text when TVDB overview data is
+// unavailable for the BTN description block.
+func preferredBTNIMDBOverview(imdb *api.IMDBMetadata) string {
+	if imdb == nil {
+		return ""
+	}
+	return strings.TrimSpace(imdb.Plot)
+}
+
 // buildAlbumDesc builds the BTN description block for TV uploads from metadata
 // that BTN does not provide through autofill. TVDB episode metadata wins for
-// title, overview, aired date, season, and episode when present; BTN autofill
-// fields remain the fallback source.
+// title, overview, aired date, season, and episode when present; missing TVDB
+// values fall back through IMDb before local metadata and BTN autofill fields.
 func buildAlbumDesc(meta api.PreparedMetadata, fields map[string]string) string {
 	if !strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") {
 		return metautil.FirstNonEmptyTrimmed(fields["album_desc"])
 	}
 	tvdb := meta.ExternalMetadata.TVDB
-	overview := metautil.FirstNonEmptyTrimmed(preferredBTNTVDBOverview(tvdb), strings.TrimSpace(meta.EpisodeOverview), strings.TrimSpace(fields["album_desc"]))
-	aired := metautil.FirstNonEmptyTrimmed(btnTVDBEpisodeAired(tvdb), strings.TrimSpace(meta.TVDBAiredDate), strings.TrimSpace(meta.DailyEpisodeDate), "TBA")
+	overview := metautil.FirstNonEmptyTrimmed(preferredBTNTVDBOverview(tvdb), preferredBTNIMDBOverview(meta.ExternalMetadata.IMDB), strings.TrimSpace(meta.EpisodeOverview), strings.TrimSpace(fields["album_desc"]))
+	aired := metautil.FirstNonEmptyTrimmed(btnTVDBEpisodeAired(tvdb), btnIMDBEpisodeAired(meta), strings.TrimSpace(meta.TVDBAiredDate), strings.TrimSpace(meta.DailyEpisodeDate), "TBA")
 	season, episode := resolveBTNTVSeasonEpisode(meta)
-	episodeTitle := metautil.FirstNonEmptyTrimmed(preferredBTNTVDBEpisodeTitle(tvdb), strings.TrimSpace(meta.EpisodeTitle), "TBA")
+	episodeTitle := metautil.FirstNonEmptyTrimmed(preferredBTNTVDBEpisodeTitle(tvdb), preferredBTNIMDBEpisodeTitle(meta), strings.TrimSpace(meta.EpisodeTitle), "TBA")
 	return strings.TrimSpace(fmt.Sprintf("Episode Name: %s\nEpisode Title: %s\nSeason: %d\nEpisode: %d\nAired: %s\n\nEpisode overview: %s", episodeTitle, episodeTitle, season, episode, aired, overview))
 }
 
@@ -1005,6 +1029,68 @@ func btnTVDBEpisodeAired(tvdb *api.TVDBMetadata) string {
 		return ""
 	}
 	return strings.TrimSpace(tvdb.EpisodeAired)
+}
+
+// btnIMDBEpisodeAired returns the selected IMDb episode release date in the
+// most specific YYYY[-MM[-DD]] form available.
+func btnIMDBEpisodeAired(meta api.PreparedMetadata) string {
+	episode := preferredBTNIMDBEpisode(meta)
+	if episode == nil || episode.ReleaseDate.Year <= 0 {
+		return ""
+	}
+	if episode.ReleaseDate.Month <= 0 {
+		return strconv.Itoa(episode.ReleaseDate.Year)
+	}
+	if episode.ReleaseDate.Day <= 0 {
+		return fmt.Sprintf("%04d-%02d", episode.ReleaseDate.Year, episode.ReleaseDate.Month)
+	}
+	return fmt.Sprintf("%04d-%02d-%02d", episode.ReleaseDate.Year, episode.ReleaseDate.Month, episode.ReleaseDate.Day)
+}
+
+// preferredBTNIMDBEpisode returns the IMDb episode entry for this upload when
+// the canonical season and episode identify one, or the sole available IMDb
+// episode when the metadata payload already represents a single episode.
+func preferredBTNIMDBEpisode(meta api.PreparedMetadata) *api.IMDBEpisode {
+	if meta.ExternalMetadata.IMDB == nil || len(meta.ExternalMetadata.IMDB.Episodes) == 0 {
+		return nil
+	}
+	episodes := meta.ExternalMetadata.IMDB.Episodes
+	season, episode := meta.CanonicalSeasonEpisode()
+	if season > 0 && episode > 0 {
+		for i := range episodes {
+			if episodes[i].Season != season {
+				continue
+			}
+			if btnIMDBEpisodeNumber(episodes[i].EpisodeText) == episode {
+				return &episodes[i]
+			}
+		}
+	}
+	if len(episodes) == 1 {
+		return &episodes[0]
+	}
+	return nil
+}
+
+// btnIMDBEpisodeNumber parses IMDb episode text such as "7", "E07", or
+// "Episode 7" into the numeric episode value BTN expects.
+func btnIMDBEpisodeNumber(value string) int {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if parsed, err := strconv.Atoi(value); err == nil {
+		return parsed
+	}
+	matches := btnIMDBEpisodePattern.FindStringSubmatch(value)
+	if len(matches) < 2 {
+		return 0
+	}
+	parsed, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return 0
+	}
+	return parsed
 }
 
 // validateBTNTVPayloadMetadata returns the shared BTN TV metadata block reason
@@ -1031,17 +1117,23 @@ func resolveUploadType(meta api.PreparedMetadata) string {
 
 // resolveBTNTVSeasonEpisode returns the season and episode numbers BTN should
 // use for generated request and description fields. TVDB episode numbers win
-// over metadata ints; missing TVDB values fall back independently.
+// over IMDb episode data, then metadata ints; missing values fall back
+// independently.
 func resolveBTNTVSeasonEpisode(meta api.PreparedMetadata) (int, int) {
 	season, episode := meta.CanonicalSeasonEpisode()
-	if meta.ExternalMetadata.TVDB == nil {
-		return season, episode
-	}
-	if meta.ExternalMetadata.TVDB.EpisodeSeason > 0 {
+	tvdb := meta.ExternalMetadata.TVDB
+	imdbEpisode := preferredBTNIMDBEpisode(meta)
+	if tvdb != nil && tvdb.EpisodeSeason > 0 {
 		season = meta.ExternalMetadata.TVDB.EpisodeSeason
+	} else if imdbEpisode != nil && imdbEpisode.Season > 0 {
+		season = imdbEpisode.Season
 	}
-	if meta.ExternalMetadata.TVDB.EpisodeNumber > 0 {
+	if tvdb != nil && tvdb.EpisodeNumber > 0 {
 		episode = meta.ExternalMetadata.TVDB.EpisodeNumber
+	} else if imdbEpisode != nil {
+		if imdbEpisodeNumber := btnIMDBEpisodeNumber(imdbEpisode.EpisodeText); imdbEpisodeNumber > 0 {
+			episode = imdbEpisodeNumber
+		}
 	}
 	return season, episode
 }
@@ -2148,6 +2240,31 @@ func resolveCountryID(meta api.PreparedMetadata) string {
 	}
 
 	return ""
+}
+
+// resolveBTNOriginalLanguage returns provider original language in BTN
+// priority order: TVDB first, then IMDb when TVDB has no value.
+func resolveBTNOriginalLanguage(meta api.PreparedMetadata) string {
+	if meta.ExternalMetadata.TVDB != nil {
+		if language := strings.TrimSpace(meta.ExternalMetadata.TVDB.OriginalLanguage); language != "" {
+			return language
+		}
+	}
+	if meta.ExternalMetadata.IMDB != nil {
+		return strings.TrimSpace(meta.ExternalMetadata.IMDB.OriginalLanguage)
+	}
+	return ""
+}
+
+// isBTNEnglishLanguage reports whether a provider language value represents
+// English and should therefore not trigger BTN's foreign flag.
+func isBTNEnglishLanguage(language string) bool {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "en", "eng", "english":
+		return true
+	default:
+		return false
+	}
 }
 
 // normalizeBTNCountryAlias lowercases and collapses punctuation so metadata
