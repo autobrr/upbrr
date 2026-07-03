@@ -86,6 +86,22 @@ func TestIsRenamedRelease(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "standard rename check skipped for configured group",
+			meta: api.PreparedMetadata{
+				SourcePath: "/data/movies/Example Release 2026 2160p MA WEB-DL DDP5 1 HDR H 265-HiDt",
+				Release:    api.ReleaseInfo{Group: "HiDt"},
+			},
+			want: false,
+		},
+		{
+			name: "standard arr-token rename check skipped for configured group",
+			meta: api.PreparedMetadata{
+				SourcePath: "/data/movies/Example Release (2026) {imdb-tt1234567}-HiDt",
+				Release:    api.ReleaseInfo{Group: "HiDt"},
+			},
+			want: false,
+		},
+		{
 			name: "arr-renamed personal release is exempt",
 			meta: api.PreparedMetadata{
 				SourcePath:      "/data/movies/Fury (2014) {imdb-tt2713180}",
@@ -171,6 +187,15 @@ func TestIsRenamedRelease(t *testing.T) {
 				SourcePath:         "/data/movies/Fury.2014.1080p.BluRay.x264",
 				SceneRenamed:       true,
 				SceneRenamedReason: "source appears renamed or modified from its original release name; verify the file hash and source provenance",
+			},
+			want: true,
+		},
+		{
+			name: "srrdb rename signal still flags configured standard-skip group",
+			meta: api.PreparedMetadata{
+				SourcePath:   "/data/movies/Example.Release.2026.1080p.BluRay.x264-HiDt",
+				Release:      api.ReleaseInfo{Group: "HiDt"},
+				SceneRenamed: true,
 			},
 			want: true,
 		},
