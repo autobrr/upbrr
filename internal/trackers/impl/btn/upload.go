@@ -35,6 +35,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
@@ -353,7 +354,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		"submit":       "true",
 		"type":         resolveUploadType(req.Meta),
 		"scenename":    resolveUploadName(req.Meta),
-		"origin":       resolveOrigin(resolveUploadName(req.Meta)),
+		"origin":       resolveOrigin(req.Meta, nil),
 		"release_desc": strings.TrimSpace(req.Meta.DescriptionOverride),
 		"tvdb":         "autofilled",
 	}
@@ -717,7 +718,7 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		"artist":       metautil.FirstNonEmptyTrimmed(fields["artist"]),
 		"title":        title,
 		"actors":       metautil.FirstNonEmptyTrimmed(fields["actors"]),
-		"origin":       resolveOrigin(resolveUploadName(req.Meta)),
+		"origin":       resolveOrigin(req.Meta, fields),
 		"year":         metautil.FirstNonEmptyTrimmed(fields["year"]),
 		"tags":         resolveBTNTags(req.Meta, fields),
 		"image":        resolveBTNImage(req.Meta, fields),
@@ -1055,15 +1056,29 @@ func btnTVPayloadMetadataMessage(meta api.PreparedMetadata) string {
 	return message
 }
 
-func resolveOrigin(releaseName string) string {
-	name := strings.TrimSpace(releaseName)
-	switch {
-	case strings.HasSuffix(name, "-BTW"), strings.HasSuffix(name, "-NTb"), strings.HasSuffix(name, "-TVSmash"):
-		return "Internal"
-	case strings.HasSuffix(name, "-NOGRP"):
-		return "None"
+// resolveOrigin preserves BTN autofill origin when available, then derives the
+// closest BTN origin from prepared scene and season-pack metadata.
+func resolveOrigin(meta api.PreparedMetadata, fields map[string]string) string {
+	if origin := strings.TrimSpace(fields["origin"]); validBTNOrigin(origin) {
+		return origin
+	}
+	if metadata.DetectSeasonPackGroupTags(meta).Mixed {
+		return "Mixed"
+	}
+	if meta.Scene || strings.TrimSpace(meta.SceneName) != "" {
+		return "Scene"
+	}
+	return "P2P"
+}
+
+// validBTNOrigin reports whether value is one of BTN's supported origin
+// dropdown values.
+func validBTNOrigin(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "None", "Scene", "P2P", "User", "Mixed":
+		return true
 	default:
-		return "P2P"
+		return false
 	}
 }
 

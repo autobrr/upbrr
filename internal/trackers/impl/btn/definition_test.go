@@ -214,6 +214,85 @@ func TestResolveUploadNameGroupTag(t *testing.T) {
 	}
 }
 
+func TestResolveOrigin(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		meta     api.PreparedMetadata
+		fields   map[string]string
+		expected string
+	}{
+		{
+			name:     "BTN autofill origin wins",
+			meta:     api.PreparedMetadata{Scene: true},
+			fields:   map[string]string{"origin": "P2P"},
+			expected: "P2P",
+		},
+		{
+			name:     "invalid BTN autofill origin ignored",
+			meta:     api.PreparedMetadata{Scene: true},
+			fields:   map[string]string{"origin": "Internal"},
+			expected: "Scene",
+		},
+		{
+			name:     "scene metadata",
+			meta:     api.PreparedMetadata{Scene: true},
+			expected: "Scene",
+		},
+		{
+			name:     "scene name metadata",
+			meta:     api.PreparedMetadata{SceneName: "Example.Show.S01E01.1080p.WEB-DL.x264-GRP"},
+			expected: "Scene",
+		},
+		{
+			name:     "non-scene metadata",
+			meta:     api.PreparedMetadata{ReleaseName: "Example.Show.S01E01.1080p.WEB-DL.x264-GRP"},
+			expected: "P2P",
+		},
+		{
+			name: "mixed season pack groups",
+			meta: api.PreparedMetadata{
+				TVPack: true,
+				FileList: []string{
+					`C:\media\Example.Show.S01E01.1080p.WEB-DL.x264-GRP.mkv`,
+					`C:\media\Example.Show.S01E02.1080p.WEB-DL.x264-ALT.mkv`,
+				},
+			},
+			expected: "Mixed",
+		},
+		{
+			name: "same season pack groups",
+			meta: api.PreparedMetadata{
+				TVPack: true,
+				FileList: []string{
+					`C:\media\Example.Show.S01E01.1080p.WEB-DL.x264-GRP.mkv`,
+					`C:\media\Example.Show.S01E02.1080p.WEB-DL.x264-GRP.mkv`,
+				},
+			},
+			expected: "P2P",
+		},
+		{
+			name: "mixed file groups ignored outside season packs",
+			meta: api.PreparedMetadata{
+				FileList: []string{
+					`C:\media\Example.Show.S01E01.1080p.WEB-DL.x264-GRP.mkv`,
+					`C:\media\Example.Show.S01E02.1080p.WEB-DL.x264-ALT.mkv`,
+				},
+			},
+			expected: "P2P",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveOrigin(tc.meta, tc.fields); got != tc.expected {
+				t.Fatalf("expected origin %q, got %q", tc.expected, got)
+			}
+		})
+	}
+}
+
 func TestResolveCountryIDUsesExactAliases(t *testing.T) {
 	t.Parallel()
 
