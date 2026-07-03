@@ -162,6 +162,36 @@ func TestResolveUploadNameGroupTag(t *testing.T) {
 			},
 			expected: "Example.Show.S01E01.1080p.Web-DL.x265-NOGRP",
 		},
+		{
+			name: "Generated episode title absent from filename stripped",
+			meta: api.PreparedMetadata{
+				Filename:     "Example.Show.S01E01.1080p.WEB-DL.x265-GRP.mkv",
+				ReleaseName:  "Example.Show.S01E01.Episode.One.1080p.WEB-DL.x265-GRP",
+				EpisodeTitle: "Episode One",
+				Tag:          "GRP",
+			},
+			expected: "Example.Show.S01E01.1080p.WEB-DL.x265-GRP",
+		},
+		{
+			name: "Filename episode title preserved",
+			meta: api.PreparedMetadata{
+				Filename:     "Example.Show.S01E01.Episode.One.1080p.WEB-DL.x265-GRP.mkv",
+				ReleaseName:  "Example.Show.S01E01.Episode.One.1080p.WEB-DL.x265-GRP",
+				EpisodeTitle: "Episode One",
+				Tag:          "GRP",
+			},
+			expected: "Example.Show.S01E01.Episode.One.1080p.WEB-DL.x265-GRP",
+		},
+		{
+			name: "Episode title substring preserved",
+			meta: api.PreparedMetadata{
+				Filename:     "Example.Show.S01E01.1080p.WEB-DL.x265-GRP.mkv",
+				ReleaseName:  "Example.Show.S01E01.Someone.1080p.WEB-DL.x265-GRP",
+				EpisodeTitle: "One",
+				Tag:          "GRP",
+			},
+			expected: "Example.Show.S01E01.Someone.1080p.WEB-DL.x265-GRP",
+		},
 	}
 
 	for _, tc := range tests {

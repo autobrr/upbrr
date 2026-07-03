@@ -925,12 +925,16 @@ func resolveOrigin(releaseName string) string {
 	}
 }
 
-func stripEpisodeTitle(name string, episodeTitle string) string {
+// stripEpisodeTitle removes generated episode-title text from BTN upload names
+// unless the original filename already carried the same token sequence.
+func stripEpisodeTitle(name string, episodeTitle string, filename string) string {
 	if episodeTitle == "" || name == "" {
 		return name
 	}
-	// uncleaned episodeTitle is embedded directly into ReleaseName.
-	return strings.ReplaceAll(name, episodeTitle, "")
+	if metautil.ReleaseNameContainsEpisodeTitle(filename, episodeTitle) {
+		return name
+	}
+	return metautil.RemoveEpisodeTitleFromReleaseName(name, episodeTitle)
 }
 
 func resolveUploadName(meta api.PreparedMetadata) string {
@@ -944,9 +948,15 @@ func resolveUploadName(meta api.PreparedMetadata) string {
 	} else {
 		name = pathutil.Base(meta.SourcePath)
 	}
-	name = stripEpisodeTitle(name, meta.EpisodeTitle)
+	name = stripEpisodeTitle(name, meta.EpisodeTitle, btnEpisodeTitleFilename(meta))
 	name = cleanAndNormalizeBTNName(name)
 	return applyBTNNoGroupSuffix(name, meta)
+}
+
+// btnEpisodeTitleFilename returns the original filename text used to decide
+// whether BTN should preserve an episode title in the upload name.
+func btnEpisodeTitleFilename(meta api.PreparedMetadata) string {
+	return metautil.FirstNonEmptyTrimmed(meta.Filename, pathutil.Base(meta.SourcePath))
 }
 
 // applyBTNNoGroupSuffix preserves a valid prepared group tag for no-tag names
@@ -974,7 +984,7 @@ func selectedBTNReleaseNameNoTag(name string, meta api.PreparedMetadata) bool {
 	if strings.TrimSpace(meta.ReleaseName) != "" || strings.TrimSpace(meta.ReleaseNameNoTag) == "" {
 		return false
 	}
-	candidate := stripEpisodeTitle(strings.TrimSpace(meta.ReleaseNameNoTag), meta.EpisodeTitle)
+	candidate := stripEpisodeTitle(strings.TrimSpace(meta.ReleaseNameNoTag), meta.EpisodeTitle, btnEpisodeTitleFilename(meta))
 	candidate = cleanAndNormalizeBTNName(candidate)
 	return strings.TrimSpace(name) == candidate
 }
