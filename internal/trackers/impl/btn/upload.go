@@ -58,10 +58,12 @@ var (
 	btnSelectedOptionRegex = regexp.MustCompile(`(?is)<option[^>]*selected[^>]*value=["']([^"']+)["']`)
 	btnOptionValueRegex    = regexp.MustCompile(`(?is)<option[^>]*value=["']([^"']+)["']`)
 	btnSuccessURLPattern   = regexp.MustCompile(`torrents\.php\?id=(\d+)(?:&torrentid=(\d+))?`)
-	btnCountryMap          = map[string]string{
+	// btnCountryMap maps normalized BTN country option labels and exact
+	// metadata-source country codes to BTN's country select values.
+	btnCountryMap = map[string]string{
 		"se": "1", "swe": "1", "sweden": "1",
 		"us": "2", "usa": "2", "united states": "2", "united states of america": "2",
-		"ru": "3", "rus": "3", "russia": "3",
+		"ru": "3", "rus": "3", "russia": "3", "russian federation": "3",
 		"fi": "4", "fin": "4", "finland": "4",
 		"ca": "5", "can": "5", "canada": "5",
 		"fr": "6", "fra": "6", "france": "6",
@@ -101,7 +103,7 @@ var (
 		"gt": "40", "gtm": "40", "guatemala": "40",
 		"il": "41", "isr": "41", "israel": "41",
 		"pk": "42", "pak": "42", "pakistan": "42",
-		"cz": "43", "cze": "43", "czech republic": "43",
+		"cz": "43", "cze": "43", "czech republic": "43", "czechia": "43",
 		"rs": "44", "srb": "44", "serbia": "44",
 		"sc": "45", "syc": "45", "seychelles": "45",
 		"tw": "46", "twn": "46", "taiwan": "46",
@@ -122,7 +124,7 @@ var (
 		"si": "61", "svn": "61", "slovenia": "61",
 		"al": "62", "alb": "62", "albania": "62",
 		"tm": "63", "tkm": "63", "turkmenistan": "63",
-		"ba": "64", "bih": "64", "bosnia herzegovina": "64",
+		"ba": "64", "bih": "64", "bosnia herzegovina": "64", "bosnia and herzegovina": "64",
 		"ad": "65", "and": "65", "andorra": "65",
 		"lt": "66", "ltu": "66", "lithuania": "66",
 		"in": "67", "ind": "67", "india": "67",
@@ -133,7 +135,7 @@ var (
 		"ro": "72", "rou": "72", "romania": "72",
 		"vu": "73", "vut": "73", "vanuatu": "73",
 		"vn": "74", "vnm": "74", "vietnam": "74",
-		"tt": "75", "tto": "75", "trinidad": "75",
+		"tt": "75", "tto": "75", "trinidad": "75", "trinidad and tobago": "75",
 		"hn": "76", "hnd": "76", "honduras": "76",
 		"kg": "77", "kgz": "77", "kyrgyzstan": "77",
 		"ec": "78", "ecu": "78", "ecuador": "78",
@@ -144,9 +146,9 @@ var (
 		"bd": "83", "bgd": "83", "bangladesh": "83",
 		"la": "84", "lao": "84", "laos": "84",
 		"uy": "85", "ury": "85", "uruguay": "85",
-		"ag": "86", "atg": "86", "antigua barbuda": "86",
+		"ag": "86", "atg": "86", "antigua barbuda": "86", "antigua and barbuda": "86",
 		"py": "87", "pry": "87", "paraguay": "87",
-		"su": "88", "sun": "88", "soviet": "88",
+		"su": "88", "sun": "88", "soviet": "88", "soviet union": "88", "ussr": "88", "union of soviet socialist repu": "88",
 		"th": "89", "tha": "89", "thailand": "89",
 		"sn": "90", "sen": "90", "senegal": "90",
 		"tg": "91", "tgo": "91", "togo": "91",
@@ -159,14 +161,19 @@ var (
 		"cr": "98", "cri": "98", "costa rica": "98",
 		"eg": "99", "egy": "99", "egypt": "99",
 		"bg": "100", "bgr": "100", "bulgaria": "100",
+		"isle de muerte": "101",
+		"fj":             "102", "fji": "102", "fiji": "102",
 		"mk": "103", "mkd": "103", "macedonia": "103",
 		"kw": "104", "kwt": "104", "kuwait": "104",
 		"lk": "105", "lka": "105", "sri lanka": "105",
 		"ir": "106", "irn": "106", "iran": "106",
-		"sa": "108", "sau": "108", "saudi arabia": "108",
-		"sk": "110", "svk": "110", "slovakia": "110",
+		"arab league": "107",
+		"sa":          "108", "sau": "108", "saudi arabia": "108",
+		"scotland": "109",
+		"sk":       "110", "svk": "110", "slovakia": "110",
 		"id": "111", "idn": "111", "indonesia": "111",
-		"bn": "113", "brn": "113", "brunei": "113",
+		"wales": "112",
+		"bn":    "113", "brn": "113", "brunei": "113",
 	}
 )
 
@@ -1605,12 +1612,10 @@ func applyBTNNameMapping(releaseName string, mappedCodec string, mappedSource st
 	return updated
 }
 
-// resolveCountryID extracts country information from external metadata and returns the BTN country ID.
-// It tries TVDB first, then TMDB, then IMDB. Returns empty string if no country is found.
-// All inputs are normalized to lowercase before matching to handle:
-// - TVDB alpha-3 codes (e.g., "usa") - converted to alpha-2 then mapped
-// - TMDB alpha-2 codes (e.g., "US") - normalized to lowercase then mapped
-// - IMDB country names (e.g., "United States") - normalized to lowercase then matched
+// resolveCountryID extracts the first available country from TVDB, TMDB, then
+// IMDB metadata and returns its BTN country id. Country codes and names are
+// matched only against normalized exact aliases so ambiguous inputs do not
+// depend on map iteration order.
 func resolveCountryID(meta api.PreparedMetadata) string {
 	var countryStr string
 
@@ -1637,24 +1642,28 @@ func resolveCountryID(meta api.PreparedMetadata) string {
 		return ""
 	}
 
-	// Normalize to lowercase for all lookups
-	normalized := strings.ToLower(strings.TrimSpace(countryStr))
-
-	// Try direct lookup (handles alpha-2 codes, alpha-3 codes, and country names)
-	if id, ok := btnCountryMap[normalized]; ok {
+	if id, ok := btnCountryMap[normalizeBTNCountryAlias(countryStr)]; ok {
 		return id
 	}
 
-	// Try partial name matching for fuzzy country name variations
-	// (e.g., "united states of america" partially matches "united states").
-	// Only match against longer names to prevent false positives from short codes.
-	for key, id := range btnCountryMap {
-		if len(key) > 3 && (strings.Contains(normalized, key) || strings.Contains(key, normalized)) {
-			return id
-		}
-	}
-
 	return ""
+}
+
+// normalizeBTNCountryAlias lowercases and collapses punctuation so metadata
+// country names can be compared against BTN's exact alias table.
+func normalizeBTNCountryAlias(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.NewReplacer(
+		"&", " and ",
+		".", " ",
+		",", " ",
+		"-", " ",
+		"_", " ",
+		"'", " ",
+		"(", " ",
+		")", " ",
+	).Replace(normalized)
+	return strings.Join(strings.Fields(normalized), " ")
 }
 
 // validateBTNAPIURL accepts only HTTP(S) URLs that resolve to public addresses.

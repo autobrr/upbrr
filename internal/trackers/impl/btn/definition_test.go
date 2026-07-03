@@ -212,6 +212,189 @@ func TestResolveUploadNameGroupTag(t *testing.T) {
 	}
 }
 
+func TestResolveCountryIDUsesExactAliases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		meta     api.PreparedMetadata
+		expected string
+	}{
+		{
+			name: "TVDB alpha3 exact",
+			meta: api.PreparedMetadata{ExternalMetadata: api.ExternalMetadata{
+				TVDB: &api.TVDBMetadata{OriginalCountry: "usa"},
+			}},
+			expected: "2",
+		},
+		{
+			name: "TMDB alpha2 exact",
+			meta: api.PreparedMetadata{ExternalMetadata: api.ExternalMetadata{
+				TMDB: &api.TMDBMetadata{OriginCountry: []string{"GB"}},
+			}},
+			expected: "12",
+		},
+		{
+			name: "IMDB compound alias",
+			meta: api.PreparedMetadata{ExternalMetadata: api.ExternalMetadata{
+				IMDB: &api.IMDBMetadata{Country: "Trinidad and Tobago"},
+			}},
+			expected: "75",
+		},
+		{
+			name: "punctuation normalized exact alias",
+			meta: api.PreparedMetadata{ExternalMetadata: api.ExternalMetadata{
+				IMDB: &api.IMDBMetadata{Country: "Bosnia & Herzegovina"},
+			}},
+			expected: "64",
+		},
+		{
+			name: "ambiguous partial name rejected",
+			meta: api.PreparedMetadata{ExternalMetadata: api.ExternalMetadata{
+				IMDB: &api.IMDBMetadata{Country: "Korea"},
+			}},
+			expected: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveCountryID(tc.meta); got != tc.expected {
+				t.Fatalf("expected country id %q, got %q", tc.expected, got)
+			}
+		})
+	}
+}
+
+func TestResolveCountryIDSupportsBTNCountryOptions(t *testing.T) {
+	t.Parallel()
+
+	countries := map[string]string{
+		"Afghanistan":                    "51",
+		"Albania":                        "62",
+		"Algeria":                        "32",
+		"Andorra":                        "65",
+		"Angola":                         "33",
+		"Antigua Barbuda":                "86",
+		"Arab League":                    "107",
+		"Argentina":                      "19",
+		"Australia":                      "20",
+		"Austria":                        "34",
+		"Bahamas":                        "79",
+		"Bangladesh":                     "83",
+		"Barbados":                       "82",
+		"Belgium":                        "16",
+		"Belize":                         "31",
+		"Bosnia Herzegovina":             "64",
+		"Brazil":                         "18",
+		"Brunei":                         "113",
+		"Bulgaria":                       "100",
+		"Burkina Faso":                   "57",
+		"Cambodia":                       "81",
+		"Canada":                         "5",
+		"Chile":                          "48",
+		"China":                          "8",
+		"Colombia":                       "95",
+		"Congo":                          "50",
+		"Costa Rica":                     "98",
+		"Croatia":                        "93",
+		"Cuba":                           "49",
+		"Czech Republic":                 "43",
+		"Denmark":                        "10",
+		"Dominican Republic":             "38",
+		"Ecuador":                        "78",
+		"Egypt":                          "99",
+		"Estonia":                        "94",
+		"Fiji":                           "102",
+		"Finland":                        "4",
+		"France":                         "6",
+		"Germany":                        "7",
+		"Greece":                         "39",
+		"Guatemala":                      "40",
+		"Honduras":                       "76",
+		"Hong Kong":                      "30",
+		"Hungary":                        "71",
+		"Iceland":                        "59",
+		"India":                          "67",
+		"Indonesia":                      "111",
+		"Iran":                           "106",
+		"Ireland":                        "13",
+		"Isle de Muerte":                 "101",
+		"Israel":                         "41",
+		"Italy":                          "9",
+		"Jamaica":                        "28",
+		"Japan":                          "17",
+		"Kiribati":                       "55",
+		"Kuwait":                         "104",
+		"Kyrgyzstan":                     "77",
+		"Laos":                           "84",
+		"Latvia":                         "97",
+		"Lebanon":                        "96",
+		"Lithuania":                      "66",
+		"Luxembourg":                     "29",
+		"Macedonia":                      "103",
+		"Malaysia":                       "37",
+		"Mexico":                         "24",
+		"Nauru":                          "60",
+		"Netherlands":                    "15",
+		"Netherlands Antilles":           "68",
+		"New Zealand":                    "21",
+		"Nigeria":                        "58",
+		"North Korea":                    "92",
+		"Norway":                         "11",
+		"Pakistan":                       "42",
+		"Paraguay":                       "87",
+		"Peru":                           "80",
+		"Philippines":                    "56",
+		"Poland":                         "14",
+		"Portugal":                       "23",
+		"Puerto Rico":                    "47",
+		"Romania":                        "72",
+		"Russia":                         "3",
+		"Saudi Arabia":                   "108",
+		"Scotland":                       "109",
+		"Senegal":                        "90",
+		"Serbia":                         "44",
+		"Seychelles":                     "45",
+		"Singapore":                      "25",
+		"Slovakia":                       "110",
+		"Slovenia":                       "61",
+		"South Africa":                   "26",
+		"South Korea":                    "27",
+		"Spain":                          "22",
+		"Sri Lanka":                      "105",
+		"Sweden":                         "1",
+		"Switzerland":                    "54",
+		"Taiwan":                         "46",
+		"Thailand":                       "89",
+		"Togo":                           "91",
+		"Trinidad & Tobago":              "75",
+		"Turkey":                         "52",
+		"Turkmenistan":                   "63",
+		"Ukraine":                        "69",
+		"Union of Soviet Socialist Repu": "88",
+		"United Kingdom":                 "12",
+		"United States of America":       "2",
+		"Uruguay":                        "85",
+		"Uzbekistan":                     "53",
+		"Vanuatu":                        "73",
+		"Venezuela":                      "70",
+		"Vietnam":                        "74",
+		"Wales":                          "112",
+		"Western Samoa":                  "36",
+		"Yugoslavia":                     "35",
+	}
+
+	for name, expected := range countries {
+		meta := api.PreparedMetadata{ExternalMetadata: api.ExternalMetadata{
+			IMDB: &api.IMDBMetadata{Country: name},
+		}}
+		if got := resolveCountryID(meta); got != expected {
+			t.Fatalf("expected BTN country %q to resolve to %q, got %q", name, expected, got)
+		}
+	}
+}
+
 func TestValidateBTNAPIDownloadURLAllowsOnlySameOriginPrivateFallback(t *testing.T) {
 	t.Parallel()
 
