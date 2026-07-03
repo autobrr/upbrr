@@ -253,7 +253,8 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, err
 	}
 
-	body, contentType, err := commonhttp.BuildMultipartPayload(data, []commonhttp.FileField{{FieldName: "file_input", Path: torrentPath, FileName: "torrent.torrent"}})
+	files := resolveBTNUploadFiles(req.Meta, torrentPath)
+	body, contentType, err := commonhttp.BuildMultipartPayload(data, files)
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 	}
@@ -383,11 +384,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		Description:      payload["release_desc"],
 		Endpoint:         uploadCtx.uploadURL,
 		Payload:          payload,
-		Files: []api.TrackerDryRunFile{{
-			Field:   "file_input",
-			Path:    torrentPath,
-			Present: strings.TrimSpace(torrentPath) != "",
-		}},
+		Files:            resolveBTNDryRunFiles(req.Meta, torrentPath),
 	}, nil
 }
 
@@ -1065,7 +1062,7 @@ func resolveOrigin(meta api.PreparedMetadata, fields map[string]string) string {
 	if metadata.DetectSeasonPackGroupTags(meta).Mixed {
 		return "Mixed"
 	}
-	if meta.Scene || strings.TrimSpace(meta.SceneName) != "" {
+	if isBTNSceneRelease(meta) {
 		return "Scene"
 	}
 	return "P2P"
@@ -1224,6 +1221,57 @@ func resolveTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error
 		}
 	}
 	return "", errors.New("trackers: BTN torrent file not found")
+}
+
+// resolveBTNUploadFiles returns the multipart file parts BTN accepts for an
+// upload. Scene NFOs are attached only when scene metadata confirms the release
+// and the prepared NFO file still exists.
+func resolveBTNUploadFiles(meta api.PreparedMetadata, torrentPath string) []commonhttp.FileField {
+	files := []commonhttp.FileField{{
+		FieldName: "file_input",
+		Path:      torrentPath,
+		FileName:  "torrent.torrent",
+	}}
+	if nfoPath := resolveBTNSceneNFOPath(meta); nfoPath != "" {
+		files = append(files, commonhttp.FileField{
+			FieldName: "nfo",
+			Path:      nfoPath,
+			FileName:  filepath.Base(nfoPath),
+		})
+	}
+	return files
+}
+
+// resolveBTNDryRunFiles mirrors the upload file parts without reading file
+// content so previews show whether BTN will receive an NFO.
+func resolveBTNDryRunFiles(meta api.PreparedMetadata, torrentPath string) []api.TrackerDryRunFile {
+	files := []api.TrackerDryRunFile{{
+		Field:   "file_input",
+		Path:    torrentPath,
+		Present: strings.TrimSpace(torrentPath) != "",
+	}}
+	if nfoPath := resolveBTNSceneNFOPath(meta); nfoPath != "" {
+		files = append(files, api.TrackerDryRunFile{Field: "nfo", Path: nfoPath, Present: true})
+	}
+	return files
+}
+
+func resolveBTNSceneNFOPath(meta api.PreparedMetadata) string {
+	if !isBTNSceneRelease(meta) {
+		return ""
+	}
+	nfoPath := strings.TrimSpace(meta.SceneNFOPath)
+	if nfoPath == "" {
+		return ""
+	}
+	if info, err := os.Stat(nfoPath); err == nil && !info.IsDir() {
+		return nfoPath
+	}
+	return ""
+}
+
+func isBTNSceneRelease(meta api.PreparedMetadata) bool {
+	return meta.Scene || strings.TrimSpace(meta.SceneName) != ""
 }
 
 func resolveTrackerTorrentPath(meta api.PreparedMetadata, dbPath string, tracker string) (string, error) {

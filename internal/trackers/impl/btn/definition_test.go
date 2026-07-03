@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"context"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -288,6 +290,69 @@ func TestResolveOrigin(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := resolveOrigin(tc.meta, tc.fields); got != tc.expected {
 				t.Fatalf("expected origin %q, got %q", tc.expected, got)
+			}
+		})
+	}
+}
+
+func TestResolveBTNUploadFilesSceneNFO(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	torrentPath := filepath.Join(dir, "upload.torrent")
+	if err := os.WriteFile(torrentPath, []byte("d8:announce13:https://x.ee"), 0o600); err != nil {
+		t.Fatalf("write torrent fixture: %v", err)
+	}
+	nfoPath := filepath.Join(dir, "scene.nfo")
+	if err := os.WriteFile(nfoPath, []byte("scene nfo"), 0o600); err != nil {
+		t.Fatalf("write nfo fixture: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		meta       api.PreparedMetadata
+		wantFields []string
+	}{
+		{
+			name:       "scene release attaches nfo",
+			meta:       api.PreparedMetadata{Scene: true, SceneNFOPath: nfoPath},
+			wantFields: []string{"file_input", "nfo"},
+		},
+		{
+			name:       "scene name attaches nfo",
+			meta:       api.PreparedMetadata{SceneName: "Example.Show.S01E01.1080p.WEB-DL.x264-GRP", SceneNFOPath: nfoPath},
+			wantFields: []string{"file_input", "nfo"},
+		},
+		{
+			name:       "non-scene ignores nfo path",
+			meta:       api.PreparedMetadata{SceneNFOPath: nfoPath},
+			wantFields: []string{"file_input"},
+		},
+		{
+			name:       "scene release skips missing nfo path",
+			meta:       api.PreparedMetadata{Scene: true, SceneNFOPath: filepath.Join(dir, "missing.nfo")},
+			wantFields: []string{"file_input"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			files := resolveBTNUploadFiles(tc.meta, torrentPath)
+			gotFields := make([]string, 0, len(files))
+			for _, file := range files {
+				gotFields = append(gotFields, file.FieldName)
+			}
+			if strings.Join(gotFields, ",") != strings.Join(tc.wantFields, ",") {
+				t.Fatalf("expected fields %#v, got %#v", tc.wantFields, gotFields)
+			}
+
+			dryRunFiles := resolveBTNDryRunFiles(tc.meta, torrentPath)
+			gotDryRunFields := make([]string, 0, len(dryRunFiles))
+			for _, file := range dryRunFiles {
+				gotDryRunFields = append(gotDryRunFields, file.Field)
+			}
+			if strings.Join(gotDryRunFields, ",") != strings.Join(tc.wantFields, ",") {
+				t.Fatalf("expected dry-run fields %#v, got %#v", tc.wantFields, gotDryRunFields)
 			}
 		})
 	}
