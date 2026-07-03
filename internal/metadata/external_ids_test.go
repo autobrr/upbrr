@@ -2034,6 +2034,31 @@ func TestApplyTVEpisodeMetadataEpisodeTitleBlankedWhenTBA(t *testing.T) {
 	}
 }
 
+func TestSanitizeEpisodeTitleSkipsGenericAndPlaceholderTitles(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "numeric episode", input: "Episode 1", want: ""},
+		{name: "hash episode", input: "Episode #12", want: ""},
+		{name: "word episode", input: "Episode One", want: ""},
+		{name: "tba", input: "TBA", want: ""},
+		{name: "tbd", input: "TBD", want: ""},
+		{name: "tbc", input: "TBC", want: ""},
+		{name: "tdc", input: "TDC", want: ""},
+		{name: "real title containing episode", input: "The Episode Problem", want: "The Episode Problem"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sanitizeEpisodeTitle(tt.input); got != tt.want {
+				t.Fatalf("sanitizeEpisodeTitle(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveExternalIDsTVDBNoEnglishRefetch(t *testing.T) {
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{}
