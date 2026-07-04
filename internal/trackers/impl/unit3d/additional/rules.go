@@ -38,6 +38,7 @@ var trackerRuleFactories = map[string]func() RuleSet{
 	"HHD":    rulesHHD,
 	"LST":    rulesLST,
 	"LUME":   rulesLUME,
+  "MNS":    rulesMNS,
 	"OE":     rulesOE,
 	"OTW":    rulesOTW,
 	"RAS":    rulesRAS,
@@ -154,6 +155,13 @@ func rulesLUME() RuleSet {
 		},
 		ExtraCheck: checkLUMERequirements,
 	}
+}
+
+func rulesMNS() RuleSet {
+	return RuleSet{
+    BlockAdult:   true,
+		AdultMessage: "Adult content is not allowed",
+  }
 }
 
 func rulesOE() RuleSet {
