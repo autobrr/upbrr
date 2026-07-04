@@ -38,7 +38,7 @@ var trackerRuleFactories = map[string]func() RuleSet{
 	"HHD":    rulesHHD,
 	"LST":    rulesLST,
 	"LUME":   rulesLUME,
-  "MNS":    rulesMNS,
+  	"MNS":    rulesMNS,
 	"OE":     rulesOE,
 	"OTW":    rulesOTW,
 	"RAS":    rulesRAS,
