@@ -247,6 +247,7 @@ const dupeResultsFromSnapshot = (snapshot: DupeCheckSnapshot | null) =>
     .map(dupeResultFromTrackerState)
     .filter((result): result is DupeCheckResult => Boolean(result));
 
+/** Maps backend metadata-cache misses to the same actionable dupe-check guidance. */
 const dupeCheckErrorMessage = (message: string) =>
   message.includes("dupe check requires metadata preview")
     ? "Fetch metadata first to cache a preview before checking dupes."

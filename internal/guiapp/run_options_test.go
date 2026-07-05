@@ -6,7 +6,10 @@ package guiapp
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -36,15 +39,17 @@ func (c *closeCounter) Close() error {
 
 type closeCounterCore struct {
 	closeCounter
-	exportedMeta api.PreparedMetadata
-	exportFound  bool
-	exportErr    error
-	importedMeta api.PreparedMetadata
-	importedReq  api.Request
-	fetchReq     api.Request
-	dupeSummary  api.DupeCheckSummary
-	uploads      []uploadPreparedResponse
-	uploadCalls  int
+	exportedMeta      api.PreparedMetadata
+	exportFound       bool
+	exportErr         error
+	expectedExportReq *api.Request
+	importedMeta      api.PreparedMetadata
+	importedReq       api.Request
+	fetchReq          api.Request
+	dupeSummary       api.DupeCheckSummary
+	dupeCalls         atomic.Int32
+	uploads           []uploadPreparedResponse
+	uploadCalls       int
 }
 
 type uploadPreparedResponse struct {
@@ -91,6 +96,7 @@ func (c *closeCounterCore) FetchTrackerDryRunPreview(context.Context, api.Reques
 }
 
 func (c *closeCounterCore) CheckDupes(context.Context, api.Request) (api.DupeCheckSummary, error) {
+	c.dupeCalls.Add(1)
 	return c.dupeSummary, nil
 }
 
@@ -182,7 +188,10 @@ func (c *closeCounterCore) SaveDescriptionOverride(context.Context, api.Request,
 	return api.DescriptionBuilderGroup{}, nil
 }
 
-func (c *closeCounterCore) ExportGUICachedPreparedMeta(context.Context, api.Request) (api.PreparedMetadata, bool, error) {
+func (c *closeCounterCore) ExportGUICachedPreparedMeta(_ context.Context, req api.Request) (api.PreparedMetadata, bool, error) {
+	if err := assertPreparedMetaExportRequest(req, c.expectedExportReq); err != nil {
+		return api.PreparedMetadata{}, false, err
+	}
 	return c.exportedMeta, c.exportFound, c.exportErr
 }
 
@@ -586,7 +595,8 @@ func TestRunDupeCheckJobSplitsGroupedPathedResultsIntoTrackerStates(t *testing.T
 		},
 	}}
 	job := newDupeCheckJobTestJob(coreSvc.dupeSummary.SourcePath, []string{"AITHER", "BLU", "RF"})
-	app := &App{core: coreSvc}
+	job.core = coreSvc
+	app := &App{}
 
 	app.runDupeCheckJob(context.Background(), nil, job)
 
@@ -604,6 +614,35 @@ func TestRunDupeCheckJobSplitsGroupedPathedResultsIntoTrackerStates(t *testing.T
 		if got := state.Result.Tracker; got != tracker {
 			t.Fatalf("expected %s result tracker, got %q", tracker, got)
 		}
+	}
+}
+
+func TestRunDupeCheckJobUsesJobCoreSnapshot(t *testing.T) {
+	t.Parallel()
+
+	jobCore := &closeCounterCore{dupeSummary: api.DupeCheckSummary{
+		SourcePath: `C:\Media\Movie.mkv`,
+		Results:    []api.DupeCheckResult{{Tracker: "AITHER", Status: "completed"}},
+	}}
+	currentCore := &closeCounterCore{dupeSummary: api.DupeCheckSummary{
+		SourcePath: `C:\Media\Other.mkv`,
+		Results:    []api.DupeCheckResult{{Tracker: "AITHER", Status: "failed"}},
+	}}
+	job := newDupeCheckJobTestJob(jobCore.dupeSummary.SourcePath, []string{"AITHER"})
+	job.core = jobCore
+	job.uploadOptions = api.UploadOptions{Screens: 1}
+	app := &App{core: currentCore}
+
+	app.runDupeCheckJob(context.Background(), nil, job)
+
+	if got := jobCore.dupeCalls.Load(); got != 1 {
+		t.Fatalf("expected job-owned core to run once, got %d", got)
+	}
+	if got := currentCore.dupeCalls.Load(); got != 0 {
+		t.Fatalf("expected current runtime core not to run, got %d", got)
+	}
+	if got := job.states["AITHER"].Status; got != "completed" {
+		t.Fatalf("expected result from job-owned core, got %q", got)
 	}
 }
 
@@ -625,6 +664,106 @@ func TestStartDupeCheckRequiresMetadataPreviewCache(t *testing.T) {
 	}
 	if len(app.dupes) != 0 {
 		t.Fatalf("expected no durable dupe job after cache miss, got %d", len(app.dupes))
+	}
+}
+
+func TestStartDupeCheckUsesMetadataPreviewCache(t *testing.T) {
+	t.Parallel()
+
+	app, sourcePath := newDupeCheckStartTestApp(t)
+	tmdbID := 1234567
+	releaseType := "movie"
+	overrides := api.ExternalIDOverrides{TMDBID: &tmdbID}
+	nameOverrides := api.ReleaseNameOverrides{Type: &releaseType}
+	coreSvc := &closeCounterCore{
+		exportFound:  true,
+		exportedMeta: api.PreparedMetadata{SourcePath: sourcePath},
+		expectedExportReq: &api.Request{
+			Paths:                []string{sourcePath},
+			Mode:                 api.ModeGUI,
+			Trackers:             []string{"AITHER"},
+			ExternalIDOverrides:  overrides,
+			ReleaseNameOverrides: nameOverrides,
+		},
+	}
+	app.core = coreSvc
+
+	jobID, err := app.StartDupeCheck(sourcePath, overrides, nameOverrides, []string{"AITHER"})
+	if err != nil {
+		t.Fatalf("start dupe check: %v", err)
+	}
+	if strings.TrimSpace(jobID) == "" {
+		t.Fatal("expected job id")
+	}
+	if len(app.dupes) != 1 {
+		t.Fatalf("expected durable dupe job, got %d", len(app.dupes))
+	}
+}
+
+func TestStartDupeCheckFailsOnMetadataPreviewCacheRequestMismatch(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name        string
+		expected    func(string) api.Request
+		overrides   api.ExternalIDOverrides
+		wantMessage string
+	}{
+		{
+			name: "path",
+			expected: func(sourcePath string) api.Request {
+				return api.Request{Paths: []string{sourcePath + ".other"}, Mode: api.ModeGUI, Trackers: []string{"AITHER"}}
+			},
+			wantMessage: "metadata preview cache request paths",
+		},
+		{
+			name: "tracker",
+			expected: func(sourcePath string) api.Request {
+				return api.Request{Paths: []string{sourcePath}, Mode: api.ModeGUI, Trackers: []string{"BLU"}}
+			},
+			wantMessage: "metadata preview cache request trackers",
+		},
+		{
+			name: "external id override",
+			expected: func(sourcePath string) api.Request {
+				tmdbID := 7654321
+				return api.Request{
+					Paths:               []string{sourcePath},
+					Mode:                api.ModeGUI,
+					Trackers:            []string{"AITHER"},
+					ExternalIDOverrides: api.ExternalIDOverrides{TMDBID: &tmdbID},
+				}
+			},
+			overrides: func() api.ExternalIDOverrides {
+				tmdbID := 1234567
+				return api.ExternalIDOverrides{TMDBID: &tmdbID}
+			}(),
+			wantMessage: "metadata preview cache request external overrides",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			app, sourcePath := newDupeCheckStartTestApp(t)
+			expected := tt.expected(sourcePath)
+			coreSvc := &closeCounterCore{
+				exportFound:       true,
+				exportedMeta:      api.PreparedMetadata{SourcePath: sourcePath},
+				expectedExportReq: &expected,
+			}
+			app.core = coreSvc
+
+			_, err := app.StartDupeCheck(sourcePath, tt.overrides, api.ReleaseNameOverrides{}, []string{"AITHER"})
+			if err == nil {
+				t.Fatal("expected metadata preview cache request mismatch to fail")
+			}
+			if !strings.Contains(err.Error(), tt.wantMessage) {
+				t.Fatalf("expected mismatch error %q, got %v", tt.wantMessage, err)
+			}
+			if len(app.dupes) != 0 {
+				t.Fatalf("expected no durable dupe job after cache request mismatch, got %d", len(app.dupes))
+			}
+		})
 	}
 }
 
@@ -766,6 +905,61 @@ func newDupeCheckJobTestJob(sourcePath string, trackers []string) *dupeCheckJob 
 		job.states[tracker] = DupeCheckTrackerState{Tracker: tracker, Status: "queued", Message: "queued"}
 	}
 	return job
+}
+
+func newDupeCheckStartTestApp(t *testing.T) (*App, string) {
+	t.Helper()
+
+	tempDir := t.TempDir()
+	sourcePath := filepath.Join(tempDir, "Example.Release.2026.1080p-GRP.mkv")
+	if err := os.WriteFile(sourcePath, []byte("example"), 0o600); err != nil {
+		t.Fatalf("write source fixture: %v", err)
+	}
+	repoPath := filepath.Join(tempDir, "upbrr.db")
+	repo, err := db.OpenWithLogger(repoPath, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	if err := repo.Migrate(); err != nil {
+		_ = repo.Close()
+		t.Fatalf("migrate repo: %v", err)
+	}
+
+	app := &App{
+		cfg: config.Config{
+			MainSettings:       config.MainSettingsConfig{DBPath: repoPath, TMDBAPI: "x"},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		},
+		repo:  repo,
+		dupes: make(map[string]*dupeCheckJob),
+	}
+	t.Cleanup(func() {
+		app.stopAllDupeJobs()
+		_ = repo.Close()
+	})
+	return app, sourcePath
+}
+
+func assertPreparedMetaExportRequest(req api.Request, expected *api.Request) error {
+	if expected == nil {
+		return nil
+	}
+	if !reflect.DeepEqual(req.Paths, expected.Paths) {
+		return fmt.Errorf("metadata preview cache request paths: got %#v want %#v", req.Paths, expected.Paths)
+	}
+	if req.Mode != expected.Mode {
+		return fmt.Errorf("metadata preview cache request mode: got %q want %q", req.Mode, expected.Mode)
+	}
+	if !reflect.DeepEqual(req.Trackers, expected.Trackers) {
+		return fmt.Errorf("metadata preview cache request trackers: got %#v want %#v", req.Trackers, expected.Trackers)
+	}
+	if !reflect.DeepEqual(req.ExternalIDOverrides, expected.ExternalIDOverrides) {
+		return fmt.Errorf("metadata preview cache request external overrides: got %#v want %#v", req.ExternalIDOverrides, expected.ExternalIDOverrides)
+	}
+	if !reflect.DeepEqual(req.ReleaseNameOverrides, expected.ReleaseNameOverrides) {
+		return fmt.Errorf("metadata preview cache request name overrides: got %#v want %#v", req.ReleaseNameOverrides, expected.ReleaseNameOverrides)
+	}
+	return nil
 }
 
 func TestSeedRunCorePreparedMetaCopiesPreparedMetadata(t *testing.T) {
