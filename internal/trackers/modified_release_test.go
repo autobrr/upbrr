@@ -94,10 +94,26 @@ func TestIsRenamedRelease(t *testing.T) {
 			want: false,
 		},
 		{
+			name: "standard rename check skipped for SPHD",
+			meta: api.PreparedMetadata{
+				SourcePath: "/data/movies/Example Release 2026 2160p MA WEB-DL DDP5 1 HDR H 265-SPHD",
+				Release:    api.ReleaseInfo{Group: "SPHD"},
+			},
+			want: false,
+		},
+		{
 			name: "standard arr-token rename check skipped for configured group",
 			meta: api.PreparedMetadata{
 				SourcePath: "/data/movies/Example Release (2026) {imdb-tt1234567}-HiDt",
 				Release:    api.ReleaseInfo{Group: "HiDt"},
+			},
+			want: false,
+		},
+		{
+			name: "standard arr-token rename check skipped for SPHD",
+			meta: api.PreparedMetadata{
+				SourcePath: "/data/movies/Example Release (2026) {imdb-tt1234567}-SPHD",
+				Release:    api.ReleaseInfo{Group: "SPHD"},
 			},
 			want: false,
 		},

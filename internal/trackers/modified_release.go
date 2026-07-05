@@ -94,6 +94,7 @@ const modifiedReleaseReason = "source appears renamed or modified from its origi
 // standard heuristic rename checks. SRRDB scene rename matches still apply.
 var standardRenameCheckSkippedGroups = map[string]struct{}{
 	"HIDT": {},
+	"SPHD": {},
 }
 
 // skipsStandardRenameCheck reports whether group is configured to bypass the
