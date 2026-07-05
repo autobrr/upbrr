@@ -250,6 +250,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	uploadCtx.client = client
 
+	if err := checkBTNSeasonPackReservation(ctx, uploadCtx, req); err != nil {
+		return api.UploadSummary{}, err
+	}
+
 	data, err := prepareUploadData(ctx, req, uploadCtx)
 	if err != nil {
 		return api.UploadSummary{}, err
@@ -2550,4 +2554,119 @@ func (origin *btnAPIDownloadOrigin) sameOrigin(parsed *url.URL) bool {
 	return strings.EqualFold(origin.scheme, parsed.Scheme) &&
 		strings.EqualFold(origin.host, parsed.Host) &&
 		origin.host != ""
+}
+
+func checkBTNSeasonPackReservation(ctx context.Context, uploadCtx uploadContext, req trackers.UploadRequest) error {
+	if resolveUploadType(req.Meta) != "Season" {
+		return nil
+	}
+	// The 2-hour reservation ONLY applies to season packs made of internal releases.
+	if !isBTNInternalGroup(req.Meta) {
+		return nil
+	}
+
+	tvdbID := req.Meta.ExternalIDs.TVDBID
+	if tvdbID == 0 {
+		return nil
+	}
+
+	group := strings.TrimPrefix(req.Meta.Tag, "-")
+	if group == "" {
+		return nil
+	}
+
+	filter := map[string]any{
+		"tvdb":     strconv.Itoa(tvdbID),
+		"category": "Episode",
+		"group":    group,
+	}
+
+	// We only need the most recent episodes to check the 2-hour window
+	torrentsMap, err := btnAPISearchTorrents(ctx, uploadCtx.apiURL, uploadCtx.apiToken, filter, 50)
+	if err != nil {
+		return err
+	}
+
+	seasonPrefix := ""
+	if req.Meta.SeasonInt > 0 {
+		seasonPrefix = fmt.Sprintf("S%02dE", req.Meta.SeasonInt)
+	}
+
+	var newestInternal time.Time
+	for _, t := range torrentsMap {
+		name, _ := t["ReleaseName"].(string)
+		if seasonPrefix != "" && !strings.Contains(strings.ToUpper(name), seasonPrefix) {
+			continue
+		}
+
+		tTime := parseBTNTimestamp(t["Time"])
+		if tTime.After(newestInternal) {
+			newestInternal = tTime
+		}
+	}
+
+	if !newestInternal.IsZero() && time.Since(newestInternal) < 2*time.Hour {
+		return errors.New("trackers: BTN 2-hour reservation period for internal season packs has not expired")
+	}
+
+	return nil
+}
+
+func btnAPISearchTorrents(ctx context.Context, apiURL, apiToken string, filter map[string]any, limit int) (map[string]map[string]any, error) {
+	payload := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "ua-btn-upload-check",
+		"method":  "getTorrentsSearch",
+		"params":  []any{apiToken, filter, limit},
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: BTN API check encode: %w", err)
+	}
+	apiReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(encoded))
+	if err != nil {
+		return nil, fmt.Errorf("trackers: BTN API check request build: %w", err)
+	}
+	apiReq.Header.Set("Content-Type", "application/json")
+	apiResp, err := (&http.Client{Timeout: 30 * time.Second}).Do(apiReq)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: BTN API check request: %w", err)
+	}
+	defer apiResp.Body.Close()
+	if apiResp.StatusCode < 200 || apiResp.StatusCode >= 300 {
+		return nil, fmt.Errorf("trackers: BTN API check failed status=%d", apiResp.StatusCode)
+	}
+
+	var response struct {
+		Result struct {
+			Torrents json.RawMessage `json:"torrents"`
+		} `json:"result"`
+	}
+	if err := decodeBTNAPIJSON(apiResp.Body, &response); err != nil {
+		return nil, fmt.Errorf("trackers: BTN decode torrent check response: %w", err)
+	}
+
+	if len(response.Result.Torrents) == 0 || string(response.Result.Torrents) == "false" || string(response.Result.Torrents) == "[]" {
+		return nil, nil
+	}
+
+	var torrentsMap map[string]map[string]any
+	if err := json.Unmarshal(response.Result.Torrents, &torrentsMap); err != nil {
+		return nil, nil
+	}
+	return torrentsMap, nil
+}
+
+func parseBTNTimestamp(val any) time.Time {
+	var epoch int64
+	switch v := val.(type) {
+	case string:
+		epoch, _ = strconv.ParseInt(v, 10, 64)
+	case float64:
+		epoch = int64(v)
+	}
+	if epoch > 0 {
+		return time.Unix(epoch, 0)
+	}
+	return time.Time{}
 }
