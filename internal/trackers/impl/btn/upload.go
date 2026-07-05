@@ -1179,8 +1179,8 @@ func btnTVPayloadMetadataMessage(meta api.PreparedMetadata) string {
 	return message
 }
 
-// resolveOrigin preserves BTN autofill origin when available, then derives the
-// closest BTN origin from prepared scene and season-pack metadata.
+// resolveOrigin derives the origin from
+// prepared scene and season-pack metadata, group tag and username
 func resolveOrigin(meta api.PreparedMetadata, username string) string {
 	group := strings.TrimSpace(meta.Release.Group)
 	if metadata.DetectSeasonPackGroupTags(meta).Mixed {
