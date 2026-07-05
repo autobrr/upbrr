@@ -252,8 +252,8 @@ func TestStartDupeCheckRequiresMetadataPreviewCache(t *testing.T) {
 	if !strings.Contains(err.Error(), "dupe check requires metadata preview") {
 		t.Fatalf("expected metadata preview error, got %v", err)
 	}
-	if len(backend.dupes) != 0 {
-		t.Fatalf("expected no durable dupe job after cache miss, got %d", len(backend.dupes))
+	if count := dupeJobCount(backend); count != 0 {
+		t.Fatalf("expected no durable dupe job after cache miss, got %d", count)
 	}
 }
 
@@ -285,8 +285,8 @@ func TestStartDupeCheckUsesMetadataPreviewCache(t *testing.T) {
 	if strings.TrimSpace(jobID) == "" {
 		t.Fatal("expected job id")
 	}
-	if len(backend.dupes) != 1 {
-		t.Fatalf("expected durable dupe job, got %d", len(backend.dupes))
+	if count := dupeJobCount(backend); count != 1 {
+		t.Fatalf("expected durable dupe job, got %d", count)
 	}
 }
 
@@ -350,8 +350,8 @@ func TestStartDupeCheckFailsOnMetadataPreviewCacheRequestMismatch(t *testing.T) 
 			if !strings.Contains(err.Error(), tt.wantMessage) {
 				t.Fatalf("expected mismatch error %q, got %v", tt.wantMessage, err)
 			}
-			if len(backend.dupes) != 0 {
-				t.Fatalf("expected no durable dupe job after cache request mismatch, got %d", len(backend.dupes))
+			if count := dupeJobCount(backend); count != 0 {
+				t.Fatalf("expected no durable dupe job after cache request mismatch, got %d", count)
 			}
 		})
 	}
@@ -391,8 +391,8 @@ func TestStartDupeCheckStopsPreJobExportOnRequestCancel(t *testing.T) {
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("expected start to return after request cancellation")
 	}
-	if len(backend.dupes) != 0 {
-		t.Fatalf("expected no durable dupe job after canceled export, got %d", len(backend.dupes))
+	if count := dupeJobCount(backend); count != 0 {
+		t.Fatalf("expected no durable dupe job after canceled export, got %d", count)
 	}
 }
 
@@ -958,6 +958,12 @@ func newDupeCheckStartTestBackend(t *testing.T) (*Backend, string) {
 		_ = repo.Close()
 	})
 	return backend, sourcePath
+}
+
+func dupeJobCount(backend *Backend) int {
+	backend.dupeMu.Lock()
+	defer backend.dupeMu.Unlock()
+	return len(backend.dupes)
 }
 
 func assertPreparedMetaExportRequest(req api.Request, expected *api.Request) error {
