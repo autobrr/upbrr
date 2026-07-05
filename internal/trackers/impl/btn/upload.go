@@ -390,7 +390,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		"submit":       "true",
 		"type":         resolveUploadType(req.Meta),
 		"scenename":    resolveUploadName(req.Meta),
-		"origin":       resolveOrigin(req.Meta, req.TrackerConfig.Username),
+		"origin":       resolveOrigin(req.Meta),
 		"release_desc": strings.TrimSpace(req.Meta.DescriptionOverride),
 		"tvdb":         "autofilled",
 	}
@@ -750,7 +750,7 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		"artist":       metautil.FirstNonEmptyTrimmed(fields["artist"]),
 		"title":        title,
 		"actors":       metautil.FirstNonEmptyTrimmed(fields["actors"]),
-		"origin":       resolveOrigin(req.Meta, req.TrackerConfig.Username),
+		"origin":       resolveOrigin(req.Meta),
 		"year":         metautil.FirstNonEmptyTrimmed(fields["year"]),
 		"tags":         resolveBTNTags(req.Meta, fields),
 		"image":        resolveBTNImage(req.Meta, fields),
@@ -1181,7 +1181,7 @@ func btnTVPayloadMetadataMessage(meta api.PreparedMetadata) string {
 
 // resolveOrigin derives the origin from
 // prepared scene and season-pack metadata, group tag and username
-func resolveOrigin(meta api.PreparedMetadata, username string) string {
+func resolveOrigin(meta api.PreparedMetadata) string {
 	group := strings.TrimSpace(meta.Release.Group)
 	if metadata.DetectSeasonPackGroupTags(meta).Mixed {
 		return "Mixed"
@@ -1191,9 +1191,6 @@ func resolveOrigin(meta api.PreparedMetadata, username string) string {
 	}
 	if group != "" && isNoGroupTag(group) {
 		return "None"
-	}
-	if username != "" && group != "" && strings.EqualFold(group, strings.TrimSpace(username)) {
-		return "User"
 	}
 	return "P2P"
 }

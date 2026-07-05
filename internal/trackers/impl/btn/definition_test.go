@@ -222,7 +222,6 @@ func TestResolveOrigin(t *testing.T) {
 	tests := []struct {
 		name     string
 		meta     api.PreparedMetadata
-		username string
 		expected string
 	}{
 		{
@@ -279,19 +278,11 @@ func TestResolveOrigin(t *testing.T) {
 			},
 			expected: "None",
 		},
-		{
-			name: "user origin when username matches group",
-			meta: api.PreparedMetadata{
-				Release: api.ReleaseInfo{Group: "MyGroup"},
-			},
-			username: "mygroup",
-			expected: "User",
-		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := resolveOrigin(tc.meta, tc.username); got != tc.expected {
+			if got := resolveOrigin(tc.meta); got != tc.expected {
 				t.Fatalf("expected origin %q, got %q", tc.expected, got)
 			}
 		})
