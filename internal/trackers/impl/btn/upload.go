@@ -390,7 +390,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		"submit":       "true",
 		"type":         resolveUploadType(req.Meta),
 		"scenename":    resolveUploadName(req.Meta),
-		"origin":       resolveOrigin(req.Meta, nil),
+		"origin":       resolveOrigin(req.Meta, req.TrackerConfig.Username),
 		"release_desc": strings.TrimSpace(req.Meta.DescriptionOverride),
 		"tvdb":         "autofilled",
 	}
@@ -750,7 +750,7 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		"artist":       metautil.FirstNonEmptyTrimmed(fields["artist"]),
 		"title":        title,
 		"actors":       metautil.FirstNonEmptyTrimmed(fields["actors"]),
-		"origin":       resolveOrigin(req.Meta, fields),
+		"origin":       resolveOrigin(req.Meta, req.TrackerConfig.Username),
 		"year":         metautil.FirstNonEmptyTrimmed(fields["year"]),
 		"tags":         resolveBTNTags(req.Meta, fields),
 		"image":        resolveBTNImage(req.Meta, fields),
@@ -1181,28 +1181,21 @@ func btnTVPayloadMetadataMessage(meta api.PreparedMetadata) string {
 
 // resolveOrigin preserves BTN autofill origin when available, then derives the
 // closest BTN origin from prepared scene and season-pack metadata.
-func resolveOrigin(meta api.PreparedMetadata, fields map[string]string) string {
-	if origin := strings.TrimSpace(fields["origin"]); validBTNOrigin(origin) {
-		return origin
-	}
+func resolveOrigin(meta api.PreparedMetadata, username string) string {
+	group := strings.TrimSpace(meta.Release.Group)
 	if metadata.DetectSeasonPackGroupTags(meta).Mixed {
 		return "Mixed"
 	}
 	if isBTNSceneRelease(meta) {
 		return "Scene"
 	}
-	return "P2P"
-}
-
-// validBTNOrigin reports whether value is one of BTN's supported origin
-// dropdown values.
-func validBTNOrigin(value string) bool {
-	switch strings.TrimSpace(value) {
-	case "None", "Scene", "P2P", "User", "Mixed":
-		return true
-	default:
-		return false
+	if group != "" && isNoGroupTag(group) {
+		return "None"
 	}
+	if username != "" && group != "" && strings.EqualFold(group, strings.TrimSpace(username)) {
+		return "User"
+	}
+	return "P2P"
 }
 
 // stripEpisodeTitle removes generated episode-title text from BTN upload names

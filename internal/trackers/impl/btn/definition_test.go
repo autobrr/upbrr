@@ -222,21 +222,9 @@ func TestResolveOrigin(t *testing.T) {
 	tests := []struct {
 		name     string
 		meta     api.PreparedMetadata
-		fields   map[string]string
+		username string
 		expected string
 	}{
-		{
-			name:     "BTN autofill origin wins",
-			meta:     api.PreparedMetadata{Scene: true},
-			fields:   map[string]string{"origin": "P2P"},
-			expected: "P2P",
-		},
-		{
-			name:     "invalid BTN autofill origin ignored",
-			meta:     api.PreparedMetadata{Scene: true},
-			fields:   map[string]string{"origin": "Internal"},
-			expected: "Scene",
-		},
 		{
 			name:     "scene metadata",
 			meta:     api.PreparedMetadata{Scene: true},
@@ -284,11 +272,26 @@ func TestResolveOrigin(t *testing.T) {
 			},
 			expected: "P2P",
 		},
+		{
+			name: "none origin for no group tag",
+			meta: api.PreparedMetadata{
+				Release: api.ReleaseInfo{Group: "nogrp"},
+			},
+			expected: "None",
+		},
+		{
+			name: "user origin when username matches group",
+			meta: api.PreparedMetadata{
+				Release: api.ReleaseInfo{Group: "MyGroup"},
+			},
+			username: "mygroup",
+			expected: "User",
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := resolveOrigin(tc.meta, tc.fields); got != tc.expected {
+			if got := resolveOrigin(tc.meta, tc.username); got != tc.expected {
 				t.Fatalf("expected origin %q, got %q", tc.expected, got)
 			}
 		})
