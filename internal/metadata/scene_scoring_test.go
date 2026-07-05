@@ -13,7 +13,7 @@ import (
 func TestBestSceneCandidate(t *testing.T) {
 	t.Parallel()
 
-	manualTag := "-MOOVEE"
+	manualTag := "-GRP"
 	cases := []struct {
 		name      string
 		meta      api.PreparedMetadata
@@ -26,24 +26,24 @@ func TestBestSceneCandidate(t *testing.T) {
 	}{
 		{
 			name:      "exact tokens (renamed dots to spaces) match",
-			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2014, Group: "GRP", Source: "BluRay", Codec: []string{"x264"}},
-			localBase: "Fury 2014 1080p BluRay x264 GRP",
+			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2026, Group: "GRP", Source: "BluRay", Codec: []string{"x264"}},
+			localBase: "Example Movie 2026 1080p BluRay x264 GRP",
 			cands: []srrdbSearchResult{
 				// Same title at a different resolution must not be matched.
-				{Release: "Fury.2014.720p.BluRay.x264-GRP"},
-				{Release: "Fury.2014.1080p.BluRay.x264-GRP"},
+				{Release: "Example.Movie.2026.720p.BluRay.x264-GRP"},
+				{Release: "Example.Movie.2026.1080p.BluRay.x264-GRP"},
 			},
-			wantPick: "Fury.2014.1080p.BluRay.x264-GRP",
+			wantPick: "Example.Movie.2026.1080p.BluRay.x264-GRP",
 		},
 		{
 			name:      "foreign dub is not chosen for an english release",
-			release:   api.ReleaseInfo{Resolution: "1080p", Year: 1994, Group: "GRP", Language: []string{"English"}},
-			localBase: "The Shawshank Redemption 1994 1080p BluRay x264 GRP",
+			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2026, Group: "GRP", Language: []string{"English"}},
+			localBase: "Example Drama 2026 1080p BluRay x264 GRP",
 			cands: []srrdbSearchResult{
-				{Release: "The.Shawshank.Redemption.1994.German.DL.1080p.BluRay.x264-GRP", IsForeign: "yes"},
-				{Release: "The.Shawshank.Redemption.1994.1080p.BluRay.x264-GRP", IsForeign: "no"},
+				{Release: "Example.Drama.2026.German.DL.1080p.BluRay.x264-GRP", IsForeign: "yes"},
+				{Release: "Example.Drama.2026.1080p.BluRay.x264-GRP", IsForeign: "no"},
 			},
-			wantPick: "The.Shawshank.Redemption.1994.1080p.BluRay.x264-GRP",
+			wantPick: "Example.Drama.2026.1080p.BluRay.x264-GRP",
 		},
 		{
 			name:      "multi-edition prefers the matching theatrical cut",
@@ -77,77 +77,77 @@ func TestBestSceneCandidate(t *testing.T) {
 		},
 		{
 			name:      "english web-dl is not misclassified as a foreign dub",
-			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2019, Group: "YIFY", Source: "WEB-DL", Language: []string{"English"}},
-			localBase: "Movie 2019 1080p WEB-DL DDP5 1 H 264 YIFY",
+			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2026, Group: "GRP", Source: "WEB-DL", Language: []string{"English"}},
+			localBase: "Movie 2026 1080p WEB-DL DDP5 1 H 264 GRP",
 			cands: []srrdbSearchResult{
-				{Release: "Movie.2019.German.DL.1080p.BluRay.x264-YIFY", IsForeign: "yes"},
-				{Release: "Movie.2019.1080p.WEB-DL.DDP5.1.H.264-YIFY", IsForeign: "no"},
+				{Release: "Movie.2026.German.DL.1080p.BluRay.x264-GRP", IsForeign: "yes"},
+				{Release: "Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP", IsForeign: "no"},
 			},
-			wantPick: "Movie.2019.1080p.WEB-DL.DDP5.1.H.264-YIFY",
+			wantPick: "Movie.2026.1080p.WEB-DL.DDP5.1.H.264-GRP",
 		},
 		{
 			name:      "year-only agreement with unknown resolution is not confident",
-			release:   api.ReleaseInfo{Year: 2008, Group: "P2PGROUP"},
-			localBase: "Movie 2008 DVDRip x264 P2PGROUP",
+			release:   api.ReleaseInfo{Year: 2026, Group: "P2PGRP"},
+			localBase: "Movie 2026 DVDRip x264 P2PGRP",
 			cands: []srrdbSearchResult{
-				{Release: "Movie.2008.R5.XviD-SCENEGROUP"},
+				{Release: "Movie.2026.R5.XviD-OTHER"},
 			},
 			wantPick: "",
 		},
 		{
 			name:      "known local group must match candidate group",
-			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2015, Group: "monkee", Source: "WEB-DL", Codec: []string{"H.264"}},
-			localBase: "7 Days in Hell 2015 1080p AMZN WEB-DL DD+ 5.1 H.264-monkee",
+			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2026, Group: "EXAMPLE", Source: "WEB-DL", Codec: []string{"H.264"}},
+			localBase: "Example Sports Movie 2026 1080p AMZN WEB-DL DD+ 5.1 H.264-EXAMPLE",
 			cands: []srrdbSearchResult{
-				{Release: "7.Days.in.Hell.2015.1080p.WEB.H264-DiMEPiECE", IsForeign: "no"},
+				{Release: "Example.Sports.Movie.2026.1080p.WEB.H264-OTHER", IsForeign: "no"},
 			},
 			wantPick: "",
 		},
 		{
 			name:      "known local group match is case-insensitive",
-			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2015, Group: "monkee", Source: "WEB-DL", Codec: []string{"H.264"}},
-			localBase: "Movie 2015 1080p WEB-DL H.264-monkee",
+			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2026, Group: "example", Source: "WEB-DL", Codec: []string{"H.264"}},
+			localBase: "Movie 2026 1080p WEB-DL H.264-example",
 			cands: []srrdbSearchResult{
-				{Release: "Movie.2015.1080p.WEB-DL.H.264-MONKEE", IsForeign: "no"},
+				{Release: "Movie.2026.1080p.WEB-DL.H.264-EXAMPLE", IsForeign: "no"},
 			},
-			wantPick: "Movie.2015.1080p.WEB-DL.H.264-MONKEE",
+			wantPick: "Movie.2026.1080p.WEB-DL.H.264-EXAMPLE",
 		},
 		{
 			name:      "manual tag override wins over parsed filename group",
-			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2001, Group: "driven", Source: "BluRay", Codec: []string{"x264"}},
-			tag:       "-driven",
+			release:   api.ReleaseInfo{Resolution: "1080p", Year: 2026, Group: "example", Source: "BluRay", Codec: []string{"x264"}},
+			tag:       "-example",
 			overrides: api.ReleaseNameOverrides{Tag: &manualTag},
-			localBase: "moovee-driven",
+			localBase: "renamed-example",
 			cands: []srrdbSearchResult{
-				{Release: "Driven.2001.1080p.BluRay.x264-MOOVEE", IsForeign: "no"},
+				{Release: "Example.Driver.2026.1080p.BluRay.x264-GRP", IsForeign: "no"},
 			},
-			wantPick: "Driven.2001.1080p.BluRay.x264-MOOVEE",
+			wantPick: "Example.Driver.2026.1080p.BluRay.x264-GRP",
 		},
 		{
 			name: "external metadata year participates when parser year is missing",
 			meta: api.PreparedMetadata{
 				Release:          api.ReleaseInfo{Resolution: "1080p"},
-				ExternalMetadata: api.ExternalMetadata{TMDB: &api.TMDBMetadata{Year: 2001}},
+				ExternalMetadata: api.ExternalMetadata{TMDB: &api.TMDBMetadata{Year: 2026}},
 			},
-			localBase: "moovee-driven",
+			localBase: "renamed-example",
 			cands: []srrdbSearchResult{
-				{Release: "Driven.2001.1080p.BluRay.x264-MOOVEE", IsForeign: "no"},
+				{Release: "Example.Driver.2026.1080p.BluRay.x264-GRP", IsForeign: "no"},
 			},
-			wantPick: "Driven.2001.1080p.BluRay.x264-MOOVEE",
+			wantPick: "Example.Driver.2026.1080p.BluRay.x264-GRP",
 		},
 		{
 			name: "media-derived codec participates when parser codec is missing",
 			meta: api.PreparedMetadata{
 				Release:          api.ReleaseInfo{Resolution: "1080p"},
-				ExternalMetadata: api.ExternalMetadata{TMDB: &api.TMDBMetadata{Year: 2001}},
+				ExternalMetadata: api.ExternalMetadata{TMDB: &api.TMDBMetadata{Year: 2026}},
 				VideoEncode:      "x264",
 			},
-			localBase: "Driven 2001 1080p",
+			localBase: "Example Driver 2026 1080p",
 			cands: []srrdbSearchResult{
-				{Release: "Driven.2001.1080p.BluRay.x265-OTHER", IsForeign: "no"},
-				{Release: "Driven.2001.1080p.BluRay.x264-MOOVEE", IsForeign: "no"},
+				{Release: "Example.Driver.2026.1080p.BluRay.x265-OTHER", IsForeign: "no"},
+				{Release: "Example.Driver.2026.1080p.BluRay.x264-GRP", IsForeign: "no"},
 			},
-			wantPick: "Driven.2001.1080p.BluRay.x264-MOOVEE",
+			wantPick: "Example.Driver.2026.1080p.BluRay.x264-GRP",
 		},
 		{
 			name:      "no candidate at the right resolution is not matched",
@@ -215,28 +215,28 @@ func TestArchivedMediaRenamed(t *testing.T) {
 		{
 			name: "renamed local filename is flagged",
 			archived: []srrdbArchivedFile{
-				{Name: "driven.2001.1080p.bluray.x264-moovee.nfo", Size: 100},
-				{Name: "driven.2001.1080p.bluray.x264-moovee.mkv", Size: 8000000000},
+				{Name: "example.driver.2026.1080p.bluray.x264-grp.nfo", Size: 100},
+				{Name: "example.driver.2026.1080p.bluray.x264-grp.mkv", Size: 8000000000},
 			},
-			localMedia:  "moovee-driven.mkv",
+			localMedia:  "renamed-example.mkv",
 			wantRenamed: true,
 			wantMatched: true,
 		},
 		{
 			name: "exact case-sensitive filename match is not renamed",
 			archived: []srrdbArchivedFile{
-				{Name: "driven.2001.1080p.bluray.x264-moovee.mkv", Size: 8000000000},
+				{Name: "example.driver.2026.1080p.bluray.x264-grp.mkv", Size: 8000000000},
 			},
-			localMedia:  "driven.2001.1080p.bluray.x264-moovee.mkv",
+			localMedia:  "example.driver.2026.1080p.bluray.x264-grp.mkv",
 			wantRenamed: false,
 			wantMatched: true,
 		},
 		{
 			name: "casing-only difference is treated as renamed (srrdb authoritative)",
 			archived: []srrdbArchivedFile{
-				{Name: "driven.2001.1080p.bluray.x264-moovee.mkv", Size: 8000000000},
+				{Name: "example.driver.2026.1080p.bluray.x264-grp.mkv", Size: 8000000000},
 			},
-			localMedia:  "Driven.2001.1080p.BluRay.x264-MOOVEE.mkv",
+			localMedia:  "Example.Driver.2026.1080p.BluRay.x264-GRP.mkv",
 			wantRenamed: true,
 			wantMatched: true,
 		},
@@ -276,9 +276,9 @@ func TestArchivedMediaRenamed(t *testing.T) {
 func TestFormatSRRDBIMDbID(t *testing.T) {
 	t.Parallel()
 	cases := map[int]string{
-		132245:  "tt0132245",
-		111161:  "tt0111161",
-		6946580: "tt6946580",
+		12345:   "tt0012345",
+		1234567: "tt1234567",
+		7654321: "tt7654321",
 		0:       "",
 		-5:      "",
 	}
@@ -295,19 +295,19 @@ func TestSceneLocalCandidates(t *testing.T) {
 	base := t.TempDir()
 
 	// Folder release: SourcePath is the release folder, VideoPath the media file.
-	const folder = "Driven.2001.1080p.BluRay.x264-MOOVEE"
+	const folder = "Example.Driver.2026.1080p.BluRay.x264-GRP"
 	c := sceneLocalCandidates(api.PreparedMetadata{
 		SourcePath: filepath.Join(base, folder),
-		VideoPath:  filepath.Join(base, folder, "moovee-driven.mkv"),
+		VideoPath:  filepath.Join(base, folder, "renamed-example.mkv"),
 	})
 	if len(c.folders) != 1 || c.folders[0] != folder {
 		t.Fatalf("folder candidates = %v, want [%s]", c.folders, folder)
 	}
-	if len(c.files) != 1 || c.files[0] != "moovee-driven" {
-		t.Fatalf("file candidates = %v, want [moovee-driven]", c.files)
+	if len(c.files) != 1 || c.files[0] != "renamed-example" {
+		t.Fatalf("file candidates = %v, want [renamed-example]", c.files)
 	}
-	if c.mediaFilename != "moovee-driven.mkv" {
-		t.Fatalf("mediaFilename = %q, want moovee-driven.mkv", c.mediaFilename)
+	if c.mediaFilename != "renamed-example.mkv" {
+		t.Fatalf("mediaFilename = %q, want renamed-example.mkv", c.mediaFilename)
 	}
 
 	// Single-file release: SourcePath == VideoPath, no folder candidate.

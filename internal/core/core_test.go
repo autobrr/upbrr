@@ -3358,7 +3358,7 @@ func TestFetchTrackerDryRunPreviewUsesCachedMetadata(t *testing.T) {
 		t.Fatalf("new core: %v", err)
 	}
 
-	prepared := api.PreparedMetadata{SourcePath: "/tmp/a", ReleaseName: "Watcher 2160p WEB-DL DD+ 5.1-FLUX"}
+	prepared := api.PreparedMetadata{SourcePath: "/tmp/a", ReleaseName: "Example Movie 2160p WEB-DL DD+ 5.1-GRP"}
 	core.storeDupeCache("/tmp/a", "", prepared)
 
 	preview, err := core.FetchTrackerDryRunPreview(context.Background(), api.Request{
@@ -3576,7 +3576,7 @@ func TestFetchTrackerDryRunPreviewAnnotatesReleaseNameChange(t *testing.T) {
 
 	tracker := &stubTrackers{dryRunEntries: []api.TrackerDryRunEntry{{
 		Tracker:     "AITHER",
-		ReleaseName: "Watcher.2160p.WEB-DL.DDP5.1-FLUX",
+		ReleaseName: "Example.Movie.2160p.WEB-DL.DDP5.1-GRP",
 	}}}
 	core, err := New(api.CoreDependencies{
 		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
@@ -3595,7 +3595,7 @@ func TestFetchTrackerDryRunPreviewAnnotatesReleaseNameChange(t *testing.T) {
 
 	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{
 		SourcePath:  "/tmp/a",
-		ReleaseName: "Watcher 2160p WEB-DL DD+ 5.1-FLUX",
+		ReleaseName: "Example Movie 2160p WEB-DL DD+ 5.1-GRP",
 		Trackers:    []string{"AITHER", "BLU"},
 	})
 
@@ -3617,10 +3617,10 @@ func TestFetchTrackerDryRunPreviewAnnotatesReleaseNameChange(t *testing.T) {
 	if !entry.ReleaseNameChanged {
 		t.Fatalf("expected release name change annotation, got %#v", entry)
 	}
-	if entry.OriginalReleaseName != "Watcher 2160p WEB-DL DD+ 5.1-FLUX" {
+	if entry.OriginalReleaseName != "Example Movie 2160p WEB-DL DD+ 5.1-GRP" {
 		t.Fatalf("expected original release name, got %q", entry.OriginalReleaseName)
 	}
-	if entry.UploadReleaseName != "Watcher.2160p.WEB-DL.DDP5.1-FLUX" {
+	if entry.UploadReleaseName != "Example.Movie.2160p.WEB-DL.DDP5.1-GRP" {
 		t.Fatalf("expected upload release name, got %q", entry.UploadReleaseName)
 	}
 }

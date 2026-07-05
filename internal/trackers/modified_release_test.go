@@ -15,7 +15,7 @@ func TestIsRenamedRelease(t *testing.T) {
 	grouped := func(sourcePath string) api.PreparedMetadata {
 		return api.PreparedMetadata{
 			SourcePath: sourcePath,
-			Release:    api.ReleaseInfo{Group: "HHWEB"},
+			Release:    api.ReleaseInfo{Group: "GRP"},
 		}
 	}
 
@@ -26,17 +26,17 @@ func TestIsRenamedRelease(t *testing.T) {
 	}{
 		{
 			name: "clean dotted folder with group",
-			meta: grouped("/data/movies/Fury.2014.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-HHWEB"),
+			meta: grouped("/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP"),
 			want: false,
 		},
 		{
 			name: "renamed spaced folder with group",
-			meta: grouped("/data/movies/Fury 2014 2160p MA WEB-DL DDP5 1 HDR H 265-HHWEB"),
+			meta: grouped("/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5 1 HDR H 265-GRP"),
 			want: true,
 		},
 		{
 			name: "renamed spaced single file with group",
-			meta: grouped("/data/movies/Fury 2014 2160p MA WEB-DL DDP5 1 HDR H 265-HHWEB.mkv"),
+			meta: grouped("/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5 1 HDR H 265-GRP.mkv"),
 			want: true,
 		},
 		{
@@ -55,16 +55,16 @@ func TestIsRenamedRelease(t *testing.T) {
 			// *arr injects {imdb-…} when it renames; this is a modified release the
 			// tracker rejects, regardless of how rls parses the group.
 			meta: api.PreparedMetadata{
-				SourcePath: "/data/movies/Fury (2014) {imdb-tt2713180}",
-				Release:    api.ReleaseInfo{Group: "tt2713180"},
+				SourcePath: "/data/movies/Example Movie (2026) {imdb-tt1234567}",
+				Release:    api.ReleaseInfo{Group: "tt1234567"},
 			},
 			want: true,
 		},
 		{
 			name: "sonarr-renamed file with tmdb token is flagged",
 			meta: api.PreparedMetadata{
-				SourcePath: "/data/tv/Severance (2022) {tmdb-95396}/Severance S01E01 {tmdb-95396}.mkv",
-				VideoPath:  "/data/tv/Severance (2022) {tmdb-95396}/Severance S01E01 {tmdb-95396}.mkv",
+				SourcePath: "/data/tv/Example Show (2026) {tmdb-12345}/Example Show S01E01 {tmdb-12345}.mkv",
+				VideoPath:  "/data/tv/Example Show (2026) {tmdb-12345}/Example Show S01E01 {tmdb-12345}.mkv",
 			},
 			want: true,
 		},
@@ -75,14 +75,14 @@ func TestIsRenamedRelease(t *testing.T) {
 		},
 		{
 			name: "arr token match is case-insensitive",
-			meta: api.PreparedMetadata{SourcePath: "/data/movies/Fury (2014) {IMDb-tt2713180}"},
+			meta: api.PreparedMetadata{SourcePath: "/data/movies/Example Movie (2026) {IMDb-tt1234567}"},
 			want: true,
 		},
 		{
 			name: "arr token is flagged even when the group tag was stripped",
 			// *arr renames frequently drop the trailing -GROUP, so the token check
 			// must fire without a parsed group.
-			meta: api.PreparedMetadata{SourcePath: "/data/movies/Fury (2014) {tmdb-99861}"},
+			meta: api.PreparedMetadata{SourcePath: "/data/movies/Example Movie (2026) {tmdb-12345}"},
 			want: true,
 		},
 		{
@@ -120,7 +120,7 @@ func TestIsRenamedRelease(t *testing.T) {
 		{
 			name: "arr-renamed personal release is exempt",
 			meta: api.PreparedMetadata{
-				SourcePath:      "/data/movies/Fury (2014) {imdb-tt2713180}",
+				SourcePath:      "/data/movies/Example Movie (2026) {imdb-tt1234567}",
 				PersonalRelease: true,
 			},
 			want: false,
@@ -128,7 +128,7 @@ func TestIsRenamedRelease(t *testing.T) {
 		{
 			name: "arr-renamed disc source is exempt",
 			meta: api.PreparedMetadata{
-				SourcePath: "/data/movies/Fury (2014) {imdb-tt2713180}",
+				SourcePath: "/data/movies/Example Movie (2026) {imdb-tt1234567}",
 				DiscType:   "BDMV",
 			},
 			want: false,
@@ -138,20 +138,20 @@ func TestIsRenamedRelease(t *testing.T) {
 			// Only the {tmdb-/imdb-/tvdb-} id tokens mark an *arr rename; other
 			// braces (e.g. {edition-…}) must not trigger the token signal, and the
 			// spaces heuristic still skips bracketed names.
-			meta: grouped("/data/movies/Fury 2014 2160p WEB-DL {edition-Directors Cut}-HHWEB"),
+			meta: grouped("/data/movies/Example Movie 2026 2160p WEB-DL {edition-Directors Cut}-GRP"),
 			want: false,
 		},
 		{
 			name: "parenthesized spaced library name without an id token is not flagged",
 			// Guards that the bracket marker still suppresses the whitespace
 			// heuristic when no *arr id token is present.
-			meta: grouped("/data/movies/Fury (2014) 2160p WEB-DL-HHWEB"),
+			meta: grouped("/data/movies/Example Movie (2026) 2160p WEB-DL-GRP"),
 			want: false,
 		},
 		{
 			name: "personal release is exempt",
 			meta: func() api.PreparedMetadata {
-				m := grouped("/data/movies/Fury 2014 2160p WEB-DL-HHWEB")
+				m := grouped("/data/movies/Example Movie 2026 2160p WEB-DL-GRP")
 				m.PersonalRelease = true
 				return m
 			}(),
@@ -160,7 +160,7 @@ func TestIsRenamedRelease(t *testing.T) {
 		{
 			name: "disc source is exempt",
 			meta: func() api.PreparedMetadata {
-				m := grouped("/data/movies/Fury 2014 2160p BluRay-HHWEB")
+				m := grouped("/data/movies/Example Movie 2026 2160p BluRay-GRP")
 				m.DiscType = "BDMV"
 				return m
 			}(),
@@ -171,9 +171,9 @@ func TestIsRenamedRelease(t *testing.T) {
 			// Finding: the tracker inspects the file, so a spaced file inside a clean
 			// dotted folder must still be detected.
 			meta: api.PreparedMetadata{
-				SourcePath: "/data/movies/Fury.2014.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-HHWEB",
-				VideoPath:  "/data/movies/Fury.2014.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-HHWEB/Fury 2014 2160p MA WEB-DL DDP5 1 HDR H 265-HHWEB.mkv",
-				Release:    api.ReleaseInfo{Group: "HHWEB"},
+				SourcePath: "/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP",
+				VideoPath:  "/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP/Example Movie 2026 2160p MA WEB-DL DDP5 1 HDR H 265-GRP.mkv",
+				Release:    api.ReleaseInfo{Group: "GRP"},
 			},
 			want: true,
 		},
@@ -181,8 +181,8 @@ func TestIsRenamedRelease(t *testing.T) {
 			name: "falls back to video path when source path is empty",
 			meta: api.PreparedMetadata{
 				SourcePath: "",
-				VideoPath:  "/data/movies/Fury 2014 2160p MA WEB-DL DDP5 1 HDR H 265-HHWEB.mkv",
-				Release:    api.ReleaseInfo{Group: "HHWEB"},
+				VideoPath:  "/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5 1 HDR H 265-GRP.mkv",
+				Release:    api.ReleaseInfo{Group: "GRP"},
 			},
 			want: true,
 		},
@@ -191,8 +191,8 @@ func TestIsRenamedRelease(t *testing.T) {
 			// A library rename that converts most separators to spaces but leaves
 			// dotted tokens (DDP5.1, H.265) must not have its trailing "-GROUP" tag
 			// stripped by extension handling on the directory basename (filepath.Ext
-			// would otherwise treat ".265-HHWEB" as an extension).
-			meta: grouped("/data/movies/Fury 2014 2160p MA WEB-DL DDP5.1 HDR H.265-HHWEB"),
+			// would otherwise treat ".265-GRP" as an extension).
+			meta: grouped("/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5.1 HDR H.265-GRP"),
 			want: true,
 		},
 		{
@@ -200,7 +200,7 @@ func TestIsRenamedRelease(t *testing.T) {
 			// The imdb: fallback authoritatively confirmed a rename that the
 			// heuristics above cannot see (no group tag, no *arr token, no spaces).
 			meta: api.PreparedMetadata{
-				SourcePath:         "/data/movies/Fury.2014.1080p.BluRay.x264",
+				SourcePath:         "/data/movies/Example.Movie.2026.1080p.BluRay.x264",
 				SceneRenamed:       true,
 				SceneRenamedReason: "source appears renamed or modified from its original release name; verify the file hash and source provenance",
 			},
@@ -218,7 +218,7 @@ func TestIsRenamedRelease(t *testing.T) {
 		{
 			name: "srrdb rename signal is exempt for personal release",
 			meta: api.PreparedMetadata{
-				SourcePath:      "/data/movies/Fury.2014.1080p.BluRay.x264",
+				SourcePath:      "/data/movies/Example.Movie.2026.1080p.BluRay.x264",
 				PersonalRelease: true,
 				SceneRenamed:    true,
 			},
@@ -227,7 +227,7 @@ func TestIsRenamedRelease(t *testing.T) {
 		{
 			name: "srrdb rename signal is exempt for disc source",
 			meta: api.PreparedMetadata{
-				SourcePath:   "/data/movies/Fury.2014.1080p.BluRay.x264",
+				SourcePath:   "/data/movies/Example.Movie.2026.1080p.BluRay.x264",
 				DiscType:     "BDMV",
 				SceneRenamed: true,
 			},

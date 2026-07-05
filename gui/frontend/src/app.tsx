@@ -790,6 +790,11 @@ export default function App() {
   const builderProgressTimers = useRef<number[]>([]);
   const [builderAutoRequestKey, setBuilderAutoRequestKey] = useState("");
   const [uploadToggles, setUploadToggles] = useState<Record<string, boolean>>({});
+  /**
+   * Tracks upload toggles disabled by dupe hits so a later Ignore override can
+   * restore only automatic disables, not user-disabled upload targets.
+   */
+  const autoDisabledUploadTrackersRef = useRef<Set<string>>(new Set());
   const [uploadSkipClientInjection, setUploadSkipClientInjection] = useState(false);
   const [trackerUploadRunning, setTrackerUploadRunning] = useState(false);
   const [trackerUploadError, setTrackerUploadError] = useState("");
@@ -1617,6 +1622,7 @@ export default function App() {
       setDupeCheckSnapshot(null);
       setDupeIgnore({});
       setDupeTrackerFlags({});
+      autoDisabledUploadTrackersRef.current.clear();
       setBuilderPreview(emptyDescriptionBuilder);
       setBuilderRawByGroup({});
       setBuilderRenderedByGroup({});
@@ -3157,6 +3163,7 @@ export default function App() {
     setDupeSummary(emptyDupeSummary);
     setDupeIgnore({});
     setDupeTrackerFlags({});
+    autoDisabledUploadTrackersRef.current.clear();
     setBuilderPreview(emptyDescriptionBuilder);
     setBuilderRawByGroup({});
     setBuilderRenderedByGroup({});
@@ -3285,55 +3292,97 @@ export default function App() {
     refreshUploadedImages,
   ]);
 
+  /**
+   * Synchronizes upload toggles with tracker selection and dupe eligibility.
+   *
+   * Dupe hits temporarily turn upload targets off. When the user ignores those
+   * dupes, the previous selected/default state is restored; hard failures and
+   * rule skips stay disabled until the blocking result changes.
+   */
   useEffect(() => {
     if (trackerUploadItems.length === 0) return;
-    setUploadToggles((prev) => {
-      const next = { ...prev };
-      trackerUploadItems.forEach((item) => {
-        const normalized = item.name.toLowerCase();
-        const hasReleaseSelection = Object.prototype.hasOwnProperty.call(
-          releasePageTrackerSelection,
+    const next = { ...uploadToggles };
+    const autoDisabled = new Set(autoDisabledUploadTrackersRef.current);
+    let changed = false;
+    const setToggle = (name: string, value: boolean) => {
+      if (next[name] !== value) {
+        next[name] = value;
+        changed = true;
+      }
+    };
+    const deleteToggle = (name: string) => {
+      if (Object.prototype.hasOwnProperty.call(next, name)) {
+        delete next[name];
+        changed = true;
+      }
+    };
+
+    trackerUploadItems.forEach((item) => {
+      const normalized = item.name.toLowerCase().trim();
+      const hasReleaseSelection = Object.prototype.hasOwnProperty.call(
+        releasePageTrackerSelection,
+        item.name,
+      );
+      if (hasReleaseSelection && !releasePageTrackerSelection[item.name]) {
+        autoDisabled.delete(normalized);
+        deleteToggle(item.name);
+        return;
+      }
+      if (dupeFiltersMatchCurrentPath && failedDupeTrackerSet.has(normalized)) {
+        autoDisabled.delete(normalized);
+        setToggle(item.name, false);
+        return;
+      }
+      if (dupeFiltersMatchCurrentPath && dupedTrackerSet.has(normalized)) {
+        if (next[item.name] !== false) {
+          autoDisabled.add(normalized);
+        }
+        setToggle(item.name, false);
+        return;
+      }
+      if (dupeFiltersMatchCurrentPath && ruleSkippedTrackerSet.has(normalized)) {
+        autoDisabled.delete(normalized);
+        setToggle(item.name, false);
+        return;
+      }
+      if (autoDisabled.has(normalized)) {
+        setToggle(
           item.name,
+          hasReleaseSelection
+            ? releasePageTrackerSelection[item.name]
+            : defaultTrackerSet.has(normalized),
         );
-        if (hasReleaseSelection && !releasePageTrackerSelection[item.name]) {
-          delete next[item.name];
-          return;
+        autoDisabled.delete(normalized);
+        return;
+      }
+      if (next[item.name] === undefined) {
+        // Prioritize release page selection, then fall back to defaults
+        if (hasReleaseSelection) {
+          setToggle(item.name, releasePageTrackerSelection[item.name]);
+        } else {
+          setToggle(item.name, defaultTrackerSet.has(normalized));
         }
-        if (dupeFiltersMatchCurrentPath && failedDupeTrackerSet.has(normalized)) {
-          next[item.name] = false;
-          return;
-        }
-        if (
-          dupeFiltersMatchCurrentPath &&
-          (dupedTrackerSet.has(normalized) || ruleSkippedTrackerSet.has(normalized))
-        ) {
-          next[item.name] = false;
-          return;
-        }
-        if (next[item.name] === undefined) {
-          // Prioritize release page selection, then fall back to defaults
-          if (hasReleaseSelection) {
-            next[item.name] = releasePageTrackerSelection[item.name];
-          } else {
-            next[item.name] = defaultTrackerSet.has(normalized);
-          }
-        }
-      });
-      const trackerNames = new Set(trackerUploadItems.map((item) => item.name));
-      Object.keys(next).forEach((name) => {
-        if (!trackerNames.has(name)) {
-          delete next[name];
-          return;
-        }
-        if (
-          Object.prototype.hasOwnProperty.call(releasePageTrackerSelection, name) &&
-          !releasePageTrackerSelection[name]
-        ) {
-          delete next[name];
-        }
-      });
-      return next;
+      }
     });
+    const trackerNames = new Set(trackerUploadItems.map((item) => item.name));
+    Object.keys(next).forEach((name) => {
+      if (!trackerNames.has(name)) {
+        autoDisabled.delete(name.toLowerCase().trim());
+        deleteToggle(name);
+        return;
+      }
+      if (
+        Object.prototype.hasOwnProperty.call(releasePageTrackerSelection, name) &&
+        !releasePageTrackerSelection[name]
+      ) {
+        autoDisabled.delete(name.toLowerCase().trim());
+        deleteToggle(name);
+      }
+    });
+    autoDisabledUploadTrackersRef.current = autoDisabled;
+    if (changed) {
+      setUploadToggles(next);
+    }
   }, [
     trackerUploadItems,
     defaultTrackerSet,
@@ -3342,6 +3391,7 @@ export default function App() {
     ruleSkippedTrackerSet,
     failedDupeTrackerSet,
     releasePageTrackerSelection,
+    uploadToggles,
   ]);
 
   useEffect(() => {

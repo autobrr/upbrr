@@ -545,12 +545,12 @@ func TestEvaluateRulesModifiedReleaseAcrossFamilies(t *testing.T) {
 	t.Parallel()
 
 	renamed := api.PreparedMetadata{
-		SourcePath: "/data/movies/Fury 2014 2160p MA WEB-DL DDP5 1 HDR H 265-HHWEB",
-		Release:    api.ReleaseInfo{Group: "HHWEB"},
+		SourcePath: "/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5 1 HDR H 265-GRP",
+		Release:    api.ReleaseInfo{Group: "GRP"},
 	}
 	clean := api.PreparedMetadata{
-		SourcePath: "/data/movies/Fury.2014.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-HHWEB",
-		Release:    api.ReleaseInfo{Group: "HHWEB"},
+		SourcePath: "/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP",
+		Release:    api.ReleaseInfo{Group: "GRP"},
 	}
 
 	// Covers a UNIT3D tracker (LST), a non-UNIT3D tracker (PTP), an AZ-family
@@ -582,8 +582,8 @@ func TestEvaluateRulesPreservesNilForTrackerWithoutFailures(t *testing.T) {
 	t.Parallel()
 
 	clean := api.PreparedMetadata{
-		SourcePath: "/data/movies/Fury.2014.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-HHWEB",
-		Release:    api.ReleaseInfo{Group: "HHWEB"},
+		SourcePath: "/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP",
+		Release:    api.ReleaseInfo{Group: "GRP"},
 	}
 	// MTV is non-UNIT3D, not PTP, and has no rule set of its own.
 	if got := EvaluateRules(context.Background(), "MTV", clean, nil); got != nil {
@@ -595,8 +595,8 @@ func TestEvaluateRulesModifiedReleaseExemptsManual(t *testing.T) {
 	t.Parallel()
 
 	renamed := api.PreparedMetadata{
-		SourcePath: "/data/movies/Fury 2014 2160p MA WEB-DL DDP5 1 HDR H 265-HHWEB",
-		Release:    api.ReleaseInfo{Group: "HHWEB"},
+		SourcePath: "/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5 1 HDR H 265-GRP",
+		Release:    api.ReleaseInfo{Group: "GRP"},
 	}
 	if got := EvaluateRules(context.Background(), "MANUAL", renamed, nil); hasRuleFailure(got, "modified_release") {
 		t.Fatalf("expected MANUAL to be exempt from modified_release, got %#v", got)

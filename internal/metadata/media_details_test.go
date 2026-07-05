@@ -324,27 +324,27 @@ func TestEditionFromMetaExtractsRepackFromSourcePath(t *testing.T) {
 	}{
 		{
 			name: "explicit repack2",
-			path: `C:\Movies\Melancholia.2011.REPACK2.1080p.BluRay.DTS.x264-DON`,
+			path: `C:\Movies\Example.Movie.2026.REPACK2.1080p.BluRay.DTS.x264-GRP`,
 			want: "REPACK2",
 		},
 		{
 			name: "v3 maps to repack2",
-			path: `C:\Movies\Melancholia.2011.V3.1080p.BluRay.DTS.x264-DON`,
+			path: `C:\Movies\Example.Movie.2026.V3.1080p.BluRay.DTS.x264-GRP`,
 			want: "REPACK2",
 		},
 		{
 			name: "v4 maps to repack3",
-			path: `C:\Movies\Melancholia.2011.V4.1080p.BluRay.DTS.x264-DON`,
+			path: `C:\Movies\Example.Movie.2026.V4.1080p.BluRay.DTS.x264-GRP`,
 			want: "REPACK3",
 		},
 		{
 			name: "proper2",
-			path: `C:\Movies\Melancholia.2011.PROPER2.1080p.BluRay.DTS.x264-DON`,
+			path: `C:\Movies\Example.Movie.2026.PROPER2.1080p.BluRay.DTS.x264-GRP`,
 			want: "PROPER2",
 		},
 		{
 			name: "parent path marker ignored",
-			path: `C:\Movies\REPACK\Melancholia.2011.1080p.BluRay.DTS.x264-DON`,
+			path: `C:\Movies\REPACK\Example.Movie.2026.1080p.BluRay.DTS.x264-GRP`,
 			want: "",
 		},
 	}

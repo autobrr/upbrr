@@ -338,13 +338,85 @@ func TestResolveServiceMGMPlus(t *testing.T) {
 	t.Parallel()
 
 	service, longName, filename := resolveService(api.PreparedMetadata{
-		SourcePath: `D:\TV\A.Spy.Among.Friends.S01.2160p.MGMP.WEB-DL.DDP5.1.H.265-XEBEC`,
+		SourcePath: `D:\TV\Example.Spy.Show.S01.2160p.MGMP.WEB-DL.DDP5.1.H.265-GRP`,
 	})
 	if service != "MGMP" {
 		t.Fatalf("expected MGMP service, got %q", service)
 	}
 	if longName != "MGM Plus" {
 		t.Fatalf("expected MGM Plus long name, got %q", longName)
+	}
+	if filename == "" {
+		t.Fatalf("expected filename to be preserved")
+	}
+}
+
+func TestResolveServiceIgnoresTitleServiceTokens(t *testing.T) {
+	t.Parallel()
+
+	service, longName, filename := resolveService(api.PreparedMetadata{
+		SourcePath: `/releases/Example.Show.S01E01.Netflix.and.Chill.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv`,
+	})
+	if service != "" {
+		t.Fatalf("expected no service from episode title, got %q", service)
+	}
+	if longName != "" {
+		t.Fatalf("expected no long name from episode title, got %q", longName)
+	}
+	if filename == "" {
+		t.Fatalf("expected filename to be preserved")
+	}
+}
+
+func TestResolveServiceUsesAliasAdjacentToWebSource(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		sourcePath string
+	}{
+		{
+			name:       "web dl with separator",
+			sourcePath: `/releases/Netflix.Documentary.2026.1080p.AMZN.WEB-DL.DDP5.1.H.264-GRP.mkv`,
+		},
+		{
+			name:       "split web dl",
+			sourcePath: `/releases/Netflix.Documentary.2026.1080p.AMZN WEB DL DDP5.1 H.264-GRP.mkv`,
+		},
+		{
+			name:       "split web rip",
+			sourcePath: `/releases/Netflix.Documentary.2026.1080p.AMZN WEB RIP DDP5.1 H.264-GRP.mkv`,
+		},
+		{
+			name:       "compact webrip",
+			sourcePath: `/releases/Netflix.Documentary.2026.1080p.AMZN.WEBRip.DDP5.1.H.264-GRP.mkv`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertResolvedService(t, tt.sourcePath, "AMZN", "Amazon Prime")
+		})
+	}
+}
+
+func TestResolveServicePrefersLongestAdjacentAlias(t *testing.T) {
+	t.Parallel()
+
+	assertResolvedService(t, `/releases/Example.Movie.2026.1080p.Apple.TV+.WEB-DL.DDP5.1.H.264-GRP.mkv`, "ATVP", "Apple TV+")
+}
+
+func assertResolvedService(t *testing.T, sourcePath, wantService, wantLongName string) {
+	t.Helper()
+
+	service, longName, filename := resolveService(api.PreparedMetadata{
+		SourcePath: sourcePath,
+	})
+	if service != wantService {
+		t.Fatalf("expected %s service, got %q", wantService, service)
+	}
+	if longName != wantLongName {
+		t.Fatalf("expected %s long name, got %q", wantLongName, longName)
 	}
 	if filename == "" {
 		t.Fatalf("expected filename to be preserved")

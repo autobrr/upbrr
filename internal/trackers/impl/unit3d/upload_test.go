@@ -121,7 +121,7 @@ func TestResolveUnit3DCategory(t *testing.T) {
 		{
 			name: "release category movie alias",
 			meta: api.PreparedMetadata{
-				ReleaseName: "S1m0ne.2002.1080p.WEB-DL-GRP",
+				ReleaseName: "Example.Movie.2026.1080p.WEB-DL-GRP",
 				Release:     api.ReleaseInfo{Category: "film"},
 			},
 			want: "MOVIE",
@@ -622,11 +622,11 @@ func TestBuildUnit3DDataSkipsTVFieldsWhenMovieSignalsExist(t *testing.T) {
 	req := trackers.UploadRequest{
 		Tracker: "AITHER",
 		Meta: api.PreparedMetadata{
-			ReleaseName: "Watcher.2022.2160p.WEB-DL.DDP5.1.H.265-FLUX",
+			ReleaseName: "Example.Movie.2026.2160p.WEB-DL.DDP5.1.H.265-GRP",
 			ExternalIDs: api.ExternalIDs{
 				Category: "TV",
-				TMDBID:   807356,
-				IMDBID:   12004038,
+				TMDBID:   765432,
+				IMDBID:   1234567,
 			},
 			MediaInfoCategory: "movie",
 			Type:              "movie",
@@ -696,12 +696,12 @@ func TestBuildUnit3DDataUsesParsedCategoryWhenExplicitCategoriesBlank(t *testing
 	movieReq := trackers.UploadRequest{
 		Tracker: "AITHER",
 		Meta: api.PreparedMetadata{
-			ReleaseName: "S1m0ne.2002.1080p.WEB-DL-GRP",
+			ReleaseName: "Example.Movie.2026.1080p.WEB-DL-GRP",
 			ExternalIDs: api.ExternalIDs{TVDBID: 789},
 			Type:        "WEBDL",
 			Release: api.ReleaseInfo{
 				Category:   "MOVIE",
-				Year:       2002,
+				Year:       2026,
 				Resolution: "1080p",
 			},
 		},
@@ -944,18 +944,18 @@ func TestBuildZNTHNameExplicitMoviePreservesMovieBranchOverParsedTV(t *testing.T
 
 func TestBuildZNTHNameBlankCategoryUsesParsedMovieCategory(t *testing.T) {
 	meta := api.PreparedMetadata{
-		ReleaseName: "S1m0ne.2002.1080p.WEB-DL-GRP",
+		ReleaseName: "Example.Movie.2026.1080p.WEB-DL-GRP",
 		Release: api.ReleaseInfo{
 			Category: "MOVIE",
-			Year:     2002,
+			Year:     2026,
 		},
 		ExternalMetadata: api.ExternalMetadata{
-			IMDB: &api.IMDBMetadata{Year: 2003},
+			IMDB: &api.IMDBMetadata{Year: 2027},
 		},
 	}
 
 	got := buildUnit3DName("ZNTH", meta, config.TrackerConfig{})
-	expected := "S1m0ne.2003.1080p.WEB-DL-GRP"
+	expected := "Example.Movie.2027.1080p.WEB-DL-GRP"
 	if got != expected {
 		t.Fatalf("expected %q, got %q", expected, got)
 	}
@@ -1449,13 +1449,13 @@ func TestBuildUnit3DNameRHDBuildsFromTMDBWhenBaseNameBlank(t *testing.T) {
 		ExternalMetadata: api.ExternalMetadata{
 			TMDB: &api.TMDBMetadata{
 				Year:            2025,
-				LocalizedTitles: map[string]string{"de": "Die Probe"},
+				LocalizedTitles: map[string]string{"de": "Beispiel Film"},
 			},
 		},
 	}
 
 	got := buildUnit3DName("RHD", meta, config.TrackerConfig{})
-	want := "Die Probe 2025 GERMAN 1080p WEB-DL DD+ 5.1 H.264-GRP"
+	want := "Beispiel Film 2025 GERMAN 1080p WEB-DL DD+ 5.1 H.264-GRP"
 	if got != want {
 		t.Fatalf("expected RHD TMDB-derived name %q, got %q", want, got)
 	}

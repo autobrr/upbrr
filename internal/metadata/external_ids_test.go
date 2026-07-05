@@ -846,10 +846,10 @@ func TestResolveExternalIDsRefetchesMissingTMDBLogo(t *testing.T) {
 
 func TestResolveExternalIDsUsesSceneTVmazeToResolveIMDb(t *testing.T) {
 	repo := &fakeRepo{}
-	tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{Title: "From", Year: 2022}}
-	imdbClient := &stubIMDB{info: imdb.Info{IMDbID: "tt9813792", Title: "From", Year: 2022}}
-	tvdbClient := &stubTVDB{id: 401003, name: "FROM"}
-	tvmazeClient := &stubTVmaze{result: tvmaze.SearchResult{SelectedID: 54723, IMDBID: 9813792, TVDBID: 401003}}
+	tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{Title: "Example Show", Year: 2026}}
+	imdbClient := &stubIMDB{info: imdb.Info{IMDbID: "tt1234567", Title: "Example Show", Year: 2026}}
+	tvdbClient := &stubTVDB{id: 456789, name: "Example Show"}
+	tvmazeClient := &stubTVmaze{result: tvmaze.SearchResult{SelectedID: 12345, IMDBID: 1234567, TVDBID: 456789}}
 
 	svc := NewService(repo,
 		WithTMDBClient(tmdbClient),
@@ -859,25 +859,25 @@ func TestResolveExternalIDsUsesSceneTVmazeToResolveIMDb(t *testing.T) {
 	)
 
 	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
-		SourcePath:        "/media/From.S04E01.2160p.WEB.h265-ETHEL.mkv",
-		SceneTVmazeID:     54723,
-		Release:           api.ReleaseInfo{Category: "TV", Title: "From"},
+		SourcePath:        "/media/Example.Show.S04E01.2160p.WEB.h265-GRP.mkv",
+		SceneTVmazeID:     12345,
+		Release:           api.ReleaseInfo{Category: "TV", Title: "Example Show"},
 		MediaInfoCategory: "TV",
 	})
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
 
-	if result.ExternalIDs.TVmazeID != 54723 || result.ExternalIDs.SourceTVmaze != "scene" {
+	if result.ExternalIDs.TVmazeID != 12345 || result.ExternalIDs.SourceTVmaze != "scene" {
 		t.Fatalf("expected scene tvmaze id, got %#v", result.ExternalIDs)
 	}
-	if result.ExternalIDs.IMDBID != 9813792 || result.ExternalIDs.SourceIMDB != "tvmaze" {
+	if result.ExternalIDs.IMDBID != 1234567 || result.ExternalIDs.SourceIMDB != "tvmaze" {
 		t.Fatalf("expected imdb from tvmaze, got %#v", result.ExternalIDs)
 	}
-	if tvmazeClient.calls == 0 || len(tvmazeClient.inputs) == 0 || tvmazeClient.inputs[0].ManualID != 54723 {
+	if tvmazeClient.calls == 0 || len(tvmazeClient.inputs) == 0 || tvmazeClient.inputs[0].ManualID != 12345 {
 		t.Fatalf("expected tvmaze manual lookup, got calls=%d inputs=%#v", tvmazeClient.calls, tvmazeClient.inputs)
 	}
-	if repo.ids.IMDBID != 9813792 || repo.ids.TVmazeID != 54723 {
+	if repo.ids.IMDBID != 1234567 || repo.ids.TVmazeID != 12345 {
 		t.Fatalf("expected persisted ids from tvmaze, got %#v", repo.ids)
 	}
 }
@@ -995,12 +995,12 @@ func TestResolveExternalIDsUsesStoredFreshData(t *testing.T) {
 func TestResolveExternalIDsPrefersTMDBFromIMDbBeforeSearch(t *testing.T) {
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{
-		searchOutcome: tmdb.SearchOutcome{TMDBID: 1620301, Category: "TV"},
-		findResult:    tmdb.FindResult{TMDBID: 77075, Category: "TV"},
-		metadata:      tmdb.MetadataResult{Title: "Jeopardy!", TMDBType: "Scripted"},
+		searchOutcome: tmdb.SearchOutcome{TMDBID: 765432, Category: "TV"},
+		findResult:    tmdb.FindResult{TMDBID: 456789, Category: "TV"},
+		metadata:      tmdb.MetadataResult{Title: "Example Quiz", TMDBType: "Scripted"},
 	}
-	imdbClient := &stubIMDB{info: imdb.Info{IMDbID: "tt0159881", Title: "Jeopardy!", Type: "tvSeries", Year: 1984}}
-	tvdbClient := &stubTVDB{seriesMetadata: tvdb.SeriesMetadata{TVDBID: 77075, Name: "Jeopardy!", FirstAired: "1984-09-10"}}
+	imdbClient := &stubIMDB{info: imdb.Info{IMDbID: "tt1234567", Title: "Example Quiz", Type: "tvSeries", Year: 2026}}
+	tvdbClient := &stubTVDB{seriesMetadata: tvdb.SeriesMetadata{TVDBID: 456789, Name: "Example Quiz", FirstAired: "2026-09-10"}}
 	tvmazeClient := &stubTVmaze{}
 
 	svc := NewService(repo,
@@ -1011,10 +1011,10 @@ func TestResolveExternalIDsPrefersTMDBFromIMDbBeforeSearch(t *testing.T) {
 	)
 
 	meta := api.PreparedMetadata{
-		SourcePath:        `D:\temp\Jeopardy.2025.11.10.1080p.PCOK.WEB-DL.AAC2.0.H.264-ASTRiD.mkv`,
+		SourcePath:        `D:\temp\Example.Quiz.2026.11.10.1080p.WEB-DL.AAC2.0.H.264-GRP.mkv`,
 		MediaInfoCategory: "TV",
-		Release:           api.ReleaseInfo{Title: "Jeopardy", Year: 2025, Type: "episode"},
-		TrackerData:       []api.TrackerMetadata{{IMDBID: 159881, TVDBID: 77075, Category: "TV"}},
+		Release:           api.ReleaseInfo{Title: "Example Quiz", Year: 2026, Type: "episode"},
+		TrackerData:       []api.TrackerMetadata{{IMDBID: 1234567, TVDBID: 456789, Category: "TV"}},
 	}
 
 	result, err := svc.ResolveExternalIDs(context.Background(), meta)
@@ -1022,7 +1022,7 @@ func TestResolveExternalIDsPrefersTMDBFromIMDbBeforeSearch(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 
-	if result.ExternalIDs.TMDBID != 77075 {
+	if result.ExternalIDs.TMDBID != 456789 {
 		t.Fatalf("expected tmdb id from imdb external lookup, got %d", result.ExternalIDs.TMDBID)
 	}
 	if result.ExternalIDs.SourceTMDB != "tmdb_external" {
@@ -1112,10 +1112,10 @@ func TestResolveExternalIDsSearchStagesAndUnattendedInteractionMode(t *testing.T
 	)
 
 	meta := api.PreparedMetadata{
-		SourcePath: "/media/Solo.Camping.for.Two.2025.1080p.WEB-DL.mkv",
+		SourcePath: "/media/Example.Series.2025.1080p.WEB-DL.mkv",
 		Mode:       api.ModeCLI,
 		Options:    api.UploadOptions{InteractionMode: api.InteractionModeUnattended},
-		Release:    api.ReleaseInfo{Title: "Solo Camping for Two", Year: 2025, Type: "episode"},
+		Release:    api.ReleaseInfo{Title: "Example Series", Year: 2025, Type: "episode"},
 	}
 
 	result, err := svc.ResolveExternalIDs(context.Background(), meta)
@@ -1166,10 +1166,10 @@ func TestResolveExternalIDsInteractiveCLIDoesNotForceUnattendedSearch(t *testing
 	svc := NewService(repo, WithTMDBClient(tmdbClient), WithIMDBClient(imdbClient), WithTVDBClient(&stubTVDB{}), WithTVmazeClient(&stubTVmaze{}))
 
 	_, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
-		SourcePath: "/media/Solo.Camping.for.Two.2025.1080p.WEB-DL.mkv",
+		SourcePath: "/media/Example.Series.2025.1080p.WEB-DL.mkv",
 		Mode:       api.ModeCLI,
 		Options:    api.UploadOptions{InteractionMode: api.InteractionModeInteractive},
-		Release:    api.ReleaseInfo{Title: "Solo Camping for Two", Year: 2025, Type: "episode"},
+		Release:    api.ReleaseInfo{Title: "Example Series", Year: 2025, Type: "episode"},
 	})
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -1212,10 +1212,10 @@ func TestResolveExternalIDsDailyDateSkipsParsedYearInSearch(t *testing.T) {
 	)
 
 	meta := api.PreparedMetadata{
-		SourcePath:       "/media/Jeopardy.2026.01.12.720p.HDTV.x264.mkv",
+		SourcePath:       "/media/Example.Quiz.2026.01.12.720p.HDTV.x264.mkv",
 		DailyEpisodeDate: "2026-01-12",
 		Release: api.ReleaseInfo{
-			Title: "Jeopardy",
+			Title: "Example Quiz",
 			Year:  2026,
 			Type:  "episode",
 		},
@@ -1241,9 +1241,9 @@ func TestResolveExternalIDsFetchesIMDBAfterTMDBResolvesIt(t *testing.T) {
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{
 		searchOutcome: tmdb.SearchOutcome{TMDBID: 224372, Category: "TV"},
-		metadata:      tmdb.MetadataResult{Title: "Example Show", TMDBType: "Scripted", IMDbID: 27497448},
+		metadata:      tmdb.MetadataResult{Title: "Example Show", TMDBType: "Scripted", IMDbID: 1234567},
 	}
-	imdbClient := &stubIMDB{info: imdb.Info{IMDbID: "tt27497448", Title: "Example Show"}}
+	imdbClient := &stubIMDB{info: imdb.Info{IMDbID: "tt1234567", Title: "Example Show"}}
 	tvdbClient := &stubTVDB{}
 	tvmazeClient := &stubTVmaze{}
 
@@ -1265,7 +1265,7 @@ func TestResolveExternalIDsFetchesIMDBAfterTMDBResolvesIt(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 
-	if result.ExternalIDs.IMDBID != 27497448 {
+	if result.ExternalIDs.IMDBID != 1234567 {
 		t.Fatalf("expected imdb id resolved from tmdb metadata, got %d", result.ExternalIDs.IMDBID)
 	}
 	if imdbClient.infoCalls == 0 {
@@ -1525,20 +1525,20 @@ func TestResolveExternalIDsMissingRepo(t *testing.T) {
 
 func TestResolveSearchTitleYearFromPathFallback(t *testing.T) {
 	meta := api.PreparedMetadata{
-		SourcePath: `D:\Movies\1982 - Fitzcarraldo [DVD9.PAL]`,
+		SourcePath: `D:\Movies\2026 - Example Movie [DVD9.PAL]`,
 	}
 
 	title, secondary := resolveSearchTitles(meta)
 	year := resolveSearchYear(meta)
 
-	if title != "Fitzcarraldo" {
+	if title != "Example Movie" {
 		t.Fatalf("expected normalized title, got %q", title)
 	}
 	if secondary != "" {
 		t.Fatalf("expected empty secondary title, got %q", secondary)
 	}
-	if year != 1982 {
-		t.Fatalf("expected inferred year 1982, got %d", year)
+	if year != 2026 {
+		t.Fatalf("expected inferred year 2026, got %d", year)
 	}
 }
 
@@ -2143,10 +2143,10 @@ func TestResolveExternalIDsTVDBSlugYearNotUsedForNamingYear(t *testing.T) {
 func TestMapTVDBMetadataAPIYearDoesNotBecomeNamingYear(t *testing.T) {
 	mapped := mapTVDBMetadata(402296, "", tvdb.SeriesMetadata{
 		TVDBID:           402296,
-		Name:             "A Spy Among Friends",
-		NameEnglish:      "A Spy Among Friends",
-		SeriesYear:       2022,
-		FirstAired:       "2022-12-08",
+		Name:             "Example Spy Show",
+		NameEnglish:      "Example Spy Show",
+		SeriesYear:       2026,
+		FirstAired:       "2026-12-08",
 		OriginalLanguage: "eng",
 		HasEnglish:       true,
 	})
@@ -2154,8 +2154,8 @@ func TestMapTVDBMetadataAPIYearDoesNotBecomeNamingYear(t *testing.T) {
 	if mapped == nil {
 		t.Fatalf("expected mapped metadata")
 	}
-	if mapped.Year != 2022 {
-		t.Fatalf("expected first-aired tvdb year 2022, got %d", mapped.Year)
+	if mapped.Year != 2026 {
+		t.Fatalf("expected first-aired tvdb year 2026, got %d", mapped.Year)
 	}
 	if mapped.YearFromAlias {
 		t.Fatalf("expected api year not to mark YearFromAlias")
@@ -2168,7 +2168,7 @@ func TestMapTVDBMetadataAPIYearDoesNotBecomeNamingYear(t *testing.T) {
 func TestMergeTVDBMetadataClearsStaleAliasYear(t *testing.T) {
 	target := &api.TVDBMetadata{
 		TVDBID:         402296,
-		Name:           "A Spy Among Friends",
+		Name:           "Example Spy Show",
 		Year:           2025,
 		YearFromAlias:  true,
 		YearSource:     "translation_alias",
@@ -2176,15 +2176,15 @@ func TestMergeTVDBMetadataClearsStaleAliasYear(t *testing.T) {
 	}
 	incoming := &api.TVDBMetadata{
 		TVDBID:     402296,
-		Name:       "A Spy Among Friends",
-		FirstAired: "2022-12-08",
-		Year:       2022,
+		Name:       "Example Spy Show",
+		FirstAired: "2026-12-08",
+		Year:       2026,
 		YearSource: "first_aired",
 	}
 
 	mergeTVDBMetadata(target, incoming)
 
-	if target.Year != 2022 {
+	if target.Year != 2026 {
 		t.Fatalf("expected stale alias year replaced with incoming first-aired year, got %d", target.Year)
 	}
 	if target.YearFromAlias {
