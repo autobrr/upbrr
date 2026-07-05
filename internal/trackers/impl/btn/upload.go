@@ -1189,7 +1189,7 @@ func resolveOrigin(meta api.PreparedMetadata) string {
 	if isBTNSceneRelease(meta) {
 		return "Scene"
 	}
-	if group != "" && isNoGroupTag(group) {
+	if group != "" && isNoGroupTag(group) || isBTNInternalGroup(meta) {
 		return "None"
 	}
 	return "P2P"
