@@ -86,6 +86,36 @@ func TestIsRenamedRelease(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "tmdb bracket token is flagged",
+			meta: api.PreparedMetadata{SourcePath: "/data/movies/Example Movie (2026) [tmdb-12345]"},
+			want: true,
+		},
+		{
+			name: "tmdb paren token is flagged",
+			meta: api.PreparedMetadata{SourcePath: "/data/movies/Example Movie (2026) (tmdb-12345)"},
+			want: true,
+		},
+		{
+			name: "imdb bracket token is flagged",
+			meta: api.PreparedMetadata{SourcePath: "/data/movies/Example Movie (2026) [imdb-tt1234567]"},
+			want: true,
+		},
+		{
+			name: "imdb paren token is flagged",
+			meta: api.PreparedMetadata{SourcePath: "/data/movies/Example Movie (2026) (imdb-tt1234567)"},
+			want: true,
+		},
+		{
+			name: "tvdb bracket token is flagged",
+			meta: api.PreparedMetadata{SourcePath: "/data/tv/Example Show (2026) [tvdb-12345]"},
+			want: true,
+		},
+		{
+			name: "tvdb paren token is flagged",
+			meta: api.PreparedMetadata{SourcePath: "/data/tv/Example Show (2026) (tvdb-12345)"},
+			want: true,
+		},
+		{
 			name: "standard rename check skipped for configured group",
 			meta: api.PreparedMetadata{
 				SourcePath: "/data/movies/Example Release 2026 2160p MA WEB-DL DDP5 1 HDR H 265-HiDt",
