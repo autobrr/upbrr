@@ -1645,6 +1645,36 @@ func decodeBTNAPIJSON(r io.Reader, dest any) error {
 	return nil
 }
 
+func callBTNAPI(ctx context.Context, apiURL, id, method string, params []any, dest any) error {
+	payload := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  method,
+		"params":  params,
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("trackers: BTN API %s encode: %w", method, err)
+	}
+	apiReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(encoded))
+	if err != nil {
+		return fmt.Errorf("trackers: BTN API %s request build: %w", method, err)
+	}
+	apiReq.Header.Set("Content-Type", "application/json")
+	apiResp, err := (&http.Client{Timeout: 30 * time.Second}).Do(apiReq)
+	if err != nil {
+		return fmt.Errorf("trackers: BTN API %s request: %w", method, err)
+	}
+	defer apiResp.Body.Close()
+	if apiResp.StatusCode < 200 || apiResp.StatusCode >= 300 {
+		return fmt.Errorf("trackers: BTN API %s failed status=%d", method, apiResp.StatusCode)
+	}
+	if err := decodeBTNAPIJSON(apiResp.Body, dest); err != nil {
+		return fmt.Errorf("trackers: BTN API decode %s response: %w", method, err)
+	}
+	return nil
+}
+
 // validateBTNJSONNoDuplicateObjectNames scans one JSON value before unmarshal
 // so duplicate object names cannot collapse into the last decoded value.
 func validateBTNJSONNoDuplicateObjectNames(payload []byte) error {
@@ -1749,73 +1779,30 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 	if strings.TrimSpace(groupID) != "" {
 		filter["group"] = groupID
 	}
-	payload := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      "ua-btn-upload",
-		"method":  "getTorrentsSearch",
-		"params":  []any{apiToken, filter, 50},
-	}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return "", "", fmt.Errorf("trackers: BTN API search encode: %w", err)
-	}
-	apiReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(encoded))
-	if err != nil {
-		return "", "", fmt.Errorf("trackers: BTN API search request build: %w", err)
-	}
-	apiReq.Header.Set("Content-Type", "application/json")
-	apiResp, err := (&http.Client{Timeout: 30 * time.Second}).Do(apiReq)
-	if err != nil {
-		return "", "", fmt.Errorf("trackers: BTN API search request: %w", err)
-	}
-	defer apiResp.Body.Close()
-	if apiResp.StatusCode < 200 || apiResp.StatusCode >= 300 {
-		return "", "", fmt.Errorf("trackers: BTN API search failed status=%d", apiResp.StatusCode)
-	}
+
 	var response struct {
 		Result struct {
 			Torrents map[string]map[string]any `json:"torrents"`
 		} `json:"result"`
 	}
-	if err := decodeBTNAPIJSON(apiResp.Body, &response); err != nil {
-		return "", "", fmt.Errorf("trackers: BTN decode torrent search response: %w", err)
+	if err := callBTNAPI(ctx, apiURL, "ua-btn-upload", "getTorrentsSearch", []any{apiToken, filter, 50}, &response); err != nil {
+		return "", "", err
 	}
+
 	selection := selectBTNAPITorrent(response.Result.Torrents, releaseName, groupID)
 	if selection.ID == "" {
 		return "", "", errors.New("trackers: BTN API did not return a matching torrent id")
 	}
 
-	downloadPayload := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      "ua-btn-download",
-		"method":  "getTorrentById",
-		"params":  []any{apiToken, selection.ID},
-	}
-	downloadEncoded, err := json.Marshal(downloadPayload)
-	if err != nil {
-		return "", "", fmt.Errorf("trackers: BTN API download encode: %w", err)
-	}
-	downloadReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(downloadEncoded))
-	if err != nil {
-		return "", "", fmt.Errorf("trackers: BTN API download request build: %w", err)
-	}
-	downloadReq.Header.Set("Content-Type", "application/json")
-	downloadResp, err := (&http.Client{Timeout: 30 * time.Second}).Do(downloadReq)
-	if err != nil {
-		return "", "", fmt.Errorf("trackers: BTN API download request: %w", err)
-	}
-	defer downloadResp.Body.Close()
-	if downloadResp.StatusCode < 200 || downloadResp.StatusCode >= 300 {
-		return "", "", fmt.Errorf("trackers: BTN API download failed status=%d", downloadResp.StatusCode)
-	}
 	var downloadResult struct {
 		Result struct {
 			DownloadURL string `json:"DownloadURL"`
 		} `json:"result"`
 	}
-	if err := decodeBTNAPIJSON(downloadResp.Body, &downloadResult); err != nil {
-		return "", "", fmt.Errorf("trackers: BTN API decode download response: %w", err)
+	if err := callBTNAPI(ctx, apiURL, "ua-btn-download", "getTorrentById", []any{apiToken, selection.ID}, &downloadResult); err != nil {
+		return "", "", err
 	}
+
 	if downloadResult.Result.DownloadURL == "" {
 		return "", "", errors.New("trackers: BTN API did not return DownloadURL")
 	}
@@ -2613,37 +2600,13 @@ func checkBTNSeasonPackReservation(ctx context.Context, uploadCtx uploadContext,
 }
 
 func btnAPISearchTorrents(ctx context.Context, apiURL, apiToken string, filter map[string]any, limit int) (map[string]map[string]any, error) {
-	payload := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      "ua-btn-upload-check",
-		"method":  "getTorrentsSearch",
-		"params":  []any{apiToken, filter, limit},
-	}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("trackers: BTN API check encode: %w", err)
-	}
-	apiReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(encoded))
-	if err != nil {
-		return nil, fmt.Errorf("trackers: BTN API check request build: %w", err)
-	}
-	apiReq.Header.Set("Content-Type", "application/json")
-	apiResp, err := (&http.Client{Timeout: 30 * time.Second}).Do(apiReq)
-	if err != nil {
-		return nil, fmt.Errorf("trackers: BTN API check request: %w", err)
-	}
-	defer apiResp.Body.Close()
-	if apiResp.StatusCode < 200 || apiResp.StatusCode >= 300 {
-		return nil, fmt.Errorf("trackers: BTN API check failed status=%d", apiResp.StatusCode)
-	}
-
 	var response struct {
 		Result struct {
 			Torrents json.RawMessage `json:"torrents"`
 		} `json:"result"`
 	}
-	if err := decodeBTNAPIJSON(apiResp.Body, &response); err != nil {
-		return nil, fmt.Errorf("trackers: BTN decode torrent check response: %w", err)
+	if err := callBTNAPI(ctx, apiURL, "ua-btn-upload-check", "getTorrentsSearch", []any{apiToken, filter, limit}, &response); err != nil {
+		return nil, err
 	}
 
 	if len(response.Result.Torrents) == 0 || string(response.Result.Torrents) == "false" || string(response.Result.Torrents) == "[]" {
