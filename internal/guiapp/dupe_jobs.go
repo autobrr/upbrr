@@ -16,10 +16,12 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/autobrr/upbrr/internal/guishared"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 const dupeCheckEventPrefix = "dupe:job:"
+const errDupeCheckRequiresMetadataPreview = "dupe check requires metadata preview"
 
 type DupeCheckTrackerState struct {
 	Tracker    string              `json:"tracker"`
@@ -72,6 +74,25 @@ func (a *App) StartDupeCheck(path string, overrides api.ExternalIDOverrides, nam
 	resolvedTrackers := normalizeTrackerList(trackers)
 	if len(resolvedTrackers) == 0 {
 		return "", errors.New("at least one tracker must be selected")
+	}
+
+	req := api.Request{
+		Paths:    []string{trimmedPath},
+		Mode:     api.ModeGUI,
+		Trackers: resolvedTrackers,
+		Options:  a.baseUploadOptions(),
+
+		ExternalIDOverrides:  overrides,
+		ReleaseNameOverrides: nameOverrides,
+	}
+	if exporter, ok := a.currentCore().(guishared.PreparedMetaExporter); ok {
+		_, found, err := exporter.ExportGUICachedPreparedMeta(a.runtimeContext(), req)
+		if err != nil {
+			return "", fmt.Errorf("dupe check metadata preview cache: %w", err)
+		}
+		if !found {
+			return "", errors.New(errDupeCheckRequiresMetadataPreview)
+		}
 	}
 
 	jobID := randomJobID()

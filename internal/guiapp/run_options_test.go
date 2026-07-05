@@ -607,6 +607,27 @@ func TestRunDupeCheckJobSplitsGroupedPathedResultsIntoTrackerStates(t *testing.T
 	}
 }
 
+func TestStartDupeCheckRequiresMetadataPreviewCache(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &closeCounterCore{}
+	app := &App{
+		core: coreSvc,
+		cfg:  config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+	}
+
+	_, err := app.StartDupeCheck(`C:\Media\Example.mkv`, api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, []string{"AITHER"})
+	if err == nil {
+		t.Fatal("expected missing metadata preview cache to block dupe check start")
+	}
+	if !strings.Contains(err.Error(), "dupe check requires metadata preview") {
+		t.Fatalf("expected metadata preview error, got %v", err)
+	}
+	if len(app.dupes) != 0 {
+		t.Fatalf("expected no durable dupe job after cache miss, got %d", len(app.dupes))
+	}
+}
+
 func TestRunTrackerUploadJobIgnoresNegativeUploadedCount(t *testing.T) {
 	app := &App{}
 	coreSvc := &closeCounterCore{uploads: []uploadPreparedResponse{

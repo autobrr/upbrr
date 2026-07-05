@@ -63,6 +63,8 @@ type FetchPreparation = (
   ignoreDupesFor: string[],
 ) => Promise<unknown>;
 type DetectDiscType = (sourcePath: string) => Promise<string>;
+type StartDupeCheck = (...args: unknown[]) => Promise<string>;
+type GetDupeCheckSnapshot = (jobID: string) => Promise<DupeCheckSnapshot>;
 type StartTrackerUpload = (...args: unknown[]) => Promise<string>;
 type RetryFailedTrackerUpload = (jobID: string) => Promise<string>;
 type CancelTrackerUpload = (jobID: string) => Promise<void>;
@@ -268,7 +270,8 @@ const installAppBridge = (
     fetchDescriptionBuilder?: FetchDescriptionBuilder;
     fetchPreparation?: FetchPreparation;
     browseFolder?: () => Promise<string>;
-    getDupeCheckSnapshot?: () => Promise<DupeCheckSnapshot>;
+    startDupeCheck?: StartDupeCheck;
+    getDupeCheckSnapshot?: GetDupeCheckSnapshot;
     detectDiscType?: DetectDiscType;
     startTrackerUpload?: StartTrackerUpload;
     retryFailedTrackerUpload?: RetryFailedTrackerUpload;
@@ -333,7 +336,7 @@ const installAppBridge = (
           },
         ],
         SavePlaylistSelection: async () => undefined,
-        StartDupeCheck: async () => "dupe-job-1",
+        StartDupeCheck: options.startDupeCheck ?? (async () => "dupe-job-1"),
         GetDupeCheckSnapshot: options.getDupeCheckSnapshot ?? (async () => dupeCheckSnapshot()),
         StartTrackerUpload: options.startTrackerUpload ?? (async () => "upload-job-1"),
         RetryFailedTrackerUpload: options.retryFailedTrackerUpload ?? (async () => "upload-job-2"),
@@ -865,6 +868,58 @@ describe("metadata tracker payloads", () => {
     await waitFor(() => expect(fetchPreparation).toHaveBeenCalledTimes(1));
     expect(fetchPreparation.mock.calls[0][3]).toEqual(["AITHER"]);
     expect(fetchPreparation.mock.calls[0][4]).toEqual([]);
+  });
+});
+
+describe("dupe check job tracking", () => {
+  it("shows metadata preview guidance when dupe job creation is blocked", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    const startDupeCheck = vi.fn<StartDupeCheck>(async () => {
+      throw new Error("dupe check requires metadata preview");
+    });
+    installAppBridge(fetchMetadata, { startDupeCheck });
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+    await screen.findByText("2/2");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+
+    await waitFor(() => expect(startDupeCheck).toHaveBeenCalledTimes(1));
+    await screen.findByText("Fetch metadata first to cache a preview before checking dupes.");
+  });
+
+  it("shows metadata preview guidance when an existing dupe job reports a cache miss", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    const getDupeCheckSnapshot = vi.fn<GetDupeCheckSnapshot>(async () => ({
+      ...dupeCheckSnapshot(),
+      status: "failed",
+      summary: { SourcePath: "C:\\media\\Example", Results: [], Notes: [] },
+      error: "core: dupe check requires metadata preview",
+      finishedAt: "2026-06-17T00:00:01Z",
+    }));
+    installAppBridge(fetchMetadata, { getDupeCheckSnapshot });
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+    await screen.findByText("2/2");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+
+    await waitFor(() => expect(getDupeCheckSnapshot).toHaveBeenCalledWith("dupe-job-1"));
+    await screen.findByText("Fetch metadata first to cache a preview before checking dupes.");
   });
 });
 

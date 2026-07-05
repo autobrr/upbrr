@@ -28,6 +28,8 @@ const (
 	trackerUploadProgressEvent = "upload:progress"
 )
 
+const errDupeCheckRequiresMetadataPreview = "dupe check requires metadata preview"
+
 type DupeCheckTrackerState struct {
 	Tracker    string              `json:"tracker"`
 	Status     string              `json:"status"`
@@ -230,6 +232,24 @@ func (b *Backend) StartDupeCheck(sessionID string, path string, overrides api.Ex
 	resolvedTrackers := normalizeTrackerList(trackers)
 	if len(resolvedTrackers) == 0 {
 		return "", errors.New("at least one tracker must be selected")
+	}
+
+	req := api.Request{
+		Paths:                []string{trimmedPath},
+		Mode:                 api.ModeGUI,
+		Trackers:             resolvedTrackers,
+		Options:              b.baseUploadOptions(),
+		ExternalIDOverrides:  overrides,
+		ReleaseNameOverrides: nameOverrides,
+	}
+	if exporter, ok := b.currentCore().(guishared.PreparedMetaExporter); ok {
+		_, found, err := exporter.ExportGUICachedPreparedMeta(context.Background(), req)
+		if err != nil {
+			return "", fmt.Errorf("dupe check metadata preview cache: %w", err)
+		}
+		if !found {
+			return "", errors.New(errDupeCheckRequiresMetadataPreview)
+		}
 	}
 
 	jobID := randomJobID()

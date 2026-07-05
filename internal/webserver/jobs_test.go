@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -202,6 +203,49 @@ func TestPruneCompletedDupeJobsLockedKeepsNewestCompleted(t *testing.T) {
 	}
 	if _, ok := backend.dupes[active.id]; !ok {
 		t.Fatal("expected active dupe job to remain")
+	}
+}
+
+func TestStartDupeCheckRequiresMetadataPreviewCache(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &preparedMetaTestCore{}
+	backend := &Backend{
+		core:  coreSvc,
+		dupes: make(map[string]*dupeCheckJob),
+	}
+
+	_, err := backend.StartDupeCheck("session", `C:\Media\Example.mkv`, api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, []string{"AITHER"})
+	if err == nil {
+		t.Fatal("expected missing metadata preview cache to block dupe check start")
+	}
+	if !strings.Contains(err.Error(), "dupe check requires metadata preview") {
+		t.Fatalf("expected metadata preview error, got %v", err)
+	}
+	if len(backend.dupes) != 0 {
+		t.Fatalf("expected no durable dupe job after cache miss, got %d", len(backend.dupes))
+	}
+}
+
+func TestStartDupeCheckUsesMetadataPreviewCache(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &preparedMetaTestCore{exportFound: true}
+	backend := &Backend{
+		core:  coreSvc,
+		dupes: make(map[string]*dupeCheckJob),
+		hub:   newEventHub(),
+	}
+
+	jobID, err := backend.StartDupeCheck("session", `C:\Media\Example.mkv`, api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, []string{"AITHER"})
+	if err != nil {
+		t.Fatalf("start dupe check: %v", err)
+	}
+	if strings.TrimSpace(jobID) == "" {
+		t.Fatal("expected job id")
+	}
+	if len(backend.dupes) != 1 {
+		t.Fatalf("expected durable dupe job, got %d", len(backend.dupes))
 	}
 }
 

@@ -247,6 +247,11 @@ const dupeResultsFromSnapshot = (snapshot: DupeCheckSnapshot | null) =>
     .map(dupeResultFromTrackerState)
     .filter((result): result is DupeCheckResult => Boolean(result));
 
+const dupeCheckErrorMessage = (message: string) =>
+  message.includes("dupe check requires metadata preview")
+    ? "Fetch metadata first to cache a preview before checking dupes."
+    : message;
+
 const emptyDescriptionBuilder: DescriptionBuilderPreview = {
   SourcePath: "",
   Groups: [],
@@ -3036,7 +3041,7 @@ export default function App() {
       setDupeError(snapshot.error || "One or more tracker dupe checks failed.");
     } else if (normalized === "failed" || normalized === "canceled") {
       setDupeChecked(false);
-      setDupeError(snapshot.error || "Dupe check failed.");
+      setDupeError(snapshot.error ? dupeCheckErrorMessage(snapshot.error) : "Dupe check failed.");
     }
   }, []);
 
@@ -3079,11 +3084,7 @@ export default function App() {
       setDupeCheckJobID("");
       setDupeCheckSnapshot(null);
       setDupeChecked(false);
-      if (message.includes("dupe check requires metadata preview")) {
-        setDupeError("Fetch metadata first to cache a preview before checking dupes.");
-      } else {
-        setDupeError(message);
-      }
+      setDupeError(dupeCheckErrorMessage(message));
       return;
     }
     setDupeCheckJobID(jobID);
