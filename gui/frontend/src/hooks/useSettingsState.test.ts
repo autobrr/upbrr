@@ -739,6 +739,44 @@ describe("Tracker client selectors", () => {
     expect(payload.Trackers?.Trackers?.BTN?.URL).toBe("https://btn.example");
   });
 
+  it("renders BTN announce URL from tracker schema when stored config lacks the key", async () => {
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () =>
+            JSON.stringify({
+              Trackers: {
+                DefaultTrackers: [],
+                PreferredTracker: "",
+                Trackers: {
+                  BTN: {
+                    APIKey: "tracker-token",
+                    URL: "https://backup.landof.tv",
+                    Username: "",
+                    Password: "",
+                  },
+                },
+              },
+            }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => ["BTN"],
+          GetImageHostPolicyMetadata: async () => ({}),
+        },
+      },
+    };
+
+    render(createElement(TrackerSettingsHarness));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("BTN", { selector: ".settings-card__summary-name" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText("BTN", { selector: ".settings-card__summary-name" }));
+
+    expect(screen.getByLabelText("Announce URL")).toHaveValue("");
+  });
+
   it("shows Lostimg as an LST image host only when configured in image hosting", async () => {
     (globalThis as typeof globalThis & { go?: any }).go = {
       guiapp: {

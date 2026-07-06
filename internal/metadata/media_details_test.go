@@ -544,6 +544,90 @@ func TestHDRFromMediaNormalizesPQTransferToHDR(t *testing.T) {
 	}
 }
 
+func TestHDRFromMediaDetectsDolbyVisionHDR10Compatibility(t *testing.T) {
+	doc, err := loadMediaInfoDocFromJSONPayload(`{"media":{"track":[{"@type":"General"},{"@type":"Video","HDR_Format":"Dolby Vision","HDR_Format_String":"Dolby Vision, Version 1.0, Profile 8.1, dvhe.08.06, BL+RPU, no metadata compression, HDR10 compatible"}]}}`)
+	if err != nil {
+		t.Fatalf("parse mediainfo: %v", err)
+	}
+
+	got := hdrFromMedia(doc, nil, api.PreparedMetadata{})
+	if got != "DV HDR" {
+		t.Fatalf("expected Dolby Vision HDR10 compatibility to normalize to DV HDR, got %q", got)
+	}
+}
+
+func TestHDRFromMediaDetectsDolbyVisionHDR10PlusCompatibility(t *testing.T) {
+	doc, err := loadMediaInfoDocFromJSONPayload(`{"media":{"track":[{"@type":"General"},{"@type":"Video","HDR_Format":"Dolby Vision","HDR_Format_String":"Dolby Vision, Version 1.0, Profile 8.1, dvhe.08.06, BL+RPU, no metadata compression, HDR10 compatible / SMPTE ST 2094 App 4, Version 1, HDR10+ Profile B compatible"}]}}`)
+	if err != nil {
+		t.Fatalf("parse mediainfo: %v", err)
+	}
+
+	got := hdrFromMedia(doc, nil, api.PreparedMetadata{})
+	if got != "DV HDR10+" {
+		t.Fatalf("expected Dolby Vision HDR10+ compatibility to normalize to DV HDR10+, got %q", got)
+	}
+}
+
+func TestHDRFromMediaDetectsDolbyVisionOnly(t *testing.T) {
+	doc, err := loadMediaInfoDocFromJSONPayload(`{"media":{"track":[{"@type":"General"},{"@type":"Video","HDR_Format_String":"Dolby Vision, Version 1.0, Profile 5"}]}}`)
+	if err != nil {
+		t.Fatalf("parse mediainfo: %v", err)
+	}
+
+	got := hdrFromMedia(doc, nil, api.PreparedMetadata{})
+	if got != "DV" {
+		t.Fatalf("expected Dolby Vision metadata to normalize to DV, got %q", got)
+	}
+}
+
+func TestHDRFromMediaDetectsSMPTE2094AsHDR(t *testing.T) {
+	doc, err := loadMediaInfoDocFromJSONPayload(`{"media":{"track":[{"@type":"General"},{"@type":"Video","colour_primaries":"BT.2020","HDR_Format_String":"SMPTE ST 2094 App 4, Version 1"}]}}`)
+	if err != nil {
+		t.Fatalf("parse mediainfo: %v", err)
+	}
+
+	got := hdrFromMedia(doc, nil, api.PreparedMetadata{})
+	if got != "HDR" {
+		t.Fatalf("expected SMPTE ST 2094 metadata to normalize to HDR, got %q", got)
+	}
+}
+
+func TestHDRFromMediaDetectsHLGFormat(t *testing.T) {
+	doc, err := loadMediaInfoDocFromJSONPayload(`{"media":{"track":[{"@type":"General"},{"@type":"Video","colour_primaries":"BT.2020","HDR_Format_String":"HLG"}]}}`)
+	if err != nil {
+		t.Fatalf("parse mediainfo: %v", err)
+	}
+
+	got := hdrFromMedia(doc, nil, api.PreparedMetadata{})
+	if got != "HLG" {
+		t.Fatalf("expected HLG format metadata to normalize to HLG, got %q", got)
+	}
+}
+
+func TestHDRFromMediaDetectsHLGTransfer(t *testing.T) {
+	doc, err := loadMediaInfoDocFromJSONPayload(`{"media":{"track":[{"@type":"General"},{"@type":"Video","colour_primaries":"BT.2020","transfer_characteristics":"HLG"}]}}`)
+	if err != nil {
+		t.Fatalf("parse mediainfo: %v", err)
+	}
+
+	got := hdrFromMedia(doc, nil, api.PreparedMetadata{})
+	if got != "HLG" {
+		t.Fatalf("expected HLG transfer metadata to normalize to HLG, got %q", got)
+	}
+}
+
+func TestHDRFromMediaDetectsBT2020TransferAsWCG(t *testing.T) {
+	doc, err := loadMediaInfoDocFromJSONPayload(`{"media":{"track":[{"@type":"General"},{"@type":"Video","colour_primaries":"BT.2020","transfer_characteristics_Original":"BT.2020 (10-bit)"}]}}`)
+	if err != nil {
+		t.Fatalf("parse mediainfo: %v", err)
+	}
+
+	got := hdrFromMedia(doc, nil, api.PreparedMetadata{})
+	if got != "WCG" {
+		t.Fatalf("expected BT.2020 transfer metadata to normalize to WCG, got %q", got)
+	}
+}
+
 func TestHDRFromMediaPrefersBDInfoOverFilenameHDR(t *testing.T) {
 	got := hdrFromMedia(mediaInfoDoc{}, &discparse.BDInfo{
 		Video: []discparse.BDVideo{

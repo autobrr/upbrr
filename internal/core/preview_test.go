@@ -4,6 +4,7 @@
 package core
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -118,5 +119,30 @@ func TestBuildMetadataPreviewMapsTVmazeRichData(t *testing.T) {
 	}
 	if item.Rating != 8.6 || item.RatingCount != 88 || item.Country != "United States" {
 		t.Fatalf("expected rating/country populated, got %#v", item)
+	}
+}
+
+func TestBuildMetadataPreviewWarnsForMixedSeasonPackGroupTags(t *testing.T) {
+	t.Parallel()
+
+	preview := buildMetadataPreview(api.PreparedMetadata{
+		SourcePath:     "Example.Show.S01.1080p.WEB-DL.x264-GRP",
+		ReleaseName:    "Example.Show.S01.1080p.WEB-DL.x264-GRP",
+		LookupWarnings: []string{"existing warning"},
+		TVPack:         true,
+		FileList: []string{
+			"Example.Show.S01E01.1080p.WEB-DL.x264-GRP.mkv",
+			"Example.Show.S01E02.1080p.WEB-DL.x264-ALT.mkv",
+		},
+	}, config.Config{})
+
+	if len(preview.Warnings) != 2 {
+		t.Fatalf("expected existing and mixed-group warnings, got %#v", preview.Warnings)
+	}
+	if preview.Warnings[0] != "existing warning" {
+		t.Fatalf("expected existing warning preserved first, got %#v", preview.Warnings)
+	}
+	if !strings.Contains(preview.Warnings[1], "mixed group tags (ALT, GRP)") {
+		t.Fatalf("expected mixed group warning, got %#v", preview.Warnings)
 	}
 }

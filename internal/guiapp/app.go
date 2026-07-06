@@ -60,6 +60,7 @@ type App struct {
 	streams     map[string]*logStreamSession
 	dupeMu      sync.Mutex
 	dupes       map[string]*dupeCheckJob
+	dupeWG      sync.WaitGroup
 	uploadMu    sync.Mutex
 	uploads     map[string]*trackerUploadJob
 	uploadWG    sync.WaitGroup

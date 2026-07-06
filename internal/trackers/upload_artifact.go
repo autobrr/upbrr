@@ -20,10 +20,14 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// trackerUploadTorrentSpec describes how tracker upload torrents are
+// personalized before injection or upload review. requireAnnounce keeps
+// source-only specs inactive until the user configured a personal announce URL.
 type trackerUploadTorrentSpec struct {
 	source          string
 	defaultAnnounce string
 	useMyAnnounce   bool
+	requireAnnounce bool
 }
 
 var trackerUploadTorrentSpecs = map[string]trackerUploadTorrentSpec{
@@ -36,6 +40,7 @@ var trackerUploadTorrentSpecs = map[string]trackerUploadTorrentSpec{
 	"BHDTV": {source: "BIT-HDTV", useMyAnnounce: true},
 	"BJS":   {source: "BJ"},
 	"BT":    {source: "BT"},
+	"BTN":   {source: "BTN", requireAnnounce: true},
 	"CZ":    {source: "CinemaZ", defaultAnnounce: "https://tracker.cinemaz.to/announce"},
 	"CZT":   {source: "CzT"},
 	"DC":    {source: "DigitalCore.club"},
@@ -131,6 +136,9 @@ func trackerUploadTorrentFields(tracker string, trackerConfig config.TrackerConf
 	}
 	if announce == "" {
 		announce = spec.defaultAnnounce
+	}
+	if spec.requireAnnounce && announce == "" {
+		return "", "", false
 	}
 	source := strings.TrimSpace(spec.source)
 	if source == "" && announce == "" {

@@ -4130,11 +4130,15 @@ func (c *Core) resolveDescriptionOverrideRequest(ctx context.Context, req api.Re
 }
 
 func buildMetadataPreview(meta api.PreparedMetadata, cfg config.Config) api.MetadataPreview {
+	warnings := append([]string{}, meta.LookupWarnings...)
+	if notice, ok := metadata.SeasonPackMixedGroupTagNotice(meta); ok {
+		warnings = append(warnings, notice)
+	}
 	return api.MetadataPreview{
 		SourcePath:           meta.SourcePath,
 		TrackerName:          trackerNameForExternalIDs(meta),
 		ReleaseName:          meta.ReleaseName,
-		Warnings:             append([]string{}, meta.LookupWarnings...),
+		Warnings:             warnings,
 		ReleaseNameOverrides: meta.ReleaseNameOverrides,
 		ExternalIDs:          meta.ExternalIDs,
 		ExternalIDCandidates: meta.ExternalIDCandidates,

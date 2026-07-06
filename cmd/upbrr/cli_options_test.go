@@ -974,6 +974,7 @@ func TestPrintMetadataPreviewShowsRichReleaseDetails(t *testing.T) {
 				TVmazeID: 34567,
 				Category: "TV",
 			},
+			Warnings: []string{"Season pack contains mixed group tags (ALT, GRP); trackers with mixed-origin support will use Mixed."},
 			ExternalPreview: []api.ExternalPreview{{
 				Provider:     "tmdb",
 				ID:           123456,
@@ -1009,6 +1010,8 @@ func TestPrintMetadataPreviewShowsRichReleaseDetails(t *testing.T) {
 		"IMDb: https://www.imdb.com/title/tt7654321",
 		"TVDB: https://www.thetvdb.com/?id=234567&tab=series",
 		"TVmaze: https://www.tvmaze.com/shows/34567",
+		"Warnings:",
+		"- Season pack contains mixed group tags (ALT, GRP); trackers with mixed-origin support will use Mixed.",
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected output to contain %q, got %q", expected, output)

@@ -34,17 +34,18 @@ import (
 )
 
 var (
-	searchYearPattern      = regexp.MustCompile(`\b(19\d{2}|20\d{2})\b`)
-	leadingSearchYearTitle = regexp.MustCompile(`^\s*(19\d{2}|20\d{2})\s*[-:._]\s*(.+?)\s*$`)
-	searchBracketNoise     = regexp.MustCompile(`[\[\(\{][^\]\)\}]*[\]\)\}]`)
-	searchInnerWhitespace  = regexp.MustCompile(`\s+`)
-	tvdbAliasYearPattern   = regexp.MustCompile(`\b(19\d{2}|20\d{2})\b`)
-	tvdbAliasYearCleanup   = regexp.MustCompile(`\s*\(?\b(?:19\d{2}|20\d{2})\b\)?\s*`)
-	tvPathHintPattern      = regexp.MustCompile(`(?i)[\\/](tv|tvshows?|series)[\\/]`)
-	tvNameHintPattern      = regexp.MustCompile(`(?i)\bS\d{1,2}(?:E\d{1,3})?\b|\b\d{1,2}x\d{2,3}\b|\b(?:season|series)\s*\d+\b|\b(19\d{2}|20\d{2})[.-]\d{2}[.-]\d{2}\b`)
-	subsPleaseHintPattern  = regexp.MustCompile(`(?i)subsplease`)
-	animeEpisodeHint       = regexp.MustCompile(`(?i)-\s*\d{1,3}\s*\(1080p\)`)
-	genericEpisodePattern  = regexp.MustCompile(`(?i)^episode\s*#?\s*\d+\s*$`)
+	searchYearPattern       = regexp.MustCompile(`\b(19\d{2}|20\d{2})\b`)
+	leadingSearchYearTitle  = regexp.MustCompile(`^\s*(19\d{2}|20\d{2})\s*[-:._]\s*(.+?)\s*$`)
+	searchBracketNoise      = regexp.MustCompile(`[\[\(\{][^\]\)\}]*[\]\)\}]`)
+	searchInnerWhitespace   = regexp.MustCompile(`\s+`)
+	tvdbAliasYearPattern    = regexp.MustCompile(`\b(19\d{2}|20\d{2})\b`)
+	tvdbAliasYearCleanup    = regexp.MustCompile(`\s*\(?\b(?:19\d{2}|20\d{2})\b\)?\s*`)
+	tvPathHintPattern       = regexp.MustCompile(`(?i)[\\/](tv|tvshows?|series)[\\/]`)
+	tvNameHintPattern       = regexp.MustCompile(`(?i)\bS\d{1,2}(?:E\d{1,3})?\b|\b\d{1,2}x\d{2,3}\b|\b(?:season|series)\s*\d+\b|\b(19\d{2}|20\d{2})[.-]\d{2}[.-]\d{2}\b`)
+	subsPleaseHintPattern   = regexp.MustCompile(`(?i)subsplease`)
+	animeEpisodeHint        = regexp.MustCompile(`(?i)-\s*\d{1,3}\s*\(1080p\)`)
+	genericEpisodePattern   = regexp.MustCompile(`(?i)^episode\s*#?\s*(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\s*$`)
+	placeholderTitlePattern = regexp.MustCompile(`(?i)^(?:tba|tbd|tbc|tdc)$`)
 )
 
 // TMDBClient is the TMDB metadata surface used by external-ID resolution.
@@ -2104,12 +2105,14 @@ func parseYearFromDate(value string) int {
 	return year
 }
 
+// isGenericEpisodeTitle reports whether value is provider placeholder text
+// rather than a useful episode title.
 func isGenericEpisodeTitle(value string) bool {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return true
 	}
-	return genericEpisodePattern.MatchString(trimmed)
+	return genericEpisodePattern.MatchString(trimmed) || placeholderTitlePattern.MatchString(trimmed)
 }
 
 // discardSeriesEpisodeTitle clears parsed episode titles that duplicate a known
@@ -2168,13 +2171,14 @@ func titleIdentityKey(value string) string {
 	return builder.String()
 }
 
+// sanitizeEpisodeTitle returns an empty value for generic provider episode
+// titles while preserving real titles that merely contain the word episode.
 func sanitizeEpisodeTitle(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return ""
 	}
-	lower := strings.ToLower(trimmed)
-	if strings.Contains(lower, "episode") || strings.Contains(lower, "tba") {
+	if isGenericEpisodeTitle(trimmed) {
 		return ""
 	}
 	return trimmed
