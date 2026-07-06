@@ -603,8 +603,8 @@ func selectDVDVOB(ctx context.Context, root string) (string, error) {
 	return vobs[0].path, nil
 }
 
-// selectDVDVOBs returns the largest DVD title set's content VOBs in playback
-// order. Menu/control files such as VTS_nn_0.VOB are excluded.
+// selectDVDVOBs returns the largest DVD title set's VOBs in numeric playback
+// order, including VTS_nn_0.VOB when present.
 func selectDVDVOBs(ctx context.Context, root string) ([]dvdTitleVOB, error) {
 	videoTS, err := findVideoTS(ctx, root)
 	if err != nil {
@@ -615,7 +615,7 @@ func selectDVDVOBs(ctx context.Context, root string) ([]dvdTitleVOB, error) {
 		return nil, fmt.Errorf("screenshots: read VIDEO_TS directory: %w", err)
 	}
 
-	vobSizes := map[string]int64{}
+	contentSizes := map[string]int64{}
 	vobPaths := map[string][]dvdTitleVOB{}
 	for _, entry := range entries {
 		select {
@@ -629,14 +629,16 @@ func selectDVDVOBs(ctx context.Context, root string) ([]dvdTitleVOB, error) {
 			continue
 		}
 		set, index, ok := parseDVDVOBName(upper)
-		if !ok || index <= 0 {
+		if !ok || index < 0 {
 			continue
 		}
 		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
-		vobSizes[set] += info.Size()
+		if index > 0 {
+			contentSizes[set] += info.Size()
+		}
 		vobPaths[set] = append(vobPaths[set], dvdTitleVOB{
 			path:  filepath.Join(videoTS, name),
 			index: index,
@@ -646,10 +648,22 @@ func selectDVDVOBs(ctx context.Context, root string) ([]dvdTitleVOB, error) {
 
 	bestSet := ""
 	var bestSize int64
-	for set, size := range vobSizes {
+	for set, size := range contentSizes {
 		if size > bestSize {
 			bestSize = size
 			bestSet = set
+		}
+	}
+	if bestSet == "" {
+		for set, paths := range vobPaths {
+			var size int64
+			for _, path := range paths {
+				size += path.size
+			}
+			if size > bestSize {
+				bestSize = size
+				bestSet = set
+			}
 		}
 	}
 	if bestSet == "" {
