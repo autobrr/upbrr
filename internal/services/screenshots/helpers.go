@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -30,6 +31,15 @@ type videoInfo struct {
 	Height          int
 	WidthScale      float64
 	HeightScale     float64
+	Segments        []videoSegment
+}
+
+// videoSegment maps a global disc timestamp window onto one concrete ffmpeg
+// input file. DVD title sets use one segment per ordered VOB part.
+type videoSegment struct {
+	SourcePath      string
+	StartSeconds    float64
+	DurationSeconds float64
 }
 
 type mediaInfoDoc struct {
@@ -40,10 +50,9 @@ type mediaInfoDoc struct {
 
 var durationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|hours?|hrs?|h|minutes?|mins?|min|seconds?|secs?|sec|s)\b`)
 
-// resolveVideoInfo selects the ffmpeg input path and timing metadata used for
-// screenshot planning/capture. Disc releases prefer selected playlist items or
-// BDInfo/DVD-derived streams; non-disc releases use VideoPath when present and
-// otherwise SourcePath.
+// resolveVideoInfo selects timing metadata and the ffmpeg inputs used for
+// screenshot planning/capture. DVD releases keep ordered title-set segments so
+// global screenshot times can be captured from the matching VOB part.
 func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot string, logger api.Logger) (videoInfo, error) {
 	logger = screenshotLogger(logger)
 	info := videoInfo{}
@@ -123,12 +132,13 @@ func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot st
 
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
 		logger.Tracef("screenshots: DVD source selection root=%s", meta.SourcePath)
-		vob, err := selectDVDVOB(ctx, meta.SourcePath)
+		vobs, err := selectDVDVOBs(ctx, meta.SourcePath)
 		if err != nil {
 			return info, err
 		}
-		info.SourcePath = vob
-		logger.Tracef("screenshots: DVD source selected path=%s", vob)
+		info.SourcePath = vobs[0].path
+		info.Segments = buildVideoSegments(vobs, info.DurationSeconds)
+		logger.Tracef("screenshots: DVD source selected path=%s segments=%d", info.SourcePath, len(info.Segments))
 	}
 
 	if info.SourcePath == "" {
@@ -145,6 +155,32 @@ func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot st
 	)
 
 	return info, nil
+}
+
+// resolveSegmentTimestamp converts a whole-title timestamp into the concrete
+// segment file and local timestamp ffmpeg should seek within that file.
+func resolveSegmentTimestamp(info videoInfo, timestamp float64) (string, float64) {
+	if len(info.Segments) == 0 || timestamp <= 0 {
+		return info.SourcePath, timestamp
+	}
+	for _, segment := range info.Segments {
+		if segment.SourcePath == "" || segment.DurationSeconds <= 0 {
+			continue
+		}
+		if timestamp < segment.StartSeconds+segment.DurationSeconds {
+			local := timestamp - segment.StartSeconds
+			if local < 0 {
+				local = 0
+			}
+			return segment.SourcePath, local
+		}
+	}
+	last := info.Segments[len(info.Segments)-1]
+	local := last.DurationSeconds
+	if local > 0.5 {
+		local -= 0.5
+	}
+	return last.SourcePath, local
 }
 
 // resolveVideoSource applies the same input-file preference as resolveVideoInfo
@@ -560,21 +596,31 @@ func selectBDMVFile(ctx context.Context, root string, info *discparse.BDInfo) (s
 }
 
 func selectDVDVOB(ctx context.Context, root string) (string, error) {
-	videoTS, err := findVideoTS(ctx, root)
+	vobs, err := selectDVDVOBs(ctx, root)
 	if err != nil {
 		return "", err
 	}
+	return vobs[0].path, nil
+}
+
+// selectDVDVOBs returns the largest DVD title set's content VOBs in playback
+// order. Menu/control files such as VTS_nn_0.VOB are excluded.
+func selectDVDVOBs(ctx context.Context, root string) ([]dvdTitleVOB, error) {
+	videoTS, err := findVideoTS(ctx, root)
+	if err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(videoTS)
 	if err != nil {
-		return "", fmt.Errorf("screenshots: read VIDEO_TS directory: %w", err)
+		return nil, fmt.Errorf("screenshots: read VIDEO_TS directory: %w", err)
 	}
 
 	vobSizes := map[string]int64{}
-	vobPaths := map[string][]string{}
+	vobPaths := map[string][]dvdTitleVOB{}
 	for _, entry := range entries {
 		select {
 		case <-ctx.Done():
-			return "", fmt.Errorf("context canceled: %w", ctx.Err())
+			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		name := entry.Name()
@@ -582,14 +628,20 @@ func selectDVDVOB(ctx context.Context, root string) (string, error) {
 		if !strings.HasPrefix(upper, "VTS_") || !strings.HasSuffix(upper, ".VOB") {
 			continue
 		}
-		set := strings.TrimPrefix(strings.TrimSuffix(upper, ".VOB"), "VTS_")
-		set = strings.SplitN(set, "_", 2)[0]
+		set, index, ok := parseDVDVOBName(upper)
+		if !ok || index <= 0 {
+			continue
+		}
 		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
 		vobSizes[set] += info.Size()
-		vobPaths[set] = append(vobPaths[set], filepath.Join(videoTS, name))
+		vobPaths[set] = append(vobPaths[set], dvdTitleVOB{
+			path:  filepath.Join(videoTS, name),
+			index: index,
+			size:  info.Size(),
+		})
 	}
 
 	bestSet := ""
@@ -601,14 +653,81 @@ func selectDVDVOB(ctx context.Context, root string) (string, error) {
 		}
 	}
 	if bestSet == "" {
-		return "", errors.New("screenshots: no dvd vob found")
+		return nil, errors.New("screenshots: no dvd vob found")
 	}
 
 	paths := vobPaths[bestSet]
 	if len(paths) == 0 {
-		return "", errors.New("screenshots: no dvd vob files for set")
+		return nil, errors.New("screenshots: no dvd vob files for set")
 	}
-	return paths[0], nil
+	sort.Slice(paths, func(i, j int) bool {
+		if paths[i].index != paths[j].index {
+			return paths[i].index < paths[j].index
+		}
+		if paths[i].size != paths[j].size {
+			return paths[i].size > paths[j].size
+		}
+		return paths[i].path < paths[j].path
+	})
+	return paths, nil
+}
+
+func parseDVDVOBName(name string) (string, int, bool) {
+	trimmed := strings.TrimSuffix(strings.TrimPrefix(strings.ToUpper(strings.TrimSpace(name)), "VTS_"), ".VOB")
+	parts := strings.Split(trimmed, "_")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", 0, false
+	}
+	index, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "", 0, false
+	}
+	return parts[0], index, true
+}
+
+// dvdTitleVOB records the parsed VTS set/index and size used to select and
+// order DVD title segments.
+type dvdTitleVOB struct {
+	path  string
+	index int
+	size  int64
+}
+
+// buildVideoSegments assigns a whole-title runtime window to each ordered DVD
+// VOB, using file size as the best available proxy for per-part duration.
+func buildVideoSegments(vobs []dvdTitleVOB, totalDuration float64) []videoSegment {
+	if len(vobs) == 0 {
+		return nil
+	}
+	segments := make([]videoSegment, 0, len(vobs))
+	if totalDuration <= 0 {
+		for _, vob := range vobs {
+			segments = append(segments, videoSegment{SourcePath: vob.path})
+		}
+		return segments
+	}
+	var totalSize int64
+	for _, vob := range vobs {
+		if vob.size > 0 {
+			totalSize += vob.size
+		}
+	}
+	if totalSize <= 0 {
+		each := totalDuration / float64(len(vobs))
+		start := 0.0
+		for _, vob := range vobs {
+			segments = append(segments, videoSegment{SourcePath: vob.path, StartSeconds: start, DurationSeconds: each})
+			start += each
+		}
+		return segments
+	}
+	start := 0.0
+	for _, vob := range vobs {
+		duration := totalDuration * (float64(vob.size) / float64(totalSize))
+		segments = append(segments, videoSegment{SourcePath: vob.path, StartSeconds: start, DurationSeconds: duration})
+		start += duration
+	}
+	return segments
 }
 
 func findVideoTS(ctx context.Context, root string) (string, error) {

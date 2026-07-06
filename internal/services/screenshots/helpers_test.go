@@ -218,6 +218,100 @@ func TestResolveVideoInfoLogsSeasonPackSourceKind(t *testing.T) {
 	}
 }
 
+func TestSelectDVDVOBSkipsMenuVOBAndUsesLargestTitleSet(t *testing.T) {
+	root := t.TempDir()
+	videoTS := filepath.Join(root, "VIDEO_TS")
+	if err := os.MkdirAll(videoTS, 0o700); err != nil {
+		t.Fatalf("mkdir VIDEO_TS: %v", err)
+	}
+	files := map[string]int{
+		"VTS_01_0.VOB": 200,
+		"VTS_01_1.VOB": 10,
+		"VTS_02_0.VOB": 1,
+		"VTS_02_1.VOB": 30,
+		"VTS_02_2.VOB": 20,
+	}
+	for name, size := range files {
+		if err := os.WriteFile(filepath.Join(videoTS, name), make([]byte, size), 0o600); err != nil {
+			t.Fatalf("write VOB fixture: %v", err)
+		}
+	}
+
+	got, err := selectDVDVOB(context.Background(), root)
+	if err != nil {
+		t.Fatalf("select DVD VOB: %v", err)
+	}
+	want := filepath.Join(videoTS, "VTS_02_1.VOB")
+	if got != want {
+		t.Fatalf("expected first title VOB from largest set %q, got %q", want, got)
+	}
+}
+
+func TestResolveVideoInfoBuildsOrderedDVDSegments(t *testing.T) {
+	root := t.TempDir()
+	videoTS := filepath.Join(root, "VIDEO_TS")
+	if err := os.MkdirAll(videoTS, 0o700); err != nil {
+		t.Fatalf("mkdir VIDEO_TS: %v", err)
+	}
+	files := map[string]int{
+		"VTS_02_0.VOB": 1,
+		"VTS_02_2.VOB": 20,
+		"VTS_02_1.VOB": 30,
+	}
+	for name, size := range files {
+		if err := os.WriteFile(filepath.Join(videoTS, name), make([]byte, size), 0o600); err != nil {
+			t.Fatalf("write VOB fixture: %v", err)
+		}
+	}
+	mediaInfoPath := filepath.Join(root, "mediainfo.json")
+	payload := []byte(`{"media":{"track":[{"@type":"General","Duration":"100"},{"@type":"Video","FrameRate":"25.000"}]}}`)
+	if err := os.WriteFile(mediaInfoPath, payload, 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	info, err := resolveVideoInfo(context.Background(), api.PreparedMetadata{
+		SourcePath:        root,
+		DiscType:          "DVD",
+		MediaInfoJSONPath: mediaInfoPath,
+	}, "", api.NopLogger{})
+	if err != nil {
+		t.Fatalf("resolve video info: %v", err)
+	}
+	if len(info.Segments) != 2 {
+		t.Fatalf("expected 2 DVD segments, got %#v", info.Segments)
+	}
+	if info.Segments[0].SourcePath != filepath.Join(videoTS, "VTS_02_1.VOB") {
+		t.Fatalf("expected first segment VTS_02_1.VOB, got %#v", info.Segments)
+	}
+	if info.Segments[1].SourcePath != filepath.Join(videoTS, "VTS_02_2.VOB") {
+		t.Fatalf("expected second segment VTS_02_2.VOB, got %#v", info.Segments)
+	}
+
+	path, timestamp := resolveSegmentTimestamp(info, 70)
+	if path != filepath.Join(videoTS, "VTS_02_2.VOB") {
+		t.Fatalf("expected timestamp after first segment to use VTS_02_2.VOB, got %q", path)
+	}
+	if timestamp < 9.99 || timestamp > 10.01 {
+		t.Fatalf("expected local timestamp near 10s, got %f", timestamp)
+	}
+}
+
+func TestSelectDVDVOBRejectsMenuOnlyDisc(t *testing.T) {
+	root := t.TempDir()
+	videoTS := filepath.Join(root, "VIDEO_TS")
+	if err := os.MkdirAll(videoTS, 0o700); err != nil {
+		t.Fatalf("mkdir VIDEO_TS: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(videoTS, "VTS_01_0.VOB"), []byte("menu"), 0o600); err != nil {
+		t.Fatalf("write menu VOB: %v", err)
+	}
+
+	_, err := selectDVDVOB(context.Background(), root)
+	if err == nil {
+		t.Fatal("expected menu-only DVD to fail source selection")
+	}
+}
+
 func TestMediaInfoVideoGeometryBuildsPARScaleFactors(t *testing.T) {
 	var doc mediaInfoDoc
 	payload := []byte(`{"media":{"track":[{"@type":"Video","Width":"720 pixels","Height":"576 pixels","PixelAspectRatio":"0.750","DisplayAspectRatio":"4:3"}]}}`)

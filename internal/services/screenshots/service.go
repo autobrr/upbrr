@@ -278,7 +278,8 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 			if _, exists := frameInfo[ts]; exists {
 				continue
 			}
-			infoResult, infoErr := getFrameInfo(ctx, s.runner, cmd, info.SourcePath, ts)
+			frameSourcePath, frameTimestamp := resolveSegmentTimestamp(info, ts)
+			infoResult, infoErr := getFrameInfo(ctx, s.runner, cmd, frameSourcePath, frameTimestamp)
 			if infoErr != nil {
 				s.logger.Debugf("screenshots: frame info failed: %v", infoErr)
 				continue
@@ -354,11 +355,12 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 			ts := job.timestamp
 			outputName := buildScreenshotFilename(base, selection.Index, ts, purpose)
 			output := filepath.Join(tmpDir, outputName)
-			s.logger.Tracef("screenshots: capture queued index=%d timestamp_seconds=%.3f output=%s", selection.Index, ts, output)
+			inputPath, inputTimestamp := resolveSegmentTimestamp(info, ts)
+			s.logger.Tracef("screenshots: capture queued index=%d timestamp_seconds=%.3f input_timestamp_seconds=%.3f input=%s output=%s", selection.Index, ts, inputTimestamp, inputPath, output)
 			capture := captureRequest{
-				InputPath:     info.SourcePath,
+				InputPath:     inputPath,
 				OutputPath:    output,
-				Timestamp:     ts,
+				Timestamp:     inputTimestamp,
 				FrameRate:     info.FrameRate,
 				Resolution:    meta.Release.Resolution,
 				UseLibplacebo: shouldUseLibplacebo(meta, s.cfg),
@@ -482,20 +484,21 @@ func (s *Service) PreviewFrame(ctx context.Context, meta api.PreparedMetadata, t
 		return api.ScreenshotPreview{}, internalerrors.ErrInvalidInput
 	}
 
-	sourcePath, err := resolveVideoSource(ctx, meta, s.tmpRoot, s.logger)
+	info, err := resolveVideoInfo(ctx, meta, s.tmpRoot, s.logger)
 	if err != nil {
 		return api.ScreenshotPreview{}, err
 	}
+	sourcePath, inputTimestamp := resolveSegmentTimestamp(info, timestampSeconds)
 
 	cmd, err := resolveFFmpeg()
 	if err != nil {
 		return api.ScreenshotPreview{}, err
 	}
 
-	s.logger.Debugf("screenshots: preview setup kind=%s disc=%s timestamp_seconds=%.3f selected_path=%s ffmpeg=%s", screenshotSourceKind(meta), screenshotLogField(meta.DiscType), timestampSeconds, sourcePath, cmd)
+	s.logger.Debugf("screenshots: preview setup kind=%s disc=%s timestamp_seconds=%.3f input_timestamp_seconds=%.3f selected_path=%s ffmpeg=%s", screenshotSourceKind(meta), screenshotLogField(meta.DiscType), timestampSeconds, inputTimestamp, sourcePath, cmd)
 	payload, err := captureFrameBytes(ctx, s.runner, cmd, previewRequest{
 		InputPath: sourcePath,
-		Timestamp: timestampSeconds,
+		Timestamp: inputTimestamp,
 	}, s.logger)
 	if err != nil {
 		return api.ScreenshotPreview{}, err
