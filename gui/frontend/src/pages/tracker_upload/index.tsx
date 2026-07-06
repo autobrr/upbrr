@@ -640,7 +640,45 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                             <p className="value mono">{dryRun.Endpoint}</p>
                           </div>
                         ) : null}
-                        {dryRun.Files?.length ? (
+                        {dryRun.DebugSections?.length ? (
+                          <div className="grid gap-1.5">
+                            <p className="label">Debug sections</p>
+                            {dryRun.DebugSections.map((section, sectionIndex) => (
+                              <div
+                                className={subtleBox}
+                                key={`${section.Title || "debug"}-${sectionIndex}`}
+                              >
+                                <p className="label">{section.Title || "Debug section"}</p>
+                                {section.Endpoint ? (
+                                  <p className="value mono">{section.Endpoint}</p>
+                                ) : null}
+                                {section.Files?.length ? (
+                                  <div className="mt-1 grid gap-1">
+                                    {section.Files.map((file) => (
+                                      <div key={`${file.Field}-${file.Path}`}>
+                                        <p className="label">File · {file.Field}</p>
+                                        <p className="value mono">{file.Path || "(missing)"}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : null}
+                                {Object.keys(section.Payload || {}).length ? (
+                                  <div className="mt-1 grid gap-1">
+                                    {Object.entries(section.Payload)
+                                      .sort(([left], [right]) => left.localeCompare(right))
+                                      .map(([key, value]) => (
+                                        <div key={key}>
+                                          <p className="label">{key}</p>
+                                          <p className="value mono">{String(value)}</p>
+                                        </div>
+                                      ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                        {(dryRun.DebugSections?.length || 0) === 0 && dryRun.Files?.length ? (
                           <div className="grid gap-1.5">
                             {dryRun.Files.map((file) => (
                               <div className={subtleBox} key={`${file.Field}-${file.Path}`}>
@@ -650,7 +688,8 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                             ))}
                           </div>
                         ) : null}
-                        {Object.keys(dryRun.Payload || {}).length ? (
+                        {(dryRun.DebugSections?.length || 0) === 0 &&
+                        Object.keys(dryRun.Payload || {}).length ? (
                           <div className="grid gap-1.5">
                             {Object.entries(dryRun.Payload)
                               .sort(([left], [right]) => left.localeCompare(right))

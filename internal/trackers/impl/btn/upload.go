@@ -390,9 +390,19 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		return api.TrackerDryRunEntry{}, err
 	}
 
+	autofillPayload, uploadType := buildBTNAutofillPayload(req.Meta)
+	debugSections := make([]api.TrackerDryRunDebugSection, 0, 2)
+	if req.Meta.Options.Debug {
+		debugSections = append(debugSections, api.TrackerDryRunDebugSection{
+			Title:    "BTN autofill request",
+			Endpoint: uploadCtx.uploadURL,
+			Payload:  urlValuesToPayloadMap(autofillPayload),
+		})
+	}
+
 	payload := map[string]string{
 		"submit":       "true",
-		"type":         resolveUploadType(req.Meta),
+		"type":         uploadType,
 		"scenename":    resolveUploadName(req.Meta),
 		"origin":       resolveOrigin(req.Meta),
 		"release_desc": strings.TrimSpace(req.Meta.DescriptionOverride),
@@ -413,6 +423,28 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		message += "; " + metadataMessage
 		status = "blocked"
 	}
+	if req.Meta.Options.Debug && status == "ready" {
+		client, err := ensureBTNUploadSession(ctx, req.TrackerConfig, req.AppConfig.MainSettings.DBPath, uploadCtx)
+		if err != nil {
+			return api.TrackerDryRunEntry{}, err
+		}
+		uploadCtx.client = client
+		fields, err := requestBTNAutofillFields(ctx, uploadCtx, autofillPayload, uploadType)
+		if err != nil {
+			return api.TrackerDryRunEntry{}, err
+		}
+		payload, err = buildBTNUploadPayload(req, fields)
+		if err != nil {
+			return api.TrackerDryRunEntry{}, err
+		}
+		message += "; BTN autofill debug completed"
+		debugSections = append(debugSections, api.TrackerDryRunDebugSection{
+			Title:    "BTN final upload payload after autofill",
+			Endpoint: uploadCtx.uploadURL,
+			Payload:  payload,
+			Files:    resolveBTNDryRunFiles(req.Meta, torrentPath),
+		})
+	}
 
 	return api.TrackerDryRunEntry{
 		Tracker:          "BTN",
@@ -424,6 +456,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		Endpoint:         uploadCtx.uploadURL,
 		Payload:          payload,
 		Files:            resolveBTNDryRunFiles(req.Meta, torrentPath),
+		DebugSections:    debugSections,
 	}, nil
 }
 
@@ -668,15 +701,27 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		return nil, err
 	}
 
+	autofillPayload, uploadType := buildBTNAutofillPayload(req.Meta)
+	fields, err := requestBTNAutofillFields(ctx, uploadCtx, autofillPayload, uploadType)
+	if err != nil {
+		return nil, err
+	}
+	return buildBTNUploadPayload(req, fields)
+}
+
+// buildBTNAutofillPayload returns the form fields for BTN's first upload.php
+// POST. TVDB-backed uploads submit the series id plus season or episode token;
+// scene-name autofill is used only when no TVDB series id is available.
+func buildBTNAutofillPayload(meta api.PreparedMetadata) (url.Values, string) {
 	autofillPayload := url.Values{}
-	uploadType := resolveUploadType(req.Meta)
-	season, episode := resolveBTNTVSeasonEpisode(req.Meta)
+	uploadType := resolveUploadType(meta)
+	season, episode := resolveBTNTVSeasonEpisode(meta)
 	autofillPayload.Set("type", uploadType)
 	autofillPayload.Set("tvdb", "Get Info")
 
-	if req.Meta.ExternalMetadata.TVDB != nil && req.Meta.ExternalMetadata.TVDB.TVDBID > 0 {
+	if meta.ExternalMetadata.TVDB != nil && meta.ExternalMetadata.TVDB.TVDBID > 0 {
 		autofillPayload.Set("scene_yesno", "No")
-		autofillPayload.Set("auto_series", strconv.Itoa(req.Meta.ExternalMetadata.TVDB.TVDBID))
+		autofillPayload.Set("auto_series", strconv.Itoa(meta.ExternalMetadata.TVDB.TVDBID))
 
 		if uploadType == "Episode" {
 			autofillPayload.Set("auto_title", fmt.Sprintf("S%02dE%02d", season, episode))
@@ -685,9 +730,16 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		}
 	} else {
 		autofillPayload.Set("scene_yesno", "Yes")
-		autofillPayload.Set("autofill", resolveUploadName(req.Meta))
+		autofillPayload.Set("autofill", resolveUploadName(meta))
 	}
 
+	return autofillPayload, uploadType
+}
+
+// requestBTNAutofillFields performs BTN's autofill POST and extracts the form
+// values returned for the final upload payload. A validation failure means BTN
+// did not return enough series/title data for the requested upload type.
+func requestBTNAutofillFields(ctx context.Context, uploadCtx uploadContext, autofillPayload url.Values, uploadType string) (map[string]string, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadCtx.uploadURL, strings.NewReader(autofillPayload.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("trackers: BTN autofill request build: %w", err)
@@ -711,7 +763,13 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 	if !validateAutofill(fields, uploadType) {
 		return nil, errors.New("trackers: BTN autofill validation failed")
 	}
+	return fields, nil
+}
 
+// buildBTNUploadPayload merges BTN autofill fields with local metadata for the
+// final upload form. Local MediaInfo-derived dropdown mappings win over BTN
+// autofill values when both are available.
+func buildBTNUploadPayload(req trackers.UploadRequest, fields map[string]string) (map[string]string, error) {
 	description := strings.TrimSpace(req.Meta.DescriptionOverride)
 	if description == "" {
 		description = commonhttp.ReadOptionalFile(req.Meta.MediaInfoTextPath)
@@ -783,6 +841,19 @@ func prepareUploadData(ctx context.Context, req trackers.UploadRequest, uploadCt
 		clean[key] = value
 	}
 	return clean, nil
+}
+
+// urlValuesToPayloadMap flattens form values for debug display; BTN autofill
+// fields are single-valued, so later values are intentionally ignored.
+func urlValuesToPayloadMap(values url.Values) map[string]string {
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		if len(value) == 0 {
+			continue
+		}
+		out[key] = value[0]
+	}
+	return out
 }
 
 // logBTNAutofillMismatch records when BTN autofill selected a different

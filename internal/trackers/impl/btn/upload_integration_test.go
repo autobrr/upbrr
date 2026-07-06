@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -577,6 +578,104 @@ func TestBTNDryRunBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
 	}
 	if !strings.Contains(entry.Message, "canonical TV season/episode missing; BTN upload requires TVDB or metadata season/episode ints and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload") {
 		t.Fatalf("expected canonical metadata message, got %q", entry.Message)
+	}
+}
+
+func TestBTNDryRunDebugRunsBTNAutofillAndReportsBothPayloads(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newBTNAuthDB(t)
+	if err := cookies.SaveTrackerCookieMap(context.Background(), dbPath, "BTN", map[string]string{"session": "imported"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+
+	handlerErrs := newHTTPHandlerErrorRecorder(t)
+	var formMu sync.Mutex
+	autofillForm := map[string]string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/upload.php":
+			_, _ = io.WriteString(w, `<form action="/upload.php"><input name="autofill"></form>`)
+		case r.Method == http.MethodPost && r.URL.Path == "/upload.php":
+			if err := r.ParseForm(); err != nil {
+				handlerErrs.Errorf("parse autofill form: %v", err)
+				http.Error(w, "handler assertion failed", http.StatusInternalServerError)
+				return
+			}
+			formMu.Lock()
+			autofillForm["type"] = r.PostForm.Get("type")
+			autofillForm["scene_yesno"] = r.PostForm.Get("scene_yesno")
+			autofillForm["auto_series"] = r.PostForm.Get("auto_series")
+			autofillForm["auto_season"] = r.PostForm.Get("auto_season")
+			autofillForm["tvdb"] = r.PostForm.Get("tvdb")
+			formMu.Unlock()
+			_, _ = io.WriteString(w, `
+				<input name="artist" value="Example Show">
+				<input name="seriesid" value="12345">
+				<input name="title" value="Season 5">
+				<input name="year" value="2026">
+				<select name="format"><option selected value="MKV">MKV</option></select>
+				<select name="bitrate"><option selected value="H.265">H.265</option></select>
+				<select name="media"><option selected value="WEB-DL">WEB-DL</option></select>
+				<select name="resolution"><option selected value="1080p">1080p</option></select>
+				<textarea name="album_desc">Autofill overview</textarea>
+			`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	req := newBTNDryRunTestRequest(t, dbPath)
+	req.TrackerConfig.URL = server.URL
+	req.Meta.Options.Debug = true
+	req.Meta.TVPack = true
+	req.Meta.EpisodeInt = 0
+	req.Meta.ReleaseName = "Example.Show.S05.1080p.WEB-DL.x265-GRP"
+	req.Meta.SeasonInt = 3
+	req.Meta.ExternalMetadata.TVDB = &api.TVDBMetadata{
+		TVDBID:           12345,
+		EpisodeSeason:    5,
+		OriginalLanguage: "en",
+	}
+
+	entry, err := buildUploadDryRun(context.Background(), req)
+	handlerErrs.Check()
+	if err != nil {
+		t.Fatalf("BuildUploadDryRun: %v", err)
+	}
+	if entry.Status != "ready" {
+		t.Fatalf("expected ready debug dry-run, got %#v", entry)
+	}
+	if len(entry.DebugSections) != 2 {
+		t.Fatalf("expected two debug sections, got %#v", entry.DebugSections)
+	}
+	requestSection := entry.DebugSections[0]
+	if requestSection.Title != "BTN autofill request" {
+		t.Fatalf("expected autofill request section, got %#v", requestSection)
+	}
+	if requestSection.Payload["type"] != "Season" || requestSection.Payload["auto_series"] != "12345" || requestSection.Payload["auto_season"] != "5" || requestSection.Payload["tvdb"] != "Get Info" {
+		t.Fatalf("unexpected autofill request payload %#v", requestSection.Payload)
+	}
+	finalSection := entry.DebugSections[1]
+	if finalSection.Title != "BTN final upload payload after autofill" {
+		t.Fatalf("expected final payload section, got %#v", finalSection)
+	}
+	if finalSection.Payload["type"] != "Season" || finalSection.Payload["seriesid"] != "12345" || finalSection.Payload["artist"] != "Example Show" {
+		t.Fatalf("unexpected final payload %#v", finalSection.Payload)
+	}
+	if len(finalSection.Files) == 0 || finalSection.Files[0].Field != "file_input" {
+		t.Fatalf("expected final debug section files, got %#v", finalSection.Files)
+	}
+	if entry.Payload["artist"] != "Example Show" {
+		t.Fatalf("expected top-level debug payload to use autofill result, got %#v", entry.Payload)
+	}
+
+	formMu.Lock()
+	gotForm := maps.Clone(autofillForm)
+	formMu.Unlock()
+	if gotForm["type"] != "Season" || gotForm["scene_yesno"] != "No" || gotForm["auto_series"] != "12345" || gotForm["auto_season"] != "5" || gotForm["tvdb"] != "Get Info" {
+		t.Fatalf("unexpected submitted autofill form %#v", gotForm)
 	}
 }
 

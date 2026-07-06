@@ -886,8 +886,18 @@ export type TrackerDryRunEntry = {
   Endpoint: string;
   Payload: Record<string, string>;
   Files: TrackerDryRunFile[];
+  /** Optional staged diagnostics for trackers that expose intermediate dry-run payloads. */
+  DebugSections?: TrackerDryRunDebugSection[] | null;
   Questionnaire?: TrackerQuestionnaire | null;
   ImageHost: ImageHostFeedback;
+};
+
+/** One named diagnostic payload rendered inside a tracker dry-run preview. */
+export type TrackerDryRunDebugSection = {
+  Title: string;
+  Endpoint: string;
+  Payload: Record<string, string>;
+  Files: TrackerDryRunFile[];
 };
 
 export type TrackerDryRunPreview = {
