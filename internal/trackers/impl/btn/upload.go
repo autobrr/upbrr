@@ -405,7 +405,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		"type":         uploadType,
 		"scenename":    resolveUploadName(req.Meta),
 		"origin":       resolveOrigin(req.Meta),
-		"release_desc": strings.TrimSpace(req.Meta.DescriptionOverride),
+		"release_desc": resolveBTNReleaseDesc(req.Meta),
 		"tvdb":         "autofilled",
 	}
 	if resolveFastTorrent(req.TrackerConfig) {
@@ -767,18 +767,10 @@ func requestBTNAutofillFields(ctx context.Context, uploadCtx uploadContext, auto
 }
 
 // buildBTNUploadPayload merges BTN autofill fields with local metadata for the
-// final upload form. BTN text fields such as album_desc are retained, while
-// local MediaInfo-derived dropdown mappings win when both sources provide a
-// BTN-supported value.
+// final upload form. BTN text fields such as album_desc are retained, release_desc
+// is populated only from MediaInfo text, and local MediaInfo-derived dropdown
+// mappings win when both sources provide a BTN-supported value.
 func buildBTNUploadPayload(req trackers.UploadRequest, fields map[string]string) (map[string]string, error) {
-	description := strings.TrimSpace(req.Meta.DescriptionOverride)
-	if description == "" {
-		description = commonhttp.ReadOptionalFile(req.Meta.MediaInfoTextPath)
-	}
-	if description == "" {
-		description = "No description provided."
-	}
-
 	format := mapContainer(req.Meta, fields)
 	bitrate := mapCodec(req.Meta, fields)
 	media := mapSource(req.Meta, fields)
@@ -822,7 +814,7 @@ func buildBTNUploadPayload(req trackers.UploadRequest, fields map[string]string)
 		"bitrate":      bitrate,
 		"media":        media,
 		"resolution":   resolution,
-		"release_desc": description,
+		"release_desc": resolveBTNReleaseDesc(req.Meta),
 		"tvdb":         "autofilled",
 	}
 	if resolveFastTorrent(req.TrackerConfig) {
@@ -836,12 +828,18 @@ func buildBTNUploadPayload(req trackers.UploadRequest, fields map[string]string)
 	}
 	clean := make(map[string]string, len(payload))
 	for key, value := range payload {
-		if strings.TrimSpace(value) == "" {
+		if key != "release_desc" && strings.TrimSpace(value) == "" {
 			continue
 		}
 		clean[key] = value
 	}
 	return clean, nil
+}
+
+// resolveBTNReleaseDesc returns the MediaInfo text BTN expects in release_desc.
+// Description overrides are intentionally ignored for this field.
+func resolveBTNReleaseDesc(meta api.PreparedMetadata) string {
+	return strings.TrimSpace(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath))
 }
 
 // urlValuesToPayloadMap flattens form values for debug display; BTN autofill

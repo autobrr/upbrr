@@ -195,23 +195,26 @@ func TestBTNUploadEndToEndSuccess(t *testing.T) {
 	if err := os.WriteFile(torrentPath, []byte("d8:announce13:https://x.ee"), 0o600); err != nil {
 		t.Fatalf("write torrent: %v", err)
 	}
+	mediaInfoText := "General\nFormat: Matroska\nVideo\nCodec: H.265"
+	mediaInfoPath := writeBTNTestMediaInfo(t, tempDir, mediaInfoText)
 
 	req := trackers.UploadRequest{
 		Tracker: "BTN",
 		Meta: api.PreparedMetadata{
-			SourcePath:      sourcePath,
-			TorrentPath:     torrentPath,
-			ReleaseName:     "Example.Show.S01E01.1080p.WEB-DL.x265-GRP",
-			Type:            "WEBDL",
-			Source:          "WEB-DL",
-			Container:       "MKV",
-			VideoEncode:     "x265",
-			VideoCodec:      "HEVC",
-			SeasonInt:       1,
-			EpisodeInt:      1,
-			EpisodeTitle:    "Episode One",
-			EpisodeOverview: "Overview",
-			TVDBAiredDate:   "2025-01-01",
+			SourcePath:        sourcePath,
+			TorrentPath:       torrentPath,
+			MediaInfoTextPath: mediaInfoPath,
+			ReleaseName:       "Example.Show.S01E01.1080p.WEB-DL.x265-GRP",
+			Type:              "WEBDL",
+			Source:            "WEB-DL",
+			Container:         "MKV",
+			VideoEncode:       "x265",
+			VideoCodec:        "HEVC",
+			SeasonInt:         1,
+			EpisodeInt:        1,
+			EpisodeTitle:      "Episode One",
+			EpisodeOverview:   "Overview",
+			TVDBAiredDate:     "2025-01-01",
 			ExternalIDs: api.ExternalIDs{
 				Category: "TV",
 			},
@@ -296,6 +299,9 @@ func TestBTNUploadEndToEndSuccess(t *testing.T) {
 	}
 	if got := uploadFormValues["origin"]; got != "P2P" {
 		t.Fatalf("expected origin P2P, got %q", got)
+	}
+	if got := uploadFormValues["release_desc"]; got != mediaInfoText {
+		t.Fatalf("expected MediaInfo release_desc, got %q", got)
 	}
 	if got := uploadFormValues["scenename"]; !strings.Contains(got, "H.265") || strings.Contains(got, "x265") {
 		t.Fatalf("expected scenename codec remap to H.265, got %q", got)
@@ -543,6 +549,9 @@ func TestBTNDryRunRequiresUploadAuthPrerequisites(t *testing.T) {
 	if entry.Status != "ready" {
 		t.Fatalf("expected credentials to satisfy dry-run upload auth prerequisites, got %#v", entry)
 	}
+	if desc, ok := entry.Payload["release_desc"]; !ok || desc != "" {
+		t.Fatalf("expected empty dry-run release_desc without MediaInfo, got value=%q present=%t", desc, ok)
+	}
 
 	cookieDBPath := newBTNAuthDB(t)
 	if err := cookies.SaveTrackerCookieMap(context.Background(), cookieDBPath, "BTN", map[string]string{"session": "imported"}); err != nil {
@@ -628,6 +637,7 @@ func TestBTNDryRunDebugRunsBTNAutofillAndReportsBothPayloads(t *testing.T) {
 
 	req := newBTNDryRunTestRequest(t, dbPath)
 	req.TrackerConfig.URL = server.URL
+	req.Meta.MediaInfoTextPath = writeBTNTestMediaInfo(t, filepath.Dir(req.Meta.SourcePath), "General\nFormat: Matroska")
 	req.Meta.Options.Debug = true
 	req.Meta.TVPack = true
 	req.Meta.EpisodeInt = 0
@@ -667,11 +677,17 @@ func TestBTNDryRunDebugRunsBTNAutofillAndReportsBothPayloads(t *testing.T) {
 	if finalSection.Payload["album_desc"] != "Autofill overview" {
 		t.Fatalf("expected final debug payload to keep BTN autofill album_desc, got %q", finalSection.Payload["album_desc"])
 	}
+	if finalSection.Payload["release_desc"] != "General\nFormat: Matroska" {
+		t.Fatalf("expected final debug payload release_desc to use MediaInfo, got %q", finalSection.Payload["release_desc"])
+	}
 	if len(finalSection.Files) == 0 || finalSection.Files[0].Field != "file_input" {
 		t.Fatalf("expected final debug section files, got %#v", finalSection.Files)
 	}
 	if entry.Payload["artist"] != "Example Show" {
 		t.Fatalf("expected top-level debug payload to use autofill result, got %#v", entry.Payload)
+	}
+	if entry.Payload["release_desc"] != "General\nFormat: Matroska" {
+		t.Fatalf("expected top-level debug payload release_desc to use MediaInfo, got %q", entry.Payload["release_desc"])
 	}
 
 	formMu.Lock()
@@ -970,6 +986,9 @@ func TestBTNPrepareUploadDataUsesEpisodeIntForTVDBAutoTitle(t *testing.T) {
 	}
 	if payload["album_desc"] != "Autofill overview" {
 		t.Fatalf("expected BTN autofill album_desc to win, got %q", payload["album_desc"])
+	}
+	if desc, ok := payload["release_desc"]; !ok || desc != "" {
+		t.Fatalf("expected empty release_desc without MediaInfo, got value=%q present=%t", desc, ok)
 	}
 
 	formMu.Lock()
@@ -1736,6 +1755,16 @@ func writeBTNTestTorrent(t *testing.T, torrentPath string) {
 	if err := torrentMeta.Write(file); err != nil {
 		t.Fatalf("write torrent: %v", err)
 	}
+}
+
+func writeBTNTestMediaInfo(t *testing.T, dir string, content string) string {
+	t.Helper()
+
+	path := filepath.Join(dir, "mediainfo.txt")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write MediaInfo: %v", err)
+	}
+	return path
 }
 
 func newBTNAuthDB(t *testing.T) string {
