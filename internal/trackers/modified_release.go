@@ -15,11 +15,11 @@ import (
 // ([Modified Release] Renamed), so detecting it lets us skip the upload before it
 // is rejected. Two independent, deliberately high-signal cases are checked:
 //
-//   - *arr id tokens: Radarr/Sonarr inject "{tmdb-…}", "{imdb-…}", or "{tvdb-…}"
-//     into renamed names (e.g. "Example Release (2026) {imdb-tt1234567}"). These
-//     never occur in an original scene/P2P name, so their presence alone marks a
-//     rename. This is independent of the release group, which an *arr rename
-//     often strips.
+//   - *arr id tokens: Radarr/Sonarr inject "{tmdb-…}", "{imdb-…}", "{tvdb-…}",
+//     jellyfin "[tmdb" style, or bracket/paren variants into renamed names
+//     (e.g. "Example Release (2026) {imdb-tt1234567}"). These never occur in an
+//     original scene/P2P name, so their presence alone marks a rename. This is
+//     independent of the release group, which an *arr rename often strips.
 //
 //   - whitespace renames: a grouped release (a trailing "-GROUP" tag, which
 //     scene/P2P releases always dot-delimit) whose on-disk name has had its dots
@@ -107,7 +107,12 @@ func skipsStandardRenameCheck(group string) bool {
 // arrReleaseIDTokens are the Radarr/Sonarr id-injection tokens that appear in
 // renamed filenames (e.g. "Example Release (2026) {imdb-tt1234567}") and never
 // in an original scene/P2P release name.
-var arrReleaseIDTokens = []string{"{tmdb-", "{imdb-", "{tvdb-"}
+var arrReleaseIDTokens = []string{
+	"{tmdb-", "{imdb-", "{tvdb-",
+	"[tmdb", "(tmdb",
+	"[imdb", "(imdb",
+	"[tvdb", "(tvdb",
+}
 
 // arrRenameToken returns the first *arr id-injection token present in name
 // (case-insensitive), or "" when none is found.
