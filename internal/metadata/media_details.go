@@ -1369,9 +1369,11 @@ func uhdFromMeta(meta api.PreparedMetadata) string {
 	return ""
 }
 
-// hdrFromMedia prefers BDInfo and MediaInfo HDR evidence, normalizing bare PQ
-// transfer metadata to HDR for tracker naming, then falls back to normalized
-// filename tokens from the current source path or parsed release.
+// hdrFromMedia prefers BDInfo and MediaInfo HDR evidence, including Dolby
+// Vision HDR10/HDR10+ compatibility markers, then falls back to normalized
+// filename tokens from the current source path or parsed release. Bare PQ
+// transfer metadata is normalized to HDR only when BT.2020 primaries confirm
+// the HDR color space.
 func hdrFromMedia(doc mediaInfoDoc, bdinfo *discparse.BDInfo, meta api.PreparedMetadata) string {
 	if bdinfo != nil && len(bdinfo.Video) > 0 {
 		hdr := ""
@@ -1401,31 +1403,31 @@ func hdrFromMedia(doc mediaInfoDoc, bdinfo *discparse.BDInfo, meta api.PreparedM
 	primariesUpper := strings.ToUpper(primaries)
 	hdr := ""
 	dv := ""
-	if primariesUpper == "BT.2020" || primariesUpper == "REC.2020" {
-		compat := trackString(track, "HDR_Format_Compatibility")
-		formatStr := trackString(track, "HDR_Format_String")
-		format := trackString(track, "HDR_Format")
-		hdrFormat := metautil.FirstNonEmptyTrimmed(compat, formatStr, format)
-		upperFormat := strings.ToUpper(hdrFormat)
-		switch {
-		case strings.Contains(upperFormat, "HDR10+"):
-			hdr = "HDR10+"
-		case strings.Contains(upperFormat, "HDR10") || strings.Contains(upperFormat, "SMPTE ST 2094"):
-			hdr = "HDR"
-		}
-		if strings.Contains(upperFormat, "HLG") {
-			hdr = strings.TrimSpace(hdr + " HLG")
-		}
-		transfer := trackString(track, "transfer_characteristics", "transfer_characteristics_Original")
-		if hdrFormat == "" && strings.Contains(strings.ToUpper(transfer), "PQ") {
-			hdr = "HDR"
-		}
-		if strings.Contains(strings.ToUpper(transfer), "HLG") {
-			hdr = "HLG"
-		}
-		if hdr != "HLG" && strings.Contains(strings.ToUpper(transfer), "BT.2020 (10-BIT)") {
-			hdr = "WCG"
-		}
+	formatEvidence := strings.Join([]string{
+		trackString(track, "HDR_Format_Compatibility"),
+		trackString(track, "HDR_Format_String"),
+		trackString(track, "HDR_Format"),
+	}, " ")
+	upperFormat := strings.ToUpper(formatEvidence)
+	switch {
+	case strings.Contains(upperFormat, "HDR10+"):
+		hdr = "HDR10+"
+	case strings.Contains(upperFormat, "HDR10") || strings.Contains(upperFormat, "SMPTE ST 2094"):
+		hdr = "HDR"
+	}
+	if strings.Contains(upperFormat, "HLG") {
+		hdr = strings.TrimSpace(hdr + " HLG")
+	}
+	transfer := trackString(track, "transfer_characteristics", "transfer_characteristics_Original")
+	transferUpper := strings.ToUpper(transfer)
+	if (primariesUpper == "BT.2020" || primariesUpper == "REC.2020") && strings.TrimSpace(formatEvidence) == "" && strings.Contains(transferUpper, "PQ") {
+		hdr = "HDR"
+	}
+	if strings.Contains(transferUpper, "HLG") {
+		hdr = "HLG"
+	}
+	if hdr != "HLG" && strings.Contains(transferUpper, "BT.2020 (10-BIT)") {
+		hdr = "WCG"
 	}
 	if strings.Contains(trackString(track, "HDR_Format"), "Dolby Vision") || strings.Contains(trackString(track, "HDR_Format_String"), "Dolby Vision") {
 		dv = "DV"
