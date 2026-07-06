@@ -1106,6 +1106,7 @@ func episodeFromResponse(item episodeResponse) Episode {
 		Overview:       item.Overview,
 		Year:           int(item.Year),
 		Aired:          item.Aired,
+		Image:          item.Image,
 	}
 }
 
@@ -1335,6 +1336,7 @@ func toMatch(ep Episode) EpisodeMatch {
 		Year:          ep.Year,
 		EpisodeID:     ep.ID,
 		Aired:         ep.Aired,
+		Image:         ep.Image,
 	}
 }
 
@@ -1673,6 +1675,7 @@ type episodeResponse struct {
 	Overview       string      `json:"overview"`
 	Year           intOrString `json:"year"`
 	Aired          string      `json:"aired"`
+	Image          string      `json:"image"`
 }
 
 type intOrString int

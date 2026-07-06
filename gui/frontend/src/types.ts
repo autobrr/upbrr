@@ -235,6 +235,25 @@ export type TVDBMetadata = {
   EpisodeOverview: string;
   EpisodeOverviewEnglish: string;
   EpisodeAired: string;
+  /** Selected episode image URL when TVDB returned one. */
+  EpisodeImage: string;
+  /** Fetched TVDB episode entries, usually for the selected season. */
+  Episodes: TVDBEpisodeMetadata[];
+};
+
+/** One TVDB episode entry used by tracker descriptions. */
+export type TVDBEpisodeMetadata = {
+  ID: number;
+  SeasonNumber: number;
+  EpisodeNumber: number;
+  EpisodeName: string;
+  EpisodeNameEnglish: string;
+  EpisodeOverview: string;
+  EpisodeOverviewEnglish: string;
+  /** TVDB air date string used in tracker descriptions. */
+  EpisodeAired: string;
+  /** Episode image URL when TVDB returned one. */
+  EpisodeImage: string;
 };
 
 export type TVmazeMetadata = {

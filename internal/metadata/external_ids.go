@@ -1591,6 +1591,46 @@ func mapTVDBMetadata(tvdbID int, fallbackName string, details tvdb.SeriesMetadat
 	}
 }
 
+// mapTVDBEpisodes copies TVDB client episode data into the persisted external
+// metadata shape used by tracker payload builders.
+func mapTVDBEpisodes(values []tvdb.Episode) []api.TVDBEpisodeMetadata {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make([]api.TVDBEpisodeMetadata, 0, len(values))
+	for _, value := range values {
+		result = append(result, api.TVDBEpisodeMetadata{
+			ID:              value.ID,
+			SeasonNumber:    value.SeasonNumber,
+			EpisodeNumber:   value.Number,
+			EpisodeName:     strings.TrimSpace(value.Name),
+			EpisodeOverview: strings.TrimSpace(value.Overview),
+			EpisodeAired:    strings.TrimSpace(value.Aired),
+			EpisodeImage:    strings.TrimSpace(value.Image),
+		})
+	}
+	return result
+}
+
+// applySelectedTVDBEpisodeText mirrors translated selected-episode text back
+// into the matching stored episode entry.
+func applySelectedTVDBEpisodeText(metadata *api.TVDBMetadata, episodeID int) {
+	if metadata == nil || episodeID == 0 {
+		return
+	}
+	for idx := range metadata.Episodes {
+		if metadata.Episodes[idx].ID != episodeID {
+			continue
+		}
+		metadata.Episodes[idx].EpisodeNameEnglish = strings.TrimSpace(metadata.EpisodeNameEnglish)
+		metadata.Episodes[idx].EpisodeOverviewEnglish = strings.TrimSpace(metadata.EpisodeOverviewEnglish)
+		if strings.TrimSpace(metadata.Episodes[idx].EpisodeImage) == "" {
+			metadata.Episodes[idx].EpisodeImage = strings.TrimSpace(metadata.EpisodeImage)
+		}
+		return
+	}
+}
+
 // mergeTVDBMetadata fills missing stored TVDB fields from newer metadata and
 // refreshes alias-year provenance when TVDB title evidence changes.
 func mergeTVDBMetadata(target *api.TVDBMetadata, incoming *api.TVDBMetadata) {
@@ -1663,6 +1703,9 @@ func mergeTVDBMetadata(target *api.TVDBMetadata, incoming *api.TVDBMetadata) {
 	}
 	if len(target.Aliases) == 0 && len(incoming.Aliases) > 0 {
 		target.Aliases = append([]string{}, incoming.Aliases...)
+	}
+	if len(target.Episodes) == 0 && len(incoming.Episodes) > 0 {
+		target.Episodes = append([]api.TVDBEpisodeMetadata(nil), incoming.Episodes...)
 	}
 	target.HasEnglish = tvdbHasEnglishContent(target)
 }
@@ -1859,6 +1902,12 @@ func (s *Service) applyTVEpisodeMetadata(
 			meta.TVDBAirsTime = strings.TrimSpace(episodes.AirsTime)
 			meta.TVDBAirsTimezone = strings.TrimSpace(episodes.AirsTimezone)
 			meta.TVDBAirsTimezoneSource = strings.TrimSpace(episodes.AirsTimezoneSource)
+			if external != nil {
+				if external.TVDB == nil {
+					external.TVDB = &api.TVDBMetadata{TVDBID: ids.TVDBID}
+				}
+				external.TVDB.Episodes = mapTVDBEpisodes(episodes.Episodes)
+			}
 			if external != nil && shouldApplyTVDBSpecificAlias(specificAlias) {
 				if aliasName, aliasYear, ok := parseTVDBAliasNameYear(specificAlias); ok {
 					if external.TVDB == nil {
@@ -1900,6 +1949,7 @@ func (s *Service) applyTVEpisodeMetadata(
 						external.TVDB.EpisodeName = strings.TrimSpace(match.EpisodeName)
 						external.TVDB.EpisodeOverview = strings.TrimSpace(match.Overview)
 						external.TVDB.EpisodeAired = metautil.FirstNonEmptyTrimmed(match.Aired, query.AiredDate)
+						external.TVDB.EpisodeImage = strings.TrimSpace(match.Image)
 						if isEnglishLanguage(external.TVDB.OriginalLanguage) {
 							external.TVDB.EpisodeNameEnglish = strings.TrimSpace(match.EpisodeName)
 							external.TVDB.EpisodeOverviewEnglish = strings.TrimSpace(match.Overview)
@@ -1914,6 +1964,7 @@ func (s *Service) applyTVEpisodeMetadata(
 								external.TVDB.EpisodeOverviewEnglish = metautil.FirstNonEmptyTrimmed(translated.Overview, external.TVDB.EpisodeOverviewEnglish)
 							}
 						}
+						applySelectedTVDBEpisodeText(external.TVDB, match.EpisodeID)
 						external.TVDB.HasEnglish = tvdbHasEnglishContent(external.TVDB)
 						englishTVDBEpisodeTitle = strings.TrimSpace(external.TVDB.EpisodeNameEnglish)
 						englishTVDBEpisodeOverview = strings.TrimSpace(external.TVDB.EpisodeOverviewEnglish)

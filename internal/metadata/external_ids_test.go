@@ -1888,6 +1888,8 @@ func TestApplyTVEpisodeMetadataTVDBEpisodeTranslationApplied(t *testing.T) {
 			Number:       2,
 			Name:         "第2話 / Episode 2",
 			Overview:     "日本語概要",
+			Aired:        "2026-01-02",
+			Image:        "https://img.example/tvdb-episode-2.jpg",
 		}}},
 		episodeTranslate: tvdb.EpisodeTranslation{
 			Name:     "Episode 2",
@@ -1919,6 +1921,16 @@ func TestApplyTVEpisodeMetadataTVDBEpisodeTranslationApplied(t *testing.T) {
 	if external.TVDB.EpisodeOverviewEnglish != "English episode overview" {
 		t.Fatalf("expected english episode overview from translation, got %q", external.TVDB.EpisodeOverviewEnglish)
 	}
+	if external.TVDB.EpisodeImage != "https://img.example/tvdb-episode-2.jpg" {
+		t.Fatalf("expected episode image from TVDB, got %q", external.TVDB.EpisodeImage)
+	}
+	if len(external.TVDB.Episodes) != 1 {
+		t.Fatalf("expected one stored TVDB episode, got %#v", external.TVDB.Episodes)
+	}
+	storedEpisode := external.TVDB.Episodes[0]
+	if storedEpisode.EpisodeNameEnglish != "Episode 2" || storedEpisode.EpisodeOverviewEnglish != "English episode overview" || storedEpisode.EpisodeImage != "https://img.example/tvdb-episode-2.jpg" {
+		t.Fatalf("expected stored TVDB episode to include translated text and image, got %#v", storedEpisode)
+	}
 	if !external.TVDB.HasEnglish {
 		t.Fatalf("expected HasEnglish true when english episode fields are populated")
 	}
@@ -1927,6 +1939,55 @@ func TestApplyTVEpisodeMetadataTVDBEpisodeTranslationApplied(t *testing.T) {
 	}
 	if updated.EpisodeOverview != "English episode overview" {
 		t.Fatalf("expected english episode overview, got %q", updated.EpisodeOverview)
+	}
+}
+
+func TestApplyTVEpisodeMetadataStoresTVDBSeasonEpisodesForPack(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	tmdbClient := &stubTMDB{}
+	tvdbClient := &stubTVDB{
+		episodes: tvdb.EpisodesData{Episodes: []tvdb.Episode{
+			{
+				ID:           201,
+				SeasonNumber: 2,
+				Number:       1,
+				Name:         "Example Episode One",
+				Overview:     "Example overview one.",
+				Aired:        "2026-04-23",
+				Image:        "https://img.example/tvdb-episode-1.jpg",
+			},
+			{
+				ID:           202,
+				SeasonNumber: 2,
+				Number:       2,
+				Name:         "Example Episode Two",
+				Overview:     "Example overview two.",
+				Aired:        "2026-04-30",
+				Image:        "https://img.example/tvdb-episode-2.jpg",
+			},
+		}},
+	}
+
+	meta := api.PreparedMetadata{
+		SourcePath: "/media/Example.Show.S02.mkv",
+		SeasonInt:  2,
+		TVPack:     true,
+	}
+	ids := &api.ExternalIDs{
+		TVDBID:   200,
+		Category: "TV",
+	}
+	external := &api.ExternalMetadata{
+		TVDB: &api.TVDBMetadata{TVDBID: 200, OriginalLanguage: "eng"},
+	}
+
+	_ = svc.applyTVEpisodeMetadata(context.Background(), meta, ids, external, tmdbClient, tvdbClient, &stubTVmaze{})
+
+	if len(external.TVDB.Episodes) != 2 {
+		t.Fatalf("expected stored TVDB season episodes, got %#v", external.TVDB.Episodes)
+	}
+	if external.TVDB.Episodes[0].EpisodeImage != "https://img.example/tvdb-episode-1.jpg" || external.TVDB.Episodes[1].EpisodeAired != "2026-04-30" {
+		t.Fatalf("unexpected stored TVDB season episodes: %#v", external.TVDB.Episodes)
 	}
 }
 

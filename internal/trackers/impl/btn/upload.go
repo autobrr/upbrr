@@ -1096,7 +1096,8 @@ func preferredBTNIMDBOverview(imdb *api.IMDBMetadata) string {
 }
 
 // buildAlbumDesc keeps BTN's autofilled album_desc when available. If BTN did
-// not return one, TV uploads fall back to provider/local episode metadata.
+// not return one, TV uploads fall back to BBCode episode blocks from TVDB or
+// provider/local episode metadata.
 func buildAlbumDesc(meta api.PreparedMetadata, fields map[string]string) string {
 	if desc := metautil.FirstNonEmptyTrimmed(fields["album_desc"]); desc != "" {
 		return desc
@@ -1104,12 +1105,91 @@ func buildAlbumDesc(meta api.PreparedMetadata, fields map[string]string) string 
 	if !strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") {
 		return ""
 	}
+	if desc := buildTVDBAlbumDesc(meta); desc != "" {
+		return desc
+	}
 	tvdb := meta.ExternalMetadata.TVDB
 	overview := metautil.FirstNonEmptyTrimmed(preferredBTNTVDBOverview(tvdb), preferredBTNIMDBOverview(meta.ExternalMetadata.IMDB), strings.TrimSpace(meta.EpisodeOverview))
 	aired := metautil.FirstNonEmptyTrimmed(btnTVDBEpisodeAired(tvdb), btnIMDBEpisodeAired(meta), strings.TrimSpace(meta.TVDBAiredDate), strings.TrimSpace(meta.DailyEpisodeDate), "TBA")
 	season, episode := resolveBTNTVSeasonEpisode(meta)
 	episodeTitle := metautil.FirstNonEmptyTrimmed(preferredBTNTVDBEpisodeTitle(tvdb), preferredBTNIMDBEpisodeTitle(meta), strings.TrimSpace(meta.EpisodeTitle), "TBA")
-	return strings.TrimSpace(fmt.Sprintf("Episode Name: %s\nEpisode Title: %s\nSeason: %d\nEpisode: %d\nAired: %s\n\nEpisode overview: %s", episodeTitle, episodeTitle, season, episode, aired, overview))
+	return formatBTNEpisodeAlbumDesc([]api.TVDBEpisodeMetadata{{
+		SeasonNumber:    season,
+		EpisodeNumber:   episode,
+		EpisodeName:     episodeTitle,
+		EpisodeOverview: overview,
+		EpisodeAired:    aired,
+	}})
+}
+
+// buildTVDBAlbumDesc builds BTN album_desc from TVDB data only. Episode uploads
+// use the selected episode; season-pack uploads use every fetched episode in
+// the selected season.
+func buildTVDBAlbumDesc(meta api.PreparedMetadata) string {
+	tvdb := meta.ExternalMetadata.TVDB
+	if tvdb == nil {
+		return ""
+	}
+	season, episode := resolveBTNTVSeasonEpisode(meta)
+	if resolveUploadType(meta) == "Season" {
+		episodes := make([]api.TVDBEpisodeMetadata, 0, len(tvdb.Episodes))
+		for _, candidate := range tvdb.Episodes {
+			if candidate.SeasonNumber == season {
+				episodes = append(episodes, candidate)
+			}
+		}
+		sort.SliceStable(episodes, func(i, j int) bool {
+			return episodes[i].EpisodeNumber < episodes[j].EpisodeNumber
+		})
+		return formatBTNEpisodeAlbumDesc(episodes)
+	}
+	for _, candidate := range tvdb.Episodes {
+		if candidate.SeasonNumber == season && candidate.EpisodeNumber == episode {
+			return formatBTNEpisodeAlbumDesc([]api.TVDBEpisodeMetadata{candidate})
+		}
+	}
+	if tvdb.EpisodeSeason > 0 || tvdb.EpisodeNumber > 0 || strings.TrimSpace(tvdb.EpisodeName) != "" || strings.TrimSpace(tvdb.EpisodeOverview) != "" {
+		return formatBTNEpisodeAlbumDesc([]api.TVDBEpisodeMetadata{{
+			SeasonNumber:           tvdb.EpisodeSeason,
+			EpisodeNumber:          tvdb.EpisodeNumber,
+			EpisodeName:            tvdb.EpisodeName,
+			EpisodeNameEnglish:     tvdb.EpisodeNameEnglish,
+			EpisodeOverview:        tvdb.EpisodeOverview,
+			EpisodeOverviewEnglish: tvdb.EpisodeOverviewEnglish,
+			EpisodeAired:           tvdb.EpisodeAired,
+			EpisodeImage:           tvdb.EpisodeImage,
+		}})
+	}
+	return ""
+}
+
+// formatBTNEpisodeAlbumDesc renders each episode as the BBCode block expected
+// by BTN's album_desc field. Empty input returns an empty string.
+func formatBTNEpisodeAlbumDesc(episodes []api.TVDBEpisodeMetadata) string {
+	blocks := make([]string, 0, len(episodes))
+	for _, episode := range episodes {
+		title := metautil.FirstNonEmptyTrimmed(episode.EpisodeNameEnglish, episode.EpisodeName, "TBA")
+		overview := metautil.FirstNonEmptyTrimmed(episode.EpisodeOverviewEnglish, episode.EpisodeOverview)
+		aired := metautil.FirstNonEmptyTrimmed(episode.EpisodeAired, "TBA")
+		var block strings.Builder
+		block.WriteString("[b]Episode Name:[/b] ")
+		block.WriteString(title)
+		block.WriteString("\n[b]Season:[/b] ")
+		block.WriteString(strconv.Itoa(episode.SeasonNumber))
+		block.WriteString("\n[b]Episode:[/b] ")
+		block.WriteString(strconv.Itoa(episode.EpisodeNumber))
+		block.WriteString("\n[b]Aired:[/b] ")
+		block.WriteString(aired)
+		block.WriteString("\n\n[b]Episode overview:[/b]\n")
+		block.WriteString(overview)
+		if image := strings.TrimSpace(episode.EpisodeImage); image != "" {
+			block.WriteString("\n\n[b]Episode image:[/b]\n[img=")
+			block.WriteString(image)
+			block.WriteString("]")
+		}
+		blocks = append(blocks, strings.TrimSpace(block.String()))
+	}
+	return strings.Join(blocks, "\n\n")
 }
 
 // btnTVDBEpisodeAired returns the TVDB episode air date used in BTN-generated
