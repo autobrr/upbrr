@@ -753,7 +753,7 @@ func TestBTNUploadPayloadUsesCanonicalSeasonEpisodeOnly(t *testing.T) {
 	if got := resolveUploadType(meta); got != "Season" {
 		t.Fatalf("expected upload type Season without canonical episode, got %q", got)
 	}
-	desc := buildAlbumDesc(meta, map[string]string{"album_desc": "fallback overview"})
+	desc := buildAlbumDesc(meta, nil)
 	for _, value := range []string{"Season: 0", "Episode: 0"} {
 		if !strings.Contains(desc, value) {
 			t.Fatalf("expected album description to contain %q, got %q", value, desc)
@@ -856,7 +856,11 @@ func TestBuildAlbumDescFallsBackToIMDBEpisodeMetadata(t *testing.T) {
 		},
 	}
 
-	desc := buildAlbumDesc(meta, map[string]string{"album_desc": "Autofill overview"})
+	if desc := buildAlbumDesc(meta, map[string]string{"album_desc": "Autofill overview"}); desc != "Autofill overview" {
+		t.Fatalf("expected BTN autofill album_desc to win, got %q", desc)
+	}
+
+	desc := buildAlbumDesc(meta, nil)
 	for _, value := range []string{"IMDb Episode", "Season: 2", "Episode: 7", "Aired: 2026-03-04", "IMDb overview"} {
 		if !strings.Contains(desc, value) {
 			t.Fatalf("expected album_desc to contain %q, got %q", value, desc)

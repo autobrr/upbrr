@@ -664,6 +664,9 @@ func TestBTNDryRunDebugRunsBTNAutofillAndReportsBothPayloads(t *testing.T) {
 	if finalSection.Payload["type"] != "Season" || finalSection.Payload["seriesid"] != "12345" || finalSection.Payload["artist"] != "Example Show" {
 		t.Fatalf("unexpected final payload %#v", finalSection.Payload)
 	}
+	if finalSection.Payload["album_desc"] != "Autofill overview" {
+		t.Fatalf("expected final debug payload to keep BTN autofill album_desc, got %q", finalSection.Payload["album_desc"])
+	}
 	if len(finalSection.Files) == 0 || finalSection.Files[0].Field != "file_input" {
 		t.Fatalf("expected final debug section files, got %#v", finalSection.Files)
 	}
@@ -965,10 +968,8 @@ func TestBTNPrepareUploadDataUsesEpisodeIntForTVDBAutoTitle(t *testing.T) {
 	if !logger.containsInfo(`BTN autofill resolution mismatch metadata_resolution="1080p" autofill_resolution="2160p" decision=metadata`) {
 		t.Fatal("expected resolution mismatch info log")
 	}
-	for _, value := range []string{"English Episode", "Season: 4", "Episode: 12", "Aired: 2026-02-03", "English overview"} {
-		if !strings.Contains(payload["album_desc"], value) {
-			t.Fatalf("expected album_desc to contain %q, got %q", value, payload["album_desc"])
-		}
+	if payload["album_desc"] != "Autofill overview" {
+		t.Fatalf("expected BTN autofill album_desc to win, got %q", payload["album_desc"])
 	}
 
 	formMu.Lock()

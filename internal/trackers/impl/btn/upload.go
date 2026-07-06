@@ -767,8 +767,9 @@ func requestBTNAutofillFields(ctx context.Context, uploadCtx uploadContext, auto
 }
 
 // buildBTNUploadPayload merges BTN autofill fields with local metadata for the
-// final upload form. Local MediaInfo-derived dropdown mappings win over BTN
-// autofill values when both are available.
+// final upload form. BTN text fields such as album_desc are retained, while
+// local MediaInfo-derived dropdown mappings win when both sources provide a
+// BTN-supported value.
 func buildBTNUploadPayload(req trackers.UploadRequest, fields map[string]string) (map[string]string, error) {
 	description := strings.TrimSpace(req.Meta.DescriptionOverride)
 	if description == "" {
@@ -1004,6 +1005,9 @@ func normalizedBTNGenreContains(normalized string, alias string) bool {
 	return strings.Contains(" "+normalized+" ", " "+alias+" ")
 }
 
+// extractAutofillFields reads BTN's autofilled upload form into the field map
+// consumed by final payload construction. Input values, selected dropdown
+// values, and the album_desc textarea are normalized to lower-case field names.
 func extractAutofillFields(htmlRaw string) map[string]string {
 	fields := map[string]string{}
 	for _, match := range btnInputPattern.FindAllStringSubmatch(htmlRaw, -1) {
@@ -1032,6 +1036,9 @@ func extractAutofillFields(htmlRaw string) map[string]string {
 	return fields
 }
 
+// validateAutofill reports whether BTN returned the minimum autofill fields
+// needed for the requested upload type. Episodes require a title; season packs
+// only require a series artist.
 func validateAutofill(fields map[string]string, uploadType string) bool {
 	artist := strings.TrimSpace(fields["artist"])
 	title := strings.TrimSpace(fields["title"])
@@ -1088,16 +1095,17 @@ func preferredBTNIMDBOverview(imdb *api.IMDBMetadata) string {
 	return strings.TrimSpace(imdb.Plot)
 }
 
-// buildAlbumDesc builds the BTN description block for TV uploads from metadata
-// that BTN does not provide through autofill. TVDB episode metadata wins for
-// title, overview, aired date, season, and episode when present; missing TVDB
-// values fall back through IMDb before local metadata and BTN autofill fields.
+// buildAlbumDesc keeps BTN's autofilled album_desc when available. If BTN did
+// not return one, TV uploads fall back to provider/local episode metadata.
 func buildAlbumDesc(meta api.PreparedMetadata, fields map[string]string) string {
+	if desc := metautil.FirstNonEmptyTrimmed(fields["album_desc"]); desc != "" {
+		return desc
+	}
 	if !strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") {
-		return metautil.FirstNonEmptyTrimmed(fields["album_desc"])
+		return ""
 	}
 	tvdb := meta.ExternalMetadata.TVDB
-	overview := metautil.FirstNonEmptyTrimmed(preferredBTNTVDBOverview(tvdb), preferredBTNIMDBOverview(meta.ExternalMetadata.IMDB), strings.TrimSpace(meta.EpisodeOverview), strings.TrimSpace(fields["album_desc"]))
+	overview := metautil.FirstNonEmptyTrimmed(preferredBTNTVDBOverview(tvdb), preferredBTNIMDBOverview(meta.ExternalMetadata.IMDB), strings.TrimSpace(meta.EpisodeOverview))
 	aired := metautil.FirstNonEmptyTrimmed(btnTVDBEpisodeAired(tvdb), btnIMDBEpisodeAired(meta), strings.TrimSpace(meta.TVDBAiredDate), strings.TrimSpace(meta.DailyEpisodeDate), "TBA")
 	season, episode := resolveBTNTVSeasonEpisode(meta)
 	episodeTitle := metautil.FirstNonEmptyTrimmed(preferredBTNTVDBEpisodeTitle(tvdb), preferredBTNIMDBEpisodeTitle(meta), strings.TrimSpace(meta.EpisodeTitle), "TBA")
