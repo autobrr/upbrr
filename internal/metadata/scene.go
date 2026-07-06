@@ -208,12 +208,18 @@ func (d *srrdbDetector) Detect(ctx context.Context, meta api.PreparedMetadata) (
 	imdbID := sceneIMDbID(meta)
 	d.log().Debugf("metadata: scene detection start imdb=%d folders=%d files=%d media_present=%t", imdbID, len(cands.folders), len(cands.files), strings.TrimSpace(cands.mediaFilename) != "")
 
-	// Detection now runs after external-ID resolution (ApplyMediaDetails), so a
-	// resolved IMDb id is normally available. The IMDb-keyed search returns the
-	// full scene release set for the title regardless of filename, which is the
-	// robust primary path. If it yields no confident match (e.g. truncated results
-	// or srrdb not keying the release to this id), fall through to the exact r:
-	// search, which is also the fallback when no IMDb id is known.
+	// For TV releases, a word:<title SxxEyy|Sxx> search is the cheapest
+	// high-signal path and avoids broad IMDb fan-out on long-running shows. TV
+	// detection deliberately skips the IMDb fallback after the word search and
+	// only tries exact r: names; non-TV releases still use IMDb before r:.
+	if result, err := d.detectViaTVWord(ctx, meta, cands); err != nil {
+		return result, err
+	} else if result.IsScene {
+		return result, nil
+	}
+	if isSRRDBTVCategory(meta) {
+		return d.detectViaR(ctx, cands)
+	}
 	if imdbID > 0 {
 		result, err := d.detectViaIMDB(ctx, meta, cands, imdbID)
 		if err != nil {
@@ -226,12 +232,43 @@ func (d *srrdbDetector) Detect(ctx context.Context, meta api.PreparedMetadata) (
 	return d.detectViaR(ctx, cands)
 }
 
+// detectViaTVWord runs the low-fan-out SRRDB word search for parsed TV releases.
+// It returns no match when the metadata cannot form a title/season query. Network
+// and decode failures are soft unless they are context cancellation.
+func (d *srrdbDetector) detectViaTVWord(ctx context.Context, meta api.PreparedMetadata, cands sceneCandidates) (SceneResult, error) {
+	query := srrdbTVWordQuery(meta)
+	if query == "" {
+		return SceneResult{}, nil
+	}
+	d.log().Tracef("metadata: scene word search start query=%q", query)
+	releases, err := d.searchWord(ctx, query)
+	if err != nil {
+		if isContextError(ctx, err) {
+			return SceneResult{}, err
+		}
+		d.log().Debugf("metadata: scene word search soft-failed query=%q: %v", query, err)
+		return SceneResult{}, nil
+	}
+	if len(releases) == 0 {
+		d.log().Debugf("metadata: scene word search no results query=%q", query)
+		return SceneResult{}, nil
+	}
+	d.log().Debugf("metadata: scene word search results query=%q count=%d", query, len(releases))
+
+	best, source := selectSceneRelease(meta, cands, releases)
+	if best == nil {
+		d.log().Debugf("metadata: scene word no confident candidate query=%q candidates=%d folders=%d files=%d", query, len(releases), len(cands.folders), len(cands.files))
+		return SceneResult{}, nil
+	}
+	return d.finishSceneMatch(ctx, cands, *best, source, "word")
+}
+
 // detectViaIMDB lists every scene release for the title, selects the one matching
 // the local folder/filename, then verifies the media filename. Strictly
 // best-effort: every failure returns a no-match (except context cancellation).
 func (d *srrdbDetector) detectViaIMDB(ctx context.Context, meta api.PreparedMetadata, cands sceneCandidates, imdbID int) (SceneResult, error) {
 	d.log().Tracef("metadata: scene imdb search start imdb=%d", imdbID)
-	releases, err := d.fetchIMDBReleases(ctx, imdbID)
+	releases, err := d.fetchIMDBReleases(ctx, meta, imdbID)
 	if err != nil {
 		if isContextError(ctx, err) {
 			return SceneResult{}, err
@@ -309,6 +346,37 @@ func (d *srrdbDetector) searchExactR(ctx context.Context, name string) (srrdbSea
 	}
 	d.log().Tracef("metadata: scene r search candidate=%q results=%d selected=%q", trimmed, len(payload.Results), payload.Results[0].Release)
 	return payload.Results[0], true, nil
+}
+
+// searchWord performs one SRRDB word:<query> search and returns the raw result
+// list. Non-OK HTTP statuses are treated as no results; request and JSON decode
+// failures are returned so the caller can apply the scene-detection soft-fail
+// policy.
+func (d *srrdbDetector) searchWord(ctx context.Context, query string) ([]srrdbSearchResult, error) {
+	trimmed := strings.TrimSpace(query)
+	if trimmed == "" {
+		return nil, nil
+	}
+	endpoint := fmt.Sprintf("%s/v1/search/word:%s", strings.TrimRight(d.baseURL, "/"), url.PathEscape(trimmed))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("scene: build word search request: %w", err)
+	}
+	setSRRDBHeaders(req)
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("scene: word search request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		d.log().Tracef("metadata: scene word search query=%q status=%d", trimmed, resp.StatusCode)
+		return nil, nil
+	}
+	var payload srrdbResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("scene: decode word search: %w", err)
+	}
+	return payload.Results, nil
 }
 
 // selectSceneRelease picks the srrdb release that matches the local names, using
@@ -836,17 +904,45 @@ func sceneIMDbID(meta api.PreparedMetadata) int {
 	return 0
 }
 
+// srrdbTVWordQuery builds the low-fan-out TV query SRRDB accepts after word:.
+// It returns "<title> SxxEyy" when an episode is known and "<title> Sxx" when
+// only the season is known. A normalized TV category, title, and season are
+// required so movie-like releases do not take the TV-only path.
+func srrdbTVWordQuery(meta api.PreparedMetadata) string {
+	if !isSRRDBTVCategory(meta) {
+		return ""
+	}
+	title := strings.Join(strings.Fields(meta.Release.Title), " ")
+	if title == "" {
+		return ""
+	}
+	season, episode := meta.SeasonEpisodeWithParsedFallback()
+	if season <= 0 {
+		return ""
+	}
+	if episode <= 0 {
+		return fmt.Sprintf("%s S%02d", title, season)
+	}
+	return fmt.Sprintf("%s S%02dE%02d", title, season, episode)
+}
+
+// isSRRDBTVCategory reports whether scene detection should use TV-specific SRRDB
+// search behavior for the parsed release category.
+func isSRRDBTVCategory(meta api.PreparedMetadata) bool {
+	return api.NormalizeCategory(meta.Release.Category) == api.CategoryTV
+}
+
 // fetchIMDBReleases lists every scene release for an IMDb id via the imdb:
 // search, paginating up to srrdbIMDBMaxPages. The id is a validated integer, so
 // the URL cannot be influenced by parsed metadata (no SSRF surface).
-func (d *srrdbDetector) fetchIMDBReleases(ctx context.Context, imdbID int) ([]srrdbSearchResult, error) {
+func (d *srrdbDetector) fetchIMDBReleases(ctx context.Context, meta api.PreparedMetadata, imdbID int) ([]srrdbSearchResult, error) {
 	if imdbID <= 0 {
 		return nil, nil
 	}
 	all := make([]srrdbSearchResult, 0, srrdbIMDBPageSize)
 	total := -1
 	for page := 1; page <= srrdbIMDBMaxPages; page++ {
-		payload, err := d.fetchIMDBReleasePage(ctx, imdbID, page)
+		payload, err := d.fetchIMDBReleasePage(ctx, meta, imdbID, page)
 		if err != nil {
 			return all, err
 		}
@@ -866,12 +962,12 @@ func (d *srrdbDetector) fetchIMDBReleases(ctx context.Context, imdbID int) ([]sr
 	return all, nil
 }
 
-func (d *srrdbDetector) fetchIMDBReleasePage(ctx context.Context, imdbID, page int) (srrdbIMDBSearchResponse, error) {
+func (d *srrdbDetector) fetchIMDBReleasePage(ctx context.Context, meta api.PreparedMetadata, imdbID, page int) (srrdbIMDBSearchResponse, error) {
 	imdb := formatSRRDBIMDbID(imdbID)
 	if imdb == "" {
 		return srrdbIMDBSearchResponse{}, nil
 	}
-	endpoint := fmt.Sprintf("%s/v1/search/imdb:%s/order:date/page:%d", strings.TrimRight(d.baseURL, "/"), imdb, page)
+	endpoint := fmt.Sprintf("%s/v1/search/imdb:%s%s/order:date/page:%d", strings.TrimRight(d.baseURL, "/"), imdb, srrdbIMDBForeignFilterPath(meta), page)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return srrdbIMDBSearchResponse{}, fmt.Errorf("scene: build imdb search request: %w", err)
@@ -891,6 +987,23 @@ func (d *srrdbDetector) fetchIMDBReleasePage(ctx context.Context, imdbID, page i
 		return srrdbIMDBSearchResponse{}, fmt.Errorf("scene: decode imdb search: %w", err)
 	}
 	return payload, nil
+}
+
+// srrdbIMDBForeignFilterPath narrows the broad imdb: release listing by the
+// parsed release language. Empty or English-only release names search
+// non-foreign entries; any explicit non-English marker searches foreign entries.
+func srrdbIMDBForeignFilterPath(meta api.PreparedMetadata) string {
+	for _, language := range meta.Release.Language {
+		switch strings.ToLower(strings.TrimSpace(language)) {
+		case "":
+			continue
+		case "english", "en", "eng":
+			continue
+		default:
+			return "/foreign:yes"
+		}
+	}
+	return "/foreign:no"
 }
 
 // sceneMediaExtensions are the archive members treated as the primary media file

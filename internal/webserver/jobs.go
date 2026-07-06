@@ -28,6 +28,10 @@ const (
 	trackerUploadProgressEvent = "upload:progress"
 )
 
+const errDupeCheckRequiresMetadataPreview = "dupe check requires metadata preview"
+
+// DupeCheckTrackerState reports frontend-visible state for one tracker in a
+// dupe check job.
 type DupeCheckTrackerState struct {
 	Tracker    string              `json:"tracker"`
 	Status     string              `json:"status"`
@@ -37,6 +41,7 @@ type DupeCheckTrackerState struct {
 	FinishedAt string              `json:"finishedAt"`
 }
 
+// DupeCheckSnapshot reports frontend-visible state for a dupe check job.
 type DupeCheckSnapshot struct {
 	JobID          string                  `json:"jobID"`
 	SourcePath     string                  `json:"sourcePath"`
@@ -52,9 +57,13 @@ type DupeCheckSnapshot struct {
 
 type dupeCheckJob struct {
 	mu             sync.Mutex
+	cleanupOnce    sync.Once
 	sessionID      string
 	id             string
 	sourcePath     string
+	uploadOptions  api.UploadOptions
+	core           api.Core
+	logger         interface{ Close() error }
 	overrides      api.ExternalIDOverrides
 	nameOverrides  api.ReleaseNameOverrides
 	trackers       []string
@@ -219,9 +228,18 @@ func randomJobID() string {
 	return fmt.Sprintf("%d-%x", time.Now().UnixNano(), value.Uint64())
 }
 
-func (b *Backend) StartDupeCheck(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string) (string, error) {
-	if err := b.requireCore(); err != nil {
+// StartDupeCheck starts a dupe check job owned by sessionID and returns its job
+// ID. The request context controls the pre-job metadata cache export/import
+// work; after the job is accepted, cancellation is detached and callers must use
+// CancelDupeCheck. When the active core exposes the GUI prepared-metadata cache,
+// the matching preview must exist before a durable job is created.
+func (b *Backend) StartDupeCheck(ctx context.Context, sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string) (string, error) {
+	rt, err := b.requireRuntime()
+	if err != nil {
 		return "", err
+	}
+	if ctx == nil {
+		return "", errors.New("request context is required")
 	}
 	trimmedPath := strings.TrimSpace(path)
 	if trimmedPath == "" {
@@ -230,6 +248,55 @@ func (b *Backend) StartDupeCheck(sessionID string, path string, overrides api.Ex
 	resolvedTrackers := normalizeTrackerList(trackers)
 	if len(resolvedTrackers) == 0 {
 		return "", errors.New("at least one tracker must be selected")
+	}
+
+	req := api.Request{
+		Paths:                []string{trimmedPath},
+		Mode:                 api.ModeGUI,
+		Trackers:             resolvedTrackers,
+		Options:              rt.baseUploadOptions(),
+		ExternalIDOverrides:  overrides,
+		ReleaseNameOverrides: nameOverrides,
+	}
+	var preparedMeta api.PreparedMetadata
+	preparedMetaFound := false
+	if exporter, ok := rt.core.(guishared.PreparedMetaExporter); ok {
+		var found bool
+		preparedMeta, found, err = exporter.ExportGUICachedPreparedMeta(ctx, req)
+		if err != nil {
+			return "", fmt.Errorf("dupe check metadata preview cache: %w", err)
+		}
+		if !found {
+			return "", errors.New(errDupeCheckRequiresMetadataPreview)
+		}
+		preparedMetaFound = true
+	}
+
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("dupe check metadata preview cache: %w", err)
+	}
+	//nolint:contextcheck // Per-run core construction has no context-aware API; request context is checked before and after setup.
+	runCore, runLogger, err := b.buildRunCoreFromSnapshot(rt, runOptions{})
+	if err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
+		_ = runCore.Close()
+		_ = runLogger.Close()
+		return "", fmt.Errorf("dupe check metadata preview cache: %w", err)
+	}
+	if preparedMetaFound {
+		importer, ok := runCore.(guishared.PreparedMetaImporter)
+		if !ok {
+			_ = runCore.Close()
+			_ = runLogger.Close()
+			return "", errors.New("dupe check metadata preview cache: run core cannot import prepared metadata")
+		}
+		if err := importer.ImportPreparedMetadataForGUI(ctx, req, preparedMeta); err != nil {
+			_ = runCore.Close()
+			_ = runLogger.Close()
+			return "", fmt.Errorf("dupe check metadata preview cache: %w", err)
+		}
 	}
 
 	jobID := randomJobID()
@@ -242,6 +309,9 @@ func (b *Backend) StartDupeCheck(sessionID string, path string, overrides api.Ex
 		sessionID:     sessionID,
 		id:            jobID,
 		sourcePath:    trimmedPath,
+		uploadOptions: req.Options,
+		core:          runCore,
+		logger:        runLogger,
 		overrides:     overrides,
 		nameOverrides: nameOverrides,
 		trackers:      resolvedTrackers,
@@ -252,7 +322,7 @@ func (b *Backend) StartDupeCheck(sessionID string, path string, overrides api.Ex
 		startedAt:     time.Now().UTC(),
 	}
 
-	jobCtx, cancel := context.WithCancel(context.Background())
+	jobCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	job.cancel = cancel
 
 	b.dupeMu.Lock()
@@ -296,6 +366,9 @@ func (b *Backend) CancelDupeCheck(sessionID string, jobID string) error {
 
 func (b *Backend) runDupeCheckJob(ctx context.Context, job *dupeCheckJob) {
 	defer b.dupeWG.Done()
+	defer func() {
+		job.closeResources()
+	}()
 
 	job.mu.Lock()
 	job.status = "running"
@@ -310,12 +383,25 @@ func (b *Backend) runDupeCheckJob(ctx context.Context, job *dupeCheckJob) {
 		Paths:                []string{job.sourcePath},
 		Mode:                 api.ModeGUI,
 		Trackers:             job.trackers,
-		Options:              b.baseUploadOptions(),
+		Options:              job.uploadOptions,
 		ExternalIDOverrides:  job.overrides,
 		ReleaseNameOverrides: job.nameOverrides,
 	}
 
-	summary, err := b.currentCore().CheckDupes(progressCtx, req)
+	if job.core == nil {
+		err := errors.New("core not initialized")
+		job.mu.Lock()
+		job.finishedAt = time.Now().UTC()
+		job.cancel = nil
+		job.status = "failed"
+		job.errorMessage = err.Error()
+		job.mu.Unlock()
+		b.emitDupeCheckSnapshot(job)
+		b.scheduleDupeJobCleanup(job)
+		return
+	}
+
+	summary, err := job.core.CheckDupes(progressCtx, req)
 	job.mu.Lock()
 	job.finishedAt = time.Now().UTC()
 	job.cancel = nil
@@ -400,6 +486,26 @@ func (b *Backend) applyDupeProgress(job *dupeCheckJob, update api.DupeProgressUp
 }
 
 func (j *trackerUploadJob) closeResources() {
+	if j == nil {
+		return
+	}
+	j.cleanupOnce.Do(func() {
+		j.mu.Lock()
+		coreSvc := j.core
+		logger := j.logger
+		j.core = nil
+		j.logger = nil
+		j.mu.Unlock()
+		if coreSvc != nil {
+			_ = coreSvc.Close()
+		}
+		if logger != nil {
+			_ = logger.Close()
+		}
+	})
+}
+
+func (j *dupeCheckJob) closeResources() {
 	if j == nil {
 		return
 	}

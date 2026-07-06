@@ -426,17 +426,34 @@ func TestSceneDetectorSRRDBNFOContextCancellationIsFatal(t *testing.T) {
 // srrdbFallbackHandler routes the srrdb endpoints used by the imdb: fallback so
 // tests can drive scene/rename detection without touching the live service.
 type srrdbFallbackHandler struct {
-	imdbPages map[int]string // page -> JSON body for /v1/search/imdb:<id>/...
-	details   map[string]string
-	rResults  map[string]string // r:<name> -> JSON body (name is the unescaped search term)
-	imdbStat  int               // non-zero overrides the imdb: search status code
-	imdbHits  *atomic.Int32     // when set, counts /v1/search/imdb: requests
+	imdbPages   map[int]string // page -> JSON body for /v1/search/imdb:<id>/...
+	details     map[string]string
+	rResults    map[string]string // r:<name> -> JSON body (name is the unescaped search term)
+	wordResults map[string]string // word:<query> -> JSON body (query is the unescaped search term)
+	imdbStat    int               // non-zero overrides the imdb: search status code
+	imdbHits    *atomic.Int32     // when set, counts /v1/search/imdb: requests
+	imdbPaths   *[]string         // when set, captures /v1/search/imdb: request paths
+	wordHits    *atomic.Int32     // when set, counts /v1/search/word: requests
+	wordPaths   *[]string         // when set, captures escaped /v1/search/word: request paths
 }
 
 func (h srrdbFallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	path := r.URL.Path
 	switch {
+	case strings.Contains(path, "/v1/search/word:"):
+		if h.wordHits != nil {
+			h.wordHits.Add(1)
+		}
+		if h.wordPaths != nil {
+			*h.wordPaths = append(*h.wordPaths, r.URL.EscapedPath())
+		}
+		query := path[strings.Index(path, "/v1/search/word:")+len("/v1/search/word:"):]
+		if body, ok := h.wordResults[query]; ok {
+			_, _ = w.Write([]byte(body))
+			return
+		}
+		_, _ = w.Write([]byte(`{"resultsCount":0,"results":[]}`))
 	case strings.Contains(path, "/v1/search/r:"):
 		name := path[strings.Index(path, "/v1/search/r:")+len("/v1/search/r:"):]
 		if body, ok := h.rResults[name]; ok {
@@ -447,6 +464,9 @@ func (h srrdbFallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	case strings.Contains(path, "/v1/search/imdb:"):
 		if h.imdbHits != nil {
 			h.imdbHits.Add(1)
+		}
+		if h.imdbPaths != nil {
+			*h.imdbPaths = append(*h.imdbPaths, path)
 		}
 		if h.imdbStat != 0 {
 			w.WriteHeader(h.imdbStat)
@@ -650,6 +670,256 @@ func TestSceneDetectorIMDBFallbackPaginates(t *testing.T) {
 	}
 	if !result.IsScene || result.SceneName != "Example.Movie.2026.1080p.BluRay.x264-GRP" {
 		t.Fatalf("expected paginated match, got %#v", result)
+	}
+}
+
+func TestSceneDetectorTVWordSearchRunsBeforeIMDBFallback(t *testing.T) {
+	imdbHits := &atomic.Int32{}
+	wordHits := &atomic.Int32{}
+	var wordPaths []string
+	const release = "Example.Show.S02E03.1080p.WEB.h264-GRP"
+	handler := srrdbFallbackHandler{
+		imdbHits:  imdbHits,
+		wordHits:  wordHits,
+		wordPaths: &wordPaths,
+		wordResults: map[string]string{
+			"Example Show S02E03": `{"resultsCount":1,"results":[{"release":"` + release + `","imdbId":"1234567","hasNFO":"no","isForeign":"no"}]}`,
+		},
+		imdbPages: map[int]string{
+			1: `{"resultsCount":1,"results":[{"release":"Example.Show.S02E03.720p.WEB.h264-ALT","imdbId":"1234567"}]}`,
+		},
+		details: map[string]string{
+			release: `{"archived-files":[{"name":"example.show.s02e03.1080p.web.h264-grp.mkv","size":1000000000}]}`,
+		},
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	meta := api.PreparedMetadata{
+		VideoPath:   "/data/" + release + ".mkv",
+		ExternalIDs: api.ExternalIDs{IMDBID: 1234567},
+		Release: api.ReleaseInfo{
+			Category:   "TV",
+			Title:      "Example Show",
+			Season:     2,
+			Episode:    3,
+			Resolution: "1080p",
+			Source:     "Web",
+			Codec:      []string{"H.264"},
+			Group:      "GRP",
+		},
+	}
+	detector := newSRRDBDetector(server.Client(), server.URL, t.TempDir(), t.TempDir())
+	result, err := detector.Detect(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if !result.IsScene || result.SceneName != release {
+		t.Fatalf("expected word search match %q, got %#v", release, result)
+	}
+	if got := wordHits.Load(); got != 1 {
+		t.Fatalf("expected one word search, got %d", got)
+	}
+	if got := imdbHits.Load(); got != 0 {
+		t.Fatalf("expected imdb fallback skipped after word match, got %d", got)
+	}
+	if len(wordPaths) != 1 || !strings.Contains(wordPaths[0], "/v1/search/word:Example%20Show%20S02E03") {
+		t.Fatalf("expected word search path for title and episode")
+	}
+}
+
+func TestSceneDetectorTVWordSearchAllowsSeasonOnly(t *testing.T) {
+	imdbHits := &atomic.Int32{}
+	wordHits := &atomic.Int32{}
+	var wordPaths []string
+	const release = "Example.Show.S02.1080p.WEB.h264-GRP"
+	handler := srrdbFallbackHandler{
+		imdbHits:  imdbHits,
+		wordHits:  wordHits,
+		wordPaths: &wordPaths,
+		wordResults: map[string]string{
+			"Example Show S02": `{"resultsCount":1,"results":[{"release":"` + release + `","imdbId":"1234567","hasNFO":"no","isForeign":"no"}]}`,
+		},
+		details: map[string]string{
+			release: `{"archived-files":[{"name":"example.show.s02e01.1080p.web.h264-grp.mkv","size":1000000000}]}`,
+		},
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	meta := api.PreparedMetadata{
+		VideoPath:   "/data/" + release + ".mkv",
+		ExternalIDs: api.ExternalIDs{IMDBID: 1234567},
+		Release: api.ReleaseInfo{
+			Category:   "TV",
+			Title:      "Example Show",
+			Season:     2,
+			Resolution: "1080p",
+			Source:     "Web",
+			Codec:      []string{"H.264"},
+			Group:      "GRP",
+		},
+	}
+	detector := newSRRDBDetector(server.Client(), server.URL, t.TempDir(), t.TempDir())
+	result, err := detector.Detect(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if !result.IsScene || result.SceneName != release {
+		t.Fatalf("expected season-only word search match %q, got %#v", release, result)
+	}
+	if got := wordHits.Load(); got != 1 {
+		t.Fatalf("expected one word search, got %d", got)
+	}
+	if got := imdbHits.Load(); got != 0 {
+		t.Fatalf("expected imdb fallback skipped after season-only word match, got %d", got)
+	}
+	if len(wordPaths) != 1 || !strings.Contains(wordPaths[0], "/v1/search/word:Example%20Show%20S02") {
+		t.Fatalf("expected season-only word search path")
+	}
+}
+
+func TestSceneDetectorTVWordMissSkipsIMDBFallback(t *testing.T) {
+	imdbHits := &atomic.Int32{}
+	wordHits := &atomic.Int32{}
+	const release = "Example.Show.S02E03.1080p.WEB.h264-GRP"
+	handler := srrdbFallbackHandler{
+		imdbHits: imdbHits,
+		wordHits: wordHits,
+		rResults: map[string]string{
+			release: `{"resultsCount":1,"results":[{"release":"` + release + `","imdbId":"1234567","hasNFO":"no","isForeign":"no"}]}`,
+		},
+		imdbPages: map[int]string{
+			1: `{"resultsCount":1,"results":[{"release":"Example.Show.S02E03.720p.WEB.h264-ALT","imdbId":"1234567"}]}`,
+		},
+		details: map[string]string{
+			release: `{"archived-files":[{"name":"example.show.s02e03.1080p.web.h264-grp.mkv","size":1000000000}]}`,
+		},
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	meta := api.PreparedMetadata{
+		VideoPath:   "/data/" + release + ".mkv",
+		ExternalIDs: api.ExternalIDs{IMDBID: 1234567},
+		Release: api.ReleaseInfo{
+			Category:   "TV",
+			Title:      "Example Show",
+			Season:     2,
+			Episode:    3,
+			Resolution: "1080p",
+			Source:     "Web",
+			Codec:      []string{"H.264"},
+			Group:      "GRP",
+		},
+	}
+	detector := newSRRDBDetector(server.Client(), server.URL, t.TempDir(), t.TempDir())
+	result, err := detector.Detect(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if !result.IsScene || result.SceneName != release {
+		t.Fatalf("expected r fallback match %q, got %#v", release, result)
+	}
+	if got := wordHits.Load(); got != 1 {
+		t.Fatalf("expected one word search, got %d", got)
+	}
+	if got := imdbHits.Load(); got != 0 {
+		t.Fatalf("expected imdb fallback skipped for tv category, got %d", got)
+	}
+}
+
+func TestSceneDetectorIMDBFallbackFiltersForeignWhenLanguageUnknown(t *testing.T) {
+	var imdbPaths []string
+	handler := srrdbFallbackHandler{
+		imdbPaths: &imdbPaths,
+		imdbPages: map[int]string{
+			1: `{"resultsCount":1,"results":[{"release":"Example.Movie.2026.1080p.BluRay.x264-GRP","imdbId":"1234567","hasNFO":"no","isForeign":"no"}]}`,
+		},
+		details: map[string]string{
+			"Example.Movie.2026.1080p.BluRay.x264-GRP": `{"archived-files":[{"name":"example.movie.2026.1080p.bluray.x264-grp.mkv","size":8000000000}]}`,
+		},
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	detector := newSRRDBDetector(server.Client(), server.URL, t.TempDir(), t.TempDir())
+	result, err := detector.Detect(context.Background(), renamedSceneMeta("/data/Example Movie 2026 1080p BluRay x264 GRP.mkv"))
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if !result.IsScene {
+		t.Fatalf("expected scene match")
+	}
+	if len(imdbPaths) != 1 {
+		t.Fatalf("expected one imdb request, got %d", len(imdbPaths))
+	}
+	if !strings.Contains(imdbPaths[0], "/v1/search/imdb:tt1234567/foreign:no/order:date/page:1") {
+		t.Fatalf("expected foreign:no imdb search path")
+	}
+}
+
+func TestSceneDetectorIMDBFallbackFiltersForeignNoWhenLanguageEnglish(t *testing.T) {
+	var imdbPaths []string
+	handler := srrdbFallbackHandler{
+		imdbPaths: &imdbPaths,
+		imdbPages: map[int]string{
+			1: `{"resultsCount":1,"results":[{"release":"Example.Movie.2026.English.1080p.BluRay.x264-GRP","imdbId":"1234567","hasNFO":"no","isForeign":"no"}]}`,
+		},
+		details: map[string]string{
+			"Example.Movie.2026.English.1080p.BluRay.x264-GRP": `{"archived-files":[{"name":"example.movie.2026.english.1080p.bluray.x264-grp.mkv","size":8000000000}]}`,
+		},
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	meta := renamedSceneMeta("/data/Example Movie 2026 English 1080p BluRay x264 GRP.mkv")
+	meta.Release.Language = []string{"English"}
+	detector := newSRRDBDetector(server.Client(), server.URL, t.TempDir(), t.TempDir())
+	result, err := detector.Detect(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if !result.IsScene {
+		t.Fatalf("expected scene match")
+	}
+	if len(imdbPaths) != 1 {
+		t.Fatalf("expected one imdb request, got %d", len(imdbPaths))
+	}
+	if !strings.Contains(imdbPaths[0], "/v1/search/imdb:tt1234567/foreign:no/order:date/page:1") {
+		t.Fatalf("expected foreign:no imdb search path")
+	}
+}
+
+func TestSceneDetectorIMDBFallbackFiltersForeignYesWhenLanguageNonEnglish(t *testing.T) {
+	var imdbPaths []string
+	handler := srrdbFallbackHandler{
+		imdbPaths: &imdbPaths,
+		imdbPages: map[int]string{
+			1: `{"resultsCount":1,"results":[{"release":"Example.Movie.2026.German.1080p.BluRay.x264-GRP","imdbId":"1234567","hasNFO":"no","isForeign":"yes"}]}`,
+		},
+		details: map[string]string{
+			"Example.Movie.2026.German.1080p.BluRay.x264-GRP": `{"archived-files":[{"name":"example.movie.2026.german.1080p.bluray.x264-grp.mkv","size":8000000000}]}`,
+		},
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	meta := renamedSceneMeta("/data/Example Movie 2026 German 1080p BluRay x264 GRP.mkv")
+	meta.Release.Language = []string{"German"}
+	detector := newSRRDBDetector(server.Client(), server.URL, t.TempDir(), t.TempDir())
+	result, err := detector.Detect(context.Background(), meta)
+	if err != nil {
+		t.Fatalf("Detect error: %v", err)
+	}
+	if !result.IsScene {
+		t.Fatalf("expected scene match")
+	}
+	if len(imdbPaths) != 1 {
+		t.Fatalf("expected one imdb request, got %d", len(imdbPaths))
+	}
+	if !strings.Contains(imdbPaths[0], "/v1/search/imdb:tt1234567/foreign:yes/order:date/page:1") {
+		t.Fatalf("expected foreign:yes imdb search path")
 	}
 }
 
