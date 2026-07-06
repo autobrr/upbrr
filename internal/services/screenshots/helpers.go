@@ -42,6 +42,16 @@ type videoSegment struct {
 	DurationSeconds float64
 }
 
+// segmentCandidate records one concrete ffmpeg input attempt for a whole-title
+// timestamp. DVD candidates can include later VOB parts as fallbacks when an
+// early menu segment produces no decodable frame.
+type segmentCandidate struct {
+	SourcePath    string
+	Timestamp     float64
+	SegmentIndex  int
+	FallbackIndex int
+}
+
 type mediaInfoDoc struct {
 	Media struct {
 		Track []map[string]any `json:"track"`
@@ -160,27 +170,86 @@ func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot st
 // resolveSegmentTimestamp converts a whole-title timestamp into the concrete
 // segment file and local timestamp ffmpeg should seek within that file.
 func resolveSegmentTimestamp(info videoInfo, timestamp float64) (string, float64) {
-	if len(info.Segments) == 0 || timestamp <= 0 {
+	candidates := resolveSegmentCandidates(info, timestamp)
+	if len(candidates) == 0 {
 		return info.SourcePath, timestamp
 	}
-	for _, segment := range info.Segments {
+	return candidates[0].SourcePath, candidates[0].Timestamp
+}
+
+// resolveSegmentCandidates returns the primary input segment for a whole-title
+// timestamp plus later ordered segments that can be tried if ffmpeg emits no
+// frame from the primary segment.
+func resolveSegmentCandidates(info videoInfo, timestamp float64) []segmentCandidate {
+	if len(info.Segments) == 0 {
+		return []segmentCandidate{{SourcePath: info.SourcePath, Timestamp: timestamp, SegmentIndex: -1}}
+	}
+
+	primaryIndex := 0
+	localTimestamp := timestamp
+	for idx, segment := range info.Segments {
 		if segment.SourcePath == "" || segment.DurationSeconds <= 0 {
 			continue
 		}
+		if timestamp <= 0 {
+			primaryIndex = idx
+			localTimestamp = 0
+			break
+		}
 		if timestamp < segment.StartSeconds+segment.DurationSeconds {
-			local := timestamp - segment.StartSeconds
-			if local < 0 {
-				local = 0
+			primaryIndex = idx
+			localTimestamp = timestamp - segment.StartSeconds
+			if localTimestamp < 0 {
+				localTimestamp = 0
 			}
-			return segment.SourcePath, local
+			break
+		}
+		primaryIndex = idx + 1
+	}
+	if primaryIndex >= len(info.Segments) {
+		primaryIndex = len(info.Segments) - 1
+		last := info.Segments[primaryIndex]
+		localTimestamp = last.DurationSeconds
+		if localTimestamp > 0.5 {
+			localTimestamp -= 0.5
 		}
 	}
-	last := info.Segments[len(info.Segments)-1]
-	local := last.DurationSeconds
-	if local > 0.5 {
-		local -= 0.5
+	if localTimestamp < 0 {
+		localTimestamp = 0
 	}
-	return last.SourcePath, local
+
+	candidates := make([]segmentCandidate, 0, len(info.Segments)-primaryIndex)
+	for idx := primaryIndex; idx < len(info.Segments); idx++ {
+		segment := info.Segments[idx]
+		if segment.SourcePath == "" {
+			continue
+		}
+		candidateTimestamp := localTimestamp
+		if idx != primaryIndex {
+			candidateTimestamp = segmentFallbackTimestamp(segment)
+		}
+		candidates = append(candidates, segmentCandidate{
+			SourcePath:    segment.SourcePath,
+			Timestamp:     candidateTimestamp,
+			SegmentIndex:  idx,
+			FallbackIndex: len(candidates),
+		})
+	}
+	if len(candidates) == 0 {
+		return []segmentCandidate{{SourcePath: info.SourcePath, Timestamp: timestamp, SegmentIndex: -1}}
+	}
+	return candidates
+}
+
+func segmentFallbackTimestamp(segment videoSegment) float64 {
+	switch {
+	case segment.DurationSeconds <= 0:
+		return 0.5
+	case segment.DurationSeconds <= 1:
+		return segment.DurationSeconds / 2
+	default:
+		return 0.5
+	}
 }
 
 // resolveVideoSource applies the same input-file preference as resolveVideoInfo

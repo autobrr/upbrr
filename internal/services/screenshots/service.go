@@ -355,29 +355,36 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 			ts := job.timestamp
 			outputName := buildScreenshotFilename(base, selection.Index, ts, purpose)
 			output := filepath.Join(tmpDir, outputName)
-			inputPath, inputTimestamp := resolveSegmentTimestamp(info, ts)
-			s.logger.Tracef("screenshots: capture queued index=%d timestamp_seconds=%.3f input_timestamp_seconds=%.3f input=%s output=%s", selection.Index, ts, inputTimestamp, inputPath, output)
-			capture := captureRequest{
-				InputPath:     inputPath,
-				OutputPath:    output,
-				Timestamp:     inputTimestamp,
-				FrameRate:     info.FrameRate,
-				Resolution:    meta.Release.Resolution,
-				UseLibplacebo: shouldUseLibplacebo(meta, s.cfg),
-				ToneMap:       tonemap,
-				Algorithm:     s.cfg.ScreenshotHandling.TonemapAlgorithm,
-				Desat:         s.cfg.ScreenshotHandling.Desat,
-				Compression:   s.cfg.ScreenshotHandling.FFmpegCompression,
-				FrameOverlay:  s.cfg.ScreenshotHandling.FrameOverlay,
-				OverlaySize:   s.cfg.ScreenshotHandling.OverlayTextSize,
-				FrameInfo:     frameInfo[ts],
-				SourceWidth:   info.Width,
-				SourceHeight:  info.Height,
-				WidthScale:    info.WidthScale,
-				HeightScale:   info.HeightScale,
-			}
+			var usedLib bool
+			var captureErr error
+			for _, candidate := range resolveSegmentCandidates(info, ts) {
+				s.logger.Tracef("screenshots: capture queued index=%d timestamp_seconds=%.3f input_timestamp_seconds=%.3f segment=%d fallback=%d input=%s output=%s", selection.Index, ts, candidate.Timestamp, candidate.SegmentIndex, candidate.FallbackIndex, candidate.SourcePath, output)
+				capture := captureRequest{
+					InputPath:     candidate.SourcePath,
+					OutputPath:    output,
+					Timestamp:     candidate.Timestamp,
+					FrameRate:     info.FrameRate,
+					Resolution:    meta.Release.Resolution,
+					UseLibplacebo: shouldUseLibplacebo(meta, s.cfg),
+					ToneMap:       tonemap,
+					Algorithm:     s.cfg.ScreenshotHandling.TonemapAlgorithm,
+					Desat:         s.cfg.ScreenshotHandling.Desat,
+					Compression:   s.cfg.ScreenshotHandling.FFmpegCompression,
+					FrameOverlay:  s.cfg.ScreenshotHandling.FrameOverlay,
+					OverlaySize:   s.cfg.ScreenshotHandling.OverlayTextSize,
+					FrameInfo:     frameInfo[ts],
+					SourceWidth:   info.Width,
+					SourceHeight:  info.Height,
+					WidthScale:    info.WidthScale,
+					HeightScale:   info.HeightScale,
+				}
 
-			usedLib, captureErr := captureFrame(ctx, s.runner, cmd, capture, s.logger)
+				usedLib, captureErr = captureFrame(ctx, s.runner, cmd, capture, s.logger)
+				if captureErr == nil {
+					break
+				}
+				s.logger.Debugf("screenshots: capture segment failed index=%d segment=%d fallback=%d err=%s", selection.Index, candidate.SegmentIndex, candidate.FallbackIndex, redaction.RedactValue(captureErr.Error(), nil))
+			}
 			if captureErr != nil {
 				s.logger.Warnf("screenshots: capture frame failed index=%d err=%s", selection.Index, redaction.RedactValue(captureErr.Error(), nil))
 				mu.Lock()
@@ -488,18 +495,26 @@ func (s *Service) PreviewFrame(ctx context.Context, meta api.PreparedMetadata, t
 	if err != nil {
 		return api.ScreenshotPreview{}, err
 	}
-	sourcePath, inputTimestamp := resolveSegmentTimestamp(info, timestampSeconds)
+	candidates := resolveSegmentCandidates(info, timestampSeconds)
 
 	cmd, err := resolveFFmpeg()
 	if err != nil {
 		return api.ScreenshotPreview{}, err
 	}
 
-	s.logger.Debugf("screenshots: preview setup kind=%s disc=%s timestamp_seconds=%.3f input_timestamp_seconds=%.3f selected_path=%s ffmpeg=%s", screenshotSourceKind(meta), screenshotLogField(meta.DiscType), timestampSeconds, inputTimestamp, sourcePath, cmd)
-	payload, err := captureFrameBytes(ctx, s.runner, cmd, previewRequest{
-		InputPath: sourcePath,
-		Timestamp: inputTimestamp,
-	}, s.logger)
+	s.logger.Debugf("screenshots: preview setup kind=%s disc=%s timestamp_seconds=%.3f candidates=%d selected_path=%s ffmpeg=%s", screenshotSourceKind(meta), screenshotLogField(meta.DiscType), timestampSeconds, len(candidates), candidates[0].SourcePath, cmd)
+	var payload []byte
+	for _, candidate := range candidates {
+		s.logger.Tracef("screenshots: preview queued timestamp_seconds=%.3f input_timestamp_seconds=%.3f segment=%d fallback=%d input=%s", timestampSeconds, candidate.Timestamp, candidate.SegmentIndex, candidate.FallbackIndex, candidate.SourcePath)
+		payload, err = captureFrameBytes(ctx, s.runner, cmd, previewRequest{
+			InputPath: candidate.SourcePath,
+			Timestamp: candidate.Timestamp,
+		}, s.logger)
+		if err == nil {
+			break
+		}
+		s.logger.Debugf("screenshots: preview segment failed segment=%d fallback=%d err=%s", candidate.SegmentIndex, candidate.FallbackIndex, redaction.RedactValue(err.Error(), nil))
+	}
 	if err != nil {
 		return api.ScreenshotPreview{}, err
 	}

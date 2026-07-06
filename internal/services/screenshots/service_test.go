@@ -6,8 +6,10 @@ package screenshots
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -89,4 +91,109 @@ func TestPlanUsesManualFrameOverridesWithoutDuration(t *testing.T) {
 	if plan.SuggestedSelections[0].Frame != 120 || plan.SuggestedSelections[0].Source != "manual" {
 		t.Fatalf("expected first manual selection, got %#v", plan.SuggestedSelections[0])
 	}
+}
+
+func TestPreviewFrameFallsForwardFromEmptyDVDZeroVOB(t *testing.T) {
+	root := t.TempDir()
+	videoTS := filepath.Join(root, "VIDEO_TS")
+	if err := os.MkdirAll(videoTS, 0o700); err != nil {
+		t.Fatalf("mkdir VIDEO_TS: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(videoTS, "VTS_01_0.VOB"), []byte("m"), 0o600); err != nil {
+		t.Fatalf("write zero VOB: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(videoTS, "VTS_01_1.VOB"), []byte(strings.Repeat("c", 99)), 0o600); err != nil {
+		t.Fatalf("write content VOB: %v", err)
+	}
+	mediaInfoPath := filepath.Join(root, "mediainfo.json")
+	payload := []byte(`{"media":{"track":[{"@type":"General","Duration":"100"},{"@type":"Video","FrameRate":"25.000"}]}}`)
+	if err := os.WriteFile(mediaInfoPath, payload, 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	ffmpegRoot := t.TempDir()
+	if err := writeTestBundledFFmpeg(ffmpegRoot); err != nil {
+		t.Fatalf("write bundled ffmpeg: %v", err)
+	}
+	t.Chdir(ffmpegRoot)
+
+	runner := &scriptedRunner{results: []CommandResult{
+		{ExitCode: 0},
+		{Stdout: []byte("png"), ExitCode: 0},
+	}}
+	service := NewService(config.Config{}, api.NopLogger{}, root, runner)
+	preview, err := service.PreviewFrame(context.Background(), api.PreparedMetadata{
+		SourcePath:        root,
+		DiscType:          "DVD",
+		MediaInfoJSONPath: mediaInfoPath,
+	}, 0.5)
+	if err != nil {
+		t.Fatalf("preview frame: %v", err)
+	}
+	if string(preview.ImageBytes) != "png" {
+		t.Fatalf("expected fallback preview payload, got %q", string(preview.ImageBytes))
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("expected primary plus fallback ffmpeg calls, got %#v", runner.calls)
+	}
+	if got := ffmpegInputArg(runner.calls[0].args); got != filepath.Join(videoTS, "VTS_01_0.VOB") {
+		t.Fatalf("expected first preview call to use zero VOB, got %q", got)
+	}
+	if got := ffmpegInputArg(runner.calls[1].args); got != filepath.Join(videoTS, "VTS_01_1.VOB") {
+		t.Fatalf("expected fallback preview call to use content VOB, got %q", got)
+	}
+	if got := ffmpegValueAfter(runner.calls[1].args, "-ss"); got != "0.500" {
+		t.Fatalf("expected fallback seek at 0.500, got %q", got)
+	}
+}
+
+type runnerCall struct {
+	args []string
+}
+
+type scriptedRunner struct {
+	results []CommandResult
+	calls   []runnerCall
+}
+
+func (r *scriptedRunner) Run(_ context.Context, _ string, args []string, _ string) (CommandResult, error) {
+	r.calls = append(r.calls, runnerCall{args: append([]string(nil), args...)})
+	if len(r.results) == 0 {
+		return CommandResult{Stdout: []byte("png"), ExitCode: 0}, nil
+	}
+	result := r.results[0]
+	r.results = r.results[1:]
+	return result, nil
+}
+
+func writeTestBundledFFmpeg(root string) error {
+	folder := osFolder()
+	if folder == "" {
+		return nil
+	}
+	name := "ffmpeg"
+	if folder == "windows" {
+		name = "ffmpeg.exe"
+	}
+	path := filepath.Join(root, "bin", "ffmpeg", folder, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("mkdir bundled ffmpeg dir: %w", err)
+	}
+	if err := os.WriteFile(path, []byte("test"), 0o600); err != nil {
+		return fmt.Errorf("write bundled ffmpeg: %w", err)
+	}
+	return nil
+}
+
+func ffmpegInputArg(args []string) string {
+	return ffmpegValueAfter(args, "-i")
+}
+
+func ffmpegValueAfter(args []string, key string) string {
+	for idx := 0; idx+1 < len(args); idx++ {
+		if args[idx] == key {
+			return args[idx+1]
+		}
+	}
+	return ""
 }

@@ -299,6 +299,48 @@ func TestResolveVideoInfoBuildsOrderedDVDSegments(t *testing.T) {
 	}
 }
 
+func TestResolveSegmentCandidatesFallsForwardFromZeroVOB(t *testing.T) {
+	info := videoInfo{
+		SourcePath: "VTS_01_0.VOB",
+		Segments: []videoSegment{
+			{SourcePath: "VTS_01_0.VOB", StartSeconds: 0, DurationSeconds: 2},
+			{SourcePath: "VTS_01_1.VOB", StartSeconds: 2, DurationSeconds: 98},
+		},
+	}
+
+	candidates := resolveSegmentCandidates(info, 1)
+	if len(candidates) != 2 {
+		t.Fatalf("expected primary plus fallback candidate, got %#v", candidates)
+	}
+	if candidates[0].SourcePath != "VTS_01_0.VOB" || candidates[0].Timestamp != 1 {
+		t.Fatalf("expected primary zero VOB candidate, got %#v", candidates[0])
+	}
+	if candidates[1].SourcePath != "VTS_01_1.VOB" || candidates[1].Timestamp != 0.5 {
+		t.Fatalf("expected fallback content VOB candidate, got %#v", candidates[1])
+	}
+}
+
+func TestResolveSegmentCandidatesFallsForwardWithoutSegmentDurations(t *testing.T) {
+	info := videoInfo{
+		SourcePath: "VTS_01_0.VOB",
+		Segments: []videoSegment{
+			{SourcePath: "VTS_01_0.VOB"},
+			{SourcePath: "VTS_01_1.VOB"},
+		},
+	}
+
+	candidates := resolveSegmentCandidates(info, 12)
+	if len(candidates) != 2 {
+		t.Fatalf("expected durationless DVD segment fallbacks, got %#v", candidates)
+	}
+	if candidates[0].SourcePath != "VTS_01_0.VOB" || candidates[0].Timestamp != 12 {
+		t.Fatalf("expected primary durationless candidate, got %#v", candidates[0])
+	}
+	if candidates[1].SourcePath != "VTS_01_1.VOB" || candidates[1].Timestamp != 0.5 {
+		t.Fatalf("expected fallback durationless candidate, got %#v", candidates[1])
+	}
+}
+
 func TestSelectDVDVOBAllowsZeroOnlyDisc(t *testing.T) {
 	root := t.TempDir()
 	videoTS := filepath.Join(root, "VIDEO_TS")

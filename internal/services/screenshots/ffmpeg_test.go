@@ -4,11 +4,14 @@
 package screenshots
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestBundledFFmpegPathPrefersWorkingDirectory(t *testing.T) {
@@ -82,4 +85,31 @@ func TestRoundToEvenUsesNearestEvenForHalves(t *testing.T) {
 			t.Fatalf("roundToEven(%v) = %d, want %d", input, got, want)
 		}
 	}
+}
+
+func TestCaptureFrameBytesRejectsEmptySuccessfulOutput(t *testing.T) {
+	runner := &singleResultRunner{result: CommandResult{ExitCode: 0}}
+
+	payload, err := captureFrameBytes(context.Background(), runner, "ffmpeg", previewRequest{
+		InputPath: "example.mkv",
+		Timestamp: 1,
+	}, api.NopLogger{})
+	if err == nil {
+		t.Fatal("expected empty ffmpeg stdout to fail")
+	}
+	if payload != nil {
+		t.Fatalf("expected no preview payload, got %d bytes", len(payload))
+	}
+	if !strings.Contains(err.Error(), "ffmpeg produced no image") {
+		t.Fatalf("expected no-image error, got %v", err)
+	}
+}
+
+type singleResultRunner struct {
+	result CommandResult
+	err    error
+}
+
+func (r *singleResultRunner) Run(context.Context, string, []string, string) (CommandResult, error) {
+	return r.result, r.err
 }
