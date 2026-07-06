@@ -336,12 +336,13 @@ export type TrackerAuthStatus = {
   cookieCount: number;
   /** RFC3339 UTC timestamp generated when the backend evaluated the status. */
   lastCheckedAt: string;
-  /** Redacted failure text from the most recent local or remote auth check. */
+  /** Redacted failure detail from the most recent local or remote auth check. */
   lastError: string;
   encryptedStorage: boolean;
   needs2FA: boolean;
   /** Opaque manual-2FA continuation token; empty unless needs2FA is true. */
   challengeID: string;
+  /** Stable user-facing status summary or next step. */
   message: string;
 };
 

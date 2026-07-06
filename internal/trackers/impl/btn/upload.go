@@ -29,6 +29,7 @@ import (
 	"time"
 	"unicode"
 
+	xhtml "golang.org/x/net/html"
 	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
@@ -39,6 +40,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -51,17 +53,16 @@ const (
 	btnLoginPath       = "/login.php"
 	btnAPIRPCURL       = "https://api.broadcasthe.net/"
 	btnAPIJSONMaxBytes = 1024 * 1024
+	btnTorrentMaxBytes = 8 * 1024 * 1024
 )
 
 var (
-	btnInputPattern        = regexp.MustCompile(`(?is)<input[^>]*name=["']([^"']+)["'][^>]*value=["']([^"']*)["'][^>]*>`)
-	btnTextAreaPattern     = regexp.MustCompile(`(?is)<textarea[^>]*name=["']album_desc["'][^>]*>(.*?)</textarea>`)
-	btnSelectPattern       = regexp.MustCompile(`(?is)<select[^>]*name=["']([^"']+)["'][^>]*>(.*?)</select>`)
-	btnSelectedOptionRegex = regexp.MustCompile(`(?is)<option[^>]*selected[^>]*value=["']([^"']+)["']`)
-	btnOptionValueRegex    = regexp.MustCompile(`(?is)<option[^>]*value=["']([^"']+)["']`)
-	btnSuccessURLPattern   = regexp.MustCompile(`torrents\.php\?id=(\d+)(?:&torrentid=(\d+))?`)
-	btnHTMLURLAttrPattern  = regexp.MustCompile(`(?is)\b(?:href|action)=["']([^"']+)["']`)
-	btnIMDBEpisodePattern  = regexp.MustCompile(`(?i)(?:^|\bE|episode\s*)(\d{1,4})(?:\b|$)`)
+	btnInputPattern       = regexp.MustCompile(`(?is)<input[^>]*name=["']([^"']+)["'][^>]*value=["']([^"']*)["'][^>]*>`)
+	btnTextAreaPattern    = regexp.MustCompile(`(?is)<textarea[^>]*name=["']album_desc["'][^>]*>(.*?)</textarea>`)
+	btnSelectPattern      = regexp.MustCompile(`(?is)<select[^>]*name=["']([^"']+)["'][^>]*>(.*?)</select>`)
+	btnSuccessURLPattern  = regexp.MustCompile(`torrents\.php\?id=(\d+)(?:&torrentid=(\d+))?`)
+	btnHTMLURLAttrPattern = regexp.MustCompile(`(?is)\b(?:href|action)=["']([^"']+)["']`)
+	btnIMDBEpisodePattern = regexp.MustCompile(`(?i)(?:^|\bE|episode\s*)(\d{1,4})(?:\b|$)`)
 	// btnCountryMap maps normalized BTN country option labels and exact
 	// metadata-source country codes to BTN's country select values.
 	btnCountryMap = map[string]string{
@@ -381,12 +382,12 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	if err := validateBTNRequest(req); err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
-	if err := validateBTNDryRunUploadAuth(ctx, req); err != nil {
-		return api.TrackerDryRunEntry{}, err
-	}
 
 	uploadCtx, err := newUploadContext(ctx, req)
 	if err != nil {
+		return api.TrackerDryRunEntry{}, err
+	}
+	if err := validateBTNDryRunUploadAuth(ctx, req, uploadCtx); err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
 
@@ -460,14 +461,24 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}, nil
 }
 
-// validateBTNDryRunUploadAuth checks only local auth prerequisites needed before
-// an upload can authenticate. It does not perform remote login or persist cookies
-// during dry-run, and it preserves storage/decrypt failures instead of treating
-// them as missing cookies.
-func validateBTNDryRunUploadAuth(ctx context.Context, req trackers.UploadRequest) error {
+// validateBTNDryRunUploadAuth checks auth prerequisites needed before an upload
+// can authenticate. Stored cookies must pass the same upload-page session gate
+// as live upload; credential fallback remains local-only and does not log in or
+// persist cookies during dry-run.
+func validateBTNDryRunUploadAuth(ctx context.Context, req trackers.UploadRequest, uploadCtx uploadContext) error {
 	values, cookieErr := loadBTNCookies(ctx, req.AppConfig.MainSettings.DBPath)
 	if cookieErr == nil && len(values) > 0 {
-		return nil
+		client, err := newBTNClientWithCookies(uploadCtx.baseURL, values)
+		if err != nil {
+			return err
+		}
+		if err := validateBTNClientSession(ctx, client, uploadCtx.baseURL); err == nil {
+			return nil
+		} else if !errors.Is(err, errBTNSessionConfirmedInvalid) {
+			return err
+		} else if strings.TrimSpace(req.TrackerConfig.Username) == "" || strings.TrimSpace(req.TrackerConfig.Password) == "" {
+			return err
+		}
 	}
 	if cookieErr != nil && !errors.Is(cookieErr, errBTNCookiesMissing) {
 		return cookieErr
@@ -1023,15 +1034,51 @@ func extractAutofillFields(htmlRaw string) map[string]string {
 		}
 		name := strings.ToLower(strings.TrimSpace(selectMatch[1]))
 		body := selectMatch[2]
-		if selected := btnSelectedOptionRegex.FindStringSubmatch(body); len(selected) > 1 {
-			fields[name] = html.UnescapeString(strings.TrimSpace(selected[1]))
-			continue
-		}
-		if first := btnOptionValueRegex.FindStringSubmatch(body); len(first) > 1 {
-			fields[name] = html.UnescapeString(strings.TrimSpace(first[1]))
+		if value := selectedBTNAutofillOptionValue(body); value != "" {
+			fields[name] = value
 		}
 	}
 	return fields
+}
+
+// selectedBTNAutofillOptionValue returns the selected option value regardless
+// of attribute order, falling back to the first option value when no option is
+// marked selected.
+func selectedBTNAutofillOptionValue(body string) string {
+	tokenizer := xhtml.NewTokenizer(strings.NewReader(body))
+	firstValue := ""
+	for {
+		switch tokenizer.Next() {
+		case xhtml.ErrorToken:
+			return firstValue
+		case xhtml.StartTagToken, xhtml.SelfClosingTagToken:
+			token := tokenizer.Token()
+			if !strings.EqualFold(token.Data, "option") {
+				continue
+			}
+			value := ""
+			selected := false
+			for _, attr := range token.Attr {
+				switch {
+				case strings.EqualFold(attr.Key, "value"):
+					value = html.UnescapeString(strings.TrimSpace(attr.Val))
+				case strings.EqualFold(attr.Key, "selected"):
+					selected = true
+				}
+			}
+			if value == "" {
+				continue
+			}
+			if firstValue == "" {
+				firstValue = value
+			}
+			if selected {
+				return value
+			}
+		case xhtml.TextToken, xhtml.EndTagToken, xhtml.CommentToken, xhtml.DoctypeToken:
+			continue
+		}
+	}
 }
 
 // validateAutofill reports whether BTN returned the minimum autofill fields
@@ -1992,7 +2039,7 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 	if dlResp.StatusCode < 200 || dlResp.StatusCode >= 300 {
 		return "", "", fmt.Errorf("trackers: BTN API download fetch failed status=%d", dlResp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(dlResp.Body, 8*1024*1024))
+	body, err := readBTNTorrentResponseBody(dlResp.Body)
 	if err != nil {
 		return "", "", fmt.Errorf("trackers: BTN API read torrent response: %w", err)
 	}
@@ -2006,6 +2053,19 @@ func resolveAndDownloadViaAPI(ctx context.Context, apiURL string, apiToken strin
 		return "", "", fmt.Errorf("trackers: BTN API write torrent output: %w", err)
 	}
 	return selection.ID, selection.GroupID, nil
+}
+
+// readBTNTorrentResponseBody rejects bodies beyond BTN's accepted torrent
+// response cap before callers validate or persist the payload.
+func readBTNTorrentResponseBody(r io.Reader) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r, btnTorrentMaxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read torrent response: %w", err)
+	}
+	if len(body) > btnTorrentMaxBytes {
+		return nil, fmt.Errorf("torrent response exceeds %d bytes", btnTorrentMaxBytes)
+	}
+	return body, nil
 }
 
 // loadBTNCookiesIntoJar best-effort seeds an upload client with persisted BTN
@@ -2700,6 +2760,9 @@ func (origin *btnAPIDownloadOrigin) sameOrigin(parsed *url.URL) bool {
 		origin.host != ""
 }
 
+// checkBTNSeasonPackReservation enforces BTN's 2-hour internal season-pack
+// reservation using the same canonical season source as the final upload
+// payload, including TVDB/IMDb translated episode metadata.
 func checkBTNSeasonPackReservation(ctx context.Context, uploadCtx uploadContext, req trackers.UploadRequest) error {
 	if resolveUploadType(req.Meta) != "Season" {
 		return nil
@@ -2732,8 +2795,9 @@ func checkBTNSeasonPackReservation(ctx context.Context, uploadCtx uploadContext,
 	}
 
 	seasonPrefix := ""
-	if req.Meta.SeasonInt > 0 {
-		seasonPrefix = fmt.Sprintf("S%02dE", req.Meta.SeasonInt)
+	season, _ := resolveBTNTVSeasonEpisode(req.Meta)
+	if season > 0 {
+		seasonPrefix = fmt.Sprintf("S%02dE", season)
 	}
 
 	var newestInternal time.Time
@@ -2772,7 +2836,7 @@ func btnAPISearchTorrents(ctx context.Context, apiURL, apiToken string, filter m
 
 	var torrentsMap map[string]map[string]any
 	if err := json.Unmarshal(response.Result.Torrents, &torrentsMap); err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("trackers: BTN API parse torrents search response: %s", redaction.RedactValue(err.Error(), nil))
 	}
 	return torrentsMap, nil
 }

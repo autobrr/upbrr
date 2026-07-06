@@ -71,6 +71,16 @@ const isManagedTrackerAuthCapability = (capability: TrackerAuthCapability) => {
   );
 };
 
+/** Returns tracker auth summary/detail text using the shared API display contract. */
+const trackerAuthStatusDisplay = (status?: TrackerAuthStatus) => {
+  const message = status?.message.trim() ?? "";
+  const lastError = status?.lastError.trim() ?? "";
+  return {
+    message,
+    lastError: lastError && lastError !== message ? lastError : "",
+  };
+};
+
 type ConfigOpStatus = {
   type: "success" | "error" | "warning";
   title: string;
@@ -480,6 +490,7 @@ export default function SettingsPage(props: Props) {
             const busy = trackerAuthActions[capability.trackerID] || "";
             const actionError = trackerAuthActionErrors[capability.trackerID] || "";
             const code = trackerAuthCodes[capability.trackerID] || "";
+            const statusDisplay = trackerAuthStatusDisplay(status);
             const canTestAuth = remoteAuthValidationTrackers.has(
               capability.trackerID.trim().toUpperCase(),
             );
@@ -532,11 +543,11 @@ export default function SettingsPage(props: Props) {
                     Storage: {status?.encryptedStorage ? "encrypted" : "unavailable"}
                   </p>
                 </div>
-                {status?.message ? (
-                  <p className="helper [overflow-wrap:anywhere]">{status.message}</p>
+                {statusDisplay.message ? (
+                  <p className="helper [overflow-wrap:anywhere]">{statusDisplay.message}</p>
                 ) : null}
-                {status?.lastError ? (
-                  <p className="error [overflow-wrap:anywhere]">{status.lastError}</p>
+                {statusDisplay.lastError ? (
+                  <p className="error [overflow-wrap:anywhere]">{statusDisplay.lastError}</p>
                 ) : null}
                 {actionError ? <p className="error">{actionError}</p> : null}
                 {(capability.notes ?? []).map((note) => (

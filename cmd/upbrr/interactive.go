@@ -570,15 +570,33 @@ func cliTrackerAuthReady(status api.TrackerAuthStatus) bool {
 	}
 }
 
-// cliTrackerAuthStatusMessage selects and redacts the safest user-visible status
-// detail available for CLI prompts and errors.
+// cliTrackerAuthStatusMessage renders the tracker auth status display contract:
+// Message is the stable summary and LastError is redacted detail displayed when
+// distinct, matching GUI/web auth cards.
 func cliTrackerAuthStatusMessage(status api.TrackerAuthStatus) string {
-	for _, value := range []string{status.Message, status.LastError, status.State} {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return cliAuthLogField(trimmed)
-		}
+	message := cliTrackerAuthDisplayField(status.Message)
+	detail := cliTrackerAuthDisplayField(status.LastError)
+	if message != "" && detail != "" && !strings.EqualFold(message, detail) {
+		return message + ": " + detail
+	}
+	if message != "" {
+		return message
+	}
+	if detail != "" {
+		return detail
+	}
+	if state := cliTrackerAuthDisplayField(status.State); state != "" {
+		return state
 	}
 	return "auth not ready"
+}
+
+func cliTrackerAuthDisplayField(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	return redaction.RedactValue(trimmed, nil)
 }
 
 func matchedPreviewTrackers(preview api.MetadataPreview) []string {
