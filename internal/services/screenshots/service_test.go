@@ -6,7 +6,9 @@ package screenshots
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"image/color"
 	"os"
 	"path/filepath"
 	"strings"
@@ -119,7 +121,7 @@ func TestPreviewFrameFallsForwardFromEmptyDVDZeroVOB(t *testing.T) {
 
 	runner := &scriptedRunner{results: []CommandResult{
 		{ExitCode: 0},
-		{Stdout: []byte("png"), ExitCode: 0},
+		{Stdout: testPNGBytes(t, color.RGBA{R: 16, G: 16, B: 16, A: 255}), ExitCode: 0},
 	}}
 	service := NewService(config.Config{}, api.NopLogger{}, root, runner)
 	preview, err := service.PreviewFrame(context.Background(), api.PreparedMetadata{
@@ -130,8 +132,8 @@ func TestPreviewFrameFallsForwardFromEmptyDVDZeroVOB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("preview frame: %v", err)
 	}
-	if string(preview.ImageBytes) != "png" {
-		t.Fatalf("expected fallback preview payload, got %q", string(preview.ImageBytes))
+	if len(preview.ImageBytes) == 0 {
+		t.Fatal("expected fallback preview payload")
 	}
 	if len(runner.calls) != 2 {
 		t.Fatalf("expected primary plus fallback ffmpeg calls, got %#v", runner.calls)
@@ -159,7 +161,7 @@ type scriptedRunner struct {
 func (r *scriptedRunner) Run(_ context.Context, _ string, args []string, _ string) (CommandResult, error) {
 	r.calls = append(r.calls, runnerCall{args: append([]string(nil), args...)})
 	if len(r.results) == 0 {
-		return CommandResult{Stdout: []byte("png"), ExitCode: 0}, nil
+		return CommandResult{ExitCode: 1}, errors.New("unexpected ffmpeg runner call")
 	}
 	result := r.results[0]
 	r.results = r.results[1:]

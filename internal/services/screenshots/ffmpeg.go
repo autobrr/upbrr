@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"math"
 	"os"
 	"os/exec"
@@ -139,9 +140,19 @@ type previewRequest struct {
 	Timestamp float64
 }
 
-const ffmpegLogPreviewLimit = 2048
+const (
+	ffmpegLogPreviewLimit = 2048
+	// blackPixelThreshold is the highest 8-bit RGB channel value still treated
+	// as black when rejecting blank ffmpeg frames.
+	blackPixelThreshold = 4
+)
 
-var errFFmpegNoImage = errors.New("ffmpeg produced no image")
+// ffmpeg image validation errors are returned after ffmpeg exits successfully
+// but fails to produce a usable screenshot frame.
+var (
+	errFFmpegNoImage    = errors.New("ffmpeg produced no image")
+	errFFmpegBlackImage = errors.New("ffmpeg produced black image")
+)
 
 // captureFrame writes one PNG frame and returns whether the successful attempt
 // used libplacebo. Libplacebo captures retry once before falling back to the
@@ -160,11 +171,10 @@ func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captur
 	logger.Tracef("screenshots: ffmpeg capture attempt mode=%s timestamp_seconds=%.3f input=%s output=%s filters=%s", ffmpegModeLabel(useLibplacebo), req.Timestamp, req.InputPath, req.OutputPath, ffmpegFilterFromArgs(args))
 	result, err := runner.Run(ctx, cmdPath, args, "")
 	if err == nil && result.ExitCode == 0 {
-		if captureOutputHasBytes(req.OutputPath) {
+		if err = validateCaptureOutput(req.OutputPath); err == nil {
 			logger.Tracef("screenshots: ffmpeg capture ok mode=%s exit_code=%d", ffmpegModeLabel(useLibplacebo), result.ExitCode)
 			return useLibplacebo, nil
 		}
-		err = errFFmpegNoImage
 	}
 
 	if useLibplacebo {
@@ -173,11 +183,10 @@ func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captur
 		logger.Tracef("screenshots: ffmpeg capture attempt mode=%s retry=%t timestamp_seconds=%.3f input=%s output=%s filters=%s", ffmpegModeLabel(true), true, req.Timestamp, req.InputPath, req.OutputPath, ffmpegFilterFromArgs(args))
 		result, err = runner.Run(ctx, cmdPath, args, "")
 		if err == nil && result.ExitCode == 0 {
-			if captureOutputHasBytes(req.OutputPath) {
+			if err = validateCaptureOutput(req.OutputPath); err == nil {
 				logger.Tracef("screenshots: ffmpeg capture ok mode=%s retry=%t exit_code=%d", ffmpegModeLabel(true), true, result.ExitCode)
 				return true, nil
 			}
-			err = errFFmpegNoImage
 		}
 
 		logger.Debugf("screenshots: ffmpeg capture fallback from_mode=%s to_mode=%s reason=%s", ffmpegModeLabel(true), ffmpegModeLabel(false), ffmpegResultPreview(result, err))
@@ -185,11 +194,10 @@ func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captur
 		logger.Tracef("screenshots: ffmpeg capture attempt mode=%s timestamp_seconds=%.3f input=%s output=%s filters=%s", ffmpegModeLabel(false), req.Timestamp, req.InputPath, req.OutputPath, ffmpegFilterFromArgs(args))
 		result, err = runner.Run(ctx, cmdPath, args, "")
 		if err == nil && result.ExitCode == 0 {
-			if captureOutputHasBytes(req.OutputPath) {
+			if err = validateCaptureOutput(req.OutputPath); err == nil {
 				logger.Tracef("screenshots: ffmpeg capture ok mode=%s exit_code=%d", ffmpegModeLabel(false), result.ExitCode)
 				return false, nil
 			}
-			err = errFFmpegNoImage
 		}
 	}
 
@@ -201,13 +209,28 @@ func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captur
 	return useLibplacebo, fmt.Errorf("screenshots: ffmpeg capture failed: %s", stderr)
 }
 
-func captureOutputHasBytes(path string) bool {
+// validateCaptureOutput verifies that ffmpeg wrote a decodable, non-black
+// image. Invalid or black output files are removed so later fallback attempts
+// can replace the same target path cleanly.
+func validateCaptureOutput(path string) error {
 	info, err := os.Stat(path)
-	return err == nil && !info.IsDir() && info.Size() > 0
+	if err != nil || info.IsDir() || info.Size() <= 0 {
+		return errFFmpegNoImage
+	}
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("screenshots: read ffmpeg capture output: %w", err)
+	}
+	if err := validateImagePayload(payload); err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	return nil
 }
 
-// captureFrameBytes returns a single preview frame encoded as PNG bytes from
-// stdout. A zero-length ffmpeg stdout is treated as a failed preview.
+// captureFrameBytes returns a single non-black preview frame encoded as PNG
+// bytes from stdout. Empty or all-black ffmpeg output is treated as a failed
+// preview so callers can try alternate screenshot inputs.
 func captureFrameBytes(ctx context.Context, runner Runner, cmdPath string, req previewRequest, logger api.Logger) ([]byte, error) {
 	logger = screenshotLogger(logger)
 	if strings.TrimSpace(req.InputPath) == "" {
@@ -221,6 +244,10 @@ func captureFrameBytes(ctx context.Context, runner Runner, cmdPath string, req p
 	logger.Tracef("screenshots: ffmpeg preview attempt timestamp_seconds=%.3f input=%s", req.Timestamp, req.InputPath)
 	result, err := runner.Run(ctx, cmdPath, args, "")
 	if err == nil && result.ExitCode == 0 && len(result.Stdout) > 0 {
+		if err := validateImagePayload(result.Stdout); err != nil {
+			logger.Debugf("screenshots: ffmpeg preview rejected reason=%s", redaction.RedactValue(err.Error(), nil))
+			return nil, fmt.Errorf("screenshots: ffmpeg preview failed: %s", err.Error())
+		}
 		logger.Tracef("screenshots: ffmpeg preview ok bytes=%d exit_code=%d", len(result.Stdout), result.ExitCode)
 		return result.Stdout, nil
 	}
@@ -234,6 +261,48 @@ func captureFrameBytes(ctx context.Context, runner Runner, cmdPath string, req p
 	}
 	logger.Debugf("screenshots: ffmpeg preview exhausted reason=%s", ffmpegResultPreview(result, err))
 	return nil, fmt.Errorf("screenshots: ffmpeg preview failed: %s", stderr)
+}
+
+// validateImagePayload rejects empty, undecodable, and all-black image bytes
+// before callers accept a screenshot or preview as usable.
+func validateImagePayload(payload []byte) error {
+	if len(payload) == 0 {
+		return errFFmpegNoImage
+	}
+	black, err := imagePayloadIsBlack(payload)
+	if err != nil {
+		return fmt.Errorf("screenshots: decode ffmpeg image: %w", err)
+	}
+	if black {
+		return errFFmpegBlackImage
+	}
+	return nil
+}
+
+// imagePayloadIsBlack reports whether every visible pixel is at or below the
+// black threshold. Fully transparent pixels do not make an image usable.
+func imagePayloadIsBlack(payload []byte) (bool, error) {
+	img, _, err := image.Decode(bytes.NewReader(payload))
+	if err != nil {
+		return false, fmt.Errorf("decode image payload: %w", err)
+	}
+	bounds := img.Bounds()
+	if bounds.Empty() {
+		return false, nil
+	}
+	maxChannel := uint32(blackPixelThreshold * 257)
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, a := img.At(x, y).RGBA()
+			if a == 0 {
+				continue
+			}
+			if r > maxChannel || g > maxChannel || b > maxChannel {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
 }
 
 func ffmpegModeLabel(useLibplacebo bool) string {
