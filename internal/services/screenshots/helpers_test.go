@@ -6,8 +6,10 @@ package screenshots
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -133,12 +135,16 @@ func TestResolveVideoInfoPrefersLargestSelectedBDMVPlaylistFile(t *testing.T) {
 		},
 	}
 
-	info, err := resolveVideoInfo(context.Background(), meta, "")
+	logger := &screenshotRecordingLogger{}
+	info, err := resolveVideoInfo(context.Background(), meta, "", logger)
 	if err != nil {
 		t.Fatalf("resolve video info: %v", err)
 	}
 	if info.SourcePath != large {
 		t.Fatalf("expected largest playlist m2ts %q, got %q", large, info.SourcePath)
+	}
+	if !logger.Contains("kind=disc_bdmv") || !logger.Contains("method=metadata") {
+		t.Fatal("expected BDMV metadata source-selection trace")
 	}
 }
 
@@ -171,12 +177,44 @@ func TestResolveVideoSourcePrefersLargestSelectedBDMVPlaylistFile(t *testing.T) 
 		},
 	}
 
-	got, err := resolveVideoSource(context.Background(), meta, "")
+	logger := &screenshotRecordingLogger{}
+	got, err := resolveVideoSource(context.Background(), meta, "", logger)
 	if err != nil {
 		t.Fatalf("resolve video source: %v", err)
 	}
 	if got != large {
 		t.Fatalf("expected largest playlist m2ts %q, got %q", large, got)
+	}
+	if !logger.Contains("kind=disc_bdmv") || !logger.Contains("method=bdmv_metadata") {
+		t.Fatal("expected BDMV preview source-selection trace")
+	}
+}
+
+func TestResolveVideoInfoLogsSeasonPackSourceKind(t *testing.T) {
+	tmpDir := t.TempDir()
+	mediaInfoPath := filepath.Join(tmpDir, "mediainfo.json")
+	payload := []byte(`{"media":{"track":[{"@type":"General","Duration":"1800"},{"@type":"Video","FrameRate":"24.000"}]}}`)
+	if err := os.WriteFile(mediaInfoPath, payload, 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	logger := &screenshotRecordingLogger{}
+	meta := api.PreparedMetadata{
+		SourcePath:        filepath.Join(tmpDir, "Example.Release.2026.S01"),
+		MediaInfoJSONPath: mediaInfoPath,
+		MediaInfoCategory: "TV",
+		TVPack:            true,
+	}
+
+	info, err := resolveVideoInfo(context.Background(), meta, "", logger)
+	if err != nil {
+		t.Fatalf("resolve video info: %v", err)
+	}
+	if info.SourcePath != meta.SourcePath {
+		t.Fatal("expected base source path")
+	}
+	if !logger.Contains("kind=season_pack") || !logger.Contains("method=base") {
+		t.Fatal("expected season-pack base source trace")
 	}
 }
 
@@ -213,4 +251,37 @@ func TestMediaInfoVideoGeometryScalesWidthForWidePixels(t *testing.T) {
 	if widthScale != 1.185 || heightScale != 1 {
 		t.Fatalf("expected width scale 1.185 and height scale 1, got %f x %f", widthScale, heightScale)
 	}
+}
+
+type screenshotRecordingLogger struct {
+	entries []string
+}
+
+func (l *screenshotRecordingLogger) Tracef(format string, args ...any) {
+	l.entries = append(l.entries, fmt.Sprintf(format, args...))
+}
+
+func (l *screenshotRecordingLogger) Debugf(format string, args ...any) {
+	l.entries = append(l.entries, fmt.Sprintf(format, args...))
+}
+
+func (l *screenshotRecordingLogger) Infof(string, ...any) {
+	// Intentionally no-op.
+}
+
+func (l *screenshotRecordingLogger) Warnf(format string, args ...any) {
+	l.entries = append(l.entries, fmt.Sprintf(format, args...))
+}
+
+func (l *screenshotRecordingLogger) Errorf(format string, args ...any) {
+	l.entries = append(l.entries, fmt.Sprintf(format, args...))
+}
+
+func (l *screenshotRecordingLogger) Contains(needle string) bool {
+	for _, entry := range l.entries {
+		if strings.Contains(entry, needle) {
+			return true
+		}
+	}
+	return false
 }

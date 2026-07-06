@@ -17,6 +17,8 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -38,7 +40,12 @@ type mediaInfoDoc struct {
 
 var durationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|hours?|hrs?|h|minutes?|mins?|min|seconds?|secs?|sec|s)\b`)
 
-func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot string) (videoInfo, error) {
+// resolveVideoInfo selects the ffmpeg input path and timing metadata used for
+// screenshot planning/capture. Disc releases prefer selected playlist items or
+// BDInfo/DVD-derived streams; non-disc releases use VideoPath when present and
+// otherwise SourcePath.
+func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot string, logger api.Logger) (videoInfo, error) {
+	logger = screenshotLogger(logger)
 	info := videoInfo{}
 
 	basePath := strings.TrimSpace(meta.VideoPath)
@@ -49,21 +56,45 @@ func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot st
 		return info, errors.New("screenshots: source path required")
 	}
 
-	doc, _ := loadMediaInfoDoc(meta.MediaInfoJSONPath)
+	logger.Tracef(
+		"screenshots: video info input kind=%s disc=%s source_path=%s video_path=%s mediainfo_present=%t selected_playlists=%d tvpack=%t",
+		screenshotSourceKind(meta),
+		screenshotLogField(meta.DiscType),
+		meta.SourcePath,
+		meta.VideoPath,
+		strings.TrimSpace(meta.MediaInfoJSONPath) != "",
+		len(meta.SelectedBDMVPlaylists),
+		meta.TVPack,
+	)
+	doc, mediaInfoErr := loadMediaInfoDoc(meta.MediaInfoJSONPath)
+	if mediaInfoErr != nil {
+		logger.Debugf("screenshots: mediainfo timing unavailable err=%s", redaction.RedactValue(mediaInfoErr.Error(), nil))
+	}
 	info.DurationSeconds = mediaInfoDurationSeconds(doc)
 	info.FrameRate = mediaInfoFrameRate(doc)
 	info.Width, info.Height, info.WidthScale, info.HeightScale = mediaInfoVideoGeometry(doc)
 	if info.FrameRate <= 0 {
 		info.FrameRate = 24.0
 	}
+	logger.Tracef(
+		"screenshots: mediainfo timing duration_seconds=%.3f frame_rate=%.3f width=%d height=%d width_scale=%.3f height_scale=%.3f",
+		info.DurationSeconds,
+		info.FrameRate,
+		info.Width,
+		info.Height,
+		info.WidthScale,
+		info.HeightScale,
+	)
 
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
 		if filePath, ok, err := selectBDMVFileFromMetadata(ctx, meta); err != nil {
 			return info, err
 		} else if ok {
 			info.SourcePath = filePath
+			logger.Tracef("screenshots: BDMV source selected method=metadata path=%s", filePath)
 		}
 
+		logger.Tracef("screenshots: BDMV summary lookup tmp_root_present=%t playlist=%s", strings.TrimSpace(tmpRoot) != "", paths.PrimaryBDMVPlaylist(meta))
 		bdinfo, err := loadBDInfo(tmpRoot, meta)
 		if err != nil {
 			return info, err
@@ -79,27 +110,47 @@ func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot st
 				filePath, err := selectBDMVFile(ctx, meta.SourcePath, bdinfo)
 				if err == nil {
 					info.SourcePath = filePath
+					logger.Tracef("screenshots: BDMV source selected method=bdinfo path=%s", filePath)
+				} else {
+					logger.Debugf("screenshots: BDMV source selection unavailable err=%s", redaction.RedactValue(err.Error(), nil))
 				}
 			}
+			logger.Tracef("screenshots: BDMV summary applied duration_seconds=%.3f frame_rate=%.3f files=%d", info.DurationSeconds, info.FrameRate, len(bdinfo.Files))
+		} else {
+			logger.Tracef("screenshots: BDMV summary not available")
 		}
 	}
 
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
+		logger.Tracef("screenshots: DVD source selection root=%s", meta.SourcePath)
 		vob, err := selectDVDVOB(ctx, meta.SourcePath)
 		if err != nil {
 			return info, err
 		}
 		info.SourcePath = vob
+		logger.Tracef("screenshots: DVD source selected path=%s", vob)
 	}
 
 	if info.SourcePath == "" {
 		info.SourcePath = basePath
+		logger.Tracef("screenshots: video source selected method=base path=%s", info.SourcePath)
 	}
+	logger.Debugf(
+		"screenshots: video info resolved kind=%s disc=%s duration_seconds=%.3f frame_rate=%.3f selected_path=%s",
+		screenshotSourceKind(meta),
+		screenshotLogField(meta.DiscType),
+		info.DurationSeconds,
+		info.FrameRate,
+		info.SourcePath,
+	)
 
 	return info, nil
 }
 
-func resolveVideoSource(ctx context.Context, meta api.PreparedMetadata, tmpRoot string) (string, error) {
+// resolveVideoSource applies the same input-file preference as resolveVideoInfo
+// when callers only need the ffmpeg source path, such as preview generation.
+func resolveVideoSource(ctx context.Context, meta api.PreparedMetadata, tmpRoot string, logger api.Logger) (string, error) {
+	logger = screenshotLogger(logger)
 	basePath := strings.TrimSpace(meta.VideoPath)
 	if basePath == "" {
 		basePath = strings.TrimSpace(meta.SourcePath)
@@ -107,14 +158,24 @@ func resolveVideoSource(ctx context.Context, meta api.PreparedMetadata, tmpRoot 
 	if basePath == "" {
 		return "", errors.New("screenshots: source path required")
 	}
+	logger.Tracef(
+		"screenshots: video source input kind=%s disc=%s source_path=%s video_path=%s selected_playlists=%d",
+		screenshotSourceKind(meta),
+		screenshotLogField(meta.DiscType),
+		meta.SourcePath,
+		meta.VideoPath,
+		len(meta.SelectedBDMVPlaylists),
+	)
 
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
 		if filePath, ok, err := selectBDMVFileFromMetadata(ctx, meta); err != nil {
 			return "", err
 		} else if ok {
+			logger.Tracef("screenshots: video source selected method=bdmv_metadata path=%s", filePath)
 			return filePath, nil
 		}
 
+		logger.Tracef("screenshots: video source BDMV summary lookup tmp_root_present=%t playlist=%s", strings.TrimSpace(tmpRoot) != "", paths.PrimaryBDMVPlaylist(meta))
 		bdinfo, err := loadBDInfo(tmpRoot, meta)
 		if err != nil {
 			return "", err
@@ -124,21 +185,27 @@ func resolveVideoSource(ctx context.Context, meta api.PreparedMetadata, tmpRoot 
 			if err != nil {
 				return "", err
 			}
+			logger.Tracef("screenshots: video source selected method=bdmv_bdinfo path=%s", filePath)
 			return filePath, nil
 		}
 	}
 
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
+		logger.Tracef("screenshots: video source DVD selection root=%s", meta.SourcePath)
 		vob, err := selectDVDVOB(ctx, meta.SourcePath)
 		if err != nil {
 			return "", err
 		}
+		logger.Tracef("screenshots: video source selected method=dvd_vob path=%s", vob)
 		return vob, nil
 	}
 
+	logger.Tracef("screenshots: video source selected method=base path=%s", basePath)
 	return basePath, nil
 }
 
+// selectBDMVFileFromMetadata returns a concrete stream path when the prepared
+// metadata already identifies the selected BDMV item or resolved video file.
 func selectBDMVFileFromMetadata(ctx context.Context, meta api.PreparedMetadata) (string, bool, error) {
 	if fileName := largestSelectedBDMVPlaylistItem(meta.SelectedBDMVPlaylists); fileName != "" {
 		if videoPath := strings.TrimSpace(meta.VideoPath); videoPath != "" && strings.EqualFold(filepath.Base(videoPath), fileName) {
@@ -675,6 +742,45 @@ func shouldUseLibplacebo(meta api.PreparedMetadata, cfg config.Config) bool {
 		return false
 	}
 	return true
+}
+
+func screenshotLogger(logger api.Logger) api.Logger {
+	if logger == nil {
+		return api.NopLogger{}
+	}
+	return logger
+}
+
+// screenshotSourceKind classifies the prepared metadata for diagnostic logs
+// without changing screenshot selection behavior.
+func screenshotSourceKind(meta api.PreparedMetadata) string {
+	discType := strings.TrimSpace(meta.DiscType)
+	if discType != "" {
+		return "disc_" + strings.ToLower(sanitizeFilename(discType))
+	}
+	if meta.TVPack {
+		return "season_pack"
+	}
+	if strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "TV") {
+		if meta.EpisodeInt <= 0 && meta.Release.Episode <= 0 {
+			return "season_pack"
+		}
+		return "episode"
+	}
+	videoPath := strings.TrimSpace(meta.VideoPath)
+	sourcePath := strings.TrimSpace(meta.SourcePath)
+	if videoPath != "" && sourcePath != "" && !pathutil.SamePath(videoPath, sourcePath) {
+		return "pack_item"
+	}
+	return "single_file"
+}
+
+func screenshotLogField(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "none"
+	}
+	return sanitizeFilename(trimmed)
 }
 
 func abs(x float64) float64 {

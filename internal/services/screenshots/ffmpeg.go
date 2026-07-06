@@ -16,6 +16,9 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/autobrr/upbrr/internal/redaction"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type Runner interface {
@@ -136,7 +139,13 @@ type previewRequest struct {
 	Timestamp float64
 }
 
-func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captureRequest) (bool, error) {
+const ffmpegLogPreviewLimit = 2048
+
+// captureFrame writes one PNG frame and returns whether the successful attempt
+// used libplacebo. Libplacebo captures retry once before falling back to the
+// software filter chain so transient Vulkan setup failures remain recoverable.
+func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captureRequest, logger api.Logger) (bool, error) {
+	logger = screenshotLogger(logger)
 	if strings.TrimSpace(req.InputPath) == "" {
 		return false, errors.New("screenshots: input path required")
 	}
@@ -146,21 +155,29 @@ func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captur
 
 	useLibplacebo := req.UseLibplacebo && req.ToneMap && !req.FrameOverlay
 	args := buildFFmpegArgs(req, useLibplacebo)
+	logger.Tracef("screenshots: ffmpeg capture attempt mode=%s timestamp_seconds=%.3f input=%s output=%s filters=%s", ffmpegModeLabel(useLibplacebo), req.Timestamp, req.InputPath, req.OutputPath, ffmpegFilterFromArgs(args))
 	result, err := runner.Run(ctx, cmdPath, args, "")
 	if err == nil && result.ExitCode == 0 {
+		logger.Tracef("screenshots: ffmpeg capture ok mode=%s exit_code=%d", ffmpegModeLabel(useLibplacebo), result.ExitCode)
 		return useLibplacebo, nil
 	}
 
 	if useLibplacebo {
+		logger.Debugf("screenshots: ffmpeg capture retry mode=%s reason=%s", ffmpegModeLabel(true), ffmpegResultPreview(result, err))
 		args = buildFFmpegArgs(req, true)
+		logger.Tracef("screenshots: ffmpeg capture attempt mode=%s retry=%t timestamp_seconds=%.3f input=%s output=%s filters=%s", ffmpegModeLabel(true), true, req.Timestamp, req.InputPath, req.OutputPath, ffmpegFilterFromArgs(args))
 		result, err = runner.Run(ctx, cmdPath, args, "")
 		if err == nil && result.ExitCode == 0 {
+			logger.Tracef("screenshots: ffmpeg capture ok mode=%s retry=%t exit_code=%d", ffmpegModeLabel(true), true, result.ExitCode)
 			return true, nil
 		}
 
+		logger.Debugf("screenshots: ffmpeg capture fallback from_mode=%s to_mode=%s reason=%s", ffmpegModeLabel(true), ffmpegModeLabel(false), ffmpegResultPreview(result, err))
 		args = buildFFmpegArgs(req, false)
+		logger.Tracef("screenshots: ffmpeg capture attempt mode=%s timestamp_seconds=%.3f input=%s output=%s filters=%s", ffmpegModeLabel(false), req.Timestamp, req.InputPath, req.OutputPath, ffmpegFilterFromArgs(args))
 		result, err = runner.Run(ctx, cmdPath, args, "")
 		if err == nil && result.ExitCode == 0 {
+			logger.Tracef("screenshots: ffmpeg capture ok mode=%s exit_code=%d", ffmpegModeLabel(false), result.ExitCode)
 			return false, nil
 		}
 	}
@@ -169,10 +186,14 @@ func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captur
 	if stderr == "" && err != nil {
 		stderr = err.Error()
 	}
+	logger.Debugf("screenshots: ffmpeg capture exhausted mode=%s reason=%s", ffmpegModeLabel(useLibplacebo), ffmpegResultPreview(result, err))
 	return useLibplacebo, fmt.Errorf("screenshots: ffmpeg capture failed: %s", stderr)
 }
 
-func captureFrameBytes(ctx context.Context, runner Runner, cmdPath string, req previewRequest) ([]byte, error) {
+// captureFrameBytes returns a single preview frame encoded as PNG bytes from
+// stdout. A zero-length ffmpeg stdout is treated as a failed preview.
+func captureFrameBytes(ctx context.Context, runner Runner, cmdPath string, req previewRequest, logger api.Logger) ([]byte, error) {
+	logger = screenshotLogger(logger)
 	if strings.TrimSpace(req.InputPath) == "" {
 		return nil, errors.New("screenshots: input path required")
 	}
@@ -181,8 +202,10 @@ func captureFrameBytes(ctx context.Context, runner Runner, cmdPath string, req p
 	}
 
 	args := buildFFmpegPreviewArgs(req)
+	logger.Tracef("screenshots: ffmpeg preview attempt timestamp_seconds=%.3f input=%s", req.Timestamp, req.InputPath)
 	result, err := runner.Run(ctx, cmdPath, args, "")
 	if err == nil && result.ExitCode == 0 && len(result.Stdout) > 0 {
+		logger.Tracef("screenshots: ffmpeg preview ok bytes=%d exit_code=%d", len(result.Stdout), result.ExitCode)
 		return result.Stdout, nil
 	}
 
@@ -190,7 +213,40 @@ func captureFrameBytes(ctx context.Context, runner Runner, cmdPath string, req p
 	if stderr == "" && err != nil {
 		stderr = err.Error()
 	}
+	logger.Debugf("screenshots: ffmpeg preview exhausted reason=%s", ffmpegResultPreview(result, err))
 	return nil, fmt.Errorf("screenshots: ffmpeg preview failed: %s", stderr)
+}
+
+func ffmpegModeLabel(useLibplacebo bool) string {
+	if useLibplacebo {
+		return "libplacebo"
+	}
+	return "software"
+}
+
+func ffmpegFilterFromArgs(args []string) string {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-vf" {
+			return args[i+1]
+		}
+	}
+	return "none"
+}
+
+// ffmpegResultPreview returns a bounded, redacted diagnostic string for logs
+// while leaving the caller-owned error text unchanged.
+func ffmpegResultPreview(result CommandResult, err error) string {
+	message := strings.TrimSpace(string(result.Stderr))
+	if message == "" && err != nil {
+		message = err.Error()
+	}
+	if message == "" {
+		message = fmt.Sprintf("exit_code=%d", result.ExitCode)
+	}
+	if len(message) > ffmpegLogPreviewLimit {
+		message = message[:ffmpegLogPreviewLimit] + "...[truncated]"
+	}
+	return redaction.RedactValue(message, nil)
 }
 
 func buildFFmpegPreviewArgs(req previewRequest) []string {
