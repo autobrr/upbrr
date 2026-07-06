@@ -727,7 +727,7 @@ func TestBTNDryRunDebugRunsBTNAutofillAndReportsBothPayloads(t *testing.T) {
 	if requestSection.Title != "BTN autofill request" {
 		t.Fatalf("expected autofill request section, got %#v", requestSection)
 	}
-	if requestSection.Payload["type"] != "Season" || requestSection.Payload["auto_series"] != "12345" || requestSection.Payload["auto_season"] != "5" || requestSection.Payload["tvdb"] != "Get Info" {
+	if requestSection.Payload["type"] != "Season" || requestSection.Payload["auto_series"] != "12345" || requestSection.Payload["auto_season"] != "S05" || requestSection.Payload["tvdb"] != "Get Info" {
 		t.Fatalf("unexpected autofill request payload %#v", requestSection.Payload)
 	}
 	finalSection := entry.DebugSections[1]
@@ -756,7 +756,7 @@ func TestBTNDryRunDebugRunsBTNAutofillAndReportsBothPayloads(t *testing.T) {
 	formMu.Lock()
 	gotForm := maps.Clone(autofillForm)
 	formMu.Unlock()
-	if gotForm["type"] != "Season" || gotForm["scene_yesno"] != "No" || gotForm["auto_series"] != "12345" || gotForm["auto_season"] != "5" || gotForm["tvdb"] != "Get Info" {
+	if gotForm["type"] != "Season" || gotForm["scene_yesno"] != "No" || gotForm["auto_series"] != "12345" || gotForm["auto_season"] != "S05" || gotForm["tvdb"] != "Get Info" {
 		t.Fatalf("unexpected submitted autofill form %#v", gotForm)
 	}
 }
