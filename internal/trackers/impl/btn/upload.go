@@ -737,7 +737,7 @@ func buildBTNAutofillPayload(meta api.PreparedMetadata) (url.Values, string) {
 		if uploadType == "Episode" {
 			autofillPayload.Set("auto_title", fmt.Sprintf("S%02dE%02d", season, episode))
 		} else {
-			autofillPayload.Set("auto_season", strconv.Itoa(season))
+			autofillPayload.Set("auto_season", fmt.Sprintf("S%02d", season))
 		}
 	} else {
 		autofillPayload.Set("scene_yesno", "Yes")

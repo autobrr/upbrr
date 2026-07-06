@@ -1156,8 +1156,8 @@ func TestBTNPrepareUploadDataUsesSeasonIntForTVDBSeasonPack(t *testing.T) {
 	if gotAutoSeries != "12345" {
 		t.Fatalf("expected TVDB series id, got %q", gotAutoSeries)
 	}
-	if gotAutoSeason != "5" {
-		t.Fatalf("expected auto_season 5, got %q", gotAutoSeason)
+	if gotAutoSeason != "S05" {
+		t.Fatalf("expected auto_season S05, got %q", gotAutoSeason)
 	}
 }
 
