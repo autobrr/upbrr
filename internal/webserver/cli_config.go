@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/autobrr/upbrr/internal/redaction"
 )
 
 const cliConfigFileName = "web-config.json"
@@ -51,7 +53,7 @@ func LoadCLIConfig(dbPath string) (CLIConfig, error) {
 		return CLIConfig{}, fmt.Errorf("web config: read: %w", err)
 	}
 	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return CLIConfig{}, fmt.Errorf("web config: parse: %w", err)
+		return CLIConfig{}, fmt.Errorf("web config: parse: %s", redaction.RedactValue(err.Error(), nil))
 	}
 	return normalizeCLIConfigLoaded(cfg), nil
 }

@@ -32,6 +32,7 @@ import (
 	"github.com/anacrolix/torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -345,7 +346,7 @@ func parseOptionalStringField(fields map[string]json.RawMessage, name string, de
 		return
 	}
 	if err := json.Unmarshal(raw, dest); err != nil {
-		*errs = append(*errs, fmt.Errorf("%s: %w", name, err))
+		*errs = append(*errs, fmt.Errorf("%s: %s", name, redaction.RedactValue(err.Error(), nil)))
 	}
 }
 

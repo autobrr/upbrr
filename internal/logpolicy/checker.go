@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1021,9 +1022,188 @@ func checkSensitiveOutputParsed(fset *token.FileSet, relPath string, file *ast.F
 			testFile:        testFile,
 			functionContext: functionContext,
 		}, fn.Body)
+		checkResponseJSONParseErrorOutput(fset, relPath, aliases, allows, &violations, fn.Body)
 	}
 
 	return violations
+}
+
+// checkResponseJSONParseErrorOutput flags parse errors from raw JSON envelope
+// fields when they reach returned errors, logs, HTTP responses, or terminal
+// output without a recognized redaction wrapper.
+func checkResponseJSONParseErrorOutput(fset *token.FileSet, relPath string, aliases map[string]string, allows map[int]*logpolicyAllow, violations *[]Violation, body *ast.BlockStmt) {
+	ast.Inspect(body, func(node ast.Node) bool {
+		if node == nil {
+			return true
+		}
+		if lit, ok := node.(*ast.FuncLit); ok && lit.Body != body {
+			return false
+		}
+		stmt, ok := node.(*ast.IfStmt)
+		if !ok {
+			return true
+		}
+		errName, pos, ok := responseJSONParseErrorBinding(stmt, aliases)
+		if !ok {
+			return true
+		}
+		if responseJSONParseErrorBlockOutputsRaw(stmt.Body, aliases, errName) {
+			appendLogpolicyViolation(fset, relPath, allows, violations, pos, "response-derived JSON parse errors must be redacted before returning or logging")
+		}
+		return true
+	})
+}
+
+// responseJSONParseErrorBinding recognizes the inline Go pattern used by most
+// parser branches: if err := json.Unmarshal(...); err != nil { ... }.
+func responseJSONParseErrorBinding(stmt *ast.IfStmt, aliases map[string]string) (string, token.Pos, bool) {
+	assign, ok := stmt.Init.(*ast.AssignStmt)
+	if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+		return "", token.NoPos, false
+	}
+	errIdent, ok := assign.Lhs[0].(*ast.Ident)
+	if !ok || !isErrorLikeName(errIdent.Name) {
+		return "", token.NoPos, false
+	}
+	call, ok := assign.Rhs[0].(*ast.CallExpr)
+	if !ok || !isResponseDerivedJSONParseCall(call, aliases) {
+		return "", token.NoPos, false
+	}
+	return errIdent.Name, call.Pos(), true
+}
+
+// isResponseDerivedJSONParseCall identifies json.Unmarshal calls whose input
+// looks like a response-envelope or json.RawMessage field rather than ordinary
+// top-level config/body decoding.
+func isResponseDerivedJSONParseCall(call *ast.CallExpr, aliases map[string]string) bool {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	if pkg, ok := selector.X.(*ast.Ident); ok && aliases[pkg.Name] == "encoding/json" && selector.Sel.Name == "Unmarshal" {
+		return len(call.Args) > 0 && isResponseDerivedJSONExpr(call.Args[0])
+	}
+	return false
+}
+
+// isResponseDerivedJSONExpr reports whether expr is named like a raw JSON
+// fragment that may contain provider or local secret material.
+func isResponseDerivedJSONExpr(expr ast.Expr) bool {
+	switch typed := expr.(type) {
+	case *ast.Ident:
+		return isResponseDerivedJSONName(typed.Name)
+	case *ast.SelectorExpr:
+		return isResponseDerivedJSONName(selectorPath(typed))
+	case *ast.IndexExpr:
+		return isResponseDerivedJSONExpr(typed.X)
+	case *ast.SliceExpr:
+		return isResponseDerivedJSONExpr(typed.X)
+	case *ast.CallExpr:
+		if slices.ContainsFunc(typed.Args, isResponseDerivedJSONExpr) {
+			return true
+		}
+	case *ast.UnaryExpr:
+		return isResponseDerivedJSONExpr(typed.X)
+	}
+	return false
+}
+
+// isResponseDerivedJSONName keeps the heuristic narrow enough to avoid generic
+// response-body decode noise while still covering raw/result envelope fields.
+func isResponseDerivedJSONName(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if lower == "" {
+		return false
+	}
+	for _, segment := range strings.FieldsFunc(lower, func(r rune) bool { return r == '.' || r == '_' || r == '-' }) {
+		switch segment {
+		case "raw", "rawmessage", "rawjson", "result", "results", "torrents":
+			return true
+		}
+	}
+	return strings.Contains(lower, "rawmessage") || strings.Contains(lower, "rawjson")
+}
+
+// responseJSONParseErrorBlockOutputsRaw reports whether the error branch emits
+// the parse error through a user-shareable output path.
+func responseJSONParseErrorBlockOutputsRaw(block *ast.BlockStmt, aliases map[string]string, errName string) bool {
+	found := false
+	ast.Inspect(block, func(node ast.Node) bool {
+		if found || node == nil {
+			return false
+		}
+		if lit, ok := node.(*ast.FuncLit); ok && lit.Body != block {
+			return false
+		}
+		switch typed := node.(type) {
+		case *ast.ReturnStmt:
+			for _, result := range typed.Results {
+				if containsRawResponseJSONParseError(result, errName) {
+					found = true
+					return false
+				}
+			}
+		case *ast.CallExpr:
+			if !isOutputCall(typed, aliases) {
+				return true
+			}
+			for _, arg := range typed.Args {
+				if containsRawResponseJSONParseError(arg, errName) {
+					found = true
+					return false
+				}
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// isOutputCall recognizes calls that produce shareable diagnostics or returned
+// errors and therefore must not receive raw response-derived parse errors.
+func isOutputCall(call *ast.CallExpr, aliases map[string]string) bool {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	if isFmtSelector(selector, aliases, "Errorf") || isFmtPrintSelector(selector, aliases) || isHTTPErrorSelector(selector, aliases) {
+		return true
+	}
+	_, logger := loggerMethods[selector.Sel.Name]
+	return logger
+}
+
+// containsRawResponseJSONParseError reports direct use of the parse error or
+// err.Error() unless the expression is inside a recognized safe-output call.
+func containsRawResponseJSONParseError(expr ast.Expr, errName string) bool {
+	raw := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		if raw || node == nil {
+			return false
+		}
+		if call, ok := node.(*ast.CallExpr); ok && isSafeOutputCall(call) {
+			return false
+		}
+		switch typed := node.(type) {
+		case *ast.Ident:
+			if typed.Name == errName {
+				raw = true
+				return false
+			}
+		case *ast.CallExpr:
+			selector, ok := typed.Fun.(*ast.SelectorExpr)
+			if !ok || selector.Sel.Name != "Error" {
+				return true
+			}
+			receiver, ok := selector.X.(*ast.Ident)
+			if ok && receiver.Name == errName {
+				raw = true
+				return false
+			}
+		}
+		return true
+	})
+	return raw
 }
 
 // unusedLogpolicyAllowViolations reports suppressions that did not match an
