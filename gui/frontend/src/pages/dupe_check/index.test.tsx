@@ -170,6 +170,29 @@ describe("DupeCheckPage", () => {
     expect(screen.getAllByText("DP").length).toBeGreaterThan(0);
   });
 
+  it("shows non-rule skipped reasons", () => {
+    renderPage({
+      SourcePath: "C:\\Media\\Example.Movie.mkv",
+      Results: [
+        {
+          ...completedResult("NBL"),
+          Status: "skipped",
+          Skipped: true,
+          SkipReason: "missing api_key for tracker",
+          Notes: ["skip: missing api_key for tracker"],
+        },
+        completedResult("ANT"),
+      ],
+      Notes: [],
+    });
+
+    expect(screen.getByText("Available for upload: 1")).toBeInTheDocument();
+    expect(screen.getByText("1 blocked.")).toBeInTheDocument();
+    expect(screen.getByText("Skipped")).toBeInTheDocument();
+    expect(screen.getByText("missing api_key for tracker")).toBeInTheDocument();
+    expect(screen.queryByText("Rule failed")).toBeNull();
+  });
+
   it("prefers per-tracker snapshot results over grouped rule-failure summary rows", () => {
     renderPage(
       {

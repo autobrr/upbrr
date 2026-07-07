@@ -896,6 +896,9 @@ export type TrackerDryRunEntry = {
   Tracker: string;
   Status: string;
   Message: string;
+  Banned: boolean;
+  BannedReason: string;
+  BannedCheckError: string;
   ReleaseName: string;
   OriginalReleaseName: string;
   UploadReleaseName: string;

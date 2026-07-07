@@ -70,9 +70,18 @@ type TrackerReview struct {
 }
 
 type TrackerDryRunEntry struct {
-	Tracker                 string
-	Status                  string
-	Message                 string
+	Tracker string
+	Status  string
+	Message string
+	// Banned reports whether the normalized release group matched this tracker
+	// during dry-run or review evaluation. It is diagnostic state and does not
+	// mean the dry-run payload builder was skipped.
+	Banned bool
+	// BannedReason explains the matched banned group when Banned is true.
+	BannedReason string
+	// BannedCheckError carries a redacted banned-group refresh or cache error
+	// for dry-run diagnostics when the banned state could not be determined.
+	BannedCheckError        string
 	ReleaseName             string
 	OriginalReleaseName     string
 	UploadReleaseName       string

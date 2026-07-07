@@ -127,7 +127,7 @@ func TestRunInteractiveCLIPathThreadsContextToCoreCall(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	coreSvc := &cliCoreForTest{}
-	err := runInteractiveCLIPathWithInput(ctx, coreSvc, nil, cliOptions{}, map[string]bool{}, "movie.mkv", 0, config.Config{}, strings.NewReader(""))
+	err := runInteractiveCLIPathWithInput(ctx, coreSvc, cliOptions{}, map[string]bool{}, "movie.mkv", 0, config.Config{}, strings.NewReader(""))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected canceled context to reach FetchMetadataPreview, got %v", err)
 	}

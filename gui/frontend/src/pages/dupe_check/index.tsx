@@ -284,6 +284,7 @@ export default function DupeCheckPage(props: Readonly<Props>) {
               const ruleSkipReason =
                 ruleSkipReasons[normalizedTracker] ||
                 (result.Skipped && isRuleFailureReason(skipReason) ? skipReason : "");
+              const skippedReason = result.Skipped && !ruleSkipReason ? skipReason : "";
               const visibleNotes =
                 result.Notes?.filter((note) => {
                   if (note === pathedNote) return false;
@@ -291,13 +292,16 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                   if (normalizedNote.startsWith("skip:")) return false;
                   if (normalizedNote.startsWith("rule check failed")) return false;
                   if (ruleSkipReason && note.trim() === ruleSkipReason) return false;
+                  if (skippedReason && note.trim() === skippedReason) return false;
                   return true;
                 }) ?? [];
               const showIgnoreToggle = !hasPathedNote && (hasDupes || dupeCount > 0);
               const displayDupeCount =
                 (dupeTrackerFlags[result.Tracker] ?? hasDupes) ? dupeCount : 0;
               const displayTrackers =
-                hasPathedNote || ruleSkipReason ? trackerNamesForResult(result) : [];
+                hasPathedNote || ruleSkipReason || skippedReason
+                  ? trackerNamesForResult(result)
+                  : [];
               const iconTrackers = displayTrackers.length > 0 ? displayTrackers : [result.Tracker];
 
               return (
@@ -334,7 +338,11 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                   </p>
 
                   <div className="min-w-0">
-                    {hasPathedNote || ruleSkipReason || hasFailure || visibleNotes.length ? (
+                    {hasPathedNote ||
+                    ruleSkipReason ||
+                    skippedReason ||
+                    hasFailure ||
+                    visibleNotes.length ? (
                       <p className="mb-1 flex flex-wrap items-center gap-1 text-sm leading-5">
                         {hasPathedNote ? <Badge tone="info">In client</Badge> : null}
 
@@ -342,6 +350,13 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                           <>
                             <Badge tone="danger">Rule failed</Badge>
                             <span className="text-[var(--muted)]">{ruleSkipReason}</span>
+                          </>
+                        ) : null}
+
+                        {skippedReason ? (
+                          <>
+                            <Badge tone="info">Skipped</Badge>
+                            <span className="text-[var(--muted)]">{skippedReason}</span>
                           </>
                         ) : null}
 

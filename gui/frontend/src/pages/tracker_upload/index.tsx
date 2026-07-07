@@ -23,6 +23,8 @@ type Props = {
   trackerUploadItems: TrackerUploadItem[];
   releasePageTrackerSelection: Record<string, boolean>;
   dupedTrackerSet: Set<string>;
+  skippedDupeReasons: Record<string, string>;
+  skippedDupeTrackerSet: Set<string>;
   ruleSkipReasons: Record<string, string>;
   ruleSkippedTrackerSet: Set<string>;
   failedDupeTrackerSet: Set<string>;
@@ -186,6 +188,8 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     trackerUploadItems,
     releasePageTrackerSelection,
     dupedTrackerSet,
+    skippedDupeReasons,
+    skippedDupeTrackerSet,
     ruleSkipReasons,
     ruleSkippedTrackerSet,
     failedDupeTrackerSet,
@@ -227,6 +231,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
       const hasFailedDupe = failedDupeTrackerSet.has(normalized);
       const hasDupes = dupedTrackerSet.has(normalized);
       const hasRuleSkip = ruleSkippedTrackerSet.has(normalized);
+      const hasSkippedDupe = skippedDupeTrackerSet.has(normalized);
       if (hasFailedDupe) {
         reasons.push("Dupe check failed");
       }
@@ -235,6 +240,8 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
       }
       if (hasRuleSkip) {
         reasons.push(ruleSkipReasons[normalized] || "Rule check failed");
+      } else if (hasSkippedDupe) {
+        reasons.push(skippedDupeReasons[normalized] || "Dupe check skipped");
       }
       next[tracker.name] = {
         blocked: reasons.length > 0,
@@ -247,6 +254,8 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     visibleTrackers,
     failedDupeTrackerSet,
     dupedTrackerSet,
+    skippedDupeReasons,
+    skippedDupeTrackerSet,
     ruleSkippedTrackerSet,
     ruleSkipReasons,
   ]);
@@ -267,6 +276,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
         const normalized = tracker.name.toLowerCase().trim();
         if (!uploadToggles[tracker.name]) return false;
         if (dupedTrackerSet.has(normalized)) return false;
+        if (skippedDupeTrackerSet.has(normalized)) return false;
         if (ruleSkippedTrackerSet.has(normalized)) return false;
         if (failedDupeTrackerSet.has(normalized)) return false;
         return true;
@@ -275,6 +285,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
       availableTrackers,
       uploadToggles,
       dupedTrackerSet,
+      skippedDupeTrackerSet,
       ruleSkippedTrackerSet,
       failedDupeTrackerSet,
     ],
@@ -731,6 +742,18 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                           <div>
                             <p className="label">Message</p>
                             <p className="value">{dryRun.Message}</p>
+                          </div>
+                        ) : null}
+                        {dryRun.Banned ? (
+                          <div>
+                            <p className="label">Banned group</p>
+                            <p className="value">{dryRun.BannedReason || "matched"}</p>
+                          </div>
+                        ) : null}
+                        {dryRun.BannedCheckError ? (
+                          <div>
+                            <p className="label">Banned group check</p>
+                            <p className="value">{dryRun.BannedCheckError}</p>
                           </div>
                         ) : null}
                         {dryRun.ReleaseName ? (

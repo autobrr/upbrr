@@ -195,7 +195,19 @@ const splitTrackerLabel = (value: string) =>
     .map((entry) => entry.toLowerCase().trim())
     .filter((entry) => entry.length > 0);
 
-/** Returns normalized tracker labels whose skipped duplicate-check result should block upload. */
+const isRuleFailureReason = (reason: string) =>
+  reason.toLowerCase().trim().startsWith("rule check failed");
+
+/** Returns the displayable skip reason carried by a duplicate-check result. */
+const dupeSkipReason = (result: Pick<DupeCheckResult, "SkipReason" | "Notes">) =>
+  String(result.SkipReason || result.Notes?.join(" ") || "").trim();
+
+/**
+ * Returns every normalized tracker label represented by a duplicate-check row.
+ * Grouped rule rows use comma-separated tracker labels, while ordinary rows use
+ * a single tracker name; callers choose whether the row is a rule skip, generic
+ * skip, dupe hit, or failure before applying the labels.
+ */
 export const ruleBlockingTrackerLabels = (result: Pick<DupeCheckResult, "Tracker">) => {
   const next = new Set<string>();
   const normalized = result.Tracker.toLowerCase().trim();
@@ -1175,7 +1187,22 @@ export default function App() {
     return next;
   }, [dupeTrackerFlags]);
 
+  // Rule failures stay terminal even in debug/dry-run. Keep this set separate
+  // from generic skipped duplicate-check results so the UI can show the exact
+  // skip reason without labeling config/handler skips as rule failures.
   const ruleSkippedTrackerSet = useMemo(() => {
+    const next = new Set<string>();
+    dupeEffectiveResults.forEach((result) => {
+      if (!result.Tracker || !result.Skipped) return;
+      if (!isRuleFailureReason(dupeSkipReason(result))) return;
+      ruleBlockingTrackerLabels(result).forEach((tracker) => next.add(tracker));
+    });
+    return next;
+  }, [dupeEffectiveResults]);
+
+  // Any skipped duplicate-check result blocks upload eligibility; rule skips are
+  // also included here but their display copy comes from ruleSkipReasons.
+  const skippedDupeTrackerSet = useMemo(() => {
     const next = new Set<string>();
     dupeEffectiveResults.forEach((result) => {
       if (!result.Tracker || !result.Skipped) return;
@@ -1200,11 +1227,26 @@ export default function App() {
     return next;
   }, [dupeEffectiveResults]);
 
+  // Generic skipped reasons cover handler/config skips such as missing API keys.
+  // Rule-specific labels are derived separately to avoid misleading copy.
+  const skippedDupeReasons = useMemo(() => {
+    const next: Record<string, string> = {};
+    dupeEffectiveResults.forEach((result) => {
+      if (!result.Tracker || !result.Skipped) return;
+      const reason = dupeSkipReason(result) || "Skipped";
+      ruleBlockingTrackerLabels(result).forEach((tracker) => {
+        next[tracker] = reason;
+      });
+    });
+    return next;
+  }, [dupeEffectiveResults]);
+
   const ruleSkipReasons = useMemo(() => {
     const next: Record<string, string> = {};
     dupeEffectiveResults.forEach((result) => {
       if (!result.Tracker || !result.Skipped) return;
-      const reason = (result.SkipReason || result.Notes?.join(" ") || "rule check failed").trim();
+      const reason = dupeSkipReason(result);
+      if (!isRuleFailureReason(reason)) return;
       ruleBlockingTrackerLabels(result).forEach((tracker) => {
         next[tracker] = reason || "rule check failed";
       });
@@ -1461,6 +1503,9 @@ export default function App() {
 
       const emptyTrackerSet = new Set<string>();
       const scopedDupedTrackerSet = dupeSourceMatchesTarget ? dupedTrackerSet : emptyTrackerSet;
+      const scopedSkippedDupeTrackerSet = dupeSourceMatchesTarget
+        ? skippedDupeTrackerSet
+        : emptyTrackerSet;
       const scopedRuleSkippedTrackerSet = dupeSourceMatchesTarget
         ? ruleSkippedTrackerSet
         : emptyTrackerSet;
@@ -1472,6 +1517,7 @@ export default function App() {
         releasePageTrackerSelection,
         uploadToggles: effectiveUploadToggles,
         dupedTrackerSet: scopedDupedTrackerSet,
+        skippedDupeTrackerSet: scopedSkippedDupeTrackerSet,
         ruleSkippedTrackerSet: scopedRuleSkippedTrackerSet,
         failedDupeTrackerSet: scopedFailedDupeTrackerSet,
       });
@@ -1488,6 +1534,7 @@ export default function App() {
             releasePageTrackerSelection,
             uploadToggles: effectiveUploadToggles,
             dupedTrackerSet: scopedDupedTrackerSet,
+            skippedDupeTrackerSet: scopedSkippedDupeTrackerSet,
             ruleSkippedTrackerSet: scopedRuleSkippedTrackerSet,
             failedDupeTrackerSet: scopedFailedDupeTrackerSet,
           }),
@@ -1502,6 +1549,7 @@ export default function App() {
       path,
       releasePageTrackerSelection,
       ruleSkippedTrackerSet,
+      skippedDupeTrackerSet,
       trackerUploadItems,
       uploadToggles,
     ],
@@ -3347,6 +3395,11 @@ export default function App() {
         setToggle(item.name, false);
         return;
       }
+      if (dupeFiltersMatchCurrentPath && skippedDupeTrackerSet.has(normalized)) {
+        autoDisabled.delete(normalized);
+        setToggle(item.name, false);
+        return;
+      }
       if (autoDisabled.has(normalized)) {
         setToggle(
           item.name,
@@ -3391,6 +3444,7 @@ export default function App() {
     dupeFiltersMatchCurrentPath,
     dupedTrackerSet,
     ruleSkippedTrackerSet,
+    skippedDupeTrackerSet,
     failedDupeTrackerSet,
     releasePageTrackerSelection,
     uploadToggles,
@@ -4402,6 +4456,8 @@ export default function App() {
               trackerUploadItems={trackerUploadItems}
               releasePageTrackerSelection={releasePageTrackerSelection}
               dupedTrackerSet={dupedTrackerSet}
+              skippedDupeReasons={skippedDupeReasons}
+              skippedDupeTrackerSet={skippedDupeTrackerSet}
               ruleSkipReasons={ruleSkipReasons}
               ruleSkippedTrackerSet={ruleSkippedTrackerSet}
               failedDupeTrackerSet={failedDupeTrackerSet}
