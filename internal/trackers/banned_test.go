@@ -69,6 +69,21 @@ func TestBannedGroupCheckerBHDBuiltins(t *testing.T) {
 	}
 }
 
+func TestBannedGroupCheckerBTNBuiltins(t *testing.T) {
+	t.Parallel()
+
+	checker := NewBannedGroupChecker(filepath.Join(t.TempDir(), "db.sqlite"))
+	for _, group := range []string{"FGT", "GalaxyTV", "MeGusta", "[Oj]"} {
+		banned, err := checker.IsBanned("BTN", group)
+		if err != nil {
+			t.Fatalf("check %s: %v", group, err)
+		}
+		if !banned {
+			t.Fatalf("expected %s to be banned on BTN", group)
+		}
+	}
+}
+
 func TestBannedGroupCheckerMergesBuiltinsWithCacheFile(t *testing.T) {
 	t.Parallel()
 

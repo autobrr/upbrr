@@ -182,6 +182,56 @@ func TestBuildUploadReviewIncludesRuleFailuresDupesAndDryRun(t *testing.T) {
 	}
 }
 
+func TestBuildUploadReviewMarksBTNBannedGroup(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	trackersSvc := &recordingReviewTrackers{
+		entries: []api.TrackerDryRunEntry{{Tracker: "BTN", Status: "ready", ReleaseName: "BTN.NAME"}},
+	}
+	coreSvc, err := New(api.CoreDependencies{
+		Config: config.Config{
+			MainSettings:       config.MainSettingsConfig{DBPath: tempDir, TMDBAPI: "x"},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+		},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Dupes:      &reviewDupes{},
+			Torrents:   &stubTorrent{},
+			Trackers:   trackersSvc,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	coreSvc.storeDupeCache("/tmp/a", "", api.PreparedMetadata{
+		SourcePath: "/tmp/a",
+		Trackers:   []string{"BTN"},
+		Tag:        "-FGT",
+	})
+
+	review, err := coreSvc.BuildUploadReview(context.Background(), api.Request{
+		Paths:    []string{"/tmp/a"},
+		Mode:     api.ModeCLI,
+		Trackers: []string{"BTN"},
+	})
+	if err != nil {
+		t.Fatalf("build upload review: %v", err)
+	}
+	if len(review.Trackers) != 1 {
+		t.Fatalf("expected 1 tracker review, got %d", len(review.Trackers))
+	}
+	btnReview := review.Trackers[0]
+	if !btnReview.Banned {
+		t.Fatalf("expected BTN to be marked banned")
+	}
+	if !strings.Contains(btnReview.BannedReason, "group fgt is banned on BTN") {
+		t.Fatalf("expected BTN banned reason, got %q", btnReview.BannedReason)
+	}
+}
+
 func TestApplyRequestToPreparedMetaClearsDupeBlocksWhenSkipped(t *testing.T) {
 	t.Parallel()
 
