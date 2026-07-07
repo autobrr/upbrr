@@ -208,6 +208,7 @@ type PreparedMetadata struct {
 	WebDV                       bool
 	ValidMediaInfo              bool
 	ValidMediaInfoSettings      bool
+	ValidMediaInfoTracks        bool
 	StreamOptimized             int
 	Service                     string
 	ServiceLongName             string

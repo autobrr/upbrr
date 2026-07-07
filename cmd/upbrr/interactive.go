@@ -81,7 +81,8 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 		}
 		metadataPreview = preview
 
-		printMetadataPreview(preview, currentOpts.Debug)
+		candidateTrackers, _ := resolveCLIUploadTrackers(currentVisited, req, metadataPreview, cfg)
+		printMetadataPreview(preview, currentOpts.Debug, candidateTrackers)
 		if currentOpts.Unattended && !currentOpts.UnattendedConfirm {
 			break
 		}
@@ -1150,7 +1151,7 @@ func isUnattendedNoConfirm(req api.Request) bool {
 
 // printMetadataPreview writes the pre-upload confirmation details shown by the
 // CLI, including a debug-mode notice when tracker uploads will not run.
-func printMetadataPreview(preview api.MetadataPreview, debug bool) {
+func printMetadataPreview(preview api.MetadataPreview, debug bool, trackers []string) {
 	fmt.Println()
 	fmt.Println("Release details")
 	if debug {
@@ -1172,6 +1173,30 @@ func printMetadataPreview(preview api.MetadataPreview, debug bool) {
 		fmt.Println("Warnings:")
 		for _, warning := range preview.Warnings {
 			fmt.Printf("- %s\n", warning)
+		}
+	}
+
+	if len(preview.TrackerRuleFailures) > 0 {
+		trackerSet := make(map[string]struct{}, len(trackers))
+		for _, t := range trackers {
+			trackerSet[strings.ToUpper(strings.TrimSpace(t))] = struct{}{}
+		}
+
+		var failedTrackers []string
+		for tracker := range preview.TrackerRuleFailures {
+			if _, ok := trackerSet[tracker]; ok {
+				failedTrackers = append(failedTrackers, tracker)
+			}
+		}
+
+		if len(failedTrackers) > 0 {
+			fmt.Println("Rule Failures:")
+			sort.Strings(failedTrackers)
+			for _, tracker := range failedTrackers {
+				for _, failure := range preview.TrackerRuleFailures[tracker] {
+					fmt.Printf("- [%s] %s: %s\n", tracker, failure.Rule, failure.Reason)
+				}
+			}
 		}
 	}
 }

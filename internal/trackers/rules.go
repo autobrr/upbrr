@@ -57,6 +57,10 @@ func EvaluateRules(ctx context.Context, tracker string, meta api.PreparedMetadat
 		return append(failures, evaluateAZFamilyRules(name, meta)...)
 	}
 	rules, ok := additional.RulesFor(name)
+	if !meta.ValidMediaInfoTracks {
+		addFailure("invalid_mediainfo_tracks", "missing video or audio tracks in MediaInfo")
+	}
+
 	// UNIT3D-known trackers without a tracker-specific RuleSet must still reach
 	// the MediaInfo-settings check below (rules is the zero value for them, which
 	// no-ops every other rule), so don't bail early when the tracker is known.
