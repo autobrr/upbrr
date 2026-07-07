@@ -222,21 +222,8 @@ func TestResolveOrigin(t *testing.T) {
 	tests := []struct {
 		name     string
 		meta     api.PreparedMetadata
-		fields   map[string]string
 		expected string
 	}{
-		{
-			name:     "BTN autofill origin wins",
-			meta:     api.PreparedMetadata{Scene: true},
-			fields:   map[string]string{"origin": "P2P"},
-			expected: "P2P",
-		},
-		{
-			name:     "invalid BTN autofill origin ignored",
-			meta:     api.PreparedMetadata{Scene: true},
-			fields:   map[string]string{"origin": "Internal"},
-			expected: "Scene",
-		},
 		{
 			name:     "scene metadata",
 			meta:     api.PreparedMetadata{Scene: true},
@@ -284,11 +271,18 @@ func TestResolveOrigin(t *testing.T) {
 			},
 			expected: "P2P",
 		},
+		{
+			name: "none origin for no group tag",
+			meta: api.PreparedMetadata{
+				Release: api.ReleaseInfo{Group: "nogrp"},
+			},
+			expected: "None",
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := resolveOrigin(tc.meta, tc.fields); got != tc.expected {
+			if got := resolveOrigin(tc.meta); got != tc.expected {
 				t.Fatalf("expected origin %q, got %q", tc.expected, got)
 			}
 		})
@@ -759,13 +753,13 @@ func TestBTNUploadPayloadUsesCanonicalSeasonEpisodeOnly(t *testing.T) {
 	if got := resolveUploadType(meta); got != "Season" {
 		t.Fatalf("expected upload type Season without canonical episode, got %q", got)
 	}
-	desc := buildAlbumDesc(meta, map[string]string{"album_desc": "fallback overview"})
-	for _, value := range []string{"Season: 0", "Episode: 0"} {
+	desc := buildAlbumDesc(meta, nil)
+	for _, value := range []string{"[b]Season:[/b] 0", "[b]Episode:[/b] 0"} {
 		if !strings.Contains(desc, value) {
 			t.Fatalf("expected album description to contain %q, got %q", value, desc)
 		}
 	}
-	if strings.Contains(desc, "Season: 4") || strings.Contains(desc, "Episode: 9") {
+	if strings.Contains(desc, "[b]Season:[/b] 4") || strings.Contains(desc, "[b]Episode:[/b] 9") {
 		t.Fatalf("album description used parsed fallback values: %q", desc)
 	}
 	if got := btnTVPayloadMetadataMessage(meta); got != "canonical TV season/episode missing; BTN upload requires TVDB or metadata season/episode ints and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload" {
@@ -862,10 +856,121 @@ func TestBuildAlbumDescFallsBackToIMDBEpisodeMetadata(t *testing.T) {
 		},
 	}
 
-	desc := buildAlbumDesc(meta, map[string]string{"album_desc": "Autofill overview"})
-	for _, value := range []string{"IMDb Episode", "Season: 2", "Episode: 7", "Aired: 2026-03-04", "IMDb overview"} {
+	if desc := buildAlbumDesc(meta, map[string]string{"album_desc": "Autofill overview"}); desc != "Autofill overview" {
+		t.Fatalf("expected BTN autofill album_desc to win, got %q", desc)
+	}
+
+	desc := buildAlbumDesc(meta, nil)
+	for _, value := range []string{"[b]Episode Name:[/b] IMDb Episode", "[b]Season:[/b] 2", "[b]Episode:[/b] 7", "[b]Aired:[/b] 2026-03-04", "[b]Episode overview:[/b]\nIMDb overview"} {
 		if !strings.Contains(desc, value) {
 			t.Fatalf("expected album_desc to contain %q, got %q", value, desc)
+		}
+	}
+}
+
+func TestBuildAlbumDescUsesSingleTVDBEpisodeBlock(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "TV"},
+		SeasonInt:   2,
+		EpisodeInt:  1,
+		ExternalMetadata: api.ExternalMetadata{
+			TVDB: &api.TVDBMetadata{
+				Episodes: []api.TVDBEpisodeMetadata{
+					{
+						SeasonNumber:    2,
+						EpisodeNumber:   1,
+						EpisodeName:     "Example Episode One",
+						EpisodeOverview: "Example overview one.",
+						EpisodeAired:    "2026-04-23",
+						EpisodeImage:    "https://img.example/tvdb-episode-1.jpg",
+					},
+					{
+						SeasonNumber:    2,
+						EpisodeNumber:   2,
+						EpisodeName:     "Example Episode Two",
+						EpisodeOverview: "Example overview two.",
+						EpisodeAired:    "2026-04-30",
+						EpisodeImage:    "https://img.example/tvdb-episode-2.jpg",
+					},
+				},
+			},
+		},
+	}
+
+	desc := buildAlbumDesc(meta, nil)
+	want := "[b]Episode Name:[/b] Example Episode One\n" +
+		"[b]Season:[/b] 2\n" +
+		"[b]Episode:[/b] 1\n" +
+		"[b]Aired:[/b] 2026-04-23\n\n" +
+		"[b]Episode overview:[/b]\n" +
+		"Example overview one.\n\n" +
+		"[b]Episode image:[/b]\n" +
+		"[img=https://img.example/tvdb-episode-1.jpg]"
+	if desc != want {
+		t.Fatalf("unexpected single episode album_desc:\n%s", desc)
+	}
+	if strings.Contains(desc, "Example Episode Two") {
+		t.Fatalf("single episode album_desc included another episode: %q", desc)
+	}
+}
+
+func TestBuildAlbumDescUsesTVDBSeasonEpisodeBlocks(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "TV"},
+		SeasonInt:   2,
+		TVPack:      true,
+		ExternalMetadata: api.ExternalMetadata{
+			TVDB: &api.TVDBMetadata{
+				Episodes: []api.TVDBEpisodeMetadata{
+					{
+						SeasonNumber:    2,
+						EpisodeNumber:   2,
+						EpisodeName:     "Example Episode Two",
+						EpisodeOverview: "Example overview two.",
+						EpisodeAired:    "2026-04-30",
+						EpisodeImage:    "https://img.example/tvdb-episode-2.jpg",
+					},
+					{
+						SeasonNumber:    1,
+						EpisodeNumber:   1,
+						EpisodeName:     "Wrong Season",
+						EpisodeOverview: "Wrong season overview.",
+						EpisodeAired:    "2025-04-23",
+					},
+					{
+						SeasonNumber:    2,
+						EpisodeNumber:   1,
+						EpisodeName:     "Example Episode One",
+						EpisodeOverview: "Example overview one.",
+						EpisodeAired:    "2026-04-23",
+						EpisodeImage:    "https://img.example/tvdb-episode-1.jpg",
+					},
+				},
+			},
+		},
+	}
+
+	desc := buildAlbumDesc(meta, nil)
+	if strings.Contains(desc, "Wrong Season") {
+		t.Fatalf("season pack album_desc included another season: %q", desc)
+	}
+	first := strings.Index(desc, "Example Episode One")
+	second := strings.Index(desc, "Example Episode Two")
+	if first < 0 || second < 0 || first > second {
+		t.Fatalf("season pack album_desc did not include sorted season episodes: %q", desc)
+	}
+	for _, value := range []string{
+		"[b]Episode Name:[/b] Example Episode One",
+		"[b]Episode image:[/b]\n[img=https://img.example/tvdb-episode-1.jpg]",
+		"[b]Episode Name:[/b] Example Episode Two",
+		"[b]Episode image:[/b]\n[img=https://img.example/tvdb-episode-2.jpg]",
+	} {
+		if !strings.Contains(desc, value) {
+			t.Fatalf("expected season pack album_desc to contain %q, got %q", value, desc)
 		}
 	}
 }

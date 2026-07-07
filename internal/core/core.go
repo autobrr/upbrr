@@ -3582,6 +3582,7 @@ func deepCopyTVDBMetadata(metadata *api.TVDBMetadata) *api.TVDBMetadata {
 	}
 	cloned := *metadata
 	cloned.Aliases = append([]string(nil), metadata.Aliases...)
+	cloned.Episodes = append([]api.TVDBEpisodeMetadata(nil), metadata.Episodes...)
 	return &cloned
 }
 

@@ -11,6 +11,7 @@ import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
 import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import type {
   MetadataPreview,
+  TrackerDryRunFile,
   TrackerDryRunPreview,
   TrackerUploadItem,
   TrackerUploadSnapshot,
@@ -69,6 +70,116 @@ const blockReasonClass =
   "inline-flex h-5 items-center rounded border border-red-400/30 bg-red-500/10 px-1.5 text-[11px] font-semibold leading-none text-red-700 dark:text-red-100";
 const formatStatusText = (value: string) => value.replaceAll("_", " ");
 const trimName = (value: unknown) => String(value || "").trim();
+const dryRunPayloadPreviewLimit = 240;
+
+const sensitiveDryRunPayloadKeys = new Set([
+  "anticsrftoken",
+  "accesstoken",
+  "apikey",
+  "apitoken",
+  "auth",
+  "authorization",
+  "authkey",
+  "authtoken",
+  "cookie",
+  "csrf",
+  "email",
+  "infohash",
+  "key",
+  "passkey",
+  "password",
+  "passwordconfirm",
+  "passwordconfirmation",
+  "popcron",
+  "refreshtoken",
+  "rsskey",
+  "secret",
+  "secretkey",
+  "sessionkey",
+  "sessiontoken",
+  "token",
+  "torrentpass",
+  "torrentpasskey",
+  "uid",
+  "user",
+  "userid",
+  "username",
+]);
+
+const normalizedDryRunPayloadKey = (key: string) => key.trim().toLowerCase();
+
+const normalizedSensitiveDryRunPayloadKey = (key: string) =>
+  key
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+
+const isSensitiveDryRunPayloadField = (key: string) =>
+  sensitiveDryRunPayloadKeys.has(normalizedSensitiveDryRunPayloadKey(key));
+
+const isDryRunBodyPayloadField = (key: string) =>
+  new Set([
+    "description",
+    "desc",
+    "descr",
+    "release_desc",
+    "album_desc",
+    "mediainfo",
+    "mediainfo[]",
+    "media_info",
+    "bdinfo",
+    "bd_info",
+    "techinfo",
+    "technical_info",
+    "technicaldetails",
+  ]).has(normalizedDryRunPayloadKey(key));
+
+const redactDryRunSecretFragments = (value: string) =>
+  value
+    .replace(/([?&])([^=&#\s]+)=([^&#\s]*)/g, (match, separator, key) =>
+      isSensitiveDryRunPayloadField(String(key)) ? `${separator}${key}=[REDACTED]` : match,
+    )
+    .replace(
+      /(^|[\s,{])([A-Za-z][A-Za-z0-9_-]*(?:key|token|pass|password|cookie|auth|secret|csrf|uid|user))\s*[:=]\s*[^\s,;}]+/gi,
+      (_match, prefix, key) =>
+        isSensitiveDryRunPayloadField(String(key)) ? `${prefix}${key}=[REDACTED]` : _match,
+    );
+
+const summarizeDryRunBody = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const lines = trimmed.split(/\r\n|\r|\n/).length;
+  return `[${trimmed.length} bytes, ${lines} lines omitted]`;
+};
+
+const formatDryRunPayloadValue = (key: string, value: unknown) => {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return "";
+  if (isSensitiveDryRunPayloadField(key)) return "[REDACTED]";
+
+  const redacted = redactDryRunSecretFragments(trimmed);
+  if (isDryRunBodyPayloadField(key)) return summarizeDryRunBody(redacted);
+
+  const compact = redacted.replace(/\s+/g, " ");
+  if (compact.length <= dryRunPayloadPreviewLimit) return compact;
+  return `${compact.slice(0, dryRunPayloadPreviewLimit)}... [${redacted.length} bytes total]`;
+};
+
+const formatDryRunFilePath = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return "(none)";
+
+  const normalized = trimmed.replaceAll("\\", "/").toLowerCase();
+  const original = trimmed.replaceAll("\\", "/");
+  for (const marker of [".upbrr/tmp/", ".upbrr/cache/", ".upbrr/logs/"]) {
+    if (normalized.startsWith(marker)) return original;
+    const index = normalized.indexOf(`/${marker}`);
+    if (index >= 0) return original.slice(index + 1);
+  }
+  return "[local path]";
+};
+
+const dryRunFileKey = (file: TrackerDryRunFile) => `${file.Field}-${file.Path}`;
 
 export default function TrackerUploadPage(props: Readonly<Props>) {
   const {
@@ -637,15 +748,61 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                         {dryRun.Endpoint ? (
                           <div>
                             <p className="label">Endpoint</p>
-                            <p className="value mono">{dryRun.Endpoint}</p>
+                            <p className="value mono">
+                              {formatDryRunPayloadValue("endpoint", dryRun.Endpoint)}
+                            </p>
+                          </div>
+                        ) : null}
+                        {dryRun.DebugSections?.length ? (
+                          <div className="grid gap-1.5">
+                            <p className="label">Debug sections</p>
+                            {dryRun.DebugSections.map((section, sectionIndex) => (
+                              <div
+                                className={subtleBox}
+                                key={`${section.Title || "debug"}-${sectionIndex}`}
+                              >
+                                <p className="label">{section.Title || "Debug section"}</p>
+                                {section.Endpoint ? (
+                                  <p className="value mono">
+                                    {formatDryRunPayloadValue("endpoint", section.Endpoint)}
+                                  </p>
+                                ) : null}
+                                {section.Files?.length ? (
+                                  <div className="mt-1 grid gap-1">
+                                    {section.Files.map((file) => (
+                                      <div key={dryRunFileKey(file)}>
+                                        <p className="label">File · {file.Field}</p>
+                                        <p className="value mono">
+                                          {formatDryRunFilePath(file.Path)}
+                                        </p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : null}
+                                {Object.keys(section.Payload || {}).length ? (
+                                  <div className="mt-1 grid gap-1">
+                                    {Object.entries(section.Payload)
+                                      .sort(([left], [right]) => left.localeCompare(right))
+                                      .map(([key, value]) => (
+                                        <div key={key}>
+                                          <p className="label">{key}</p>
+                                          <p className="value mono">
+                                            {formatDryRunPayloadValue(key, value)}
+                                          </p>
+                                        </div>
+                                      ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ))}
                           </div>
                         ) : null}
                         {dryRun.Files?.length ? (
                           <div className="grid gap-1.5">
                             {dryRun.Files.map((file) => (
-                              <div className={subtleBox} key={`${file.Field}-${file.Path}`}>
+                              <div className={subtleBox} key={dryRunFileKey(file)}>
                                 <p className="label">File · {file.Field}</p>
-                                <p className="value mono">{file.Path || "(missing)"}</p>
+                                <p className="value mono">{formatDryRunFilePath(file.Path)}</p>
                               </div>
                             ))}
                           </div>
@@ -657,7 +814,9 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                               .map(([key, value]) => (
                                 <div className={subtleBox} key={key}>
                                   <p className="label">{key}</p>
-                                  <p className="value mono">{String(value)}</p>
+                                  <p className="value mono">
+                                    {formatDryRunPayloadValue(key, value)}
+                                  </p>
                                 </div>
                               ))}
                           </div>

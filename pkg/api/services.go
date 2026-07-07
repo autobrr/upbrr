@@ -619,6 +619,24 @@ type IMDBSeasonSummary struct {
 	YearRange string
 }
 
+// TVDBEpisodeMetadata stores one TVDB episode entry for tracker payloads that
+// need single-episode or season-pack episode descriptions.
+type TVDBEpisodeMetadata struct {
+	ID                     int
+	SeasonNumber           int
+	EpisodeNumber          int
+	EpisodeName            string
+	EpisodeNameEnglish     string
+	EpisodeOverview        string
+	EpisodeOverviewEnglish string
+	// EpisodeAired is the TVDB air date string used in tracker descriptions.
+	EpisodeAired string
+	// EpisodeImage is the TVDB episode image URL when the API returned one.
+	EpisodeImage string
+}
+
+// TVDBMetadata stores TVDB series metadata plus the selected episode and any
+// episode list fetched for the selected season.
 type TVDBMetadata struct {
 	TVDBID          int
 	Name            string
@@ -649,6 +667,11 @@ type TVDBMetadata struct {
 	EpisodeOverview        string
 	EpisodeOverviewEnglish string
 	EpisodeAired           string
+	// EpisodeImage is the selected episode image URL when the API returned one.
+	EpisodeImage string
+	// Episodes contains fetched TVDB episode entries, usually the season needed
+	// by a season-pack upload.
+	Episodes []TVDBEpisodeMetadata
 }
 
 type TVmazeMetadata struct {

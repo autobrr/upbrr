@@ -29,13 +29,14 @@ type TrackerAuthStatus struct {
 	CookieCount int    `json:"cookieCount"`
 	// LastCheckedAt is an RFC3339 UTC timestamp generated when the status is evaluated.
 	LastCheckedAt string `json:"lastCheckedAt"`
-	// LastError contains redacted failure text when a local or remote auth check failed.
+	// LastError contains redacted failure detail when a local or remote auth check failed; consumers should display it with Message when distinct.
 	LastError        string `json:"lastError"`
 	EncryptedStorage bool   `json:"encryptedStorage"`
 	Needs2FA         bool   `json:"needs2FA"`
 	// ChallengeID is an opaque manual-2FA continuation token; it is empty unless Needs2FA is true.
 	ChallengeID string `json:"challengeID"`
-	Message     string `json:"message"`
+	// Message contains the stable user-facing status summary or next step.
+	Message string `json:"message"`
 }
 
 // TrackerAuthLoginRequest carries optional login data for tracker auth flows.

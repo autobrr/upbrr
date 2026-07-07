@@ -570,15 +570,33 @@ func cliTrackerAuthReady(status api.TrackerAuthStatus) bool {
 	}
 }
 
-// cliTrackerAuthStatusMessage selects and redacts the safest user-visible status
-// detail available for CLI prompts and errors.
+// cliTrackerAuthStatusMessage renders the tracker auth status display contract:
+// Message is the stable summary and LastError is redacted detail displayed when
+// distinct, matching GUI/web auth cards.
 func cliTrackerAuthStatusMessage(status api.TrackerAuthStatus) string {
-	for _, value := range []string{status.Message, status.LastError, status.State} {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return cliAuthLogField(trimmed)
-		}
+	message := cliTrackerAuthDisplayField(status.Message)
+	detail := cliTrackerAuthDisplayField(status.LastError)
+	if message != "" && detail != "" && !strings.EqualFold(message, detail) {
+		return message + ": " + detail
+	}
+	if message != "" {
+		return message
+	}
+	if detail != "" {
+		return detail
+	}
+	if state := cliTrackerAuthDisplayField(status.State); state != "" {
+		return state
 	}
 	return "auth not ready"
+}
+
+func cliTrackerAuthDisplayField(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	return redaction.RedactValue(trimmed, nil)
 }
 
 func matchedPreviewTrackers(preview api.MetadataPreview) []string {
@@ -1474,29 +1492,67 @@ func printDryRunDetails(entry api.TrackerDryRunEntry) {
 // writeDryRunDetails writes redacted dry-run files, payload fields, and
 // description summaries to an arbitrary writer.
 func writeDryRunDetails(w io.Writer, entry api.TrackerDryRunEntry) {
-	if len(entry.Files) > 0 {
-		fmt.Fprintln(w, "Files:")
-		for _, file := range entry.Files {
-			status := "missing"
-			if file.Present {
-				status = "present"
-			}
-			fmt.Fprintf(w, "- %s [%s]: %s\n", file.Field, status, formatDryRunFilePath(file.Path))
+	if len(entry.DebugSections) > 0 {
+		writeDryRunDebugSections(w, entry.DebugSections)
+	} else {
+		if len(entry.Files) > 0 {
+			writeDryRunFiles(w, entry.Files)
 		}
-	}
-	if len(entry.Payload) > 0 {
-		fmt.Fprintln(w, "Payload:")
-		keys := make([]string, 0, len(entry.Payload))
-		for key := range entry.Payload {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			fmt.Fprintf(w, "- %s: %s\n", key, formatDryRunPayloadValue(key, entry.Payload[key]))
+		if len(entry.Payload) > 0 {
+			writeDryRunPayload(w, entry.Payload)
 		}
 	}
 	if message := strings.TrimSpace(entry.Description); message != "" && !payloadIncludesDescription(entry.Payload) {
 		fmt.Fprintf(w, "Description: %s\n", summarizeDryRunBody(message))
+	}
+}
+
+// writeDryRunDebugSections renders staged tracker diagnostics instead of the
+// top-level dry-run payload so debug output can show intermediate request data
+// without duplicating the final payload.
+func writeDryRunDebugSections(w io.Writer, sections []api.TrackerDryRunDebugSection) {
+	if len(sections) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "Debug sections:")
+	for _, section := range sections {
+		title := strings.TrimSpace(section.Title)
+		if title == "" {
+			title = "debug section"
+		}
+		fmt.Fprintf(w, "%s:\n", title)
+		if endpoint := strings.TrimSpace(section.Endpoint); endpoint != "" {
+			fmt.Fprintf(w, "Endpoint: %s\n", formatDryRunPayloadValue("endpoint", endpoint))
+		}
+		if len(section.Files) > 0 {
+			writeDryRunFiles(w, section.Files)
+		}
+		if len(section.Payload) > 0 {
+			writeDryRunPayload(w, section.Payload)
+		}
+	}
+}
+
+func writeDryRunFiles(w io.Writer, files []api.TrackerDryRunFile) {
+	fmt.Fprintln(w, "Files:")
+	for _, file := range files {
+		status := "missing"
+		if file.Present {
+			status = "present"
+		}
+		fmt.Fprintf(w, "- %s [%s]: %s\n", file.Field, status, formatDryRunFilePath(file.Path))
+	}
+}
+
+func writeDryRunPayload(w io.Writer, payload map[string]string) {
+	fmt.Fprintln(w, "Payload:")
+	keys := make([]string, 0, len(payload))
+	for key := range payload {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fmt.Fprintf(w, "- %s: %s\n", key, formatDryRunPayloadValue(key, payload[key]))
 	}
 }
 

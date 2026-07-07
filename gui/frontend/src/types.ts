@@ -235,6 +235,25 @@ export type TVDBMetadata = {
   EpisodeOverview: string;
   EpisodeOverviewEnglish: string;
   EpisodeAired: string;
+  /** Selected episode image URL when TVDB returned one. */
+  EpisodeImage: string;
+  /** Fetched TVDB episode entries, usually for the selected season. */
+  Episodes: TVDBEpisodeMetadata[];
+};
+
+/** One TVDB episode entry used by tracker descriptions. */
+export type TVDBEpisodeMetadata = {
+  ID: number;
+  SeasonNumber: number;
+  EpisodeNumber: number;
+  EpisodeName: string;
+  EpisodeNameEnglish: string;
+  EpisodeOverview: string;
+  EpisodeOverviewEnglish: string;
+  /** TVDB air date string used in tracker descriptions. */
+  EpisodeAired: string;
+  /** Episode image URL when TVDB returned one. */
+  EpisodeImage: string;
 };
 
 export type TVmazeMetadata = {
@@ -317,12 +336,13 @@ export type TrackerAuthStatus = {
   cookieCount: number;
   /** RFC3339 UTC timestamp generated when the backend evaluated the status. */
   lastCheckedAt: string;
-  /** Redacted failure text from the most recent local or remote auth check. */
+  /** Redacted failure detail from the most recent local or remote auth check. */
   lastError: string;
   encryptedStorage: boolean;
   needs2FA: boolean;
   /** Opaque manual-2FA continuation token; empty unless needs2FA is true. */
   challengeID: string;
+  /** Stable user-facing status summary or next step. */
   message: string;
 };
 
@@ -886,8 +906,18 @@ export type TrackerDryRunEntry = {
   Endpoint: string;
   Payload: Record<string, string>;
   Files: TrackerDryRunFile[];
+  /** Optional staged diagnostics for trackers that expose intermediate dry-run payloads. */
+  DebugSections?: TrackerDryRunDebugSection[] | null;
   Questionnaire?: TrackerQuestionnaire | null;
   ImageHost: ImageHostFeedback;
+};
+
+/** One named diagnostic payload rendered inside a tracker dry-run preview. */
+export type TrackerDryRunDebugSection = {
+  Title: string;
+  Endpoint: string;
+  Payload: Record<string, string>;
+  Files: TrackerDryRunFile[];
 };
 
 export type TrackerDryRunPreview = {

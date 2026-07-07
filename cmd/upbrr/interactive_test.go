@@ -723,6 +723,27 @@ func TestCLITrackerAuthStatusMessageRedactsUserVisibleStatusText(t *testing.T) {
 	}
 }
 
+func TestCLITrackerAuthStatusMessageIncludesDistinctFailureDetail(t *testing.T) {
+	t.Parallel()
+
+	got := cliTrackerAuthStatusMessage(api.TrackerAuthStatus{
+		Message:   "stored session expired or invalid",
+		LastError: `remote validation failed: {"api_key":"secret-token"}`,
+	})
+	if !strings.Contains(got, "stored session expired or invalid") {
+		t.Fatal("status message omitted auth summary")
+	}
+	if !strings.Contains(got, "remote validation failed") {
+		t.Fatal("status message omitted auth failure detail")
+	}
+	if strings.Contains(got, "secret-token") {
+		t.Fatal("status message leaked secret")
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Fatal("status message omitted redaction marker")
+	}
+}
+
 func TestEnsureCLITrackerAuthBeforeDupeCheckPromptsForManual2FA(t *testing.T) {
 	t.Parallel()
 
