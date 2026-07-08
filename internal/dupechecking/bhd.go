@@ -25,14 +25,14 @@ func (h bhdHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 	if !ok {
 		return nil, []string{noteSkip("missing api_key for tracker")}, nil
 	}
-	tmdbID := resolveSearchTMDBID(meta)
+	tmdbID := meta.ExternalIDs.TMDBID
 	imdbID := imdbForLookup(meta)
 	if tmdbID == 0 && imdbID == "" {
 		return nil, []string{noteSkip("missing tmdb/imdb id for BHD dupe search")}, nil
 	}
 	category := "Movies"
 	tmdbPrefix := "movie"
-	if strings.EqualFold(resolveSearchCategory(meta), "TV") {
+	if strings.EqualFold(meta.ExternalIDs.Category, "TV") {
 		category = "TV"
 		tmdbPrefix = "tv"
 	}

@@ -46,11 +46,6 @@ type uploadState struct {
 	fields      map[string]string
 }
 
-type uploadIdentity struct {
-	tmdbID   int
-	category string
-}
-
 func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
 	state, err := prepareUploadState(ctx, req)
 	if err != nil {
@@ -148,8 +143,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	if strings.TrimSpace(req.TrackerConfig.APIKey) == "" {
 		return uploadState{}, errors.New("trackers: BHD missing api_key; configure the BHD api_key in tracker settings before uploading")
 	}
-	identity := resolveUploadIdentity(req.Meta)
-	if identity.tmdbID == 0 {
+	if req.Meta.ExternalIDs.TMDBID == 0 {
 		return uploadState{}, errors.New("trackers: BHD missing tmdb id; refresh metadata or set a TMDB id before uploading")
 	}
 	if err := validateBHDContainer(req.Meta); err != nil {
@@ -185,11 +179,11 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}
 	fields := map[string]string{
 		"name":        resolveUploadName(req.Meta),
-		"category_id": resolveCategoryID(identity.category),
+		"category_id": resolveCategoryID(req.Meta),
 		"type":        resolveType(req.Meta),
 		"source":      source,
 		"imdb_id":     resolveIMDbID(req.Meta),
-		"tmdb_id":     resolveTMDBID(identity),
+		"tmdb_id":     resolveTMDBID(req.Meta),
 		"description": description,
 		"anon":        resolveAnon(req.TrackerConfig),
 		"sd":          boolFlag(isSD(req.Meta)),
@@ -405,73 +399,22 @@ func resolveUploadName(meta api.PreparedMetadata) string {
 	return strings.ReplaceAll(name, "DD+", "DDP")
 }
 
-func resolveUploadIdentity(meta api.PreparedMetadata) uploadIdentity {
-	if meta.ExternalMetadata.TMDB != nil &&
-		strings.EqualFold(strings.TrimSpace(meta.ExternalMetadata.SourcePath), strings.TrimSpace(meta.SourcePath)) &&
-		meta.ExternalMetadata.TMDB.TMDBID != 0 {
-		return uploadIdentity{
-			tmdbID:   meta.ExternalMetadata.TMDB.TMDBID,
-			category: firstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Category, meta.MediaInfoCategory, meta.Release.Category),
-		}
-	}
-	if meta.ExternalIDs.TMDBID != 0 && externalIDsMatchCurrentSource(meta) {
-		return uploadIdentity{
-			tmdbID:   meta.ExternalIDs.TMDBID,
-			category: firstNonEmptyTrimmed(meta.ExternalIDs.Category, meta.MediaInfoCategory, meta.Release.Category),
-		}
-	}
-	if meta.MediaInfoTMDBID != 0 {
-		return uploadIdentity{
-			tmdbID:   meta.MediaInfoTMDBID,
-			category: firstNonEmptyTrimmed(meta.MediaInfoCategory, meta.Release.Category, meta.ExternalIDs.Category),
-		}
-	}
-	if meta.SceneTMDBID != 0 {
-		return uploadIdentity{
-			tmdbID:   meta.SceneTMDBID,
-			category: firstNonEmptyTrimmed(meta.MediaInfoCategory, meta.Release.Category, meta.ExternalIDs.Category),
-		}
-	}
-	if meta.ArrTMDBID != 0 {
-		return uploadIdentity{
-			tmdbID:   meta.ArrTMDBID,
-			category: firstNonEmptyTrimmed(meta.MediaInfoCategory, meta.Release.Category, meta.ExternalIDs.Category),
-		}
-	}
-	return uploadIdentity{}
-}
-
-func externalIDsMatchCurrentSource(meta api.PreparedMetadata) bool {
-	storedSource := strings.TrimSpace(meta.ExternalIDs.SourcePath)
-	return storedSource == "" || strings.EqualFold(storedSource, strings.TrimSpace(meta.SourcePath))
-}
-
-func firstNonEmptyTrimmed(candidates ...string) string {
-	for _, candidate := range candidates {
-		trimmed := strings.TrimSpace(candidate)
-		if trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
-}
-
-func resolveCategoryID(category string) string {
-	if strings.EqualFold(strings.TrimSpace(category), "TV") {
+func resolveCategoryID(meta api.PreparedMetadata) string {
+	if strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") {
 		return "2"
 	}
 	return "1"
 }
 
-func resolveTMDBID(identity uploadIdentity) string {
-	if identity.tmdbID == 0 {
+func resolveTMDBID(meta api.PreparedMetadata) string {
+	if meta.ExternalIDs.TMDBID == 0 {
 		return ""
 	}
 	prefix := "movie"
-	if strings.EqualFold(resolveCategoryID(identity.category), "2") {
+	if strings.EqualFold(resolveCategoryID(meta), "2") {
 		prefix = "tv"
 	}
-	return fmt.Sprintf("%s/%d", prefix, identity.tmdbID)
+	return fmt.Sprintf("%s/%d", prefix, meta.ExternalIDs.TMDBID)
 }
 
 func validateBHDContainer(meta api.PreparedMetadata) error {
@@ -565,25 +508,8 @@ func resolveTags(meta api.PreparedMetadata) []string {
 }
 
 func resolveIMDbID(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.IMDB != nil && strings.EqualFold(strings.TrimSpace(meta.ExternalMetadata.SourcePath), strings.TrimSpace(meta.SourcePath)) {
-		if id := strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbIDText); id != "" {
-			return id
-		}
-		if meta.ExternalMetadata.IMDB.IMDBID > 0 {
-			return fmt.Sprintf("tt%07d", meta.ExternalMetadata.IMDB.IMDBID)
-		}
-	}
 	if meta.ExternalIDs.IMDBID > 0 {
 		return fmt.Sprintf("tt%07d", meta.ExternalIDs.IMDBID)
-	}
-	if meta.MediaInfoIMDBID > 0 {
-		return fmt.Sprintf("tt%07d", meta.MediaInfoIMDBID)
-	}
-	if meta.SceneIMDB > 0 {
-		return fmt.Sprintf("tt%07d", meta.SceneIMDB)
-	}
-	if meta.ArrIMDBID > 0 {
-		return fmt.Sprintf("tt%07d", meta.ArrIMDBID)
 	}
 	return "1"
 }

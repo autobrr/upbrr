@@ -15,7 +15,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestBHDSearchUsesResolvedTMDBFallbacks(t *testing.T) {
+func TestBHDSearchUsesExternalIDs(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -29,48 +29,24 @@ func TestBHDSearchUsesResolvedTMDBFallbacks(t *testing.T) {
 		wantNilCat   bool
 	}{
 		{
-			name: "source current external metadata",
+			name: "tv tmdb id",
 			meta: api.PreparedMetadata{
-				SourcePath: "source",
-				Release:    api.ReleaseInfo{Resolution: "1080p"},
-				ExternalMetadata: api.ExternalMetadata{
-					SourcePath: "source",
-					TMDB:       &api.TMDBMetadata{TMDBID: 123, Category: "TV"},
-				},
+				SourcePath:  "source",
+				ExternalIDs: api.ExternalIDs{TMDBID: 123, Category: "TV"},
+				Release:     api.ReleaseInfo{Resolution: "1080p"},
 			},
 			wantTMDBID:   "tv/123",
 			wantCategory: "TV",
 			wantType:     "1080p",
 		},
 		{
-			name: "current tv external metadata overrides stale movie category",
+			name: "movie tmdb id",
 			meta: api.PreparedMetadata{
-				SourcePath:        "source",
-				ExternalIDs:       api.ExternalIDs{SourcePath: "other", TMDBID: 999, Category: "MOVIE"},
-				MediaInfoCategory: "MOVIE",
-				Release:           api.ReleaseInfo{Category: "MOVIE", Resolution: "1080p"},
-				ExternalMetadata: api.ExternalMetadata{
-					SourcePath: "source",
-					TMDB:       &api.TMDBMetadata{TMDBID: 234, Category: "TV"},
-				},
+				SourcePath:  "source",
+				ExternalIDs: api.ExternalIDs{TMDBID: 234, Category: "MOVIE"},
+				Release:     api.ReleaseInfo{Resolution: "1080p"},
 			},
-			wantTMDBID:   "tv/234",
-			wantCategory: "TV",
-			wantType:     "1080p",
-		},
-		{
-			name: "current movie external metadata overrides stale tv category",
-			meta: api.PreparedMetadata{
-				SourcePath:        "source",
-				ExternalIDs:       api.ExternalIDs{SourcePath: "other", TMDBID: 999, Category: "TV"},
-				MediaInfoCategory: "TV",
-				Release:           api.ReleaseInfo{Category: "TV", Resolution: "1080p"},
-				ExternalMetadata: api.ExternalMetadata{
-					SourcePath: "source",
-					TMDB:       &api.TMDBMetadata{TMDBID: 345, Category: "MOVIE"},
-				},
-			},
-			wantTMDBID:   "movie/345",
+			wantTMDBID:   "movie/234",
 			wantCategory: "Movies",
 			wantType:     "1080p",
 		},
@@ -86,30 +62,7 @@ func TestBHDSearchUsesResolvedTMDBFallbacks(t *testing.T) {
 			wantType:     "2160p",
 		},
 		{
-			name: "mediainfo id",
-			meta: api.PreparedMetadata{
-				SourcePath:        "source",
-				MediaInfoTMDBID:   234,
-				MediaInfoCategory: "TV",
-				Release:           api.ReleaseInfo{Resolution: "720p"},
-			},
-			wantTMDBID:   "tv/234",
-			wantCategory: "TV",
-			wantType:     "720p",
-		},
-		{
-			name: "arr id",
-			meta: api.PreparedMetadata{
-				SourcePath: "source",
-				ArrTMDBID:  345,
-				Release:    api.ReleaseInfo{Resolution: "1080i"},
-			},
-			wantTMDBID:   "movie/345",
-			wantCategory: "Movies",
-			wantType:     "1080i",
-		},
-		{
-			name: "imdb fallback",
+			name: "imdb id",
 			meta: api.PreparedMetadata{
 				SourcePath:  "source",
 				ExternalIDs: api.ExternalIDs{IMDBID: 1234567, Category: "MOVIE"},
@@ -117,18 +70,6 @@ func TestBHDSearchUsesResolvedTMDBFallbacks(t *testing.T) {
 			},
 			wantIMDBID:   "tt1234567",
 			wantCategory: "Movies",
-			wantType:     "1080p",
-		},
-		{
-			name: "mediainfo imdb fallback",
-			meta: api.PreparedMetadata{
-				SourcePath:        "source",
-				MediaInfoIMDBID:   7654321,
-				MediaInfoCategory: "TV",
-				Release:           api.ReleaseInfo{Resolution: "1080p"},
-			},
-			wantIMDBID:   "tt7654321",
-			wantCategory: "TV",
 			wantType:     "1080p",
 		},
 		{
@@ -215,21 +156,5 @@ func TestBHDSearchUsesResolvedTMDBFallbacks(t *testing.T) {
 				t.Fatalf("expected type %q, got %q", tc.wantType, got)
 			}
 		})
-	}
-}
-
-func TestResolveSearchTMDBIDIgnoresStaleExternalMetadata(t *testing.T) {
-	t.Parallel()
-
-	meta := api.PreparedMetadata{
-		SourcePath: "source",
-		ExternalMetadata: api.ExternalMetadata{
-			SourcePath: "other",
-			TMDB:       &api.TMDBMetadata{TMDBID: 123},
-		},
-	}
-
-	if got := resolveSearchTMDBID(meta); got != 0 {
-		t.Fatalf("expected stale external metadata to be ignored, got %d", got)
 	}
 }
