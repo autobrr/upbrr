@@ -268,7 +268,7 @@ func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, quer
 }
 
 func normalizeIMDbRemote(value string) string {
-	trimmed := strings.TrimSpace(value)
+	trimmed := strings.ToLower(strings.TrimSpace(value))
 	if trimmed == "" || trimmed == "0" {
 		return ""
 	}

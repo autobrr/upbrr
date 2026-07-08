@@ -4653,7 +4653,7 @@ func buildExternalPreviews(ids api.ExternalIDs, metadata api.ExternalMetadata) [
 			preview.ReleaseDate = metadata.AniList.StartDate
 			preview.FirstAirDate = metadata.AniList.StartDate
 			preview.LastAirDate = metadata.AniList.EndDate
-			preview.OriginalLanguage = metadata.AniList.CountryOfOrigin
+			preview.OriginalLanguage = anilistPreviewOriginalLanguage(metadata.AniList)
 			preview.TMDBType = metadata.AniList.Format
 			preview.Runtime = metadata.AniList.Duration
 			preview.Genres = strings.Join(metadata.AniList.Genres, ", ")
@@ -4664,6 +4664,18 @@ func buildExternalPreviews(ids api.ExternalIDs, metadata api.ExternalMetadata) [
 		result = append(result, preview)
 	}
 	return result
+}
+
+func anilistPreviewOriginalLanguage(metadata *api.AniListMetadata) string {
+	if metadata == nil {
+		return ""
+	}
+	for _, link := range metadata.ExternalLinks {
+		if language := strings.TrimSpace(link.Language); language != "" {
+			return language
+		}
+	}
+	return ""
 }
 
 // firstNonEmpty returns the first non-blank value after trimming whitespace.

@@ -135,23 +135,27 @@ func TestBuildMetadataPreviewMapsAniListRichData(t *testing.T) {
 		},
 		ExternalMetadata: api.ExternalMetadata{
 			AniList: &api.AniListMetadata{
-				AniListID:    1,
-				MALID:        5114,
-				SiteURL:      "https://anilist.co/anime/1",
-				TitleEnglish: "Example Anime",
-				TitleRomaji:  "Example Anime Romaji",
-				Description:  "Anime overview",
-				Format:       "TV",
-				Status:       "FINISHED",
-				StartDate:    "2026-04-01",
-				SeasonYear:   2026,
-				Episodes:     12,
-				Duration:     24,
-				CoverLarge:   "https://img.example/anilist-cover.jpg",
-				BannerImage:  "https://img.example/anilist-banner.jpg",
-				Genres:       []string{"Action", "Drama"},
-				AverageScore: 82,
-				Popularity:   12345,
+				AniListID:       1,
+				MALID:           5114,
+				SiteURL:         "https://anilist.co/anime/1",
+				TitleEnglish:    "Example Anime",
+				TitleRomaji:     "Example Anime Romaji",
+				Description:     "Anime overview",
+				Format:          "TV",
+				Status:          "FINISHED",
+				StartDate:       "2026-04-01",
+				SeasonYear:      2026,
+				Episodes:        12,
+				Duration:        24,
+				CoverLarge:      "https://img.example/anilist-cover.jpg",
+				BannerImage:     "https://img.example/anilist-banner.jpg",
+				Genres:          []string{"Action", "Drama"},
+				AverageScore:    82,
+				Popularity:      12345,
+				CountryOfOrigin: "JP",
+				ExternalLinks: []api.AniListExternalLink{
+					{Site: "Official", URL: "https://example.invalid/anime", Language: "ja"},
+				},
 			},
 			UpdatedAt: updatedAt,
 		},
@@ -185,6 +189,12 @@ func TestBuildMetadataPreviewMapsAniListRichData(t *testing.T) {
 	}
 	if item.Genres != "Action, Drama" || item.Rating != 8.2 || item.RatingCount != 12345 {
 		t.Fatalf("expected anilist genres/rating, got %#v", item)
+	}
+	if item.OriginalLanguage != "ja" {
+		t.Fatalf("expected anilist preview original language from link language, got %q", item.OriginalLanguage)
+	}
+	if item.AniList.CountryOfOrigin != "JP" {
+		t.Fatalf("expected country of origin preserved only on nested anilist metadata, got %q", item.AniList.CountryOfOrigin)
 	}
 }
 

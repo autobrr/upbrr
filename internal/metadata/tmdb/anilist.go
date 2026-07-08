@@ -127,7 +127,6 @@ func (c *Client) FetchAniListMetadata(ctx context.Context, malID int) (AniListMe
 		return AniListMetadataResult{}, fmt.Errorf("anilist: marshal metadata payload: %w", err)
 	}
 
-	var lastErr error
 	for attempt := range anilistRetryCount {
 		response, err := c.doAniListMetadata(ctx, body)
 		if err == nil {
@@ -145,13 +144,9 @@ func (c *Client) FetchAniListMetadata(ctx context.Context, malID int) (AniListMe
 		if !isRetryableAniListError(err) || attempt == anilistRetryCount-1 {
 			return AniListMetadataResult{}, err
 		}
-		lastErr = err
 		if c.logger != nil {
 			c.logger.Warnf("tmdb: anilist metadata request timed out for mal=%d, retrying (%d/%d)", malID, attempt+2, anilistRetryCount)
 		}
-	}
-	if lastErr != nil {
-		return AniListMetadataResult{}, lastErr
 	}
 	return AniListMetadataResult{}, nil
 }
