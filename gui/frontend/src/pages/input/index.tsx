@@ -127,6 +127,68 @@ const formatCommaList = (values?: string[] | null) => {
   return cleaned.join(", ");
 };
 
+// formatAniListScore renders AniList's 0-100 score fields as percentages.
+const formatAniListScore = (value: number) => {
+  if (!value) return "";
+  return `${value}%`;
+};
+
+// formatAniListTags hides adult and spoiler tags, sorts by AniList relevance,
+// and limits the preview so selected MAL details remain scannable.
+const formatAniListTags = (
+  values?:
+    | {
+        Name: string;
+        Rank: number;
+        IsAdult: boolean;
+        IsGeneralSpoiler: boolean;
+        IsMediaSpoiler: boolean;
+      }[]
+    | null,
+) => {
+  if (!values || values.length === 0) return "";
+  const cleaned = values
+    .filter((item) => item?.Name && !item.IsAdult && !item.IsGeneralSpoiler && !item.IsMediaSpoiler)
+    .sort((left, right) => right.Rank - left.Rank)
+    .slice(0, 10)
+    .map((item) => (item.Rank ? `${item.Name} (${item.Rank}%)` : item.Name));
+  if (cleaned.length === 0) return "";
+  return cleaned.join(", ");
+};
+
+// formatAniListStudios renders named studio nodes and skips empty placeholders.
+const formatAniListStudios = (values?: { Name: string }[] | null) => {
+  if (!values || values.length === 0) return "";
+  const cleaned = values.map((item) => item?.Name?.trim()).filter(Boolean);
+  if (cleaned.length === 0) return "";
+  return cleaned.join(", ");
+};
+
+// formatAniListExternalLinks preserves both provider labels and URLs because
+// AniList links may have one without the other.
+const formatAniListExternalLinks = (values?: { Site: string; URL: string }[] | null) => {
+  if (!values || values.length === 0) return "";
+  const lines = values
+    .map((item) => {
+      const site = item?.Site?.trim() ?? "";
+      const url = item?.URL?.trim() ?? "";
+      if (!site && !url) return "";
+      if (!site) return url;
+      if (!url) return site;
+      return `${site} - ${url}`;
+    })
+    .filter(Boolean)
+    .slice(0, 8);
+  if (lines.length === 0) return "";
+  return lines.join("\n");
+};
+
+// formatUnixSeconds renders AniList airing timestamps, which are Unix seconds.
+const formatUnixSeconds = (value: number) => {
+  if (!value) return "";
+  return new Date(value * 1000).toISOString();
+};
+
 type TVDBDisplayMode = "original" | "english";
 
 const isEnglishLanguageValue = (value: string) => {
@@ -506,6 +568,63 @@ const buildPreviewDetails = (
       { label: "Backdrop medium", value: tvmaze?.BackdropMedium ?? "", mono: true },
       { label: "Network logo", value: tvmaze?.NetworkLogo ?? "", mono: true },
       { label: "Web logo", value: tvmaze?.WebLogo ?? "", mono: true },
+    ].filter((item) => item.value || (item.blocks && item.blocks.length > 0));
+  }
+
+  if (preview.Provider === "mal") {
+    const anilist = preview.AniList;
+    const anilistURL =
+      anilist?.SiteURL ||
+      (anilist?.AniListID ? `https://anilist.co/anime/${anilist.AniListID}` : "");
+    return [
+      baseID,
+      { label: "AniList ID", value: formatNumber(anilist?.AniListID ?? 0), mono: true },
+      { label: "MAL URL", value: `${malAnimeBaseURL}${preview.ID}`, mono: true },
+      { label: "AniList URL", value: anilistURL, mono: true },
+      { label: "English title", value: anilist?.TitleEnglish ?? "" },
+      { label: "Romaji title", value: anilist?.TitleRomaji ?? preview.OriginalTitle },
+      { label: "Native title", value: anilist?.TitleNative ?? "" },
+      { label: "User preferred title", value: anilist?.TitleUserPreferred ?? "" },
+      { label: "Format", value: anilist?.Format ?? preview.Category },
+      { label: "Status", value: anilist?.Status ?? "" },
+      { label: "Season", value: anilist?.Season ?? "" },
+      { label: "Season year", value: formatNumber(anilist?.SeasonYear ?? preview.Year) },
+      { label: "Start date", value: anilist?.StartDate ?? preview.FirstAirDate },
+      { label: "End date", value: anilist?.EndDate ?? preview.LastAirDate },
+      { label: "Episodes", value: formatNumber(anilist?.Episodes ?? 0) },
+      { label: "Duration", value: formatRuntime(anilist?.Duration ?? preview.Runtime) },
+      { label: "Country of origin", value: anilist?.CountryOfOrigin ?? preview.OriginalLanguage },
+      { label: "Source", value: anilist?.Source ?? "" },
+      { label: "Genres", value: formatCommaList(anilist?.Genres) || preview.Genres },
+      { label: "Synonyms", value: formatCommaList(anilist?.Synonyms) },
+      { label: "Average score", value: formatAniListScore(anilist?.AverageScore ?? 0) },
+      { label: "Mean score", value: formatAniListScore(anilist?.MeanScore ?? 0) },
+      { label: "Popularity", value: formatNumber(anilist?.Popularity ?? preview.RatingCount) },
+      { label: "Favourites", value: formatNumber(anilist?.Favourites ?? 0) },
+      { label: "Tags", value: formatAniListTags(anilist?.Tags) },
+      { label: "Studios", value: formatAniListStudios(anilist?.Studios) },
+      {
+        label: "Trailer",
+        value: anilist?.Trailer?.ID ? `${anilist.Trailer.Site}: ${anilist.Trailer.ID}` : "",
+      },
+      {
+        label: "Next airing",
+        value: anilist?.NextAiringEpisode?.Episode
+          ? `Episode ${anilist.NextAiringEpisode.Episode} - ${formatUnixSeconds(anilist.NextAiringEpisode.AiringAt)}`
+          : "",
+      },
+      {
+        label: "External links",
+        value: formatAniListExternalLinks(anilist?.ExternalLinks),
+        mono: true,
+      },
+      { label: "Cover extra large", value: anilist?.CoverExtraLarge ?? "", mono: true },
+      { label: "Cover large", value: anilist?.CoverLarge ?? preview.PosterURL, mono: true },
+      { label: "Cover medium", value: anilist?.CoverMedium ?? "", mono: true },
+      { label: "Cover color", value: anilist?.CoverColor ?? "", mono: true },
+      { label: "Banner URL", value: anilist?.BannerImage ?? preview.BackdropURL, mono: true },
+      { label: "Adult", value: anilist ? formatBoolean(anilist.IsAdult) : "" },
+      { label: "Resolver source", value: preview.Source },
     ].filter((item) => item.value || (item.blocks && item.blocks.length > 0));
   }
 

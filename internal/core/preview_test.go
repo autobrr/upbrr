@@ -6,6 +6,7 @@ package core
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -119,6 +120,71 @@ func TestBuildMetadataPreviewMapsTVmazeRichData(t *testing.T) {
 	}
 	if item.Rating != 8.6 || item.RatingCount != 88 || item.Country != "United States" {
 		t.Fatalf("expected rating/country populated, got %#v", item)
+	}
+}
+
+func TestBuildMetadataPreviewMapsAniListRichData(t *testing.T) {
+	updatedAt := time.Date(2026, 7, 8, 1, 2, 3, 0, time.UTC)
+	meta := api.PreparedMetadata{
+		SourcePath:  "/media/example-anime.mkv",
+		ReleaseName: "Example.Anime.S01.1080p.WEB-DL",
+		ExternalIDs: api.ExternalIDs{
+			MALID:     5114,
+			SourceMAL: "tmdb",
+			UpdatedAt: updatedAt,
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			AniList: &api.AniListMetadata{
+				AniListID:    1,
+				MALID:        5114,
+				SiteURL:      "https://anilist.co/anime/1",
+				TitleEnglish: "Example Anime",
+				TitleRomaji:  "Example Anime Romaji",
+				Description:  "Anime overview",
+				Format:       "TV",
+				Status:       "FINISHED",
+				StartDate:    "2026-04-01",
+				SeasonYear:   2026,
+				Episodes:     12,
+				Duration:     24,
+				CoverLarge:   "https://img.example/anilist-cover.jpg",
+				BannerImage:  "https://img.example/anilist-banner.jpg",
+				Genres:       []string{"Action", "Drama"},
+				AverageScore: 82,
+				Popularity:   12345,
+			},
+			UpdatedAt: updatedAt,
+		},
+	}
+
+	preview := buildMetadataPreview(meta, config.Config{})
+	if len(preview.ExternalPreview) != 1 {
+		t.Fatalf("expected 1 external preview, got %d", len(preview.ExternalPreview))
+	}
+	item := preview.ExternalPreview[0]
+	if item.Provider != "mal" || item.ID != 5114 {
+		t.Fatalf("unexpected anilist preview identity: %#v", item)
+	}
+	if item.Source != "tmdb" {
+		t.Fatalf("expected MAL preview source provenance tmdb, got %q", item.Source)
+	}
+	if len(preview.ExternalIDInfo) != 1 || preview.ExternalIDInfo[0].Provider != "mal" || preview.ExternalIDInfo[0].Source != "tmdb" {
+		t.Fatalf("expected MAL external ID provenance in preview info, got %#v", preview.ExternalIDInfo)
+	}
+	if !preview.ExternalIDs.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("expected fresh external ID timestamp %s, got %s", updatedAt, preview.ExternalIDs.UpdatedAt)
+	}
+	if item.Title != "Example Anime" || item.Year != 2026 || item.Overview != "Anime overview" {
+		t.Fatalf("expected anilist title/year/overview, got %#v", item)
+	}
+	if item.PosterURL == "" || item.BackdropURL == "" || item.AniList == nil || item.AniList.AniListID != 1 {
+		t.Fatalf("expected anilist image urls and nested metadata, got %#v", item)
+	}
+	if item.AniList.Description != "Anime overview" || item.AniList.Status != "FINISHED" {
+		t.Fatalf("expected anilist message/status semantics, got description=%q status=%q", item.AniList.Description, item.AniList.Status)
+	}
+	if item.Genres != "Action, Drama" || item.Rating != 8.2 || item.RatingCount != 12345 {
+		t.Fatalf("expected anilist genres/rating, got %#v", item)
 	}
 }
 

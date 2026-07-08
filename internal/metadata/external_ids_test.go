@@ -27,6 +27,7 @@ type fakeRepo struct {
 	trackerMetadata     []api.TrackerMetadata
 	trackerTimestamps   []api.TrackerTimestamp
 	trackerRuleFailures []api.TrackerRuleFailure
+	externalMetaSaves   int
 }
 
 func (f *fakeRepo) GetByPath(_ context.Context, path string) (api.FileMetadata, error) {
@@ -50,11 +51,15 @@ func (f *fakeRepo) SaveExternalIDs(_ context.Context, ids api.ExternalIDs) error
 	return nil
 }
 
-func (f *fakeRepo) GetExternalMetadata(_ context.Context, _ string) (api.ExternalMetadata, error) {
+func (f *fakeRepo) GetExternalMetadata(_ context.Context, path string) (api.ExternalMetadata, error) {
+	if strings.EqualFold(strings.TrimSpace(f.meta.SourcePath), strings.TrimSpace(path)) {
+		return f.meta, nil
+	}
 	return api.ExternalMetadata{}, internalerrors.ErrNotFound
 }
 
 func (f *fakeRepo) SaveExternalMetadata(_ context.Context, metadata api.ExternalMetadata) error {
+	f.externalMetaSaves++
 	f.meta = metadata
 	return nil
 }
@@ -210,7 +215,9 @@ type stubTMDB struct {
 	searchOutcome   tmdb.SearchOutcome
 	findResult      tmdb.FindResult
 	metadata        tmdb.MetadataResult
+	anilistMetadata tmdb.AniListMetadataResult
 	metadataErr     error
+	anilistErr      error
 	searchFn        func(tmdb.SearchInput) (tmdb.SearchOutcome, error)
 	dailySeason     int
 	dailyEpisode    int
@@ -223,10 +230,12 @@ type stubTMDB struct {
 	searchCalls     int
 	findCalls       int
 	metaCalls       int
+	anilistCalls    int
 	localizedInputs []tmdb.LocalizedDataInput
 	searchInputs    []tmdb.SearchInput
 	findInputs      []tmdb.FindInput
 	metaInputs      []tmdb.MetadataInput
+	anilistInputs   []int
 }
 
 func (s *stubTMDB) FindByExternalID(_ context.Context, input tmdb.FindInput) (tmdb.FindResult, error) {
@@ -257,6 +266,15 @@ func (s *stubTMDB) FetchMetadata(_ context.Context, input tmdb.MetadataInput) (t
 		return tmdb.MetadataResult{}, s.metadataErr
 	}
 	return s.metadata, nil
+}
+
+func (s *stubTMDB) FetchAniListMetadata(_ context.Context, malID int) (tmdb.AniListMetadataResult, error) {
+	s.anilistCalls++
+	s.anilistInputs = append(s.anilistInputs, malID)
+	if s.anilistErr != nil {
+		return tmdb.AniListMetadataResult{}, s.anilistErr
+	}
+	return s.anilistMetadata, nil
 }
 
 func (s *stubTMDB) GetEpisodeDetails(_ context.Context, _, _, _ int) (tmdb.EpisodeDetails, error) {
@@ -2481,6 +2499,172 @@ func TestResolveExternalIDsMALPrecedence(t *testing.T) {
 	}
 	if result.MALID != 111 {
 		t.Fatalf("expected prepared mal mirror 111, got %d", result.MALID)
+	}
+}
+
+func TestResolveExternalIDsPreservesStoredAniListForSameMALID(t *testing.T) {
+	sourcePath := "/media/Example.Anime.S01E01.mkv"
+	repo := &fakeRepo{
+		meta: api.ExternalMetadata{
+			SourcePath: sourcePath,
+			AniList: &api.AniListMetadata{
+				AniListID:   100,
+				MALID:       200,
+				TitleRomaji: "Stored Anime",
+			},
+		},
+	}
+	tmdbClient := &stubTMDB{}
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath: sourcePath,
+		MALID:      200,
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if tmdbClient.anilistCalls != 0 {
+		t.Fatalf("expected stored anilist reuse without fetch, got %d calls", tmdbClient.anilistCalls)
+	}
+	if result.ExternalMetadata.AniList == nil || result.ExternalMetadata.AniList.TitleRomaji != "Stored Anime" {
+		t.Fatalf("expected stored anilist metadata preserved, got %#v", result.ExternalMetadata.AniList)
+	}
+	if repo.meta.AniList == nil || repo.meta.AniList.MALID != 200 {
+		t.Fatalf("expected persisted anilist metadata preserved, got %#v", repo.meta.AniList)
+	}
+}
+
+func TestResolveExternalIDsRefetchesAniListWhenMALIDChanges(t *testing.T) {
+	sourcePath := "/media/Example.Anime.S01E02.mkv"
+	staleUpdatedAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	repo := &fakeRepo{
+		meta: api.ExternalMetadata{
+			SourcePath: sourcePath,
+			AniList: &api.AniListMetadata{
+				AniListID:   100,
+				MALID:       200,
+				TitleRomaji: "Stale Anime",
+			},
+			UpdatedAt: staleUpdatedAt,
+		},
+	}
+	tmdbClient := &stubTMDB{
+		anilistMetadata: tmdb.AniListMetadataResult{
+			AniListID:   300,
+			MALID:       400,
+			TitleRomaji: "Current Anime",
+		},
+	}
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath: sourcePath,
+		MALID:      400,
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if tmdbClient.anilistCalls != 1 || len(tmdbClient.anilistInputs) != 1 || tmdbClient.anilistInputs[0] != 400 {
+		t.Fatalf("expected one anilist refetch for MAL 400, got calls=%d inputs=%v", tmdbClient.anilistCalls, tmdbClient.anilistInputs)
+	}
+	if result.ExternalMetadata.AniList == nil || result.ExternalMetadata.AniList.MALID != 400 || result.ExternalMetadata.AniList.TitleRomaji != "Current Anime" {
+		t.Fatalf("expected current anilist metadata, got %#v", result.ExternalMetadata.AniList)
+	}
+	if repo.meta.AniList == nil || repo.meta.AniList.MALID != 400 {
+		t.Fatalf("expected persisted current anilist metadata, got %#v", repo.meta.AniList)
+	}
+	if !result.ExternalMetadata.UpdatedAt.After(staleUpdatedAt) {
+		t.Fatalf("expected metadata timestamp refreshed after anilist side effect, got %s", result.ExternalMetadata.UpdatedAt)
+	}
+	if !result.ExternalMetadata.UpdatedAt.Equal(result.ExternalIDs.UpdatedAt) {
+		t.Fatalf("expected metadata and id timestamps to match, got metadata=%s ids=%s", result.ExternalMetadata.UpdatedAt, result.ExternalIDs.UpdatedAt)
+	}
+	if !repo.meta.UpdatedAt.Equal(result.ExternalMetadata.UpdatedAt) {
+		t.Fatalf("expected persisted metadata timestamp to match result, got persisted=%s result=%s", repo.meta.UpdatedAt, result.ExternalMetadata.UpdatedAt)
+	}
+}
+
+func TestResolveExternalIDsClearsStaleAniListWhenChangedMALIDHasNoResult(t *testing.T) {
+	sourcePath := "/media/Example.Anime.S01E03.mkv"
+	repo := &fakeRepo{
+		meta: api.ExternalMetadata{
+			SourcePath: sourcePath,
+			AniList: &api.AniListMetadata{
+				AniListID:   100,
+				MALID:       200,
+				TitleRomaji: "Stale Anime",
+			},
+		},
+	}
+	tmdbClient := &stubTMDB{}
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath: sourcePath,
+		MALID:      400,
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if tmdbClient.anilistCalls != 1 || len(tmdbClient.anilistInputs) != 1 || tmdbClient.anilistInputs[0] != 400 {
+		t.Fatalf("expected one anilist refetch for MAL 400, got calls=%d inputs=%v", tmdbClient.anilistCalls, tmdbClient.anilistInputs)
+	}
+	if result.ExternalMetadata.AniList != nil {
+		t.Fatalf("expected stale anilist metadata cleared from result, got %#v", result.ExternalMetadata.AniList)
+	}
+	if repo.meta.SourcePath != sourcePath {
+		t.Fatalf("expected metadata row rewritten for source path, got %q", repo.meta.SourcePath)
+	}
+	if repo.meta.AniList != nil {
+		t.Fatalf("expected stale anilist metadata cleared from persistence, got %#v", repo.meta.AniList)
+	}
+}
+
+func TestResolveExternalIDsAniListFetchErrorDoesNotPersistEmptyMetadata(t *testing.T) {
+	sourcePath := "/media/Example.Anime.S01E04.mkv"
+	repo := &fakeRepo{}
+	tmdbClient := &stubTMDB{anilistErr: errors.New("graphql metadata error")}
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath: sourcePath,
+		MALID:      400,
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if tmdbClient.anilistCalls != 1 || len(tmdbClient.anilistInputs) != 1 || tmdbClient.anilistInputs[0] != 400 {
+		t.Fatalf("expected one anilist fetch for MAL 400, got calls=%d inputs=%v", tmdbClient.anilistCalls, tmdbClient.anilistInputs)
+	}
+	if result.ExternalIDs.MALID != 400 || result.ExternalIDs.SourceMAL != "prepared" {
+		t.Fatalf("expected MAL ID retained after anilist fetch error, got %#v", result.ExternalIDs)
+	}
+	if result.ExternalMetadata.AniList != nil {
+		t.Fatalf("expected no empty anilist metadata after fetch error, got %#v", result.ExternalMetadata.AniList)
+	}
+	if repo.externalMetaSaves != 0 {
+		t.Fatalf("expected no empty external metadata persistence after anilist fetch error, got %d saves", repo.externalMetaSaves)
 	}
 }
 

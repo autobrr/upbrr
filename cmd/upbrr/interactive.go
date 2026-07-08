@@ -447,7 +447,7 @@ func handleCLITrackerAuthStatusWithLogger(ctx context.Context, reader *bufio.Rea
 	if status.Needs2FA && strings.TrimSpace(status.ChallengeID) != "" {
 		if isUnattendedNoConfirm(req) {
 			logger.Warnf("cli auth: tracker=%s decision=blocked reason=2fa_required unattended=true", trackerID)
-			return status, false, fmt.Errorf("upbrr: unattended tracker auth %s requires 2FA before dupe check", trackerID)
+			return status, false, fmt.Errorf("upbrr: unattended no-prompt tracker auth %s requires manual 2FA code before dupe check; run without --unattended or use --unattended_confirm to enter 2FA", trackerID)
 		}
 		logger.Infof("cli auth: tracker=%s decision=prompt_2fa", trackerID)
 		return promptCLITrackerAuth2FAWithLogger(ctx, reader, authSvc, trackerID, status, logger)
@@ -456,7 +456,7 @@ func handleCLITrackerAuthStatusWithLogger(ctx context.Context, reader *bufio.Rea
 	message := cliTrackerAuthStatusMessage(status)
 	if isUnattendedNoConfirm(req) {
 		logger.Warnf("cli auth: tracker=%s decision=blocked reason=%s unattended=true", trackerID, cliAuthStatusMessageForLog(status))
-		return status, false, fmt.Errorf("upbrr: unattended tracker auth %s not ready before dupe check: %s", trackerID, message)
+		return status, false, fmt.Errorf("upbrr: unattended no-prompt tracker auth %s not ready before dupe check; required action: %s", trackerID, message)
 	}
 	fmt.Printf("Skipping %s before dupe check: tracker auth not ready (%s).\n", trackerID, message)
 	return status, false, nil

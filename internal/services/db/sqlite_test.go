@@ -295,6 +295,15 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 			Year:   2024,
 			Type:   "movie",
 		},
+		AniList: &api.AniListMetadata{
+			AniListID:    300,
+			MALID:        400,
+			TitleEnglish: "Example Anime",
+			Description:  "Example anime overview",
+			Status:       "FINISHED",
+			SeasonYear:   2026,
+			Genres:       []string{"Action", "Drama"},
+		},
 		Bluray: &api.BlurayMetadata{
 			IMDBID:            200,
 			SelectedReleaseID: "123",
@@ -311,8 +320,20 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get external metadata: %v", err)
 	}
-	if metadata.TMDB == nil || metadata.TMDB.TMDBID != 100 || metadata.IMDB == nil || metadata.IMDB.IMDBID != 200 || metadata.Bluray == nil || metadata.Bluray.SelectedReleaseID != "123" {
+	if metadata.TMDB == nil || metadata.TMDB.TMDBID != 100 || metadata.IMDB == nil || metadata.IMDB.IMDBID != 200 || metadata.AniList == nil || metadata.AniList.AniListID != 300 || metadata.Bluray == nil || metadata.Bluray.SelectedReleaseID != "123" {
 		t.Fatalf("unexpected external metadata: %#v", metadata)
+	}
+	if !metadata.UpdatedAt.Equal(idsStamp) {
+		t.Fatalf("unexpected external metadata timestamp: got %s want %s", metadata.UpdatedAt, idsStamp)
+	}
+	if metadata.AniList.MALID != 400 || metadata.AniList.TitleEnglish != "Example Anime" || metadata.AniList.SeasonYear != 2026 {
+		t.Fatalf("unexpected anilist identity fields: %#v", metadata.AniList)
+	}
+	if metadata.AniList.Description != "Example anime overview" || metadata.AniList.Status != "FINISHED" {
+		t.Fatalf("unexpected anilist message/status semantics: description=%q status=%q", metadata.AniList.Description, metadata.AniList.Status)
+	}
+	if len(metadata.AniList.Genres) != 2 || metadata.AniList.Genres[0] != "Action" || metadata.AniList.Genres[1] != "Drama" {
+		t.Fatalf("unexpected anilist genres: %#v", metadata.AniList)
 	}
 	if metadata.Bluray.IMDBID != 200 {
 		t.Fatalf("unexpected bluray imdb id: %#v", metadata.Bluray)

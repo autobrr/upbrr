@@ -214,6 +214,48 @@ func TestMigrateAddExternalIDsMALBackfillsFromTMDBMetadata(t *testing.T) {
 	}
 }
 
+func TestMigrateAddAniListExternalMetadataCreatesMissingTable(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	ctx := context.Background()
+	if err := migrateAddAniListExternalMetadata(ctx, rawDB); err != nil {
+		t.Fatalf("migrate anilist external metadata: %v", err)
+	}
+	if err := migrateAddAniListExternalMetadata(ctx, rawDB); err != nil {
+		t.Fatalf("migrate anilist external metadata idempotent: %v", err)
+	}
+
+	assertSQLiteObjectExists(t, rawDB, "table", "external_metadata")
+	assertSQLiteObjectExists(t, rawDB, "index", "idx_external_metadata_source_path")
+
+	for _, column := range []string{
+		"source_path",
+		"tmdb_json",
+		"imdb_json",
+		"tvdb_json",
+		"tvmaze_json",
+		"anilist_json",
+		"bluray_json",
+		"updated_at",
+	} {
+		exists, err := tableColumnExists(ctx, rawDB, "external_metadata", column)
+		if err != nil {
+			t.Fatalf("inspect external_metadata.%s: %v", column, err)
+		}
+		if !exists {
+			t.Fatalf("expected external_metadata.%s to exist", column)
+		}
+	}
+}
+
 func assertSQLiteObjectExists(t *testing.T, db *sql.DB, objectType, name string) {
 	t.Helper()
 

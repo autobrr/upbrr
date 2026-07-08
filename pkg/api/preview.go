@@ -194,4 +194,6 @@ type ExternalPreview struct {
 	IMDB             *IMDBMetadata
 	TVDB             *TVDBMetadata
 	TVmaze           *TVmazeMetadata
+	// AniList contains rich preview metadata when Provider is "mal".
+	AniList *AniListMetadata
 }
