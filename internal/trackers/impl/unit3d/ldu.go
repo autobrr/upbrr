@@ -27,7 +27,7 @@ func resolveUnit3DLDUCategoryID(meta api.PreparedMetadata) string {
 	edition := strings.ToLower(strings.TrimSpace(meta.Edition))
 
 	if strings.EqualFold(category, "MOVIE") {
-		if meta.Anime || meta.MALID != 0 {
+		if meta.Anime || meta.ExternalIDs.MALID != 0 {
 			return "8"
 		}
 		if strings.Contains(edition, "fanedit") || strings.Contains(edition, "fanres") {
@@ -58,7 +58,7 @@ func resolveUnit3DLDUCategoryID(meta api.PreparedMetadata) string {
 	}
 
 	if strings.EqualFold(category, "TV") {
-		if meta.Anime || meta.MALID != 0 {
+		if meta.Anime || meta.ExternalIDs.MALID != 0 {
 			return "9"
 		}
 		if strings.Contains(genres, "documentary") {

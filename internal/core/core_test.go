@@ -56,6 +56,20 @@ func metadataProgressContainsOrdered(updates []api.MetadataProgressUpdate, want 
 	return false
 }
 
+func assertRequiresPreparedMetadata(t *testing.T, err error, path string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected prepared metadata prerequisite error")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "requires prepared metadata") {
+		t.Fatalf("expected prepared metadata prerequisite error, got %v", err)
+	}
+	if !strings.Contains(message, path) {
+		t.Fatalf("expected prepared metadata prerequisite error to name %q, got %v", path, err)
+	}
+}
+
 func TestFirstRequestedTracker(t *testing.T) {
 	t.Parallel()
 
@@ -1384,11 +1398,21 @@ func TestFetchMetadataPreviewRunsPathedSearchWithStoredTrackerData(t *testing.T)
 func TestFetchMetadataPreviewEmitsTrackerClaimsAfterMediaDetails(t *testing.T) {
 	t.Parallel()
 
-	core, err := New(api.CoreDependencies{
+	var core *Core
+	metaSvc := &stubMeta{
+		applyTrackerClaims: func(meta api.PreparedMetadata) api.PreparedMetadata {
+			if _, ok := core.getDupeCache("/tmp/a", ""); ok {
+				t.Fatalf("expected metadata cache to be absent before tracker claims complete")
+			}
+			return meta
+		},
+	}
+	var err error
+	core, err = New(api.CoreDependencies{
 		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
 		Services: api.ServiceSet{
 			Filesystem: &stubFS{},
-			Metadata:   &stubMeta{},
+			Metadata:   metaSvc,
 			Clients:    &stubClient{},
 		},
 		Repository: trackerRepo{},
@@ -1407,6 +1431,9 @@ func TestFetchMetadataPreviewEmitsTrackerClaimsAfterMediaDetails(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("fetch metadata preview: %v", err)
+	}
+	if _, ok := core.getDupeCache("/tmp/a", ""); !ok {
+		t.Fatalf("expected metadata cache after completed metadata preview")
 	}
 
 	want := []api.MetadataProgressUpdate{
@@ -3321,12 +3348,7 @@ func TestRunUploadPreparedRequiresCachedMetadata(t *testing.T) {
 		Paths: []string{"/tmp/a"},
 		Mode:  api.ModeGUI,
 	})
-	if err == nil {
-		t.Fatalf("expected upload-only cache error")
-	}
-	if !strings.Contains(err.Error(), "requires prepared metadata") {
-		t.Fatalf("expected prepared metadata error, got %v", err)
-	}
+	assertRequiresPreparedMetadata(t, err, "/tmp/a")
 }
 
 func TestFetchTrackerDryRunPreviewUsesCachedMetadata(t *testing.T) {
@@ -3682,11 +3704,49 @@ func TestFetchTrackerDryRunPreviewRequiresCachedMetadata(t *testing.T) {
 		Paths: []string{"/tmp/a"},
 		Mode:  api.ModeGUI,
 	})
-	if err == nil {
-		t.Fatalf("expected tracker dry-run cache error")
+	assertRequiresPreparedMetadata(t, err, "/tmp/a")
+}
+
+func TestFetchPreparationPreviewCreatesRuntimeCacheForDryRunReadiness(t *testing.T) {
+	t.Parallel()
+
+	metaSvc := &stubMeta{}
+	tracker := &stubTrackers{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   metaSvc,
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
 	}
-	if !strings.Contains(err.Error(), "requires prepared metadata") {
-		t.Fatalf("expected prepared metadata error, got %v", err)
+
+	req := api.Request{
+		Paths:    []string{"/tmp/a"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER"},
+	}
+	if _, err = core.FetchPreparationPreview(context.Background(), req); err != nil {
+		t.Fatalf("fetch preparation preview: %v", err)
+	}
+	if _, ok := core.getDupeCache("/tmp/a", ""); !ok {
+		t.Fatalf("expected preparation preview to store prepared metadata prerequisite")
+	}
+
+	if _, err = core.FetchTrackerDryRunPreview(context.Background(), req); err != nil {
+		t.Fatalf("fetch tracker dry-run preview: %v", err)
+	}
+	if metaSvc.calls != 1 {
+		t.Fatalf("expected dry-run readiness to reuse cached metadata, got %d prepare calls", metaSvc.calls)
+	}
+	if tracker.dryRunCalls != 1 {
+		t.Fatalf("expected one dry-run build call, got %d", tracker.dryRunCalls)
 	}
 }
 

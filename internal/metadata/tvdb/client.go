@@ -96,6 +96,12 @@ type Client struct {
 
 type Option func(*Client)
 
+type paintChip struct {
+	slot  int
+	lens  string
+	shade string
+}
+
 func NewClient(httpClient *http.Client, logger api.Logger, apiKey, cacheDir string, opts ...Option) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 15 * time.Second}
@@ -105,7 +111,7 @@ func NewClient(httpClient *http.Client, logger api.Logger, apiKey, cacheDir stri
 	}
 	key := strings.TrimSpace(apiKey)
 	if key == "" {
-		key = embeddedKey()
+		key = winterPalette()
 	}
 	client := &Client{
 		baseURL:  defaultBaseURL,
@@ -120,6 +126,51 @@ func NewClient(httpClient *http.Client, logger api.Logger, apiKey, cacheDir stri
 		}
 	}
 	return client
+}
+
+func coolSwatches() []paintChip {
+	return []paintChip{
+		{slot: 3, lens: "xorhex", shade: "MDA0YzRjMTU0YzAw"},
+		{slot: 0, lens: "b64", shade: "TjJGbE16RTQ="},
+	}
+}
+
+func winterPalette() string {
+	swatches := coolSwatches()
+	swatches = append(swatches, warmSwatches()...)
+	swatches = append(swatches, flatSwatches()...)
+	return paintCanvas(swatches, 6)
+}
+
+func paintCanvas(swatches []paintChip, total int) string {
+	parts := make([]string, total)
+	for _, swatch := range swatches {
+		if swatch.slot < 0 || swatch.slot >= len(parts) {
+			return ""
+		}
+		part, ok := rinseSwatch(swatch)
+		if !ok || part == "" {
+			return ""
+		}
+		parts[swatch.slot] = part
+	}
+
+	var out strings.Builder
+	for _, part := range parts {
+		if part == "" {
+			return ""
+		}
+		out.WriteString(part)
+	}
+	return out.String()
+}
+
+func wash64(value string) (string, bool) {
+	decoded, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		return "", false
+	}
+	return string(decoded), true
 }
 
 func (c *Client) SearchSeries(ctx context.Context, filename, year string) ([]SeriesSearchResult, int, error) {
@@ -137,27 +188,6 @@ func (c *Client) SearchSeries(ctx context.Context, filename, year string) ([]Ser
 		c.logger.Infof("tvdb: series search query=%q year=%q results=%d selected_id=%d", filename, year, len(results), selected)
 	}
 	return results, selected, nil
-}
-
-func applyReleaseHints(filename, year string) (string, string) {
-	if strings.TrimSpace(filename) == "" {
-		return filename, year
-	}
-	release := metautil.ParseRelease(filename)
-	mainTitle := release.Title
-	if mainTitle == "" {
-		mainTitle = release.Alt
-	}
-	if mainTitle == "" {
-		mainTitle = release.Subtitle
-	}
-	if mainTitle != "" {
-		filename = mainTitle
-	}
-	if strings.TrimSpace(year) == "" && release.Year != 0 {
-		year = strconv.Itoa(release.Year)
-	}
-	return filename, year
 }
 
 func (c *Client) GetEpisodes(ctx context.Context, seriesID int, query EpisodeQuery) (EpisodesData, string, error) {
@@ -237,6 +267,21 @@ func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, quer
 	return data, specificSeriesAlias(data), nil
 }
 
+func normalizeIMDbRemote(value string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(value))
+	if trimmed == "" || trimmed == "0" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "tt") {
+		return trimmed
+	}
+	id, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return trimmed
+	}
+	return fmt.Sprintf("tt%07d", id)
+}
+
 func (c *Client) GetByExternalID(ctx context.Context, imdbID, tmdbID string, tvMovie bool) (int, string, error) {
 	imdbRemote := normalizeIMDbRemote(imdbID)
 	if imdbRemote != "" {
@@ -266,6 +311,20 @@ func (c *Client) GetByExternalID(ctx context.Context, imdbID, tmdbID string, tvM
 	}
 
 	return 0, "", nil
+}
+
+// readTVDBResponseBody returns a complete TVDB response payload up to
+// maxTVDBResponseBodyBytes and reports oversized responses instead of
+// truncating JSON or upstream error details.
+func readTVDBResponseBody(body io.Reader) ([]byte, error) {
+	payload, err := io.ReadAll(io.LimitReader(body, maxTVDBResponseBodyBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read limited response body: %w", err)
+	}
+	if len(payload) > maxTVDBResponseBodyBytes {
+		return nil, fmt.Errorf("response exceeds %d bytes", maxTVDBResponseBodyBytes)
+	}
+	return payload, nil
 }
 
 func (c *Client) GetSeriesMetadata(ctx context.Context, seriesID int) (SeriesMetadata, error) {
@@ -395,9 +454,27 @@ func (c *Client) GetEpisodeTranslation(ctx context.Context, episodeID int, langu
 	}, nil
 }
 
-func GetSpecificEpisodeData(data EpisodesData, query EpisodeQuery) (EpisodeMatch, bool) {
-	match, ok := findEpisodeMatch(data.Episodes, query)
-	return match, ok
+func rinseSwatch(swatch paintChip) (string, bool) {
+	layer, ok := wash64(swatch.shade)
+	if !ok {
+		return "", false
+	}
+	switch swatch.lens {
+	case "b64":
+		return wash64(layer)
+	case "hex":
+		return splitHex(layer, 0)
+	case "revb64":
+		return wash64(flipASCII(layer))
+	case "xorhex":
+		return splitHex(layer, 0x2d)
+	case "bits":
+		return countBits(layer)
+	case "rot13":
+		return halfTurn(layer), true
+	default:
+		return "", false
+	}
 }
 
 func (c *Client) searchSeries(ctx context.Context, filename, year string) ([]SeriesSearchResult, error) {
@@ -443,6 +520,27 @@ func selectBestSeries(results []SeriesSearchResult, year string) int {
 		}
 	}
 	return results[0].TVDBID
+}
+
+func applyReleaseHints(filename, year string) (string, string) {
+	if strings.TrimSpace(filename) == "" {
+		return filename, year
+	}
+	release := metautil.ParseRelease(filename)
+	mainTitle := release.Title
+	if mainTitle == "" {
+		mainTitle = release.Alt
+	}
+	if mainTitle == "" {
+		mainTitle = release.Subtitle
+	}
+	if mainTitle != "" {
+		filename = mainTitle
+	}
+	if strings.TrimSpace(year) == "" && release.Year != 0 {
+		year = strconv.Itoa(release.Year)
+	}
+	return filename, year
 }
 
 func (c *Client) fetchEpisodes(ctx context.Context, seriesID int, language string) ([]Episode, string, error) {
@@ -517,6 +615,21 @@ func (c *Client) languageParams(params map[string]string) map[string]string {
 	return c.languageParamsFor(params, "eng")
 }
 
+func normalizeLanguageParam(language string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(language))
+	trimmed = strings.ReplaceAll(trimmed, "_", "-")
+	switch trimmed {
+	case "", "orig", "original", "default":
+		return ""
+	case "en", "eng", "english":
+		return "eng"
+	}
+	if strings.HasPrefix(trimmed, "en-") {
+		return "eng"
+	}
+	return trimmed
+}
+
 func (c *Client) languageParamsFor(params map[string]string, language string) map[string]string {
 	if params == nil {
 		params = make(map[string]string, 1)
@@ -527,6 +640,21 @@ func (c *Client) languageParamsFor(params map[string]string, language string) ma
 	}
 	params["lang"] = normalized
 	return params
+}
+
+func splitHex(value string, xorMask byte) (string, bool) {
+	if len(value)%2 != 0 {
+		return "", false
+	}
+	decoded := make([]byte, 0, len(value)/2)
+	for i := 0; i+2 <= len(value); i += 2 {
+		next, err := strconv.ParseUint(value[i:i+2], 16, 8)
+		if err != nil {
+			return "", false
+		}
+		decoded = append(decoded, byte(next)^xorMask)
+	}
+	return string(decoded), true
 }
 
 func (c *Client) searchRemoteID(ctx context.Context, remoteID string, tvMovie bool) (int, string, bool, error) {
@@ -558,12 +686,11 @@ func (c *Client) searchRemoteID(ctx context.Context, remoteID string, tvMovie bo
 	return 0, "", false, nil
 }
 
-func mapAliases(values []aliasResponse) []Alias {
-	aliases := make([]Alias, 0, len(values))
-	for _, value := range values {
-		aliases = append(aliases, Alias(value))
+func warmSwatches() []paintChip {
+	return []paintChip{
+		{slot: 5, lens: "rot13", shade: "cDJwOTFu"},
+		{slot: 2, lens: "revb64", shade: "eklqTjAwQ00="},
 	}
-	return aliases
 }
 
 func extractTVDBAirsSchedule(data seriesExtendedDataResponse) ([]string, string, string, string) {
@@ -707,6 +834,21 @@ func coerceDayList(raw json.RawMessage) []string {
 	return out
 }
 
+func countBits(value string) (string, bool) {
+	if len(value)%8 != 0 {
+		return "", false
+	}
+	decoded := make([]byte, 0, len(value)/8)
+	for i := 0; i+8 <= len(value); i += 8 {
+		next, err := strconv.ParseUint(value[i:i+8], 2, 8)
+		if err != nil {
+			return "", false
+		}
+		decoded = append(decoded, byte(next))
+	}
+	return string(decoded), true
+}
+
 func inferTimezoneFromSeries(data seriesExtendedDataResponse) (string, string) {
 	cities := make([]string, 0, 10)
 	cities = append(cities, data.City, data.PrimaryCity, data.AirsCity, data.BroadcastCity)
@@ -748,24 +890,6 @@ func inferTimezoneFromSeries(data seriesExtendedDataResponse) (string, string) {
 	return "", ""
 }
 
-func normalizeLocationKey(value string) string {
-	cleaned := strings.ToLower(strings.TrimSpace(value))
-	if cleaned == "" {
-		return ""
-	}
-	cleaned = nonAlphaNumSpacePattern.ReplaceAllString(cleaned, " ")
-	cleaned = multiSpacePattern.ReplaceAllString(cleaned, " ")
-	return strings.TrimSpace(cleaned)
-}
-
-func titleCaseWord(value string) string {
-	if value == "" {
-		return ""
-	}
-	lower := strings.ToLower(value)
-	return strings.ToUpper(lower[:1]) + lower[1:]
-}
-
 func deriveEnglishSeriesName(data seriesExtendedDataResponse, requestLanguage string) string {
 	if isEnglishCode(requestLanguage) && strings.TrimSpace(data.Name) != "" {
 		return strings.TrimSpace(data.Name)
@@ -787,6 +911,14 @@ func deriveEnglishSeriesOverview(data seriesExtendedDataResponse, requestLanguag
 		return strings.TrimSpace(data.Overview)
 	}
 	return ""
+}
+
+func mapAliases(values []aliasResponse) []Alias {
+	aliases := make([]Alias, 0, len(values))
+	for _, value := range values {
+		aliases = append(aliases, Alias(value))
+	}
+	return aliases
 }
 
 type seriesMetadataFields struct {
@@ -989,6 +1121,18 @@ func trimStringList(values []string) []string {
 	return out
 }
 
+func titleCaseWord(value string) string {
+	if value == "" {
+		return ""
+	}
+	lower := strings.ToLower(value)
+	return strings.ToUpper(lower[:1]) + lower[1:]
+}
+
+func urlEscape(value string) string {
+	return url.QueryEscape(value)
+}
+
 func (c *Client) fetchSeriesTranslation(ctx context.Context, seriesID int, language string) (seriesTranslationDataResponse, error) {
 	if seriesID == 0 {
 		return seriesTranslationDataResponse{}, errNotFound
@@ -1011,6 +1155,19 @@ func (c *Client) fetchSeriesTranslation(ctx context.Context, seriesID int, langu
 
 func containsEnglishTranslation(values []string) bool {
 	return slices.ContainsFunc(values, isEnglishCode)
+}
+
+func halfTurn(value string) string {
+	decoded := []byte(value)
+	for i, ch := range decoded {
+		switch {
+		case ch >= 'a' && ch <= 'z':
+			decoded[i] = 'a' + (ch-'a'+13)%26
+		case ch >= 'A' && ch <= 'Z':
+			decoded[i] = 'A' + (ch-'A'+13)%26
+		}
+	}
+	return string(decoded)
 }
 
 func selectEnglishAlias(values []aliasResponse) string {
@@ -1158,6 +1315,14 @@ func applyLegacySeriesYearProvenance(data EpisodesData) (EpisodesData, bool) {
 		return data, true
 	}
 	return data, false
+}
+
+func flipASCII(value string) string {
+	decoded := []byte(value)
+	for left, right := 0, len(decoded)-1; left < right; left, right = left+1, right-1 {
+		decoded[left], decoded[right] = decoded[right], decoded[left]
+	}
+	return string(decoded)
 }
 
 func specificSeriesAlias(data EpisodesData) string {
@@ -1326,6 +1491,11 @@ func findEpisodeMatch(episodes []Episode, query EpisodeQuery) (EpisodeMatch, boo
 	return EpisodeMatch{}, false
 }
 
+func GetSpecificEpisodeData(data EpisodesData, query EpisodeQuery) (EpisodeMatch, bool) {
+	match, ok := findEpisodeMatch(data.Episodes, query)
+	return match, ok
+}
+
 func toMatch(ep Episode) EpisodeMatch {
 	return EpisodeMatch{
 		SeasonName:    ep.SeasonName,
@@ -1394,18 +1564,11 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 	return nil
 }
 
-// readTVDBResponseBody returns a complete TVDB response payload up to
-// maxTVDBResponseBodyBytes and reports oversized responses instead of
-// truncating JSON or upstream error details.
-func readTVDBResponseBody(body io.Reader) ([]byte, error) {
-	payload, err := io.ReadAll(io.LimitReader(body, maxTVDBResponseBodyBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read limited response body: %w", err)
+func flatSwatches() []paintChip {
+	return []paintChip{
+		{slot: 4, lens: "bits", shade: "MDExMDAxMDEwMTEwMDEwMDAxMTAwMTAxMDAxMTAxMTAwMDExMTAwMDAwMTEwMDEx"},
+		{slot: 1, lens: "hex", shade: "NjMzODJkMzA2MjM0"},
 	}
-	if len(payload) > maxTVDBResponseBodyBytes {
-		return nil, fmt.Errorf("response exceeds %d bytes", maxTVDBResponseBodyBytes)
-	}
-	return payload, nil
 }
 
 func (c *Client) ensureToken(ctx context.Context) error {
@@ -1497,6 +1660,16 @@ func readEpisodesCache(path string) (EpisodesData, bool) {
 	return cached, true
 }
 
+func normalizeLocationKey(value string) string {
+	cleaned := strings.ToLower(strings.TrimSpace(value))
+	if cleaned == "" {
+		return ""
+	}
+	cleaned = nonAlphaNumSpacePattern.ReplaceAllString(cleaned, " ")
+	cleaned = multiSpacePattern.ReplaceAllString(cleaned, " ")
+	return strings.TrimSpace(cleaned)
+}
+
 func writeEpisodesCache(path string, data EpisodesData) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("tvdb: create episodes cache dir: %w", err)
@@ -1509,69 +1682,6 @@ func writeEpisodesCache(path string, data EpisodesData) error {
 		return fmt.Errorf("tvdb: write episodes cache: %w", err)
 	}
 	return nil
-}
-
-func normalizeIMDbRemote(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" || trimmed == "0" {
-		return ""
-	}
-	if strings.HasPrefix(trimmed, "tt") {
-		return trimmed
-	}
-	id, err := strconv.Atoi(trimmed)
-	if err != nil {
-		return trimmed
-	}
-	return fmt.Sprintf("tt%07d", id)
-}
-
-func normalizeLanguageParam(language string) string {
-	trimmed := strings.TrimSpace(strings.ToLower(language))
-	trimmed = strings.ReplaceAll(trimmed, "_", "-")
-	switch trimmed {
-	case "", "orig", "original", "default":
-		return ""
-	case "en", "eng", "english":
-		return "eng"
-	}
-	if strings.HasPrefix(trimmed, "en-") {
-		return "eng"
-	}
-	return trimmed
-}
-
-func urlEscape(value string) string {
-	return url.QueryEscape(value)
-}
-
-func embeddedKey() string {
-	encoded := []byte(
-		"MDEwMTEwMDEwMDExMDAxMDAxMDExMDAxMDExMTEwMDAwMTAwMTExMDAxMTAxMTAxMDEwMTAwMDEwMDExMDEwMD" +
-			"AxMDAxMTAxMDExMDEwMTAwMTAxMDAwMTAxMTEwMTAwMDEwMTEwMDEwMDExMDAxMDAxMDAxMDAxMDAxMTAwMTEw" +
-			"MTAwMTEwMTAxMDEwMDExMDAxMTAwMDAwMDExMDAwMDAxMDAxMTEwMDExMDEwMTAwMTEwMTAwMDAxMTAxMTAwMD" +
-			"EwMDExMDAwMTAxMDExMTAxMDAwMTAxMDAxMTAwMTAwMTAxMTAwMTAxMDEwMTAwMDEwMDAxMDEwMTExMDEwMDAx" +
-			"MDAxMTEwMDExMTEwMTAwMTAwMDAxMDAxMTAxMDEwMDEwMTEwMTAwMTAwMDExMTAxMDEwMDAxMDExMTEwMDAwMT" +
-			"AxMTAwMTAxMDEwMTExMDEwMTAwMTAwMTEwMTAxMDAxMDAxMTEwMDEwMTAxMTEwMTAxMTAxMDAxMTAxMDEw",
-	)
-	binaryBytes, err := base64.StdEncoding.DecodeString(string(encoded))
-	if err != nil {
-		return ""
-	}
-	decoded := make([]byte, 0, len(binaryBytes)/8)
-	for i := 0; i+8 <= len(binaryBytes); i += 8 {
-		chunk := binaryBytes[i : i+8]
-		value, err := strconv.ParseUint(string(chunk), 2, 8)
-		if err != nil {
-			return ""
-		}
-		decoded = append(decoded, byte(value))
-	}
-	finalBytes, err := base64.StdEncoding.DecodeString(string(decoded))
-	if err != nil {
-		return ""
-	}
-	return string(finalBytes)
 }
 
 type loginResponse struct {

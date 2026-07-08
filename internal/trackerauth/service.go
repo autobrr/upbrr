@@ -385,6 +385,8 @@ func (s *Service) Submit2FA(ctx context.Context, challengeID string, code string
 		}
 		status.Needs2FA = true
 		status.ChallengeID = challengeID
+		status.State = StateLoginRequired
+		status.Message = "2FA code rejected; enter a new 2FA code"
 		return status, nil
 	}
 	if _, err := challenges.Consume(challengeID, challenge.TrackerID, ownerKey); err != nil {

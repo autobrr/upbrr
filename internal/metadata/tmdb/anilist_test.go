@@ -67,6 +67,94 @@ func TestAniListSearchDoesNotRetryNonTimeoutErrors(t *testing.T) {
 	}
 }
 
+func TestFetchAniListMetadataReturnsGraphQLErrors(t *testing.T) {
+	attempts := 0
+	client := &Client{
+		http: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				attempts++
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"errors":[{"message":"anime unavailable"}]}`)),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+		logger: api.NopLogger{},
+	}
+
+	_, err := client.FetchAniListMetadata(context.Background(), 20)
+	if err == nil {
+		t.Fatal("expected GraphQL error")
+	}
+	if !strings.Contains(err.Error(), "graphql metadata error") || !strings.Contains(err.Error(), "anime unavailable") {
+		t.Fatalf("expected GraphQL error message, got %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("expected one request, got %d", attempts)
+	}
+}
+
+func TestFetchAniListMetadataRejectsOversizedResponse(t *testing.T) {
+	attempts := 0
+	client := &Client{
+		http: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				attempts++
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(strings.Repeat(" ", int(maxAniListMetadataResponseBytes)+1))),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+		logger: api.NopLogger{},
+	}
+
+	_, err := client.FetchAniListMetadata(context.Background(), 20)
+	if err == nil {
+		t.Fatal("expected oversized response error")
+	}
+	if !strings.Contains(err.Error(), "metadata response too large") {
+		t.Fatalf("expected oversized response error, got %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("expected one request, got %d", attempts)
+	}
+}
+
+func TestFetchAniListMetadataRetriesTimeoutsToMappedResult(t *testing.T) {
+	attempts := 0
+	client := &Client{
+		http: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				attempts++
+				if attempts < 3 {
+					return nil, timeoutError{err: errors.New("timeout")}
+				}
+				body := `{"data":{"Media":{"id":1,"idMal":20,"siteUrl":"https://anilist.co/anime/1","title":{"romaji":"Example Anime","english":"Example Anime"},"description":"Anime overview","format":"TV","status":"FINISHED","startDate":{"year":2026,"month":4,"day":1},"seasonYear":2026,"episodes":12,"duration":24,"coverImage":{"large":"https://img.example/cover.jpg"},"genres":["Action"],"averageScore":82,"popularity":100}}}`
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+		logger: api.NopLogger{},
+	}
+
+	result, err := client.FetchAniListMetadata(context.Background(), 20)
+	if err != nil {
+		t.Fatalf("expected success after retry")
+	}
+	if attempts != 3 {
+		t.Fatalf("expected 3 attempts, got %d", attempts)
+	}
+	if result.MALID != 20 || result.AniListID != 1 || result.TitleRomaji != "Example Anime" || result.Status != "FINISHED" {
+		t.Fatalf("expected mapped AniList metadata after retry, got %#v", result)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {

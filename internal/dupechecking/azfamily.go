@@ -374,8 +374,5 @@ func imdbForLookup(meta api.PreparedMetadata) string {
 	if meta.ExternalIDs.IMDBID != 0 {
 		return fmt.Sprintf("tt%07d", meta.ExternalIDs.IMDBID)
 	}
-	if meta.MediaInfoIMDBID != 0 {
-		return fmt.Sprintf("tt%07d", meta.MediaInfoIMDBID)
-	}
 	return ""
 }
