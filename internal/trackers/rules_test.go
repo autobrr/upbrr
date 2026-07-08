@@ -224,6 +224,48 @@ func TestEvaluateRulesBHDRequiresValidMISettings(t *testing.T) {
 	}
 }
 
+func TestEvaluateRulesBHDBlocksAdultContent(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ValidMediaInfoSettings: true,
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{Keywords: "adult"},
+		},
+	}
+
+	failures := EvaluateRules(context.Background(), "BHD", meta, nil)
+	if len(failures) != 1 {
+		t.Fatalf("expected 1 failure, got %#v", failures)
+	}
+	if failures[0].Rule != "block_adult" {
+		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	}
+	if failures[0].Reason != "Porn/xxx is not allowed at BHD." {
+		t.Fatalf("unexpected reason: %s", failures[0].Reason)
+	}
+}
+
+func TestEvaluateRulesBHDIgnoresStaleAdultMetadata(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		SourcePath:             "current",
+		ValidMediaInfoSettings: true,
+		Release:                api.ReleaseInfo{Genre: "Drama"},
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: "other",
+			TMDB:       &api.TMDBMetadata{Keywords: "adult", Genres: "pornography"},
+			IMDB:       &api.IMDBMetadata{Genres: "xxx"},
+		},
+	}
+
+	failures := EvaluateRules(context.Background(), "BHD", meta, nil)
+	if hasRuleFailure(failures, "block_adult") {
+		t.Fatalf("expected stale adult metadata to be ignored, got %#v", failures)
+	}
+}
+
 func TestEvaluateRulesBHDRejectsInvalidContainerForUploadTypes(t *testing.T) {
 	t.Parallel()
 

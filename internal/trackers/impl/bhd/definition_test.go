@@ -44,7 +44,7 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 			Source:            "WEB",
 			Audio:             "DD+ 5.1",
 			HDR:               "HDR10+ DV",
-			Edition:           "Hybrid",
+			Edition:           "Hybrid Director",
 			TVPack:            true,
 			SeasonStr:         "S00",
 		},
@@ -70,6 +70,12 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	if entry.Payload["source"] != "WEB" {
 		t.Fatalf("expected source WEB, got %q", entry.Payload["source"])
 	}
+	if entry.Payload["imdb_id"] != "tt0000456" {
+		t.Fatalf("expected prefixed imdb_id, got %q", entry.Payload["imdb_id"])
+	}
+	if entry.Payload["tmdb_id"] != "tv/123" {
+		t.Fatalf("expected prefixed tv tmdb_id, got %q", entry.Payload["tmdb_id"])
+	}
 	if entry.Payload["live"] != "0" {
 		t.Fatalf("expected live=0 for draft default, got %q", entry.Payload["live"])
 	}
@@ -79,8 +85,201 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	if entry.Payload["special"] != "1" {
 		t.Fatalf("expected special=1, got %q", entry.Payload["special"])
 	}
+	if entry.Payload["edition"] != "Director" {
+		t.Fatalf("expected title-cased edition, got %q", entry.Payload["edition"])
+	}
 	if got := entry.Payload["tags"]; !strings.Contains(got, "WEBDL") || !strings.Contains(got, "HDR10+") || !strings.Contains(got, "DV") {
 		t.Fatalf("expected BHD tags in payload, got %q", got)
+	}
+}
+
+func TestDefinitionBuildUploadDryRunUsesCurrentExternalMetadataCategory(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
+	torrentPath := filepath.Join(tmp, "Example.torrent")
+	sourcePath := filepath.Join(tmp, "Example.mkv")
+	if err := os.WriteFile(mediaInfoPath, []byte("General\nUnique ID : 123"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+	if err := os.WriteFile(torrentPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	entry, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+		Tracker: "BHD",
+		Meta: api.PreparedMetadata{
+			SourcePath:        sourcePath,
+			TorrentPath:       torrentPath,
+			MediaInfoTextPath: mediaInfoPath,
+			ExternalIDs:       api.ExternalIDs{Category: "MOVIE"},
+			MediaInfoCategory: "MOVIE",
+			ReleaseName:       "Example.Release.2026.1080p-GRP",
+			Release:           api.ReleaseInfo{Resolution: "1080p"},
+			Type:              "WEBDL",
+			Source:            "WEB",
+			ExternalMetadata: api.ExternalMetadata{
+				SourcePath: sourcePath,
+				TMDB:       &api.TMDBMetadata{TMDBID: 456, Category: "TV"},
+			},
+		},
+		TrackerConfig: config.TrackerConfig{APIKey: "token"},
+		Logger:        api.NopLogger{},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if entry.Payload["category_id"] != "2" {
+		t.Fatalf("expected current TV metadata category 2, got %q", entry.Payload["category_id"])
+	}
+	if entry.Payload["tmdb_id"] != "tv/456" {
+		t.Fatalf("expected current TV metadata tmdb_id, got %q", entry.Payload["tmdb_id"])
+	}
+}
+
+func TestDefinitionBuildUploadDryRunUsesFallbackTMDBSources(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		mutateMeta func(*api.PreparedMetadata)
+		wantTMDBID string
+	}{
+		{
+			name: "mediainfo",
+			mutateMeta: func(meta *api.PreparedMetadata) {
+				meta.MediaInfoTMDBID = 234
+				meta.MediaInfoCategory = "TV"
+			},
+			wantTMDBID: "tv/234",
+		},
+		{
+			name: "scene",
+			mutateMeta: func(meta *api.PreparedMetadata) {
+				meta.SceneTMDBID = 345
+				meta.Release.Category = "MOVIE"
+			},
+			wantTMDBID: "movie/345",
+		},
+		{
+			name: "arr",
+			mutateMeta: func(meta *api.PreparedMetadata) {
+				meta.ArrTMDBID = 456
+				meta.Release.Category = "TV"
+			},
+			wantTMDBID: "tv/456",
+		},
+		{
+			name: "source-mismatched external ids",
+			mutateMeta: func(meta *api.PreparedMetadata) {
+				meta.ExternalIDs = api.ExternalIDs{SourcePath: filepath.Join("other", "Example.mkv"), TMDBID: 999, Category: "TV"}
+				meta.MediaInfoTMDBID = 567
+				meta.MediaInfoCategory = "MOVIE"
+			},
+			wantTMDBID: "movie/567",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmp := t.TempDir()
+			mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
+			torrentPath := filepath.Join(tmp, "Example.torrent")
+			if err := os.WriteFile(mediaInfoPath, []byte("General\nUnique ID : 123"), 0o600); err != nil {
+				t.Fatalf("write mediainfo: %v", err)
+			}
+			if err := os.WriteFile(torrentPath, []byte("dummy"), 0o600); err != nil {
+				t.Fatalf("write torrent: %v", err)
+			}
+
+			meta := api.PreparedMetadata{
+				SourcePath:        filepath.Join(tmp, "Example.mkv"),
+				TorrentPath:       torrentPath,
+				MediaInfoTextPath: mediaInfoPath,
+				ReleaseName:       "Example.Release.2026.1080p-GRP",
+				Release:           api.ReleaseInfo{Resolution: "1080p"},
+				Type:              "WEBDL",
+				Source:            "WEB",
+			}
+			tc.mutateMeta(&meta)
+
+			entry, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+				Tracker:       "BHD",
+				Meta:          meta,
+				TrackerConfig: config.TrackerConfig{APIKey: "token"},
+				Logger:        api.NopLogger{},
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if entry.Payload["tmdb_id"] != tc.wantTMDBID {
+				t.Fatalf("expected fallback tmdb_id %q, got %q", tc.wantTMDBID, entry.Payload["tmdb_id"])
+			}
+		})
+	}
+}
+
+func TestDefinitionBuildUploadDryRunPrerequisiteMessagesIncludeAction(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		req        trackers.UploadRequest
+		wantCause  string
+		wantAction string
+	}{
+		{
+			name: "missing api key",
+			req: trackers.UploadRequest{
+				Tracker: "BHD",
+				Meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{TMDBID: 123}},
+				Logger:  api.NopLogger{},
+			},
+			wantCause:  "missing api_key",
+			wantAction: "configure the BHD api_key",
+		},
+		{
+			name: "missing tmdb id",
+			req: trackers.UploadRequest{
+				Tracker:       "BHD",
+				TrackerConfig: config.TrackerConfig{APIKey: "token"},
+				Logger:        api.NopLogger{},
+			},
+			wantCause:  "missing tmdb id",
+			wantAction: "refresh metadata or set a TMDB id",
+		},
+		{
+			name: "missing mediainfo text",
+			req: trackers.UploadRequest{
+				Tracker:       "BHD",
+				TrackerConfig: config.TrackerConfig{APIKey: "token"},
+				Meta:          api.PreparedMetadata{ExternalIDs: api.ExternalIDs{TMDBID: 123}},
+				Logger:        api.NopLogger{},
+			},
+			wantCause:  "missing mediainfo text",
+			wantAction: "generate or attach MediaInfo",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := New().BuildUploadDryRun(context.Background(), tc.req)
+			if err == nil {
+				t.Fatalf("expected prerequisite error")
+			}
+			message := err.Error()
+			if !strings.Contains(message, tc.wantCause) {
+				t.Fatalf("expected cause %q in error, got %q", tc.wantCause, message)
+			}
+			if !strings.Contains(message, tc.wantAction) {
+				t.Fatalf("expected action %q in error, got %q", tc.wantAction, message)
+			}
+		})
 	}
 }
 
@@ -115,6 +314,57 @@ func TestDefinitionBuildUploadDryRunRejectsInvalidContainer(t *testing.T) {
 	}
 }
 
+func TestResolveTypeRejectsBHD576iResolution(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{Release: api.ReleaseInfo{Resolution: "576i"}}
+	if got := resolveType(meta); got != "Other" {
+		t.Fatalf("expected BHD type Other for 576i, got %q", got)
+	}
+}
+
+func TestResolveTypeRejectsHDDVDRemuxEvenWithUHD(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{Type: "REMUX", Source: "HDDVD", UHD: "UHD"}
+	if got := resolveType(meta); got != "Other" {
+		t.Fatalf("expected BHD type Other for HD-DVD remux, got %q", got)
+	}
+}
+
+func TestDefinitionBuildUploadDryRunRejectsInvalidSource(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
+	torrentPath := filepath.Join(tmp, "Example.torrent")
+	if err := os.WriteFile(mediaInfoPath, []byte("General\nUnique ID : 123"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+	if err := os.WriteFile(torrentPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	_, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+		Tracker: "BHD",
+		Meta: api.PreparedMetadata{
+			SourcePath:        filepath.Join(tmp, "Example.mkv"),
+			TorrentPath:       torrentPath,
+			MediaInfoTextPath: mediaInfoPath,
+			ExternalIDs:       api.ExternalIDs{TMDBID: 123, Category: "MOVIE"},
+			Release:           api.ReleaseInfo{Resolution: "1080p"},
+			Type:              "WEBDL",
+			Source:            "CAM",
+			Container:         "mkv",
+		},
+		TrackerConfig: config.TrackerConfig{APIKey: "token"},
+		Logger:        api.NopLogger{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported source") {
+		t.Fatalf("expected unsupported source error, got %v", err)
+	}
+}
+
 func TestUploadRetriesInvalidIMDb(t *testing.T) {
 	tmp := t.TempDir()
 	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
@@ -136,12 +386,25 @@ func TestUploadRetriesInvalidIMDb(t *testing.T) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if len(r.MultipartForm.File["mediainfo"]) != 1 {
+			t.Errorf("expected mediainfo file part")
+			return
+		}
+		if len(r.MultipartForm.File["file"]) != 1 {
+			t.Errorf("expected torrent file part")
+			return
+		}
 		calls++
 		imdbID := r.FormValue("imdb_id")
+		tmdbID := r.FormValue("tmdb_id")
+		if tmdbID != "movie/123" {
+			t.Errorf("expected tmdb_id movie/123, got %q", tmdbID)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if calls == 1 {
-			if imdbID != "456" {
-				t.Errorf("expected first imdb_id 456, got %q", imdbID)
+			if imdbID != "tt0000456" {
+				t.Errorf("expected first imdb_id tt0000456, got %q", imdbID)
 				return
 			}
 			_, _ = fmt.Fprint(w, `{"status_code":0,"status_message":"Invalid imdb_id"}`)
@@ -187,6 +450,42 @@ func TestUploadRetriesInvalidIMDb(t *testing.T) {
 	}
 	if len(summary.UploadedTorrents) != 1 || summary.UploadedTorrents[0].TorrentID != "7890" {
 		t.Fatalf("unexpected uploaded torrents: %+v", summary.UploadedTorrents)
+	}
+}
+
+func TestSendUploadRejectsOversizedResponseBody(t *testing.T) {
+	tmp := t.TempDir()
+	torrentPath := filepath.Join(tmp, "Example.torrent")
+	if err := os.WriteFile(torrentPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, strings.Repeat("x", int(bhdUploadResponseMaxBytes)+1))
+	}))
+	defer server.Close()
+
+	originalBaseURL := bhdBaseURL
+	bhdBaseURL = server.URL
+	defer func() { bhdBaseURL = originalBaseURL }()
+
+	_, _, err := sendUpload(context.Background(), trackers.UploadRequest{
+		Tracker:       "BHD",
+		TrackerConfig: config.TrackerConfig{APIKey: "token"},
+	}, uploadState{
+		torrentPath: torrentPath,
+		fields: map[string]string{
+			"name":        "Example.Release.2026.1080p-GRP",
+			"category_id": "1",
+			"type":        "1080p",
+			"source":      "WEB",
+			"tmdb_id":     "movie/123456",
+			"description": "Example description",
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "response body exceeds") {
+		t.Fatalf("expected oversized response error, got %v", err)
 	}
 }
 

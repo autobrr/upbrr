@@ -17,7 +17,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -27,6 +26,7 @@ import (
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/bhdmeta"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -37,11 +37,18 @@ var (
 	bhdInvalidIMDbPattern = regexp.MustCompile(`(?i)^invalid imdb_id`)
 )
 
+const bhdUploadResponseMaxBytes = commonhttp.DefaultResponsePreviewBytes
+
 type uploadState struct {
 	torrentPath string
 	mediaDump   string
 	description string
 	fields      map[string]string
+}
+
+type uploadIdentity struct {
+	tmdbID   int
+	category string
 }
 
 func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
@@ -139,10 +146,11 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}
 
 	if strings.TrimSpace(req.TrackerConfig.APIKey) == "" {
-		return uploadState{}, errors.New("trackers: BHD missing api_key")
+		return uploadState{}, errors.New("trackers: BHD missing api_key; configure the BHD api_key in tracker settings before uploading")
 	}
-	if req.Meta.ExternalIDs.TMDBID == 0 {
-		return uploadState{}, errors.New("trackers: BHD missing tmdb id")
+	identity := resolveUploadIdentity(req.Meta)
+	if identity.tmdbID == 0 {
+		return uploadState{}, errors.New("trackers: BHD missing tmdb id; refresh metadata or set a TMDB id before uploading")
 	}
 	if err := validateBHDContainer(req.Meta); err != nil {
 		return uploadState{}, err
@@ -171,13 +179,17 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 
 	tags := resolveTags(req.Meta)
 	customEdition, edition := resolveEdition(req.Meta, tags)
+	source, ok := resolveSource(req.Meta)
+	if !ok {
+		return uploadState{}, fmt.Errorf("trackers: BHD unsupported source %q", req.Meta.Source)
+	}
 	fields := map[string]string{
 		"name":        resolveUploadName(req.Meta),
-		"category_id": resolveCategoryID(req.Meta),
+		"category_id": resolveCategoryID(identity.category),
 		"type":        resolveType(req.Meta),
-		"source":      resolveSource(req.Meta.Source),
+		"source":      source,
 		"imdb_id":     resolveIMDbID(req.Meta),
-		"tmdb_id":     strconv.Itoa(req.Meta.ExternalIDs.TMDBID),
+		"tmdb_id":     resolveTMDBID(identity),
 		"description": description,
 		"anon":        resolveAnon(req.TrackerConfig),
 		"sd":          boolFlag(isSD(req.Meta)),
@@ -230,7 +242,7 @@ func sendUpload(ctx context.Context, req trackers.UploadRequest, state uploadSta
 	}
 	defer resp.Body.Close()
 
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := readUploadResponseBody(resp.Body)
 	if err != nil {
 		return uploadResponse{}, nil, fmt.Errorf("trackers: BHD read response: %w", err)
 	}
@@ -241,6 +253,17 @@ func sendUpload(ctx context.Context, req trackers.UploadRequest, state uploadSta
 		}
 	}
 	return decoded, responseBody, nil
+}
+
+func readUploadResponseBody(r io.Reader) ([]byte, error) {
+	responseBody, err := io.ReadAll(io.LimitReader(r, bhdUploadResponseMaxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read upload response body: %w", err)
+	}
+	if int64(len(responseBody)) > bhdUploadResponseMaxBytes {
+		return nil, fmt.Errorf("response body exceeds %d bytes", bhdUploadResponseMaxBytes)
+	}
+	return responseBody, nil
 }
 
 type uploadResponse struct {
@@ -257,9 +280,14 @@ func buildMultipartPayload(fields map[string]string, mediaDump string, torrentPa
 			return nil, "", fmt.Errorf("trackers: BHD write multipart field %q: %w", key, err)
 		}
 	}
-	if err := writer.WriteField("mediainfo", mediaDump); err != nil {
+	part, err := writer.CreateFormFile("mediainfo", "mediainfo.txt")
+	if err != nil {
 		_ = writer.Close()
-		return nil, "", fmt.Errorf("trackers: BHD write multipart field %q: %w", "mediainfo", err)
+		return nil, "", fmt.Errorf("trackers: BHD create mediainfo form file: %w", err)
+	}
+	if _, err := io.WriteString(part, mediaDump); err != nil {
+		_ = writer.Close()
+		return nil, "", fmt.Errorf("trackers: BHD write mediainfo form file: %w", err)
 	}
 	file, err := os.Open(torrentPath)
 	if err != nil {
@@ -267,7 +295,7 @@ func buildMultipartPayload(fields map[string]string, mediaDump string, torrentPa
 		return nil, "", fmt.Errorf("trackers: BHD open torrent file: %w", err)
 	}
 	defer file.Close()
-	part, err := writer.CreateFormFile("file", "torrent.torrent")
+	part, err = writer.CreateFormFile("file", "torrent.torrent")
 	if err != nil {
 		_ = writer.Close()
 		return nil, "", fmt.Errorf("trackers: BHD create torrent form file: %w", err)
@@ -287,18 +315,18 @@ func resolveMediaDump(meta api.PreparedMetadata, dbPath string) (string, error) 
 	case "BDMV":
 		text := readBDInfoNoErr(dbPath, meta)
 		if text == "" {
-			return "", errors.New("trackers: BHD missing BDInfo text")
+			return "", errors.New("trackers: BHD missing BDInfo text; generate or attach BDInfo before uploading")
 		}
 		return text, nil
 	case "DVD":
 		text := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.DVDVOBMediaInfoText), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
 		if text == "" {
-			return "", errors.New("trackers: BHD missing DVD MediaInfo text")
+			return "", errors.New("trackers: BHD missing DVD MediaInfo text; generate or attach DVD MediaInfo before uploading")
 		}
 		return text, nil
 	default:
 		if strings.TrimSpace(meta.MediaInfoTextPath) == "" {
-			return "", errors.New("trackers: BHD missing mediainfo text")
+			return "", errors.New("trackers: BHD missing mediainfo text; generate or attach MediaInfo before uploading")
 		}
 		payload, err := os.ReadFile(strings.TrimSpace(meta.MediaInfoTextPath))
 		if err != nil {
@@ -368,7 +396,7 @@ func writeFailureArtifact(req trackers.UploadRequest, payload []byte, name strin
 
 func resolveUploadName(meta api.PreparedMetadata) string {
 	name := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ReleaseName), strings.TrimSpace(meta.ReleaseNameNoTag), strings.TrimSpace(meta.Filename), pathutil.Base(meta.SourcePath))
-	if isDVDSource(meta.Source) {
+	if bhdmeta.IsDVDSource(meta.Source) {
 		audio := strings.Join(strings.Fields(strings.TrimSpace(meta.Audio)), " ")
 		if audio != "" && strings.TrimSpace(meta.VideoCodec) != "" {
 			name = strings.Replace(name, audio, strings.TrimSpace(meta.VideoCodec)+" "+audio, 1)
@@ -377,11 +405,73 @@ func resolveUploadName(meta api.PreparedMetadata) string {
 	return strings.ReplaceAll(name, "DD+", "DDP")
 }
 
-func resolveCategoryID(meta api.PreparedMetadata) string {
-	if strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") || strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "TV") {
+func resolveUploadIdentity(meta api.PreparedMetadata) uploadIdentity {
+	if meta.ExternalMetadata.TMDB != nil &&
+		strings.EqualFold(strings.TrimSpace(meta.ExternalMetadata.SourcePath), strings.TrimSpace(meta.SourcePath)) &&
+		meta.ExternalMetadata.TMDB.TMDBID != 0 {
+		return uploadIdentity{
+			tmdbID:   meta.ExternalMetadata.TMDB.TMDBID,
+			category: firstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Category, meta.MediaInfoCategory, meta.Release.Category),
+		}
+	}
+	if meta.ExternalIDs.TMDBID != 0 && externalIDsMatchCurrentSource(meta) {
+		return uploadIdentity{
+			tmdbID:   meta.ExternalIDs.TMDBID,
+			category: firstNonEmptyTrimmed(meta.ExternalIDs.Category, meta.MediaInfoCategory, meta.Release.Category),
+		}
+	}
+	if meta.MediaInfoTMDBID != 0 {
+		return uploadIdentity{
+			tmdbID:   meta.MediaInfoTMDBID,
+			category: firstNonEmptyTrimmed(meta.MediaInfoCategory, meta.Release.Category, meta.ExternalIDs.Category),
+		}
+	}
+	if meta.SceneTMDBID != 0 {
+		return uploadIdentity{
+			tmdbID:   meta.SceneTMDBID,
+			category: firstNonEmptyTrimmed(meta.MediaInfoCategory, meta.Release.Category, meta.ExternalIDs.Category),
+		}
+	}
+	if meta.ArrTMDBID != 0 {
+		return uploadIdentity{
+			tmdbID:   meta.ArrTMDBID,
+			category: firstNonEmptyTrimmed(meta.MediaInfoCategory, meta.Release.Category, meta.ExternalIDs.Category),
+		}
+	}
+	return uploadIdentity{}
+}
+
+func externalIDsMatchCurrentSource(meta api.PreparedMetadata) bool {
+	storedSource := strings.TrimSpace(meta.ExternalIDs.SourcePath)
+	return storedSource == "" || strings.EqualFold(storedSource, strings.TrimSpace(meta.SourcePath))
+}
+
+func firstNonEmptyTrimmed(candidates ...string) string {
+	for _, candidate := range candidates {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func resolveCategoryID(category string) string {
+	if strings.EqualFold(strings.TrimSpace(category), "TV") {
 		return "2"
 	}
 	return "1"
+}
+
+func resolveTMDBID(identity uploadIdentity) string {
+	if identity.tmdbID == 0 {
+		return ""
+	}
+	prefix := "movie"
+	if strings.EqualFold(resolveCategoryID(identity.category), "2") {
+		prefix = "tv"
+	}
+	return fmt.Sprintf("%s/%d", prefix, identity.tmdbID)
 }
 
 func validateBHDContainer(meta api.PreparedMetadata) error {
@@ -395,73 +485,12 @@ func validateBHDContainer(meta api.PreparedMetadata) error {
 	return nil
 }
 
-func resolveSource(source string) string {
-	switch strings.ToUpper(strings.TrimSpace(source)) {
-	case "BLURAY", "BLU-RAY":
-		return "Blu-ray"
-	case "HDDVD", "HD DVD":
-		return "HD-DVD"
-	case "WEB", "WEB-DL", "WEBDL", "WEBRIP":
-		return "WEB"
-	case "HDTV", "UHDTV":
-		return "HDTV"
-	case "NTSC", "PAL", "NTSC DVD", "PAL DVD", "DVD":
-		return "DVD"
-	default:
-		return strings.TrimSpace(source)
-	}
+func resolveSource(meta api.PreparedMetadata) (string, bool) {
+	return bhdmeta.SourceForMetadata(meta)
 }
 
 func resolveType(meta api.PreparedMetadata) string {
-	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-		size := 100
-		for _, candidate := range []int{25, 50, 66, 100} {
-			if meta.SourceSize > 0 && meta.SourceSize < int64(candidate)<<30 {
-				size = candidate
-				break
-			}
-		}
-		if strings.EqualFold(strings.TrimSpace(meta.UHD), "UHD") && size != 25 {
-			if size == 50 || size == 66 || size == 100 {
-				return fmt.Sprintf("UHD %d", size)
-			}
-			return "Other"
-		}
-		if size == 25 || size == 50 {
-			return fmt.Sprintf("BD %d", size)
-		}
-		return "Other"
-	}
-	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
-		upper := strings.ToUpper(strings.TrimSpace(meta.Release.Size))
-		switch {
-		case strings.Contains(upper, "DVD5"):
-			return "DVD 5"
-		case strings.Contains(upper, "DVD9"):
-			return "DVD 9"
-		default:
-			return "Other"
-		}
-	}
-	if strings.EqualFold(strings.TrimSpace(meta.Type), "REMUX") {
-		switch {
-		case strings.EqualFold(strings.TrimSpace(meta.UHD), "UHD"):
-			return "UHD Remux"
-		case isDVDSource(meta.Source):
-			return "DVD Remux"
-		case strings.EqualFold(strings.TrimSpace(meta.Source), "BluRay"), strings.EqualFold(strings.TrimSpace(meta.Source), "Blu-ray"):
-			return "BD Remux"
-		default:
-			return "Other"
-		}
-	}
-	resolution := normalizeResolution(meta.Release.Resolution)
-	switch resolution {
-	case "2160p", "1080p", "1080i", "720p", "576p", "576i", "540p", "480p":
-		return resolution
-	default:
-		return "Other"
-	}
+	return bhdmeta.Type(meta)
 }
 
 func resolveEdition(meta api.PreparedMetadata, tags []string) (bool, string) {
@@ -476,9 +505,9 @@ func resolveEdition(meta api.PreparedMetadata, tags []string) (bool, string) {
 		if strings.Contains(strings.ToLower(edition), token) {
 			switch token {
 			case "director":
-				return false, "director"
+				return false, "Director"
 			default:
-				return false, token
+				return false, strings.ToUpper(token[:1]) + token[1:]
 			}
 		}
 	}
@@ -536,8 +565,25 @@ func resolveTags(meta api.PreparedMetadata) []string {
 }
 
 func resolveIMDbID(meta api.PreparedMetadata) string {
+	if meta.ExternalMetadata.IMDB != nil && strings.EqualFold(strings.TrimSpace(meta.ExternalMetadata.SourcePath), strings.TrimSpace(meta.SourcePath)) {
+		if id := strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbIDText); id != "" {
+			return id
+		}
+		if meta.ExternalMetadata.IMDB.IMDBID > 0 {
+			return fmt.Sprintf("tt%07d", meta.ExternalMetadata.IMDB.IMDBID)
+		}
+	}
 	if meta.ExternalIDs.IMDBID > 0 {
-		return strconv.Itoa(meta.ExternalIDs.IMDBID)
+		return fmt.Sprintf("tt%07d", meta.ExternalIDs.IMDBID)
+	}
+	if meta.MediaInfoIMDBID > 0 {
+		return fmt.Sprintf("tt%07d", meta.MediaInfoIMDBID)
+	}
+	if meta.SceneIMDB > 0 {
+		return fmt.Sprintf("tt%07d", meta.SceneIMDB)
+	}
+	if meta.ArrIMDBID > 0 {
+		return fmt.Sprintf("tt%07d", meta.ArrIMDBID)
 	}
 	return "1"
 }
@@ -570,17 +616,7 @@ func resolveRegion(region string) string {
 }
 
 func isSD(meta api.PreparedMetadata) bool {
-	resolution := normalizeResolution(meta.Release.Resolution)
-	return strings.Contains(resolution, "480") || strings.Contains(resolution, "540") || strings.Contains(resolution, "576")
-}
-
-func normalizeResolution(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
-}
-
-func isDVDSource(source string) bool {
-	upper := strings.ToUpper(strings.TrimSpace(source))
-	return upper == "PAL DVD" || upper == "NTSC DVD" || upper == "DVD" || upper == "PAL" || upper == "NTSC"
+	return bhdmeta.IsSD(meta)
 }
 
 func boolFlag(value bool) string {

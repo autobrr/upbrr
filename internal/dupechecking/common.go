@@ -96,6 +96,74 @@ func parseSkipReason(notes []string) (string, bool) {
 	return "", false
 }
 
+// resolveSearchTMDBID returns the first usable TMDB ID from the same fallback
+// chain used by tracker dupe-search payloads. External metadata is accepted
+// only when it belongs to the current source path.
+func resolveSearchTMDBID(meta api.PreparedMetadata) int {
+	if meta.ExternalMetadata.TMDB != nil &&
+		strings.EqualFold(strings.TrimSpace(meta.ExternalMetadata.SourcePath), strings.TrimSpace(meta.SourcePath)) &&
+		meta.ExternalMetadata.TMDB.TMDBID != 0 {
+		return meta.ExternalMetadata.TMDB.TMDBID
+	}
+	if meta.ExternalIDs.TMDBID != 0 && externalIDsMatchCurrentSource(meta) {
+		return meta.ExternalIDs.TMDBID
+	}
+	if meta.MediaInfoTMDBID != 0 {
+		return meta.MediaInfoTMDBID
+	}
+	if meta.SceneTMDBID != 0 {
+		return meta.SceneTMDBID
+	}
+	return meta.ArrTMDBID
+}
+
+// resolveSearchCategory returns the best available movie or TV category for
+// tracker search filters. External metadata is accepted only when it belongs to
+// the current source path.
+func resolveSearchCategory(meta api.PreparedMetadata) string {
+	if meta.ExternalMetadata.TMDB != nil &&
+		strings.EqualFold(strings.TrimSpace(meta.ExternalMetadata.SourcePath), strings.TrimSpace(meta.SourcePath)) &&
+		meta.ExternalMetadata.TMDB.TMDBID != 0 {
+		return firstSearchCategory(meta.ExternalMetadata.TMDB.Category, meta.MediaInfoCategory, meta.Release.Category)
+	}
+	if meta.ExternalIDs.TMDBID != 0 && externalIDsMatchCurrentSource(meta) {
+		return firstSearchCategory(meta.ExternalIDs.Category, meta.MediaInfoCategory, meta.Release.Category)
+	}
+	if meta.MediaInfoTMDBID != 0 {
+		return firstSearchCategory(meta.MediaInfoCategory, meta.Release.Category)
+	}
+	for _, candidate := range []string{
+		meta.ExternalIDs.Category,
+		meta.MediaInfoCategory,
+		meta.Release.Category,
+	} {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	if meta.ExternalMetadata.TMDB != nil &&
+		strings.EqualFold(strings.TrimSpace(meta.ExternalMetadata.SourcePath), strings.TrimSpace(meta.SourcePath)) {
+		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Category)
+	}
+	return ""
+}
+
+func externalIDsMatchCurrentSource(meta api.PreparedMetadata) bool {
+	storedSource := strings.TrimSpace(meta.ExternalIDs.SourcePath)
+	return storedSource == "" || strings.EqualFold(storedSource, strings.TrimSpace(meta.SourcePath))
+}
+
+func firstSearchCategory(candidates ...string) string {
+	for _, candidate := range candidates {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func stringsToDupeEntries(values []string) []api.DupeEntry {
 	if len(values) == 0 {
 		return nil
