@@ -5,6 +5,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -59,9 +61,14 @@ func TestTrackerAuthStatusConsumerContractsIncludeAPIFields(t *testing.T) {
 
 	fields := trackerAuthStatusJSONFields(t)
 	frontendTypes := readRepoFile(t, "gui", "frontend", "src", "types.ts")
-	wailsModels := readRepoFile(t, "gui", "frontend", "wailsjs", "go", "models.ts")
 
 	assertContractBlockFields(t, frontendTypes, "export type TrackerAuthStatus = {", "};", fields)
+
+	wailsModels, ok := readOptionalRepoFile(t, "gui", "frontend", "wailsjs", "go", "models.ts")
+	if !ok {
+		t.Log("skipping generated Wails model contract check; gui/frontend/wailsjs/go/models.ts is ignored and absent in clean checkouts")
+		return
+	}
 	assertContractBlockFields(t, wailsModels, "export class TrackerAuthStatus {", "static createFrom", fields)
 }
 
@@ -70,13 +77,13 @@ func TestTrackerAuthStatusConsumerContractsIncludeAPIFields(t *testing.T) {
 func trackerAuthStatusJSONFields(t *testing.T) []string {
 	t.Helper()
 
-	statusType := reflect.TypeOf(TrackerAuthStatus{})
+	statusType := reflect.TypeFor[TrackerAuthStatus]()
 	fields := make([]string, 0, statusType.NumField())
-	for i := range statusType.NumField() {
-		tag := statusType.Field(i).Tag.Get("json")
+	for field := range statusType.Fields() {
+		tag := field.Tag.Get("json")
 		name, _, _ := strings.Cut(tag, ",")
 		if name == "" || name == "-" {
-			t.Fatalf("TrackerAuthStatus field %s missing JSON contract tag", statusType.Field(i).Name)
+			t.Fatalf("TrackerAuthStatus field %s missing JSON contract tag", field.Name)
 		}
 		fields = append(fields, name)
 	}
@@ -109,10 +116,32 @@ func assertContractBlockFields(t *testing.T, source string, start string, end st
 func readRepoFile(t *testing.T, parts ...string) string {
 	t.Helper()
 
-	pathParts := append([]string{"..", ".."}, parts...)
-	content, err := os.ReadFile(filepath.Join(pathParts...))
+	content, err := readRepoFileContent(parts...)
 	if err != nil {
 		t.Fatalf("read repo contract file %v: %v", parts, err)
 	}
 	return string(content)
+}
+
+func readOptionalRepoFile(t *testing.T, parts ...string) (string, bool) {
+	t.Helper()
+
+	content, err := readRepoFileContent(parts...)
+	if err == nil {
+		return string(content), true
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false
+	}
+	t.Fatalf("read optional repo contract file %v: %v", parts, err)
+	return "", false
+}
+
+func readRepoFileContent(parts ...string) ([]byte, error) {
+	pathParts := append([]string{"..", ".."}, parts...)
+	content, err := os.ReadFile(filepath.Join(pathParts...))
+	if err != nil {
+		return nil, fmt.Errorf("read repo file: %w", err)
+	}
+	return content, nil
 }
