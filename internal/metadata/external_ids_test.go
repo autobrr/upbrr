@@ -921,10 +921,13 @@ func TestResolveExternalIDsUsesSceneNFOIDs(t *testing.T) {
 	if result.ExternalIDs.TVmazeID != 444 || result.ExternalIDs.SourceTVmaze != "scene" {
 		t.Fatalf("expected scene tvmaze id, got %#v", result.ExternalIDs)
 	}
-	if result.MALID != 999 {
-		t.Fatalf("expected tmdb mal to take precedence after metadata fetch, got %d", result.MALID)
+	if result.ExternalIDs.MALID != 555 || result.ExternalIDs.SourceMAL != "scene" {
+		t.Fatalf("expected scene mal id, got %#v", result.ExternalIDs)
 	}
-	if repo.ids.TMDBID != 42 || repo.ids.IMDBID != 123456 || repo.ids.TVDBID != 333 || repo.ids.TVmazeID != 444 {
+	if result.MALID != 555 {
+		t.Fatalf("expected canonical scene mal mirror, got %d", result.MALID)
+	}
+	if repo.ids.TMDBID != 42 || repo.ids.IMDBID != 123456 || repo.ids.TVDBID != 333 || repo.ids.TVmazeID != 444 || repo.ids.MALID != 555 {
 		t.Fatalf("expected persisted scene ids, got %#v", repo.ids)
 	}
 }
@@ -2438,6 +2441,94 @@ func TestResolveExternalIDsAppliesMALOverride(t *testing.T) {
 	}
 	if result.MALID != 999 {
 		t.Fatalf("expected mal override 999, got %d", result.MALID)
+	}
+	if result.ExternalIDs.MALID != 999 || result.ExternalIDs.SourceMAL != "override" {
+		t.Fatalf("expected canonical mal override, got %#v", result.ExternalIDs)
+	}
+}
+
+func TestResolveExternalIDsMALPrecedence(t *testing.T) {
+	tmdbID := 101
+	tmdbClient := &stubTMDB{
+		metadata: tmdb.MetadataResult{
+			TMDBType: "tv",
+			MALID:    444,
+			Anime:    true,
+		},
+	}
+	svc := NewService(&fakeRepo{},
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:        "/media/Example.Anime.S01E01.mkv",
+		MediaInfoCategory: "TV",
+		TrackerData:       []api.TrackerMetadata{{MALID: 111}},
+		SceneMALID:        222,
+		MALID:             333,
+		ExternalIDOverrides: api.ExternalIDOverrides{
+			TMDBID: &tmdbID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if result.ExternalIDs.MALID != 111 || result.ExternalIDs.SourceMAL != "tracker" {
+		t.Fatalf("expected tracker mal precedence, got %#v", result.ExternalIDs)
+	}
+	if result.MALID != 111 {
+		t.Fatalf("expected prepared mal mirror 111, got %d", result.MALID)
+	}
+}
+
+func TestResolveExternalIDsMALFallbacksAndClear(t *testing.T) {
+	tmdbID := 101
+	clearMAL := 0
+	svc := NewService(&fakeRepo{},
+		WithTMDBClient(&stubTMDB{metadata: tmdb.MetadataResult{TMDBType: "tv", MALID: 444, Anime: true}}),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:        "/media/Example.Anime.S01E02.mkv",
+		MediaInfoCategory: "TV",
+		SceneMALID:        222,
+		MALID:             333,
+		ExternalIDOverrides: api.ExternalIDOverrides{
+			TMDBID: &tmdbID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve scene: %v", err)
+	}
+	if result.ExternalIDs.MALID != 222 || result.ExternalIDs.SourceMAL != "scene" {
+		t.Fatalf("expected scene mal fallback, got %#v", result.ExternalIDs)
+	}
+
+	cleared, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:        "/media/Example.Anime.S01E03.mkv",
+		MediaInfoCategory: "TV",
+		TrackerData:       []api.TrackerMetadata{{MALID: 111}},
+		SceneMALID:        222,
+		MALID:             333,
+		ExternalIDOverrides: api.ExternalIDOverrides{
+			TMDBID: &tmdbID,
+			MALID:  &clearMAL,
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve clear: %v", err)
+	}
+	if cleared.ExternalIDs.MALID != 0 || cleared.ExternalIDs.SourceMAL != "override_clear" {
+		t.Fatalf("expected cleared mal lock, got %#v", cleared.ExternalIDs)
+	}
+	if cleared.MALID != 0 {
+		t.Fatalf("expected prepared mal mirror cleared, got %d", cleared.MALID)
 	}
 }
 

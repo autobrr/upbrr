@@ -305,26 +305,44 @@ type RuleFailure struct {
 	Reason string
 }
 
+// ExternalIDOverrides carries caller-supplied ID intent into metadata
+// resolution. Nil means the resolver may fill the provider; a positive value
+// locks that provider to the supplied ID; zero locks an explicit clear for the
+// current request.
 type ExternalIDOverrides struct {
 	TMDBID   *int
 	IMDBID   *int
 	TVDBID   *int
 	TVmazeID *int
-	MALID    *int
+	// MALID carries caller intent for the canonical MAL/AniList-compatible
+	// anime identifier. Nil leaves resolution unchanged; zero clears it.
+	MALID *int
 }
 
+// ExternalIDs contains canonical IDs finalized by metadata resolution.
+// Downstream search, rule, preview, history, and upload code should use these
+// fields instead of re-reading raw resolver fallback inputs.
 type ExternalIDs struct {
-	SourcePath   string
-	TMDBID       int
-	IMDBID       int
-	TVDBID       int
-	TVmazeID     int
-	Category     string
+	// SourcePath is the content path these resolved IDs belong to. Empty means
+	// the record is not scoped to a specific source path.
+	SourcePath string
+	TMDBID     int
+	IMDBID     int
+	TVDBID     int
+	TVmazeID   int
+	// MALID is the canonical anime identifier used by MAL/AniList-compatible
+	// tracker fields after metadata resolution.
+	MALID    int
+	Category string
+	// Source* fields record the resolver source labels that produced each
+	// provider ID, for example tracker, mediainfo, tmdb, or scene.
 	SourceTMDB   string
 	SourceIMDB   string
 	SourceTVDB   string
 	SourceTVmaze string
-	UpdatedAt    time.Time `ts_type:"string"`
+	// SourceMAL records the resolver source label for MALID.
+	SourceMAL string
+	UpdatedAt time.Time `ts_type:"string"`
 }
 
 type ExternalMetadata struct {

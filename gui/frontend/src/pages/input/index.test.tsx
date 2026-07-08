@@ -19,11 +19,13 @@ const preview: MetadataPreview = {
     IMDBID: 0,
     TVDBID: 0,
     TVmazeID: 0,
+    MALID: 0,
     Category: "TV",
     SourceTMDB: "",
     SourceIMDB: "",
     SourceTVDB: "",
     SourceTVmaze: "",
+    SourceMAL: "",
   },
   ExternalIDCandidates: {
     TMDB: [],
@@ -99,8 +101,9 @@ describe("InputPage metadata progress", () => {
         trackerUploadItems={[]}
         releasePageTrackerSelection={{}}
         setReleasePageTrackerSelection={vi.fn()}
-        idEdits={{ tmdb: "", imdb: "", tvdb: "", tvmaze: "" }}
+        idEdits={{ tmdb: "", imdb: "", tvdb: "", tvmaze: "", mal: "" }}
         setIdEdits={vi.fn()}
+        markIDTouched={vi.fn()}
         releaseEdits={releaseEdits}
         setReleaseEdits={vi.fn()}
         markReleaseTouched={vi.fn<(key: keyof ReleaseNameTouchedState) => void>()}
@@ -124,6 +127,70 @@ describe("InputPage metadata progress", () => {
 
     expect(screen.getByText("Retry tracker data")).toBeInTheDocument();
     expect(screen.getByText("Running")).toBeInTheDocument();
+  });
+});
+
+describe("InputPage external ID preview", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("renders an explicit unavailable preview for selected MAL IDs", () => {
+    render(
+      <InputPage
+        path="C:\\media\\Example.mkv"
+        handleSourcePathChange={vi.fn()}
+        sourcePathHistory={[]}
+        handleSourcePathHistorySelect={vi.fn()}
+        sourceLookupURL=""
+        setSourceLookupURL={vi.fn()}
+        browseAvailable={false}
+        handleBrowseFile={vi.fn()}
+        handleBrowseFolder={vi.fn()}
+        handleFetch={vi.fn()}
+        handleRefresh={vi.fn()}
+        handleResetMetadata={vi.fn()}
+        loading={false}
+        metadataResetting={false}
+        metadataProgressActive={false}
+        metadataProgressUpdates={[]}
+        error=""
+        preview={{
+          ...preview,
+          ExternalIDInfo: [{ Provider: "mal", ID: 5114, Source: "tmdb" }],
+          ExternalPreview: [],
+        }}
+        trackerUploadItems={[]}
+        releasePageTrackerSelection={{}}
+        setReleasePageTrackerSelection={vi.fn()}
+        idEdits={{ tmdb: "", imdb: "", tvdb: "", tvmaze: "", mal: "" }}
+        setIdEdits={vi.fn()}
+        markIDTouched={vi.fn()}
+        releaseEdits={releaseEdits}
+        setReleaseEdits={vi.fn()}
+        markReleaseTouched={vi.fn<(key: keyof ReleaseNameTouchedState) => void>()}
+        idOverrideState={{ overrides: {}, dirty: false, invalid: false }}
+        releaseOverrideState={{ overrides: {}, dirty: false, invalid: false }}
+        showExternalIDInputUI={false}
+        refreshDisabled={false}
+        selectedProvider="mal"
+        setSelectedProvider={vi.fn()}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+        runDebug={false}
+        setRunDebug={vi.fn()}
+        runLogLevel=""
+        setRunLogLevel={vi.fn()}
+        runLogLevelTouched={false}
+        setRunLogLevelTouched={vi.fn()}
+        trackerIconSrcByName={{}}
+      />,
+    );
+
+    expect(screen.getByText("MAL metadata preview unavailable.")).toBeInTheDocument();
+    expect(screen.getByText("MAL URL")).toBeInTheDocument();
+    expect(screen.getByText("https://myanimelist.net/anime/5114")).toBeInTheDocument();
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
   });
 });
 
@@ -167,8 +234,9 @@ describe("InputPage tracker selection", () => {
           ]}
           releasePageTrackerSelection={releasePageTrackerSelection}
           setReleasePageTrackerSelection={setReleasePageTrackerSelection}
-          idEdits={{ tmdb: "", imdb: "", tvdb: "", tvmaze: "" }}
+          idEdits={{ tmdb: "", imdb: "", tvdb: "", tvmaze: "", mal: "" }}
           setIdEdits={vi.fn()}
+          markIDTouched={vi.fn()}
           releaseEdits={releaseEdits}
           setReleaseEdits={vi.fn()}
           markReleaseTouched={vi.fn<(key: keyof ReleaseNameTouchedState) => void>()}

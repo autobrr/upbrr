@@ -1,23 +1,32 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+/** Resolved external IDs returned by metadata resolution for the current source path. */
 export type ExternalIDs = {
   TMDBID: number;
   IMDBID: number;
   TVDBID: number;
   TVmazeID: number;
+  /** Canonical anime identifier used for MAL and MAL/AniList-compatible tracker fields. */
+  MALID: number;
   Category: string;
+  /** Resolver source labels for each provider ID, such as tracker, mediainfo, tmdb, or scene. */
   SourceTMDB: string;
   SourceIMDB: string;
   SourceTVDB: string;
   SourceTVmaze: string;
+  /** Resolver source label for MALID. */
+  SourceMAL: string;
 };
 
+/** External ID overrides use null/undefined for untouched fields and 0 for an explicit clear. */
 export type ExternalIDOverrides = {
   TMDBID?: number | null;
   IMDBID?: number | null;
   TVDBID?: number | null;
   TVmazeID?: number | null;
+  /** Canonical MAL/AniList-compatible anime identifier override. */
+  MALID?: number | null;
 };
 
 export type ReleaseNameOverrides = {

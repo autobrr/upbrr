@@ -213,11 +213,13 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 		IMDBID:       200,
 		TVDBID:       300,
 		TVmazeID:     400,
+		MALID:        500,
 		Category:     "MOVIE",
 		SourceTMDB:   "tracker",
 		SourceIMDB:   "mediainfo",
 		SourceTVDB:   "tmdb",
 		SourceTVmaze: "tvmaze",
+		SourceMAL:    "scene",
 		UpdatedAt:    idsStamp,
 	}); err != nil {
 		t.Fatalf("save external ids: %v", err)
@@ -227,8 +229,26 @@ func TestSQLiteRepositoryCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get external ids: %v", err)
 	}
-	if ids.TMDBID != 100 || ids.IMDBID != 200 || ids.TVDBID != 300 || ids.TVmazeID != 400 {
+	if ids.TMDBID != 100 || ids.IMDBID != 200 || ids.TVDBID != 300 || ids.TVmazeID != 400 || ids.MALID != 500 {
 		t.Fatalf("unexpected external ids: %#v", ids)
+	}
+	if ids.SourcePath != "/media/file.mkv" || ids.Category != "MOVIE" ||
+		ids.SourceTMDB != "tracker" || ids.SourceIMDB != "mediainfo" ||
+		ids.SourceTVDB != "tmdb" || ids.SourceTVmaze != "tvmaze" ||
+		ids.SourceMAL != "scene" {
+		t.Fatalf(
+			"unexpected external id source fields: path=%q category=%q tmdb=%q imdb=%q tvdb=%q tvmaze=%q mal=%q",
+			ids.SourcePath,
+			ids.Category,
+			ids.SourceTMDB,
+			ids.SourceIMDB,
+			ids.SourceTVDB,
+			ids.SourceTVmaze,
+			ids.SourceMAL,
+		)
+	}
+	if !ids.UpdatedAt.Equal(idsStamp) {
+		t.Fatalf("unexpected external id timestamp: got %s want %s", ids.UpdatedAt, idsStamp)
 	}
 
 	if err := repo.SaveDVDMediaInfo(ctx, DVDMediaInfo{

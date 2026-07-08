@@ -23,11 +23,13 @@ const preview = {
     IMDBID: 0,
     TVDBID: 0,
     TVmazeID: 0,
+    MALID: 0,
     Category: "",
     SourceTMDB: "",
     SourceIMDB: "",
     SourceTVDB: "",
     SourceTVmaze: "",
+    SourceMAL: "",
   },
   ExternalIDCandidates: {
     TMDB: [],

@@ -62,12 +62,17 @@ type ExecutionOptions struct {
 	SiteUploadTracker string
 }
 
-// ExternalIDSelection records the external metadata IDs chosen for one source path.
+// ExternalIDSelection records per-source-path user ID choices copied across
+// resolved CLI/UI paths. Nil provider fields mean no user choice; non-nil
+// fields follow [ExternalIDOverrides] positive-value and zero-clear semantics.
 type ExternalIDSelection struct {
 	TMDBID   *int
 	IMDBID   *int
 	TVDBID   *int
 	TVmazeID *int
+	// MALID stores user selection for the canonical MAL/AniList-compatible
+	// anime identifier for this source path.
+	MALID *int
 }
 
 // UploadOptions contains per-run upload and preview behavior flags.

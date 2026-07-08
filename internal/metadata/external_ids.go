@@ -101,7 +101,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	}
 
 	ids := api.ExternalIDs{SourcePath: meta.SourcePath}
-	if meta.StoredDataFresh && strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.SourcePath), strings.TrimSpace(meta.SourcePath)) {
+	if meta.StoredDataFresh && sourceScopedMetadataMatches(meta.ExternalIDs.SourcePath, meta.SourcePath) {
 		ids = meta.ExternalIDs
 		if strings.TrimSpace(ids.SourcePath) == "" {
 			ids.SourcePath = meta.SourcePath
@@ -111,7 +111,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		clearTrackerSourcedExternalIDs(&ids)
 	}
 	metadata := api.ExternalMetadata{SourcePath: meta.SourcePath}
-	if meta.StoredDataFresh && strings.EqualFold(strings.TrimSpace(meta.ExternalMetadata.SourcePath), strings.TrimSpace(meta.SourcePath)) {
+	if meta.StoredDataFresh && sourceScopedMetadataMatches(meta.ExternalMetadata.SourcePath, meta.SourcePath) {
 		metadata = meta.ExternalMetadata
 		if strings.TrimSpace(metadata.SourcePath) == "" {
 			metadata.SourcePath = meta.SourcePath
@@ -139,10 +139,11 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	overrideIMDB, clearedIMDB := applyOverrideID(&ids.IMDBID, &ids.SourceIMDB, meta.ExternalIDOverrides.IMDBID)
 	overrideTVDB, clearedTVDB := applyOverrideID(&ids.TVDBID, &ids.SourceTVDB, meta.ExternalIDOverrides.TVDBID)
 	overrideTVmaze, _ := applyOverrideID(&ids.TVmazeID, &ids.SourceTVmaze, meta.ExternalIDOverrides.TVmazeID)
+	overrideMAL, clearedMAL := applyOverrideID(&ids.MALID, &ids.SourceMAL, meta.ExternalIDOverrides.MALID)
 
-	trackerTMDB, trackerIMDB, trackerTVDB := 0, 0, 0
+	trackerTMDB, trackerIMDB, trackerTVDB, trackerMAL := 0, 0, 0, 0
 	if !meta.Options.SkipAutoTorrent || meta.SourceLookupActive {
-		trackerTMDB, trackerIMDB, trackerTVDB = resolveTrackerIDs(meta.TrackerData)
+		trackerTMDB, trackerIMDB, trackerTVDB, trackerMAL = resolveTrackerIDs(meta.TrackerData)
 	}
 	if !overrideTMDB && !clearedTMDB {
 		applyResolvedID(&ids.TMDBID, &ids.SourceTMDB, trackerTMDB, "tracker")
@@ -152,6 +153,9 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	}
 	if !overrideTVDB && !clearedTVDB {
 		applyResolvedID(&ids.TVDBID, &ids.SourceTVDB, trackerTVDB, "tracker")
+	}
+	if !overrideMAL && !clearedMAL {
+		applyResolvedID(&ids.MALID, &ids.SourceMAL, trackerMAL, "tracker")
 	}
 
 	if !overrideTMDB && !clearedTMDB {
@@ -175,6 +179,12 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	}
 	if !overrideTVmaze {
 		applyResolvedID(&ids.TVmazeID, &ids.SourceTVmaze, meta.SceneTVmazeID, "scene")
+	}
+	if !overrideMAL && !clearedMAL {
+		applyResolvedID(&ids.MALID, &ids.SourceMAL, meta.SceneMALID, "scene")
+	}
+	if !overrideMAL && !clearedMAL {
+		applyResolvedID(&ids.MALID, &ids.SourceMAL, meta.MALID, "prepared")
 	}
 	if !overrideTMDB && !clearedTMDB {
 		applyResolvedID(&ids.TMDBID, &ids.SourceTMDB, meta.ArrTMDBID, metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.ArrSource), "arr"))
@@ -563,6 +573,9 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 			if shouldUseTVDBForCategory(meta, ids) && !overrideTVDB && ids.TVDBID == 0 && tmdbResult.TVDBID != 0 {
 				applyResolvedID(&ids.TVDBID, &ids.SourceTVDB, tmdbResult.TVDBID, "tmdb")
 			}
+			if !overrideMAL && !clearedMAL && ids.MALID == 0 && tmdbResult.MALID != 0 {
+				applyResolvedID(&ids.MALID, &ids.SourceMAL, tmdbResult.MALID, "tmdb")
+			}
 		}
 
 		if imdbInfo != nil {
@@ -785,9 +798,18 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	}
 
 	meta.ExternalIDs = ids
+	meta.MALID = ids.MALID
 	meta.ExternalIDCandidates = candidates
 	meta.ExternalMetadata = metadata
 	return meta, nil
+}
+
+func sourceScopedMetadataMatches(storedSourcePath string, currentSourcePath string) bool {
+	trimmedStored := strings.TrimSpace(storedSourcePath)
+	if trimmedStored == "" {
+		return true
+	}
+	return strings.EqualFold(trimmedStored, strings.TrimSpace(currentSourcePath))
 }
 
 func clearTrackerSourcedExternalIDs(ids *api.ExternalIDs) {
@@ -809,6 +831,10 @@ func clearTrackerSourcedExternalIDs(ids *api.ExternalIDs) {
 	if strings.EqualFold(strings.TrimSpace(ids.SourceTVmaze), "tracker") {
 		ids.TVmazeID = 0
 		ids.SourceTVmaze = ""
+	}
+	if strings.EqualFold(strings.TrimSpace(ids.SourceMAL), "tracker") {
+		ids.MALID = 0
+		ids.SourceMAL = ""
 	}
 }
 
@@ -1789,13 +1815,10 @@ func (s *Service) applyTVEpisodeMetadata(
 	overrideMAL := meta.ExternalIDOverrides.MALID != nil
 	if external != nil && external.TMDB != nil {
 		meta.Anime = external.TMDB.Anime
-		meta.MALID = external.TMDB.MALID
 	}
-	if meta.MALID == 0 {
-		meta.MALID = meta.SceneMALID
-	}
+	meta.MALID = ids.MALID
 	if overrideMAL {
-		meta.MALID = metautil.FirstInt(*meta.ExternalIDOverrides.MALID, 0)
+		meta.MALID = metautil.FirstInt(ids.MALID, 0)
 	}
 
 	if !isLikelyTV(meta) && !strings.EqualFold(ids.Category, "TV") {

@@ -4460,6 +4460,9 @@ func mergeExternalIDOverrides(base api.ExternalIDOverrides, selection api.Extern
 	if selection.TVmazeID != nil {
 		merged.TVmazeID = selection.TVmazeID
 	}
+	if selection.MALID != nil {
+		merged.MALID = selection.MALID
+	}
 	return merged
 }
 
@@ -4509,7 +4512,7 @@ func baseFromAnnounce(announce string) string {
 }
 
 func buildExternalIDInfo(ids api.ExternalIDs) []api.ExternalIDInfo {
-	result := make([]api.ExternalIDInfo, 0, 4)
+	result := make([]api.ExternalIDInfo, 0, 5)
 	if ids.IMDBID != 0 {
 		result = append(result, api.ExternalIDInfo{Provider: "imdb", ID: ids.IMDBID, Source: ids.SourceIMDB})
 	}
@@ -4521,6 +4524,9 @@ func buildExternalIDInfo(ids api.ExternalIDs) []api.ExternalIDInfo {
 	}
 	if ids.TVmazeID != 0 {
 		result = append(result, api.ExternalIDInfo{Provider: "tvmaze", ID: ids.TVmazeID, Source: ids.SourceTVmaze})
+	}
+	if ids.MALID != 0 {
+		result = append(result, api.ExternalIDInfo{Provider: "mal", ID: ids.MALID, Source: ids.SourceMAL})
 	}
 	return result
 }

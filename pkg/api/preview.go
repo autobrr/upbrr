@@ -154,6 +154,8 @@ type TrackerPreview struct {
 	UpdatedAt       string
 }
 
+// ExternalIDInfo is the user-visible provider ID plus the resolver source label
+// that produced it.
 type ExternalIDInfo struct {
 	Provider string
 	ID       int

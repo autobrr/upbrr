@@ -840,8 +840,8 @@ func resolveGroupDescription(meta api.PreparedMetadata) string {
 	if meta.ExternalIDs.TVmazeID != 0 {
 		parts = append(parts, "https://www.tvmaze.com/shows/"+strconv.Itoa(meta.ExternalIDs.TVmazeID))
 	}
-	if meta.MALID != 0 {
-		parts = append(parts, "https://myanimelist.net/anime/"+strconv.Itoa(meta.MALID))
+	if meta.ExternalIDs.MALID != 0 {
+		parts = append(parts, "https://myanimelist.net/anime/"+strconv.Itoa(meta.ExternalIDs.MALID))
 	}
 	return strings.Join(parts, "\n")
 }

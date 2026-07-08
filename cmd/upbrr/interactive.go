@@ -1238,6 +1238,10 @@ func printMetadataExternalIDs(preview api.MetadataPreview) {
 		printHeader()
 		fmt.Printf("TVmaze: https://www.tvmaze.com/shows/%d\n", preview.ExternalIDs.TVmazeID)
 	}
+	if preview.ExternalIDs.MALID != 0 {
+		printHeader()
+		fmt.Printf("MAL: https://myanimelist.net/anime/%d\n", preview.ExternalIDs.MALID)
+	}
 }
 
 func primaryMetadataPreview(preview api.MetadataPreview) *api.ExternalPreview {

@@ -542,8 +542,8 @@ func (r *SQLiteRepository) GetExternalIDs(ctx context.Context, path string) (Ext
 	}
 
 	row := r.db.QueryRowContext(ctx, `
-		SELECT source_path, tmdb_id, imdb_id, tvdb_id, tvmaze_id, category,
-			source_tmdb, source_imdb, source_tvdb, source_tvmaze, updated_at
+		SELECT source_path, tmdb_id, imdb_id, tvdb_id, tvmaze_id, mal_id, category,
+			source_tmdb, source_imdb, source_tvdb, source_tvmaze, source_mal, updated_at
 		FROM external_ids
 		WHERE source_path = ?
 	`, path)
@@ -556,11 +556,13 @@ func (r *SQLiteRepository) GetExternalIDs(ctx context.Context, path string) (Ext
 		&ids.IMDBID,
 		&ids.TVDBID,
 		&ids.TVmazeID,
+		&ids.MALID,
 		&ids.Category,
 		&ids.SourceTMDB,
 		&ids.SourceIMDB,
 		&ids.SourceTVDB,
 		&ids.SourceTVmaze,
+		&ids.SourceMAL,
 		&updatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -592,20 +594,22 @@ func (r *SQLiteRepository) SaveExternalIDs(ctx context.Context, ids ExternalIDs)
 
 	_, err := r.execWrite(ctx, "save external ids", `
 		INSERT INTO external_ids (
-			source_path, tmdb_id, imdb_id, tvdb_id, tvmaze_id, category,
-			source_tmdb, source_imdb, source_tvdb, source_tvmaze, updated_at
+			source_path, tmdb_id, imdb_id, tvdb_id, tvmaze_id, mal_id, category,
+			source_tmdb, source_imdb, source_tvdb, source_tvmaze, source_mal, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_path) DO UPDATE SET
 			tmdb_id = excluded.tmdb_id,
 			imdb_id = excluded.imdb_id,
 			tvdb_id = excluded.tvdb_id,
 			tvmaze_id = excluded.tvmaze_id,
+			mal_id = excluded.mal_id,
 			category = excluded.category,
 			source_tmdb = excluded.source_tmdb,
 			source_imdb = excluded.source_imdb,
 			source_tvdb = excluded.source_tvdb,
 			source_tvmaze = excluded.source_tvmaze,
+			source_mal = excluded.source_mal,
 			updated_at = excluded.updated_at
 	`,
 		ids.SourcePath,
@@ -613,11 +617,13 @@ func (r *SQLiteRepository) SaveExternalIDs(ctx context.Context, ids ExternalIDs)
 		ids.IMDBID,
 		ids.TVDBID,
 		ids.TVmazeID,
+		ids.MALID,
 		ids.Category,
 		ids.SourceTMDB,
 		ids.SourceIMDB,
 		ids.SourceTVDB,
 		ids.SourceTVmaze,
+		ids.SourceMAL,
 		timestamp.Format(time.RFC3339Nano),
 	)
 	if err != nil {
