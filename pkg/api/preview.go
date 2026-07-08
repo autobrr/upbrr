@@ -154,6 +154,8 @@ type TrackerPreview struct {
 	UpdatedAt       string
 }
 
+// ExternalIDInfo is the user-visible provider ID plus the resolver source label
+// that produced it.
 type ExternalIDInfo struct {
 	Provider string
 	ID       int
@@ -192,4 +194,6 @@ type ExternalPreview struct {
 	IMDB             *IMDBMetadata
 	TVDB             *TVDBMetadata
 	TVmaze           *TVmazeMetadata
+	// AniList contains rich preview metadata when Provider is "mal".
+	AniList *AniListMetadata
 }

@@ -1,23 +1,32 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+/** Resolved external IDs returned by metadata resolution for the current source path. */
 export type ExternalIDs = {
   TMDBID: number;
   IMDBID: number;
   TVDBID: number;
   TVmazeID: number;
+  /** Canonical anime identifier used for MAL and MAL/AniList-compatible tracker fields. */
+  MALID: number;
   Category: string;
+  /** Resolver source labels for each provider ID, such as tracker, mediainfo, tmdb, or scene. */
   SourceTMDB: string;
   SourceIMDB: string;
   SourceTVDB: string;
   SourceTVmaze: string;
+  /** Resolver source label for MALID. */
+  SourceMAL: string;
 };
 
+/** External ID overrides use null/undefined for untouched fields and 0 for an explicit clear. */
 export type ExternalIDOverrides = {
   TMDBID?: number | null;
   IMDBID?: number | null;
   TVDBID?: number | null;
   TVmazeID?: number | null;
+  /** Canonical MAL/AniList-compatible anime identifier override. */
+  MALID?: number | null;
 };
 
 export type ReleaseNameOverrides = {
@@ -286,6 +295,113 @@ export type TVmazeMetadata = {
   TVDBID: number;
 };
 
+/** AniList media tag shown in the MAL/AniList preview. */
+export type AniListTag = {
+  Name: string;
+  /** AniList tag relevance percentage from 0 to 100. */
+  Rank: number;
+  Category: string;
+  /** Adult/spoiler markers used to hide sensitive tag labels in preview UI. */
+  IsAdult: boolean;
+  IsGeneralSpoiler: boolean;
+  IsMediaSpoiler: boolean;
+};
+
+/** Studio attached to an AniList media entry. */
+export type AniListStudio = {
+  ID: number;
+  Name: string;
+  /** AniList studio page URL. */
+  SiteURL: string;
+};
+
+/** Trailer reference returned by AniList. */
+export type AniListTrailer = {
+  ID: string;
+  Site: string;
+  /** Provider thumbnail URL when AniList supplies one. */
+  Thumbnail: string;
+};
+
+/** Next scheduled episode for an airing AniList media entry. */
+export type AniListAiringEpisode = {
+  /** Unix timestamp in seconds. */
+  AiringAt: number;
+  /** Seconds from AniList's response time until AiringAt. */
+  TimeUntilAiring: number;
+  Episode: number;
+};
+
+/** Public provider or official link attached to AniList media. */
+export type AniListExternalLink = {
+  Site: string;
+  /** Public provider or official URL. */
+  URL: string;
+  Type: string;
+  Language: string;
+};
+
+/**
+ * AniList media snapshot used by the MAL/AniList metadata preview.
+ *
+ * Mirrors the shared Go API contract: date strings preserve AniList
+ * fuzzy-date precision, score fields are 0-100 percentages, and airing
+ * timestamps are Unix seconds.
+ */
+export type AniListMetadata = {
+  /** AniList media ID used in AniList URLs. */
+  AniListID: number;
+  /** MyAnimeList media ID used as upbrr's canonical anime ID. */
+  MALID: number;
+  /** Canonical AniList media page URL. */
+  SiteURL: string;
+  /** Localized AniList title variants. */
+  TitleRomaji: string;
+  TitleEnglish: string;
+  TitleNative: string;
+  TitleUserPreferred: string;
+  /** Plain-text media description from AniList. */
+  Description: string;
+  /** AniList enum value such as TV, MOVIE, or OVA. */
+  Format: string;
+  /** AniList enum value such as FINISHED or RELEASING. */
+  Status: string;
+  /** YYYY, YYYY-MM, or YYYY-MM-DD depending on AniList precision. */
+  StartDate: string;
+  /** YYYY, YYYY-MM, or YYYY-MM-DD depending on AniList precision. */
+  EndDate: string;
+  /** AniList season enum such as WINTER or SPRING. */
+  Season: string;
+  SeasonYear: number;
+  Episodes: number;
+  /** Average episode duration in minutes. */
+  Duration: number;
+  CountryOfOrigin: string;
+  /** AniList source enum such as MANGA, ORIGINAL, or LIGHT_NOVEL. */
+  Source: string;
+  /** AniList image URLs and dominant cover color. */
+  CoverExtraLarge: string;
+  CoverLarge: string;
+  CoverMedium: string;
+  CoverColor: string;
+  BannerImage: string;
+  Genres: string[];
+  Synonyms: string[];
+  /** AniList percentage score from 0 to 100. */
+  AverageScore: number;
+  /** AniList percentage score from 0 to 100. */
+  MeanScore: number;
+  Popularity: number;
+  Favourites: number;
+  IsAdult: boolean;
+  /** Includes adult/spoiler markers so the UI can filter sensitive tags. */
+  Tags: AniListTag[];
+  Studios: AniListStudio[];
+  Trailer: AniListTrailer;
+  NextAiringEpisode: AniListAiringEpisode;
+  ExternalLinks: AniListExternalLink[];
+};
+
 export type WebAuthStatus = {
   path: string;
   exists: boolean;
@@ -327,7 +443,13 @@ export type TrackerAuthCapability = {
   notes?: string[] | null;
 };
 
-/** Current tracker auth state returned after status, import, login, validation, 2FA, or delete actions. */
+/**
+ * Current tracker auth state returned after status, import, login, validation,
+ * 2FA, or delete actions.
+ *
+ * Mirrors the shared Go API contract; browser routes and Wails bindings should
+ * preserve every field so GUI surfaces show the same status and remediation.
+ */
 export type TrackerAuthStatus = {
   trackerID: string;
   displayName: string;
@@ -384,6 +506,8 @@ export type ExternalPreview = {
   IMDB?: IMDBMetadata;
   TVDB?: TVDBMetadata;
   TVmaze?: TVmazeMetadata;
+  /** Rich preview metadata when Provider is "mal". */
+  AniList?: AniListMetadata;
 };
 
 export type BlurayImage = {

@@ -371,11 +371,25 @@ func detectResolution(value string) string {
 }
 
 func imdbForLookup(meta api.PreparedMetadata) string {
-	if meta.ExternalIDs.IMDBID != 0 {
+	if meta.ExternalMetadata.IMDB != nil && strings.EqualFold(strings.TrimSpace(meta.ExternalMetadata.SourcePath), strings.TrimSpace(meta.SourcePath)) {
+		if id := strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbIDText); id != "" {
+			return id
+		}
+		if meta.ExternalMetadata.IMDB.IMDBID != 0 {
+			return fmt.Sprintf("tt%07d", meta.ExternalMetadata.IMDB.IMDBID)
+		}
+	}
+	if meta.ExternalIDs.IMDBID != 0 && externalIDsMatchCurrentSource(meta) {
 		return fmt.Sprintf("tt%07d", meta.ExternalIDs.IMDBID)
 	}
 	if meta.MediaInfoIMDBID != 0 {
 		return fmt.Sprintf("tt%07d", meta.MediaInfoIMDBID)
+	}
+	if meta.SceneIMDB != 0 {
+		return fmt.Sprintf("tt%07d", meta.SceneIMDB)
+	}
+	if meta.ArrIMDBID != 0 {
+		return fmt.Sprintf("tt%07d", meta.ArrIMDBID)
 	}
 	return ""
 }

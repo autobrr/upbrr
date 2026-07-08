@@ -1244,14 +1244,21 @@ func TestValidateBTNClientSessionRequiresUploadFormStructure(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		body    string
-		wantErr bool
+		name                 string
+		body                 string
+		wantErr              bool
+		wantConfirmedInvalid bool
 	}{
 		{
 			name:    "help page upload text rejected",
 			body:    `<html><h1>Upload help</h1><p>Use the upload page to submit releases.</p></html>`,
 			wantErr: true,
+		},
+		{
+			name:                 "logged out upload help rejected",
+			body:                 `<html><h1>Upload</h1><p>Please log in before using the upload page.</p></html>`,
+			wantErr:              true,
+			wantConfirmedInvalid: true,
 		},
 		{
 			name:    "transient success body rejected",
@@ -1284,6 +1291,12 @@ func TestValidateBTNClientSessionRequiresUploadFormStructure(t *testing.T) {
 			err := validateBTNClientSession(context.Background(), server.Client(), server.URL)
 			if tt.wantErr && err == nil {
 				t.Fatal("expected upload auth page validation error")
+			}
+			if tt.wantConfirmedInvalid && !errors.Is(err, errBTNSessionConfirmedInvalid) {
+				t.Fatalf("expected confirmed-invalid session error, got %v", err)
+			}
+			if tt.wantErr && !tt.wantConfirmedInvalid && !strings.Contains(err.Error(), "upload auth page validation failed") {
+				t.Fatalf("expected upload marker validation error, got %v", err)
 			}
 			if !tt.wantErr && err != nil {
 				t.Fatalf("validateBTNClientSession: %v", err)

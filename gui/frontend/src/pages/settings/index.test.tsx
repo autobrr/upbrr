@@ -671,6 +671,49 @@ describe("SettingsPage", () => {
     },
   );
 
+  it("stores the post-validation tracker auth status returned by Check Auth", async () => {
+    const testStatus = {
+      ...trackerAuthStatus("fresh validation ready"),
+      cookieCount: 3,
+      lastCheckedAt: "2026-07-08T00:00:00Z",
+      lastError: "",
+      encryptedStorage: true,
+    };
+    vi.stubGlobal("go", {
+      guiapp: {
+        App: {
+          ListTrackerAuthCapabilities: vi.fn().mockResolvedValue([trackerAuthCapability]),
+          GetTrackerAuthStatus: vi.fn().mockResolvedValue({
+            ...trackerAuthStatus("stale before validation"),
+            cookieCount: 1,
+          }),
+          TestTrackerAuth: vi.fn().mockResolvedValue(testStatus),
+        },
+      },
+    });
+
+    render(
+      <SettingsPage {...baseProps} settingsSection="tracker_auth" setSettingsSection={vi.fn()} />,
+    );
+
+    expect(await screen.findByText("stale before validation")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Check Auth" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("fresh validation ready")).toBeInTheDocument();
+      expect(screen.getByText("Cookies: 3")).toBeInTheDocument();
+      expect(
+        screen.getByText((_content, element) =>
+          Boolean(
+            element?.textContent?.startsWith("Checked: ") &&
+            element.textContent !== "Checked: Never",
+          ),
+        ),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("stale before validation")).not.toBeInTheDocument();
+    });
+  });
+
   it("clears tracker auth cards when refresh fails after an action", async () => {
     const list = vi
       .fn()

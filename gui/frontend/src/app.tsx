@@ -142,11 +142,13 @@ const emptyPreview: MetadataPreview = {
     IMDBID: 0,
     TVDBID: 0,
     TVmazeID: 0,
+    MALID: 0,
     Category: "",
     SourceTMDB: "",
     SourceIMDB: "",
     SourceTVDB: "",
     SourceTVmaze: "",
+    SourceMAL: "",
   },
   ExternalIDCandidates: {
     TMDB: [],
@@ -609,7 +611,7 @@ const parseIDInput = (provider: string, value: string) => {
   return Number(normalized);
 };
 
-const providerOrder = ["tmdb", "imdb", "tvdb", "tvmaze"] as const;
+const providerOrder = ["tmdb", "imdb", "tvdb", "tvmaze", "mal"] as const;
 
 const filterAndOrderExternalIDs = (info: ExternalIDInfo[]) => {
   const orderIndex = new Map<string, number>(
@@ -631,6 +633,17 @@ const buildIDEditState = (ids: ExternalIDs) => ({
   imdb: formatNumber(ids.IMDBID),
   tvdb: formatNumber(ids.TVDBID),
   tvmaze: formatNumber(ids.TVmazeID),
+  mal: formatNumber(ids.MALID),
+});
+
+type IDProviderKey = keyof ReturnType<typeof buildIDEditState>;
+
+const buildIDTouchedState = (): Record<IDProviderKey, boolean> => ({
+  tmdb: false,
+  imdb: false,
+  tvdb: false,
+  tvmaze: false,
+  mal: false,
 });
 
 const buildReleaseEditState = (overrides?: ReleaseNameOverrides): ReleaseNameEditState => ({
@@ -738,6 +751,9 @@ export default function App() {
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<MetadataPreview>(emptyPreview);
   const [idEdits, setIdEdits] = useState(() => buildIDEditState(emptyPreview.ExternalIDs));
+  const [idTouched, setIdTouched] = useState<Record<IDProviderKey, boolean>>(() =>
+    buildIDTouchedState(),
+  );
   const [releaseEdits, setReleaseEdits] = useState(() =>
     buildReleaseEditState(emptyPreview.ReleaseNameOverrides),
   );
@@ -1261,25 +1277,21 @@ export default function App() {
       imdb: parseIDInput("imdb", idEdits.imdb),
       tvdb: parseIDInput("tvdb", idEdits.tvdb),
       tvmaze: parseIDInput("tvmaze", idEdits.tvmaze),
+      mal: parseIDInput("mal", idEdits.mal),
     };
 
     const invalid = Object.values(parsed).includes(null);
     const overrides: ExternalIDOverrides = {
-      TMDBID:
-        parsed.tmdb !== null && parsed.tmdb !== preview.ExternalIDs.TMDBID ? parsed.tmdb : null,
-      IMDBID:
-        parsed.imdb !== null && parsed.imdb !== preview.ExternalIDs.IMDBID ? parsed.imdb : null,
-      TVDBID:
-        parsed.tvdb !== null && parsed.tvdb !== preview.ExternalIDs.TVDBID ? parsed.tvdb : null,
-      TVmazeID:
-        parsed.tvmaze !== null && parsed.tvmaze !== preview.ExternalIDs.TVmazeID
-          ? parsed.tvmaze
-          : null,
+      TMDBID: parsed.tmdb !== null && idTouched.tmdb ? parsed.tmdb : null,
+      IMDBID: parsed.imdb !== null && idTouched.imdb ? parsed.imdb : null,
+      TVDBID: parsed.tvdb !== null && idTouched.tvdb ? parsed.tvdb : null,
+      TVmazeID: parsed.tvmaze !== null && idTouched.tvmaze ? parsed.tvmaze : null,
+      MALID: parsed.mal !== null && idTouched.mal ? parsed.mal : null,
     };
     const dirty = Object.values(overrides).some((value) => value !== null);
 
     return { overrides, dirty, invalid };
-  }, [idEdits, preview.ExternalIDs]);
+  }, [idEdits, idTouched]);
 
   const releaseOverrideState = useMemo(() => {
     // Safety check: ensure state is initialized
@@ -1602,6 +1614,7 @@ export default function App() {
       setError("");
       setPreview(emptyPreview);
       setIdEdits(buildIDEditState(emptyPreview.ExternalIDs));
+      setIdTouched(buildIDTouchedState());
       setReleaseEdits(buildReleaseEditState(emptyPreview.ReleaseNameOverrides));
       setReleaseTouched(buildReleaseTouchedState(emptyPreview.ReleaseNameOverrides));
       setShowExternalIDInputUI(true);
@@ -1870,6 +1883,9 @@ export default function App() {
     if (overrides.TVmazeID !== null && overrides.TVmazeID !== undefined) {
       payload.TVmazeID = overrides.TVmazeID;
     }
+    if (overrides.MALID !== null && overrides.MALID !== undefined) {
+      payload.MALID = overrides.MALID;
+    }
     return payload;
   };
 
@@ -1946,14 +1962,17 @@ export default function App() {
 
   const applyPreviewResult = (
     result: MetadataPreview,
-    options: { switchToInput?: boolean } = {},
+    options: { switchToInput?: boolean; preserveIDTouches?: boolean } = {},
   ) => {
-    const { switchToInput = true } = options;
+    const { switchToInput = true, preserveIDTouches = false } = options;
     setPreview(result);
     if (switchToInput) {
       setActiveTab("input");
     }
     setIdEdits(buildIDEditState(result.ExternalIDs));
+    if (!preserveIDTouches) {
+      setIdTouched(buildIDTouchedState());
+    }
     setReleaseEdits(buildReleaseEditState(result.ReleaseNameOverrides || {}));
     setReleaseTouched(buildReleaseTouchedState(result.ReleaseNameOverrides || {}));
     const orderedIDs = filterAndOrderExternalIDs(result.ExternalIDInfo || []);
@@ -2302,7 +2321,10 @@ export default function App() {
         normalizeReleaseOverrides(nameOverrides),
         selectedTrackers,
       );
-      applyPreviewResult(result, { switchToInput: options.switchToInput });
+      applyPreviewResult(result, {
+        switchToInput: options.switchToInput,
+        preserveIDTouches: Object.keys(normalizeOverrides(overrides)).length > 0,
+      });
       rememberSourcePath(
         targetPath,
         options.targetMode ?? sourcePathMode ?? inferSourcePathMode(targetPath),
@@ -2367,6 +2389,7 @@ export default function App() {
 
   const clearEditAttributesState = () => {
     setIdEdits(buildIDEditState(emptyPreview.ExternalIDs));
+    setIdTouched(buildIDTouchedState());
     setReleaseEdits(buildReleaseEditState({}));
     setReleaseTouched(buildReleaseTouchedState({}));
   };
@@ -4465,6 +4488,12 @@ export default function App() {
               setReleasePageTrackerSelection={setReleasePageTrackerSelection}
               idEdits={idEdits}
               setIdEdits={setIdEdits}
+              markIDTouched={(key) =>
+                setIdTouched((previous) => ({
+                  ...previous,
+                  [key]: true,
+                }))
+              }
               releaseEdits={releaseEdits}
               setReleaseEdits={setReleaseEdits}
               markReleaseTouched={markReleaseTouched}

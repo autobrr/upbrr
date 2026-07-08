@@ -278,8 +278,8 @@ func buildDatabaseLinks(meta api.PreparedMetadata) string {
 	if id := meta.ExternalIDs.TVmazeID; id > 0 {
 		links = append(links, fmt.Sprintf("https://www.tvmaze.com/shows/%d", id))
 	}
-	if meta.MALID > 0 {
-		links = append(links, fmt.Sprintf("https://myanimelist.net/anime/%d", meta.MALID))
+	if meta.ExternalIDs.MALID > 0 {
+		links = append(links, fmt.Sprintf("https://myanimelist.net/anime/%d", meta.ExternalIDs.MALID))
 	}
 	return strings.Join(links, "\n")
 }

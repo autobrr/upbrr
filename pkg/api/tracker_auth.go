@@ -20,7 +20,12 @@ type TrackerAuthCapability struct {
 	Notes              []string `json:"notes"`
 }
 
-// TrackerAuthStatus reports the current local tracker auth state after a status, import, login, validation, 2FA, or delete action.
+// TrackerAuthStatus reports the current local tracker auth state after a
+// status, import, login, validation, 2FA, or delete action.
+//
+// Wails, embedded web, and frontend consumers must expose the same JSON fields
+// so status summaries, remediation messages, and Promise-visible errors stay in
+// parity across GUI entrypoints.
 type TrackerAuthStatus struct {
 	TrackerID   string `json:"trackerID"`
 	DisplayName string `json:"displayName"`

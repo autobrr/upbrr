@@ -1261,9 +1261,8 @@ func cloneCLIExternalIDSelectionsForResolvedPath(selections map[string]api.Exter
 	if !ok {
 		return selections
 	}
-	if _, ok := resolveCLIExternalIDSelection(selections, trimmedResolvedPath); ok {
-		return selections
-	}
+	// Current source-path selections must replace any stale resolved-path
+	// selections carried from a previous run or source change.
 	cloned := make(map[string]api.ExternalIDSelection, len(selections)+1)
 	maps.Copy(cloned, selections)
 	cloned[trimmedResolvedPath] = selected

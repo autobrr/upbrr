@@ -163,7 +163,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		"type":             resolveResolution(req.Meta),
 		"tmdb":             strconv.Itoa(req.Meta.ExternalIDs.TMDBID),
 		"imdb":             strconv.Itoa(req.Meta.ExternalIDs.IMDBID),
-		"mal":              strconv.Itoa(req.Meta.MALID),
+		"mal":              strconv.Itoa(req.Meta.ExternalIDs.MALID),
 		"igdb":             "0",
 		"anonymous":        boolNum(req.TrackerConfig.Anon),
 		"stream":           boolNum(req.Meta.StreamOptimized > 0),

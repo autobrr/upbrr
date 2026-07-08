@@ -305,36 +305,158 @@ type RuleFailure struct {
 	Reason string
 }
 
+// ExternalIDOverrides carries caller-supplied ID intent into metadata
+// resolution. Nil means the resolver may fill the provider; a positive value
+// locks that provider to the supplied ID; zero locks an explicit clear for the
+// current request.
 type ExternalIDOverrides struct {
 	TMDBID   *int
 	IMDBID   *int
 	TVDBID   *int
 	TVmazeID *int
-	MALID    *int
+	// MALID carries caller intent for the canonical MAL/AniList-compatible
+	// anime identifier. Nil leaves resolution unchanged; zero clears it.
+	MALID *int
 }
 
+// ExternalIDs contains canonical IDs finalized by metadata resolution.
+// Downstream search, rule, preview, history, and upload code should use these
+// fields instead of re-reading raw resolver fallback inputs.
 type ExternalIDs struct {
-	SourcePath   string
-	TMDBID       int
-	IMDBID       int
-	TVDBID       int
-	TVmazeID     int
-	Category     string
+	// SourcePath is the content path these resolved IDs belong to. Empty means
+	// the record is not scoped to a specific source path.
+	SourcePath string
+	TMDBID     int
+	IMDBID     int
+	TVDBID     int
+	TVmazeID   int
+	// MALID is the canonical anime identifier used by MAL/AniList-compatible
+	// tracker fields after metadata resolution.
+	MALID    int
+	Category string
+	// Source* fields record the resolver source labels that produced each
+	// provider ID, for example tracker, mediainfo, tmdb, or scene.
 	SourceTMDB   string
 	SourceIMDB   string
 	SourceTVDB   string
 	SourceTVmaze string
-	UpdatedAt    time.Time `ts_type:"string"`
+	// SourceMAL records the resolver source label for MALID.
+	SourceMAL string
+	UpdatedAt time.Time `ts_type:"string"`
 }
 
+// ExternalMetadata stores provider-specific metadata snapshots resolved for one
+// source path. Nil provider fields mean that provider has no stored snapshot.
 type ExternalMetadata struct {
+	// SourcePath scopes the metadata to a prepared source path when set.
 	SourcePath string
 	TMDB       *TMDBMetadata
 	IMDB       *IMDBMetadata
 	TVDB       *TVDBMetadata
 	TVmaze     *TVmazeMetadata
-	Bluray     *BlurayMetadata
-	UpdatedAt  time.Time `ts_type:"string"`
+	// AniList stores rich anime metadata resolved from the canonical MALID.
+	AniList   *AniListMetadata
+	Bluray    *BlurayMetadata
+	UpdatedAt time.Time `ts_type:"string"`
+}
+
+// AniListMetadata is the AniList media snapshot used for MAL/AniList preview.
+//
+// Date fields keep AniList fuzzy-date precision, score fields are percentages
+// from 0 to 100, and AiringAt fields are Unix timestamps in seconds. Tags keep
+// adult/spoiler flags so consumers can filter them before display.
+type AniListMetadata struct {
+	// AniListID is the AniList media ID used in AniList URLs.
+	AniListID int
+	// MALID is the MyAnimeList media ID used as upbrr's canonical anime ID.
+	MALID int
+	// SiteURL is the canonical AniList media page URL.
+	SiteURL string
+	// Title* fields preserve AniList's localized title variants.
+	TitleRomaji        string
+	TitleEnglish       string
+	TitleNative        string
+	TitleUserPreferred string
+	// Description is AniList's plain-text media description.
+	Description string
+	// Format, Status, Season, and Source are AniList enum values.
+	Format string
+	Status string
+	// StartDate is formatted as YYYY, YYYY-MM, or YYYY-MM-DD depending on AniList precision.
+	StartDate string
+	// EndDate is formatted as YYYY, YYYY-MM, or YYYY-MM-DD depending on AniList precision.
+	EndDate    string
+	Season     string
+	SeasonYear int
+	Episodes   int
+	// Duration is AniList's average episode duration in minutes.
+	Duration        int
+	CountryOfOrigin string
+	Source          string
+	// Cover* and BannerImage are AniList image URLs or color metadata used by previews.
+	CoverExtraLarge string
+	CoverLarge      string
+	CoverMedium     string
+	CoverColor      string
+	BannerImage     string
+	Genres          []string
+	Synonyms        []string
+	// AverageScore and MeanScore are AniList percentage scores from 0 to 100.
+	AverageScore      int
+	MeanScore         int
+	Popularity        int
+	Favourites        int
+	IsAdult           bool
+	Tags              []AniListTag
+	Studios           []AniListStudio
+	Trailer           AniListTrailer
+	NextAiringEpisode AniListAiringEpisode
+	ExternalLinks     []AniListExternalLink
+}
+
+// AniListTag is a media tag returned by AniList for the selected anime.
+type AniListTag struct {
+	Name string
+	// Rank is AniList's tag relevance percentage from 0 to 100.
+	Rank     int
+	Category string
+	// IsAdult and Is*Spoiler let UI consumers omit sensitive tag labels.
+	IsAdult          bool
+	IsGeneralSpoiler bool
+	IsMediaSpoiler   bool
+}
+
+// AniListStudio is a studio attached to an AniList media entry.
+type AniListStudio struct {
+	ID   int
+	Name string
+	// SiteURL is the AniList studio page URL.
+	SiteURL string
+}
+
+// AniListTrailer identifies a media trailer from AniList.
+type AniListTrailer struct {
+	ID   string
+	Site string
+	// Thumbnail is the provider thumbnail URL when AniList supplies one.
+	Thumbnail string
+}
+
+// AniListAiringEpisode describes the next scheduled episode for an airing anime.
+type AniListAiringEpisode struct {
+	// AiringAt is a Unix timestamp in seconds.
+	AiringAt int
+	// TimeUntilAiring is seconds from AniList's response time until AiringAt.
+	TimeUntilAiring int
+	Episode         int
+}
+
+// AniListExternalLink is a public provider or official link attached to AniList media.
+type AniListExternalLink struct {
+	Site     string
+	URL      string
+	Type     string
+	Language string
 }
 
 type BlurayMetadata struct {
