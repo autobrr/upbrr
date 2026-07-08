@@ -4,19 +4,23 @@
 package btn
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/metainfo"
@@ -194,23 +198,26 @@ func TestBTNUploadEndToEndSuccess(t *testing.T) {
 	if err := os.WriteFile(torrentPath, []byte("d8:announce13:https://x.ee"), 0o600); err != nil {
 		t.Fatalf("write torrent: %v", err)
 	}
+	mediaInfoText := "General\nFormat: Matroska\nVideo\nCodec: H.265"
+	mediaInfoPath := writeBTNTestMediaInfo(t, tempDir, mediaInfoText)
 
 	req := trackers.UploadRequest{
 		Tracker: "BTN",
 		Meta: api.PreparedMetadata{
-			SourcePath:      sourcePath,
-			TorrentPath:     torrentPath,
-			ReleaseName:     "Example.Show.S01E01.1080p.WEB-DL.x265-GRP",
-			Type:            "WEBDL",
-			Source:          "WEB-DL",
-			Container:       "MKV",
-			VideoEncode:     "x265",
-			VideoCodec:      "HEVC",
-			SeasonInt:       1,
-			EpisodeInt:      1,
-			EpisodeTitle:    "Episode One",
-			EpisodeOverview: "Overview",
-			TVDBAiredDate:   "2025-01-01",
+			SourcePath:        sourcePath,
+			TorrentPath:       torrentPath,
+			MediaInfoTextPath: mediaInfoPath,
+			ReleaseName:       "Example.Show.S01E01.1080p.WEB-DL.x265-GRP",
+			Type:              "WEBDL",
+			Source:            "WEB-DL",
+			Container:         "MKV",
+			VideoEncode:       "x265",
+			VideoCodec:        "HEVC",
+			SeasonInt:         1,
+			EpisodeInt:        1,
+			EpisodeTitle:      "Episode One",
+			EpisodeOverview:   "Overview",
+			TVDBAiredDate:     "2025-01-01",
 			ExternalIDs: api.ExternalIDs{
 				Category: "TV",
 			},
@@ -295,6 +302,9 @@ func TestBTNUploadEndToEndSuccess(t *testing.T) {
 	}
 	if got := uploadFormValues["origin"]; got != "P2P" {
 		t.Fatalf("expected origin P2P, got %q", got)
+	}
+	if got := uploadFormValues["release_desc"]; got != mediaInfoText {
+		t.Fatalf("expected MediaInfo release_desc, got %q", got)
 	}
 	if got := uploadFormValues["scenename"]; !strings.Contains(got, "H.265") || strings.Contains(got, "x265") {
 		t.Fatalf("expected scenename codec remap to H.265, got %q", got)
@@ -542,18 +552,71 @@ func TestBTNDryRunRequiresUploadAuthPrerequisites(t *testing.T) {
 	if entry.Status != "ready" {
 		t.Fatalf("expected credentials to satisfy dry-run upload auth prerequisites, got %#v", entry)
 	}
+	if desc, ok := entry.Payload["release_desc"]; !ok || desc != "" {
+		t.Fatalf("expected empty dry-run release_desc without MediaInfo, got value=%q present=%t", desc, ok)
+	}
 
 	cookieDBPath := newBTNAuthDB(t)
 	if err := cookies.SaveTrackerCookieMap(context.Background(), cookieDBPath, "BTN", map[string]string{"session": "imported"}); err != nil {
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
+	handlerErrs := newHTTPHandlerErrorRecorder(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/upload.php" {
+			http.NotFound(w, r)
+			return
+		}
+		if !strings.Contains(r.Header.Get("Cookie"), "session=imported") {
+			handlerErrs.Errorf("expected imported cookie on dry-run upload validation")
+			http.Error(w, "handler assertion failed", http.StatusInternalServerError)
+			return
+		}
+		_, _ = io.WriteString(w, `<form action="/upload.php"><input name="autofill"></form>`)
+	}))
+	defer server.Close()
 	cookieReq := newBTNDryRunTestRequest(t, cookieDBPath)
+	cookieReq.TrackerConfig.URL = server.URL
 	entry, err = buildUploadDryRun(context.Background(), cookieReq)
+	handlerErrs.Check()
 	if err != nil {
 		t.Fatalf("BuildUploadDryRun with stored cookies: %v", err)
 	}
 	if entry.Status != "ready" {
 		t.Fatalf("expected stored cookies to satisfy dry-run upload auth prerequisites, got %#v", entry)
+	}
+}
+
+func TestBTNDryRunRejectsStaleStoredCookiesWithoutCredentials(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newBTNAuthDB(t)
+	if err := cookies.SaveTrackerCookieMap(context.Background(), dbPath, "BTN", map[string]string{"session": "stale"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+
+	handlerErrs := newHTTPHandlerErrorRecorder(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/upload.php" {
+			http.NotFound(w, r)
+			return
+		}
+		if !strings.Contains(r.Header.Get("Cookie"), "session=stale") {
+			handlerErrs.Errorf("expected stale cookie on dry-run upload validation")
+			http.Error(w, "handler assertion failed", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `<form action="/login.php"><input name="password"></form>`)
+	}))
+	defer server.Close()
+
+	req := newBTNDryRunTestRequest(t, dbPath)
+	req.TrackerConfig.URL = server.URL
+
+	_, err := buildUploadDryRun(context.Background(), req)
+	handlerErrs.Check()
+	if !errors.Is(err, errBTNSessionConfirmedInvalid) {
+		t.Fatalf("expected stale stored cookies to block dry-run readiness, got %v", err)
 	}
 }
 
@@ -577,6 +640,124 @@ func TestBTNDryRunBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
 	}
 	if !strings.Contains(entry.Message, "canonical TV season/episode missing; BTN upload requires TVDB or metadata season/episode ints and ignores parsed season/episode fallback; refresh metadata or correct canonical season/episode before upload") {
 		t.Fatalf("expected canonical metadata message, got %q", entry.Message)
+	}
+}
+
+func TestBTNDryRunDebugRunsBTNAutofillAndReportsBothPayloads(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newBTNAuthDB(t)
+	if err := cookies.SaveTrackerCookieMap(context.Background(), dbPath, "BTN", map[string]string{"session": "imported"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+
+	handlerErrs := newHTTPHandlerErrorRecorder(t)
+	var formMu sync.Mutex
+	autofillForm := map[string]string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/upload.php":
+			if !strings.Contains(r.Header.Get("Cookie"), "session=imported") {
+				handlerErrs.Errorf("expected imported cookie on debug dry-run upload validation")
+				http.Error(w, "handler assertion failed", http.StatusInternalServerError)
+				return
+			}
+			_, _ = io.WriteString(w, `<form action="/upload.php"><input name="autofill"></form>`)
+		case r.Method == http.MethodPost && r.URL.Path == "/upload.php":
+			if !strings.Contains(r.Header.Get("Cookie"), "session=imported") {
+				handlerErrs.Errorf("expected imported cookie on debug dry-run autofill request")
+				http.Error(w, "handler assertion failed", http.StatusInternalServerError)
+				return
+			}
+			if err := r.ParseForm(); err != nil {
+				handlerErrs.Errorf("parse autofill form: %v", err)
+				http.Error(w, "handler assertion failed", http.StatusInternalServerError)
+				return
+			}
+			formMu.Lock()
+			autofillForm["type"] = r.PostForm.Get("type")
+			autofillForm["scene_yesno"] = r.PostForm.Get("scene_yesno")
+			autofillForm["auto_series"] = r.PostForm.Get("auto_series")
+			autofillForm["auto_season"] = r.PostForm.Get("auto_season")
+			autofillForm["tvdb"] = r.PostForm.Get("tvdb")
+			formMu.Unlock()
+			_, _ = io.WriteString(w, `
+				<input name="artist" value="Example Show">
+				<input name="seriesid" value="12345">
+				<input name="title" value="Season 5">
+				<input name="year" value="2026">
+				<select name="format"><option selected value="MKV">MKV</option></select>
+				<select name="bitrate"><option selected value="H.265">H.265</option></select>
+				<select name="media"><option selected value="WEB-DL">WEB-DL</option></select>
+				<select name="resolution"><option selected value="1080p">1080p</option></select>
+				<textarea name="album_desc">Autofill overview</textarea>
+			`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	req := newBTNDryRunTestRequest(t, dbPath)
+	req.TrackerConfig.URL = server.URL
+	req.Meta.MediaInfoTextPath = writeBTNTestMediaInfo(t, filepath.Dir(req.Meta.SourcePath), "General\nFormat: Matroska")
+	req.Meta.Options.Debug = true
+	req.Meta.TVPack = true
+	req.Meta.EpisodeInt = 0
+	req.Meta.ReleaseName = "Example.Show.S05.1080p.WEB-DL.x265-GRP"
+	req.Meta.SeasonInt = 3
+	req.Meta.ExternalMetadata.TVDB = &api.TVDBMetadata{
+		TVDBID:           12345,
+		EpisodeSeason:    5,
+		OriginalLanguage: "en",
+	}
+
+	entry, err := buildUploadDryRun(context.Background(), req)
+	handlerErrs.Check()
+	if err != nil {
+		t.Fatalf("BuildUploadDryRun: %v", err)
+	}
+	if entry.Status != "ready" {
+		t.Fatalf("expected ready debug dry-run, got %#v", entry)
+	}
+	if len(entry.DebugSections) != 2 {
+		t.Fatalf("expected two debug sections, got %#v", entry.DebugSections)
+	}
+	requestSection := entry.DebugSections[0]
+	if requestSection.Title != "BTN autofill request" {
+		t.Fatalf("expected autofill request section, got %#v", requestSection)
+	}
+	if requestSection.Payload["type"] != "Season" || requestSection.Payload["auto_series"] != "12345" || requestSection.Payload["auto_season"] != "S05" || requestSection.Payload["tvdb"] != "Get Info" {
+		t.Fatalf("unexpected autofill request payload %#v", requestSection.Payload)
+	}
+	finalSection := entry.DebugSections[1]
+	if finalSection.Title != "BTN final upload payload after autofill" {
+		t.Fatalf("expected final payload section, got %#v", finalSection)
+	}
+	if finalSection.Payload["type"] != "Season" || finalSection.Payload["seriesid"] != "12345" || finalSection.Payload["artist"] != "Example Show" {
+		t.Fatalf("unexpected final payload %#v", finalSection.Payload)
+	}
+	if finalSection.Payload["album_desc"] != "Autofill overview" {
+		t.Fatalf("expected final debug payload to keep BTN autofill album_desc, got %q", finalSection.Payload["album_desc"])
+	}
+	if finalSection.Payload["release_desc"] != "General\nFormat: Matroska" {
+		t.Fatalf("expected final debug payload release_desc to use MediaInfo, got %q", finalSection.Payload["release_desc"])
+	}
+	if len(finalSection.Files) == 0 || finalSection.Files[0].Field != "file_input" {
+		t.Fatalf("expected final debug section files, got %#v", finalSection.Files)
+	}
+	if entry.Payload["artist"] != "Example Show" {
+		t.Fatalf("expected top-level debug payload to use autofill result, got %#v", entry.Payload)
+	}
+	if entry.Payload["release_desc"] != "General\nFormat: Matroska" {
+		t.Fatalf("expected top-level debug payload release_desc to use MediaInfo, got %q", entry.Payload["release_desc"])
+	}
+
+	formMu.Lock()
+	gotForm := maps.Clone(autofillForm)
+	formMu.Unlock()
+	if gotForm["type"] != "Season" || gotForm["scene_yesno"] != "No" || gotForm["auto_series"] != "12345" || gotForm["auto_season"] != "S05" || gotForm["tvdb"] != "Get Info" {
+		t.Fatalf("unexpected submitted autofill form %#v", gotForm)
 	}
 }
 
@@ -866,10 +1047,11 @@ func TestBTNPrepareUploadDataUsesEpisodeIntForTVDBAutoTitle(t *testing.T) {
 	if !logger.containsInfo(`BTN autofill resolution mismatch metadata_resolution="1080p" autofill_resolution="2160p" decision=metadata`) {
 		t.Fatal("expected resolution mismatch info log")
 	}
-	for _, value := range []string{"English Episode", "Season: 4", "Episode: 12", "Aired: 2026-02-03", "English overview"} {
-		if !strings.Contains(payload["album_desc"], value) {
-			t.Fatalf("expected album_desc to contain %q, got %q", value, payload["album_desc"])
-		}
+	if payload["album_desc"] != "Autofill overview" {
+		t.Fatalf("expected BTN autofill album_desc to win, got %q", payload["album_desc"])
+	}
+	if desc, ok := payload["release_desc"]; !ok || desc != "" {
+		t.Fatalf("expected empty release_desc without MediaInfo, got value=%q present=%t", desc, ok)
 	}
 
 	formMu.Lock()
@@ -974,8 +1156,8 @@ func TestBTNPrepareUploadDataUsesSeasonIntForTVDBSeasonPack(t *testing.T) {
 	if gotAutoSeries != "12345" {
 		t.Fatalf("expected TVDB series id, got %q", gotAutoSeries)
 	}
-	if gotAutoSeason != "5" {
-		t.Fatalf("expected auto_season 5, got %q", gotAutoSeason)
+	if gotAutoSeason != "S05" {
+		t.Fatalf("expected auto_season S05, got %q", gotAutoSeason)
 	}
 }
 
@@ -1062,14 +1244,21 @@ func TestValidateBTNClientSessionRequiresUploadFormStructure(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		body    string
-		wantErr bool
+		name                 string
+		body                 string
+		wantErr              bool
+		wantConfirmedInvalid bool
 	}{
 		{
 			name:    "help page upload text rejected",
 			body:    `<html><h1>Upload help</h1><p>Use the upload page to submit releases.</p></html>`,
 			wantErr: true,
+		},
+		{
+			name:                 "logged out upload help rejected",
+			body:                 `<html><h1>Upload</h1><p>Please log in before using the upload page.</p></html>`,
+			wantErr:              true,
+			wantConfirmedInvalid: true,
 		},
 		{
 			name:    "transient success body rejected",
@@ -1103,8 +1292,101 @@ func TestValidateBTNClientSessionRequiresUploadFormStructure(t *testing.T) {
 			if tt.wantErr && err == nil {
 				t.Fatal("expected upload auth page validation error")
 			}
+			if tt.wantConfirmedInvalid && !errors.Is(err, errBTNSessionConfirmedInvalid) {
+				t.Fatalf("expected confirmed-invalid session error, got %v", err)
+			}
+			if tt.wantErr && !tt.wantConfirmedInvalid && !strings.Contains(err.Error(), "upload auth page validation failed") {
+				t.Fatalf("expected upload marker validation error, got %v", err)
+			}
 			if !tt.wantErr && err != nil {
 				t.Fatalf("validateBTNClientSession: %v", err)
+			}
+		})
+	}
+}
+
+func TestExtractAutofillFieldsSelectsOptionsOrderIndependently(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "selected before value",
+			body: `<select name="media">
+				<option value="HDTV">HDTV</option>
+				<option selected value="WEB-DL">WEB-DL</option>
+			</select>`,
+			want: "WEB-DL",
+		},
+		{
+			name: "value before selected",
+			body: `<select name="media">
+				<option value="HDTV">HDTV</option>
+				<option value="WEB-DL" selected>WEB-DL</option>
+			</select>`,
+			want: "WEB-DL",
+		},
+		{
+			name: "first value fallback",
+			body: `<select name="media">
+				<option value="HDTV">HDTV</option>
+				<option value="WEB-DL">WEB-DL</option>
+			</select>`,
+			want: "HDTV",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fields := extractAutofillFields(tt.body)
+			if got := fields["media"]; got != tt.want {
+				t.Fatalf("media option = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReadBTNTorrentResponseBodySizeLimit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		size    int
+		wantErr bool
+	}{
+		{
+			name: "limit size accepted",
+			size: btnTorrentMaxBytes,
+		},
+		{
+			name:    "over limit rejected",
+			size:    btnTorrentMaxBytes + 1,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			body := bytes.Repeat([]byte("d"), tt.size)
+			got, err := readBTNTorrentResponseBody(bytes.NewReader(body))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected oversized torrent response error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("readBTNTorrentResponseBody: %v", err)
+			}
+			if len(got) != tt.size {
+				t.Fatalf("torrent response length = %d, want %d", len(got), tt.size)
 			}
 		})
 	}
@@ -1395,6 +1677,106 @@ func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
 	}
 }
 
+func TestBTNSeasonPackReservationFailsClosedOnMalformedAPISearch(t *testing.T) {
+	t.Parallel()
+
+	var apiSearchCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rpc" || r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		var rpc struct {
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&rpc)
+		if rpc.Method != "getTorrentsSearch" {
+			http.NotFound(w, r)
+			return
+		}
+		apiSearchCalls.Add(1)
+		_, _ = w.Write([]byte(`{"result":{"torrents":"api_key=secret-value"}}`))
+	}))
+	defer server.Close()
+
+	req := trackers.UploadRequest{
+		Meta: api.PreparedMetadata{
+			TVPack:    true,
+			SeasonInt: 1,
+			Tag:       "NTb",
+			ExternalIDs: api.ExternalIDs{
+				TVDBID:   123456,
+				Category: "TV",
+			},
+		},
+	}
+
+	err := checkBTNSeasonPackReservation(context.Background(), uploadContext{
+		apiURL:   server.URL + "/rpc",
+		apiToken: strings.Repeat("x", 30),
+	}, req)
+	if err == nil || !strings.Contains(err.Error(), "parse torrents search response") {
+		t.Fatalf("expected malformed BTN API search to fail closed, got %v", err)
+	}
+	if strings.Contains(err.Error(), "secret-value") {
+		t.Fatal("expected malformed BTN API search error to redact provider details")
+	}
+	if apiSearchCalls.Load() != 1 {
+		t.Fatalf("expected one API search call, got %d", apiSearchCalls.Load())
+	}
+}
+
+func TestBTNSeasonPackReservationUsesTranslatedTVDBSeason(t *testing.T) {
+	t.Parallel()
+
+	var apiSearchCalls atomic.Int32
+	now := strconv.FormatInt(time.Now().Unix(), 10)
+	old := strconv.FormatInt(time.Now().Add(-3*time.Hour).Unix(), 10)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rpc" || r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		var rpc struct {
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&rpc)
+		if rpc.Method != "getTorrentsSearch" {
+			http.NotFound(w, r)
+			return
+		}
+		apiSearchCalls.Add(1)
+		_, _ = fmt.Fprintf(w, `{"result":{"torrents":{"10":{"ReleaseName":"Example.Show.S05E01.1080p-GRP","Time":%q},"9":{"ReleaseName":"Example.Show.S03E01.1080p-GRP","Time":%q}}}}`, now, old)
+	}))
+	defer server.Close()
+
+	req := trackers.UploadRequest{
+		Meta: api.PreparedMetadata{
+			TVPack:    true,
+			SeasonInt: 3,
+			Tag:       "NTb",
+			ExternalIDs: api.ExternalIDs{
+				TVDBID:   123456,
+				Category: "TV",
+			},
+			ExternalMetadata: api.ExternalMetadata{
+				TVDB: &api.TVDBMetadata{EpisodeSeason: 5},
+			},
+		},
+	}
+
+	err := checkBTNSeasonPackReservation(context.Background(), uploadContext{
+		apiURL:   server.URL + "/rpc",
+		apiToken: strings.Repeat("x", 30),
+	}, req)
+	if err == nil || !strings.Contains(err.Error(), "BTN 2-hour reservation period") {
+		t.Fatalf("expected translated TVDB season reservation to block")
+	}
+	if apiSearchCalls.Load() != 1 {
+		t.Fatalf("expected one API search call, got %d", apiSearchCalls.Load())
+	}
+}
+
 func TestBTNUploadFollowsIntermediateDetailPage(t *testing.T) {
 	t.Parallel()
 
@@ -1636,6 +2018,16 @@ func writeBTNTestTorrent(t *testing.T, torrentPath string) {
 	if err := torrentMeta.Write(file); err != nil {
 		t.Fatalf("write torrent: %v", err)
 	}
+}
+
+func writeBTNTestMediaInfo(t *testing.T, dir string, content string) string {
+	t.Helper()
+
+	path := filepath.Join(dir, "mediainfo.txt")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write MediaInfo: %v", err)
+	}
+	return path
 }
 
 func newBTNAuthDB(t *testing.T) string {

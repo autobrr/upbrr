@@ -360,6 +360,61 @@ describe("SettingsPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders tracker auth failure summary with distinct remote detail", async () => {
+    vi.stubGlobal("go", {
+      guiapp: {
+        App: {
+          ListTrackerAuthCapabilities: vi.fn().mockResolvedValue([trackerAuthCapability]),
+          GetTrackerAuthStatus: vi.fn().mockResolvedValue({
+            ...trackerAuthStatus("stored session expired or invalid"),
+            state: "login_required",
+            lastError: "remote auth test failed status=401",
+          }),
+        },
+      },
+    });
+
+    render(
+      <SettingsPage {...baseProps} settingsSection="tracker_auth" setSettingsSection={vi.fn()} />,
+    );
+
+    const title = await screen.findByText("MTV");
+    const card = title.closest(".tracker-auth-card");
+    expect(card).not.toBeNull();
+    expect(
+      within(card as HTMLElement).getByText("stored session expired or invalid"),
+    ).toBeInTheDocument();
+    expect(
+      within(card as HTMLElement).getByText("remote auth test failed status=401"),
+    ).toBeInTheDocument();
+  });
+
+  it("does not render duplicate tracker auth failure detail", async () => {
+    vi.stubGlobal("go", {
+      guiapp: {
+        App: {
+          ListTrackerAuthCapabilities: vi.fn().mockResolvedValue([trackerAuthCapability]),
+          GetTrackerAuthStatus: vi.fn().mockResolvedValue({
+            ...trackerAuthStatus("stored session expired or invalid"),
+            state: "login_required",
+            lastError: "stored session expired or invalid",
+          }),
+        },
+      },
+    });
+
+    render(
+      <SettingsPage {...baseProps} settingsSection="tracker_auth" setSettingsSection={vi.fn()} />,
+    );
+
+    const title = await screen.findByText("MTV");
+    const card = title.closest(".tracker-auth-card");
+    expect(card).not.toBeNull();
+    expect(
+      within(card as HTMLElement).getAllByText("stored session expired or invalid"),
+    ).toHaveLength(1);
+  });
+
   it("renders fast tracker auth statuses before slow statuses resolve", async () => {
     let resolveSlow: (value: unknown) => void = () => undefined;
     const slowStatus = new Promise((resolve) => {
@@ -615,6 +670,49 @@ describe("SettingsPage", () => {
       });
     },
   );
+
+  it("stores the post-validation tracker auth status returned by Check Auth", async () => {
+    const testStatus = {
+      ...trackerAuthStatus("fresh validation ready"),
+      cookieCount: 3,
+      lastCheckedAt: "2026-07-08T00:00:00Z",
+      lastError: "",
+      encryptedStorage: true,
+    };
+    vi.stubGlobal("go", {
+      guiapp: {
+        App: {
+          ListTrackerAuthCapabilities: vi.fn().mockResolvedValue([trackerAuthCapability]),
+          GetTrackerAuthStatus: vi.fn().mockResolvedValue({
+            ...trackerAuthStatus("stale before validation"),
+            cookieCount: 1,
+          }),
+          TestTrackerAuth: vi.fn().mockResolvedValue(testStatus),
+        },
+      },
+    });
+
+    render(
+      <SettingsPage {...baseProps} settingsSection="tracker_auth" setSettingsSection={vi.fn()} />,
+    );
+
+    expect(await screen.findByText("stale before validation")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Check Auth" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("fresh validation ready")).toBeInTheDocument();
+      expect(screen.getByText("Cookies: 3")).toBeInTheDocument();
+      expect(
+        screen.getByText((_content, element) =>
+          Boolean(
+            element?.textContent?.startsWith("Checked: ") &&
+            element.textContent !== "Checked: Never",
+          ),
+        ),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("stale before validation")).not.toBeInTheDocument();
+    });
+  });
 
   it("clears tracker auth cards when refresh fails after an action", async () => {
     const list = vi

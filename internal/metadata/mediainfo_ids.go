@@ -49,7 +49,7 @@ func (s *Service) ApplyMediaInfoIDs(ctx context.Context, meta api.PreparedMetada
 	meta.MediaInfoIMDBID = ids.IMDBID
 	meta.MediaInfoTVDBID = ids.TVDBID
 
-	trackerTMDB, trackerIMDB, trackerTVDB := resolveTrackerIDs(meta.TrackerData)
+	trackerTMDB, trackerIMDB, trackerTVDB, _ := resolveTrackerIDs(meta.TrackerData)
 	if trackerTMDB != 0 && ids.TMDBID != 0 && trackerTMDB != ids.TMDBID {
 		meta.MismatchedMediaInfoTMDBID = ids.TMDBID
 	}
@@ -302,10 +302,11 @@ func parseNumericID(value string) int {
 	return id
 }
 
-func resolveTrackerIDs(records []api.TrackerMetadata) (int, int, int) {
+func resolveTrackerIDs(records []api.TrackerMetadata) (int, int, int, int) {
 	var tmdbID int
 	var imdbID int
 	var tvdbID int
+	var malID int
 	for _, record := range records {
 		if tmdbID == 0 && record.TMDBID != 0 {
 			tmdbID = record.TMDBID
@@ -316,9 +317,12 @@ func resolveTrackerIDs(records []api.TrackerMetadata) (int, int, int) {
 		if tvdbID == 0 && record.TVDBID != 0 {
 			tvdbID = record.TVDBID
 		}
-		if tmdbID != 0 && imdbID != 0 && tvdbID != 0 {
+		if malID == 0 && record.MALID != 0 {
+			malID = record.MALID
+		}
+		if tmdbID != 0 && imdbID != 0 && tvdbID != 0 && malID != 0 {
 			break
 		}
 	}
-	return tmdbID, imdbID, tvdbID
+	return tmdbID, imdbID, tvdbID, malID
 }

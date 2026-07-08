@@ -84,11 +84,13 @@ const metadataPreview = (sourcePath: string): MetadataPreview => ({
     IMDBID: 0,
     TVDBID: 0,
     TVmazeID: 0,
+    MALID: 0,
     Category: "movie",
     SourceTMDB: "",
     SourceIMDB: "",
     SourceTVDB: "",
     SourceTVmaze: "",
+    SourceMAL: "",
   },
   ExternalIDCandidates: {
     TMDB: [],
@@ -400,6 +402,53 @@ describe("hasExplicitEmptyReleaseTrackerSelection", () => {
         BLU: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("external ID edits", () => {
+  it("sends touched equal-value IDs plus edited and cleared MAL IDs", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath, _lookup, overrides) => {
+      const idOverrides = overrides as { TMDBID?: number; MALID?: number };
+      const result = metadataPreview(sourcePath);
+      return {
+        ...result,
+        ExternalIDs: {
+          ...result.ExternalIDs,
+          TMDBID: idOverrides.TMDBID ?? result.ExternalIDs.TMDBID,
+          MALID: idOverrides.MALID ?? result.ExternalIDs.MALID,
+        },
+      };
+    });
+    installAppBridge(fetchMetadata);
+
+    render(createElement(App));
+
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByText("Edit Release Details"));
+    const tmdbInput = screen.getByLabelText("TMDB ID");
+    fireEvent.change(tmdbInput, { target: { value: "2" } });
+    fireEvent.change(tmdbInput, { target: { value: "1" } });
+    const malInput = screen.getByLabelText("MAL ID");
+    fireEvent.change(malInput, { target: { value: "5114" } });
+
+    const refreshButton = screen.getByRole("button", { name: "Refresh metadata" });
+    await waitFor(() => expect(refreshButton).not.toBeDisabled());
+    fireEvent.click(refreshButton);
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(2));
+    expect(fetchMetadata.mock.calls[1][2]).toEqual({ TMDBID: 1, MALID: 5114 });
+
+    await waitFor(() => expect(screen.getByLabelText("MAL ID")).toHaveValue("5114"));
+    fireEvent.change(screen.getByLabelText("MAL ID"), { target: { value: "" } });
+
+    await waitFor(() => expect(refreshButton).not.toBeDisabled());
+    fireEvent.click(refreshButton);
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(3));
+    expect(fetchMetadata.mock.calls[2][2]).toEqual({ TMDBID: 1, MALID: 0 });
   });
 });
 

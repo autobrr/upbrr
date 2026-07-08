@@ -723,6 +723,27 @@ func TestCLITrackerAuthStatusMessageRedactsUserVisibleStatusText(t *testing.T) {
 	}
 }
 
+func TestCLITrackerAuthStatusMessageIncludesDistinctFailureDetail(t *testing.T) {
+	t.Parallel()
+
+	got := cliTrackerAuthStatusMessage(api.TrackerAuthStatus{
+		Message:   "stored session expired or invalid",
+		LastError: `remote validation failed: {"api_key":"secret-token"}`,
+	})
+	if !strings.Contains(got, "stored session expired or invalid") {
+		t.Fatal("status message omitted auth summary")
+	}
+	if !strings.Contains(got, "remote validation failed") {
+		t.Fatal("status message omitted auth failure detail")
+	}
+	if strings.Contains(got, "secret-token") {
+		t.Fatal("status message leaked secret")
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Fatal("status message omitted redaction marker")
+	}
+}
+
 func TestEnsureCLITrackerAuthBeforeDupeCheckPromptsForManual2FA(t *testing.T) {
 	t.Parallel()
 
@@ -792,11 +813,16 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckFailsUnattendedAuthRequired(t *testi
 		t.Fatal("expected unattended auth-required error")
 	}
 	got := err.Error()
-	if !strings.Contains(got, "unattended") {
-		t.Fatal("expected auth-required error to name unattended mode")
-	}
-	if !strings.Contains(got, "login credentials or imported cookies required") {
-		t.Fatal("expected auth-required error to include required user action")
+	for _, expected := range []string{
+		"unattended",
+		"no-prompt",
+		"HDB",
+		"required action",
+		"login credentials or imported cookies required",
+	} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("expected auth-required error to include %q, got %q", expected, got)
+		}
 	}
 }
 
@@ -834,8 +860,17 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckFailsUnattendedBTN2FA(t *testing.T) 
 	if err == nil {
 		t.Fatal("expected unattended BTN 2FA error")
 	}
-	if !strings.Contains(err.Error(), "unattended tracker auth BTN requires 2FA before dupe check") {
-		t.Fatalf("unexpected error: %v", err)
+	got := err.Error()
+	for _, expected := range []string{
+		"unattended",
+		"no-prompt",
+		"BTN",
+		"manual 2FA code",
+		"before dupe check",
+	} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("expected unattended 2FA error to include %q, got %q", expected, got)
+		}
 	}
 }
 

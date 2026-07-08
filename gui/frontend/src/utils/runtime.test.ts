@@ -3,6 +3,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { TrackerAuthStatus } from "../types";
+
 const jsonResponse = (payload: unknown, init?: ResponseInit) =>
   new Response(JSON.stringify(payload), {
     headers: { "Content-Type": "application/json" },
@@ -66,6 +68,54 @@ describe("browser runtime bridge", () => {
           NameOverrides: { Category: "MOVIE" },
         }),
       }),
+    );
+  });
+
+  it("preserves tracker auth status fields from browser app routes", async () => {
+    const status: TrackerAuthStatus = {
+      trackerID: "MTV",
+      displayName: "MTV",
+      state: "needs_2fa",
+      cookieCount: 2,
+      lastCheckedAt: "2026-07-08T01:02:03Z",
+      lastError: "tracker auth validation failed",
+      encryptedStorage: true,
+      needs2FA: true,
+      challengeID: "challenge-123",
+      message: "enter 2FA code",
+    };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(status));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { initializeBrowserBridge } = await import("./runtime");
+    initializeBrowserBridge("csrf-token", true);
+
+    const result = await (globalThis as any).go.guiapp.App.GetTrackerAuthStatus("MTV");
+
+    expect(result).toEqual(status);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/app/GetTrackerAuthStatus",
+      expect.objectContaining({
+        body: JSON.stringify({ Tracker: "MTV" }),
+      }),
+    );
+  });
+
+  it("preserves tracker auth app route error messages", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse({ error: "tracker auth: validation failed" }, { status: 400 }),
+        ),
+    );
+
+    const { initializeBrowserBridge } = await import("./runtime");
+    initializeBrowserBridge("csrf-token", true);
+
+    await expect((globalThis as any).go.guiapp.App.TestTrackerAuth("MTV")).rejects.toThrow(
+      "tracker auth: validation failed",
     );
   });
 

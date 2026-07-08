@@ -3516,6 +3516,7 @@ func deepCopyExternalMetadata(metadata api.ExternalMetadata) api.ExternalMetadat
 		IMDB:       deepCopyIMDBMetadata(metadata.IMDB),
 		TVDB:       deepCopyTVDBMetadata(metadata.TVDB),
 		TVmaze:     deepCopyTVmazeMetadata(metadata.TVmaze),
+		AniList:    deepCopyAniListMetadata(metadata.AniList),
 		Bluray:     deepCopyBlurayMetadata(metadata.Bluray),
 		UpdatedAt:  metadata.UpdatedAt,
 	}
@@ -3582,6 +3583,7 @@ func deepCopyTVDBMetadata(metadata *api.TVDBMetadata) *api.TVDBMetadata {
 	}
 	cloned := *metadata
 	cloned.Aliases = append([]string(nil), metadata.Aliases...)
+	cloned.Episodes = append([]api.TVDBEpisodeMetadata(nil), metadata.Episodes...)
 	return &cloned
 }
 
@@ -3590,6 +3592,21 @@ func deepCopyTVmazeMetadata(metadata *api.TVmazeMetadata) *api.TVmazeMetadata {
 		return nil
 	}
 	cloned := *metadata
+	return &cloned
+}
+
+// deepCopyAniListMetadata clones rich anime metadata for prepared-metadata
+// snapshots so cached GUI/core state cannot alias mutable slice fields.
+func deepCopyAniListMetadata(metadata *api.AniListMetadata) *api.AniListMetadata {
+	if metadata == nil {
+		return nil
+	}
+	cloned := *metadata
+	cloned.Genres = append([]string(nil), metadata.Genres...)
+	cloned.Synonyms = append([]string(nil), metadata.Synonyms...)
+	cloned.Tags = append([]api.AniListTag(nil), metadata.Tags...)
+	cloned.Studios = append([]api.AniListStudio(nil), metadata.Studios...)
+	cloned.ExternalLinks = append([]api.AniListExternalLink(nil), metadata.ExternalLinks...)
 	return &cloned
 }
 
@@ -4459,6 +4476,9 @@ func mergeExternalIDOverrides(base api.ExternalIDOverrides, selection api.Extern
 	if selection.TVmazeID != nil {
 		merged.TVmazeID = selection.TVmazeID
 	}
+	if selection.MALID != nil {
+		merged.MALID = selection.MALID
+	}
 	return merged
 }
 
@@ -4508,7 +4528,7 @@ func baseFromAnnounce(announce string) string {
 }
 
 func buildExternalIDInfo(ids api.ExternalIDs) []api.ExternalIDInfo {
-	result := make([]api.ExternalIDInfo, 0, 4)
+	result := make([]api.ExternalIDInfo, 0, 5)
 	if ids.IMDBID != 0 {
 		result = append(result, api.ExternalIDInfo{Provider: "imdb", ID: ids.IMDBID, Source: ids.SourceIMDB})
 	}
@@ -4520,6 +4540,9 @@ func buildExternalIDInfo(ids api.ExternalIDs) []api.ExternalIDInfo {
 	}
 	if ids.TVmazeID != 0 {
 		result = append(result, api.ExternalIDInfo{Provider: "tvmaze", ID: ids.TVmazeID, Source: ids.SourceTVmaze})
+	}
+	if ids.MALID != 0 {
+		result = append(result, api.ExternalIDInfo{Provider: "mal", ID: ids.MALID, Source: ids.SourceMAL})
 	}
 	return result
 }
@@ -4607,7 +4630,63 @@ func buildExternalPreviews(ids api.ExternalIDs, metadata api.ExternalMetadata) [
 		}
 		result = append(result, preview)
 	}
+	if ids.MALID != 0 {
+		preview := api.ExternalPreview{Provider: "mal", ID: ids.MALID, Source: ids.SourceMAL}
+		if metadata.AniList != nil {
+			title := firstNonEmpty(
+				metadata.AniList.TitleEnglish,
+				metadata.AniList.TitleUserPreferred,
+				metadata.AniList.TitleRomaji,
+				metadata.AniList.TitleNative,
+			)
+			preview.Title = title
+			preview.Year = metadata.AniList.SeasonYear
+			preview.Overview = metadata.AniList.Description
+			preview.PosterURL = firstNonEmpty(
+				metadata.AniList.CoverExtraLarge,
+				metadata.AniList.CoverLarge,
+				metadata.AniList.CoverMedium,
+			)
+			preview.BackdropURL = metadata.AniList.BannerImage
+			preview.Category = metadata.AniList.Format
+			preview.OriginalTitle = metadata.AniList.TitleRomaji
+			preview.ReleaseDate = metadata.AniList.StartDate
+			preview.FirstAirDate = metadata.AniList.StartDate
+			preview.LastAirDate = metadata.AniList.EndDate
+			preview.OriginalLanguage = anilistPreviewOriginalLanguage(metadata.AniList)
+			preview.TMDBType = metadata.AniList.Format
+			preview.Runtime = metadata.AniList.Duration
+			preview.Genres = strings.Join(metadata.AniList.Genres, ", ")
+			preview.Rating = float64(metadata.AniList.AverageScore) / 10
+			preview.RatingCount = metadata.AniList.Popularity
+			preview.AniList = metadata.AniList
+		}
+		result = append(result, preview)
+	}
 	return result
+}
+
+func anilistPreviewOriginalLanguage(metadata *api.AniListMetadata) string {
+	if metadata == nil {
+		return ""
+	}
+	for _, link := range metadata.ExternalLinks {
+		if language := strings.TrimSpace(link.Language); language != "" {
+			return language
+		}
+	}
+	return ""
+}
+
+// firstNonEmpty returns the first non-blank value after trimming whitespace.
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func trackerNameForExternalIDs(meta api.PreparedMetadata) string {

@@ -83,8 +83,21 @@ type TrackerDryRunEntry struct {
 	Endpoint                string
 	Payload                 map[string]string
 	Files                   []TrackerDryRunFile
-	Questionnaire           *TrackerQuestionnaire
-	ImageHost               ImageHostFeedback
+	// DebugSections carries optional staged diagnostics for trackers whose dry-run
+	// preview needs to show more than one request or derived payload.
+	DebugSections []TrackerDryRunDebugSection
+	Questionnaire *TrackerQuestionnaire
+	ImageHost     ImageHostFeedback
+}
+
+// TrackerDryRunDebugSection describes one named diagnostic payload inside a
+// dry-run preview. Payload and files use the same redaction and path-display
+// rules as the top-level dry-run entry.
+type TrackerDryRunDebugSection struct {
+	Title    string
+	Endpoint string
+	Payload  map[string]string
+	Files    []TrackerDryRunFile
 }
 
 type TrackerDryRunFile struct {
@@ -141,6 +154,8 @@ type TrackerPreview struct {
 	UpdatedAt       string
 }
 
+// ExternalIDInfo is the user-visible provider ID plus the resolver source label
+// that produced it.
 type ExternalIDInfo struct {
 	Provider string
 	ID       int
@@ -179,4 +194,6 @@ type ExternalPreview struct {
 	IMDB             *IMDBMetadata
 	TVDB             *TVDBMetadata
 	TVmaze           *TVmazeMetadata
+	// AniList contains rich preview metadata when Provider is "mal".
+	AniList *AniListMetadata
 }

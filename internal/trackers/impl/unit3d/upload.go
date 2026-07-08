@@ -664,7 +664,7 @@ func buildUnit3DData(req trackers.UploadRequest, name, description, mediainfo, b
 		"resolution_id":    resolveUnit3DResolutionIDForTracker(req.Tracker, meta),
 		"tmdb":             formatOptionalInt(meta.ExternalIDs.TMDBID),
 		"imdb":             formatOptionalInt(meta.ExternalIDs.IMDBID),
-		"mal":              formatOptionalInt(resolveMALID(meta)),
+		"mal":              formatOptionalInt(meta.ExternalIDs.MALID),
 		"igdb":             "0",
 		"anonymous":        boolFlag(req.TrackerConfig.Anon),
 		"stream":           boolFlag(meta.StreamOptimized != 0),
@@ -757,16 +757,6 @@ func resolveTVDBID(meta api.PreparedMetadata) int {
 		if meta.ExternalIDs.TVDBID != 0 {
 			return meta.ExternalIDs.TVDBID
 		}
-		if meta.MediaInfoTVDBID != 0 {
-			return meta.MediaInfoTVDBID
-		}
-	}
-	return 0
-}
-
-func resolveMALID(meta api.PreparedMetadata) int {
-	if meta.ExternalMetadata.TMDB != nil {
-		return meta.ExternalMetadata.TMDB.MALID
 	}
 	return 0
 }

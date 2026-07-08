@@ -67,3 +67,33 @@ func validateBTNRequest(req trackers.UploadRequest) error {
 	}
 	return nil
 }
+
+var btnInternalGroups = []string{
+	"BTW",
+	"ESPNtb",
+	"HiSD",
+	"HRiP",
+	"iPRiP",
+	"iT00NZ",
+	"JJ",
+	"LoTV",
+	"NTb",
+	"PreBS",
+	"RAWR",
+	"TTVa",
+	"TVSmash",
+}
+
+func isBTNInternalGroup(meta api.PreparedMetadata) bool {
+	if strings.TrimSpace(meta.Tag) == "" {
+		return false
+	}
+
+	group := strings.ToLower(strings.TrimPrefix(meta.Tag, "-"))
+	for _, value := range btnInternalGroups {
+		if strings.ToLower(value) == group {
+			return true
+		}
+	}
+	return false
+}

@@ -23,11 +23,13 @@ const preview = {
     IMDBID: 0,
     TVDBID: 0,
     TVmazeID: 0,
+    MALID: 0,
     Category: "",
     SourceTMDB: "",
     SourceIMDB: "",
     SourceTVDB: "",
     SourceTVmaze: "",
+    SourceMAL: "",
   },
   ExternalIDCandidates: {
     TMDB: [],
@@ -208,5 +210,100 @@ describe("TrackerUploadPage", () => {
 
     expect(onRunDryRun).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
+  });
+
+  it("redacts debug dry-run endpoints, payloads, and local file paths", () => {
+    render(
+      <TrackerUploadPage
+        {...baseProps}
+        dryRunPreview={{
+          ...dryRunPreview,
+          Trackers: [
+            {
+              ...dryRunPreview.Trackers[0],
+              DebugSections: [
+                {
+                  Title: "Tracker request",
+                  Endpoint:
+                    "https://tracker.example/upload?api_key=debug-value&name=Example.Release.2026.1080p-GRP",
+                  Files: [
+                    {
+                      Field: "torrent",
+                      Path: "C:\\path\\to\\Example.Release.2026.1080p-GRP.torrent",
+                      Present: true,
+                    },
+                  ],
+                  Payload: {
+                    api_key: "debug-value",
+                    description: "line 1\nline 2",
+                    name: "Example.Release.2026.1080p-GRP",
+                  },
+                },
+              ],
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "https://tracker.example/upload?api_key=[REDACTED]&name=Example.Release.2026.1080p-GRP",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("[local path]")).toBeTruthy();
+    expect(screen.getByText("[13 bytes, 2 lines omitted]")).toBeTruthy();
+    expect(screen.getAllByText("[REDACTED]").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders blocked debug dry-run top-level payload and files", () => {
+    render(
+      <TrackerUploadPage
+        {...baseProps}
+        dryRunPreview={{
+          ...dryRunPreview,
+          Trackers: [
+            {
+              ...dryRunPreview.Trackers[0],
+              Status: "blocked",
+              Message: "Manual confirmation required",
+              Payload: {
+                upload_name: "top-level-payload",
+              },
+              Files: [
+                {
+                  Field: "torrent",
+                  Path: ".upbrr/tmp/top-level.torrent",
+                  Present: true,
+                },
+              ],
+              DebugSections: [
+                {
+                  Title: "Debug payload",
+                  Endpoint: "",
+                  Files: [
+                    {
+                      Field: "torrent",
+                      Path: ".upbrr/tmp/debug.torrent",
+                      Present: true,
+                    },
+                  ],
+                  Payload: {
+                    upload_name: "debug-payload",
+                  },
+                },
+              ],
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("blocked")).toBeTruthy();
+    expect(screen.getByText("Manual confirmation required")).toBeTruthy();
+    expect(screen.getByText("top-level-payload")).toBeTruthy();
+    expect(screen.getByText(".upbrr/tmp/top-level.torrent")).toBeTruthy();
+    expect(screen.getByText("debug-payload")).toBeTruthy();
+    expect(screen.getByText(".upbrr/tmp/debug.torrent")).toBeTruthy();
   });
 });

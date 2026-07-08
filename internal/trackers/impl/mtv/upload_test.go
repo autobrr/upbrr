@@ -385,6 +385,41 @@ func TestResolveSessionForTrackerAuthRejectsEmptyLoginCookiesWithoutReplacingSto
 	}
 }
 
+func TestResolveSessionForTrackerAuthDoesNotPersistCookiesBeforeAuthKeyValidation(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newMTVAuthDB(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login":
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "unverified", Path: "/"})
+			_, _ = w.Write([]byte(`<html>logged in without auth key</html>`))
+		case "/index.php":
+			_, _ = w.Write([]byte(`<html>temporary account notice</html>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	err := ResolveSessionForTrackerAuth(ctx, config.TrackerConfig{
+		URL:      server.URL,
+		Username: "user",
+		Password: "pass",
+	}, dbPath)
+	if err == nil || !strings.Contains(err.Error(), "auth key not found") {
+		t.Fatalf("expected auth-key validation failure, got %v", err)
+	}
+	if values, loadErr := loadMTVCookies(ctx, dbPath); !errors.Is(loadErr, cookiepkg.ErrTrackerCookiesNotFound) {
+		t.Fatalf("unverified login cookies persisted or unexpected load error values=%#v err=%v", values, loadErr)
+	}
+}
+
 func TestResolveSessionForTrackerAuthLoginUsesManual2FACode(t *testing.T) {
 	t.Parallel()
 

@@ -271,3 +271,104 @@ type AnimeResult struct {
 	Episodes    int
 	Demographic string
 }
+
+// AniListMetadataResult contains the AniList media fields used to build API
+// preview metadata.
+//
+// Date fields keep AniList fuzzy-date precision, score fields are percentages
+// from 0 to 100, and AiringAt fields are Unix timestamps in seconds. Tags keep
+// adult/spoiler flags so downstream API/UI layers can filter them before
+// display.
+type AniListMetadataResult struct {
+	// AniListID is the AniList media ID used in AniList URLs.
+	AniListID int
+	// MALID is the MyAnimeList media ID used as upbrr's canonical anime ID.
+	MALID int
+	// SiteURL is the canonical AniList media page URL.
+	SiteURL string
+	// Title* fields preserve AniList's localized title variants.
+	TitleRomaji        string
+	TitleEnglish       string
+	TitleNative        string
+	TitleUserPreferred string
+	// Description is AniList's plain-text media description.
+	Description string
+	// Format, Status, Season, and Source are AniList enum values.
+	Format string
+	Status string
+	// StartDate is formatted as YYYY, YYYY-MM, or YYYY-MM-DD depending on AniList precision.
+	StartDate string
+	// EndDate is formatted as YYYY, YYYY-MM, or YYYY-MM-DD depending on AniList precision.
+	EndDate    string
+	Season     string
+	SeasonYear int
+	Episodes   int
+	// Duration is AniList's average episode duration in minutes.
+	Duration        int
+	CountryOfOrigin string
+	Source          string
+	// Cover* and BannerImage are AniList image URLs or color metadata used by previews.
+	CoverExtraLarge string
+	CoverLarge      string
+	CoverMedium     string
+	CoverColor      string
+	BannerImage     string
+	Genres          []string
+	Synonyms        []string
+	// AverageScore and MeanScore are AniList percentage scores from 0 to 100.
+	AverageScore      int
+	MeanScore         int
+	Popularity        int
+	Favourites        int
+	IsAdult           bool
+	Tags              []AniListTag
+	Studios           []AniListStudio
+	Trailer           AniListTrailer
+	NextAiringEpisode AniListAiringEpisode
+	ExternalLinks     []AniListExternalLink
+}
+
+// AniListTag is a media tag returned by AniList for the selected anime.
+type AniListTag struct {
+	Name string
+	// Rank is AniList's tag relevance percentage from 0 to 100.
+	Rank     int
+	Category string
+	// IsAdult and Is*Spoiler let UI consumers omit sensitive tag labels.
+	IsAdult          bool
+	IsGeneralSpoiler bool
+	IsMediaSpoiler   bool
+}
+
+// AniListStudio is a studio attached to an AniList media entry.
+type AniListStudio struct {
+	ID   int
+	Name string
+	// SiteURL is the AniList studio page URL.
+	SiteURL string
+}
+
+// AniListTrailer identifies a media trailer from AniList.
+type AniListTrailer struct {
+	ID   string
+	Site string
+	// Thumbnail is the provider thumbnail URL when AniList supplies one.
+	Thumbnail string
+}
+
+// AniListAiringEpisode describes the next scheduled episode for an airing anime.
+type AniListAiringEpisode struct {
+	// AiringAt is a Unix timestamp in seconds.
+	AiringAt int
+	// TimeUntilAiring is seconds from AniList's response time until AiringAt.
+	TimeUntilAiring int
+	Episode         int
+}
+
+// AniListExternalLink is a public provider or official link attached to AniList media.
+type AniListExternalLink struct {
+	Site     string
+	URL      string
+	Type     string
+	Language string
+}

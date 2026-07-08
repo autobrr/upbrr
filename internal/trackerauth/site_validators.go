@@ -293,6 +293,9 @@ func resolveHDBStoredSessionForTrackerAuth(ctx context.Context, cfg config.Track
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return &ValidationError{TrackerID: "HDB", Transient: true, Reason: "remote validation failed", Err: fmt.Errorf("trackers: HDB session validation failed status=%d", resp.StatusCode)}
 	}
+	if !hdbLooksLikeUploadPage(string(body)) {
+		return &ValidationError{TrackerID: "HDB", ConfirmedInvalid: true, Reason: "stored session expired", Err: errors.New("trackers: HDB upload marker not found")}
+	}
 	return nil
 }
 
@@ -437,6 +440,20 @@ func arLooksLoggedOut(body string) bool {
 func hdbLooksLoggedOut(body string) bool {
 	lower := strings.ToLower(body)
 	return strings.Contains(lower, "login.php") || strings.Contains(lower, "name=\"username\"") || strings.Contains(lower, "name=\"password\"")
+}
+
+// hdbLooksLikeUploadPage recognizes concrete HDB upload form structure.
+func hdbLooksLikeUploadPage(body string) bool {
+	lower := strings.ToLower(body)
+	hasUploadAction := strings.Contains(lower, "action=\"/upload/upload") ||
+		strings.Contains(lower, "action='/upload/upload") ||
+		strings.Contains(lower, "action=\"upload/upload") ||
+		strings.Contains(lower, "action='upload/upload")
+	hasUploadField := strings.Contains(lower, "name=\"file\"") ||
+		strings.Contains(lower, "name='file'") ||
+		strings.Contains(lower, "name=\"category\"") ||
+		strings.Contains(lower, "name='category'")
+	return hasUploadAction && hasUploadField
 }
 
 // ffLooksLoggedIn recognizes the FF upload-page marker used by Upload Assistant.

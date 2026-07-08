@@ -29,7 +29,7 @@ func (h bhdHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 	}
 	category := "Movies"
 	tmdbPrefix := "movie"
-	if strings.EqualFold(meta.ExternalIDs.Category, "TV") || strings.EqualFold(meta.MediaInfoCategory, "TV") {
+	if strings.EqualFold(meta.ExternalIDs.Category, "TV") {
 		category = "TV"
 		tmdbPrefix = "tv"
 	}
