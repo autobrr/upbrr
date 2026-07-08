@@ -759,7 +759,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	}
 	if s.logger != nil {
 		s.logger.Debugf(
-			"metadata: external ids resolved tmdb=%d(%s) imdb=%d(%s) tvdb=%d(%s) tvmaze=%d(%s)",
+			"metadata: external ids resolved tmdb=%d(%s) imdb=%d(%s) tvdb=%d(%s) tvmaze=%d(%s) mal=%d(%s)",
 			ids.TMDBID,
 			ids.SourceTMDB,
 			ids.IMDBID,
@@ -768,6 +768,8 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 			ids.SourceTVDB,
 			ids.TVmazeID,
 			ids.SourceTVmaze,
+			ids.MALID,
+			ids.SourceMAL,
 		)
 		s.logger.Debugf(
 			"metadata: external metadata fetched tmdb=%t imdb=%t tvdb=%t tvmaze=%t bluray=%t",

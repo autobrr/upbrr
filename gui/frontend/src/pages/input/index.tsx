@@ -560,6 +560,22 @@ const renderDetailValue = (item: DetailItem) => {
   );
 };
 
+const PreviewDetailsList = ({ items }: { items: DetailItem[] }) => {
+  if (items.length === 0) return null;
+  return (
+    <div className="preview-details">
+      {items.map((item) => (
+        <div className="preview-detail" key={item.label}>
+          <p className="label">{item.label}</p>
+          <p className={`value preview-detail__value ${item.mono ? "mono" : ""}`}>
+            {renderDetailValue(item)}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 type OverrideState<T> = {
   overrides: T;
   dirty: boolean;
@@ -1752,18 +1768,7 @@ export default function InputPage(props: Props) {
                   <p className="title">{selectedPreviewTitle || "Untitled"}</p>
                   <p className="meta">{selectedPreview.Year ? `${selectedPreview.Year}` : ""}</p>
                   <p className="overview">{selectedPreviewOverview || "No overview available."}</p>
-                  {previewDetails.length > 0 ? (
-                    <div className="preview-details">
-                      {previewDetails.map((item) => (
-                        <div className="preview-detail" key={item.label}>
-                          <p className="label">{item.label}</p>
-                          <p className={`value preview-detail__value ${item.mono ? "mono" : ""}`}>
-                            {renderDetailValue(item)}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
+                  <PreviewDetailsList items={previewDetails} />
                 </div>
                 <div className="preview-images">
                   {selectedPreview.PosterURL ? (
@@ -1779,18 +1784,7 @@ export default function InputPage(props: Props) {
                 <div className="preview-text">
                   <p className="title">MAL</p>
                   <p className="overview">MAL metadata preview unavailable.</p>
-                  {previewDetails.length > 0 ? (
-                    <div className="preview-details">
-                      {previewDetails.map((item) => (
-                        <div className="preview-detail" key={item.label}>
-                          <p className="label">{item.label}</p>
-                          <p className={`value preview-detail__value ${item.mono ? "mono" : ""}`}>
-                            {renderDetailValue(item)}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
+                  <PreviewDetailsList items={previewDetails} />
                 </div>
               </div>
             ) : (
