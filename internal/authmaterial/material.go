@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/autobrr/upbrr/internal/redaction"
 )
 
 const (
@@ -75,7 +77,7 @@ func LoadRecordFromDBPath(dbPath string) (Record, error) {
 
 	var record Record
 	if err := json.Unmarshal(raw, &record); err != nil {
-		return Record{}, fmt.Errorf("failed to parse web auth file: %w", err)
+		return Record{}, fmt.Errorf("failed to parse web auth file: %s", redaction.RedactValue(err.Error(), nil))
 	}
 
 	if !record.AuthMaterial().IsUsable() {

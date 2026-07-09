@@ -136,6 +136,126 @@ func TestMigrateBridgesLegacyV8TrackerCookiesSchema(t *testing.T) {
 	assertSQLiteObjectExists(t, rawDB, "index", "idx_tracker_cookies_created_at")
 }
 
+func TestMigrateAddExternalIDsMALBackfillsFromTMDBMetadata(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	ctx := context.Background()
+	statements := []string{
+		`
+		CREATE TABLE external_ids (
+			source_path TEXT PRIMARY KEY,
+			tmdb_id INTEGER NOT NULL DEFAULT 0,
+			imdb_id INTEGER NOT NULL DEFAULT 0,
+			tvdb_id INTEGER NOT NULL DEFAULT 0,
+			tvmaze_id INTEGER NOT NULL DEFAULT 0,
+			category TEXT NOT NULL DEFAULT "",
+			source_tmdb TEXT NOT NULL DEFAULT "",
+			source_imdb TEXT NOT NULL DEFAULT "",
+			source_tvdb TEXT NOT NULL DEFAULT "",
+			source_tvmaze TEXT NOT NULL DEFAULT "",
+			updated_at TEXT NOT NULL
+		)
+		`,
+		`
+		CREATE TABLE external_metadata (
+			source_path TEXT PRIMARY KEY,
+			tmdb_json TEXT NOT NULL DEFAULT "",
+			imdb_json TEXT NOT NULL DEFAULT "",
+			tvdb_json TEXT NOT NULL DEFAULT "",
+			tvmaze_json TEXT NOT NULL DEFAULT "",
+			bluray_json TEXT NOT NULL DEFAULT "",
+			updated_at TEXT NOT NULL
+		)
+		`,
+		`INSERT INTO external_ids (source_path, tmdb_id, updated_at) VALUES ('/media/Example.Release.2026.1080p-GRP.mkv', 123, '2026-01-01T00:00:00Z')`,
+		`INSERT INTO external_ids (source_path, tmdb_id, updated_at) VALUES ('/media/Example.Release.2026.2160p-GRP.mkv', 456, '2026-01-01T00:00:00Z')`,
+		`INSERT INTO external_metadata (source_path, tmdb_json, updated_at) VALUES ('/media/Example.Release.2026.1080p-GRP.mkv', '{"MALID":5114}', '2026-01-01T00:00:00Z')`,
+	}
+	for _, statement := range statements {
+		if _, err := rawDB.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("seed schema: %v", err)
+		}
+	}
+
+	if err := migrateAddExternalIDsMAL(ctx, rawDB); err != nil {
+		t.Fatalf("migrate external ids mal: %v", err)
+	}
+
+	var malID int
+	var sourceMAL string
+	if err := rawDB.QueryRowContext(ctx, `
+		SELECT mal_id, source_mal
+		FROM external_ids
+		WHERE source_path = ?
+	`, "/media/Example.Release.2026.1080p-GRP.mkv").Scan(&malID, &sourceMAL); err != nil {
+		t.Fatalf("read backfilled mal: %v", err)
+	}
+	if malID != 5114 || sourceMAL != "tmdb" {
+		t.Fatalf("expected tmdb mal backfill, got id=%d source=%q", malID, sourceMAL)
+	}
+
+	if err := rawDB.QueryRowContext(ctx, `
+		SELECT mal_id, source_mal
+		FROM external_ids
+		WHERE source_path = ?
+	`, "/media/Example.Release.2026.2160p-GRP.mkv").Scan(&malID, &sourceMAL); err != nil {
+		t.Fatalf("read empty mal row: %v", err)
+	}
+	if malID != 0 || sourceMAL != "" {
+		t.Fatalf("expected missing metadata to stay empty, got id=%d source=%q", malID, sourceMAL)
+	}
+}
+
+func TestMigrateAddAniListExternalMetadataCreatesMissingTable(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	ctx := context.Background()
+	if err := migrateAddAniListExternalMetadata(ctx, rawDB); err != nil {
+		t.Fatalf("migrate anilist external metadata: %v", err)
+	}
+	if err := migrateAddAniListExternalMetadata(ctx, rawDB); err != nil {
+		t.Fatalf("migrate anilist external metadata idempotent: %v", err)
+	}
+
+	assertSQLiteObjectExists(t, rawDB, "table", "external_metadata")
+	assertSQLiteObjectExists(t, rawDB, "index", "idx_external_metadata_source_path")
+
+	for _, column := range []string{
+		"source_path",
+		"tmdb_json",
+		"imdb_json",
+		"tvdb_json",
+		"tvmaze_json",
+		"anilist_json",
+		"bluray_json",
+		"updated_at",
+	} {
+		exists, err := tableColumnExists(ctx, rawDB, "external_metadata", column)
+		if err != nil {
+			t.Fatalf("inspect external_metadata.%s: %v", column, err)
+		}
+		if !exists {
+			t.Fatalf("expected external_metadata.%s to exist", column)
+		}
+	}
+}
+
 func assertSQLiteObjectExists(t *testing.T, db *sql.DB, objectType, name string) {
 	t.Helper()
 

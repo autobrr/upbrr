@@ -75,7 +75,7 @@ func TestRunInteractiveCLIPathDoesNotDryRunBeforeTrackerApproval(t *testing.T) {
 		"y",
 	}, "\n") + "\n"
 
-	err := runInteractiveCLIPathWithInput(context.Background(), coreSvc, nil, cliOptions{}, map[string]bool{}, "movie.mkv", 1, config.Config{
+	err := runInteractiveCLIPathWithInput(context.Background(), coreSvc, cliOptions{}, map[string]bool{}, "movie.mkv", 1, config.Config{
 		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
 	}, strings.NewReader(input))
 	if err != nil {
@@ -194,7 +194,7 @@ func TestRunInteractiveCLIPathDebugHandlesScreenshotsBeforeReview(t *testing.T) 
 	}
 }
 
-func TestRunInteractiveCLIPathDebugProcessesAllCheckedTrackers(t *testing.T) {
+func TestRunInteractiveCLIPathDebugProcessesNonRuleCheckedTrackers(t *testing.T) {
 	t.Parallel()
 
 	coreSvc := &cliCoreForTest{
@@ -208,7 +208,7 @@ func TestRunInteractiveCLIPathDebugProcessesAllCheckedTrackers(t *testing.T) {
 		dupeSummary: api.DupeCheckSummary{
 			Results: []api.DupeCheckResult{
 				{Tracker: "AITHER", Status: "completed", HasDupes: true},
-				{Tracker: "BLU", Status: "skipped", Skipped: true, SkipReason: "rule check failed"},
+				{Tracker: "BLU", Status: "skipped", Skipped: true, SkipRules: []string{"require_movie_only"}},
 				{Tracker: "DP", Status: "completed"},
 			},
 		},
@@ -228,14 +228,139 @@ func TestRunInteractiveCLIPathDebugProcessesAllCheckedTrackers(t *testing.T) {
 		t.Fatalf("expected debug to run checks and continue to review, got %s", got)
 	}
 	uploadReq := coreSvc.requests[len(coreSvc.requests)-1].req
-	if got := strings.Join(uploadReq.Trackers, ","); got != "AITHER,BLU,DP" {
+	if got := strings.Join(uploadReq.Trackers, ","); got != "AITHER,DP" {
 		t.Fatalf("expected debug upload to keep all trackers, got %s", got)
 	}
-	if got := strings.Join(uploadReq.IgnoreDupesFor, ","); got != "AITHER,BLU,DP" {
-		t.Fatalf("expected debug upload to ignore dupe blocks for all trackers, got %s", got)
+	if got := strings.Join(uploadReq.IgnoreDupesFor, ","); got != "AITHER,DP" {
+		t.Fatalf("expected debug upload to ignore dupe blocks for non-rule trackers, got %s", got)
 	}
-	if got := strings.Join(uploadReq.IgnoreTrackerRuleFailuresFor, ","); got != "AITHER,BLU,DP" {
-		t.Fatalf("expected debug upload to ignore rule blocks for all trackers, got %s", got)
+	if got := strings.Join(uploadReq.IgnoreTrackerRuleFailuresFor, ","); got != "" {
+		t.Fatalf("expected debug upload not to ignore rule blocks, got %s", got)
+	}
+}
+
+func TestRunInteractiveCLIPathDryRunProcessesNonRuleCheckedTrackers(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &cliCoreForTest{
+		previewResponses: []api.MetadataPreview{{
+			SourcePath: "Example.Release.2026.1080p-GRP",
+			TrackerData: []api.TrackerPreview{{
+				Tracker: "AITHER",
+				Matched: true,
+			}},
+		}},
+		dupeSummary: api.DupeCheckSummary{
+			Results: []api.DupeCheckResult{
+				{Tracker: "AITHER", Status: "completed", HasDupes: true},
+				{Tracker: "BLU", Status: "skipped", Skipped: true, SkipRules: []string{"require_movie_only"}},
+				{Tracker: "DP", Status: "completed"},
+			},
+		},
+		review: api.UploadReview{Trackers: []api.TrackerReview{
+			{Tracker: "AITHER"},
+			{Tracker: "BLU"},
+			{Tracker: "DP"},
+		}},
+	}
+	err := runInteractiveCLIPath(context.Background(), coreSvc, cliOptions{Unattended: true, DryRun: true}, map[string]bool{}, "Example.Release.2026.1080p-GRP", config.Config{
+		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU", "DP"}},
+	})
+	if err != nil {
+		t.Fatalf("runInteractiveCLIPath: %v", err)
+	}
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,review" {
+		t.Fatalf("expected dry-run to run dupe check and continue to review, got %s", got)
+	}
+	uploadReq := coreSvc.requests[len(coreSvc.requests)-1].req
+	if got := strings.Join(uploadReq.Trackers, ","); got != "AITHER,DP" {
+		t.Fatalf("expected dry-run upload to keep all trackers, got %s", got)
+	}
+	if got := strings.Join(uploadReq.IgnoreDupesFor, ","); got != "AITHER,DP" {
+		t.Fatalf("expected dry-run upload to ignore dupe blocks for non-rule trackers, got %s", got)
+	}
+	if got := strings.Join(uploadReq.IgnoreTrackerRuleFailuresFor, ","); got != "" {
+		t.Fatalf("expected dry-run upload not to ignore rule blocks, got %s", got)
+	}
+}
+
+func TestIsRuleSkippedDupeResultUsesSkipRules(t *testing.T) {
+	t.Parallel()
+
+	if !isRuleSkippedDupeResult(api.DupeCheckResult{
+		Tracker:   "BLU",
+		Status:    "skipped",
+		Skipped:   true,
+		SkipRules: []string{"require_movie_only"},
+	}) {
+		t.Fatal("expected structured rule skip to remain terminal")
+	}
+	if isRuleSkippedDupeResult(api.DupeCheckResult{
+		Tracker:    "BLU",
+		Status:     "skipped",
+		Skipped:    true,
+		SkipReason: "rule check failed: category movie is not tv",
+	}) {
+		t.Fatal("expected text-only skip reason not to drive rule classification")
+	}
+	if isRuleSkippedDupeResult(api.DupeCheckResult{
+		Tracker:   "BLU",
+		Status:    "completed",
+		SkipRules: []string{"require_movie_only"},
+	}) {
+		t.Fatal("expected non-skipped result not to be terminal")
+	}
+}
+
+func TestRunInteractiveCLIPathQuestionnaireAnswerRebuildsDryRunReview(t *testing.T) {
+	coreSvc := &cliCoreForTest{
+		previewResponses: []api.MetadataPreview{{SourcePath: "Example.Release.2026.1080p-GRP"}},
+		dupeSummary: api.DupeCheckSummary{
+			Results: []api.DupeCheckResult{{Tracker: "ANT", Status: "completed"}},
+		},
+		reviewResponses: []api.UploadReview{
+			{Trackers: []api.TrackerReview{{
+				Tracker: "ANT",
+				Questionnaire: &api.TrackerQuestionnaire{Fields: []api.TrackerQuestionnaireField{{
+					Key:      "type",
+					Label:    "Type",
+					Value:    "Feature",
+					Required: true,
+				}}},
+			}}},
+			{Trackers: []api.TrackerReview{{
+				Tracker: "ANT",
+				DryRun: api.TrackerDryRunEntry{
+					Tracker:     "ANT",
+					Status:      "ready",
+					ReleaseName: "Example.Release.2026.S01E01.1080p-GRP",
+				},
+			}}},
+		},
+	}
+	output := captureStdout(t, func() {
+		err := runInteractiveCLIPathWithInput(context.Background(), coreSvc, cliOptions{DryRun: true, OnlyID: true}, map[string]bool{}, "Example.Release.2026.1080p-GRP", 1, config.Config{
+			Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"ANT"}},
+		}, strings.NewReader("y\nEpisode\n"))
+		if err != nil {
+			t.Fatalf("runInteractiveCLIPathWithInput: %v", err)
+		}
+	})
+	reviewCalls := 0
+	for _, call := range coreSvc.callOrder {
+		if call == "review" {
+			reviewCalls++
+		}
+	}
+	if reviewCalls != 2 {
+		t.Fatalf("expected questionnaire answer to rebuild review, got %d review call(s): %#v", reviewCalls, coreSvc.callOrder)
+	}
+	if !strings.Contains(output, "Tracker release name: Example.Release.2026.S01E01.1080p-GRP") {
+		t.Fatalf("expected dry-run output to use rebuilt questionnaire-aware review, got %q", output)
+	}
+	uploadReq := coreSvc.requests[len(coreSvc.requests)-1].req
+	if got := uploadReq.TrackerQuestionnaireAnswers["ANT"]["type"]; got != "Episode" {
+		t.Fatalf("expected upload request to carry questionnaire answer, got %#v", uploadReq.TrackerQuestionnaireAnswers)
 	}
 }
 
@@ -300,7 +425,6 @@ func TestRunInteractiveCLIPathCorrectionPromptsAccumulateQuotedOverrides(t *test
 	err := runInteractiveCLIPathWithInput(
 		context.Background(),
 		coreSvc,
-		nil,
 		cliOptions{},
 		map[string]bool{},
 		"movie.mkv",
@@ -535,6 +659,44 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckLogsRuleFailureSkipOnlyForManagedAut
 	}
 }
 
+func TestEnsureCLITrackerAuthBeforeDupeCheckDryRunSkipsRuleFailedManagedAuth(t *testing.T) {
+	t.Parallel()
+
+	authSvc := &cliTrackerAuthForTest{
+		capabilities: []api.TrackerAuthCapability{
+			{TrackerID: "MTV", AuthKind: "api_key_cookies_login_manual_2fa", SupportsCookieFile: true, SupportsLogin: true, SupportsManual2FA: true, RequiresAPIKey: true},
+			{TrackerID: "PTP", AuthKind: "cookies_login_manual_2fa", SupportsCookieFile: true, SupportsLogin: true, SupportsManual2FA: true},
+		},
+	}
+	logger := &cliAuthRecordingLogger{}
+
+	got, err := ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(
+		context.Background(),
+		bufio.NewReader(strings.NewReader("")),
+		authSvc,
+		api.Request{Options: api.UploadOptions{DryRun: true, InteractionMode: api.InteractionModeInteractive}},
+		[]string{"MTV", "PTP"},
+		api.MetadataPreview{TrackerRuleFailures: map[string][]api.RuleFailure{
+			"MTV": {{Rule: "extra_check", Reason: "managed auth rule failure"}},
+		}},
+		logger,
+	)
+	if err != nil {
+		t.Fatalf("ensureCLITrackerAuthBeforeDupeCheck: %v", err)
+	}
+	if strings.Join(got, ",") != "PTP" {
+		t.Fatalf("expected dry-run to skip rule-failed managed auth tracker, got %#v", got)
+	}
+	if strings.Join(authSvc.validated, ",") != "PTP" {
+		t.Fatalf("expected dry-run to validate only rule-eligible managed auth trackers, got %#v", authSvc.validated)
+	}
+
+	logs := strings.Join(append(append(append([]string{}, logger.debug...), logger.info...), logger.warn...), "\n")
+	if !strings.Contains(logs, "tracker=MTV skipped before auth due to rule failure") {
+		t.Fatal("dry-run should skip managed auth due to rule failure")
+	}
+}
+
 func TestEnsureCLITrackerAuthBeforeDupeCheckHonorsPerTrackerRuleFailureOverride(t *testing.T) {
 	t.Parallel()
 
@@ -723,6 +885,27 @@ func TestCLITrackerAuthStatusMessageRedactsUserVisibleStatusText(t *testing.T) {
 	}
 }
 
+func TestCLITrackerAuthStatusMessageIncludesDistinctFailureDetail(t *testing.T) {
+	t.Parallel()
+
+	got := cliTrackerAuthStatusMessage(api.TrackerAuthStatus{
+		Message:   "stored session expired or invalid",
+		LastError: `remote validation failed: {"api_key":"secret-token"}`,
+	})
+	if !strings.Contains(got, "stored session expired or invalid") {
+		t.Fatal("status message omitted auth summary")
+	}
+	if !strings.Contains(got, "remote validation failed") {
+		t.Fatal("status message omitted auth failure detail")
+	}
+	if strings.Contains(got, "secret-token") {
+		t.Fatal("status message leaked secret")
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Fatal("status message omitted redaction marker")
+	}
+}
+
 func TestEnsureCLITrackerAuthBeforeDupeCheckPromptsForManual2FA(t *testing.T) {
 	t.Parallel()
 
@@ -792,11 +975,16 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckFailsUnattendedAuthRequired(t *testi
 		t.Fatal("expected unattended auth-required error")
 	}
 	got := err.Error()
-	if !strings.Contains(got, "unattended") {
-		t.Fatal("expected auth-required error to name unattended mode")
-	}
-	if !strings.Contains(got, "login credentials or imported cookies required") {
-		t.Fatal("expected auth-required error to include required user action")
+	for _, expected := range []string{
+		"unattended",
+		"no-prompt",
+		"HDB",
+		"required action",
+		"login credentials or imported cookies required",
+	} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("expected auth-required error to include %q, got %q", expected, got)
+		}
 	}
 }
 
@@ -834,8 +1022,17 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckFailsUnattendedBTN2FA(t *testing.T) 
 	if err == nil {
 		t.Fatal("expected unattended BTN 2FA error")
 	}
-	if !strings.Contains(err.Error(), "unattended tracker auth BTN requires 2FA before dupe check") {
-		t.Fatalf("unexpected error: %v", err)
+	got := err.Error()
+	for _, expected := range []string{
+		"unattended",
+		"no-prompt",
+		"BTN",
+		"manual 2FA code",
+		"before dupe check",
+	} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("expected unattended 2FA error to include %q, got %q", expected, got)
+		}
 	}
 }
 
@@ -963,7 +1160,7 @@ func TestPromptTrackerDupeReviewApprovesUserSkippedDupeChecksInUnattendedMode(t 
 
 func TestPromptTrackerDupeReviewGroupsUnattendedOutput(t *testing.T) {
 	req := api.Request{
-		Trackers: []string{"AITHER", "ANT", "DP", "OTW", "MTV"},
+		Trackers: []string{"AITHER", "ANT", "DP", "OTW", "MTV", "NBL"},
 		Options:  api.UploadOptions{InteractionMode: api.InteractionModeUnattended},
 	}
 	summary := api.DupeCheckSummary{
@@ -982,6 +1179,12 @@ func TestPromptTrackerDupeReviewGroupsUnattendedOutput(t *testing.T) {
 				Status:     "skipped",
 				Skipped:    true,
 				SkipReason: "rule check failed: category tv is not movie",
+			},
+			{
+				Tracker:    "NBL",
+				Status:     "skipped",
+				Skipped:    true,
+				SkipReason: "missing api_key for tracker",
 			},
 			{Tracker: "DP", Status: "completed"},
 			{
@@ -1023,7 +1226,8 @@ func TestPromptTrackerDupeReviewGroupsUnattendedOutput(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"Dupe check summary:",
-		"Skipped due to tracker rules/conditions: ANT",
+		"Skipped: ANT (rule check failed: category tv is not movie)",
+		"Skipped: NBL (missing api_key for tracker)",
 		"Found potential dupes on: AITHER, MTV",
 		"Trackers passed all checks: DP, OTW",
 	} {
@@ -1035,7 +1239,6 @@ func TestPromptTrackerDupeReviewGroupsUnattendedOutput(t *testing.T) {
 		"\n[AITHER]\n",
 		"Skipping AITHER due to dupe/rule check result.",
 		"Skipping ANT due to dupe/rule check result.",
-		"rule check failed: category tv is not movie",
 		"Example Release 2026 S01 720p WEB-DL H.264-ALT",
 		"Example.Release.2026.S01.720p.WEB-DL.H264-OTHER",
 		"Example Release 2026 S01 2160p WEB-DL H.265-ALT2",
@@ -1191,6 +1394,31 @@ func TestPromptTrackerQuestionnairesRejectsBlankRequiredUnattendedDefault(t *tes
 	}
 	if !strings.Contains(err.Error(), "unattended upload requires ANT Type questionnaire value for ANT") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPromptTrackerQuestionnairesSkipsRuleFailedTrackers(t *testing.T) {
+	t.Parallel()
+
+	answers, changed, err := promptTrackerQuestionnaires(bufio.NewReader(strings.NewReader("unexpected\n")), api.UploadReview{
+		Trackers: []api.TrackerReview{{
+			Tracker:      "ANT",
+			RuleFailures: []api.RuleFailure{{Rule: "require_movie_only", Reason: "category tv is not movie"}},
+			Questionnaire: &api.TrackerQuestionnaire{Fields: []api.TrackerQuestionnaireField{{
+				Key:      "type",
+				Label:    "Type",
+				Required: true,
+			}}},
+		}},
+	}, cliOptions{})
+	if err != nil {
+		t.Fatalf("promptTrackerQuestionnaires: %v", err)
+	}
+	if changed {
+		t.Fatal("expected no questionnaire change for rule-failed tracker")
+	}
+	if len(answers) != 0 {
+		t.Fatalf("expected no answers for rule-failed tracker, got %#v", answers)
 	}
 }
 
@@ -1567,6 +1795,7 @@ func TestMaybeEditCLIDescriptionsSkipsOnlyID(t *testing.T) {
 
 type cliCoreForTest struct {
 	review                 api.UploadReview
+	reviewResponses        []api.UploadReview
 	dryRunPreview          api.TrackerDryRunPreview
 	callOrder              []string
 	requests               []cliCoreRequestForTest
@@ -1651,8 +1880,20 @@ func (c *cliCoreForTest) recordRequest(name string, req api.Request) {
 	copyReq.IgnoreDupesFor = append([]string(nil), req.IgnoreDupesFor...)
 	copyReq.IgnoreTrackerRuleFailuresFor = append([]string(nil), req.IgnoreTrackerRuleFailuresFor...)
 	copyReq.DescriptionGroups = api.CloneDescriptionBuilderGroups(req.DescriptionGroups)
+	copyReq.TrackerQuestionnaireAnswers = cloneCLIQuestionnaireAnswersForTest(req.TrackerQuestionnaireAnswers)
 	copyReq.ExternalIDSelections = cloneCLIExternalIDSelectionsForTest(req.ExternalIDSelections)
 	c.requests = append(c.requests, cliCoreRequestForTest{name: name, req: copyReq})
+}
+
+func cloneCLIQuestionnaireAnswersForTest(input map[string]map[string]string) map[string]map[string]string {
+	if len(input) == 0 {
+		return nil
+	}
+	cloned := make(map[string]map[string]string, len(input))
+	for tracker, values := range input {
+		cloned[tracker] = maps.Clone(values)
+	}
+	return cloned
 }
 
 func (c *cliCoreForTest) RunUpload(context.Context, api.Request) (api.Result, error) {
@@ -1715,6 +1956,11 @@ func (c *cliCoreForTest) CheckDupes(_ context.Context, req api.Request) (api.Dup
 func (c *cliCoreForTest) BuildUploadReview(_ context.Context, req api.Request) (api.UploadReview, error) {
 	c.callOrder = append(c.callOrder, "review")
 	c.recordRequest("review", req)
+	if len(c.reviewResponses) > 0 {
+		review := c.reviewResponses[0]
+		c.reviewResponses = c.reviewResponses[1:]
+		return review, nil
+	}
 	return c.review, nil
 }
 

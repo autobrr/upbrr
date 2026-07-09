@@ -78,18 +78,12 @@ func imdbForLookup(meta api.PreparedMetadata) string {
 	if meta.ExternalIDs.IMDBID != 0 {
 		return fmt.Sprintf("tt%07d", meta.ExternalIDs.IMDBID)
 	}
-	if meta.MediaInfoIMDBID != 0 {
-		return fmt.Sprintf("tt%07d", meta.MediaInfoIMDBID)
-	}
 	return ""
 }
 
 func tmdbForLookup(meta api.PreparedMetadata) string {
 	if meta.ExternalIDs.TMDBID != 0 {
 		return strconv.Itoa(meta.ExternalIDs.TMDBID)
-	}
-	if meta.MediaInfoTMDBID != 0 {
-		return strconv.Itoa(meta.MediaInfoTMDBID)
 	}
 	return ""
 }

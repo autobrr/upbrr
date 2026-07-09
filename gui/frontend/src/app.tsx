@@ -87,6 +87,7 @@ import {
 import { handleExternalLinkClick } from "./utils/externalLinks";
 import { normalizeJobStatus } from "./utils/jobStatus";
 import { isMetadataProgressPathMatch } from "./utils/metadataProgress";
+import { dupeSkipReason, isRuleSkippedResult } from "./utils/dupeCheck";
 import {
   hasFilteredEmptyUploadTrackerSelection as hasFilteredEmptyUploadTrackerSelectionState,
   resolveSelectedUploadTrackers,
@@ -142,11 +143,13 @@ const emptyPreview: MetadataPreview = {
     IMDBID: 0,
     TVDBID: 0,
     TVmazeID: 0,
+    MALID: 0,
     Category: "",
     SourceTMDB: "",
     SourceIMDB: "",
     SourceTVDB: "",
     SourceTVmaze: "",
+    SourceMAL: "",
   },
   ExternalIDCandidates: {
     TMDB: [],
@@ -195,7 +198,12 @@ const splitTrackerLabel = (value: string) =>
     .map((entry) => entry.toLowerCase().trim())
     .filter((entry) => entry.length > 0);
 
-/** Returns normalized tracker labels whose skipped duplicate-check result should block upload. */
+/**
+ * Returns every normalized tracker label represented by a duplicate-check row.
+ * Grouped rule rows use comma-separated tracker labels, while ordinary rows use
+ * a single tracker name; callers choose whether the row is a rule skip, generic
+ * skip, dupe hit, or failure before applying the labels.
+ */
 export const ruleBlockingTrackerLabels = (result: Pick<DupeCheckResult, "Tracker">) => {
   const next = new Set<string>();
   const normalized = result.Tracker.toLowerCase().trim();
@@ -609,7 +617,7 @@ const parseIDInput = (provider: string, value: string) => {
   return Number(normalized);
 };
 
-const providerOrder = ["tmdb", "imdb", "tvdb", "tvmaze"] as const;
+const providerOrder = ["tmdb", "imdb", "tvdb", "tvmaze", "mal"] as const;
 
 const filterAndOrderExternalIDs = (info: ExternalIDInfo[]) => {
   const orderIndex = new Map<string, number>(
@@ -631,6 +639,17 @@ const buildIDEditState = (ids: ExternalIDs) => ({
   imdb: formatNumber(ids.IMDBID),
   tvdb: formatNumber(ids.TVDBID),
   tvmaze: formatNumber(ids.TVmazeID),
+  mal: formatNumber(ids.MALID),
+});
+
+type IDProviderKey = keyof ReturnType<typeof buildIDEditState>;
+
+const buildIDTouchedState = (): Record<IDProviderKey, boolean> => ({
+  tmdb: false,
+  imdb: false,
+  tvdb: false,
+  tvmaze: false,
+  mal: false,
 });
 
 const buildReleaseEditState = (overrides?: ReleaseNameOverrides): ReleaseNameEditState => ({
@@ -738,6 +757,9 @@ export default function App() {
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<MetadataPreview>(emptyPreview);
   const [idEdits, setIdEdits] = useState(() => buildIDEditState(emptyPreview.ExternalIDs));
+  const [idTouched, setIdTouched] = useState<Record<IDProviderKey, boolean>>(() =>
+    buildIDTouchedState(),
+  );
   const [releaseEdits, setReleaseEdits] = useState(() =>
     buildReleaseEditState(emptyPreview.ReleaseNameOverrides),
   );
@@ -1175,7 +1197,21 @@ export default function App() {
     return next;
   }, [dupeTrackerFlags]);
 
+  // Rule failures stay terminal even in debug/dry-run. Keep this set separate
+  // from generic skipped duplicate-check results so the UI can show the exact
+  // skip reason without labeling config/handler skips as rule failures.
   const ruleSkippedTrackerSet = useMemo(() => {
+    const next = new Set<string>();
+    dupeEffectiveResults.forEach((result) => {
+      if (!result.Tracker || !isRuleSkippedResult(result)) return;
+      ruleBlockingTrackerLabels(result).forEach((tracker) => next.add(tracker));
+    });
+    return next;
+  }, [dupeEffectiveResults]);
+
+  // Any skipped duplicate-check result blocks upload eligibility; rule skips are
+  // also included here but their display copy comes from ruleSkipReasons.
+  const skippedDupeTrackerSet = useMemo(() => {
     const next = new Set<string>();
     dupeEffectiveResults.forEach((result) => {
       if (!result.Tracker || !result.Skipped) return;
@@ -1200,11 +1236,25 @@ export default function App() {
     return next;
   }, [dupeEffectiveResults]);
 
-  const ruleSkipReasons = useMemo(() => {
+  // Generic skipped reasons cover handler/config skips such as missing API keys.
+  // Rule-specific labels are derived separately to avoid misleading copy.
+  const skippedDupeReasons = useMemo(() => {
     const next: Record<string, string> = {};
     dupeEffectiveResults.forEach((result) => {
       if (!result.Tracker || !result.Skipped) return;
-      const reason = (result.SkipReason || result.Notes?.join(" ") || "rule check failed").trim();
+      const reason = dupeSkipReason(result) || "Skipped";
+      ruleBlockingTrackerLabels(result).forEach((tracker) => {
+        next[tracker] = reason;
+      });
+    });
+    return next;
+  }, [dupeEffectiveResults]);
+
+  const ruleSkipReasons = useMemo(() => {
+    const next: Record<string, string> = {};
+    dupeEffectiveResults.forEach((result) => {
+      if (!result.Tracker || !isRuleSkippedResult(result)) return;
+      const reason = dupeSkipReason(result);
       ruleBlockingTrackerLabels(result).forEach((tracker) => {
         next[tracker] = reason || "rule check failed";
       });
@@ -1261,25 +1311,21 @@ export default function App() {
       imdb: parseIDInput("imdb", idEdits.imdb),
       tvdb: parseIDInput("tvdb", idEdits.tvdb),
       tvmaze: parseIDInput("tvmaze", idEdits.tvmaze),
+      mal: parseIDInput("mal", idEdits.mal),
     };
 
     const invalid = Object.values(parsed).includes(null);
     const overrides: ExternalIDOverrides = {
-      TMDBID:
-        parsed.tmdb !== null && parsed.tmdb !== preview.ExternalIDs.TMDBID ? parsed.tmdb : null,
-      IMDBID:
-        parsed.imdb !== null && parsed.imdb !== preview.ExternalIDs.IMDBID ? parsed.imdb : null,
-      TVDBID:
-        parsed.tvdb !== null && parsed.tvdb !== preview.ExternalIDs.TVDBID ? parsed.tvdb : null,
-      TVmazeID:
-        parsed.tvmaze !== null && parsed.tvmaze !== preview.ExternalIDs.TVmazeID
-          ? parsed.tvmaze
-          : null,
+      TMDBID: parsed.tmdb !== null && idTouched.tmdb ? parsed.tmdb : null,
+      IMDBID: parsed.imdb !== null && idTouched.imdb ? parsed.imdb : null,
+      TVDBID: parsed.tvdb !== null && idTouched.tvdb ? parsed.tvdb : null,
+      TVmazeID: parsed.tvmaze !== null && idTouched.tvmaze ? parsed.tvmaze : null,
+      MALID: parsed.mal !== null && idTouched.mal ? parsed.mal : null,
     };
     const dirty = Object.values(overrides).some((value) => value !== null);
 
     return { overrides, dirty, invalid };
-  }, [idEdits, preview.ExternalIDs]);
+  }, [idEdits, idTouched]);
 
   const releaseOverrideState = useMemo(() => {
     // Safety check: ensure state is initialized
@@ -1427,16 +1473,20 @@ export default function App() {
    * Dupe and rule-failure filters apply only when their snapshot source path
    * matches the requested path context, preventing stale blocks from a previous
    * source path from changing metadata fetch or playlist preparation payloads.
+   * Callers starting a fresh dupe check can disable dupe filters while keeping
+   * manual upload tracker toggles.
    */
   const resolveUploadTrackerEligibilityForPath = useCallback(
-    (sourcePath: string) => {
+    (sourcePath: string, options: { applyDupeFilters?: boolean } = {}) => {
       const targetPath = sourcePath.trim();
       const currentPath = path.trim();
       const dupeSourcePath = String(
         dupeSummary.SourcePath || dupeCheckSnapshot?.sourcePath || "",
       ).trim();
       const pathCaseInsensitive = isRuntimePathCaseInsensitive();
+      const applyDupeFilters = options.applyDupeFilters ?? true;
       const dupeSourceMatchesTarget =
+        applyDupeFilters &&
         targetPath !== "" &&
         dupeSourcePath !== "" &&
         isSourcePathContextMatch(dupeSourcePath, targetPath, pathCaseInsensitive);
@@ -1448,7 +1498,13 @@ export default function App() {
 
       trackerUploadItems.forEach((item) => {
         const normalized = item.name.toLowerCase().trim();
-        if (uploadTogglesMatchTarget && hasOwnSelection(uploadToggles, item.name)) {
+        const ignoreAutoDisabledToggle =
+          !applyDupeFilters && autoDisabledUploadTrackersRef.current.has(normalized);
+        if (
+          uploadTogglesMatchTarget &&
+          hasOwnSelection(uploadToggles, item.name) &&
+          !ignoreAutoDisabledToggle
+        ) {
           effectiveUploadToggles[item.name] = uploadToggles[item.name];
           return;
         }
@@ -1461,6 +1517,9 @@ export default function App() {
 
       const emptyTrackerSet = new Set<string>();
       const scopedDupedTrackerSet = dupeSourceMatchesTarget ? dupedTrackerSet : emptyTrackerSet;
+      const scopedSkippedDupeTrackerSet = dupeSourceMatchesTarget
+        ? skippedDupeTrackerSet
+        : emptyTrackerSet;
       const scopedRuleSkippedTrackerSet = dupeSourceMatchesTarget
         ? ruleSkippedTrackerSet
         : emptyTrackerSet;
@@ -1472,6 +1531,7 @@ export default function App() {
         releasePageTrackerSelection,
         uploadToggles: effectiveUploadToggles,
         dupedTrackerSet: scopedDupedTrackerSet,
+        skippedDupeTrackerSet: scopedSkippedDupeTrackerSet,
         ruleSkippedTrackerSet: scopedRuleSkippedTrackerSet,
         failedDupeTrackerSet: scopedFailedDupeTrackerSet,
       });
@@ -1488,6 +1548,7 @@ export default function App() {
             releasePageTrackerSelection,
             uploadToggles: effectiveUploadToggles,
             dupedTrackerSet: scopedDupedTrackerSet,
+            skippedDupeTrackerSet: scopedSkippedDupeTrackerSet,
             ruleSkippedTrackerSet: scopedRuleSkippedTrackerSet,
             failedDupeTrackerSet: scopedFailedDupeTrackerSet,
           }),
@@ -1502,6 +1563,7 @@ export default function App() {
       path,
       releasePageTrackerSelection,
       ruleSkippedTrackerSet,
+      skippedDupeTrackerSet,
       trackerUploadItems,
       uploadToggles,
     ],
@@ -1602,6 +1664,7 @@ export default function App() {
       setError("");
       setPreview(emptyPreview);
       setIdEdits(buildIDEditState(emptyPreview.ExternalIDs));
+      setIdTouched(buildIDTouchedState());
       setReleaseEdits(buildReleaseEditState(emptyPreview.ReleaseNameOverrides));
       setReleaseTouched(buildReleaseTouchedState(emptyPreview.ReleaseNameOverrides));
       setShowExternalIDInputUI(true);
@@ -1870,6 +1933,9 @@ export default function App() {
     if (overrides.TVmazeID !== null && overrides.TVmazeID !== undefined) {
       payload.TVmazeID = overrides.TVmazeID;
     }
+    if (overrides.MALID !== null && overrides.MALID !== undefined) {
+      payload.MALID = overrides.MALID;
+    }
     return payload;
   };
 
@@ -1946,14 +2012,17 @@ export default function App() {
 
   const applyPreviewResult = (
     result: MetadataPreview,
-    options: { switchToInput?: boolean } = {},
+    options: { switchToInput?: boolean; preserveIDTouches?: boolean } = {},
   ) => {
-    const { switchToInput = true } = options;
+    const { switchToInput = true, preserveIDTouches = false } = options;
     setPreview(result);
     if (switchToInput) {
       setActiveTab("input");
     }
     setIdEdits(buildIDEditState(result.ExternalIDs));
+    if (!preserveIDTouches) {
+      setIdTouched(buildIDTouchedState());
+    }
     setReleaseEdits(buildReleaseEditState(result.ReleaseNameOverrides || {}));
     setReleaseTouched(buildReleaseTouchedState(result.ReleaseNameOverrides || {}));
     const orderedIDs = filterAndOrderExternalIDs(result.ExternalIDInfo || []);
@@ -2302,7 +2371,10 @@ export default function App() {
         normalizeReleaseOverrides(nameOverrides),
         selectedTrackers,
       );
-      applyPreviewResult(result, { switchToInput: options.switchToInput });
+      applyPreviewResult(result, {
+        switchToInput: options.switchToInput,
+        preserveIDTouches: Object.keys(normalizeOverrides(overrides)).length > 0,
+      });
       rememberSourcePath(
         targetPath,
         options.targetMode ?? sourcePathMode ?? inferSourcePathMode(targetPath),
@@ -2367,6 +2439,7 @@ export default function App() {
 
   const clearEditAttributesState = () => {
     setIdEdits(buildIDEditState(emptyPreview.ExternalIDs));
+    setIdTouched(buildIDTouchedState());
     setReleaseEdits(buildReleaseEditState({}));
     setReleaseTouched(buildReleaseTouchedState({}));
   };
@@ -3062,13 +3135,14 @@ export default function App() {
       setDupeError("Fix invalid overrides before checking dupes.");
       return;
     }
-    const selectedTrackers = getSelectedTrackers();
+    const trackerEligibility = resolveUploadTrackerEligibilityForPath(path, {
+      applyDupeFilters: false,
+    });
+    const selectedTrackers = trackerEligibility.selectedTrackers.slice();
     if (selectedTrackers.length === 0) {
       setDupeError("Select at least one tracker before checking dupes.");
       return;
     }
-    setDupeChecked(false);
-    setDupeSummary(emptyDupeSummary);
     setDupeLoading(true);
     let jobID = "";
     try {
@@ -3080,14 +3154,16 @@ export default function App() {
       );
     } catch (err) {
       const message = String(err);
-      // Starter failures do not create a durable job, so clear the polling gates.
+      // Starter failures do not create a durable job, so stop polling without
+      // discarding the last completed summary.
       setDupeLoading(false);
       setDupeCheckJobID("");
-      setDupeCheckSnapshot(null);
-      setDupeChecked(false);
       setDupeError(dupeCheckErrorMessage(message));
       return;
     }
+    setDupeChecked(false);
+    setDupeSummary(emptyDupeSummary);
+    setDupeCheckSnapshot(null);
     setDupeCheckJobID(jobID);
     // The first snapshot is best-effort; once a job exists, events and fallback
     // polling own lifecycle updates.
@@ -3347,6 +3423,11 @@ export default function App() {
         setToggle(item.name, false);
         return;
       }
+      if (dupeFiltersMatchCurrentPath && skippedDupeTrackerSet.has(normalized)) {
+        autoDisabled.delete(normalized);
+        setToggle(item.name, false);
+        return;
+      }
       if (autoDisabled.has(normalized)) {
         setToggle(
           item.name,
@@ -3391,6 +3472,7 @@ export default function App() {
     dupeFiltersMatchCurrentPath,
     dupedTrackerSet,
     ruleSkippedTrackerSet,
+    skippedDupeTrackerSet,
     failedDupeTrackerSet,
     releasePageTrackerSelection,
     uploadToggles,
@@ -3456,14 +3538,6 @@ export default function App() {
     setTrackerDryRunError("");
     setTrackerDryRunProgress(null);
   }, [path]);
-
-  // releasePageTrackerSelection is raw input-page state. Workflows that must
-  // honor upload eligibility use selectedUploadImageTrackers instead.
-  const getSelectedTrackers = () => {
-    return Object.entries(releasePageTrackerSelection)
-      .filter(([, selected]) => selected)
-      .map(([name]) => name);
-  };
 
   const getSelectedUploadTrackers = useCallback(
     () => selectedUploadImageTrackers,
@@ -4255,6 +4329,7 @@ export default function App() {
               dupeTrackerFlags={dupeTrackerFlags}
               dupeIgnore={dupeIgnore}
               ruleSkippedTrackerSet={ruleSkippedTrackerSet}
+              skippedDupeReasons={skippedDupeReasons}
               ruleSkipReasons={ruleSkipReasons}
               dupeProgressStatus={dupeProgressStatus}
               dupeCompletedCount={dupeCompletedCount}
@@ -4402,6 +4477,8 @@ export default function App() {
               trackerUploadItems={trackerUploadItems}
               releasePageTrackerSelection={releasePageTrackerSelection}
               dupedTrackerSet={dupedTrackerSet}
+              skippedDupeReasons={skippedDupeReasons}
+              skippedDupeTrackerSet={skippedDupeTrackerSet}
               ruleSkipReasons={ruleSkipReasons}
               ruleSkippedTrackerSet={ruleSkippedTrackerSet}
               failedDupeTrackerSet={failedDupeTrackerSet}
@@ -4465,6 +4542,12 @@ export default function App() {
               setReleasePageTrackerSelection={setReleasePageTrackerSelection}
               idEdits={idEdits}
               setIdEdits={setIdEdits}
+              markIDTouched={(key) =>
+                setIdTouched((previous) => ({
+                  ...previous,
+                  [key]: true,
+                }))
+              }
               releaseEdits={releaseEdits}
               setReleaseEdits={setReleaseEdits}
               markReleaseTouched={markReleaseTouched}

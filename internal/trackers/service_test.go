@@ -7,12 +7,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -140,6 +143,78 @@ func TestUploadBannedGroup(t *testing.T) {
 	}
 }
 
+func TestUploadSkipsDynamicBannedRefreshForEmptyEffectiveGroup(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`{"data":[],"meta":{"next_cursor":""}}`))
+	}))
+	defer server.Close()
+
+	registry := NewRegistry()
+	if err := registry.Register(trackingUploadDefinition{name: "AITHER"}); err != nil {
+		t.Fatalf("register stub: %v", err)
+	}
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")},
+		Trackers: config.TrackersConfig{
+			DefaultTrackers: config.CSVList{"AITHER"},
+			Trackers: map[string]config.TrackerConfig{
+				"AITHER": {APIKey: "aither-key", URL: server.URL},
+			},
+		},
+	}
+	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+
+	for _, tag := range []string{"-", " - ", "   "} {
+		summary, err := svc.Upload(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/file", Tag: tag})
+		if err != nil {
+			t.Fatalf("upload tag %q: %v", tag, err)
+		}
+		if summary.Uploaded != 1 {
+			t.Fatalf("expected upload to proceed for tag %q, got %d", tag, summary.Uploaded)
+		}
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("expected no dynamic banned refresh for empty effective group, got %d request(s)", got)
+	}
+
+	summary, err := svc.Upload(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/file", Tag: "-GRP"})
+	if err != nil {
+		t.Fatalf("upload real group: %v", err)
+	}
+	if summary.Uploaded != 1 {
+		t.Fatalf("expected upload to proceed for real group, got %d", summary.Uploaded)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("expected real group to refresh dynamic banned groups once, got %d request(s)", got)
+	}
+}
+
+func TestNormalizeBannedReleaseGroup(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		tag  string
+		want string
+	}{
+		{tag: "", want: ""},
+		{tag: "-", want: ""},
+		{tag: " - ", want: ""},
+		{tag: "   ", want: ""},
+		{tag: "-GRP", want: "grp"},
+		{tag: "-TAoE", want: "taoe"},
+		{tag: "-NotTAoE", want: "nottaoe"},
+	}
+	for _, tt := range tests {
+		if got := NormalizeBannedReleaseGroup(tt.tag); got != tt.want {
+			t.Fatalf("NormalizeBannedReleaseGroup(%q)=%q, want %q", tt.tag, got, tt.want)
+		}
+	}
+}
+
 func TestNormalizeTrackersDedup(t *testing.T) {
 	t.Parallel()
 
@@ -153,7 +228,8 @@ func TestNormalizeTrackersDedup(t *testing.T) {
 }
 
 type stubDryRunDefinition struct {
-	name string
+	name      string
+	dryRunErr error
 }
 
 type stubUploadArtifactDefinition struct {
@@ -451,6 +527,9 @@ func (s stubDryRunDefinition) Upload(context.Context, UploadRequest) (api.Upload
 }
 
 func (s stubDryRunDefinition) BuildUploadDryRun(context.Context, UploadRequest) (api.TrackerDryRunEntry, error) {
+	if s.dryRunErr != nil {
+		return api.TrackerDryRunEntry{}, s.dryRunErr
+	}
 	return api.TrackerDryRunEntry{
 		Tracker: s.name,
 		Status:  "ready",
@@ -642,7 +721,7 @@ func TestBuildPreparationBlocksWhenUploadedImagesDoNotCoverRHDSlots(t *testing.T
 	}
 }
 
-func TestBuildUploadDryRunIncludesRuleFailedTrackersWhenOverrideEnabled(t *testing.T) {
+func TestBuildUploadDryRunIncludesRuleFailedTrackers(t *testing.T) {
 	t.Parallel()
 
 	registry := NewRegistry()
@@ -652,8 +731,7 @@ func TestBuildUploadDryRunIncludesRuleFailedTrackersWhenOverrideEnabled(t *testi
 
 	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
 	entries, err := svc.BuildUploadDryRun(context.Background(), api.PreparedMetadata{
-		SourcePath:                "/tmp/file",
-		IgnoreTrackerRuleFailures: true,
+		SourcePath: "/tmp/file",
 		TrackerRuleFailures: map[string][]api.RuleFailure{
 			"BLU": {{Rule: "require_movie_only", Reason: "movie only"}},
 		},
@@ -2006,7 +2084,7 @@ func TestBuildPreparationSkipsBlockedTrackers(t *testing.T) {
 	}
 }
 
-func TestBuildUploadDryRunSkipsBlockedTrackers(t *testing.T) {
+func TestBuildUploadDryRunIncludesBlockedTrackers(t *testing.T) {
 	t.Parallel()
 
 	registry := NewRegistry()
@@ -2029,11 +2107,126 @@ func TestBuildUploadDryRunSkipsBlockedTrackers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 dry-run entries, got %d", len(entries))
+	}
+	if entries[0].Tracker != "HDB" || entries[1].Tracker != "BHD" {
+		t.Fatalf("expected blocked and unblocked dry-run entries, got %#v", entries)
+	}
+}
+
+func TestBuildUploadDryRunAnnotatesBannedGroupWithoutBlockingPayload(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if err := registry.Register(stubDryRunDefinition{name: "ANT"}); err != nil {
+		t.Fatalf("register stub: %v", err)
+	}
+
+	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	entries, err := svc.BuildUploadDryRun(context.Background(), api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		Tag:        "-AFG",
+	}, []string{"ANT"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 dry-run entry, got %d", len(entries))
 	}
-	if entries[0].Tracker != "BHD" {
-		t.Fatalf("expected only BHD dry-run entry, got %q", entries[0].Tracker)
+	entry := entries[0]
+	if entry.Tracker != "ANT" {
+		t.Fatalf("expected ANT dry-run entry, got %#v", entry)
+	}
+	if entry.Status != "ready" || entry.Payload["category"] != "movie" {
+		t.Fatalf("expected payload to remain ready, got %#v", entry)
+	}
+	if !entry.Banned {
+		t.Fatalf("expected dry-run banned annotation, got %#v", entry)
+	}
+	if !strings.Contains(entry.BannedReason, "group afg is banned on ANT") {
+		t.Fatalf("expected banned reason, got %q", entry.BannedReason)
+	}
+}
+
+func TestBuildUploadDryRunAnnotatesBannedGroupOnBuilderError(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if err := registry.Register(stubDryRunDefinition{name: "ANT", dryRunErr: errors.New("build failed")}); err != nil {
+		t.Fatalf("register stub: %v", err)
+	}
+
+	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	entries, err := svc.BuildUploadDryRun(context.Background(), api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		Tag:        "-AFG",
+	}, []string{"ANT"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 dry-run entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry.Tracker != "ANT" {
+		t.Fatalf("expected ANT dry-run entry, got %#v", entry)
+	}
+	if entry.Status != "error" || entry.Message != "build failed" {
+		t.Fatalf("expected builder error entry, got %#v", entry)
+	}
+	if !entry.Banned {
+		t.Fatalf("expected dry-run banned annotation, got %#v", entry)
+	}
+	if !strings.Contains(entry.BannedReason, "group afg is banned on ANT") {
+		t.Fatalf("expected banned reason, got %q", entry.BannedReason)
+	}
+	if entry.BannedCheckError != "" {
+		t.Fatalf("expected no banned check error, got %q", entry.BannedCheckError)
+	}
+}
+
+func TestBuildUploadDryRunReportsBannedCheckErrorOnBuilderError(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	if err := registry.Register(stubDryRunDefinition{name: "BLU", dryRunErr: errors.New("build failed")}); err != nil {
+		t.Fatalf("register stub: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "upbrr.db")
+	svc := NewServiceWithRegistry(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+	}, nil, nil, registry)
+	bannedDir := filepath.Join(tempDir, "cache", "banned")
+	if err := os.MkdirAll(bannedDir, 0o700); err != nil {
+		t.Fatalf("create banned cache dir: %v", err)
+	}
+	bannedPath := filepath.Join(bannedDir, "BLU_banned_groups.json")
+	if err := os.WriteFile(bannedPath, []byte("{not-json"), 0o600); err != nil {
+		t.Fatalf("write invalid banned cache: %v", err)
+	}
+
+	entries, err := svc.BuildUploadDryRun(context.Background(), api.PreparedMetadata{
+		SourcePath: "/tmp/source",
+		Tag:        "-ExampleGRP",
+	}, []string{"BLU"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 dry-run entry, got %d", len(entries))
+	}
+	entry := entries[0]
+	if entry.Status != "error" || entry.Message != "build failed" {
+		t.Fatalf("expected builder error entry, got %#v", entry)
+	}
+	if entry.BannedCheckError == "" {
+		t.Fatalf("expected banned check error, got %#v", entry)
+	}
+	if !strings.Contains(entry.BannedCheckError, "banned group check failed") {
+		t.Fatalf("expected banned check failure message, got %q", entry.BannedCheckError)
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -425,11 +426,11 @@ func fetchLayout(ctx context.Context, dbPath string, meta api.PreparedMetadata, 
 	}
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return layoutData{}, fmt.Errorf("trackers: ASC unmarshal layout response: %w", err)
+		return layoutData{}, fmt.Errorf("trackers: ASC unmarshal layout response: %s", redaction.RedactValue(err.Error(), nil))
 	}
 	var raw map[string]any
 	if err := json.Unmarshal(payload["ASC"], &raw); err != nil {
-		return layoutData{}, fmt.Errorf("trackers: ASC unmarshal layout data: %w", err)
+		return layoutData{}, fmt.Errorf("trackers: ASC unmarshal layout data: %s", redaction.RedactValue(err.Error(), nil))
 	}
 	layout := normalizeLayout(raw)
 	_ = writeLayoutCache(dbPath, layoutID, payload["ASC"])
