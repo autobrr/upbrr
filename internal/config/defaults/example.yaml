@@ -515,7 +515,7 @@ trackers:
   VMF:
     link_dir_name: ""
     api_key: ""
-    url: "https://vietmediaf.net"
+    url: "https://tracker.vietmediaf.store"
     anon: false
   YUS:
     link_dir_name: ""
