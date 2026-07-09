@@ -647,6 +647,13 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.APIKey,
     trackerFieldMeta.Anon,
   ],
+  VMF: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+    trackerFieldMeta.ModQ,
+  ],
   YUS: [
     trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
