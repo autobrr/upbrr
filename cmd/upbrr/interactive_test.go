@@ -208,7 +208,7 @@ func TestRunInteractiveCLIPathDebugProcessesNonRuleCheckedTrackers(t *testing.T)
 		dupeSummary: api.DupeCheckSummary{
 			Results: []api.DupeCheckResult{
 				{Tracker: "AITHER", Status: "completed", HasDupes: true},
-				{Tracker: "BLU", Status: "skipped", Skipped: true, SkipReason: "rule check failed"},
+				{Tracker: "BLU", Status: "skipped", Skipped: true, SkipRules: []string{"require_movie_only"}},
 				{Tracker: "DP", Status: "completed"},
 			},
 		},
@@ -253,7 +253,7 @@ func TestRunInteractiveCLIPathDryRunProcessesNonRuleCheckedTrackers(t *testing.T
 		dupeSummary: api.DupeCheckSummary{
 			Results: []api.DupeCheckResult{
 				{Tracker: "AITHER", Status: "completed", HasDupes: true},
-				{Tracker: "BLU", Status: "skipped", Skipped: true, SkipReason: "rule check failed"},
+				{Tracker: "BLU", Status: "skipped", Skipped: true, SkipRules: []string{"require_movie_only"}},
 				{Tracker: "DP", Status: "completed"},
 			},
 		},
@@ -281,6 +281,34 @@ func TestRunInteractiveCLIPathDryRunProcessesNonRuleCheckedTrackers(t *testing.T
 	}
 	if got := strings.Join(uploadReq.IgnoreTrackerRuleFailuresFor, ","); got != "" {
 		t.Fatalf("expected dry-run upload not to ignore rule blocks, got %s", got)
+	}
+}
+
+func TestIsRuleSkippedDupeResultUsesSkipRules(t *testing.T) {
+	t.Parallel()
+
+	if !isRuleSkippedDupeResult(api.DupeCheckResult{
+		Tracker:   "BLU",
+		Status:    "skipped",
+		Skipped:   true,
+		SkipRules: []string{"require_movie_only"},
+	}) {
+		t.Fatal("expected structured rule skip to remain terminal")
+	}
+	if isRuleSkippedDupeResult(api.DupeCheckResult{
+		Tracker:    "BLU",
+		Status:     "skipped",
+		Skipped:    true,
+		SkipReason: "rule check failed: category movie is not tv",
+	}) {
+		t.Fatal("expected text-only skip reason not to drive rule classification")
+	}
+	if isRuleSkippedDupeResult(api.DupeCheckResult{
+		Tracker:   "BLU",
+		Status:    "completed",
+		SkipRules: []string{"require_movie_only"},
+	}) {
+		t.Fatal("expected non-skipped result not to be terminal")
 	}
 }
 

@@ -159,6 +159,31 @@ describe("TrackerUploadPage", () => {
     expect(screen.queryByText("Rule check failed")).toBeNull();
   });
 
+  it("shows banned-group status and check error copy", () => {
+    render(
+      <TrackerUploadPage
+        {...baseProps}
+        dryRunPreview={{
+          ...dryRunPreview,
+          Trackers: [
+            {
+              ...dryRunPreview.Trackers[0],
+              Banned: true,
+              BannedReason: "",
+              BannedCheckError: "banned group check failed: cache unavailable",
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Banned group")).toBeTruthy();
+    expect(screen.getByText("Release group matched banned list.")).toBeTruthy();
+    expect(screen.getByText("Banned group check")).toBeTruthy();
+    expect(screen.getByText("banned group check failed: cache unavailable")).toBeTruthy();
+    expect(screen.queryByText("matched")).toBeNull();
+  });
+
   it("hides full tracker names when favicon-only mode is enabled", () => {
     render(<TrackerUploadPage {...baseProps} faviconOnly={true} useFavicons={true} />);
 

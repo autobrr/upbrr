@@ -87,6 +87,7 @@ import {
 import { handleExternalLinkClick } from "./utils/externalLinks";
 import { normalizeJobStatus } from "./utils/jobStatus";
 import { isMetadataProgressPathMatch } from "./utils/metadataProgress";
+import { dupeSkipReason, isRuleSkippedResult } from "./utils/dupeCheck";
 import {
   hasFilteredEmptyUploadTrackerSelection as hasFilteredEmptyUploadTrackerSelectionState,
   resolveSelectedUploadTrackers,
@@ -194,13 +195,6 @@ const splitTrackerLabel = (value: string) =>
     .split(",")
     .map((entry) => entry.toLowerCase().trim())
     .filter((entry) => entry.length > 0);
-
-const isRuleFailureReason = (reason: string) =>
-  reason.toLowerCase().trim().startsWith("rule check failed");
-
-/** Returns the displayable skip reason carried by a duplicate-check result. */
-const dupeSkipReason = (result: Pick<DupeCheckResult, "SkipReason" | "Notes">) =>
-  String(result.SkipReason || result.Notes?.join(" ") || "").trim();
 
 /**
  * Returns every normalized tracker label represented by a duplicate-check row.
@@ -1193,8 +1187,7 @@ export default function App() {
   const ruleSkippedTrackerSet = useMemo(() => {
     const next = new Set<string>();
     dupeEffectiveResults.forEach((result) => {
-      if (!result.Tracker || !result.Skipped) return;
-      if (!isRuleFailureReason(dupeSkipReason(result))) return;
+      if (!result.Tracker || !isRuleSkippedResult(result)) return;
       ruleBlockingTrackerLabels(result).forEach((tracker) => next.add(tracker));
     });
     return next;
@@ -1244,9 +1237,8 @@ export default function App() {
   const ruleSkipReasons = useMemo(() => {
     const next: Record<string, string> = {};
     dupeEffectiveResults.forEach((result) => {
-      if (!result.Tracker || !result.Skipped) return;
+      if (!result.Tracker || !isRuleSkippedResult(result)) return;
       const reason = dupeSkipReason(result);
-      if (!isRuleFailureReason(reason)) return;
       ruleBlockingTrackerLabels(result).forEach((tracker) => {
         next[tracker] = reason || "rule check failed";
       });
@@ -1469,16 +1461,20 @@ export default function App() {
    * Dupe and rule-failure filters apply only when their snapshot source path
    * matches the requested path context, preventing stale blocks from a previous
    * source path from changing metadata fetch or playlist preparation payloads.
+   * Callers starting a fresh dupe check can disable dupe filters while keeping
+   * manual upload tracker toggles.
    */
   const resolveUploadTrackerEligibilityForPath = useCallback(
-    (sourcePath: string) => {
+    (sourcePath: string, options: { applyDupeFilters?: boolean } = {}) => {
       const targetPath = sourcePath.trim();
       const currentPath = path.trim();
       const dupeSourcePath = String(
         dupeSummary.SourcePath || dupeCheckSnapshot?.sourcePath || "",
       ).trim();
       const pathCaseInsensitive = isRuntimePathCaseInsensitive();
+      const applyDupeFilters = options.applyDupeFilters ?? true;
       const dupeSourceMatchesTarget =
+        applyDupeFilters &&
         targetPath !== "" &&
         dupeSourcePath !== "" &&
         isSourcePathContextMatch(dupeSourcePath, targetPath, pathCaseInsensitive);
@@ -1490,7 +1486,13 @@ export default function App() {
 
       trackerUploadItems.forEach((item) => {
         const normalized = item.name.toLowerCase().trim();
-        if (uploadTogglesMatchTarget && hasOwnSelection(uploadToggles, item.name)) {
+        const ignoreAutoDisabledToggle =
+          !applyDupeFilters && autoDisabledUploadTrackersRef.current.has(normalized);
+        if (
+          uploadTogglesMatchTarget &&
+          hasOwnSelection(uploadToggles, item.name) &&
+          !ignoreAutoDisabledToggle
+        ) {
           effectiveUploadToggles[item.name] = uploadToggles[item.name];
           return;
         }
@@ -3110,13 +3112,14 @@ export default function App() {
       setDupeError("Fix invalid overrides before checking dupes.");
       return;
     }
-    const selectedTrackers = getSelectedTrackers();
+    const trackerEligibility = resolveUploadTrackerEligibilityForPath(path, {
+      applyDupeFilters: false,
+    });
+    const selectedTrackers = trackerEligibility.selectedTrackers.slice();
     if (selectedTrackers.length === 0) {
       setDupeError("Select at least one tracker before checking dupes.");
       return;
     }
-    setDupeChecked(false);
-    setDupeSummary(emptyDupeSummary);
     setDupeLoading(true);
     let jobID = "";
     try {
@@ -3128,14 +3131,16 @@ export default function App() {
       );
     } catch (err) {
       const message = String(err);
-      // Starter failures do not create a durable job, so clear the polling gates.
+      // Starter failures do not create a durable job, so stop polling without
+      // discarding the last completed summary.
       setDupeLoading(false);
       setDupeCheckJobID("");
-      setDupeCheckSnapshot(null);
-      setDupeChecked(false);
       setDupeError(dupeCheckErrorMessage(message));
       return;
     }
+    setDupeChecked(false);
+    setDupeSummary(emptyDupeSummary);
+    setDupeCheckSnapshot(null);
     setDupeCheckJobID(jobID);
     // The first snapshot is best-effort; once a job exists, events and fallback
     // polling own lifecycle updates.
@@ -3510,14 +3515,6 @@ export default function App() {
     setTrackerDryRunError("");
     setTrackerDryRunProgress(null);
   }, [path]);
-
-  // releasePageTrackerSelection is raw input-page state. Workflows that must
-  // honor upload eligibility use selectedUploadImageTrackers instead.
-  const getSelectedTrackers = () => {
-    return Object.entries(releasePageTrackerSelection)
-      .filter(([, selected]) => selected)
-      .map(([name]) => name);
-  };
 
   const getSelectedUploadTrackers = useCallback(
     () => selectedUploadImageTrackers,
@@ -4309,6 +4306,7 @@ export default function App() {
               dupeTrackerFlags={dupeTrackerFlags}
               dupeIgnore={dupeIgnore}
               ruleSkippedTrackerSet={ruleSkippedTrackerSet}
+              skippedDupeReasons={skippedDupeReasons}
               ruleSkipReasons={ruleSkipReasons}
               dupeProgressStatus={dupeProgressStatus}
               dupeCompletedCount={dupeCompletedCount}

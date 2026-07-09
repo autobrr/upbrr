@@ -828,7 +828,12 @@ func isRuleSkippedDupeResult(result api.DupeCheckResult) bool {
 	if !result.Skipped {
 		return false
 	}
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(result.SkipReason)), "rule check failed")
+	for _, rule := range result.SkipRules {
+		if strings.TrimSpace(rule) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // dupeReviewBlockReason returns the operator-facing reason for a blocked dupe

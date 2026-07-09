@@ -38,6 +38,7 @@ const renderPage = (
     faviconOnly?: boolean;
     trackerIconSrcByName?: Record<string, string>;
     dupeTrackerStates?: DupeCheckTrackerState[];
+    skippedDupeReasons?: Record<string, string>;
   } = {},
 ) =>
   render(
@@ -50,6 +51,7 @@ const renderPage = (
       dupeTrackerFlags={{}}
       dupeIgnore={{}}
       ruleSkippedTrackerSet={new Set()}
+      skippedDupeReasons={options.skippedDupeReasons ?? {}}
       ruleSkipReasons={{}}
       dupeProgressStatus=""
       dupeCompletedCount={0}
@@ -188,6 +190,52 @@ describe("DupeCheckPage", () => {
 
     expect(screen.getByText("Available for upload: 1")).toBeInTheDocument();
     expect(screen.getByText("1 blocked.")).toBeInTheDocument();
+    expect(screen.getByText("Skipped")).toBeInTheDocument();
+    expect(screen.getByText("missing api_key for tracker")).toBeInTheDocument();
+    expect(screen.queryByText("Rule failed")).toBeNull();
+  });
+
+  it("uses structured SkipRules for rule-failure skipped results", () => {
+    renderPage({
+      SourcePath: "C:\\Media\\Example.Movie.mkv",
+      Results: [
+        {
+          ...completedResult("NBL"),
+          Status: "skipped",
+          Skipped: true,
+          SkipReason: "",
+          SkipRules: ["required_metadata"],
+        },
+        completedResult("ANT"),
+      ],
+      Notes: [],
+    });
+
+    expect(screen.getByText("Available for upload: 1")).toBeInTheDocument();
+    expect(screen.getByText("1 blocked.")).toBeInTheDocument();
+    expect(screen.getByText("Rule failed")).toBeInTheDocument();
+    expect(screen.queryByText("Skipped")).toBeNull();
+  });
+
+  it("uses threaded skipped reasons when SkipReason is empty", () => {
+    renderPage(
+      {
+        SourcePath: "C:\\Media\\Example.Movie.mkv",
+        Results: [
+          {
+            ...completedResult("NBL"),
+            Status: "skipped",
+            Skipped: true,
+            SkipReason: "",
+            Notes: ["skip: missing api_key for tracker"],
+          },
+          completedResult("ANT"),
+        ],
+        Notes: [],
+      },
+      { skippedDupeReasons: { nbl: "missing api_key for tracker" } },
+    );
+
     expect(screen.getByText("Skipped")).toBeInTheDocument();
     expect(screen.getByText("missing api_key for tracker")).toBeInTheDocument();
     expect(screen.queryByText("Rule failed")).toBeNull();

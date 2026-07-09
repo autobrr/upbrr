@@ -198,14 +198,6 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 		dryRunByTracker[name] = entry
 	}
 
-	bannedChecker := trackerspkg.NewBannedGroupChecker(c.cfg.MainSettings.DBPath)
-	group := trackerspkg.NormalizeBannedReleaseGroup(meta.Tag)
-	if group != "" {
-		if err := bannedChecker.RefreshDynamic(ctx, c.cfg, resolvedTrackers, c.logger); err != nil {
-			return api.UploadReview{}, fmt.Errorf("core: upload review banned groups refresh: %w", err)
-		}
-	}
-
 	reviews := make([]api.TrackerReview, 0, len(resolvedTrackers))
 	for _, tracker := range resolvedTrackers {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
@@ -222,24 +214,16 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 		if review.DryRun.Tracker == "" {
 			review.DryRun.Tracker = name
 		}
+		review.Banned = review.DryRun.Banned
+		review.BannedReason = review.DryRun.BannedReason
 		if reasons := meta.BlockedTrackers[name]; len(reasons) > 0 {
 			review.DryRun.Status = "blocked"
 			review.DryRun.Message = "tracker blocked: " + formatBlockedReasons(reasons)
+		} else if bannedCheckError := strings.TrimSpace(review.DryRun.BannedCheckError); bannedCheckError != "" {
+			review.DryRun.Status = "blocked"
+			review.DryRun.Message = bannedCheckError
 		}
 		review.Questionnaire = review.DryRun.Questionnaire
-
-		if group != "" {
-			banned, err := bannedChecker.IsBanned(name, group)
-			if err != nil {
-				return api.UploadReview{}, fmt.Errorf("core: upload review banned group check %s: %w", name, err)
-			}
-			if banned {
-				review.Banned = true
-				review.BannedReason = fmt.Sprintf("group %s is banned on %s", group, name)
-				review.DryRun.Banned = true
-				review.DryRun.BannedReason = review.BannedReason
-			}
-		}
 
 		reviews = append(reviews, review)
 	}

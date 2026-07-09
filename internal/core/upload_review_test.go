@@ -243,6 +243,86 @@ func TestBuildUploadReviewSkipsDynamicBannedRefreshForEmptyEffectiveGroup(t *tes
 	}
 }
 
+func TestBuildUploadReviewReusesDryRunBannedAnnotations(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`{"data":[],"meta":{"next_cursor":""}}`))
+	}))
+	defer server.Close()
+
+	sourcePath := filepath.Join(t.TempDir(), "a")
+	const bannedCheckError = "banned group check failed: cache unavailable"
+	trackersSvc := &recordingReviewTrackers{
+		entries: []api.TrackerDryRunEntry{{
+			Tracker:          "AITHER",
+			Status:           "ready",
+			Banned:           true,
+			BannedReason:     "group examplegrp is banned on AITHER",
+			BannedCheckError: bannedCheckError,
+		}},
+	}
+	coreSvc, err := New(api.CoreDependencies{
+		Config: config.Config{
+			MainSettings:       config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db"), TMDBAPI: "x"},
+			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
+			Trackers: config.TrackersConfig{
+				Trackers: map[string]config.TrackerConfig{
+					"AITHER": {APIKey: "aither-key", URL: server.URL},
+				},
+			},
+		},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Dupes:      &reviewDupes{},
+			Torrents:   &stubTorrent{},
+			Trackers:   trackersSvc,
+		},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	defer coreSvc.Close()
+	coreSvc.storeDupeCache(sourcePath, "", api.PreparedMetadata{
+		SourcePath: sourcePath,
+		Tag:        "-ExampleGRP",
+	})
+
+	review, err := coreSvc.BuildUploadReview(context.Background(), api.Request{
+		Paths:    []string{sourcePath},
+		Mode:     api.ModeCLI,
+		Trackers: []string{"AITHER"},
+	})
+	if err != nil {
+		t.Fatalf("build upload review: %v", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("expected review to reuse dry-run banned data without refresh, got %d request(s)", got)
+	}
+	if len(review.Trackers) != 1 {
+		t.Fatalf("expected one tracker review, got %#v", review.Trackers)
+	}
+	tracker := review.Trackers[0]
+	if !tracker.Banned || tracker.BannedReason != "group examplegrp is banned on AITHER" {
+		t.Fatalf("expected banned review annotation from dry-run data, got %#v", tracker)
+	}
+	if !tracker.DryRun.Banned || tracker.DryRun.BannedReason != tracker.BannedReason {
+		t.Fatalf("expected dry-run banned annotation to remain intact, got %#v", tracker.DryRun)
+	}
+	if tracker.DryRun.BannedCheckError != bannedCheckError {
+		t.Fatalf("expected dry-run banned check error %q, got %#v", bannedCheckError, tracker.DryRun)
+	}
+	if tracker.DryRun.Status != "blocked" {
+		t.Fatalf("expected dry-run banned check error to block upload review, got %#v", tracker.DryRun)
+	}
+	if tracker.DryRun.Message != bannedCheckError {
+		t.Fatalf("expected dry-run blocked message %q, got %#v", bannedCheckError, tracker.DryRun)
+	}
+}
+
 func TestApplyRequestToPreparedMetaClearsDupeBlocksWhenSkipped(t *testing.T) {
 	t.Parallel()
 

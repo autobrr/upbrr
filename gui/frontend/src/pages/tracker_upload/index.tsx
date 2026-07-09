@@ -747,7 +747,9 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                         {dryRun.Banned ? (
                           <div>
                             <p className="label">Banned group</p>
-                            <p className="value">{dryRun.BannedReason || "matched"}</p>
+                            <p className="value">
+                              {dryRun.BannedReason || "Release group matched banned list."}
+                            </p>
                           </div>
                         ) : null}
                         {dryRun.BannedCheckError ? (
