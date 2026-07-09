@@ -542,8 +542,8 @@ func (r *SQLiteRepository) GetExternalIDs(ctx context.Context, path string) (Ext
 	}
 
 	row := r.db.QueryRowContext(ctx, `
-		SELECT source_path, tmdb_id, imdb_id, tvdb_id, tvmaze_id, category,
-			source_tmdb, source_imdb, source_tvdb, source_tvmaze, updated_at
+		SELECT source_path, tmdb_id, imdb_id, tvdb_id, tvmaze_id, mal_id, category,
+			source_tmdb, source_imdb, source_tvdb, source_tvmaze, source_mal, updated_at
 		FROM external_ids
 		WHERE source_path = ?
 	`, path)
@@ -556,11 +556,13 @@ func (r *SQLiteRepository) GetExternalIDs(ctx context.Context, path string) (Ext
 		&ids.IMDBID,
 		&ids.TVDBID,
 		&ids.TVmazeID,
+		&ids.MALID,
 		&ids.Category,
 		&ids.SourceTMDB,
 		&ids.SourceIMDB,
 		&ids.SourceTVDB,
 		&ids.SourceTVmaze,
+		&ids.SourceMAL,
 		&updatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -592,20 +594,22 @@ func (r *SQLiteRepository) SaveExternalIDs(ctx context.Context, ids ExternalIDs)
 
 	_, err := r.execWrite(ctx, "save external ids", `
 		INSERT INTO external_ids (
-			source_path, tmdb_id, imdb_id, tvdb_id, tvmaze_id, category,
-			source_tmdb, source_imdb, source_tvdb, source_tvmaze, updated_at
+			source_path, tmdb_id, imdb_id, tvdb_id, tvmaze_id, mal_id, category,
+			source_tmdb, source_imdb, source_tvdb, source_tvmaze, source_mal, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_path) DO UPDATE SET
 			tmdb_id = excluded.tmdb_id,
 			imdb_id = excluded.imdb_id,
 			tvdb_id = excluded.tvdb_id,
 			tvmaze_id = excluded.tvmaze_id,
+			mal_id = excluded.mal_id,
 			category = excluded.category,
 			source_tmdb = excluded.source_tmdb,
 			source_imdb = excluded.source_imdb,
 			source_tvdb = excluded.source_tvdb,
 			source_tvmaze = excluded.source_tvmaze,
+			source_mal = excluded.source_mal,
 			updated_at = excluded.updated_at
 	`,
 		ids.SourcePath,
@@ -613,11 +617,13 @@ func (r *SQLiteRepository) SaveExternalIDs(ctx context.Context, ids ExternalIDs)
 		ids.IMDBID,
 		ids.TVDBID,
 		ids.TVmazeID,
+		ids.MALID,
 		ids.Category,
 		ids.SourceTMDB,
 		ids.SourceIMDB,
 		ids.SourceTVDB,
 		ids.SourceTVmaze,
+		ids.SourceMAL,
 		timestamp.Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -744,7 +750,7 @@ func (r *SQLiteRepository) GetExternalMetadata(ctx context.Context, path string)
 	}
 
 	row := r.db.QueryRowContext(ctx, `
-		SELECT source_path, tmdb_json, imdb_json, tvdb_json, tvmaze_json, bluray_json, updated_at
+		SELECT source_path, tmdb_json, imdb_json, tvdb_json, tvmaze_json, anilist_json, bluray_json, updated_at
 		FROM external_metadata
 		WHERE source_path = ?
 	`, path)
@@ -754,6 +760,7 @@ func (r *SQLiteRepository) GetExternalMetadata(ctx context.Context, path string)
 	var imdbJSON string
 	var tvdbJSON string
 	var tvmazeJSON string
+	var anilistJSON string
 	var blurayJSON string
 	var updatedAt string
 	if err := row.Scan(
@@ -762,6 +769,7 @@ func (r *SQLiteRepository) GetExternalMetadata(ctx context.Context, path string)
 		&imdbJSON,
 		&tvdbJSON,
 		&tvmazeJSON,
+		&anilistJSON,
 		&blurayJSON,
 		&updatedAt,
 	); err != nil {
@@ -783,6 +791,9 @@ func (r *SQLiteRepository) GetExternalMetadata(ctx context.Context, path string)
 	}
 	if metadata.TVmaze, err = decodeOptionalJSON[TVmazeMetadata](tvmazeJSON); err != nil {
 		return ExternalMetadata{}, fmt.Errorf("db decode tvmaze metadata: %w", err)
+	}
+	if metadata.AniList, err = decodeOptionalJSON[api.AniListMetadata](anilistJSON); err != nil {
+		return ExternalMetadata{}, fmt.Errorf("db decode anilist metadata: %w", err)
 	}
 	if metadata.Bluray, err = decodeOptionalJSON[api.BlurayMetadata](blurayJSON); err != nil {
 		return ExternalMetadata{}, fmt.Errorf("db decode bluray metadata: %w", err)
@@ -813,18 +824,20 @@ func (r *SQLiteRepository) SaveExternalMetadata(ctx context.Context, metadata Ex
 	imdbJSON := encodeOptionalJSON(metadata.IMDB)
 	tvdbJSON := encodeOptionalJSON(metadata.TVDB)
 	tvmazeJSON := encodeOptionalJSON(metadata.TVmaze)
+	anilistJSON := encodeOptionalJSON(metadata.AniList)
 	blurayJSON := encodeOptionalJSON(metadata.Bluray)
 
 	_, err := r.execWrite(ctx, "save external metadata", `
 		INSERT INTO external_metadata (
-			source_path, tmdb_json, imdb_json, tvdb_json, tvmaze_json, bluray_json, updated_at
+			source_path, tmdb_json, imdb_json, tvdb_json, tvmaze_json, anilist_json, bluray_json, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_path) DO UPDATE SET
 			tmdb_json = excluded.tmdb_json,
 			imdb_json = excluded.imdb_json,
 			tvdb_json = excluded.tvdb_json,
 			tvmaze_json = excluded.tvmaze_json,
+			anilist_json = excluded.anilist_json,
 			bluray_json = excluded.bluray_json,
 			updated_at = excluded.updated_at
 	`,
@@ -833,6 +846,7 @@ func (r *SQLiteRepository) SaveExternalMetadata(ctx context.Context, metadata Ex
 		imdbJSON,
 		tvdbJSON,
 		tvmazeJSON,
+		anilistJSON,
 		blurayJSON,
 		timestamp.Format(time.RFC3339Nano),
 	)

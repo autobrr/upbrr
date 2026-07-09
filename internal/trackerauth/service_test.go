@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
@@ -643,6 +644,75 @@ func TestValidateFFLoginPersistsCookies(t *testing.T) {
 	}
 }
 
+func TestValidateFFLoginDoesNotPersistUnverifiedCookies(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "FF", map[string]string{"session": "expired"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+
+	var uploadValidationRequests atomic.Int32
+	handlerErr := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/upload.php":
+			if cookie, err := r.Cookie("session"); err == nil && cookie.Value == "invalid" {
+				uploadValidationRequests.Add(1)
+			}
+			_, _ = w.Write([]byte(`<input name="username">`))
+		case "/takelogin.php":
+			if err := r.ParseForm(); err != nil {
+				select {
+				case handlerErr <- fmt.Errorf("parse login form: %w", err):
+				default:
+				}
+				return
+			}
+			if r.FormValue("username") != "user" || r.FormValue("password") != "pass" {
+				select {
+				case handlerErr <- errors.New("unexpected FF login form"):
+				default:
+				}
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "invalid", Path: "/"})
+			w.Header().Set("Location", "/index.php")
+			w.WriteHeader(http.StatusFound)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"FF": {URL: server.URL, Username: "user", Password: "pass"},
+			},
+		},
+	}).Validate(ctx, "FF")
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	select {
+	case err := <-handlerErr:
+		t.Fatal(err)
+	default:
+	}
+	if status.State != StateLoginRequired || status.CookieCount != 0 {
+		t.Fatalf("expected rejected FF login cookies to leave login required with no cookies, got %#v", status)
+	}
+	if uploadValidationRequests.Load() == 0 {
+		t.Fatalf("expected returned FF login cookies to be validated before persistence, got %d request(s)", uploadValidationRequests.Load())
+	}
+	if _, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "FF"); err == nil {
+		t.Fatal("invalid FF login cookies were persisted")
+	}
+}
+
 func TestValidateFLLoginPersistsCookies(t *testing.T) {
 	t.Parallel()
 
@@ -880,6 +950,9 @@ func TestSubmit2FAFailureKeepsChallengeRetryVisible(t *testing.T) {
 	if !status.Needs2FA || strings.TrimSpace(status.ChallengeID) == "" {
 		t.Fatalf("expected retry-visible challenge after failed code, got %#v", status)
 	}
+	if status.State != StateLoginRequired || !strings.Contains(status.Message, "enter a new 2FA code") {
+		t.Fatalf("expected failed 2FA status to include mode and required action, got %#v", status)
+	}
 }
 
 func TestSubmit2FATransientSubmittedCodeFailureKeepsChallengeRetryVisible(t *testing.T) {
@@ -925,6 +998,9 @@ func TestSubmit2FATransientSubmittedCodeFailureKeepsChallengeRetryVisible(t *tes
 	}
 	if !status.Needs2FA || status.ChallengeID != challengeID {
 		t.Fatalf("expected retry-visible challenge after classified failed code, got %#v", status)
+	}
+	if status.State != StateLoginRequired || !strings.Contains(status.Message, "enter a new 2FA code") {
+		t.Fatalf("expected failed 2FA status to include mode and required action, got %#v", status)
 	}
 	if _, ok := service.challenges.Get(challengeID); !ok {
 		t.Fatal("failed submitted code consumed challenge")
@@ -1454,6 +1530,142 @@ func TestStatusConfiguredAuthReportsEncryptedStorageUnavailableWhenPersistenceRe
 	}
 }
 
+func TestStatusStateMessageParityForAuthBlockers(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		dbPath      string
+		cfg         config.Config
+		spec        trackerSpec
+		wantState   string
+		wantMessage string
+	}{
+		"not configured": {
+			dbPath:      newTrackerAuthTestDB(t),
+			spec:        trackerSpec{id: "ASC", cookies: true},
+			wantState:   StateNotConfigured,
+			wantMessage: "auth material not configured",
+		},
+		"login required": {
+			dbPath:      newTrackerAuthTestDB(t),
+			spec:        trackerSpec{id: "PTP", cookies: true, login: true, needsCredentials: true},
+			wantState:   StateLoginRequired,
+			wantMessage: "login credentials or imported cookies required",
+		},
+		"encrypted storage unavailable": {
+			dbPath:      filepath.Join(t.TempDir(), "missing-auth", "upbrr.db"),
+			spec:        trackerSpec{id: "ASC", cookies: true},
+			wantState:   StateEncryptedStorageUnavailable,
+			wantMessage: "encrypted cookie storage unavailable; create web-auth.json before importing cookies",
+		},
+		"api key still needs upload auth": {
+			dbPath: newTrackerAuthTestDB(t),
+			cfg: config.Config{
+				Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"MTV": {APIKey: "api-key"}}},
+			},
+			spec:        trackerSpec{id: "MTV", cookies: true, login: true, apiKey: true, needsCredentials: true},
+			wantState:   StateLoginRequired,
+			wantMessage: "API key covers Torznab/search; imported cookies or login credentials required for upload auth",
+		},
+		"btn missing api key": {
+			dbPath: newTrackerAuthTestDB(t),
+			cfg: config.Config{
+				Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"BTN": {Username: "user", Password: "pass"}}},
+			},
+			spec:        trackerSpec{id: "BTN", cookies: true, login: true, apiKey: true, needsCredentials: true},
+			wantState:   StateLoginRequired,
+			wantMessage: btnMissingAPIKeyMessage(),
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := tt.cfg
+			cfg.MainSettings.DBPath = tt.dbPath
+			service := NewService(cfg)
+			status := service.statusForSpec(context.Background(), tt.spec)
+			if status.State != tt.wantState {
+				t.Fatalf("expected state %q, got %#v", tt.wantState, status)
+			}
+			if status.Message != tt.wantMessage {
+				t.Fatalf("expected message %q for state %q, got %#v", tt.wantMessage, tt.wantState, status)
+			}
+		})
+	}
+}
+
+func TestStatusCookieReadErrorStaysDistinctFromMissingCookies(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "PTP", map[string]string{"session": "abc"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	repo, err := servicedb.OpenWithLoggerContext(ctx, dbPath, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("OpenWithLoggerContext: %v", err)
+	}
+	defer repo.Close()
+	if _, err := repo.RawDB().ExecContext(ctx, `UPDATE tracker_cookies SET encrypted_value = ? WHERE tracker_id = ?`, "not-base64", "PTP"); err != nil {
+		t.Fatalf("corrupt cookie row: %v", err)
+	}
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+	}).Status(ctx, "PTP")
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if status.LastError == "" {
+		t.Fatalf("expected cookie read error detail, got %#v", status)
+	}
+	if strings.Contains(status.LastError, "no cookies found") {
+		t.Fatalf("cookie read error was reported as missing cookies: %#v", status)
+	}
+
+	missingStatus, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: newTrackerAuthTestDB(t)},
+	}).Status(ctx, "PTP")
+	if err != nil {
+		t.Fatalf("Status missing cookies: %v", err)
+	}
+	if missingStatus.LastError != "" {
+		t.Fatalf("missing cookies must not populate LastError, got %#v", missingStatus)
+	}
+}
+
+func TestStatusCookieParseErrorStaysDistinctFromMissingCookies(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	jsonPath := trackerAuthLegacyCookiePathByExt(t, dbPath, "PTP", ".json")
+	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o755); err != nil {
+		t.Fatalf("mkdir cookie dir: %v", err)
+	}
+	if err := os.WriteFile(jsonPath, []byte(`{"session":`), 0o600); err != nil {
+		t.Fatalf("write malformed cookie file: %v", err)
+	}
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+	}).Status(ctx, "PTP")
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if status.LastError == "" {
+		t.Fatalf("expected cookie parse error detail, got %#v", status)
+	}
+	if strings.Contains(status.LastError, "no cookies found") {
+		t.Fatalf("cookie parse error was reported as missing cookies: %#v", status)
+	}
+	if !strings.Contains(status.LastError, "parse") && !strings.Contains(status.LastError, "unmarshal") {
+		t.Fatalf("expected parse detail, got %#v", status)
+	}
+}
+
 func TestStatusConfiguredAuthReportsCoexistingCookies(t *testing.T) {
 	t.Parallel()
 
@@ -1862,6 +2074,59 @@ func TestApplyEnsureErrorToStatusDoesNotExposeEmpty2FAChallenge(t *testing.T) {
 	}
 	if status.State != StateLoginRequired {
 		t.Fatalf("expected login required state, got %#v", status)
+	}
+}
+
+func TestApplyEnsureErrorToStatusKeepsStateMessageParity(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		err         error
+		wantState   string
+		wantMessage string
+	}{
+		"cookie storage": {
+			err:         errors.New("cookies: load tracker PTP from db: failed to decode stored cookie"),
+			wantState:   StateEncryptedStorageUnavailable,
+			wantMessage: "cookie storage unavailable; see error details",
+		},
+		"auth required": {
+			err:         &AuthRequiredError{TrackerID: "PTP", Reason: "missing cookies"},
+			wantState:   StateLoginRequired,
+			wantMessage: "login credentials or imported cookies required",
+		},
+		"confirmed invalid": {
+			err:         &ValidationError{TrackerID: "PTP", ConfirmedInvalid: true, Err: errors.New("expired")},
+			wantState:   StateLoginRequired,
+			wantMessage: "stored session expired or invalid",
+		},
+		"2FA with challenge": {
+			err:         &Needs2FAError{TrackerID: "PTP", ChallengeID: "challenge-1"},
+			wantState:   StateLoginRequired,
+			wantMessage: "2FA required",
+		},
+		"2FA without challenge": {
+			err:         &Needs2FAError{TrackerID: "PTP"},
+			wantState:   StateLoginRequired,
+			wantMessage: "2FA required but no manual challenge is available",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			status := api.TrackerAuthStatus{TrackerID: "PTP", State: StateConfigured}
+			applyEnsureErrorToStatus(&status, tt.err)
+			if status.State != tt.wantState {
+				t.Fatalf("expected state %q, got %#v", tt.wantState, status)
+			}
+			if status.Message != tt.wantMessage {
+				t.Fatalf("expected message %q, got %#v", tt.wantMessage, status)
+			}
+			if status.LastError == "" {
+				t.Fatalf("expected LastError for blocker, got %#v", status)
+			}
+		})
 	}
 }
 

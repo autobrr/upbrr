@@ -68,6 +68,30 @@ func TestSpecificSeriesAliasDoesNotUseSlugFallback(t *testing.T) {
 	}
 }
 
+func TestNormalizeIMDbRemote(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "empty", value: " ", want: ""},
+		{name: "zero", value: "0", want: ""},
+		{name: "numeric", value: "1234567", want: "tt1234567"},
+		{name: "numeric_pads", value: "123", want: "tt0000123"},
+		{name: "lower_prefix", value: "tt1234567", want: "tt1234567"},
+		{name: "upper_prefix", value: "TT1234567", want: "tt1234567"},
+		{name: "mixed_prefix_trimmed", value: "  Tt7654321  ", want: "tt7654321"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeIMDbRemote(tt.value); got != tt.want {
+				t.Fatalf("normalizeIMDbRemote(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFindEpisodeMatch(t *testing.T) {
 	episodes := []Episode{
 		{ID: 10, SeasonNumber: 1, Number: 1, AbsoluteNumber: 1, Name: "Pilot", Overview: "Overview", SeasonName: "Season 1", Year: 2020, Aired: "2020-01-01"},

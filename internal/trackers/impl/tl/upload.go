@@ -147,8 +147,8 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 			"nonscene":    boolWord(!req.Meta.Scene, "on", "off"),
 		}
 		switch {
-		case req.Meta.Anime && req.Meta.MALID > 0:
-			state.fields["animeid"] = fmt.Sprintf("https://anilist.co/anime/%d", req.Meta.MALID)
+		case req.Meta.Anime && req.Meta.ExternalIDs.MALID > 0:
+			state.fields["animeid"] = tlAnimeIDURL(req.Meta.ExternalIDs.MALID)
 		case !isTV(req.Meta) && req.Meta.ExternalIDs.IMDBID > 0:
 			state.fields["imdb"] = fmt.Sprintf("tt%07d", req.Meta.ExternalIDs.IMDBID)
 		case isTV(req.Meta):
@@ -197,6 +197,13 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		return uploadState{}, nil, err
 	}
 	return state, client, nil
+}
+
+// tlAnimeIDURL formats TorrentLeech's animeid field. TL names the value as an
+// AniList URL, while upbrr's canonical MALID carries the same anime identifier
+// for this tracker payload.
+func tlAnimeIDURL(malID int) string {
+	return fmt.Sprintf("https://anilist.co/anime/%d", malID)
 }
 
 func cookieClient(ctx context.Context, dbPath string) (*http.Client, error) {

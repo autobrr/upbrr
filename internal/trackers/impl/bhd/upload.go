@@ -378,7 +378,7 @@ func resolveUploadName(meta api.PreparedMetadata) string {
 }
 
 func resolveCategoryID(meta api.PreparedMetadata) string {
-	if strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") || strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "TV") {
+	if strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") {
 		return "2"
 	}
 	return "1"

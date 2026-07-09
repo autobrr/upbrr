@@ -7,9 +7,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -110,6 +115,50 @@ func TestCheckSkipsRuleFailures(t *testing.T) {
 	}
 }
 
+func TestCheckRuleSkipTakesPrecedenceOverBannedGroup(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService(config.Config{}, api.NopLogger{})
+	called := false
+	svc.handlers = map[string]searchHandler{
+		"DP": searchHandlerFunc(func(context.Context, api.PreparedMetadata, string) ([]api.DupeEntry, []string, error) {
+			called = true
+			return nil, nil, nil
+		}),
+	}
+	meta := api.PreparedMetadata{
+		SourcePath: "/tmp/example",
+		Tag:        "-FGT",
+		TrackerRuleFailures: map[string][]api.RuleFailure{
+			"DP": {{Rule: "example_rule", Reason: "example rule failure"}},
+		},
+	}
+
+	summary, err := svc.Check(context.Background(), meta, []string{"DP"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if called {
+		t.Fatalf("expected terminal skip before tracker search")
+	}
+	if len(summary.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(summary.Results))
+	}
+	result := summary.Results[0]
+	if !result.Skipped || result.Status != "skipped" {
+		t.Fatalf("expected skipped result, got %#v", result)
+	}
+	if result.SkipCode == "banned_group" {
+		t.Fatalf("expected rule skip to take precedence over banned group, got %#v", result)
+	}
+	if len(result.SkipRules) != 1 || result.SkipRules[0] != "example_rule" {
+		t.Fatalf("expected rule skip metadata, got %#v", result)
+	}
+	if !strings.Contains(result.SkipReason, "example rule failure") {
+		t.Fatalf("expected rule skip reason, got %q", result.SkipReason)
+	}
+}
+
 func TestCheckSkipsClaimRuleFailures(t *testing.T) {
 	t.Parallel()
 	svc := NewService(config.Config{}, api.NopLogger{})
@@ -139,6 +188,219 @@ func TestCheckSkipsClaimRuleFailures(t *testing.T) {
 	}
 	if len(result.SkipRules) != 1 || result.SkipRules[0] != "claim_active" {
 		t.Fatalf("expected claim_active skip rule, got %#v", result.SkipRules)
+	}
+}
+
+func TestCheckSkipsBannedGroupBeforeSearch(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")},
+	}
+	svc := NewService(cfg, api.NopLogger{})
+	called := false
+	svc.handlers = map[string]searchHandler{
+		"DP": searchHandlerFunc(func(context.Context, api.PreparedMetadata, string) ([]api.DupeEntry, []string, error) {
+			called = true
+			return []api.DupeEntry{{Name: "Example.Release.2026.1080p-GRP"}}, nil, nil
+		}),
+	}
+
+	summary, err := svc.Check(context.Background(), api.PreparedMetadata{SourcePath: "x", Tag: "-FGT"}, []string{"DP"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if called {
+		t.Fatalf("expected banned group to skip before tracker search")
+	}
+	if len(summary.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(summary.Results))
+	}
+	result := summary.Results[0]
+	if !result.Skipped || result.Status != "skipped" {
+		t.Fatalf("expected skipped banned-group result, got %#v", result)
+	}
+	if result.SkipCode != "banned_group" {
+		t.Fatalf("expected banned_group skip code, got %q", result.SkipCode)
+	}
+	if result.SkipReason != "group fgt is banned on DP" {
+		t.Fatalf("expected banned-group reason, got %q", result.SkipReason)
+	}
+}
+
+func TestCheckDoesNotCollapseUnrelatedTAoESubstringGroup(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService(config.Config{}, api.NopLogger{})
+	called := false
+	svc.handlers = map[string]searchHandler{
+		"DP": searchHandlerFunc(func(context.Context, api.PreparedMetadata, string) ([]api.DupeEntry, []string, error) {
+			called = true
+			return nil, nil, nil
+		}),
+	}
+
+	summary, err := svc.Check(context.Background(), api.PreparedMetadata{SourcePath: "x", Tag: "-NotTAoE"}, []string{"DP"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !called {
+		t.Fatalf("expected unrelated TAoE substring group to reach tracker search")
+	}
+	if len(summary.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(summary.Results))
+	}
+	result := summary.Results[0]
+	if result.Skipped || result.SkipCode == "banned_group" {
+		t.Fatalf("expected unskipped result for unrelated TAoE substring, got %#v", result)
+	}
+}
+
+func TestCheckRefreshesDynamicBannedGroupsBeforeSearch(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if got := r.URL.Path; got != "/api/blacklists/releasegroups" {
+			t.Errorf("unexpected path %q", got)
+			return
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer aither-key" {
+			t.Error("unexpected auth header")
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[{"name":"GRP"}],"meta":{"next_cursor":""}}`))
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "upbrr.db")},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"AITHER": {APIKey: "aither-key", URL: server.URL},
+			},
+		},
+	}
+	svc := NewService(cfg, api.NopLogger{})
+	called := false
+	svc.handlers = map[string]searchHandler{
+		"AITHER": searchHandlerFunc(func(context.Context, api.PreparedMetadata, string) ([]api.DupeEntry, []string, error) {
+			called = true
+			return []api.DupeEntry{{Name: "Example.Release.2026.1080p-GRP"}}, nil, nil
+		}),
+	}
+
+	summary, err := svc.Check(context.Background(), api.PreparedMetadata{SourcePath: "x", Tag: "-GRP"}, []string{"AITHER"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("expected banned groups fetch, got %d requests", requests)
+	}
+	if called {
+		t.Fatalf("expected fetched banned group to skip before tracker search")
+	}
+	if len(summary.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(summary.Results))
+	}
+	result := summary.Results[0]
+	if !result.Skipped || result.Status != "skipped" || result.SkipCode != "banned_group" {
+		t.Fatalf("expected banned group skip, got %#v", result)
+	}
+	if result.SkipReason != "group grp is banned on AITHER" {
+		t.Fatalf("expected dynamic banned-group reason, got %q", result.SkipReason)
+	}
+}
+
+func TestCheckSkipsDynamicBannedRefreshForEmptyEffectiveGroup(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`{"data":[],"meta":{"next_cursor":""}}`))
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "upbrr.db")},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"AITHER": {APIKey: "aither-key", URL: server.URL},
+			},
+		},
+	}
+	svc := NewService(cfg, api.NopLogger{})
+	called := false
+	svc.handlers = map[string]searchHandler{
+		"AITHER": searchHandlerFunc(func(context.Context, api.PreparedMetadata, string) ([]api.DupeEntry, []string, error) {
+			called = true
+			return nil, nil, nil
+		}),
+	}
+
+	summary, err := svc.Check(context.Background(), api.PreparedMetadata{SourcePath: "x", Tag: "-"}, []string{"AITHER"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("expected no dynamic banned refresh for empty effective group, got %d request(s)", got)
+	}
+	if !called {
+		t.Fatalf("expected tracker search to proceed")
+	}
+	if len(summary.Results) != 1 || summary.Results[0].Skipped {
+		t.Fatalf("expected unskipped result, got %#v", summary.Results)
+	}
+}
+
+func TestCheckBannedGroupFailureIncludesModeAndAction(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	cfg := config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "upbrr.db")},
+	}
+	svc := NewService(cfg, api.NopLogger{})
+
+	cachePath := filepath.Join(tempDir, "cache", "banned", "RHD_banned_groups.json")
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o700); err != nil {
+		t.Fatalf("create banned cache dir: %v", err)
+	}
+	if err := os.Mkdir(cachePath, 0o700); err != nil {
+		t.Fatalf("create unreadable banned cache path: %v", err)
+	}
+
+	summary, err := svc.Check(context.Background(), api.PreparedMetadata{SourcePath: "x", Tag: "-CustomRHD"}, []string{"RHD"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(summary.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(summary.Results))
+	}
+	result := summary.Results[0]
+	if result.Status != "failed" {
+		t.Fatalf("expected failed status, got %#v", result)
+	}
+	assertBannedGroupFailureMessage(t, result.Error)
+	if len(result.Notes) != 1 {
+		t.Fatalf("expected one failure note, got %#v", result.Notes)
+	}
+	assertBannedGroupFailureMessage(t, result.Notes[0])
+}
+
+func assertBannedGroupFailureMessage(t *testing.T, message string) {
+	t.Helper()
+	for _, want := range []string{
+		"banned group check failed:",
+		"read banned groups",
+		"mode=non-interactive dupe check",
+		"action=fix banned-group cache or dynamic banned-group configuration, then retry",
+	} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("expected failure message to contain %q, got %q", want, message)
+		}
 	}
 }
 
