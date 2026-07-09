@@ -81,10 +81,10 @@ func (s *Service) Upload(ctx context.Context, meta api.PreparedMetadata) (api.Up
 		return api.UploadSummary{Uploaded: 0}, nil
 	}
 
-	if meta.Tag != "" {
-		group := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(meta.Tag, "-")))
-		if strings.Contains(group, "taoe") {
-			group = "taoe"
+	group := NormalizeBannedReleaseGroup(meta.Tag)
+	if group != "" {
+		if err := s.banned.RefreshDynamic(ctx, s.cfg, trackers, s.logger); err != nil {
+			return api.UploadSummary{}, fmt.Errorf("trackers: banned groups refresh: %w", err)
 		}
 		for _, tracker := range trackers {
 			select {
@@ -916,6 +916,11 @@ func preparationBlockedImageHostGroupKey(tracker string) string {
 	return name + "|blocked|image-host"
 }
 
+// BuildUploadDryRun builds tracker upload payload previews without performing
+// tracker uploads. Dry-run processing still evaluates all resolved tracker
+// builders and banned-group state. It does not apply rule-failure or blocked
+// tracker suppression itself; callers that want suppression must pass an already
+// filtered tracker list.
 func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetadata, trackersList []string) ([]api.TrackerDryRunEntry, error) {
 	select {
 	case <-ctx.Done():
@@ -928,8 +933,6 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 		resolved = ResolveTrackersWithDefaults(s.cfg, meta.Trackers, meta.TrackersRemove, s.logger)
 	}
 	resolved = filterKnownTrackers(resolved, s.logger)
-	resolved = filterTrackersByRuleFailures(resolved, meta.TrackerRuleFailures, meta.IgnoreTrackerRuleFailures, s.logger)
-	resolved = filterTrackersByBlocks(resolved, meta.BlockedTrackers, s.logger)
 	if len(resolved) == 0 {
 		return nil, errors.New("trackers: no trackers configured")
 	}
@@ -938,6 +941,7 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 	}
 
 	s.logger.Debugf("trackers: dry-run decision=build trackers=%d", len(resolved))
+	bannedResults := s.dryRunBannedGroupResults(ctx, meta, resolved)
 
 	preloaded, err := preloadDescriptionAssetData(ctx, meta, s.repo)
 	if err != nil {
@@ -958,6 +962,7 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 		if !ok {
 			entry.Status = "not_supported"
 			entry.Message = "tracker not registered"
+			applyDryRunBannedGroupResult(&entry, bannedResults)
 			results = append(results, entry)
 			continue
 		}
@@ -965,6 +970,7 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 		if !ok {
 			entry.Status = "not_supported"
 			entry.Message = "dry-run payload preview not implemented"
+			applyDryRunBannedGroupResult(&entry, bannedResults)
 			results = append(results, entry)
 			continue
 		}
@@ -975,6 +981,7 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 		if err != nil {
 			entry.Status = "error"
 			entry.Message = err.Error()
+			applyDryRunBannedGroupResult(&entry, bannedResults)
 			results = append(results, entry)
 			continue
 		}
@@ -983,6 +990,7 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 			s.logger.Warnf("trackers: dry-run image host resolution failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
 			entry.Status = "error"
 			entry.Message = err.Error()
+			applyDryRunBannedGroupResult(&entry, bannedResults)
 			results = append(results, entry)
 			continue
 		}
@@ -990,6 +998,7 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 			entry.Status = "blocked"
 			entry.Message = resolution.feedback.Message
 			entry.ImageHost = resolution.feedback
+			applyDryRunBannedGroupResult(&entry, bannedResults)
 			results = append(results, entry)
 			continue
 		}
@@ -997,6 +1006,7 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 		if err != nil {
 			entry.Status = "error"
 			entry.Message = err.Error()
+			applyDryRunBannedGroupResult(&entry, bannedResults)
 			results = append(results, entry)
 			continue
 		}
@@ -1014,6 +1024,7 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 		if err != nil {
 			entry.Status = "error"
 			entry.Message = err.Error()
+			applyDryRunBannedGroupResult(&entry, bannedResults)
 			results = append(results, entry)
 			continue
 		}
@@ -1024,10 +1035,84 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.PreparedMetada
 			preview.Status = "ready"
 		}
 		preview.ImageHost = resolution.feedback
+		applyDryRunBannedGroupResult(&preview, bannedResults)
 		results = append(results, preview)
 	}
 
 	return results, nil
+}
+
+type dryRunBannedGroupResult struct {
+	banned bool
+	reason string
+	err    string
+}
+
+// dryRunBannedGroupResults refreshes and checks banned groups for dry-run
+// annotations. A banned group marks the entry but does not suppress payload
+// generation; refresh or cache errors are reported per tracker for diagnostics.
+func (s *Service) dryRunBannedGroupResults(ctx context.Context, meta api.PreparedMetadata, trackers []string) map[string]dryRunBannedGroupResult {
+	group := NormalizeBannedReleaseGroup(meta.Tag)
+	if group == "" || len(trackers) == 0 || s.banned == nil {
+		return nil
+	}
+
+	results := make(map[string]dryRunBannedGroupResult, len(trackers))
+	if err := s.banned.RefreshDynamic(ctx, s.cfg, trackers, s.logger); err != nil {
+		message := "banned group check failed: " + redaction.RedactValue(err.Error(), nil)
+		for _, tracker := range trackers {
+			name := strings.ToUpper(strings.TrimSpace(tracker))
+			if name != "" {
+				results[name] = dryRunBannedGroupResult{err: message}
+			}
+		}
+		return results
+	}
+
+	for _, tracker := range trackers {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name == "" {
+			continue
+		}
+		banned, err := s.banned.IsBanned(name, group)
+		if err != nil {
+			results[name] = dryRunBannedGroupResult{err: "banned group check failed: " + redaction.RedactValue(err.Error(), nil)}
+			continue
+		}
+		if banned {
+			results[name] = dryRunBannedGroupResult{
+				banned: true,
+				reason: fmt.Sprintf("group %s is banned on %s", group, name),
+			}
+		}
+	}
+	return results
+}
+
+// NormalizeBannedReleaseGroup returns the release group key used by upload,
+// review, dry-run, and dupe-check banned-group decisions. Empty, whitespace,
+// and dash-only tags return an empty key; TAoE is recognized only as an exact
+// normalized alias.
+func NormalizeBannedReleaseGroup(tag string) string {
+	group := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(tag), "-"))
+	group = strings.TrimSpace(group)
+	if group == "taoe" {
+		return "taoe"
+	}
+	return group
+}
+
+func applyDryRunBannedGroupResult(entry *api.TrackerDryRunEntry, results map[string]dryRunBannedGroupResult) {
+	if entry == nil || len(results) == 0 {
+		return
+	}
+	result, ok := results[strings.ToUpper(strings.TrimSpace(entry.Tracker))]
+	if !ok {
+		return
+	}
+	entry.Banned = result.banned
+	entry.BannedReason = result.reason
+	entry.BannedCheckError = result.err
 }
 
 func filterTrackersByRuleFailures(trackers []string, failures map[string][]api.RuleFailure, ignore bool, logger api.Logger) []string {

@@ -10,6 +10,7 @@ import type { DupeCheckResult, DupeCheckSummary, DupeCheckTrackerState } from ".
 import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
 import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import { cn } from "../../utils/cn";
+import { dupeSkipReason, isRuleSkippedResult } from "../../utils/dupeCheck";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
 
 type Props = {
@@ -21,6 +22,7 @@ type Props = {
   dupeTrackerFlags: Record<string, boolean>;
   dupeIgnore: Record<string, boolean>;
   ruleSkippedTrackerSet: Set<string>;
+  skippedDupeReasons: Record<string, string>;
   ruleSkipReasons: Record<string, string>;
   dupeProgressStatus: string;
   dupeCompletedCount: number;
@@ -39,9 +41,6 @@ const splitTrackerLabel = (value: string) =>
     .split(",")
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
-
-const isRuleFailureReason = (reason: string) =>
-  reason.toLowerCase().trim().startsWith("rule check failed");
 
 const isFinishedTrackerStatus = (status: string) => {
   switch (status.toLowerCase().trim()) {
@@ -106,6 +105,7 @@ export default function DupeCheckPage(props: Readonly<Props>) {
     dupeTrackerFlags,
     dupeIgnore,
     ruleSkippedTrackerSet,
+    skippedDupeReasons,
     ruleSkipReasons,
     dupeProgressStatus,
     dupeCompletedCount,
@@ -133,14 +133,10 @@ export default function DupeCheckPage(props: Readonly<Props>) {
     const rightCount = right.Filtered?.length ?? 0;
     const leftPathed = left.Notes?.includes(pathedNote) ?? false;
     const rightPathed = right.Notes?.includes(pathedNote) ?? false;
-    const leftReason = String(left.SkipReason || "").trim();
-    const rightReason = String(right.SkipReason || "").trim();
     const leftRuleSkip =
-      ruleSkippedTrackerSet.has(left.Tracker.toLowerCase().trim()) ||
-      (left.Skipped && isRuleFailureReason(leftReason));
+      ruleSkippedTrackerSet.has(left.Tracker.toLowerCase().trim()) || isRuleSkippedResult(left);
     const rightRuleSkip =
-      ruleSkippedTrackerSet.has(right.Tracker.toLowerCase().trim()) ||
-      (right.Skipped && isRuleFailureReason(rightReason));
+      ruleSkippedTrackerSet.has(right.Tracker.toLowerCase().trim()) || isRuleSkippedResult(right);
     const leftHasDupes = leftCount > 0;
     const rightHasDupes = rightCount > 0;
 
@@ -280,10 +276,14 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                 .trim();
               const hasFailure = status === "failed" || Boolean(result.Error?.trim());
               const normalizedTracker = result.Tracker.toLowerCase().trim();
-              const skipReason = String(result.SkipReason || "").trim();
+              const skipReason = dupeSkipReason(result);
               const ruleSkipReason =
                 ruleSkipReasons[normalizedTracker] ||
-                (result.Skipped && isRuleFailureReason(skipReason) ? skipReason : "");
+                (isRuleSkippedResult(result) ? skipReason || "rule check failed" : "");
+              const skippedReason =
+                result.Skipped && !ruleSkipReason
+                  ? skippedDupeReasons[normalizedTracker] || skipReason
+                  : "";
               const visibleNotes =
                 result.Notes?.filter((note) => {
                   if (note === pathedNote) return false;
@@ -291,13 +291,16 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                   if (normalizedNote.startsWith("skip:")) return false;
                   if (normalizedNote.startsWith("rule check failed")) return false;
                   if (ruleSkipReason && note.trim() === ruleSkipReason) return false;
+                  if (skippedReason && note.trim() === skippedReason) return false;
                   return true;
                 }) ?? [];
               const showIgnoreToggle = !hasPathedNote && (hasDupes || dupeCount > 0);
               const displayDupeCount =
                 (dupeTrackerFlags[result.Tracker] ?? hasDupes) ? dupeCount : 0;
               const displayTrackers =
-                hasPathedNote || ruleSkipReason ? trackerNamesForResult(result) : [];
+                hasPathedNote || ruleSkipReason || skippedReason
+                  ? trackerNamesForResult(result)
+                  : [];
               const iconTrackers = displayTrackers.length > 0 ? displayTrackers : [result.Tracker];
 
               return (
@@ -334,7 +337,11 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                   </p>
 
                   <div className="min-w-0">
-                    {hasPathedNote || ruleSkipReason || hasFailure || visibleNotes.length ? (
+                    {hasPathedNote ||
+                    ruleSkipReason ||
+                    skippedReason ||
+                    hasFailure ||
+                    visibleNotes.length ? (
                       <p className="mb-1 flex flex-wrap items-center gap-1 text-sm leading-5">
                         {hasPathedNote ? <Badge tone="info">In client</Badge> : null}
 
@@ -342,6 +349,13 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                           <>
                             <Badge tone="danger">Rule failed</Badge>
                             <span className="text-[var(--muted)]">{ruleSkipReason}</span>
+                          </>
+                        ) : null}
+
+                        {skippedReason ? (
+                          <>
+                            <Badge tone="info">Skipped</Badge>
+                            <span className="text-[var(--muted)]">{skippedReason}</span>
                           </>
                         ) : null}
 

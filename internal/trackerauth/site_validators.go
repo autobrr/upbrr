@@ -127,8 +127,8 @@ func validateFFStoredCookies(ctx context.Context, baseURL string, values []*http
 	return nil
 }
 
-// loginFFForTrackerAuth performs the FF credential login flow and persists the
-// cookies returned by a successful redirect response.
+// loginFFForTrackerAuth performs the FF credential login flow, verifies the
+// returned cookies against the upload page, then persists them.
 func loginFFForTrackerAuth(ctx context.Context, cfg config.TrackerConfig, dbPath string, baseURL string) error {
 	data := url.Values{}
 	data.Set("returnto", "/index.php")
@@ -149,7 +149,14 @@ func loginFFForTrackerAuth(ctx context.Context, cfg config.TrackerConfig, dbPath
 	if resp.StatusCode != http.StatusFound {
 		return &ValidationError{TrackerID: "FF", ConfirmedInvalid: true, Reason: "login failed", Err: fmt.Errorf("trackers: FF login failed status=%d", resp.StatusCode)}
 	}
-	if err := persistHTTPCookies(ctx, dbPath, "FF", resp.Cookies()); err != nil {
+	loginCookies := usableHTTPCookies(resp.Cookies())
+	if len(loginCookies) == 0 {
+		return errors.New("trackers: FF login returned no usable cookies")
+	}
+	if err := validateFFStoredCookies(ctx, baseURL, loginCookies); err != nil {
+		return fmt.Errorf("trackers: FF validate login cookies: %w", err)
+	}
+	if err := persistHTTPCookies(ctx, dbPath, "FF", loginCookies); err != nil {
 		return fmt.Errorf("trackers: FF persist login cookies: %w", err)
 	}
 	return nil
@@ -362,13 +369,7 @@ func shouldRefreshStoredCookiesWithCredentials(err error) bool {
 // persistHTTPCookies saves non-empty login cookies and rejects empty login
 // responses so tracker auth never reports success without durable auth material.
 func persistHTTPCookies(ctx context.Context, dbPath string, trackerID string, values []*http.Cookie) error {
-	valid := make([]*http.Cookie, 0, len(values))
-	for _, cookie := range values {
-		if cookie == nil || strings.TrimSpace(cookie.Name) == "" || strings.TrimSpace(cookie.Value) == "" {
-			continue
-		}
-		valid = append(valid, cookie)
-	}
+	valid := usableHTTPCookies(values)
 	if len(valid) == 0 {
 		return fmt.Errorf("trackers: %s login returned no usable cookies", trackerID)
 	}
@@ -376,6 +377,19 @@ func persistHTTPCookies(ctx context.Context, dbPath string, trackerID string, va
 		return fmt.Errorf("trackers: %s save cookies: %w", trackerID, err)
 	}
 	return nil
+}
+
+// usableHTTPCookies keeps only cookies with non-empty names and values so login
+// flows never persist placeholders as usable auth material.
+func usableHTTPCookies(values []*http.Cookie) []*http.Cookie {
+	valid := make([]*http.Cookie, 0, len(values))
+	for _, cookie := range values {
+		if cookie == nil || strings.TrimSpace(cookie.Name) == "" || strings.TrimSpace(cookie.Value) == "" {
+			continue
+		}
+		valid = append(valid, cookie)
+	}
+	return valid
 }
 
 // cookieLoadError preserves the underlying cookie load failure when available

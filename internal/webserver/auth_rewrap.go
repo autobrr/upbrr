@@ -15,6 +15,7 @@ import (
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/redaction"
 )
 
 func generateStableEncryptionSeed() (string, error) {
@@ -172,7 +173,7 @@ func loadCookieEncryptionSalt(ctx context.Context, db *sql.DB) (string, error) {
 		Salt string `json:"salt"`
 	}
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return "", fmt.Errorf("cookies: parse encryption salt: %w", err)
+		return "", fmt.Errorf("cookies: parse encryption salt: %s", redaction.RedactValue(err.Error(), nil))
 	}
 
 	salt := strings.TrimSpace(payload.Salt)
