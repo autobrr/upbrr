@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
+	"github.com/autobrr/upbrr/internal/redaction"
 )
 
 const (
@@ -98,7 +99,7 @@ func (s *sessionStore) Load() ([]session, error) {
 	}
 	var sessions []session
 	if err := json.Unmarshal(raw, &sessions); err != nil {
-		return nil, fmt.Errorf("web auth: unmarshal session file: %w", err)
+		return nil, fmt.Errorf("web auth: unmarshal session file: %s", redaction.RedactValue(err.Error(), nil))
 	}
 	return sessions, nil
 }

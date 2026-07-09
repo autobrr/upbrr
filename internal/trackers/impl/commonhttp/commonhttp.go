@@ -202,7 +202,7 @@ func LoadJSONCookieMap(path string) (map[string]string, error) {
 	}
 	var decoded map[string]any
 	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return nil, fmt.Errorf("read JSON cookie file: unmarshal: %w", err)
+		return nil, fmt.Errorf("read JSON cookie file: unmarshal: %s", redaction.RedactValue(err.Error(), nil))
 	}
 	result := make(map[string]string, len(decoded))
 	for key, value := range decoded {

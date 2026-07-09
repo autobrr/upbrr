@@ -1559,6 +1559,146 @@ func check(log logger, body []byte) {
 	}
 }
 
+func TestCheckRepositoryFlagsRawResponseJSONParseErrorOutput(t *testing.T) {
+	root := t.TempDir()
+
+	content := `package sample
+
+import (
+	"encoding/json"
+	"fmt"
+)
+
+func check(response struct{ Result struct{ Torrents json.RawMessage } }) error {
+	var torrents map[string]map[string]any
+	if err := json.Unmarshal(response.Result.Torrents, &torrents); err != nil {
+		return fmt.Errorf("sample parse torrents search response: %w", err)
+	}
+	return nil
+}
+`
+
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "JSON parse errors") {
+		t.Fatalf("expected response JSON parse error violation, got %q", violations[0].Message)
+	}
+}
+
+func TestCheckRepositoryFlagsRawMessageMapResponseJSONParseErrorOutput(t *testing.T) {
+	root := t.TempDir()
+
+	content := `package sample
+
+import (
+	"encoding/json"
+	"fmt"
+)
+
+func check(body []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return fmt.Errorf("decode sample response fields: %w", err)
+	}
+	var id int
+	if err := json.Unmarshal(fields["id"], &id); err != nil {
+		return fmt.Errorf("decode sample response id: %w", err)
+	}
+	return nil
+}
+`
+
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 2 {
+		t.Fatalf("expected 2 violations, got %d: %#v", len(violations), violations)
+	}
+	for _, violation := range violations {
+		if !strings.Contains(violation.Message, "JSON parse errors") {
+			t.Fatalf("expected response JSON parse error violation, got %q", violation.Message)
+		}
+	}
+}
+
+func TestCheckRepositoryAllowsRedactedResponseJSONParseErrorOutput(t *testing.T) {
+	root := t.TempDir()
+
+	content := `package sample
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/autobrr/upbrr/internal/redaction"
+)
+
+func check(response struct{ Result struct{ Torrents json.RawMessage } }) error {
+	var torrents map[string]map[string]any
+	if err := json.Unmarshal(response.Result.Torrents, &torrents); err != nil {
+		return fmt.Errorf("sample parse torrents search response: %s", redaction.RedactValue(err.Error(), nil))
+	}
+	return nil
+}
+`
+
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
+func TestCheckRepositoryAllowsRedactedRawMessageMapResponseJSONParseErrorOutput(t *testing.T) {
+	root := t.TempDir()
+
+	content := `package sample
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/autobrr/upbrr/internal/redaction"
+)
+
+func check(body []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return fmt.Errorf("decode sample response fields: %s", redaction.RedactValue(err.Error(), nil))
+	}
+	var id int
+	if err := json.Unmarshal(fields["id"], &id); err != nil {
+		return fmt.Errorf("decode sample response id: %s", redaction.RedactValue(err.Error(), nil))
+	}
+	return nil
+}
+`
+
+	writeInternalFixture(t, root, content)
+
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("CheckRepository returned error: %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("expected no violations, got %#v", violations)
+	}
+}
+
 func TestCheckRepositoryAllowsAssignedRedactedResponseBodyLogging(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
