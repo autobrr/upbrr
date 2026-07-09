@@ -45,6 +45,7 @@ const (
 	uploadPath                = "/takeupload_api.php"
 	uploadTimeout             = 120 * time.Second
 	defaultCZTPostCancelGrace = 5 * time.Second
+	cztUploadDecodeFieldBytes = 512
 )
 
 var cztPostCancelGrace atomic.Int64
@@ -329,7 +330,7 @@ func parseCZTUploadResponse(body []byte) (uploadResponse, error) {
 		return parsed, redactCZTUploadDecodeError("decode CZT upload response fields", err)
 	}
 	if err := json.Unmarshal(fields["id"], &parsed.ID); err != nil {
-		return parsed, redactCZTUploadDecodeError("id", err)
+		return parsed, redactCZTUploadDecodeError("decode CZT upload response id", err)
 	}
 	var fieldErrs []error
 	parseOptionalStringField(fields, "name", &parsed.Name, &fieldErrs)
@@ -352,7 +353,11 @@ func parseOptionalStringField(fields map[string]json.RawMessage, name string, de
 		return
 	}
 	if err := json.Unmarshal(raw, dest); err != nil {
-		*errs = append(*errs, fmt.Errorf("%s: %s", name, redaction.RedactValue(err.Error(), nil)))
+		preview := string(raw)
+		if len(preview) > cztUploadDecodeFieldBytes {
+			preview = preview[:cztUploadDecodeFieldBytes] + "..."
+		}
+		*errs = append(*errs, fmt.Errorf("%s: %s", name, redaction.RedactValue(fmt.Sprintf("value=%s: %s", preview, err.Error()), nil)))
 	}
 }
 

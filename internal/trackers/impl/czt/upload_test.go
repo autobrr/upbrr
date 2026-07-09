@@ -298,8 +298,13 @@ func TestCZTUploadDecodeErrorsAreRedacted(t *testing.T) {
 	if _, err := parseCZTUploadResponse([]byte(`{`)); err == nil || !strings.Contains(err.Error(), "decode CZT upload response fields") {
 		t.Fatalf("expected redacted response fields decode path, got %v", err)
 	}
-	if _, err := parseCZTUploadResponse([]byte(`{"id":"bad"}`)); err == nil || !strings.Contains(err.Error(), "id") {
+	if _, err := parseCZTUploadResponse([]byte(`{"id":"bad"}`)); err == nil || !strings.Contains(err.Error(), "decode CZT upload response id") {
 		t.Fatalf("expected redacted response id decode path, got %v", err)
+	}
+	if _, err := parseCZTUploadResponse([]byte(`{"id":123,"error":{"api_key":"secret-passkey"}}`)); err == nil {
+		t.Fatal("expected redacted optional field decode path")
+	} else if got := err.Error(); !strings.Contains(got, "error") || !strings.Contains(got, "[REDACTED]") || strings.Contains(got, "secret-passkey") {
+		t.Fatalf("expected redacted optional field decode error, got %q", got)
 	}
 }
 
