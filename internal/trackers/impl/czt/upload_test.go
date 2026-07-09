@@ -276,6 +276,33 @@ func TestUploadResponseParseBoundaries(t *testing.T) {
 	}
 }
 
+func TestCZTUploadDecodeErrorsAreRedacted(t *testing.T) {
+	err := redactCZTUploadDecodeError("decode CZT upload response fields", errors.New("api_key=secret-passkey Cookie=session-token"))
+	if err == nil {
+		t.Fatal("expected redacted error")
+	}
+	got := err.Error()
+	if strings.Contains(got, "secret-passkey") || strings.Contains(got, "session-token") {
+		t.Fatalf("expected redacted decode error")
+	}
+	if !strings.Contains(got, "decode CZT upload response fields") || !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("expected context and redaction marker, got %q", got)
+	}
+
+	if _, err := parseCZTUploadID([]byte(`{`)); err == nil || !strings.Contains(err.Error(), "decode CZT upload response fields") {
+		t.Fatalf("expected redacted fields decode path, got %v", err)
+	}
+	if _, err := parseCZTUploadID([]byte(`{"id":"bad"}`)); err == nil || !strings.Contains(err.Error(), "decode CZT upload response id") {
+		t.Fatalf("expected redacted id decode path, got %v", err)
+	}
+	if _, err := parseCZTUploadResponse([]byte(`{`)); err == nil || !strings.Contains(err.Error(), "decode CZT upload response fields") {
+		t.Fatalf("expected redacted response fields decode path, got %v", err)
+	}
+	if _, err := parseCZTUploadResponse([]byte(`{"id":"bad"}`)); err == nil || !strings.Contains(err.Error(), "id") {
+		t.Fatalf("expected redacted response id decode path, got %v", err)
+	}
+}
+
 func TestUploadSuccessParsesLargeResponse(t *testing.T) {
 	padding := strings.Repeat("a", 70*1024)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -784,7 +784,7 @@ func bannedGroupsPageItems(raw json.RawMessage) ([]json.RawMessage, string, erro
 
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(trimmed, &object); err != nil {
-		return nil, "", fmt.Errorf("unmarshal banned groups page: %w", err)
+		return nil, "", fmt.Errorf("unmarshal banned groups page: %s", redaction.RedactValue(err.Error(), nil))
 	}
 	if _, hasData := object["data"]; !hasData {
 		if bannedGroupName(trimmed) != "" {

@@ -1032,6 +1032,7 @@ func checkSensitiveOutputParsed(fset *token.FileSet, relPath string, file *ast.F
 // fields when they reach returned errors, logs, HTTP responses, or terminal
 // output without a recognized redaction wrapper.
 func checkResponseJSONParseErrorOutput(fset *token.FileSet, relPath string, aliases map[string]string, allows map[int]*logpolicyAllow, violations *[]Violation, body *ast.BlockStmt) {
+	rawMessageMaps := responseJSONRawMessageMapVars(body, aliases)
 	ast.Inspect(body, func(node ast.Node) bool {
 		if node == nil {
 			return true
@@ -1043,7 +1044,7 @@ func checkResponseJSONParseErrorOutput(fset *token.FileSet, relPath string, alia
 		if !ok {
 			return true
 		}
-		errName, pos, ok := responseJSONParseErrorBinding(stmt, aliases)
+		errName, pos, ok := responseJSONParseErrorBinding(stmt, aliases, rawMessageMaps)
 		if !ok {
 			return true
 		}
@@ -1056,7 +1057,7 @@ func checkResponseJSONParseErrorOutput(fset *token.FileSet, relPath string, alia
 
 // responseJSONParseErrorBinding recognizes the inline Go pattern used by most
 // parser branches: if err := json.Unmarshal(...); err != nil { ... }.
-func responseJSONParseErrorBinding(stmt *ast.IfStmt, aliases map[string]string) (string, token.Pos, bool) {
+func responseJSONParseErrorBinding(stmt *ast.IfStmt, aliases map[string]string, rawMessageMaps map[string]struct{}) (string, token.Pos, bool) {
 	assign, ok := stmt.Init.(*ast.AssignStmt)
 	if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
 		return "", token.NoPos, false
@@ -1066,7 +1067,7 @@ func responseJSONParseErrorBinding(stmt *ast.IfStmt, aliases map[string]string) 
 		return "", token.NoPos, false
 	}
 	call, ok := assign.Rhs[0].(*ast.CallExpr)
-	if !ok || !isResponseDerivedJSONParseCall(call, aliases) {
+	if !ok || !isResponseDerivedJSONParseCall(call, aliases, rawMessageMaps) {
 		return "", token.NoPos, false
 	}
 	return errIdent.Name, call.Pos(), true
@@ -1075,37 +1076,131 @@ func responseJSONParseErrorBinding(stmt *ast.IfStmt, aliases map[string]string) 
 // isResponseDerivedJSONParseCall identifies json.Unmarshal calls whose input
 // looks like a response-envelope or json.RawMessage field rather than ordinary
 // top-level config/body decoding.
-func isResponseDerivedJSONParseCall(call *ast.CallExpr, aliases map[string]string) bool {
+func isResponseDerivedJSONParseCall(call *ast.CallExpr, aliases map[string]string, rawMessageMaps map[string]struct{}) bool {
 	selector, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return false
 	}
 	if pkg, ok := selector.X.(*ast.Ident); ok && aliases[pkg.Name] == "encoding/json" && selector.Sel.Name == "Unmarshal" {
-		return len(call.Args) > 0 && isResponseDerivedJSONExpr(call.Args[0])
+		return len(call.Args) > 0 &&
+			(isResponseDerivedJSONExpr(call.Args[0], rawMessageMaps) || responseJSONParseCallDecodesRawMessageMap(call, rawMessageMaps))
 	}
 	return false
 }
 
 // isResponseDerivedJSONExpr reports whether expr is named like a raw JSON
 // fragment that may contain provider or local secret material.
-func isResponseDerivedJSONExpr(expr ast.Expr) bool {
+func isResponseDerivedJSONExpr(expr ast.Expr, rawMessageMaps map[string]struct{}) bool {
 	switch typed := expr.(type) {
 	case *ast.Ident:
 		return isResponseDerivedJSONName(typed.Name)
 	case *ast.SelectorExpr:
 		return isResponseDerivedJSONName(selectorPath(typed))
 	case *ast.IndexExpr:
-		return isResponseDerivedJSONExpr(typed.X)
+		if ident, ok := typed.X.(*ast.Ident); ok {
+			if _, exists := rawMessageMaps[ident.Name]; exists {
+				return true
+			}
+		}
+		return isResponseDerivedJSONExpr(typed.X, rawMessageMaps)
 	case *ast.SliceExpr:
-		return isResponseDerivedJSONExpr(typed.X)
+		return isResponseDerivedJSONExpr(typed.X, rawMessageMaps)
 	case *ast.CallExpr:
-		if slices.ContainsFunc(typed.Args, isResponseDerivedJSONExpr) {
+		if slices.ContainsFunc(typed.Args, func(arg ast.Expr) bool {
+			return isResponseDerivedJSONExpr(arg, rawMessageMaps)
+		}) {
 			return true
 		}
 	case *ast.UnaryExpr:
-		return isResponseDerivedJSONExpr(typed.X)
+		return isResponseDerivedJSONExpr(typed.X, rawMessageMaps)
 	}
 	return false
+}
+
+// responseJSONRawMessageMapVars collects function-local envelope variables that
+// preserve unparsed response fields for later json.Unmarshal calls.
+func responseJSONRawMessageMapVars(body *ast.BlockStmt, aliases map[string]string) map[string]struct{} {
+	result := make(map[string]struct{})
+	ast.Inspect(body, func(node ast.Node) bool {
+		if node == nil {
+			return true
+		}
+		if lit, ok := node.(*ast.FuncLit); ok && lit.Body != body {
+			return false
+		}
+		switch typed := node.(type) {
+		case *ast.ValueSpec:
+			if !isRawMessageMapType(typed.Type, aliases) {
+				return true
+			}
+			for _, name := range typed.Names {
+				if name != nil && name.Name != "_" {
+					result[name.Name] = struct{}{}
+				}
+			}
+		case *ast.AssignStmt:
+			for index, rhs := range typed.Rhs {
+				if index >= len(typed.Lhs) || !isRawMessageMapCompositeLit(rhs, aliases) {
+					continue
+				}
+				if ident, ok := typed.Lhs[index].(*ast.Ident); ok && ident.Name != "_" {
+					result[ident.Name] = struct{}{}
+				}
+			}
+		}
+		return true
+	})
+	return result
+}
+
+// responseJSONParseCallDecodesRawMessageMap reports whether a json.Unmarshal
+// target is a tracked map[string]json.RawMessage response envelope.
+func responseJSONParseCallDecodesRawMessageMap(call *ast.CallExpr, rawMessageMaps map[string]struct{}) bool {
+	if len(call.Args) < 2 {
+		return false
+	}
+	return isRawMessageMapDecodeTarget(call.Args[1], rawMessageMaps)
+}
+
+// isRawMessageMapDecodeTarget recognizes address-taken envelope vars such as
+// &fields after their declaration has been classified as a RawMessage map.
+func isRawMessageMapDecodeTarget(expr ast.Expr, rawMessageMaps map[string]struct{}) bool {
+	unary, ok := expr.(*ast.UnaryExpr)
+	if !ok || unary.Op != token.AND {
+		return false
+	}
+	ident, ok := unary.X.(*ast.Ident)
+	if !ok || ident.Name == "_" {
+		return false
+	}
+	_, exists := rawMessageMaps[ident.Name]
+	return exists
+}
+
+// isRawMessageMapCompositeLit reports composite literals that initialize
+// map[string]json.RawMessage envelopes.
+func isRawMessageMapCompositeLit(expr ast.Expr, aliases map[string]string) bool {
+	composite, ok := expr.(*ast.CompositeLit)
+	return ok && isRawMessageMapType(composite.Type, aliases)
+}
+
+// isRawMessageMapType reports map[string]json.RawMessage using the file's
+// import aliases rather than assuming the package is named json.
+func isRawMessageMapType(expr ast.Expr, aliases map[string]string) bool {
+	mapType, ok := expr.(*ast.MapType)
+	if !ok {
+		return false
+	}
+	keyIdent, ok := mapType.Key.(*ast.Ident)
+	if !ok || keyIdent.Name != "string" {
+		return false
+	}
+	selector, ok := mapType.Value.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "RawMessage" {
+		return false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	return ok && aliases[pkg.Name] == "encoding/json"
 }
 
 // isResponseDerivedJSONName keeps the heuristic narrow enough to avoid generic

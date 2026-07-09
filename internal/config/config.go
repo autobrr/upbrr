@@ -554,7 +554,7 @@ func (t *TrackersConfig) UnmarshalJSON(data []byte) error {
 
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(data, &root); err != nil {
-		return fmt.Errorf("config: unmarshal trackers config root: %w", err)
+		return fmt.Errorf("config: unmarshal trackers config root: %s", redaction.RedactValue(err.Error(), nil))
 	}
 
 	t.DefaultTrackers = CSVList{}
