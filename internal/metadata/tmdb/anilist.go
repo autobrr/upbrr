@@ -98,7 +98,9 @@ func (c *Client) ResolveAnime(ctx context.Context, tmdbName string, input Metada
 	result.Romaji = metautil.FirstNonEmpty(best.Title.Romaji, best.Title.English)
 	result.English = metautil.FirstNonEmpty(best.Title.English, best.Title.Romaji)
 	result.MALID = best.IDMal
-	result.SeasonYear = best.SeasonYear
+	if best.SeasonYear != 0 {
+		result.SeasonYear = strconv.Itoa(best.SeasonYear)
+	}
 	result.Episodes = best.Episodes
 	result.Demographic = resolveDemographic(best.Tags, result.Demographic)
 	if input.MALManual != 0 {
@@ -358,7 +360,7 @@ type anilistMedia struct {
 	ID         int          `json:"id"`
 	IDMal      int          `json:"idMal"`
 	Title      anilistTitle `json:"title"`
-	SeasonYear string       `json:"seasonYear"`
+	SeasonYear int          `json:"seasonYear"`
 	Episodes   int          `json:"episodes"`
 	Tags       []anilistTag `json:"tags"`
 }

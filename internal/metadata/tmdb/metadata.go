@@ -34,7 +34,6 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 	if category == "" {
 		category = "MOVIE"
 	}
-
 	var media mediaResponse
 	path := fmt.Sprintf("/movie/%d", input.TMDBID)
 	if category == "TV" {
@@ -241,7 +240,7 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 		result.Anime = isAnime(media.OriginalLanguage, media.Genres)
 	}
 	if result.Anime {
-		animeResult, err := c.ResolveAnime(ctx, title, input)
+		animeResult, err := c.ResolveAnime(requestCtx, title, input)
 		if err == nil {
 			result.MALID = animeResult.MALID
 			result.RetrievedAKA = animeResult.Romaji
