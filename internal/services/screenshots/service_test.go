@@ -95,7 +95,7 @@ func TestPlanUsesManualFrameOverridesWithoutDuration(t *testing.T) {
 	}
 }
 
-func TestPreviewFrameFallsForwardFromEmptyDVDZeroVOB(t *testing.T) {
+func TestPreviewFrameExcludesDVDMenuVOB(t *testing.T) {
 	root := t.TempDir()
 	videoTS := filepath.Join(root, "VIDEO_TS")
 	if err := os.MkdirAll(videoTS, 0o700); err != nil {
@@ -119,10 +119,10 @@ func TestPreviewFrameFallsForwardFromEmptyDVDZeroVOB(t *testing.T) {
 	}
 	t.Chdir(ffmpegRoot)
 
-	runner := &scriptedRunner{results: []CommandResult{
-		{ExitCode: 0},
-		{Stdout: testPNGBytes(t, color.RGBA{R: 16, G: 16, B: 16, A: 255}), ExitCode: 0},
-	}}
+	runner := &scriptedRunner{results: []CommandResult{{
+		Stdout:   testPNGBytes(t, color.RGBA{R: 16, G: 16, B: 16, A: 255}),
+		ExitCode: 0,
+	}}}
 	service := NewService(config.Config{}, api.NopLogger{}, root, runner)
 	preview, err := service.PreviewFrame(context.Background(), api.PreparedMetadata{
 		SourcePath:        root,
@@ -133,19 +133,16 @@ func TestPreviewFrameFallsForwardFromEmptyDVDZeroVOB(t *testing.T) {
 		t.Fatalf("preview frame: %v", err)
 	}
 	if len(preview.ImageBytes) == 0 {
-		t.Fatal("expected fallback preview payload")
+		t.Fatal("expected preview payload")
 	}
-	if len(runner.calls) != 2 {
-		t.Fatalf("expected primary plus fallback ffmpeg calls, got %#v", runner.calls)
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected one ffmpeg call, got %#v", runner.calls)
 	}
-	if got := ffmpegInputArg(runner.calls[0].args); got != filepath.Join(videoTS, "VTS_01_0.VOB") {
-		t.Fatalf("expected first preview call to use zero VOB, got %q", got)
+	if got := ffmpegInputArg(runner.calls[0].args); got != filepath.Join(videoTS, "VTS_01_1.VOB") {
+		t.Fatalf("expected preview call to use content VOB, got %q", got)
 	}
-	if got := ffmpegInputArg(runner.calls[1].args); got != filepath.Join(videoTS, "VTS_01_1.VOB") {
-		t.Fatalf("expected fallback preview call to use content VOB, got %q", got)
-	}
-	if got := ffmpegValueAfter(runner.calls[1].args, "-ss"); got != "0.500" {
-		t.Fatalf("expected fallback seek at 0.500, got %q", got)
+	if got := ffmpegValueAfter(runner.calls[0].args, "-ss"); got != "0.500" {
+		t.Fatalf("expected content seek at 0.500, got %q", got)
 	}
 }
 

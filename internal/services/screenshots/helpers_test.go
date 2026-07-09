@@ -218,7 +218,7 @@ func TestResolveVideoInfoLogsSeasonPackSourceKind(t *testing.T) {
 	}
 }
 
-func TestSelectDVDVOBIncludesZeroVOBAndUsesLargestTitleSet(t *testing.T) {
+func TestSelectDVDVOBExcludesMenuVOBAndUsesLargestTitleSet(t *testing.T) {
 	root := t.TempDir()
 	videoTS := filepath.Join(root, "VIDEO_TS")
 	if err := os.MkdirAll(videoTS, 0o700); err != nil {
@@ -241,9 +241,9 @@ func TestSelectDVDVOBIncludesZeroVOBAndUsesLargestTitleSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("select DVD VOB: %v", err)
 	}
-	want := filepath.Join(videoTS, "VTS_02_0.VOB")
+	want := filepath.Join(videoTS, "VTS_02_1.VOB")
 	if got != want {
-		t.Fatalf("expected first numeric VOB from largest set %q, got %q", want, got)
+		t.Fatalf("expected first content VOB from largest set %q, got %q", want, got)
 	}
 }
 
@@ -277,34 +277,31 @@ func TestResolveVideoInfoBuildsOrderedDVDSegments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve video info: %v", err)
 	}
-	if len(info.Segments) != 3 {
-		t.Fatalf("expected 3 DVD segments, got %#v", info.Segments)
+	if len(info.Segments) != 2 {
+		t.Fatalf("expected 2 DVD content segments, got %#v", info.Segments)
 	}
-	if info.Segments[0].SourcePath != filepath.Join(videoTS, "VTS_02_0.VOB") {
-		t.Fatalf("expected first segment VTS_02_0.VOB, got %#v", info.Segments)
+	if info.Segments[0].SourcePath != filepath.Join(videoTS, "VTS_02_1.VOB") {
+		t.Fatalf("expected first segment VTS_02_1.VOB, got %#v", info.Segments)
 	}
-	if info.Segments[1].SourcePath != filepath.Join(videoTS, "VTS_02_1.VOB") {
-		t.Fatalf("expected second segment VTS_02_1.VOB, got %#v", info.Segments)
-	}
-	if info.Segments[2].SourcePath != filepath.Join(videoTS, "VTS_02_2.VOB") {
-		t.Fatalf("expected third segment VTS_02_2.VOB, got %#v", info.Segments)
+	if info.Segments[1].SourcePath != filepath.Join(videoTS, "VTS_02_2.VOB") {
+		t.Fatalf("expected second segment VTS_02_2.VOB, got %#v", info.Segments)
 	}
 
 	path, timestamp := resolveSegmentTimestamp(info, 70)
 	if path != filepath.Join(videoTS, "VTS_02_2.VOB") {
 		t.Fatalf("expected timestamp in final segment to use VTS_02_2.VOB, got %q", path)
 	}
-	if timestamp < 9.20 || timestamp > 9.23 {
-		t.Fatalf("expected local timestamp near 9.22s, got %f", timestamp)
+	if timestamp != 10 {
+		t.Fatalf("expected local timestamp 10s, got %f", timestamp)
 	}
 }
 
-func TestResolveSegmentCandidatesFallsForwardFromZeroVOB(t *testing.T) {
+func TestResolveSegmentCandidatesFallsForwardFromPrimarySegment(t *testing.T) {
 	info := videoInfo{
-		SourcePath: "VTS_01_0.VOB",
+		SourcePath: "VTS_01_1.VOB",
 		Segments: []videoSegment{
-			{SourcePath: "VTS_01_0.VOB", StartSeconds: 0, DurationSeconds: 2},
-			{SourcePath: "VTS_01_1.VOB", StartSeconds: 2, DurationSeconds: 98},
+			{SourcePath: "VTS_01_1.VOB", StartSeconds: 0, DurationSeconds: 2},
+			{SourcePath: "VTS_01_2.VOB", StartSeconds: 2, DurationSeconds: 98},
 		},
 	}
 
@@ -312,20 +309,20 @@ func TestResolveSegmentCandidatesFallsForwardFromZeroVOB(t *testing.T) {
 	if len(candidates) != 2 {
 		t.Fatalf("expected primary plus fallback candidate, got %#v", candidates)
 	}
-	if candidates[0].SourcePath != "VTS_01_0.VOB" || candidates[0].Timestamp != 1 {
-		t.Fatalf("expected primary zero VOB candidate, got %#v", candidates[0])
+	if candidates[0].SourcePath != "VTS_01_1.VOB" || candidates[0].Timestamp != 1 {
+		t.Fatalf("expected primary segment candidate, got %#v", candidates[0])
 	}
-	if candidates[1].SourcePath != "VTS_01_1.VOB" || candidates[1].Timestamp != 0.5 {
+	if candidates[1].SourcePath != "VTS_01_2.VOB" || candidates[1].Timestamp != 0.5 {
 		t.Fatalf("expected fallback content VOB candidate, got %#v", candidates[1])
 	}
 }
 
 func TestResolveSegmentCandidatesFallsForwardWithoutSegmentDurations(t *testing.T) {
 	info := videoInfo{
-		SourcePath: "VTS_01_0.VOB",
+		SourcePath: "VTS_01_1.VOB",
 		Segments: []videoSegment{
-			{SourcePath: "VTS_01_0.VOB"},
 			{SourcePath: "VTS_01_1.VOB"},
+			{SourcePath: "VTS_01_2.VOB"},
 		},
 	}
 
@@ -333,15 +330,15 @@ func TestResolveSegmentCandidatesFallsForwardWithoutSegmentDurations(t *testing.
 	if len(candidates) != 2 {
 		t.Fatalf("expected durationless DVD segment fallbacks, got %#v", candidates)
 	}
-	if candidates[0].SourcePath != "VTS_01_0.VOB" || candidates[0].Timestamp != 12 {
+	if candidates[0].SourcePath != "VTS_01_1.VOB" || candidates[0].Timestamp != 12 {
 		t.Fatalf("expected primary durationless candidate, got %#v", candidates[0])
 	}
-	if candidates[1].SourcePath != "VTS_01_1.VOB" || candidates[1].Timestamp != 0.5 {
+	if candidates[1].SourcePath != "VTS_01_2.VOB" || candidates[1].Timestamp != 0.5 {
 		t.Fatalf("expected fallback durationless candidate, got %#v", candidates[1])
 	}
 }
 
-func TestSelectDVDVOBAllowsZeroOnlyDisc(t *testing.T) {
+func TestSelectDVDVOBRejectsMenuOnlyDisc(t *testing.T) {
 	root := t.TempDir()
 	videoTS := filepath.Join(root, "VIDEO_TS")
 	if err := os.MkdirAll(videoTS, 0o700); err != nil {
@@ -351,13 +348,8 @@ func TestSelectDVDVOBAllowsZeroOnlyDisc(t *testing.T) {
 		t.Fatalf("write menu VOB: %v", err)
 	}
 
-	got, err := selectDVDVOB(context.Background(), root)
-	if err != nil {
-		t.Fatalf("select DVD VOB: %v", err)
-	}
-	want := filepath.Join(videoTS, "VTS_01_0.VOB")
-	if got != want {
-		t.Fatalf("expected zero-only DVD VOB %q, got %q", want, got)
+	if _, err := selectDVDVOB(context.Background(), root); err == nil {
+		t.Fatal("expected menu-only DVD to have no screenshot VOB")
 	}
 }
 

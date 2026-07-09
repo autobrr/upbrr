@@ -44,7 +44,7 @@ type videoSegment struct {
 
 // segmentCandidate records one concrete ffmpeg input attempt for a whole-title
 // timestamp. DVD candidates can include later VOB parts as fallbacks when an
-// early menu segment produces no decodable frame.
+// early segment produces no decodable frame.
 type segmentCandidate struct {
 	SourcePath    string
 	Timestamp     float64
@@ -672,8 +672,8 @@ func selectDVDVOB(ctx context.Context, root string) (string, error) {
 	return vobs[0].path, nil
 }
 
-// selectDVDVOBs returns the largest DVD title set's VOBs in numeric playback
-// order, including VTS_nn_0.VOB when present.
+// selectDVDVOBs returns the largest DVD title set's content VOBs in numeric
+// playback order. VTS_nn_0.VOB menu files are excluded.
 func selectDVDVOBs(ctx context.Context, root string) ([]dvdTitleVOB, error) {
 	videoTS, err := findVideoTS(ctx, root)
 	if err != nil {
@@ -698,16 +698,14 @@ func selectDVDVOBs(ctx context.Context, root string) ([]dvdTitleVOB, error) {
 			continue
 		}
 		set, index, ok := parseDVDVOBName(upper)
-		if !ok || index < 0 {
+		if !ok || index <= 0 {
 			continue
 		}
 		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
-		if index > 0 {
-			contentSizes[set] += info.Size()
-		}
+		contentSizes[set] += info.Size()
 		vobPaths[set] = append(vobPaths[set], dvdTitleVOB{
 			path:  filepath.Join(videoTS, name),
 			index: index,
