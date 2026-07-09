@@ -16,11 +16,15 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/autobrr/upbrr/internal/guishared"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 const dupeCheckEventPrefix = "dupe:job:"
+const errDupeCheckRequiresMetadataPreview = "dupe check requires metadata preview"
 
+// DupeCheckTrackerState reports Wails-visible state for one tracker in a dupe
+// check job.
 type DupeCheckTrackerState struct {
 	Tracker    string              `json:"tracker"`
 	Status     string              `json:"status"`
@@ -30,6 +34,7 @@ type DupeCheckTrackerState struct {
 	FinishedAt string              `json:"finishedAt"`
 }
 
+// DupeCheckSnapshot reports Wails-visible state for a dupe check job.
 type DupeCheckSnapshot struct {
 	JobID          string                  `json:"jobID"`
 	SourcePath     string                  `json:"sourcePath"`
@@ -45,8 +50,12 @@ type DupeCheckSnapshot struct {
 
 type dupeCheckJob struct {
 	mu             sync.Mutex
+	cleanupOnce    sync.Once
 	id             string
 	sourcePath     string
+	uploadOptions  api.UploadOptions
+	core           api.Core
+	logger         interface{ Close() error }
 	overrides      api.ExternalIDOverrides
 	nameOverrides  api.ReleaseNameOverrides
 	trackers       []string
@@ -61,9 +70,15 @@ type dupeCheckJob struct {
 	cancel         context.CancelFunc
 }
 
+// StartDupeCheck starts a background dupe check for selected trackers and
+// returns the job ID. When the active core exposes the GUI prepared-metadata
+// cache, the matching metadata preview must already exist before a durable job
+// is created. The job captures a runtime snapshot so later config/core swaps do
+// not change the cache proof or execution core.
 func (a *App) StartDupeCheck(path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string) (string, error) {
-	if a == nil || a.currentCore() == nil {
-		return "", errors.New("app not initialized")
+	rt, err := a.requireRuntime()
+	if err != nil {
+		return "", err
 	}
 	trimmedPath := strings.TrimSpace(path)
 	if trimmedPath == "" {
@@ -72,6 +87,48 @@ func (a *App) StartDupeCheck(path string, overrides api.ExternalIDOverrides, nam
 	resolvedTrackers := normalizeTrackerList(trackers)
 	if len(resolvedTrackers) == 0 {
 		return "", errors.New("at least one tracker must be selected")
+	}
+
+	req := api.Request{
+		Paths:    []string{trimmedPath},
+		Mode:     api.ModeGUI,
+		Trackers: resolvedTrackers,
+		Options:  rt.baseUploadOptions(),
+
+		ExternalIDOverrides:  overrides,
+		ReleaseNameOverrides: nameOverrides,
+	}
+	baseCtx := a.runtimeContext()
+	var preparedMeta api.PreparedMetadata
+	preparedMetaFound := false
+	if exporter, ok := rt.core.(guishared.PreparedMetaExporter); ok {
+		var found bool
+		preparedMeta, found, err = exporter.ExportGUICachedPreparedMeta(baseCtx, req)
+		if err != nil {
+			return "", fmt.Errorf("dupe check metadata preview cache: %w", err)
+		}
+		if !found {
+			return "", errors.New(errDupeCheckRequiresMetadataPreview)
+		}
+		preparedMetaFound = true
+	}
+
+	runCore, runLogger, err := a.buildRunCoreFromSnapshot(rt, runOptions{})
+	if err != nil {
+		return "", err
+	}
+	if preparedMetaFound {
+		importer, ok := runCore.(guishared.PreparedMetaImporter)
+		if !ok {
+			_ = runCore.Close()
+			_ = runLogger.Close()
+			return "", errors.New("dupe check metadata preview cache: run core cannot import prepared metadata")
+		}
+		if err := importer.ImportPreparedMetadataForGUI(baseCtx, req, preparedMeta); err != nil {
+			_ = runCore.Close()
+			_ = runLogger.Close()
+			return "", fmt.Errorf("dupe check metadata preview cache: %w", err)
+		}
 	}
 
 	jobID := randomJobID()
@@ -87,6 +144,9 @@ func (a *App) StartDupeCheck(path string, overrides api.ExternalIDOverrides, nam
 	job := &dupeCheckJob{
 		id:            jobID,
 		sourcePath:    trimmedPath,
+		uploadOptions: req.Options,
+		core:          runCore,
+		logger:        runLogger,
 		overrides:     overrides,
 		nameOverrides: nameOverrides,
 		trackers:      resolvedTrackers,
@@ -97,16 +157,13 @@ func (a *App) StartDupeCheck(path string, overrides api.ExternalIDOverrides, nam
 		startedAt:     time.Now().UTC(),
 	}
 
-	baseCtx := a.runtimeContext()
 	jobCtx, cancel := context.WithCancel(baseCtx)
 	job.cancel = cancel
 
-	a.dupeMu.Lock()
-	a.dupes[jobID] = job
-	a.dupeMu.Unlock()
-
+	a.publishDupeCheckJob(job)
 	a.emitDupeCheckSnapshot(baseCtx, job)
 	go func() {
+		defer a.dupeWG.Done()
 		defer cancel()
 		a.runDupeCheckJob(jobCtx, baseCtx, job)
 	}()
@@ -114,6 +171,7 @@ func (a *App) StartDupeCheck(path string, overrides api.ExternalIDOverrides, nam
 	return jobID, nil
 }
 
+// GetDupeCheckSnapshot returns the current state for an existing dupe check job.
 func (a *App) GetDupeCheckSnapshot(jobID string) (DupeCheckSnapshot, error) {
 	if a == nil {
 		return DupeCheckSnapshot{}, errors.New("app not initialized")
@@ -131,6 +189,7 @@ func (a *App) GetDupeCheckSnapshot(jobID string) (DupeCheckSnapshot, error) {
 	return buildDupeCheckSnapshot(job), nil
 }
 
+// CancelDupeCheck requests cancellation for an existing dupe check job.
 func (a *App) CancelDupeCheck(jobID string) error {
 	if a == nil {
 		return errors.New("app not initialized")
@@ -155,7 +214,12 @@ func (a *App) CancelDupeCheck(jobID string) error {
 }
 
 func (a *App) runDupeCheckJob(ctx context.Context, eventCtx context.Context, job *dupeCheckJob) {
-	if a == nil || a.currentCore() == nil || job == nil {
+	if job != nil {
+		defer func() {
+			_ = job.closeResources()
+		}()
+	}
+	if a == nil || job == nil || job.core == nil {
 		return
 	}
 
@@ -172,13 +236,13 @@ func (a *App) runDupeCheckJob(ctx context.Context, eventCtx context.Context, job
 		Paths:    []string{job.sourcePath},
 		Mode:     api.ModeGUI,
 		Trackers: job.trackers,
-		Options:  a.baseUploadOptions(),
+		Options:  job.uploadOptions,
 
 		ExternalIDOverrides:  job.overrides,
 		ReleaseNameOverrides: job.nameOverrides,
 	}
 
-	summary, err := a.currentCore().CheckDupes(progressCtx, req)
+	summary, err := job.core.CheckDupes(progressCtx, req)
 
 	job.mu.Lock()
 	job.finishedAt = time.Now().UTC()
@@ -381,9 +445,12 @@ func resultMessage(result api.DupeCheckResult) string {
 }
 
 func (a *App) emitDupeCheckSnapshot(ctx context.Context, job *dupeCheckJob) {
-	if a == nil || ctx == nil || job == nil {
+	if a == nil || ctx == nil || job == nil || ctx.Value("events") == nil {
 		return
 	}
+	defer func() {
+		_ = recover()
+	}()
 	snapshot := buildDupeCheckSnapshot(job)
 	runtime.EventsEmit(ctx, dupeCheckEventPrefix+job.id, snapshot)
 }
@@ -442,6 +509,37 @@ func (a *App) getDupeCheckJob(jobID string) *dupeCheckJob {
 	return a.dupes[jobID]
 }
 
+func (a *App) publishDupeCheckJob(job *dupeCheckJob) {
+	a.dupeMu.Lock()
+	a.dupeWG.Add(1)
+	a.dupes[job.id] = job
+	a.dupeMu.Unlock()
+}
+
+func (j *dupeCheckJob) closeResources() error {
+	if j == nil {
+		return nil
+	}
+
+	var closeErr error
+	j.cleanupOnce.Do(func() {
+		j.mu.Lock()
+		coreSvc := j.core
+		logger := j.logger
+		j.core = nil
+		j.logger = nil
+		j.mu.Unlock()
+
+		if coreSvc != nil {
+			closeErr = errors.Join(closeErr, closeTrackerUploadResource("core", coreSvc))
+		}
+		if logger != nil {
+			closeErr = errors.Join(closeErr, closeTrackerUploadResource("logger", logger))
+		}
+	})
+	return closeErr
+}
+
 func (a *App) stopAllDupeJobs() {
 	if a == nil {
 		return
@@ -462,6 +560,12 @@ func (a *App) stopAllDupeJobs() {
 		job.mu.Unlock()
 		if cancel != nil {
 			cancel()
+		}
+	}
+	a.dupeWG.Wait()
+	for _, job := range jobs {
+		if job != nil {
+			_ = job.closeResources()
 		}
 	}
 }

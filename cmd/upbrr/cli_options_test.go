@@ -1069,6 +1069,54 @@ func TestPrintDryRunDetails(t *testing.T) {
 			name:  "empty details print nothing",
 			entry: api.TrackerDryRunEntry{},
 		},
+		{
+			name: "prints debug sections with redacted endpoint and payload",
+			entry: api.TrackerDryRunEntry{
+				DebugSections: []api.TrackerDryRunDebugSection{
+					{
+						Title:    "BTN autofill request",
+						Endpoint: "https://tracker.test/upload.php?passkey=secret-pass",
+						Payload: map[string]string{
+							"auto_season": "5",
+							"auto_series": "12345",
+							"scene_yesno": "No",
+							"type":        "Season",
+						},
+					},
+					{
+						Title:    "BTN final upload payload after autofill",
+						Endpoint: "https://tracker.test/upload.php?api_key=secret-key",
+						Files: []api.TrackerDryRunFile{
+							{Field: "file_input", Path: "C:\\Users\\Tester\\.upbrr\\tmp\\file.torrent", Present: true},
+						},
+						Payload: map[string]string{
+							"artist":       "Example Show",
+							"release_desc": "line 1\nline 2",
+							"type":         "Season",
+						},
+					},
+				},
+			},
+			contains: []string{
+				"Debug sections:",
+				"BTN autofill request:",
+				"Endpoint: https://tracker.test/upload.php?passkey=[REDACTED]",
+				"- auto_season: 5",
+				"- auto_series: 12345",
+				"BTN final upload payload after autofill:",
+				"Endpoint: https://tracker.test/upload.php?api_key=[REDACTED]",
+				"- file_input [present]: .upbrr/tmp/file.torrent",
+				"- artist: Example Show",
+				"- release_desc: [13 bytes, 2 lines omitted]",
+				"- type: Season",
+			},
+			notContains: []string{
+				"secret-pass",
+				"secret-key",
+				"C:\\Users\\Tester",
+				"line 1\nline 2",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1198,6 +1246,14 @@ func TestPrintDebugUploadReview(t *testing.T) {
 				Tracker:      "HDB",
 				Banned:       true,
 				BannedReason: "group banned",
+				DryRun: api.TrackerDryRunEntry{
+					Tracker:      "HDB",
+					Status:       "ready",
+					Banned:       true,
+					BannedReason: "group banned",
+					ReleaseName:  "Movie.HDB.2024",
+					Payload:      map[string]string{"name": "Movie.HDB.2024"},
+				},
 			},
 		},
 	}
@@ -1214,6 +1270,7 @@ func TestPrintDebugUploadReview(t *testing.T) {
 		"- name: Movie.2024",
 		"[HDB Debug Payload]",
 		"Banned group: group banned",
+		"- name: Movie.HDB.2024",
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected output to contain %q, got %q", expected, output)

@@ -127,7 +127,7 @@ func TestRunInteractiveCLIPathThreadsContextToCoreCall(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	coreSvc := &cliCoreForTest{}
-	err := runInteractiveCLIPathWithInput(ctx, coreSvc, nil, cliOptions{}, map[string]bool{}, "movie.mkv", 0, config.Config{}, strings.NewReader(""))
+	err := runInteractiveCLIPathWithInput(ctx, coreSvc, cliOptions{}, map[string]bool{}, "movie.mkv", 0, config.Config{}, strings.NewReader(""))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected canceled context to reach FetchMetadataPreview, got %v", err)
 	}
@@ -675,6 +675,7 @@ func TestPrepareCLIUploadMetadataRefreshesResolvedPathForExternalSelections(t *t
 	sourcePath := "folder"
 	resolvedPath := filepath.Join("folder", "movie.mkv")
 	tmdbID := 12345
+	malID := 67890
 
 	coreSvc := &cliCoreForTest{
 		previewResponses: []api.MetadataPreview{
@@ -685,7 +686,7 @@ func TestPrepareCLIUploadMetadataRefreshesResolvedPathForExternalSelections(t *t
 	req := api.Request{
 		Paths: []string{sourcePath},
 		ExternalIDSelections: map[string]api.ExternalIDSelection{
-			sourcePath: {TMDBID: &tmdbID},
+			sourcePath: {TMDBID: &tmdbID, MALID: &malID},
 		},
 	}
 
@@ -709,13 +710,19 @@ func TestPrepareCLIUploadMetadataRefreshesResolvedPathForExternalSelections(t *t
 	if !ok || selected.TMDBID == nil || *selected.TMDBID != tmdbID {
 		t.Fatalf("expected resolved-path external selection, got %#v", resolvedReq.ExternalIDSelections)
 	}
+	if selected.MALID == nil || *selected.MALID != malID {
+		t.Fatalf("expected resolved-path mal selection, got %#v", resolvedReq.ExternalIDSelections)
+	}
 	secondSelected, ok := coreSvc.requests[1].req.ExternalIDSelections[resolvedPath]
 	if !ok || secondSelected.TMDBID == nil || *secondSelected.TMDBID != tmdbID {
 		t.Fatalf("expected resolved-path selection on second preview, got %#v", coreSvc.requests[1].req.ExternalIDSelections)
 	}
+	if secondSelected.MALID == nil || *secondSelected.MALID != malID {
+		t.Fatalf("expected second preview mal selection, got %#v", coreSvc.requests[1].req.ExternalIDSelections)
+	}
 }
 
-func TestPrepareCLIUploadMetadataPreservesResolvedPathExternalSelections(t *testing.T) {
+func TestPrepareCLIUploadMetadataRefreshesStaleResolvedPathExternalSelections(t *testing.T) {
 	t.Parallel()
 
 	sourcePath := "folder"
@@ -743,12 +750,12 @@ func TestPrepareCLIUploadMetadataPreservesResolvedPathExternalSelections(t *test
 	}
 
 	selected, ok := resolvedReq.ExternalIDSelections[resolvedPath]
-	if !ok || selected.TMDBID == nil || *selected.TMDBID != staleTMDBID {
-		t.Fatalf("expected resolved upload selection to preserve resolved TMDB ID, got %#v", resolvedReq.ExternalIDSelections)
+	if !ok || selected.TMDBID == nil || *selected.TMDBID != currentTMDBID {
+		t.Fatalf("expected resolved upload selection to refresh stale TMDB ID, got %#v", resolvedReq.ExternalIDSelections)
 	}
 	secondSelected, ok := coreSvc.requests[1].req.ExternalIDSelections[resolvedPath]
-	if !ok || secondSelected.TMDBID == nil || *secondSelected.TMDBID != staleTMDBID {
-		t.Fatalf("expected second preview to preserve resolved TMDB ID, got %#v", coreSvc.requests[1].req.ExternalIDSelections)
+	if !ok || secondSelected.TMDBID == nil || *secondSelected.TMDBID != currentTMDBID {
+		t.Fatalf("expected second preview to refresh stale TMDB ID, got %#v", coreSvc.requests[1].req.ExternalIDSelections)
 	}
 }
 

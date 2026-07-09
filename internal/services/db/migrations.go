@@ -22,6 +22,19 @@ const (
 			applied_at TEXT NOT NULL
 		)
 	`
+	externalMetadataTableDDL = `
+		CREATE TABLE IF NOT EXISTS external_metadata (
+			source_path TEXT PRIMARY KEY,
+			tmdb_json TEXT NOT NULL DEFAULT "",
+			imdb_json TEXT NOT NULL DEFAULT "",
+			tvdb_json TEXT NOT NULL DEFAULT "",
+			tvmaze_json TEXT NOT NULL DEFAULT "",
+			anilist_json TEXT NOT NULL DEFAULT "",
+			bluray_json TEXT NOT NULL DEFAULT "",
+			updated_at TEXT NOT NULL
+		)
+	`
+	externalMetadataSourcePathIndexDDL = `CREATE INDEX IF NOT EXISTS idx_external_metadata_source_path ON external_metadata (source_path)`
 )
 
 type migrationStep struct {
@@ -56,6 +69,8 @@ var migrationRegistry = []migrationStep{
 	{id: "2026_04_add_release_category", dependsOn: []string{"2026_04_add_tracker_cookies"}, apply: migrateAddReleaseCategory},
 	{id: "2026_05_add_bluray_external_metadata", dependsOn: []string{"2026_04_add_release_category"}, apply: migrateAddBlurayExternalMetadata},
 	{id: "2026_06_add_tracker_auth_state", dependsOn: []string{"2026_05_add_bluray_external_metadata"}, apply: migrateAddTrackerAuthState},
+	{id: "2026_07_add_external_ids_mal", dependsOn: []string{"2026_06_add_tracker_auth_state"}, apply: migrateAddExternalIDsMAL},
+	{id: "2026_07_add_anilist_external_metadata", dependsOn: []string{"2026_07_add_external_ids_mal"}, apply: migrateAddAniListExternalMetadata},
 }
 
 var legacyVersionToMigrationIDs = map[int][]string{
@@ -333,6 +348,47 @@ func migrateAddBlurayExternalMetadata(ctx context.Context, exec migrationExecuto
 	return nil
 }
 
+// migrateAddAniListExternalMetadata adds the optional rich AniList metadata
+// column when the external metadata table exists in the current schema.
+func migrateAddAniListExternalMetadata(ctx context.Context, exec migrationExecutor) error {
+	tablePresent, err := tableExists(ctx, exec, "external_metadata")
+	if err != nil {
+		return err
+	}
+	if !tablePresent {
+		if err := createExternalMetadataSchema(ctx, exec); err != nil {
+			return err
+		}
+		return nil
+	}
+	exists, err := tableColumnExists(ctx, exec, "external_metadata", "anilist_json")
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	if _, err := exec.ExecContext(ctx, `ALTER TABLE external_metadata ADD COLUMN anilist_json TEXT NOT NULL DEFAULT ""`); err != nil {
+		return fmt.Errorf("db: %w", err)
+	}
+	return nil
+}
+
+func createExternalMetadataSchema(ctx context.Context, exec migrationExecutor) error {
+	statements := []string{
+		externalMetadataTableDDL,
+		externalMetadataSourcePathIndexDDL,
+	}
+
+	for _, statement := range statements {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("db: %w", err)
+		}
+	}
+
+	return nil
+}
+
 func migrateAddTrackerAuthState(ctx context.Context, exec migrationExecutor) error {
 	statements := []string{
 		`
@@ -357,6 +413,98 @@ func migrateAddTrackerAuthState(ctx context.Context, exec migrationExecutor) err
 		}
 	}
 
+	return nil
+}
+
+func migrateAddExternalIDsMAL(ctx context.Context, exec migrationExecutor) error {
+	exists, err := tableExists(ctx, exec, "external_ids")
+	if err != nil {
+		return fmt.Errorf("db: inspect external_ids table: %w", err)
+	}
+	if !exists {
+		statements := []string{
+			`
+			CREATE TABLE IF NOT EXISTS external_ids (
+				source_path TEXT PRIMARY KEY,
+				tmdb_id INTEGER NOT NULL DEFAULT 0,
+				imdb_id INTEGER NOT NULL DEFAULT 0,
+				tvdb_id INTEGER NOT NULL DEFAULT 0,
+				tvmaze_id INTEGER NOT NULL DEFAULT 0,
+				mal_id INTEGER NOT NULL DEFAULT 0,
+				category TEXT NOT NULL DEFAULT "",
+				source_tmdb TEXT NOT NULL DEFAULT "",
+				source_imdb TEXT NOT NULL DEFAULT "",
+				source_tvdb TEXT NOT NULL DEFAULT "",
+				source_tvmaze TEXT NOT NULL DEFAULT "",
+				source_mal TEXT NOT NULL DEFAULT "",
+				updated_at TEXT NOT NULL
+			)
+			`,
+			`CREATE INDEX IF NOT EXISTS idx_external_ids_source_path ON external_ids (source_path)`,
+		}
+		for _, statement := range statements {
+			if _, err := exec.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("db: create external_ids for mal migration: %w", err)
+			}
+		}
+		return nil
+	}
+
+	columns := []struct {
+		name string
+		ddl  string
+	}{
+		{name: "mal_id", ddl: `ALTER TABLE external_ids ADD COLUMN mal_id INTEGER NOT NULL DEFAULT 0`},
+		{name: "source_mal", ddl: `ALTER TABLE external_ids ADD COLUMN source_mal TEXT NOT NULL DEFAULT ""`},
+	}
+	for _, column := range columns {
+		exists, err := tableColumnExists(ctx, exec, "external_ids", column.name)
+		if err != nil {
+			return fmt.Errorf("db: inspect external_ids.%s: %w", column.name, err)
+		}
+		if exists {
+			continue
+		}
+		if _, err := exec.ExecContext(ctx, column.ddl); err != nil {
+			return fmt.Errorf("db: add external_ids.%s: %w", column.name, err)
+		}
+	}
+	if err := backfillExternalIDsMALFromMetadata(ctx, exec); err != nil {
+		return err
+	}
+	return nil
+}
+
+func backfillExternalIDsMALFromMetadata(ctx context.Context, exec migrationExecutor) error {
+	exists, err := tableExists(ctx, exec, "external_metadata")
+	if err != nil {
+		return fmt.Errorf("db: inspect external_metadata table: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	if _, err := exec.ExecContext(ctx, `
+		UPDATE external_ids
+		SET
+			mal_id = (
+				SELECT CAST(json_extract(external_metadata.tmdb_json, '$.MALID') AS INTEGER)
+				FROM external_metadata
+				WHERE external_metadata.source_path = external_ids.source_path
+			),
+			source_mal = "tmdb"
+		WHERE
+			mal_id = 0
+			AND EXISTS (
+				SELECT 1
+				FROM external_metadata
+				WHERE
+					external_metadata.source_path = external_ids.source_path
+					AND json_valid(external_metadata.tmdb_json)
+					AND CAST(json_extract(external_metadata.tmdb_json, '$.MALID') AS INTEGER) > 0
+			)
+	`); err != nil {
+		return fmt.Errorf("db: backfill external_ids mal from metadata: %w", err)
+	}
 	return nil
 }
 
@@ -773,27 +921,19 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 			imdb_id INTEGER NOT NULL DEFAULT 0,
 			tvdb_id INTEGER NOT NULL DEFAULT 0,
 			tvmaze_id INTEGER NOT NULL DEFAULT 0,
+			mal_id INTEGER NOT NULL DEFAULT 0,
 			category TEXT NOT NULL DEFAULT "",
 			source_tmdb TEXT NOT NULL DEFAULT "",
 			source_imdb TEXT NOT NULL DEFAULT "",
 			source_tvdb TEXT NOT NULL DEFAULT "",
 			source_tvmaze TEXT NOT NULL DEFAULT "",
+			source_mal TEXT NOT NULL DEFAULT "",
 			updated_at TEXT NOT NULL
 		)
 		`,
-		`
-		CREATE TABLE IF NOT EXISTS external_metadata (
-			source_path TEXT PRIMARY KEY,
-			tmdb_json TEXT NOT NULL DEFAULT "",
-			imdb_json TEXT NOT NULL DEFAULT "",
-			tvdb_json TEXT NOT NULL DEFAULT "",
-			tvmaze_json TEXT NOT NULL DEFAULT "",
-			bluray_json TEXT NOT NULL DEFAULT "",
-			updated_at TEXT NOT NULL
-		)
-		`,
+		externalMetadataTableDDL,
 		`CREATE INDEX IF NOT EXISTS idx_external_ids_source_path ON external_ids (source_path)`,
-		`CREATE INDEX IF NOT EXISTS idx_external_metadata_source_path ON external_metadata (source_path)`,
+		externalMetadataSourcePathIndexDDL,
 		`
 		CREATE TABLE IF NOT EXISTS config_settings (
 			section TEXT PRIMARY KEY,

@@ -75,11 +75,11 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 
 	signature := overrideSignature(singleReq.ExternalIDOverrides, singleReq.ReleaseNameOverrides, singleReq.MetadataOverrides, singleReq.TrackerConfigOverrides, singleReq.TrackerSiteOverrides, singleReq.ClientOverrides, singleReq.TorrentOverrides, singleReq.ImageHostOverrides, singleReq.ScreenshotOverrides)
 	var (
-		baseMeta               api.PreparedMetadata
-		baseMetaOK             bool
-		cachedDebugDupeSummary api.DupeCheckSummary
-		meta                   api.PreparedMetadata
-		ok                     bool
+		baseMeta                api.PreparedMetadata
+		baseMetaOK              bool
+		cachedDryRunDupeSummary api.DupeCheckSummary
+		meta                    api.PreparedMetadata
+		ok                      bool
 	)
 	if req.Mode == api.ModeGUI {
 		entry, _, found := c.lookupGUICachedMetaEntry(singleReq, uniquePaths[0])
@@ -103,8 +103,8 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 		entry, _, found := c.lookupGUICachedMetaEntry(singleReq, uniquePaths[0])
 		if found {
 			ok = true
-			if entry.requestRefreshed && cachedPreparedMetaMatchesRequest(entry.meta, singleReq, uniquePaths[0]) {
-				cachedDebugDupeSummary = deepCopyDupeCheckSummary(entry.dupeSummary)
+			if entry.requestRefreshed && cachedDupeSummaryMatchesRequest(entry.meta, singleReq, uniquePaths[0]) {
+				cachedDryRunDupeSummary = deepCopyDupeCheckSummary(entry.dupeSummary)
 			}
 			meta, err = c.applyRequestToCachedPreparedMeta(ctx, entry.meta, singleReq)
 			if err != nil {
@@ -130,7 +130,7 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 
 	dupeResults := make(map[string]api.DupeCheckResult)
 	if singleReq.SkipDupeCheck {
-		meta.BlockedTrackers = removeTrackerBlockReason(cloneBlockedTrackers(meta.BlockedTrackers), api.TrackerBlockReasonDupe)
+		meta.BlockedTrackers = removeTrackerDupeBlockReason(cloneBlockedTrackers(meta.BlockedTrackers))
 		meta.CrossSeedTorrents = nil
 		for _, tracker := range resolvedTrackers {
 			name := strings.ToUpper(strings.TrimSpace(tracker))
@@ -146,8 +146,8 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 		}
 	} else {
 		var summary api.DupeCheckSummary
-		if debugDupeSummaryCoversTrackers(cachedDebugDupeSummary, singleReq, resolvedTrackers) {
-			summary = cachedDebugDupeSummary
+		if dryRunDupeSummaryCoversTrackers(cachedDryRunDupeSummary, singleReq, resolvedTrackers) {
+			summary = cachedDryRunDupeSummary
 		} else {
 			summary, err = c.services.Dupes.Check(ctx, meta, resolvedTrackers)
 			if err != nil {
@@ -177,8 +177,7 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 		}
 	}
 
-	dryRunMeta := trackerDebugProcessingMeta(meta, singleReq)
-	dryRunMeta.IgnoreTrackerRuleFailures = true
+	dryRunMeta := trackerDryRunProcessingMeta(meta, singleReq)
 	torrent, err := c.services.Torrents.Create(ctx, dryRunMeta)
 	if err != nil {
 		return api.UploadReview{}, fmt.Errorf("core: %w", err)
@@ -199,12 +198,6 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 		dryRunByTracker[name] = entry
 	}
 
-	bannedChecker := trackerspkg.NewBannedGroupChecker(c.cfg.MainSettings.DBPath)
-	group := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(meta.Tag, "-")))
-	if strings.Contains(group, "taoe") {
-		group = "taoe"
-	}
-
 	reviews := make([]api.TrackerReview, 0, len(resolvedTrackers))
 	for _, tracker := range resolvedTrackers {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
@@ -221,22 +214,16 @@ func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.Uplo
 		if review.DryRun.Tracker == "" {
 			review.DryRun.Tracker = name
 		}
+		review.Banned = review.DryRun.Banned
+		review.BannedReason = review.DryRun.BannedReason
 		if reasons := meta.BlockedTrackers[name]; len(reasons) > 0 {
 			review.DryRun.Status = "blocked"
 			review.DryRun.Message = "tracker blocked: " + formatBlockedReasons(reasons)
+		} else if bannedCheckError := strings.TrimSpace(review.DryRun.BannedCheckError); bannedCheckError != "" {
+			review.DryRun.Status = "blocked"
+			review.DryRun.Message = bannedCheckError
 		}
 		review.Questionnaire = review.DryRun.Questionnaire
-
-		if group != "" {
-			banned, err := bannedChecker.IsBanned(name, group)
-			if err != nil {
-				return api.UploadReview{}, fmt.Errorf("core: upload review banned group check %s: %w", name, err)
-			}
-			if banned {
-				review.Banned = true
-				review.BannedReason = fmt.Sprintf("group %s is banned on %s", group, name)
-			}
-		}
 
 		reviews = append(reviews, review)
 	}
@@ -424,7 +411,7 @@ func applyRequestToPreparedMetaWithDerivedFields(meta api.PreparedMetadata, req 
 	applyTorrentOverridesToPreparedMeta(&meta)
 	meta.TrackerRuleFailures = filterTrackerRuleFailures(meta.TrackerRuleFailures, req.IgnoreTrackerRuleFailuresFor)
 	if req.SkipDupeCheck {
-		meta.BlockedTrackers = removeTrackerBlockReason(meta.BlockedTrackers, api.TrackerBlockReasonDupe)
+		meta.BlockedTrackers = removeTrackerDupeBlockReason(meta.BlockedTrackers)
 		meta.CrossSeedTorrents = nil
 	} else if len(req.IgnoreDupesFor) > 0 {
 		meta.BlockedTrackers = removeTrackerBlockReasonForTrackers(meta.BlockedTrackers, api.TrackerBlockReasonDupe, req.IgnoreDupesFor)
@@ -626,10 +613,10 @@ func mapDupeResults(results []api.DupeCheckResult) map[string]api.DupeCheckResul
 	return mapped
 }
 
-// debugDupeSummaryCoversTrackers reports whether cached dupe-check results
-// already cover every tracker needed by a debug review.
-func debugDupeSummaryCoversTrackers(summary api.DupeCheckSummary, req api.Request, trackers []string) bool {
-	if !req.Options.Debug || len(summary.Results) == 0 || len(trackers) == 0 {
+// dryRunDupeSummaryCoversTrackers reports whether cached dupe-check results
+// already cover every tracker needed by a dry-run or debug review.
+func dryRunDupeSummaryCoversTrackers(summary api.DupeCheckSummary, req api.Request, trackers []string) bool {
+	if !dryRunOrDebug(req) || len(summary.Results) == 0 || len(trackers) == 0 {
 		return false
 	}
 
@@ -657,6 +644,21 @@ func debugDupeSummaryCoversTrackers(summary api.DupeCheckSummary, req api.Reques
 		}
 	}
 	return true
+}
+
+// cachedDupeSummaryMatchesRequest compares the cached dupe-check request to the
+// current review request. Dry-run/debug CLI flows add IgnoreDupesFor after the
+// initial dupe check so duplicate hits do not stop later processing; those
+// bypass fields are not part of dupe-search identity and must not force a second
+// dupe check.
+func cachedDupeSummaryMatchesRequest(meta api.PreparedMetadata, req api.Request, path string) bool {
+	if !dryRunOrDebug(req) {
+		return cachedPreparedMetaMatchesRequest(meta, req, path)
+	}
+	summaryReq := req
+	summaryReq.IgnoreDupesFor = nil
+	summaryReq.IgnoreTrackerRuleFailuresFor = nil
+	return cachedPreparedMetaMatchesRequest(meta, summaryReq, path)
 }
 
 func deepCopyDupeCheckSummary(summary api.DupeCheckSummary) api.DupeCheckSummary {
@@ -727,7 +729,7 @@ func applyDupeSummaryToPreparedMeta(meta *api.PreparedMetadata, summary api.Dupe
 		return
 	}
 
-	blocked := removeTrackerBlockReason(cloneBlockedTrackers(meta.BlockedTrackers), api.TrackerBlockReasonDupe)
+	blocked := removeTrackerDupeBlockReason(cloneBlockedTrackers(meta.BlockedTrackers))
 	crossSeeds := make([]api.UploadedTorrent, 0)
 	seenCrossSeeds := make(map[string]struct{})
 	for _, result := range summary.Results {
@@ -825,7 +827,7 @@ func addTrackerBlockReason(blocked map[string][]api.TrackerBlockReason, tracker 
 	return blocked
 }
 
-func removeTrackerBlockReason(blocked map[string][]api.TrackerBlockReason, reason api.TrackerBlockReason) map[string][]api.TrackerBlockReason {
+func removeTrackerDupeBlockReason(blocked map[string][]api.TrackerBlockReason) map[string][]api.TrackerBlockReason {
 	if len(blocked) == 0 {
 		return nil
 	}
@@ -839,7 +841,7 @@ func removeTrackerBlockReason(blocked map[string][]api.TrackerBlockReason, reaso
 
 		kept := make([]api.TrackerBlockReason, 0, len(reasons))
 		for _, existing := range reasons {
-			if existing != reason {
+			if existing != api.TrackerBlockReasonDupe {
 				kept = append(kept, existing)
 			}
 		}

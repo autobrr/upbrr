@@ -325,7 +325,7 @@ func (c *Core) executePreparedUpload(ctx context.Context, req api.Request, meta 
 					return 0, err
 				}
 			} else {
-				dryRunMeta := trackerDebugProcessingMeta(meta, req)
+				dryRunMeta := trackerDryRunProcessingMeta(meta, req)
 				entries, err := c.services.Trackers.BuildUploadDryRun(ctx, dryRunMeta, resolvedTrackers)
 				if err != nil {
 					return 0, fmt.Errorf("core: %w", err)
@@ -542,13 +542,21 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (summary api.Dup
 			return api.DupeCheckSummary{}, err
 		} else if ok {
 			matchedTrackers := mergeTrackerRemovals(nil, cached.MatchedTrackers)
-			removeTrackers := mergeTrackerRemovals(req.TrackersRemove, matchedTrackers)
+			removeTrackers := mergeTrackerRemovals(nil, req.TrackersRemove)
+			checkMeta := cached
+			if dryRunOrDebug(req) {
+				checkMeta = dupeCheckDryRunProcessingMeta(cached)
+			} else {
+				removeTrackers = mergeTrackerRemovals(removeTrackers, matchedTrackers)
+			}
 			resolvedTrackers := trackers.ResolveTrackers(c.cfg, req.Trackers, removeTrackers, c.logger)
-			summary, err := c.services.Dupes.Check(ctx, cached, resolvedTrackers)
+			summary, err := c.services.Dupes.Check(ctx, checkMeta, resolvedTrackers)
 			if err != nil {
 				return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
 			}
-			summary = appendPathedDupeResults(summary, matchedTrackers)
+			if !dryRunOrDebug(req) {
+				summary = appendPathedDupeResults(summary, matchedTrackers)
+			}
 			applyDupeSummaryToPreparedMeta(&cached, summary)
 			c.storeRefreshedDupeCacheWithDupeSummary(cached.SourcePath, overrideSignature(cached.ExternalIDOverrides, cached.ReleaseNameOverrides, cached.MetadataOverrides, cached.TrackerConfigOverrides, cached.TrackerSiteOverrides, cached.ClientOverrides, cached.TorrentOverrides, cached.ImageHostOverrides, cached.ScreenshotOverrides), cached, summary)
 			return summary, nil
@@ -667,13 +675,21 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (summary api.Dup
 	c.storeRefreshedDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 
 	matchedTrackers := mergeTrackerRemovals(nil, meta.MatchedTrackers)
-	removeTrackers := mergeTrackerRemovals(req.TrackersRemove, matchedTrackers)
+	removeTrackers := mergeTrackerRemovals(nil, req.TrackersRemove)
+	checkMeta := meta
+	if dryRunOrDebug(req) {
+		checkMeta = dupeCheckDryRunProcessingMeta(meta)
+	} else {
+		removeTrackers = mergeTrackerRemovals(removeTrackers, matchedTrackers)
+	}
 	resolvedTrackers := trackers.ResolveTrackers(c.cfg, req.Trackers, removeTrackers, c.logger)
-	summary, err = c.services.Dupes.Check(ctx, meta, resolvedTrackers)
+	summary, err = c.services.Dupes.Check(ctx, checkMeta, resolvedTrackers)
 	if err != nil {
 		return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
 	}
-	summary = appendPathedDupeResults(summary, matchedTrackers)
+	if !dryRunOrDebug(req) {
+		summary = appendPathedDupeResults(summary, matchedTrackers)
+	}
 	applyDupeSummaryToPreparedMeta(&meta, summary)
 	c.storeRefreshedDupeCacheWithDupeSummary(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta, summary)
 	return summary, nil
@@ -2047,7 +2063,10 @@ func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (pr
 }
 
 // FetchTrackerDryRunPreview builds per-tracker dry-run upload entries from cached
-// prepared metadata, creating torrents and cache state only after selected trackers resolve.
+// prepared metadata, creating torrents and cache state only after selected trackers
+// resolve. Dry-run/debug processing still evaluates tracker prerequisites such
+// as banned-group matches, rule failures, and block state, but reports them
+// without suppressing payload generation or performing the tracker upload.
 func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (preview api.TrackerDryRunPreview, err error) {
 	defer func() {
 		if err != nil {
@@ -2163,7 +2182,7 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 	}
 	meta.TorrentPath = torrent.Path
 
-	dryRunMeta := trackerDebugProcessingMeta(meta, singleReq)
+	dryRunMeta := trackerDryRunProcessingMeta(meta, singleReq)
 	entries, err := c.services.Trackers.BuildUploadDryRun(ctx, dryRunMeta, resolvedTrackers)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, fmt.Errorf("core: %w", err)
@@ -3516,6 +3535,7 @@ func deepCopyExternalMetadata(metadata api.ExternalMetadata) api.ExternalMetadat
 		IMDB:       deepCopyIMDBMetadata(metadata.IMDB),
 		TVDB:       deepCopyTVDBMetadata(metadata.TVDB),
 		TVmaze:     deepCopyTVmazeMetadata(metadata.TVmaze),
+		AniList:    deepCopyAniListMetadata(metadata.AniList),
 		Bluray:     deepCopyBlurayMetadata(metadata.Bluray),
 		UpdatedAt:  metadata.UpdatedAt,
 	}
@@ -3582,6 +3602,7 @@ func deepCopyTVDBMetadata(metadata *api.TVDBMetadata) *api.TVDBMetadata {
 	}
 	cloned := *metadata
 	cloned.Aliases = append([]string(nil), metadata.Aliases...)
+	cloned.Episodes = append([]api.TVDBEpisodeMetadata(nil), metadata.Episodes...)
 	return &cloned
 }
 
@@ -3590,6 +3611,21 @@ func deepCopyTVmazeMetadata(metadata *api.TVmazeMetadata) *api.TVmazeMetadata {
 		return nil
 	}
 	cloned := *metadata
+	return &cloned
+}
+
+// deepCopyAniListMetadata clones rich anime metadata for prepared-metadata
+// snapshots so cached GUI/core state cannot alias mutable slice fields.
+func deepCopyAniListMetadata(metadata *api.AniListMetadata) *api.AniListMetadata {
+	if metadata == nil {
+		return nil
+	}
+	cloned := *metadata
+	cloned.Genres = append([]string(nil), metadata.Genres...)
+	cloned.Synonyms = append([]string(nil), metadata.Synonyms...)
+	cloned.Tags = append([]api.AniListTag(nil), metadata.Tags...)
+	cloned.Studios = append([]api.AniListStudio(nil), metadata.Studios...)
+	cloned.ExternalLinks = append([]api.AniListExternalLink(nil), metadata.ExternalLinks...)
 	return &cloned
 }
 
@@ -4459,6 +4495,9 @@ func mergeExternalIDOverrides(base api.ExternalIDOverrides, selection api.Extern
 	if selection.TVmazeID != nil {
 		merged.TVmazeID = selection.TVmazeID
 	}
+	if selection.MALID != nil {
+		merged.MALID = selection.MALID
+	}
 	return merged
 }
 
@@ -4508,7 +4547,7 @@ func baseFromAnnounce(announce string) string {
 }
 
 func buildExternalIDInfo(ids api.ExternalIDs) []api.ExternalIDInfo {
-	result := make([]api.ExternalIDInfo, 0, 4)
+	result := make([]api.ExternalIDInfo, 0, 5)
 	if ids.IMDBID != 0 {
 		result = append(result, api.ExternalIDInfo{Provider: "imdb", ID: ids.IMDBID, Source: ids.SourceIMDB})
 	}
@@ -4520,6 +4559,9 @@ func buildExternalIDInfo(ids api.ExternalIDs) []api.ExternalIDInfo {
 	}
 	if ids.TVmazeID != 0 {
 		result = append(result, api.ExternalIDInfo{Provider: "tvmaze", ID: ids.TVmazeID, Source: ids.SourceTVmaze})
+	}
+	if ids.MALID != 0 {
+		result = append(result, api.ExternalIDInfo{Provider: "mal", ID: ids.MALID, Source: ids.SourceMAL})
 	}
 	return result
 }
@@ -4607,7 +4649,63 @@ func buildExternalPreviews(ids api.ExternalIDs, metadata api.ExternalMetadata) [
 		}
 		result = append(result, preview)
 	}
+	if ids.MALID != 0 {
+		preview := api.ExternalPreview{Provider: "mal", ID: ids.MALID, Source: ids.SourceMAL}
+		if metadata.AniList != nil {
+			title := firstNonEmpty(
+				metadata.AniList.TitleEnglish,
+				metadata.AniList.TitleUserPreferred,
+				metadata.AniList.TitleRomaji,
+				metadata.AniList.TitleNative,
+			)
+			preview.Title = title
+			preview.Year = metadata.AniList.SeasonYear
+			preview.Overview = metadata.AniList.Description
+			preview.PosterURL = firstNonEmpty(
+				metadata.AniList.CoverExtraLarge,
+				metadata.AniList.CoverLarge,
+				metadata.AniList.CoverMedium,
+			)
+			preview.BackdropURL = metadata.AniList.BannerImage
+			preview.Category = metadata.AniList.Format
+			preview.OriginalTitle = metadata.AniList.TitleRomaji
+			preview.ReleaseDate = metadata.AniList.StartDate
+			preview.FirstAirDate = metadata.AniList.StartDate
+			preview.LastAirDate = metadata.AniList.EndDate
+			preview.OriginalLanguage = anilistPreviewOriginalLanguage(metadata.AniList)
+			preview.TMDBType = metadata.AniList.Format
+			preview.Runtime = metadata.AniList.Duration
+			preview.Genres = strings.Join(metadata.AniList.Genres, ", ")
+			preview.Rating = float64(metadata.AniList.AverageScore) / 10
+			preview.RatingCount = metadata.AniList.Popularity
+			preview.AniList = metadata.AniList
+		}
+		result = append(result, preview)
+	}
 	return result
+}
+
+func anilistPreviewOriginalLanguage(metadata *api.AniListMetadata) string {
+	if metadata == nil {
+		return ""
+	}
+	for _, link := range metadata.ExternalLinks {
+		if language := strings.TrimSpace(link.Language); language != "" {
+			return language
+		}
+	}
+	return ""
+}
+
+// firstNonEmpty returns the first non-blank value after trimming whitespace.
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func trackerNameForExternalIDs(meta api.PreparedMetadata) string {
@@ -4679,7 +4777,7 @@ func mergeTrackerRemovals(existing []string, additions []string) []string {
 // for pre-application explicit-empty checks. Request dupe bypasses are applied
 // first so ignored or skipped matched trackers can still resolve when selected.
 func requestPreparedMetaTrackersRemove(meta api.PreparedMetadata, req api.Request) []string {
-	if req.Options.Debug {
+	if req.Options.Debug || req.Options.DryRun {
 		return mergeTrackerRemovals(nil, req.TrackersRemove)
 	}
 	metaRemove, matched := duplicateTrackerStateForRequest(meta, req)
@@ -4688,22 +4786,41 @@ func requestPreparedMetaTrackersRemove(meta api.PreparedMetadata, req api.Reques
 }
 
 // trackerResolutionRemoveForRequest returns the tracker removal set for final
-// tracker resolution. Debug mode ignores prepared block state so artifact and
-// client dry-runs can still cover all requested trackers.
+// tracker resolution. Debug and dry-run modes ignore duplicate/block removal
+// state so artifact and client dry-runs can still cover trackers that passed
+// rules; tracker rule failures remain terminal in every mode.
 func trackerResolutionRemoveForRequest(meta api.PreparedMetadata, req api.Request) []string {
-	if req.Options.Debug {
+	if req.Options.Debug || req.Options.DryRun {
 		return mergeTrackerRemovals(nil, req.TrackersRemove)
 	}
 	return meta.TrackersRemove
 }
 
-// trackerDebugProcessingMeta clears rule and dupe block state for debug-mode
-// artifact generation while leaving normal upload processing unchanged.
-func trackerDebugProcessingMeta(meta api.PreparedMetadata, req api.Request) api.PreparedMetadata {
-	if !req.Options.Debug {
+func dryRunOrDebug(req api.Request) bool {
+	return req.Options.Debug || req.Options.DryRun
+}
+
+// dupeCheckDryRunProcessingMeta clears previous duplicate-match suppression
+// before the dupe service runs for dry-run/debug. Tracker rule failures stay in
+// place so rule-failed trackers remain skipped by the dupe check.
+func dupeCheckDryRunProcessingMeta(meta api.PreparedMetadata) api.PreparedMetadata {
+	meta = deepCopyPreparedMetadata(meta)
+	meta.TrackersRemove = removeReviewedTrackerNames(meta.TrackersRemove, meta.MatchedTrackers)
+	meta.MatchedTrackers = nil
+	meta.BlockedTrackers = removeTrackerDupeBlockReason(meta.BlockedTrackers)
+	meta.CrossSeedTorrents = nil
+	return meta
+}
+
+// trackerDryRunProcessingMeta clears suppressive duplicate/block state for
+// dry-run/debug artifact generation while leaving normal upload processing
+// unchanged. Rule failures stay terminal in every mode; dry-run/debug should
+// only bypass duplicate-hit state so operators can inspect what would have been
+// built for trackers that passed rules.
+func trackerDryRunProcessingMeta(meta api.PreparedMetadata, req api.Request) api.PreparedMetadata {
+	if !req.Options.Debug && !req.Options.DryRun {
 		return meta
 	}
-	meta.IgnoreTrackerRuleFailures = true
 	meta.BlockedTrackers = nil
 	return meta
 }
@@ -4737,7 +4854,7 @@ func (c *Core) resolveCanonicalDescriptionGroups(ctx context.Context, meta api.P
 	if explicitEmpty {
 		return nil, nil
 	}
-	prepMeta := trackerDebugProcessingMeta(meta, req)
+	prepMeta := trackerDryRunProcessingMeta(meta, req)
 	prep, err := c.services.Trackers.BuildPreparation(ctx, prepMeta, resolvedTrackers)
 	if err != nil {
 		return nil, fmt.Errorf("core: %w", err)

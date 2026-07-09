@@ -21,6 +21,7 @@ describe("resolveSelectedUploadTrackers", () => {
         releasePageTrackerSelection: { AITHER: true, BLU: false },
         uploadToggles: { AITHER: true, BLU: true },
         dupedTrackerSet: new Set(),
+        skippedDupeTrackerSet: new Set(),
         ruleSkippedTrackerSet: new Set(),
         failedDupeTrackerSet: new Set(),
       }),
@@ -34,6 +35,21 @@ describe("resolveSelectedUploadTrackers", () => {
         releasePageTrackerSelection: { AITHER: true, BLU: true },
         uploadToggles: { AITHER: true, BLU: true },
         dupedTrackerSet: new Set(["blu"]),
+        skippedDupeTrackerSet: new Set(),
+        ruleSkippedTrackerSet: new Set(),
+        failedDupeTrackerSet: new Set(),
+      }),
+    ).toEqual(["AITHER"]);
+  });
+
+  it("excludes skipped selected trackers", () => {
+    expect(
+      resolveSelectedUploadTrackers({
+        trackerUploadItems,
+        releasePageTrackerSelection: { AITHER: true, BLU: true },
+        uploadToggles: { AITHER: true, BLU: true },
+        dupedTrackerSet: new Set(),
+        skippedDupeTrackerSet: new Set(["blu"]),
         ruleSkippedTrackerSet: new Set(),
         failedDupeTrackerSet: new Set(),
       }),
@@ -47,6 +63,7 @@ describe("resolveSelectedUploadTrackers", () => {
         releasePageTrackerSelection: { AITHER: true, BLU: true },
         uploadToggles: { AITHER: false, BLU: true },
         dupedTrackerSet: new Set(["blu"]),
+        skippedDupeTrackerSet: new Set(),
         ruleSkippedTrackerSet: new Set(),
         failedDupeTrackerSet: new Set(),
       }),
@@ -60,6 +77,7 @@ describe("resolveSelectedUploadTrackers", () => {
         releasePageTrackerSelection: { AITHER: true },
         uploadToggles: {},
         dupedTrackerSet: new Set(),
+        skippedDupeTrackerSet: new Set(),
         ruleSkippedTrackerSet: new Set(),
         failedDupeTrackerSet: new Set(),
       }),
@@ -71,6 +89,7 @@ describe("resolveSelectedUploadTrackers", () => {
         releasePageTrackerSelection: { AITHER: true, BLU: true },
         uploadToggles: { AITHER: true, BLU: false },
         dupedTrackerSet: new Set(),
+        skippedDupeTrackerSet: new Set(),
         ruleSkippedTrackerSet: new Set(),
         failedDupeTrackerSet: new Set(),
       }),

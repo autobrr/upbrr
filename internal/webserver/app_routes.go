@@ -910,7 +910,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		value, err := s.backend.StartDupeCheck(current.ID, req.Path, req.Overrides, req.NameOverrides, req.Trackers)
+		value, err := s.backend.StartDupeCheck(r.Context(), current.ID, req.Path, req.Overrides, req.NameOverrides, req.Trackers)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return

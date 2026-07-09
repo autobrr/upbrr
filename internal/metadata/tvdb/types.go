@@ -65,6 +65,8 @@ type Episode struct {
 	Overview       string
 	Year           int
 	Aired          string
+	// Image is the episode image URL returned by TVDB.
+	Image string
 }
 
 type EpisodeQuery struct {
@@ -85,6 +87,8 @@ type EpisodeMatch struct {
 	Year          int
 	EpisodeID     int
 	Aired         string
+	// Image is the matched episode image URL returned by TVDB.
+	Image string
 }
 
 type EpisodeTranslation struct {
