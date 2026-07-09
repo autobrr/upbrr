@@ -4,6 +4,9 @@
 package unit3d
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -49,6 +52,8 @@ func buildUnit3DName(tracker string, meta api.PreparedMetadata, cfg config.Track
 		return BuildCBRName(meta, cfg.TagForCustomRelease)
 	case "LDU":
 		return buildLDUName(name, meta)
+	case "LT":
+		return buildLTName(name, meta)
 	case "RF":
 		return addNoGroupSuffix(name, meta, "NoGroup")
 	case "SAM":
@@ -473,4 +478,194 @@ func normalizeZNTHAlphaNum(value string) string {
 
 func isZNTHAlphaNum(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+func buildLTName(name string, meta api.PreparedMetadata) string {
+	aka := ""
+	title := ""
+	origTitle := ""
+	origLang := ""
+	if meta.ExternalMetadata.TMDB != nil {
+		aka = meta.ExternalMetadata.TMDB.RetrievedAKA
+		title = meta.ExternalMetadata.TMDB.Title
+		origTitle = meta.ExternalMetadata.TMDB.OriginalTitle
+		origLang = meta.ExternalMetadata.TMDB.OriginalLanguage
+	}
+	if title == "" && meta.ExternalMetadata.IMDB != nil {
+		title = meta.ExternalMetadata.IMDB.Title
+	}
+	if origTitle == "" {
+		origTitle = title
+	}
+	ltName := name
+	ltName = strings.ReplaceAll(ltName, "Dual-Audio", "")
+	ltName = strings.ReplaceAll(ltName, "Dubbed", "")
+
+	// Find the end of the title block (start of year, resolution, source, etc.)
+	titleEndIdx := len(ltName)
+	markerRegex := regexp.MustCompile(`(?i)\.(19\d\d|20\d\d|3d|480p|576p|720p|1080p|1080i|2160p|4k|mkv|avi|mp4|remux|bluray|blu-ray|web-dl|webdl|web|hdtv|dvdrip|dvd|bd25|bd50|uhd)\b`)
+	if loc := markerRegex.FindStringIndex(ltName); loc != nil {
+		titleEndIdx = loc[0]
+	}
+
+	titleBlock := ltName[:titleEndIdx]
+	restOfName := ltName[titleEndIdx:]
+
+	// Determine the correct target title to use
+	targetTitle := title
+	if origLang == "es" {
+		// Use Spanish title for Spanish original series/movies
+		if aka != "" {
+			akaClean := strings.TrimSpace(strings.ReplaceAll(aka, "AKA", ""))
+			if akaClean != "" {
+				targetTitle = akaClean
+			}
+		} else if origTitle != "" {
+			targetTitle = origTitle
+		}
+	}
+	targetTitleDotted := strings.ReplaceAll(targetTitle, " ", ".")
+
+	// If the title block contains AKA, or we need to replace a mismatched title:
+	akaRegex := regexp.MustCompile(`(?i)[. _-]aka[. _-]`)
+	if akaRegex.MatchString(titleBlock) || !strings.EqualFold(strings.ReplaceAll(titleBlock, ".", " "), targetTitle) {
+		titleBlock = targetTitleDotted
+	}
+
+	ltName = titleBlock + restOfName
+
+	isDisc := false
+	if normalizeUnit3DTypeCandidate(meta.Type) == "DISC" || normalizeUnit3DTypeCandidate(meta.Release.Type) == "DISC" || meta.DiscType != "" {
+		isDisc = true
+	}
+
+	if !isDisc {
+		type rawMediaInfoDoc struct {
+			Media struct {
+				Track []map[string]any `json:"track"`
+			} `json:"media"`
+		}
+
+		var tracks []map[string]any
+		if meta.MediaInfoJSONPath != "" {
+			if payload, err := os.ReadFile(meta.MediaInfoJSONPath); err == nil {
+				var doc rawMediaInfoDoc
+				if err := json.Unmarshal(payload, &doc); err == nil {
+					tracks = doc.Media.Track
+				}
+			}
+		}
+
+		hasSpanishAudio := false
+		hasLatino := false
+		hasCastilian := false
+
+		audioLatinoCheck := map[string]bool{
+			"es-419": true, "es-mx": true, "es-ar": true, "es-cl": true, "es-ve": true,
+			"es-bo": true, "es-co": true, "es-cr": true, "es-do": true, "es-ec": true,
+			"es-sv": true, "es-gt": true, "es-hn": true, "es-ni": true, "es-pa": true,
+			"es-py": true, "es-pe": true, "es-pr": true, "es-uy": true,
+		}
+		audioCastilianCheck := map[string]bool{
+			"es": true, "es-es": true,
+		}
+		latinoKeywords := []string{"latino", "latin america"}
+		castilianKeywords := []string{"castellano"}
+
+		hasTracks := false
+		if len(tracks) > 0 {
+			for _, track := range tracks {
+				trackType := ""
+				if val, ok := track["@type"]; ok {
+					trackType = strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", val)))
+				}
+				if trackType != "audio" {
+					continue
+				}
+				hasTracks = true
+				lang := strings.ToLower(namesTrackString(track, "Language", "Language_String", "Language_String2", "Language_String3"))
+				titleText := strings.ToLower(namesTrackString(track, "Title", "Title_String", "Title_String2", "Title_String3"))
+
+				if strings.Contains(titleText, "commentary") {
+					continue
+				}
+
+				isLatinoTitle := false
+				for _, kw := range latinoKeywords {
+					if strings.Contains(titleText, kw) {
+						isLatinoTitle = true
+						break
+					}
+				}
+				isCastilianTitle := false
+				for _, kw := range castilianKeywords {
+					if strings.Contains(titleText, kw) {
+						isCastilianTitle = true
+						break
+					}
+				}
+
+				if audioLatinoCheck[lang] || (lang == "es" && isLatinoTitle) {
+					hasLatino = true
+					hasSpanishAudio = true
+				} else if (lang == "es" && isCastilianTitle) || audioCastilianCheck[lang] {
+					hasCastilian = true
+					hasSpanishAudio = true
+				}
+			}
+		}
+
+		if !hasTracks {
+			// Fallback to PreparedMetadata.AudioLanguages if MediaInfo JSON wasn't parsed
+			for _, lang := range meta.AudioLanguages {
+				if strings.EqualFold(lang, "Spanish") || strings.EqualFold(lang, "es") {
+					hasSpanishAudio = true
+					hasLatino = true
+					break
+				}
+			}
+		}
+
+		tag := strings.TrimSpace(meta.Tag)
+		// insertTagBracket inserts the label just before "-<tag>" so the result
+		// is "… [LABEL]-TAG" rather than "…- [LABEL]TAG".
+		insertTagBracket := func(s, label string) string {
+			if tag != "" {
+				sep := "-" + tag
+				if idx := strings.LastIndex(s, sep); idx != -1 {
+					return s[:idx] + " [" + label + "]" + s[idx:]
+				}
+			}
+			return s + " [" + label + "]"
+		}
+		if hasSpanishAudio {
+			if !hasLatino && hasCastilian {
+				if !strings.Contains(ltName, "[CAST]") {
+					ltName = insertTagBracket(ltName, "CAST")
+				}
+			}
+		} else {
+			if !strings.Contains(ltName, "[SUBS]") {
+				ltName = insertTagBracket(ltName, "SUBS")
+			}
+		}
+	}
+
+	multipleDots := regexp.MustCompile(`\.{2,}`)
+	ltName = multipleDots.ReplaceAllString(ltName, ".")
+	multipleSpaces := regexp.MustCompile(`\s{2,}`)
+	ltName = multipleSpaces.ReplaceAllString(ltName, " ")
+	return strings.Trim(ltName, ". ")
+}
+
+func namesTrackString(track map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := track[key]; ok {
+			trimmed := strings.TrimSpace(fmt.Sprintf("%v", value))
+			if trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
 }

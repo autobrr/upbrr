@@ -28,6 +28,7 @@ var unit3DSiteProfiles = map[string]unit3DSiteProfile{
 	"ITT":    siteITTProfile(),
 	"LDU":    siteLDUProfile(),
 	"LST":    siteLSTProfile(),
+	"LT":     siteLTProfile(),
 	"OE":     siteOEProfile(),
 	"OTW":    siteOTWProfile(),
 	"PT":     sitePTProfile(),

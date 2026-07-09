@@ -37,6 +37,7 @@ var trackerRuleFactories = map[string]func() RuleSet{
 	"DP":     rulesDP,
 	"HHD":    rulesHHD,
 	"LST":    rulesLST,
+	"LT":     rulesLT,
 	"LUME":   rulesLUME,
 	"OE":     rulesOE,
 	"OTW":    rulesOTW,
@@ -267,5 +268,15 @@ func rulesZNTH() RuleSet {
 	return RuleSet{
 		BlockAdult:   true,
 		AdultMessage: "Porn/xxx is not allowed at ZNTH.",
+	}
+}
+
+func rulesLT() RuleSet {
+	return RuleSet{
+		Language: &LanguageRule{
+			Languages:    languagesSpanish,
+			RequireAudio: true,
+			RequireSubs:  true,
+		},
 	}
 }

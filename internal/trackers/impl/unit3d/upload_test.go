@@ -1887,3 +1887,195 @@ func TestResolveUnit3DTypeIDForTrackerTIKOverrideDiscType(t *testing.T) {
 		t.Fatalf("expected TIK BD66 override type_id=4, got %q", got)
 	}
 }
+
+func TestBuildUnit3DNameLT(t *testing.T) {
+	t.Run("cleans Dual-Audio and Dubbed and AKA", func(t *testing.T) {
+		meta := api.PreparedMetadata{
+			ReleaseName: "Movie.2024.Dual-Audio.Dubbed.1080p.Bluray-GRP",
+			Tag:         "GRP",
+			ExternalMetadata: api.ExternalMetadata{
+				TMDB: &api.TMDBMetadata{
+					RetrievedAKA: "AKA Alternative Title",
+				},
+			},
+		}
+		got := buildUnit3DName("LT", meta, config.TrackerConfig{})
+		if strings.Contains(got, "Dual-Audio") || strings.Contains(got, "Dubbed") {
+			t.Fatalf("expected Dual-Audio and Dubbed to be removed, got %q", got)
+		}
+	})
+
+	t.Run("replaces English title with Spanish AKA when origLang is es", func(t *testing.T) {
+		meta := api.PreparedMetadata{
+			ReleaseName: "Original.Title.2024.1080p.Bluray-GRP",
+			Tag:         "GRP",
+			ExternalMetadata: api.ExternalMetadata{
+				TMDB: &api.TMDBMetadata{
+					Title:            "Original Title",
+					OriginalLanguage: "es",
+					RetrievedAKA:     "AKA Titulo en Español",
+				},
+			},
+		}
+		got := buildUnit3DName("LT", meta, config.TrackerConfig{})
+		if !strings.Contains(got, "Titulo.en.Español") {
+			t.Fatalf("expected English title replaced by Spanish AKA, got %q", got)
+		}
+	})
+
+	t.Run("replaces Spanish title with English title when origLang is not es (foreign)", func(t *testing.T) {
+		meta := api.PreparedMetadata{
+			ReleaseName: "Spanish.Title.2024.1080p.Bluray-GRP",
+			Tag:         "GRP",
+			ExternalMetadata: api.ExternalMetadata{
+				TMDB: &api.TMDBMetadata{
+					Title:            "English Title",
+					OriginalLanguage: "en",
+					RetrievedAKA:     "Spanish Title",
+				},
+			},
+		}
+		got := buildUnit3DName("LT", meta, config.TrackerConfig{})
+		if !strings.Contains(got, "English.Title") || strings.Contains(got, "Spanish.Title") {
+			t.Fatalf("expected Spanish title replaced by English title, got %q", got)
+		}
+	})
+
+	t.Run("removes AKA tag from Title.AKA.SpanishTitle pattern for foreign movies (keeping English)", func(t *testing.T) {
+		meta := api.PreparedMetadata{
+			ReleaseName: "English.Title.AKA.Spanish.Title.2024.1080p.Bluray-GRP",
+			Tag:         "GRP",
+			ExternalMetadata: api.ExternalMetadata{
+				TMDB: &api.TMDBMetadata{
+					Title:            "English Title",
+					OriginalTitle:    "English Title",
+					OriginalLanguage: "en",
+					RetrievedAKA:     "AKA Spanish Title",
+				},
+			},
+		}
+		got := buildUnit3DName("LT", meta, config.TrackerConfig{})
+		if !strings.Contains(got, "English.Title") || strings.Contains(got, "Spanish.Title") || strings.Contains(got, "AKA") {
+			t.Fatalf("expected English title kept and AKA/Spanish title removed, got %q", got)
+		}
+	})
+
+	t.Run("removes AKA tag from EnglishTitle.AKA.SpanishTitle pattern for Spanish original movies (keeping Spanish)", func(t *testing.T) {
+		meta := api.PreparedMetadata{
+			ReleaseName: "English.Title.AKA.Spanish.Title.2024.1080p.Bluray-GRP",
+			Tag:         "GRP",
+			ExternalMetadata: api.ExternalMetadata{
+				TMDB: &api.TMDBMetadata{
+					Title:            "English Title",
+					OriginalTitle:    "Spanish Title",
+					OriginalLanguage: "es",
+					RetrievedAKA:     "AKA Spanish Title",
+				},
+			},
+		}
+		got := buildUnit3DName("LT", meta, config.TrackerConfig{})
+		if !strings.Contains(got, "Spanish.Title") || strings.Contains(got, "English.Title") || strings.Contains(got, "AKA") {
+			t.Fatalf("expected Spanish title kept and AKA/English title removed, got %q", got)
+		}
+	})
+
+	t.Run("adds CAST tag when Castilian-only audio", func(t *testing.T) {
+		// Mock track list by using a temp file for MediaInfoJSONPath
+		tempFile, err := os.CreateTemp("", "mediainfo-*.json")
+		if err != nil {
+			t.Fatalf("failed to create temp file: %v", err)
+		}
+		defer os.Remove(tempFile.Name())
+
+		mediaInfoJSON := `{
+			"media": {
+				"track": [
+					{"@type": "General"},
+					{"@type": "Video"},
+					{"@type": "Audio", "Language": "es", "Title": "Castellano"}
+				]
+			}
+		}`
+		if _, err := tempFile.Write([]byte(mediaInfoJSON)); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+		tempFile.Close()
+
+		meta := api.PreparedMetadata{
+			ReleaseName:       "Movie.2024.1080p.Bluray-GRP",
+			Tag:               "GRP",
+			MediaInfoJSONPath: tempFile.Name(),
+		}
+		got := buildUnit3DName("LT", meta, config.TrackerConfig{})
+		if !strings.Contains(got, " [CAST]-GRP") {
+			t.Fatalf("expected [CAST] tag added before GRP, got %q", got)
+		}
+	})
+
+	t.Run("adds SUBS tag when no Spanish audio", func(t *testing.T) {
+		meta := api.PreparedMetadata{
+			ReleaseName:    "Movie.2024.1080p.Bluray-GRP",
+			Tag:            "GRP",
+			AudioLanguages: []string{"English"},
+		}
+		got := buildUnit3DName("LT", meta, config.TrackerConfig{})
+		if !strings.Contains(got, " [SUBS]-GRP") {
+			t.Fatalf("expected [SUBS] tag added before GRP, got %q", got)
+		}
+	})
+}
+
+func TestResolveUnit3DLTCategoryID(t *testing.T) {
+	t.Run("default movie and TV categories", func(t *testing.T) {
+		metaMovie := api.PreparedMetadata{Type: "MOVIE"}
+		if got := resolveUnit3DCategoryIDForTracker("LT", metaMovie); got != "1" {
+			t.Fatalf("expected MOVIE category_id=1, got %q", got)
+		}
+
+		metaTV := api.PreparedMetadata{
+			Release: api.ReleaseInfo{Category: "TV"},
+		}
+		if got := resolveUnit3DCategoryIDForTracker("LT", metaTV); got != "2" {
+			t.Fatalf("expected TV category_id=2, got %q", got)
+		}
+	})
+
+	t.Run("Anime category", func(t *testing.T) {
+		meta := api.PreparedMetadata{
+			Release: api.ReleaseInfo{Category: "TV"},
+			Anime:   true,
+		}
+		if got := resolveUnit3DCategoryIDForTracker("LT", meta); got != "5" {
+			t.Fatalf("expected Anime category_id=5, got %q", got)
+		}
+	})
+
+	t.Run("Telenovela category", func(t *testing.T) {
+		meta := api.PreparedMetadata{
+			Release: api.ReleaseInfo{Category: "TV"},
+			ExternalMetadata: api.ExternalMetadata{
+				TMDB: &api.TMDBMetadata{
+					Keywords: "some keywords, novela, drama",
+				},
+			},
+		}
+		if got := resolveUnit3DCategoryIDForTracker("LT", meta); got != "8" {
+			t.Fatalf("expected Telenovela category_id=8, got %q", got)
+		}
+	})
+
+	t.Run("Turkish & Asian drama category", func(t *testing.T) {
+		meta := api.PreparedMetadata{
+			Release: api.ReleaseInfo{Category: "TV"},
+			ExternalMetadata: api.ExternalMetadata{
+				TMDB: &api.TMDBMetadata{
+					Genres:        "action, drama, comedy",
+					OriginCountry: []string{"TR"},
+				},
+			},
+		}
+		if got := resolveUnit3DCategoryIDForTracker("LT", meta); got != "20" {
+			t.Fatalf("expected Turkish drama category_id=20, got %q", got)
+		}
+	})
+}
