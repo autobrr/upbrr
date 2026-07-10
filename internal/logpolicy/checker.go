@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -333,9 +334,27 @@ func checkProjectLoggerPathSanitization(fset *token.FileSet, root string) ([]Vio
 	violations := checkProjectLoggerURLPathPreservation(
 		fset,
 		relPath,
-		functionPosition(file, "SanitizeMessage", file.Package),
+		sanitizeMessagePosition(file, file.Package),
 		logging.SanitizeMessage,
 	)
+	violations = append(violations, checkProjectLoggerSecretRedaction(
+		fset,
+		relPath,
+		sanitizeMessagePosition(file, file.Package),
+		logging.SanitizeMessage,
+	)...)
+	violations = append(violations, checkProjectLoggerURLUserinfoRedaction(
+		fset,
+		relPath,
+		sanitizeMessagePosition(file, file.Package),
+		logging.SanitizeMessage,
+	)...)
+	violations = append(violations, checkProjectLoggerApostrophePathRedaction(
+		fset,
+		relPath,
+		sanitizeMessagePosition(file, file.Package),
+		logging.SanitizeMessage,
+	)...)
 
 	for _, decl := range file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
@@ -371,13 +390,46 @@ func checkProjectLoggerURLPathPreservation(fset *token.FileSet, relPath string, 
 	return nil
 }
 
-// functionPosition anchors behavioral sanitizer violations at the named
-// declaration when it exists, falling back to the package position for malformed
-// or partial fixtures.
-func functionPosition(file *ast.File, name string, fallback token.Pos) token.Pos {
+// checkProjectLoggerSecretRedaction guards the logger boundary shared by
+// console, file, buffered, and frontend-streamed output.
+func checkProjectLoggerSecretRedaction(fset *token.FileSet, relPath string, pos token.Pos, sanitize func(string) string) []Violation {
+	sanitized := sanitize(`tracker: request: Get "https://tracker.example/api/torrents/filter?api_token=policy-secret&name=Example.Release.2026.1080p-GRP": timeout`)
+	if strings.Contains(sanitized, "policy-secret") || !strings.Contains(sanitized, "api_token=[REDACTED]") {
+		return []Violation{violationAt(fset, relPath, pos, "project logger sanitizer must redact secret-bearing request URLs")}
+	}
+	return nil
+}
+
+// checkProjectLoggerURLUserinfoRedaction guards credentials embedded in URL
+// authority components, which query/key-value redaction does not cover.
+func checkProjectLoggerURLUserinfoRedaction(fset *token.FileSet, relPath string, pos token.Pos, sanitize func(string) string) []Violation {
+	sanitized := sanitize(`clients: connecting to qbit https://policy-user:policy-password@host.example`)
+	if strings.Contains(sanitized, "policy-user") || strings.Contains(sanitized, "policy-password") ||
+		!strings.Contains(sanitized, "https://[REDACTED]@host.example") {
+		return []Violation{violationAt(fset, relPath, pos, "project logger sanitizer must redact URL userinfo credentials")}
+	}
+	return nil
+}
+
+// checkProjectLoggerApostrophePathRedaction guards complete path labeling for
+// valid release names that contain apostrophes.
+func checkProjectLoggerApostrophePathRedaction(fset *token.FileSet, relPath string, pos token.Pos, sanitize func(string) string) []Violation {
+	sanitized := sanitize(`source=C:\media\Example's.Release.2026-GRP: state=failed`)
+	if strings.Contains(sanitized, `C:\media`) ||
+		strings.Contains(sanitized, "Example's.Release.2026-GRP") ||
+		!strings.Contains(sanitized, "source=[local path]: state=failed") {
+		return []Violation{violationAt(fset, relPath, pos, "project logger sanitizer must redact complete local paths containing apostrophes")}
+	}
+	return nil
+}
+
+// sanitizeMessagePosition anchors behavioral sanitizer violations at the
+// declaration when it exists, falling back to the package position for
+// malformed or partial fixtures.
+func sanitizeMessagePosition(file *ast.File, fallback token.Pos) token.Pos {
 	for _, decl := range file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
-		if ok && fn.Name != nil && fn.Name.Name == name {
+		if ok && fn.Name != nil && fn.Name.Name == "SanitizeMessage" {
 			return fn.Name.Pos()
 		}
 	}
@@ -860,6 +912,10 @@ func checkFile(fset *token.FileSet, root string, path string) ([]Violation, erro
 	})
 	violations = append(violations, checkWorkflowLoggingCoverage(fset, relPath, file, allows)...)
 	violations = append(violations, checkUnboundedResponseBodyUses(fset, relPath, file, aliases)...)
+	violations = append(violations, checkDiagnosticArtifactWrites(fset, relPath, file, aliases, allows)...)
+	violations = append(violations, checkFrontendVisibleRawErrors(fset, relPath, file, aliases, allows)...)
+	violations = append(violations, checkDryRunPreviewSerialization(fset, relPath, file, allows)...)
+	violations = append(violations, checkUnit3DQueryCredentialAuth(fset, relPath, file, allows)...)
 
 	sensitiveViolations := checkSensitiveOutputParsed(fset, relPath, file, aliases, allows, false)
 	violations = append(violations, sensitiveViolations...)
@@ -1021,9 +1077,550 @@ func checkSensitiveOutputParsed(fset *token.FileSet, relPath string, file *ast.F
 			testFile:        testFile,
 			functionContext: functionContext,
 		}, fn.Body)
+		checkResponseJSONParseErrorOutput(fset, relPath, aliases, allows, &violations, fn.Body)
 	}
 
 	return violations
+}
+
+// checkDiagnosticArtifactWrites requires response-derived failure artifacts to
+// pass through an approved redaction helper before reaching os.WriteFile.
+func checkDiagnosticArtifactWrites(fset *token.FileSet, relPath string, file *ast.File, aliases map[string]string, allows map[int]*logpolicyAllow) []Violation {
+	violations := make([]Violation, 0)
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name == nil || fn.Body == nil {
+			continue
+		}
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok || !isOSWriteFileCall(call, aliases) || len(call.Args) < 2 {
+				return true
+			}
+			if !isDiagnosticArtifactWrite(fn.Name.Name, call.Args[0], call.Args[1]) {
+				return true
+			}
+			if isSafeSensitiveOutputExpr(call.Args[1]) || isSanitizedBindingBefore(fn.Body, call.Args[1], call.Pos()) {
+				return true
+			}
+			appendLogpolicyViolation(fset, relPath, allows, &violations, call.Args[1].Pos(), "diagnostic response artifacts must redact body/payload data before writing")
+			return true
+		})
+	}
+	return violations
+}
+
+func isOSWriteFileCall(call *ast.CallExpr, aliases map[string]string) bool {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "WriteFile" {
+		return false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	return ok && aliases[pkg.Name] == "os"
+}
+
+func isDiagnosticArtifactWrite(functionName string, pathExpr ast.Expr, dataExpr ast.Expr) bool {
+	functionName = canonicalSensitiveKeyName(functionName)
+	if strings.Contains(functionName, "failureartifact") || strings.Contains(functionName, "diagnosticartifact") {
+		return true
+	}
+	return exprContainsNameSignal(pathExpr, "failure", "artifact") &&
+		exprContainsNameSignal(dataExpr, "body", "payload", "response", "preview")
+}
+
+func exprContainsNameSignal(expr ast.Expr, signals ...string) bool {
+	found := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		if found || node == nil {
+			return false
+		}
+		value := ""
+		switch typed := node.(type) {
+		case *ast.Ident:
+			value = typed.Name
+		case *ast.SelectorExpr:
+			value = typed.Sel.Name
+		case *ast.BasicLit:
+			if typed.Kind == token.STRING {
+				value, _ = strconv.Unquote(typed.Value)
+			}
+		}
+		lower := strings.ToLower(value)
+		for _, signal := range signals {
+			if strings.Contains(lower, signal) {
+				found = true
+				return false
+			}
+		}
+		return true
+	})
+	return found
+}
+
+func isSanitizedBindingBefore(body *ast.BlockStmt, expr ast.Expr, before token.Pos) bool {
+	expr = unwrapSingleArgTypeConversion(expr)
+	ident, ok := expr.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	sanitized := false
+	ast.Inspect(body, func(node ast.Node) bool {
+		if node == nil || node.Pos() >= before {
+			return false
+		}
+		assign, ok := node.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+		for index, lhs := range assign.Lhs {
+			name, ok := lhs.(*ast.Ident)
+			if !ok || name.Name != ident.Name {
+				continue
+			}
+			rhsIndex := index
+			if len(assign.Rhs) == 1 {
+				rhsIndex = 0
+			}
+			sanitized = rhsIndex < len(assign.Rhs) && containsSafeOutputCall(assign.Rhs[rhsIndex])
+		}
+		return true
+	})
+	return sanitized
+}
+
+// unwrapSingleArgTypeConversion removes conversions whose function expression
+// is syntactically a type. Named conversions remain wrapped because AST-only
+// analysis cannot distinguish them from ordinary single-argument calls.
+func unwrapSingleArgTypeConversion(expr ast.Expr) ast.Expr {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 || !isSyntacticTypeExpr(call.Fun) {
+		return expr
+	}
+	return call.Args[0]
+}
+
+func isSyntacticTypeExpr(expr ast.Expr) bool {
+	switch typed := expr.(type) {
+	case *ast.ArrayType, *ast.MapType, *ast.StructType, *ast.InterfaceType, *ast.ChanType, *ast.FuncType:
+		return true
+	case *ast.ParenExpr:
+		return isSyntacticTypeExpr(typed.X)
+	default:
+		return false
+	}
+}
+
+// checkFrontendVisibleRawErrors guards Wails/web job state and pkg/api result
+// objects, whose string fields are rendered or serialized for users.
+func checkFrontendVisibleRawErrors(fset *token.FileSet, relPath string, file *ast.File, aliases map[string]string, allows map[int]*logpolicyAllow) []Violation {
+	violations := make([]Violation, 0)
+	bridgeFile := strings.HasPrefix(relPath, "internal/guiapp/") || strings.HasPrefix(relPath, "internal/webserver/")
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch typed := node.(type) {
+		case *ast.AssignStmt:
+			if !bridgeFile {
+				return true
+			}
+			for index, lhs := range typed.Lhs {
+				selector, ok := lhs.(*ast.SelectorExpr)
+				if !ok || !isFrontendDiagnosticField(selector.Sel.Name) {
+					continue
+				}
+				rhsIndex := index
+				if len(typed.Rhs) == 1 {
+					rhsIndex = 0
+				}
+				if rhsIndex >= len(typed.Rhs) || isShareableMessageSanitizedExpr(typed.Rhs[rhsIndex]) || !isRawErrorLikeExpr(typed.Rhs[rhsIndex]) {
+					continue
+				}
+				appendLogpolicyViolation(fset, relPath, allows, &violations, typed.Rhs[rhsIndex].Pos(), "frontend-visible error/message fields must redact raw errors before assignment")
+			}
+		case *ast.CompositeLit:
+			if !isAPICompositeType(typed.Type, aliases) {
+				return true
+			}
+			for _, element := range typed.Elts {
+				field, ok := element.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				key, ok := field.Key.(*ast.Ident)
+				if !ok || !isFrontendDiagnosticField(key.Name) || isShareableMessageSanitizedExpr(field.Value) || !isRawErrorLikeExpr(field.Value) {
+					continue
+				}
+				appendLogpolicyViolation(fset, relPath, allows, &violations, field.Value.Pos(), "frontend-visible API error/message fields must redact raw errors before serialization")
+			}
+		case *ast.CallExpr:
+			if !bridgeFile || callName(typed) != "failTrackerUploadJob" || len(typed.Args) < 3 {
+				return true
+			}
+			message := typed.Args[2]
+			if isShareableMessageSanitizedExpr(message) || !isRawErrorLikeExpr(message) {
+				return true
+			}
+			appendLogpolicyViolation(fset, relPath, allows, &violations, message.Pos(), "frontend-visible upload job failure messages must redact raw errors before state update and event emission")
+		}
+		return true
+	})
+	return violations
+}
+
+func isFrontendDiagnosticField(name string) bool {
+	switch canonicalSensitiveKeyName(name) {
+	case "error", "errormessage", "lasterror", "message", "warning":
+		return true
+	default:
+		return false
+	}
+}
+
+func isShareableMessageSanitizedExpr(expr ast.Expr) bool {
+	sanitized := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		name := strings.ToLower(callName(call))
+		if name == "sanitizemessage" || (strings.Contains(name, "sanit") && (strings.Contains(name, "message") || strings.Contains(name, "error"))) {
+			sanitized = true
+			return false
+		}
+		return true
+	})
+	return sanitized
+}
+
+func isAPICompositeType(expr ast.Expr, aliases map[string]string) bool {
+	selector, ok := expr.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	return ok && aliases[pkg.Name] == "github.com/autobrr/upbrr/pkg/api"
+}
+
+// checkDryRunPreviewSerialization requires backend redaction before tracker
+// endpoint/payload data is placed in a bridge/API preview response.
+func checkDryRunPreviewSerialization(fset *token.FileSet, relPath string, file *ast.File, allows map[int]*logpolicyAllow) []Violation {
+	violations := make([]Violation, 0)
+	ast.Inspect(file, func(node ast.Node) bool {
+		literal, ok := node.(*ast.CompositeLit)
+		if !ok || compositeTypeName(literal.Type) != "TrackerDryRunPreview" {
+			return true
+		}
+		for _, element := range literal.Elts {
+			field, ok := element.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			key, ok := field.Key.(*ast.Ident)
+			if !ok || key.Name != "Trackers" || isEmptyCompositeLiteral(field.Value) || isSanitizedDryRunEntriesExpr(field.Value) {
+				continue
+			}
+			appendLogpolicyViolation(fset, relPath, allows, &violations, field.Value.Pos(), "TrackerDryRunPreview entries must be sanitized before bridge/API serialization")
+		}
+		return true
+	})
+	return violations
+}
+
+func compositeTypeName(expr ast.Expr) string {
+	switch typed := expr.(type) {
+	case *ast.Ident:
+		return typed.Name
+	case *ast.SelectorExpr:
+		return typed.Sel.Name
+	default:
+		return ""
+	}
+}
+
+func isEmptyCompositeLiteral(expr ast.Expr) bool {
+	literal, ok := expr.(*ast.CompositeLit)
+	return ok && len(literal.Elts) == 0
+}
+
+func isSanitizedDryRunEntriesExpr(expr ast.Expr) bool {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	name := strings.ToLower(callName(call))
+	return strings.Contains(name, "dryrun") && (strings.Contains(name, "redact") || strings.Contains(name, "sanit"))
+}
+
+// checkResponseJSONParseErrorOutput flags parse errors from raw JSON envelope
+// fields when they reach returned errors, logs, HTTP responses, or terminal
+// output without a recognized redaction wrapper.
+func checkResponseJSONParseErrorOutput(fset *token.FileSet, relPath string, aliases map[string]string, allows map[int]*logpolicyAllow, violations *[]Violation, body *ast.BlockStmt) {
+	rawMessageMaps := responseJSONRawMessageMapVars(body, aliases)
+	ast.Inspect(body, func(node ast.Node) bool {
+		if node == nil {
+			return true
+		}
+		if lit, ok := node.(*ast.FuncLit); ok && lit.Body != body {
+			return false
+		}
+		stmt, ok := node.(*ast.IfStmt)
+		if !ok {
+			return true
+		}
+		errName, pos, ok := responseJSONParseErrorBinding(stmt, aliases, rawMessageMaps)
+		if !ok {
+			return true
+		}
+		if responseJSONParseErrorBlockOutputsRaw(stmt.Body, aliases, errName) {
+			appendLogpolicyViolation(fset, relPath, allows, violations, pos, "response-derived JSON parse errors must be redacted before returning or logging")
+		}
+		return true
+	})
+}
+
+// responseJSONParseErrorBinding recognizes the inline Go pattern used by most
+// parser branches: if err := json.Unmarshal(...); err != nil { ... }.
+func responseJSONParseErrorBinding(stmt *ast.IfStmt, aliases map[string]string, rawMessageMaps map[string]struct{}) (string, token.Pos, bool) {
+	assign, ok := stmt.Init.(*ast.AssignStmt)
+	if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+		return "", token.NoPos, false
+	}
+	errIdent, ok := assign.Lhs[0].(*ast.Ident)
+	if !ok || !isErrorLikeName(errIdent.Name) {
+		return "", token.NoPos, false
+	}
+	call, ok := assign.Rhs[0].(*ast.CallExpr)
+	if !ok || !isResponseDerivedJSONParseCall(call, aliases, rawMessageMaps) {
+		return "", token.NoPos, false
+	}
+	return errIdent.Name, call.Pos(), true
+}
+
+// isResponseDerivedJSONParseCall identifies json.Unmarshal calls whose input
+// looks like a response-envelope or json.RawMessage field rather than ordinary
+// top-level config/body decoding.
+func isResponseDerivedJSONParseCall(call *ast.CallExpr, aliases map[string]string, rawMessageMaps map[string]struct{}) bool {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	if pkg, ok := selector.X.(*ast.Ident); ok && aliases[pkg.Name] == "encoding/json" && selector.Sel.Name == "Unmarshal" {
+		return len(call.Args) > 0 &&
+			(isResponseDerivedJSONExpr(call.Args[0], rawMessageMaps) || responseJSONParseCallDecodesRawMessageMap(call, rawMessageMaps))
+	}
+	return false
+}
+
+// isResponseDerivedJSONExpr reports whether expr is named like a raw JSON
+// fragment that may contain provider or local secret material.
+func isResponseDerivedJSONExpr(expr ast.Expr, rawMessageMaps map[string]struct{}) bool {
+	switch typed := expr.(type) {
+	case *ast.Ident:
+		return isResponseDerivedJSONName(typed.Name)
+	case *ast.SelectorExpr:
+		return isResponseDerivedJSONName(selectorPath(typed))
+	case *ast.IndexExpr:
+		if ident, ok := typed.X.(*ast.Ident); ok {
+			if _, exists := rawMessageMaps[ident.Name]; exists {
+				return true
+			}
+		}
+		return isResponseDerivedJSONExpr(typed.X, rawMessageMaps)
+	case *ast.SliceExpr:
+		return isResponseDerivedJSONExpr(typed.X, rawMessageMaps)
+	case *ast.CallExpr:
+		if slices.ContainsFunc(typed.Args, func(arg ast.Expr) bool {
+			return isResponseDerivedJSONExpr(arg, rawMessageMaps)
+		}) {
+			return true
+		}
+	case *ast.UnaryExpr:
+		return isResponseDerivedJSONExpr(typed.X, rawMessageMaps)
+	}
+	return false
+}
+
+// responseJSONRawMessageMapVars collects function-local envelope variables that
+// preserve unparsed response fields for later json.Unmarshal calls.
+func responseJSONRawMessageMapVars(body *ast.BlockStmt, aliases map[string]string) map[string]struct{} {
+	result := make(map[string]struct{})
+	ast.Inspect(body, func(node ast.Node) bool {
+		if node == nil {
+			return true
+		}
+		if lit, ok := node.(*ast.FuncLit); ok && lit.Body != body {
+			return false
+		}
+		switch typed := node.(type) {
+		case *ast.ValueSpec:
+			if !isRawMessageMapType(typed.Type, aliases) {
+				return true
+			}
+			for _, name := range typed.Names {
+				if name != nil && name.Name != "_" {
+					result[name.Name] = struct{}{}
+				}
+			}
+		case *ast.AssignStmt:
+			for index, rhs := range typed.Rhs {
+				if index >= len(typed.Lhs) || !isRawMessageMapCompositeLit(rhs, aliases) {
+					continue
+				}
+				if ident, ok := typed.Lhs[index].(*ast.Ident); ok && ident.Name != "_" {
+					result[ident.Name] = struct{}{}
+				}
+			}
+		}
+		return true
+	})
+	return result
+}
+
+// responseJSONParseCallDecodesRawMessageMap reports whether a json.Unmarshal
+// target is a tracked map[string]json.RawMessage response envelope.
+func responseJSONParseCallDecodesRawMessageMap(call *ast.CallExpr, rawMessageMaps map[string]struct{}) bool {
+	if len(call.Args) < 2 {
+		return false
+	}
+	return isRawMessageMapDecodeTarget(call.Args[1], rawMessageMaps)
+}
+
+// isRawMessageMapDecodeTarget recognizes address-taken envelope vars such as
+// &fields after their declaration has been classified as a RawMessage map.
+func isRawMessageMapDecodeTarget(expr ast.Expr, rawMessageMaps map[string]struct{}) bool {
+	unary, ok := expr.(*ast.UnaryExpr)
+	if !ok || unary.Op != token.AND {
+		return false
+	}
+	ident, ok := unary.X.(*ast.Ident)
+	if !ok || ident.Name == "_" {
+		return false
+	}
+	_, exists := rawMessageMaps[ident.Name]
+	return exists
+}
+
+// isRawMessageMapCompositeLit reports composite literals that initialize
+// map[string]json.RawMessage envelopes.
+func isRawMessageMapCompositeLit(expr ast.Expr, aliases map[string]string) bool {
+	composite, ok := expr.(*ast.CompositeLit)
+	return ok && isRawMessageMapType(composite.Type, aliases)
+}
+
+// isRawMessageMapType reports map[string]json.RawMessage using the file's
+// import aliases rather than assuming the package is named json.
+func isRawMessageMapType(expr ast.Expr, aliases map[string]string) bool {
+	mapType, ok := expr.(*ast.MapType)
+	if !ok {
+		return false
+	}
+	keyIdent, ok := mapType.Key.(*ast.Ident)
+	if !ok || keyIdent.Name != "string" {
+		return false
+	}
+	selector, ok := mapType.Value.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != "RawMessage" {
+		return false
+	}
+	pkg, ok := selector.X.(*ast.Ident)
+	return ok && aliases[pkg.Name] == "encoding/json"
+}
+
+// isResponseDerivedJSONName keeps the heuristic narrow enough to avoid generic
+// response-body decode noise while still covering raw/result envelope fields.
+func isResponseDerivedJSONName(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if lower == "" {
+		return false
+	}
+	for _, segment := range strings.FieldsFunc(lower, func(r rune) bool { return r == '.' || r == '_' || r == '-' }) {
+		switch segment {
+		case "raw", "rawmessage", "rawjson", "result", "results", "torrents":
+			return true
+		}
+	}
+	return strings.Contains(lower, "rawmessage") || strings.Contains(lower, "rawjson")
+}
+
+// responseJSONParseErrorBlockOutputsRaw reports whether the error branch emits
+// the parse error through a user-shareable output path.
+func responseJSONParseErrorBlockOutputsRaw(block *ast.BlockStmt, aliases map[string]string, errName string) bool {
+	found := false
+	ast.Inspect(block, func(node ast.Node) bool {
+		if found || node == nil {
+			return false
+		}
+		if lit, ok := node.(*ast.FuncLit); ok && lit.Body != block {
+			return false
+		}
+		switch typed := node.(type) {
+		case *ast.ReturnStmt:
+			for _, result := range typed.Results {
+				if containsRawResponseJSONParseError(result, errName) {
+					found = true
+					return false
+				}
+			}
+		case *ast.CallExpr:
+			if !isOutputCall(typed, aliases) {
+				return true
+			}
+			for _, arg := range typed.Args {
+				if containsRawResponseJSONParseError(arg, errName) {
+					found = true
+					return false
+				}
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// isOutputCall recognizes calls that produce shareable diagnostics or returned
+// errors and therefore must not receive raw response-derived parse errors.
+func isOutputCall(call *ast.CallExpr, aliases map[string]string) bool {
+	selector, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	if isFmtSelector(selector, aliases, "Errorf") || isFmtPrintSelector(selector, aliases) || isHTTPErrorSelector(selector, aliases) {
+		return true
+	}
+	_, logger := loggerMethods[selector.Sel.Name]
+	return logger
+}
+
+// containsRawResponseJSONParseError reports direct use of the parse error or
+// err.Error() unless the expression is inside a recognized safe-output call.
+func containsRawResponseJSONParseError(expr ast.Expr, errName string) bool {
+	raw := false
+	ast.Inspect(expr, func(node ast.Node) bool {
+		if raw || node == nil {
+			return false
+		}
+		if call, ok := node.(*ast.CallExpr); ok && isSafeOutputCall(call) {
+			return false
+		}
+		switch typed := node.(type) {
+		case *ast.Ident:
+			if typed.Name == errName {
+				raw = true
+				return false
+			}
+		case *ast.CallExpr:
+			selector, ok := typed.Fun.(*ast.SelectorExpr)
+			if !ok || selector.Sel.Name != "Error" {
+				return true
+			}
+			receiver, ok := selector.X.(*ast.Ident)
+			if ok && receiver.Name == errName {
+				raw = true
+				return false
+			}
+		}
+		return true
+	})
+	return raw
 }
 
 // unusedLogpolicyAllowViolations reports suppressions that did not match an
@@ -2224,7 +2821,7 @@ func isSafeOutputCall(call *ast.CallExpr) bool {
 		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(fun.Sel.Name)), "redact") {
 			return true
 		}
-		return fun.Sel.Name == "RedactErrorDetail" || fun.Sel.Name == "ExtractHTTPErrorDetail"
+		return fun.Sel.Name == "RedactErrorDetail" || fun.Sel.Name == "ExtractHTTPErrorDetail" || fun.Sel.Name == "SanitizeMessage"
 	default:
 		return false
 	}
@@ -2875,6 +3472,35 @@ func isSafeDryRunOutputExpr(expr ast.Expr) bool {
 	default:
 		return false
 	}
+}
+
+// checkUnit3DQueryCredentialAuth prevents API credentials from returning to
+// request URLs after Unit3D authentication has moved to Bearer headers.
+func checkUnit3DQueryCredentialAuth(fset *token.FileSet, relPath string, file *ast.File, allows map[int]*logpolicyAllow) []Violation {
+	if relPath != "internal/trackerdata/unit3d.go" && !strings.HasPrefix(relPath, "internal/trackers/impl/unit3d/") {
+		return nil
+	}
+	violations := make([]Violation, 0)
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok || len(call.Args) < 2 {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || (selector.Sel.Name != "Set" && selector.Sel.Name != "Add") {
+			return true
+		}
+		key, ok := stringLiteral(call.Args[0])
+		if !ok {
+			return true
+		}
+		switch canonicalSensitiveKeyName(key) {
+		case "apikey", "apitoken", "authkey", "passkey", "token":
+			appendLogpolicyViolation(fset, relPath, allows, &violations, call.Args[0].Pos(), "Unit3D API credentials must use Authorization: Bearer instead of URL query parameters")
+		}
+		return true
+	})
+	return violations
 }
 
 func violationAt(fset *token.FileSet, file string, pos token.Pos, message string) Violation {

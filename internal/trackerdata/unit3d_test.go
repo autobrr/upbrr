@@ -29,6 +29,23 @@ func TestIsUnit3DTracker(t *testing.T) {
 	}
 }
 
+func TestSetUnit3DAPIHeadersUsesBearerAuthorization(t *testing.T) {
+	t.Parallel()
+
+	SetUnit3DAPIHeaders(nil, "ignored")
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "https://tracker.example/api/torrents/upload", nil)
+	SetUnit3DAPIHeaders(req, " secret ")
+	if req.Header.Get("Authorization") != "Bearer secret" {
+		t.Fatal("expected Unit3D Bearer authorization")
+	}
+	if req.Header.Get("Accept") != "application/json" {
+		t.Fatal("expected Unit3D JSON accept header")
+	}
+	if req.URL.Query().Has("api_token") {
+		t.Fatal("Unit3D API token must not be placed in the query")
+	}
+}
+
 func TestUnit3DMappings(t *testing.T) {
 	t.Parallel()
 
@@ -137,8 +154,12 @@ func TestSearchTorrentsCBRIncludesPendingAndFiltersTMDB(t *testing.T) {
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
-		if got := r.URL.Query().Get("api_token"); got != "secret" {
-			t.Error("api token mismatch")
+		if r.Header.Get("Authorization") != "Bearer secret" {
+			t.Error("bearer authorization mismatch")
+			return
+		}
+		if r.URL.Query().Has("api_token") {
+			t.Error("API token must not be placed in the query")
 			return
 		}
 
@@ -191,6 +212,42 @@ func TestSearchTorrentsCBRIncludesPendingAndFiltersTMDB(t *testing.T) {
 	}
 	if entries[1].ID != "202" || entries[1].SizeBytes != 456 || entries[1].Files[0] != "pending.mkv" {
 		t.Fatalf("unexpected pending fields: %#v", entries[1])
+	}
+}
+
+func TestTorrentInfoUsesBearerAuthorization(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer secret" {
+			t.Error("bearer authorization mismatch")
+			return
+		}
+		if r.URL.Query().Has("api_token") {
+			t.Error("API token must not be placed in the query")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"attributes":{"tmdb_id":123,"category":"MOVIE"}}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	base, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal("parse test server URL")
+	}
+	client := NewClient(config.Config{
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"AITHER": {APIKey: "secret"},
+		}},
+	}, api.NopLogger{}, &http.Client{Transport: rewriteHostTransport{base: base, rt: server.Client().Transport}})
+
+	result, err := client.TorrentInfo(context.Background(), "AITHER", "123", "", true, false)
+	if err != nil {
+		t.Fatalf("torrent info: %v", err)
+	}
+	if result.TMDBID != 123 || result.Category != "MOVIE" {
+		t.Fatalf("unexpected Unit3D lookup result: %#v", result)
 	}
 }
 

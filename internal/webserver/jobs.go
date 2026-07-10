@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/guishared"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -394,7 +395,7 @@ func (b *Backend) runDupeCheckJob(ctx context.Context, job *dupeCheckJob) {
 		job.finishedAt = time.Now().UTC()
 		job.cancel = nil
 		job.status = "failed"
-		job.errorMessage = err.Error()
+		job.errorMessage = logging.SanitizeMessage(err.Error())
 		job.mu.Unlock()
 		b.emitDupeCheckSnapshot(job)
 		b.scheduleDupeJobCleanup(job)
@@ -411,7 +412,7 @@ func (b *Backend) runDupeCheckJob(ctx context.Context, job *dupeCheckJob) {
 			job.errorMessage = "dupe check canceled"
 		} else {
 			job.status = "failed"
-			job.errorMessage = err.Error()
+			job.errorMessage = logging.SanitizeMessage(err.Error())
 		}
 		job.mu.Unlock()
 		b.emitDupeCheckSnapshot(job)
@@ -723,13 +724,14 @@ func (b *Backend) runTrackerUploadJob(ctx context.Context, job *trackerUploadJob
 				break
 			}
 			job.mu.Lock()
+			message := logging.SanitizeMessage(err.Error())
 			state = job.states[tracker]
 			state.Status = "failed"
-			state.Message = err.Error()
+			state.Message = message
 			state.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 			job.states[tracker] = state
 			job.failedTrackers = append(job.failedTrackers, tracker)
-			job.errorMessage = err.Error()
+			job.errorMessage = message
 			job.mu.Unlock()
 			b.emitTrackerUploadSnapshot(job)
 			continue

@@ -32,6 +32,7 @@ import (
 	"github.com/anacrolix/torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -44,6 +45,7 @@ const (
 	uploadPath                = "/takeupload_api.php"
 	uploadTimeout             = 120 * time.Second
 	defaultCZTPostCancelGrace = 5 * time.Second
+	cztUploadDecodeFieldBytes = 512
 )
 
 var cztPostCancelGrace atomic.Int64
@@ -312,11 +314,11 @@ func finalizeCZTUploadSummary(summary api.UploadSummary) api.UploadSummary {
 func parseCZTUploadID(body []byte) (int, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(body, &fields); err != nil {
-		return 0, fmt.Errorf("decode CZT upload response fields: %w", err)
+		return 0, redactCZTUploadDecodeError("decode CZT upload response fields", err)
 	}
 	var id int
 	if err := json.Unmarshal(fields["id"], &id); err != nil {
-		return 0, fmt.Errorf("decode CZT upload response id: %w", err)
+		return 0, redactCZTUploadDecodeError("decode CZT upload response id", err)
 	}
 	return id, nil
 }
@@ -325,10 +327,10 @@ func parseCZTUploadResponse(body []byte) (uploadResponse, error) {
 	var parsed uploadResponse
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(body, &fields); err != nil {
-		return parsed, fmt.Errorf("decode CZT upload response fields: %w", err)
+		return parsed, redactCZTUploadDecodeError("decode CZT upload response fields", err)
 	}
 	if err := json.Unmarshal(fields["id"], &parsed.ID); err != nil {
-		return parsed, fmt.Errorf("id: %w", err)
+		return parsed, redactCZTUploadDecodeError("decode CZT upload response id", err)
 	}
 	var fieldErrs []error
 	parseOptionalStringField(fields, "name", &parsed.Name, &fieldErrs)
@@ -339,13 +341,23 @@ func parseCZTUploadResponse(body []byte) (uploadResponse, error) {
 	return parsed, errors.Join(fieldErrs...)
 }
 
+// redactCZTUploadDecodeError preserves parse context while removing any
+// secret-bearing fragments that encoding/json may echo from the response body.
+func redactCZTUploadDecodeError(context string, err error) error {
+	return fmt.Errorf("%s: %s", context, redaction.RedactValue(err.Error(), nil))
+}
+
 func parseOptionalStringField(fields map[string]json.RawMessage, name string, dest *string, errs *[]error) {
 	raw := fields[name]
 	if len(raw) == 0 {
 		return
 	}
 	if err := json.Unmarshal(raw, dest); err != nil {
-		*errs = append(*errs, fmt.Errorf("%s: %w", name, err))
+		preview := string(raw)
+		if len(preview) > cztUploadDecodeFieldBytes {
+			preview = preview[:cztUploadDecodeFieldBytes] + "..."
+		}
+		*errs = append(*errs, fmt.Errorf("%s: %s", name, redaction.RedactValue(fmt.Sprintf("value=%s: %s", preview, err.Error()), nil)))
 	}
 }
 

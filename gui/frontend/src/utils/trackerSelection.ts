@@ -8,6 +8,7 @@ type ResolveSelectedUploadTrackersInput = {
   releasePageTrackerSelection: Record<string, boolean>;
   uploadToggles: Record<string, boolean>;
   dupedTrackerSet: Set<string>;
+  skippedDupeTrackerSet: Set<string>;
   ruleSkippedTrackerSet: Set<string>;
   failedDupeTrackerSet: Set<string>;
 };
@@ -20,17 +21,19 @@ const hasOwn = (value: Record<string, boolean>, key: string) =>
  * metadata, upload, dry-run, and image-upload requests.
  *
  * A tracker must still be selected on the input page, enabled on the upload page,
- * configured in the current tracker list, and not blocked by dupe/rule failures.
- * Blocked-tracker sets use lower-case trimmed tracker names; returned names keep
- * the upload toggle keys used by the caller. Callers that pass the result to
- * backend APIs where an empty tracker list means defaults must guard filtered-empty
- * selections separately.
+ * configured in the current tracker list, and not blocked by duplicate hits,
+ * skipped dupe checks, rule failures, or failed dupe checks. Blocked-tracker
+ * sets use lower-case trimmed tracker names; returned names keep the upload
+ * toggle keys used by the caller. Callers that pass the result to backend APIs
+ * where an empty tracker list means defaults must guard filtered-empty selections
+ * separately.
  */
 export const resolveSelectedUploadTrackers = ({
   trackerUploadItems,
   releasePageTrackerSelection,
   uploadToggles,
   dupedTrackerSet,
+  skippedDupeTrackerSet,
   ruleSkippedTrackerSet,
   failedDupeTrackerSet,
 }: ResolveSelectedUploadTrackersInput) => {
@@ -43,6 +46,7 @@ export const resolveSelectedUploadTrackers = ({
       const normalized = name.toLowerCase().trim();
       if (!normalized) return false;
       if (dupedTrackerSet.has(normalized)) return false;
+      if (skippedDupeTrackerSet.has(normalized)) return false;
       if (ruleSkippedTrackerSet.has(normalized)) return false;
       if (failedDupeTrackerSet.has(normalized)) return false;
       return true;
@@ -56,13 +60,15 @@ export const resolveSelectedUploadTrackers = ({
  * every selected tracker before the backend call.
  *
  * Missing upload toggle keys are treated as startup/uninitialized state, while
- * disabled toggles and dupe/rule-failure blocks count as upload filters.
+ * disabled toggles and duplicate, skipped, rule-failure, or failed dupe-check
+ * blocks count as upload filters.
  */
 export const hasFilteredEmptyUploadTrackerSelection = ({
   trackerUploadItems,
   releasePageTrackerSelection,
   uploadToggles,
   dupedTrackerSet,
+  skippedDupeTrackerSet,
   ruleSkippedTrackerSet,
   failedDupeTrackerSet,
 }: ResolveSelectedUploadTrackersInput) => {
@@ -78,6 +84,7 @@ export const hasFilteredEmptyUploadTrackerSelection = ({
     if (!hasOwn(uploadToggles, item.name)) return false;
     if (!uploadToggles[item.name]) return true;
     if (dupedTrackerSet.has(normalized)) return true;
+    if (skippedDupeTrackerSet.has(normalized)) return true;
     if (ruleSkippedTrackerSet.has(normalized)) return true;
     if (failedDupeTrackerSet.has(normalized)) return true;
     return false;

@@ -778,6 +778,59 @@ func TestRunUploadPreparedDryRunInjectsSelectedTrackers(t *testing.T) {
 	}
 }
 
+func TestRunUploadPreparedDryRunBuildsSelectedTrackersDespiteSuppression(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	tracker := &stubTrackers{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	core.storeDupeCache(sourcePath, "", api.PreparedMetadata{
+		SourcePath:      sourcePath,
+		TrackersRemove:  []string{"AITHER"},
+		MatchedTrackers: []string{"AITHER"},
+		BlockedTrackers: map[string][]api.TrackerBlockReason{"AITHER": {api.TrackerBlockReasonDupe}, "BLU": {api.TrackerBlockReasonClaim}},
+	})
+
+	_, err = core.RunUploadPrepared(context.Background(), api.Request{
+		Paths:    []string{sourcePath},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER", "BLU"},
+		Options:  api.UploadOptions{DryRun: true},
+	})
+	if err != nil {
+		t.Fatalf("run upload prepared: %v", err)
+	}
+	if tracker.calls != 0 {
+		t.Fatalf("expected tracker upload not called, got %d", tracker.calls)
+	}
+	if tracker.dryRunCalls != 1 {
+		t.Fatalf("expected tracker dry-run build called once, got %d", tracker.dryRunCalls)
+	}
+	if !reflect.DeepEqual(tracker.lastTrackers, []string{"AITHER", "BLU"}) {
+		t.Fatalf("expected dry-run to process selected trackers despite suppression, got %v", tracker.lastTrackers)
+	}
+	if len(tracker.lastMeta.BlockedTrackers) != 0 {
+		t.Fatalf("expected dry-run metadata to ignore blocks, got %#v", tracker.lastMeta.BlockedTrackers)
+	}
+	if tracker.lastMeta.IgnoreTrackerRuleFailures {
+		t.Fatalf("expected dry-run metadata to preserve rule-failure filtering")
+	}
+}
+
 func TestRunUploadPreparedDebugInjectsClientAndSkipsTrackerUpload(t *testing.T) {
 	t.Parallel()
 
@@ -1858,6 +1911,56 @@ func TestCheckDupesReusesCLIMetadataPreviewCache(t *testing.T) {
 	}
 	if !containsCoreString(dupes.lastTrackers, "BHD") {
 		t.Fatalf("expected unmatched tracker checked, got %v", dupes.lastTrackers)
+	}
+}
+
+func TestCheckDupesDryRunChecksPreviouslyMatchedTrackers(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	dupes := &stubDupes{}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   &stubMeta{},
+			Clients:    &stubClient{},
+			Dupes:      dupes,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+	core.storeDupeCache(sourcePath, "", api.PreparedMetadata{
+		SourcePath:      sourcePath,
+		MatchedTrackers: []string{"AITHER"},
+		TrackersRemove:  []string{"AITHER"},
+		BlockedTrackers: map[string][]api.TrackerBlockReason{
+			"AITHER": {api.TrackerBlockReasonDupe},
+		},
+	})
+
+	summary, err := core.CheckDupes(context.Background(), api.Request{
+		Paths:    []string{sourcePath},
+		Mode:     api.ModeCLI,
+		Trackers: []string{"AITHER", "BHD"},
+		Options:  api.UploadOptions{DryRun: true},
+	})
+	if err != nil {
+		t.Fatalf("check dupes: %v", err)
+	}
+	if !containsCoreString(dupes.lastTrackers, "AITHER") || !containsCoreString(dupes.lastTrackers, "BHD") {
+		t.Fatalf("expected dry-run dupe check to include matched and unmatched trackers, got %v", dupes.lastTrackers)
+	}
+	if len(dupes.lastMeta.MatchedTrackers) != 0 {
+		t.Fatalf("expected previous matched trackers cleared for dry-run dupe check, got %#v", dupes.lastMeta.MatchedTrackers)
+	}
+	if got := dupes.lastMeta.BlockedTrackers["AITHER"]; len(got) != 0 {
+		t.Fatalf("expected previous dupe block cleared for dry-run dupe check, got %#v", got)
+	}
+	if len(summary.Results) != 0 {
+		t.Fatalf("expected no synthetic pathed dupe result in dry-run check, got %#v", summary.Results)
 	}
 }
 
@@ -3408,6 +3511,53 @@ func TestFetchTrackerDryRunPreviewUsesCachedMetadata(t *testing.T) {
 	}
 }
 
+func TestSanitizeTrackerDryRunEntriesRedactsBridgePayload(t *testing.T) {
+	t.Parallel()
+
+	entries := []api.TrackerDryRunEntry{{
+		Message:  `request failed: Get "https://tracker.example/upload?api_key=policy-secret"`,
+		Endpoint: "https://policy-user:policy-password@tracker.example/upload?api_key=policy-secret",
+		Payload: map[string]string{
+			"api_key":     "policy-secret",
+			"description": "kept",
+		},
+		Files: []api.TrackerDryRunFile{{Field: "torrent", Path: `C:\path\to\Example.Release.2026.1080p-GRP.torrent`, Present: true}},
+		DebugSections: []api.TrackerDryRunDebugSection{{
+			Endpoint: "https://tracker.example/debug?passkey=policy-passkey",
+			Payload:  map[string]string{"auth_key": "policy-auth", "name": "kept"},
+			Files:    []api.TrackerDryRunFile{{Field: "nfo", Path: `/media/releases/Example.Release.2026.1080p-GRP.nfo`, Present: true}},
+		}},
+		ImageHost: api.ImageHostFeedback{Warnings: []api.ImageHostWarning{{
+			Host:    "example",
+			Message: "failed for /media/releases/Example.Release.2026.1080p-GRP.png?token=policy-token",
+		}}},
+	}}
+
+	sanitized := sanitizeTrackerDryRunEntries(entries)
+	if len(sanitized) != 1 {
+		t.Fatal("expected one sanitized dry-run entry")
+	}
+	encoded := sanitized[0].Message + sanitized[0].Endpoint + strings.Join([]string{
+		sanitized[0].Payload["api_key"],
+		sanitized[0].Files[0].Path,
+		sanitized[0].DebugSections[0].Endpoint,
+		sanitized[0].DebugSections[0].Payload["auth_key"],
+		sanitized[0].DebugSections[0].Files[0].Path,
+		sanitized[0].ImageHost.Warnings[0].Message,
+	}, " ")
+	for _, marker := range []string{"policy-secret", "policy-user", "policy-password", "policy-passkey", "policy-auth", "policy-token", `C:\path\to`, "/media/releases/"} {
+		if strings.Contains(encoded, marker) {
+			t.Fatal("expected bridge dry-run payload to omit secrets and local paths")
+		}
+	}
+	if sanitized[0].Payload["description"] != "kept" || sanitized[0].DebugSections[0].Payload["name"] != "kept" {
+		t.Fatal("expected non-sensitive dry-run payload fields preserved")
+	}
+	if entries[0].Payload["api_key"] != "policy-secret" || entries[0].Files[0].Path == sanitized[0].Files[0].Path {
+		t.Fatal("expected sanitizer to clone nested dry-run data")
+	}
+}
+
 func TestRunUploadPreparedDebugDryRunIgnoresCheckBlocksForArtifacts(t *testing.T) {
 	t.Parallel()
 
@@ -3475,8 +3625,8 @@ func TestRunUploadPreparedDebugDryRunIgnoresCheckBlocksForArtifacts(t *testing.T
 	if !slices.Equal(tracker.lastTrackers, []string{"AITHER", "BLU"}) {
 		t.Fatalf("expected debug dry-run for all trackers, got %#v", tracker.lastTrackers)
 	}
-	if !tracker.lastMeta.IgnoreTrackerRuleFailures {
-		t.Fatalf("expected debug dry-run metadata to ignore rule failures")
+	if tracker.lastMeta.IgnoreTrackerRuleFailures {
+		t.Fatalf("expected debug dry-run metadata to preserve rule-failure filtering")
 	}
 	if len(tracker.lastMeta.BlockedTrackers) != 0 {
 		t.Fatalf("expected debug dry-run metadata to ignore tracker blocks, got %#v", tracker.lastMeta.BlockedTrackers)
@@ -3647,9 +3797,10 @@ func TestFetchTrackerDryRunPreviewAnnotatesReleaseNameChange(t *testing.T) {
 	}
 }
 
-func TestFetchTrackerDryRunPreviewPassesRuleFailureOverride(t *testing.T) {
+func TestFetchTrackerDryRunPreviewPreservesRuleFailuresForArtifacts(t *testing.T) {
 	t.Parallel()
 
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
 	tracker := &stubTrackers{}
 	core, err := New(api.CoreDependencies{
 		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
@@ -3666,19 +3817,29 @@ func TestFetchTrackerDryRunPreviewPassesRuleFailureOverride(t *testing.T) {
 		t.Fatalf("new core: %v", err)
 	}
 
-	core.storeDupeCache("/tmp/a", "", api.PreparedMetadata{SourcePath: "/tmp/a"})
+	core.storeDupeCache(sourcePath, "", api.PreparedMetadata{
+		SourcePath: sourcePath,
+		BlockedTrackers: map[string][]api.TrackerBlockReason{
+			"AITHER": {api.TrackerBlockReasonClaim},
+		},
+		TrackerRuleFailures: map[string][]api.RuleFailure{
+			"AITHER": {{Rule: "example_rule", Reason: "example reason"}},
+		},
+	})
 
 	_, err = core.FetchTrackerDryRunPreview(context.Background(), api.Request{
-		Paths:                     []string{"/tmp/a"},
-		Mode:                      api.ModeGUI,
-		Trackers:                  []string{"AITHER"},
-		IgnoreTrackerRuleFailures: true,
+		Paths:    []string{sourcePath},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER"},
 	})
 	if err != nil {
 		t.Fatalf("fetch tracker dry-run preview: %v", err)
 	}
-	if !tracker.lastMeta.IgnoreTrackerRuleFailures {
-		t.Fatalf("expected ignore tracker rule failures flag to be passed to dry-run")
+	if tracker.lastMeta.IgnoreTrackerRuleFailures {
+		t.Fatalf("expected dry-run metadata to preserve tracker rule failures")
+	}
+	if len(tracker.lastMeta.BlockedTrackers) != 0 {
+		t.Fatalf("expected dry-run metadata to ignore tracker blocks, got %#v", tracker.lastMeta.BlockedTrackers)
 	}
 }
 
@@ -3753,6 +3914,7 @@ func TestFetchPreparationPreviewCreatesRuntimeCacheForDryRunReadiness(t *testing
 func TestFetchTrackerDryRunPreviewReturnsEmptyWithoutSideEffectsWhenSelectedTrackersResolveEmpty(t *testing.T) {
 	t.Parallel()
 
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
 	client := &stubClient{}
 	metaSvc := &stubMeta{}
 	tracker := &stubTrackers{dryRunEntries: []api.TrackerDryRunEntry{{Tracker: "BLU", Status: "ready"}}}
@@ -3776,21 +3938,21 @@ func TestFetchTrackerDryRunPreviewReturnsEmptyWithoutSideEffectsWhenSelectedTrac
 	}
 
 	prepared := api.PreparedMetadata{
-		SourcePath:     "/tmp/a",
-		TrackersRemove: []string{"AITHER"},
+		SourcePath: sourcePath,
 	}
-	core.storeDupeCache("/tmp/a", "", prepared)
+	core.storeDupeCache(sourcePath, "", prepared)
 
 	preview, err := core.FetchTrackerDryRunPreview(context.Background(), api.Request{
-		Paths:    []string{"/tmp/a"},
-		Mode:     api.ModeGUI,
-		Trackers: []string{"AITHER"},
+		Paths:          []string{sourcePath},
+		Mode:           api.ModeGUI,
+		Trackers:       []string{"BLU"},
+		TrackersRemove: []string{"BLU"},
 	})
 	if err != nil {
 		t.Fatalf("fetch tracker dry-run preview: %v", err)
 	}
-	if preview.SourcePath != "/tmp/a" {
-		t.Fatalf("expected source path /tmp/a, got %q", preview.SourcePath)
+	if preview.SourcePath != sourcePath {
+		t.Fatalf("expected source path %q, got %q", sourcePath, preview.SourcePath)
 	}
 	if len(preview.Trackers) != 0 {
 		t.Fatalf("expected no dry-run entries, got %#v", preview.Trackers)
@@ -3804,7 +3966,7 @@ func TestFetchTrackerDryRunPreviewReturnsEmptyWithoutSideEffectsWhenSelectedTrac
 	if metaSvc.refreshCalls != 0 {
 		t.Fatalf("expected no metadata refresh, got %d", metaSvc.refreshCalls)
 	}
-	cached, ok := core.getDupeCache("/tmp/a", "")
+	cached, ok := core.getDupeCache(sourcePath, "")
 	if !ok {
 		t.Fatal("expected cached prepared metadata")
 	}

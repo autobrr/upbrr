@@ -259,16 +259,19 @@ Prefer generic group tags such as `GRP` when the group is incidental; real group
 
 ### Logging levels
 
-Keep log levels purposeful. `INFO` should provide concise, relevant progress or outcome details for end users during uploads and other top-level workflows. `DEBUG` should include richer decision-making context useful for developer troubleshooting. `TRACE` should capture near-complete operational flow for high-fidelity execution reporting.
+Keep log levels purposeful.
+- `INFO` should provide concise, relevant progress or outcome details for end users during uploads and other top-level workflows.
+- `DEBUG` should include richer decision-making context useful for developer troubleshooting.
+- `TRACE` should capture near-complete operational flow for high-fidelity execution reporting.
 
 ### Sensitive information
 
-Logging should be completely safe for blanket copy/pasting, without exposing any user sensitive credentials. Err on the side of caution.
-Tests should apply redaction for any potentially sensitive information, to prevent LLM consumption of personal information/credentials.
-Pay particular attention in API/HTTP/cookie type handling, ensuring redaction of headers and response bodies.
-Gaps fixes in `internal/redaction/redaction.go` or `internal/logpolicy/checker.go` are especially appreciated.
-Config values should be encrypted where appropriate, and only ever displayed in a redacted state.
-If an endpoint supports GET/query style and POST/bearer style handling, use the endpoint that puts sensitive credentials into a secure packet, rather than as a plain URL parameter.
+- Logging should be completely safe for blanket copy/pasting, without exposing any user sensitive credentials. Err on the side of caution.
+- Test assertion output is treated as CI-visible log material. Do not print raw cookies, auth headers, API keys, passkeys, passwords, CSRF tokens, OTP secrets, tracker announce URLs, or unredacted request/response bodies in tests, application logs, CLI output, or checker failure text.
+- Pay particular attention in API/HTTP/cookie type handling, ensuring redaction of headers and response bodies.
+- Gaps fixes in `internal/redaction/redaction.go` or `internal/logpolicy/checker.go`, are especially appreciated pull requests.
+- Config values should be encrypted where appropriate, and only ever displayed in a redacted state.
+- If an endpoint supports GET/query style and POST/bearer style handling, use the endpoint that puts sensitive credentials into a secure packet, rather than as a plain URL parameter.
 
 ### Path portability
 
@@ -285,12 +288,6 @@ upbrr targets Windows, Linux, and macOS. Do not assume POSIX path behavior in Go
 - Use `path.Base`, `path.Ext`, and related `path` APIs for URL/API paths. Use `filepath.Base`, `filepath.Ext`, and related `filepath` APIs for local paths. Legit stdlib `path` imports need import-local `//nolint:depguard // <slash-data reason>`.
 
 `make pathpolicy` runs the repo-local AST checker for hardcoded OS-rooted literals in `filepath` calls, string-built local paths, wrong `path`/`filepath` package use, slash-data filesystem calls, slash assertions without `filepath.ToSlash`, and ad-hoc local path guard helpers outside `internal/pathutil`. Rare intentional checker exceptions need `//pathpolicy:allow <reason>` on the same or previous line. `make lint`, pre-commit, and pre-push run it automatically.
-
-### Sensitive output
-
-Test assertion output is treated as CI-visible log material. Do not print raw cookies, auth headers, API keys, passkeys, passwords, CSRF tokens, OTP secrets, tracker announce URLs, or unredacted request/response bodies in tests, application logs, CLI output, or checker failure text.
-
-Prefer stable state assertions without raw values, such as `expected session cookie` or `got count=%d`. When diagnostic output needs value shape, use `redaction.RedactValue` or `commonhttp.RedactErrorDetail` before formatting it.
 
 ## AI agent instructions
 

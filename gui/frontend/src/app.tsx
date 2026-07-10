@@ -87,6 +87,7 @@ import {
 import { handleExternalLinkClick } from "./utils/externalLinks";
 import { normalizeJobStatus } from "./utils/jobStatus";
 import { isMetadataProgressPathMatch } from "./utils/metadataProgress";
+import { dupeSkipReason, isRuleSkippedResult } from "./utils/dupeCheck";
 import {
   hasFilteredEmptyUploadTrackerSelection as hasFilteredEmptyUploadTrackerSelectionState,
   resolveSelectedUploadTrackers,
@@ -197,7 +198,12 @@ const splitTrackerLabel = (value: string) =>
     .map((entry) => entry.toLowerCase().trim())
     .filter((entry) => entry.length > 0);
 
-/** Returns normalized tracker labels whose skipped duplicate-check result should block upload. */
+/**
+ * Returns every normalized tracker label represented by a duplicate-check row.
+ * Grouped rule rows use comma-separated tracker labels, while ordinary rows use
+ * a single tracker name; callers choose whether the row is a rule skip, generic
+ * skip, dupe hit, or failure before applying the labels.
+ */
 export const ruleBlockingTrackerLabels = (result: Pick<DupeCheckResult, "Tracker">) => {
   const next = new Set<string>();
   const normalized = result.Tracker.toLowerCase().trim();
@@ -1191,7 +1197,21 @@ export default function App() {
     return next;
   }, [dupeTrackerFlags]);
 
+  // Rule failures stay terminal even in debug/dry-run. Keep this set separate
+  // from generic skipped duplicate-check results so the UI can show the exact
+  // skip reason without labeling config/handler skips as rule failures.
   const ruleSkippedTrackerSet = useMemo(() => {
+    const next = new Set<string>();
+    dupeEffectiveResults.forEach((result) => {
+      if (!result.Tracker || !isRuleSkippedResult(result)) return;
+      ruleBlockingTrackerLabels(result).forEach((tracker) => next.add(tracker));
+    });
+    return next;
+  }, [dupeEffectiveResults]);
+
+  // Any skipped duplicate-check result blocks upload eligibility; rule skips are
+  // also included here but their display copy comes from ruleSkipReasons.
+  const skippedDupeTrackerSet = useMemo(() => {
     const next = new Set<string>();
     dupeEffectiveResults.forEach((result) => {
       if (!result.Tracker || !result.Skipped) return;
@@ -1216,11 +1236,25 @@ export default function App() {
     return next;
   }, [dupeEffectiveResults]);
 
-  const ruleSkipReasons = useMemo(() => {
+  // Generic skipped reasons cover handler/config skips such as missing API keys.
+  // Rule-specific labels are derived separately to avoid misleading copy.
+  const skippedDupeReasons = useMemo(() => {
     const next: Record<string, string> = {};
     dupeEffectiveResults.forEach((result) => {
       if (!result.Tracker || !result.Skipped) return;
-      const reason = (result.SkipReason || result.Notes?.join(" ") || "rule check failed").trim();
+      const reason = dupeSkipReason(result) || "Skipped";
+      ruleBlockingTrackerLabels(result).forEach((tracker) => {
+        next[tracker] = reason;
+      });
+    });
+    return next;
+  }, [dupeEffectiveResults]);
+
+  const ruleSkipReasons = useMemo(() => {
+    const next: Record<string, string> = {};
+    dupeEffectiveResults.forEach((result) => {
+      if (!result.Tracker || !isRuleSkippedResult(result)) return;
+      const reason = dupeSkipReason(result);
       ruleBlockingTrackerLabels(result).forEach((tracker) => {
         next[tracker] = reason || "rule check failed";
       });
@@ -1439,16 +1473,20 @@ export default function App() {
    * Dupe and rule-failure filters apply only when their snapshot source path
    * matches the requested path context, preventing stale blocks from a previous
    * source path from changing metadata fetch or playlist preparation payloads.
+   * Callers starting a fresh dupe check can disable dupe filters while keeping
+   * manual upload tracker toggles.
    */
   const resolveUploadTrackerEligibilityForPath = useCallback(
-    (sourcePath: string) => {
+    (sourcePath: string, options: { applyDupeFilters?: boolean } = {}) => {
       const targetPath = sourcePath.trim();
       const currentPath = path.trim();
       const dupeSourcePath = String(
         dupeSummary.SourcePath || dupeCheckSnapshot?.sourcePath || "",
       ).trim();
       const pathCaseInsensitive = isRuntimePathCaseInsensitive();
+      const applyDupeFilters = options.applyDupeFilters ?? true;
       const dupeSourceMatchesTarget =
+        applyDupeFilters &&
         targetPath !== "" &&
         dupeSourcePath !== "" &&
         isSourcePathContextMatch(dupeSourcePath, targetPath, pathCaseInsensitive);
@@ -1460,7 +1498,13 @@ export default function App() {
 
       trackerUploadItems.forEach((item) => {
         const normalized = item.name.toLowerCase().trim();
-        if (uploadTogglesMatchTarget && hasOwnSelection(uploadToggles, item.name)) {
+        const ignoreAutoDisabledToggle =
+          !applyDupeFilters && autoDisabledUploadTrackersRef.current.has(normalized);
+        if (
+          uploadTogglesMatchTarget &&
+          hasOwnSelection(uploadToggles, item.name) &&
+          !ignoreAutoDisabledToggle
+        ) {
           effectiveUploadToggles[item.name] = uploadToggles[item.name];
           return;
         }
@@ -1473,6 +1517,9 @@ export default function App() {
 
       const emptyTrackerSet = new Set<string>();
       const scopedDupedTrackerSet = dupeSourceMatchesTarget ? dupedTrackerSet : emptyTrackerSet;
+      const scopedSkippedDupeTrackerSet = dupeSourceMatchesTarget
+        ? skippedDupeTrackerSet
+        : emptyTrackerSet;
       const scopedRuleSkippedTrackerSet = dupeSourceMatchesTarget
         ? ruleSkippedTrackerSet
         : emptyTrackerSet;
@@ -1484,6 +1531,7 @@ export default function App() {
         releasePageTrackerSelection,
         uploadToggles: effectiveUploadToggles,
         dupedTrackerSet: scopedDupedTrackerSet,
+        skippedDupeTrackerSet: scopedSkippedDupeTrackerSet,
         ruleSkippedTrackerSet: scopedRuleSkippedTrackerSet,
         failedDupeTrackerSet: scopedFailedDupeTrackerSet,
       });
@@ -1500,6 +1548,7 @@ export default function App() {
             releasePageTrackerSelection,
             uploadToggles: effectiveUploadToggles,
             dupedTrackerSet: scopedDupedTrackerSet,
+            skippedDupeTrackerSet: scopedSkippedDupeTrackerSet,
             ruleSkippedTrackerSet: scopedRuleSkippedTrackerSet,
             failedDupeTrackerSet: scopedFailedDupeTrackerSet,
           }),
@@ -1514,6 +1563,7 @@ export default function App() {
       path,
       releasePageTrackerSelection,
       ruleSkippedTrackerSet,
+      skippedDupeTrackerSet,
       trackerUploadItems,
       uploadToggles,
     ],
@@ -3085,13 +3135,14 @@ export default function App() {
       setDupeError("Fix invalid overrides before checking dupes.");
       return;
     }
-    const selectedTrackers = getSelectedTrackers();
+    const trackerEligibility = resolveUploadTrackerEligibilityForPath(path, {
+      applyDupeFilters: false,
+    });
+    const selectedTrackers = trackerEligibility.selectedTrackers.slice();
     if (selectedTrackers.length === 0) {
       setDupeError("Select at least one tracker before checking dupes.");
       return;
     }
-    setDupeChecked(false);
-    setDupeSummary(emptyDupeSummary);
     setDupeLoading(true);
     let jobID = "";
     try {
@@ -3103,14 +3154,16 @@ export default function App() {
       );
     } catch (err) {
       const message = String(err);
-      // Starter failures do not create a durable job, so clear the polling gates.
+      // Starter failures do not create a durable job, so stop polling without
+      // discarding the last completed summary.
       setDupeLoading(false);
       setDupeCheckJobID("");
-      setDupeCheckSnapshot(null);
-      setDupeChecked(false);
       setDupeError(dupeCheckErrorMessage(message));
       return;
     }
+    setDupeChecked(false);
+    setDupeSummary(emptyDupeSummary);
+    setDupeCheckSnapshot(null);
     setDupeCheckJobID(jobID);
     // The first snapshot is best-effort; once a job exists, events and fallback
     // polling own lifecycle updates.
@@ -3370,6 +3423,11 @@ export default function App() {
         setToggle(item.name, false);
         return;
       }
+      if (dupeFiltersMatchCurrentPath && skippedDupeTrackerSet.has(normalized)) {
+        autoDisabled.delete(normalized);
+        setToggle(item.name, false);
+        return;
+      }
       if (autoDisabled.has(normalized)) {
         setToggle(
           item.name,
@@ -3414,6 +3472,7 @@ export default function App() {
     dupeFiltersMatchCurrentPath,
     dupedTrackerSet,
     ruleSkippedTrackerSet,
+    skippedDupeTrackerSet,
     failedDupeTrackerSet,
     releasePageTrackerSelection,
     uploadToggles,
@@ -3479,14 +3538,6 @@ export default function App() {
     setTrackerDryRunError("");
     setTrackerDryRunProgress(null);
   }, [path]);
-
-  // releasePageTrackerSelection is raw input-page state. Workflows that must
-  // honor upload eligibility use selectedUploadImageTrackers instead.
-  const getSelectedTrackers = () => {
-    return Object.entries(releasePageTrackerSelection)
-      .filter(([, selected]) => selected)
-      .map(([name]) => name);
-  };
 
   const getSelectedUploadTrackers = useCallback(
     () => selectedUploadImageTrackers,
@@ -4278,6 +4329,7 @@ export default function App() {
               dupeTrackerFlags={dupeTrackerFlags}
               dupeIgnore={dupeIgnore}
               ruleSkippedTrackerSet={ruleSkippedTrackerSet}
+              skippedDupeReasons={skippedDupeReasons}
               ruleSkipReasons={ruleSkipReasons}
               dupeProgressStatus={dupeProgressStatus}
               dupeCompletedCount={dupeCompletedCount}
@@ -4425,6 +4477,8 @@ export default function App() {
               trackerUploadItems={trackerUploadItems}
               releasePageTrackerSelection={releasePageTrackerSelection}
               dupedTrackerSet={dupedTrackerSet}
+              skippedDupeReasons={skippedDupeReasons}
+              skippedDupeTrackerSet={skippedDupeTrackerSet}
               ruleSkipReasons={ruleSkipReasons}
               ruleSkippedTrackerSet={ruleSkippedTrackerSet}
               failedDupeTrackerSet={failedDupeTrackerSet}

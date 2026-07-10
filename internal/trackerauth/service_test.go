@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
@@ -640,6 +641,75 @@ func TestValidateFFLoginPersistsCookies(t *testing.T) {
 	}
 	if values["session"] != "valid" {
 		t.Fatal("expected saved FF login cookies")
+	}
+}
+
+func TestValidateFFLoginDoesNotPersistUnverifiedCookies(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "FF", map[string]string{"session": "expired"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+
+	var uploadValidationRequests atomic.Int32
+	handlerErr := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/upload.php":
+			if cookie, err := r.Cookie("session"); err == nil && cookie.Value == "invalid" {
+				uploadValidationRequests.Add(1)
+			}
+			_, _ = w.Write([]byte(`<input name="username">`))
+		case "/takelogin.php":
+			if err := r.ParseForm(); err != nil {
+				select {
+				case handlerErr <- fmt.Errorf("parse login form: %w", err):
+				default:
+				}
+				return
+			}
+			if r.FormValue("username") != "user" || r.FormValue("password") != "pass" {
+				select {
+				case handlerErr <- errors.New("unexpected FF login form"):
+				default:
+				}
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "invalid", Path: "/"})
+			w.Header().Set("Location", "/index.php")
+			w.WriteHeader(http.StatusFound)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"FF": {URL: server.URL, Username: "user", Password: "pass"},
+			},
+		},
+	}).Validate(ctx, "FF")
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	select {
+	case err := <-handlerErr:
+		t.Fatal(err)
+	default:
+	}
+	if status.State != StateLoginRequired || status.CookieCount != 0 {
+		t.Fatalf("expected rejected FF login cookies to leave login required with no cookies, got %#v", status)
+	}
+	if uploadValidationRequests.Load() == 0 {
+		t.Fatalf("expected returned FF login cookies to be validated before persistence, got %d request(s)", uploadValidationRequests.Load())
+	}
+	if _, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "FF"); err == nil {
+		t.Fatal("invalid FF login cookies were persisted")
 	}
 }
 

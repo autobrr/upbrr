@@ -1246,6 +1246,14 @@ func TestPrintDebugUploadReview(t *testing.T) {
 				Tracker:      "HDB",
 				Banned:       true,
 				BannedReason: "group banned",
+				DryRun: api.TrackerDryRunEntry{
+					Tracker:      "HDB",
+					Status:       "ready",
+					Banned:       true,
+					BannedReason: "group banned",
+					ReleaseName:  "Movie.HDB.2024",
+					Payload:      map[string]string{"name": "Movie.HDB.2024"},
+				},
 			},
 		},
 	}
@@ -1262,6 +1270,7 @@ func TestPrintDebugUploadReview(t *testing.T) {
 		"- name: Movie.2024",
 		"[HDB Debug Payload]",
 		"Banned group: group banned",
+		"- name: Movie.HDB.2024",
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected output to contain %q, got %q", expected, output)

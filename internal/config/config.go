@@ -19,6 +19,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/autobrr/upbrr/internal/imagehostpolicy"
+	"github.com/autobrr/upbrr/internal/redaction"
 )
 
 type Config struct {
@@ -553,7 +554,7 @@ func (t *TrackersConfig) UnmarshalJSON(data []byte) error {
 
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(data, &root); err != nil {
-		return fmt.Errorf("config: unmarshal trackers config root: %w", err)
+		return fmt.Errorf("config: unmarshal trackers config root: %s", redaction.RedactValue(err.Error(), nil))
 	}
 
 	t.DefaultTrackers = CSVList{}
@@ -588,7 +589,7 @@ func (t *TrackersConfig) UnmarshalJSON(data []byte) error {
 	var rawTrackers map[string]json.RawMessage
 	if raw, ok := root["Trackers"]; ok {
 		if err := json.Unmarshal(raw, &rawTrackers); err != nil {
-			return fmt.Errorf("config: unmarshal trackers map: %w", err)
+			return fmt.Errorf("config: unmarshal trackers map: %s", redaction.RedactValue(err.Error(), nil))
 		}
 	} else {
 		rawTrackers = make(map[string]json.RawMessage)

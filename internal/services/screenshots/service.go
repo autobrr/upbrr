@@ -24,6 +24,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -343,7 +344,7 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 			usedLib, captureErr := captureFrame(ctx, s.runner, cmd, capture)
 			if captureErr != nil {
 				mu.Lock()
-				errors = append(errors, api.ScreenshotError{Index: selection.Index, Message: captureErr.Error()})
+				errors = append(errors, api.ScreenshotError{Index: selection.Index, Message: logging.SanitizeMessage(captureErr.Error())})
 				mu.Unlock()
 				continue
 			}

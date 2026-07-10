@@ -16,8 +16,10 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackerdata"
+	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -34,6 +36,7 @@ type Service struct {
 	logger   api.Logger
 	http     *http.Client
 	tracker  *trackerdata.Client
+	banned   *trackerspkg.BannedGroupChecker
 	handlers map[string]searchHandler
 	filter   func([]api.DupeEntry, api.PreparedMetadata, string, config.Config, api.Logger) ([]api.DupeEntry, api.DupeMatch)
 
@@ -54,6 +57,7 @@ func NewService(cfg config.Config, logger api.Logger) *Service {
 		logger:   logger,
 		http:     httpClient,
 		tracker:  trackerClient,
+		banned:   trackerspkg.NewBannedGroupChecker(cfg.MainSettings.DBPath),
 		handlers: buildHandlers(deps),
 		filter:   FilterDupes,
 
@@ -65,6 +69,12 @@ func NewService(cfg config.Config, logger api.Logger) *Service {
 // Missing source paths return an error, an empty tracker list returns a summary
 // note, and context cancellation stops queued work, waits briefly for active
 // workers, and returns a cancellation error instead of a partial summary.
+// Trackers blocked by rule failures or banned release groups are returned as
+// skipped results without running the tracker search handler. Per-tracker rule
+// skips remain terminal over banned-group skips in the returned result.
+// When meta has an effective release group, Check refreshes dynamic banned
+// group caches before per-tracker rule skips so the once-per-TTL cache
+// maintenance still runs for the requested tracker set.
 // Progress callback panics are logged and do not abort the duplicate check.
 func (s *Service) Check(ctx context.Context, meta api.PreparedMetadata, trackers []string) (api.DupeCheckSummary, error) {
 	if strings.TrimSpace(meta.SourcePath) == "" {
@@ -76,6 +86,13 @@ func (s *Service) Check(ctx context.Context, meta api.PreparedMetadata, trackers
 		summary.Notes = append(summary.Notes, "no trackers configured for dupe checking")
 		s.logger.Infof("dupechecking: no trackers configured for %s", meta.SourcePath)
 		return summary, nil
+	}
+	if trackerspkg.NormalizeBannedReleaseGroup(meta.Tag) != "" {
+		// RefreshDynamic is cache maintenance for the resolved tracker set, not
+		// per-tracker search work; keep it before terminal rule-skip handling.
+		if err := s.banned.RefreshDynamic(ctx, s.cfg, resolvedTrackers, s.logger); err != nil {
+			return api.DupeCheckSummary{}, fmt.Errorf("dupechecking: banned groups refresh: %w", err)
+		}
 	}
 
 	total := len(resolvedTrackers)
@@ -218,6 +235,24 @@ func (s *Service) checkTracker(ctx context.Context, meta api.PreparedMetadata, t
 		return result
 	}
 
+	if reason, err := s.bannedGroupSkipReason(tracker, meta.Tag); reason != "" || err != nil {
+		if err != nil {
+			message := bannedGroupCheckFailureMessage(err)
+			result.Status = "failed"
+			result.Error = message
+			result.Notes = append(result.Notes, message)
+			s.logger.Warnf("dupechecking: %s banned group check failed for %s: %s", tracker, meta.SourcePath, redaction.RedactValue(err.Error(), nil))
+			return result
+		}
+		result.Skipped = true
+		result.SkipReason = reason
+		result.SkipCode = "banned_group"
+		result.Status = "skipped"
+		result.Notes = append(result.Notes, reason)
+		s.logger.Debugf("dupechecking: skipped %s for %s due to banned group: %s", tracker, meta.SourcePath, reason)
+		return result
+	}
+
 	handler, ok := s.handlers[tracker]
 	if !ok {
 		reason := handlerNotImplementedReason(tracker)
@@ -231,10 +266,14 @@ func (s *Service) checkTracker(ctx context.Context, meta api.PreparedMetadata, t
 
 	raw, notes, err := handler.Search(ctx, meta, tracker)
 	if err != nil {
+		message := strings.TrimSpace(logging.SanitizeMessage(err.Error()))
+		if message == "" {
+			message = "dupe search failed"
+		}
 		result.Status = "failed"
-		result.Error = err.Error()
-		result.Notes = append(result.Notes, fmt.Sprintf("dupe search failed: %v", err))
-		s.logger.Warnf("dupechecking: %s search failed for %s: %v", tracker, meta.SourcePath, err)
+		result.Error = message
+		result.Notes = append(result.Notes, "dupe search failed: "+message)
+		s.logger.Warnf("dupechecking: %s search failed for %s: %s", tracker, meta.SourcePath, message)
 		return result
 	}
 	skipCode, notes := splitSkipCodeNotes(notes)
@@ -247,7 +286,7 @@ func (s *Service) checkTracker(ctx context.Context, meta api.PreparedMetadata, t
 	result.Notes = append(result.Notes, notes...)
 	result.Raw = trimEntries(raw)
 	if result.Skipped {
-		s.logger.Debugf("dupechecking: handler marked skipped for %s (%s)", tracker, meta.SourcePath)
+		s.logger.Debugf("dupechecking: handler marked skipped for %s (%s): %s", tracker, meta.SourcePath, result.SkipReason)
 		return result
 	}
 
@@ -263,12 +302,38 @@ func (s *Service) checkTracker(ctx context.Context, meta api.PreparedMetadata, t
 	return result
 }
 
+// bannedGroupSkipReason reports the skip reason for tracker when the normalized
+// tag resolves to a banned release group. Cache read failures are returned for
+// the caller to expose as a failed tracker result.
+func (s *Service) bannedGroupSkipReason(tracker string, tag string) (string, error) {
+	group := trackerspkg.NormalizeBannedReleaseGroup(tag)
+	if group == "" {
+		return "", nil
+	}
+	banned, err := s.banned.IsBanned(tracker, group)
+	if err != nil {
+		return "", fmt.Errorf("dupechecking: %s banned group: %w", normalizeTracker(tracker), err)
+	}
+	if !banned {
+		return "", nil
+	}
+	return fmt.Sprintf("group %s is banned on %s", group, normalizeTracker(tracker)), nil
+}
+
 func panicFailureMessage(recovered any) string {
 	detail := strings.TrimSpace(redaction.RedactValue(fmt.Sprint(recovered), nil))
 	if detail == "" {
 		return "dupe search panicked"
 	}
 	return "dupe search panicked: " + detail
+}
+
+func bannedGroupCheckFailureMessage(err error) string {
+	detail := strings.TrimSpace(redaction.RedactValue(err.Error(), nil))
+	if detail == "" {
+		detail = "unknown error"
+	}
+	return "banned group check failed: " + detail + "; mode=non-interactive dupe check; action=fix banned-group cache or dynamic banned-group configuration, then retry"
 }
 
 func panicProgressMessage(recovered any) string {

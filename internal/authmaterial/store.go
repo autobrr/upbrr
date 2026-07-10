@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/redaction"
+
 	"golang.org/x/crypto/argon2"
 )
 
@@ -109,7 +111,7 @@ func (s *Store) Load() (Record, error) {
 	}
 	var record Record
 	if err := json.Unmarshal(raw, &record); err != nil {
-		return Record{}, fmt.Errorf("web auth: unmarshal auth file: %w", err)
+		return Record{}, fmt.Errorf("web auth: unmarshal auth file: %s", redaction.RedactValue(err.Error(), nil))
 	}
 	return record, nil
 }
@@ -253,7 +255,7 @@ func (s *Store) updateRecordLocked(apply func(record *Record) error) error {
 
 	var record Record
 	if err := json.Unmarshal(raw, &record); err != nil {
-		return fmt.Errorf("web auth: unmarshal auth file: %w", err)
+		return fmt.Errorf("web auth: unmarshal auth file: %s", redaction.RedactValue(err.Error(), nil))
 	}
 	if err := apply(&record); err != nil {
 		return err

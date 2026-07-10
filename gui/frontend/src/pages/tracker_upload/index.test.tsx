@@ -49,6 +49,9 @@ const dryRunPreview: TrackerDryRunPreview = {
       Tracker: "AITHER",
       Status: "ready",
       Message: "",
+      Banned: false,
+      BannedReason: "",
+      BannedCheckError: "",
       ReleaseName: "Example.Movie.2160p.WEB-DL.DDP5.1-GRP",
       OriginalReleaseName: "Example Movie 2160p WEB-DL DD+ 5.1-GRP",
       UploadReleaseName: "Example.Movie.2160p.WEB-DL.DDP5.1-GRP",
@@ -76,6 +79,8 @@ describe("TrackerUploadPage", () => {
     trackerUploadItems: [{ name: "AITHER", config: {} }],
     releasePageTrackerSelection: { AITHER: true },
     dupedTrackerSet: new Set<string>(),
+    skippedDupeReasons: {},
+    skippedDupeTrackerSet: new Set<string>(),
     ruleSkipReasons: {},
     ruleSkippedTrackerSet: new Set<string>(),
     failedDupeTrackerSet: new Set<string>(),
@@ -140,6 +145,45 @@ describe("TrackerUploadPage", () => {
     render(<TrackerUploadPage {...baseProps} failedDupeTrackerSet={new Set(["aither"])} />);
 
     expect(screen.getByText("AIT")).toBeTruthy();
+  });
+
+  it("blocks non-rule skipped trackers with the skip reason", () => {
+    render(
+      <TrackerUploadPage
+        {...baseProps}
+        skippedDupeReasons={{ aither: "missing api_key for tracker" }}
+        skippedDupeTrackerSet={new Set(["aither"])}
+      />,
+    );
+
+    expect(screen.getByText("Blocked trackers (1)")).toBeTruthy();
+    expect(screen.getByText("missing api_key for tracker")).toBeTruthy();
+    expect(screen.queryByText("Rule check failed")).toBeNull();
+  });
+
+  it("shows banned-group status and check error copy", () => {
+    render(
+      <TrackerUploadPage
+        {...baseProps}
+        dryRunPreview={{
+          ...dryRunPreview,
+          Trackers: [
+            {
+              ...dryRunPreview.Trackers[0],
+              Banned: true,
+              BannedReason: "",
+              BannedCheckError: "banned group check failed: cache unavailable",
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Banned group")).toBeTruthy();
+    expect(screen.getByText("Release group matched banned list.")).toBeTruthy();
+    expect(screen.getByText("Banned group check")).toBeTruthy();
+    expect(screen.getByText("banned group check failed: cache unavailable")).toBeTruthy();
+    expect(screen.queryByText("matched")).toBeNull();
   });
 
   it("hides full tracker names when favicon-only mode is enabled", () => {
