@@ -302,7 +302,7 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 	if len(params) > 0 {
 		req.URL.RawQuery = params.Encode()
 	}
-	setUnit3DAPIHeaders(req, apiKey)
+	SetUnit3DAPIHeaders(req, apiKey)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -437,7 +437,7 @@ func (c *Client) searchUnit3DEndpoint(ctx context.Context, tracker string, endpo
 	if len(params) > 0 {
 		req.URL.RawQuery = params.Encode()
 	}
-	setUnit3DAPIHeaders(req, apiKey)
+	SetUnit3DAPIHeaders(req, apiKey)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -466,9 +466,9 @@ func (c *Client) searchUnit3DEndpoint(ctx context.Context, tracker string, endpo
 	return buildUnit3DSearchEntries(payload.Data, isDisc), "", nil
 }
 
-// setUnit3DAPIHeaders applies the authentication and response format expected
+// SetUnit3DAPIHeaders applies the authentication and response format expected
 // by every Unit3D API request.
-func setUnit3DAPIHeaders(req *http.Request, apiKey string) {
+func SetUnit3DAPIHeaders(req *http.Request, apiKey string) {
 	if req == nil {
 		return
 	}

@@ -29,6 +29,23 @@ func TestIsUnit3DTracker(t *testing.T) {
 	}
 }
 
+func TestSetUnit3DAPIHeadersUsesBearerAuthorization(t *testing.T) {
+	t.Parallel()
+
+	SetUnit3DAPIHeaders(nil, "ignored")
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "https://tracker.example/api/torrents/upload", nil)
+	SetUnit3DAPIHeaders(req, " secret ")
+	if req.Header.Get("Authorization") != "Bearer secret" {
+		t.Fatal("expected Unit3D Bearer authorization")
+	}
+	if req.Header.Get("Accept") != "application/json" {
+		t.Fatal("expected Unit3D JSON accept header")
+	}
+	if req.URL.Query().Has("api_token") {
+		t.Fatal("Unit3D API token must not be placed in the query")
+	}
+}
+
 func TestUnit3DMappings(t *testing.T) {
 	t.Parallel()
 
