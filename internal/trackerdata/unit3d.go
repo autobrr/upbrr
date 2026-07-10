@@ -280,10 +280,8 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 
 	apiKey := strings.TrimSpace(TrackerAPIKey(c.cfg, tracker))
 	params := url.Values{}
-	if apiKey != "" {
-		params.Set("api_token", apiKey)
-	} else {
-		c.logger.Debugf("unit3d: %s missing api token; request may be unauthenticated", tracker)
+	if apiKey == "" {
+		c.logger.Debugf("unit3d: %s missing API key; request will be unauthenticated", tracker)
 	}
 
 	var endpoint string
@@ -304,6 +302,7 @@ func (c *Client) lookupUnit3D(ctx context.Context, tracker string, id string, fi
 	if len(params) > 0 {
 		req.URL.RawQuery = params.Encode()
 	}
+	SetUnit3DAPIHeaders(req, apiKey)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -398,11 +397,8 @@ func (c *Client) SearchTorrents(ctx context.Context, tracker string, params url.
 	}
 
 	apiKey := strings.TrimSpace(TrackerAPIKey(c.cfg, tracker))
-	if apiKey != "" {
-		params = cloneValues(params)
-		params.Set("api_token", apiKey)
-	} else if c.logger != nil {
-		c.logger.Debugf("unit3d: %s missing api token; request may be unauthenticated", tracker)
+	if apiKey == "" && c.logger != nil {
+		c.logger.Debugf("unit3d: %s missing API key; request will be unauthenticated", tracker)
 	}
 
 	endpoints := []unit3dSearchEndpoint{{
@@ -420,7 +416,7 @@ func (c *Client) SearchTorrents(ctx context.Context, tracker string, params url.
 
 	var entries []api.DupeEntry
 	for _, endpoint := range endpoints {
-		endpointEntries, warning, err := c.searchUnit3DEndpoint(ctx, tracker, endpoint, params, isDisc)
+		endpointEntries, warning, err := c.searchUnit3DEndpoint(ctx, tracker, endpoint, params, apiKey, isDisc)
 		if err != nil {
 			return nil, "", err
 		}
@@ -433,7 +429,7 @@ func (c *Client) SearchTorrents(ctx context.Context, tracker string, params url.
 	return entries, "", nil
 }
 
-func (c *Client) searchUnit3DEndpoint(ctx context.Context, tracker string, endpoint unit3dSearchEndpoint, params url.Values, isDisc bool) ([]api.DupeEntry, string, error) {
+func (c *Client) searchUnit3DEndpoint(ctx context.Context, tracker string, endpoint unit3dSearchEndpoint, params url.Values, apiKey string, isDisc bool) ([]api.DupeEntry, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.url, nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("unit3d: request: %w", err)
@@ -441,6 +437,7 @@ func (c *Client) searchUnit3DEndpoint(ctx context.Context, tracker string, endpo
 	if len(params) > 0 {
 		req.URL.RawQuery = params.Encode()
 	}
+	SetUnit3DAPIHeaders(req, apiKey)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -467,6 +464,18 @@ func (c *Client) searchUnit3DEndpoint(ctx context.Context, tracker string, endpo
 		return nil, "", fmt.Errorf("unit3d: decode: %w", err)
 	}
 	return buildUnit3DSearchEntries(payload.Data, isDisc), "", nil
+}
+
+// SetUnit3DAPIHeaders applies the authentication and response format expected
+// by every Unit3D API request.
+func SetUnit3DAPIHeaders(req *http.Request, apiKey string) {
+	if req == nil {
+		return
+	}
+	req.Header.Set("Accept", "application/json")
+	if apiKey = strings.TrimSpace(apiKey); apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 }
 
 func buildUnit3DSearchEntries(items []unit3dSearchItem, isDisc bool) []api.DupeEntry {
@@ -814,16 +823,6 @@ func baseFromAnnounce(announce string) string {
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return parsed.String()
-}
-
-func cloneValues(values url.Values) url.Values {
-	clone := url.Values{}
-	for key, list := range values {
-		for _, value := range list {
-			clone.Add(key, value)
-		}
-	}
-	return clone
 }
 
 func parseNumberToInt64(value json.Number) (int64, error) {

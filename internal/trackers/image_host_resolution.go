@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/paths"
 	dbsvc "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/imagehost"
@@ -233,7 +234,7 @@ func ensureDescriptionImageHostWithData(
 			}
 			feedback.Warnings = append(feedback.Warnings, api.ImageHostWarning{
 				Host:    host,
-				Message: err.Error(),
+				Message: logging.SanitizeMessage(err.Error()),
 			})
 			if logger != nil {
 				logger.Warnf("trackers: image host upload failed tracker=%s host=%s: %v", tracker, host, err)
@@ -251,7 +252,7 @@ func ensureDescriptionImageHostWithData(
 			lastErr = err
 			feedback.Warnings = append(feedback.Warnings, api.ImageHostWarning{
 				Host:    host,
-				Message: err.Error(),
+				Message: logging.SanitizeMessage(err.Error()),
 			})
 			if logger != nil {
 				logger.Warnf("trackers: image host upload produced unusable screenshots tracker=%s host=%s: %v", tracker, host, err)

@@ -122,6 +122,24 @@ func TestRedactValueDoesNotReredactRedactedQueryValues(t *testing.T) {
 	}
 }
 
+func TestRedactValueURLUserinfo(t *testing.T) {
+	t.Parallel()
+
+	input := `primary=https://policy-user:policy-password@host.example secondary=//other-user:other-password@proxy.example/path`
+	output := RedactValue(input, nil)
+
+	for _, secret := range []string{"policy-user", "policy-password", "other-user", "other-password"} {
+		if contains(output, secret) {
+			t.Fatal("expected URL userinfo redacted")
+		}
+	}
+	for _, marker := range []string{"https://[REDACTED]@host.example", "//[REDACTED]@proxy.example/path"} {
+		if !contains(output, marker) {
+			t.Fatal("expected URL authority preserved around redacted userinfo")
+		}
+	}
+}
+
 func TestRedactValueQuotedKeyValuePairsWithEscapedQuotes(t *testing.T) {
 	t.Parallel()
 
