@@ -30,10 +30,9 @@ func Source(source string) (string, bool) {
 	}
 }
 
-// SourceForMetadata maps the prepared source, falling back to parsed release
-// source when the prepared field is empty.
+// SourceForMetadata maps the canonical prepared source.
 func SourceForMetadata(meta api.PreparedMetadata) (string, bool) {
-	return Source(firstNonEmpty(meta.Source, meta.Release.Source))
+	return Source(meta.Source)
 }
 
 // Type maps prepared metadata to BHD's upload/search type enum. Unknown or
