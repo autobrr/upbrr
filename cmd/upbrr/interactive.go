@@ -193,6 +193,9 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 			return err
 		}
 	}
+	if err := prepareCLIImages(ctx, coreSvc, req, logger); err != nil {
+		return err
+	}
 
 	review, err := coreSvc.BuildUploadReview(ctx, req)
 	if err != nil {
@@ -332,7 +335,7 @@ func ensureCLITrackerAuthBeforeDupeCheckWithLogger(ctx context.Context, reader *
 		return trackerNames, nil
 	}
 	logger = cliAuthLogger(logger)
-	return ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx, reader, trackerauth.NewServiceWithLogger(cfg, logger), req, trackerNames, preview, logger)
+	return ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx, reader, newCLITrackerAuthService(cfg, logger), req, trackerNames, preview, logger)
 }
 
 // ensureCLITrackerAuthBeforeDupeCheckWithService is the injectable form of

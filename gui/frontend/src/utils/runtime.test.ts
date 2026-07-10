@@ -71,6 +71,77 @@ describe("browser runtime bridge", () => {
     );
   });
 
+  it("uses exact DVD menu capture and lifecycle payloads", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse("dvd-job-1"))
+      .mockResolvedValueOnce(jsonResponse({ jobID: "dvd-job-1", status: "running" }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { initializeBrowserBridge } = await import("./runtime");
+    initializeBrowserBridge("csrf-token", true);
+    const app = (globalThis as any).go.guiapp.App;
+
+    await app.StartDVDMenuCapture("C:/media/Example", { TMDBID: 1 }, { Category: "MOVIE" });
+    await app.GetDVDMenuCaptureSnapshot("dvd-job-1");
+    await app.CancelDVDMenuCapture("dvd-job-1");
+    await app.ListDVDMenuScreenshots("C:/media/Example", { TMDBID: 1 }, { Category: "MOVIE" });
+    await app.DeleteDVDMenuScreenshot(
+      "C:/media/Example",
+      { TMDBID: 1 },
+      { Category: "MOVIE" },
+      "C:/managed/menu.png",
+    );
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/app/StartDVDMenuCapture",
+      expect.objectContaining({
+        body: JSON.stringify({
+          Path: "C:/media/Example",
+          Overrides: { TMDBID: 1 },
+          NameOverrides: { Category: "MOVIE" },
+        }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/app/GetDVDMenuCaptureSnapshot",
+      expect.objectContaining({ body: JSON.stringify({ JobID: "dvd-job-1" }) }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/app/CancelDVDMenuCapture",
+      expect.objectContaining({ body: JSON.stringify({ JobID: "dvd-job-1" }) }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      "/api/app/ListDVDMenuScreenshots",
+      expect.objectContaining({
+        body: JSON.stringify({
+          Path: "C:/media/Example",
+          Overrides: { TMDBID: 1 },
+          NameOverrides: { Category: "MOVIE" },
+        }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      5,
+      "/api/app/DeleteDVDMenuScreenshot",
+      expect.objectContaining({
+        body: JSON.stringify({
+          Path: "C:/media/Example",
+          Overrides: { TMDBID: 1 },
+          NameOverrides: { Category: "MOVIE" },
+          ImagePath: "C:/managed/menu.png",
+        }),
+      }),
+    );
+  });
+
   it("preserves tracker auth status fields from browser app routes", async () => {
     const status: TrackerAuthStatus = {
       trackerID: "MTV",

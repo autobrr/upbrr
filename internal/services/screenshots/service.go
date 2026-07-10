@@ -227,6 +227,9 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 	return plan, nil
 }
 
+// Capture renders the requested frames into the prepared release's managed temp
+// directory and records each image with purpose. It returns successful images
+// plus per-selection failures and honors context cancellation.
 func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, selections []api.ScreenshotSelection, purpose api.ScreenshotPurpose) (result api.ScreenshotResult, err error) {
 	defer func() {
 		if err != nil {
@@ -397,7 +400,7 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 				usedLibplacebo.Store(true)
 			}
 
-			img := api.ScreenshotImage{Index: selection.Index, TimestampSeconds: ts, Path: output}
+			img := api.ScreenshotImage{Index: selection.Index, TimestampSeconds: ts, Path: output, Purpose: purpose}
 			if stat, err := os.Stat(output); err == nil {
 				img.SizeBytes = stat.Size()
 			}
@@ -713,6 +716,9 @@ func isSQLiteBusyError(err error) bool {
 	return db.IsBusyError(err)
 }
 
+// SaveFinalSelections replaces normal final selections from images while
+// preserving manual and automatic disc-menu selections. Menu-purpose images in
+// the input are ignored rather than reclassified as normal screenshots.
 func (s *Service) SaveFinalSelections(ctx context.Context, meta api.PreparedMetadata, images []api.ScreenshotImage) error {
 	if s.repo == nil {
 		return nil
@@ -730,6 +736,9 @@ func (s *Service) SaveFinalSelections(ctx context.Context, meta api.PreparedMeta
 
 	selections := make([]api.ScreenshotFinalSelection, 0, len(images))
 	for index, img := range images {
+		if img.Purpose == api.ScreenshotPurposeMenu {
+			continue
+		}
 		pathValue := strings.TrimSpace(img.Path)
 		if pathValue == "" {
 			return internalerrors.ErrInvalidInput
@@ -749,6 +758,12 @@ func (s *Service) SaveFinalSelections(ctx context.Context, meta api.PreparedMeta
 		})
 	}
 
+	if lifecycle, ok := s.repo.(api.ScreenshotLifecycleRepository); ok {
+		if err := lifecycle.ReplaceNormalFinalSelections(ctx, meta.SourcePath, selections); err != nil {
+			return fmt.Errorf("screenshots: replace normal final selections: %w", err)
+		}
+		return nil
+	}
 	if err := s.repo.SaveFinalSelections(ctx, meta.SourcePath, selections); err != nil {
 		return fmt.Errorf("screenshots: save final selections: %w", err)
 	}
@@ -820,6 +835,9 @@ func listExistingScreens(tmpDir, base string) []api.ScreenshotImage {
 		if base != "" && strings.HasPrefix(name, strings.ToLower(base)+"-preview-") {
 			continue
 		}
+		if base != "" && strings.HasPrefix(name, strings.ToLower(base)+"-dvd-menu-") {
+			continue
+		}
 		stat, err := os.Stat(match)
 		if err != nil {
 			continue
@@ -829,6 +847,7 @@ func listExistingScreens(tmpDir, base string) []api.ScreenshotImage {
 			Index:            parseScreenshotIndex(match, base),
 			TimestampSeconds: ts,
 			Path:             match,
+			Purpose:          api.ScreenshotPurposeFinal,
 			SizeBytes:        stat.Size(),
 		})
 	}
@@ -871,7 +890,7 @@ func listTrackerScreens(tmpDir, base string) []api.ScreenshotImage {
 		if infoErr != nil {
 			return nil
 		}
-		results = append(results, api.ScreenshotImage{Path: path, SizeBytes: info.Size()})
+		results = append(results, api.ScreenshotImage{Path: path, Purpose: api.ScreenshotPurposeFinal, SizeBytes: info.Size()})
 		return nil
 	})
 
@@ -907,6 +926,11 @@ func (s *Service) loadFinalSelections(ctx context.Context, meta api.PreparedMeta
 		if !ok {
 			continue
 		}
+		if api.IsDiscMenuSelectionSource(selection.Source) {
+			img.Purpose = api.ScreenshotPurposeMenu
+		} else {
+			img.Purpose = api.ScreenshotPurposeFinal
+		}
 		images = append(images, img)
 	}
 	sort.Slice(images, func(i, j int) bool { return images[i].Index < images[j].Index })
@@ -924,6 +948,7 @@ func buildScreenshotImage(pathValue string, index int) (api.ScreenshotImage, boo
 		Index:            index,
 		TimestampSeconds: ts,
 		Path:             pathValue,
+		Purpose:          api.ScreenshotPurposeFinal,
 		SizeBytes:        stat.Size(),
 	}
 	if f, err := os.Open(pathValue); err == nil {

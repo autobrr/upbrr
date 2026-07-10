@@ -200,6 +200,28 @@ type Screenshot struct {
 	CapturedAt  time.Time `ts_type:"string"`
 }
 
+// DiscMenuDeleteResult describes local references removed by one atomic menu
+// deletion. UploadedLinks indicates that the remote host may retain an orphan.
+type DiscMenuDeleteResult struct {
+	// Selection is the deleted manual or automatic menu selection.
+	Selection ScreenshotFinalSelection
+	// UploadedLinks counts local upload records removed with the selection.
+	UploadedLinks int
+}
+
+// ScreenshotLifecycleRepository owns category-aware screenshot mutations that
+// must stay atomic without expanding the general metadata repository contract.
+type ScreenshotLifecycleRepository interface {
+	// ReplaceNormalFinalSelections replaces non-menu selections while preserving disc menus.
+	ReplaceNormalFinalSelections(ctx context.Context, path string, selections []ScreenshotFinalSelection) error
+	// AppendManualMenuScreenshots atomically appends manual menu records and selections.
+	AppendManualMenuScreenshots(ctx context.Context, path string, screenshots []Screenshot, selections []ScreenshotFinalSelection) error
+	// ReplaceDVDMenuScreenshots atomically replaces automatic captures and returns their old local paths.
+	ReplaceDVDMenuScreenshots(ctx context.Context, path string, screenshots []Screenshot, selections []ScreenshotFinalSelection) ([]string, error)
+	// DeleteDiscMenuScreenshot atomically removes one manual or automatic menu selection and local records.
+	DeleteDiscMenuScreenshot(ctx context.Context, path string, imagePath string) (DiscMenuDeleteResult, error)
+}
+
 type DVDMediaInfo struct {
 	SourcePath      string
 	IFOPath         string

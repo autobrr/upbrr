@@ -68,6 +68,12 @@ func resolveFFmpeg() (string, error) {
 	return path, nil
 }
 
+// ResolveFFmpegExecutable returns the existing bundled-or-PATH FFmpeg choice
+// shared by screenshot and DVD-menu capture services.
+func ResolveFFmpegExecutable() (string, error) {
+	return resolveFFmpeg()
+}
+
 func bundledFFmpegPath() string {
 	name := "ffmpeg"
 	folder := osFolder()

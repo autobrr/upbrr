@@ -615,6 +615,23 @@ func TestBuildCLIRequestSkipAutoTorrent(t *testing.T) {
 	}
 }
 
+func TestBuildCLIRequestCaptureDVDMenus(t *testing.T) {
+	opts, visited, paths, err := parseCLIOptions([]string{"--get-dvd-menus", "Example.Release.2026.1080p-GRP"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !visited["get-dvd-menus"] {
+		t.Fatalf("expected get-dvd-menus visited, got %#v", visited)
+	}
+	req, err := buildCLIRequest(opts, visited, paths, 4)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if !req.Options.CaptureDVDMenus {
+		t.Fatalf("expected capture option, got %#v", req.Options)
+	}
+}
+
 func TestBuildCLIRequestKeepFolder(t *testing.T) {
 	opts, visited, paths, err := parseCLIOptions([]string{"-kf", "movie-folder"})
 	if err != nil {

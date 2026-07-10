@@ -18,6 +18,7 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/paths"
 	dbsvc "github.com/autobrr/upbrr/internal/services/db"
+	descriptionunit3d "github.com/autobrr/upbrr/internal/services/description/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -286,6 +287,29 @@ func TestResolveDescriptionAssetsPrefersDBDescription(t *testing.T) {
 	}
 }
 
+func TestResolveDescriptionAssetsWithPreparedPreservesCallerAssets(t *testing.T) {
+	t.Parallel()
+
+	prepared := DescriptionAssets{
+		Description: "prepared description",
+		MenuImages:  []api.ScreenshotImage{{Path: filepath.Join(t.TempDir(), "prepared-menu.png")}},
+	}
+	resolved, err := ResolveDescriptionAssetsWithPrepared(
+		context.Background(),
+		"AITHER",
+		api.PreparedMetadata{},
+		&stubRepo{trackerRecordsErr: errors.New("must not query repository")},
+		api.NopLogger{},
+		&prepared,
+	)
+	if err != nil {
+		t.Fatalf("resolve prepared assets: %v", err)
+	}
+	if resolved.Description != prepared.Description || len(resolved.MenuImages) != 1 || resolved.MenuImages[0].Path != prepared.MenuImages[0].Path {
+		t.Fatalf("resolved assets = %#v, want %#v", resolved, prepared)
+	}
+}
+
 func TestResolveDescriptionAssetsDedupesAfterSanitizingBotSignatures(t *testing.T) {
 	repo := &stubRepo{
 		trackerRecords: []api.TrackerMetadata{
@@ -311,7 +335,7 @@ func TestApplyResolvedDescriptionScreenshotsKeepsMenuImagesSeparate(t *testing.T
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
 			{SourcePath: "/tmp/source", ImagePath: "/tmp/screen1.png", Order: 0, Source: string(api.ScreenshotPurposeFinal)},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/menu1.png", Order: 1, Source: screenshotPurposeMenu},
+			{SourcePath: "/tmp/source", ImagePath: "/tmp/menu1.png", Order: 1, Source: api.ScreenshotSelectionSourceDVDMenu},
 			{SourcePath: "/tmp/source", ImagePath: "/tmp/screen2.png", Order: 2, Source: string(api.ScreenshotPurposeFinal)},
 		},
 	}
@@ -334,6 +358,189 @@ func TestApplyResolvedDescriptionScreenshotsKeepsMenuImagesSeparate(t *testing.T
 		if strings.Contains(shot.ImgURL, "menu1.png") {
 			t.Fatalf("menu image leaked into screenshots: %#v", assets.Screenshots)
 		}
+	}
+}
+
+func TestDescriptionAssetsPreserveMenuClassificationAcrossRehost(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "Example.Release.2026.DVD-GRP")
+	paths := []string{
+		filepath.Join(root, "auto-menu.png"),
+		filepath.Join(root, "manual-menu.png"),
+		filepath.Join(root, "normal-screen.png"),
+	}
+	repo := &stubRepo{selections: []api.ScreenshotFinalSelection{
+		{SourcePath: sourcePath, ImagePath: paths[0], Order: 0, Source: api.ScreenshotSelectionSourceDVDMenu},
+		{SourcePath: sourcePath, ImagePath: paths[1], Order: 1, Source: api.ScreenshotSelectionSourceMenu},
+		{SourcePath: sourcePath, ImagePath: paths[2], Order: 2, Source: string(api.ScreenshotPurposeFinal)},
+	}}
+	images := &stubImageService{repo: repo}
+	meta := api.PreparedMetadata{SourcePath: sourcePath}
+
+	resolution, err := ensureDescriptionImageHost(
+		context.Background(),
+		"PTP",
+		meta,
+		config.Config{},
+		config.TrackerConfig{},
+		repo,
+		images,
+		api.NopLogger{},
+	)
+	if err != nil {
+		t.Fatalf("rehost description assets: %v", err)
+	}
+	if !resolution.feedback.Reuploaded || resolution.feedback.SelectedHost != "pixhost" {
+		t.Fatalf("rehost feedback = %#v", resolution.feedback)
+	}
+
+	assets, err := ResolveDescriptionAssets(context.Background(), "PTP", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("resolve rehosted assets: %v", err)
+	}
+	applyResolvedDescriptionScreenshots(context.Background(), meta, repo, nil, &assets, resolution.screenshots)
+	assertScreenshotPaths(t, assets.MenuImages, paths[:2])
+	assertScreenshotPaths(t, assets.Screenshots, paths[2:])
+	for _, image := range append(append([]api.ScreenshotImage(nil), assets.MenuImages...), assets.Screenshots...) {
+		if image.Host != "pixhost" || strings.TrimSpace(image.RawURL) == "" {
+			t.Fatalf("rehosted image lost hosted variant: %#v", image)
+		}
+	}
+}
+
+func TestPartialMenuRemovalUpdatesResolvedAndRenderedDescription(t *testing.T) {
+	t.Parallel()
+
+	repo, err := dbsvc.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repository: %v", err)
+	}
+
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "Example.Release.2026.DVD-GRP")
+	autoFirst := filepath.Join(root, "auto-menu-01.png")
+	autoSecond := filepath.Join(root, "auto-menu-02.png")
+	normal := filepath.Join(root, "normal-screen-01.png")
+	selections := []api.ScreenshotFinalSelection{
+		{SourcePath: sourcePath, ImagePath: autoFirst, Order: 0, Source: api.ScreenshotSelectionSourceDVDMenu},
+		{SourcePath: sourcePath, ImagePath: autoSecond, Order: 1, Source: api.ScreenshotSelectionSourceDVDMenu},
+		{SourcePath: sourcePath, ImagePath: normal, Order: 2, Source: string(api.ScreenshotPurposeFinal)},
+	}
+	if err := repo.SaveFinalSelections(context.Background(), sourcePath, selections); err != nil {
+		t.Fatalf("save selections: %v", err)
+	}
+	uploads := make([]api.UploadedImageLink, 0, len(selections))
+	slots := make([]api.ScreenshotSlot, 0, len(selections))
+	for index, selection := range selections {
+		rawURL := fmt.Sprintf("https://images.example.invalid/%d.png", index)
+		uploads = append(uploads, api.UploadedImageLink{
+			SourcePath: sourcePath,
+			ImagePath:  selection.ImagePath,
+			Host:       "imgbb",
+			UsageScope: globalImageUsageScope,
+			ImgURL:     rawURL,
+			RawURL:     rawURL,
+			WebURL:     rawURL,
+		})
+		slots = append(slots, api.ScreenshotSlot{
+			SourcePath:          sourcePath,
+			SlotOrder:           index,
+			SourceKind:          screenshotSlotSourceSelection,
+			OriginalKey:         selection.ImagePath,
+			ImagePath:           selection.ImagePath,
+			SectionKind:         screenshotSectionWrapped,
+			RenderInScreenshots: true,
+			Variants: []api.ScreenshotSlotVariant{{
+				SourcePath: sourcePath,
+				SlotOrder:  index,
+				Host:       "imgbb",
+				UsageScope: globalImageUsageScope,
+				ImagePath:  selection.ImagePath,
+				ImgURL:     rawURL,
+				RawURL:     rawURL,
+				WebURL:     rawURL,
+			}},
+		})
+	}
+	if err := repo.SaveUploadedImages(context.Background(), sourcePath, "imgbb", uploads); err != nil {
+		t.Fatalf("save uploads: %v", err)
+	}
+	if err := repo.ReplaceScreenshotSlots(context.Background(), sourcePath, slots); err != nil {
+		t.Fatalf("save slots: %v", err)
+	}
+
+	meta := api.PreparedMetadata{SourcePath: sourcePath}
+	before := resolveAssetsForTest(t, meta, repo)
+	if len(before.MenuImages) != 2 || len(before.Screenshots) != 1 {
+		t.Fatalf("assets before removal = %#v", before)
+	}
+
+	if _, err := repo.DeleteDiscMenuScreenshot(context.Background(), sourcePath, autoFirst); err != nil {
+		t.Fatalf("delete first menu: %v", err)
+	}
+	after := resolveAssetsForTest(t, meta, repo)
+	assertScreenshotPaths(t, after.MenuImages, []string{autoSecond})
+	assertScreenshotPaths(t, after.Screenshots, []string{normal})
+
+	description, err := descriptionunit3d.BuildDescription(
+		context.Background(),
+		meta,
+		config.Config{Description: config.DescriptionSettingsConfig{
+			DiscMenuHeader:   "Disc menu token",
+			ScreenshotHeader: "Screenshots token",
+			ThumbnailSize:    300,
+		}},
+		config.TrackerConfig{},
+		api.NopLogger{},
+		"Body token",
+		after.MenuImages,
+		after.Screenshots,
+	)
+	if err != nil {
+		t.Fatalf("render description: %v", err)
+	}
+	assertDescriptionTokensInOrder(t, description, "Body token", "Disc menu token", "1.png", "Screenshots token", "2.png")
+	if strings.Contains(description, "0.png") {
+		t.Fatalf("removed menu remained in description: %q", description)
+	}
+}
+
+func resolveAssetsForTest(t *testing.T, meta api.PreparedMetadata, repo api.MetadataRepository) DescriptionAssets {
+	t.Helper()
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("resolve description assets: %v", err)
+	}
+	return assets
+}
+
+func assertScreenshotPaths(t *testing.T, images []api.ScreenshotImage, expected []string) {
+	t.Helper()
+	if len(images) != len(expected) {
+		t.Fatalf("image count = %d, want %d: %#v", len(images), len(expected), images)
+	}
+	for index, pathValue := range expected {
+		if images[index].Path != pathValue {
+			t.Fatalf("image[%d].Path = %q, want %q", index, images[index].Path, pathValue)
+		}
+	}
+}
+
+func assertDescriptionTokensInOrder(t *testing.T, description string, tokens ...string) {
+	t.Helper()
+	previous := -1
+	for _, token := range tokens {
+		position := strings.Index(description, token)
+		if position <= previous {
+			t.Fatalf("description tokens out of order at %q: %q", token, description)
+		}
+		previous = position
 	}
 }
 

@@ -45,6 +45,8 @@ metadata:
 
 screenshot_handling:
   screens: 4
+  # Automatic DVD menu capture is opt-in. This caps stored distinct menu screens (1-32).
+  max_menu_items: 6
   min_successful_image_uploads: 3
   cutoff_screens: 1
   frame_overlay: false

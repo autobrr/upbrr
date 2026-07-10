@@ -613,6 +613,99 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))
 
+	mux.HandleFunc("/api/app/StartDVDMenuCapture", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req struct {
+			Path          string
+			Overrides     api.ExternalIDOverrides
+			NameOverrides api.ReleaseNameOverrides
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		value, err := s.backend.StartDVDMenuCapture(r.Context(), current.ID, req.Path, req.Overrides, req.NameOverrides)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, value)
+	}))
+
+	mux.HandleFunc("/api/app/GetDVDMenuCaptureSnapshot", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
+		var req struct{ JobID string }
+		if err := decodeJSON(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		value, err := s.backend.GetDVDMenuCaptureSnapshot(current.ID, req.JobID)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, value)
+	}))
+
+	mux.HandleFunc("/api/app/CancelDVDMenuCapture", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req struct{ JobID string }
+		if err := decodeJSON(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := s.backend.CancelDVDMenuCapture(current.ID, req.JobID); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}))
+
+	mux.HandleFunc("/api/app/ListDVDMenuScreenshots", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		var req struct {
+			Path          string
+			Overrides     api.ExternalIDOverrides
+			NameOverrides api.ReleaseNameOverrides
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		value, err := s.backend.ListDVDMenuScreenshots(req.Path, req.Overrides, req.NameOverrides)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, value)
+	}))
+
+	mux.HandleFunc("/api/app/DeleteDVDMenuScreenshot", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req struct {
+			Path          string
+			Overrides     api.ExternalIDOverrides
+			NameOverrides api.ReleaseNameOverrides
+			ImagePath     string
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := s.backend.DeleteDVDMenuScreenshot(req.Path, req.Overrides, req.NameOverrides, req.ImagePath); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	}))
+
 	mux.HandleFunc("/api/app/ReadScreenshotImage", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
 		var req struct{ Path string }
 		if err := decodeJSON(r, &req); err != nil {

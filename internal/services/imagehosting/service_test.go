@@ -320,6 +320,44 @@ func TestListCandidatesIncludesUploadedOnlyImages(t *testing.T) {
 	}
 }
 
+func TestListCandidatesPopulatesGeneratedAndManualMenuPurpose(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	generatedPath := filepath.Join(root, "generated-menu.png")
+	manualPath := filepath.Join(root, "manual-menu.png")
+	for _, imagePath := range []string{generatedPath, manualPath} {
+		if err := os.WriteFile(imagePath, []byte("synthetic image"), 0o600); err != nil {
+			t.Fatalf("write image: %v", err)
+		}
+	}
+	repo := &recordingRepo{
+		screens: []api.Screenshot{{
+			SourcePath: "/tmp/source",
+			ImagePath:  generatedPath,
+			Purpose:    api.ScreenshotPurposeMenu,
+		}},
+		selections: []api.ScreenshotFinalSelection{
+			{SourcePath: "/tmp/source", ImagePath: generatedPath, Order: 0, Source: api.ScreenshotSelectionSourceDVDMenu},
+			{SourcePath: "/tmp/source", ImagePath: manualPath, Order: 1, Source: api.ScreenshotSelectionSourceMenu},
+		},
+	}
+	service := &Service{logger: api.NopLogger{}, repo: repo}
+
+	images, err := service.ListCandidates(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/source"})
+	if err != nil {
+		t.Fatalf("list candidates: %v", err)
+	}
+	if len(images) != 2 {
+		t.Fatalf("candidate count = %d, want 2", len(images))
+	}
+	for _, imageValue := range images {
+		if imageValue.Purpose != api.ScreenshotPurposeMenu {
+			t.Fatalf("candidate purpose = %q for %q", imageValue.Purpose, filepath.Base(imageValue.Path))
+		}
+	}
+}
+
 func TestUploadImagesUnsupportedHost(t *testing.T) {
 	service := &Service{logger: api.NopLogger{}, uploaders: map[string]uploader{}}
 	meta := api.PreparedMetadata{SourcePath: "source"}

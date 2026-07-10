@@ -6,6 +6,7 @@ package core
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -419,6 +420,10 @@ func TestRunUploadPreparedReturnsAccumulatedCountWhenLaterMenuImportFails(t *tes
 
 	tracker := &stubTrackers{}
 	repo := &menuImportRepo{failListOnCall: 2}
+	menuDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(menuDir, "menu.png"), []byte("synthetic menu image"), 0o600); err != nil {
+		t.Fatalf("write menu image: %v", err)
+	}
 	core, err := New(api.CoreDependencies{
 		Config: config.Config{
 			MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: t.TempDir()},
@@ -443,7 +448,7 @@ func TestRunUploadPreparedReturnsAccumulatedCountWhenLaterMenuImportFails(t *tes
 		Paths: []string{"/tmp/a", "/tmp/b"},
 		Mode:  api.ModeGUI,
 		ScreenshotOverrides: api.ScreenshotOverrides{
-			MenuPaths: []string{t.TempDir()},
+			MenuPaths: []string{menuDir},
 		},
 	})
 	if err == nil || !strings.Contains(err.Error(), "import menu images failed") {
@@ -4077,6 +4082,26 @@ func (r *menuImportRepo) ListFinalSelections(context.Context, string) ([]db.Scre
 
 func (r *menuImportRepo) SaveFinalSelections(context.Context, string, []db.ScreenshotFinalSelection) error {
 	return nil
+}
+
+func (r *menuImportRepo) ReplaceNormalFinalSelections(context.Context, string, []db.ScreenshotFinalSelection) error {
+	return nil
+}
+
+func (r *menuImportRepo) AppendManualMenuScreenshots(context.Context, string, []db.Screenshot, []db.ScreenshotFinalSelection) error {
+	r.listCalls++
+	if r.failListOnCall > 0 && r.listCalls == r.failListOnCall {
+		return errors.New("menu import append failed")
+	}
+	return nil
+}
+
+func (r *menuImportRepo) ReplaceDVDMenuScreenshots(context.Context, string, []db.Screenshot, []db.ScreenshotFinalSelection) ([]string, error) {
+	return nil, nil
+}
+
+func (r *menuImportRepo) DeleteDiscMenuScreenshot(context.Context, string, string) (api.DiscMenuDeleteResult, error) {
+	return api.DiscMenuDeleteResult{}, nil
 }
 
 type dryRunPreviewRepo struct {

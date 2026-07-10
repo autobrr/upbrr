@@ -35,6 +35,7 @@ import type {
   ApplicationInfo,
   BrowseDirectoryResponse,
   DescriptionBuilderPreview,
+  DVDMenuCaptureSnapshot,
   DupeCheckResult,
   DupeCheckSnapshot,
   DupeCheckSummary,
@@ -512,6 +513,29 @@ declare global {
               nameOverrides: ReleaseNameOverrides,
               paths: string[],
             ) => Promise<void>;
+            /** Starts background capture from prepared metadata and resolves to an opaque job ID. */
+            StartDVDMenuCapture: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+            ) => Promise<string>;
+            /** Returns the latest state for a background DVD menu capture job. */
+            GetDVDMenuCaptureSnapshot: (jobID: string) => Promise<DVDMenuCaptureSnapshot>;
+            /** Requests asynchronous cancellation of a background DVD menu capture job. */
+            CancelDVDMenuCapture: (jobID: string) => Promise<void>;
+            /** Lists persisted manual and automatic menu images for a prepared source path. */
+            ListDVDMenuScreenshots: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+            ) => Promise<ScreenshotImage[]>;
+            /** Removes one managed menu image and its local records. */
+            DeleteDVDMenuScreenshot: (
+              path: string,
+              overrides: ExternalIDOverrides,
+              nameOverrides: ReleaseNameOverrides,
+              imagePath: string,
+            ) => Promise<void>;
             ReadScreenshotImage: (path: string) => Promise<string>;
             ListUploadCandidates: (
               path: string,
@@ -751,6 +775,7 @@ export default function App() {
   });
   const [sourcePathMode, setSourcePathMode] = useState<SourcePathMode | undefined>();
   const [currentDiscType, setCurrentDiscType] = useState("");
+  const [imageAssetsRevision, setImageAssetsRevision] = useState(0);
   const [sourceLookupURL, setSourceLookupURL] = useState("");
   const [loading, setLoading] = useState(false);
   const [metadataResetting, setMetadataResetting] = useState(false);
@@ -932,6 +957,10 @@ export default function App() {
       null) as ConfigMap | null;
     return typeof mainSettings?.FaviconOnly === "boolean" ? mainSettings.FaviconOnly : false;
   }, [configData]);
+  const maxMenuItems = useMemo(() => {
+    const value = screenshotConfig?.MaxMenuItems;
+    return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 6;
+  }, [screenshotConfig]);
 
   const persistSourcePathHistory = useCallback((entries: SourcePathHistoryEntry[]) => {
     try {
@@ -1601,6 +1630,8 @@ export default function App() {
     setUploadSelections,
     setUploadHost,
     uploadHost,
+    handleUploadImages: uploadSelectedImages,
+    handleDeleteUploadedImage: deleteUploadedImage,
   } = uploadImages;
 
   // Tracker image URL handling
@@ -1640,6 +1671,26 @@ export default function App() {
     );
   }, [screenshots.uploadCandidates]);
 
+  const markImageAssetsChanged = useCallback(() => {
+    setImageAssetsRevision((revision) => revision + 1);
+  }, []);
+
+  const handleUploadImagesWithRevision = useCallback(
+    async (selected: ScreenshotPreviewImage[]) => {
+      await uploadSelectedImages(selected);
+      markImageAssetsChanged();
+    },
+    [markImageAssetsChanged, uploadSelectedImages],
+  );
+
+  const handleDeleteUploadedImageWithRevision = useCallback(
+    async (imagePath: string, host: string) => {
+      await deleteUploadedImage(imagePath, host);
+      markImageAssetsChanged();
+    },
+    [deleteUploadedImage, markImageAssetsChanged],
+  );
+
   const resetScreenshotState = useCallback(() => {
     resetScreenshots();
     resetUploadState();
@@ -1658,6 +1709,8 @@ export default function App() {
     (nextActiveTab = "input") => {
       setPath("");
       setSourcePathMode(undefined);
+      setCurrentDiscType("");
+      setImageAssetsRevision(0);
       setSourceLookupURL("");
       setLoading(false);
       setMetadataResetting(false);
@@ -2364,6 +2417,7 @@ export default function App() {
     setMetadataProgressActive(true);
     setLoading(true);
     try {
+      setCurrentDiscType(await detectDiscType(targetPath));
       const result = await fetcher(
         targetPath,
         sourceLookupURL.trim(),
@@ -3235,6 +3289,8 @@ export default function App() {
   }, [applyDupeCheckSnapshot, dupeCheckJobID, dupeCheckSnapshot?.status, dupeLoading]);
 
   useEffect(() => {
+    setCurrentDiscType("");
+    setImageAssetsRevision(0);
     setDupeChecked(false);
     setDupeCheckJobID("");
     setDupeCheckSnapshot(null);
@@ -3278,6 +3334,7 @@ export default function App() {
       path: normalizedPath,
       external: normalizeOverrides(idOverrideState?.overrides || {}),
       release: normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
+      imageAssetsRevision,
     });
     if (builderAutoRequestKey === requestKey) return;
     setBuilderAutoRequestKey(requestKey);
@@ -3292,6 +3349,7 @@ export default function App() {
     idOverrideState,
     releaseOverrideState,
     builderAutoRequestKey,
+    imageAssetsRevision,
     runDescriptionBuilder,
   ]);
 
@@ -3368,6 +3426,7 @@ export default function App() {
     setExistingImages,
     readScreenshotImage,
     refreshUploadedImages,
+    imageAssetsRevision,
   ]);
 
   /**
@@ -4401,10 +4460,13 @@ export default function App() {
               path={path}
               overrides={idOverrideState?.overrides || {}}
               nameOverrides={releaseOverrideState?.overrides || {}}
+              currentDiscType={currentDiscType}
+              maxMenuItems={maxMenuItems}
               browseAvailable={browserNativeBrowseAvailable}
-              onImportComplete={() => {
-                setActiveTab("upload_images");
-              }}
+              onImagesChanged={markImageAssetsChanged}
+              onContinue={() => setActiveTab("upload_images")}
+              setLightboxImage={setLightboxImage}
+              setLightboxAlt={setLightboxAlt}
             />
           ) : activeTab === "upload_images" ? (
             <UploadImagesPage
@@ -4416,7 +4478,7 @@ export default function App() {
               uploadImagesLoading={uploadImages.uploadImagesLoading}
               uploadProgress={uploadImages.uploadProgress}
               setAllUploadSelections={uploadImages.setAllUploadSelections}
-              handleUploadImages={uploadImages.handleUploadImages}
+              handleUploadImages={handleUploadImagesWithRevision}
               uploadImagesError={uploadImages.uploadImagesError}
               uploadImageFailures={uploadImages.uploadImageFailures}
               uploadCandidates={screenshots.uploadCandidates}
@@ -4429,7 +4491,7 @@ export default function App() {
               uploadedImageRecords={uploadImages.uploadedImageRecords}
               trackerImageLinks={screenshots.trackerImageLinks}
               trackerImageURLs={trackerImageURLs}
-              handleDeleteUploadedImage={uploadImages.handleDeleteUploadedImage}
+              handleDeleteUploadedImage={handleDeleteUploadedImageWithRevision}
               handleDeleteTrackerImage={screenshots.handleDeleteTrackerImage}
             />
           ) : activeTab === "bluray" ? (

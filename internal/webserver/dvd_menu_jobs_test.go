@@ -1,0 +1,79 @@
+// Copyright (c) 2025-2026, Audionut and the autobrr contributors.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+package webserver
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/autobrr/upbrr/pkg/api"
+)
+
+func TestRunDVDMenuCaptureJobPublishesProgressAndResult(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &preparedMetaTestCore{
+		dvdMenuCapture: func(ctx context.Context, _ api.Request) (api.DVDMenuCaptureResult, error) {
+			api.ReportDVDMenuProgress(ctx, api.DVDMenuProgressUpdate{
+				Phase:           "capturing",
+				DiscoveredMenus: 2,
+				VisitedStates:   4,
+				VisitedButtons:  3,
+				CapturedCount:   1,
+			})
+			return api.DVDMenuCaptureResult{
+				SourcePath:      "Example.Release.2026.1080p-GRP",
+				DiscoveredMenus: 2,
+				VisitedStates:   4,
+				VisitedButtons:  3,
+				Complete:        true,
+				Images: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{
+					Path:    "menu-1.png",
+					Purpose: api.ScreenshotPurposeMenu,
+				}}},
+			}, nil
+		},
+	}
+	job := &dvdMenuCaptureJob{
+		sessionID: "session-a",
+		id:        "dvd-job-1",
+		core:      coreSvc,
+		status:    "queued",
+		startedAt: time.Now().UTC(),
+	}
+	backend := &Backend{dvdMenus: map[string]*dvdMenuCaptureJob{job.id: job}}
+	backend.dvdMenuWG.Add(1)
+
+	backend.runDVDMenuCaptureJob(context.Background(), job)
+	snapshot := buildWebDVDMenuCaptureSnapshot(job)
+	if snapshot.Status != "completed" || snapshot.CapturedCount != 1 || !snapshot.Result.Complete {
+		t.Fatalf("unexpected terminal snapshot: %#v", snapshot)
+	}
+	if coreSvc.dvdMenuCalls != 1 {
+		t.Fatalf("expected one capture call, got %d", coreSvc.dvdMenuCalls)
+	}
+}
+
+func TestDVDMenuCaptureJobAccessRequiresOwningSession(t *testing.T) {
+	t.Parallel()
+
+	job := &dvdMenuCaptureJob{
+		sessionID: "session-a",
+		id:        "dvd-job-1",
+		status:    "running",
+		startedAt: time.Now().UTC(),
+	}
+	backend := &Backend{dvdMenus: map[string]*dvdMenuCaptureJob{job.id: job}}
+
+	if _, err := backend.GetDVDMenuCaptureSnapshot("session-b", job.id); err == nil {
+		t.Fatal("expected foreign session snapshot read to fail")
+	}
+	if err := backend.CancelDVDMenuCapture("session-b", job.id); err == nil {
+		t.Fatal("expected foreign session cancellation to fail")
+	}
+	if _, err := backend.GetDVDMenuCaptureSnapshot("session-a", job.id); err != nil {
+		t.Fatalf("expected owning session snapshot read: %v", err)
+	}
+}

@@ -879,6 +879,52 @@ func TestRunCLIUploadOnlyQueueSumsUploadedCounts(t *testing.T) {
 	}
 }
 
+func TestRunCLIUploadOnlyQueueCapturesOnlyDVDItems(t *testing.T) {
+	t.Parallel()
+
+	dvdRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dvdRoot, "VIDEO_TS"), 0o700); err != nil {
+		t.Fatalf("create VIDEO_TS: %v", err)
+	}
+	nonDiscRoot := t.TempDir()
+	coreSvc := &cliCoreForTest{dvdMenuResult: api.DVDMenuCaptureResult{
+		Images: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{Path: "dvd-menu.png", Purpose: api.ScreenshotPurposeMenu}}},
+	}}
+	err := runCLIUploadOnlyQueue(context.Background(), coreSvc, api.Request{
+		Options: api.UploadOptions{CaptureDVDMenus: true},
+	}, []string{dvdRoot, nonDiscRoot}, false, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("upload-only queue: %v", err)
+	}
+	if coreSvc.dvdMenuCaptureCalls != 1 {
+		t.Fatalf("capture calls = %d, want 1", coreSvc.dvdMenuCaptureCalls)
+	}
+	if coreSvc.runUploadPreparedCalls != 2 {
+		t.Fatalf("upload calls = %d, want 2", coreSvc.runUploadPreparedCalls)
+	}
+}
+
+func TestRunCLIUploadOnlyQueueDVDMenuCaptureFailureStopsUpload(t *testing.T) {
+	t.Parallel()
+
+	dvdRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dvdRoot, "VIDEO_TS"), 0o700); err != nil {
+		t.Fatalf("create VIDEO_TS: %v", err)
+	}
+	coreSvc := &cliCoreForTest{dvdMenuErr: errSyntheticDVDMenuCapture}
+	err := runCLIUploadOnlyQueue(context.Background(), coreSvc, api.Request{
+		Options: api.UploadOptions{CaptureDVDMenus: true},
+	}, []string{dvdRoot}, false, api.NopLogger{})
+
+	assertDVDMenuCaptureError(t, err)
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,capture-dvd-menus" {
+		t.Fatalf("queue capture failure call order = %s", got)
+	}
+	if coreSvc.runUploadPreparedCalls != 0 {
+		t.Fatalf("queue upload calls after capture failure = %d, want 0", coreSvc.runUploadPreparedCalls)
+	}
+}
+
 func TestRunCLIUploadOnlyBatchBoundsTimeoutByItemCap(t *testing.T) {
 	t.Parallel()
 
@@ -897,7 +943,7 @@ func TestRunCLIUploadOnlyBatchBoundsTimeoutByItemCap(t *testing.T) {
 	for i := range paths {
 		paths[i] = "p" + strconv.Itoa(i)
 	}
-	if err := runCLIUploadOnlyBatch(context.Background(), coreSvc, api.Request{Paths: paths}, paths, false); err != nil {
+	if err := runCLIUploadOnlyBatch(context.Background(), coreSvc, api.Request{Paths: paths}, paths, false, api.NopLogger{}); err != nil {
 		t.Fatalf("runCLIUploadOnlyBatch: %v", err)
 	}
 	if !sawDeadline {
@@ -930,7 +976,7 @@ func TestRunCLIUploadOnlyBatchSinglePathTimeout(t *testing.T) {
 		},
 	}
 	paths := []string{"only"}
-	if err := runCLIUploadOnlyBatch(context.Background(), coreSvc, api.Request{Paths: paths}, paths, false); err != nil {
+	if err := runCLIUploadOnlyBatch(context.Background(), coreSvc, api.Request{Paths: paths}, paths, false, api.NopLogger{}); err != nil {
 		t.Fatalf("runCLIUploadOnlyBatch: %v", err)
 	}
 	if !sawDeadline {
@@ -941,6 +987,54 @@ func TestRunCLIUploadOnlyBatchSinglePathTimeout(t *testing.T) {
 	}
 	if coreSvc.runUploadPreparedCalls != 1 {
 		t.Fatalf("expected a single RunUploadPrepared call, got %d", coreSvc.runUploadPreparedCalls)
+	}
+}
+
+func TestRunCLIUploadOnlyBatchCapturesBeforeDebugReviews(t *testing.T) {
+	t.Parallel()
+
+	dvdRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dvdRoot, "VIDEO_TS"), 0o700); err != nil {
+		t.Fatalf("create VIDEO_TS: %v", err)
+	}
+	coreSvc := &cliCoreForTest{
+		dvdMenuResult: api.DVDMenuCaptureResult{
+			Images: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{Path: "dvd-menu.png", Purpose: api.ScreenshotPurposeMenu}}},
+		},
+		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
+	}
+	paths := []string{dvdRoot}
+	if err := runCLIUploadOnlyBatch(context.Background(), coreSvc, api.Request{
+		Paths:   paths,
+		Options: api.UploadOptions{CaptureDVDMenus: true},
+	}, paths, true, api.NopLogger{}); err != nil {
+		t.Fatalf("upload-only batch: %v", err)
+	}
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,capture-dvd-menus,review" {
+		t.Fatalf("batch call order = %s", got)
+	}
+}
+
+func TestRunCLIUploadOnlyBatchDVDMenuCaptureFailureStopsReviewAndUpload(t *testing.T) {
+	t.Parallel()
+
+	dvdRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dvdRoot, "VIDEO_TS"), 0o700); err != nil {
+		t.Fatalf("create VIDEO_TS: %v", err)
+	}
+	coreSvc := &cliCoreForTest{dvdMenuErr: errSyntheticDVDMenuCapture}
+	paths := []string{dvdRoot}
+	err := runCLIUploadOnlyBatch(context.Background(), coreSvc, api.Request{
+		Paths:   paths,
+		Options: api.UploadOptions{CaptureDVDMenus: true},
+	}, paths, true, api.NopLogger{})
+
+	assertDVDMenuCaptureError(t, err)
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,capture-dvd-menus" {
+		t.Fatalf("batch capture failure call order = %s", got)
+	}
+	if coreSvc.runUploadPreparedCalls != 0 {
+		t.Fatalf("batch upload calls after capture failure = %d, want 0", coreSvc.runUploadPreparedCalls)
 	}
 }
 

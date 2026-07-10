@@ -50,6 +50,28 @@ func TestMergeTrackerImagesIntoFinalSelectionsReindexesSparseIndices(t *testing.
 	}
 }
 
+func TestListExistingScreensExcludesDVDMenuAndPreviewFiles(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	base := "Example.Release.2026.DVD-GRP"
+	normalPath := filepath.Join(root, base+"-01-ss_1000.png")
+	for _, imagePath := range []string{
+		normalPath,
+		filepath.Join(root, base+"-dvd-menu-01-123.png"),
+		filepath.Join(root, base+"-preview-01.png"),
+	} {
+		if err := os.WriteFile(imagePath, []byte("synthetic image"), 0o600); err != nil {
+			t.Fatalf("write image: %v", err)
+		}
+	}
+
+	images := listExistingScreens(root, base)
+	if len(images) != 1 || images[0].Path != normalPath || images[0].Purpose != api.ScreenshotPurposeFinal {
+		t.Fatalf("existing screenshots = %#v", images)
+	}
+}
+
 func TestPlanUsesManualFrameOverridesWithoutDuration(t *testing.T) {
 	tmpDir := t.TempDir()
 	mediaInfoPath := filepath.Join(tmpDir, "mediainfo.json")

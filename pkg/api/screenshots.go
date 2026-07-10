@@ -3,15 +3,41 @@
 
 package api
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
+// ScreenshotPurpose classifies an image within preview, final-selection, and
+// disc-menu workflows.
 type ScreenshotPurpose string
 
+// Screenshot purpose and selection-source values shared across persistence and
+// frontend workflows.
 const (
+	// ScreenshotPurposePreview identifies transient frame previews.
 	ScreenshotPurposePreview ScreenshotPurpose = "preview"
-	ScreenshotPurposeFinal   ScreenshotPurpose = "final"
-	ScreenshotPurposeMenu    ScreenshotPurpose = "menu"
+	// ScreenshotPurposeFinal identifies normal final screenshot selections.
+	ScreenshotPurposeFinal ScreenshotPurpose = "final"
+	// ScreenshotPurposeMenu identifies manual or automatic disc-menu images.
+	ScreenshotPurposeMenu ScreenshotPurpose = "menu"
+
+	// ScreenshotSelectionSourceMenu identifies manually imported disc-menu selections.
+	ScreenshotSelectionSourceMenu = "menu"
+	// ScreenshotSelectionSourceDVDMenu identifies automatically captured DVD-menu selections.
+	ScreenshotSelectionSourceDVDMenu = "dvd_menu"
 )
+
+// IsDiscMenuSelectionSource reports whether a final-selection source belongs
+// to either manually imported or automatically captured disc menus.
+func IsDiscMenuSelectionSource(source string) bool {
+	switch strings.TrimSpace(source) {
+	case ScreenshotSelectionSourceMenu, ScreenshotSelectionSourceDVDMenu:
+		return true
+	default:
+		return false
+	}
+}
 
 type ScreenshotSelection struct {
 	Index            int
@@ -61,9 +87,11 @@ type ScreenshotImage struct {
 	Index            int
 	TimestampSeconds float64
 	Path             string
-	Width            int
-	Height           int
-	SizeBytes        int64
+	// Purpose distinguishes preview, normal final, and disc-menu images.
+	Purpose   ScreenshotPurpose
+	Width     int
+	Height    int
+	SizeBytes int64
 	// Optional upload information (populated when image has been uploaded)
 	Host       string    `json:"Host,omitempty"`
 	ImgURL     string    `json:"ImgURL,omitempty"`

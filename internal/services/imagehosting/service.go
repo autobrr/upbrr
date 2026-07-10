@@ -42,6 +42,9 @@ func NewService(cfg config.Config, logger api.Logger, repo api.MetadataRepositor
 	return service
 }
 
+// ListCandidates returns existing local and uploaded screenshot selections for
+// image hosting, deduplicated by local image path. Disc-menu selections retain
+// [api.ScreenshotPurposeMenu]; all other candidates use final purpose.
 func (s *Service) ListCandidates(ctx context.Context, meta api.PreparedMetadata) ([]api.ScreenshotImage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("image hosting: list candidates canceled: %w", err)
@@ -63,6 +66,15 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.PreparedMetadata)
 	uploaded, err := s.repo.ListUploadedImagesByPath(ctx, meta.SourcePath)
 	if err != nil {
 		return nil, fmt.Errorf("image hosting: %w", err)
+	}
+	selections, err := s.repo.ListFinalSelections(ctx, meta.SourcePath)
+	if err != nil {
+		s.logger.Debugf("image hosting: final selections unavailable: %v", err)
+		selections = nil
+	}
+	selectionSourceByPath := make(map[string]string, len(selections))
+	for _, selection := range selections {
+		selectionSourceByPath[strings.TrimSpace(selection.ImagePath)] = strings.TrimSpace(selection.Source)
 	}
 
 	// Build a map of uploaded images by path for quick lookup
@@ -86,9 +98,15 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.PreparedMetadata)
 		img := api.ScreenshotImage{
 			Path:             pathValue,
 			TimestampSeconds: shot.Timestamp,
+			Purpose:          shot.Purpose,
 			Width:            shot.Width,
 			Height:           shot.Height,
 			SizeBytes:        info.Size(),
+		}
+		if api.IsDiscMenuSelectionSource(selectionSourceByPath[pathValue]) {
+			img.Purpose = api.ScreenshotPurposeMenu
+		} else if img.Purpose == "" {
+			img.Purpose = api.ScreenshotPurposeFinal
 		}
 
 		// If this image has been uploaded, include the upload info
@@ -109,41 +127,42 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.PreparedMetadata)
 	for _, img := range images {
 		seenPaths[img.Path] = struct{}{}
 	}
-	selections, err := s.repo.ListFinalSelections(ctx, meta.SourcePath)
-	if err == nil {
-		for _, sel := range selections {
-			pathValue := strings.TrimSpace(sel.ImagePath)
-			if pathValue == "" || !isAllowedImageExt(pathValue) {
-				continue
-			}
-			if _, exists := seenPaths[pathValue]; exists {
-				continue
-			}
-			info, statErr := os.Stat(pathValue)
-			if statErr != nil || info.IsDir() {
-				continue
-			}
-
-			img := api.ScreenshotImage{
-				Path:             pathValue,
-				TimestampSeconds: 0, // Fallback since it wasn't a generated frame
-				Width:            0,
-				Height:           0,
-				SizeBytes:        info.Size(),
-			}
-
-			if uploadInfo, exists := uploadedByPath[pathValue]; exists {
-				img.Host = uploadInfo.Host
-				img.ImgURL = uploadInfo.ImgURL
-				img.RawURL = uploadInfo.RawURL
-				img.WebURL = uploadInfo.WebURL
-				img.UploadedAt = uploadInfo.UploadedAt
-				s.logger.Tracef("image hosting: found uploaded final selection %s (host: %s)", filepath.Base(pathValue), uploadInfo.Host)
-			}
-
-			images = append(images, img)
-			seenPaths[pathValue] = struct{}{}
+	for _, sel := range selections {
+		pathValue := strings.TrimSpace(sel.ImagePath)
+		if pathValue == "" || !isAllowedImageExt(pathValue) {
+			continue
 		}
+		if _, exists := seenPaths[pathValue]; exists {
+			continue
+		}
+		info, statErr := os.Stat(pathValue)
+		if statErr != nil || info.IsDir() {
+			continue
+		}
+
+		img := api.ScreenshotImage{
+			Path:             pathValue,
+			TimestampSeconds: 0, // Fallback since it wasn't a generated frame
+			Purpose:          api.ScreenshotPurposeFinal,
+			Width:            0,
+			Height:           0,
+			SizeBytes:        info.Size(),
+		}
+		if api.IsDiscMenuSelectionSource(sel.Source) {
+			img.Purpose = api.ScreenshotPurposeMenu
+		}
+
+		if uploadInfo, exists := uploadedByPath[pathValue]; exists {
+			img.Host = uploadInfo.Host
+			img.ImgURL = uploadInfo.ImgURL
+			img.RawURL = uploadInfo.RawURL
+			img.WebURL = uploadInfo.WebURL
+			img.UploadedAt = uploadInfo.UploadedAt
+			s.logger.Tracef("image hosting: found uploaded final selection %s (host: %s)", filepath.Base(pathValue), uploadInfo.Host)
+		}
+
+		images = append(images, img)
+		seenPaths[pathValue] = struct{}{}
 	}
 
 	for _, upload := range uploaded {
@@ -158,8 +177,13 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.PreparedMetadata)
 		if statErr != nil || info.IsDir() {
 			continue
 		}
+		purpose := api.ScreenshotPurposeFinal
+		if api.IsDiscMenuSelectionSource(selectionSourceByPath[pathValue]) {
+			purpose = api.ScreenshotPurposeMenu
+		}
 		images = append(images, api.ScreenshotImage{
 			Path:       pathValue,
+			Purpose:    purpose,
 			SizeBytes:  info.Size(),
 			Host:       upload.Host,
 			ImgURL:     upload.ImgURL,

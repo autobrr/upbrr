@@ -495,6 +495,33 @@ export const initializeBrowserBridge = (
             NameOverrides: nameOverrides,
             Paths: paths,
           }),
+        StartDVDMenuCapture: (path: string, overrides: unknown, nameOverrides: unknown) =>
+          call("StartDVDMenuCapture", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+          }),
+        GetDVDMenuCaptureSnapshot: (jobID: string) =>
+          call("GetDVDMenuCaptureSnapshot", { JobID: jobID }),
+        CancelDVDMenuCapture: (jobID: string) => call("CancelDVDMenuCapture", { JobID: jobID }),
+        ListDVDMenuScreenshots: (path: string, overrides: unknown, nameOverrides: unknown) =>
+          call("ListDVDMenuScreenshots", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+          }),
+        DeleteDVDMenuScreenshot: (
+          path: string,
+          overrides: unknown,
+          nameOverrides: unknown,
+          imagePath: string,
+        ) =>
+          call("DeleteDVDMenuScreenshot", {
+            Path: path,
+            Overrides: overrides,
+            NameOverrides: nameOverrides,
+            ImagePath: imagePath,
+          }),
         ReadScreenshotImage: (path: string) => call("ReadScreenshotImage", { Path: path }),
         ListUploadCandidates: (path: string, overrides: unknown, nameOverrides: unknown) =>
           call("ListUploadCandidates", {

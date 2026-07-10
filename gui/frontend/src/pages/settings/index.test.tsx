@@ -148,6 +148,49 @@ describe("SettingsPage", () => {
     expect(screen.queryByText("Copyright (c) 2026 autobrr")).not.toBeInTheDocument();
   });
 
+  it("shows path-free DVD engine and FFmpeg capability diagnostics", async () => {
+    vi.stubGlobal("go", {
+      guiapp: {
+        App: {
+          GetApplicationInfo: vi.fn().mockResolvedValue({
+            version: "dev",
+            buildIdentifier: "example-build",
+            goVersion: "go1.26.4",
+            goos: "windows",
+            goarch: "amd64",
+            uptime: "1s",
+            uptimeSeconds: 1,
+            dvdMenuEngine: {
+              EngineVersion: "phase0a-1",
+              SchemaVersion: 1,
+              SupportedFeatures: ["ifo_inventory"],
+              FFmpegVersion: "ffmpeg version example",
+              FFmpegDVDVideo: true,
+              MissingFFmpegOptions: [],
+            },
+            dvdMenuCapabilityStatus: "available",
+            dvdMenuCapabilityMessage: "Compatible FFmpeg dvdvideo menu support detected.",
+          }),
+        },
+      },
+    });
+
+    render(
+      <SettingsPage
+        {...baseProps}
+        settingsSection="application_details"
+        setSettingsSection={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("phase0a-1")).toBeInTheDocument());
+    expect(screen.getByText("Available")).toBeInTheDocument();
+    expect(screen.getByText("ffmpeg version example")).toBeInTheDocument();
+    expect(
+      screen.getByText("Compatible FFmpeg dvdvideo menu support detected."),
+    ).toBeInTheDocument();
+  });
+
   it("renders tracker auth as the bottom tab", async () => {
     const setSettingsSection = vi.fn();
     vi.stubGlobal("go", {

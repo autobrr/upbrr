@@ -34,6 +34,8 @@ type preparedMetaTestCore struct {
 	fetchReq          api.Request
 	dupeSummary       api.DupeCheckSummary
 	dupeCalls         int
+	dvdMenuCapture    func(context.Context, api.Request) (api.DVDMenuCaptureResult, error)
+	dvdMenuCalls      int
 	uploads           []uploadPreparedResponse
 	uploadCalls       int
 }
@@ -111,6 +113,22 @@ func (c *preparedMetaTestCore) SaveFinalScreenshotSelections(context.Context, ap
 }
 
 func (c *preparedMetaTestCore) ImportMenuImages(context.Context, api.Request, []string) error {
+	return nil
+}
+
+func (c *preparedMetaTestCore) CaptureDVDMenus(ctx context.Context, req api.Request) (api.DVDMenuCaptureResult, error) {
+	c.dvdMenuCalls++
+	if c.dvdMenuCapture != nil {
+		return c.dvdMenuCapture(ctx, req)
+	}
+	return api.DVDMenuCaptureResult{}, nil
+}
+
+func (c *preparedMetaTestCore) ListDVDMenuScreenshots(context.Context, api.Request) ([]api.ScreenshotImage, error) {
+	return nil, nil
+}
+
+func (c *preparedMetaTestCore) DeleteDVDMenuScreenshot(context.Context, api.Request, string) error {
 	return nil
 }
 

@@ -48,6 +48,8 @@ type closeCounterCore struct {
 	fetchReq          api.Request
 	dupeSummary       api.DupeCheckSummary
 	dupeCalls         atomic.Int32
+	dvdMenuCapture    func(context.Context, api.Request) (api.DVDMenuCaptureResult, error)
+	dvdMenuCalls      atomic.Int32
 	uploads           []uploadPreparedResponse
 	uploadCalls       int
 }
@@ -129,6 +131,22 @@ func (c *closeCounterCore) SaveFinalScreenshotSelections(context.Context, api.Re
 }
 
 func (c *closeCounterCore) ImportMenuImages(context.Context, api.Request, []string) error {
+	return nil
+}
+
+func (c *closeCounterCore) CaptureDVDMenus(ctx context.Context, req api.Request) (api.DVDMenuCaptureResult, error) {
+	c.dvdMenuCalls.Add(1)
+	if c.dvdMenuCapture != nil {
+		return c.dvdMenuCapture(ctx, req)
+	}
+	return api.DVDMenuCaptureResult{}, nil
+}
+
+func (c *closeCounterCore) ListDVDMenuScreenshots(context.Context, api.Request) ([]api.ScreenshotImage, error) {
+	return nil, nil
+}
+
+func (c *closeCounterCore) DeleteDVDMenuScreenshot(context.Context, api.Request, string) error {
 	return nil
 }
 
