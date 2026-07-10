@@ -36,6 +36,7 @@ var (
 	announcePathTokenRe = regexp.MustCompile(`(?i)(/announce(?:\.php)?/)([A-Za-z0-9]{10,})($|[/?#])`)
 	apiPathTokenRe      = regexp.MustCompile(`(?i)(/api/torrents/)([A-Za-z0-9]{10,})($|[/?#"])`)
 	proxyPathRe         = regexp.MustCompile(`(?i)(/proxy/)([^/\s?#"]+)`) // /proxy/<secret>
+	urlUserinfoRe       = regexp.MustCompile(`(?i)(\b[a-z][a-z0-9+.-]*://|//)([^/@\s]+)@`)
 	queryParamRe        = regexp.MustCompile(`(?i)([?&](anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|auth|auth[_-]?key|csrf|info[_-]?hash|key|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass|uid|user|user[_-]?id|userid)=)[^&]+`)
 	keyValueQuotedRe    = regexp.MustCompile(`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass)\b(\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`)
 	keyValuePlainRe     = regexp.MustCompile(`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass)\b(\s*[:=]\s*)(bearer\s+)?([^"'\s,;)\]}]+)`)
@@ -131,6 +132,7 @@ func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
 	value = announcePathTokenRe.ReplaceAllString(value, `${1}[REDACTED]${3}`)
 	value = apiPathTokenRe.ReplaceAllString(value, `${1}[REDACTED]${3}`)
 	value = proxyPathRe.ReplaceAllString(value, `${1}[REDACTED]`)
+	value = urlUserinfoRe.ReplaceAllString(value, `${1}[REDACTED]@`)
 	value = queryParamRe.ReplaceAllString(value, `${1}[REDACTED]`)
 	value = keyValueQuotedRe.ReplaceAllStringFunc(value, redactQuotedKeyValue)
 	value = keyValuePlainRe.ReplaceAllStringFunc(value, redactPlainKeyValue)

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -240,11 +241,12 @@ func (l *Logger) logf(level Level, label string, format string, args ...any) {
 	l.record(label, formatted)
 }
 
-// SanitizeMessage replaces local filesystem paths in user-shareable log or
-// terminal output with stable labels. Paths under known app DB tmp/cache/log
-// directories keep only their .upbrr-relative suffix; other local paths become
-// [local path].
+// SanitizeMessage redacts secrets and replaces local filesystem paths in
+// user-shareable log or terminal output with stable labels. Paths under known
+// app DB tmp/cache/log directories keep only their .upbrr-relative suffix;
+// other local paths become [local path].
 func SanitizeMessage(message string) string {
+	message = redaction.RedactValue(message, nil)
 	if strings.TrimSpace(message) == "" {
 		return message
 	}
@@ -344,8 +346,12 @@ func isURLEndDelimiter(ch byte) bool {
 func localPathEnd(value string, start int) int {
 	for index := start; index < len(value); index++ {
 		switch value[index] {
-		case '\r', '\n', '\t', '"', '\'', '`', ',', ';', ')', ']', '}':
+		case '\r', '\n', '\t', '"', '`', ',', ';', ')', ']', '}':
 			return index
+		case ':':
+			if index > start+2 && index+1 < len(value) && value[index+1] == ' ' {
+				return index
+			}
 		case ' ':
 			if nextLooksLikeLogField(value, index+1) {
 				return index

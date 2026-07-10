@@ -86,6 +86,65 @@ func TestCheckNoTrackers(t *testing.T) {
 	}
 }
 
+func TestCheckRedactsSearchErrorsFromResultProgressAndLogs(t *testing.T) {
+	t.Parallel()
+
+	logger := &recordingLogger{}
+	svc := NewService(config.Config{}, logger)
+	svc.handlers = map[string]searchHandler{
+		"DP": testSearchHandler{err: errors.New(`unit3d: request: Get "https://tracker.example/api/torrents/filter?api_token=secret-api-token&name=Example.Release.2026.1080p-GRP": context deadline exceeded`)},
+	}
+
+	var updatesMu sync.Mutex
+	updates := make([]api.DupeProgressUpdate, 0, 3)
+	ctx := api.WithDupeProgressReporter(context.Background(), func(update api.DupeProgressUpdate) {
+		updatesMu.Lock()
+		updates = append(updates, update)
+		updatesMu.Unlock()
+	})
+
+	summary, err := svc.Check(ctx, api.PreparedMetadata{SourcePath: `D:\media\Example's.Release.2026-GRP`}, []string{"DP"})
+	if err != nil {
+		t.Fatalf("check dupes: %v", err)
+	}
+	if len(summary.Results) != 1 {
+		t.Fatalf("expected one result, got %d", len(summary.Results))
+	}
+	result := summary.Results[0]
+	if strings.Contains(result.Error, "secret-api-token") || strings.Contains(strings.Join(result.Notes, " "), "secret-api-token") {
+		t.Fatal("expected dupe result error details to redact request secret")
+	}
+	if !strings.Contains(result.Error, "api_token=[REDACTED]") {
+		t.Fatal("expected dupe result to preserve redacted request context")
+	}
+
+	updatesMu.Lock()
+	capturedUpdates := slices.Clone(updates)
+	updatesMu.Unlock()
+	foundFailed := false
+	for _, update := range capturedUpdates {
+		if strings.Contains(update.Message, "secret-api-token") || strings.Contains(update.Result.Error, "secret-api-token") {
+			t.Fatal("expected dupe progress to redact request secret")
+		}
+		if update.Status == "failed" {
+			foundFailed = true
+			if !strings.Contains(update.Message, "api_token=[REDACTED]") {
+				t.Fatal("expected failed progress to preserve redacted request context")
+			}
+		}
+	}
+	if !foundFailed {
+		t.Fatal("expected failed dupe progress update")
+	}
+
+	logger.mu.Lock()
+	warns := slices.Clone(logger.warns)
+	logger.mu.Unlock()
+	if strings.Contains(strings.Join(warns, " "), "secret-api-token") {
+		t.Fatal("expected dupe warning to redact request secret before logger boundary")
+	}
+}
+
 func TestCheckSkipsRuleFailures(t *testing.T) {
 	t.Parallel()
 	svc := NewService(config.Config{}, api.NopLogger{})

@@ -34,6 +34,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/imagehost"
@@ -112,7 +113,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()
 	}
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	_, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode == http.StatusOK, commonhttp.DefaultResponsePreviewBytes)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: PTP read upload response: %w", err)
+	}
 	if matches := ptpSuccessPattern.FindStringSubmatch(finalURL); len(matches) == 3 {
 		groupID := strings.TrimSpace(matches[1])
 		torrentID := strings.TrimSpace(matches[2])
@@ -139,11 +143,12 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	failurePath := ""
 	if pathValue, pathErr := resolveFailurePath(req.Meta, req.AppConfig.MainSettings.DBPath); pathErr == nil {
 		failurePath = pathValue
-		_ = os.WriteFile(failurePath, bodyBytes, 0o600)
+		redactedBody := []byte(redaction.RedactValue(string(responsePreview), nil))
+		_ = os.WriteFile(failurePath, redactedBody, 0o600)
 	}
-	errText := commonhttp.RedactErrorDetail(extractAlertError(string(bodyBytes)))
+	errText := commonhttp.RedactErrorDetail(extractAlertError(string(responsePreview)))
 	if errText == "" {
-		errText = commonhttp.ExtractHTTPErrorDetail(bodyBytes)
+		errText = commonhttp.ExtractHTTPErrorDetail(responsePreview)
 	}
 	if errText == "" {
 		errText = "upload failed"

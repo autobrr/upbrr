@@ -17,6 +17,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/autobrr/upbrr/internal/guishared"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -261,7 +262,7 @@ func (a *App) runDupeCheckJob(ctx context.Context, eventCtx context.Context, job
 			}
 		} else {
 			job.status = "failed"
-			job.errorMessage = err.Error()
+			job.errorMessage = logging.SanitizeMessage(err.Error())
 		}
 		job.mu.Unlock()
 		a.emitDupeCheckSnapshot(eventCtx, job)
