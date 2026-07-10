@@ -358,11 +358,11 @@ func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAss
 	parts = append(parts, fmt.Sprintf("[right][url=%s][size=1]%s[/size][/url][/right]", link, text))
 
 	// finalize description
-	finalDescription := bbcode.FinalizeTrackerDescription("HDS", strings.TrimSpace(strings.Join(parts, "\n\n")))
+	finalDescription := bbcode.FinalizeTrackerDescription("HDT", strings.TrimSpace(strings.Join(parts, "\n\n")))
 
 	// save debug description
 	if meta.Options.Debug {
-		descriptionunit3d.SaveDescriptionDebug(meta, "HDS", req.AppConfig.MainSettings.DBPath, finalDescription, req.Logger)
+		descriptionunit3d.SaveDescriptionDebug(meta, "HDT", req.AppConfig.MainSettings.DBPath, finalDescription, req.Logger)
 	}
 
 	return finalDescription

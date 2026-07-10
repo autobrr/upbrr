@@ -3,6 +3,7 @@ package vm
 import (
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestExecuteSetAndJump(t *testing.T) {
@@ -52,6 +53,33 @@ func TestRegistersCloneIsIndependent(t *testing.T) {
 	clone.General[1] = 20
 	if registers.General[1] != 10 {
 		t.Fatalf("parent GPRM mutated: %d", registers.General[1])
+	}
+}
+
+func TestGeneralCounterPersistsLazyOrigin(t *testing.T) {
+	var registers Registers
+	registers.CounterMode[2] = true
+	current := time.Unix(100, 0)
+	executor := executor{
+		registers: &registers,
+		now:       func() time.Time { return current },
+	}
+
+	first, err := executor.general(2)
+	if err != nil {
+		t.Fatalf("first general read: %v", err)
+	}
+	if first != 0 || !registers.counterOrigin[2].Equal(current) {
+		t.Fatalf("first counter read = %d origin=%v", first, registers.counterOrigin[2])
+	}
+
+	current = current.Add(5 * time.Second)
+	second, err := executor.general(2)
+	if err != nil {
+		t.Fatalf("second general read: %v", err)
+	}
+	if second != 5 || registers.General[2] != 5 {
+		t.Fatalf("second counter read = %d register=%d, want 5", second, registers.General[2])
 	}
 }
 

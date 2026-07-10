@@ -193,7 +193,7 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 			return err
 		}
 	}
-	if err := prepareCLIImages(ctx, coreSvc, req, logger); err != nil {
+	if err := prepareCLIImages(ctx, coreSvc, req, logger, false); err != nil {
 		return err
 	}
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -77,6 +78,14 @@ func TestRouteSPUFragmentsReadsPTS(t *testing.T) {
 	}
 	if len(fragments) != 1 || !fragments[0].HasPTS || fragments[0].PTS != 0 {
 		t.Fatalf("fragments = %+v", fragments)
+	}
+}
+
+func TestRouteSPUFragmentsRejectsTruncatedPESHeader(t *testing.T) {
+	data := append(make([]byte, 6), 0, 0, 1, 0xbd)
+	_, err := RouteSPUFragments(data, 1, 1)
+	if !errors.Is(err, ErrInvalidNAV) || !strings.Contains(err.Error(), "truncated PES payload") {
+		t.Fatalf("RouteSPUFragments error = %v, want truncated ErrInvalidNAV", err)
 	}
 }
 

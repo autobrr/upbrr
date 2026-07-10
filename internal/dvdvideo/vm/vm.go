@@ -313,7 +313,8 @@ func (e executor) general(index uint64) (uint16, error) {
 	if e.registers.CounterMode[index] {
 		origin := e.registers.counterOrigin[index]
 		if origin.IsZero() {
-			origin = e.now()
+			e.registers.counterOrigin[index] = e.now()
+			origin = e.registers.counterOrigin[index]
 		}
 		seconds := e.now().Sub(origin) / time.Second
 		//nolint:gosec // DVD counters intentionally retain the low 16 elapsed-second bits.

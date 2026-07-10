@@ -339,7 +339,7 @@ func runCLIUploadOnlyBatch(ctx context.Context, coreSvc api.Core, uploadReq api.
 	if err != nil {
 		return exitError(1, err)
 	}
-	if err := prepareCLIImages(uploadCtx, coreSvc, preparedReq, logger); err != nil {
+	if err := prepareCLIImages(uploadCtx, coreSvc, preparedReq, logger, true); err != nil {
 		return exitError(1, err)
 	}
 	if debug {
@@ -372,7 +372,7 @@ func runCLIUploadOnlyQueue(ctx context.Context, coreSvc api.Core, uploadReq api.
 		if err != nil {
 			return err
 		}
-		if err := prepareCLIImages(itemCtx, coreSvc, preparedReq, logger); err != nil {
+		if err := prepareCLIImages(itemCtx, coreSvc, preparedReq, logger, false); err != nil {
 			return err
 		}
 		if debug {
@@ -415,8 +415,9 @@ func runCLIUploadOnlyQueue(ctx context.Context, coreSvc api.Core, uploadReq api.
 
 // prepareCLIImages imports manual menu paths and optionally captures automatic
 // DVD menus for each request path before review or upload. Non-DVD paths are
-// skipped without invoking capture.
-func prepareCLIImages(ctx context.Context, coreSvc api.Core, req api.Request, logger api.Logger) error {
+// skipped without invoking capture. Batch callers can continue after an empty
+// successful capture while retaining errors from CaptureDVDMenus.
+func prepareCLIImages(ctx context.Context, coreSvc api.Core, req api.Request, logger api.Logger, continueOnEmptyCapture bool) error {
 	if coreSvc == nil {
 		return errors.New("upbrr: core service is required")
 	}
@@ -458,7 +459,14 @@ func prepareCLIImages(ctx context.Context, coreSvc api.Core, req api.Request, lo
 			return fmt.Errorf("upbrr: capture DVD menus: %w", err)
 		}
 		if len(result.Images) == 0 {
-			return errors.New("upbrr: capture DVD menus: no menu images captured")
+			if !continueOnEmptyCapture {
+				return errors.New("upbrr: capture DVD menus: no menu images captured")
+			}
+			logger.Errorf(
+				"DVD menus: capture failed source=%s decision=continue reason=no_images",
+				formatPathLabel(sourcePath),
+			)
+			continue
 		}
 		if result.Partial {
 			logger.Warnf(

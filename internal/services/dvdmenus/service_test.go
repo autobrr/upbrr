@@ -129,8 +129,16 @@ func TestCaptureRerunListAndDeletePreserveManualMenus(t *testing.T) {
 	logger := &dvdMenuRecordingLogger{}
 	service := newService(logger, tmpRoot, repo, runner, func() (string, error) { return executable, nil },
 		func(_ context.Context, root string, _ render.Runner, _ string, options engine.Options) (engine.Result, error) {
-			if root != videoTS {
-				t.Fatalf("capture root = %q, want %q", root, videoTS)
+			rootInfo, err := os.Stat(root)
+			if err != nil {
+				t.Fatal("capture root is unavailable")
+			}
+			videoTSInfo, err := os.Stat(videoTS)
+			if err != nil {
+				t.Fatal("expected VIDEO_TS directory is unavailable")
+			}
+			if !os.SameFile(rootInfo, videoTSInfo) {
+				t.Fatal("capture root does not identify the expected VIDEO_TS directory")
 			}
 			if options.Capability == nil || !options.Capability.Available {
 				t.Fatal("capture did not receive cached capability")

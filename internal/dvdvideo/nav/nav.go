@@ -568,6 +568,9 @@ func RouteSPUFragments(data []byte, packetLimit, payloadLimit int) ([]SPUFragmen
 			break
 		}
 		offset += index
+		if offset+6 > len(data) {
+			return nil, fmt.Errorf("%w: truncated PES payload", ErrInvalidNAV)
+		}
 		length := int(binary.BigEndian.Uint16(data[offset+4 : offset+6]))
 		end := offset + 6 + length
 		if end > len(data) {

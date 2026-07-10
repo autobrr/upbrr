@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { createElement } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App, { hasExplicitEmptyReleaseTrackerSelection, ruleBlockingTrackerLabels } from "./app";
@@ -75,6 +75,14 @@ type GetHistoryOverview = (sourcePath: string) => Promise<HistoryOverview>;
 type DeleteHistoryRelease = (sourcePath: string) => Promise<void>;
 type StartDVDMenuCapture = (...args: unknown[]) => Promise<string>;
 type GetDVDMenuCaptureSnapshot = (jobID: string) => Promise<DVDMenuCaptureSnapshot>;
+
+const createDeferred = <T>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+};
 
 const metadataPreview = (sourcePath: string): MetadataPreview => ({
   SourcePath: sourcePath,
@@ -613,6 +621,74 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
     await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
 
+    expect(screen.queryByRole("button", { name: "Menu Images" })).not.toBeInTheDocument();
+  });
+
+  it("ignores a fetch disc detection after the source path changes", async () => {
+    const detection = createDeferred<string>();
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    const detectDiscType = vi.fn<DetectDiscType>(() => detection.promise);
+    installAppBridge(fetchMetadata, { detectDiscType });
+
+    render(createElement(App));
+    const sourcePath = screen.getByLabelText("Source path");
+    fireEvent.change(sourcePath, { target: { value: "C:\\media\\First" } });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(detectDiscType).toHaveBeenCalledWith("C:\\media\\First"));
+
+    fireEvent.change(sourcePath, { target: { value: "C:\\media\\Second.mkv" } });
+    await act(async () => detection.resolve("BDMV"));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledOnce());
+    await screen.findByText("2/2");
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+
+    expect(screen.queryByRole("button", { name: "Menu Images" })).not.toBeInTheDocument();
+  });
+
+  it("ignores an older browse disc detection after a newer path selection", async () => {
+    const firstDetection = createDeferred<string>();
+    const secondDetection = createDeferred<string>();
+    const firstPath = "C:\\media\\First";
+    const secondPath = "C:\\media\\Second";
+    const browseFolder = vi
+      .fn<() => Promise<string>>()
+      .mockResolvedValueOnce(firstPath)
+      .mockResolvedValueOnce(secondPath);
+    const detectDiscType = vi.fn<DetectDiscType>((sourcePath) => {
+      if (sourcePath === firstPath) {
+        return firstDetection.promise;
+      }
+      if (sourcePath === secondPath) {
+        return secondDetection.promise;
+      }
+      return Promise.resolve("");
+    });
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    installAppBridge(fetchMetadata, { browseFolder, detectDiscType });
+
+    render(createElement(App));
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example.mkv" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledOnce());
+    await screen.findByText("2/2");
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Browse folder" }));
+    await waitFor(() => expect(detectDiscType).toHaveBeenCalledWith(firstPath));
+    fireEvent.click(screen.getByRole("button", { name: "Browse folder" }));
+    await waitFor(() => expect(detectDiscType).toHaveBeenCalledWith(secondPath));
+
+    await act(async () => secondDetection.resolve(""));
+    await act(async () => firstDetection.resolve("BDMV"));
+
+    expect(screen.getByLabelText("Source path")).toHaveValue(secondPath);
     expect(screen.queryByRole("button", { name: "Menu Images" })).not.toBeInTheDocument();
   });
 

@@ -819,6 +819,7 @@ export default function App() {
   // same tick as a fetch/reset request are not dropped by a stale React closure.
   const metadataProgressActiveRef = useRef(false);
   const metadataProgressTargetRef = useRef("");
+  const discTypeRequestTokenRef = useRef(0);
   const [dupeSummary, setDupeSummary] = useState<DupeCheckSummary>(emptyDupeSummary);
   const [dupeLoading, setDupeLoading] = useState(false);
   const [dupeError, setDupeError] = useState("");
@@ -992,8 +993,10 @@ export default function App() {
   );
 
   const handleSourcePathChange = useCallback((value: string) => {
+    discTypeRequestTokenRef.current += 1;
     setPath(value);
     setSourcePathMode(undefined);
+    setCurrentDiscType("");
   }, []);
 
   useEffect(() => {
@@ -1707,6 +1710,7 @@ export default function App() {
    */
   const resetFreshWorkflowState = useCallback(
     (nextActiveTab = "input") => {
+      discTypeRequestTokenRef.current += 1;
       setPath("");
       setSourcePathMode(undefined);
       setCurrentDiscType("");
@@ -2273,6 +2277,16 @@ export default function App() {
     return "";
   };
 
+  const updateCurrentDiscType = async (selectedPath: string): Promise<string | null> => {
+    const requestToken = ++discTypeRequestTokenRef.current;
+    const discType = await detectDiscType(selectedPath);
+    if (requestToken !== discTypeRequestTokenRef.current) {
+      return null;
+    }
+    setCurrentDiscType(discType);
+    return discType;
+  };
+
   // Auto-detect BDMV and show playlist selection
   const handlePathSelected = async (
     selectedPath: string,
@@ -2286,8 +2300,10 @@ export default function App() {
     setPath(trimmedPath);
     setSourcePathMode(selectedMode);
     rememberSourcePath(trimmedPath, selectedMode);
-    const discType = await detectDiscType(trimmedPath);
-    setCurrentDiscType(discType);
+    const discType = await updateCurrentDiscType(trimmedPath);
+    if (discType === null) {
+      return null;
+    }
     setShowExternalIDInputUI(true);
     setPlaylistPreparationError("");
     setBdinfoProgressLines([]);
@@ -2417,7 +2433,7 @@ export default function App() {
     setMetadataProgressActive(true);
     setLoading(true);
     try {
-      setCurrentDiscType(await detectDiscType(targetPath));
+      await updateCurrentDiscType(targetPath);
       const result = await fetcher(
         targetPath,
         sourceLookupURL.trim(),
