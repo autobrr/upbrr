@@ -1158,6 +1158,7 @@ func exprContainsNameSignal(expr ast.Expr, signals ...string) bool {
 }
 
 func isSanitizedBindingBefore(body *ast.BlockStmt, expr ast.Expr, before token.Pos) bool {
+	expr = unwrapSingleArgTypeConversion(expr)
 	ident, ok := expr.(*ast.Ident)
 	if !ok {
 		return false
@@ -1185,6 +1186,28 @@ func isSanitizedBindingBefore(body *ast.BlockStmt, expr ast.Expr, before token.P
 		return true
 	})
 	return sanitized
+}
+
+// unwrapSingleArgTypeConversion removes conversions whose function expression
+// is syntactically a type. Named conversions remain wrapped because AST-only
+// analysis cannot distinguish them from ordinary single-argument calls.
+func unwrapSingleArgTypeConversion(expr ast.Expr) ast.Expr {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 || !isSyntacticTypeExpr(call.Fun) {
+		return expr
+	}
+	return call.Args[0]
+}
+
+func isSyntacticTypeExpr(expr ast.Expr) bool {
+	switch typed := expr.(type) {
+	case *ast.ArrayType, *ast.MapType, *ast.StructType, *ast.InterfaceType, *ast.ChanType, *ast.FuncType:
+		return true
+	case *ast.ParenExpr:
+		return isSyntacticTypeExpr(typed.X)
+	default:
+		return false
+	}
 }
 
 // checkFrontendVisibleRawErrors guards Wails/web job state and pkg/api result
@@ -1227,6 +1250,15 @@ func checkFrontendVisibleRawErrors(fset *token.FileSet, relPath string, file *as
 				}
 				appendLogpolicyViolation(fset, relPath, allows, &violations, field.Value.Pos(), "frontend-visible API error/message fields must redact raw errors before serialization")
 			}
+		case *ast.CallExpr:
+			if !bridgeFile || callName(typed) != "failTrackerUploadJob" || len(typed.Args) < 3 {
+				return true
+			}
+			message := typed.Args[2]
+			if isShareableMessageSanitizedExpr(message) || !isRawErrorLikeExpr(message) {
+				return true
+			}
+			appendLogpolicyViolation(fset, relPath, allows, &violations, message.Pos(), "frontend-visible upload job failure messages must redact raw errors before state update and event emission")
 		}
 		return true
 	})

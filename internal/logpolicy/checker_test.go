@@ -3166,6 +3166,43 @@ func writeSafeFailureArtifact(path string, payload []byte) error {
 	}
 }
 
+func TestDiagnosticArtifactWritesRecognizeConvertedSanitizedBindings(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		writeExpr      string
+		wantViolations int
+	}{
+		{name: "slice conversion", writeExpr: "[]byte(payload)", wantViolations: 0},
+		{name: "ordinary call", writeExpr: "cloneBytes(payload)", wantViolations: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content := `package sample
+
+import (
+	"os"
+
+	"github.com/autobrr/upbrr/internal/redaction"
+)
+
+func cloneBytes(payload []byte) []byte { return payload }
+
+func writeFailureArtifact(path string, payload []byte) error {
+	payload = []byte(redaction.RedactValue(string(payload), nil))
+	return os.WriteFile(path, ` + tt.writeExpr + `, 0o600)
+}
+`
+			fset, file := parsePolicyFixture(t, content)
+			violations := checkDiagnosticArtifactWrites(fset, "internal/sample/sample.go", file, importAliases(file), nil)
+			if len(violations) != tt.wantViolations {
+				t.Fatalf("expected %d violations, got %d: %#v", tt.wantViolations, len(violations), violations)
+			}
+		})
+	}
+}
+
 func TestFrontendVisibleRawErrorsRequireRedaction(t *testing.T) {
 	t.Parallel()
 
@@ -3198,6 +3235,35 @@ func updateSafe(state *trackerState, err error) {
 		if !strings.Contains(violation.Message, "frontend-visible") {
 			t.Fatalf("expected frontend-visible violation, got %q", violation.Message)
 		}
+	}
+}
+
+func TestFrontendVisibleUploadJobFailureMessagesRequireRedaction(t *testing.T) {
+	t.Parallel()
+
+	content := `package guiapp
+
+import "github.com/autobrr/upbrr/internal/logging"
+
+func unsafe(app *App, eventCtx any, job *trackerUploadJob, err error) {
+	app.failTrackerUploadJob(eventCtx, job, err.Error())
+}
+
+func safe(app *App, eventCtx any, job *trackerUploadJob, err error) {
+	app.failTrackerUploadJob(eventCtx, job, logging.SanitizeMessage(err.Error()))
+}
+
+func stable(app *App, eventCtx any, job *trackerUploadJob) {
+	app.failTrackerUploadJob(eventCtx, job, "upload failed")
+}
+`
+	fset, file := parsePolicyFixture(t, content)
+	violations := checkFrontendVisibleRawErrors(fset, "internal/guiapp/sample.go", file, importAliases(file), nil)
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "upload job failure") {
+		t.Fatalf("expected upload job failure violation, got %q", violations[0].Message)
 	}
 }
 

@@ -408,7 +408,7 @@ func (a *App) runTrackerUploadJob(ctx context.Context, eventCtx context.Context,
 	job.cancel = nil
 	job.mu.Unlock()
 	if err := job.closeResources(); err != nil {
-		a.failTrackerUploadJob(eventCtx, job, err.Error())
+		a.failTrackerUploadJob(eventCtx, job, logging.SanitizeMessage(err.Error()))
 		return
 	}
 	a.emitTrackerUploadSnapshot(eventCtx, job)
