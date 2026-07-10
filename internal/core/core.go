@@ -29,6 +29,7 @@ import (
 	"github.com/autobrr/upbrr/internal/dupechecking"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -1578,7 +1579,7 @@ func (c *Core) uploadImagesToTargets(ctx context.Context, meta api.PreparedMetad
 				Host:       result.target.Host,
 				UsageScope: result.target.UsageScope,
 				Trackers:   slices.Clone(result.target.Trackers),
-				Message:    uploadFailureMessage(result.err),
+				Message:    logging.SanitizeMessage(uploadFailureMessage(result.err)),
 			}
 			failures = append(failures, failure)
 			failureMessages = append(failureMessages, fmt.Sprintf("%s: %v", result.target.Host, result.err))
@@ -2198,7 +2199,73 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 
 	c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 
-	return api.TrackerDryRunPreview{SourcePath: meta.SourcePath, Trackers: entries}, nil
+	return api.TrackerDryRunPreview{SourcePath: meta.SourcePath, Trackers: sanitizeTrackerDryRunEntries(entries)}, nil
+}
+
+func sanitizeTrackerDryRunEntries(entries []api.TrackerDryRunEntry) []api.TrackerDryRunEntry {
+	sanitized := make([]api.TrackerDryRunEntry, len(entries))
+	for index, entry := range entries {
+		entry.Message = logging.SanitizeMessage(entry.Message)
+		entry.BannedReason = logging.SanitizeMessage(entry.BannedReason)
+		entry.BannedCheckError = logging.SanitizeMessage(entry.BannedCheckError)
+		entry.Endpoint = logging.SanitizeMessage(entry.Endpoint)
+		entry.Payload = redactDryRunPayload(entry.Payload)
+		entry.Files = sanitizeTrackerDryRunFiles(entry.Files)
+		entry.DebugSections = sanitizeTrackerDryRunDebugSections(entry.DebugSections)
+		entry.ImageHost = sanitizeDryRunImageHostFeedback(entry.ImageHost)
+		sanitized[index] = entry
+	}
+	return sanitized
+}
+
+func redactDryRunPayload(payload map[string]string) map[string]string {
+	if payload == nil {
+		return nil
+	}
+	redacted := make(map[string]string, len(payload))
+	for key, value := range payload {
+		wrapped := map[string]any{key: value}
+		result, ok := redaction.RedactPrivateInfo(wrapped, nil).(map[string]any)
+		if !ok {
+			redacted[key] = "[REDACTED]"
+			continue
+		}
+		redactedValue, ok := result[key].(string)
+		if !ok {
+			redacted[key] = "[REDACTED]"
+			continue
+		}
+		redacted[key] = logging.SanitizeMessage(redactedValue)
+	}
+	return redacted
+}
+
+func sanitizeTrackerDryRunFiles(files []api.TrackerDryRunFile) []api.TrackerDryRunFile {
+	sanitized := slices.Clone(files)
+	for index := range sanitized {
+		sanitized[index].Path = logging.SanitizeMessage(sanitized[index].Path)
+	}
+	return sanitized
+}
+
+func sanitizeTrackerDryRunDebugSections(sections []api.TrackerDryRunDebugSection) []api.TrackerDryRunDebugSection {
+	sanitized := make([]api.TrackerDryRunDebugSection, len(sections))
+	for index, section := range sections {
+		section.Endpoint = logging.SanitizeMessage(section.Endpoint)
+		section.Payload = redactDryRunPayload(section.Payload)
+		section.Files = sanitizeTrackerDryRunFiles(section.Files)
+		sanitized[index] = section
+	}
+	return sanitized
+}
+
+func sanitizeDryRunImageHostFeedback(feedback api.ImageHostFeedback) api.ImageHostFeedback {
+	feedback.Message = logging.SanitizeMessage(feedback.Message)
+	feedback.Warnings = slices.Clone(feedback.Warnings)
+	for index := range feedback.Warnings {
+		feedback.Warnings[index].Message = logging.SanitizeMessage(feedback.Warnings[index].Message)
+	}
+	return feedback
 }
 
 // injectTrackerDryRunTorrents injects only ready dry-run tracker torrents into

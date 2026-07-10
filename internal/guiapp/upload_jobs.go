@@ -18,6 +18,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/autobrr/upbrr/internal/guishared"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -360,13 +361,14 @@ func (a *App) runTrackerUploadJob(ctx context.Context, eventCtx context.Context,
 				break
 			}
 			job.mu.Lock()
+			message := logging.SanitizeMessage(err.Error())
 			state = job.states[tracker]
 			state.Status = "failed"
-			state.Message = err.Error()
+			state.Message = message
 			state.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 			job.states[tracker] = state
 			job.failedTrackers = append(job.failedTrackers, tracker)
-			job.errorMessage = err.Error()
+			job.errorMessage = message
 			job.mu.Unlock()
 			a.emitTrackerUploadSnapshot(eventCtx, job)
 			continue
@@ -538,10 +540,11 @@ func (a *App) failTrackerUploadJob(eventCtx context.Context, job *trackerUploadJ
 
 	if err := job.closeResources(); err != nil {
 		job.mu.Lock()
+		message := logging.SanitizeMessage(err.Error())
 		if job.errorMessage == "" {
-			job.errorMessage = err.Error()
-		} else if !strings.Contains(job.errorMessage, err.Error()) {
-			job.errorMessage += "; " + err.Error()
+			job.errorMessage = message
+		} else if !strings.Contains(job.errorMessage, message) {
+			job.errorMessage += "; " + message
 		}
 		for _, tracker := range job.trackers {
 			state := job.states[tracker]

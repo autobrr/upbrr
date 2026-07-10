@@ -1270,6 +1270,57 @@ func TestProjectLoggerURLPathPreservationFlagsSanitizerRegression(t *testing.T) 
 	}
 }
 
+func TestProjectLoggerSecretRedactionFlagsSanitizerRegression(t *testing.T) {
+	t.Parallel()
+
+	violations := checkProjectLoggerSecretRedaction(
+		token.NewFileSet(),
+		"internal/logging/logger.go",
+		token.NoPos,
+		func(value string) string { return value },
+	)
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "request URLs") {
+		t.Fatalf("expected request URL secret violation, got %q", violations[0].Message)
+	}
+}
+
+func TestProjectLoggerApostrophePathRedactionFlagsSanitizerRegression(t *testing.T) {
+	t.Parallel()
+
+	violations := checkProjectLoggerApostrophePathRedaction(
+		token.NewFileSet(),
+		"internal/logging/logger.go",
+		token.NoPos,
+		func(value string) string { return value },
+	)
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "apostrophes") {
+		t.Fatalf("expected apostrophe path violation, got %q", violations[0].Message)
+	}
+}
+
+func TestProjectLoggerURLUserinfoRedactionFlagsSanitizerRegression(t *testing.T) {
+	t.Parallel()
+
+	violations := checkProjectLoggerURLUserinfoRedaction(
+		token.NewFileSet(),
+		"internal/logging/logger.go",
+		token.NoPos,
+		func(value string) string { return value },
+	)
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "URL userinfo") {
+		t.Fatalf("expected URL userinfo violation, got %q", violations[0].Message)
+	}
+}
+
 func TestCheckRepositoryFlagsRawTerminalErrorOutput(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
@@ -3083,6 +3134,114 @@ func check(log logger, tracker string) {
 	if !strings.Contains(violations[0].Message, "user-visible outcome") {
 		t.Fatalf("expected trace outcome violation, got %q", violations[0].Message)
 	}
+}
+
+func TestDiagnosticArtifactWritesRequireRedaction(t *testing.T) {
+	t.Parallel()
+
+	content := `package sample
+
+import (
+	"os"
+
+	"github.com/autobrr/upbrr/internal/redaction"
+)
+
+func writeFailureArtifact(path string, payload []byte) error {
+	return os.WriteFile(path, payload, 0o600)
+}
+
+func writeSafeFailureArtifact(path string, payload []byte) error {
+	payload = []byte(redaction.RedactValue(string(payload), nil))
+	return os.WriteFile(path, payload, 0o600)
+}
+`
+	fset, file := parsePolicyFixture(t, content)
+	violations := checkDiagnosticArtifactWrites(fset, "internal/sample/sample.go", file, importAliases(file), nil)
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "artifacts must redact") {
+		t.Fatalf("expected artifact redaction violation, got %q", violations[0].Message)
+	}
+}
+
+func TestFrontendVisibleRawErrorsRequireRedaction(t *testing.T) {
+	t.Parallel()
+
+	content := `package guiapp
+
+import (
+	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/pkg/api"
+)
+
+type trackerState struct { Message string }
+type uploadJob struct { errorMessage string }
+
+func update(state *trackerState, job *uploadJob, err error, captureErr error) api.ScreenshotError {
+	state.Message = err.Error()
+	job.errorMessage = err.Error()
+	return api.ScreenshotError{Message: captureErr.Error()}
+}
+
+func updateSafe(state *trackerState, err error) {
+	state.Message = logging.SanitizeMessage(err.Error())
+}
+`
+	fset, file := parsePolicyFixture(t, content)
+	violations := checkFrontendVisibleRawErrors(fset, "internal/guiapp/sample.go", file, importAliases(file), nil)
+	if len(violations) != 3 {
+		t.Fatalf("expected 3 violations, got %d: %#v", len(violations), violations)
+	}
+	for _, violation := range violations {
+		if !strings.Contains(violation.Message, "frontend-visible") {
+			t.Fatalf("expected frontend-visible violation, got %q", violation.Message)
+		}
+	}
+}
+
+func TestDryRunPreviewSerializationRequiresSanitization(t *testing.T) {
+	t.Parallel()
+
+	content := `package core
+
+import "github.com/autobrr/upbrr/pkg/api"
+
+func unsafe(entries []api.TrackerDryRunEntry) api.TrackerDryRunPreview {
+	return api.TrackerDryRunPreview{Trackers: entries}
+}
+
+func safe(entries []api.TrackerDryRunEntry) api.TrackerDryRunPreview {
+	return api.TrackerDryRunPreview{Trackers: sanitizeTrackerDryRunEntries(entries)}
+}
+
+func empty() api.TrackerDryRunPreview {
+	return api.TrackerDryRunPreview{Trackers: []api.TrackerDryRunEntry{}}
+}
+
+func sanitizeTrackerDryRunEntries(entries []api.TrackerDryRunEntry) []api.TrackerDryRunEntry {
+	return entries
+}
+`
+	fset, file := parsePolicyFixture(t, content)
+	violations := checkDryRunPreviewSerialization(fset, "internal/core/sample.go", file, nil)
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "must be sanitized") {
+		t.Fatalf("expected dry-run serialization violation, got %q", violations[0].Message)
+	}
+}
+
+func parsePolicyFixture(t *testing.T, content string) (*token.FileSet, *ast.File) {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "sample.go", content, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse policy fixture: %v", err)
+	}
+	return fset, file
 }
 
 func writeInternalProductionFixture(t *testing.T, root string, content string) {
