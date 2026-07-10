@@ -21,6 +21,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -447,6 +448,7 @@ func writeFailureArtifact(req trackers.UploadRequest, payload []byte, name strin
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", fmt.Errorf("trackers: BHDTV create failure artifact dir: %w", err)
 	}
+	payload = []byte(redaction.RedactValue(string(payload), nil))
 	if err := os.WriteFile(path, payload, 0o600); err != nil {
 		return "", fmt.Errorf("trackers: BHDTV write failure artifact: %w", err)
 	}

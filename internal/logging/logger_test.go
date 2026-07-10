@@ -62,6 +62,56 @@ func TestLoggerSanitizesLocalPaths(t *testing.T) {
 	}
 }
 
+func TestLoggerSanitizesRequestSecretsAndApostrophePaths(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	logger, err := NewWithLevel(config.LoggingConfig{Level: "debug"}, "", "")
+	if err != nil {
+		t.Fatalf("new logger: %v", err)
+	}
+	logger.SetConsoleOutput(&stdout, &stderr)
+
+	logger.Warnf(
+		"dupechecking: DP search failed for %s: %s",
+		`D:\media\Example's.Release.2026-GRP`,
+		`unit3d: request: Get "https://tracker.example/api/torrents/filter?api_token=secret-api-token&name=Example.Release.2026.1080p-GRP": context deadline exceeded`,
+	)
+
+	console := stderr.String()
+	for _, leaked := range []string{"secret-api-token", `D:\media`, "Example's.Release.2026-GRP"} {
+		if strings.Contains(console, leaked) {
+			t.Fatal("expected console log to redact request secret and complete local path")
+		}
+	}
+	for _, expected := range []string{"for [local path]: unit3d: request", "api_token=[REDACTED]", "context deadline exceeded"} {
+		if !strings.Contains(console, expected) {
+			t.Fatal("expected console log to preserve sanitized request context")
+		}
+	}
+
+	recent := logger.Recent(1)
+	if len(recent) != 1 {
+		t.Fatalf("expected one buffered log entry, got %d", len(recent))
+	}
+	if strings.Contains(recent[0].Message, "secret-api-token") || strings.Contains(recent[0].Message, "Example's.Release.2026-GRP") {
+		t.Fatal("expected frontend log entry to redact request secret and complete local path")
+	}
+}
+
+func TestSanitizeMessageHandlesApostrophesInUnixLocalPaths(t *testing.T) {
+	t.Parallel()
+
+	got := SanitizeMessage("source=/media/releases/Example's.Release.2026-GRP: state=failed")
+	if strings.Contains(got, "/media/releases") || strings.Contains(got, "Example's.Release.2026-GRP") {
+		t.Fatal("expected complete Unix local path with apostrophe to be redacted")
+	}
+	if !strings.Contains(got, "source=[local path]: state=failed") {
+		t.Fatal("expected diagnostic context after Unix local path to remain")
+	}
+}
+
 func TestSanitizeLogMessageHandlesUnixLocalPaths(t *testing.T) {
 	t.Parallel()
 
@@ -104,5 +154,17 @@ func TestSanitizeLogMessagePreservesURLs(t *testing.T) {
 	}
 	if !strings.Contains(got, "image=https://img.example.com/media/poster.jpg source=[local path]") {
 		t.Fatalf("expected URL preserved and local path redacted, got %q", got)
+	}
+}
+
+func TestSanitizeMessageRedactsURLUserinfo(t *testing.T) {
+	t.Parallel()
+
+	got := SanitizeMessage("client=https://policy-user:policy-password@host.example/path")
+	if strings.Contains(got, "policy-user") || strings.Contains(got, "policy-password") {
+		t.Fatal("expected URL userinfo credentials redacted")
+	}
+	if !strings.Contains(got, "https://[REDACTED]@host.example/path") {
+		t.Fatal("expected URL host and path preserved")
 	}
 }

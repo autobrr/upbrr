@@ -21,6 +21,7 @@ import (
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -74,7 +75,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if resp.Request != nil && resp.Request.URL != nil {
 		finalURL = resp.Request.URL.String()
 	}
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode == http.StatusOK, commonhttp.DefaultResponsePreviewBytes)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: ASC read upload response: %w", err)
+	}
 	torrentID := parseUploadID(finalURL, string(bodyBytes))
 	if resp.StatusCode == http.StatusOK && torrentID != "" {
 		torrentURL := baseURL + "/torrents-details.php?id=" + url.QueryEscape(torrentID)
@@ -105,12 +109,13 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	failurePath := ""
 	if pathValue, pathErr := resolveFailurePath(req.Meta, req.AppConfig.MainSettings.DBPath); pathErr == nil {
 		failurePath = pathValue
-		_ = os.WriteFile(failurePath, bodyBytes, 0o600)
+		redactedBody := []byte(redaction.RedactValue(string(responsePreview), nil))
+		_ = os.WriteFile(failurePath, redactedBody, 0o600)
 	}
 	if failurePath != "" {
-		return api.UploadSummary{}, fmt.Errorf("%w failure=%s", commonhttp.UploadHTTPErrorWithURL("ASC", resp.StatusCode, finalURL, bodyBytes), failurePath)
+		return api.UploadSummary{}, fmt.Errorf("%w failure=%s", commonhttp.UploadHTTPErrorWithURL("ASC", resp.StatusCode, finalURL, responsePreview), failurePath)
 	}
-	return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("ASC", resp.StatusCode, finalURL, bodyBytes)
+	return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("ASC", resp.StatusCode, finalURL, responsePreview)
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
