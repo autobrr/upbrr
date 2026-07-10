@@ -3234,6 +3234,36 @@ func sanitizeTrackerDryRunEntries(entries []api.TrackerDryRunEntry) []api.Tracke
 	}
 }
 
+func TestUnit3DQueryCredentialAuthRequiresBearerHeader(t *testing.T) {
+	t.Parallel()
+
+	content := `package trackerdata
+
+import (
+	"net/http"
+	"net/url"
+)
+
+func unsafe(req *http.Request, apiKey string) {
+	params := url.Values{}
+	params.Set("api_token", apiKey)
+	req.URL.RawQuery = params.Encode()
+}
+
+func safe(req *http.Request, apiKey string) {
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+}
+`
+	fset, file := parsePolicyFixture(t, content)
+	violations := checkUnit3DQueryCredentialAuth(fset, "internal/trackerdata/unit3d.go", file, nil)
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
+	}
+	if !strings.Contains(violations[0].Message, "Authorization: Bearer") {
+		t.Fatalf("expected Unit3D Bearer auth violation, got %q", violations[0].Message)
+	}
+}
+
 func parsePolicyFixture(t *testing.T, content string) (*token.FileSet, *ast.File) {
 	t.Helper()
 	fset := token.NewFileSet()

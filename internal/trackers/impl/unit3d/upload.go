@@ -159,14 +159,7 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 		logger.Errorf("trackers: %s failed to create HTTP request: %v", trackerName, err)
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s build upload request: %w", trackerName, err)
 	}
-	if usesUnit3DBearerAuth(trackerName) {
-		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	} else {
-		query := httpReq.URL.Query()
-		query.Set("api_token", apiKey)
-		httpReq.URL.RawQuery = query.Encode()
-	}
-	httpReq.Header.Set("Accept", "application/json")
+	setUnit3DAPIHeaders(httpReq, apiKey)
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
 
@@ -748,8 +741,14 @@ func resolveKeywordsForTracker(tracker string, meta api.PreparedMetadata) string
 	return resolveKeywords(meta)
 }
 
-func usesUnit3DBearerAuth(tracker string) bool {
-	return !strings.EqualFold(strings.TrimSpace(tracker), "ACM")
+func setUnit3DAPIHeaders(req *http.Request, apiKey string) {
+	if req == nil {
+		return
+	}
+	req.Header.Set("Accept", "application/json")
+	if apiKey = strings.TrimSpace(apiKey); apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 }
 
 func resolveTVDBID(meta api.PreparedMetadata) int {

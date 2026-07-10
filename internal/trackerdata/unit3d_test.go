@@ -137,8 +137,12 @@ func TestSearchTorrentsCBRIncludesPendingAndFiltersTMDB(t *testing.T) {
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
-		if got := r.URL.Query().Get("api_token"); got != "secret" {
-			t.Error("api token mismatch")
+		if r.Header.Get("Authorization") != "Bearer secret" {
+			t.Error("bearer authorization mismatch")
+			return
+		}
+		if r.URL.Query().Has("api_token") {
+			t.Error("API token must not be placed in the query")
 			return
 		}
 
@@ -191,6 +195,42 @@ func TestSearchTorrentsCBRIncludesPendingAndFiltersTMDB(t *testing.T) {
 	}
 	if entries[1].ID != "202" || entries[1].SizeBytes != 456 || entries[1].Files[0] != "pending.mkv" {
 		t.Fatalf("unexpected pending fields: %#v", entries[1])
+	}
+}
+
+func TestTorrentInfoUsesBearerAuthorization(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer secret" {
+			t.Error("bearer authorization mismatch")
+			return
+		}
+		if r.URL.Query().Has("api_token") {
+			t.Error("API token must not be placed in the query")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"attributes":{"tmdb_id":123,"category":"MOVIE"}}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	base, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal("parse test server URL")
+	}
+	client := NewClient(config.Config{
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"AITHER": {APIKey: "secret"},
+		}},
+	}, api.NopLogger{}, &http.Client{Transport: rewriteHostTransport{base: base, rt: server.Client().Transport}})
+
+	result, err := client.TorrentInfo(context.Background(), "AITHER", "123", "", true, false)
+	if err != nil {
+		t.Fatalf("torrent info: %v", err)
+	}
+	if result.TMDBID != 123 || result.Category != "MOVIE" {
+		t.Fatalf("unexpected Unit3D lookup result: %#v", result)
 	}
 }
 

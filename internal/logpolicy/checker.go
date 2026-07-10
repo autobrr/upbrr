@@ -393,7 +393,7 @@ func checkProjectLoggerURLPathPreservation(fset *token.FileSet, relPath string, 
 // checkProjectLoggerSecretRedaction guards the logger boundary shared by
 // console, file, buffered, and frontend-streamed output.
 func checkProjectLoggerSecretRedaction(fset *token.FileSet, relPath string, pos token.Pos, sanitize func(string) string) []Violation {
-	sanitized := sanitize(`unit3d: request: Get "https://tracker.example/api/torrents/filter?api_token=policy-secret&name=Example.Release.2026.1080p-GRP": timeout`)
+	sanitized := sanitize(`tracker: request: Get "https://tracker.example/api/torrents/filter?api_token=policy-secret&name=Example.Release.2026.1080p-GRP": timeout`)
 	if strings.Contains(sanitized, "policy-secret") || !strings.Contains(sanitized, "api_token=[REDACTED]") {
 		return []Violation{violationAt(fset, relPath, pos, "project logger sanitizer must redact secret-bearing request URLs")}
 	}
@@ -915,6 +915,7 @@ func checkFile(fset *token.FileSet, root string, path string) ([]Violation, erro
 	violations = append(violations, checkDiagnosticArtifactWrites(fset, relPath, file, aliases, allows)...)
 	violations = append(violations, checkFrontendVisibleRawErrors(fset, relPath, file, aliases, allows)...)
 	violations = append(violations, checkDryRunPreviewSerialization(fset, relPath, file, allows)...)
+	violations = append(violations, checkUnit3DQueryCredentialAuth(fset, relPath, file, allows)...)
 
 	sensitiveViolations := checkSensitiveOutputParsed(fset, relPath, file, aliases, allows, false)
 	violations = append(violations, sensitiveViolations...)
@@ -3439,6 +3440,35 @@ func isSafeDryRunOutputExpr(expr ast.Expr) bool {
 	default:
 		return false
 	}
+}
+
+// checkUnit3DQueryCredentialAuth prevents API credentials from returning to
+// request URLs after Unit3D authentication has moved to Bearer headers.
+func checkUnit3DQueryCredentialAuth(fset *token.FileSet, relPath string, file *ast.File, allows map[int]*logpolicyAllow) []Violation {
+	if relPath != "internal/trackerdata/unit3d.go" && !strings.HasPrefix(relPath, "internal/trackers/impl/unit3d/") {
+		return nil
+	}
+	violations := make([]Violation, 0)
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok || len(call.Args) < 2 {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || (selector.Sel.Name != "Set" && selector.Sel.Name != "Add") {
+			return true
+		}
+		key, ok := stringLiteral(call.Args[0])
+		if !ok {
+			return true
+		}
+		switch canonicalSensitiveKeyName(key) {
+		case "apikey", "apitoken", "authkey", "passkey", "token":
+			appendLogpolicyViolation(fset, relPath, allows, &violations, call.Args[0].Pos(), "Unit3D API credentials must use Authorization: Bearer instead of URL query parameters")
+		}
+		return true
+	})
+	return violations
 }
 
 func violationAt(fset *token.FileSet, file string, pos token.Pos, message string) Violation {
