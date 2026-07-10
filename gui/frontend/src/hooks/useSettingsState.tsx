@@ -460,6 +460,12 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.Anon,
     trackerFieldMeta.ModQ,
   ],
+  MNS: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+  ],
   MTV: [
     trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,

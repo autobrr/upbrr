@@ -875,6 +875,30 @@ func TestRunTrackerUploadJobContainsCleanupPanic(t *testing.T) {
 	}
 }
 
+func TestRunTrackerUploadJobSanitizesCleanupError(t *testing.T) {
+	app := &App{}
+	coreSvc := &closeCounterCore{uploads: []uploadPreparedResponse{
+		{
+			result: api.Result{UploadedCount: 1},
+		},
+	}}
+	coreSvc.closeErr = errors.New(`request failed for C:\path\to\Example.Release.2026.1080p-GRP: Get "https://tracker.invalid/api/torrents?api_token=secret-value"`)
+	job := newTrackerUploadJobTestJob(coreSvc, []string{"BLU"})
+
+	app.runTrackerUploadJob(context.Background(), context.Background(), job)
+
+	snapshot := buildTrackerUploadSnapshot(job)
+	if snapshot.Status != "failed" {
+		t.Fatalf("expected failed status after cleanup error, got %q", snapshot.Status)
+	}
+	if strings.Contains(snapshot.Error, "secret-value") {
+		t.Fatal("expected cleanup error to redact secrets")
+	}
+	if strings.Contains(snapshot.Error, "Example.Release.2026.1080p-GRP") {
+		t.Fatal("expected cleanup error to redact local path details")
+	}
+}
+
 func newTrackerUploadJobTestJob(coreSvc api.Core, trackers []string) *trackerUploadJob {
 	job := &trackerUploadJob{
 		id:         "job",
