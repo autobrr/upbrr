@@ -137,7 +137,7 @@ func buildA4KAIName(meta api.PreparedMetadata) string {
 
 	name := strings.TrimSpace(strings.Join(strings.Fields(strings.Join(parts, " ")), " "))
 
-	group := strings.TrimPrefix(strings.TrimSpace(meta.Tag), "-")
+	group := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(meta.Tag), "-"))
 	if group == "" || isNoGroupTag(group) {
 		group = "NOGRP"
 	}

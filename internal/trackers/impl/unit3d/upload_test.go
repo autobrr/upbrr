@@ -1551,6 +1551,30 @@ func TestBuildUnit3DNameA4KAIUpscale(t *testing.T) {
 	}
 }
 
+func TestBuildUnit3DNameA4KAITagWithSpaceAfterDash(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ReleaseName: "12.12.The.Day.2023.2160p.AI.Upscale.BluRay.TrueHD.5.1.AV1-Group",
+		Type:        "REMUX",
+		Source:      "BluRay",
+		Audio:       "TrueHD",
+		Channels:    "5.1",
+		VideoEncode: "AV1",
+		Tag:         "- Group",
+		Release: api.ReleaseInfo{
+			Title: "12 12: The Day",
+			Year:  2023,
+		},
+	}
+
+	got := buildUnit3DName("A4K", meta, config.TrackerConfig{})
+	want := "12 12: The Day 2023 2160p AI Upscale BluRay TrueHD 5.1 AV1-Group"
+	if got != want {
+		t.Fatalf("expected A4K name with no stray space after tag dash %q, got %q", want, got)
+	}
+}
+
 func TestBuildUnit3DNameA4KAIRemaster(t *testing.T) {
 	t.Parallel()
 
