@@ -340,6 +340,11 @@ trackers:
     url: "https://luminarr.me"
     anon: false
     modq: false
+  MNS:
+    link_dir_name: ""
+    api_key: ""
+    url: "https://midnightscene.cc"
+    anon: false
   MTV:
     link_dir_name: ""
     api_key: ""

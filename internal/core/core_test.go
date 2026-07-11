@@ -3516,6 +3516,53 @@ func TestFetchTrackerDryRunPreviewUsesCachedMetadata(t *testing.T) {
 	}
 }
 
+func TestSanitizeTrackerDryRunEntriesRedactsBridgePayload(t *testing.T) {
+	t.Parallel()
+
+	entries := []api.TrackerDryRunEntry{{
+		Message:  `request failed: Get "https://tracker.example/upload?api_key=policy-secret"`,
+		Endpoint: "https://policy-user:policy-password@tracker.example/upload?api_key=policy-secret",
+		Payload: map[string]string{
+			"api_key":     "policy-secret",
+			"description": "kept",
+		},
+		Files: []api.TrackerDryRunFile{{Field: "torrent", Path: `C:\path\to\Example.Release.2026.1080p-GRP.torrent`, Present: true}},
+		DebugSections: []api.TrackerDryRunDebugSection{{
+			Endpoint: "https://tracker.example/debug?passkey=policy-passkey",
+			Payload:  map[string]string{"auth_key": "policy-auth", "name": "kept"},
+			Files:    []api.TrackerDryRunFile{{Field: "nfo", Path: `/media/releases/Example.Release.2026.1080p-GRP.nfo`, Present: true}},
+		}},
+		ImageHost: api.ImageHostFeedback{Warnings: []api.ImageHostWarning{{
+			Host:    "example",
+			Message: "failed for /media/releases/Example.Release.2026.1080p-GRP.png?token=policy-token",
+		}}},
+	}}
+
+	sanitized := sanitizeTrackerDryRunEntries(entries)
+	if len(sanitized) != 1 {
+		t.Fatal("expected one sanitized dry-run entry")
+	}
+	encoded := sanitized[0].Message + sanitized[0].Endpoint + strings.Join([]string{
+		sanitized[0].Payload["api_key"],
+		sanitized[0].Files[0].Path,
+		sanitized[0].DebugSections[0].Endpoint,
+		sanitized[0].DebugSections[0].Payload["auth_key"],
+		sanitized[0].DebugSections[0].Files[0].Path,
+		sanitized[0].ImageHost.Warnings[0].Message,
+	}, " ")
+	for _, marker := range []string{"policy-secret", "policy-user", "policy-password", "policy-passkey", "policy-auth", "policy-token", `C:\path\to`, "/media/releases/"} {
+		if strings.Contains(encoded, marker) {
+			t.Fatal("expected bridge dry-run payload to omit secrets and local paths")
+		}
+	}
+	if sanitized[0].Payload["description"] != "kept" || sanitized[0].DebugSections[0].Payload["name"] != "kept" {
+		t.Fatal("expected non-sensitive dry-run payload fields preserved")
+	}
+	if entries[0].Payload["api_key"] != "policy-secret" || entries[0].Files[0].Path == sanitized[0].Files[0].Path {
+		t.Fatal("expected sanitizer to clone nested dry-run data")
+	}
+}
+
 func TestRunUploadPreparedDebugDryRunIgnoresCheckBlocksForArtifacts(t *testing.T) {
 	t.Parallel()
 

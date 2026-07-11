@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackerdata"
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
@@ -265,10 +266,14 @@ func (s *Service) checkTracker(ctx context.Context, meta api.PreparedMetadata, t
 
 	raw, notes, err := handler.Search(ctx, meta, tracker)
 	if err != nil {
+		message := strings.TrimSpace(logging.SanitizeMessage(err.Error()))
+		if message == "" {
+			message = "dupe search failed"
+		}
 		result.Status = "failed"
-		result.Error = err.Error()
-		result.Notes = append(result.Notes, fmt.Sprintf("dupe search failed: %v", err))
-		s.logger.Warnf("dupechecking: %s search failed for %s: %v", tracker, meta.SourcePath, err)
+		result.Error = message
+		result.Notes = append(result.Notes, "dupe search failed: "+message)
+		s.logger.Warnf("dupechecking: %s search failed for %s: %s", tracker, meta.SourcePath, message)
 		return result
 	}
 	skipCode, notes := splitSkipCodeNotes(notes)
