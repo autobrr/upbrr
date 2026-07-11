@@ -67,7 +67,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	descriptionText := strings.TrimSpace(assets.Description)
 	if !assets.Final {
-		descriptionText, err = descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
+		descriptionText, err = descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.MenuImages, assets.Screenshots)
 		if err != nil {
 			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
@@ -176,7 +176,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}
 	descriptionText := strings.TrimSpace(assets.Description)
 	if !assets.Final {
-		descriptionText, err = descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
+		descriptionText, err = descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.MenuImages, assets.Screenshots)
 		if err != nil {
 			return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: %w", err)
 		}

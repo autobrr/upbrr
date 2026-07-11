@@ -52,7 +52,7 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 
 	description := strings.TrimSpace(assets.Description)
 	if !assets.Final {
-		description, err = descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
+		description, err = descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.MenuImages, assets.Screenshots)
 		if err != nil {
 			return trackers.DescriptionResult{}, fmt.Errorf("trackers: HDB description build: %w", err)
 		}

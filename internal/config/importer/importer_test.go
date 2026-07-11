@@ -185,6 +185,12 @@ func TestImportFromContentRejectsNestedUnknownKeys(t *testing.T) {
 			wantKey: "MainSettings.tmdbapi",
 		},
 		{
+			name:    "yaml-max-menu-items-noncanonical",
+			file:    "config.yaml",
+			payload: []byte("screenshot_handling:\n  maxMenuItems: 6\n"),
+			wantKey: "screenshot_handling.maxMenuItems",
+		},
+		{
 			name:    "yaml-torrent-client-typo",
 			file:    "config.yaml",
 			payload: []byte("torrent_clients:\n  watch-client:\n    type: watch\n    watch_folder_typo: C:/Watch\n"),

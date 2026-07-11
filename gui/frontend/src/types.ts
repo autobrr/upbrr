@@ -415,6 +415,7 @@ export type WebAuthStatus = {
   message: string;
 };
 
+/** Running build metadata plus path-free DVD menu capability diagnostics. */
 export type ApplicationInfo = {
   version: string;
   buildIdentifier: string;
@@ -423,6 +424,12 @@ export type ApplicationInfo = {
   goarch: string;
   uptime: string;
   uptimeSeconds: number;
+  /** Pure-Go engine and FFmpeg dvdvideo probe metadata. */
+  dvdMenuEngine: DVDMenuEngineInfo;
+  /** Stable capability state shown by settings diagnostics. */
+  dvdMenuCapabilityStatus: "available" | "incompatible" | "unavailable";
+  /** User-facing reason for dvdMenuCapabilityStatus. */
+  dvdMenuCapabilityMessage: string;
 };
 
 /** Tracker auth support metadata returned by the app bridge. */
@@ -761,7 +768,8 @@ export type DescriptionBuilderPreview = {
   Groups: DescriptionBuilderGroup[];
 };
 
-export type ScreenshotPurpose = "preview" | "final";
+/** Image category shared by capture, selection, upload, and menu workflows. */
+export type ScreenshotPurpose = "preview" | "final" | "menu";
 
 export type ScreenshotSelection = {
   Index: number;
@@ -774,6 +782,8 @@ export type ScreenshotImage = {
   Index: number;
   TimestampSeconds: number;
   Path: string;
+  /** Distinguishes preview, normal final, and disc-menu images. */
+  Purpose: ScreenshotPurpose;
   Width: number;
   Height: number;
   SizeBytes: number;
@@ -782,6 +792,101 @@ export type ScreenshotImage = {
   RawURL?: string;
   WebURL?: string;
   UploadedAt?: string;
+};
+
+/** How the DVD navigation engine found a selected menu screen. */
+export type DVDMenuDiscovery = "reachable" | "structural";
+
+/** Stable, redacted diagnostic for incomplete DVD menu coverage. */
+export type DVDMenuCaptureWarning = {
+  /** Machine-readable warning identifier. */
+  Code: string;
+  /** User-facing path-free warning text. */
+  Message: string;
+};
+
+/** Path-free pure-Go engine and FFmpeg dvdvideo capability metadata. */
+export type DVDMenuEngineInfo = {
+  /** Bundled pure-Go engine implementation version. */
+  EngineVersion: string;
+  /** Capture metadata contract version. */
+  SchemaVersion: number;
+  /** Engine stages available in this build. */
+  SupportedFeatures: string[];
+  /** Bounded first line of FFmpeg version output. */
+  FFmpegVersion: string;
+  /** Whether FFmpeg exposes the required dvdvideo menu options. */
+  FFmpegDVDVideo: boolean;
+  /** Required dvdvideo options absent from the capability probe. */
+  MissingFFmpegOptions: string[];
+};
+
+/** Persisted menu image plus its navigation discovery source. */
+export type DVDMenuCaptureImage = ScreenshotImage & {
+  /** Whether navigation or structural inventory found the screen. */
+  Discovery: DVDMenuDiscovery;
+};
+
+/** Final or partial result of one bounded automatic DVD menu capture. */
+export type DVDMenuCaptureResult = {
+  /** Host filesystem path of the prepared DVD source. */
+  SourcePath: string;
+  /** Persisted automatic captures in display order. */
+  Images: DVDMenuCaptureImage[];
+  /** Menu language requested from the engine. */
+  SelectedLanguage: string;
+  /** DVD region override; zero means none. */
+  Region: number;
+  /** Number of structurally inventoried menu programs. */
+  DiscoveredMenus: number;
+  /** Number of distinct VM states evaluated. */
+  VisitedStates: number;
+  /** Number of authored button commands evaluated. */
+  VisitedButtons: number;
+  /** Configured upper bound on automatic captures. */
+  MaxItems: number;
+  /** True when every selected screen was captured without coverage warnings. */
+  Complete: boolean;
+  /** True when warnings prevented complete navigation or rendering coverage. */
+  Partial: boolean;
+  /** True when MaxItems excluded eligible screens. */
+  Truncated: boolean;
+  /** Deduplicated coverage diagnostics. */
+  Warnings: DVDMenuCaptureWarning[];
+  /** Engine and FFmpeg capability used for capture. */
+  Engine: DVDMenuEngineInfo;
+};
+
+/** Pollable frontend state for one background DVD menu capture job. */
+export type DVDMenuCaptureSnapshot = {
+  /** Opaque identifier used for polling and cancellation. */
+  jobID: string;
+  /** Host filesystem path associated with the prepared metadata. */
+  sourcePath: string;
+  /** Job lifecycle state: queued, running, completed, failed, or canceled. */
+  status: string;
+  /** Current capture stage within status. */
+  phase: string;
+  /** User-facing progress or terminal summary. */
+  message: string;
+  /** Latest structural inventory count. */
+  discoveredMenus: number;
+  /** Latest evaluated VM-state count. */
+  visitedStates: number;
+  /** Latest evaluated button-command count. */
+  visitedButtons: number;
+  /** Latest rendered or persisted image count. */
+  capturedCount: number;
+  /** Latest distinct coverage-warning count. */
+  warningCount: number;
+  /** Final or partial capture result when available. */
+  result: DVDMenuCaptureResult;
+  /** Terminal failure text; empty for successful jobs. */
+  error: string;
+  /** RFC3339 UTC job start time. */
+  startedAt: string;
+  /** RFC3339 UTC finish time, or empty while active. */
+  finishedAt: string;
 };
 
 export type ScreenshotError = {

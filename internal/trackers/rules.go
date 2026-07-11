@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/additional"
 	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -475,11 +476,11 @@ func hasReleaseToken(meta api.PreparedMetadata, tokens []string) bool {
 
 func isAdultContent(meta api.PreparedMetadata) bool {
 	candidates := append([]string{}, splitCSV(meta.Release.Genre)...)
-	if meta.ExternalMetadata.TMDB != nil {
+	if meta.ExternalMetadata.TMDB != nil && externalMetadataMatchesCurrentSource(meta) {
 		candidates = append(candidates, splitCSV(meta.ExternalMetadata.TMDB.Genres)...)
 		candidates = append(candidates, splitCSV(meta.ExternalMetadata.TMDB.Keywords)...)
 	}
-	if meta.ExternalMetadata.IMDB != nil {
+	if meta.ExternalMetadata.IMDB != nil && externalMetadataMatchesCurrentSource(meta) {
 		candidates = append(candidates, splitCSV(meta.ExternalMetadata.IMDB.Genres)...)
 	}
 	normalized := normalizeStrings(candidates)
@@ -490,6 +491,11 @@ func isAdultContent(meta api.PreparedMetadata) bool {
 		}
 	}
 	return false
+}
+
+func externalMetadataMatchesCurrentSource(meta api.PreparedMetadata) bool {
+	storedSource := strings.TrimSpace(meta.ExternalMetadata.SourcePath)
+	return storedSource == "" || pathutil.SamePath(storedSource, strings.TrimSpace(meta.SourcePath))
 }
 
 func splitCSV(value string) []string {

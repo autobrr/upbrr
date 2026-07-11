@@ -220,6 +220,65 @@ func TestUploadImagesUploadsApplicableTrackerHosts(t *testing.T) {
 	}
 }
 
+func TestUploadImagesIncludesRequiredHDBRehost(t *testing.T) {
+	t.Parallel()
+
+	images := []api.ScreenshotImage{{Path: "/tmp/menu.png", Purpose: api.ScreenshotPurposeMenu}}
+	imageService := &stubImageHosting{
+		uploadFn: func(_ context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+			return uploadedImageLinksForHost(meta, host, usageScope, images), nil
+		},
+	}
+	core := &Core{
+		logger: api.NopLogger{},
+		cfg: config.Config{
+			ImageHosting: config.ImageHostingConfig{Host1: "imgbox"},
+			Trackers: config.TrackersConfig{
+				Trackers: map[string]config.TrackerConfig{
+					"HDB": {ImgRehost: true},
+					"STC": {},
+				},
+			},
+		},
+		services: api.ServiceSet{
+			Filesystem: stubFilesystem{paths: []string{"/tmp/source"}},
+			Images:     imageService,
+		},
+		dupeCache: make(map[string]dupeCacheEntry),
+	}
+
+	result, err := core.UploadImages(context.Background(), api.Request{
+		Paths:    []string{"/tmp/source"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"HDB", "STC"},
+	}, "imgbox", images)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(imageService.calls) != 2 {
+		t.Fatalf("expected global and HDB uploads, got %d calls: %#v", len(imageService.calls), imageService.calls)
+	}
+	calledHosts := map[string]string{}
+	for _, call := range imageService.calls {
+		calledHosts[call.host] = call.usageScope
+	}
+	if calledHosts["imgbox"] != "global" {
+		t.Fatalf("expected selected global host, got %#v", imageService.calls)
+	}
+	if calledHosts["hdb"] != "tracker:HDB" {
+		t.Fatalf("expected tracker-scoped HDB rehost, got %#v", imageService.calls)
+	}
+	for _, call := range imageService.calls {
+		if call.host == "hdb" && (len(call.images) != 1 || call.images[0].Purpose != api.ScreenshotPurposeMenu) {
+			t.Fatalf("expected HDB upload to preserve menu purpose, got %#v", call.images)
+		}
+	}
+	if len(result.Links) != 2 {
+		t.Fatalf("expected results from both hosts, got %#v", result)
+	}
+}
+
 func TestUploadImagesUsesConfiguredHostPriorityWhenSelectedHostIsNotApproved(t *testing.T) {
 	t.Parallel()
 

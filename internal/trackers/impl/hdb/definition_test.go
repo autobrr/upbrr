@@ -56,6 +56,28 @@ func TestDefinitionBuildDescriptionUsesProvidedAssets(t *testing.T) {
 	}
 }
 
+func TestDefinitionBuildDescriptionUsesProvidedMenuImages(t *testing.T) {
+	d := New()
+	result, err := d.BuildDescription(context.Background(), trackers.DescriptionRequest{
+		Tracker: "HDB",
+		Meta:    api.PreparedMetadata{},
+		Logger:  api.NopLogger{},
+		Assets: &trackers.DescriptionAssets{
+			MenuImages: []api.ScreenshotImage{{
+				Purpose: api.ScreenshotPurposeMenu,
+				ImgURL:  "https://t.hdbits.org/menu.jpg",
+				WebURL:  "https://img.hdbits.org/menu",
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result.Description, "https://t.hdbits.org/menu.jpg") {
+		t.Fatalf("expected provided menu image in description, got %q", result.Description)
+	}
+}
+
 func TestDefinitionUploadMissingCredentials(t *testing.T) {
 	d := New()
 	_, err := d.Upload(context.Background(), trackers.UploadRequest{Tracker: "HDB", Logger: api.NopLogger{}})

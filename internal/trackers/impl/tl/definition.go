@@ -24,7 +24,7 @@ func (definition) BuildUploadDryRun(ctx context.Context, req trackers.UploadRequ
 }
 
 func (definition) BuildDescription(ctx context.Context, req trackers.DescriptionRequest) (trackers.DescriptionResult, error) {
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+	assets, err := trackers.ResolveDescriptionAssetsWithPrepared(ctx, req.Tracker, req.Meta, req.Repo, req.Logger, req.Assets)
 	if err != nil {
 		assets = trackers.DescriptionAssets{}
 	}

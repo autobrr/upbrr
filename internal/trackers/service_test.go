@@ -494,7 +494,7 @@ func (testHDBPreparationDefinition) BuildDescription(ctx context.Context, req De
 	if req.Assets != nil {
 		assets = *req.Assets
 	}
-	description, err := descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
+	description, err := descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.MenuImages, assets.Screenshots)
 	if err != nil {
 		return DescriptionResult{}, fmt.Errorf("trackers: %w", err)
 	}
