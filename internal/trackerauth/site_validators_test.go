@@ -30,7 +30,7 @@ func TestValidateFFStoredCookiesReadsFullSuccessBody(t *testing.T) {
 	}
 }
 
-func TestResolveARStoredSessionRequiresAuthenticatedBrowseMarker(t *testing.T) {
+func TestResolveARStoredSessionRequiresAuthenticatedLogoutMarker(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -39,8 +39,25 @@ func TestResolveARStoredSessionRequiresAuthenticatedBrowseMarker(t *testing.T) {
 		wantInvalid bool
 	}{
 		{
-			name: "authenticated download link",
-			body: `<a href="/torrents.php?action=download&amp;id=123&amp;auth=session-key">Download</a>`,
+			name: "authenticated logout link",
+			body: `<a href="https://alpharatio.cc/logout.php?auth=session-key">Logout</a>`,
+		},
+		{
+			name: "relative logout link",
+			body: `<a href="/logout.php?auth=session-key">Logout</a>`,
+		},
+		{
+			name: "logout link without auth key",
+			body: `<a href="https://alpharatio.cc/logout.php?auth=">Logout</a>`,
+		},
+		{
+			name: "logout link without query",
+			body: `<a href="https://alpharatio.cc/logout.php">Logout</a>`,
+		},
+		{
+			name:        "foreign logout link",
+			body:        `<a href="https://example.invalid/logout.php?auth=session-key">Logout</a>`,
+			wantInvalid: true,
 		},
 		{
 			name:        "arbitrary help page",
@@ -62,7 +79,7 @@ func TestResolveARStoredSessionRequiresAuthenticatedBrowseMarker(t *testing.T) {
 				t.Fatalf("SaveTrackerCookieMap: %v", err)
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != arBrowsePath {
+				if r.URL.Path != arIndexPath {
 					http.NotFound(w, r)
 					return
 				}
@@ -74,7 +91,7 @@ func TestResolveARStoredSessionRequiresAuthenticatedBrowseMarker(t *testing.T) {
 			err := resolveARSessionForTrackerAuth(ctx, config.TrackerConfig{URL: server.URL}, dbPath, api.TrackerAuthLoginRequest{})
 			if !tt.wantInvalid {
 				if err != nil {
-					t.Fatalf("expected authenticated AR browse page to validate: %v", err)
+					t.Fatalf("expected authenticated AR index page to validate: %v", err)
 				}
 				return
 			}
@@ -83,7 +100,7 @@ func TestResolveARStoredSessionRequiresAuthenticatedBrowseMarker(t *testing.T) {
 				t.Fatalf("expected validation error, got %v", err)
 			}
 			if !validationErr.ConfirmedInvalid || validationErr.Transient {
-				t.Fatalf("expected missing AR browse marker to invalidate session, got %+v", validationErr)
+				t.Fatalf("expected missing AR logout marker to invalidate session, got %+v", validationErr)
 			}
 		})
 	}

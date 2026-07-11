@@ -20,13 +20,14 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
+	"github.com/autobrr/upbrr/internal/trackers/impl/thr"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 const (
 	arDefaultBaseURL  = "https://alpharatio.cc"
 	authPreviewBytes  = 64 * 1024
-	arBrowsePath      = "/torrents.php"
+	arIndexPath       = "/index.php"
 	arLoginPath       = "/login.php"
 	ffDefaultBaseURL  = "https://www.funfile.org"
 	ffLoginPath       = "/takelogin.php"
@@ -37,15 +38,13 @@ const (
 	flLoginPath       = "/takelogin.php"
 	hdbDefaultBaseURL = "https://hdbits.org"
 	hdbUploadPath     = "/upload/upload"
-	thrDefaultBaseURL = "https://www.torrenthr.org"
-	thrLoginPath      = "/takelogin.php"
 )
 
 // flValidatorPattern extracts the anti-CSRF validator required by FL login.
 var flValidatorPattern = regexp.MustCompile(`name="validator"\s+value="([^"]+)"`)
 
 // resolveARSessionForTrackerAuth verifies imported AR cookies against the
-// browse page and refreshes missing or confirmed-invalid sessions with
+// post-login index page and refreshes missing or confirmed-invalid sessions with
 // configured credentials. Transport and unexpected HTTP failures preserve
 // stored cookies and do not trigger credential login.
 func resolveARSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConfig, dbPath string, _ api.TrackerAuthLoginRequest) error {
@@ -73,7 +72,7 @@ func resolveARSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConfi
 }
 
 func validateARStoredCookies(ctx context.Context, baseURL string, values []*http.Cookie) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, joinAuthURL(baseURL, arBrowsePath), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, joinAuthURL(baseURL, arIndexPath), nil)
 	if err != nil {
 		return fmt.Errorf("trackers: AR session validation request build: %w", err)
 	}
@@ -96,20 +95,19 @@ func validateARStoredCookies(ctx context.Context, baseURL string, values []*http
 		return &ValidationError{TrackerID: "AR", Transient: true, Reason: "remote validation failed", Err: fmt.Errorf("trackers: AR session validation failed status=%d", resp.StatusCode)}
 	}
 	if !arLooksLoggedIn(string(body)) {
-		return &ValidationError{TrackerID: "AR", ConfirmedInvalid: true, Reason: "stored session expired", Err: errors.New("trackers: AR browse marker not found")}
+		return &ValidationError{TrackerID: "AR", ConfirmedInvalid: true, Reason: "stored session expired", Err: errors.New("trackers: AR logout marker not found")}
 	}
 	return nil
 }
 
 // loginARForTrackerAuth creates a clean AR session, proves it against the
-// browse page, and persists only the validated replacement cookies.
+// post-login index page, and persists only the validated replacement cookies.
 func loginARForTrackerAuth(ctx context.Context, cfg config.TrackerConfig, dbPath string, baseURL string) error {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return fmt.Errorf("trackers: AR create login cookie jar: %w", err)
 	}
-	client := noRedirectHTTPClient()
-	client.Jar = jar
+	client := &http.Client{Timeout: 30 * time.Second, Jar: jar}
 	data := url.Values{}
 	data.Set("username", strings.TrimSpace(cfg.Username))
 	data.Set("password", strings.TrimSpace(cfg.Password))
@@ -336,7 +334,11 @@ func loginFLForTrackerAuth(ctx context.Context, cfg config.TrackerConfig, dbPath
 	if err != nil {
 		return fmt.Errorf("trackers: FL parse base URL: %w", err)
 	}
-	if err := persistHTTPCookies(ctx, dbPath, "FL", jar.Cookies(base)); err != nil {
+	loginCookies := jar.Cookies(base)
+	if err := validateFLStoredCookies(ctx, baseURL, loginCookies); err != nil {
+		return fmt.Errorf("trackers: FL validate login cookies: %w", err)
+	}
+	if err := persistHTTPCookies(ctx, dbPath, "FL", loginCookies); err != nil {
 		return fmt.Errorf("trackers: FL persist login cookies: %w", err)
 	}
 	return nil
@@ -382,38 +384,18 @@ func resolveHDBStoredSessionForTrackerAuth(ctx context.Context, cfg config.Track
 	return nil
 }
 
-// resolveTHRSessionForTrackerAuth validates THR credentials by performing a
-// login check. THR uploads log in per request and do not use stored cookies.
+// resolveTHRSessionForTrackerAuth validates THR credentials using the same
+// browser-style session bootstrap as uploads. THR logs in per request and does
+// not persist cookies in tracker-auth storage.
 func resolveTHRSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConfig, _ string, _ api.TrackerAuthLoginRequest) error {
 	if !hasLoginCredentials(cfg) {
 		return &AuthRequiredError{TrackerID: "THR", Reason: "username/password missing", Err: errors.New("trackers: THR missing username/password")}
 	}
-	baseURL := resolveAuthBaseURL(cfg, thrDefaultBaseURL)
-	data := url.Values{}
-	data.Set("username", strings.TrimSpace(cfg.Username))
-	data.Set("password", strings.TrimSpace(cfg.Password))
-	data.Set("ssl", "yes")
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, joinAuthURL(baseURL, thrLoginPath), strings.NewReader(data.Encode()))
-	if err != nil {
-		return fmt.Errorf("trackers: THR login request build: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", "upbrr")
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("trackers: THR login request: %w", err)
-	}
-	defer resp.Body.Close()
-	body, readErr := readTrackerAuthResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 400)
-	if readErr != nil {
-		return &ValidationError{TrackerID: "THR", Transient: true, Reason: "remote validation unavailable", Err: readErr}
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
-		return &ValidationError{TrackerID: "THR", ConfirmedInvalid: true, Reason: "login failed", Err: fmt.Errorf("trackers: THR login failed status=%d", resp.StatusCode)}
-	}
-	if !thrLooksLoggedIn(string(body), resp) {
-		return &ValidationError{TrackerID: "THR", ConfirmedInvalid: true, Reason: "login failed", Err: errors.New("trackers: THR login marker not found")}
+	if _, err := thr.LoginSession(ctx, cfg); err != nil {
+		if errors.Is(err, thr.ErrLoginFailed) {
+			return &ValidationError{TrackerID: "THR", ConfirmedInvalid: true, Reason: "login failed", Err: err}
+		}
+		return fmt.Errorf("trackers: THR login session: %w", err)
 	}
 	return nil
 }
@@ -526,7 +508,7 @@ func arLooksLoggedOut(body string) bool {
 	return strings.Contains(lower, "forgot your password") || strings.Contains(lower, "login.php?act=recover")
 }
 
-// arLooksLoggedIn recognizes an authenticated AR browse-page download link.
+// arLooksLoggedIn recognizes AR's authenticated logout link on any HTML page.
 func arLooksLoggedIn(body string) bool {
 	tokenizer := html.NewTokenizer(strings.NewReader(body))
 	for {
@@ -543,13 +525,14 @@ func arLooksLoggedIn(body string) bool {
 					continue
 				}
 				candidate, err := url.Parse(attr.Val)
-				if err != nil || !strings.EqualFold(strings.TrimPrefix(candidate.Path, "/"), "torrents.php") {
+				if err != nil || !strings.EqualFold(strings.TrimPrefix(candidate.Path, "/"), "logout.php") {
 					continue
 				}
-				query := candidate.Query()
-				if strings.EqualFold(query.Get("action"), "download") && strings.TrimSpace(query.Get("auth")) != "" {
-					return true
+				if candidate.IsAbs() && (!strings.EqualFold(candidate.Scheme, "https") ||
+					!strings.EqualFold(candidate.Hostname(), "alpharatio.cc")) {
+					continue
 				}
+				return true
 			}
 		case html.TextToken, html.EndTagToken, html.CommentToken, html.DoctypeToken:
 			continue
@@ -597,18 +580,4 @@ func flLooksLoggedIn(body string) bool {
 func flLooksLoggedOut(body string) bool {
 	lower := strings.ToLower(body)
 	return strings.Contains(lower, "login.php") || strings.Contains(lower, "name=\"username\"") || strings.Contains(lower, "name=\"password\"")
-}
-
-// thrLooksLoggedIn recognizes THR credential-login success by response body or
-// final URL because THR uploads use per-request login instead of stored cookies.
-func thrLooksLoggedIn(body string, resp *http.Response) bool {
-	lower := strings.ToLower(body)
-	if strings.Contains(lower, "logout.php") {
-		return true
-	}
-	if resp != nil && resp.Request != nil && resp.Request.URL != nil {
-		path := strings.ToLower(resp.Request.URL.Path)
-		return strings.Contains(path, "index.php")
-	}
-	return false
 }

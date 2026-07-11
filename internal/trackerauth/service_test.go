@@ -528,7 +528,7 @@ func TestValidateARStoredCookies(t *testing.T) {
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/torrents.php" {
+		if r.URL.Path != arIndexPath {
 			http.NotFound(w, r)
 			return
 		}
@@ -536,7 +536,7 @@ func TestValidateARStoredCookies(t *testing.T) {
 			t.Error("expected AR session cookie")
 			return
 		}
-		_, _ = w.Write([]byte(`<a href="/torrents.php?action=download&id=1&auth=session-key">Download</a>`))
+		_, _ = w.Write([]byte(`<a href="https://alpharatio.cc/logout.php?auth=session-key">Logout</a>`))
 	}))
 	t.Cleanup(server.Close)
 
@@ -575,6 +575,7 @@ func TestValidateARAutoLoginReplacesMissingOrExpiredCookies(t *testing.T) {
 			}
 
 			var loginCalls atomic.Int32
+			var indexCalls atomic.Int32
 			var invalidLoginForm atomic.Bool
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
@@ -584,14 +585,15 @@ func TestValidateARAutoLoginReplacesMissingOrExpiredCookies(t *testing.T) {
 						invalidLoginForm.Store(true)
 					}
 					http.SetCookie(w, &http.Cookie{Name: "session", Value: "refreshed", Path: "/"})
-					w.WriteHeader(http.StatusOK)
-				case arBrowsePath:
+					http.Redirect(w, r, arIndexPath, http.StatusFound)
+				case arIndexPath:
+					indexCalls.Add(1)
 					cookie, cookieErr := r.Cookie("session")
 					if cookieErr != nil || cookie.Value != "refreshed" {
 						_, _ = w.Write([]byte(`login.php?act=recover`))
 						return
 					}
-					_, _ = w.Write([]byte(`<a href="/torrents.php?action=download&amp;id=123&amp;auth=session-key">Download</a>`))
+					_, _ = w.Write([]byte(`<a href="https://alpharatio.cc/logout.php?auth=session-key">Logout</a>`))
 				default:
 					http.NotFound(w, r)
 				}
@@ -612,6 +614,13 @@ func TestValidateARAutoLoginReplacesMissingOrExpiredCookies(t *testing.T) {
 			}
 			if loginCalls.Load() != 1 || invalidLoginForm.Load() {
 				t.Fatal("expected one AR login with configured credentials")
+			}
+			wantIndexCalls := int32(2)
+			if tt.seedExpired {
+				wantIndexCalls++
+			}
+			if indexCalls.Load() != wantIndexCalls {
+				t.Fatalf("expected AR login redirect plus session validation, got %d index requests", indexCalls.Load())
 			}
 			values, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "AR")
 			if err != nil {
@@ -883,23 +892,74 @@ func TestValidateFLLoginPersistsCookies(t *testing.T) {
 	}
 }
 
+func TestValidateFLLoginDoesNotPersistUnverifiedCookies(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case flLoginPagePath:
+			_, _ = w.Write([]byte(`<input name="validator" value="token">`))
+		case flLoginPath:
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "unverified", Path: "/"})
+			http.Redirect(w, r, flIndexPath, http.StatusFound)
+		case flIndexPath:
+			_, _ = w.Write([]byte(`<input name="username">`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"FL": {URL: server.URL, Username: "user", Password: "pass"},
+		}},
+	}).Validate(ctx, "FL")
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if status.State != StateLoginRequired || status.CookieCount != 0 {
+		t.Fatalf("expected unverified FL login to remain login required, got %#v", status)
+	}
+	if _, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "FL"); err == nil {
+		t.Fatal("unverified FL login cookies were persisted")
+	}
+}
+
 func TestValidateTHRChecksCredentialLogin(t *testing.T) {
 	t.Parallel()
 
+	handlerErr := make(chan error, 4)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/takelogin.php" {
+		switch r.URL.Path {
+		case "/login.php":
+			http.SetCookie(w, &http.Cookie{Name: "bootstrap", Value: "ready", Path: "/"})
+			_, _ = w.Write([]byte(`<input type="hidden" name="token" value="login-token">`))
+		case "/takelogin.php":
+			if err := r.ParseForm(); err != nil {
+				handlerErr <- fmt.Errorf("parse THR login form: %w", err)
+				return
+			}
+			if r.FormValue("username") != "user" || r.FormValue("password") != "pass" || r.FormValue("ssl") != "yes" || r.FormValue("token") != "login-token" {
+				handlerErr <- errors.New("unexpected THR login form")
+			}
+			if cookie, err := r.Cookie("bootstrap"); err != nil || cookie.Value != "ready" {
+				handlerErr <- errors.New("THR login bootstrap cookie missing")
+			}
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "authenticated", Path: "/"})
+			http.Redirect(w, r, "/index.php", http.StatusFound)
+		case "/index.php":
+			if cookie, err := r.Cookie("session"); err != nil || cookie.Value != "authenticated" {
+				handlerErr <- errors.New("THR redirect session cookie missing")
+				return
+			}
+			_, _ = w.Write([]byte(`<a href="logout.php">Logout</a>`))
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		if err := r.ParseForm(); err != nil {
-			t.Errorf("ParseForm: %v", err)
-			return
-		}
-		if r.FormValue("username") != "user" || r.FormValue("password") != "pass" || r.FormValue("ssl") != "yes" {
-			t.Error("unexpected THR login form")
-			return
-		}
-		_, _ = w.Write([]byte(`<a href="logout.php">Logout</a>`))
 	}))
 	t.Cleanup(server.Close)
 
@@ -915,6 +975,10 @@ func TestValidateTHRChecksCredentialLogin(t *testing.T) {
 	}
 	if status.State != StateConfigured {
 		t.Fatalf("expected THR configured after login check, got %#v", status)
+	}
+	close(handlerErr)
+	for err := range handlerErr {
+		t.Error(err)
 	}
 }
 
