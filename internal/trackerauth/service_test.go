@@ -3032,7 +3032,12 @@ func TestValidateManyRunsTrackerChecksConcurrentlyAndPreservesOrder(t *testing.T
 		releaseValidation(trackerID)
 	}
 
-	got := <-resultCh
+	var got result
+	select {
+	case got = <-resultCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ValidateMany did not return after all validations were released")
+	}
 	if got.err != nil {
 		t.Fatalf("ValidateMany: %v", got.err)
 	}
