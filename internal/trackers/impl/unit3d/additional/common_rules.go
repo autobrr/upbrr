@@ -259,7 +259,7 @@ func isAdultContent(meta api.PreparedMetadata) bool {
 }
 
 func isAnime(meta api.PreparedMetadata) bool {
-	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Anime {
+	if meta.ExternalMetadata.TMDB != nil && externalMetadataMatchesCurrentSource(meta) && meta.ExternalMetadata.TMDB.Anime {
 		return true
 	}
 	return containsAny(collectKeywords(meta), []string{"anime"})
@@ -272,10 +272,10 @@ func isAnimation(meta api.PreparedMetadata) bool {
 func collectGenres(meta api.PreparedMetadata) []string {
 	values := []string{}
 	values = append(values, splitList(meta.Release.Genre)...)
-	if meta.ExternalMetadata.TMDB != nil {
+	if meta.ExternalMetadata.TMDB != nil && externalMetadataMatchesCurrentSource(meta) {
 		values = append(values, splitList(meta.ExternalMetadata.TMDB.Genres)...)
 	}
-	if meta.ExternalMetadata.IMDB != nil {
+	if meta.ExternalMetadata.IMDB != nil && externalMetadataMatchesCurrentSource(meta) {
 		values = append(values, splitList(meta.ExternalMetadata.IMDB.Genres)...)
 	}
 	return normalizeStrings(values)
@@ -283,10 +283,15 @@ func collectGenres(meta api.PreparedMetadata) []string {
 
 func collectKeywords(meta api.PreparedMetadata) []string {
 	values := []string{}
-	if meta.ExternalMetadata.TMDB != nil {
+	if meta.ExternalMetadata.TMDB != nil && externalMetadataMatchesCurrentSource(meta) {
 		values = append(values, splitList(meta.ExternalMetadata.TMDB.Keywords)...)
 	}
 	return normalizeStrings(values)
+}
+
+func externalMetadataMatchesCurrentSource(meta api.PreparedMetadata) bool {
+	storedSource := strings.TrimSpace(meta.ExternalMetadata.SourcePath)
+	return storedSource == "" || strings.EqualFold(storedSource, strings.TrimSpace(meta.SourcePath))
 }
 
 func splitList(value string) []string {
