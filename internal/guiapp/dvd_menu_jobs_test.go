@@ -6,6 +6,7 @@ package guiapp
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +81,26 @@ func TestRunDVDMenuCaptureJobClassifiesCancellation(t *testing.T) {
 	snapshot := buildDVDMenuCaptureSnapshot(job)
 	if snapshot.Status != "canceled" || !errors.Is(ctx.Err(), context.Canceled) {
 		t.Fatalf("expected canceled snapshot, got %#v", snapshot)
+	}
+}
+
+func TestRunDVDMenuCaptureJobRedactsFailureMessage(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &closeCounterCore{
+		dvdMenuCapture: func(context.Context, api.Request) (api.DVDMenuCaptureResult, error) {
+			return api.DVDMenuCaptureResult{}, errors.New("provider rejected api_key=secret-value")
+		},
+	}
+	job := &dvdMenuCaptureJob{id: "dvd-job-1", core: coreSvc, status: "queued", startedAt: time.Now().UTC()}
+
+	(&App{}).runDVDMenuCaptureJob(context.Background(), nil, job)
+	snapshot := buildDVDMenuCaptureSnapshot(job)
+	if snapshot.Status != "failed" {
+		t.Fatal("expected failed snapshot")
+	}
+	if strings.Contains(snapshot.Error, "secret-value") || !strings.Contains(snapshot.Error, "[REDACTED]") {
+		t.Fatal("expected redacted DVD menu capture error")
 	}
 }
 

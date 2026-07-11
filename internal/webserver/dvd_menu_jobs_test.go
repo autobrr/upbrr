@@ -5,6 +5,8 @@ package webserver
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,6 +58,34 @@ func TestRunDVDMenuCaptureJobPublishesProgressAndResult(t *testing.T) {
 	}
 	if coreSvc.closeCalls != 1 {
 		t.Fatalf("expected one core close, got %d", coreSvc.closeCalls)
+	}
+}
+
+func TestRunDVDMenuCaptureJobRedactsFailureMessage(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &preparedMetaTestCore{
+		dvdMenuCapture: func(context.Context, api.Request) (api.DVDMenuCaptureResult, error) {
+			return api.DVDMenuCaptureResult{}, errors.New("provider rejected api_key=secret-value")
+		},
+	}
+	job := &dvdMenuCaptureJob{
+		sessionID: "session-a",
+		id:        "dvd-job-1",
+		core:      coreSvc,
+		status:    "queued",
+		startedAt: time.Now().UTC(),
+	}
+	backend := &Backend{dvdMenus: map[string]*dvdMenuCaptureJob{job.id: job}}
+	backend.dvdMenuWG.Add(1)
+
+	backend.runDVDMenuCaptureJob(context.Background(), job)
+	snapshot := buildWebDVDMenuCaptureSnapshot(job)
+	if snapshot.Status != "failed" {
+		t.Fatal("expected failed snapshot")
+	}
+	if strings.Contains(snapshot.Error, "secret-value") || !strings.Contains(snapshot.Error, "[REDACTED]") {
+		t.Fatal("expected redacted DVD menu capture error")
 	}
 }
 

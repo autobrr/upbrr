@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/guishared"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -241,7 +242,7 @@ func (b *Backend) runDVDMenuCaptureJob(ctx context.Context, job *dvdMenuCaptureJ
 			job.status = "failed"
 			job.phase = "failed"
 			job.message = "DVD menu capture failed."
-			job.errorMessage = err.Error()
+			job.errorMessage = redaction.RedactValue(err.Error(), nil)
 		}
 	} else {
 		job.status = "completed"

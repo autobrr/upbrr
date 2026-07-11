@@ -15,6 +15,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/autobrr/upbrr/internal/guishared"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -245,7 +246,7 @@ func (a *App) runDVDMenuCaptureJob(ctx context.Context, eventCtx context.Context
 			job.status = "failed"
 			job.phase = "failed"
 			job.message = "DVD menu capture failed."
-			job.errorMessage = err.Error()
+			job.errorMessage = redaction.RedactValue(err.Error(), nil)
 		}
 	} else {
 		job.status = "completed"
