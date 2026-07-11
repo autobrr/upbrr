@@ -85,8 +85,11 @@ type TVmazeClient interface {
 
 // ResolveExternalIDs resolves and persists cross-provider IDs and metadata for
 // a prepared item, honoring fresh stored data, overrides, scene IDs, and tracker
-// matches before falling back to provider searches. Selected BJS, BT, and ASC
-// targets trigger pt-BR TMDB localized metadata when a TMDB ID is known.
+// matches before falling back to provider searches. Without a configured or
+// injected TMDB client, it preserves independently resolved TMDB IDs while
+// skipping TMDB searches and enrichment; other providers continue normally.
+// Selected BJS, BT, and ASC targets trigger pt-BR TMDB localized metadata when
+// both a TMDB ID and client are available.
 func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
 	select {
 	case <-ctx.Done():
@@ -212,10 +215,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		)
 	}
 
-	tmdbClient, imdbClient, tvdbClient, tvmazeClient, err := s.ensureExternalClients()
-	if err != nil {
-		return api.PreparedMetadata{}, err
-	}
+	tmdbClient, imdbClient, tvdbClient, tvmazeClient := s.ensureExternalClients()
 
 	filename, secondary := resolveSearchTitles(meta)
 	year := resolveSearchYear(meta)
@@ -224,7 +224,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		manualLanguage = strings.TrimSpace(*meta.MetadataOverrides.OriginalLanguage)
 	}
 	unattendedSearch := isUnattendedMetadataSearch(meta)
-	if !overrideTMDB && ids.TMDBID == 0 && ids.IMDBID != 0 {
+	if tmdbClient != nil && !overrideTMDB && ids.TMDBID == 0 && ids.IMDBID != 0 {
 		if s.logger != nil {
 			s.logger.Debugf("metadata: external ids lookup tmdb from imdb=%d", ids.IMDBID)
 		}
@@ -258,19 +258,21 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		}
 	}
 
-	needsTMDBSearch := !overrideTMDB && ids.TMDBID == 0
+	needsTMDBSearch := tmdbClient != nil && !overrideTMDB && ids.TMDBID == 0
 	needsIMDBSearch := !overrideIMDB && ids.IMDBID == 0
 
 	if needsTMDBSearch || needsIMDBSearch {
 		searchYears := buildSearchYears(year)
 		if s.logger != nil {
 			s.logger.Debugf(
-				"metadata: external ids search tmdb+imdb filename=%q year=%d stages=%v unattended=%t category=%q",
+				"metadata: external ids search filename=%q year=%d stages=%v unattended=%t category=%q tmdb=%t imdb=%t",
 				filename,
 				year,
 				searchYears,
 				unattendedSearch,
 				tmdbCategoryPref,
+				needsTMDBSearch,
+				needsIMDBSearch,
 			)
 		}
 
@@ -279,7 +281,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 				break
 			}
 
-			stageNeedsTMDB := !overrideTMDB && ids.TMDBID == 0
+			stageNeedsTMDB := tmdbClient != nil && !overrideTMDB && ids.TMDBID == 0
 			stageNeedsIMDB := !overrideIMDB && ids.IMDBID == 0
 			if !stageNeedsTMDB && !stageNeedsIMDB {
 				break
@@ -399,7 +401,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	tmdbLogoFetchAttempted := false
 	anilistFetchAttempted := false
 	shouldFetchTMDBMetadata := func() bool {
-		if ids.TMDBID == 0 {
+		if tmdbClient == nil || ids.TMDBID == 0 {
 			return false
 		}
 		if metadata.TMDB == nil {
@@ -412,7 +414,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		if shouldFetchTMDBMetadata() {
 			return true
 		}
-		if shouldFetchAniListMetadata(ids.MALID, metadata.AniList) && !anilistFetchAttempted {
+		if tmdbClient != nil && shouldFetchAniListMetadata(ids.MALID, metadata.AniList) && !anilistFetchAttempted {
 			return true
 		}
 		if ids.IMDBID != 0 && metadata.IMDB == nil {
@@ -432,7 +434,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		if fetchTMDB && s.cfg.Description.AddLogo {
 			tmdbLogoFetchAttempted = true
 		}
-		fetchAniList := shouldFetchAniListMetadata(ids.MALID, metadata.AniList) && !anilistFetchAttempted
+		fetchAniList := tmdbClient != nil && shouldFetchAniListMetadata(ids.MALID, metadata.AniList) && !anilistFetchAttempted
 		if fetchAniList {
 			anilistFetchAttempted = true
 		}
@@ -726,7 +728,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 
 	needsPTBR := trackers.AnyNeedsPTBRLocalizedMetadata(meta.Trackers) || trackers.AnyNeedsPTBRLocalizedMetadata(meta.MatchedTrackers)
 
-	if needsPTBR && ids.TMDBID != 0 {
+	if tmdbClient != nil && needsPTBR && ids.TMDBID != 0 {
 		var mainData, seasonData, episodeData map[string]any
 		var localizedErr error
 		isTV := strings.EqualFold(ids.Category, "TV")
@@ -1096,13 +1098,17 @@ func mapIMDBCandidates(items []imdb.Candidate) []api.ExternalIDCandidate {
 	return mapped
 }
 
-func (s *Service) ensureExternalClients() (TMDBClient, IMDBClient, TVDBClient, TVmazeClient, error) {
+// ensureExternalClients initializes missing provider clients. It returns a nil
+// TMDB client when no client was injected and no TMDB API key is configured;
+// the remaining provider clients are always initialized.
+func (s *Service) ensureExternalClients() (TMDBClient, IMDBClient, TVDBClient, TVmazeClient) {
 	if s.tmdb == nil {
 		apiKey := strings.TrimSpace(s.cfg.MainSettings.TMDBAPI)
-		if apiKey == "" {
-			return nil, nil, nil, nil, errors.New("metadata: tmdb api key missing")
+		if apiKey != "" {
+			s.tmdb = tmdb.NewClient(nil, s.logger, apiKey)
+		} else if s.logger != nil {
+			s.logger.Debugf("metadata: tmdb client disabled reason=api_key_missing")
 		}
-		s.tmdb = tmdb.NewClient(nil, s.logger, apiKey)
 	}
 	if s.imdb == nil {
 		s.imdb = imdb.NewClient(nil, s.logger)
@@ -1119,7 +1125,7 @@ func (s *Service) ensureExternalClients() (TMDBClient, IMDBClient, TVDBClient, T
 	if s.tvmaze == nil {
 		s.tvmaze = tvmaze.NewClient(nil, s.logger)
 	}
-	return s.tmdb, s.imdb, s.tvdb, s.tvmaze, nil
+	return s.tmdb, s.imdb, s.tvdb, s.tvmaze
 }
 
 func isIMDbTVMovie(ids api.ExternalIDs, metadata api.ExternalMetadata) bool {
@@ -1959,7 +1965,8 @@ func mapTVmazeMetadata(result tvmaze.SearchResult) *api.TVmazeMetadata {
 // applyTVEpisodeMetadata enriches TV episode fields from provider data.
 // Parsed release season/episode values may seed provider lookups, but only
 // canonical metadata or provider-confirmed mappings are persisted back to
-// SeasonInt and EpisodeInt.
+// SeasonInt and EpisodeInt. A nil TMDB client skips TMDB-specific mapping and
+// detail lookups without disabling TVDB or TVmaze enrichment.
 func (s *Service) applyTVEpisodeMetadata(
 	ctx context.Context,
 	meta api.PreparedMetadata,
@@ -2002,7 +2009,7 @@ func (s *Service) applyTVEpisodeMetadata(
 	hasManualSeasonEpisode := hasManualSeasonEpisodeOverrides(meta.ReleaseNameOverrides)
 	tmdbDateMatch := false
 
-	if dailyDate != "" && ids.TMDBID != 0 && ((season == 0 || episode == 0) || (wantsSeasonEpisode && !hasManualSeasonEpisode)) {
+	if tmdbClient != nil && dailyDate != "" && ids.TMDBID != 0 && ((season == 0 || episode == 0) || (wantsSeasonEpisode && !hasManualSeasonEpisode)) {
 		if parsedDate, err := time.Parse("2006-01-02", dailyDate); err == nil {
 			if mappedSeason, mappedEpisode, mapErr := tmdbClient.DailyToSeasonEpisode(ctx, ids.TMDBID, parsedDate); mapErr == nil {
 				if mappedSeason > 0 && mappedEpisode > 0 {
@@ -2210,7 +2217,7 @@ func (s *Service) applyTVEpisodeMetadata(
 		}
 	}
 
-	if ids.TMDBID != 0 {
+	if tmdbClient != nil && ids.TMDBID != 0 {
 		lookupSeason := metautil.FirstInt(season, fallbackSeason)
 		lookupEpisode := metautil.FirstInt(episode, fallbackEpisode)
 		if !meta.TVPack && lookupSeason > 0 && lookupEpisode > 0 {
@@ -2269,7 +2276,7 @@ func (s *Service) applyTVEpisodeMetadata(
 		)
 	}
 
-	if wantsSeasonEpisode && !hasManualSeasonEpisode && !tmdbDateMatch && strings.TrimSpace(meta.DailyEpisodeDate) != "" && ids.TMDBID != 0 && s.logger != nil {
+	if tmdbClient != nil && wantsSeasonEpisode && !hasManualSeasonEpisode && !tmdbDateMatch && strings.TrimSpace(meta.DailyEpisodeDate) != "" && ids.TMDBID != 0 && s.logger != nil {
 		s.logger.Warnf("metadata: season/episode naming requested but TMDB season/episode lookup failed for daily_date=%q tmdb_id=%d", strings.TrimSpace(meta.DailyEpisodeDate), ids.TMDBID)
 	}
 

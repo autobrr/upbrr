@@ -1040,8 +1040,8 @@ func loadCLIConfig(configPath string, configProvided bool) (config.Config, strin
 }
 
 // loadServeConfig loads config for the web server without requiring a fully
-// valid config (e.g. tmdb_api). The web UI handles initial setup, so the
-// server must be able to start even on a fresh install with no config yet. A
+// valid config. The web UI handles initial setup, so the server must be able
+// to start even on a fresh install with no config yet. A
 // provided --config may seed or merge database config, but invalid env-applied
 // input is not persisted over stored settings.
 func loadServeConfig(configPath string, configProvided bool) (config.Config, string, error) {

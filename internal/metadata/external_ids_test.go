@@ -449,6 +449,30 @@ func TestResolveExternalIDsPrecedence(t *testing.T) {
 	}
 }
 
+func TestResolveExternalIDsWithoutTMDBAPIKey(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo,
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:        "Example.Release.2026.1080p-GRP.mkv",
+		MediaInfoCategory: "MOVIE",
+		TrackerData:       []api.TrackerMetadata{{TMDBID: 123456}},
+	})
+	if err != nil {
+		t.Fatalf("resolve without TMDB API key: %v", err)
+	}
+	if result.ExternalIDs.TMDBID != 123456 || result.ExternalIDs.SourceTMDB != "tracker" {
+		t.Fatalf("expected tracker TMDB ID without enrichment, got %#v", result.ExternalIDs)
+	}
+	if result.ExternalMetadata.TMDB != nil {
+		t.Fatalf("expected TMDB enrichment to remain unavailable, got %#v", result.ExternalMetadata.TMDB)
+	}
+}
+
 func TestMapTMDBMetadataClonesLocalizedTitles(t *testing.T) {
 	t.Parallel()
 

@@ -48,16 +48,20 @@ const (
 	MaxDVDMenuItems = 32
 )
 
+// MainSettingsConfig defines application-wide runtime and presentation settings.
+// TMDB enrichment is disabled when TMDBAPI is empty; other metadata providers
+// and externally supplied metadata IDs remain available.
 type MainSettingsConfig struct {
-	UpdateNotification  bool   `yaml:"update_notification"`
-	VerboseNotification bool   `yaml:"verbose_notification"`
-	TMDBAPI             string `yaml:"tmdb_api"`
-	TrackerPassChecks   int    `yaml:"tracker_pass_checks"`
-	InputHistoryLimit   int    `yaml:"input_history_limit"`
-	DBPath              string `yaml:"db_path"`
-	UseFavicons         bool   `yaml:"use_favicons"`
-	FaviconOnly         bool   `yaml:"favicon_only"`
-	SceneDetection      bool   `yaml:"scene_detection"`
+	UpdateNotification  bool `yaml:"update_notification"`
+	VerboseNotification bool `yaml:"verbose_notification"`
+	// TMDBAPI is the optional API key used for TMDB lookups and enrichment.
+	TMDBAPI           string `yaml:"tmdb_api"`
+	TrackerPassChecks int    `yaml:"tracker_pass_checks"`
+	InputHistoryLimit int    `yaml:"input_history_limit"`
+	DBPath            string `yaml:"db_path"`
+	UseFavicons       bool   `yaml:"use_favicons"`
+	FaviconOnly       bool   `yaml:"favicon_only"`
+	SceneDetection    bool   `yaml:"scene_detection"`
 }
 
 type mainSettingsConfigAlias MainSettingsConfig
@@ -872,11 +876,9 @@ func torrentClientConfigYAMLMap(c TorrentClientConfig) map[string]any {
 }
 
 // Validate checks the loaded configuration values needed before runtime
-// services can safely start or save settings.
+// services can safely start or save settings. An empty TMDBAPI is valid and
+// leaves TMDB enrichment disabled.
 func (c Config) Validate() error {
-	if c.MainSettings.TMDBAPI == "" {
-		return errors.New("config: main_settings.tmdb_api is required")
-	}
 	if c.MainSettings.InputHistoryLimit < 0 {
 		return errors.New("config: main_settings.input_history_limit must be zero or greater")
 	}

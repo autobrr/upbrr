@@ -345,7 +345,7 @@ func TestBootstrapWithValidatorRejectsInvalidProvidedYAMLBeforePersist(t *testin
 	}
 }
 
-func TestBootstrapWithValidatorRejectsEnvOnlyProvidedYAMLBeforePersist(t *testing.T) {
+func TestBootstrapWithValidatorAcceptsMissingOptionalTMDBAPI(t *testing.T) {
 	ctx := context.Background()
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "env-rescue.db")
@@ -357,17 +357,24 @@ func TestBootstrapWithValidatorRejectsEnvOnlyProvidedYAMLBeforePersist(t *testin
 	}
 
 	t.Setenv("UA_DEFAULT_TMDB_API", "from-env")
-	_, _, err := configstore.BootstrapWithValidator(ctx, yamlPath, true, true, func(cfg *config.Config) error {
+	runtime, resolvedDB, err := configstore.BootstrapWithValidator(ctx, yamlPath, true, true, func(cfg *config.Config) error {
 		return cfg.Validate()
 	})
-	if err == nil {
-		t.Fatal("expected env-only valid config to fail before persistence")
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
 	}
-	if !strings.Contains(err.Error(), "tmdb_api") {
-		t.Fatalf("expected raw config validation error, got %v", err)
+	if resolvedDB != dbPath {
+		t.Fatalf("DB path: got %q want %q", resolvedDB, dbPath)
 	}
-	if _, statErr := os.Stat(dbPath); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("env-rescued provided config should not create database file, stat err=%v", statErr)
+	if runtime.MainSettings.TMDBAPI != "from-env" {
+		t.Fatalf("runtime TMDBAPI: got %q want env override", runtime.MainSettings.TMDBAPI)
+	}
+	stored, loadErr := configstore.LoadFromDBPath(ctx, dbPath)
+	if loadErr != nil {
+		t.Fatalf("load stored: %v", loadErr)
+	}
+	if stored.MainSettings.TMDBAPI != "from-env" {
+		t.Fatalf("stored TMDBAPI: got %q want env override", stored.MainSettings.TMDBAPI)
 	}
 }
 
@@ -613,7 +620,7 @@ func TestBootstrapProvidedYAMLMergeSkipsNilDynamicTorrentClientEntry(t *testing.
 	}
 }
 
-func TestBootstrapProvidedYAMLInvalidMergeDoesNotOverwriteStoredConfig(t *testing.T) {
+func TestBootstrapProvidedYAMLEmptyTMDBAPIOverwritesStoredConfig(t *testing.T) {
 	ctx := context.Background()
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "invalid-merge.db")
@@ -643,20 +650,20 @@ func TestBootstrapProvidedYAMLInvalidMergeDoesNotOverwriteStoredConfig(t *testin
 	if resolvedDB != dbPath {
 		t.Fatalf("DB path: got %q want %q", resolvedDB, dbPath)
 	}
-	if runtime.MainSettings.TMDBAPI != "stored-key" || runtime.ScreenshotHandling.Screens != 7 {
-		t.Fatalf("runtime should fall back to stored config, got tmdb=%q screens=%d", runtime.MainSettings.TMDBAPI, runtime.ScreenshotHandling.Screens)
+	if runtime.MainSettings.TMDBAPI != "" || runtime.ScreenshotHandling.Screens != 4 {
+		t.Fatalf("runtime should use provided config, got tmdb=%q screens=%d", runtime.MainSettings.TMDBAPI, runtime.ScreenshotHandling.Screens)
 	}
 
 	reloaded, err := configstore.LoadFromDBPath(ctx, dbPath)
 	if err != nil {
 		t.Fatalf("load stored: %v", err)
 	}
-	if reloaded.MainSettings.TMDBAPI != "stored-key" || reloaded.ScreenshotHandling.Screens != 7 {
-		t.Fatalf("stored config overwritten: tmdb=%q screens=%d", reloaded.MainSettings.TMDBAPI, reloaded.ScreenshotHandling.Screens)
+	if reloaded.MainSettings.TMDBAPI != "" || reloaded.ScreenshotHandling.Screens != 4 {
+		t.Fatalf("provided config not persisted: tmdb=%q screens=%d", reloaded.MainSettings.TMDBAPI, reloaded.ScreenshotHandling.Screens)
 	}
 }
 
-func TestBootstrapProvidedYAMLInvalidFreshSetupDoesNotCreateDB(t *testing.T) {
+func TestBootstrapProvidedYAMLEmptyTMDBAPICreatesDB(t *testing.T) {
 	ctx := context.Background()
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "fresh-invalid.db")
@@ -677,8 +684,12 @@ func TestBootstrapProvidedYAMLInvalidFreshSetupDoesNotCreateDB(t *testing.T) {
 	if runtime.MainSettings.TMDBAPI != "" {
 		t.Fatalf("runtime TMDBAPI: got %q want empty setup value", runtime.MainSettings.TMDBAPI)
 	}
-	if _, statErr := os.Stat(dbPath); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("invalid fresh setup should not create database before validation succeeds, stat err=%v", statErr)
+	stored, loadErr := configstore.LoadFromDBPath(ctx, dbPath)
+	if loadErr != nil {
+		t.Fatalf("load stored: %v", loadErr)
+	}
+	if stored.MainSettings.TMDBAPI != "" || stored.ScreenshotHandling.Screens != 4 {
+		t.Fatalf("stored config: tmdb=%q screens=%d", stored.MainSettings.TMDBAPI, stored.ScreenshotHandling.Screens)
 	}
 }
 
