@@ -581,8 +581,8 @@ func shouldDiscardStoredTrackerField(path string, key string, values map[string]
 		}
 		hasKnownFoldPeer = true
 		if _, valid := allowed[knownKey]; valid {
-			_, exactAllowedPresent := values[knownKey]
-			return exactAllowedPresent
+			allowedValue, exactAllowedPresent := values[knownKey]
+			return exactAllowedPresent && allowedValue != nil && !reflect.ValueOf(allowedValue).IsZero()
 		}
 	}
 	return hasKnownFoldPeer
@@ -617,11 +617,35 @@ func validateStoredOverlayKeys(base map[string]any, keys []string, path string) 
 			continue
 		}
 		if previous, ok := seen[foldKey]; ok && previous != key {
+			if isRetainedStoredTrackerFieldAlias(path, previous, key) {
+				continue
+			}
 			return fmt.Errorf("duplicate folded config keys %q and %q at %q", previous, key, path)
 		}
 		seen[foldKey] = key
 	}
 	return nil
+}
+
+// isRetainedStoredTrackerFieldAlias reports the unambiguous schema-known pair
+// left after a populated legacy alias outranks its zero-valued allowed peer.
+func isRetainedStoredTrackerFieldAlias(path, firstKey, secondKey string) bool {
+	const trackerPathPrefix = "Trackers.Trackers."
+	trackerName, ok := strings.CutPrefix(path, trackerPathPrefix)
+	if !ok || trackerName == "" || strings.Contains(trackerName, ".") {
+		return false
+	}
+	initTrackerTagMetadata()
+	if _, known := trackerKnownJSONKeys[firstKey]; !known {
+		return false
+	}
+	if _, known := trackerKnownJSONKeys[secondKey]; !known {
+		return false
+	}
+	allowed := trackerAllowedJSONKeys(trackerName)
+	_, firstAllowed := allowed[firstKey]
+	_, secondAllowed := allowed[secondKey]
+	return firstAllowed != secondAllowed
 }
 
 // usesASCIIStoredTrackerKeys reports paths whose dynamic child names are

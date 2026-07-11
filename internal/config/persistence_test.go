@@ -1155,6 +1155,19 @@ func TestMergeStoredConfigMapPreservesLoneLegacyTrackerFieldAlias(t *testing.T) 
 	}
 }
 
+func TestMergeStoredConfigMapPreservesPopulatedLegacyTrackerFieldAlias(t *testing.T) {
+	t.Parallel()
+
+	base := map[string]any{"APIKey": ""}
+	overlay := map[string]any{"APIKey": "", "ApiKey": "legacy-token"}
+	if _, err := mergeStoredConfigMapWithReport(base, overlay, "Trackers.Trackers.MNS"); err != nil {
+		t.Fatalf("merge populated legacy alias: %v", err)
+	}
+	if base["APIKey"] != "legacy-token" {
+		t.Fatal("expected populated legacy alias to replace empty allowed field")
+	}
+}
+
 func foldedTrackerJSONKeyGroups() [][]string {
 	initTrackerTagMetadata()
 	byFold := map[string][]string{}
