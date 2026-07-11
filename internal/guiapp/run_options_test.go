@@ -635,6 +635,38 @@ func TestRunDupeCheckJobSplitsGroupedPathedResultsIntoTrackerStates(t *testing.T
 	}
 }
 
+func TestApplyDupeProgressCountsNewTrackersWithoutInflatingExplicitTotal(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		startTotal  int
+		updateTotal int
+		wantTotal   int
+	}{
+		{name: "explicit total", startTotal: 2, updateTotal: 2, wantTotal: 2},
+		{name: "total omitted", startTotal: 1, wantTotal: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			job := newDupeCheckJobTestJob(`C:\Media\Example.Release.2026.1080p-GRP.mkv`, []string{"AITHER"})
+			job.totalCount = tt.startTotal
+
+			(&App{}).applyDupeProgress(context.Background(), job, api.DupeProgressUpdate{
+				Tracker: "BLU",
+				Status:  "running",
+				Total:   tt.updateTotal,
+			})
+
+			if job.totalCount != tt.wantTotal {
+				t.Fatalf("expected total count %d, got %d", tt.wantTotal, job.totalCount)
+			}
+		})
+	}
+}
+
 func TestRunDupeCheckJobUsesJobCoreSnapshot(t *testing.T) {
 	t.Parallel()
 

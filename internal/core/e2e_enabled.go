@@ -22,6 +22,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackerauth"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -260,7 +261,7 @@ func (e2eTrackerAuthService) Capabilities(context.Context) ([]api.TrackerAuthCap
 func (e2eTrackerAuthService) ValidateMany(_ context.Context, trackerIDs []string) ([]api.TrackerAuthStatus, error) {
 	statuses := make([]api.TrackerAuthStatus, 0, len(trackerIDs))
 	for _, trackerID := range trackerIDs {
-		statuses = append(statuses, api.TrackerAuthStatus{TrackerID: strings.ToUpper(strings.TrimSpace(trackerID)), State: "configured"})
+		statuses = append(statuses, api.TrackerAuthStatus{TrackerID: strings.ToUpper(strings.TrimSpace(trackerID)), State: trackerauth.StateConfigured})
 	}
 	return statuses, nil
 }

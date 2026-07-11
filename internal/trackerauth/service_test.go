@@ -2953,15 +2953,24 @@ func TestValidateManyRunsTrackerChecksConcurrentlyAndPreservesOrder(t *testing.T
 	t.Parallel()
 
 	dbPath := newTrackerAuthTestDB(t)
-	entered := make(chan string, 2)
-	release := make(chan struct{})
-	released := false
+	trackerIDs := [maxConcurrentValidations + 1]string{"PTP", "MTV", "RTF", "AR", "HDB"}
+	entered := make(chan string, len(trackerIDs))
+	releases := make(map[string]chan struct{}, len(trackerIDs))
+	released := make(map[string]bool, len(trackerIDs))
+	releaseValidation := func(trackerID string) {
+		if !released[trackerID] {
+			close(releases[trackerID])
+			released[trackerID] = true
+		}
+	}
 	defer func() {
-		if !released {
-			close(release)
+		for _, trackerID := range trackerIDs {
+			releaseValidation(trackerID)
 		}
 	}()
 	newBlockingAdapter := func(trackerID string) *fakeAdapter {
+		release := make(chan struct{})
+		releases[trackerID] = release
 		return &fakeAdapter{
 			capability: api.TrackerAuthCapability{TrackerID: trackerID, SupportsLogin: true},
 			validate: func() (Session, error) {
@@ -2971,15 +2980,17 @@ func TestValidateManyRunsTrackerChecksConcurrentlyAndPreservesOrder(t *testing.T
 			},
 		}
 	}
+	trackerConfigs := make(map[string]config.TrackerConfig, len(trackerIDs))
+	for _, trackerID := range trackerIDs {
+		trackerConfigs[trackerID] = config.TrackerConfig{}
+	}
 	service := NewService(config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-			"MTV": {},
-			"PTP": {},
-		}},
+		Trackers:     config.TrackersConfig{Trackers: trackerConfigs},
 	})
-	service.adapters["MTV"] = newBlockingAdapter("MTV")
-	service.adapters["PTP"] = newBlockingAdapter("PTP")
+	for _, trackerID := range trackerIDs {
+		service.adapters[trackerID] = newBlockingAdapter(trackerID)
+	}
 
 	type result struct {
 		statuses []api.TrackerAuthStatus
@@ -2987,31 +2998,54 @@ func TestValidateManyRunsTrackerChecksConcurrentlyAndPreservesOrder(t *testing.T
 	}
 	resultCh := make(chan result, 1)
 	go func() {
-		statuses, err := service.ValidateMany(context.Background(), []string{"PTP", "MTV"})
+		statuses, err := service.ValidateMany(context.Background(), trackerIDs[:])
 		resultCh <- result{statuses: statuses, err: err}
 	}()
 
-	seen := make(map[string]bool, 2)
-	for range 2 {
+	seen := make(map[string]bool, len(trackerIDs))
+	firstEntered := ""
+	for range maxConcurrentValidations {
 		select {
 		case trackerID := <-entered:
 			seen[trackerID] = true
+			if firstEntered == "" {
+				firstEntered = trackerID
+			}
 		case <-time.After(2 * time.Second):
-			t.Fatal("tracker validations did not overlap")
+			t.Fatal("concurrent tracker validations did not reach the limit")
 		}
 	}
-	close(release)
-	released = true
+	select {
+	case trackerID := <-entered:
+		t.Fatalf("expected only %d concurrent validations, but %s also entered", maxConcurrentValidations, trackerID)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	releaseValidation(firstEntered)
+	select {
+	case trackerID := <-entered:
+		seen[trackerID] = true
+	case <-time.After(2 * time.Second):
+		t.Fatal("queued tracker validation did not enter after a slot was released")
+	}
+	for _, trackerID := range trackerIDs {
+		releaseValidation(trackerID)
+	}
 
 	got := <-resultCh
 	if got.err != nil {
 		t.Fatalf("ValidateMany: %v", got.err)
 	}
-	if !seen["PTP"] || !seen["MTV"] {
-		t.Fatalf("expected both tracker validations to start, got %#v", seen)
+	if len(seen) != len(trackerIDs) {
+		t.Fatalf("expected all tracker validations to start, got %#v", seen)
 	}
-	if len(got.statuses) != 2 || got.statuses[0].TrackerID != "PTP" || got.statuses[1].TrackerID != "MTV" {
+	if len(got.statuses) != len(trackerIDs) {
 		t.Fatalf("expected input-ordered statuses, got %#v", got.statuses)
+	}
+	for i, trackerID := range trackerIDs {
+		if got.statuses[i].TrackerID != trackerID || got.statuses[i].State != StateConfigured {
+			t.Fatalf("expected successful input-ordered status for %s, got %#v", trackerID, got.statuses[i])
+		}
 	}
 }
 
