@@ -37,6 +37,8 @@ func buildUnit3DName(tracker string, meta api.PreparedMetadata, cfg config.Track
 	}
 
 	switch trackerName {
+	case "A4K":
+		return buildA4KName(name, meta)
 	case "AITHER":
 		return BuildAitherName(meta)
 	case "ACM":
