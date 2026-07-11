@@ -84,8 +84,64 @@ func TestLoginSessionRejectsRedirectWithoutAuthenticatedMarker(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	_, err := LoginSession(context.Background(), config.TrackerConfig{URL: server.URL, Username: "user", Password: "pass"})
+	client, err := LoginSession(context.Background(), config.TrackerConfig{URL: server.URL, Username: "user", Password: "pass"})
 	if !errors.Is(err, ErrLoginFailed) {
 		t.Fatalf("expected ErrLoginFailed, got %v", err)
+	}
+	if client != nil {
+		t.Fatal("expected rejected login to return no client")
+	}
+}
+
+func TestLoginSessionRejectsWeakAuthenticatedMarkers(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		finalPath string
+		body      string
+	}{
+		{
+			name:      "public index path without logout anchor",
+			finalPath: "/index.php",
+			body:      `<form action="/login.php"><input name="username"></form>`,
+		},
+		{
+			name:      "incidental logout text off index",
+			finalPath: "/help.php",
+			body:      `<p>Read the logout.php troubleshooting guide.</p>`,
+		},
+		{
+			name:      "logout anchor off index",
+			finalPath: "/home.php",
+			body:      `<a href="/logout.php">Logout</a>`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case loginPagePath:
+					_, _ = w.Write([]byte(`<input type="hidden" name="token" value="login-token">`))
+				case takeLoginPath:
+					http.Redirect(w, r, tt.finalPath, http.StatusFound)
+				case tt.finalPath:
+					_, _ = w.Write([]byte(tt.body))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			client, err := LoginSession(context.Background(), config.TrackerConfig{URL: server.URL, Username: "user", Password: "pass"})
+			if !errors.Is(err, ErrLoginFailed) {
+				t.Fatalf("expected ErrLoginFailed, got %v", err)
+			}
+			if client != nil {
+				t.Fatal("expected weak marker login to return no client")
+			}
+		})
 	}
 }

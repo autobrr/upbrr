@@ -1101,6 +1101,49 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckFailsUnattendedAuthRequired(t *testi
 	}
 }
 
+func TestEnsureCLITrackerAuthBeforeDupeCheckExplainsExpiredSessionAction(t *testing.T) {
+	t.Parallel()
+
+	authSvc := &cliTrackerAuthForTest{
+		capabilities: []api.TrackerAuthCapability{{
+			TrackerID:          "HDB",
+			SupportsCookieFile: true,
+			RequiresPasskey:    true,
+		}},
+		validateStatus: map[string]api.TrackerAuthStatus{
+			"HDB": {
+				TrackerID: "HDB",
+				State:     trackerauth.StateLoginRequired,
+				Message:   "stored session expired or invalid; log in again or import fresh cookies",
+			},
+		},
+	}
+
+	_, err := ensureCLITrackerAuthBeforeDupeCheckWithService(
+		context.Background(),
+		bufio.NewReader(strings.NewReader("")),
+		authSvc,
+		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeUnattended}},
+		[]string{"HDB"},
+	)
+	if err == nil {
+		t.Fatal("expected unattended expired-session error")
+	}
+	got := err.Error()
+	for _, expected := range []string{
+		"unattended",
+		"no-prompt",
+		"HDB",
+		"required action",
+		"log in again",
+		"import fresh cookies",
+	} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("expected expired-session error to include %q, got %q", expected, got)
+		}
+	}
+}
+
 func TestEnsureCLITrackerAuthBeforeDupeCheckFailsUnattendedBTN2FA(t *testing.T) {
 	t.Parallel()
 

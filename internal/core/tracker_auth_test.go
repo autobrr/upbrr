@@ -80,7 +80,7 @@ func TestCheckGUIDupesWithAuthSkipsBlockedTrackerAndContinuesReadyTrackers(t *te
 		t.Fatalf("expected ready and auth-blocked results, got %#v", summary.Results)
 	}
 	blocked := summary.Results[1]
-	expectedReason := "tracker auth not ready: manual 2FA required"
+	expectedReason := "tracker auth not ready: manual 2FA required; configure tracker auth and retry"
 	if blocked.Tracker != "PTP" || !blocked.Skipped || blocked.SkipCode != dupeSkipCodeTrackerAuthNotReady ||
 		blocked.SkipReason != expectedReason || blocked.Status != "skipped" || blocked.CheckedAt.IsZero() {
 		t.Fatalf("expected PTP auth-required skip, got %#v", blocked)
@@ -93,6 +93,39 @@ func TestCheckGUIDupesWithAuthSkipsBlockedTrackerAndContinuesReadyTrackers(t *te
 	}
 	if !reflect.DeepEqual(progress[1].Result, blocked) {
 		t.Fatalf("expected skipped auth progress result to match summary result, got %#v", progress[1].Result)
+	}
+}
+
+func TestGUITrackerAuthSkipReasonIncludesRetryAction(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		status api.TrackerAuthStatus
+		want   string
+	}{
+		"diagnostic gets action": {
+			status: api.TrackerAuthStatus{
+				Message:   "stored session expired or invalid",
+				LastError: "remote session validation failed",
+			},
+			want: "tracker auth not ready: stored session expired or invalid: remote session validation failed; configure tracker auth and retry",
+		},
+		"existing action is not duplicated": {
+			status: api.TrackerAuthStatus{
+				Message: "stored session expired; configure tracker auth and retry",
+			},
+			want: "tracker auth not ready: stored session expired; configure tracker auth and retry",
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := guiTrackerAuthSkipReason(tt.status); got != tt.want {
+				t.Fatalf("guiTrackerAuthSkipReason() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

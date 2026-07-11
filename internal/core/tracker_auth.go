@@ -163,25 +163,28 @@ func orderedReadyTrackers(trackerIDs []string, readySet map[string]struct{}) []s
 	return ready
 }
 
+const guiTrackerAuthRetryAction = "configure tracker auth and retry"
+
 // guiTrackerAuthSkipReason builds a redacted user-facing reason, preferring the
-// stable status message before error detail, 2FA state, and raw state.
+// stable status message before error detail, 2FA state, and raw state. Every
+// blocker includes the remediation action, even when diagnostics are present.
 func guiTrackerAuthSkipReason(status api.TrackerAuthStatus) string {
 	message := strings.TrimSpace(redaction.RedactValue(status.Message, nil))
 	detail := strings.TrimSpace(redaction.RedactValue(status.LastError, nil))
+	reason := "tracker auth not ready"
 	if message != "" && detail != "" && !strings.EqualFold(message, detail) {
-		return "tracker auth not ready: " + message + ": " + detail
+		reason += ": " + message + ": " + detail
+	} else if message != "" {
+		reason += ": " + message
+	} else if detail != "" {
+		reason += ": " + detail
+	} else if status.Needs2FA {
+		reason += ": manual 2FA required"
+	} else if state := strings.TrimSpace(redaction.RedactValue(status.State, nil)); state != "" {
+		reason += ": " + state
 	}
-	if message != "" {
-		return "tracker auth not ready: " + message
+	if strings.Contains(strings.ToLower(reason), guiTrackerAuthRetryAction) {
+		return reason
 	}
-	if detail != "" {
-		return "tracker auth not ready: " + detail
-	}
-	if status.Needs2FA {
-		return "tracker auth not ready: manual 2FA required; configure tracker auth and retry"
-	}
-	if state := strings.TrimSpace(redaction.RedactValue(status.State, nil)); state != "" {
-		return "tracker auth not ready: " + state
-	}
-	return "tracker auth not ready; configure tracker auth and retry"
+	return reason + "; " + guiTrackerAuthRetryAction
 }

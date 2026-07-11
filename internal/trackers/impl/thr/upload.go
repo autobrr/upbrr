@@ -172,7 +172,8 @@ func login(ctx context.Context, cfg config.TrackerConfig) (*http.Client, error) 
 // LoginSession performs THR's browser-style login flow. It first loads the
 // login page into a cookie jar, carries all non-empty hidden form fields into
 // the credential POST, follows the redirect to the authenticated page, and
-// returns the live client only after index/logout evidence is present.
+// returns the live client only after the final index page contains a structured
+// logout link on the same scheme and hostname.
 func LoginSession(ctx context.Context, cfg config.TrackerConfig) (*http.Client, error) {
 	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
 		return nil, errors.New("trackers: THR missing username/password")
@@ -231,14 +232,53 @@ func LoginSession(ctx context.Context, cfg config.TrackerConfig) (*http.Client, 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("trackers: THR login response status=%d", resp.StatusCode)
 	}
-	finalPath := ""
+	var finalURL *url.URL
 	if resp.Request != nil && resp.Request.URL != nil {
-		finalPath = strings.ToLower(resp.Request.URL.Path)
+		finalURL = resp.Request.URL
 	}
-	if !strings.Contains(finalPath, "index.php") && !strings.Contains(strings.ToLower(string(body)), "logout.php") {
+	if !isAuthenticatedLoginPage(finalURL, body) {
 		return nil, fmt.Errorf("%w: authenticated marker not found", ErrLoginFailed)
 	}
 	return client, nil
+}
+
+// isAuthenticatedLoginPage requires THR's post-login index path and a parsed
+// logout anchor on the same scheme and hostname. Path fragments or incidental
+// response text cannot independently prove authentication.
+func isAuthenticatedLoginPage(finalURL *url.URL, body []byte) bool {
+	if finalURL == nil || !strings.EqualFold(strings.Trim(finalURL.Path, "/"), "index.php") {
+		return false
+	}
+	tokenizer := html.NewTokenizer(bytes.NewReader(body))
+	for {
+		switch tokenizer.Next() {
+		case html.ErrorToken:
+			return false
+		case html.StartTagToken, html.SelfClosingTagToken:
+			token := tokenizer.Token()
+			if !strings.EqualFold(token.Data, "a") {
+				continue
+			}
+			for _, attr := range token.Attr {
+				if !strings.EqualFold(attr.Key, "href") {
+					continue
+				}
+				candidate, err := url.Parse(strings.TrimSpace(attr.Val))
+				if err != nil || !strings.EqualFold(strings.TrimPrefix(candidate.Path, "/"), "logout.php") {
+					continue
+				}
+				if candidate.Scheme != "" && !strings.EqualFold(candidate.Scheme, finalURL.Scheme) {
+					continue
+				}
+				if candidate.Host != "" && !strings.EqualFold(candidate.Hostname(), finalURL.Hostname()) {
+					continue
+				}
+				return true
+			}
+		case html.TextToken, html.EndTagToken, html.CommentToken, html.DoctypeToken:
+			continue
+		}
+	}
 }
 
 func readLoginResponse(resp *http.Response) ([]byte, error) {

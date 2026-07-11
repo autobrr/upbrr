@@ -27,6 +27,7 @@ import (
 const (
 	arDefaultBaseURL  = "https://alpharatio.cc"
 	authPreviewBytes  = 64 * 1024
+	authResponseBytes = 1 * 1024 * 1024
 	arIndexPath       = "/index.php"
 	arLoginPath       = "/login.php"
 	ffDefaultBaseURL  = "https://www.funfile.org"
@@ -400,13 +401,17 @@ func resolveTHRSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConf
 	return nil
 }
 
-// readTrackerAuthResponseBody reads full success-candidate auth pages for
-// marker parsing while keeping failed-status diagnostics bounded.
+// readTrackerAuthResponseBody reads success-candidate auth pages through a
+// 1 MiB plus sentinel and rejects oversized bodies before marker parsing.
+// Failed-status diagnostics are capped at 64 KiB.
 func readTrackerAuthResponseBody(resp *http.Response, successCandidate bool) ([]byte, error) {
 	if successCandidate {
-		body, err := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(io.LimitReader(resp.Body, authResponseBytes+1))
 		if err != nil {
 			return nil, fmt.Errorf("trackers: read auth response body: %w", err)
+		}
+		if len(body) > authResponseBytes {
+			return nil, fmt.Errorf("trackers: auth response body exceeds %d bytes", authResponseBytes)
 		}
 		return body, nil
 	}
@@ -508,7 +513,8 @@ func arLooksLoggedOut(body string) bool {
 	return strings.Contains(lower, "forgot your password") || strings.Contains(lower, "login.php?act=recover")
 }
 
-// arLooksLoggedIn recognizes AR's authenticated logout link on any HTML page.
+// arLooksLoggedIn requires a logout.php anchor with a non-empty auth query.
+// Relative links are accepted; absolute links must use HTTPS on alpharatio.cc.
 func arLooksLoggedIn(body string) bool {
 	tokenizer := html.NewTokenizer(strings.NewReader(body))
 	for {
@@ -528,8 +534,13 @@ func arLooksLoggedIn(body string) bool {
 				if err != nil || !strings.EqualFold(strings.TrimPrefix(candidate.Path, "/"), "logout.php") {
 					continue
 				}
-				if candidate.IsAbs() && (!strings.EqualFold(candidate.Scheme, "https") ||
-					!strings.EqualFold(candidate.Hostname(), "alpharatio.cc")) {
+				if candidate.Scheme != "" && !strings.EqualFold(candidate.Scheme, "https") {
+					continue
+				}
+				if candidate.Host != "" && !strings.EqualFold(candidate.Hostname(), "alpharatio.cc") {
+					continue
+				}
+				if strings.TrimSpace(candidate.Query().Get("auth")) == "" {
 					continue
 				}
 				return true

@@ -452,6 +452,9 @@ func (b *Backend) runDupeCheckJob(ctx context.Context, job *dupeCheckJob) {
 	b.scheduleDupeJobCleanup(job)
 }
 
+// applyDupeProgress merges one tracker update and emits the resulting job
+// snapshot. Trackers discovered after job creation increase the total once only
+// when the producer omitted an explicit total.
 func (b *Backend) applyDupeProgress(job *dupeCheckJob, update api.DupeProgressUpdate) {
 	tracker := strings.ToUpper(strings.TrimSpace(update.Tracker))
 	if tracker == "" {
@@ -459,8 +462,14 @@ func (b *Backend) applyDupeProgress(job *dupeCheckJob, update api.DupeProgressUp
 	}
 	job.mu.Lock()
 	state := job.states[tracker]
+	if state.Tracker == "" {
+		state.Tracker = tracker
+		job.trackers = append(job.trackers, tracker)
+		if update.Total <= 0 {
+			job.totalCount++
+		}
+	}
 	previousStatus := state.Status
-	state.Tracker = tracker
 	if strings.TrimSpace(update.Status) != "" {
 		state.Status = strings.TrimSpace(update.Status)
 	}

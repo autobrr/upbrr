@@ -402,18 +402,33 @@ func TestValidateBTNInvalidCookiesDeletesOnlyConfirmedInvalid(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	status, err := NewService(config.Config{
+	service := NewService(config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 		Metadata:     config.MetadataConfig{BTNAPI: "legacy-token"},
 		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 			"BTN": {URL: server.URL},
 		}},
-	}).Validate(ctx, "BTN")
+	})
+	preEffectTime := time.Date(2026, time.July, 11, 1, 2, 3, 0, time.UTC)
+	postEffectTime := preEffectTime.Add(time.Minute)
+	nowCalls := 0
+	service.now = func() time.Time {
+		nowCalls++
+		if nowCalls == 1 {
+			return preEffectTime
+		}
+		return postEffectTime
+	}
+
+	status, err := service.Validate(ctx, "BTN")
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	if status.State != StateLoginRequired || status.CookieCount != 0 {
 		t.Fatalf("expected confirmed-invalid BTN cookies to be deleted, got %#v", status)
+	}
+	if status.LastCheckedAt != postEffectTime.Format(time.RFC3339) {
+		t.Fatalf("expected post-deletion LastCheckedAt %q, got %q", postEffectTime.Format(time.RFC3339), status.LastCheckedAt)
 	}
 	if _, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "BTN"); err == nil {
 		t.Fatal("expected BTN cookies to be deleted")
@@ -700,7 +715,7 @@ func TestValidateHDBInvalidCookiesDeletesSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	if status.State != StateLoginRequired || status.CookieCount != 0 || status.Message != "stored session expired or invalid" {
+	if status.State != StateLoginRequired || status.CookieCount != 0 || status.Message != "stored session expired or invalid; log in again or import fresh cookies" {
 		t.Fatalf("expected HDB login-required expired-session status, got %#v", status)
 	}
 	if _, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "HDB"); err == nil {
@@ -2274,7 +2289,7 @@ func TestApplyEnsureErrorToStatusKeepsStateMessageParity(t *testing.T) {
 		"confirmed invalid": {
 			err:         &ValidationError{TrackerID: "PTP", ConfirmedInvalid: true, Err: errors.New("expired")},
 			wantState:   StateLoginRequired,
-			wantMessage: "stored session expired or invalid",
+			wantMessage: "stored session expired or invalid; log in again or import fresh cookies",
 		},
 		"2FA with challenge": {
 			err:         &Needs2FAError{TrackerID: "PTP", ChallengeID: "challenge-1"},

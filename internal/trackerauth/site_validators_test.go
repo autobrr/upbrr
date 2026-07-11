@@ -47,16 +47,23 @@ func TestResolveARStoredSessionRequiresAuthenticatedLogoutMarker(t *testing.T) {
 			body: `<a href="/logout.php?auth=session-key">Logout</a>`,
 		},
 		{
-			name: "logout link without auth key",
-			body: `<a href="https://alpharatio.cc/logout.php?auth=">Logout</a>`,
+			name:        "logout link without auth key",
+			body:        `<a href="https://alpharatio.cc/logout.php?auth=">Logout</a>`,
+			wantInvalid: true,
 		},
 		{
-			name: "logout link without query",
-			body: `<a href="https://alpharatio.cc/logout.php">Logout</a>`,
+			name:        "logout link without query",
+			body:        `<a href="https://alpharatio.cc/logout.php">Logout</a>`,
+			wantInvalid: true,
 		},
 		{
 			name:        "foreign logout link",
 			body:        `<a href="https://example.invalid/logout.php?auth=session-key">Logout</a>`,
+			wantInvalid: true,
+		},
+		{
+			name:        "protocol-relative foreign logout link",
+			body:        `<a href="//example.invalid/logout.php?auth=session-key">Logout</a>`,
 			wantInvalid: true,
 		},
 		{
@@ -101,6 +108,50 @@ func TestResolveARStoredSessionRequiresAuthenticatedLogoutMarker(t *testing.T) {
 			}
 			if !validationErr.ConfirmedInvalid || validationErr.Transient {
 				t.Fatalf("expected missing AR logout marker to invalidate session, got %+v", validationErr)
+			}
+		})
+	}
+}
+
+func TestValidateARStoredCookiesBoundsSuccessfulResponseBody(t *testing.T) {
+	t.Parallel()
+
+	const marker = `<a href="/logout.php?auth=session-key">Logout</a>`
+	tests := []struct {
+		name          string
+		bodySize      int
+		wantTransient bool
+	}{
+		{name: "at limit", bodySize: authResponseBytes},
+		{name: "over limit", bodySize: authResponseBytes + 1, wantTransient: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			body := marker + strings.Repeat("a", tt.bodySize-len(marker))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(body))
+			}))
+			t.Cleanup(server.Close)
+
+			err := validateARStoredCookies(context.Background(), server.URL, []*http.Cookie{{Name: "session", Value: "ok"}})
+			if !tt.wantTransient {
+				if err != nil {
+					t.Fatalf("expected response at size limit to validate: %v", err)
+				}
+				return
+			}
+			validationErr, ok := asValidationError(err)
+			if !ok {
+				t.Fatalf("expected oversized response validation error, got %v", err)
+			}
+			if !validationErr.Transient || validationErr.ConfirmedInvalid {
+				t.Fatalf("expected oversized response to fail transiently, got %+v", validationErr)
+			}
+			if !strings.Contains(validationErr.Error(), "exceeds") {
+				t.Fatalf("expected oversized response error, got %v", validationErr)
 			}
 		})
 	}
