@@ -71,7 +71,7 @@ func TestResolveARStoredSessionRequiresAuthenticatedBrowseMarker(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			err := resolveARStoredSessionForTrackerAuth(ctx, config.TrackerConfig{URL: server.URL}, dbPath, api.TrackerAuthLoginRequest{})
+			err := resolveARSessionForTrackerAuth(ctx, config.TrackerConfig{URL: server.URL}, dbPath, api.TrackerAuthLoginRequest{})
 			if !tt.wantInvalid {
 				if err != nil {
 					t.Fatalf("expected authenticated AR browse page to validate: %v", err)

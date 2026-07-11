@@ -27,6 +27,7 @@ const (
 	arDefaultBaseURL  = "https://alpharatio.cc"
 	authPreviewBytes  = 64 * 1024
 	arBrowsePath      = "/torrents.php"
+	arLoginPath       = "/login.php"
 	ffDefaultBaseURL  = "https://www.funfile.org"
 	ffLoginPath       = "/takelogin.php"
 	ffUploadPath      = "/upload.php"
@@ -43,16 +44,36 @@ const (
 // flValidatorPattern extracts the anti-CSRF validator required by FL login.
 var flValidatorPattern = regexp.MustCompile(`name="validator"\s+value="([^"]+)"`)
 
-// resolveARStoredSessionForTrackerAuth verifies imported AR cookies against
-// the browse page. Missing cookies require user auth material, login redirects
-// or logged-out page markers invalidate stored cookies, and transport or
-// unexpected HTTP failures preserve stored cookies as transient failures.
-func resolveARStoredSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConfig, dbPath string, _ api.TrackerAuthLoginRequest) error {
+// resolveARSessionForTrackerAuth verifies imported AR cookies against the
+// browse page and refreshes missing or confirmed-invalid sessions with
+// configured credentials. Transport and unexpected HTTP failures preserve
+// stored cookies and do not trigger credential login.
+func resolveARSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConfig, dbPath string, _ api.TrackerAuthLoginRequest) error {
+	baseURL := resolveAuthBaseURL(cfg, arDefaultBaseURL)
 	values, err := cookies.LoadTrackerHTTPCookies(ctx, dbPath, "AR", "alpharatio.cc")
-	if err != nil || len(values) == 0 {
+	switch {
+	case err == nil && len(values) > 0:
+		validationErr := validateARStoredCookies(ctx, baseURL, values)
+		if validationErr == nil {
+			return nil
+		}
+		if !shouldRefreshStoredCookiesWithCredentials(validationErr) {
+			return validationErr
+		}
+		if !hasLoginCredentials(cfg) {
+			return validationErr
+		}
+	case err != nil && !errors.Is(err, cookies.ErrTrackerCookiesNotFound):
+		return &AuthRequiredError{TrackerID: "AR", Reason: "cookies unavailable", Err: cookieLoadError("AR", err)}
+	case !hasLoginCredentials(cfg):
 		return &AuthRequiredError{TrackerID: "AR", Reason: "cookies missing", Err: cookieLoadError("AR", err)}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, joinAuthURL(resolveAuthBaseURL(cfg, arDefaultBaseURL), arBrowsePath), nil)
+
+	return loginARForTrackerAuth(ctx, cfg, dbPath, baseURL)
+}
+
+func validateARStoredCookies(ctx context.Context, baseURL string, values []*http.Cookie) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, joinAuthURL(baseURL, arBrowsePath), nil)
 	if err != nil {
 		return fmt.Errorf("trackers: AR session validation request build: %w", err)
 	}
@@ -76,6 +97,56 @@ func resolveARStoredSessionForTrackerAuth(ctx context.Context, cfg config.Tracke
 	}
 	if !arLooksLoggedIn(string(body)) {
 		return &ValidationError{TrackerID: "AR", ConfirmedInvalid: true, Reason: "stored session expired", Err: errors.New("trackers: AR browse marker not found")}
+	}
+	return nil
+}
+
+// loginARForTrackerAuth creates a clean AR session, proves it against the
+// browse page, and persists only the validated replacement cookies.
+func loginARForTrackerAuth(ctx context.Context, cfg config.TrackerConfig, dbPath string, baseURL string) error {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return fmt.Errorf("trackers: AR create login cookie jar: %w", err)
+	}
+	client := noRedirectHTTPClient()
+	client.Jar = jar
+	data := url.Values{}
+	data.Set("username", strings.TrimSpace(cfg.Username))
+	data.Set("password", strings.TrimSpace(cfg.Password))
+	data.Set("keeplogged", "1")
+	data.Set("login", "Login")
+	loginReq, err := http.NewRequestWithContext(ctx, http.MethodPost, joinAuthURL(baseURL, arLoginPath), strings.NewReader(data.Encode()))
+	if err != nil {
+		return fmt.Errorf("trackers: AR login request build: %w", err)
+	}
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loginReq.Header.Set("User-Agent", "upbrr")
+	loginResp, err := client.Do(loginReq)
+	if err != nil {
+		return &ValidationError{TrackerID: "AR", Transient: true, Reason: "remote login unavailable", Err: fmt.Errorf("trackers: AR login request: %w", err)}
+	}
+	defer loginResp.Body.Close()
+	body, readErr := readTrackerAuthResponseBody(loginResp, loginResp.StatusCode >= 200 && loginResp.StatusCode < 400)
+	if readErr != nil {
+		return &ValidationError{TrackerID: "AR", Transient: true, Reason: "remote login unavailable", Err: readErr}
+	}
+	if loginResp.StatusCode < 200 || loginResp.StatusCode >= 400 || arLooksLoggedOut(string(body)) {
+		return &ValidationError{TrackerID: "AR", ConfirmedInvalid: true, Reason: "login failed", Err: fmt.Errorf("trackers: AR login failed status=%d", loginResp.StatusCode)}
+	}
+
+	base, err := url.Parse(strings.TrimRight(baseURL, "/") + "/")
+	if err != nil {
+		return fmt.Errorf("trackers: AR parse base URL: %w", err)
+	}
+	loginCookies := jar.Cookies(base)
+	if len(usableHTTPCookies(loginCookies)) == 0 {
+		return &ValidationError{TrackerID: "AR", ConfirmedInvalid: true, Reason: "login failed", Err: errors.New("trackers: AR login returned no usable cookies")}
+	}
+	if validationErr := validateARStoredCookies(ctx, baseURL, loginCookies); validationErr != nil {
+		return validationErr
+	}
+	if err := persistHTTPCookies(ctx, dbPath, "AR", loginCookies); err != nil {
+		return err
 	}
 	return nil
 }

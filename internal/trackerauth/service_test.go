@@ -554,6 +554,117 @@ func TestValidateARStoredCookies(t *testing.T) {
 	}
 }
 
+func TestValidateARAutoLoginReplacesMissingOrExpiredCookies(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		seedExpired bool
+	}{
+		{name: "missing cookies"},
+		{name: "expired cookies", seedExpired: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			dbPath := newTrackerAuthTestDB(t)
+			if tt.seedExpired {
+				if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "AR", map[string]string{"session": "expired"}); err != nil {
+					t.Fatalf("SaveTrackerCookieMap: %v", err)
+				}
+			}
+
+			var loginCalls atomic.Int32
+			var invalidLoginForm atomic.Bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case arLoginPath:
+					loginCalls.Add(1)
+					if r.FormValue("username") != "user" || r.FormValue("password") != "password" || r.FormValue("keeplogged") != "1" {
+						invalidLoginForm.Store(true)
+					}
+					http.SetCookie(w, &http.Cookie{Name: "session", Value: "refreshed", Path: "/"})
+					w.WriteHeader(http.StatusOK)
+				case arBrowsePath:
+					cookie, cookieErr := r.Cookie("session")
+					if cookieErr != nil || cookie.Value != "refreshed" {
+						_, _ = w.Write([]byte(`login.php?act=recover`))
+						return
+					}
+					_, _ = w.Write([]byte(`<a href="/torrents.php?action=download&amp;id=123&amp;auth=session-key">Download</a>`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			status, err := NewService(config.Config{
+				MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+				Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+					"AR": {URL: server.URL, Username: "user", Password: "password"},
+				}},
+			}).Validate(ctx, "AR")
+			if err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+			if status.State != StateConfigured || status.Message != "remote auth check succeeded" {
+				t.Fatalf("expected successful AR auto-login, got %#v", status)
+			}
+			if loginCalls.Load() != 1 || invalidLoginForm.Load() {
+				t.Fatal("expected one AR login with configured credentials")
+			}
+			values, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "AR")
+			if err != nil {
+				t.Fatalf("LoadTrackerCookieMap: %v", err)
+			}
+			if values["session"] != "refreshed" {
+				t.Fatal("expected refreshed AR session cookie")
+			}
+		})
+	}
+}
+
+func TestValidateARTransientFailurePreservesCookiesWithoutLogin(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "AR", map[string]string{"session": "existing"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	var loginCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == arLoginPath {
+			loginCalls.Add(1)
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"AR": {URL: server.URL, Username: "user", Password: "password"},
+		}},
+	}).Validate(ctx, "AR")
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if status.Message != "remote auth test failed" {
+		t.Fatalf("expected transient AR validation status, got %#v", status)
+	}
+	if loginCalls.Load() != 0 {
+		t.Fatal("transient AR failure must not trigger credential login")
+	}
+	values, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "AR")
+	if err != nil {
+		t.Fatalf("LoadTrackerCookieMap: %v", err)
+	}
+	if values["session"] != "existing" {
+		t.Fatal("transient AR failure must preserve stored cookies")
+	}
+}
+
 func TestValidateHDBInvalidCookiesDeletesSession(t *testing.T) {
 	t.Parallel()
 
@@ -2367,8 +2478,8 @@ func TestCapabilitiesAdvertiseOnlySupportedManual2FA(t *testing.T) {
 				t.Fatalf("%s must not advertise 2FA actions: %#v", cap.TrackerID, cap)
 			}
 		case "AR":
-			if cap.SupportsLogin || cap.SupportsAutoLogin || cap.SupportsManual2FA {
-				t.Fatalf("%s auth check is validation-only in tracker-auth UI: %#v", cap.TrackerID, cap)
+			if !cap.SupportsLogin || !cap.SupportsAutoLogin || cap.SupportsManual2FA {
+				t.Fatalf("%s must advertise credential auto-login without manual 2FA: %#v", cap.TrackerID, cap)
 			}
 			if !cap.SupportsCookieFile {
 				t.Fatalf("%s must keep cookie import capability: %#v", cap.TrackerID, cap)
