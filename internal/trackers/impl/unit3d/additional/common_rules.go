@@ -5,7 +5,11 @@ package additional
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -23,6 +27,158 @@ var resolutionOrder = map[string]int{
 	"2160p": 9,
 	"4320p": 10,
 	"8640p": 11,
+}
+
+var a4kWebRipRegex = regexp.MustCompile(`(?i)(^|[^[:alnum:]])web-?rip([^[:alnum:]]|$)`)
+
+const (
+	a4kMovieMinBitrateMbps = 10.0
+	a4kTVMinBitrateMbps    = 6.0
+)
+
+// checkA4KRequirements rejects WEBRips outright and enforces A4K's minimum
+// encode bitrate for movies and TV episodes. Full-disc uploads are exempt
+// from the bitrate floor since raw discs are never encode-bitrate limited.
+func checkA4KRequirements(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
+	select {
+	case <-ctx.Done():
+		return Fail(fmt.Errorf("context canceled: %w", ctx.Err()).Error())
+	default:
+	}
+
+	if isA4KWebRip(meta) {
+		return Fail("WEBRips are not allowed at A4K.")
+	}
+
+	if reason, ok := checkA4KBitrate(meta); !ok {
+		return Fail(reason)
+	}
+
+	return Pass()
+}
+
+func isA4KWebRip(meta api.PreparedMetadata) bool {
+	if resolveType(meta) == "WEBRIP" {
+		return true
+	}
+	if a4kWebRipRegex.MatchString(meta.Source) {
+		return true
+	}
+	return a4kWebRipRegex.MatchString(meta.ReleaseName)
+}
+
+func checkA4KBitrate(meta api.PreparedMetadata) (string, bool) {
+	if isDiscType(meta.DiscType) {
+		return "", true
+	}
+
+	bitrateMbps, ok := mediaInfoVideoBitrateMbps(meta.MediaInfoJSONPath)
+	if !ok {
+		return "", true
+	}
+
+	minBitrate := a4kMovieMinBitrateMbps
+	label := "Movie"
+	if resolveCategory(meta) == "tv" {
+		minBitrate = a4kTVMinBitrateMbps
+		label = "TV Episode"
+	}
+
+	if bitrateMbps < minBitrate {
+		return fmt.Sprintf("%s bitrate %.1f Mbps is below A4K's %.0f Mbps minimum.", label, bitrateMbps, minBitrate), false
+	}
+	return "", true
+}
+
+// mediaInfoVideoBitrateMbps reads the video track's bitrate from a MediaInfo
+// JSON report. When MediaInfo didn't report a video track bitrate directly,
+// it's approximated as the General track's OverallBitRate minus the summed
+// bitrate of all audio tracks. Returns ok=false when neither is available or
+// parseable, rather than failing the caller's rule.
+func mediaInfoVideoBitrateMbps(path string) (float64, bool) {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return 0, false
+	}
+	payload, err := os.ReadFile(trimmed)
+	if err != nil {
+		return 0, false
+	}
+
+	var doc struct {
+		Media struct {
+			Track []map[string]any `json:"track"`
+		} `json:"media"`
+	}
+	if err := json.Unmarshal(payload, &doc); err != nil {
+		return 0, false
+	}
+
+	var overallBitRate, videoBitRate string
+	var audioBitRateSum float64
+	for _, track := range doc.Media.Track {
+		trackType := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", track["@type"])))
+		switch trackType {
+		case "general":
+			if overallBitRate == "" {
+				overallBitRate = fmt.Sprintf("%v", track["OverallBitRate"])
+			}
+		case "video":
+			if videoBitRate == "" {
+				videoBitRate = fmt.Sprintf("%v", track["BitRate"])
+			}
+		case "audio":
+			if bps, ok := firstNumericFloat(fmt.Sprintf("%v", track["BitRate"])); ok {
+				audioBitRateSum += bps
+			}
+		}
+	}
+
+	if bps, ok := firstNumericFloat(videoBitRate); ok {
+		return bps / 1_000_000, true
+	}
+
+	overallBps, ok := firstNumericFloat(overallBitRate)
+	if !ok {
+		return 0, false
+	}
+	videoBps := overallBps - audioBitRateSum
+	if videoBps <= 0 {
+		return 0, false
+	}
+	return videoBps / 1_000_000, true
+}
+
+var mediaInfoNumericRegex = regexp.MustCompile(`\d+(?:\.\d+)?`)
+
+func firstNumericFloat(value string) (float64, bool) {
+	match := mediaInfoNumericRegex.FindString(strings.TrimSpace(value))
+	if match == "" {
+		return 0, false
+	}
+	parsed, err := strconv.ParseFloat(match, 64)
+	if err != nil {
+		return 0, false
+	}
+	return parsed, true
+}
+
+func resolveCategory(meta api.PreparedMetadata) string {
+	if value := strings.ToLower(strings.TrimSpace(meta.ExternalIDs.Category)); value != "" {
+		return value
+	}
+	if value := strings.ToLower(strings.TrimSpace(meta.MediaInfoCategory)); value != "" {
+		return value
+	}
+	if meta.ExternalMetadata.TMDB != nil {
+		if value := strings.ToLower(strings.TrimSpace(meta.ExternalMetadata.TMDB.Category)); value != "" {
+			return value
+		}
+	}
+	if value := strings.ToLower(strings.TrimSpace(meta.Release.Category)); value != "" {
+		return value
+	}
+	return ""
 }
 
 func checkLUMEResolution(ctx context.Context, meta api.PreparedMetadata, _ api.Logger) Result {
