@@ -779,6 +779,7 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     CheckPredb: { key: "CheckPredb", advanced: true },
   },
   ScreenshotHandling: {
+    MaxMenuItems: { key: "MaxMenuItems", label: "Maximum DVD menu images", type: "number" },
     ProcessLimit: { key: "ProcessLimit", advanced: true },
     MaxConcurrentUploads: { key: "MaxConcurrentUploads", advanced: true },
     FFmpegLimit: { key: "FFmpegLimit", advanced: true },

@@ -493,6 +493,7 @@ func (s e2eScreenshotService) Capture(_ context.Context, meta api.PreparedMetada
 	if err != nil {
 		return api.ScreenshotResult{}, err
 	}
+	shot.Purpose = purpose
 	return api.ScreenshotResult{SourcePath: meta.SourcePath, Purpose: purpose, Images: []api.ScreenshotImage{shot}}, nil
 }
 
@@ -525,6 +526,9 @@ func (s e2eScreenshotService) SaveFinalSelections(ctx context.Context, meta api.
 			Source:     string(api.ScreenshotPurposeFinal),
 			SelectedAt: time.Now().UTC(),
 		})
+	}
+	if lifecycle, ok := s.repo.(api.ScreenshotLifecycleRepository); ok {
+		return lifecycle.ReplaceNormalFinalSelections(ctx, meta.SourcePath, selections)
 	}
 	return s.repo.SaveFinalSelections(ctx, meta.SourcePath, selections)
 }
@@ -570,7 +574,7 @@ func e2eManagedScreenshot(shotPath string, tmpRoot string, meta api.PreparedMeta
 	if err != nil {
 		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: stat managed screenshot: %w", err)
 	}
-	return api.ScreenshotImage{Index: 1, TimestampSeconds: 10, Path: managedPath, Width: 320, Height: 180, SizeBytes: info.Size()}, nil
+	return api.ScreenshotImage{Index: 1, TimestampSeconds: 10, Path: managedPath, Purpose: api.ScreenshotPurposeFinal, Width: 320, Height: 180, SizeBytes: info.Size()}, nil
 }
 
 func writeJSONE2E(w io.Writer, value any) error {

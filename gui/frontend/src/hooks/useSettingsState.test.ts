@@ -192,6 +192,25 @@ function ImageHostingHarness() {
   );
 }
 
+function ScreenshotSettingsHarness() {
+  const state = useSettingsState({ activeTab: "settings" });
+  const config = state.screenshotConfig;
+  if (!config) {
+    return createElement("div");
+  }
+  return createElement(
+    "div",
+    null,
+    state.renderField(
+      "MaxMenuItems",
+      config.MaxMenuItems,
+      ["ScreenshotHandling", "MaxMenuItems"],
+      state.sectionFieldMeta.ScreenshotHandling?.MaxMenuItems,
+    ),
+    createElement(PayloadCapture, { value: state.buildSavePayload() }),
+  );
+}
+
 let latestPayload = "";
 
 /** Captures save payloads without rendering secret-shaped values into DOM snapshots. */
@@ -261,6 +280,30 @@ describe("settings advanced fields", () => {
     expect(advancedBySection.PostUpload).toEqual(["InjectDelay", "MaxConcurrentTrackers"]);
     expect(advancedBySection.TorrentCreation).toEqual([]);
     expect(advancedBySection.TorrentClients).toEqual(["VerifyWebUICertificate"]);
+  });
+});
+
+describe("DVD menu screenshot settings", () => {
+  it("loads the default maximum and preserves edits in the save payload", async () => {
+    (globalThis as typeof globalThis & { go?: any }).go = {
+      guiapp: {
+        App: {
+          GetConfig: async () => JSON.stringify({ ScreenshotHandling: { MaxMenuItems: 6 } }),
+          GetDefaultConfig: async () => JSON.stringify({}),
+          ListKnownTrackers: async () => [],
+          GetImageHostPolicyMetadata: async () => ({}),
+        },
+      },
+    };
+
+    render(createElement(ScreenshotSettingsHarness));
+    const input = await screen.findByLabelText("Maximum DVD menu images");
+    expect(input).toHaveValue(6);
+    fireEvent.change(input, { target: { value: "8" } });
+    await waitFor(() => {
+      const payload = readPayload<{ ScreenshotHandling?: { MaxMenuItems?: number } }>();
+      expect(payload.ScreenshotHandling?.MaxMenuItems).toBe(8);
+    });
   });
 });
 

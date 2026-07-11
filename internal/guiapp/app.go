@@ -64,6 +64,9 @@ type App struct {
 	uploadMu    sync.Mutex
 	uploads     map[string]*trackerUploadJob
 	uploadWG    sync.WaitGroup
+	dvdMenuMu   sync.Mutex
+	dvdMenus    map[string]*dvdMenuCaptureJob
+	dvdMenuWG   sync.WaitGroup
 
 	sharedCookieMigrator func(context.Context, string, api.Logger) error
 }
@@ -136,6 +139,7 @@ func NewAppWithContext(ctx context.Context, configPath string, configProvided bo
 		streams:     make(map[string]*logStreamSession),
 		dupes:       make(map[string]*dupeCheckJob),
 		uploads:     make(map[string]*trackerUploadJob),
+		dvdMenus:    make(map[string]*dvdMenuCaptureJob),
 	}, nil
 }
 
@@ -147,6 +151,7 @@ func (a *App) shutdown(_ context.Context) {
 	a.stopAllLogStreams()
 	a.stopAllDupeJobs()
 	a.stopAllUploadJobs()
+	a.stopAllDVDMenuJobs()
 	rt := a.runtimeSnapshot()
 	if rt.core != nil {
 		_ = rt.core.Close()
@@ -1214,11 +1219,15 @@ func (a *App) GetConfig() (string, error) {
 	return wrapGUIResult(config.ExportToJSON(normalized))
 }
 
+// GetApplicationInfo returns build/runtime metadata plus a bounded, path-free
+// DVD menu capability probe for frontend diagnostics.
 func (a *App) GetApplicationInfo() (api.ApplicationInfo, error) {
 	if a == nil {
 		return api.ApplicationInfo{}, errors.New("app not initialized")
 	}
-	return api.CurrentApplicationInfo(), nil
+	rt := a.runtimeSnapshot()
+	provider, _ := rt.core.(api.DVDMenuCapabilityProvider)
+	return guishared.CurrentApplicationInfo(a.runtimeContext(), provider), nil
 }
 
 func (a *App) GetDefaultConfig() (string, error) {

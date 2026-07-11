@@ -129,6 +129,15 @@ func ResolveDescriptionAssets(ctx context.Context, tracker string, meta api.Prep
 	return resolveDescriptionAssets(ctx, tracker, meta, repo, logger, nil)
 }
 
+// ResolveDescriptionAssetsWithPrepared returns caller-prepared assets when
+// available, preserving image-host resolution performed by the orchestrator.
+func ResolveDescriptionAssetsWithPrepared(ctx context.Context, tracker string, meta api.PreparedMetadata, repo api.MetadataRepository, logger api.Logger, prepared *DescriptionAssets) (DescriptionAssets, error) {
+	if prepared != nil {
+		return *prepared, nil
+	}
+	return ResolveDescriptionAssets(ctx, tracker, meta, repo, logger)
+}
+
 func LogDescriptionAssetResolutionFailure(logger api.Logger, tracker string, err error) {
 	if err == nil || logger == nil {
 		return
@@ -228,7 +237,7 @@ func splitDescriptionScreenshots(ctx context.Context, meta api.PreparedMetadata,
 	}
 	menuPaths := make(map[string]struct{})
 	for _, sel := range selections {
-		if sel.Source == screenshotPurposeMenu && strings.TrimSpace(sel.ImagePath) != "" {
+		if api.IsDiscMenuSelectionSource(sel.Source) && strings.TrimSpace(sel.ImagePath) != "" {
 			menuPaths[strings.TrimSpace(sel.ImagePath)] = struct{}{}
 		}
 	}

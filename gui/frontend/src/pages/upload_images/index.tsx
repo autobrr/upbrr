@@ -301,6 +301,11 @@ export default function UploadImagesPage(props: Props) {
                         Uploaded {hostLabel}
                       </span>
                     ) : null}
+                    {item.image.Purpose === "menu" ? (
+                      <span className="pointer-events-none absolute bottom-1.5 left-1.5 rounded bg-sky-900 px-1.5 py-1 text-xs font-semibold text-sky-50">
+                        Disc menu
+                      </span>
+                    ) : null}
                   </button>
                   <Button
                     className={cn(

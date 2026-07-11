@@ -11,12 +11,15 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/paths"
+	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -28,6 +31,25 @@ type videoInfo struct {
 	Height          int
 	WidthScale      float64
 	HeightScale     float64
+	Segments        []videoSegment
+}
+
+// videoSegment maps a global disc timestamp window onto one concrete ffmpeg
+// input file. DVD title sets use one segment per ordered VOB part.
+type videoSegment struct {
+	SourcePath      string
+	StartSeconds    float64
+	DurationSeconds float64
+}
+
+// segmentCandidate records one concrete ffmpeg input attempt for a whole-title
+// timestamp. DVD candidates can include later VOB parts as fallbacks when an
+// early segment produces no decodable frame.
+type segmentCandidate struct {
+	SourcePath    string
+	Timestamp     float64
+	SegmentIndex  int
+	FallbackIndex int
 }
 
 type mediaInfoDoc struct {
@@ -38,7 +60,11 @@ type mediaInfoDoc struct {
 
 var durationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|hours?|hrs?|h|minutes?|mins?|min|seconds?|secs?|sec|s)\b`)
 
-func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot string) (videoInfo, error) {
+// resolveVideoInfo selects timing metadata and the ffmpeg inputs used for
+// screenshot planning/capture. DVD releases keep ordered title-set segments so
+// global screenshot times can be captured from the matching VOB part.
+func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot string, logger api.Logger) (videoInfo, error) {
+	logger = screenshotLogger(logger)
 	info := videoInfo{}
 
 	basePath := strings.TrimSpace(meta.VideoPath)
@@ -49,21 +75,45 @@ func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot st
 		return info, errors.New("screenshots: source path required")
 	}
 
-	doc, _ := loadMediaInfoDoc(meta.MediaInfoJSONPath)
+	logger.Tracef(
+		"screenshots: video info input kind=%s disc=%s source_path=%s video_path=%s mediainfo_present=%t selected_playlists=%d tvpack=%t",
+		screenshotSourceKind(meta),
+		screenshotLogField(meta.DiscType),
+		meta.SourcePath,
+		meta.VideoPath,
+		strings.TrimSpace(meta.MediaInfoJSONPath) != "",
+		len(meta.SelectedBDMVPlaylists),
+		meta.TVPack,
+	)
+	doc, mediaInfoErr := loadMediaInfoDoc(meta.MediaInfoJSONPath)
+	if mediaInfoErr != nil {
+		logger.Debugf("screenshots: mediainfo timing unavailable err=%s", redaction.RedactValue(mediaInfoErr.Error(), nil))
+	}
 	info.DurationSeconds = mediaInfoDurationSeconds(doc)
 	info.FrameRate = mediaInfoFrameRate(doc)
 	info.Width, info.Height, info.WidthScale, info.HeightScale = mediaInfoVideoGeometry(doc)
 	if info.FrameRate <= 0 {
 		info.FrameRate = 24.0
 	}
+	logger.Tracef(
+		"screenshots: mediainfo timing duration_seconds=%.3f frame_rate=%.3f width=%d height=%d width_scale=%.3f height_scale=%.3f",
+		info.DurationSeconds,
+		info.FrameRate,
+		info.Width,
+		info.Height,
+		info.WidthScale,
+		info.HeightScale,
+	)
 
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
 		if filePath, ok, err := selectBDMVFileFromMetadata(ctx, meta); err != nil {
 			return info, err
 		} else if ok {
 			info.SourcePath = filePath
+			logger.Tracef("screenshots: BDMV source selected method=metadata path=%s", filePath)
 		}
 
+		logger.Tracef("screenshots: BDMV summary lookup tmp_root_present=%t playlist=%s", strings.TrimSpace(tmpRoot) != "", paths.PrimaryBDMVPlaylist(meta))
 		bdinfo, err := loadBDInfo(tmpRoot, meta)
 		if err != nil {
 			return info, err
@@ -79,27 +129,133 @@ func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot st
 				filePath, err := selectBDMVFile(ctx, meta.SourcePath, bdinfo)
 				if err == nil {
 					info.SourcePath = filePath
+					logger.Tracef("screenshots: BDMV source selected method=bdinfo path=%s", filePath)
+				} else {
+					logger.Debugf("screenshots: BDMV source selection unavailable err=%s", redaction.RedactValue(err.Error(), nil))
 				}
 			}
+			logger.Tracef("screenshots: BDMV summary applied duration_seconds=%.3f frame_rate=%.3f files=%d", info.DurationSeconds, info.FrameRate, len(bdinfo.Files))
+		} else {
+			logger.Tracef("screenshots: BDMV summary not available")
 		}
 	}
 
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
-		vob, err := selectDVDVOB(ctx, meta.SourcePath)
+		logger.Tracef("screenshots: DVD source selection root=%s", meta.SourcePath)
+		vobs, err := selectDVDVOBs(ctx, meta.SourcePath)
 		if err != nil {
 			return info, err
 		}
-		info.SourcePath = vob
+		info.SourcePath = vobs[0].path
+		info.Segments = buildVideoSegments(vobs)
+		logger.Tracef("screenshots: DVD source selected path=%s segments=%d", info.SourcePath, len(info.Segments))
 	}
 
 	if info.SourcePath == "" {
 		info.SourcePath = basePath
+		logger.Tracef("screenshots: video source selected method=base path=%s", info.SourcePath)
 	}
+	logger.Debugf(
+		"screenshots: video info resolved kind=%s disc=%s duration_seconds=%.3f frame_rate=%.3f selected_path=%s",
+		screenshotSourceKind(meta),
+		screenshotLogField(meta.DiscType),
+		info.DurationSeconds,
+		info.FrameRate,
+		info.SourcePath,
+	)
 
 	return info, nil
 }
 
-func resolveVideoSource(ctx context.Context, meta api.PreparedMetadata, tmpRoot string) (string, error) {
+// resolveSegmentTimestamp converts a whole-title timestamp into the concrete
+// segment file and local timestamp ffmpeg should seek within that file.
+func resolveSegmentTimestamp(info videoInfo, timestamp float64) (string, float64) {
+	candidates := resolveSegmentCandidates(info, timestamp)
+	if len(candidates) == 0 {
+		return info.SourcePath, timestamp
+	}
+	return candidates[0].SourcePath, candidates[0].Timestamp
+}
+
+// resolveSegmentCandidates returns the primary input segment for a whole-title
+// timestamp plus later ordered segments that can be tried if ffmpeg emits no
+// frame from the primary segment.
+func resolveSegmentCandidates(info videoInfo, timestamp float64) []segmentCandidate {
+	if len(info.Segments) == 0 {
+		return []segmentCandidate{{SourcePath: info.SourcePath, Timestamp: timestamp, SegmentIndex: -1}}
+	}
+
+	primaryIndex := 0
+	localTimestamp := timestamp
+	for idx, segment := range info.Segments {
+		if segment.SourcePath == "" || segment.DurationSeconds <= 0 {
+			continue
+		}
+		if timestamp <= 0 {
+			primaryIndex = idx
+			localTimestamp = 0
+			break
+		}
+		if timestamp < segment.StartSeconds+segment.DurationSeconds {
+			primaryIndex = idx
+			localTimestamp = timestamp - segment.StartSeconds
+			if localTimestamp < 0 {
+				localTimestamp = 0
+			}
+			break
+		}
+		primaryIndex = idx + 1
+	}
+	if primaryIndex >= len(info.Segments) {
+		primaryIndex = len(info.Segments) - 1
+		last := info.Segments[primaryIndex]
+		localTimestamp = last.DurationSeconds
+		if localTimestamp > 0.5 {
+			localTimestamp -= 0.5
+		}
+	}
+	if localTimestamp < 0 {
+		localTimestamp = 0
+	}
+
+	candidates := make([]segmentCandidate, 0, len(info.Segments)-primaryIndex)
+	for idx := primaryIndex; idx < len(info.Segments); idx++ {
+		segment := info.Segments[idx]
+		if segment.SourcePath == "" {
+			continue
+		}
+		candidateTimestamp := localTimestamp
+		if idx != primaryIndex {
+			candidateTimestamp = segmentFallbackTimestamp(segment)
+		}
+		candidates = append(candidates, segmentCandidate{
+			SourcePath:    segment.SourcePath,
+			Timestamp:     candidateTimestamp,
+			SegmentIndex:  idx,
+			FallbackIndex: len(candidates),
+		})
+	}
+	if len(candidates) == 0 {
+		return []segmentCandidate{{SourcePath: info.SourcePath, Timestamp: timestamp, SegmentIndex: -1}}
+	}
+	return candidates
+}
+
+func segmentFallbackTimestamp(segment videoSegment) float64 {
+	switch {
+	case segment.DurationSeconds <= 0:
+		return 0.5
+	case segment.DurationSeconds <= 1:
+		return segment.DurationSeconds / 2
+	default:
+		return 0.5
+	}
+}
+
+// resolveVideoSource applies the same input-file preference as resolveVideoInfo
+// when callers only need the ffmpeg source path, such as preview generation.
+func resolveVideoSource(ctx context.Context, meta api.PreparedMetadata, tmpRoot string, logger api.Logger) (string, error) {
+	logger = screenshotLogger(logger)
 	basePath := strings.TrimSpace(meta.VideoPath)
 	if basePath == "" {
 		basePath = strings.TrimSpace(meta.SourcePath)
@@ -107,14 +263,24 @@ func resolveVideoSource(ctx context.Context, meta api.PreparedMetadata, tmpRoot 
 	if basePath == "" {
 		return "", errors.New("screenshots: source path required")
 	}
+	logger.Tracef(
+		"screenshots: video source input kind=%s disc=%s source_path=%s video_path=%s selected_playlists=%d",
+		screenshotSourceKind(meta),
+		screenshotLogField(meta.DiscType),
+		meta.SourcePath,
+		meta.VideoPath,
+		len(meta.SelectedBDMVPlaylists),
+	)
 
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
 		if filePath, ok, err := selectBDMVFileFromMetadata(ctx, meta); err != nil {
 			return "", err
 		} else if ok {
+			logger.Tracef("screenshots: video source selected method=bdmv_metadata path=%s", filePath)
 			return filePath, nil
 		}
 
+		logger.Tracef("screenshots: video source BDMV summary lookup tmp_root_present=%t playlist=%s", strings.TrimSpace(tmpRoot) != "", paths.PrimaryBDMVPlaylist(meta))
 		bdinfo, err := loadBDInfo(tmpRoot, meta)
 		if err != nil {
 			return "", err
@@ -124,21 +290,27 @@ func resolveVideoSource(ctx context.Context, meta api.PreparedMetadata, tmpRoot 
 			if err != nil {
 				return "", err
 			}
+			logger.Tracef("screenshots: video source selected method=bdmv_bdinfo path=%s", filePath)
 			return filePath, nil
 		}
 	}
 
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
+		logger.Tracef("screenshots: video source DVD selection root=%s", meta.SourcePath)
 		vob, err := selectDVDVOB(ctx, meta.SourcePath)
 		if err != nil {
 			return "", err
 		}
+		logger.Tracef("screenshots: video source selected method=dvd_vob path=%s", vob)
 		return vob, nil
 	}
 
+	logger.Tracef("screenshots: video source selected method=base path=%s", basePath)
 	return basePath, nil
 }
 
+// selectBDMVFileFromMetadata returns a concrete stream path when the prepared
+// metadata already identifies the selected BDMV item or resolved video file.
 func selectBDMVFileFromMetadata(ctx context.Context, meta api.PreparedMetadata) (string, bool, error) {
 	if fileName := largestSelectedBDMVPlaylistItem(meta.SelectedBDMVPlaylists); fileName != "" {
 		if videoPath := strings.TrimSpace(meta.VideoPath); videoPath != "" && strings.EqualFold(filepath.Base(videoPath), fileName) {
@@ -493,21 +665,31 @@ func selectBDMVFile(ctx context.Context, root string, info *discparse.BDInfo) (s
 }
 
 func selectDVDVOB(ctx context.Context, root string) (string, error) {
-	videoTS, err := findVideoTS(ctx, root)
+	vobs, err := selectDVDVOBs(ctx, root)
 	if err != nil {
 		return "", err
 	}
+	return vobs[0].path, nil
+}
+
+// selectDVDVOBs returns the largest DVD title set's content VOBs in numeric
+// playback order. VTS_nn_0.VOB menu files are excluded.
+func selectDVDVOBs(ctx context.Context, root string) ([]dvdTitleVOB, error) {
+	videoTS, err := findVideoTS(ctx, root)
+	if err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(videoTS)
 	if err != nil {
-		return "", fmt.Errorf("screenshots: read VIDEO_TS directory: %w", err)
+		return nil, fmt.Errorf("screenshots: read VIDEO_TS directory: %w", err)
 	}
 
-	vobSizes := map[string]int64{}
-	vobPaths := map[string][]string{}
+	contentSizes := map[string]int64{}
+	vobPaths := map[string][]dvdTitleVOB{}
 	for _, entry := range entries {
 		select {
 		case <-ctx.Done():
-			return "", fmt.Errorf("context canceled: %w", ctx.Err())
+			return nil, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		name := entry.Name()
@@ -515,33 +697,127 @@ func selectDVDVOB(ctx context.Context, root string) (string, error) {
 		if !strings.HasPrefix(upper, "VTS_") || !strings.HasSuffix(upper, ".VOB") {
 			continue
 		}
-		set := strings.TrimPrefix(strings.TrimSuffix(upper, ".VOB"), "VTS_")
-		set = strings.SplitN(set, "_", 2)[0]
+		set, index, ok := parseDVDVOBName(upper)
+		if !ok || index <= 0 {
+			continue
+		}
 		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
-		vobSizes[set] += info.Size()
-		vobPaths[set] = append(vobPaths[set], filepath.Join(videoTS, name))
+		contentSizes[set] += info.Size()
+		vobPaths[set] = append(vobPaths[set], dvdTitleVOB{
+			path:  filepath.Join(videoTS, name),
+			index: index,
+			size:  info.Size(),
+		})
 	}
 
 	bestSet := ""
 	var bestSize int64
-	for set, size := range vobSizes {
+	for set, size := range contentSizes {
 		if size > bestSize {
 			bestSize = size
 			bestSet = set
 		}
 	}
 	if bestSet == "" {
-		return "", errors.New("screenshots: no dvd vob found")
+		for set, paths := range vobPaths {
+			var size int64
+			for _, path := range paths {
+				size += path.size
+			}
+			if size > bestSize {
+				bestSize = size
+				bestSet = set
+			}
+		}
+	}
+	if bestSet == "" {
+		return nil, errors.New("screenshots: no dvd vob found")
 	}
 
 	paths := vobPaths[bestSet]
 	if len(paths) == 0 {
-		return "", errors.New("screenshots: no dvd vob files for set")
+		return nil, errors.New("screenshots: no dvd vob files for set")
 	}
-	return paths[0], nil
+	sort.Slice(paths, func(i, j int) bool {
+		if paths[i].index != paths[j].index {
+			return paths[i].index < paths[j].index
+		}
+		if paths[i].size != paths[j].size {
+			return paths[i].size > paths[j].size
+		}
+		return paths[i].path < paths[j].path
+	})
+	return paths, nil
+}
+
+func parseDVDVOBName(name string) (string, int, bool) {
+	trimmed := strings.TrimSuffix(strings.TrimPrefix(strings.ToUpper(strings.TrimSpace(name)), "VTS_"), ".VOB")
+	parts := strings.Split(trimmed, "_")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", 0, false
+	}
+	index, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "", 0, false
+	}
+	return parts[0], index, true
+}
+
+// dvdTitleVOB records the parsed VTS set/index and size used to select and
+// order DVD title segments.
+type dvdTitleVOB struct {
+	path  string
+	index int
+	size  int64
+}
+
+// buildVideoSegments records ordered DVD VOB inputs that need measured timing.
+// A single VOB needs no segment mapping because its local and title timestamps
+// are identical.
+func buildVideoSegments(vobs []dvdTitleVOB) []videoSegment {
+	if len(vobs) <= 1 {
+		return nil
+	}
+	segments := make([]videoSegment, 0, len(vobs))
+	for _, vob := range vobs {
+		segments = append(segments, videoSegment{SourcePath: vob.path})
+	}
+	return segments
+}
+
+// resolveDVDVideoSegmentTimings measures each VOB's container duration before
+// mapping whole-title timestamps. File size is not a valid duration proxy for
+// variable-bitrate MPEG program streams. It mutates segments in order and
+// returns an error if any segment lacks a usable duration.
+func resolveDVDVideoSegmentTimings(
+	ctx context.Context,
+	runner Runner,
+	cmdPath string,
+	segments []videoSegment,
+	logger api.Logger,
+) error {
+	logger = screenshotLogger(logger)
+	start := 0.0
+	for idx := range segments {
+		duration, err := probeVideoDuration(ctx, runner, cmdPath, segments[idx].SourcePath)
+		if err != nil {
+			return fmt.Errorf("screenshots: probe DVD segment %d duration: %w", idx+1, err)
+		}
+		segments[idx].StartSeconds = start
+		segments[idx].DurationSeconds = duration
+		start += duration
+		logger.Tracef(
+			"screenshots: DVD segment timing measured segment=%d start_seconds=%.3f duration_seconds=%.3f input=%s",
+			idx,
+			segments[idx].StartSeconds,
+			segments[idx].DurationSeconds,
+			segments[idx].SourcePath,
+		)
+	}
+	return nil
 }
 
 func findVideoTS(ctx context.Context, root string) (string, error) {
@@ -675,6 +951,45 @@ func shouldUseLibplacebo(meta api.PreparedMetadata, cfg config.Config) bool {
 		return false
 	}
 	return true
+}
+
+func screenshotLogger(logger api.Logger) api.Logger {
+	if logger == nil {
+		return api.NopLogger{}
+	}
+	return logger
+}
+
+// screenshotSourceKind classifies the prepared metadata for diagnostic logs
+// without changing screenshot selection behavior.
+func screenshotSourceKind(meta api.PreparedMetadata) string {
+	discType := strings.TrimSpace(meta.DiscType)
+	if discType != "" {
+		return "disc_" + strings.ToLower(sanitizeFilename(discType))
+	}
+	if meta.TVPack {
+		return "season_pack"
+	}
+	if strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "TV") {
+		if meta.EpisodeInt <= 0 && meta.Release.Episode <= 0 {
+			return "season_pack"
+		}
+		return "episode"
+	}
+	videoPath := strings.TrimSpace(meta.VideoPath)
+	sourcePath := strings.TrimSpace(meta.SourcePath)
+	if videoPath != "" && sourcePath != "" && !pathutil.SamePath(videoPath, sourcePath) {
+		return "pack_item"
+	}
+	return "single_file"
+}
+
+func screenshotLogField(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "none"
+	}
+	return sanitizeFilename(trimmed)
 }
 
 func abs(x float64) float64 {

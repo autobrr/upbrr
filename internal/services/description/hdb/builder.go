@@ -29,7 +29,11 @@ var (
 	hdbEmptyWrapperTag = regexp.MustCompile(`(?is)\[(?:center|align=center)\]\s*\[/(?:center|align)\]`)
 )
 
-func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig config.Config, keptDescription string, screenshots []api.ScreenshotImage) (string, error) {
+// BuildDescription builds HDB-compatible BBCode from retained description
+// text and resolved image assets. Disc-menu images render in their own section
+// before normal screenshots; cancellation and disc-metadata read failures are
+// returned to the caller.
+func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig config.Config, keptDescription string, menuImages []api.ScreenshotImage, screenshots []api.ScreenshotImage) (string, error) {
 	select {
 	case <-ctx.Done():
 		return "", fmt.Errorf("context canceled: %w", ctx.Err())
@@ -50,8 +54,17 @@ func BuildDescription(ctx context.Context, meta api.PreparedMetadata, appConfig 
 		parts = append(parts, discSection)
 	}
 
-	if transformed := transformBaseDescription(keptDescription, len(screenshots) > 0); strings.TrimSpace(transformed) != "" {
+	if transformed := transformBaseDescription(keptDescription, len(menuImages) > 0 || len(screenshots) > 0); strings.TrimSpace(transformed) != "" {
 		parts = append(parts, transformed)
+	}
+
+	if len(menuImages) > 0 {
+		if header := strings.TrimSpace(appConfig.Description.DiscMenuHeader); header != "" {
+			parts = append(parts, header)
+		}
+		if section := buildScreenshotSection(menuImages, 0); section != "" {
+			parts = append(parts, section)
+		}
 	}
 
 	if section := buildScreenshotSection(screenshots, meta.Options.Screens); section != "" {
@@ -159,10 +172,7 @@ func convertComparisonToCentered(value string, maxWidth int) string {
 		if screensPerLine <= 0 {
 			return match
 		}
-		imgSize := maxWidth / screensPerLine
-		if imgSize > 350 {
-			imgSize = 350
-		}
+		imgSize := min(maxWidth/screensPerLine, 350)
 		rows := make([]string, 0)
 		line := make([]string, 0, screensPerLine)
 		for _, img := range images {

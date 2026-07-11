@@ -314,7 +314,7 @@ func run() error {
 		if queueMode {
 			return runCLIUploadOnlyQueue(ctx, coreSvc, uploadReq, paths, opts.Debug, logger)
 		}
-		return runCLIUploadOnlyBatch(ctx, coreSvc, uploadReq, paths, opts.Debug)
+		return runCLIUploadOnlyBatch(ctx, coreSvc, uploadReq, paths, opts.Debug, logger)
 	}
 
 	queueMode := strings.TrimSpace(opts.QueueName) != ""
@@ -331,12 +331,15 @@ func run() error {
 // semantics) under a deadline budgeted by item count but capped at
 // cliUploadOnlyTimeoutCap items so a large path list cannot create an
 // effectively unbounded run-wide timeout.
-func runCLIUploadOnlyBatch(ctx context.Context, coreSvc api.Core, uploadReq api.Request, paths []string, debug bool) error {
+func runCLIUploadOnlyBatch(ctx context.Context, coreSvc api.Core, uploadReq api.Request, paths []string, debug bool, logger api.Logger) error {
 	budgetItems := min(max(1, len(paths)), cliUploadOnlyTimeoutCap)
 	uploadCtx, uploadCancel := context.WithTimeout(ctx, time.Duration(budgetItems)*cliItemTimeout)
 	defer uploadCancel()
 	preparedReq, err := prepareCLIUploadMetadata(uploadCtx, coreSvc, uploadReq)
 	if err != nil {
+		return exitError(1, err)
+	}
+	if err := prepareCLIImages(uploadCtx, coreSvc, preparedReq, logger, true); err != nil {
 		return exitError(1, err)
 	}
 	if debug {
@@ -367,6 +370,9 @@ func runCLIUploadOnlyQueue(ctx context.Context, coreSvc api.Core, uploadReq api.
 		itemReq.Paths = []string{sourcePath}
 		preparedReq, err := prepareCLIUploadMetadata(itemCtx, coreSvc, itemReq)
 		if err != nil {
+			return err
+		}
+		if err := prepareCLIImages(itemCtx, coreSvc, preparedReq, logger, false); err != nil {
 			return err
 		}
 		if debug {
@@ -405,6 +411,80 @@ func runCLIUploadOnlyQueue(ctx context.Context, coreSvc api.Core, uploadReq api.
 		logger.Infof("queue: upload-only completed, %d tracker upload(s) accepted", uploaded)
 	}
 	return err
+}
+
+// prepareCLIImages imports manual menu paths and optionally captures automatic
+// DVD menus for each request path before review or upload. Non-DVD paths are
+// skipped without invoking capture. Batch callers can continue after an empty
+// successful capture while retaining errors from CaptureDVDMenus.
+func prepareCLIImages(ctx context.Context, coreSvc api.Core, req api.Request, logger api.Logger, continueOnEmptyCapture bool) error {
+	if coreSvc == nil {
+		return errors.New("upbrr: core service is required")
+	}
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
+	if len(req.Paths) == 0 {
+		return internalerrors.ErrInvalidInput
+	}
+
+	for _, sourcePath := range req.Paths {
+		singleReq := req
+		singleReq.Paths = []string{sourcePath}
+		if len(singleReq.ScreenshotOverrides.MenuPaths) > 0 {
+			if err := coreSvc.ImportMenuImages(ctx, singleReq, singleReq.ScreenshotOverrides.MenuPaths); err != nil {
+				return fmt.Errorf("upbrr: import menu images: %w", err)
+			}
+		}
+		if !singleReq.Options.CaptureDVDMenus {
+			continue
+		}
+
+		discType, err := filesystem.DetectDiscType(ctx, sourcePath)
+		if err != nil {
+			return fmt.Errorf("upbrr: detect DVD menu source: %w", err)
+		}
+		if !strings.EqualFold(strings.TrimSpace(discType), "DVD") {
+			label := strings.TrimSpace(discType)
+			if label == "" {
+				label = "none"
+			}
+			logger.Infof("DVD menus: capture skipped disc_type=%s decision=skip", label)
+			fmt.Printf("DVD menu capture skipped: %s is not a DVD\n", formatPathLabel(sourcePath))
+			continue
+		}
+
+		result, err := coreSvc.CaptureDVDMenus(ctx, singleReq)
+		if err != nil {
+			return fmt.Errorf("upbrr: capture DVD menus: %w", err)
+		}
+		if len(result.Images) == 0 {
+			if !continueOnEmptyCapture {
+				return errors.New("upbrr: capture DVD menus: no menu images captured")
+			}
+			logger.Errorf(
+				"DVD menus: capture failed source=%s decision=continue reason=no_images",
+				formatPathLabel(sourcePath),
+			)
+			continue
+		}
+		if result.Partial {
+			logger.Warnf(
+				"DVD menus: capture incomplete captured=%d warnings=%d truncated=%t",
+				len(result.Images),
+				len(result.Warnings),
+				result.Truncated,
+			)
+			fmt.Printf("DVD menus ready: %d (capture incomplete)\n", len(result.Images))
+			continue
+		}
+		if result.Truncated {
+			fmt.Printf("DVD menus ready: %d (maximum reached)\n", len(result.Images))
+			continue
+		}
+		fmt.Printf("DVD menus ready: %d\n", len(result.Images))
+	}
+	return nil
 }
 
 // processCLIPaths runs process for each input path under its own itemTimeout. In

@@ -19,7 +19,9 @@ type ServiceSet struct {
 	Filesystem  FilesystemService
 	Dupes       DupeService
 	Screenshots ScreenshotService
-	Images      ImageHostingService
+	// DVDMenus handles automatic capture and persisted disc-menu lifecycle operations.
+	DVDMenus DVDMenuService
+	Images   ImageHostingService
 }
 
 type MetadataService interface {
@@ -64,6 +66,18 @@ type ScreenshotService interface {
 	PreviewFrame(ctx context.Context, meta PreparedMetadata, timestampSeconds float64) (ScreenshotPreview, error)
 	Delete(ctx context.Context, meta PreparedMetadata, imagePath string) error
 	SaveFinalSelections(ctx context.Context, meta PreparedMetadata, images []ScreenshotImage) error
+}
+
+// DVDMenuService captures and manages persisted menu images for prepared DVD metadata.
+type DVDMenuService interface {
+	// Capture replaces automatic captures up to maxItems while preserving manual menus.
+	Capture(ctx context.Context, meta PreparedMetadata, maxItems int) (DVDMenuCaptureResult, error)
+	// List returns persisted manual and automatic menu images in selection order.
+	List(ctx context.Context, meta PreparedMetadata) ([]ScreenshotImage, error)
+	// Delete removes one managed menu image and its local repository references.
+	Delete(ctx context.Context, meta PreparedMetadata, imagePath string) error
+	// Capability reports path-free engine and FFmpeg dvdvideo support.
+	Capability(ctx context.Context) (DVDMenuEngineInfo, error)
 }
 
 type ImageHostingService interface {
