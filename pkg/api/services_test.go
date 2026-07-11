@@ -31,6 +31,24 @@ func TestPreparedMetadataSeasonEpisodeHelpers(t *testing.T) {
 	}
 }
 
+func TestRuleFailureSeverityFailClosed(t *testing.T) {
+	t.Parallel()
+	failures := []RuleFailure{
+		{Rule: "legacy"},
+		{Rule: "warning", Severity: RuleFailureSeverityWarning},
+		{Rule: "unknown", Severity: "unexpected"},
+	}
+	if !HasBlockingRuleFailures(failures) {
+		t.Fatal("expected legacy and unknown severities to block")
+	}
+	if got := BlockingRuleFailures(failures); len(got) != 2 || got[0].Rule != "legacy" || got[1].Rule != "unknown" {
+		t.Fatalf("unexpected blocking subset: %#v", got)
+	}
+	if got := WarningRuleFailures(failures); len(got) != 1 || got[0].Rule != "warning" {
+		t.Fatalf("unexpected warning subset: %#v", got)
+	}
+}
+
 func TestTMDBMetadataMarshalLocalizedTitlesAsObject(t *testing.T) {
 	tests := []struct {
 		name            string

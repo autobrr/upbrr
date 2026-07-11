@@ -382,7 +382,7 @@ func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx context.Context
 			readyByTracker[name] = struct{}{}
 			continue
 		}
-		if !cliTrackerRuleFailuresIgnored(req, name) && len(trackerRuleFailuresForPreview(preview, name)) > 0 {
+		if !cliTrackerRuleFailuresIgnored(req, name) && api.HasBlockingRuleFailures(trackerRuleFailuresForPreview(preview, name)) {
 			logger.Debugf("cli auth: tracker=%s skipped before auth due to rule failure", name)
 			continue
 		}
@@ -1091,12 +1091,7 @@ func runSiteCheckCLIPath(ctx context.Context, coreSvc api.Core, opts cliOptions,
 		if tracker.Banned && !tracker.DryRun.Banned {
 			fmt.Printf("Banned group: %s\n", tracker.BannedReason)
 		}
-		if len(tracker.RuleFailures) > 0 {
-			fmt.Println("Rule failures:")
-			for _, failure := range tracker.RuleFailures {
-				fmt.Printf("- %s: %s\n", failure.Rule, failure.Reason)
-			}
-		}
+		printRuleFailures(tracker.RuleFailures)
 		if !req.SkipDupeCheck && tracker.DupeCheck.HasDupes {
 			printDupeResult(tracker.DupeCheck)
 		}
@@ -1113,7 +1108,7 @@ func promptTrackerQuestionnaires(reader *bufio.Reader, review api.UploadReview, 
 	answers := make(map[string]map[string]string)
 	changed := false
 	for _, tracker := range review.Trackers {
-		if tracker.Banned || len(tracker.RuleFailures) > 0 || tracker.Questionnaire == nil || len(tracker.Questionnaire.Fields) == 0 {
+		if tracker.Banned || api.HasBlockingRuleFailures(tracker.RuleFailures) || tracker.Questionnaire == nil || len(tracker.Questionnaire.Fields) == 0 {
 			continue
 		}
 		trackerKey := strings.ToUpper(strings.TrimSpace(tracker.Tracker))
@@ -1574,16 +1569,29 @@ func printDryRunUploadReview(review api.UploadReview, req api.Request) {
 		if tracker.Banned && !tracker.DryRun.Banned {
 			fmt.Printf("Banned group: %s\n", tracker.BannedReason)
 		}
-		if len(tracker.RuleFailures) > 0 {
-			fmt.Println("Rule failures:")
-			for _, failure := range tracker.RuleFailures {
-				fmt.Printf("- %s: %s\n", failure.Rule, failure.Reason)
-			}
-		}
+		printRuleFailures(tracker.RuleFailures)
 		if !req.SkipDupeCheck && tracker.DupeCheck.HasDupes {
 			printDupeResult(tracker.DupeCheck)
 		}
 		printDryRunSummary(tracker.DryRun)
+	}
+}
+
+// printRuleFailures groups blocking results and advisory warnings for CLI output.
+func printRuleFailures(failures []api.RuleFailure) {
+	blocking := api.BlockingRuleFailures(failures)
+	if len(blocking) > 0 {
+		fmt.Println("Rule failures:")
+		for _, failure := range blocking {
+			fmt.Printf("- %s: %s\n", failure.Rule, failure.Reason)
+		}
+	}
+	warnings := api.WarningRuleFailures(failures)
+	if len(warnings) > 0 {
+		fmt.Println("Rule warnings:")
+		for _, warning := range warnings {
+			fmt.Printf("- %s: %s\n", warning.Rule, warning.Reason)
+		}
 	}
 }
 

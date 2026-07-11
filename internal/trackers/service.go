@@ -1124,9 +1124,12 @@ func filterTrackersByRuleFailures(trackers []string, failures map[string][]api.R
 	for _, tracker := range trackers {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
 		trackerFailures, ok := failures[name]
-		if ok && len(trackerFailures) > 0 {
+		if ok && api.HasBlockingRuleFailures(trackerFailures) {
 			if logger != nil {
 				for _, failure := range trackerFailures {
+					if !api.IsBlockingRuleFailure(failure) {
+						continue
+					}
 					logger.Warnf("trackers: skipping %s due to rule failure %s (%s)", name, failure.Rule, failure.Reason)
 				}
 			}

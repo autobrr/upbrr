@@ -326,7 +326,18 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
                 <article className="rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5 [&_p]:mb-1 [&_p]:mt-0">
                   <h3>Counts</h3>
                   <p>Tracker metadata: {overview.TrackerMetadata?.length || 0}</p>
-                  <p>Rule failures: {overview.TrackerRuleFailures?.length || 0}</p>
+                  <p>
+                    Rule failures:{" "}
+                    {overview.TrackerRuleFailures?.filter(
+                      (failure) => String(failure.Severity || "blocking") !== "warning",
+                    ).length || 0}
+                  </p>
+                  <p>
+                    Rule warnings:{" "}
+                    {overview.TrackerRuleFailures?.filter(
+                      (failure) => String(failure.Severity || "blocking") === "warning",
+                    ).length || 0}
+                  </p>
                   <p>Screenshots: {overview.Screenshots?.length || 0}</p>
                   <p>Final selections: {overview.FinalSelections?.length || 0}</p>
                   <p>Uploaded images: {overview.UploadedImages?.length || 0}</p>
@@ -371,18 +382,19 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
                 </article>
 
                 <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
-                  <h3>Tracker Rule Failures</h3>
+                  <h3>Tracker Rule Results</h3>
                   {overview.TrackerRuleFailures?.length ? (
                     <ul className="m-0 grid gap-1 pl-4">
                       {overview.TrackerRuleFailures.map((failure, index) => (
                         <li key={`${failure.Tracker}-${failure.Rule}-${index}`}>
-                          <strong>{failure.Tracker || "UNKNOWN"}</strong>: {failure.Rule}{" "}
+                          <strong>{failure.Tracker || "UNKNOWN"}</strong> [
+                          {failure.Severity || "blocking"}]: {failure.Rule}{" "}
                           {failure.Reason ? `— ${failure.Reason}` : ""}
                         </li>
                       ))}
                     </ul>
                   ) : (
-                    <p className="muted">No tracker rule failures stored.</p>
+                    <p className="muted">No tracker rule results stored.</p>
                   )}
                 </article>
 

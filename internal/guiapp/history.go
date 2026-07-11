@@ -139,7 +139,13 @@ func (a *App) getHistoryOverviewFromRepo(ctx context.Context, sourcePath string)
 		overview.LatestUploadStatus = uploadHistory[0].Status
 		overview.LatestUploadAt = uploadHistory[0].CreatedAt
 	}
-	overview.StatusLabel = historyStatusLabel(overview.LatestUploadStatus, len(ruleFailures))
+	blockingRuleFailures := 0
+	for _, failure := range ruleFailures {
+		if api.NormalizeRuleFailureSeverity(failure.Severity) == api.RuleFailureSeverityBlocking {
+			blockingRuleFailures++
+		}
+	}
+	overview.StatusLabel = historyStatusLabel(overview.LatestUploadStatus, blockingRuleFailures)
 
 	return overview, nil
 }

@@ -104,27 +104,43 @@ func lookupMediaCode(ctx context.Context, site siteDefinition, state sessionStat
 
 	imdbID := imdbForLookup(meta)
 	tmdbID := tmdbForLookup(meta)
+	tvdbID := tvdbForLookup(meta)
 	all := make([]map[string]any, 0)
-	if imdbID != "" {
-		list, err := search(imdbID)
-		if err != nil {
-			return mediaLookupResult{}, fmt.Errorf("trackers: %s media search by imdb failed: %w", site.Name, err)
+	for _, lookup := range []struct {
+		provider string
+		value    string
+	}{
+		{provider: "imdb", value: imdbID},
+		{provider: "tmdb", value: tmdbID},
+		{provider: "tvdb", value: tvdbID},
+	} {
+		if lookup.value == "" {
+			continue
 		}
-		all = append(all, list...)
-	}
-	if len(all) == 0 {
-		list, err := search(lookupTitle(meta))
+		list, err := search(lookup.value)
 		if err != nil {
-			return mediaLookupResult{}, fmt.Errorf("trackers: %s media search by title failed: %w", site.Name, err)
+			return mediaLookupResult{}, fmt.Errorf("trackers: %s media search by %s failed: %w", site.Name, lookup.provider, err)
 		}
 		all = append(all, list...)
 	}
 	for _, item := range all {
-		if imdbID != "" && strings.EqualFold(stringValue(item["imdb"]), imdbID) {
+		if mediaItemMatchesIDs(item, imdbID, tmdbID, tvdbID) {
 			return mediaLookupResult{MediaCode: stringValue(item["id"])}, nil
 		}
-		if tmdbID != "" && strings.EqualFold(stringValue(item["tmdb"]), tmdbID) {
+	}
+
+	titleResults, err := search(lookupTitle(meta))
+	if err != nil {
+		return mediaLookupResult{}, fmt.Errorf("trackers: %s media search by title failed: %w", site.Name, err)
+	}
+	for _, item := range titleResults {
+		if mediaItemMatchesIDs(item, imdbID, tmdbID, tvdbID) {
 			return mediaLookupResult{MediaCode: stringValue(item["id"])}, nil
+		}
+	}
+	if len(titleResults) > 0 {
+		if id := stringValue(titleResults[0]["id"]); id != "" {
+			return mediaLookupResult{MediaCode: id}, nil
 		}
 	}
 	if len(all) > 0 {
@@ -133,6 +149,13 @@ func lookupMediaCode(ctx context.Context, site siteDefinition, state sessionStat
 		}
 	}
 	return mediaLookupResult{Missing: true}, nil
+}
+
+// mediaItemMatchesIDs reports whether an item matches any supplied provider ID.
+func mediaItemMatchesIDs(item map[string]any, imdbID, tmdbID, tvdbID string) bool {
+	return (imdbID != "" && strings.EqualFold(stringValue(item["imdb"]), imdbID)) ||
+		(tmdbID != "" && strings.EqualFold(stringValue(item["tmdb"]), tmdbID)) ||
+		(tvdbID != "" && strings.EqualFold(stringValue(item["tvdb"]), tvdbID))
 }
 
 func searchRequests(ctx context.Context, site siteDefinition, state sessionState, meta api.PreparedMetadata) ([]string, error) {

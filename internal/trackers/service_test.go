@@ -2363,6 +2363,7 @@ func TestFilterTrackersByRuleFailuresExcludesModifiedReleaseAcrossFamilies(t *te
 	failures := map[string][]api.RuleFailure{
 		"PTP": {{Rule: "modified_release", Reason: "source renamed from original release name"}},
 		"LST": {{Rule: "modified_release", Reason: "source renamed from original release name"}},
+		"HDB": {{Rule: "recommended_id", Reason: "recommended ID missing", Severity: api.RuleFailureSeverityWarning}},
 	}
 	trackers := []string{"PTP", "LST", "HDB"}
 
@@ -2371,7 +2372,7 @@ func TestFilterTrackersByRuleFailuresExcludesModifiedReleaseAcrossFamilies(t *te
 		t.Fatalf("expected PTP and LST skipped for modified_release, got %v", got)
 	}
 	if !slices.Contains(got, "HDB") {
-		t.Fatalf("expected HDB (no failure) retained, got %v", got)
+		t.Fatalf("expected warning-only HDB retained, got %v", got)
 	}
 
 	// The override flag must let the user force-upload past the failure.

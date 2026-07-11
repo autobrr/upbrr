@@ -71,6 +71,48 @@ var migrationRegistry = []migrationStep{
 	{id: "2026_06_add_tracker_auth_state", dependsOn: []string{"2026_05_add_bluray_external_metadata"}, apply: migrateAddTrackerAuthState},
 	{id: "2026_07_add_external_ids_mal", dependsOn: []string{"2026_06_add_tracker_auth_state"}, apply: migrateAddExternalIDsMAL},
 	{id: "2026_07_add_anilist_external_metadata", dependsOn: []string{"2026_07_add_external_ids_mal"}, apply: migrateAddAniListExternalMetadata},
+	{id: "2026_07_add_tracker_rule_failure_severity", dependsOn: []string{"2026_07_add_anilist_external_metadata"}, apply: migrateAddTrackerRuleFailureSeverity},
+}
+
+// migrateAddTrackerRuleFailureSeverity creates the rule-results table when
+// absent or adds a fail-closed severity column to the legacy table.
+func migrateAddTrackerRuleFailureSeverity(ctx context.Context, exec migrationExecutor) error {
+	exists, err := tableExists(ctx, exec, "tracker_rule_failures")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		statements := []string{
+			`CREATE TABLE tracker_rule_failures (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				source_path TEXT NOT NULL,
+				tracker TEXT NOT NULL,
+				rule TEXT NOT NULL,
+				reason TEXT NOT NULL DEFAULT "",
+				severity TEXT NOT NULL DEFAULT "blocking",
+				created_at TEXT NOT NULL
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_tracker_rule_failures_source_path ON tracker_rule_failures (source_path)`,
+			`CREATE INDEX IF NOT EXISTS idx_tracker_rule_failures_tracker ON tracker_rule_failures (tracker)`,
+		}
+		for _, statement := range statements {
+			if _, err := exec.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("db: add tracker rule failure severity: %w", err)
+			}
+		}
+		return nil
+	}
+
+	hasSeverity, err := tableColumnExists(ctx, exec, "tracker_rule_failures", "severity")
+	if err != nil {
+		return err
+	}
+	if !hasSeverity {
+		if _, err := exec.ExecContext(ctx, `ALTER TABLE tracker_rule_failures ADD COLUMN severity TEXT NOT NULL DEFAULT "blocking"`); err != nil {
+			return fmt.Errorf("db: add tracker rule failure severity: %w", err)
+		}
+	}
+	return nil
 }
 
 var legacyVersionToMigrationIDs = map[int][]string{
@@ -1029,6 +1071,7 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 			tracker TEXT NOT NULL,
 			rule TEXT NOT NULL,
 			reason TEXT NOT NULL DEFAULT "",
+			severity TEXT NOT NULL DEFAULT "blocking",
 			created_at TEXT NOT NULL
 		)
 		`,

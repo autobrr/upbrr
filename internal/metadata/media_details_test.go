@@ -1095,6 +1095,7 @@ func TestRefreshPreparedMetadataClearsResolvedRuleFailures(t *testing.T) {
 		Trackers:   []string{"ANT"},
 		ExternalIDs: api.ExternalIDs{
 			Category: "MOVIE",
+			TMDBID:   1,
 		},
 		TrackerRuleFailures: map[string][]api.RuleFailure{
 			"ANT": {

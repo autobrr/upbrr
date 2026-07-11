@@ -206,7 +206,7 @@ func TestDefinitionBuildUploadDryRunForNewGroupIncludesQuestionnaire(t *testing.
 			ReleaseName: "Movie.2026.1080p.BluRay.x264",
 			Source:      "BluRay",
 			VideoCodec:  "AVC",
-			ExternalIDs: api.ExternalIDs{Category: "MOVIE", IMDBID: 1234567},
+			ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
 			ExternalMetadata: api.ExternalMetadata{
 				TMDB: &api.TMDBMetadata{
 					Title:    "Movie",
@@ -232,6 +232,9 @@ func TestDefinitionBuildUploadDryRunForNewGroupIncludesQuestionnaire(t *testing.
 	}
 	if entry.Questionnaire.Fields[0].Key != "title" {
 		t.Fatalf("expected first questionnaire field to be title, got %q", entry.Questionnaire.Fields[0].Key)
+	}
+	if got := entry.Payload["imdb"]; got != "0" {
+		t.Fatalf("expected missing IMDb dry-run payload value 0, got %q", got)
 	}
 }
 

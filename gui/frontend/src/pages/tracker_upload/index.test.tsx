@@ -126,6 +126,29 @@ describe("TrackerUploadPage", () => {
     expect(screen.queryByText(/Upload:/)).toBeNull();
   });
 
+  it("shows rule warnings without blocking tracker eligibility", () => {
+    render(
+      <TrackerUploadPage
+        {...baseProps}
+        preview={{
+          ...preview,
+          TrackerRuleFailures: {
+            AITHER: [
+              {
+                Rule: "require_metadata_id",
+                Reason: "missing recommended IMDb ID",
+                Severity: "warning",
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Rule warning: missing recommended IMDb ID")).toBeTruthy();
+    expect(screen.queryByText("Blocked trackers (1)")).toBeNull();
+  });
+
   it("renders cached tracker icons without fetching from the page", () => {
     const getTrackerIcon = vi.fn().mockResolvedValue("");
     vi.stubGlobal("go", { guiapp: { App: { GetTrackerIcon: getTrackerIcon } } });

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -314,9 +315,67 @@ type ExternalIDCandidate struct {
 	Similarity    float64
 }
 
+// RuleFailureSeverity classifies whether a tracker rule result blocks work.
+// The zero value and unrecognized values are treated as blocking for backward
+// compatibility and fail-closed behavior.
+type RuleFailureSeverity string
+
+const (
+	// RuleFailureSeverityBlocking prevents the affected tracker operation.
+	RuleFailureSeverityBlocking RuleFailureSeverity = "blocking"
+	// RuleFailureSeverityWarning reports advice without preventing the operation.
+	RuleFailureSeverityWarning RuleFailureSeverity = "warning"
+)
+
+// RuleFailure describes a failed or advisory tracker rule result.
 type RuleFailure struct {
 	Rule   string
 	Reason string
+	// Severity defaults to blocking when empty or unrecognized.
+	Severity RuleFailureSeverity
+}
+
+// NormalizeRuleFailureSeverity maps the warning value to itself and all other
+// values, including legacy empty values, to blocking.
+func NormalizeRuleFailureSeverity(severity RuleFailureSeverity) RuleFailureSeverity {
+	if severity == RuleFailureSeverityWarning {
+		return RuleFailureSeverityWarning
+	}
+	return RuleFailureSeverityBlocking
+}
+
+// IsBlockingRuleFailure reports whether a rule result blocks tracker work.
+func IsBlockingRuleFailure(failure RuleFailure) bool {
+	return NormalizeRuleFailureSeverity(failure.Severity) == RuleFailureSeverityBlocking
+}
+
+// BlockingRuleFailures returns an independent slice containing only blocking
+// results. Legacy and unrecognized severities are included.
+func BlockingRuleFailures(failures []RuleFailure) []RuleFailure {
+	return filterRuleFailures(failures, true)
+}
+
+// WarningRuleFailures returns an independent slice containing only results with
+// the explicit warning severity.
+func WarningRuleFailures(failures []RuleFailure) []RuleFailure {
+	return filterRuleFailures(failures, false)
+}
+
+// HasBlockingRuleFailures reports whether any rule result blocks tracker work.
+func HasBlockingRuleFailures(failures []RuleFailure) bool {
+	return slices.ContainsFunc(failures, IsBlockingRuleFailure)
+}
+
+// filterRuleFailures copies results whose normalized blocking state matches the
+// requested state.
+func filterRuleFailures(failures []RuleFailure, blocking bool) []RuleFailure {
+	filtered := make([]RuleFailure, 0, len(failures))
+	for _, failure := range failures {
+		if IsBlockingRuleFailure(failure) == blocking {
+			filtered = append(filtered, failure)
+		}
+	}
+	return filtered
 }
 
 // ExternalIDOverrides carries caller-supplied ID intent into metadata

@@ -1400,7 +1400,7 @@ func (c *Core) filterImageUploadTrackers(trackerNames []string, meta api.Prepare
 		blockedReasons := blockedReasonsForTracker(meta.BlockedTrackers, name)
 		ruleFailures := ruleFailuresForTracker(meta.TrackerRuleFailures, name)
 		existingMatch := matchedTrackerForUpload(meta.MatchedTrackers, name)
-		if len(blockedReasons) > 0 || (!meta.IgnoreTrackerRuleFailures && len(ruleFailures) > 0) || existingMatch {
+		if len(blockedReasons) > 0 || (!meta.IgnoreTrackerRuleFailures && api.HasBlockingRuleFailures(ruleFailures)) || existingMatch {
 			if c.logger != nil {
 				c.logger.Debugf("core: excluding blocked image upload tracker tracker=%s blocked_reasons=%v rule_failures=%d existing_match=%t", name, blockedReasons, len(ruleFailures), existingMatch)
 			}
@@ -4142,7 +4142,13 @@ func (c *Core) GetHistoryOverview(ctx context.Context, sourcePath string) (api.H
 		overview.LatestUploadStatus = uploadHistory[0].Status
 		overview.LatestUploadAt = uploadHistory[0].CreatedAt
 	}
-	overview.StatusLabel = historyStatusLabel(overview.LatestUploadStatus, len(ruleFailures))
+	blockingRuleFailures := 0
+	for _, failure := range ruleFailures {
+		if api.NormalizeRuleFailureSeverity(failure.Severity) == api.RuleFailureSeverityBlocking {
+			blockingRuleFailures++
+		}
+	}
+	overview.StatusLabel = historyStatusLabel(overview.LatestUploadStatus, blockingRuleFailures)
 
 	return overview, nil
 }

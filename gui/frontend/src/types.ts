@@ -597,6 +597,8 @@ export type TrackerPreview = {
 export type RuleFailure = {
   Rule: string;
   Reason: string;
+  /** Empty and unrecognized values are treated as blocking by backend APIs. */
+  Severity?: "blocking" | "warning" | string;
 };
 
 export type DupeEntry = {
@@ -958,6 +960,8 @@ export type HistoryEntry = {
   LatestUploadStatus: string;
   LatestUploadAt: string;
   RuleFailureCount: number;
+  /** Number of explicitly advisory rule results; absent on older API responses. */
+  RuleWarningCount?: number;
 };
 
 export type HistoryUploadRecord = {
@@ -989,6 +993,8 @@ export type HistoryRuleFailure = {
   Tracker: string;
   Rule: string;
   Reason: string;
+  /** Empty and unrecognized values represent blocking legacy results. */
+  Severity?: "blocking" | "warning" | string;
   CreatedAt: string;
 };
 
