@@ -111,6 +111,7 @@ type cliOptions struct {
 	Comparison            string
 	ComparisonIndex       int
 	MenuImages            string
+	GetDVDMenus           bool
 	InfoHash              string
 	MaxPieceSize          int
 	NoHash                bool
@@ -256,6 +257,7 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.IntVar(&opts.ComparisonIndex, "comparison_index", 0, "Primary comparison index")
 	fs.IntVar(&opts.ComparisonIndex, "comps_index", 0, "Primary comparison index")
 	fs.StringVar(&opts.MenuImages, "menu-images", "", "Path to manually captured disc menu screenshots (Disc releases only)")
+	fs.BoolVar(&opts.GetDVDMenus, "get-dvd-menus", false, "Capture distinct menus from an extracted DVD VIDEO_TS (requires compatible FFmpeg)")
 	fs.StringVar(&opts.InfoHash, "torrenthash", "", "Reuse an existing torrent info hash")
 	fs.StringVar(&opts.InfoHash, "th", "", "Reuse an existing torrent info hash")
 	fs.StringVar(&opts.InfoHash, "infohash", "", "Override v1 info hash")
@@ -621,7 +623,7 @@ func cliHelpSections(name string) []helpSection {
 			"commentary", "personalrelease", "stream", "webdv", "not-anime", "anon", "draft", "modq", "channel",
 		}},
 		{title: "Screenshots and Images", names: []string{
-			"screens", "manual_frames", "comparison", "comparison_index", "menu-images", "imghost", "skip-imagehost-upload",
+			"screens", "manual_frames", "comparison", "comparison_index", "menu-images", "get-dvd-menus", "imghost", "skip-imagehost-upload",
 			"descfile", "desclink",
 		}},
 		{title: "Client and Torrent", names: []string{
@@ -731,6 +733,7 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, s
 			SkipAutoTorrent: opts.SkipAutoTorrent,
 			KeepFolder:      opts.KeepFolder,
 			OnlyID:          opts.OnlyID,
+			CaptureDVDMenus: opts.GetDVDMenus,
 			InteractionMode: opts.interactionMode(),
 		},
 		ReleaseNameOverrides: buildReleaseNameOverrides(visited, releaseOverrideInput{

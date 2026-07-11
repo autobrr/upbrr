@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { createElement } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App, { hasExplicitEmptyReleaseTrackerSelection, ruleBlockingTrackerLabels } from "./app";
 import type {
   DescriptionBuilderPreview,
+  DVDMenuCaptureSnapshot,
   DupeCheckResult,
   DupeCheckSnapshot,
   DupeEntry,
@@ -72,6 +73,16 @@ type GetTrackerUploadSnapshot = (jobID: string) => Promise<TrackerUploadSnapshot
 type ListHistory = () => Promise<HistoryEntry[]>;
 type GetHistoryOverview = (sourcePath: string) => Promise<HistoryOverview>;
 type DeleteHistoryRelease = (sourcePath: string) => Promise<void>;
+type StartDVDMenuCapture = (...args: unknown[]) => Promise<string>;
+type GetDVDMenuCaptureSnapshot = (jobID: string) => Promise<DVDMenuCaptureSnapshot>;
+
+const createDeferred = <T>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+};
 
 const metadataPreview = (sourcePath: string): MetadataPreview => ({
   SourcePath: sourcePath,
@@ -218,6 +229,44 @@ const dupeCheckSnapshot = (sourcePath = "C:\\media\\Example"): DupeCheckSnapshot
   finishedAt: "2026-06-17T00:00:01Z",
 });
 
+const dvdMenuCaptureSnapshot = (): DVDMenuCaptureSnapshot => ({
+  jobID: "dvd-job-1",
+  sourcePath: "C:\\media\\Example",
+  status: "completed",
+  phase: "complete",
+  message: "DVD menu capture finished.",
+  discoveredMenus: 1,
+  visitedStates: 2,
+  visitedButtons: 1,
+  capturedCount: 1,
+  warningCount: 0,
+  result: {
+    SourcePath: "C:\\media\\Example",
+    Images: [],
+    SelectedLanguage: "en",
+    Region: 0,
+    DiscoveredMenus: 1,
+    VisitedStates: 2,
+    VisitedButtons: 1,
+    MaxItems: 6,
+    Complete: true,
+    Partial: false,
+    Truncated: false,
+    Warnings: [],
+    Engine: {
+      EngineVersion: "phase0a-1",
+      SchemaVersion: 1,
+      SupportedFeatures: [],
+      FFmpegVersion: "8.0",
+      FFmpegDVDVideo: true,
+      MissingFFmpegOptions: [],
+    },
+  },
+  error: "",
+  startedAt: "2026-07-10T00:00:00Z",
+  finishedAt: "2026-07-10T00:00:01Z",
+});
+
 const historyEntry = (sourcePath: string): HistoryEntry => ({
   SourcePath: sourcePath,
   ReleaseTitle: "Example Release",
@@ -282,6 +331,8 @@ const installAppBridge = (
     listHistory?: ListHistory;
     getHistoryOverview?: GetHistoryOverview;
     deleteHistoryRelease?: DeleteHistoryRelease;
+    startDVDMenuCapture?: StartDVDMenuCapture;
+    getDVDMenuCaptureSnapshot?: GetDVDMenuCaptureSnapshot;
   } = {},
 ) => {
   const storage = new Map<string, string>();
@@ -312,6 +363,7 @@ const installAppBridge = (
             },
             ScreenshotHandling: {
               ProcessLimit: 1,
+              MaxMenuItems: 6,
             },
           }),
         BrowseFolder: options.browseFolder ?? (async () => "C:\\media\\Example\\BDMV"),
@@ -328,6 +380,14 @@ const installAppBridge = (
           (async (sourcePath: string) => descriptionBuilderPreview(sourcePath)),
         FetchPreparation: options.fetchPreparation ?? (async () => ({})),
         ListUploadedImages: async () => [],
+        ListDVDMenuScreenshots: async () => [],
+        ReadScreenshotImage: async () => "data:image/png;base64,example",
+        StartDVDMenuCapture: options.startDVDMenuCapture ?? (async () => "dvd-job-1"),
+        GetDVDMenuCaptureSnapshot:
+          options.getDVDMenuCaptureSnapshot ?? (async () => dvdMenuCaptureSnapshot()),
+        CancelDVDMenuCapture: async () => undefined,
+        DeleteDVDMenuScreenshot: async () => undefined,
+        ImportMenuImages: async () => undefined,
         DiscoverPlaylists: async () => [
           {
             file: "00001.mpls",
@@ -546,6 +606,126 @@ describe("hasFilteredEmptyUploadTrackerSelection", () => {
 });
 
 describe("metadata tracker payloads", () => {
+  it("gates Disc Menus by detected disc type", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    installAppBridge(fetchMetadata, { detectDiscType: async () => "" });
+
+    render(createElement(App));
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example.mkv" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledOnce());
+    await screen.findByText("2/2");
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+
+    expect(screen.queryByRole("button", { name: "Menu Images" })).not.toBeInTheDocument();
+  });
+
+  it("ignores a fetch disc detection after the source path changes", async () => {
+    const detection = createDeferred<string>();
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    const detectDiscType = vi.fn<DetectDiscType>(() => detection.promise);
+    installAppBridge(fetchMetadata, { detectDiscType });
+
+    render(createElement(App));
+    const sourcePath = screen.getByLabelText("Source path");
+    fireEvent.change(sourcePath, { target: { value: "C:\\media\\First" } });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(detectDiscType).toHaveBeenCalledWith("C:\\media\\First"));
+
+    fireEvent.change(sourcePath, { target: { value: "C:\\media\\Second.mkv" } });
+    await act(async () => detection.resolve("BDMV"));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledOnce());
+    await screen.findByText("2/2");
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+
+    expect(screen.queryByRole("button", { name: "Menu Images" })).not.toBeInTheDocument();
+  });
+
+  it("ignores an older browse disc detection after a newer path selection", async () => {
+    const firstDetection = createDeferred<string>();
+    const secondDetection = createDeferred<string>();
+    const firstPath = "C:\\media\\First";
+    const secondPath = "C:\\media\\Second";
+    const browseFolder = vi
+      .fn<() => Promise<string>>()
+      .mockResolvedValueOnce(firstPath)
+      .mockResolvedValueOnce(secondPath);
+    const detectDiscType = vi.fn<DetectDiscType>((sourcePath) => {
+      if (sourcePath === firstPath) {
+        return firstDetection.promise;
+      }
+      if (sourcePath === secondPath) {
+        return secondDetection.promise;
+      }
+      return Promise.resolve("");
+    });
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    installAppBridge(fetchMetadata, { browseFolder, detectDiscType });
+
+    render(createElement(App));
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example.mkv" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledOnce());
+    await screen.findByText("2/2");
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Browse folder" }));
+    await waitFor(() => expect(detectDiscType).toHaveBeenCalledWith(firstPath));
+    fireEvent.click(screen.getByRole("button", { name: "Browse folder" }));
+    await waitFor(() => expect(detectDiscType).toHaveBeenCalledWith(secondPath));
+
+    await act(async () => secondDetection.resolve(""));
+    await act(async () => firstDetection.resolve("BDMV"));
+
+    expect(screen.getByLabelText("Source path")).toHaveValue(secondPath);
+    expect(screen.queryByRole("button", { name: "Menu Images" })).not.toBeInTheDocument();
+  });
+
+  it("invalidates Description Builder after DVD menu capture without auto-navigation", async () => {
+    const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
+    const fetchDescriptionBuilder = vi.fn<FetchDescriptionBuilder>(async (sourcePath) =>
+      descriptionBuilderPreview(sourcePath),
+    );
+    installAppBridge(fetchMetadata, {
+      detectDiscType: async () => "DVD",
+      fetchDescriptionBuilder,
+      startDVDMenuCapture: async () => "dvd-job-1",
+      getDVDMenuCaptureSnapshot: async () => dvdMenuCaptureSnapshot(),
+    });
+
+    render(createElement(App));
+    fireEvent.change(screen.getByLabelText("Source path"), {
+      target: { value: "C:\\media\\Example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
+    await waitFor(() => expect(fetchMetadata).toHaveBeenCalledOnce());
+    await screen.findByText("2/2");
+    fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Description Builder" }));
+    await waitFor(() => expect(fetchDescriptionBuilder).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Menu Images" }));
+    fireEvent.click(screen.getByRole("button", { name: "Capture DVD menus" }));
+    expect(await screen.findByText("Captured 1 DVD menu image.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Menu Images" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Description Builder" }));
+    await waitFor(() => expect(fetchDescriptionBuilder).toHaveBeenCalledTimes(2));
+  });
+
   it("excludes dupe-blocked upload targets from metadata fetches", async () => {
     const fetchMetadata = vi.fn<FetchMetadata>(async (sourcePath) => metadataPreview(sourcePath));
     installAppBridge(fetchMetadata);

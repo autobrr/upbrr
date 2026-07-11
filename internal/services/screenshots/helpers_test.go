@@ -6,8 +6,10 @@ package screenshots
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -133,12 +135,16 @@ func TestResolveVideoInfoPrefersLargestSelectedBDMVPlaylistFile(t *testing.T) {
 		},
 	}
 
-	info, err := resolveVideoInfo(context.Background(), meta, "")
+	logger := &screenshotRecordingLogger{}
+	info, err := resolveVideoInfo(context.Background(), meta, "", logger)
 	if err != nil {
 		t.Fatalf("resolve video info: %v", err)
 	}
 	if info.SourcePath != large {
 		t.Fatalf("expected largest playlist m2ts %q, got %q", large, info.SourcePath)
+	}
+	if !logger.Contains("kind=disc_bdmv") || !logger.Contains("method=metadata") {
+		t.Fatal("expected BDMV metadata source-selection trace")
 	}
 }
 
@@ -171,12 +177,214 @@ func TestResolveVideoSourcePrefersLargestSelectedBDMVPlaylistFile(t *testing.T) 
 		},
 	}
 
-	got, err := resolveVideoSource(context.Background(), meta, "")
+	logger := &screenshotRecordingLogger{}
+	got, err := resolveVideoSource(context.Background(), meta, "", logger)
 	if err != nil {
 		t.Fatalf("resolve video source: %v", err)
 	}
 	if got != large {
 		t.Fatalf("expected largest playlist m2ts %q, got %q", large, got)
+	}
+	if !logger.Contains("kind=disc_bdmv") || !logger.Contains("method=bdmv_metadata") {
+		t.Fatal("expected BDMV preview source-selection trace")
+	}
+}
+
+func TestResolveVideoInfoLogsSeasonPackSourceKind(t *testing.T) {
+	tmpDir := t.TempDir()
+	mediaInfoPath := filepath.Join(tmpDir, "mediainfo.json")
+	payload := []byte(`{"media":{"track":[{"@type":"General","Duration":"1800"},{"@type":"Video","FrameRate":"24.000"}]}}`)
+	if err := os.WriteFile(mediaInfoPath, payload, 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	logger := &screenshotRecordingLogger{}
+	meta := api.PreparedMetadata{
+		SourcePath:        filepath.Join(tmpDir, "Example.Release.2026.S01"),
+		MediaInfoJSONPath: mediaInfoPath,
+		MediaInfoCategory: "TV",
+		TVPack:            true,
+	}
+
+	info, err := resolveVideoInfo(context.Background(), meta, "", logger)
+	if err != nil {
+		t.Fatalf("resolve video info: %v", err)
+	}
+	if info.SourcePath != meta.SourcePath {
+		t.Fatal("expected base source path")
+	}
+	if !logger.Contains("kind=season_pack") || !logger.Contains("method=base") {
+		t.Fatal("expected season-pack base source trace")
+	}
+}
+
+func TestSelectDVDVOBExcludesMenuVOBAndUsesLargestTitleSet(t *testing.T) {
+	root := t.TempDir()
+	videoTS := filepath.Join(root, "VIDEO_TS")
+	if err := os.MkdirAll(videoTS, 0o700); err != nil {
+		t.Fatalf("mkdir VIDEO_TS: %v", err)
+	}
+	files := map[string]int{
+		"VTS_01_0.VOB": 200,
+		"VTS_01_1.VOB": 10,
+		"VTS_02_0.VOB": 1,
+		"VTS_02_1.VOB": 30,
+		"VTS_02_2.VOB": 20,
+	}
+	for name, size := range files {
+		if err := os.WriteFile(filepath.Join(videoTS, name), make([]byte, size), 0o600); err != nil {
+			t.Fatalf("write VOB fixture: %v", err)
+		}
+	}
+
+	got, err := selectDVDVOB(context.Background(), root)
+	if err != nil {
+		t.Fatalf("select DVD VOB: %v", err)
+	}
+	want := filepath.Join(videoTS, "VTS_02_1.VOB")
+	if got != want {
+		t.Fatalf("expected first content VOB from largest set %q, got %q", want, got)
+	}
+}
+
+func TestResolveVideoInfoBuildsOrderedDVDSegments(t *testing.T) {
+	root := t.TempDir()
+	videoTS := filepath.Join(root, "VIDEO_TS")
+	if err := os.MkdirAll(videoTS, 0o700); err != nil {
+		t.Fatalf("mkdir VIDEO_TS: %v", err)
+	}
+	files := map[string]int{
+		"VTS_02_0.VOB": 1,
+		"VTS_02_2.VOB": 20,
+		"VTS_02_1.VOB": 30,
+	}
+	for name, size := range files {
+		if err := os.WriteFile(filepath.Join(videoTS, name), make([]byte, size), 0o600); err != nil {
+			t.Fatalf("write VOB fixture: %v", err)
+		}
+	}
+	mediaInfoPath := filepath.Join(root, "mediainfo.json")
+	payload := []byte(`{"media":{"track":[{"@type":"General","Duration":"100"},{"@type":"Video","FrameRate":"25.000"}]}}`)
+	if err := os.WriteFile(mediaInfoPath, payload, 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+
+	info, err := resolveVideoInfo(context.Background(), api.PreparedMetadata{
+		SourcePath:        root,
+		DiscType:          "DVD",
+		MediaInfoJSONPath: mediaInfoPath,
+	}, "", api.NopLogger{})
+	if err != nil {
+		t.Fatalf("resolve video info: %v", err)
+	}
+	if len(info.Segments) != 2 {
+		t.Fatalf("expected 2 DVD content segments, got %#v", info.Segments)
+	}
+	if info.Segments[0].SourcePath != filepath.Join(videoTS, "VTS_02_1.VOB") {
+		t.Fatalf("expected first segment VTS_02_1.VOB, got %#v", info.Segments)
+	}
+	if info.Segments[1].SourcePath != filepath.Join(videoTS, "VTS_02_2.VOB") {
+		t.Fatalf("expected second segment VTS_02_2.VOB, got %#v", info.Segments)
+	}
+	for _, segment := range info.Segments {
+		if segment.StartSeconds != 0 || segment.DurationSeconds != 0 {
+			t.Fatalf("expected unresolved segment timing before ffmpeg probe, got %#v", info.Segments)
+		}
+	}
+}
+
+func TestResolveDVDVideoSegmentTimingsUsesMeasuredDurations(t *testing.T) {
+	vobs := []dvdTitleVOB{
+		{path: "VTS_01_1.VOB", size: 900},
+		{path: "VTS_01_2.VOB", size: 100},
+	}
+	segments := buildVideoSegments(vobs)
+	runner := &scriptedRunner{results: []CommandResult{
+		{Stderr: []byte("Duration: 00:00:20.00, start: 0.000000, bitrate: 4000 kb/s\n")},
+		{Stderr: []byte("Duration: 00:01:20.00, start: 0.000000, bitrate: 500 kb/s\n")},
+	}}
+
+	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, api.NopLogger{}); err != nil {
+		t.Fatalf("resolve DVD segment timings: %v", err)
+	}
+	info := videoInfo{SourcePath: vobs[0].path, Segments: segments}
+	path, timestamp := resolveSegmentTimestamp(info, 30)
+	if path != vobs[1].path {
+		t.Fatalf("expected measured duration to select second VOB, got %q", path)
+	}
+	if timestamp != 10 {
+		t.Fatalf("expected measured local timestamp 10s, got %f", timestamp)
+	}
+}
+
+func TestResolveDVDVideoSegmentTimingsRejectsUnknownDuration(t *testing.T) {
+	segments := buildVideoSegments([]dvdTitleVOB{
+		{path: "VTS_01_1.VOB", size: 900},
+		{path: "VTS_01_2.VOB", size: 100},
+	})
+	runner := &scriptedRunner{results: []CommandResult{{
+		Stderr: []byte("Duration: N/A, start: 0.000000, bitrate: N/A\n"),
+	}}}
+
+	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, api.NopLogger{}); err == nil {
+		t.Fatal("expected unknown segment duration to fail instead of using file size")
+	}
+}
+
+func TestResolveSegmentCandidatesFallsForwardFromPrimarySegment(t *testing.T) {
+	info := videoInfo{
+		SourcePath: "VTS_01_1.VOB",
+		Segments: []videoSegment{
+			{SourcePath: "VTS_01_1.VOB", StartSeconds: 0, DurationSeconds: 2},
+			{SourcePath: "VTS_01_2.VOB", StartSeconds: 2, DurationSeconds: 98},
+		},
+	}
+
+	candidates := resolveSegmentCandidates(info, 1)
+	if len(candidates) != 2 {
+		t.Fatalf("expected primary plus fallback candidate, got %#v", candidates)
+	}
+	if candidates[0].SourcePath != "VTS_01_1.VOB" || candidates[0].Timestamp != 1 {
+		t.Fatalf("expected primary segment candidate, got %#v", candidates[0])
+	}
+	if candidates[1].SourcePath != "VTS_01_2.VOB" || candidates[1].Timestamp != 0.5 {
+		t.Fatalf("expected fallback content VOB candidate, got %#v", candidates[1])
+	}
+}
+
+func TestResolveSegmentCandidatesFallsForwardWithoutSegmentDurations(t *testing.T) {
+	info := videoInfo{
+		SourcePath: "VTS_01_1.VOB",
+		Segments: []videoSegment{
+			{SourcePath: "VTS_01_1.VOB"},
+			{SourcePath: "VTS_01_2.VOB"},
+		},
+	}
+
+	candidates := resolveSegmentCandidates(info, 12)
+	if len(candidates) != 2 {
+		t.Fatalf("expected durationless DVD segment fallbacks, got %#v", candidates)
+	}
+	if candidates[0].SourcePath != "VTS_01_1.VOB" || candidates[0].Timestamp != 12 {
+		t.Fatalf("expected primary durationless candidate, got %#v", candidates[0])
+	}
+	if candidates[1].SourcePath != "VTS_01_2.VOB" || candidates[1].Timestamp != 0.5 {
+		t.Fatalf("expected fallback durationless candidate, got %#v", candidates[1])
+	}
+}
+
+func TestSelectDVDVOBRejectsMenuOnlyDisc(t *testing.T) {
+	root := t.TempDir()
+	videoTS := filepath.Join(root, "VIDEO_TS")
+	if err := os.MkdirAll(videoTS, 0o700); err != nil {
+		t.Fatalf("mkdir VIDEO_TS: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(videoTS, "VTS_01_0.VOB"), []byte("menu"), 0o600); err != nil {
+		t.Fatalf("write menu VOB: %v", err)
+	}
+
+	if _, err := selectDVDVOB(context.Background(), root); err == nil {
+		t.Fatal("expected menu-only DVD to have no screenshot VOB")
 	}
 }
 
@@ -213,4 +421,37 @@ func TestMediaInfoVideoGeometryScalesWidthForWidePixels(t *testing.T) {
 	if widthScale != 1.185 || heightScale != 1 {
 		t.Fatalf("expected width scale 1.185 and height scale 1, got %f x %f", widthScale, heightScale)
 	}
+}
+
+type screenshotRecordingLogger struct {
+	entries []string
+}
+
+func (l *screenshotRecordingLogger) Tracef(format string, args ...any) {
+	l.entries = append(l.entries, fmt.Sprintf(format, args...))
+}
+
+func (l *screenshotRecordingLogger) Debugf(format string, args ...any) {
+	l.entries = append(l.entries, fmt.Sprintf(format, args...))
+}
+
+func (l *screenshotRecordingLogger) Infof(string, ...any) {
+	// Intentionally no-op.
+}
+
+func (l *screenshotRecordingLogger) Warnf(format string, args ...any) {
+	l.entries = append(l.entries, fmt.Sprintf(format, args...))
+}
+
+func (l *screenshotRecordingLogger) Errorf(format string, args ...any) {
+	l.entries = append(l.entries, fmt.Sprintf(format, args...))
+}
+
+func (l *screenshotRecordingLogger) Contains(needle string) bool {
+	for _, entry := range l.entries {
+		if strings.Contains(entry, needle) {
+			return true
+		}
+	}
+	return false
 }

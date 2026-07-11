@@ -294,6 +294,7 @@ func TestYAMLRoundTrip(t *testing.T) {
 		},
 		ScreenshotHandling: ScreenshotHandlingConfig{
 			Screens:              4,
+			MaxMenuItems:         DefaultDVDMenuItems,
 			MinSuccessfulUploads: 3,
 			CutoffScreens:        2,
 			FrameOverlay:         true,
@@ -709,6 +710,32 @@ func TestLoadFromDatabaseWithDefaultBackfillIgnoresExplicitZeroDefaultKey(t *tes
 	}
 	if backfilledDefaults {
 		t.Fatalf("expected explicit zero-value key to avoid default backfill")
+	}
+}
+
+func TestLoadFromDatabaseBackfillsMaxMenuItems(t *testing.T) {
+	t.Parallel()
+
+	for name, mutate := range map[string]func(map[string]any){
+		"missing": func(section map[string]any) { delete(section, "MaxMenuItems") },
+		"zero":    func(section map[string]any) { section["MaxMenuItems"] = float64(0) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw := defaultDatabaseConfigMap(t)
+			section, ok := raw["ScreenshotHandling"].(map[string]any)
+			if !ok {
+				t.Fatal("expected ScreenshotHandling defaults map")
+			}
+			mutate(section)
+
+			loaded, _, err := LoadFromDatabaseWithDefaultBackfill(context.Background(), &rawConfigRepo{raw: raw})
+			if err != nil {
+				t.Fatalf("LoadFromDatabaseWithDefaultBackfill: %v", err)
+			}
+			if loaded.ScreenshotHandling.MaxMenuItems != DefaultDVDMenuItems {
+				t.Fatalf("MaxMenuItems = %d, want %d", loaded.ScreenshotHandling.MaxMenuItems, DefaultDVDMenuItems)
+			}
+		})
 	}
 }
 

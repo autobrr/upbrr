@@ -37,7 +37,7 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 	default:
 	}
 
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+	assets, err := trackers.ResolveDescriptionAssetsWithPrepared(ctx, req.Tracker, req.Meta, req.Repo, req.Logger, req.Assets)
 	if err != nil {
 		assets = trackers.DescriptionAssets{}
 	}
