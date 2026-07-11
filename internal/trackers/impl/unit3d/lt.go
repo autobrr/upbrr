@@ -15,14 +15,19 @@ func siteLTProfile() unit3DSiteProfile {
 	}
 }
 
+var ltAsianCountries = map[string]bool{
+	"AE": true, "AF": true, "AM": true, "AZ": true, "BD": true, "BH": true, "BN": true, "BT": true, "CN": true, "CY": true, "GE": true, "HK": true, "ID": true, "IL": true, "IN": true,
+	"IQ": true, "IR": true, "JO": true, "JP": true, "KG": true, "KH": true, "KP": true, "KR": true, "KW": true, "KZ": true, "LA": true, "LB": true, "LK": true, "MM": true, "MN": true,
+	"MO": true, "MV": true, "MY": true, "NP": true, "OM": true, "PH": true, "PK": true, "PS": true, "QA": true, "SA": true, "SG": true, "SY": true, "TH": true, "TJ": true, "TL": true,
+	"TM": true, "TR": true, "TW": true, "UZ": true, "VN": true, "YE": true,
+}
+
 func resolveUnit3DLTCategoryID(meta api.PreparedMetadata) string {
 	category := resolveUnit3DCategory(meta)
 
 	categoryID := "1" // Default MOVIE
 	if category == "TV" {
 		categoryID = "2" // Default TV
-	} else if category != "MOVIE" {
-		categoryID = "1"
 	}
 
 	if category == "TV" {
@@ -54,17 +59,9 @@ func resolveUnit3DLTCategoryID(meta api.PreparedMetadata) string {
 			return "8"
 		}
 
-		// Turkish & Asian
-		asianCountries := map[string]bool{
-			"AE": true, "AF": true, "AM": true, "AZ": true, "BD": true, "BH": true, "BN": true, "BT": true, "CN": true, "CY": true, "GE": true, "HK": true, "ID": true, "IL": true, "IN": true,
-			"IQ": true, "IR": true, "JO": true, "JP": true, "KG": true, "KH": true, "KP": true, "KR": true, "KW": true, "KZ": true, "LA": true, "LB": true, "LK": true, "MM": true, "MN": true,
-			"MO": true, "MV": true, "MY": true, "NP": true, "OM": true, "PH": true, "PK": true, "PS": true, "QA": true, "SA": true, "SG": true, "SY": true, "TH": true, "TJ": true, "TL": true,
-			"TM": true, "TR": true, "TW": true, "UZ": true, "VN": true, "YE": true,
-		}
-
 		hasAsianCountry := false
 		for _, c := range originCountries {
-			if asianCountries[strings.ToUpper(c)] {
+			if ltAsianCountries[strings.ToUpper(c)] {
 				hasAsianCountry = true
 				break
 			}

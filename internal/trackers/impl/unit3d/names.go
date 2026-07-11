@@ -26,6 +26,23 @@ var noGroupTagPattern = regexp.MustCompile(`(?i)-(nogrp|nogroup|unknown|-unk-)`)
 var (
 	languageTagLookupOnce sync.Once
 	languageTagLookup     map[string]language.Tag
+
+	markerPattern         = regexp.MustCompile(`(?i)\.(19\d\d|20\d\d|3d|480p|576p|720p|1080p|1080i|2160p|4k|mkv|avi|mp4|remux|bluray|blu-ray|web-dl|webdl|web|hdtv|dvdrip|dvd|bd25|bd50|uhd)\b`)
+	akaPattern            = regexp.MustCompile(`(?i)[. _-]aka[. _-]`)
+	multipleDotsPattern   = regexp.MustCompile(`\.{2,}`)
+	multipleSpacesPattern = regexp.MustCompile(`\s{2,}`)
+
+	audioLatinoCheck = map[string]bool{
+		"es-419": true, "es-mx": true, "es-ar": true, "es-cl": true, "es-ve": true,
+		"es-bo": true, "es-co": true, "es-cr": true, "es-do": true, "es-ec": true,
+		"es-sv": true, "es-gt": true, "es-hn": true, "es-ni": true, "es-pa": true,
+		"es-py": true, "es-pe": true, "es-pr": true, "es-uy": true,
+	}
+	audioCastilianCheck = map[string]bool{
+		"es": true, "es-es": true,
+	}
+	latinoKeywords    = []string{"latino", "latin america"}
+	castilianKeywords = []string{"castellano"}
 )
 
 func buildUnit3DName(tracker string, meta api.PreparedMetadata, cfg config.TrackerConfig) string {
@@ -503,8 +520,7 @@ func buildLTName(name string, meta api.PreparedMetadata) string {
 
 	// Find the end of the title block (start of year, resolution, source, etc.)
 	titleEndIdx := len(ltName)
-	markerRegex := regexp.MustCompile(`(?i)\.(19\d\d|20\d\d|3d|480p|576p|720p|1080p|1080i|2160p|4k|mkv|avi|mp4|remux|bluray|blu-ray|web-dl|webdl|web|hdtv|dvdrip|dvd|bd25|bd50|uhd)\b`)
-	if loc := markerRegex.FindStringIndex(ltName); loc != nil {
+	if loc := markerPattern.FindStringIndex(ltName); loc != nil {
 		titleEndIdx = loc[0]
 	}
 
@@ -524,12 +540,13 @@ func buildLTName(name string, meta api.PreparedMetadata) string {
 			targetTitle = origTitle
 		}
 	}
-	targetTitleDotted := strings.ReplaceAll(targetTitle, " ", ".")
 
-	// If the title block contains AKA, or we need to replace a mismatched title:
-	akaRegex := regexp.MustCompile(`(?i)[. _-]aka[. _-]`)
-	if akaRegex.MatchString(titleBlock) || !strings.EqualFold(strings.ReplaceAll(titleBlock, ".", " "), targetTitle) {
-		titleBlock = targetTitleDotted
+	if targetTitle != "" {
+		targetTitleDotted := strings.ReplaceAll(targetTitle, " ", ".")
+		// If the title block contains AKA, or we need to replace a mismatched title:
+		if akaPattern.MatchString(titleBlock) || !strings.EqualFold(strings.ReplaceAll(titleBlock, ".", " "), targetTitle) {
+			titleBlock = targetTitleDotted
+		}
 	}
 
 	ltName = titleBlock + restOfName
@@ -559,18 +576,6 @@ func buildLTName(name string, meta api.PreparedMetadata) string {
 		hasSpanishAudio := false
 		hasLatino := false
 		hasCastilian := false
-
-		audioLatinoCheck := map[string]bool{
-			"es-419": true, "es-mx": true, "es-ar": true, "es-cl": true, "es-ve": true,
-			"es-bo": true, "es-co": true, "es-cr": true, "es-do": true, "es-ec": true,
-			"es-sv": true, "es-gt": true, "es-hn": true, "es-ni": true, "es-pa": true,
-			"es-py": true, "es-pe": true, "es-pr": true, "es-uy": true,
-		}
-		audioCastilianCheck := map[string]bool{
-			"es": true, "es-es": true,
-		}
-		latinoKeywords := []string{"latino", "latin america"}
-		castilianKeywords := []string{"castellano"}
 
 		hasTracks := false
 		if len(tracks) > 0 {
@@ -651,10 +656,8 @@ func buildLTName(name string, meta api.PreparedMetadata) string {
 		}
 	}
 
-	multipleDots := regexp.MustCompile(`\.{2,}`)
-	ltName = multipleDots.ReplaceAllString(ltName, ".")
-	multipleSpaces := regexp.MustCompile(`\s{2,}`)
-	ltName = multipleSpaces.ReplaceAllString(ltName, " ")
+	ltName = multipleDotsPattern.ReplaceAllString(ltName, ".")
+	ltName = multipleSpacesPattern.ReplaceAllString(ltName, " ")
 	return strings.Trim(ltName, ". ")
 }
 

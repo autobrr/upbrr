@@ -1900,8 +1900,8 @@ func TestBuildUnit3DNameLT(t *testing.T) {
 			},
 		}
 		got := buildUnit3DName("LT", meta, config.TrackerConfig{})
-		if strings.Contains(got, "Dual-Audio") || strings.Contains(got, "Dubbed") {
-			t.Fatalf("expected Dual-Audio and Dubbed to be removed, got %q", got)
+		if strings.Contains(got, "Dual-Audio") || strings.Contains(got, "Dubbed") || strings.Contains(got, "AKA") {
+			t.Fatalf("expected Dual-Audio, Dubbed, and AKA to be removed, got %q", got)
 		}
 	})
 
@@ -1980,13 +1980,8 @@ func TestBuildUnit3DNameLT(t *testing.T) {
 	})
 
 	t.Run("adds CAST tag when Castilian-only audio", func(t *testing.T) {
-		// Mock track list by using a temp file for MediaInfoJSONPath
-		tempFile, err := os.CreateTemp("", "mediainfo-*.json")
-		if err != nil {
-			t.Fatalf("failed to create temp file: %v", err)
-		}
-		defer os.Remove(tempFile.Name())
-
+		tempDir := t.TempDir()
+		filePath := filepath.Join(tempDir, "mediainfo.json")
 		mediaInfoJSON := `{
 			"media": {
 				"track": [
@@ -1996,31 +1991,57 @@ func TestBuildUnit3DNameLT(t *testing.T) {
 				]
 			}
 		}`
-		if _, err := tempFile.Write([]byte(mediaInfoJSON)); err != nil {
+		if err := os.WriteFile(filePath, []byte(mediaInfoJSON), 0644); err != nil {
 			t.Fatalf("failed to write temp file: %v", err)
 		}
-		tempFile.Close()
 
 		meta := api.PreparedMetadata{
 			ReleaseName:       "Movie.2024.1080p.Bluray-GRP",
 			Tag:               "GRP",
-			MediaInfoJSONPath: tempFile.Name(),
+			MediaInfoJSONPath: filePath,
+			ExternalMetadata: api.ExternalMetadata{
+				TMDB: &api.TMDBMetadata{
+					Title: "Movie",
+				},
+			},
 		}
 		got := buildUnit3DName("LT", meta, config.TrackerConfig{})
-		if !strings.Contains(got, " [CAST]-GRP") {
-			t.Fatalf("expected [CAST] tag added before GRP, got %q", got)
+		expected := "Movie.2024.1080p.Bluray [CAST]-GRP"
+		if got != expected {
+			t.Fatalf("expected name to be %q, got %q", expected, got)
 		}
 	})
 
 	t.Run("adds SUBS tag when no Spanish audio", func(t *testing.T) {
+		tempDir := t.TempDir()
+		filePath := filepath.Join(tempDir, "mediainfo.json")
+		mediaInfoJSON := `{
+			"media": {
+				"track": [
+					{"@type": "General"},
+					{"@type": "Video"},
+					{"@type": "Audio", "Language": "en"}
+				]
+			}
+		}`
+		if err := os.WriteFile(filePath, []byte(mediaInfoJSON), 0644); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+
 		meta := api.PreparedMetadata{
-			ReleaseName:    "Movie.2024.1080p.Bluray-GRP",
-			Tag:            "GRP",
-			AudioLanguages: []string{"English"},
+			ReleaseName:       "Movie.2024.1080p.Bluray-GRP",
+			Tag:               "GRP",
+			MediaInfoJSONPath: filePath,
+			ExternalMetadata: api.ExternalMetadata{
+				TMDB: &api.TMDBMetadata{
+					Title: "Movie",
+				},
+			},
 		}
 		got := buildUnit3DName("LT", meta, config.TrackerConfig{})
-		if !strings.Contains(got, " [SUBS]-GRP") {
-			t.Fatalf("expected [SUBS] tag added before GRP, got %q", got)
+		expected := "Movie.2024.1080p.Bluray [SUBS]-GRP"
+		if got != expected {
+			t.Fatalf("expected name to be %q, got %q", expected, got)
 		}
 	})
 }
