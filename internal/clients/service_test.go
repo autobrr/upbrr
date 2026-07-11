@@ -25,9 +25,11 @@ import (
 type qbitAddCapture struct {
 	errCh    chan error
 	mu       sync.Mutex
+	addCalls int
 	category string
 	savePath string
 	tags     string
+	autoTMM  string
 }
 
 func newQbitAddCaptureServer(t *testing.T) (*httptest.Server, *qbitAddCapture) {
@@ -47,9 +49,11 @@ func newQbitAddCaptureServer(t *testing.T) (*httptest.Server, *qbitAddCapture) {
 				return
 			}
 			capture.mu.Lock()
+			capture.addCalls++
 			capture.category = r.FormValue("category")
 			capture.savePath = r.FormValue("savepath")
 			capture.tags = r.FormValue("tags")
+			capture.autoTMM = r.FormValue("autoTMM")
 			capture.mu.Unlock()
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
@@ -118,6 +122,7 @@ func TestInjectQbitClient(t *testing.T) {
 	var addCategory string
 	var addTags string
 	var addSkipChecking string
+	var addAutoTMM string
 	var fileCount int
 	errCh := make(chan error, 1)
 
@@ -141,6 +146,7 @@ func TestInjectQbitClient(t *testing.T) {
 			addCategory = r.FormValue("category")
 			addTags = r.FormValue("tags")
 			addSkipChecking = r.FormValue("skip_checking")
+			addAutoTMM = r.FormValue("autoTMM")
 			if files, ok := r.MultipartForm.File["torrents"]; ok {
 				fileCount = len(files)
 			}
@@ -202,6 +208,9 @@ func TestInjectQbitClient(t *testing.T) {
 	if addSkipChecking != "true" {
 		t.Fatalf("expected skip_checking true, got %q", addSkipChecking)
 	}
+	if addAutoTMM != "false" {
+		t.Fatalf("expected autoTMM false, got %q", addAutoTMM)
+	}
 	if fileCount != 1 {
 		t.Fatalf("expected 1 torrent file, got %d", fileCount)
 	}
@@ -216,6 +225,48 @@ func TestQbitInjectClientConfigCapsTimeoutAndRetries(t *testing.T) {
 	}
 	if cfg.RetryAttempts != qbitInjectHTTPRetryAttempts {
 		t.Fatalf("expected retry attempts %d, got %d", qbitInjectHTTPRetryAttempts, cfg.RetryAttempts)
+	}
+}
+
+func TestQbitAutomaticManagementEnabledUsesPathBoundaries(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	tests := []struct {
+		name       string
+		sourcePath string
+		configured string
+		want       bool
+	}{
+		{
+			name:       "configured root",
+			sourcePath: filepath.Join(root, "video.mkv"),
+			configured: root,
+			want:       true,
+		},
+		{
+			name:       "configured root child",
+			sourcePath: filepath.Join(root, "child", "video.mkv"),
+			configured: root,
+			want:       true,
+		},
+		{
+			name:       "sibling prefix",
+			sourcePath: filepath.Join(root+"-old", "video.mkv"),
+			configured: root,
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			meta := api.PreparedMetadata{SourcePath: tt.sourcePath}
+			if got := qbitAutomaticManagementEnabled(meta, config.StringList{tt.configured}); got != tt.want {
+				t.Fatalf("qbitAutomaticManagementEnabled() = %t, want %t", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -243,12 +294,13 @@ func TestInjectQbitClientUsesPathMappingSavePath(t *testing.T) {
 	svc := NewService(config.Config{
 		TorrentClients: map[string]config.TorrentClientConfig{
 			"qbit": {
-				Type:       "qbit",
-				URL:        server.URL,
-				Username:   "user",
-				Password:   "pass",
-				LocalPath:  config.StringList{"", localRoot},
-				RemotePath: config.StringList{"/wrong/root", remoteRoot},
+				Type:                     "qbit",
+				URL:                      server.URL,
+				Username:                 "user",
+				Password:                 "pass",
+				LocalPath:                config.StringList{"", localRoot},
+				RemotePath:               config.StringList{"/wrong/root", remoteRoot},
+				AutomaticManagementPaths: config.StringList{localRoot},
 			},
 		},
 	}, nil)
@@ -269,6 +321,9 @@ func TestInjectQbitClientUsesPathMappingSavePath(t *testing.T) {
 	wantSavePath := "/remote/media/Movies/Fixture.Title.2024/"
 	if capture.savePath != wantSavePath {
 		t.Fatalf("expected mapped savepath %q, got %q", wantSavePath, capture.savePath)
+	}
+	if capture.autoTMM != "true" {
+		t.Fatalf("expected autoTMM true, got %q", capture.autoTMM)
 	}
 }
 
@@ -354,6 +409,47 @@ func TestMappedRemotePathPreservesBlankPathPairAlignment(t *testing.T) {
 				t.Fatalf("expected mapped path %q, got %q", want, got)
 			}
 		})
+	}
+}
+
+func TestMappedRemotePathUsesMostSpecificRoot(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	linkedRoot := filepath.Join(root, "cross-seed")
+	source := filepath.Join(linkedRoot, "EXAMPLE", "Example.Release.2026.mkv")
+
+	got, ok := mappedRemotePath(
+		source,
+		config.StringList{root, linkedRoot},
+		config.StringList{"/remote/general", "/remote/cross-seed"},
+	)
+	if !ok {
+		t.Fatal("expected mapped path")
+	}
+	want := filepath.Join("/remote/cross-seed", "EXAMPLE", "Example.Release.2026.mkv")
+	if got != want {
+		t.Fatalf("expected most-specific mapped path %q, got %q", want, got)
+	}
+}
+
+func TestMappedRemotePathIsCaseInsensitiveOnWindows(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path semantics")
+	}
+	root := t.TempDir()
+	source := filepath.Join(root, "CrossSeed", "EXAMPLE", "Example.Release.2026.mkv")
+	localRoot := strings.ToUpper(filepath.Join(root, "crossseed"))
+
+	got, ok := mappedRemotePath(source, config.StringList{localRoot}, config.StringList{"/remote/cross-seed"})
+	if !ok {
+		t.Fatal("expected case-insensitive mapped path")
+	}
+	want := filepath.Join("/remote/cross-seed", "EXAMPLE", "Example.Release.2026.mkv")
+	if got != want {
+		t.Fatalf("expected mapped path %q, got %q", want, got)
 	}
 }
 
@@ -530,9 +626,10 @@ func TestInjectQbitClientUsesCrossFieldsForCrossSeedTorrent(t *testing.T) {
 	}
 }
 
-func newQbitAddFailureServer(t *testing.T) *httptest.Server {
+func newQbitAddFailureServer(t *testing.T) (*httptest.Server, *qbitAddCapture) {
 	t.Helper()
 
+	capture := &qbitAddCapture{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v2/auth/login":
@@ -551,6 +648,9 @@ func newQbitAddFailureServer(t *testing.T) *httptest.Server {
 					return
 				}
 			}
+			capture.mu.Lock()
+			capture.addCalls++
+			capture.mu.Unlock()
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte("Fails."))
 			return
@@ -560,13 +660,22 @@ func newQbitAddFailureServer(t *testing.T) *httptest.Server {
 		}
 	}))
 	t.Cleanup(server.Close)
-	return server
+	return server, capture
 }
 
-func TestInjectQbitClientCleansStagingAfterFileAddFailure(t *testing.T) {
+func TestInjectQbitClientCleansStagingAfterLoginFailure(t *testing.T) {
 	t.Parallel()
 
-	server := newQbitAddFailureServer(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v2/auth/login" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("Fails."))
+	}))
+	t.Cleanup(server.Close)
+
 	root := t.TempDir()
 	source := filepath.Join(root, "source.mkv")
 	if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
@@ -577,13 +686,11 @@ func TestInjectQbitClientCleansStagingAfterFileAddFailure(t *testing.T) {
 		t.Fatalf("mkdir links: %v", err)
 	}
 	torrentPath := filepath.Join(root, "sample.torrent")
-	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
-		t.Fatalf("write torrent: %v", err)
-	}
+	writeQbitTestTorrentForSource(t, torrentPath, source)
 
 	svc := NewService(config.Config{
 		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-			"AITHER": {LinkDirName: "aither-links"},
+			"EXAMPLE": {LinkDirName: "example-links"},
 		}},
 		TorrentClients: map[string]config.TorrentClientConfig{
 			"qbit": {
@@ -597,24 +704,73 @@ func TestInjectQbitClientCleansStagingAfterFileAddFailure(t *testing.T) {
 		},
 	}, nil)
 
-	err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: source, FileList: []string{source}}, api.TorrentResult{Path: torrentPath, Tracker: "AITHER"})
+	err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: source, FileList: []string{source}}, api.TorrentResult{Path: torrentPath, Tracker: "EXAMPLE"})
+	if err == nil {
+		t.Fatal("expected qbit login failure")
+	}
+
+	stagingDir := filepath.Join(linkRoot, "example-links")
+	if _, statErr := os.Stat(stagingDir); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("expected login failure to remove staging, stat err=%v", statErr)
+	}
+}
+
+func TestInjectQbitClientCleansStagingAfterFileAddFailure(t *testing.T) {
+	t.Parallel()
+
+	server, capture := newQbitAddFailureServer(t)
+	root := t.TempDir()
+	source := filepath.Join(root, "source.mkv")
+	if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	linkRoot := filepath.Join(root, "links")
+	if err := os.MkdirAll(linkRoot, 0o700); err != nil {
+		t.Fatalf("mkdir links: %v", err)
+	}
+	torrentPath := filepath.Join(root, "sample.torrent")
+	writeQbitTestTorrentForSource(t, torrentPath, source)
+
+	svc := NewService(config.Config{
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"EXAMPLE": {LinkDirName: "example-links"},
+		}},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:         "qbit",
+				URL:          server.URL,
+				Username:     "user",
+				Password:     "pass",
+				Linking:      "hardlink",
+				LinkedFolder: config.StringList{linkRoot},
+			},
+		},
+	}, nil)
+
+	err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: source, FileList: []string{source}}, api.TorrentResult{Path: torrentPath, Tracker: "EXAMPLE"})
 	if err == nil {
 		t.Fatal("expected qbit add failure")
 	}
+	capture.mu.Lock()
+	addCalls := capture.addCalls
+	capture.mu.Unlock()
+	if addCalls != 1 {
+		t.Fatalf("expected one qbit add attempt, got %d", addCalls)
+	}
 
-	stagedPath := filepath.Join(linkRoot, "aither-links", filepath.Base(source))
+	stagedPath := filepath.Join(linkRoot, "example-links", filepath.Base(source))
 	if _, statErr := os.Stat(stagedPath); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("expected staged file cleanup, stat err=%v", statErr)
 	}
-	if _, statErr := os.Stat(filepath.Join(linkRoot, "aither-links")); !errors.Is(statErr, os.ErrNotExist) {
+	if _, statErr := os.Stat(filepath.Join(linkRoot, "example-links")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("expected tracker staging dir cleanup, stat err=%v", statErr)
 	}
 }
 
-func TestInjectQbitClientCleansStagingAfterURLAddFailure(t *testing.T) {
+func TestInjectQbitClientURLLinkingFallsBackWithoutStaging(t *testing.T) {
 	t.Parallel()
 
-	server := newQbitAddFailureServer(t)
+	server, _ := newQbitAddFailureServer(t)
 	root := t.TempDir()
 	source := filepath.Join(root, "source.mkv")
 	if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
@@ -648,10 +804,10 @@ func TestInjectQbitClientCleansStagingAfterURLAddFailure(t *testing.T) {
 
 	stagedPath := filepath.Join(linkRoot, "aither-links", filepath.Base(source))
 	if _, statErr := os.Stat(stagedPath); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("expected staged file cleanup, stat err=%v", statErr)
+		t.Fatalf("expected URL-only injection not to stage files, stat err=%v", statErr)
 	}
 	if _, statErr := os.Stat(filepath.Join(linkRoot, "aither-links")); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("expected tracker staging dir cleanup, stat err=%v", statErr)
+		t.Fatalf("expected URL-only injection not to create tracker staging, stat err=%v", statErr)
 	}
 }
 
@@ -661,6 +817,8 @@ func TestInjectQbitClientHardlinksSourceAndUsesLinkedSavePath(t *testing.T) {
 	var mu sync.Mutex
 	var addSavePath string
 	var addTags string
+	var addAutoTMM string
+	var addSkipChecking string
 	errCh := make(chan error, 1)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -678,6 +836,8 @@ func TestInjectQbitClientHardlinksSourceAndUsesLinkedSavePath(t *testing.T) {
 			mu.Lock()
 			addSavePath = r.FormValue("savepath")
 			addTags = r.FormValue("tags")
+			addAutoTMM = r.FormValue("autoTMM")
+			addSkipChecking = r.FormValue("skip_checking")
 			mu.Unlock()
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
@@ -700,9 +860,8 @@ func TestInjectQbitClientHardlinksSourceAndUsesLinkedSavePath(t *testing.T) {
 		t.Fatalf("mkdir links: %v", err)
 	}
 	torrentPath := filepath.Join(root, "sample.torrent")
-	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
-		t.Fatalf("write torrent: %v", err)
-	}
+	torrentRoot := "Tracker.Name.2026.mkv"
+	writeQbitTestTorrent(t, torrentPath, torrentRoot, map[string]string{"source": source}, false)
 
 	svc := NewService(config.Config{
 		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
@@ -710,13 +869,16 @@ func TestInjectQbitClientHardlinksSourceAndUsesLinkedSavePath(t *testing.T) {
 		}},
 		TorrentClients: map[string]config.TorrentClientConfig{
 			"qbit": {
-				Type:            "qbit",
-				URL:             server.URL,
-				Username:        "user",
-				Password:        "pass",
-				Linking:         "hardlink",
-				LinkedFolder:    config.StringList{linkRoot},
-				UseTrackerAsTag: true,
+				Type:                     "qbit",
+				URL:                      server.URL,
+				Username:                 "user",
+				Password:                 "pass",
+				Linking:                  "hardlink",
+				LinkedFolder:             config.StringList{linkRoot},
+				LocalPath:                config.StringList{root},
+				RemotePath:               config.StringList{"/remote/root"},
+				AutomaticManagementPaths: config.StringList{root},
+				UseTrackerAsTag:          true,
 			},
 		},
 	}, nil)
@@ -732,7 +894,7 @@ func TestInjectQbitClientHardlinksSourceAndUsesLinkedSavePath(t *testing.T) {
 	default:
 	}
 
-	linkedSource := filepath.Join(linkRoot, "aither-links", filepath.Base(source))
+	linkedSource := filepath.Join(linkRoot, "aither-links", torrentRoot)
 	sourceInfo, err := os.Stat(source)
 	if err != nil {
 		t.Fatalf("stat source: %v", err)
@@ -747,12 +909,70 @@ func TestInjectQbitClientHardlinksSourceAndUsesLinkedSavePath(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	wantSavePath := filepath.ToSlash(filepath.Join(linkRoot, "aither-links")) + "/"
+	wantSavePath := "/remote/root/links/aither-links/"
 	if addSavePath != wantSavePath {
 		t.Fatalf("expected savepath %q, got %q", wantSavePath, addSavePath)
 	}
 	if addTags != "AITHER" {
 		t.Fatalf("expected tracker tag, got %q", addTags)
+	}
+	if addAutoTMM != "false" {
+		t.Fatalf("expected linked injection autoTMM false, got %q", addAutoTMM)
+	}
+	if addSkipChecking != "false" {
+		t.Fatalf("expected linked injection hash checking, got skip_checking=%q", addSkipChecking)
+	}
+}
+
+func TestInjectQbitClientRejectsUnmappedLinkedSavePath(t *testing.T) {
+	t.Parallel()
+
+	server, capture := newQbitAddCaptureServer(t)
+	root := t.TempDir()
+	mediaRoot := filepath.Join(root, "media")
+	if err := os.MkdirAll(mediaRoot, 0o700); err != nil {
+		t.Fatalf("mkdir media: %v", err)
+	}
+	source := filepath.Join(mediaRoot, "Example.Release.2026.mkv")
+	if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	linkRoot := filepath.Join(root, "cross-seed")
+	if err := os.MkdirAll(linkRoot, 0o700); err != nil {
+		t.Fatalf("mkdir links: %v", err)
+	}
+	torrentPath := filepath.Join(root, "sample.torrent")
+	writeQbitTestTorrentForSource(t, torrentPath, source)
+
+	svc := NewService(config.Config{
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"EXAMPLE": {LinkDirName: "example-links"},
+		}},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:         "qbit",
+				URL:          server.URL,
+				Username:     "user",
+				Password:     "pass",
+				Linking:      "hardlink",
+				LinkedFolder: config.StringList{linkRoot},
+				LocalPath:    config.StringList{mediaRoot},
+				RemotePath:   config.StringList{"/remote/media"},
+			},
+		},
+	}, nil)
+
+	err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: source, FileList: []string{source}}, api.TorrentResult{Path: torrentPath, Tracker: "EXAMPLE"})
+	if err == nil || !strings.Contains(err.Error(), "outside configured local_path roots") {
+		t.Fatal("expected linked staging path mapping error")
+	}
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	if capture.addCalls != 0 {
+		t.Fatal("expected mapping failure to prevent qBittorrent add")
+	}
+	if _, statErr := os.Stat(filepath.Join(linkRoot, "example-links")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatal("expected mapping failure not to create tracker staging")
 	}
 }
 
@@ -823,9 +1043,7 @@ func TestInjectQbitClientRejectsStaleExistingHardlinkDest(t *testing.T) {
 		t.Fatalf("write stale dest: %v", err)
 	}
 	torrentPath := filepath.Join(root, "sample.torrent")
-	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
-		t.Fatalf("write torrent: %v", err)
-	}
+	writeQbitTestTorrentForSource(t, torrentPath, source)
 	allowFallback := false
 	svc := NewService(config.Config{
 		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
@@ -874,9 +1092,7 @@ func TestInjectQbitClientAllowsMatchingExistingHardlinkDest(t *testing.T) {
 		t.Fatalf("precreate hardlink dest: %v", err)
 	}
 	torrentPath := filepath.Join(root, "sample.torrent")
-	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
-		t.Fatalf("write torrent: %v", err)
-	}
+	writeQbitTestTorrentForSource(t, torrentPath, source)
 
 	svc := NewService(config.Config{
 		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
@@ -932,9 +1148,7 @@ func TestInjectQbitClientTriesLaterLinkedFolderAfterFirstFails(t *testing.T) {
 		t.Fatalf("write stale first dest: %v", err)
 	}
 	torrentPath := filepath.Join(root, "sample.torrent")
-	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
-		t.Fatalf("write torrent: %v", err)
-	}
+	writeQbitTestTorrentForSource(t, torrentPath, source)
 	allowFallback := false
 
 	svc := NewService(config.Config{
@@ -1059,9 +1273,7 @@ func TestInjectQbitClientReflinksSourceAndUsesLinkedSavePath(t *testing.T) {
 		t.Fatalf("mkdir links: %v", err)
 	}
 	torrentPath := filepath.Join(root, "sample.torrent")
-	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
-		t.Fatalf("write torrent: %v", err)
-	}
+	writeQbitTestTorrentForSource(t, torrentPath, source)
 
 	originalCreateReflink := createReflink
 	var cloneCalls []string

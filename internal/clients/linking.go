@@ -18,13 +18,19 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/pathutil"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// linkStagingResult records a successful link-staging decision and the cleanup
+// needed if the subsequent client add fails. LayoutValidated and FileCount
+// describe only staging derived from a locally available torrent artifact.
 type linkStagingResult struct {
-	SavePath string
-	Linked   bool
-	Cleanup  *linkStagingCleanup
+	SavePath        string
+	Linked          bool
+	LayoutValidated bool
+	FileCount       int
+	Cleanup         *linkStagingCleanup
 }
 
 type linkStagingCleanup struct {
@@ -76,7 +82,11 @@ func (c *linkStagingCleanup) Run() error {
 
 var createReflink = reflinkFile
 
-func (s *Service) prepareLinkStaging(ctx context.Context, clientName string, client config.TorrentClientConfig, meta api.PreparedMetadata, tracker string) (linkStagingResult, error) {
+// prepareLinkStaging creates a client-visible staging tree for the final local
+// torrent artifact. It uses the torrent's metainfo layout, validates staged
+// files before returning, and maps the containing directory to the qBittorrent
+// host path. URL-only or invalid layouts fall back only when the client permits it.
+func (s *Service) prepareLinkStaging(ctx context.Context, clientName string, client config.TorrentClientConfig, meta api.PreparedMetadata, torrent api.TorrentResult) (linkStagingResult, error) {
 	mode := client.LinkingMode()
 	if mode == "" {
 		s.logger.Tracef("clients: %s link staging disabled", clientName)
@@ -95,11 +105,39 @@ func (s *Service) prepareLinkStaging(ctx context.Context, clientName string, cli
 		return linkStagingResult{}, fmt.Errorf("clients: %s linking target: %w", clientName, err)
 	}
 
+	tracker := strings.TrimSpace(torrent.Tracker)
 	trackerDirName, err := sanitizeTrackerLinkDirName(s.trackerLinkDirName(tracker))
 	if err != nil {
 		return linkStagingResult{}, fmt.Errorf("clients: %s invalid link staging directory for tracker %q: %w", clientName, strings.TrimSpace(tracker), err)
 	}
 
+	var torrentPlan torrentLinkPlan
+	if torrentPath := strings.TrimSpace(torrent.Path); torrentPath != "" {
+		s.logger.Debugf("clients: inspecting injected torrent layout client=%s tracker=%s mode=%s", clientName, tracker, mode)
+		plan, err := buildTorrentLinkPlan(torrentPath, meta)
+		if err != nil {
+			if client.FallbackAllowed() {
+				s.logger.Warnf("clients: injected torrent layout validation failed client=%s tracker=%s mode=%s decision=original-path-fallback reason=%s", clientName, tracker, mode, redaction.RedactValue(err.Error(), nil))
+				return linkStagingResult{}, nil
+			}
+			return linkStagingResult{}, fmt.Errorf("clients: %s plan %s staging from injected torrent: %w", clientName, mode, err)
+		}
+		torrentPlan = plan
+		s.logger.Debugf("clients: injected torrent layout ready client=%s tracker=%s root=%q files=%d padding_files=%d multi_file=%t", clientName, tracker, plan.root, len(plan.files), plan.paddingFiles, plan.torrentIsMulti)
+		for _, file := range plan.files {
+			s.logger.Tracef("clients: injected torrent file mapped client=%s tracker=%s match=%s source=%s destination=%s", clientName, tracker, file.match, file.sourcePath, file.destRel)
+		}
+	} else {
+		if !client.FallbackAllowed() {
+			return linkStagingResult{}, fmt.Errorf("clients: %s cannot validate %s staging for URL-only torrent; provide a torrent file or enable allow_fallback for this client", clientName, mode)
+		}
+		s.logger.Warnf("clients: URL-only linked injection cannot inspect torrent layout client=%s tracker=%s mode=%s decision=original-path-fallback", clientName, tracker, mode)
+		return linkStagingResult{}, nil
+	}
+
+	mappingPairs := pathMappingPairs(client.LocalPath, client.RemotePath)
+	mappingRequired := len(mappingPairs) > 0
+	mappingCandidateFound := false
 	var lastErr error
 	for _, linkTarget := range linkTargets {
 		trackerDir := filepath.Join(linkTarget, trackerDirName)
@@ -107,6 +145,22 @@ func (s *Service) prepareLinkStaging(ctx context.Context, clientName string, cli
 			lastErr = fmt.Errorf("clients: %s link staging directory escapes target: %w", clientName, internalerrors.ErrInvalidInput)
 			continue
 		}
+
+		savePath := trackerDir
+		mappingState := "not-configured"
+		if mappingRequired {
+			mappedPath, mapped := mappedRemotePath(trackerDir, client.LocalPath, client.RemotePath)
+			if !mapped {
+				lastErr = fmt.Errorf("clients: %s linked staging path is outside configured local_path roots: %w", clientName, internalerrors.ErrInvalidInput)
+				s.logger.Debugf("clients: linked torrent path mapping skipped client=%s tracker=%s mode=%s state=no-local-root-match tracker_dir=%s", clientName, tracker, mode, trackerDir)
+				continue
+			}
+			mappingCandidateFound = true
+			mappingState = "matched"
+			savePath = mappedPath
+			s.logger.Debugf("clients: linked torrent path mapping ready client=%s tracker=%s mode=%s state=%s local=%s remote=%s", clientName, tracker, mode, mappingState, trackerDir, savePath)
+		}
+
 		trackerDirExisted, err := pathExists(trackerDir)
 		if err != nil {
 			lastErr = fmt.Errorf("clients: %s stat link staging directory: %w", clientName, err)
@@ -117,7 +171,7 @@ func (s *Service) prepareLinkStaging(ctx context.Context, clientName string, cli
 			continue
 		}
 
-		dest := filepath.Join(trackerDir, filepath.Base(source))
+		dest := filepath.Join(trackerDir, torrentPlan.root)
 		if !pathutil.IsWithinRoot(trackerDir, dest) {
 			lastErr = fmt.Errorf("clients: %s link destination escapes target: %w", clientName, internalerrors.ErrInvalidInput)
 			continue
@@ -127,7 +181,8 @@ func (s *Service) prepareLinkStaging(ctx context.Context, clientName string, cli
 			lastErr = fmt.Errorf("clients: %s stat link destination: %w", clientName, err)
 			continue
 		}
-		if err := createLinkTree(ctx, source, dest, mode); err != nil {
+		linkErr := createTorrentLinkPlan(ctx, trackerDir, torrentPlan, mode)
+		if linkErr != nil {
 			if !destExisted {
 				if cleanupErr := (&linkStagingCleanup{
 					TrackerDir:       trackerDir,
@@ -137,11 +192,10 @@ func (s *Service) prepareLinkStaging(ctx context.Context, clientName string, cli
 					s.logger.Warnf("clients: %s cleanup failed after staged link error target=%s: %v", clientName, linkTarget, cleanupErr)
 				}
 			}
-			lastErr = fmt.Errorf("clients: %s %s target %s: %w", clientName, mode, linkTarget, err)
+			lastErr = fmt.Errorf("clients: %s %s target %s: %w", clientName, mode, linkTarget, linkErr)
 			continue
 		}
 
-		savePath := mapLocalPathToRemote(trackerDir, client.LocalPath, client.RemotePath)
 		var cleanup *linkStagingCleanup
 		if !destExisted {
 			cleanup = &linkStagingCleanup{
@@ -150,11 +204,21 @@ func (s *Service) prepareLinkStaging(ctx context.Context, clientName string, cli
 				RemoveTrackerDir: !trackerDirExisted,
 			}
 		}
-		result := linkStagingResult{SavePath: qbitSavePath(savePath), Linked: true, Cleanup: cleanup}
-		s.logger.Debugf("clients: %s linked content tracker=%s mode=%s save_path=%s", clientName, strings.TrimSpace(tracker), mode, result.SavePath)
+		result := linkStagingResult{
+			SavePath:        qbitSavePath(savePath),
+			Linked:          true,
+			LayoutValidated: true,
+			FileCount:       len(torrentPlan.files),
+			Cleanup:         cleanup,
+		}
+		s.logger.Infof("clients: linked torrent staging ready client=%s tracker=%s mode=%s files=%d layout_validated=%t path_mapping=%s save_path=%s", clientName, tracker, mode, result.FileCount, result.LayoutValidated, mappingState, result.SavePath)
 		return result, nil
 	}
 
+	if mappingRequired && !mappingCandidateFound {
+		s.logger.Warnf("clients: linked torrent path mapping blocked client=%s tracker=%s mode=%s decision=abort reason=no-local-root-match", clientName, tracker, mode)
+		return linkStagingResult{}, lastErr
+	}
 	if client.FallbackAllowed() {
 		s.logger.Warnf("clients: %s %s failed for %s, falling back to original qbit path: %v", clientName, mode, source, lastErr)
 		return linkStagingResult{}, nil
@@ -609,35 +673,33 @@ func symlink(source string, dest string, _ bool) error {
 	return nil
 }
 
-// mapLocalPathToRemote maps a local filesystem path through the first matching,
-// positionally paired local_path/remote_path entry, or returns the trimmed input
-// when no usable pair matches.
-func mapLocalPathToRemote[S ~[]string](value string, localPaths S, remotePaths S) string {
-	if mapped, ok := mappedRemotePath(value, localPaths, remotePaths); ok {
-		return mapped
-	}
-	return strings.TrimSpace(value)
-}
-
 // mappedRemotePath reports whether value is under a usable configured local
-// root and, when it is, returns the paired remote root plus relative suffix.
-// Blank local or remote entries are ignored without shifting later pairs.
+// root and, when it is, returns the most-specific paired remote root plus
+// relative suffix. Blank entries are ignored without shifting later pairs.
 func mappedRemotePath[S ~[]string](value string, localPaths S, remotePaths S) (string, bool) {
 	savePath := strings.TrimSpace(value)
 	if savePath == "" {
 		return "", false
 	}
+	bestSpecificity := -1
+	bestMapped := ""
 	for _, pair := range pathMappingPairs(localPaths, remotePaths) {
 		rel, ok := relativePathUnderRoot(pair.local, savePath)
 		if !ok {
 			continue
 		}
-		if rel == "." {
-			return pair.remote, true
+		localRoot, err := filepath.Abs(filepath.Clean(pair.local))
+		if err != nil || len(localRoot) <= bestSpecificity {
+			continue
 		}
-		return filepath.Join(pair.remote, rel), true
+		bestSpecificity = len(localRoot)
+		if rel == "." {
+			bestMapped = pair.remote
+			continue
+		}
+		bestMapped = filepath.Join(pair.remote, rel)
 	}
-	return "", false
+	return bestMapped, bestSpecificity >= 0
 }
 
 // mappedQbitSavePathForSource maps the prepared source path to the qBittorrent

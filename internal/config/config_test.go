@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1158,24 +1159,25 @@ func TestTorrentClientConfigExportUsesCanonicalTypeAndQbitSettings(t *testing.T)
 	cfg := &Config{
 		TorrentClients: map[string]TorrentClientConfig{
 			"q": {
-				Type:                   "qbit",
-				TorrentClient:          "qbit",
-				URL:                    "http://legacy",
-				WatchFolder:            "D:\\Watch",
-				Username:               "legacy-user",
-				Password:               "legacy-pass",
-				Category:               "legacy-cat",
-				Tags:                   []string{"legacy-tag"},
-				QbitURL:                "http://qbit",
-				QbitPort:               8080,
-				QbitUser:               "qbit-user",
-				QbitPass:               "qbit-pass",
-				QbitCategoryValue:      "qbit-cat",
-				QbitTag:                "qbit-tag",
-				QbitCrossCategory:      "cross-cat",
-				QbitCrossTag:           "cross-tag",
-				AllowFallback:          &allowFallback,
-				VerifyWebUICertificate: &verifyWebUI,
+				Type:                     "qbit",
+				TorrentClient:            "qbit",
+				URL:                      "http://legacy",
+				WatchFolder:              "D:\\Watch",
+				Username:                 "legacy-user",
+				Password:                 "legacy-pass",
+				Category:                 "legacy-cat",
+				Tags:                     []string{"legacy-tag"},
+				QbitURL:                  "http://qbit",
+				QbitPort:                 8080,
+				QbitUser:                 "qbit-user",
+				QbitPass:                 "qbit-pass",
+				QbitCategoryValue:        "qbit-cat",
+				QbitTag:                  "qbit-tag",
+				QbitCrossCategory:        "cross-cat",
+				QbitCrossTag:             "cross-tag",
+				AutomaticManagementPaths: StringList{"media-root", "archive-root"},
+				AllowFallback:            &allowFallback,
+				VerifyWebUICertificate:   &verifyWebUI,
 			},
 		},
 	}
@@ -1190,10 +1192,51 @@ func TestTorrentClientConfigExportUsesCanonicalTypeAndQbitSettings(t *testing.T)
 			t.Fatalf("exported torrent client should not contain legacy key %s: %s", key, exported)
 		}
 	}
-	for _, key := range []string{"Type", "QbitURL", "QbitUser", "QbitPass", "QbitCategoryValue", "QbitTag", "QbitCrossCategory", "QbitCrossTag"} {
+	for _, key := range []string{"Type", "QbitURL", "QbitUser", "QbitPass", "QbitCategoryValue", "QbitTag", "QbitCrossCategory", "QbitCrossTag", "AutomaticManagementPaths"} {
 		if !strings.Contains(exported, `"`+key+`"`) {
 			t.Fatalf("exported torrent client missing qbit key %s: %s", key, exported)
 		}
+	}
+	var exportShape struct {
+		TorrentClients map[string]struct {
+			AutomaticManagementPaths []string `json:"AutomaticManagementPaths"`
+		} `json:"TorrentClients"`
+	}
+	if err := json.Unmarshal([]byte(exported), &exportShape); err != nil {
+		t.Fatalf("decode exported config: %v", err)
+	}
+	wantPaths := []string{"media-root", "archive-root"}
+	gotPaths := exportShape.TorrentClients["q"].AutomaticManagementPaths
+	if !slices.Equal(gotPaths, wantPaths) {
+		t.Fatalf("AutomaticManagementPaths = %q, want %q", gotPaths, wantPaths)
+	}
+}
+
+func TestTorrentClientConfigAutomaticManagementPathsAcceptsStringOrList(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		value    string
+		expected StringList
+	}{
+		{name: "string", value: `media-root`, expected: StringList{"media-root"}},
+		{name: "list", value: "[media-root, archive-root]", expected: StringList{"media-root", "archive-root"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			payload := "torrent_clients:\n  qbit:\n    type: qbit\n    automatic_management_paths: " + tt.value
+			var cfg Config
+			if err := yaml.Unmarshal([]byte(payload), &cfg); err != nil {
+				t.Fatalf("unmarshal config: %v", err)
+			}
+			client := cfg.TorrentClients["qbit"]
+			if strings.Join(client.AutomaticManagementPaths, "|") != strings.Join(tt.expected, "|") {
+				t.Fatalf("unexpected automatic management paths")
+			}
+		})
 	}
 }
 

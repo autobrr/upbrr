@@ -325,6 +325,7 @@ describe("renderTorrentClientsSection", () => {
                   QbitURL: "http://localhost:8080",
                   QbitUser: "user",
                   QbitPass: "secret",
+                  AutomaticManagementPaths: ["/media"],
                 },
               },
             }),
@@ -351,6 +352,13 @@ describe("renderTorrentClientsSection", () => {
     expect(watchScope.getByLabelText("Watch folder")).toHaveValue("/watch");
     expect(watchScope.getByLabelText("Storage directory")).toHaveValue("/storage");
     expect(qbitScope.getByLabelText("qBit URL")).toHaveValue("http://localhost:8080");
+    expect(qbitScope.getByLabelText("Automatic management paths 1")).toHaveValue("/media");
+    expect(qbitScope.getByRole("button", { name: "Add Linked folder item" })).toBeInTheDocument();
+    expect(qbitScope.getByRole("button", { name: "Add Local path item" })).toBeInTheDocument();
+    expect(qbitScope.getByRole("button", { name: "Add Remote path item" })).toBeInTheDocument();
+    expect(
+      qbitScope.getByRole("button", { name: "Add Automatic management paths item" }),
+    ).toBeInTheDocument();
     expect(qbitScope.getByLabelText("qBit direct")).toBeChecked();
 
     fireEvent.change(watchScope.getByLabelText("Watch folder"), {
@@ -373,6 +381,7 @@ describe("renderTorrentClientsSection", () => {
       QbitURL: "http://localhost:8080",
       QbitUser: "user",
       QbitPass: "secret",
+      AutomaticManagementPaths: ["/media"],
     });
   });
 });

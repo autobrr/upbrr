@@ -746,6 +746,9 @@ type TorrentClientConfig struct {
 	LinkedFolder  StringList `yaml:"linked_folder"`
 	LocalPath     StringList `yaml:"local_path"`
 	RemotePath    StringList `yaml:"remote_path"`
+	// AutomaticManagementPaths enables qBittorrent automatic management when
+	// an unlinked injection's original local save path contains any configured value.
+	AutomaticManagementPaths StringList `yaml:"automatic_management_paths"`
 
 	QbitURL                string   `yaml:"qbit_url"`
 	QbitPort               int      `yaml:"qbit_port"`
@@ -815,6 +818,7 @@ func torrentClientConfigJSONMap(c TorrentClientConfig) map[string]any {
 	addStringList("LinkedFolder", c.LinkedFolder)
 	addStringList("LocalPath", c.LocalPath)
 	addStringList("RemotePath", c.RemotePath)
+	addStringList("AutomaticManagementPaths", c.AutomaticManagementPaths)
 	if c.VerifyWebUICertificate != nil {
 		out["VerifyWebUICertificate"] = *c.VerifyWebUICertificate
 	}
@@ -864,6 +868,7 @@ func torrentClientConfigYAMLMap(c TorrentClientConfig) map[string]any {
 	addStringList("linked_folder", c.LinkedFolder)
 	addStringList("local_path", c.LocalPath)
 	addStringList("remote_path", c.RemotePath)
+	addStringList("automatic_management_paths", c.AutomaticManagementPaths)
 	if c.VerifyWebUICertificate != nil {
 		out["verify_webui_certificate"] = *c.VerifyWebUICertificate
 	}

@@ -553,4 +553,8 @@ torrent_clients:
       - ""
     remote_path:
       - ""
+    # Enable qBittorrent automatic torrent management when the original save path matches an entry.
+    # Automatic management stays disabled for hardlink, reflink, and symlink staging.
+    automatic_management_paths:
+      - ""
     verify_webui_certificate: true

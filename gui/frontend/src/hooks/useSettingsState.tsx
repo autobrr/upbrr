@@ -832,6 +832,9 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     LinkedFolder: stringField("LinkedFolder", { label: "Linked folder" }),
     LocalPath: stringField("LocalPath", { label: "Local path" }),
     RemotePath: stringField("RemotePath", { label: "Remote path" }),
+    AutomaticManagementPaths: stringField("AutomaticManagementPaths", {
+      label: "Automatic management paths",
+    }),
     VerifyWebUICertificate: boolField("VerifyWebUICertificate", {
       label: "Verify WebUI certificate",
       advanced: true,
@@ -932,6 +935,7 @@ const qbitDefaultClient = (): ConfigMap => ({
   LinkedFolder: [],
   LocalPath: [],
   RemotePath: [],
+  AutomaticManagementPaths: [],
   VerifyWebUICertificate: true,
 });
 
@@ -1604,7 +1608,11 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
             </Button>
           </div>
         ))}
-        <Button type="button" onClick={() => updateConfigValue(path, [...value, newItemValue])}>
+        <Button
+          type="button"
+          aria-label={displayLabel ? `Add ${displayLabel} item` : "Add item"}
+          onClick={() => updateConfigValue(path, [...value, newItemValue])}
+        >
           Add item
         </Button>
       </div>
@@ -2002,6 +2010,14 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                           arrayFor(client, "RemotePath"),
                           ["TorrentClients", name, "RemotePath"],
                           meta.RemotePath,
+                        )
+                      : null}
+                    {!watchClient
+                      ? renderField(
+                          "AutomaticManagementPaths",
+                          arrayFor(client, "AutomaticManagementPaths"),
+                          ["TorrentClients", name, "AutomaticManagementPaths"],
+                          meta.AutomaticManagementPaths,
                         )
                       : null}
                     {!watchClient && advancedOpen

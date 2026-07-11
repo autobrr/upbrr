@@ -297,21 +297,26 @@ func torrentOverrideEnabled(value *bool) bool {
 	return value != nil && *value
 }
 
+// validateCandidateTorrent checks an existing torrent against the active
+// tracker policy and prepared source layout. Expected candidate rejection is
+// logged at debug level so discovery can continue without operator warnings.
 func validateCandidateTorrent(path string, policy *trackerTorrentPolicy, meta api.PreparedMetadata, logger api.Logger) error {
-	if policy == nil {
-		return validateTorrentContent(path, meta)
-	}
-	if err := policy.validateTorrent(path, meta); err != nil {
-		if logger != nil {
-			logger.Warnf("torrent: skipping non-compliant torrent %s: %v", path, err)
+	if policy != nil {
+		if err := policy.validateTorrent(path, meta); err != nil {
+			if logger != nil {
+				logger.Debugf("torrent: reusable candidate rejected path=%s stage=tracker_policy reason=%s", path, redaction.RedactValue(err.Error(), nil))
+			}
+			return err
 		}
-		return err
 	}
 	if err := validateTorrentContent(path, meta); err != nil {
 		if logger != nil {
-			logger.Warnf("torrent: skipping mismatched torrent %s: %v", path, err)
+			logger.Debugf("torrent: reusable candidate rejected path=%s stage=content_layout reason=%s", path, redaction.RedactValue(err.Error(), nil))
 		}
 		return err
+	}
+	if logger != nil {
+		logger.Debugf("torrent: reusable candidate validated path=%s tracker_policy=%t", path, policy != nil)
 	}
 	return nil
 }
