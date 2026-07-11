@@ -14,7 +14,7 @@ import (
 )
 
 func TestEvaluateRulesRequiresUniqueID(t *testing.T) {
-	meta := api.PreparedMetadata{ValidMediaInfo: false}
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true, ValidMediaInfo: false}
 	failures := EvaluateRules(context.Background(), "AITHER", meta, nil)
 	if len(failures) == 0 {
 		t.Fatalf("expected rule failure")
@@ -37,7 +37,7 @@ func TestEvaluateRulesUnit3DEnforcesMediaInfoSettings(t *testing.T) {
 	// RF is a known UNIT3D tracker but its RuleSet does not opt into
 	// RequireValidMISetting; the UNIT3D upload rejects encodes without encoding
 	// settings, so the rule must fire at prep time regardless.
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		ExternalIDs:            api.ExternalIDs{Category: "movie"},
 		ValidMediaInfoSettings: false,
 	}
@@ -50,7 +50,7 @@ func TestEvaluateRulesUnit3DEnforcesMediaInfoSettings(t *testing.T) {
 func TestEvaluateRulesUnit3DWithoutRuleSetEnforcesMediaInfoSettings(t *testing.T) {
 	// ACM is a known UNIT3D tracker with no tracker-specific RuleSet. The early
 	// "not found" return must not skip the MediaInfo-settings enforcement.
-	meta := api.PreparedMetadata{ValidMediaInfoSettings: false}
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true, ValidMediaInfoSettings: false}
 	failures := EvaluateRules(context.Background(), "ACM", meta, nil)
 	if !hasMISettingsFailure(failures) {
 		t.Fatalf("expected require_valid_mi_setting failure for ACM, got %#v", failures)
@@ -64,7 +64,7 @@ func TestEvaluateRulesUnit3DWithoutRuleSetEnforcesMediaInfoSettings(t *testing.T
 }
 
 func TestEvaluateRulesUnit3DAllowsValidMediaInfoSettings(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		ExternalIDs:            api.ExternalIDs{Category: "movie"},
 		ValidMediaInfoSettings: true,
 	}
@@ -77,7 +77,7 @@ func TestEvaluateRulesUnit3DAllowsValidMediaInfoSettings(t *testing.T) {
 func TestEvaluateRulesNonUnit3DOptInMediaInfoSettings(t *testing.T) {
 	// BHD is not a UNIT3D-upload tracker but opts in via its RuleSet, so the
 	// per-tracker flag must still be honored.
-	meta := api.PreparedMetadata{ValidMediaInfoSettings: false}
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true, ValidMediaInfoSettings: false}
 	failures := EvaluateRules(context.Background(), "BHD", meta, nil)
 	if !hasMISettingsFailure(failures) {
 		t.Fatalf("expected require_valid_mi_setting failure for BHD, got %#v", failures)
@@ -85,7 +85,7 @@ func TestEvaluateRulesNonUnit3DOptInMediaInfoSettings(t *testing.T) {
 }
 
 func TestEvaluateRulesLanguageRulePasses(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		AudioLanguages:         []string{"french"},
 		SubtitleLanguages:      nil,
 		ValidMediaInfoSettings: true,
@@ -97,7 +97,7 @@ func TestEvaluateRulesLanguageRulePasses(t *testing.T) {
 }
 
 func TestEvaluateRulesLanguageRuleMissingData(t *testing.T) {
-	meta := api.PreparedMetadata{ValidMediaInfoSettings: true}
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true, ValidMediaInfoSettings: true}
 	failures := EvaluateRules(context.Background(), "TOS", meta, nil)
 	if len(failures) != 1 {
 		t.Fatalf("expected 1 failure, got %#v", failures)
@@ -108,7 +108,7 @@ func TestEvaluateRulesLanguageRuleMissingData(t *testing.T) {
 }
 
 func TestEvaluateRulesLanguageRuleOriginalFallback(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		AudioLanguages:         []string{"Japanese"},
 		SubtitleLanguages:      []string{"English"},
 		ValidMediaInfoSettings: true,
@@ -125,7 +125,7 @@ func TestEvaluateRulesLanguageRuleOriginalFallback(t *testing.T) {
 }
 
 func TestEvaluateRulesLUMERequiresMKVForNonDisc(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		Container:              "mp4",
 		AudioLanguages:         []string{"English"},
 		SubtitleLanguages:      []string{"English"},
@@ -145,7 +145,7 @@ func TestEvaluateRulesLUMERequiresMKVForNonDisc(t *testing.T) {
 }
 
 func TestEvaluateRulesLUMEAllowsMKVForNonDisc(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		Container:              "mkv",
 		AudioLanguages:         []string{"English"},
 		SubtitleLanguages:      []string{"English"},
@@ -159,7 +159,7 @@ func TestEvaluateRulesLUMEAllowsMKVForNonDisc(t *testing.T) {
 }
 
 func TestEvaluateRulesLUMESkipsContainerRuleForDisc(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		DiscType:               "BDMV",
 		Container:              "mp4",
 		ValidMediaInfoSettings: true,
@@ -172,7 +172,7 @@ func TestEvaluateRulesLUMESkipsContainerRuleForDisc(t *testing.T) {
 }
 
 func TestEvaluateRulesPTPRequiresMovieForNonPackTV(t *testing.T) {
-	meta := api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "tv"}}
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true, ExternalIDs: api.ExternalIDs{Category: "tv"}}
 	failures := EvaluateRules(context.Background(), "PTP", meta, nil)
 	if len(failures) != 1 {
 		t.Fatalf("expected 1 failure, got %#v", failures)
@@ -183,7 +183,7 @@ func TestEvaluateRulesPTPRequiresMovieForNonPackTV(t *testing.T) {
 }
 
 func TestEvaluateRulesPTPAllowsTVPacks(t *testing.T) {
-	meta := api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "tv"}, TVPack: true}
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true, ExternalIDs: api.ExternalIDs{Category: "tv"}, TVPack: true}
 	failures := EvaluateRules(context.Background(), "PTP", meta, nil)
 	if len(failures) != 0 {
 		t.Fatalf("expected no failures, got %#v", failures)
@@ -191,7 +191,7 @@ func TestEvaluateRulesPTPAllowsTVPacks(t *testing.T) {
 }
 
 func TestEvaluateRulesANTRequiresMovie(t *testing.T) {
-	meta := api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "tv"}}
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true, ExternalIDs: api.ExternalIDs{Category: "tv"}}
 	failures := EvaluateRules(context.Background(), "ANT", meta, nil)
 	if len(failures) != 1 {
 		t.Fatalf("expected 1 failure, got %#v", failures)
@@ -202,7 +202,7 @@ func TestEvaluateRulesANTRequiresMovie(t *testing.T) {
 }
 
 func TestEvaluateRulesANTAllowsMovie(t *testing.T) {
-	meta := api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "movie"}}
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true, ExternalIDs: api.ExternalIDs{Category: "movie"}}
 	failures := EvaluateRules(context.Background(), "ANT", meta, nil)
 	if len(failures) != 0 {
 		t.Fatalf("expected no failures, got %#v", failures)
@@ -210,7 +210,7 @@ func TestEvaluateRulesANTAllowsMovie(t *testing.T) {
 }
 
 func TestEvaluateRulesBHDRequiresValidMISettings(t *testing.T) {
-	meta := api.PreparedMetadata{ValidMediaInfoSettings: false}
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true, ValidMediaInfoSettings: false}
 	failures := EvaluateRules(context.Background(), "BHD", meta, nil)
 	if len(failures) != 1 {
 		t.Fatalf("expected 1 failure, got %#v", failures)
@@ -331,7 +331,7 @@ func TestEvaluateRulesBHDIgnoresCaseOnlyDistinctAdultMetadata(t *testing.T) {
 func TestEvaluateRulesBHDRejectsInvalidContainerForUploadTypes(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		ValidMediaInfoSettings: true,
 		Type:                   "REMUX",
 		Container:              "avi",
@@ -361,22 +361,22 @@ func TestEvaluateRulesBLUContainerRules(t *testing.T) {
 	}{
 		{
 			name:      "non disc defaults to mkv",
-			meta:      api.PreparedMetadata{Type: "WEBDL", Container: "avi", ValidMediaInfoSettings: true},
+			meta:      api.PreparedMetadata{ValidMediaInfoTracks: true, Type: "WEBDL", Container: "avi", ValidMediaInfoSettings: true},
 			wantBlock: true,
 		},
 		{
 			name:      "hdtv allows ts",
-			meta:      api.PreparedMetadata{Type: "HDTV", Container: "ts", ValidMediaInfoSettings: true},
+			meta:      api.PreparedMetadata{ValidMediaInfoTracks: true, Type: "HDTV", Container: "ts", ValidMediaInfoSettings: true},
 			wantBlock: false,
 		},
 		{
 			name:      "dolby vision webdl allows mp4",
-			meta:      api.PreparedMetadata{Type: "WEBDL", Container: "mp4", WebDV: true, ValidMediaInfoSettings: true},
+			meta:      api.PreparedMetadata{ValidMediaInfoTracks: true, Type: "WEBDL", Container: "mp4", WebDV: true, ValidMediaInfoSettings: true},
 			wantBlock: false,
 		},
 		{
 			name:      "disc skips container rule",
-			meta:      api.PreparedMetadata{DiscType: "BDMV", Type: "WEBDL", Container: "avi", ValidMediaInfoSettings: true},
+			meta:      api.PreparedMetadata{ValidMediaInfoTracks: true, DiscType: "BDMV", Type: "WEBDL", Container: "avi", ValidMediaInfoSettings: true},
 			wantBlock: false,
 		},
 	}
@@ -397,7 +397,7 @@ func TestEvaluateRulesBLUContainerRules(t *testing.T) {
 }
 
 func TestEvaluateRulesNBLRequiresTV(t *testing.T) {
-	meta := api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "movie"}}
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true, ExternalIDs: api.ExternalIDs{Category: "movie"}}
 	failures := EvaluateRules(context.Background(), "NBL", meta, nil)
 	if len(failures) != 2 {
 		t.Fatalf("expected 2 failures, got %#v", failures)
@@ -408,7 +408,7 @@ func TestEvaluateRulesNBLRequiresTV(t *testing.T) {
 }
 
 func TestEvaluateRulesNBLAllowsTV(t *testing.T) {
-	meta := api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "tv"}}
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true, ExternalIDs: api.ExternalIDs{Category: "tv"}}
 	failures := EvaluateRules(context.Background(), "NBL", meta, nil)
 	if len(failures) != 1 {
 		t.Fatalf("expected 1 failure because language data is missing, got %#v", failures)
@@ -419,7 +419,7 @@ func TestEvaluateRulesNBLAllowsTV(t *testing.T) {
 }
 
 func TestEvaluateRulesNBLAllowsTVWithOriginalAudioAndEnglishSubs(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		ExternalIDs:       api.ExternalIDs{Category: "tv"},
 		DiscType:          "",
 		AudioLanguages:    []string{"Japanese"},
@@ -435,7 +435,7 @@ func TestEvaluateRulesNBLAllowsTVWithOriginalAudioAndEnglishSubs(t *testing.T) {
 }
 
 func TestEvaluateRulesNBLSkipsLanguageRuleForBDMVOnly(t *testing.T) {
-	bdmv := api.PreparedMetadata{
+	bdmv := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		ExternalIDs: api.ExternalIDs{Category: "tv"},
 		DiscType:    "BDMV",
 	}
@@ -443,7 +443,7 @@ func TestEvaluateRulesNBLSkipsLanguageRuleForBDMVOnly(t *testing.T) {
 		t.Fatalf("expected BDMV to skip NBL language rule, got %#v", failures)
 	}
 
-	dvd := api.PreparedMetadata{
+	dvd := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		ExternalIDs: api.ExternalIDs{Category: "tv"},
 		DiscType:    "DVD",
 	}
@@ -459,7 +459,7 @@ func TestEvaluateRulesNBLSkipsLanguageRuleForBDMVOnly(t *testing.T) {
 func TestEvaluateRulesDPDoesNotSpecialCaseFGTEncodes(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		Tag:               "-FGT",
 		Type:              "ENCODE",
 		AudioLanguages:    []string{"English"},
@@ -476,7 +476,7 @@ func TestEvaluateRulesDPDoesNotSpecialCaseFGTEncodes(t *testing.T) {
 func TestEvaluateRulesRHDRequiresGermanAudio(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		AudioLanguages:         []string{"English"},
 		Release:                api.ReleaseInfo{Resolution: "1080p"},
 		ValidMediaInfoSettings: true,
@@ -493,7 +493,7 @@ func TestEvaluateRulesRHDRequiresGermanAudio(t *testing.T) {
 func TestEvaluateRulesRHDAllowsGermanAudio(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		AudioLanguages:         []string{"German"},
 		Release:                api.ReleaseInfo{Resolution: "1080p"},
 		ValidMediaInfoSettings: true,
@@ -507,7 +507,7 @@ func TestEvaluateRulesRHDAllowsGermanAudio(t *testing.T) {
 func TestEvaluateRulesRHDRequiresGermanAudioForDisc(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		Type:                   "DISC",
 		DiscType:               "BDMV",
 		AudioLanguages:         []string{"English"},
@@ -526,7 +526,7 @@ func TestEvaluateRulesRHDRequiresGermanAudioForDisc(t *testing.T) {
 func TestEvaluateRulesRHDAllowsGermanAudioForDisc(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		Type:                   "DISC",
 		DiscType:               "BDMV",
 		AudioLanguages:         []string{"German"},
@@ -542,7 +542,7 @@ func TestEvaluateRulesRHDAllowsGermanAudioForDisc(t *testing.T) {
 func TestEvaluateRulesRHDRequiresSceneNFO(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		Scene:                  true,
 		AudioLanguages:         []string{"German"},
 		Release:                api.ReleaseInfo{Resolution: "1080p"},
@@ -560,7 +560,7 @@ func TestEvaluateRulesRHDRequiresSceneNFO(t *testing.T) {
 func TestEvaluateRulesRHDAllowsNonSceneWithoutNFO(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		AudioLanguages: []string{"German"},
 		Release:        api.ReleaseInfo{Resolution: "1080p"},
 	}
@@ -575,7 +575,7 @@ func TestEvaluateRulesRHDAllowsNonSceneWithoutNFO(t *testing.T) {
 func TestEvaluateRulesTOSRequiresSceneNFO(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		Scene:                  true,
 		AudioLanguages:         []string{"French"},
 		ValidMediaInfoSettings: true,
@@ -590,7 +590,7 @@ func TestEvaluateRulesTOSRequiresSceneNFO(t *testing.T) {
 }
 
 func TestEvaluateRulesAitherRequiresLanguageForNonDisc(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		DiscType:               "",
 		ValidMediaInfo:         true,
 		ValidMediaInfoSettings: true,
@@ -610,7 +610,7 @@ func TestEvaluateRulesAitherRequiresLanguageForNonDisc(t *testing.T) {
 }
 
 func TestEvaluateRulesA4KSkipsLanguageRuleForDisc(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		DiscType:               "BDMV",
 		ValidMediaInfoSettings: true,
 	}
@@ -621,7 +621,7 @@ func TestEvaluateRulesA4KSkipsLanguageRuleForDisc(t *testing.T) {
 }
 
 func TestEvaluateRulesLSTRequiresValidMIAndLanguage(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		DiscType:               "",
 		ValidMediaInfoSettings: false,
 	}
@@ -648,11 +648,11 @@ func hasRuleFailure(failures []api.RuleFailure, rule string) bool {
 func TestEvaluateRulesModifiedReleaseAcrossFamilies(t *testing.T) {
 	t.Parallel()
 
-	renamed := api.PreparedMetadata{
+	renamed := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		SourcePath: "/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5 1 HDR H 265-GRP",
 		Release:    api.ReleaseInfo{Group: "GRP"},
 	}
-	clean := api.PreparedMetadata{
+	clean := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		SourcePath: "/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP",
 		Release:    api.ReleaseInfo{Group: "GRP"},
 	}
@@ -685,7 +685,7 @@ func TestEvaluateRulesModifiedReleaseAcrossFamilies(t *testing.T) {
 func TestEvaluateRulesPreservesNilForTrackerWithoutFailures(t *testing.T) {
 	t.Parallel()
 
-	clean := api.PreparedMetadata{
+	clean := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		SourcePath: "/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP",
 		Release:    api.ReleaseInfo{Group: "GRP"},
 	}
@@ -698,7 +698,7 @@ func TestEvaluateRulesPreservesNilForTrackerWithoutFailures(t *testing.T) {
 func TestEvaluateRulesModifiedReleaseExemptsManual(t *testing.T) {
 	t.Parallel()
 
-	renamed := api.PreparedMetadata{
+	renamed := api.PreparedMetadata{ValidMediaInfoTracks: true,
 		SourcePath: "/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5 1 HDR H 265-GRP",
 		Release:    api.ReleaseInfo{Group: "GRP"},
 	}

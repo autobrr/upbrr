@@ -58,6 +58,12 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 		s.logger.Debugf("metadata: media languages audio=%v subs=%v", meta.AudioLanguages, meta.SubtitleLanguages)
 	}
 
+	meta.ValidMediaInfoTracks = true
+	_, videoTracks, audioTracks := splitMediaInfoTracks(miDoc)
+	if len(videoTracks) == 0 && len(audioTracks) == 0 && !strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") && meta.MediaInfoJSONPath != "" {
+		meta.ValidMediaInfoTracks = false
+	}
+
 	bdinfo := loadBDInfo(meta, s.cfg.MainSettings.DBPath)
 
 	meta.Container = containerFromMeta(meta)

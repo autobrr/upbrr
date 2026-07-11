@@ -1005,7 +1005,7 @@ func TestPrintMetadataPreviewShowsRichReleaseDetails(t *testing.T) {
 				Rating:       7.9,
 				RatingCount:  1200,
 			}},
-		}, true)
+		}, true, nil)
 	})
 
 	for _, expected := range []string{
