@@ -404,6 +404,12 @@ func mergeStoredConfigMapWithReport(base map[string]any, overlay map[string]any,
 
 	overlayKeys := make([]string, 0, len(overlay))
 	for key := range overlay {
+		if shouldDiscardStoredTrackerField(path, key, overlay) {
+			invalidPath := configMapPath(path, key)
+			report.invalidPaths = append(report.invalidPaths, invalidPath)
+			report.markChanged(invalidPath)
+			continue
+		}
 		overlayKeys = append(overlayKeys, key)
 	}
 	sort.Strings(overlayKeys)
@@ -547,6 +553,41 @@ func trackerFieldConfigMapKey(values map[string]any, key string) (string, bool, 
 	}
 }
 
+// shouldDiscardStoredTrackerField reports a schema-known field from a folded
+// collision group that cannot apply to this tracker. Older saves could emit
+// every TrackerConfig field, including APIKey and PTP-only ApiKey, for unknown
+// trackers. A lone case alias remains eligible for legacy normalization.
+func shouldDiscardStoredTrackerField(path string, key string, values map[string]any) bool {
+	const trackerPathPrefix = "Trackers.Trackers."
+	trackerName, ok := strings.CutPrefix(path, trackerPathPrefix)
+	if !ok || trackerName == "" || strings.Contains(trackerName, ".") {
+		return false
+	}
+	allowed := trackerAllowedJSONKeys(trackerName)
+	if len(allowed) == 0 {
+		return false
+	}
+	initTrackerTagMetadata()
+	if _, known := trackerKnownJSONKeys[key]; !known {
+		return false
+	}
+	if _, valid := allowed[key]; valid {
+		return false
+	}
+	hasKnownFoldPeer := false
+	for knownKey := range trackerKnownJSONKeys {
+		if knownKey == key || !asciiEqualFold(knownKey, key) {
+			continue
+		}
+		hasKnownFoldPeer = true
+		if _, valid := allowed[knownKey]; valid {
+			_, exactAllowedPresent := values[knownKey]
+			return exactAllowedPresent
+		}
+	}
+	return hasKnownFoldPeer
+}
+
 // validateStoredOverlayKeys rejects duplicate stored keys that would fold into
 // the same tracker name or tracker field before mutation starts.
 func validateStoredOverlayKeys(base map[string]any, keys []string, path string) error {
@@ -676,6 +717,9 @@ func mergeStoredUnknownConfigValues(current, stored any, path string) error {
 		return nil
 	}
 	for key, storedValue := range storedMap {
+		if shouldDiscardStoredTrackerField(path, key, storedMap) {
+			continue
+		}
 		currentKey, currentValue, exists, err := storedUnknownConfigMergeTarget(currentMap, key, path)
 		if err != nil {
 			return err
