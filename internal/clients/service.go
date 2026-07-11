@@ -4,10 +4,13 @@
 package clients
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -34,7 +37,43 @@ type Service struct {
 const (
 	qbitInjectHTTPTimeout       = 30 * time.Second
 	qbitInjectHTTPRetryAttempts = 1
+	qbitLoginResponseMaxBytes   = 4 << 10
 )
+
+// qbitLoginValidatingTransport verifies direct qBittorrent login responses
+// before net/http can persist response cookies in the client's jar.
+type qbitLoginValidatingTransport struct {
+	base http.RoundTripper
+}
+
+// RoundTrip requires the exact qBittorrent success body for HTTP 200 login
+// responses. It bounds the body read and restores valid bodies for LoginCtx.
+func (t qbitLoginValidatingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		return nil, fmt.Errorf("qbit HTTP request: %w", err)
+	}
+	if !strings.HasSuffix(req.URL.Path, "/api/v2/auth/login") || resp.StatusCode != http.StatusOK {
+		return resp, nil
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, qbitLoginResponseMaxBytes+1))
+	if err != nil {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("read qbit login response: %w", err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		return nil, fmt.Errorf("close qbit login response: %w", err)
+	}
+	if len(body) > qbitLoginResponseMaxBytes {
+		return nil, errors.New("qbit login response exceeds limit")
+	}
+	if string(body) != "Ok." {
+		return nil, errors.New("qbit login response was not successful")
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	return resp, nil
+}
 
 func NewService(cfg config.Config, logger api.Logger) *Service {
 	if logger == nil {
@@ -276,6 +315,14 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	}
 
 	qbit := qbittorrent.NewClient(qbitInjectClientConfig(host, username, password, client))
+	qbitHTTP := qbit.GetHTTPClient()
+	baseTransport := qbitHTTP.Transport
+	if baseTransport == nil {
+		baseTransport = http.DefaultTransport
+	}
+	// The transport sees the response before http.Client stores Set-Cookie
+	// values, so a transient body cannot create an authenticated session.
+	qbitHTTP.Transport = qbitLoginValidatingTransport{base: baseTransport}
 
 	options := qbittorrent.TorrentAddOptions{}
 	s.logger.Debugf("clients: preparing qbit add options client=%s tracker=%s cross_seed=%t", name, strings.TrimSpace(torrent.Tracker), torrent.CrossSeed)
@@ -286,7 +333,7 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	}
 	// Linked staging is checked by qBittorrent after add so a successful API
 	// response cannot mask a metainfo/content mismatch as a seeded torrent.
-	options.SkipHashCheck = !staging.Linked
+	options.SkipHashCheck = !staging.Linked && !staging.HashCheckRequired
 	if staging.Linked {
 		options.SavePath = staging.SavePath
 		s.logger.Debugf("clients: qbit link staging selected client=%s tracker=%s files=%d layout_validated=%t save_path=%s", name, strings.TrimSpace(torrent.Tracker), staging.FileCount, staging.LayoutValidated, staging.SavePath)
@@ -317,7 +364,9 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	autoManagement := !staging.Linked && qbitAutomaticManagementEnabled(meta, client.AutomaticManagementPaths)
 	addOptions := options.Prepare()
 	addOptions["autoTMM"] = strconv.FormatBool(autoManagement)
-	if staging.Linked {
+	// go-qbittorrent omits skip_checking when SkipHashCheck is false, so states
+	// that require verification must send the false value explicitly.
+	if staging.Linked || staging.HashCheckRequired {
 		addOptions["skip_checking"] = "false"
 	}
 	s.logger.Debugf("clients: qbit add options ready client=%s auto_tmm=%t skip_hash_check=%t elapsed=%s", name, autoManagement, options.SkipHashCheck, time.Since(optionsStart).Round(time.Millisecond))
@@ -362,8 +411,9 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 
 // qbitAutomaticManagementEnabled reports whether the original local save path
 // is a configured automatic-management root or one of its descendants after
-// case-insensitive host path normalization. Linked staging is excluded by the
-// caller.
+// trimming and filepath cleaning. Containment uses host semantics: Windows
+// comparisons ignore case, while case-sensitive systems preserve it. Linked
+// staging is excluded by the caller.
 func qbitAutomaticManagementEnabled(meta api.PreparedMetadata, configuredPaths config.StringList) bool {
 	if len(configuredPaths) == 0 {
 		return false
@@ -373,13 +423,13 @@ func qbitAutomaticManagementEnabled(meta api.PreparedMetadata, configuredPaths c
 	if err != nil {
 		return false
 	}
-	localSavePath := strings.ToLower(filepath.Clean(filepath.Dir(source)))
+	localSavePath := filepath.Clean(filepath.Dir(source))
 	for _, configuredPath := range configuredPaths {
 		configuredPath = strings.TrimSpace(configuredPath)
 		if configuredPath == "" {
 			continue
 		}
-		configuredPath = strings.ToLower(filepath.Clean(configuredPath))
+		configuredPath = filepath.Clean(configuredPath)
 		if pathutil.IsWithinRoot(configuredPath, localSavePath) {
 			return true
 		}

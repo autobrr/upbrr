@@ -49,13 +49,24 @@ type sourceLinkCandidate struct {
 
 // buildTorrentLinkPlan parses the final torrent artifact and maps every
 // non-padding metainfo file to one unique regular source file. Destination
-// paths preserve the torrent root and internal file layout.
-func buildTorrentLinkPlan(torrentPath string, meta api.PreparedMetadata) (torrentLinkPlan, error) {
+// paths preserve the torrent root and internal file layout. It checks ctx
+// around metainfo processing and during source discovery and matching, returning
+// an error that wraps the context error when canceled.
+func buildTorrentLinkPlan(ctx context.Context, torrentPath string, meta api.PreparedMetadata) (torrentLinkPlan, error) {
+	if err := torrentLinkPlanContextError(ctx); err != nil {
+		return torrentLinkPlan{}, err
+	}
 	torrentMeta, err := metainfo.LoadFromFile(torrentPath)
+	if err := torrentLinkPlanContextError(ctx); err != nil {
+		return torrentLinkPlan{}, err
+	}
 	if err != nil {
 		return torrentLinkPlan{}, fmt.Errorf("load injected torrent metainfo: %w", err)
 	}
 	info, err := torrentMeta.UnmarshalInfo()
+	if err := torrentLinkPlanContextError(ctx); err != nil {
+		return torrentLinkPlan{}, err
+	}
 	if err != nil {
 		return torrentLinkPlan{}, fmt.Errorf("decode injected torrent info: %w", err)
 	}
@@ -63,7 +74,7 @@ func buildTorrentLinkPlan(torrentPath string, meta api.PreparedMetadata) (torren
 	if err != nil {
 		return torrentLinkPlan{}, fmt.Errorf("injected torrent root: %w", err)
 	}
-	candidates, err := sourceLinkCandidates(meta)
+	candidates, err := sourceLinkCandidates(ctx, meta)
 	if err != nil {
 		return torrentLinkPlan{}, err
 	}
@@ -73,6 +84,9 @@ func buildTorrentLinkPlan(torrentPath string, meta api.PreparedMetadata) (torren
 
 	plan := torrentLinkPlan{root: root, torrentIsMulti: info.IsDir()}
 	for _, torrentFile := range info.UpvertedFiles() {
+		if err := torrentLinkPlanContextError(ctx); err != nil {
+			return torrentLinkPlan{}, err
+		}
 		if strings.Contains(torrentFile.Attr, "p") {
 			plan.paddingFiles++
 			continue
@@ -87,7 +101,7 @@ func buildTorrentLinkPlan(torrentPath string, meta api.PreparedMetadata) (torren
 			torrentRel = filepath.Join(components...)
 			destRel = filepath.Join(append([]string{root}, components...)...)
 		}
-		candidate, match, err := matchSourceLinkCandidate(candidates, torrentRel, torrentFile.Length)
+		candidate, match, err := matchSourceLinkCandidate(ctx, candidates, torrentRel, torrentFile.Length)
 		if err != nil {
 			return torrentLinkPlan{}, fmt.Errorf("map injected torrent file %q: %w", filepath.ToSlash(torrentRel), err)
 		}
@@ -101,12 +115,20 @@ func buildTorrentLinkPlan(torrentPath string, meta api.PreparedMetadata) (torren
 	if len(plan.files) == 0 {
 		return torrentLinkPlan{}, errors.New("injected torrent has no non-padding files")
 	}
+	if err := torrentLinkPlanContextError(ctx); err != nil {
+		return torrentLinkPlan{}, err
+	}
 	return plan, nil
 }
 
 // sourceLinkCandidates enumerates regular files below the prepared source path.
-// Single-file sources produce one candidate; directory sources are walked recursively.
-func sourceLinkCandidates(meta api.PreparedMetadata) ([]sourceLinkCandidate, error) {
+// Single-file sources produce one candidate; directory sources are walked
+// recursively. It checks ctx around filesystem operations and on every walk
+// callback, returning a wrapped context error when canceled.
+func sourceLinkCandidates(ctx context.Context, meta api.PreparedMetadata) ([]sourceLinkCandidate, error) {
+	if err := torrentLinkPlanContextError(ctx); err != nil {
+		return nil, err
+	}
 	source := strings.TrimSpace(meta.SourcePath)
 	if source == "" {
 		return nil, errors.New("source path is required for torrent link staging")
@@ -115,7 +137,13 @@ func sourceLinkCandidates(meta api.PreparedMetadata) ([]sourceLinkCandidate, err
 	if err != nil {
 		return nil, err
 	}
+	if err := torrentLinkPlanContextError(ctx); err != nil {
+		return nil, err
+	}
 	sourceInfo, err := os.Stat(sourceAbs)
+	if err := torrentLinkPlanContextError(ctx); err != nil {
+		return nil, err
+	}
 	if err != nil {
 		return nil, fmt.Errorf("stat torrent link source: %w", err)
 	}
@@ -123,11 +151,17 @@ func sourceLinkCandidates(meta api.PreparedMetadata) ([]sourceLinkCandidate, err
 	candidates := make([]sourceLinkCandidate, 0, max(1, len(meta.FileList)))
 	seen := make(map[string]struct{})
 	add := func(path string, rel string) error {
+		if err := torrentLinkPlanContextError(ctx); err != nil {
+			return err
+		}
 		pathAbs, err := absLocalPath("torrent link candidate", path)
 		if err != nil {
 			return err
 		}
 		info, err := os.Stat(pathAbs)
+		if err := torrentLinkPlanContextError(ctx); err != nil {
+			return err
+		}
 		if err != nil {
 			return fmt.Errorf("stat torrent link candidate: %w", err)
 		}
@@ -159,6 +193,9 @@ func sourceLinkCandidates(meta api.PreparedMetadata) ([]sourceLinkCandidate, err
 	}
 
 	if err := filepath.WalkDir(sourceAbs, func(path string, entry fs.DirEntry, walkErr error) error {
+		if err := torrentLinkPlanContextError(ctx); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return fmt.Errorf("walk torrent link source: %w", walkErr)
 		}
@@ -173,13 +210,26 @@ func sourceLinkCandidates(meta api.PreparedMetadata) ([]sourceLinkCandidate, err
 	}); err != nil {
 		return nil, fmt.Errorf("walk torrent link candidates: %w", err)
 	}
+	if err := torrentLinkPlanContextError(ctx); err != nil {
+		return nil, err
+	}
 	return candidates, nil
 }
 
 // matchSourceLinkCandidate selects one unused file by path and size, then name
 // and size, then unique size. Ambiguous or absent matches return an error rather
-// than risk staging the wrong content.
-func matchSourceLinkCandidate(candidates []sourceLinkCandidate, torrentRel string, length int64) (*sourceLinkCandidate, string, error) {
+// than risk staging the wrong content. Path and name matching follows host case
+// semantics, and size-only matching cannot revive a rejected case-only match.
+// It stops scanning and returns a wrapped context error when ctx is canceled.
+func matchSourceLinkCandidate(ctx context.Context, candidates []sourceLinkCandidate, torrentRel string, length int64) (*sourceLinkCandidate, string, error) {
+	return matchSourceLinkCandidateWithCaseFold(ctx, candidates, torrentRel, length, runtime.GOOS == "windows")
+}
+
+// matchSourceLinkCandidateWithCaseFold applies the matcher with explicit case
+// semantics so host-independent tests can prove Windows and non-Windows rules.
+func matchSourceLinkCandidateWithCaseFold(ctx context.Context, candidates []sourceLinkCandidate, torrentRel string, length int64, foldCase bool) (*sourceLinkCandidate, string, error) {
+	torrentRel = filepath.Clean(torrentRel)
+	torrentName := filepath.Base(torrentRel)
 	checks := []struct {
 		name  string
 		match func(sourceLinkCandidate) bool
@@ -187,25 +237,31 @@ func matchSourceLinkCandidate(candidates []sourceLinkCandidate, torrentRel strin
 		{
 			name: "path_size",
 			match: func(candidate sourceLinkCandidate) bool {
-				return candidate.size == length && strings.EqualFold(filepath.Clean(candidate.rel), filepath.Clean(torrentRel))
+				return candidate.size == length && sourceLinkPathEqual(filepath.Clean(candidate.rel), torrentRel, foldCase)
 			},
 		},
 		{
 			name: "name_size",
 			match: func(candidate sourceLinkCandidate) bool {
-				return candidate.size == length && strings.EqualFold(candidate.name, filepath.Base(torrentRel))
+				return candidate.size == length && sourceLinkPathEqual(candidate.name, torrentName, foldCase)
 			},
 		},
 		{
 			name: "unique_size",
 			match: func(candidate sourceLinkCandidate) bool {
-				return candidate.size == length
+				return candidate.size == length && !sourceLinkCaseOnlyMismatch(candidate, torrentRel, torrentName, foldCase)
 			},
 		},
 	}
 	for _, check := range checks {
+		if err := torrentLinkPlanContextError(ctx); err != nil {
+			return nil, "", err
+		}
 		matched := -1
 		for index := range candidates {
+			if err := torrentLinkPlanContextError(ctx); err != nil {
+				return nil, "", err
+			}
 			if candidates[index].used || !check.match(candidates[index]) {
 				continue
 			}
@@ -224,6 +280,36 @@ func matchSourceLinkCandidate(candidates []sourceLinkCandidate, torrentRel strin
 		}
 	}
 	return nil, "", fmt.Errorf("no unique source match with length=%d", length)
+}
+
+// sourceLinkPathEqual compares a candidate path or name using the selected host
+// case semantics.
+func sourceLinkPathEqual(left string, right string, foldCase bool) bool {
+	if foldCase {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
+}
+
+// sourceLinkCaseOnlyMismatch reports whether a candidate differs only by case.
+// Such candidates cannot bypass case-sensitive rejection via unique-size match.
+func sourceLinkCaseOnlyMismatch(candidate sourceLinkCandidate, torrentRel string, torrentName string, foldCase bool) bool {
+	if foldCase {
+		return false
+	}
+	candidateRel := filepath.Clean(candidate.rel)
+	relMismatch := candidateRel != torrentRel && strings.EqualFold(candidateRel, torrentRel)
+	nameMismatch := candidate.name != torrentName && strings.EqualFold(candidate.name, torrentName)
+	return relMismatch || nameMismatch
+}
+
+// torrentLinkPlanContextError returns nil while ctx is active or an error that
+// wraps ctx.Err after cancellation.
+func torrentLinkPlanContextError(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("torrent link planning canceled: %w", err)
+	}
+	return nil
 }
 
 // safeTorrentLinkPath validates metainfo components before they become a local
@@ -254,24 +340,53 @@ func safeTorrentLinkComponent(value string) (string, error) {
 }
 
 // createTorrentLinkPlan materializes a metainfo-shaped staging tree and checks
-// that every destination is a regular file with the declared length. qBittorrent
-// performs the subsequent piece hash check during injection.
+// that every destination is a regular file with the declared length. On failure
+// it removes links created by the current attempt while preserving pre-existing
+// destinations. qBittorrent performs the subsequent piece hash check.
 func createTorrentLinkPlan(ctx context.Context, trackerDir string, plan torrentLinkPlan, mode string) error {
+	created := make([]string, 0, len(plan.files))
 	for _, file := range plan.files {
 		dest := filepath.Join(trackerDir, file.destRel)
 		if !pathutil.IsWithinRoot(trackerDir, dest) {
-			return errors.New("torrent link destination escapes tracker directory")
+			return rollbackTorrentLinkPlan(trackerDir, created, errors.New("torrent link destination escapes tracker directory"))
+		}
+		destExisted, err := pathExists(dest)
+		if err != nil {
+			return rollbackTorrentLinkPlan(trackerDir, created, fmt.Errorf("stat staged torrent file: %w", err))
 		}
 		if err := createLinkTree(ctx, file.sourcePath, dest, mode); err != nil {
-			return fmt.Errorf("create metainfo-shaped %s link: %w", mode, err)
+			return rollbackTorrentLinkPlan(trackerDir, created, fmt.Errorf("create metainfo-shaped %s link: %w", mode, err))
+		}
+		if !destExisted {
+			created = append(created, dest)
 		}
 		info, err := os.Stat(dest)
 		if err != nil {
-			return fmt.Errorf("validate staged torrent file: %w", err)
+			return rollbackTorrentLinkPlan(trackerDir, created, fmt.Errorf("validate staged torrent file: %w", err))
 		}
 		if !info.Mode().IsRegular() || info.Size() != file.length {
-			return fmt.Errorf("staged torrent file size mismatch: expected=%d actual=%d", file.length, info.Size())
+			return rollbackTorrentLinkPlan(trackerDir, created, fmt.Errorf("staged torrent file size mismatch: expected=%d actual=%d", file.length, info.Size()))
 		}
 	}
 	return nil
+}
+
+// rollbackTorrentLinkPlan removes created links in reverse order and combines
+// cleanup failures with the original plan error.
+func rollbackTorrentLinkPlan(trackerDir string, created []string, planErr error) error {
+	var rollbackErrs []error
+	for i := len(created) - 1; i >= 0; i-- {
+		dest := created[i]
+		if !pathutil.IsWithinRoot(trackerDir, dest) {
+			rollbackErrs = append(rollbackErrs, errors.New("torrent link rollback destination escapes tracker directory"))
+			continue
+		}
+		if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
+			rollbackErrs = append(rollbackErrs, fmt.Errorf("remove staged torrent link: %w", err))
+		}
+	}
+	if len(rollbackErrs) == 0 {
+		return planErr
+	}
+	return fmt.Errorf("rollback failed: %w", errors.Join(append([]error{planErr}, rollbackErrs...)...))
 }

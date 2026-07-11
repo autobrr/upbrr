@@ -5,6 +5,7 @@ package clients
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -101,7 +102,7 @@ func TestBuildTorrentLinkPlanUsesInjectedSingleFileName(t *testing.T) {
 	torrentPath := filepath.Join(root, "renamed.torrent")
 	writeQbitTestTorrent(t, torrentPath, "Tracker.Name.2026.mkv", map[string]string{"source": source}, false)
 
-	plan, err := buildTorrentLinkPlan(torrentPath, api.PreparedMetadata{SourcePath: source, FileList: []string{source}})
+	plan, err := buildTorrentLinkPlan(context.Background(), torrentPath, api.PreparedMetadata{SourcePath: source, FileList: []string{source}})
 	if err != nil {
 		t.Fatalf("build plan: %v", err)
 	}
@@ -126,7 +127,7 @@ func TestBuildTorrentLinkPlanUsesInjectedMultiFileLayout(t *testing.T) {
 		filepath.Join("Feature", "Tracker.Name.2026.mkv"): source,
 	}, true)
 
-	plan, err := buildTorrentLinkPlan(torrentPath, api.PreparedMetadata{SourcePath: sourceRoot, FileList: []string{source}})
+	plan, err := buildTorrentLinkPlan(context.Background(), torrentPath, api.PreparedMetadata{SourcePath: sourceRoot, FileList: []string{source}})
 	if err != nil {
 		t.Fatalf("build plan: %v", err)
 	}
@@ -154,6 +155,50 @@ func TestBuildTorrentLinkPlanUsesInjectedMultiFileLayout(t *testing.T) {
 	}
 }
 
+func TestCreateTorrentLinkPlanRollsBackCreatedLinksUnderExistingRoot(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	trackerDir := filepath.Join(root, "links", "EXAMPLE")
+	planRoot := filepath.Join(trackerDir, "Example.Release.2026")
+	if err := os.MkdirAll(planRoot, 0o700); err != nil {
+		t.Fatalf("mkdir existing plan root: %v", err)
+	}
+	firstSource := filepath.Join(root, "first.mkv")
+	secondSource := filepath.Join(root, "second.mkv")
+	for _, source := range []string{firstSource, secondSource} {
+		if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
+			t.Fatalf("write source: %v", err)
+		}
+	}
+	staleDest := filepath.Join(planRoot, "second.mkv")
+	if err := os.WriteFile(staleDest, []byte("stale"), 0o600); err != nil {
+		t.Fatalf("write stale destination: %v", err)
+	}
+
+	plan := torrentLinkPlan{
+		root: "Example.Release.2026",
+		files: []torrentLinkFile{
+			{sourcePath: firstSource, destRel: filepath.Join("Example.Release.2026", "first.mkv"), length: 5},
+			{sourcePath: secondSource, destRel: filepath.Join("Example.Release.2026", "second.mkv"), length: 5},
+		},
+		torrentIsMulti: true,
+	}
+	if err := createTorrentLinkPlan(context.Background(), trackerDir, plan, "hardlink"); err == nil {
+		t.Fatal("expected stale destination to fail link plan")
+	}
+	if _, err := os.Stat(filepath.Join(planRoot, "first.mkv")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected failed attempt to remove its created link, stat err=%v", err)
+	}
+	stale, err := os.ReadFile(staleDest)
+	if err != nil {
+		t.Fatalf("read stale destination: %v", err)
+	}
+	if string(stale) != "stale" {
+		t.Fatal("expected rollback to preserve pre-existing destination")
+	}
+}
+
 func TestBuildTorrentLinkPlanRejectsAmbiguousSizeOnlyMatch(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -171,9 +216,119 @@ func TestBuildTorrentLinkPlanRejectsAmbiguousSizeOnlyMatch(t *testing.T) {
 	torrentPath := filepath.Join(root, "ambiguous.torrent")
 	writeQbitTestTorrent(t, torrentPath, "Renamed.mkv", map[string]string{"source": first}, false)
 
-	_, err := buildTorrentLinkPlan(torrentPath, api.PreparedMetadata{SourcePath: sourceRoot})
+	_, err := buildTorrentLinkPlan(context.Background(), torrentPath, api.PreparedMetadata{SourcePath: sourceRoot})
 	if err == nil || !strings.Contains(err.Error(), "no unique source match") {
 		t.Fatalf("expected ambiguous source mapping error")
+	}
+}
+
+func TestMatchSourceLinkCandidateUsesHostCaseSemantics(t *testing.T) {
+	t.Parallel()
+
+	t.Run("exact case", func(t *testing.T) {
+		candidates := []sourceLinkCandidate{{
+			path: "exact",
+			rel:  filepath.Join("Feature", "Example.Release.2026.mkv"),
+			name: "Example.Release.2026.mkv",
+			size: 5,
+		}}
+		candidate, match, err := matchSourceLinkCandidateWithCaseFold(
+			context.Background(),
+			candidates,
+			filepath.Join("Feature", "Example.Release.2026.mkv"),
+			5,
+			false,
+		)
+		if err != nil {
+			t.Fatalf("match exact-case candidate: %v", err)
+		}
+		if candidate.path != "exact" || match != "path_size" {
+			t.Fatal("expected exact-case path match")
+		}
+	})
+
+	t.Run("case-only mismatch", func(t *testing.T) {
+		candidates := []sourceLinkCandidate{{
+			path: "case-only",
+			rel:  filepath.Join("Feature", "Example.Release.2026.mkv"),
+			name: "Example.Release.2026.mkv",
+			size: 5,
+		}}
+		candidate, match, err := matchSourceLinkCandidateWithCaseFold(
+			context.Background(),
+			candidates,
+			filepath.Join("feature", "example.release.2026.mkv"),
+			5,
+			false,
+		)
+		if err == nil {
+			t.Fatal("expected case-only mismatch rejection on case-sensitive host")
+		}
+		if candidate != nil || match != "" {
+			t.Fatal("expected rejected case-only candidate without a match")
+		}
+	})
+
+	t.Run("Windows case folding", func(t *testing.T) {
+		candidates := []sourceLinkCandidate{{
+			path: "case-only",
+			rel:  filepath.Join("Feature", "Example.Release.2026.mkv"),
+			name: "Example.Release.2026.mkv",
+			size: 5,
+		}}
+		candidate, match, err := matchSourceLinkCandidateWithCaseFold(
+			context.Background(),
+			candidates,
+			filepath.Join("feature", "example.release.2026.mkv"),
+			5,
+			true,
+		)
+		if err != nil {
+			t.Fatalf("match Windows case-folded candidate: %v", err)
+		}
+		if candidate.path != "case-only" || match != "path_size" {
+			t.Fatal("expected Windows case-folded path match")
+		}
+	})
+
+	t.Run("true rename keeps unique-size fallback", func(t *testing.T) {
+		candidates := []sourceLinkCandidate{{
+			path: "renamed",
+			rel:  "Original.Name.2026.mkv",
+			name: "Original.Name.2026.mkv",
+			size: 5,
+		}}
+		candidate, match, err := matchSourceLinkCandidateWithCaseFold(context.Background(), candidates, "Tracker.Name.2026.mkv", 5, false)
+		if err != nil {
+			t.Fatalf("match renamed candidate: %v", err)
+		}
+		if candidate.path != "renamed" || match != "unique_size" {
+			t.Fatal("expected renamed unique-size match")
+		}
+	})
+}
+
+func TestPrepareLinkStagingReturnsPlannerCancellation(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	source := filepath.Join(root, "Example.Release.2026.mkv")
+	if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	service := NewService(config.Config{}, nil)
+	_, err := service.prepareLinkStaging(ctx, "qbit", config.TorrentClientConfig{
+		Linking:      "hardlink",
+		LinkedFolder: config.StringList{filepath.Join(root, "links")},
+	}, api.PreparedMetadata{
+		SourcePath: source,
+		FileList:   []string{source},
+	}, api.TorrentResult{Path: filepath.Join(root, "injected.torrent"), Tracker: "EXAMPLE"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatal("expected planner cancellation")
 	}
 }
 

@@ -23,13 +23,14 @@ import (
 )
 
 type qbitAddCapture struct {
-	errCh    chan error
-	mu       sync.Mutex
-	addCalls int
-	category string
-	savePath string
-	tags     string
-	autoTMM  string
+	errCh        chan error
+	mu           sync.Mutex
+	addCalls     int
+	category     string
+	savePath     string
+	tags         string
+	autoTMM      string
+	skipChecking string
 }
 
 func newQbitAddCaptureServer(t *testing.T) (*httptest.Server, *qbitAddCapture) {
@@ -43,7 +44,13 @@ func newQbitAddCaptureServer(t *testing.T) (*httptest.Server, *qbitAddCapture) {
 			_, _ = w.Write([]byte("Ok."))
 			return
 		case "/api/v2/torrents/add":
-			if err := r.ParseMultipartForm(10 << 20); err != nil {
+			if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+				if err := r.ParseMultipartForm(10 << 20); err != nil {
+					capture.errCh <- err
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+			} else if err := r.ParseForm(); err != nil {
 				capture.errCh <- err
 				w.WriteHeader(http.StatusBadRequest)
 				return
@@ -54,6 +61,7 @@ func newQbitAddCaptureServer(t *testing.T) (*httptest.Server, *qbitAddCapture) {
 			capture.savePath = r.FormValue("savepath")
 			capture.tags = r.FormValue("tags")
 			capture.autoTMM = r.FormValue("autoTMM")
+			capture.skipChecking = r.FormValue("skip_checking")
 			capture.mu.Unlock()
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusOK)
@@ -216,6 +224,58 @@ func TestInjectQbitClient(t *testing.T) {
 	}
 }
 
+func TestInjectQbitClientRejectsCookieBearingNonOKLogin(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	addCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "transient-session"})
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Try again."))
+		case "/api/v2/torrents/add":
+			mu.Lock()
+			addCalls++
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Ok."))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	torrentPath := filepath.Join(t.TempDir(), "sample.torrent")
+	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+	svc := NewService(config.Config{
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:     "qbit",
+				URL:      server.URL,
+				Username: "user",
+				Password: "pass",
+			},
+		},
+	}, nil)
+
+	err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: "Example.Release.2026.mkv"}, api.TorrentResult{Path: torrentPath})
+	if err == nil {
+		t.Fatal("expected cookie-bearing non-Ok login rejection")
+	}
+	if !strings.Contains(err.Error(), "qbit login") {
+		t.Fatal("expected qbit login error")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if addCalls != 0 {
+		t.Fatalf("expected no qbit add attempt, got %d", addCalls)
+	}
+}
+
 func TestQbitInjectClientConfigCapsTimeoutAndRetries(t *testing.T) {
 	t.Parallel()
 
@@ -255,6 +315,12 @@ func TestQbitAutomaticManagementEnabledUsesPathBoundaries(t *testing.T) {
 			sourcePath: filepath.Join(root+"-old", "video.mkv"),
 			configured: root,
 			want:       false,
+		},
+		{
+			name:       "case variant directory",
+			sourcePath: filepath.Join(root, "media", "video.mkv"),
+			configured: filepath.Join(root, "Media"),
+			want:       runtime.GOOS == "windows",
 		},
 	}
 
@@ -770,7 +836,7 @@ func TestInjectQbitClientCleansStagingAfterFileAddFailure(t *testing.T) {
 func TestInjectQbitClientURLLinkingFallsBackWithoutStaging(t *testing.T) {
 	t.Parallel()
 
-	server, _ := newQbitAddFailureServer(t)
+	server, capture := newQbitAddCaptureServer(t)
 	root := t.TempDir()
 	source := filepath.Join(root, "source.mkv")
 	if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
@@ -797,9 +863,13 @@ func TestInjectQbitClientURLLinkingFallsBackWithoutStaging(t *testing.T) {
 		},
 	}, nil)
 
-	err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: source, FileList: []string{source}}, api.TorrentResult{URL: "https://tracker.example/torrent/1", Tracker: "AITHER"})
-	if err == nil {
-		t.Fatal("expected qbit add failure")
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: source, FileList: []string{source}}, api.TorrentResult{URL: "https://tracker.example/torrent/1", Tracker: "AITHER"}); err != nil {
+		t.Fatalf("inject URL fallback: %v", err)
+	}
+	select {
+	case err := <-capture.errCh:
+		t.Fatalf("handler: %v", err)
+	default:
 	}
 
 	stagedPath := filepath.Join(linkRoot, "aither-links", filepath.Base(source))
@@ -808,6 +878,69 @@ func TestInjectQbitClientURLLinkingFallsBackWithoutStaging(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(linkRoot, "aither-links")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("expected URL-only injection not to create tracker staging, stat err=%v", statErr)
+	}
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	if capture.addCalls != 1 {
+		t.Fatalf("expected one qbit add attempt, got %d", capture.addCalls)
+	}
+	if capture.skipChecking != "false" {
+		t.Fatalf("expected URL fallback hash checking, got skip_checking=%q", capture.skipChecking)
+	}
+}
+
+func TestInjectQbitClientInvalidLinkPlanFallbackChecksHash(t *testing.T) {
+	t.Parallel()
+
+	server, capture := newQbitAddCaptureServer(t)
+	root := t.TempDir()
+	source := filepath.Join(root, "Example.Release.2026.mkv")
+	if err := os.WriteFile(source, []byte("media"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	linkRoot := filepath.Join(root, "links")
+	if err := os.MkdirAll(linkRoot, 0o700); err != nil {
+		t.Fatalf("mkdir links: %v", err)
+	}
+	torrentPath := filepath.Join(root, "invalid.torrent")
+	if err := os.WriteFile(torrentPath, []byte("invalid metainfo"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	svc := NewService(config.Config{
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:         "qbit",
+				URL:          server.URL,
+				Username:     "user",
+				Password:     "pass",
+				Linking:      "hardlink",
+				LinkedFolder: config.StringList{linkRoot},
+			},
+		},
+	}, nil)
+
+	err := svc.Inject(context.Background(), api.PreparedMetadata{
+		SourcePath: source,
+		FileList:   []string{source},
+	}, api.TorrentResult{Path: torrentPath, Tracker: "EXAMPLE"})
+	if err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+
+	select {
+	case err := <-capture.errCh:
+		t.Fatalf("handler: %v", err)
+	default:
+	}
+
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	if capture.savePath != "" {
+		t.Fatalf("expected original-path fallback, got savepath %q", capture.savePath)
+	}
+	if capture.skipChecking != "false" {
+		t.Fatalf("expected fallback hash checking, got skip_checking=%q", capture.skipChecking)
 	}
 }
 
@@ -1070,6 +1203,63 @@ func TestInjectQbitClientRejectsStaleExistingHardlinkDest(t *testing.T) {
 	case err := <-capture.errCh:
 		t.Fatalf("handler: %v", err)
 	default:
+	}
+}
+
+func TestInjectQbitClientFailedLinkPlanFallbackChecksHash(t *testing.T) {
+	t.Parallel()
+
+	server, capture := newQbitAddCaptureServer(t)
+	root := t.TempDir()
+	source := filepath.Join(root, "source.mkv")
+	if err := os.WriteFile(source, []byte("fresh"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	linkRoot := filepath.Join(root, "links")
+	trackerDir := filepath.Join(linkRoot, "example-links")
+	if err := os.MkdirAll(trackerDir, 0o700); err != nil {
+		t.Fatalf("mkdir links: %v", err)
+	}
+	dest := filepath.Join(trackerDir, filepath.Base(source))
+	if err := os.WriteFile(dest, []byte("stale"), 0o600); err != nil {
+		t.Fatalf("write stale dest: %v", err)
+	}
+	torrentPath := filepath.Join(root, "sample.torrent")
+	writeQbitTestTorrentForSource(t, torrentPath, source)
+	svc := NewService(config.Config{
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"EXAMPLE": {LinkDirName: "example-links"},
+		}},
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:         "qbit",
+				URL:          server.URL,
+				Username:     "user",
+				Password:     "pass",
+				Linking:      "hardlink",
+				LinkedFolder: config.StringList{linkRoot},
+			},
+		},
+	}, nil)
+
+	if err := svc.Inject(context.Background(), api.PreparedMetadata{SourcePath: source, FileList: []string{source}}, api.TorrentResult{Path: torrentPath, Tracker: "EXAMPLE"}); err != nil {
+		t.Fatalf("inject failed-link fallback: %v", err)
+	}
+	select {
+	case err := <-capture.errCh:
+		t.Fatalf("handler: %v", err)
+	default:
+	}
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	if capture.addCalls != 1 {
+		t.Fatalf("expected one qbit add attempt, got %d", capture.addCalls)
+	}
+	if capture.savePath != "" {
+		t.Fatalf("expected original-path fallback, got savepath %q", capture.savePath)
+	}
+	if capture.skipChecking != "false" {
+		t.Fatalf("expected failed-link fallback hash checking, got skip_checking=%q", capture.skipChecking)
 	}
 }
 
