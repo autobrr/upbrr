@@ -282,6 +282,7 @@ func neededImageUploadTargets(appCfg config.Config, trackerNames []string, selec
 
 		policy := policyForTrackerForTarget(name, appCfg, trackerCfg)
 		candidates := imageUploadCandidatesForTracker(appCfg, name, userHosts)
+		candidates = appendOwnedPolicyUploadHosts(candidates, name, policy)
 		flexibleTargets = append(flexibleTargets, imageUploadPolicyTarget{tracker: name, policy: policy, candidates: candidates})
 	}
 
@@ -450,6 +451,18 @@ func imageUploadCandidatesForTracker(appCfg config.Config, tracker string, userH
 	}
 	if reelflixEnabledForTracker(tracker, trackerConfigForImageHostPolicy(appCfg, tracker)) {
 		candidates = appendUniqueHost(candidates, "reelflix")
+	}
+	return candidates
+}
+
+// appendOwnedPolicyUploadHosts adds upload-capable policy hosts owned by the
+// target tracker. Owned hosts are intentionally absent from the global host
+// list and must retain their tracker-scoped upload target.
+func appendOwnedPolicyUploadHosts(candidates []string, tracker string, policy imageHostPolicy) []string {
+	for _, host := range policy.uploadHosts {
+		if owner := trackerForOwnedHost(host); owner != "" && strings.EqualFold(owner, tracker) {
+			candidates = appendUniqueHost(candidates, host)
+		}
 	}
 	return candidates
 }

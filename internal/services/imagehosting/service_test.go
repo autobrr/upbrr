@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -192,6 +193,48 @@ type fakeBatchUploader struct {
 	calls        []string
 	batches      [][]string
 	galleryNames []string
+}
+
+type recordingImageHostLogger struct {
+	mu       sync.Mutex
+	messages []string
+}
+
+func (l *recordingImageHostLogger) record(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.messages = append(l.messages, fmt.Sprintf(format, args...))
+}
+
+func (l *recordingImageHostLogger) Tracef(format string, args ...any) {
+	l.record(format, args...)
+}
+
+func (l *recordingImageHostLogger) Debugf(format string, args ...any) {
+	l.record(format, args...)
+}
+
+func (l *recordingImageHostLogger) Infof(format string, args ...any) {
+	l.record(format, args...)
+}
+
+func (l *recordingImageHostLogger) Warnf(format string, args ...any) {
+	l.record(format, args...)
+}
+
+func (l *recordingImageHostLogger) Errorf(format string, args ...any) {
+	l.record(format, args...)
+}
+
+func (l *recordingImageHostLogger) contains(value string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, message := range l.messages {
+		if strings.Contains(message, value) {
+			return true
+		}
+	}
+	return false
 }
 
 func (u *fakeBatchUploader) Upload(_ context.Context, imagePath string) (uploadResult, error) {
@@ -453,6 +496,80 @@ func TestUploadImagesUsesBatchUploader(t *testing.T) {
 	}
 	if uploaderStub.galleryNames[0] != "Movie.2026.2160p.WEB-DL" {
 		t.Fatalf("expected content gallery name, got %q", uploaderStub.galleryNames[0])
+	}
+}
+
+func TestUploadImagesSeparatesHDBMenuGalleryWithoutDuplicates(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	firstPath := filepath.Join(tmpDir, "screen-01.png")
+	menuPath := filepath.Join(tmpDir, "menu-01.png")
+	secondPath := filepath.Join(tmpDir, "screen-02.png")
+	for _, imagePath := range []string{firstPath, menuPath, secondPath} {
+		if err := os.WriteFile(imagePath, []byte("testdata"), 0o600); err != nil {
+			t.Fatalf("write temp file: %v", err)
+		}
+	}
+
+	uploaderStub := &fakeBatchUploader{}
+	logger := &recordingImageHostLogger{}
+	service := &Service{
+		cfg:       config.Config{},
+		logger:    logger,
+		repo:      &recordingRepo{},
+		uploaders: map[string]uploader{"hdb": uploaderStub},
+	}
+
+	result, err := service.Upload(context.Background(), api.PreparedMetadata{
+		SourcePath:  filepath.Join(tmpDir, "Example.Release.2026.2160p.WEB-DL-GRP.mkv"),
+		ReleaseName: "Example.Release.2026.2160p.WEB-DL-GRP",
+	}, "hdb", "tracker:HDB", []api.ScreenshotImage{
+		{Path: firstPath, Purpose: api.ScreenshotPurposeFinal},
+		{Path: menuPath, Purpose: api.ScreenshotPurposeMenu},
+		{Path: secondPath, Purpose: api.ScreenshotPurposeFinal},
+	})
+	if err != nil {
+		t.Fatalf("upload images: %v", err)
+	}
+	if len(uploaderStub.batches) != 2 {
+		t.Fatalf("expected normal and menu HDB batches, got %#v", uploaderStub.batches)
+	}
+	if !slices.Equal(uploaderStub.batches[0], []string{firstPath, secondPath}) {
+		t.Fatalf("expected normal gallery to exclude menu image, got %#v", uploaderStub.batches[0])
+	}
+	if !slices.Equal(uploaderStub.batches[1], []string{menuPath}) {
+		t.Fatalf("expected menu gallery to contain only menu image, got %#v", uploaderStub.batches[1])
+	}
+	if !slices.Equal(uploaderStub.galleryNames, []string{
+		"Example.Release.2026.2160p.WEB-DL-GRP",
+		"Example.Release.2026.2160p.WEB-DL-GRP Disc Menus",
+	}) {
+		t.Fatalf("unexpected HDB gallery names: %#v", uploaderStub.galleryNames)
+	}
+	if len(result) != 3 || result[0].ImagePath != firstPath || result[1].ImagePath != menuPath || result[2].ImagePath != secondPath {
+		t.Fatalf("expected upload results in input order, got %#v", result)
+	}
+	if !logger.contains("host=hdb tracker=HDB") {
+		t.Fatal("expected HDB tracker identity in image-host logs")
+	}
+}
+
+func TestImageHostLogTrackerNamesEveryOwnedHost(t *testing.T) {
+	t.Parallel()
+
+	for host, expected := range map[string]string{
+		"hdb":      "HDB",
+		"lostimg":  "LST",
+		"reelflix": "RF",
+		"thr":      "THR",
+	} {
+		if got := imageHostLogTracker(host); got != expected {
+			t.Errorf("host %q tracker = %q, want %q", host, got, expected)
+		}
+	}
+	if got := imageHostLogTracker("imgbox"); got != "shared" {
+		t.Errorf("shared host tracker = %q, want shared", got)
 	}
 }
 

@@ -1292,6 +1292,10 @@ func (c *Core) ListUploadedImages(ctx context.Context, req api.Request) ([]api.U
 	return wrapCoreResult(c.repo.ListUploadedImagesByPath(ctx, uniquePaths[0]))
 }
 
+// UploadImages uploads one source's selected images to the requested global
+// host and any additional hosts required by its eligible trackers. Host uploads
+// run concurrently, tracker-owned hosts use tracker-scoped records, and
+// recoverable host failures are returned in [api.UploadImagesResult].
 func (c *Core) UploadImages(ctx context.Context, req api.Request, host string, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
 	if len(req.Paths) == 0 {
 		return api.UploadImagesResult{}, internalerrors.ErrInvalidInput
@@ -1679,7 +1683,12 @@ func (c *Core) uploadImagesToTargets(ctx context.Context, meta api.PreparedMetad
 				Message:    uploadFailureMessage(result.err),
 			}
 			failures = append(failures, failure)
-			failureMessages = append(failureMessages, fmt.Sprintf("%s: %v", result.target.Host, result.err))
+			failureMessages = append(failureMessages, fmt.Sprintf(
+				"host=%s trackers=%v err=%s",
+				result.target.Host,
+				result.target.Trackers,
+				redaction.RedactValue(failure.Message, nil),
+			))
 		}
 	}
 	if len(failures) == 0 {
@@ -1720,7 +1729,7 @@ func (c *Core) uploadImagesToTarget(ctx context.Context, meta api.PreparedMetada
 	target.Host = strings.ToLower(strings.TrimSpace(target.Host))
 	target.UsageScope = normalizeImageUploadUsageScope(target.UsageScope)
 	if c.repo == nil {
-		c.logger.Debugf("core: uploading images host=%s scope=%s trackers=%v count=%d", target.Host, target.UsageScope, target.Trackers, len(images))
+		c.logger.Tracef("core: uploading images host=%s tracker=%s scope=%s trackers=%v count=%d", target.Host, imageHostOwnerLogValue(target.Host), target.UsageScope, target.Trackers, len(images))
 		return wrapCoreResult(c.services.Images.Upload(ctx, meta, target.Host, target.UsageScope, images))
 	}
 
@@ -1744,11 +1753,11 @@ func (c *Core) uploadImagesToTarget(ctx context.Context, meta api.PreparedMetada
 		missing = append(missing, image)
 	}
 	if len(missing) == 0 {
-		c.logger.Debugf("core: reusing uploaded images host=%s scope=%s trackers=%v count=%d", target.Host, target.UsageScope, target.Trackers, len(results))
+		c.logger.Tracef("core: reusing uploaded images host=%s tracker=%s scope=%s trackers=%v count=%d", target.Host, imageHostOwnerLogValue(target.Host), target.UsageScope, target.Trackers, len(results))
 		return results, nil
 	}
 
-	c.logger.Debugf("core: uploading missing images host=%s scope=%s trackers=%v missing=%d reused=%d", target.Host, target.UsageScope, target.Trackers, len(missing), len(results))
+	c.logger.Debugf("core: uploading missing images host=%s tracker=%s scope=%s trackers=%v missing=%d reused=%d", target.Host, imageHostOwnerLogValue(target.Host), target.UsageScope, target.Trackers, len(missing), len(results))
 	uploaded, err := c.services.Images.Upload(ctx, meta, target.Host, target.UsageScope, missing)
 	results = append(results, uploaded...)
 	if err != nil {
@@ -1812,6 +1821,14 @@ func normalizeImageUploadUsageScope(scope string) string {
 	return trimmed
 }
 
+// imageHostOwnerLogValue identifies tracker-owned hosts in core upload logs.
+func imageHostOwnerLogValue(host string) string {
+	if tracker := trackers.TrackerForOwnedImageHost(host); tracker != "" {
+		return tracker
+	}
+	return "shared"
+}
+
 func (c *Core) DeleteUploadedImage(ctx context.Context, req api.Request, imagePath string, host string) error {
 	if len(req.Paths) == 0 {
 		return internalerrors.ErrInvalidInput
@@ -1843,7 +1860,7 @@ func (c *Core) DeleteUploadedImage(ctx context.Context, req api.Request, imagePa
 		return internalerrors.ErrInvalidInput
 	}
 
-	c.logger.Debugf("core: deleting uploaded image path=%s host=%s", imagePath, host)
+	c.logger.Debugf("core: deleting uploaded image path=%s host=%s tracker=%s", imagePath, host, imageHostOwnerLogValue(host))
 	return wrapCoreError(c.repo.DeleteUploadedImage(ctx, uniquePaths[0], imagePath, host))
 }
 
