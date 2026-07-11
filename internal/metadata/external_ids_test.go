@@ -473,6 +473,34 @@ func TestResolveExternalIDsWithoutTMDBAPIKey(t *testing.T) {
 	}
 }
 
+func TestResolveExternalIDsDoesNotCreateTVmazePlaceholder(t *testing.T) {
+	repo := &fakeRepo{}
+	tvmazeClient := &stubTVmaze{}
+	svc := NewService(repo,
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(tvmazeClient),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:        "Example.Release.2026.S01.1080p.WEB-DL-GRP",
+		MediaInfoCategory: "TV",
+		SceneTVmazeID:     55,
+	})
+	if err != nil {
+		t.Fatalf("resolve unresolved TVmaze ID: %v", err)
+	}
+	if result.ExternalIDs.TVmazeID != 55 {
+		t.Fatalf("expected canonical TVmaze ID to remain, got %#v", result.ExternalIDs)
+	}
+	if result.ExternalMetadata.TVmaze != nil {
+		t.Fatalf("expected no placeholder TVmaze snapshot, got %#v", result.ExternalMetadata.TVmaze)
+	}
+	if tvmazeClient.calls == 0 {
+		t.Fatal("expected TVmaze fetch attempt")
+	}
+}
+
 func TestMapTMDBMetadataClonesLocalizedTitles(t *testing.T) {
 	t.Parallel()
 
@@ -1477,6 +1505,51 @@ func TestResolveExternalIDsOverride(t *testing.T) {
 	}
 	if result.ExternalIDs.SourceTMDB != "override" || result.ExternalIDs.SourceIMDB != "override" {
 		t.Fatalf("unexpected override sources: %#v", result.ExternalIDs)
+	}
+}
+
+func TestResolveExternalIDsRefetchesProviderSnapshotsAfterIDOverride(t *testing.T) {
+	repo := &fakeRepo{}
+	tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{Title: "Current TMDB", TMDBType: "Movie"}}
+	imdbClient := &stubIMDB{info: imdb.Info{IMDbID: "tt0000111", Title: "Current IMDb"}}
+
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(imdbClient),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:      "Example.Release.2026.1080p-GRP.mkv",
+		StoredDataFresh: true,
+		ExternalIDs: api.ExternalIDs{
+			SourcePath: "Example.Release.2026.1080p-GRP.mkv",
+			Category:   "movie",
+			TMDBID:     1,
+			IMDBID:     2,
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: "Example.Release.2026.1080p-GRP.mkv",
+			TMDB:       &api.TMDBMetadata{TMDBID: 1, Title: "Stale TMDB"},
+			IMDB:       &api.IMDBMetadata{IMDBID: 2, Title: "Stale IMDb"},
+		},
+		ExternalIDOverrides: api.ExternalIDOverrides{
+			TMDBID: new(999),
+			IMDBID: new(111),
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve changed provider IDs: %v", err)
+	}
+	if result.ExternalMetadata.TMDB == nil || result.ExternalMetadata.TMDB.TMDBID != 999 || result.ExternalMetadata.TMDB.Title != "Current TMDB" {
+		t.Fatalf("expected refetched TMDB snapshot, got %#v", result.ExternalMetadata.TMDB)
+	}
+	if result.ExternalMetadata.IMDB == nil || result.ExternalMetadata.IMDB.IMDBID != 111 || result.ExternalMetadata.IMDB.Title != "Current IMDb" {
+		t.Fatalf("expected refetched IMDb snapshot, got %#v", result.ExternalMetadata.IMDB)
+	}
+	if tmdbClient.metaCalls != 1 || imdbClient.infoCalls != 1 {
+		t.Fatalf("expected one provider refetch each, got tmdb=%d imdb=%d", tmdbClient.metaCalls, imdbClient.infoCalls)
 	}
 }
 

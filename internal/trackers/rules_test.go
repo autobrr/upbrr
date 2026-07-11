@@ -24,7 +24,34 @@ func evaluateNonMetadataRulesForTest(ctx context.Context, tracker string, meta a
 	meta.ExternalIDs.IMDBID = 1234567
 	meta.ExternalIDs.TVDBID = 1
 	meta.ExternalIDs.TVmazeID = 1
-	meta.ExternalMetadata.TVDB = &api.TVDBMetadata{TVDBID: 1, Name: "Example Series"}
+	if meta.ExternalMetadata.TMDB == nil {
+		meta.ExternalMetadata.TMDB = &api.TMDBMetadata{}
+	}
+	meta.ExternalMetadata.TMDB.TMDBID = 1
+	if strings.TrimSpace(meta.ExternalMetadata.TMDB.Title) == "" {
+		meta.ExternalMetadata.TMDB.Title = "Example Release"
+	}
+	if meta.ExternalMetadata.IMDB == nil {
+		meta.ExternalMetadata.IMDB = &api.IMDBMetadata{}
+	}
+	meta.ExternalMetadata.IMDB.IMDBID = 1234567
+	if strings.TrimSpace(meta.ExternalMetadata.IMDB.Title) == "" {
+		meta.ExternalMetadata.IMDB.Title = "Example Release"
+	}
+	if meta.ExternalMetadata.TVDB == nil {
+		meta.ExternalMetadata.TVDB = &api.TVDBMetadata{}
+	}
+	meta.ExternalMetadata.TVDB.TVDBID = 1
+	if strings.TrimSpace(meta.ExternalMetadata.TVDB.Name) == "" {
+		meta.ExternalMetadata.TVDB.Name = "Example Series"
+	}
+	if meta.ExternalMetadata.TVmaze == nil {
+		meta.ExternalMetadata.TVmaze = &api.TVmazeMetadata{}
+	}
+	meta.ExternalMetadata.TVmaze.TVmazeID = 1
+	if strings.TrimSpace(meta.ExternalMetadata.TVmaze.Name) == "" {
+		meta.ExternalMetadata.TVmaze.Name = "Example Series"
+	}
 	return EvaluateRules(ctx, tracker, meta, nil)
 }
 

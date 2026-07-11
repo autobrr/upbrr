@@ -1097,6 +1097,9 @@ func TestRefreshPreparedMetadataClearsResolvedRuleFailures(t *testing.T) {
 			Category: "MOVIE",
 			TMDBID:   1,
 		},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{TMDBID: 1, Title: "Example Release"},
+		},
 		TrackerRuleFailures: map[string][]api.RuleFailure{
 			"ANT": {
 				{Rule: "require_movie_only", Reason: "category tv is not movie"},

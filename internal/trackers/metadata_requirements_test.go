@@ -17,11 +17,12 @@ func TestMetadataRequirementMatrix(t *testing.T) {
 		tracker  string
 		category string
 		ids      api.ExternalIDs
-		tvdb     *api.TVDBMetadata
+		metadata api.ExternalMetadata
 		warning  bool
 		fail     bool
 	}{
-		{name: "unit3d tmdb", tracker: "AITHER", ids: api.ExternalIDs{TMDBID: 1}},
+		{name: "unit3d tmdb", tracker: "AITHER", ids: api.ExternalIDs{TMDBID: 1}, metadata: api.ExternalMetadata{TMDB: &api.TMDBMetadata{TMDBID: 1, Title: "Example Release"}}},
+		{name: "unit3d id only", tracker: "AITHER", ids: api.ExternalIDs{TMDBID: 1}, fail: true},
 		{name: "unit3d missing", tracker: "AITHER", fail: true},
 		{name: "ptp imdb", tracker: "PTP", ids: api.ExternalIDs{IMDBID: 1234567}},
 		{name: "ptp warning", tracker: "PTP", warning: true},
@@ -30,27 +31,30 @@ func TestMetadataRequirementMatrix(t *testing.T) {
 		{name: "hdb tv imdb", tracker: "HDB", category: "tv", ids: api.ExternalIDs{IMDBID: 1234567}},
 		{name: "hdb tv tvdb", tracker: "HDB", category: "tv", ids: api.ExternalIDs{TVDBID: 2}},
 		{name: "hdb tv missing", tracker: "HDB", category: "tv", fail: true},
-		{name: "nbl tvmaze", tracker: "NBL", category: "tv", ids: api.ExternalIDs{TVmazeID: 3}},
+		{name: "nbl tvmaze", tracker: "NBL", category: "tv", ids: api.ExternalIDs{TVmazeID: 3}, metadata: api.ExternalMetadata{TVmaze: &api.TVmazeMetadata{TVmazeID: 3, Name: "Example Series"}}},
+		{name: "nbl id only", tracker: "NBL", category: "tv", ids: api.ExternalIDs{TVmazeID: 3}, fail: true},
 		{name: "nbl wrong provider", tracker: "NBL", category: "tv", ids: api.ExternalIDs{IMDBID: 1234567}, fail: true},
-		{name: "ant tmdb", tracker: "ANT", category: "movie", ids: api.ExternalIDs{TMDBID: 1}},
+		{name: "ant tmdb", tracker: "ANT", category: "movie", ids: api.ExternalIDs{TMDBID: 1}, metadata: api.ExternalMetadata{TMDB: &api.TMDBMetadata{TMDBID: 1, Title: "Example Release"}}},
 		{name: "ant imdb rejected", tracker: "ANT", category: "movie", ids: api.ExternalIDs{IMDBID: 1234567}, fail: true},
 		{name: "bhd tmdb", tracker: "BHD", category: "movie", ids: api.ExternalIDs{TMDBID: 1}},
-		{name: "mtv movie imdb", tracker: "MTV", category: "movie", ids: api.ExternalIDs{IMDBID: 1234567}},
-		{name: "mtv movie tmdb", tracker: "MTV", category: "movie", ids: api.ExternalIDs{TMDBID: 1}},
-		{name: "mtv tv complete", tracker: "MTV", category: "tv", ids: api.ExternalIDs{TMDBID: 1, TVDBID: 2}, tvdb: &api.TVDBMetadata{TVDBID: 2, NameEnglish: "Example Series"}},
-		{name: "mtv tv blank title", tracker: "MTV", category: "tv", ids: api.ExternalIDs{TMDBID: 1, TVDBID: 2}, tvdb: &api.TVDBMetadata{TVDBID: 2}, fail: true},
-		{name: "mtv tv mismatched title metadata", tracker: "MTV", category: "tv", ids: api.ExternalIDs{TMDBID: 1, TVDBID: 2}, tvdb: &api.TVDBMetadata{TVDBID: 3, Name: "Example Series"}, fail: true},
-		{name: "mtv tv tvdb identity rejected", tracker: "MTV", category: "tv", ids: api.ExternalIDs{TVDBID: 2}, tvdb: &api.TVDBMetadata{TVDBID: 2, Name: "Example Series"}, fail: true},
-		{name: "btn imdb", tracker: "BTN", category: "tv", ids: api.ExternalIDs{IMDBID: 1234567}},
-		{name: "btn tvdb", tracker: "BTN", category: "tv", ids: api.ExternalIDs{TVDBID: 2}},
+		{name: "mtv movie imdb", tracker: "MTV", category: "movie", ids: api.ExternalIDs{IMDBID: 1234567}, metadata: api.ExternalMetadata{IMDB: &api.IMDBMetadata{IMDBID: 1234567, Title: "Example Release"}}},
+		{name: "mtv movie tmdb", tracker: "MTV", category: "movie", ids: api.ExternalIDs{TMDBID: 1}, metadata: api.ExternalMetadata{TMDB: &api.TMDBMetadata{TMDBID: 1, Title: "Example Release"}}},
+		{name: "mtv movie id only", tracker: "MTV", category: "movie", ids: api.ExternalIDs{TMDBID: 1}, fail: true},
+		{name: "mtv tv complete", tracker: "MTV", category: "tv", ids: api.ExternalIDs{TMDBID: 1, TVDBID: 2}, metadata: api.ExternalMetadata{TMDB: &api.TMDBMetadata{TMDBID: 1, Title: "Example Series"}, TVDB: &api.TVDBMetadata{TVDBID: 2, NameEnglish: "Example Series"}}},
+		{name: "mtv tv blank title", tracker: "MTV", category: "tv", ids: api.ExternalIDs{TMDBID: 1, TVDBID: 2}, metadata: api.ExternalMetadata{TMDB: &api.TMDBMetadata{TMDBID: 1, Title: "Example Series"}, TVDB: &api.TVDBMetadata{TVDBID: 2}}, fail: true},
+		{name: "mtv tv mismatched title metadata", tracker: "MTV", category: "tv", ids: api.ExternalIDs{TMDBID: 1, TVDBID: 2}, metadata: api.ExternalMetadata{TMDB: &api.TMDBMetadata{TMDBID: 1, Title: "Example Series"}, TVDB: &api.TVDBMetadata{TVDBID: 3, Name: "Example Series"}}, fail: true},
+		{name: "mtv tv tvdb identity rejected", tracker: "MTV", category: "tv", ids: api.ExternalIDs{TVDBID: 2}, metadata: api.ExternalMetadata{TVDB: &api.TVDBMetadata{TVDBID: 2, Name: "Example Series"}}, fail: true},
+		{name: "btn imdb", tracker: "BTN", category: "tv", ids: api.ExternalIDs{IMDBID: 1234567}, metadata: api.ExternalMetadata{IMDB: &api.IMDBMetadata{IMDBID: 1234567, Title: "Example Series"}}},
+		{name: "btn tvdb", tracker: "BTN", category: "tv", ids: api.ExternalIDs{TVDBID: 2}, metadata: api.ExternalMetadata{TVDB: &api.TVDBMetadata{TVDBID: 2, Name: "Example Series"}}},
+		{name: "btn id only", tracker: "BTN", category: "tv", ids: api.ExternalIDs{TVDBID: 2}, fail: true},
 		{name: "btn tmdb rejected", tracker: "BTN", category: "tv", ids: api.ExternalIDs{TMDBID: 1}, fail: true},
-		{name: "ar movie imdb", tracker: "AR", category: "movie", ids: api.ExternalIDs{IMDBID: 1234567}},
-		{name: "ar movie tmdb", tracker: "AR", category: "movie", ids: api.ExternalIDs{TMDBID: 1}},
+		{name: "ar movie imdb", tracker: "AR", category: "movie", ids: api.ExternalIDs{IMDBID: 1234567}, metadata: api.ExternalMetadata{IMDB: &api.IMDBMetadata{IMDBID: 1234567, Title: "Example Release"}}},
+		{name: "ar movie tmdb", tracker: "AR", category: "movie", ids: api.ExternalIDs{TMDBID: 1}, metadata: api.ExternalMetadata{TMDB: &api.TMDBMetadata{TMDBID: 1, Title: "Example Release"}}},
 		{name: "ar movie tvdb rejected", tracker: "AR", category: "movie", ids: api.ExternalIDs{TVDBID: 2}, fail: true},
-		{name: "ar tv imdb", tracker: "AR", category: "tv", ids: api.ExternalIDs{IMDBID: 1234567}},
-		{name: "ar tv tmdb", tracker: "AR", category: "tv", ids: api.ExternalIDs{TMDBID: 1}},
-		{name: "ar tv tvdb", tracker: "AR", category: "tv", ids: api.ExternalIDs{TVDBID: 2}},
-		{name: "ar tv tvmaze", tracker: "AR", category: "tv", ids: api.ExternalIDs{TVmazeID: 3}},
+		{name: "ar tv imdb", tracker: "AR", category: "tv", ids: api.ExternalIDs{IMDBID: 1234567}, metadata: api.ExternalMetadata{IMDB: &api.IMDBMetadata{IMDBID: 1234567, Title: "Example Series"}}},
+		{name: "ar tv tmdb", tracker: "AR", category: "tv", ids: api.ExternalIDs{TMDBID: 1}, metadata: api.ExternalMetadata{TMDB: &api.TMDBMetadata{TMDBID: 1, Title: "Example Series"}}},
+		{name: "ar tv tvdb", tracker: "AR", category: "tv", ids: api.ExternalIDs{TVDBID: 2}, metadata: api.ExternalMetadata{TVDB: &api.TVDBMetadata{TVDBID: 2, Name: "Example Series"}}},
+		{name: "ar tv tvmaze", tracker: "AR", category: "tv", ids: api.ExternalIDs{TVmazeID: 3}, metadata: api.ExternalMetadata{TVmaze: &api.TVmazeMetadata{TVmazeID: 3, Name: "Example Series"}}},
 		{name: "ar tv missing", tracker: "AR", category: "tv", fail: true},
 		{name: "z movie imdb", tracker: "AZ", category: "movie", ids: api.ExternalIDs{IMDBID: 1234567}},
 		{name: "z movie tvdb rejected", tracker: "CZ", category: "movie", ids: api.ExternalIDs{TVDBID: 2}, fail: true},
@@ -61,7 +65,7 @@ func TestMetadataRequirementMatrix(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			meta := api.PreparedMetadata{ExternalIDs: tc.ids, ExternalMetadata: api.ExternalMetadata{TVDB: tc.tvdb}}
+			meta := api.PreparedMetadata{ExternalIDs: tc.ids, ExternalMetadata: tc.metadata}
 			meta.ExternalIDs.Category = tc.category
 			failures, evaluated := evaluateMetadataRequirements(tc.tracker, meta)
 			if !evaluated {
@@ -92,15 +96,29 @@ func TestMetadataRequirementRejectsStaleSourceData(t *testing.T) {
 	}
 }
 
+func TestMetadataRequirementRejectsMismatchedProviderSnapshot(t *testing.T) {
+	t.Parallel()
+	meta := api.PreparedMetadata{
+		ExternalIDs: api.ExternalIDs{Category: "movie", TMDBID: 1},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{TMDBID: 2, Title: "Example Release"},
+		},
+	}
+	failures, _ := evaluateMetadataRequirements("ANT", meta)
+	if !api.HasBlockingRuleFailures(failures) {
+		t.Fatalf("expected mismatched TMDB snapshot to fail, got %#v", failures)
+	}
+}
+
 func TestMetadataPolicyForReturnsClonedRequirements(t *testing.T) {
 	t.Parallel()
 	first, ok := MetadataPolicyFor("HDB")
 	if !ok {
 		t.Fatal("expected HDB policy")
 	}
-	first.Requirements[0].AnyOf[0] = MetadataFieldTMDBID
+	first.Requirements[0].AnyOf[0] = MetadataFieldTMDBIDOnly
 	second, _ := MetadataPolicyFor("HDB")
-	if second.Requirements[0].AnyOf[0] != MetadataFieldIMDBID {
+	if second.Requirements[0].AnyOf[0] != MetadataFieldIMDBIDOnly {
 		t.Fatalf("policy was mutated: %#v", second)
 	}
 }
@@ -134,7 +152,14 @@ func TestTVDBTitleRequirementRejectsStaleProviderMetadata(t *testing.T) {
 		},
 	}
 	failures, _ := evaluateMetadataRequirements("MTV", meta)
-	if len(failures) != 1 || failures[0].Rule != "require_tvdb_title" {
+	found := false
+	for _, failure := range failures {
+		if failure.Rule == "require_tvdb_title" {
+			found = true
+			break
+		}
+	}
+	if !found {
 		t.Fatalf("expected stale TVDB metadata failure, got %#v", failures)
 	}
 }

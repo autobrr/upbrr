@@ -214,6 +214,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 			ids.SourceTVDB,
 		)
 	}
+	metadataChanged := invalidateMismatchedProviderMetadata(&metadata, ids)
 
 	tmdbClient, imdbClient, tvdbClient, tvmazeClient := s.ensureExternalClients()
 
@@ -391,7 +392,6 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	var tvdbErr error
 	var tvmazeErr error
 	var anilistErr error
-	metadataChanged := false
 	tvdbName := ""
 
 	isTVForTVmaze := func() bool {
@@ -404,10 +404,19 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		if tmdbClient == nil || ids.TMDBID == 0 {
 			return false
 		}
-		if metadata.TMDB == nil {
+		if !usableTMDBMetadata(metadata.TMDB, ids.TMDBID) {
 			return true
 		}
 		return s.cfg.Description.AddLogo && strings.TrimSpace(metadata.TMDB.Logo) == "" && !tmdbLogoFetchAttempted
+	}
+	shouldFetchIMDBMetadata := func() bool {
+		return imdbClient != nil && ids.IMDBID != 0 && !usableIMDBMetadata(metadata.IMDB, ids.IMDBID)
+	}
+	shouldFetchTVDBMetadata := func() bool {
+		return tvdbClient != nil && shouldUseTVDBForCategory(meta, ids) && ids.TVDBID != 0 && !usableTVDBMetadata(metadata.TVDB, ids.TVDBID)
+	}
+	shouldFetchTVmazeMetadata := func() bool {
+		return tvmazeClient != nil && isTVForTVmaze() && ids.TVmazeID != 0 && !usableTVmazeMetadata(metadata.TVmaze, ids.TVmazeID)
 	}
 
 	shouldRunFetchPass := func() bool {
@@ -417,13 +426,13 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		if tmdbClient != nil && shouldFetchAniListMetadata(ids.MALID, metadata.AniList) && !anilistFetchAttempted {
 			return true
 		}
-		if ids.IMDBID != 0 && metadata.IMDB == nil {
+		if shouldFetchIMDBMetadata() || shouldFetchTVDBMetadata() || shouldFetchTVmazeMetadata() {
 			return true
 		}
 		if shouldUseTVDBForCategory(meta, ids) && !overrideTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0) {
 			return true
 		}
-		if metadata.TVmaze == nil && isTVForTVmaze() && (ids.TVmazeID != 0 || (!overrideTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0))) {
+		if isTVForTVmaze() && (shouldFetchTVmazeMetadata() || (!overrideTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0))) {
 			return true
 		}
 		return false
@@ -438,9 +447,9 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		if fetchAniList {
 			anilistFetchAttempted = true
 		}
-		fetchIMDB := ids.IMDBID != 0 && metadata.IMDB == nil
+		fetchIMDB := shouldFetchIMDBMetadata()
 		lookupTVDB := shouldUseTVDBForCategory(meta, ids) && !overrideTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0)
-		lookupTVmaze := metadata.TVmaze == nil && isTVForTVmaze() && (ids.TVmazeID != 0 || (!overrideTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0)))
+		lookupTVmaze := isTVForTVmaze() && (shouldFetchTVmazeMetadata() || (!overrideTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0)))
 
 		if s.logger != nil {
 			s.logger.Debugf(
@@ -694,12 +703,6 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 			metadata.TVmaze = mapTVmazeMetadata(*tvmazeResult)
 		}
 
-		if shouldUseTVDBForCategory(meta, ids) && metadata.TVDB == nil && ids.TVDBID != 0 {
-			metadata.TVDB = &api.TVDBMetadata{TVDBID: ids.TVDBID, Name: tvdbName}
-		}
-		if metadata.TVmaze == nil && ids.TVmazeID != 0 {
-			metadata.TVmaze = &api.TVmazeMetadata{TVmazeID: ids.TVmazeID, IMDBID: ids.IMDBID, TVDBID: ids.TVDBID}
-		}
 		if manualLanguage != "" {
 			if metadata.TMDB != nil {
 				metadata.TMDB.OriginalLanguage = manualLanguage
@@ -863,6 +866,47 @@ func sourceScopedMetadataMatches(storedSourcePath string, currentSourcePath stri
 		return true
 	}
 	return strings.EqualFold(trimmedStored, strings.TrimSpace(currentSourcePath))
+}
+
+func invalidateMismatchedProviderMetadata(metadata *api.ExternalMetadata, ids api.ExternalIDs) bool {
+	if metadata == nil {
+		return false
+	}
+	changed := false
+	if metadata.TMDB != nil && (ids.TMDBID == 0 || metadata.TMDB.TMDBID != ids.TMDBID) {
+		metadata.TMDB = nil
+		changed = true
+	}
+	if metadata.IMDB != nil && (ids.IMDBID == 0 || metadata.IMDB.IMDBID != ids.IMDBID) {
+		metadata.IMDB = nil
+		changed = true
+	}
+	if metadata.TVDB != nil && (ids.TVDBID == 0 || metadata.TVDB.TVDBID != ids.TVDBID) {
+		metadata.TVDB = nil
+		changed = true
+	}
+	if metadata.TVmaze != nil && (ids.TVmazeID == 0 || metadata.TVmaze.TVmazeID != ids.TVmazeID) {
+		metadata.TVmaze = nil
+		changed = true
+	}
+	return changed
+}
+
+func usableTMDBMetadata(metadata *api.TMDBMetadata, tmdbID int) bool {
+	return metadata != nil && tmdbID > 0 && metadata.TMDBID == tmdbID && strings.TrimSpace(metadata.Title) != ""
+}
+
+func usableIMDBMetadata(metadata *api.IMDBMetadata, imdbID int) bool {
+	return metadata != nil && imdbID > 0 && metadata.IMDBID == imdbID && strings.TrimSpace(metadata.Title) != ""
+}
+
+func usableTVDBMetadata(metadata *api.TVDBMetadata, tvdbID int) bool {
+	return metadata != nil && tvdbID > 0 && metadata.TVDBID == tvdbID &&
+		(strings.TrimSpace(metadata.NameEnglish) != "" || strings.TrimSpace(metadata.Name) != "")
+}
+
+func usableTVmazeMetadata(metadata *api.TVmazeMetadata, tvmazeID int) bool {
+	return metadata != nil && tvmazeID > 0 && metadata.TVmazeID == tvmazeID && strings.TrimSpace(metadata.Name) != ""
 }
 
 // shouldFetchAniListMetadata returns true when the current canonical MAL ID has
