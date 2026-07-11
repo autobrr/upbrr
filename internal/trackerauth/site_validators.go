@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/html"
+
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -71,6 +73,9 @@ func resolveARStoredSessionForTrackerAuth(ctx context.Context, cfg config.Tracke
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return &ValidationError{TrackerID: "AR", Transient: true, Reason: "remote validation failed", Err: fmt.Errorf("trackers: AR session validation failed status=%d", resp.StatusCode)}
+	}
+	if !arLooksLoggedIn(string(body)) {
+		return &ValidationError{TrackerID: "AR", ConfirmedInvalid: true, Reason: "stored session expired", Err: errors.New("trackers: AR browse marker not found")}
 	}
 	return nil
 }
@@ -448,6 +453,37 @@ func isLoginRedirect(resp *http.Response) bool {
 func arLooksLoggedOut(body string) bool {
 	lower := strings.ToLower(body)
 	return strings.Contains(lower, "forgot your password") || strings.Contains(lower, "login.php?act=recover")
+}
+
+// arLooksLoggedIn recognizes an authenticated AR browse-page download link.
+func arLooksLoggedIn(body string) bool {
+	tokenizer := html.NewTokenizer(strings.NewReader(body))
+	for {
+		switch tokenizer.Next() {
+		case html.ErrorToken:
+			return false
+		case html.StartTagToken, html.SelfClosingTagToken:
+			token := tokenizer.Token()
+			if !strings.EqualFold(token.Data, "a") {
+				continue
+			}
+			for _, attr := range token.Attr {
+				if !strings.EqualFold(attr.Key, "href") {
+					continue
+				}
+				candidate, err := url.Parse(attr.Val)
+				if err != nil || !strings.EqualFold(strings.TrimPrefix(candidate.Path, "/"), "torrents.php") {
+					continue
+				}
+				query := candidate.Query()
+				if strings.EqualFold(query.Get("action"), "download") && strings.TrimSpace(query.Get("auth")) != "" {
+					return true
+				}
+			}
+		case html.TextToken, html.EndTagToken, html.CommentToken, html.DoctypeToken:
+			continue
+		}
+	}
 }
 
 // hdbLooksLoggedOut recognizes HDB login form markers in validation responses.

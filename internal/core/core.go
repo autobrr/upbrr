@@ -41,6 +41,7 @@ import (
 	"github.com/autobrr/upbrr/internal/services/imagehosting"
 	"github.com/autobrr/upbrr/internal/services/screenshots"
 	"github.com/autobrr/upbrr/internal/torrent"
+	"github.com/autobrr/upbrr/internal/trackerauth"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -186,6 +187,9 @@ func newCore(ctx context.Context, deps api.CoreDependencies) (*Core, error) {
 	}
 	if services.Dupes == nil {
 		services.Dupes = dupechecking.NewService(cfg, logger)
+	}
+	if services.TrackerAuth == nil {
+		services.TrackerAuth = trackerauth.NewServiceWithLogger(cfg, logger)
 	}
 	logger.Infof("core: initialized services")
 
@@ -560,7 +564,7 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (summary api.Dup
 				removeTrackers = mergeTrackerRemovals(removeTrackers, matchedTrackers)
 			}
 			resolvedTrackers := trackers.ResolveTrackers(c.cfg, req.Trackers, removeTrackers, c.logger)
-			summary, err := c.services.Dupes.Check(ctx, checkMeta, resolvedTrackers)
+			summary, err := c.checkGUIDupesWithAuth(ctx, req.Mode, checkMeta, resolvedTrackers)
 			if err != nil {
 				return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
 			}
@@ -693,7 +697,7 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (summary api.Dup
 		removeTrackers = mergeTrackerRemovals(removeTrackers, matchedTrackers)
 	}
 	resolvedTrackers := trackers.ResolveTrackers(c.cfg, req.Trackers, removeTrackers, c.logger)
-	summary, err = c.services.Dupes.Check(ctx, checkMeta, resolvedTrackers)
+	summary, err = c.checkGUIDupesWithAuth(ctx, req.Mode, checkMeta, resolvedTrackers)
 	if err != nil {
 		return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
 	}

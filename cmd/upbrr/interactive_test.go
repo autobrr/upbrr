@@ -1969,13 +1969,18 @@ func (s *cliTrackerAuthForTest) Capabilities(context.Context) ([]api.TrackerAuth
 	return append([]api.TrackerAuthCapability(nil), s.capabilities...), nil
 }
 
-func (s *cliTrackerAuthForTest) Validate(_ context.Context, trackerID string) (api.TrackerAuthStatus, error) {
-	name := strings.ToUpper(strings.TrimSpace(trackerID))
-	s.validated = append(s.validated, name)
-	if status, ok := s.validateStatus[name]; ok {
-		return status, nil
+func (s *cliTrackerAuthForTest) ValidateMany(_ context.Context, trackerIDs []string) ([]api.TrackerAuthStatus, error) {
+	statuses := make([]api.TrackerAuthStatus, 0, len(trackerIDs))
+	for _, trackerID := range trackerIDs {
+		name := strings.ToUpper(strings.TrimSpace(trackerID))
+		s.validated = append(s.validated, name)
+		if status, ok := s.validateStatus[name]; ok {
+			statuses = append(statuses, status)
+			continue
+		}
+		statuses = append(statuses, api.TrackerAuthStatus{TrackerID: name, State: trackerauth.StateConfigured})
 	}
-	return api.TrackerAuthStatus{TrackerID: name, State: trackerauth.StateConfigured}, nil
+	return statuses, nil
 }
 
 func (s *cliTrackerAuthForTest) Submit2FA(_ context.Context, challengeID string, code string) (api.TrackerAuthStatus, error) {

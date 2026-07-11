@@ -195,6 +195,27 @@ describe("DupeCheckPage", () => {
     expect(screen.queryByText("Rule failed")).toBeNull();
   });
 
+  it("labels tracker-auth preflight skips as auth required", () => {
+    renderPage({
+      SourcePath: "C:\\Media\\Example.Movie.mkv",
+      Results: [
+        {
+          ...completedResult("PTP"),
+          Status: "skipped",
+          Skipped: true,
+          SkipReason: "tracker auth not ready: manual 2FA required",
+          SkipCode: "tracker_auth_not_ready",
+        },
+        completedResult("ANT"),
+      ],
+      Notes: [],
+    });
+
+    expect(screen.getByText("Auth required")).toBeInTheDocument();
+    expect(screen.getByText("tracker auth not ready: manual 2FA required")).toBeInTheDocument();
+    expect(screen.queryByText("Skipped")).toBeNull();
+  });
+
   it("uses structured SkipRules for rule-failure skipped results", () => {
     renderPage({
       SourcePath: "C:\\Media\\Example.Movie.mkv",

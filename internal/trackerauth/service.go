@@ -21,6 +21,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
@@ -44,6 +46,9 @@ const (
 	StateLoginRequired = "login_required"
 	// StateEncryptedStorageUnavailable means cookie import cannot be used until web auth material exists.
 	StateEncryptedStorageUnavailable = "encrypted_storage_unavailable"
+
+	// maxConcurrentValidations bounds simultaneous tracker and auth DB work.
+	maxConcurrentValidations = 4
 )
 
 // Service reports and manages persisted tracker auth material for configured trackers.
@@ -274,6 +279,58 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (status api.Tr
 	}
 	status.Message = "remote auth validation is not supported for this tracker"
 	return status, nil
+}
+
+// ValidateMany validates every tracker concurrently and returns statuses in
+// input order. It waits for the full batch with bounded concurrency; if any
+// validation fails, it returns the first input-ordered error and no statuses.
+func (s *Service) ValidateMany(ctx context.Context, trackerIDs []string) ([]api.TrackerAuthStatus, error) {
+	statuses := make([]api.TrackerAuthStatus, len(trackerIDs))
+	errs := make([]error, len(trackerIDs))
+
+	var group errgroup.Group
+	group.SetLimit(maxConcurrentValidations)
+	for i, trackerID := range trackerIDs {
+		group.Go(func() error {
+			statuses[i], errs[i] = s.Validate(ctx, trackerID)
+			return nil
+		})
+	}
+	_ = group.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			return nil, fmt.Errorf("tracker auth: validate %s: %w", trackerLogID(trackerIDs[i]), err)
+		}
+	}
+	return statuses, nil
+}
+
+// IsManagedCapability reports whether a capability requires session, login,
+// refresh, or 2FA handling rather than only static API-key/passkey config.
+func IsManagedCapability(capability api.TrackerAuthCapability) bool {
+	authKind := strings.ToLower(strings.TrimSpace(capability.AuthKind))
+	return capability.SupportsCookieFile ||
+		capability.SupportsLogin ||
+		capability.SupportsAutoLogin ||
+		capability.SupportsTOTP ||
+		capability.SupportsManual2FA ||
+		strings.Contains(authKind, "refresh") ||
+		strings.Contains(authKind, "2fa")
+}
+
+// IsReadyStatus reports whether a status represents usable auth without further
+// user input. A pending 2FA challenge is never ready, regardless of state.
+func IsReadyStatus(status api.TrackerAuthStatus) bool {
+	if status.Needs2FA {
+		return false
+	}
+	switch strings.TrimSpace(status.State) {
+	case StateConfigured, StateHasCookies:
+		return true
+	default:
+		return false
+	}
 }
 
 // Login runs credential-based tracker auth when supported and returns status for

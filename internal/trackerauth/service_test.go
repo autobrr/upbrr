@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
@@ -2945,6 +2946,72 @@ func TestValidateTransientAdapterFailurePreservesCookieCount(t *testing.T) {
 	}
 	if values["session"] != "abc" {
 		t.Fatal("expected transient adapter failure to preserve cookies")
+	}
+}
+
+func TestValidateManyRunsTrackerChecksConcurrentlyAndPreservesOrder(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newTrackerAuthTestDB(t)
+	entered := make(chan string, 2)
+	release := make(chan struct{})
+	released := false
+	defer func() {
+		if !released {
+			close(release)
+		}
+	}()
+	newBlockingAdapter := func(trackerID string) *fakeAdapter {
+		return &fakeAdapter{
+			capability: api.TrackerAuthCapability{TrackerID: trackerID, SupportsLogin: true},
+			validate: func() (Session, error) {
+				entered <- trackerID
+				<-release
+				return Session{TrackerID: trackerID, State: SessionStateReady}, nil
+			},
+		}
+	}
+	service := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"MTV": {},
+			"PTP": {},
+		}},
+	})
+	service.adapters["MTV"] = newBlockingAdapter("MTV")
+	service.adapters["PTP"] = newBlockingAdapter("PTP")
+
+	type result struct {
+		statuses []api.TrackerAuthStatus
+		err      error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		statuses, err := service.ValidateMany(context.Background(), []string{"PTP", "MTV"})
+		resultCh <- result{statuses: statuses, err: err}
+	}()
+
+	seen := make(map[string]bool, 2)
+	for range 2 {
+		select {
+		case trackerID := <-entered:
+			seen[trackerID] = true
+		case <-time.After(2 * time.Second):
+			t.Fatal("tracker validations did not overlap")
+		}
+	}
+	close(release)
+	released = true
+
+	got := <-resultCh
+	if got.err != nil {
+		t.Fatalf("ValidateMany: %v", got.err)
+	}
+	if !seen["PTP"] || !seen["MTV"] {
+		t.Fatalf("expected both tracker validations to start, got %#v", seen)
+	}
+	if len(got.statuses) != 2 || got.statuses[0].TrackerID != "PTP" || got.statuses[1].TrackerID != "MTV" {
+		t.Fatalf("expected input-ordered statuses, got %#v", got.statuses)
 	}
 }
 

@@ -478,7 +478,7 @@ func (b *Backend) applyDupeProgress(job *dupeCheckJob, update api.DupeProgressUp
 		job.completedCount++
 		state.FinishedAt = time.Now().UTC().Format(time.RFC3339)
 	}
-	if update.Total > 0 {
+	if update.Total > job.totalCount {
 		job.totalCount = update.Total
 	}
 	job.states[tracker] = state

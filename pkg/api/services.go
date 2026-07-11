@@ -12,12 +12,14 @@ import (
 )
 
 type ServiceSet struct {
-	Metadata    MetadataService
-	Trackers    TrackerService
-	Torrents    TorrentService
-	Clients     ClientService
-	Filesystem  FilesystemService
-	Dupes       DupeService
+	Metadata   MetadataService
+	Trackers   TrackerService
+	Torrents   TorrentService
+	Clients    ClientService
+	Filesystem FilesystemService
+	Dupes      DupeService
+	// TrackerAuth validates managed tracker sessions before duplicate checks.
+	TrackerAuth TrackerAuthService
 	Screenshots ScreenshotService
 	// DVDMenus handles automatic capture and persisted disc-menu lifecycle operations.
 	DVDMenus DVDMenuService
@@ -58,6 +60,17 @@ type FilesystemService interface {
 
 type DupeService interface {
 	Check(ctx context.Context, meta PreparedMetadata, trackers []string) (DupeCheckSummary, error)
+}
+
+// TrackerAuthService exposes the batch auth operations needed before GUI and
+// embedded-web duplicate checking.
+type TrackerAuthService interface {
+	// Capabilities returns the configured trackers whose auth workflows the
+	// service can classify.
+	Capabilities(ctx context.Context) ([]TrackerAuthCapability, error)
+	// ValidateMany returns one status per tracker in input order. An error means
+	// the batch has no usable status result.
+	ValidateMany(ctx context.Context, trackerIDs []string) ([]TrackerAuthStatus, error)
 }
 
 type ScreenshotService interface {

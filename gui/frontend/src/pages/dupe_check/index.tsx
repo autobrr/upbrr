@@ -280,8 +280,9 @@ export default function DupeCheckPage(props: Readonly<Props>) {
               const ruleSkipReason =
                 ruleSkipReasons[normalizedTracker] ||
                 (isRuleSkippedResult(result) ? skipReason || "rule check failed" : "");
+              const authRequired = result.SkipCode === "tracker_auth_not_ready";
               const skippedReason =
-                result.Skipped && !ruleSkipReason
+                result.Skipped && !ruleSkipReason && !authRequired
                   ? skippedDupeReasons[normalizedTracker] || skipReason
                   : "";
               const visibleNotes =
@@ -298,7 +299,7 @@ export default function DupeCheckPage(props: Readonly<Props>) {
               const displayDupeCount =
                 (dupeTrackerFlags[result.Tracker] ?? hasDupes) ? dupeCount : 0;
               const displayTrackers =
-                hasPathedNote || ruleSkipReason || skippedReason
+                hasPathedNote || ruleSkipReason || authRequired || skippedReason
                   ? trackerNamesForResult(result)
                   : [];
               const iconTrackers = displayTrackers.length > 0 ? displayTrackers : [result.Tracker];
@@ -339,6 +340,7 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                   <div className="min-w-0">
                     {hasPathedNote ||
                     ruleSkipReason ||
+                    authRequired ||
                     skippedReason ||
                     hasFailure ||
                     visibleNotes.length ? (
@@ -349,6 +351,13 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                           <>
                             <Badge tone="danger">Rule failed</Badge>
                             <span className="text-[var(--muted)]">{ruleSkipReason}</span>
+                          </>
+                        ) : null}
+
+                        {authRequired ? (
+                          <>
+                            <Badge tone="danger">Auth required</Badge>
+                            <span className="text-[var(--muted)]">{skipReason}</span>
                           </>
                         ) : null}
 

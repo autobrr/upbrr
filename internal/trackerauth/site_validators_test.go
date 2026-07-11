@@ -30,6 +30,65 @@ func TestValidateFFStoredCookiesReadsFullSuccessBody(t *testing.T) {
 	}
 }
 
+func TestResolveARStoredSessionRequiresAuthenticatedBrowseMarker(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		body        string
+		wantInvalid bool
+	}{
+		{
+			name: "authenticated download link",
+			body: `<a href="/torrents.php?action=download&amp;id=123&amp;auth=session-key">Download</a>`,
+		},
+		{
+			name:        "arbitrary help page",
+			body:        `<html><h1>Browse help</h1></html>`,
+			wantInvalid: true,
+		},
+		{
+			name:        "unrecognized login page",
+			body:        `<form action="/login.php"><input name="username"><input name="password"></form>`,
+			wantInvalid: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			dbPath := newTrackerAuthTestDB(t)
+			if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "AR", map[string]string{"session": "abc"}); err != nil {
+				t.Fatalf("SaveTrackerCookieMap: %v", err)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != arBrowsePath {
+					http.NotFound(w, r)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			t.Cleanup(server.Close)
+
+			err := resolveARStoredSessionForTrackerAuth(ctx, config.TrackerConfig{URL: server.URL}, dbPath, api.TrackerAuthLoginRequest{})
+			if !tt.wantInvalid {
+				if err != nil {
+					t.Fatalf("expected authenticated AR browse page to validate: %v", err)
+				}
+				return
+			}
+			validationErr, ok := asValidationError(err)
+			if !ok {
+				t.Fatalf("expected validation error, got %v", err)
+			}
+			if !validationErr.ConfirmedInvalid || validationErr.Transient {
+				t.Fatalf("expected missing AR browse marker to invalidate session, got %+v", validationErr)
+			}
+		})
+	}
+}
+
 func TestValidateFFStoredCookiesTreatsBodyReadErrorAsTransient(t *testing.T) {
 	t.Parallel()
 

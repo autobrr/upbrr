@@ -353,7 +353,7 @@ func (a *App) applyDupeProgress(ctx context.Context, job *dupeCheckJob, update a
 			job.completedCount++
 		}
 	}
-	if update.Total > 0 {
+	if update.Total > job.totalCount {
 		job.totalCount = update.Total
 	}
 	job.states[tracker] = state
