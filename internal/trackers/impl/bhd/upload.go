@@ -13,9 +13,11 @@ import (
 	"maps"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -277,7 +279,7 @@ func buildMultipartPayload(fields map[string]string, mediaDump string, torrentPa
 			return nil, "", fmt.Errorf("trackers: BHD write multipart field %q: %w", key, err)
 		}
 	}
-	part, err := writer.CreateFormFile("mediainfo", "mediainfo.txt")
+	part, err := writer.CreateFormFile("mediainfo", "upload")
 	if err != nil {
 		_ = writer.Close()
 		return nil, "", fmt.Errorf("trackers: BHD create mediainfo form file: %w", err)
@@ -292,7 +294,10 @@ func buildMultipartPayload(fields map[string]string, mediaDump string, torrentPa
 		return nil, "", fmt.Errorf("trackers: BHD open torrent file: %w", err)
 	}
 	defer file.Close()
-	part, err = writer.CreateFormFile("file", "torrent.torrent")
+	part, err = writer.CreatePart(textproto.MIMEHeader{
+		"Content-Disposition": {`form-data; name="file"; filename="torrent.torrent"`},
+		"Content-Type":        {"application/x-bittorrent"},
+	})
 	if err != nil {
 		_ = writer.Close()
 		return nil, "", fmt.Errorf("trackers: BHD create torrent form file: %w", err)
@@ -424,11 +429,7 @@ func resolveTMDBID(meta api.PreparedMetadata) string {
 	if meta.ExternalIDs.TMDBID == 0 {
 		return ""
 	}
-	prefix := "movie"
-	if strings.EqualFold(resolveCategoryID(meta), "2") {
-		prefix = "tv"
-	}
-	return fmt.Sprintf("%s/%d", prefix, meta.ExternalIDs.TMDBID)
+	return strconv.Itoa(meta.ExternalIDs.TMDBID)
 }
 
 func validateBHDContainer(meta api.PreparedMetadata) error {
@@ -523,7 +524,7 @@ func resolveTags(meta api.PreparedMetadata) []string {
 
 func resolveIMDbID(meta api.PreparedMetadata) string {
 	if meta.ExternalIDs.IMDBID > 0 {
-		return fmt.Sprintf("tt%07d", meta.ExternalIDs.IMDBID)
+		return strconv.Itoa(meta.ExternalIDs.IMDBID)
 	}
 	return "1"
 }

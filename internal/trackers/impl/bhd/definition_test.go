@@ -70,11 +70,11 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	if entry.Payload["source"] != "WEB" {
 		t.Fatalf("expected source WEB, got %q", entry.Payload["source"])
 	}
-	if entry.Payload["imdb_id"] != "tt0000456" {
-		t.Fatalf("expected prefixed imdb_id, got %q", entry.Payload["imdb_id"])
+	if entry.Payload["imdb_id"] != "456" {
+		t.Fatalf("expected numeric imdb_id, got %q", entry.Payload["imdb_id"])
 	}
-	if entry.Payload["tmdb_id"] != "tv/123" {
-		t.Fatalf("expected prefixed tv tmdb_id, got %q", entry.Payload["tmdb_id"])
+	if entry.Payload["tmdb_id"] != "123" {
+		t.Fatalf("expected numeric tmdb_id, got %q", entry.Payload["tmdb_id"])
 	}
 	if entry.Payload["live"] != "0" {
 		t.Fatalf("expected live=0 for draft default, got %q", entry.Payload["live"])
@@ -261,21 +261,29 @@ func TestUploadRetriesInvalidIMDb(t *testing.T) {
 			t.Errorf("expected mediainfo file part")
 			return
 		}
+		if filename := r.MultipartForm.File["mediainfo"][0].Filename; filename != "upload" {
+			t.Errorf("expected Upload-Assistant-compatible mediainfo filename, got %q", filename)
+			return
+		}
 		if len(r.MultipartForm.File["file"]) != 1 {
 			t.Errorf("expected torrent file part")
+			return
+		}
+		if contentType := r.MultipartForm.File["file"][0].Header.Get("Content-Type"); contentType != "application/x-bittorrent" {
+			t.Errorf("expected Upload-Assistant-compatible torrent content type, got %q", contentType)
 			return
 		}
 		calls++
 		imdbID := r.FormValue("imdb_id")
 		tmdbID := r.FormValue("tmdb_id")
-		if tmdbID != "movie/123" {
-			t.Errorf("expected tmdb_id movie/123, got %q", tmdbID)
+		if tmdbID != "123" {
+			t.Errorf("expected tmdb_id 123, got %q", tmdbID)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if calls == 1 {
-			if imdbID != "tt0000456" {
-				t.Errorf("expected first imdb_id tt0000456, got %q", imdbID)
+			if imdbID != "456" {
+				t.Errorf("expected first imdb_id 456, got %q", imdbID)
 				return
 			}
 			_, _ = fmt.Fprint(w, `{"status_code":0,"status_message":"Invalid imdb_id"}`)
@@ -499,6 +507,25 @@ func TestDefinitionBuildDescriptionUsesProvidedAssets(t *testing.T) {
 	}
 	if !strings.Contains(result.Description, "[img width=350]https://img.hdbits.org/full.jpg[/img]") {
 		t.Fatalf("expected raw image url to be used, got %q", result.Description)
+	}
+}
+
+func TestBuildScreenshotSectionUsesTwoImagesPerRow(t *testing.T) {
+	images := []api.ScreenshotImage{
+		{RawURL: "https://img.example/1.png", WebURL: "https://img.example/1"},
+		{RawURL: "https://img.example/2.png", WebURL: "https://img.example/2"},
+		{RawURL: "https://img.example/3.png", WebURL: "https://img.example/3"},
+		{RawURL: "https://img.example/4.png", WebURL: "https://img.example/4"},
+	}
+
+	got := buildScreenshotSection(images, len(images))
+	want := strings.Join([]string{
+		`[align=center][url=https://img.example/1][img width=350]https://img.example/1.png[/img][/url] [url=https://img.example/2][img width=350]https://img.example/2.png[/img][/url]`,
+		``,
+		`[url=https://img.example/3][img width=350]https://img.example/3.png[/img][/url] [url=https://img.example/4][img width=350]https://img.example/4.png[/img][/url][/align]`,
+	}, "\n")
+	if got != want {
+		t.Fatalf("unexpected BHD screenshot layout: %q", got)
 	}
 }
 
