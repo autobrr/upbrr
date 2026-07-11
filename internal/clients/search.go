@@ -89,6 +89,7 @@ var trackerURLPatterns = map[string][]string{
 	"lst":  {"https://lst.gg"},
 	"lt":   {"https://lat-team.com"},
 	"lume": {"https://luminarr.me"},
+	"mns":  {"https://midnightscene.cc"},
 	"mtv":  {"tracker.morethantv"},
 	"nbl":  {"tracker.nebulance"},
 	"oe":   {"https://onlyencodes.cc"},

@@ -39,7 +39,14 @@ type Config struct {
 	secretReencryptionRequired bool
 }
 
-const DefaultInputHistoryLimit = 20
+const (
+	// DefaultInputHistoryLimit is the default number of retained input paths.
+	DefaultInputHistoryLimit = 20
+	// DefaultDVDMenuItems is the default automatic DVD menu capture limit.
+	DefaultDVDMenuItems = 6
+	// MaxDVDMenuItems is the largest accepted automatic DVD menu capture limit.
+	MaxDVDMenuItems = 32
+)
 
 type MainSettingsConfig struct {
 	UpdateNotification  bool   `yaml:"update_notification"`
@@ -118,7 +125,9 @@ type MetadataConfig struct {
 }
 
 type ScreenshotHandlingConfig struct {
-	Screens              int     `yaml:"screens"`
+	Screens int `yaml:"screens"`
+	// MaxMenuItems bounds automatic DVD menu captures; zero resolves to DefaultDVDMenuItems.
+	MaxMenuItems         int     `yaml:"max_menu_items"`
 	MinSuccessfulUploads int     `yaml:"min_successful_image_uploads"`
 	CutoffScreens        int     `yaml:"cutoff_screens"`
 	FrameOverlay         bool    `yaml:"frame_overlay"`
@@ -131,6 +140,47 @@ type ScreenshotHandlingConfig struct {
 	FFmpegCompression    int     `yaml:"ffmpeg_compression"`
 	TonemapAlgorithm     string  `yaml:"algorithm"`
 	Desat                float64 `yaml:"desat"`
+}
+
+type screenshotHandlingConfigAlias ScreenshotHandlingConfig
+
+// UnmarshalYAML preserves the default menu limit when legacy YAML omits or
+// explicitly zeroes max_menu_items.
+func (c *ScreenshotHandlingConfig) UnmarshalYAML(value *yaml.Node) error {
+	var raw screenshotHandlingConfigAlias
+	raw.MaxMenuItems = DefaultDVDMenuItems
+	if err := value.Decode(&raw); err != nil {
+		return fmt.Errorf("config: decode screenshot handling yaml: %w", err)
+	}
+	if raw.MaxMenuItems == 0 {
+		raw.MaxMenuItems = DefaultDVDMenuItems
+	}
+	*c = ScreenshotHandlingConfig(raw)
+	return nil
+}
+
+// UnmarshalJSON preserves the default menu limit when legacy JSON omits or
+// explicitly zeroes MaxMenuItems.
+func (c *ScreenshotHandlingConfig) UnmarshalJSON(data []byte) error {
+	var raw screenshotHandlingConfigAlias
+	raw.MaxMenuItems = DefaultDVDMenuItems
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("config: decode screenshot handling json: %w", err)
+	}
+	if raw.MaxMenuItems == 0 {
+		raw.MaxMenuItems = DefaultDVDMenuItems
+	}
+	*c = ScreenshotHandlingConfig(raw)
+	return nil
+}
+
+// ResolvedMaxMenuItems returns the configured DVD menu capture limit. Zero in
+// legacy or programmatic configs uses the embedded default.
+func (c *ScreenshotHandlingConfig) ResolvedMaxMenuItems() int {
+	if c.MaxMenuItems == 0 {
+		return DefaultDVDMenuItems
+	}
+	return c.MaxMenuItems
 }
 
 type DescriptionSettingsConfig struct {
@@ -832,6 +882,12 @@ func (c Config) Validate() error {
 	}
 	if c.ScreenshotHandling.Screens <= 0 {
 		return errors.New("config: screenshot_handling.screens must be greater than zero")
+	}
+	if c.ScreenshotHandling.MaxMenuItems < 0 {
+		return errors.New("config: screenshot_handling.max_menu_items must be zero or greater")
+	}
+	if c.ScreenshotHandling.MaxMenuItems > MaxDVDMenuItems {
+		return fmt.Errorf("config: screenshot_handling.max_menu_items must not exceed %d", MaxDVDMenuItems)
 	}
 	if c.PostUpload.MaxConcurrentTrackers < 0 {
 		return errors.New("config: post_upload.max_concurrent_tracker_uploads must be zero or greater")

@@ -21,6 +21,25 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+var errSyntheticDVDMenuCapture = errors.New("synthetic DVD menu capture failure")
+
+func assertDVDMenuCaptureError(t *testing.T, err error) {
+	t.Helper()
+
+	if err == nil {
+		t.Fatal("expected DVD menu capture failure")
+	}
+	if !strings.Contains(err.Error(), "upbrr: capture DVD menus") {
+		t.Fatal("DVD menu capture error is missing operation context")
+	}
+	if !strings.Contains(err.Error(), errSyntheticDVDMenuCapture.Error()) {
+		t.Fatal("DVD menu capture error is missing the underlying cause")
+	}
+	if !errors.Is(err, errSyntheticDVDMenuCapture) {
+		t.Fatal("DVD menu capture error does not wrap the underlying cause")
+	}
+}
+
 func TestRunInteractiveCLIPathReturnsNilAfterSuccessfulUpload(t *testing.T) {
 	t.Parallel()
 
@@ -61,6 +80,100 @@ func TestRunInteractiveCLIPathHandlesScreenshotsBeforeReview(t *testing.T) {
 	}
 	if len(coreSvc.savedFinalImages) != 1 || coreSvc.savedFinalImages[0].Path != "screen1.png" {
 		t.Fatalf("expected generated final screenshot saved, got %#v", coreSvc.savedFinalImages)
+	}
+}
+
+func TestRunInteractiveCLIPathCapturesDVDMenusBeforeReview(t *testing.T) {
+	t.Parallel()
+
+	discRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(discRoot, "VIDEO_TS"), 0o700); err != nil {
+		t.Fatalf("create VIDEO_TS: %v", err)
+	}
+	coreSvc := &cliCoreForTest{
+		dvdMenuResult: api.DVDMenuCaptureResult{
+			Images:   []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{Path: "dvd-menu.png", Purpose: api.ScreenshotPurposeMenu}}},
+			Complete: true,
+		},
+		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
+	}
+	err := runInteractiveCLIPath(context.Background(), coreSvc, cliOptions{Unattended: true, GetDVDMenus: true}, map[string]bool{}, discRoot, config.Config{
+		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+	})
+	if err != nil {
+		t.Fatalf("runInteractiveCLIPath: %v", err)
+	}
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,screenshot-plan,capture-dvd-menus,review" {
+		t.Fatalf("capture order = %s", got)
+	}
+	if coreSvc.dvdMenuCaptureCalls != 1 {
+		t.Fatalf("capture calls = %d, want 1", coreSvc.dvdMenuCaptureCalls)
+	}
+}
+
+func TestRunInteractiveCLIPathDVDMenuCaptureFailureStopsBeforeReview(t *testing.T) {
+	t.Parallel()
+
+	discRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(discRoot, "VIDEO_TS"), 0o700); err != nil {
+		t.Fatalf("create VIDEO_TS: %v", err)
+	}
+	coreSvc := &cliCoreForTest{
+		dvdMenuErr: errSyntheticDVDMenuCapture,
+		review:     api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
+	}
+	err := runInteractiveCLIPath(context.Background(), coreSvc, cliOptions{Unattended: true, GetDVDMenus: true}, map[string]bool{}, discRoot, config.Config{
+		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+	})
+
+	assertDVDMenuCaptureError(t, err)
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,screenshot-plan,capture-dvd-menus" {
+		t.Fatalf("capture failure call order = %s", got)
+	}
+	if coreSvc.runUploadPreparedCalls != 0 {
+		t.Fatalf("upload calls after capture failure = %d, want 0", coreSvc.runUploadPreparedCalls)
+	}
+}
+
+func TestRunInteractiveCLIPathExplicitDryRunCapturesDVDMenus(t *testing.T) {
+	t.Parallel()
+
+	discRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(discRoot, "VIDEO_TS"), 0o700); err != nil {
+		t.Fatalf("create VIDEO_TS: %v", err)
+	}
+	coreSvc := &cliCoreForTest{
+		dvdMenuResult: api.DVDMenuCaptureResult{
+			Images: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{Path: "dvd-menu.png", Purpose: api.ScreenshotPurposeMenu}}},
+		},
+		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
+	}
+	err := runInteractiveCLIPath(context.Background(), coreSvc, cliOptions{Unattended: true, DryRun: true, GetDVDMenus: true}, map[string]bool{}, discRoot, config.Config{
+		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+	})
+	if err != nil {
+		t.Fatalf("runInteractiveCLIPath: %v", err)
+	}
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,capture-dvd-menus,review" {
+		t.Fatalf("dry-run capture order = %s", got)
+	}
+}
+
+func TestRunInteractiveCLIPathSkipsNonDVDMenuCapture(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &cliCoreForTest{review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}}}
+	err := runInteractiveCLIPath(context.Background(), coreSvc, cliOptions{Unattended: true, GetDVDMenus: true}, map[string]bool{}, t.TempDir(), config.Config{
+		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
+	})
+	if err != nil {
+		t.Fatalf("runInteractiveCLIPath: %v", err)
+	}
+	if coreSvc.dvdMenuCaptureCalls != 0 {
+		t.Fatalf("non-DVD capture calls = %d", coreSvc.dvdMenuCaptureCalls)
+	}
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,screenshot-plan,review" {
+		t.Fatalf("non-DVD call order = %s", got)
 	}
 }
 
@@ -1807,6 +1920,10 @@ type cliCoreForTest struct {
 	screenshotPlan         api.ScreenshotPlan
 	screenshotResult       api.ScreenshotResult
 	savedFinalImages       []api.ScreenshotImage
+	dvdMenuResult          api.DVDMenuCaptureResult
+	dvdMenuErr             error
+	dvdMenuCaptureCalls    int
+	importMenuCalls        int
 	playlistSelectionErr   error
 	playlists              []api.PlaylistInfo
 	savedPlaylists         []string
@@ -2020,7 +2137,25 @@ func (c *cliCoreForTest) DeleteUploadedImage(context.Context, api.Request, strin
 	return nil
 }
 
-func (c *cliCoreForTest) ImportMenuImages(context.Context, api.Request, []string) error {
+func (c *cliCoreForTest) ImportMenuImages(_ context.Context, req api.Request, _ []string) error {
+	c.callOrder = append(c.callOrder, "import-menu-images")
+	c.recordRequest("import-menu-images", req)
+	c.importMenuCalls++
+	return nil
+}
+
+func (c *cliCoreForTest) CaptureDVDMenus(_ context.Context, req api.Request) (api.DVDMenuCaptureResult, error) {
+	c.callOrder = append(c.callOrder, "capture-dvd-menus")
+	c.recordRequest("capture-dvd-menus", req)
+	c.dvdMenuCaptureCalls++
+	return c.dvdMenuResult, c.dvdMenuErr
+}
+
+func (c *cliCoreForTest) ListDVDMenuScreenshots(context.Context, api.Request) ([]api.ScreenshotImage, error) {
+	return nil, nil
+}
+
+func (c *cliCoreForTest) DeleteDVDMenuScreenshot(context.Context, api.Request, string) error {
 	return nil
 }
 

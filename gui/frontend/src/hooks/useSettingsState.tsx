@@ -460,6 +460,12 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.Anon,
     trackerFieldMeta.ModQ,
   ],
+  MNS: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.Anon,
+  ],
   MTV: [
     trackerFieldMeta.FaviconURL,
     trackerFieldMeta.LinkDirName,
@@ -766,6 +772,7 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     CheckPredb: { key: "CheckPredb", advanced: true },
   },
   ScreenshotHandling: {
+    MaxMenuItems: { key: "MaxMenuItems", label: "Maximum DVD menu images", type: "number" },
     ProcessLimit: { key: "ProcessLimit", advanced: true },
     MaxConcurrentUploads: { key: "MaxConcurrentUploads", advanced: true },
     FFmpegLimit: { key: "FFmpegLimit", advanced: true },

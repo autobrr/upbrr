@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+// ApplicationInfo describes the running build and optional runtime capability
+// probes returned by Wails and embedded web entrypoints.
 type ApplicationInfo struct {
 	Version         string `json:"version"`
 	BuildIdentifier string `json:"buildIdentifier"`
@@ -20,6 +22,12 @@ type ApplicationInfo struct {
 	GOARCH          string `json:"goarch"`
 	Uptime          string `json:"uptime"`
 	UptimeSeconds   int64  `json:"uptimeSeconds"`
+	// DVDMenuEngine contains path-free engine and FFmpeg probe metadata.
+	DVDMenuEngine DVDMenuEngineInfo `json:"dvdMenuEngine"`
+	// DVDMenuCapabilityStatus is available, incompatible, or unavailable.
+	DVDMenuCapabilityStatus string `json:"dvdMenuCapabilityStatus"`
+	// DVDMenuCapabilityMessage is the user-facing reason for the capability status.
+	DVDMenuCapabilityMessage string `json:"dvdMenuCapabilityMessage"`
 }
 
 var (
@@ -29,6 +37,8 @@ var (
 	applicationStartedAt = time.Now()
 )
 
+// SetApplicationBuild stores trimmed build metadata returned by
+// [CurrentApplicationInfo].
 func SetApplicationBuild(version string, buildIdentifier string) {
 	applicationInfoMu.Lock()
 	defer applicationInfoMu.Unlock()
@@ -37,6 +47,8 @@ func SetApplicationBuild(version string, buildIdentifier string) {
 	applicationBuildID = strings.TrimSpace(buildIdentifier)
 }
 
+// CurrentApplicationInfo returns process build, platform, and uptime metadata.
+// Optional capability fields remain zero until an entrypoint probes them.
 func CurrentApplicationInfo() ApplicationInfo {
 	uptime := max(time.Since(applicationStartedAt), 0)
 

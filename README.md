@@ -30,8 +30,8 @@ Have these ready:
 - image host credentials
 - torrent client details or watch-folder paths
 - existing Upload Assistant `config.py`, if migrating
-- ffmpeg installed on your system for screenshot generation
-    - On Windows, ffmpeg must be added to PATH (https://windowsloop.com/install-ffmpeg-windows-10/)
+- FFmpeg installed on your system for screenshot generation
+    - On Windows, FFmpeg must be added to `PATH`
     - On Linux, install it from your distribution package manager
     - On macOS, install it with Homebrew:
 
@@ -40,6 +40,7 @@ Have these ready:
       ```
 
       The CLI can find ffmpeg when your shell PATH includes Homebrew. If you start the GUI from Finder, macOS may not pass your shell PATH to the app, so the GUI may not see Homebrew's ffmpeg. Start the GUI from Terminal, or make ffmpeg available in the environment used to launch the app.
+    - Automatic DVD menu screenshots need an FFmpeg build whose `dvdvideo` demuxer exposes `menu`, `menu_lu`, `menu_vts`, `pgc`, and `pg`. A version number alone does not prove this capability. upbrr checks the selected FFmpeg at runtime; see [FFmpeg's dvdvideo documentation](https://ffmpeg.org/ffmpeg-formats.html#dvdvideo).
 
 By default, upbrr stores its database at:
 
@@ -233,6 +234,22 @@ Useful CLI checks:
 ```
 
 NOTE: with cli `--debug` works as expected. Additionally, the printed feedback (even with debug) can be adjusted with `--log-level`. See `upbrr.exe --help`
+
+### Automatic DVD Menu Screenshots
+
+Automatic DVD menu capture is opt-in. It accepts an extracted DVD directory containing `VIDEO_TS`, or the `VIDEO_TS` directory itself. ISO images, optical drives, and Blu-ray menus are not automatic-capture inputs in this version.
+
+CLI example:
+
+```powershell
+.\upbrr.exe --get-dvd-menus "D:\releases\Example.Release.2026.DVD-GRP"
+```
+
+In the GUI or web UI, fetch DVD metadata, then open **Disc Menus** and start automatic capture. Manual Disc Menu image import remains available for DVD, BDMV, and HDDVD sources. `screenshot_handling.max_menu_items` controls the maximum stored automatic menu images; the default is `6` and the supported range is `1` to `32`.
+
+The FFmpeg capability check must find the `dvdvideo` demuxer and all required menu-coordinate options. If it does not, capture stops with an explicit capability error instead of sampling menu VOB files. Application Details shows the embedded Go DVD engine version, FFmpeg version, and menu-capability status without exposing local executable paths.
+
+upbrr does not include CSS decryption or bundle `libdvdcss`. Encrypted/protected, unreadable, region-restricted, or corrupt inputs may fail. Use only media you are legally permitted to process; extract/decrypt it outside upbrr where allowed.
 
 ### Run with Docker Compose
 

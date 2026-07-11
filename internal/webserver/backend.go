@@ -61,6 +61,10 @@ type Backend struct {
 	uploads  map[string]*trackerUploadJob
 	uploadWG sync.WaitGroup
 
+	dvdMenuMu sync.Mutex
+	dvdMenus  map[string]*dvdMenuCaptureJob
+	dvdMenuWG sync.WaitGroup
+
 	sharedCookieMigrator func(context.Context, string, api.Logger) error
 }
 
@@ -138,6 +142,7 @@ func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub
 		streams:     make(map[string]*backendLogStream),
 		dupes:       make(map[string]*dupeCheckJob),
 		uploads:     make(map[string]*trackerUploadJob),
+		dvdMenus:    make(map[string]*dvdMenuCaptureJob),
 	}, nil
 }
 
@@ -146,6 +151,7 @@ func (b *Backend) Close() error {
 	b.stopAllLogStreams()
 	b.stopAllDupeJobs()
 	b.stopAllUploadJobs()
+	b.stopAllDVDMenuJobs()
 	rt := b.runtimeSnapshot()
 	if rt.core != nil {
 		_ = rt.core.Close()
@@ -741,8 +747,12 @@ func (b *Backend) GetConfig() (string, error) {
 	return wrapWebResult(config.ExportToJSON(cfg))
 }
 
+// GetApplicationInfo returns build/runtime metadata plus a bounded, path-free
+// DVD menu capability probe for embedded-web diagnostics.
 func (b *Backend) GetApplicationInfo() (api.ApplicationInfo, error) {
-	return api.CurrentApplicationInfo(), nil
+	rt := b.runtimeSnapshot()
+	provider, _ := rt.core.(api.DVDMenuCapabilityProvider)
+	return guishared.CurrentApplicationInfo(context.Background(), provider), nil
 }
 
 // ExportConfig returns the exportable config, using plaintext secrets only

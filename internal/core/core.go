@@ -5,6 +5,7 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -29,12 +30,14 @@ import (
 	"github.com/autobrr/upbrr/internal/dupechecking"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/paths"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/description"
+	"github.com/autobrr/upbrr/internal/services/dvdmenus"
 	"github.com/autobrr/upbrr/internal/services/imagehosting"
 	"github.com/autobrr/upbrr/internal/services/screenshots"
 	"github.com/autobrr/upbrr/internal/torrent"
@@ -157,6 +160,13 @@ func newCore(ctx context.Context, deps api.CoreDependencies) (*Core, error) {
 			return nil, fmt.Errorf("core: tmp dir: %w", err)
 		}
 		services.Screenshots = screenshots.NewServiceWithRepo(cfg, logger, tmpDir, nil, repo)
+	}
+	if services.DVDMenus == nil {
+		tmpDir, err := db.Subdir(cfg.MainSettings.DBPath, "tmp")
+		if err != nil {
+			return nil, fmt.Errorf("core: tmp dir: %w", err)
+		}
+		services.DVDMenus = dvdmenus.NewService(logger, tmpDir, repo)
 	}
 	if services.Images == nil {
 		services.Images = imagehosting.NewService(cfg, logger, repo)
@@ -1014,12 +1024,25 @@ func (c *Core) SaveFinalScreenshotSelections(ctx context.Context, req api.Reques
 	return wrapCoreError(c.services.Screenshots.SaveFinalSelections(ctx, meta, images))
 }
 
+// ImportMenuImages copies supported image files from host filesystem paths into
+// one prepared release's managed temp directory. Content-addressed names dedupe
+// repeated imports, and DB records/selections are appended atomically.
 func (c *Core) ImportMenuImages(ctx context.Context, req api.Request, importPaths []string) error {
 	if len(req.Paths) == 0 {
 		return internalerrors.ErrInvalidInput
 	}
 	if len(importPaths) == 0 {
 		return nil
+	}
+	if c.repo == nil {
+		return errors.New("core: repository not configured")
+	}
+	if c.services.Filesystem == nil {
+		return errors.New("core: filesystem service not configured")
+	}
+	lifecycle, ok := c.repo.(api.ScreenshotLifecycleRepository)
+	if !ok {
+		return errors.New("core: screenshot lifecycle repository not configured")
 	}
 	normalizedPaths, err := c.services.Filesystem.ValidatePaths(ctx, req.Paths)
 	if err != nil {
@@ -1039,17 +1062,6 @@ func (c *Core) ImportMenuImages(ctx context.Context, req api.Request, importPath
 	}
 	sourcePath := uniquePaths[0]
 
-	existing, err := c.repo.ListFinalSelections(ctx, sourcePath)
-	if err != nil && !errors.Is(err, internalerrors.ErrNotFound) {
-		return fmt.Errorf("core: list menu selections: %w", err)
-	}
-	maxOrder := -1
-	for _, sel := range existing {
-		if sel.Order > maxOrder {
-			maxOrder = sel.Order
-		}
-	}
-
 	var expandedPaths []string
 	for _, p := range importPaths {
 		p = strings.TrimSpace(p)
@@ -1068,14 +1080,14 @@ func (c *Core) ImportMenuImages(ctx context.Context, req api.Request, importPath
 			for _, entry := range entries {
 				if !entry.IsDir() {
 					ext := strings.ToLower(filepath.Ext(entry.Name()))
-					if ext == ".png" || ext == ".jpg" || ext == ".jpeg" {
+					if isMenuImageExtension(ext) {
 						expandedPaths = append(expandedPaths, filepath.Join(p, entry.Name()))
 					}
 				}
 			}
 		} else {
 			ext := strings.ToLower(filepath.Ext(p))
-			if ext == ".png" || ext == ".jpg" || ext == ".jpeg" {
+			if isMenuImageExtension(ext) {
 				expandedPaths = append(expandedPaths, p)
 			}
 		}
@@ -1091,28 +1103,115 @@ func (c *Core) ImportMenuImages(ctx context.Context, req api.Request, importPath
 		return fmt.Errorf("core: create release tmp dir: %w", err)
 	}
 
-	for idx, p := range expandedPaths {
-		destPath := filepath.Join(tmpDir, filepath.Base(p))
+	if len(expandedPaths) == 0 {
+		return nil
+	}
 
-		// Copy file to release tmp dir
-		if err := filesystem.CopyFile(p, destPath); err != nil {
-			return fmt.Errorf("core: copy menu image %s: %w", p, err)
+	now := time.Now().UTC()
+	records := make([]api.Screenshot, 0, len(expandedPaths))
+	selections := make([]api.ScreenshotFinalSelection, 0, len(expandedPaths))
+	created := make([]string, 0, len(expandedPaths))
+	seen := make(map[string]struct{}, len(expandedPaths))
+	for _, sourceImage := range expandedPaths {
+		destPath, wasCreated, err := copyManagedMenuImage(tmpDir, sourceImage)
+		if err != nil {
+			removeMenuImportFiles(created)
+			return err
 		}
-
-		existing = append(existing, api.ScreenshotFinalSelection{
+		if _, exists := seen[destPath]; exists {
+			continue
+		}
+		seen[destPath] = struct{}{}
+		if wasCreated {
+			created = append(created, destPath)
+		}
+		records = append(records, api.Screenshot{
 			SourcePath: sourcePath,
 			ImagePath:  destPath,
-			Order:      maxOrder + 1 + idx,
-			Source:     string(api.ScreenshotPurposeMenu),
-			SelectedAt: time.Now().UTC(),
+			Purpose:    api.ScreenshotPurposeMenu,
+			CapturedAt: now,
+		})
+		selections = append(selections, api.ScreenshotFinalSelection{
+			SourcePath: sourcePath,
+			ImagePath:  destPath,
+			Order:      len(selections),
+			Source:     api.ScreenshotSelectionSourceMenu,
+			SelectedAt: now,
 		})
 	}
-	if err := c.repo.SaveFinalSelections(ctx, sourcePath, existing); err != nil {
+	if err := lifecycle.AppendManualMenuScreenshots(ctx, sourcePath, records, selections); err != nil {
+		removeMenuImportFiles(created)
 		return fmt.Errorf("core: save menu selections: %w", err)
 	}
 	return nil
 }
 
+func isMenuImageExtension(extension string) bool {
+	switch strings.ToLower(strings.TrimSpace(extension)) {
+	case ".png", ".jpg", ".jpeg", ".webp":
+		return true
+	default:
+		return false
+	}
+}
+
+// copyManagedMenuImage stages one import and assigns a content-addressed managed
+// name. The boolean result reports whether this call created the destination.
+func copyManagedMenuImage(tmpDir string, sourcePath string) (string, bool, error) {
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return "", false, fmt.Errorf("core: open menu image: %w", err)
+	}
+	defer source.Close()
+
+	staged, err := os.CreateTemp(tmpDir, ".manual-dvd-menu-*.partial")
+	if err != nil {
+		return "", false, fmt.Errorf("core: stage menu image: %w", err)
+	}
+	stagedPath := staged.Name()
+	cleanupStaged := true
+	defer func() {
+		if cleanupStaged {
+			_ = os.Remove(stagedPath)
+		}
+	}()
+
+	hash := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(staged, hash), source); err != nil {
+		_ = staged.Close()
+		return "", false, fmt.Errorf("core: copy menu image: %w", err)
+	}
+	if err := staged.Close(); err != nil {
+		return "", false, fmt.Errorf("core: close staged menu image: %w", err)
+	}
+	extension := strings.ToLower(filepath.Ext(sourcePath))
+	destPath := filepath.Join(tmpDir, fmt.Sprintf("manual-dvd-menu-%x%s", hash.Sum(nil)[:8], extension))
+	if info, err := os.Stat(destPath); err == nil {
+		if info.IsDir() {
+			return "", false, internalerrors.ErrInvalidInput
+		}
+		return destPath, false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", false, fmt.Errorf("core: inspect managed menu image: %w", err)
+	}
+	if err := os.Rename(stagedPath, destPath); err != nil {
+		if info, statErr := os.Stat(destPath); statErr == nil && !info.IsDir() {
+			return destPath, false, nil
+		}
+		return "", false, fmt.Errorf("core: finalize menu image: %w", err)
+	}
+	cleanupStaged = false
+	return destPath, true, nil
+}
+
+func removeMenuImportFiles(paths []string) {
+	for _, pathValue := range paths {
+		_ = os.Remove(pathValue)
+	}
+}
+
+// ListUploadCandidates returns persisted normal and disc-menu images eligible
+// for image-host upload for one prepared release.
 func (c *Core) ListUploadCandidates(ctx context.Context, req api.Request) ([]api.ScreenshotImage, error) {
 	if len(req.Paths) == 0 {
 		return nil, internalerrors.ErrInvalidInput
@@ -1194,6 +1293,10 @@ func (c *Core) ListUploadedImages(ctx context.Context, req api.Request) ([]api.U
 	return wrapCoreResult(c.repo.ListUploadedImagesByPath(ctx, uniquePaths[0]))
 }
 
+// UploadImages uploads one source's selected images to the requested global
+// host and any additional hosts required by its eligible trackers. Host uploads
+// run concurrently, tracker-owned hosts use tracker-scoped records, and
+// recoverable host failures are returned in [api.UploadImagesResult].
 func (c *Core) UploadImages(ctx context.Context, req api.Request, host string, images []api.ScreenshotImage) (api.UploadImagesResult, error) {
 	if len(req.Paths) == 0 {
 		return api.UploadImagesResult{}, internalerrors.ErrInvalidInput
@@ -1578,10 +1681,15 @@ func (c *Core) uploadImagesToTargets(ctx context.Context, meta api.PreparedMetad
 				Host:       result.target.Host,
 				UsageScope: result.target.UsageScope,
 				Trackers:   slices.Clone(result.target.Trackers),
-				Message:    uploadFailureMessage(result.err),
+				Message:    logging.SanitizeMessage(uploadFailureMessage(result.err)),
 			}
 			failures = append(failures, failure)
-			failureMessages = append(failureMessages, fmt.Sprintf("%s: %v", result.target.Host, result.err))
+			failureMessages = append(failureMessages, fmt.Sprintf(
+				"host=%s trackers=%v err=%s",
+				result.target.Host,
+				result.target.Trackers,
+				redaction.RedactValue(failure.Message, nil),
+			))
 		}
 	}
 	if len(failures) == 0 {
@@ -1622,7 +1730,7 @@ func (c *Core) uploadImagesToTarget(ctx context.Context, meta api.PreparedMetada
 	target.Host = strings.ToLower(strings.TrimSpace(target.Host))
 	target.UsageScope = normalizeImageUploadUsageScope(target.UsageScope)
 	if c.repo == nil {
-		c.logger.Debugf("core: uploading images host=%s scope=%s trackers=%v count=%d", target.Host, target.UsageScope, target.Trackers, len(images))
+		c.logger.Tracef("core: uploading images host=%s tracker=%s scope=%s trackers=%v count=%d", target.Host, imageHostOwnerLogValue(target.Host), target.UsageScope, target.Trackers, len(images))
 		return wrapCoreResult(c.services.Images.Upload(ctx, meta, target.Host, target.UsageScope, images))
 	}
 
@@ -1646,11 +1754,11 @@ func (c *Core) uploadImagesToTarget(ctx context.Context, meta api.PreparedMetada
 		missing = append(missing, image)
 	}
 	if len(missing) == 0 {
-		c.logger.Debugf("core: reusing uploaded images host=%s scope=%s trackers=%v count=%d", target.Host, target.UsageScope, target.Trackers, len(results))
+		c.logger.Tracef("core: reusing uploaded images host=%s tracker=%s scope=%s trackers=%v count=%d", target.Host, imageHostOwnerLogValue(target.Host), target.UsageScope, target.Trackers, len(results))
 		return results, nil
 	}
 
-	c.logger.Debugf("core: uploading missing images host=%s scope=%s trackers=%v missing=%d reused=%d", target.Host, target.UsageScope, target.Trackers, len(missing), len(results))
+	c.logger.Debugf("core: uploading missing images host=%s tracker=%s scope=%s trackers=%v missing=%d reused=%d", target.Host, imageHostOwnerLogValue(target.Host), target.UsageScope, target.Trackers, len(missing), len(results))
 	uploaded, err := c.services.Images.Upload(ctx, meta, target.Host, target.UsageScope, missing)
 	results = append(results, uploaded...)
 	if err != nil {
@@ -1714,6 +1822,14 @@ func normalizeImageUploadUsageScope(scope string) string {
 	return trimmed
 }
 
+// imageHostOwnerLogValue identifies tracker-owned hosts in core upload logs.
+func imageHostOwnerLogValue(host string) string {
+	if tracker := trackers.TrackerForOwnedImageHost(host); tracker != "" {
+		return tracker
+	}
+	return "shared"
+}
+
 func (c *Core) DeleteUploadedImage(ctx context.Context, req api.Request, imagePath string, host string) error {
 	if len(req.Paths) == 0 {
 		return internalerrors.ErrInvalidInput
@@ -1745,7 +1861,7 @@ func (c *Core) DeleteUploadedImage(ctx context.Context, req api.Request, imagePa
 		return internalerrors.ErrInvalidInput
 	}
 
-	c.logger.Debugf("core: deleting uploaded image path=%s host=%s", imagePath, host)
+	c.logger.Debugf("core: deleting uploaded image path=%s host=%s tracker=%s", imagePath, host, imageHostOwnerLogValue(host))
 	return wrapCoreError(c.repo.DeleteUploadedImage(ctx, uniquePaths[0], imagePath, host))
 }
 
@@ -2198,7 +2314,73 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 
 	c.storeDupeCache(meta.SourcePath, overrideSignature(meta.ExternalIDOverrides, meta.ReleaseNameOverrides, meta.MetadataOverrides, meta.TrackerConfigOverrides, meta.TrackerSiteOverrides, meta.ClientOverrides, meta.TorrentOverrides, meta.ImageHostOverrides, meta.ScreenshotOverrides), meta)
 
-	return api.TrackerDryRunPreview{SourcePath: meta.SourcePath, Trackers: entries}, nil
+	return api.TrackerDryRunPreview{SourcePath: meta.SourcePath, Trackers: sanitizeTrackerDryRunEntries(entries)}, nil
+}
+
+func sanitizeTrackerDryRunEntries(entries []api.TrackerDryRunEntry) []api.TrackerDryRunEntry {
+	sanitized := make([]api.TrackerDryRunEntry, len(entries))
+	for index, entry := range entries {
+		entry.Message = logging.SanitizeMessage(entry.Message)
+		entry.BannedReason = logging.SanitizeMessage(entry.BannedReason)
+		entry.BannedCheckError = logging.SanitizeMessage(entry.BannedCheckError)
+		entry.Endpoint = logging.SanitizeMessage(entry.Endpoint)
+		entry.Payload = redactDryRunPayload(entry.Payload)
+		entry.Files = sanitizeTrackerDryRunFiles(entry.Files)
+		entry.DebugSections = sanitizeTrackerDryRunDebugSections(entry.DebugSections)
+		entry.ImageHost = sanitizeDryRunImageHostFeedback(entry.ImageHost)
+		sanitized[index] = entry
+	}
+	return sanitized
+}
+
+func redactDryRunPayload(payload map[string]string) map[string]string {
+	if payload == nil {
+		return nil
+	}
+	redacted := make(map[string]string, len(payload))
+	for key, value := range payload {
+		wrapped := map[string]any{key: value}
+		result, ok := redaction.RedactPrivateInfo(wrapped, nil).(map[string]any)
+		if !ok {
+			redacted[key] = "[REDACTED]"
+			continue
+		}
+		redactedValue, ok := result[key].(string)
+		if !ok {
+			redacted[key] = "[REDACTED]"
+			continue
+		}
+		redacted[key] = logging.SanitizeMessage(redactedValue)
+	}
+	return redacted
+}
+
+func sanitizeTrackerDryRunFiles(files []api.TrackerDryRunFile) []api.TrackerDryRunFile {
+	sanitized := slices.Clone(files)
+	for index := range sanitized {
+		sanitized[index].Path = logging.SanitizeMessage(sanitized[index].Path)
+	}
+	return sanitized
+}
+
+func sanitizeTrackerDryRunDebugSections(sections []api.TrackerDryRunDebugSection) []api.TrackerDryRunDebugSection {
+	sanitized := make([]api.TrackerDryRunDebugSection, len(sections))
+	for index, section := range sections {
+		section.Endpoint = logging.SanitizeMessage(section.Endpoint)
+		section.Payload = redactDryRunPayload(section.Payload)
+		section.Files = sanitizeTrackerDryRunFiles(section.Files)
+		sanitized[index] = section
+	}
+	return sanitized
+}
+
+func sanitizeDryRunImageHostFeedback(feedback api.ImageHostFeedback) api.ImageHostFeedback {
+	feedback.Message = logging.SanitizeMessage(feedback.Message)
+	feedback.Warnings = slices.Clone(feedback.Warnings)
+	for index := range feedback.Warnings {
+		feedback.Warnings[index].Message = logging.SanitizeMessage(feedback.Warnings[index].Message)
+	}
+	return feedback
 }
 
 // injectTrackerDryRunTorrents injects only ready dry-run tracker torrents into

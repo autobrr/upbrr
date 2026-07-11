@@ -144,7 +144,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	if err != nil {
 		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+	assets, err := trackers.ResolveDescriptionAssetsWithPrepared(ctx, req.Tracker, req.Meta, req.Repo, req.Logger, req.Assets)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
@@ -292,6 +292,9 @@ func validateFields(groupID string, fields map[string]string) string {
 }
 
 func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) string {
+	if assets.Final {
+		return strings.TrimSpace(assets.Description)
+	}
 	meta := req.Meta
 	parts := make([]string, 0, 3)
 	// custom header

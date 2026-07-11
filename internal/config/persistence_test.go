@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -294,6 +295,7 @@ func TestYAMLRoundTrip(t *testing.T) {
 		},
 		ScreenshotHandling: ScreenshotHandlingConfig{
 			Screens:              4,
+			MaxMenuItems:         DefaultDVDMenuItems,
 			MinSuccessfulUploads: 3,
 			CutoffScreens:        2,
 			FrameOverlay:         true,
@@ -712,6 +714,32 @@ func TestLoadFromDatabaseWithDefaultBackfillIgnoresExplicitZeroDefaultKey(t *tes
 	}
 }
 
+func TestLoadFromDatabaseBackfillsMaxMenuItems(t *testing.T) {
+	t.Parallel()
+
+	for name, mutate := range map[string]func(map[string]any){
+		"missing": func(section map[string]any) { delete(section, "MaxMenuItems") },
+		"zero":    func(section map[string]any) { section["MaxMenuItems"] = float64(0) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw := defaultDatabaseConfigMap(t)
+			section, ok := raw["ScreenshotHandling"].(map[string]any)
+			if !ok {
+				t.Fatal("expected ScreenshotHandling defaults map")
+			}
+			mutate(section)
+
+			loaded, _, err := LoadFromDatabaseWithDefaultBackfill(context.Background(), &rawConfigRepo{raw: raw})
+			if err != nil {
+				t.Fatalf("LoadFromDatabaseWithDefaultBackfill: %v", err)
+			}
+			if loaded.ScreenshotHandling.MaxMenuItems != DefaultDVDMenuItems {
+				t.Fatalf("MaxMenuItems = %d, want %d", loaded.ScreenshotHandling.MaxMenuItems, DefaultDVDMenuItems)
+			}
+		})
+	}
+}
+
 func TestLoadFromDatabaseWithRepairReportDoesNotPersistInvalidObjectRoots(t *testing.T) {
 	t.Parallel()
 
@@ -939,6 +967,238 @@ func TestSaveSectionsToDatabaseDoesNotPreserveRepairedTrackerAliases(t *testing.
 	}
 	if got := btn["FutureFlag"]; got != true {
 		t.Fatalf("expected distinct unknown tracker field to be preserved, got %#v", got)
+	}
+}
+
+func TestLoadFromDatabaseRepairsLegacyTrackerFieldCollision(t *testing.T) {
+	t.Parallel()
+
+	raw := defaultDatabaseConfigMap(t)
+	trackerSection, ok := raw["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatal("expected Trackers defaults map")
+	}
+	trackers, ok := trackerSection["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatal("expected Trackers.Trackers defaults map")
+	}
+	mns, ok := trackers["MNS"].(map[string]any)
+	if !ok {
+		t.Fatal("expected MNS defaults map")
+	}
+	mns["APIKey"] = "stored-token"
+	mns["ApiKey"] = ""
+	mns["FutureFlag"] = true
+	repo := &sectionBatchPreserveRepo{raw: raw}
+
+	loaded, report, err := LoadFromDatabaseWithRepairReport(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("LoadFromDatabaseWithRepairReport failed: %v", err)
+	}
+	if loaded.Trackers.Trackers["MNS"].APIKey != "stored-token" {
+		t.Fatal("expected allowed MNS API key to survive repair")
+	}
+	if !slices.Contains(report.InvalidPaths, "Trackers.Trackers.MNS.ApiKey") {
+		t.Fatalf("expected disallowed tracker field diagnostic, got %#v", report.InvalidPaths)
+	}
+	if !slices.Contains(report.ChangedSections, "Trackers") {
+		t.Fatalf("expected Trackers repair section, got %#v", report.ChangedSections)
+	}
+	if err := SaveSectionsToDatabase(context.Background(), loaded, report.ChangedSections, repo); err != nil {
+		t.Fatalf("SaveSectionsToDatabase failed: %v", err)
+	}
+
+	persistedTrackers, ok := repo.raw["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatal("expected persisted Trackers map")
+	}
+	persistedEntries, ok := persistedTrackers["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatal("expected persisted Trackers.Trackers map")
+	}
+	persistedMNS, ok := persistedEntries["MNS"].(map[string]any)
+	if !ok {
+		t.Fatal("expected persisted MNS entry")
+	}
+	if _, ok := persistedMNS["ApiKey"]; ok {
+		t.Fatal("expected disallowed PTP-only field to be removed from MNS")
+	}
+	if persistedMNS["APIKey"] != "stored-token" {
+		t.Fatal("expected persisted MNS API key to survive repair")
+	}
+	if persistedMNS["FutureFlag"] != true {
+		t.Fatal("expected distinct unknown tracker field to survive repair")
+	}
+}
+
+func TestTrackerSchemasAllowSingleFieldPerFoldGroup(t *testing.T) {
+	t.Parallel()
+
+	initTrackerSchema()
+	trackerNames := make([]string, 0, len(trackerSchema))
+	for trackerName := range trackerSchema {
+		trackerNames = append(trackerNames, trackerName)
+	}
+	sort.Strings(trackerNames)
+	for _, trackerName := range trackerNames {
+		t.Run(trackerName, func(t *testing.T) {
+			seen := map[string]string{}
+			for key := range trackerAllowedJSONKeys(trackerName) {
+				folded := asciiFoldKey(key)
+				if previous, exists := seen[folded]; exists && previous != key {
+					t.Fatalf("tracker schema allows folded field collision %q and %q", previous, key)
+				}
+				seen[folded] = key
+			}
+		})
+	}
+}
+
+func TestLoadFromDatabaseRepairsLegacyFoldedTrackerFieldMatrix(t *testing.T) {
+	t.Parallel()
+
+	raw := defaultDatabaseConfigMap(t)
+	trackerSection, ok := raw["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatal("expected Trackers defaults map")
+	}
+	trackers, ok := trackerSection["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatal("expected Trackers.Trackers defaults map")
+	}
+	legacyFields, err := trackerConfigToJSONMap(TrackerConfig{})
+	if err != nil {
+		t.Fatalf("build legacy tracker fields: %v", err)
+	}
+	foldGroups := foldedTrackerJSONKeyGroups()
+	expectedAllowed := map[string]map[string]any{}
+	for trackerName, rawEntry := range trackers {
+		entry, ok := rawEntry.(map[string]any)
+		if !ok {
+			t.Fatalf("expected tracker entry map for %s", trackerName)
+		}
+		allowed := trackerAllowedJSONKeys(trackerName)
+		expectedAllowed[trackerName] = map[string]any{}
+		for _, group := range foldGroups {
+			for _, key := range group {
+				entry[key] = legacyFields[key]
+				if _, valid := allowed[key]; valid {
+					marker := trackerFieldTestMarker(t, legacyFields[key], trackerName)
+					entry[key] = marker
+					expectedAllowed[trackerName][key] = marker
+				}
+			}
+		}
+		entry["FutureFlag"] = true
+	}
+	repo := &sectionBatchPreserveRepo{raw: raw}
+
+	loaded, report, err := LoadFromDatabaseWithRepairReport(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("load legacy folded tracker matrix: %v", err)
+	}
+	if !slices.Contains(report.ChangedSections, "Trackers") {
+		t.Fatalf("expected Trackers repair section, got %#v", report.ChangedSections)
+	}
+	if err := SaveSectionsToDatabase(context.Background(), loaded, report.ChangedSections, repo); err != nil {
+		t.Fatalf("persist legacy folded tracker repair: %v", err)
+	}
+	if _, _, err := LoadFromDatabaseWithRepairReport(context.Background(), repo); err != nil {
+		t.Fatalf("reload repaired tracker matrix: %v", err)
+	}
+
+	persistedSection, ok := repo.raw["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatal("expected persisted Trackers map")
+	}
+	persistedEntries, ok := persistedSection["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatal("expected persisted Trackers.Trackers map")
+	}
+	for trackerName, rawEntry := range persistedEntries {
+		entry, ok := rawEntry.(map[string]any)
+		if !ok {
+			t.Fatalf("expected persisted tracker entry map for %s", trackerName)
+		}
+		allowed := trackerAllowedJSONKeys(trackerName)
+		for _, group := range foldGroups {
+			for _, key := range group {
+				expected, shouldRemain := expectedAllowed[trackerName][key]
+				actual, exists := entry[key]
+				if shouldRemain {
+					if !exists || actual != expected {
+						t.Fatalf("tracker %s allowed field %s was not preserved", trackerName, key)
+					}
+					continue
+				}
+				if _, schemaAllows := allowed[key]; !schemaAllows && exists {
+					t.Fatalf("tracker %s retained disallowed folded field %s", trackerName, key)
+				}
+			}
+		}
+		if entry["FutureFlag"] != true {
+			t.Fatalf("tracker %s lost distinct unknown field", trackerName)
+		}
+	}
+}
+
+func TestMergeStoredConfigMapPreservesLoneLegacyTrackerFieldAlias(t *testing.T) {
+	t.Parallel()
+
+	base := map[string]any{"APIKey": ""}
+	overlay := map[string]any{"ApiKey": "legacy-token"}
+	if _, err := mergeStoredConfigMapWithReport(base, overlay, "Trackers.Trackers.MNS"); err != nil {
+		t.Fatalf("merge lone legacy alias: %v", err)
+	}
+	if base["APIKey"] != "legacy-token" {
+		t.Fatal("expected lone legacy alias to normalize into allowed field")
+	}
+}
+
+func TestMergeStoredConfigMapPreservesPopulatedLegacyTrackerFieldAlias(t *testing.T) {
+	t.Parallel()
+
+	base := map[string]any{"APIKey": ""}
+	overlay := map[string]any{"APIKey": "", "ApiKey": "legacy-token"}
+	if _, err := mergeStoredConfigMapWithReport(base, overlay, "Trackers.Trackers.MNS"); err != nil {
+		t.Fatalf("merge populated legacy alias: %v", err)
+	}
+	if base["APIKey"] != "legacy-token" {
+		t.Fatal("expected populated legacy alias to replace empty allowed field")
+	}
+}
+
+func foldedTrackerJSONKeyGroups() [][]string {
+	initTrackerTagMetadata()
+	byFold := map[string][]string{}
+	for key := range trackerKnownJSONKeys {
+		folded := asciiFoldKey(key)
+		byFold[folded] = append(byFold[folded], key)
+	}
+	groups := make([][]string, 0)
+	for _, keys := range byFold {
+		if len(keys) < 2 {
+			continue
+		}
+		sort.Strings(keys)
+		groups = append(groups, keys)
+	}
+	sort.Slice(groups, func(i, j int) bool { return groups[i][0] < groups[j][0] })
+	return groups
+}
+
+func trackerFieldTestMarker(t *testing.T, value any, trackerName string) any {
+	t.Helper()
+	switch value := value.(type) {
+	case string:
+		return "stored-" + strings.ToLower(trackerName)
+	case bool:
+		return !value
+	case float64:
+		return value + 17
+	default:
+		t.Fatalf("unsupported folded tracker field type %T", value)
+		return nil
 	}
 }
 

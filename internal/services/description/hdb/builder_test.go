@@ -17,7 +17,7 @@ func TestBuildDescriptionAddsWebDLSource(t *testing.T) {
 		Type:            "WEBDL",
 		ServiceLongName: "Netflix",
 	}
-	description, err := BuildDescription(context.Background(), meta, config.Config{}, "", nil)
+	description, err := BuildDescription(context.Background(), meta, config.Config{}, "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestBuildDescriptionTransformsBaseAndAddsScreens(t *testing.T) {
 	base := "[code]x[/code]\n[spoiler=Comp][comparison=A, B]https://img/a.jpg https://img/b.jpg[/comparison][/spoiler]\n[size=3][img=300]https://img/x.jpg[/img][/size]"
 	screens := []api.ScreenshotImage{{ImgURL: "https://img/s1.jpg", WebURL: "https://web/s1"}, {ImgURL: "https://img/s2.jpg"}}
 
-	description, err := BuildDescription(context.Background(), meta, config.Config{}, base, screens)
+	description, err := BuildDescription(context.Background(), meta, config.Config{}, base, nil, screens)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -48,6 +48,36 @@ func TestBuildDescriptionTransformsBaseAndAddsScreens(t *testing.T) {
 	}
 	if strings.Contains(description, "https://img/s2.jpg") {
 		t.Fatalf("expected second screenshot omitted by limit, got %q", description)
+	}
+}
+
+func TestBuildDescriptionAddsRehostedMenuImagesSeparately(t *testing.T) {
+	menuImages := []api.ScreenshotImage{{
+		Purpose: api.ScreenshotPurposeMenu,
+		ImgURL:  "https://t.hdbits.org/menu.jpg",
+		WebURL:  "https://img.hdbits.org/menu",
+	}}
+	screens := []api.ScreenshotImage{{
+		Purpose: api.ScreenshotPurposeFinal,
+		ImgURL:  "https://t.hdbits.org/screen.jpg",
+		WebURL:  "https://img.hdbits.org/screen",
+	}}
+	appConfig := config.Config{Description: config.DescriptionSettingsConfig{DiscMenuHeader: "[b]Disc menu[/b]"}}
+
+	description, err := BuildDescription(context.Background(), api.PreparedMetadata{}, appConfig, "", menuImages, screens)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	menuPos := strings.Index(description, "https://t.hdbits.org/menu.jpg")
+	screenPos := strings.Index(description, "https://t.hdbits.org/screen.jpg")
+	if menuPos < 0 || screenPos < 0 {
+		t.Fatalf("expected menu and screenshot sections, got %q", description)
+	}
+	if !strings.Contains(description, "[b]Disc menu[/b]") {
+		t.Fatalf("expected disc menu header, got %q", description)
+	}
+	if menuPos >= screenPos {
+		t.Fatalf("expected menu before screenshots, got %q", description)
 	}
 }
 
@@ -66,7 +96,7 @@ func TestBuildDescriptionReplacesExistingScreenshotBlock(t *testing.T) {
 		{ImgURL: "https://t.hdbits.org/w0S7ltI.jpg", RawURL: "https://img.hdbits.org/w0S7ltI.jpg", WebURL: "https://img.hdbits.org/w0S7ltI"},
 	}
 
-	description, err := BuildDescription(context.Background(), meta, config.Config{}, base, screens)
+	description, err := BuildDescription(context.Background(), meta, config.Config{}, base, nil, screens)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -92,7 +122,7 @@ func TestBuildDescriptionPreservesExistingScreensWhenNoNewScreensProvided(t *tes
 
 [align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]`
 
-	description, err := BuildDescription(context.Background(), meta, config.Config{}, base, nil)
+	description, err := BuildDescription(context.Background(), meta, config.Config{}, base, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

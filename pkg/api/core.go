@@ -86,6 +86,8 @@ type UploadOptions struct {
 	OnlyID          bool
 	KeepFolder      bool
 	KeepImages      bool
+	// CaptureDVDMenus requests automatic menu capture for DVD inputs before review or upload.
+	CaptureDVDMenus bool
 	InteractionMode InteractionMode
 }
 
@@ -139,6 +141,12 @@ type Core interface {
 	DeleteScreenshot(ctx context.Context, req Request, imagePath string) error
 	DeleteTrackerImageURL(ctx context.Context, req Request, url string) error
 	SaveFinalScreenshotSelections(ctx context.Context, req Request, images []ScreenshotImage) error
+	// CaptureDVDMenus captures and persists bounded automatic menu images for one prepared DVD.
+	CaptureDVDMenus(ctx context.Context, req Request) (DVDMenuCaptureResult, error)
+	// ListDVDMenuScreenshots lists persisted manual and automatic menu images for one prepared source.
+	ListDVDMenuScreenshots(ctx context.Context, req Request) ([]ScreenshotImage, error)
+	// DeleteDVDMenuScreenshot removes one managed menu image and its local references.
+	DeleteDVDMenuScreenshot(ctx context.Context, req Request, imagePath string) error
 	ListUploadCandidates(ctx context.Context, req Request) ([]ScreenshotImage, error)
 	ListUploadedImages(ctx context.Context, req Request) ([]UploadedImageLink, error)
 	UploadImages(ctx context.Context, req Request, host string, images []ScreenshotImage) (UploadImagesResult, error)

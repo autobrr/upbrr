@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -167,7 +168,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	if err != nil {
 		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
-	descriptionAssets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+	descriptionAssets, err := trackers.ResolveDescriptionAssetsWithPrepared(ctx, req.Tracker, req.Meta, req.Repo, req.Logger, req.Assets)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		descriptionAssets = trackers.DescriptionAssets{}
@@ -196,9 +197,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		"release_desc": description,
 		"screenshots":  screenshots,
 	}
-	for key, value := range mediaFields {
-		fields[key] = value
-	}
+	maps.Copy(fields, mediaFields)
 	if len(flags) > 0 {
 		fields["flags[]"] = strings.Join(flags, ",")
 	}
@@ -235,6 +234,9 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 }
 
 func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) string {
+	if assets.Final {
+		return strings.TrimSpace(assets.Description)
+	}
 	meta := req.Meta
 	var parts []string
 
@@ -670,7 +672,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	writer := multipart.NewWriter(&body)
 	for key, value := range fields {
 		if key == "flags[]" {
-			for _, item := range strings.Split(value, ",") {
+			for item := range strings.SplitSeq(value, ",") {
 				trimmed := strings.TrimSpace(item)
 				if trimmed == "" {
 					continue

@@ -366,6 +366,64 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestScreenshotHandlingMaxMenuItemsDefaultsAndValidation(t *testing.T) {
+	t.Parallel()
+
+	for name, payload := range map[string]string{
+		"yaml omitted": "screens: 1\n",
+		"yaml zero":    "screens: 1\nmax_menu_items: 0\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var cfg ScreenshotHandlingConfig
+			if err := yaml.Unmarshal([]byte(payload), &cfg); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if cfg.MaxMenuItems != DefaultDVDMenuItems {
+				t.Fatalf("MaxMenuItems = %d, want %d", cfg.MaxMenuItems, DefaultDVDMenuItems)
+			}
+		})
+	}
+
+	var jsonCfg ScreenshotHandlingConfig
+	if err := json.Unmarshal([]byte(`{"Screens":1}`), &jsonCfg); err != nil {
+		t.Fatalf("unmarshal json: %v", err)
+	}
+	if jsonCfg.MaxMenuItems != DefaultDVDMenuItems {
+		t.Fatalf("JSON MaxMenuItems = %d, want %d", jsonCfg.MaxMenuItems, DefaultDVDMenuItems)
+	}
+
+	base := Config{
+		MainSettings:       MainSettingsConfig{TMDBAPI: "test-key"},
+		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
+	}
+	if err := base.Validate(); err != nil {
+		t.Fatalf("zero legacy value should resolve to default: %v", err)
+	}
+	if got := base.ScreenshotHandling.ResolvedMaxMenuItems(); got != DefaultDVDMenuItems {
+		t.Fatalf("resolved zero = %d, want %d", got, DefaultDVDMenuItems)
+	}
+	base.ScreenshotHandling.MaxMenuItems = -1
+	if err := base.Validate(); err == nil || !strings.Contains(err.Error(), "max_menu_items") {
+		t.Fatalf("negative validation error = %v", err)
+	}
+	base.ScreenshotHandling.MaxMenuItems = MaxDVDMenuItems + 1
+	if err := base.Validate(); err == nil || !strings.Contains(err.Error(), "max_menu_items") {
+		t.Fatalf("over-limit validation error = %v", err)
+	}
+}
+
+func TestEmbeddedDefaultMaxMenuItems(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := LoadEmbeddedDefaultConfig()
+	if err != nil {
+		t.Fatalf("LoadEmbeddedDefaultConfig: %v", err)
+	}
+	if cfg.ScreenshotHandling.MaxMenuItems != DefaultDVDMenuItems {
+		t.Fatalf("MaxMenuItems = %d, want %d", cfg.ScreenshotHandling.MaxMenuItems, DefaultDVDMenuItems)
+	}
+}
+
 func TestMainSettingsInputHistoryLimitDefaultsWhenMissing(t *testing.T) {
 	t.Parallel()
 

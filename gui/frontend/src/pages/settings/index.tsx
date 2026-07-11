@@ -678,6 +678,29 @@ export default function SettingsPage(props: Props) {
               <p className="settings-detail-card__value mono">{applicationInfo.goVersion}</p>
             </div>
             <div className="settings-detail-card">
+              <p className="settings-detail-card__label">DVD Menu Engine</p>
+              <p className="settings-detail-card__value mono">
+                {applicationInfo.dvdMenuEngine.EngineVersion || "Unavailable"}
+              </p>
+            </div>
+            <div className="settings-detail-card">
+              <p className="settings-detail-card__label">FFmpeg DVD Menus</p>
+              <p className="settings-detail-card__value mono">
+                {applicationInfo.dvdMenuCapabilityStatus === "available"
+                  ? "Available"
+                  : applicationInfo.dvdMenuCapabilityStatus === "incompatible"
+                    ? "Incompatible"
+                    : "Unavailable"}
+              </p>
+              <p className="helper">{applicationInfo.dvdMenuCapabilityMessage}</p>
+            </div>
+            <div className="settings-detail-card">
+              <p className="settings-detail-card__label">FFmpeg Version</p>
+              <p className="settings-detail-card__value mono">
+                {applicationInfo.dvdMenuEngine.FFmpegVersion || "Unavailable"}
+              </p>
+            </div>
+            <div className="settings-detail-card">
               <p className="settings-detail-card__label">Platform</p>
               <p className="settings-detail-card__value mono">
                 {applicationInfo.goos}/{applicationInfo.goarch}

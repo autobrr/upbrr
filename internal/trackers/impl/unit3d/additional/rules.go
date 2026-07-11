@@ -38,6 +38,7 @@ var trackerRuleFactories = map[string]func() RuleSet{
 	"HHD":    rulesHHD,
 	"LST":    rulesLST,
 	"LUME":   rulesLUME,
+	"MNS":    rulesMNS,
 	"OE":     rulesOE,
 	"OTW":    rulesOTW,
 	"RAS":    rulesRAS,
@@ -91,6 +92,8 @@ func rulesA4K() RuleSet {
 func rulesBHD() RuleSet {
 	return RuleSet{
 		RequireValidMISetting: true,
+		BlockAdult:            true,
+		AdultMessage:          "Porn/xxx is not allowed at BHD.",
 		ExtraCheck:            checkBHDRequirements,
 	}
 }
@@ -153,6 +156,13 @@ func rulesLUME() RuleSet {
 			ApplyIfNonDisc: true,
 		},
 		ExtraCheck: checkLUMERequirements,
+	}
+}
+
+func rulesMNS() RuleSet {
+	return RuleSet{
+		BlockAdult:   true,
+		AdultMessage: "Adult content is not allowed",
 	}
 }
 
