@@ -33,6 +33,8 @@ const (
 	MetadataFieldTVmaze MetadataField = "tvmaze"
 	// MetadataFieldTVDBTitle represents a non-empty title from matching TVDB metadata.
 	MetadataFieldTVDBTitle MetadataField = "tvdb_title"
+	// MetadataFieldPoster represents poster artwork from matching provider metadata.
+	MetadataFieldPoster MetadataField = "poster"
 )
 
 // MetadataScope limits a metadata requirement to a content category.
@@ -65,6 +67,8 @@ type TrackerMetadataPolicy struct {
 	Requirements []MetadataRequirement
 }
 
+// trackerMetadataPolicies maps normalized tracker names to their required
+// provider evidence; requirements within one entry are cumulative.
 var trackerMetadataPolicies = map[string]TrackerMetadataPolicy{
 	"PTP": {Requirements: []MetadataRequirement{{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldIMDBIDOnly}, Severity: api.RuleFailureSeverityWarning}}},
 	"HDB": {RequireKnownCategory: true, Requirements: []MetadataRequirement{
@@ -73,7 +77,7 @@ var trackerMetadataPolicies = map[string]TrackerMetadataPolicy{
 	}},
 	"NBL": {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldTVmaze}}}},
 	"ANT": {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeMovie, AnyOf: []MetadataField{MetadataFieldTMDB}}}},
-	"BHD": {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeMovie, AnyOf: []MetadataField{MetadataFieldTMDBIDOnly}}}},
+	"BHD": {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeMovie, AnyOf: []MetadataField{MetadataFieldIMDB}}}},
 	"MTV": {RequireKnownCategory: true, Requirements: []MetadataRequirement{
 		{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB}},
 		{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldTVDBTitle}},
@@ -81,8 +85,14 @@ var trackerMetadataPolicies = map[string]TrackerMetadataPolicy{
 	"BTN": {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldIMDB, MetadataFieldTVDB}}}},
 	"AR": {RequireKnownCategory: true, Requirements: []MetadataRequirement{
 		{Scope: MetadataScopeMovie, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB}},
-		{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB, MetadataFieldTVDB, MetadataFieldTVmaze}},
+		{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB, MetadataFieldTVDB}},
+		{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldPoster}},
 	}},
+	"SPD": {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB}}}},
+	"THR": {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB}}}},
+	"TVC": {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB}}}},
+	"TL":  {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB}}}},
+	"BJS": {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldTMDB}}}},
 	"AZ":  multiIDMetadataPolicy(),
 	"CZ":  multiIDMetadataPolicy(),
 	"PHD": multiIDMetadataPolicy(),
@@ -146,10 +156,14 @@ func evaluateMetadataRequirements(tracker string, meta api.PreparedMetadata) ([]
 		severity := api.NormalizeRuleFailureSeverity(requirement.Severity)
 		rule := "require_metadata_id"
 		reason := "missing required " + metadataFieldList(requirement.AnyOf)
-		if slices.Contains(requirement.AnyOf, MetadataFieldTVDBTitle) {
+		switch {
+		case slices.Contains(requirement.AnyOf, MetadataFieldTVDBTitle):
 			rule = "require_tvdb_title"
 			reason = "missing required TVDB series title for MTV TV upload"
-		} else if severity == api.RuleFailureSeverityWarning {
+		case slices.Contains(requirement.AnyOf, MetadataFieldPoster):
+			rule = "require_metadata_poster"
+			reason = "missing required metadata poster"
+		case severity == api.RuleFailureSeverityWarning:
 			reason = "missing recommended IMDb ID; PTP upload remains allowed"
 		}
 		failures = append(failures, api.RuleFailure{Rule: rule, Reason: reason, Severity: severity})
@@ -191,6 +205,8 @@ func metadataFieldPresent(field MetadataField, meta api.PreparedMetadata) bool {
 		return matchingTVmazeMetadata(meta)
 	case MetadataFieldTVDBTitle:
 		return matchingTVDBMetadata(meta)
+	case MetadataFieldPoster:
+		return matchingMetadataPoster(meta)
 	}
 	return false
 }
@@ -218,6 +234,29 @@ func matchingTVmazeMetadata(meta api.PreparedMetadata) bool {
 	value := meta.ExternalMetadata.TVmaze
 	return providerMetadataCurrent(meta) && value != nil && meta.ExternalIDs.TVmazeID > 0 &&
 		value.TVmazeID == meta.ExternalIDs.TVmazeID && strings.TrimSpace(value.Name) != ""
+}
+
+// matchingMetadataPoster reports whether any current matching provider snapshot
+// supplies poster artwork, independently of the provider used for identity.
+func matchingMetadataPoster(meta api.PreparedMetadata) bool {
+	if !providerMetadataCurrent(meta) {
+		return false
+	}
+	if value := meta.ExternalMetadata.TMDB; value != nil && meta.ExternalIDs.TMDBID > 0 &&
+		value.TMDBID == meta.ExternalIDs.TMDBID && strings.TrimSpace(value.Poster) != "" {
+		return true
+	}
+	if value := meta.ExternalMetadata.IMDB; value != nil && meta.ExternalIDs.IMDBID > 0 &&
+		value.IMDBID == meta.ExternalIDs.IMDBID && strings.TrimSpace(value.Cover) != "" {
+		return true
+	}
+	if value := meta.ExternalMetadata.TVDB; value != nil && meta.ExternalIDs.TVDBID > 0 &&
+		value.TVDBID == meta.ExternalIDs.TVDBID && strings.TrimSpace(value.Poster) != "" {
+		return true
+	}
+	value := meta.ExternalMetadata.TVmaze
+	return value != nil && meta.ExternalIDs.TVmazeID > 0 && value.TVmazeID == meta.ExternalIDs.TVmazeID &&
+		(strings.TrimSpace(value.Poster) != "" || strings.TrimSpace(value.PosterMedium) != "")
 }
 
 func providerMetadataCurrent(meta api.PreparedMetadata) bool {
@@ -255,6 +294,8 @@ func metadataFieldList(fields []MetadataField) string {
 			labels = append(labels, "fetched TVmaze metadata")
 		case MetadataFieldTVDBTitle:
 			labels = append(labels, "TVDB series title")
+		case MetadataFieldPoster:
+			labels = append(labels, "metadata poster")
 		}
 	}
 	if len(labels) == 0 {
