@@ -14,7 +14,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -241,6 +240,9 @@ func sendUpload(ctx context.Context, req trackers.UploadRequest, state uploadSta
 	if err != nil {
 		return uploadResponse{}, nil, fmt.Errorf("trackers: BHD read response: %w", err)
 	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return uploadResponse{}, responseBody, commonhttp.UploadHTTPError("BHD", resp.StatusCode, responseBody)
+	}
 	decoded := uploadResponse{}
 	if len(responseBody) > 0 {
 		if err := json.Unmarshal(responseBody, &decoded); err != nil {
@@ -379,13 +381,23 @@ func writeFailureArtifact(req trackers.UploadRequest, payload []byte, name strin
 	if bytes.Contains(bytes.ToLower(payload), []byte("<html")) {
 		ext = ".html"
 	}
-	path := filepath.Join(tmpDir, "[BHD]"+name+ext)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
 		return "", fmt.Errorf("trackers: BHD create failure artifact dir: %w", err)
 	}
 	payload = []byte(redaction.RedactValue(string(payload), nil))
-	if err := os.WriteFile(path, payload, 0o600); err != nil {
+	file, err := os.CreateTemp(tmpDir, "[BHD]"+name+"-*"+ext)
+	if err != nil {
+		return "", fmt.Errorf("trackers: BHD create failure artifact: %w", err)
+	}
+	path := file.Name()
+	if _, err := file.Write(payload); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
 		return "", fmt.Errorf("trackers: BHD write failure artifact: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("trackers: BHD close failure artifact: %w", err)
 	}
 	return path, nil
 }

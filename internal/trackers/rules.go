@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/additional"
 	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -494,7 +495,7 @@ func isAdultContent(meta api.PreparedMetadata) bool {
 
 func externalMetadataMatchesCurrentSource(meta api.PreparedMetadata) bool {
 	storedSource := strings.TrimSpace(meta.ExternalMetadata.SourcePath)
-	return storedSource == "" || strings.EqualFold(storedSource, strings.TrimSpace(meta.SourcePath))
+	return storedSource == "" || pathutil.SamePath(storedSource, strings.TrimSpace(meta.SourcePath))
 }
 
 func splitCSV(value string) []string {

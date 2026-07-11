@@ -360,6 +360,120 @@ func TestSendUploadRejectsOversizedResponseBody(t *testing.T) {
 	}
 }
 
+func TestSendUploadRejectsNonSuccessHTTPStatus(t *testing.T) {
+	tmp := t.TempDir()
+	torrentPath := filepath.Join(tmp, "Example.torrent")
+	if err := os.WriteFile(torrentPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantDetail string
+	}{
+		{
+			name:       "valid-looking success body",
+			statusCode: http.StatusInternalServerError,
+			body:       `{"status_code":1,"status_message":"https://beyond-hd.me/torrent/download/example.123456.torrent"}`,
+		},
+		{
+			name:       "ordinary error body",
+			statusCode: http.StatusUnprocessableEntity,
+			body:       `{"message":"upload rejected"}`,
+			wantDetail: "upload rejected",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.statusCode)
+				_, _ = fmt.Fprint(w, tt.body)
+			}))
+			defer server.Close()
+
+			originalBaseURL := bhdBaseURL
+			bhdBaseURL = server.URL
+			defer func() { bhdBaseURL = originalBaseURL }()
+
+			_, responseBody, err := sendUpload(context.Background(), trackers.UploadRequest{
+				Tracker:       "BHD",
+				TrackerConfig: config.TrackerConfig{APIKey: "token"},
+			}, uploadState{
+				torrentPath: torrentPath,
+				fields: map[string]string{
+					"name":        "Example.Release.2026.1080p-GRP",
+					"category_id": "1",
+					"type":        "1080p",
+					"source":      "WEB",
+					"tmdb_id":     "movie/123456",
+					"description": "Example description",
+				},
+			})
+			if err == nil {
+				t.Fatal("expected non-success HTTP status error")
+			}
+			if !strings.Contains(err.Error(), fmt.Sprintf("status=%d", tt.statusCode)) {
+				t.Fatal("expected HTTP status in upload error")
+			}
+			if tt.wantDetail != "" && !strings.Contains(err.Error(), tt.wantDetail) {
+				t.Fatal("expected redacted response detail in upload error")
+			}
+			if string(responseBody) != tt.body {
+				t.Fatal("expected bounded response body to be returned")
+			}
+		})
+	}
+}
+
+func TestWriteFailureArtifactPreservesRepeatedFailures(t *testing.T) {
+	tmp := t.TempDir()
+	req := trackers.UploadRequest{
+		Meta: api.PreparedMetadata{
+			SourcePath: filepath.Join(tmp, "Example.Release.2026.1080p-GRP.mkv"),
+		},
+		AppConfig: config.Config{
+			MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "upbrr.db")},
+		},
+	}
+
+	firstPayload := []byte(`{"message":"first failure"}`)
+	firstPath, err := writeFailureArtifact(req, firstPayload, "upload_failure")
+	if err != nil {
+		t.Fatalf("write first failure artifact: %v", err)
+	}
+	secondPayload := []byte(`{"message":"second failure"}`)
+	secondPath, err := writeFailureArtifact(req, secondPayload, "upload_failure")
+	if err != nil {
+		t.Fatalf("write second failure artifact: %v", err)
+	}
+
+	firstInfo, err := os.Stat(firstPath)
+	if err != nil {
+		t.Fatalf("stat first failure artifact: %v", err)
+	}
+	secondInfo, err := os.Stat(secondPath)
+	if err != nil {
+		t.Fatalf("stat second failure artifact: %v", err)
+	}
+	if os.SameFile(firstInfo, secondInfo) {
+		t.Fatal("repeated failures must use distinct artifacts")
+	}
+	firstStored, err := os.ReadFile(firstPath)
+	if err != nil {
+		t.Fatalf("read first failure artifact: %v", err)
+	}
+	secondStored, err := os.ReadFile(secondPath)
+	if err != nil {
+		t.Fatalf("read second failure artifact: %v", err)
+	}
+	if string(firstStored) != string(firstPayload) || string(secondStored) != string(secondPayload) {
+		t.Fatal("repeated failure artifacts did not preserve both payloads")
+	}
+}
+
 func TestDefinitionBuildDescriptionUsesProvidedAssets(t *testing.T) {
 	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
 		Tracker: "BHD",
