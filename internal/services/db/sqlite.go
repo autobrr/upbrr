@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -2225,8 +2226,9 @@ func (r *SQLiteRepository) ReplaceDVDMenuScreenshots(ctx context.Context, path s
 }
 
 // DeleteDiscMenuScreenshot atomically removes one manual or automatic menu
-// selection, its screenshot row, and local upload records. It rejects normal
-// final selections and reports how many remote-host references were orphaned.
+// selection and all local records tied to it. It rejects normal final
+// selections and returns a complete snapshot suitable for compensation with
+// [SQLiteRepository.RestoreDiscMenuScreenshot]. Remote assets are unchanged.
 func (r *SQLiteRepository) DeleteDiscMenuScreenshot(ctx context.Context, path string, imagePath string) (api.DiscMenuDeleteResult, error) {
 	if r == nil || r.db == nil {
 		return api.DiscMenuDeleteResult{}, errors.New("db: repository not initialized")
@@ -2261,10 +2263,43 @@ func (r *SQLiteRepository) DeleteDiscMenuScreenshot(ctx context.Context, path st
 				deleted.Selection.SelectedAt = parsed
 			}
 		}
-		if err := tx.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM uploaded_images WHERE source_path = ? AND image_path = ?
-		`, trimmedPath, trimmedImage).Scan(&deleted.UploadedLinks); err != nil {
-			return fmt.Errorf("db delete disc menu screenshot: count uploaded images: %w", err)
+		var screenshot Screenshot
+		var purpose string
+		var capturedAt string
+		err = tx.QueryRowContext(ctx, `
+			SELECT timestamp, frame_number, width, height, purpose, captured_at
+			FROM screenshots
+			WHERE source_path = ? AND image_path = ?
+		`, trimmedPath, trimmedImage).Scan(
+			&screenshot.Timestamp,
+			&screenshot.FrameNumber,
+			&screenshot.Width,
+			&screenshot.Height,
+			&purpose,
+			&capturedAt,
+		)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("db delete disc menu screenshot: load screenshot: %w", err)
+		}
+		if err == nil {
+			screenshot.SourcePath = trimmedPath
+			screenshot.ImagePath = trimmedImage
+			screenshot.Purpose = ScreenshotPurpose(purpose)
+			if capturedAt != "" {
+				if parsed, parseErr := time.Parse(time.RFC3339Nano, capturedAt); parseErr == nil {
+					screenshot.CapturedAt = parsed
+				}
+			}
+			deleted.Screenshot = &screenshot
+		}
+		deleted.UploadedImages, err = listUploadedImagesForImageTx(ctx, tx, trimmedPath, trimmedImage)
+		if err != nil {
+			return err
+		}
+		deleted.UploadedLinks = len(deleted.UploadedImages)
+		deleted.ScreenshotSlots, deleted.ScreenshotSlotVariants, err = listDeletedScreenshotSlotsTx(ctx, tx, trimmedPath, trimmedImage)
+		if err != nil {
+			return err
 		}
 		if err := deleteScreenshotReferencesTx(ctx, tx, trimmedPath, trimmedImage); err != nil {
 			return err
@@ -2285,6 +2320,277 @@ func (r *SQLiteRepository) DeleteDiscMenuScreenshot(ctx context.Context, path st
 		return api.DiscMenuDeleteResult{}, err
 	}
 	return deleted, nil
+}
+
+// RestoreDiscMenuScreenshot atomically compensates a completed local-record
+// deletion when the corresponding filesystem deletion could not be finalized.
+// It rejects snapshots whose source, image, menu purpose, or host data do not
+// match path and the deleted selection.
+func (r *SQLiteRepository) RestoreDiscMenuScreenshot(ctx context.Context, path string, deleted api.DiscMenuDeleteResult) error {
+	if r == nil || r.db == nil {
+		return errors.New("db: repository not initialized")
+	}
+	trimmedPath := strings.TrimSpace(path)
+	selection := deleted.Selection
+	selection.SourcePath = strings.TrimSpace(selection.SourcePath)
+	selection.ImagePath = strings.TrimSpace(selection.ImagePath)
+	if trimmedPath == "" || selection.SourcePath != trimmedPath || selection.ImagePath == "" || !api.IsDiscMenuSelectionSource(strings.TrimSpace(selection.Source)) {
+		return internalerrors.ErrInvalidInput
+	}
+	if deleted.Screenshot != nil {
+		if strings.TrimSpace(deleted.Screenshot.SourcePath) != trimmedPath || strings.TrimSpace(deleted.Screenshot.ImagePath) != selection.ImagePath || deleted.Screenshot.Purpose != api.ScreenshotPurposeMenu {
+			return internalerrors.ErrInvalidInput
+		}
+	}
+	for _, uploaded := range deleted.UploadedImages {
+		if strings.TrimSpace(uploaded.SourcePath) != trimmedPath || strings.TrimSpace(uploaded.ImagePath) != selection.ImagePath || strings.TrimSpace(uploaded.Host) == "" {
+			return internalerrors.ErrInvalidInput
+		}
+	}
+	for _, slot := range deleted.ScreenshotSlots {
+		if strings.TrimSpace(slot.SourcePath) != trimmedPath || strings.TrimSpace(slot.ImagePath) != selection.ImagePath {
+			return internalerrors.ErrInvalidInput
+		}
+	}
+	for _, variant := range deleted.ScreenshotSlotVariants {
+		if strings.TrimSpace(variant.SourcePath) != trimmedPath || strings.TrimSpace(variant.Host) == "" {
+			return internalerrors.ErrInvalidInput
+		}
+	}
+
+	return r.withWriteTx(ctx, "restore disc menu screenshot", func(tx *sql.Tx) error {
+		if deleted.Screenshot != nil {
+			if err := upsertMenuScreenshotsTx(ctx, tx, trimmedPath, []Screenshot{*deleted.Screenshot}); err != nil {
+				return err
+			}
+		}
+		selections, err := listFinalSelectionsTx(ctx, tx, trimmedPath)
+		if err != nil {
+			return err
+		}
+		filtered := selections[:0]
+		for _, current := range selections {
+			if current.ImagePath != selection.ImagePath {
+				filtered = append(filtered, current)
+			}
+		}
+		filtered = append(filtered, selection)
+		if err := rewriteFinalSelectionsTx(ctx, tx, trimmedPath, filtered); err != nil {
+			return err
+		}
+		if err := restoreScreenshotSlotsTx(ctx, tx, trimmedPath, deleted.ScreenshotSlots, deleted.ScreenshotSlotVariants); err != nil {
+			return err
+		}
+		return upsertUploadedImagesTx(ctx, tx, trimmedPath, deleted.UploadedImages)
+	})
+}
+
+// listDeletedScreenshotSlotsTx snapshots slots selected by imagePath and every
+// variant that deletion would remove with those slots or the image itself.
+func listDeletedScreenshotSlotsTx(ctx context.Context, tx *sql.Tx, path string, imagePath string) ([]ScreenshotSlot, []ScreenshotSlotVariant, error) {
+	slotRows, err := tx.QueryContext(ctx, `
+		SELECT slot_order, source_kind, original_key, original_url, original_host, image_path,
+			from_description, tracker, section_kind, render_in_screenshots
+		FROM screenshot_slots
+		WHERE source_path = ? AND image_path = ?
+		ORDER BY slot_order ASC
+	`, path, imagePath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("db delete disc menu screenshot: list slots: %w", err)
+	}
+	defer slotRows.Close()
+
+	slots := make([]ScreenshotSlot, 0)
+	for slotRows.Next() {
+		var slot ScreenshotSlot
+		var fromDescription int
+		var renderInScreenshots int
+		if err := slotRows.Scan(
+			&slot.SlotOrder,
+			&slot.SourceKind,
+			&slot.OriginalKey,
+			&slot.OriginalURL,
+			&slot.OriginalHost,
+			&slot.ImagePath,
+			&fromDescription,
+			&slot.Tracker,
+			&slot.SectionKind,
+			&renderInScreenshots,
+		); err != nil {
+			return nil, nil, fmt.Errorf("db delete disc menu screenshot: scan slot: %w", err)
+		}
+		slot.SourcePath = path
+		slot.FromDescription = fromDescription != 0
+		slot.RenderInScreenshots = renderInScreenshots != 0
+		slots = append(slots, slot)
+	}
+	if err := slotRows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("db delete disc menu screenshot: iterate slots: %w", err)
+	}
+
+	variantRows, err := tx.QueryContext(ctx, `
+		SELECT slot_order, host, usage_scope, image_path, img_url, raw_url, web_url, uploaded_at
+		FROM screenshot_slot_variants
+		WHERE source_path = ? AND (
+			image_path = ? OR slot_order IN (
+				SELECT slot_order FROM screenshot_slots WHERE source_path = ? AND image_path = ?
+			)
+		)
+		ORDER BY slot_order ASC
+	`, path, imagePath, path, imagePath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("db delete disc menu screenshot: list slot variants: %w", err)
+	}
+	defer variantRows.Close()
+
+	variants := make([]ScreenshotSlotVariant, 0)
+	for variantRows.Next() {
+		var variant ScreenshotSlotVariant
+		var uploadedAt string
+		if err := variantRows.Scan(
+			&variant.SlotOrder,
+			&variant.Host,
+			&variant.UsageScope,
+			&variant.ImagePath,
+			&variant.ImgURL,
+			&variant.RawURL,
+			&variant.WebURL,
+			&uploadedAt,
+		); err != nil {
+			return nil, nil, fmt.Errorf("db delete disc menu screenshot: scan slot variant: %w", err)
+		}
+		variant.SourcePath = path
+		if uploadedAt != "" {
+			if parsed, parseErr := time.Parse(time.RFC3339Nano, uploadedAt); parseErr == nil {
+				variant.UploadedAt = parsed
+			}
+		}
+		variants = append(variants, variant)
+	}
+	if err := variantRows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("db delete disc menu screenshot: iterate slot variants: %w", err)
+	}
+	return slots, variants, nil
+}
+
+// restoreScreenshotSlotsTx upserts a compensation snapshot into the caller's
+// transaction, replacing conflicting slot and variant state for path.
+func restoreScreenshotSlotsTx(ctx context.Context, tx *sql.Tx, path string, slots []ScreenshotSlot, variants []ScreenshotSlotVariant) error {
+	if len(slots) > 0 {
+		slotStmt, err := tx.PrepareContext(ctx, `
+			INSERT INTO screenshot_slots (
+				source_path, slot_order, source_kind, original_key, original_url, original_host,
+				image_path, from_description, tracker, section_kind, render_in_screenshots
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(source_path, slot_order) DO UPDATE SET
+				source_kind = excluded.source_kind,
+				original_key = excluded.original_key,
+				original_url = excluded.original_url,
+				original_host = excluded.original_host,
+				image_path = excluded.image_path,
+				from_description = excluded.from_description,
+				tracker = excluded.tracker,
+				section_kind = excluded.section_kind,
+				render_in_screenshots = excluded.render_in_screenshots
+		`)
+		if err != nil {
+			return fmt.Errorf("db restore disc menu screenshot: prepare slots: %w", err)
+		}
+		defer slotStmt.Close()
+		for _, slot := range slots {
+			if _, err := slotStmt.ExecContext(
+				ctx,
+				path,
+				slot.SlotOrder,
+				strings.TrimSpace(slot.SourceKind),
+				strings.TrimSpace(slot.OriginalKey),
+				strings.TrimSpace(slot.OriginalURL),
+				strings.TrimSpace(slot.OriginalHost),
+				strings.TrimSpace(slot.ImagePath),
+				boolToInt(slot.FromDescription),
+				strings.TrimSpace(slot.Tracker),
+				strings.TrimSpace(slot.SectionKind),
+				boolToInt(slot.RenderInScreenshots),
+			); err != nil {
+				return fmt.Errorf("db restore disc menu screenshot: insert slot: %w", err)
+			}
+		}
+	}
+	if len(variants) == 0 {
+		return nil
+	}
+	variantStmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO screenshot_slot_variants (
+			source_path, slot_order, host, usage_scope, image_path, img_url, raw_url, web_url, uploaded_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(source_path, slot_order, host, usage_scope) DO UPDATE SET
+			image_path = excluded.image_path,
+			img_url = excluded.img_url,
+			raw_url = excluded.raw_url,
+			web_url = excluded.web_url,
+			uploaded_at = excluded.uploaded_at
+	`)
+	if err != nil {
+		return fmt.Errorf("db restore disc menu screenshot: prepare slot variants: %w", err)
+	}
+	defer variantStmt.Close()
+	for _, variant := range variants {
+		uploadedAt := ""
+		if !variant.UploadedAt.IsZero() {
+			uploadedAt = variant.UploadedAt.UTC().Format(time.RFC3339Nano)
+		}
+		if _, err := variantStmt.ExecContext(
+			ctx,
+			path,
+			variant.SlotOrder,
+			strings.TrimSpace(variant.Host),
+			strings.TrimSpace(variant.UsageScope),
+			strings.TrimSpace(variant.ImagePath),
+			strings.TrimSpace(variant.ImgURL),
+			strings.TrimSpace(variant.RawURL),
+			strings.TrimSpace(variant.WebURL),
+			uploadedAt,
+		); err != nil {
+			return fmt.Errorf("db restore disc menu screenshot: insert slot variant: %w", err)
+		}
+	}
+	return nil
+}
+
+// listUploadedImagesForImageTx snapshots every local upload record associated
+// with one source image. It does not inspect or mutate remote assets.
+func listUploadedImagesForImageTx(ctx context.Context, tx *sql.Tx, path string, imagePath string) ([]UploadedImageLink, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT host, usage_scope, img_url, raw_url, web_url, size_bytes, uploaded_at
+		FROM uploaded_images
+		WHERE source_path = ? AND image_path = ?
+		ORDER BY id ASC
+	`, path, imagePath)
+	if err != nil {
+		return nil, fmt.Errorf("db delete disc menu screenshot: list uploaded images: %w", err)
+	}
+	defer rows.Close()
+
+	images := make([]UploadedImageLink, 0)
+	for rows.Next() {
+		var image UploadedImageLink
+		var uploadedAt string
+		if err := rows.Scan(&image.Host, &image.UsageScope, &image.ImgURL, &image.RawURL, &image.WebURL, &image.SizeBytes, &uploadedAt); err != nil {
+			return nil, fmt.Errorf("db delete disc menu screenshot: scan uploaded image: %w", err)
+		}
+		image.SourcePath = path
+		image.ImagePath = imagePath
+		if uploadedAt != "" {
+			if parsed, parseErr := time.Parse(time.RFC3339Nano, uploadedAt); parseErr == nil {
+				image.UploadedAt = parsed
+			}
+		}
+		images = append(images, image)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("db delete disc menu screenshot: iterate uploaded images: %w", err)
+	}
+	return images, nil
 }
 
 func validMenuScreenshotBatch(path string, screenshots []Screenshot, selections []ScreenshotFinalSelection, source string) bool {
@@ -2756,54 +3062,69 @@ func (r *SQLiteRepository) SaveUploadedImages(ctx context.Context, path string, 
 		return fmt.Errorf("db save uploaded images: context canceled: %w", err)
 	}
 
+	normalized := slices.Clone(images)
+	for idx := range normalized {
+		normalized[idx].SourcePath = trimmed
+		normalized[idx].Host = trimmedHost
+	}
 	if err := r.withWriteTx(ctx, "save uploaded images", func(tx *sql.Tx) error {
-		stmt, err := tx.PrepareContext(ctx, `
-			INSERT INTO uploaded_images (
-				source_path, image_path, host, usage_scope, img_url, raw_url, web_url, size_bytes, uploaded_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(source_path, usage_scope, host, image_path)
-			DO UPDATE SET
-				img_url = excluded.img_url,
-				raw_url = excluded.raw_url,
-				web_url = excluded.web_url,
-				size_bytes = excluded.size_bytes,
-				uploaded_at = excluded.uploaded_at
-		`)
-		if err != nil {
-			return fmt.Errorf("db save uploaded images: prepare: %w", err)
-		}
-		defer stmt.Close()
-
-		for _, image := range images {
-			if strings.TrimSpace(image.ImagePath) == "" {
-				return internalerrors.ErrInvalidInput
-			}
-			usageScope := strings.TrimSpace(image.UsageScope)
-			if usageScope == "" {
-				usageScope = "global"
-			}
-			uploadedAt := image.UploadedAt
-			if uploadedAt.IsZero() {
-				uploadedAt = time.Now().UTC()
-			}
-			if _, err := stmt.ExecContext(
-				ctx,
-				trimmed,
-				image.ImagePath,
-				trimmedHost,
-				usageScope,
-				strings.TrimSpace(image.ImgURL),
-				strings.TrimSpace(image.RawURL),
-				strings.TrimSpace(image.WebURL),
-				image.SizeBytes,
-				uploadedAt.UTC().Format(time.RFC3339Nano),
-			); err != nil {
-				return fmt.Errorf("db save uploaded images: insert: %w", err)
-			}
-		}
-		return nil
+		return upsertUploadedImagesTx(ctx, tx, trimmed, normalized)
 	}); err != nil {
 		return err
+	}
+	return nil
+}
+
+// upsertUploadedImagesTx stores normalized upload records in the caller's
+// transaction. Each record must match path and name a local image and host;
+// empty usage scopes and upload times receive their persistence defaults.
+func upsertUploadedImagesTx(ctx context.Context, tx *sql.Tx, path string, images []UploadedImageLink) error {
+	if len(images) == 0 {
+		return nil
+	}
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO uploaded_images (
+			source_path, image_path, host, usage_scope, img_url, raw_url, web_url, size_bytes, uploaded_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(source_path, usage_scope, host, image_path)
+		DO UPDATE SET
+			img_url = excluded.img_url,
+			raw_url = excluded.raw_url,
+			web_url = excluded.web_url,
+			size_bytes = excluded.size_bytes,
+			uploaded_at = excluded.uploaded_at
+	`)
+	if err != nil {
+		return fmt.Errorf("db save uploaded images: prepare: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, image := range images {
+		if strings.TrimSpace(image.SourcePath) != path || strings.TrimSpace(image.ImagePath) == "" || strings.TrimSpace(image.Host) == "" {
+			return internalerrors.ErrInvalidInput
+		}
+		usageScope := strings.TrimSpace(image.UsageScope)
+		if usageScope == "" {
+			usageScope = "global"
+		}
+		uploadedAt := image.UploadedAt
+		if uploadedAt.IsZero() {
+			uploadedAt = time.Now().UTC()
+		}
+		if _, err := stmt.ExecContext(
+			ctx,
+			path,
+			image.ImagePath,
+			strings.TrimSpace(image.Host),
+			usageScope,
+			strings.TrimSpace(image.ImgURL),
+			strings.TrimSpace(image.RawURL),
+			strings.TrimSpace(image.WebURL),
+			image.SizeBytes,
+			uploadedAt.UTC().Format(time.RFC3339Nano),
+		); err != nil {
+			return fmt.Errorf("db save uploaded images: insert: %w", err)
+		}
 	}
 	return nil
 }

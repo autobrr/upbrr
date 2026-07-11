@@ -54,6 +54,9 @@ func TestRunDVDMenuCaptureJobPublishesProgressAndResult(t *testing.T) {
 	if coreSvc.dvdMenuCalls != 1 {
 		t.Fatalf("expected one capture call, got %d", coreSvc.dvdMenuCalls)
 	}
+	if coreSvc.closeCalls != 1 {
+		t.Fatalf("expected one core close, got %d", coreSvc.closeCalls)
+	}
 }
 
 func TestDVDMenuCaptureJobAccessRequiresOwningSession(t *testing.T) {
@@ -67,11 +70,17 @@ func TestDVDMenuCaptureJobAccessRequiresOwningSession(t *testing.T) {
 	}
 	backend := &Backend{dvdMenus: map[string]*dvdMenuCaptureJob{job.id: job}}
 
-	if _, err := backend.GetDVDMenuCaptureSnapshot("session-b", job.id); err == nil {
-		t.Fatal("expected foreign session snapshot read to fail")
+	if _, err := backend.GetDVDMenuCaptureSnapshot("session-b", job.id); err == nil || err.Error() != "DVD menu capture job not found" {
+		t.Fatal("expected foreign session snapshot read to use the not-found privacy response")
 	}
-	if err := backend.CancelDVDMenuCapture("session-b", job.id); err == nil {
-		t.Fatal("expected foreign session cancellation to fail")
+	if err := backend.CancelDVDMenuCapture("session-b", job.id); err == nil || err.Error() != "DVD menu capture job not found" {
+		t.Fatal("expected foreign session cancellation to use the not-found privacy response")
+	}
+	if _, err := backend.GetDVDMenuCaptureSnapshot("session-b", "missing-job"); err == nil || err.Error() != "DVD menu capture job not found" {
+		t.Fatal("expected unknown snapshot read to use the same not-found privacy response")
+	}
+	if err := backend.CancelDVDMenuCapture("session-b", "missing-job"); err == nil || err.Error() != "DVD menu capture job not found" {
+		t.Fatal("expected unknown cancellation to use the same not-found privacy response")
 	}
 	if _, err := backend.GetDVDMenuCaptureSnapshot("session-a", job.id); err != nil {
 		t.Fatalf("expected owning session snapshot read: %v", err)

@@ -56,7 +56,8 @@ const errorText = (error: unknown) =>
 /**
  * Manages manual disc-menu imports and background DVD menu capture for the
  * current prepared source. Persisted images can be previewed or deleted before
- * continuing to image-host selection.
+ * continuing to image-host selection. Concurrent deletions keep each affected
+ * control pending until its own request settles.
  */
 export default function MenuImagesPage(props: Props) {
   const {
@@ -76,13 +77,14 @@ export default function MenuImagesPage(props: Props) {
   const [images, setImages] = useState<MenuPreview[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [deletingPath, setDeletingPath] = useState("");
+  const [deletingPaths, setDeletingPaths] = useState<ReadonlySet<string>>(() => new Set());
   const [captureJob, setCaptureJob] = useState<CaptureJob | null>(null);
   const [captureStart, setCaptureStart] = useState<CaptureStart | null>(null);
   const [captureStatus, setCaptureStatus] = useState<CaptureStatus | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const removeButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const deletingPathsRef = useRef(new Set<string>());
   const captureButtonRef = useRef<HTMLButtonElement>(null);
   const focusAfterRemovalRef = useRef<number | null>(null);
   const captureJobRef = useRef<CaptureJob | null>(null);
@@ -303,7 +305,9 @@ export default function MenuImagesPage(props: Props) {
   };
 
   const handleDelete = async (imagePath: string, index: number) => {
-    setDeletingPath(imagePath);
+    if (deletingPathsRef.current.has(imagePath)) return;
+    deletingPathsRef.current.add(imagePath);
+    setDeletingPaths(new Set(deletingPathsRef.current));
     setError("");
     try {
       const remove = globalThis.go?.guiapp?.App?.DeleteDVDMenuScreenshot;
@@ -316,7 +320,8 @@ export default function MenuImagesPage(props: Props) {
     } catch (deleteError) {
       setError(errorText(deleteError));
     } finally {
-      setDeletingPath("");
+      deletingPathsRef.current.delete(imagePath);
+      setDeletingPaths(new Set(deletingPathsRef.current));
     }
   };
 
@@ -463,6 +468,7 @@ export default function MenuImagesPage(props: Props) {
           <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
             {images.map((item, index) => {
               const itemNumber = index + 1;
+              const deleting = deletingPaths.has(item.image.Path);
               return (
                 <article className="grid gap-2" key={item.image.Path}>
                   <button
@@ -484,10 +490,10 @@ export default function MenuImagesPage(props: Props) {
                     className="danger"
                     type="button"
                     aria-label={`Remove DVD menu ${itemNumber}`}
-                    disabled={deletingPath === item.image.Path || captureActive}
+                    disabled={deleting || captureActive}
                     onClick={() => handleDelete(item.image.Path, index)}
                   >
-                    {deletingPath === item.image.Path ? "Removing..." : "Remove"}
+                    {deleting ? "Removing..." : "Remove"}
                   </button>
                 </article>
               );

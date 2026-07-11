@@ -66,6 +66,7 @@ type Service struct {
 	runner            render.Runner
 	resolveExecutable executableResolverFunc
 	captureDirectory  captureDirectoryFunc
+	removeFile        func(string) error
 	capabilityMu      sync.Mutex
 	capabilityCache   capabilityCache
 }
@@ -106,6 +107,7 @@ func newService(
 		runner:            runner,
 		resolveExecutable: resolveExecutable,
 		captureDirectory:  captureDirectory,
+		removeFile:        os.Remove,
 	}
 }
 
@@ -327,7 +329,9 @@ func (s *Service) List(ctx context.Context, meta api.PreparedMetadata) ([]api.Sc
 
 // Delete removes one menu image beneath the prepared release's managed temp
 // directory and atomically deletes its local DB references. Remote image-host
-// assets are not deleted.
+// assets are not deleted. If final removal of the staged file fails, Delete
+// attempts to restore the original file and its local records before returning;
+// compensation failures are joined with the removal error.
 func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePath string) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("DVD menus: delete canceled: %w", err)
@@ -372,8 +376,18 @@ func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePa
 		return fmt.Errorf("DVD menus: delete records: %w", err)
 	}
 	if renamed {
-		if err := os.Remove(pendingPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("DVD menus: remove staged local image: %w", err)
+		removeFile := s.removeFile
+		if removeFile == nil {
+			removeFile = os.Remove
+		}
+		if removeErr := removeFile(pendingPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			if restoreErr := os.Rename(pendingPath, trimmedPath); restoreErr != nil {
+				return fmt.Errorf("DVD menus: remove staged local image and restore file: %w", errors.Join(removeErr, restoreErr))
+			}
+			if restoreErr := s.lifecycle.RestoreDiscMenuScreenshot(context.WithoutCancel(ctx), meta.SourcePath, deleted); restoreErr != nil {
+				return fmt.Errorf("DVD menus: remove staged local image and restore records: %w", errors.Join(removeErr, restoreErr))
+			}
+			return fmt.Errorf("DVD menus: remove staged local image; deletion rolled back: %w", removeErr)
 		}
 	}
 	if deleted.UploadedLinks > 0 {

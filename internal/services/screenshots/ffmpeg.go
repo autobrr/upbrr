@@ -153,6 +153,10 @@ const (
 	blackPixelThreshold = 4
 )
 
+// ffmpegDurationPattern extracts the container duration reported on FFmpeg's
+// stderr.
+var ffmpegDurationPattern = regexp.MustCompile(`(?m)Duration:\s*(\d{2,}:\d{2}:\d{2}(?:\.\d+)?)\s*,`)
+
 // ffmpeg image validation errors are returned after ffmpeg exits successfully
 // but fails to produce a usable screenshot frame.
 var (
@@ -267,6 +271,38 @@ func captureFrameBytes(ctx context.Context, runner Runner, cmdPath string, req p
 	}
 	logger.Debugf("screenshots: ffmpeg preview exhausted reason=%s", ffmpegResultPreview(result, err))
 	return nil, fmt.Errorf("screenshots: ffmpeg preview failed: %s", stderr)
+}
+
+// probeVideoDuration reads FFmpeg's container timing without decoding the VOB.
+// The bundled distribution does not include ffprobe, so FFmpeg performs the
+// equivalent header probe with a zero-length null output. It returns seconds
+// and rejects missing, malformed, or non-positive duration metadata.
+func probeVideoDuration(ctx context.Context, runner Runner, cmdPath, inputPath string) (float64, error) {
+	if strings.TrimSpace(inputPath) == "" {
+		return 0, errors.New("screenshots: duration probe input path required")
+	}
+	args := []string{
+		"-hide_banner",
+		"-loglevel", "info",
+		"-i", inputPath,
+		"-map", "0:v:0",
+		"-t", "0",
+		"-f", "null",
+		"-",
+	}
+	result, err := runner.Run(ctx, cmdPath, args, "")
+	if err != nil || result.ExitCode != 0 {
+		return 0, fmt.Errorf("screenshots: ffmpeg duration probe failed: %s", ffmpegResultPreview(result, err))
+	}
+	match := ffmpegDurationPattern.FindSubmatch(result.Stderr)
+	if len(match) != 2 {
+		return 0, errors.New("screenshots: ffmpeg duration unavailable")
+	}
+	duration := parseDurationSeconds(string(match[1]))
+	if duration <= 0 {
+		return 0, errors.New("screenshots: ffmpeg duration invalid")
+	}
+	return duration, nil
 }
 
 // validateImagePayload rejects empty, undecodable, and all-black image bytes

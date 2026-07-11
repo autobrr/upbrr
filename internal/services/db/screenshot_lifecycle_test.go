@@ -114,15 +114,71 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 	}}); err != nil {
 		t.Fatalf("save manual upload: %v", err)
 	}
+	if err := repo.ReplaceScreenshotSlots(ctx, sourcePath, []api.ScreenshotSlot{{
+		SourcePath: sourcePath,
+		SlotOrder:  0,
+		ImagePath:  manualNew,
+		Variants: []api.ScreenshotSlotVariant{{
+			SourcePath: sourcePath,
+			SlotOrder:  0,
+			Host:       "example-host",
+			UsageScope: "global",
+			ImagePath:  manualNew,
+			RawURL:     "https://example.invalid/manual-new.png",
+			UploadedAt: now,
+		}},
+	}}); err != nil {
+		t.Fatalf("save manual screenshot slot: %v", err)
+	}
 	deleted, err := repo.DeleteDiscMenuScreenshot(ctx, sourcePath, manualNew)
 	if err != nil {
 		t.Fatalf("delete manual screenshot: %v", err)
 	}
 	if deleted.Selection.Source != api.ScreenshotSelectionSourceMenu || deleted.UploadedLinks != 1 {
-		t.Fatalf("delete result = %#v", deleted)
+		t.Fatal("delete result metadata is incorrect")
+	}
+	if deleted.Screenshot == nil || deleted.Screenshot.ImagePath != manualNew || len(deleted.UploadedImages) != 1 || len(deleted.ScreenshotSlots) != 1 || len(deleted.ScreenshotSlotVariants) != 1 {
+		t.Fatal("delete result did not retain the compensation snapshot")
 	}
 	assertFinalSelectionPaths(t, repo, sourcePath, []string{autoNew, manualOld, normalNew})
 	assertNoScreenshotReferences(t, repo, sourcePath, manualNew)
+
+	if err := repo.RestoreDiscMenuScreenshot(ctx, sourcePath, deleted); err != nil {
+		t.Fatal("restore deleted menu screenshot records failed")
+	}
+	assertFinalSelectionPaths(t, repo, sourcePath, []string{autoNew, manualOld, manualNew, normalNew})
+	restoredScreenshots, err := repo.ListScreenshotsByPath(ctx, sourcePath)
+	if err != nil {
+		t.Fatal("list restored screenshots failed")
+	}
+	restoredUploads, err := repo.ListUploadedImagesByPath(ctx, sourcePath)
+	if err != nil {
+		t.Fatal("list restored uploads failed")
+	}
+	restoredScreenshot := false
+	for _, screenshot := range restoredScreenshots {
+		if screenshot.ImagePath == manualNew {
+			restoredScreenshot = true
+			break
+		}
+	}
+	restoredUpload := false
+	for _, uploaded := range restoredUploads {
+		if uploaded.ImagePath == manualNew {
+			restoredUpload = true
+			break
+		}
+	}
+	if !restoredScreenshot || !restoredUpload {
+		t.Fatal("restored menu screenshot references are incomplete")
+	}
+	restoredSlots, err := repo.ListScreenshotSlotsByPath(ctx, sourcePath)
+	if err != nil {
+		t.Fatal("list restored screenshot slots failed")
+	}
+	if len(restoredSlots) != 1 || restoredSlots[0].ImagePath != manualNew || len(restoredSlots[0].Variants) != 1 {
+		t.Fatal("restored menu screenshot slot references are incomplete")
+	}
 }
 
 func TestAppendManualMenuScreenshotsRollsBackCrossSourceImageConflict(t *testing.T) {

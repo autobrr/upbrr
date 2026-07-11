@@ -147,7 +147,7 @@ func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot st
 			return info, err
 		}
 		info.SourcePath = vobs[0].path
-		info.Segments = buildVideoSegments(vobs, info.DurationSeconds)
+		info.Segments = buildVideoSegments(vobs)
 		logger.Tracef("screenshots: DVD source selected path=%s segments=%d", info.SourcePath, len(info.Segments))
 	}
 
@@ -774,41 +774,50 @@ type dvdTitleVOB struct {
 	size  int64
 }
 
-// buildVideoSegments assigns a whole-title runtime window to each ordered DVD
-// VOB, using file size as the best available proxy for per-part duration.
-func buildVideoSegments(vobs []dvdTitleVOB, totalDuration float64) []videoSegment {
-	if len(vobs) == 0 {
+// buildVideoSegments records ordered DVD VOB inputs that need measured timing.
+// A single VOB needs no segment mapping because its local and title timestamps
+// are identical.
+func buildVideoSegments(vobs []dvdTitleVOB) []videoSegment {
+	if len(vobs) <= 1 {
 		return nil
 	}
 	segments := make([]videoSegment, 0, len(vobs))
-	if totalDuration <= 0 {
-		for _, vob := range vobs {
-			segments = append(segments, videoSegment{SourcePath: vob.path})
-		}
-		return segments
-	}
-	var totalSize int64
 	for _, vob := range vobs {
-		if vob.size > 0 {
-			totalSize += vob.size
-		}
-	}
-	if totalSize <= 0 {
-		each := totalDuration / float64(len(vobs))
-		start := 0.0
-		for _, vob := range vobs {
-			segments = append(segments, videoSegment{SourcePath: vob.path, StartSeconds: start, DurationSeconds: each})
-			start += each
-		}
-		return segments
-	}
-	start := 0.0
-	for _, vob := range vobs {
-		duration := totalDuration * (float64(vob.size) / float64(totalSize))
-		segments = append(segments, videoSegment{SourcePath: vob.path, StartSeconds: start, DurationSeconds: duration})
-		start += duration
+		segments = append(segments, videoSegment{SourcePath: vob.path})
 	}
 	return segments
+}
+
+// resolveDVDVideoSegmentTimings measures each VOB's container duration before
+// mapping whole-title timestamps. File size is not a valid duration proxy for
+// variable-bitrate MPEG program streams. It mutates segments in order and
+// returns an error if any segment lacks a usable duration.
+func resolveDVDVideoSegmentTimings(
+	ctx context.Context,
+	runner Runner,
+	cmdPath string,
+	segments []videoSegment,
+	logger api.Logger,
+) error {
+	logger = screenshotLogger(logger)
+	start := 0.0
+	for idx := range segments {
+		duration, err := probeVideoDuration(ctx, runner, cmdPath, segments[idx].SourcePath)
+		if err != nil {
+			return fmt.Errorf("screenshots: probe DVD segment %d duration: %w", idx+1, err)
+		}
+		segments[idx].StartSeconds = start
+		segments[idx].DurationSeconds = duration
+		start += duration
+		logger.Tracef(
+			"screenshots: DVD segment timing measured segment=%d start_seconds=%.3f duration_seconds=%.3f input=%s",
+			idx,
+			segments[idx].StartSeconds,
+			segments[idx].DurationSeconds,
+			segments[idx].SourcePath,
+		)
+	}
+	return nil
 }
 
 func findVideoTS(ctx context.Context, root string) (string, error) {

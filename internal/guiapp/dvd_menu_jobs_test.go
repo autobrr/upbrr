@@ -82,3 +82,43 @@ func TestRunDVDMenuCaptureJobClassifiesCancellation(t *testing.T) {
 		t.Fatalf("expected canceled snapshot, got %#v", snapshot)
 	}
 }
+
+func TestPruneCompletedDVDMenuJobsKeepsNewestBoundedSet(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	oldest := &dvdMenuCaptureJob{
+		id:             "oldest",
+		status:         "completed",
+		finishedAt:     now.Add(-3 * time.Minute),
+		retentionTimer: time.NewTimer(time.Hour),
+	}
+	middle := &dvdMenuCaptureJob{id: "middle", status: "failed", finishedAt: now.Add(-2 * time.Minute)}
+	newest := &dvdMenuCaptureJob{id: "newest", status: "canceled", finishedAt: now.Add(-time.Minute)}
+	running := &dvdMenuCaptureJob{id: "running", status: "running", startedAt: now}
+	app := &App{dvdMenus: map[string]*dvdMenuCaptureJob{
+		oldest.id:  oldest,
+		middle.id:  middle,
+		newest.id:  newest,
+		running.id: running,
+	}}
+
+	app.dvdMenuMu.Lock()
+	app.pruneCompletedDVDMenuJobsLocked(2)
+	app.dvdMenuMu.Unlock()
+
+	if app.getDVDMenuCaptureJob(oldest.id) != nil {
+		t.Fatal("expected oldest terminal DVD menu job to be evicted")
+	}
+	oldest.mu.Lock()
+	oldestTimer := oldest.retentionTimer
+	oldest.mu.Unlock()
+	if oldestTimer != nil {
+		t.Fatal("expected evicted DVD menu job retention timer to be released")
+	}
+	for _, jobID := range []string{middle.id, newest.id, running.id} {
+		if app.getDVDMenuCaptureJob(jobID) == nil {
+			t.Fatal("expected retained DVD menu job")
+		}
+	}
+}

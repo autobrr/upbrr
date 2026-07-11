@@ -286,13 +286,48 @@ func TestResolveVideoInfoBuildsOrderedDVDSegments(t *testing.T) {
 	if info.Segments[1].SourcePath != filepath.Join(videoTS, "VTS_02_2.VOB") {
 		t.Fatalf("expected second segment VTS_02_2.VOB, got %#v", info.Segments)
 	}
+	for _, segment := range info.Segments {
+		if segment.StartSeconds != 0 || segment.DurationSeconds != 0 {
+			t.Fatalf("expected unresolved segment timing before ffmpeg probe, got %#v", info.Segments)
+		}
+	}
+}
 
-	path, timestamp := resolveSegmentTimestamp(info, 70)
-	if path != filepath.Join(videoTS, "VTS_02_2.VOB") {
-		t.Fatalf("expected timestamp in final segment to use VTS_02_2.VOB, got %q", path)
+func TestResolveDVDVideoSegmentTimingsUsesMeasuredDurations(t *testing.T) {
+	vobs := []dvdTitleVOB{
+		{path: "VTS_01_1.VOB", size: 900},
+		{path: "VTS_01_2.VOB", size: 100},
+	}
+	segments := buildVideoSegments(vobs)
+	runner := &scriptedRunner{results: []CommandResult{
+		{Stderr: []byte("Duration: 00:00:20.00, start: 0.000000, bitrate: 4000 kb/s\n")},
+		{Stderr: []byte("Duration: 00:01:20.00, start: 0.000000, bitrate: 500 kb/s\n")},
+	}}
+
+	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, api.NopLogger{}); err != nil {
+		t.Fatalf("resolve DVD segment timings: %v", err)
+	}
+	info := videoInfo{SourcePath: vobs[0].path, Segments: segments}
+	path, timestamp := resolveSegmentTimestamp(info, 30)
+	if path != vobs[1].path {
+		t.Fatalf("expected measured duration to select second VOB, got %q", path)
 	}
 	if timestamp != 10 {
-		t.Fatalf("expected local timestamp 10s, got %f", timestamp)
+		t.Fatalf("expected measured local timestamp 10s, got %f", timestamp)
+	}
+}
+
+func TestResolveDVDVideoSegmentTimingsRejectsUnknownDuration(t *testing.T) {
+	segments := buildVideoSegments([]dvdTitleVOB{
+		{path: "VTS_01_1.VOB", size: 900},
+		{path: "VTS_01_2.VOB", size: 100},
+	})
+	runner := &scriptedRunner{results: []CommandResult{{
+		Stderr: []byte("Duration: N/A, start: 0.000000, bitrate: N/A\n"),
+	}}}
+
+	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, api.NopLogger{}); err == nil {
+		t.Fatal("expected unknown segment duration to fail instead of using file size")
 	}
 }
 

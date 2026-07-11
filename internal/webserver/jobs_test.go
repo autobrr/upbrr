@@ -36,6 +36,7 @@ type preparedMetaTestCore struct {
 	dupeCalls         int
 	dvdMenuCapture    func(context.Context, api.Request) (api.DVDMenuCaptureResult, error)
 	dvdMenuCalls      int
+	closeCalls        int
 	uploads           []uploadPreparedResponse
 	uploadCalls       int
 }
@@ -189,6 +190,7 @@ func (c *preparedMetaTestCore) SaveDescriptionOverride(context.Context, api.Requ
 }
 
 func (c *preparedMetaTestCore) Close() error {
+	c.closeCalls++
 	return nil
 }
 

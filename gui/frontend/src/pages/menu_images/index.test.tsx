@@ -324,4 +324,51 @@ describe("MenuImagesPage", () => {
     expect(screen.queryByRole("button", { name: "Remove DVD menu 2" })).not.toBeInTheDocument();
     expect(props.onImagesChanged).toHaveBeenCalledOnce();
   });
+
+  it("keeps every concurrent deletion disabled until its own request completes", async () => {
+    let persisted = [menuImage("menu-1.png", 0), menuImage("menu-2.png", 1)];
+    const firstDelete = deferred<void>();
+    const secondDelete = deferred<void>();
+    const app = installBridge({
+      ListDVDMenuScreenshots: vi.fn(async () => persisted),
+      DeleteDVDMenuScreenshot: vi.fn(
+        async (_path, _overrides, _nameOverrides, imagePath: string) => {
+          if (imagePath === "menu-1.png") await firstDelete.promise;
+          else await secondDelete.promise;
+          persisted = persisted.filter((image) => image.Path !== imagePath);
+        },
+      ),
+    });
+    renderPage();
+
+    const firstButton = await screen.findByRole("button", { name: "Remove DVD menu 1" });
+    const secondButton = screen.getByRole("button", { name: "Remove DVD menu 2" });
+    fireEvent.click(firstButton);
+    fireEvent.click(secondButton);
+
+    expect(app.DeleteDVDMenuScreenshot).toHaveBeenCalledTimes(2);
+    expect(firstButton).toBeDisabled();
+    expect(secondButton).toBeDisabled();
+
+    await act(async () => {
+      secondDelete.resolve();
+      await secondDelete.promise;
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Remove DVD menu 2" })).not.toBeInTheDocument(),
+    );
+    const stillPendingButton = screen.getByRole("button", { name: "Remove DVD menu 1" });
+    expect(stillPendingButton).toBeDisabled();
+    fireEvent.click(stillPendingButton);
+    expect(app.DeleteDVDMenuScreenshot).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      firstDelete.resolve();
+      await firstDelete.promise;
+    });
+
+    expect(await screen.findByText("No saved menu images yet.")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });

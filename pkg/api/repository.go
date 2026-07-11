@@ -201,10 +201,19 @@ type Screenshot struct {
 }
 
 // DiscMenuDeleteResult describes local references removed by one atomic menu
-// deletion. UploadedLinks indicates that the remote host may retain an orphan.
+// deletion and retains the records needed for transactional compensation.
 type DiscMenuDeleteResult struct {
 	// Selection is the deleted manual or automatic menu selection.
 	Selection ScreenshotFinalSelection
+	// Screenshot is the deleted local screenshot record when one existed.
+	Screenshot *Screenshot
+	// UploadedImages are deleted local upload records. Remote assets are unchanged.
+	UploadedImages []UploadedImageLink
+	// ScreenshotSlots are deleted slot records whose selected image was removed.
+	ScreenshotSlots []ScreenshotSlot
+	// ScreenshotSlotVariants are variants deleted with a slot or because they
+	// referenced the removed image.
+	ScreenshotSlotVariants []ScreenshotSlotVariant
 	// UploadedLinks counts local upload records removed with the selection.
 	UploadedLinks int
 }
@@ -218,8 +227,12 @@ type ScreenshotLifecycleRepository interface {
 	AppendManualMenuScreenshots(ctx context.Context, path string, screenshots []Screenshot, selections []ScreenshotFinalSelection) error
 	// ReplaceDVDMenuScreenshots atomically replaces automatic captures and returns their old local paths.
 	ReplaceDVDMenuScreenshots(ctx context.Context, path string, screenshots []Screenshot, selections []ScreenshotFinalSelection) ([]string, error)
-	// DeleteDiscMenuScreenshot atomically removes one manual or automatic menu selection and local records.
+	// DeleteDiscMenuScreenshot atomically removes one manual or automatic menu
+	// selection and returns the local records needed to compensate the deletion.
 	DeleteDiscMenuScreenshot(ctx context.Context, path string, imagePath string) (DiscMenuDeleteResult, error)
+	// RestoreDiscMenuScreenshot atomically restores a result returned by
+	// DeleteDiscMenuScreenshot for the same source path.
+	RestoreDiscMenuScreenshot(ctx context.Context, path string, deleted DiscMenuDeleteResult) error
 }
 
 type DVDMediaInfo struct {

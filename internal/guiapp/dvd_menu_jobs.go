@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -20,7 +21,11 @@ import (
 const (
 	dvdMenuCaptureEventPrefix              = "dvdmenu:job:"
 	errDVDMenuCaptureRequiresMetadataCache = "DVD menu capture requires metadata preview"
-	dvdMenuSnapshotThrottle                = 150 * time.Millisecond
+	// dvdMenuCompletedJobRetention bounds how long terminal snapshots remain queryable.
+	dvdMenuCompletedJobRetention = 24 * time.Hour
+	// maxCompletedDVDMenuJobs bounds retained terminal snapshots across all GUI captures.
+	maxCompletedDVDMenuJobs = 200
+	dvdMenuSnapshotThrottle = 150 * time.Millisecond
 )
 
 // dvdMenuCaptureJob owns one isolated core/logger snapshot and its synchronized
@@ -49,6 +54,7 @@ type dvdMenuCaptureJob struct {
 	finishedAt     time.Time
 	lastEmit       time.Time
 	cancel         context.CancelFunc
+	retentionTimer *time.Timer
 }
 
 // StartDVDMenuCapture starts a background capture using the current prepared
@@ -116,8 +122,9 @@ func (a *App) StartDVDMenuCapture(path string, overrides api.ExternalIDOverrides
 	if a.dvdMenus == nil {
 		a.dvdMenus = make(map[string]*dvdMenuCaptureJob)
 	}
-	a.dvdMenuWG.Add(1)
 	a.dvdMenus[job.id] = job
+	a.pruneCompletedDVDMenuJobsLocked(maxCompletedDVDMenuJobs)
+	a.dvdMenuWG.Add(1)
 	a.dvdMenuMu.Unlock()
 	a.emitDVDMenuCaptureSnapshot(baseCtx, job, true)
 	go func() {
@@ -129,7 +136,8 @@ func (a *App) StartDVDMenuCapture(path string, overrides api.ExternalIDOverrides
 }
 
 // GetDVDMenuCaptureSnapshot returns the current capture job state. It rejects
-// unknown or expired job IDs.
+// unknown or expired job IDs. Terminal snapshots have bounded time and
+// capacity retention, so callers should consume their final state promptly.
 func (a *App) GetDVDMenuCaptureSnapshot(jobID string) (api.DVDMenuCaptureSnapshot, error) {
 	if a == nil {
 		return api.DVDMenuCaptureSnapshot{}, errors.New("app not initialized")
@@ -196,8 +204,8 @@ func newDVDMenuRequest(path string, overrides api.ExternalIDOverrides, nameOverr
 	}
 }
 
-// runDVDMenuCaptureJob owns the queued-to-terminal lifecycle and releases its
-// per-run core/logger resources exactly once.
+// runDVDMenuCaptureJob owns the queued-to-terminal lifecycle, releases its
+// per-run core/logger resources exactly once, and schedules bounded retention.
 func (a *App) runDVDMenuCaptureJob(ctx context.Context, eventCtx context.Context, job *dvdMenuCaptureJob) {
 	if job != nil {
 		defer func() { _ = job.closeResources() }()
@@ -247,6 +255,7 @@ func (a *App) runDVDMenuCaptureJob(ctx context.Context, eventCtx context.Context
 	}
 	job.mu.Unlock()
 	a.emitDVDMenuCaptureSnapshot(eventCtx, job, true)
+	a.scheduleDVDMenuJobCleanup(job)
 }
 
 func (a *App) applyDVDMenuCaptureProgress(ctx context.Context, job *dvdMenuCaptureJob, update api.DVDMenuProgressUpdate) {
@@ -343,6 +352,84 @@ func (job *dvdMenuCaptureJob) closeResources() error {
 	return closeErr
 }
 
+// scheduleDVDMenuJobCleanup retains a registered terminal job for the query
+// window and arranges its eventual removal. Capacity pruning may remove it
+// immediately when newer terminal jobs already fill the retained set.
+func (a *App) scheduleDVDMenuJobCleanup(job *dvdMenuCaptureJob) {
+	if a == nil || job == nil {
+		return
+	}
+	a.dvdMenuMu.Lock()
+	if a.dvdMenus[job.id] != job {
+		a.dvdMenuMu.Unlock()
+		return
+	}
+	a.pruneCompletedDVDMenuJobsLocked(maxCompletedDVDMenuJobs)
+	if a.dvdMenus[job.id] != job {
+		a.dvdMenuMu.Unlock()
+		return
+	}
+	timer := time.AfterFunc(dvdMenuCompletedJobRetention, func() {
+		a.dvdMenuMu.Lock()
+		defer a.dvdMenuMu.Unlock()
+		if current := a.dvdMenus[job.id]; current == job && isDVDMenuJobTerminal(job) {
+			a.deleteDVDMenuJobLocked(job)
+		}
+	})
+	job.mu.Lock()
+	job.retentionTimer = timer
+	job.mu.Unlock()
+	a.dvdMenuMu.Unlock()
+}
+
+// pruneCompletedDVDMenuJobsLocked evicts the oldest terminal jobs until at
+// most maxCompleted remain. The caller must hold a.dvdMenuMu.
+func (a *App) pruneCompletedDVDMenuJobsLocked(maxCompleted int) {
+	if maxCompleted <= 0 {
+		return
+	}
+	completed := make([]*dvdMenuCaptureJob, 0, len(a.dvdMenus))
+	for _, job := range a.dvdMenus {
+		if isDVDMenuJobTerminal(job) {
+			completed = append(completed, job)
+		}
+	}
+	if len(completed) <= maxCompleted {
+		return
+	}
+	sort.Slice(completed, func(i, j int) bool {
+		return completed[i].finishedAt.Before(completed[j].finishedAt)
+	})
+	for _, job := range completed[:len(completed)-maxCompleted] {
+		a.deleteDVDMenuJobLocked(job)
+	}
+}
+
+// deleteDVDMenuJobLocked removes job and stops its retention timer. The caller
+// must hold a.dvdMenuMu.
+func (a *App) deleteDVDMenuJobLocked(job *dvdMenuCaptureJob) {
+	delete(a.dvdMenus, job.id)
+	job.mu.Lock()
+	timer := job.retentionTimer
+	job.retentionTimer = nil
+	job.mu.Unlock()
+	if timer != nil {
+		timer.Stop()
+	}
+}
+
+// isDVDMenuJobTerminal reports whether job has reached a queryable final state.
+func isDVDMenuJobTerminal(job *dvdMenuCaptureJob) bool {
+	if job == nil {
+		return false
+	}
+	job.mu.Lock()
+	defer job.mu.Unlock()
+	return job.status == "completed" || job.status == "failed" || job.status == "canceled"
+}
+
+// stopAllDVDMenuJobs cancels active captures, waits for workers, releases
+// per-job resources, and clears retained snapshots and cleanup timers.
 func (a *App) stopAllDVDMenuJobs() {
 	if a == nil {
 		return
@@ -365,4 +452,9 @@ func (a *App) stopAllDVDMenuJobs() {
 	for _, job := range jobs {
 		_ = job.closeResources()
 	}
+	a.dvdMenuMu.Lock()
+	for _, job := range a.dvdMenus {
+		a.deleteDVDMenuJobLocked(job)
+	}
+	a.dvdMenuMu.Unlock()
 }

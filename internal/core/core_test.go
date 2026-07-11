@@ -4104,6 +4104,10 @@ func (r *menuImportRepo) DeleteDiscMenuScreenshot(context.Context, string, strin
 	return api.DiscMenuDeleteResult{}, nil
 }
 
+func (r *menuImportRepo) RestoreDiscMenuScreenshot(context.Context, string, api.DiscMenuDeleteResult) error {
+	return nil
+}
+
 type dryRunPreviewRepo struct {
 	stubRepo
 }

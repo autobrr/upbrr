@@ -331,6 +331,93 @@ func TestDeleteRejectsOriginalOutsideManagedDirectory(t *testing.T) {
 	}
 }
 
+func TestDeleteRestoresFileAndRecordsWhenFinalRemoveFails(t *testing.T) {
+	t.Parallel()
+
+	repo := openTestRepository(t)
+	tmpRoot := t.TempDir()
+	discRoot := t.TempDir()
+	meta := api.PreparedMetadata{SourcePath: discRoot, DiscType: "DVD"}
+	managedDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	if err != nil {
+		t.Fatal("create managed directory failed")
+	}
+	imagePath := filepath.Join(managedDir, "Example.Release.2026-dvd-menu-01.png")
+	writePNG(t, imagePath, color.NRGBA{R: 20, G: 40, B: 60, A: 255})
+	now := time.Now().UTC()
+	if err := repo.AppendManualMenuScreenshots(context.Background(), meta.SourcePath,
+		[]api.Screenshot{{SourcePath: meta.SourcePath, ImagePath: imagePath, Width: 2, Height: 2, Purpose: api.ScreenshotPurposeMenu, CapturedAt: now}},
+		[]api.ScreenshotFinalSelection{{SourcePath: meta.SourcePath, ImagePath: imagePath, Source: api.ScreenshotSelectionSourceMenu, SelectedAt: now}},
+	); err != nil {
+		t.Fatal("seed menu screenshot failed")
+	}
+	if err := repo.SaveUploadedImages(context.Background(), meta.SourcePath, "example-host", []api.UploadedImageLink{{
+		SourcePath: meta.SourcePath,
+		ImagePath:  imagePath,
+		Host:       "example-host",
+		UsageScope: "global",
+		RawURL:     "https://example.invalid/dvd-menu.png",
+		UploadedAt: now,
+	}}); err != nil {
+		t.Fatal("seed menu upload record failed")
+	}
+	if err := repo.ReplaceScreenshotSlots(context.Background(), meta.SourcePath, []api.ScreenshotSlot{{
+		SourcePath: meta.SourcePath,
+		SlotOrder:  0,
+		ImagePath:  imagePath,
+		Variants: []api.ScreenshotSlotVariant{{
+			SourcePath: meta.SourcePath,
+			SlotOrder:  0,
+			Host:       "example-host",
+			UsageScope: "global",
+			ImagePath:  imagePath,
+			RawURL:     "https://example.invalid/dvd-menu.png",
+			UploadedAt: now,
+		}},
+	}}); err != nil {
+		t.Fatal("seed menu screenshot slot failed")
+	}
+
+	service := NewService(api.NopLogger{}, tmpRoot, repo)
+	service.removeFile = func(string) error { return errors.New("synthetic remove failure") }
+	err = service.Delete(context.Background(), meta, imagePath)
+	if err == nil || !strings.Contains(err.Error(), "deletion rolled back") {
+		t.Fatal("expected final remove failure to roll back deletion")
+	}
+	if _, err := os.Stat(imagePath); err != nil {
+		t.Fatal("expected rolled-back image at its original path")
+	}
+	listed, err := service.List(context.Background(), meta)
+	if err != nil {
+		t.Fatal("list rolled-back menu image failed")
+	}
+	if len(listed) != 1 || listed[0].Path != imagePath {
+		t.Fatal("rolled-back image is not recoverable through the menu list")
+	}
+	uploads, err := repo.ListUploadedImagesByPath(context.Background(), meta.SourcePath)
+	if err != nil {
+		t.Fatal("list rolled-back upload association failed")
+	}
+	restoredUpload := false
+	for _, uploaded := range uploads {
+		if uploaded.ImagePath == imagePath {
+			restoredUpload = true
+			break
+		}
+	}
+	if !restoredUpload {
+		t.Fatal("rolled-back upload association was not restored")
+	}
+	slots, err := repo.ListScreenshotSlotsByPath(context.Background(), meta.SourcePath)
+	if err != nil || len(slots) != 1 || slots[0].ImagePath != imagePath || len(slots[0].Variants) != 1 {
+		t.Fatal("rolled-back screenshot slot associations were not restored")
+	}
+	pending, err := filepath.Glob(imagePath + ".delete-*")
+	if err != nil || len(pending) != 0 {
+		t.Fatal("rolled-back delete left a staged image behind")
+	}
+}
+
 func TestCapabilityCacheInvalidatesWhenExecutableIdentityChanges(t *testing.T) {
 	t.Parallel()
 

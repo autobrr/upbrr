@@ -256,6 +256,9 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 	if err != nil {
 		return api.ScreenshotResult{}, err
 	}
+	if err := resolveDVDVideoSegmentTimings(ctx, s.runner, cmd, info.Segments, s.logger); err != nil {
+		return api.ScreenshotResult{}, err
+	}
 
 	tmpDir, _, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
 	if err != nil {
@@ -498,12 +501,15 @@ func (s *Service) PreviewFrame(ctx context.Context, meta api.PreparedMetadata, t
 	if err != nil {
 		return api.ScreenshotPreview{}, err
 	}
-	candidates := resolveSegmentCandidates(info, timestampSeconds)
 
 	cmd, err := resolveFFmpeg()
 	if err != nil {
 		return api.ScreenshotPreview{}, err
 	}
+	if err := resolveDVDVideoSegmentTimings(ctx, s.runner, cmd, info.Segments, s.logger); err != nil {
+		return api.ScreenshotPreview{}, err
+	}
+	candidates := resolveSegmentCandidates(info, timestampSeconds)
 
 	s.logger.Debugf("screenshots: preview setup kind=%s disc=%s timestamp_seconds=%.3f candidates=%d selected_path=%s ffmpeg=%s", screenshotSourceKind(meta), screenshotLogField(meta.DiscType), timestampSeconds, len(candidates), candidates[0].SourcePath, cmd)
 	var payload []byte
