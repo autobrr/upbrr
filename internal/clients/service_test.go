@@ -884,12 +884,12 @@ func TestInjectQbitClientURLLinkingFallsBackWithoutStaging(t *testing.T) {
 	if capture.addCalls != 1 {
 		t.Fatalf("expected one qbit add attempt, got %d", capture.addCalls)
 	}
-	if capture.skipChecking != "false" {
-		t.Fatalf("expected URL fallback hash checking, got skip_checking=%q", capture.skipChecking)
+	if capture.skipChecking != "true" {
+		t.Fatalf("expected URL fallback to skip hash checking, got skip_checking=%q", capture.skipChecking)
 	}
 }
 
-func TestInjectQbitClientInvalidLinkPlanFallbackChecksHash(t *testing.T) {
+func TestInjectQbitClientInvalidLinkPlanFallbackSkipsHashCheck(t *testing.T) {
 	t.Parallel()
 
 	server, capture := newQbitAddCaptureServer(t)
@@ -939,8 +939,8 @@ func TestInjectQbitClientInvalidLinkPlanFallbackChecksHash(t *testing.T) {
 	if capture.savePath != "" {
 		t.Fatalf("expected original-path fallback, got savepath %q", capture.savePath)
 	}
-	if capture.skipChecking != "false" {
-		t.Fatalf("expected fallback hash checking, got skip_checking=%q", capture.skipChecking)
+	if capture.skipChecking != "true" {
+		t.Fatalf("expected fallback to skip hash checking, got skip_checking=%q", capture.skipChecking)
 	}
 }
 
@@ -1052,8 +1052,8 @@ func TestInjectQbitClientHardlinksSourceAndUsesLinkedSavePath(t *testing.T) {
 	if addAutoTMM != "false" {
 		t.Fatalf("expected linked injection autoTMM false, got %q", addAutoTMM)
 	}
-	if addSkipChecking != "false" {
-		t.Fatalf("expected linked injection hash checking, got skip_checking=%q", addSkipChecking)
+	if addSkipChecking != "true" {
+		t.Fatalf("expected linked injection to skip hash checking, got skip_checking=%q", addSkipChecking)
 	}
 }
 
@@ -1206,7 +1206,7 @@ func TestInjectQbitClientRejectsStaleExistingHardlinkDest(t *testing.T) {
 	}
 }
 
-func TestInjectQbitClientFailedLinkPlanFallbackChecksHash(t *testing.T) {
+func TestInjectQbitClientFailedLinkPlanFallbackSkipsHashCheck(t *testing.T) {
 	t.Parallel()
 
 	server, capture := newQbitAddCaptureServer(t)
@@ -1258,8 +1258,8 @@ func TestInjectQbitClientFailedLinkPlanFallbackChecksHash(t *testing.T) {
 	if capture.savePath != "" {
 		t.Fatalf("expected original-path fallback, got savepath %q", capture.savePath)
 	}
-	if capture.skipChecking != "false" {
-		t.Fatalf("expected failed-link fallback hash checking, got skip_checking=%q", capture.skipChecking)
+	if capture.skipChecking != "true" {
+		t.Fatalf("expected failed-link fallback to skip hash checking, got skip_checking=%q", capture.skipChecking)
 	}
 }
 

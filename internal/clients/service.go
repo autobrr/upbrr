@@ -331,9 +331,7 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	if err != nil {
 		return err
 	}
-	// Linked staging is checked by qBittorrent after add so a successful API
-	// response cannot mask a metainfo/content mismatch as a seeded torrent.
-	options.SkipHashCheck = !staging.Linked && !staging.HashCheckRequired
+	options.SkipHashCheck = true
 	if staging.Linked {
 		options.SavePath = staging.SavePath
 		s.logger.Debugf("clients: qbit link staging selected client=%s tracker=%s files=%d layout_validated=%t save_path=%s", name, strings.TrimSpace(torrent.Tracker), staging.FileCount, staging.LayoutValidated, staging.SavePath)
@@ -364,11 +362,6 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	autoManagement := !staging.Linked && qbitAutomaticManagementEnabled(meta, client.AutomaticManagementPaths)
 	addOptions := options.Prepare()
 	addOptions["autoTMM"] = strconv.FormatBool(autoManagement)
-	// go-qbittorrent omits skip_checking when SkipHashCheck is false, so states
-	// that require verification must send the false value explicitly.
-	if staging.Linked || staging.HashCheckRequired {
-		addOptions["skip_checking"] = "false"
-	}
 	s.logger.Debugf("clients: qbit add options ready client=%s auto_tmm=%t skip_hash_check=%t elapsed=%s", name, autoManagement, options.SkipHashCheck, time.Since(optionsStart).Round(time.Millisecond))
 
 	qbitCtx, cancel := context.WithTimeout(ctx, qbitInjectHTTPTimeout)

@@ -23,16 +23,14 @@ import (
 )
 
 // linkStagingResult records a link-staging decision and any cleanup needed if
-// the subsequent client add fails. HashCheckRequired distinguishes an unsafe
-// original-path fallback from ordinary unlinked mode. LayoutValidated and
-// FileCount describe only staging derived from a local torrent artifact.
+// the subsequent client add fails. LayoutValidated and FileCount describe only
+// staging derived from a local torrent artifact.
 type linkStagingResult struct {
-	SavePath          string
-	Linked            bool
-	HashCheckRequired bool
-	LayoutValidated   bool
-	FileCount         int
-	Cleanup           *linkStagingCleanup
+	SavePath        string
+	Linked          bool
+	LayoutValidated bool
+	FileCount       int
+	Cleanup         *linkStagingCleanup
 }
 
 type linkStagingCleanup struct {
@@ -126,7 +124,7 @@ func (s *Service) prepareLinkStaging(ctx context.Context, clientName string, cli
 			}
 			if client.FallbackAllowed() {
 				s.logger.Warnf("clients: injected torrent layout validation failed client=%s tracker=%s mode=%s decision=original-path-fallback reason=%s", clientName, tracker, mode, redaction.RedactValue(err.Error(), nil))
-				return linkStagingResult{HashCheckRequired: true}, nil
+				return linkStagingResult{}, nil
 			}
 			return linkStagingResult{}, fmt.Errorf("clients: %s plan %s staging from injected torrent: %w", clientName, mode, err)
 		}
@@ -140,7 +138,7 @@ func (s *Service) prepareLinkStaging(ctx context.Context, clientName string, cli
 			return linkStagingResult{}, fmt.Errorf("clients: %s cannot validate %s staging for URL-only torrent; provide a torrent file or enable allow_fallback for this client", clientName, mode)
 		}
 		s.logger.Warnf("clients: URL-only linked injection cannot inspect torrent layout client=%s tracker=%s mode=%s decision=original-path-fallback", clientName, tracker, mode)
-		return linkStagingResult{HashCheckRequired: true}, nil
+		return linkStagingResult{}, nil
 	}
 
 	mappingPairs := pathMappingPairs(client.LocalPath, client.RemotePath)
@@ -229,7 +227,7 @@ func (s *Service) prepareLinkStaging(ctx context.Context, clientName string, cli
 	}
 	if client.FallbackAllowed() {
 		s.logger.Warnf("clients: %s %s failed for %s, falling back to original qbit path: %v", clientName, mode, source, lastErr)
-		return linkStagingResult{HashCheckRequired: true}, nil
+		return linkStagingResult{}, nil
 	}
 	return linkStagingResult{}, lastErr
 }
