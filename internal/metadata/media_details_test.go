@@ -871,6 +871,39 @@ func TestSourceAndTypeInfersRemuxWhenReleaseTypeMissing(t *testing.T) {
 	}
 }
 
+func TestSourceAndTypeFinalizesBDRemuxAsBluRayRemux(t *testing.T) {
+	source, typeValue := sourceAndType(preparationstate.State{
+		SourcePath: "Example.Show.S01.2026.BDRemux.1080p",
+		Release:    api.ReleaseInfo{},
+	}, mediaInfoDoc{})
+
+	if source != "BluRay" {
+		t.Fatalf("expected BluRay source, got %q", source)
+	}
+	if typeValue != "REMUX" {
+		t.Fatalf("expected REMUX type, got %q", typeValue)
+	}
+}
+
+// The parser retains the rls-native "BDRiP" source spelling; media-fact
+// derivation must finalize the non-canonical value as BluRay.
+func TestSourceAndTypeFinalizesBDRipAsBluRayEncode(t *testing.T) {
+	source, typeValue := sourceAndType(preparationstate.State{
+		SourcePath: "Example.Show.S01.2026.BDRip.1080p.x265-GRP",
+		Release: api.ReleaseInfo{
+			Source: "BDRiP",
+			Type:   "ENCODE",
+		},
+	}, mediaInfoDoc{})
+
+	if source != "BluRay" {
+		t.Fatalf("expected BluRay source, got %q", source)
+	}
+	if typeValue != "ENCODE" {
+		t.Fatalf("expected ENCODE type, got %q", typeValue)
+	}
+}
+
 // Python get_type() falls back to "ENCODE" for any release that is not a disc
 // and does not match a known keyword. Verify Go does the same.
 func TestSourceAndTypeDefaultsToEncodeForUnknownRelease(t *testing.T) {
