@@ -85,6 +85,7 @@ import {
   type SourcePathMode,
   sourcePathHistoryStorageKey,
 } from "./utils/inputHistory";
+import { hasFetchedExternalPreviewData } from "./utils/externalPreview";
 import { handleExternalLinkClick } from "./utils/externalLinks";
 import { normalizeJobStatus } from "./utils/jobStatus";
 import { isMetadataProgressPathMatch } from "./utils/metadataProgress";
@@ -2082,7 +2083,14 @@ export default function App() {
     }
     setReleaseEdits(buildReleaseEditState(result.ReleaseNameOverrides || {}));
     setReleaseTouched(buildReleaseTouchedState(result.ReleaseNameOverrides || {}));
-    const orderedIDs = filterAndOrderExternalIDs(result.ExternalIDInfo || []);
+    const fetchedProviders = new Set(
+      (result.ExternalPreview || [])
+        .filter(hasFetchedExternalPreviewData)
+        .map((item) => item.Provider),
+    );
+    const orderedIDs = filterAndOrderExternalIDs(result.ExternalIDInfo || []).filter((item) =>
+      fetchedProviders.has(item.Provider),
+    );
     if (orderedIDs.length > 0) {
       setSelectedProvider(orderedIDs[0].Provider);
     } else {

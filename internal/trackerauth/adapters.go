@@ -31,7 +31,7 @@ func defaultAdapters() map[string]Adapter {
 	for _, spec := range builtInSpecs() {
 		switch spec.id {
 		case "AR":
-			adapters[spec.id] = trackerAdapter{capability: validationOnlyCapability(spec), resolve: resolveARStoredSessionForTrackerAuth}
+			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec), resolve: resolveARSessionForTrackerAuth}
 		case "BTN":
 			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec), resolve: btn.ResolveSessionForTrackerAuthLogin}
 		case "FF":
@@ -51,17 +51,6 @@ func defaultAdapters() map[string]Adapter {
 		}
 	}
 	return adapters
-}
-
-// validationOnlyCapability keeps cookie import visible while hiding credential
-// login actions for adapters that can only test existing auth material.
-func validationOnlyCapability(spec trackerSpec) api.TrackerAuthCapability {
-	capability := capabilityFromSpec(spec)
-	capability.SupportsLogin = false
-	capability.SupportsAutoLogin = false
-	capability.SupportsTOTP = false
-	capability.SupportsManual2FA = false
-	return capability
 }
 
 func (s *Service) adapterFor(trackerID string) (Adapter, bool) {

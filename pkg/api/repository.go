@@ -172,7 +172,9 @@ type TrackerRuleFailure struct {
 	Tracker    string
 	Rule       string
 	Reason     string
-	CreatedAt  time.Time `ts_type:"string"`
+	// Severity defaults to blocking for records created before severity was stored.
+	Severity  RuleFailureSeverity
+	CreatedAt time.Time `ts_type:"string"`
 }
 
 type DescriptionOverride struct {

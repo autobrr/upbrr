@@ -135,7 +135,7 @@ describe("InputPage external ID preview", () => {
     cleanup();
   });
 
-  it("renders an explicit unavailable preview for selected MAL IDs", () => {
+  it("hides metadata providers when an ID resolved without fetched provider data", () => {
     render(
       <InputPage
         path="C:\\media\\Example.mkv"
@@ -157,8 +157,14 @@ describe("InputPage external ID preview", () => {
         error=""
         preview={{
           ...preview,
-          ExternalIDInfo: [{ Provider: "mal", ID: 5114, Source: "tmdb" }],
-          ExternalPreview: [],
+          ExternalIDInfo: [{ Provider: "tmdb", ID: 123, Source: "tracker" }],
+          ExternalPreview: [
+            {
+              Provider: "tmdb",
+              ID: 123,
+              Source: "tracker",
+            } as MetadataPreview["ExternalPreview"][number],
+          ],
         }}
         trackerUploadItems={[]}
         releasePageTrackerSelection={{}}
@@ -173,7 +179,7 @@ describe("InputPage external ID preview", () => {
         releaseOverrideState={{ overrides: {}, dirty: false, invalid: false }}
         showExternalIDInputUI={false}
         refreshDisabled={false}
-        selectedProvider="mal"
+        selectedProvider="tmdb"
         setSelectedProvider={vi.fn()}
         setLightboxImage={vi.fn()}
         setLightboxAlt={vi.fn()}
@@ -187,10 +193,9 @@ describe("InputPage external ID preview", () => {
       />,
     );
 
-    expect(screen.getByText("MAL metadata preview unavailable.")).toBeInTheDocument();
-    expect(screen.getByText("MAL URL")).toBeInTheDocument();
-    expect(screen.getByText("https://myanimelist.net/anime/5114")).toBeInTheDocument();
-    expect(screen.getByText("Unavailable")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /TMDB/i })).not.toBeInTheDocument();
+    expect(screen.getByText("No external metadata details found.")).toBeInTheDocument();
+    expect(screen.queryByText("123")).not.toBeInTheDocument();
   });
 
   it("renders rich AniList metadata for selected MAL IDs", () => {

@@ -41,6 +41,7 @@ import (
 	"github.com/autobrr/upbrr/internal/services/imagehosting"
 	"github.com/autobrr/upbrr/internal/services/screenshots"
 	"github.com/autobrr/upbrr/internal/torrent"
+	"github.com/autobrr/upbrr/internal/trackerauth"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -186,6 +187,9 @@ func newCore(ctx context.Context, deps api.CoreDependencies) (*Core, error) {
 	}
 	if services.Dupes == nil {
 		services.Dupes = dupechecking.NewService(cfg, logger)
+	}
+	if services.TrackerAuth == nil {
+		services.TrackerAuth = trackerauth.NewServiceWithLogger(cfg, logger)
 	}
 	logger.Infof("core: initialized services")
 
@@ -560,7 +564,7 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (summary api.Dup
 				removeTrackers = mergeTrackerRemovals(removeTrackers, matchedTrackers)
 			}
 			resolvedTrackers := trackers.ResolveTrackers(c.cfg, req.Trackers, removeTrackers, c.logger)
-			summary, err := c.services.Dupes.Check(ctx, checkMeta, resolvedTrackers)
+			summary, err := c.checkGUIDupesWithAuth(ctx, req.Mode, checkMeta, resolvedTrackers)
 			if err != nil {
 				return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
 			}
@@ -693,7 +697,7 @@ func (c *Core) CheckDupes(ctx context.Context, req api.Request) (summary api.Dup
 		removeTrackers = mergeTrackerRemovals(removeTrackers, matchedTrackers)
 	}
 	resolvedTrackers := trackers.ResolveTrackers(c.cfg, req.Trackers, removeTrackers, c.logger)
-	summary, err = c.services.Dupes.Check(ctx, checkMeta, resolvedTrackers)
+	summary, err = c.checkGUIDupesWithAuth(ctx, req.Mode, checkMeta, resolvedTrackers)
 	if err != nil {
 		return api.DupeCheckSummary{}, fmt.Errorf("core: %w", err)
 	}
@@ -1400,7 +1404,7 @@ func (c *Core) filterImageUploadTrackers(trackerNames []string, meta api.Prepare
 		blockedReasons := blockedReasonsForTracker(meta.BlockedTrackers, name)
 		ruleFailures := ruleFailuresForTracker(meta.TrackerRuleFailures, name)
 		existingMatch := matchedTrackerForUpload(meta.MatchedTrackers, name)
-		if len(blockedReasons) > 0 || (!meta.IgnoreTrackerRuleFailures && len(ruleFailures) > 0) || existingMatch {
+		if len(blockedReasons) > 0 || (!meta.IgnoreTrackerRuleFailures && api.HasBlockingRuleFailures(ruleFailures)) || existingMatch {
 			if c.logger != nil {
 				c.logger.Debugf("core: excluding blocked image upload tracker tracker=%s blocked_reasons=%v rule_failures=%d existing_match=%t", name, blockedReasons, len(ruleFailures), existingMatch)
 			}
@@ -4034,7 +4038,7 @@ func (c *Core) ListHistory(ctx context.Context) ([]api.HistoryEntry, error) {
 	result := make([]api.HistoryEntry, 0, len(entries))
 	for _, entry := range entries {
 		entryCopy := entry
-		entryCopy.LatestUploadStatus = historyStatusLabel(entry.LatestUploadStatus, entry.RuleFailureCount)
+		entryCopy.LatestUploadStatus = api.HistoryStatusLabel(entry.LatestUploadStatus, entry.RuleFailureCount)
 		result = append(result, entryCopy)
 	}
 
@@ -4142,7 +4146,8 @@ func (c *Core) GetHistoryOverview(ctx context.Context, sourcePath string) (api.H
 		overview.LatestUploadStatus = uploadHistory[0].Status
 		overview.LatestUploadAt = uploadHistory[0].CreatedAt
 	}
-	overview.StatusLabel = historyStatusLabel(overview.LatestUploadStatus, len(ruleFailures))
+	blockingRuleFailures := api.CountBlockingRuleFailures(ruleFailures)
+	overview.StatusLabel = api.HistoryStatusLabel(overview.LatestUploadStatus, blockingRuleFailures)
 
 	return overview, nil
 }
@@ -4263,35 +4268,6 @@ func (c *Core) SaveDescriptionOverride(ctx context.Context, req api.Request, raw
 		RawDescriptionHTML: description.Render(trimmed),
 		HasOverride:        true,
 	}, nil
-}
-
-func historyStatusLabel(rawStatus string, ruleFailureCount int) string {
-	status := strings.TrimSpace(strings.ToLower(rawStatus))
-	switch status {
-	case "pending":
-		return "Pending"
-	case "pending-internal":
-		return "Pending Internal"
-	case "uploaded", "success", "completed":
-		return "Uploaded"
-	case "failed", "error":
-		return "Failed"
-	}
-	if status != "" {
-		normalized := strings.ReplaceAll(status, "-", " ")
-		words := strings.Fields(normalized)
-		for idx, word := range words {
-			if word == "" {
-				continue
-			}
-			words[idx] = strings.ToUpper(word[:1]) + word[1:]
-		}
-		return strings.Join(words, " ")
-	}
-	if ruleFailureCount > 0 {
-		return "Rule Issues"
-	}
-	return "Stored"
 }
 
 func (c *Core) applyDefaultOptions(options api.UploadOptions) (api.UploadOptions, error) {
@@ -4748,120 +4724,111 @@ func buildExternalIDInfo(ids api.ExternalIDs) []api.ExternalIDInfo {
 	return result
 }
 
+// buildExternalPreviews returns previews only for resolved IDs with matching fetched provider data.
 func buildExternalPreviews(ids api.ExternalIDs, metadata api.ExternalMetadata) []api.ExternalPreview {
 	result := make([]api.ExternalPreview, 0, 4)
-	if ids.IMDBID != 0 {
+	if ids.IMDBID != 0 && metadata.IMDB != nil {
 		preview := api.ExternalPreview{Provider: "imdb", ID: ids.IMDBID, Source: ids.SourceIMDB}
-		if metadata.IMDB != nil {
-			preview.Title = metadata.IMDB.Title
-			preview.Year = metadata.IMDB.Year
-			preview.Overview = metadata.IMDB.Plot
-			preview.PosterURL = metadata.IMDB.Cover
-			preview.IMDBType = metadata.IMDB.Type
-			preview.Rating = metadata.IMDB.Rating
-			preview.RatingCount = metadata.IMDB.RatingCount
-			preview.RuntimeMinutes = metadata.IMDB.RuntimeMinutes
-			preview.Genres = metadata.IMDB.Genres
-			preview.Country = metadata.IMDB.Country
-			preview.IMDB = metadata.IMDB
-		}
+		preview.Title = metadata.IMDB.Title
+		preview.Year = metadata.IMDB.Year
+		preview.Overview = metadata.IMDB.Plot
+		preview.PosterURL = metadata.IMDB.Cover
+		preview.IMDBType = metadata.IMDB.Type
+		preview.Rating = metadata.IMDB.Rating
+		preview.RatingCount = metadata.IMDB.RatingCount
+		preview.RuntimeMinutes = metadata.IMDB.RuntimeMinutes
+		preview.Genres = metadata.IMDB.Genres
+		preview.Country = metadata.IMDB.Country
+		preview.IMDB = metadata.IMDB
 		result = append(result, preview)
 	}
-	if ids.TMDBID != 0 {
+	if ids.TMDBID != 0 && metadata.TMDB != nil {
 		preview := api.ExternalPreview{Provider: "tmdb", ID: ids.TMDBID, Source: ids.SourceTMDB}
-		if metadata.TMDB != nil {
-			preview.Title = metadata.TMDB.Title
-			preview.Year = metadata.TMDB.Year
-			preview.Overview = metadata.TMDB.Overview
-			preview.PosterURL = metadata.TMDB.Poster
-			preview.BackdropURL = metadata.TMDB.Backdrop
-			preview.Category = metadata.TMDB.Category
-			preview.OriginalTitle = metadata.TMDB.OriginalTitle
-			preview.ReleaseDate = metadata.TMDB.ReleaseDate
-			preview.FirstAirDate = metadata.TMDB.FirstAirDate
-			preview.LastAirDate = metadata.TMDB.LastAirDate
-			preview.OriginalLanguage = metadata.TMDB.OriginalLanguage
-			preview.TMDBType = metadata.TMDB.TMDBType
-			preview.Runtime = metadata.TMDB.Runtime
-			preview.Genres = metadata.TMDB.Genres
-			preview.Keywords = metadata.TMDB.Keywords
-			preview.YouTube = metadata.TMDB.YouTube
-			preview.IMDBID = metadata.TMDB.IMDBID
-			preview.TVDBID = metadata.TMDB.TVDBID
-			preview.TMDB = metadata.TMDB
-		}
+		preview.Title = metadata.TMDB.Title
+		preview.Year = metadata.TMDB.Year
+		preview.Overview = metadata.TMDB.Overview
+		preview.PosterURL = metadata.TMDB.Poster
+		preview.BackdropURL = metadata.TMDB.Backdrop
+		preview.Category = metadata.TMDB.Category
+		preview.OriginalTitle = metadata.TMDB.OriginalTitle
+		preview.ReleaseDate = metadata.TMDB.ReleaseDate
+		preview.FirstAirDate = metadata.TMDB.FirstAirDate
+		preview.LastAirDate = metadata.TMDB.LastAirDate
+		preview.OriginalLanguage = metadata.TMDB.OriginalLanguage
+		preview.TMDBType = metadata.TMDB.TMDBType
+		preview.Runtime = metadata.TMDB.Runtime
+		preview.Genres = metadata.TMDB.Genres
+		preview.Keywords = metadata.TMDB.Keywords
+		preview.YouTube = metadata.TMDB.YouTube
+		preview.IMDBID = metadata.TMDB.IMDBID
+		preview.TVDBID = metadata.TMDB.TVDBID
+		preview.TMDB = metadata.TMDB
 		result = append(result, preview)
 	}
-	if ids.TVDBID != 0 {
+	if ids.TVDBID != 0 && metadata.TVDB != nil {
 		preview := api.ExternalPreview{Provider: "tvdb", ID: ids.TVDBID, Source: ids.SourceTVDB}
-		if metadata.TVDB != nil {
-			preview.Title = metadata.TVDB.Name
-			preview.Year = metadata.TVDB.Year
-			preview.Overview = metadata.TVDB.Overview
-			preview.PosterURL = metadata.TVDB.Poster
-			preview.FirstAirDate = metadata.TVDB.FirstAired
-			preview.TMDBType = metadata.TVDB.Type
-			preview.Country = metadata.TVDB.OriginalCountry
-			preview.OriginalLanguage = metadata.TVDB.OriginalLanguage
-			preview.Genres = metadata.TVDB.Genres
-			preview.TVDBID = metadata.TVDB.TVDBID
-			preview.TVDB = metadata.TVDB
-		}
+		preview.Title = metadata.TVDB.Name
+		preview.Year = metadata.TVDB.Year
+		preview.Overview = metadata.TVDB.Overview
+		preview.PosterURL = metadata.TVDB.Poster
+		preview.FirstAirDate = metadata.TVDB.FirstAired
+		preview.TMDBType = metadata.TVDB.Type
+		preview.Country = metadata.TVDB.OriginalCountry
+		preview.OriginalLanguage = metadata.TVDB.OriginalLanguage
+		preview.Genres = metadata.TVDB.Genres
+		preview.TVDBID = metadata.TVDB.TVDBID
+		preview.TVDB = metadata.TVDB
 		result = append(result, preview)
 	}
-	if ids.TVmazeID != 0 {
+	if ids.TVmazeID != 0 && metadata.TVmaze != nil {
 		preview := api.ExternalPreview{Provider: "tvmaze", ID: ids.TVmazeID, Source: ids.SourceTVmaze}
-		if metadata.TVmaze != nil {
-			preview.Title = metadata.TVmaze.Name
-			preview.Year = yearFromDate(metadata.TVmaze.Premiered)
-			preview.Overview = metadata.TVmaze.Summary
-			preview.PosterURL = metadata.TVmaze.Poster
-			preview.BackdropURL = metadata.TVmaze.Backdrop
-			preview.TMDBType = metadata.TVmaze.Type
-			preview.OriginalLanguage = metadata.TVmaze.Language
-			preview.Runtime = metadata.TVmaze.Runtime
-			preview.Genres = metadata.TVmaze.Genres
-			preview.Rating = metadata.TVmaze.Rating
-			preview.RatingCount = metadata.TVmaze.Weight
-			preview.Country = metadata.TVmaze.Country
-			preview.Premiered = metadata.TVmaze.Premiered
-			preview.IMDBID = metadata.TVmaze.IMDBID
-			preview.TVDBID = metadata.TVmaze.TVDBID
-			preview.TVmaze = metadata.TVmaze
-		}
+		preview.Title = metadata.TVmaze.Name
+		preview.Year = yearFromDate(metadata.TVmaze.Premiered)
+		preview.Overview = metadata.TVmaze.Summary
+		preview.PosterURL = metadata.TVmaze.Poster
+		preview.BackdropURL = metadata.TVmaze.Backdrop
+		preview.TMDBType = metadata.TVmaze.Type
+		preview.OriginalLanguage = metadata.TVmaze.Language
+		preview.Runtime = metadata.TVmaze.Runtime
+		preview.Genres = metadata.TVmaze.Genres
+		preview.Rating = metadata.TVmaze.Rating
+		preview.RatingCount = metadata.TVmaze.Weight
+		preview.Country = metadata.TVmaze.Country
+		preview.Premiered = metadata.TVmaze.Premiered
+		preview.IMDBID = metadata.TVmaze.IMDBID
+		preview.TVDBID = metadata.TVmaze.TVDBID
+		preview.TVmaze = metadata.TVmaze
 		result = append(result, preview)
 	}
-	if ids.MALID != 0 {
+	if ids.MALID != 0 && metadata.AniList != nil {
 		preview := api.ExternalPreview{Provider: "mal", ID: ids.MALID, Source: ids.SourceMAL}
-		if metadata.AniList != nil {
-			title := firstNonEmpty(
-				metadata.AniList.TitleEnglish,
-				metadata.AniList.TitleUserPreferred,
-				metadata.AniList.TitleRomaji,
-				metadata.AniList.TitleNative,
-			)
-			preview.Title = title
-			preview.Year = metadata.AniList.SeasonYear
-			preview.Overview = metadata.AniList.Description
-			preview.PosterURL = firstNonEmpty(
-				metadata.AniList.CoverExtraLarge,
-				metadata.AniList.CoverLarge,
-				metadata.AniList.CoverMedium,
-			)
-			preview.BackdropURL = metadata.AniList.BannerImage
-			preview.Category = metadata.AniList.Format
-			preview.OriginalTitle = metadata.AniList.TitleRomaji
-			preview.ReleaseDate = metadata.AniList.StartDate
-			preview.FirstAirDate = metadata.AniList.StartDate
-			preview.LastAirDate = metadata.AniList.EndDate
-			preview.OriginalLanguage = anilistPreviewOriginalLanguage(metadata.AniList)
-			preview.TMDBType = metadata.AniList.Format
-			preview.Runtime = metadata.AniList.Duration
-			preview.Genres = strings.Join(metadata.AniList.Genres, ", ")
-			preview.Rating = float64(metadata.AniList.AverageScore) / 10
-			preview.RatingCount = metadata.AniList.Popularity
-			preview.AniList = metadata.AniList
-		}
+		title := firstNonEmpty(
+			metadata.AniList.TitleEnglish,
+			metadata.AniList.TitleUserPreferred,
+			metadata.AniList.TitleRomaji,
+			metadata.AniList.TitleNative,
+		)
+		preview.Title = title
+		preview.Year = metadata.AniList.SeasonYear
+		preview.Overview = metadata.AniList.Description
+		preview.PosterURL = firstNonEmpty(
+			metadata.AniList.CoverExtraLarge,
+			metadata.AniList.CoverLarge,
+			metadata.AniList.CoverMedium,
+		)
+		preview.BackdropURL = metadata.AniList.BannerImage
+		preview.Category = metadata.AniList.Format
+		preview.OriginalTitle = metadata.AniList.TitleRomaji
+		preview.ReleaseDate = metadata.AniList.StartDate
+		preview.FirstAirDate = metadata.AniList.StartDate
+		preview.LastAirDate = metadata.AniList.EndDate
+		preview.OriginalLanguage = anilistPreviewOriginalLanguage(metadata.AniList)
+		preview.TMDBType = metadata.AniList.Format
+		preview.Runtime = metadata.AniList.Duration
+		preview.Genres = strings.Join(metadata.AniList.Genres, ", ")
+		preview.Rating = float64(metadata.AniList.AverageScore) / 10
+		preview.RatingCount = metadata.AniList.Popularity
+		preview.AniList = metadata.AniList
 		result = append(result, preview)
 	}
 	return result

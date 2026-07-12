@@ -88,6 +88,14 @@ func tmdbForLookup(meta api.PreparedMetadata) string {
 	return ""
 }
 
+// tvdbForLookup returns a TVDB search value only for identified TV content.
+func tvdbForLookup(meta api.PreparedMetadata) string {
+	if isTV(meta) && meta.ExternalIDs.TVDBID > 0 {
+		return strconv.Itoa(meta.ExternalIDs.TVDBID)
+	}
+	return ""
+}
+
 func lookupTitle(meta api.PreparedMetadata) string {
 	if title := strings.TrimSpace(meta.Release.Title); title != "" {
 		return title

@@ -31,6 +31,7 @@ import type {
   TrackerUploadItem,
 } from "../../types";
 import type { SourcePathHistoryEntry } from "../../utils/inputHistory";
+import { hasFetchedExternalPreviewData } from "../../utils/externalPreview";
 
 const compactInputClass =
   "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
@@ -631,15 +632,6 @@ const buildPreviewDetails = (
   return [baseID].filter((item) => item.value || (item.blocks && item.blocks.length > 0));
 };
 
-/** Builds the explicit MAL fallback shown when the backend has no rich ExternalPreview payload. */
-const buildMALPreviewDetails = (info: ExternalIDInfo): DetailItem[] =>
-  [
-    { label: "MAL ID", value: formatID("mal", info.ID), mono: true },
-    { label: "MAL URL", value: `${malAnimeBaseURL}${info.ID}`, mono: true },
-    { label: "Source", value: info.Source },
-    { label: "Preview", value: "Unavailable" },
-  ].filter((item) => item.value);
-
 const renderDetailValue = (item: DetailItem) => {
   if (item.blocks && item.blocks.length > 0) {
     return (
@@ -885,10 +877,16 @@ export default function InputPage(props: Props) {
     return "";
   }, [path]);
 
-  const orderedExternalIDs = useMemo(
-    () => filterAndOrderExternalIDs(preview.ExternalIDInfo || []),
-    [preview.ExternalIDInfo],
-  );
+  const orderedExternalIDs = useMemo(() => {
+    const fetchedProviders = new Set(
+      (preview.ExternalPreview || [])
+        .filter(hasFetchedExternalPreviewData)
+        .map((item) => item.Provider),
+    );
+    return filterAndOrderExternalIDs(preview.ExternalIDInfo || []).filter((item) =>
+      fetchedProviders.has(item.Provider),
+    );
+  }, [preview.ExternalIDInfo, preview.ExternalPreview]);
 
   const tmdbCandidates = useMemo(
     () => preview.ExternalIDCandidates?.TMDB || [],
@@ -964,14 +962,11 @@ export default function InputPage(props: Props) {
   const selectedPreview = useMemo(() => {
     if (!selectedProvider) return null;
     return (
-      (preview.ExternalPreview || []).find((item) => item.Provider === selectedProvider) || null
+      (preview.ExternalPreview || []).find(
+        (item) => item.Provider === selectedProvider && hasFetchedExternalPreviewData(item),
+      ) || null
     );
   }, [preview.ExternalPreview, selectedProvider]);
-
-  const selectedMALInfo = useMemo(() => {
-    if (selectedProvider !== "mal") return null;
-    return orderedExternalIDs.find((item) => item.Provider === "mal") || null;
-  }, [orderedExternalIDs, selectedProvider]);
 
   const [tvdbDisplayMode, setTVDBDisplayMode] = useState<TVDBDisplayMode>("original");
 
@@ -1014,9 +1009,7 @@ export default function InputPage(props: Props) {
 
   const previewDetails = selectedPreview
     ? buildPreviewDetails(selectedPreview, tvdbDisplayMode)
-    : selectedMALInfo
-      ? buildMALPreviewDetails(selectedMALInfo)
-      : [];
+    : [];
 
   // Keep this aligned with the backend FetchMetadataPreview phase emissions so
   // progress updates advance without skipping backend work, including fallback retries.
@@ -1896,14 +1889,6 @@ export default function InputPage(props: Props) {
                   {selectedPreview.BackdropURL ? (
                     <img src={selectedPreview.BackdropURL} alt="Backdrop" loading="lazy" />
                   ) : null}
-                </div>
-              </div>
-            ) : selectedMALInfo ? (
-              <div className="preview-content">
-                <div className="preview-text">
-                  <p className="title">MAL</p>
-                  <p className="overview">MAL metadata preview unavailable.</p>
-                  <PreviewDetailsList items={previewDetails} />
                 </div>
               </div>
             ) : (

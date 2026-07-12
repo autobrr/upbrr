@@ -42,6 +42,7 @@ type Service struct {
 	nfoDir   string
 	cfg      config.Config
 	tmdb     TMDBClient
+	anilist  AniListClient
 	imdb     IMDBClient
 	tvdb     TVDBClient
 	tvmaze   TVmazeClient
@@ -132,6 +133,15 @@ func WithConfig(cfg config.Config) Option {
 func WithTMDBClient(client TMDBClient) Option {
 	return func(s *Service) {
 		s.tmdb = client
+		if anilistClient, ok := client.(AniListClient); ok && s.anilist == nil {
+			s.anilist = anilistClient
+		}
+	}
+}
+
+func WithAniListClient(client AniListClient) Option {
+	return func(s *Service) {
+		s.anilist = client
 	}
 }
 

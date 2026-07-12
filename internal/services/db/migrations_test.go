@@ -10,9 +10,65 @@ import (
 	"testing"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 const expectedSchemaVersion = 8
+
+func TestMigrateAddTrackerRuleFailureSeverityHandlesAbsentAndLegacyTables(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		seed string
+	}{
+		{name: "absent"},
+		{name: "legacy", seed: `CREATE TABLE tracker_rule_failures (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_path TEXT NOT NULL,
+			tracker TEXT NOT NULL,
+			rule TEXT NOT NULL,
+			reason TEXT NOT NULL DEFAULT "",
+			created_at TEXT NOT NULL
+		)`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db, err := sql.Open("sqlite", ":memory:")
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			if tc.seed != "" {
+				if _, err := db.ExecContext(context.Background(), tc.seed); err != nil {
+					t.Fatalf("seed: %v", err)
+				}
+				if _, err := db.ExecContext(context.Background(), `INSERT INTO tracker_rule_failures (source_path, tracker, rule, created_at) VALUES ("source", "PTP", "legacy", "now")`); err != nil {
+					t.Fatalf("seed legacy row: %v", err)
+				}
+			}
+			if err := migrateAddTrackerRuleFailureSeverity(context.Background(), db); err != nil {
+				t.Fatalf("migrate: %v", err)
+			}
+			if err := migrateAddTrackerRuleFailureSeverity(context.Background(), db); err != nil {
+				t.Fatalf("idempotent migrate: %v", err)
+			}
+			exists, err := tableColumnExists(context.Background(), db, "tracker_rule_failures", "severity")
+			if err != nil || !exists {
+				t.Fatalf("severity column exists=%t err=%v", exists, err)
+			}
+			if tc.seed != "" {
+				var severity string
+				if err := db.QueryRowContext(context.Background(), `SELECT severity FROM tracker_rule_failures WHERE rule = "legacy"`).Scan(&severity); err != nil {
+					t.Fatalf("read legacy severity: %v", err)
+				}
+				if severity != string(api.RuleFailureSeverityBlocking) {
+					t.Fatalf("legacy severity=%q", severity)
+				}
+			}
+		})
+	}
+}
 
 func TestMigrateCreatesTrackerCookiesSchema(t *testing.T) {
 	t.Parallel()

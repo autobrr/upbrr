@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
@@ -401,18 +402,33 @@ func TestValidateBTNInvalidCookiesDeletesOnlyConfirmedInvalid(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	status, err := NewService(config.Config{
+	service := NewService(config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 		Metadata:     config.MetadataConfig{BTNAPI: "legacy-token"},
 		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 			"BTN": {URL: server.URL},
 		}},
-	}).Validate(ctx, "BTN")
+	})
+	preEffectTime := time.Date(2026, time.July, 11, 1, 2, 3, 0, time.UTC)
+	postEffectTime := preEffectTime.Add(time.Minute)
+	nowCalls := 0
+	service.now = func() time.Time {
+		nowCalls++
+		if nowCalls == 1 {
+			return preEffectTime
+		}
+		return postEffectTime
+	}
+
+	status, err := service.Validate(ctx, "BTN")
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	if status.State != StateLoginRequired || status.CookieCount != 0 {
 		t.Fatalf("expected confirmed-invalid BTN cookies to be deleted, got %#v", status)
+	}
+	if status.LastCheckedAt != postEffectTime.Format(time.RFC3339) {
+		t.Fatalf("expected post-deletion LastCheckedAt %q, got %q", postEffectTime.Format(time.RFC3339), status.LastCheckedAt)
 	}
 	if _, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "BTN"); err == nil {
 		t.Fatal("expected BTN cookies to be deleted")
@@ -527,7 +543,7 @@ func TestValidateARStoredCookies(t *testing.T) {
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/torrents.php" {
+		if r.URL.Path != arIndexPath {
 			http.NotFound(w, r)
 			return
 		}
@@ -535,7 +551,7 @@ func TestValidateARStoredCookies(t *testing.T) {
 			t.Error("expected AR session cookie")
 			return
 		}
-		_, _ = w.Write([]byte(`<a href="/torrents.php?action=download&id=1&auth=session-key">Download</a>`))
+		_, _ = w.Write([]byte(`<a href="https://alpharatio.cc/logout.php?auth=session-key">Logout</a>`))
 	}))
 	t.Cleanup(server.Close)
 
@@ -550,6 +566,126 @@ func TestValidateARStoredCookies(t *testing.T) {
 	}
 	if status.State != StateConfigured || status.Message != "remote auth check succeeded" {
 		t.Fatalf("expected successful AR auth validation, got %#v", status)
+	}
+}
+
+func TestValidateARAutoLoginReplacesMissingOrExpiredCookies(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		seedExpired bool
+	}{
+		{name: "missing cookies"},
+		{name: "expired cookies", seedExpired: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			dbPath := newTrackerAuthTestDB(t)
+			if tt.seedExpired {
+				if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "AR", map[string]string{"session": "expired"}); err != nil {
+					t.Fatalf("SaveTrackerCookieMap: %v", err)
+				}
+			}
+
+			var loginCalls atomic.Int32
+			var indexCalls atomic.Int32
+			var invalidLoginForm atomic.Bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case arLoginPath:
+					loginCalls.Add(1)
+					if r.FormValue("username") != "user" || r.FormValue("password") != "password" || r.FormValue("keeplogged") != "1" {
+						invalidLoginForm.Store(true)
+					}
+					http.SetCookie(w, &http.Cookie{Name: "session", Value: "refreshed", Path: "/"})
+					http.Redirect(w, r, arIndexPath, http.StatusFound)
+				case arIndexPath:
+					indexCalls.Add(1)
+					cookie, cookieErr := r.Cookie("session")
+					if cookieErr != nil || cookie.Value != "refreshed" {
+						_, _ = w.Write([]byte(`login.php?act=recover`))
+						return
+					}
+					_, _ = w.Write([]byte(`<a href="https://alpharatio.cc/logout.php?auth=session-key">Logout</a>`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			status, err := NewService(config.Config{
+				MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+				Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+					"AR": {URL: server.URL, Username: "user", Password: "password"},
+				}},
+			}).Validate(ctx, "AR")
+			if err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+			if status.State != StateConfigured || status.Message != "remote auth check succeeded" {
+				t.Fatalf("expected successful AR auto-login, got %#v", status)
+			}
+			if loginCalls.Load() != 1 || invalidLoginForm.Load() {
+				t.Fatal("expected one AR login with configured credentials")
+			}
+			wantIndexCalls := int32(2)
+			if tt.seedExpired {
+				wantIndexCalls++
+			}
+			if indexCalls.Load() != wantIndexCalls {
+				t.Fatalf("expected AR login redirect plus session validation, got %d index requests", indexCalls.Load())
+			}
+			values, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "AR")
+			if err != nil {
+				t.Fatalf("LoadTrackerCookieMap: %v", err)
+			}
+			if values["session"] != "refreshed" {
+				t.Fatal("expected refreshed AR session cookie")
+			}
+		})
+	}
+}
+
+func TestValidateARTransientFailurePreservesCookiesWithoutLogin(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "AR", map[string]string{"session": "existing"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	var loginCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == arLoginPath {
+			loginCalls.Add(1)
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"AR": {URL: server.URL, Username: "user", Password: "password"},
+		}},
+	}).Validate(ctx, "AR")
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if status.Message != "remote auth test failed" {
+		t.Fatalf("expected transient AR validation status, got %#v", status)
+	}
+	if loginCalls.Load() != 0 {
+		t.Fatal("transient AR failure must not trigger credential login")
+	}
+	values, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "AR")
+	if err != nil {
+		t.Fatalf("LoadTrackerCookieMap: %v", err)
+	}
+	if values["session"] != "existing" {
+		t.Fatal("transient AR failure must preserve stored cookies")
 	}
 }
 
@@ -579,7 +715,7 @@ func TestValidateHDBInvalidCookiesDeletesSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	if status.State != StateLoginRequired || status.CookieCount != 0 || status.Message != "stored session expired or invalid" {
+	if status.State != StateLoginRequired || status.CookieCount != 0 || status.Message != "stored session expired or invalid; log in again or import fresh cookies" {
 		t.Fatalf("expected HDB login-required expired-session status, got %#v", status)
 	}
 	if _, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "HDB"); err == nil {
@@ -771,23 +907,74 @@ func TestValidateFLLoginPersistsCookies(t *testing.T) {
 	}
 }
 
+func TestValidateFLLoginDoesNotPersistUnverifiedCookies(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newTrackerAuthTestDB(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case flLoginPagePath:
+			_, _ = w.Write([]byte(`<input name="validator" value="token">`))
+		case flLoginPath:
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "unverified", Path: "/"})
+			http.Redirect(w, r, flIndexPath, http.StatusFound)
+		case flIndexPath:
+			_, _ = w.Write([]byte(`<input name="username">`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	status, err := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"FL": {URL: server.URL, Username: "user", Password: "pass"},
+		}},
+	}).Validate(ctx, "FL")
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if status.State != StateLoginRequired || status.CookieCount != 0 {
+		t.Fatalf("expected unverified FL login to remain login required, got %#v", status)
+	}
+	if _, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "FL"); err == nil {
+		t.Fatal("unverified FL login cookies were persisted")
+	}
+}
+
 func TestValidateTHRChecksCredentialLogin(t *testing.T) {
 	t.Parallel()
 
+	handlerErr := make(chan error, 4)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/takelogin.php" {
+		switch r.URL.Path {
+		case "/login.php":
+			http.SetCookie(w, &http.Cookie{Name: "bootstrap", Value: "ready", Path: "/"})
+			_, _ = w.Write([]byte(`<input type="hidden" name="token" value="login-token">`))
+		case "/takelogin.php":
+			if err := r.ParseForm(); err != nil {
+				handlerErr <- fmt.Errorf("parse THR login form: %w", err)
+				return
+			}
+			if r.FormValue("username") != "user" || r.FormValue("password") != "pass" || r.FormValue("ssl") != "yes" || r.FormValue("token") != "login-token" {
+				handlerErr <- errors.New("unexpected THR login form")
+			}
+			if cookie, err := r.Cookie("bootstrap"); err != nil || cookie.Value != "ready" {
+				handlerErr <- errors.New("THR login bootstrap cookie missing")
+			}
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "authenticated", Path: "/"})
+			http.Redirect(w, r, "/index.php", http.StatusFound)
+		case "/index.php":
+			if cookie, err := r.Cookie("session"); err != nil || cookie.Value != "authenticated" {
+				handlerErr <- errors.New("THR redirect session cookie missing")
+				return
+			}
+			_, _ = w.Write([]byte(`<a href="logout.php">Logout</a>`))
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		if err := r.ParseForm(); err != nil {
-			t.Errorf("ParseForm: %v", err)
-			return
-		}
-		if r.FormValue("username") != "user" || r.FormValue("password") != "pass" || r.FormValue("ssl") != "yes" {
-			t.Error("unexpected THR login form")
-			return
-		}
-		_, _ = w.Write([]byte(`<a href="logout.php">Logout</a>`))
 	}))
 	t.Cleanup(server.Close)
 
@@ -803,6 +990,10 @@ func TestValidateTHRChecksCredentialLogin(t *testing.T) {
 	}
 	if status.State != StateConfigured {
 		t.Fatalf("expected THR configured after login check, got %#v", status)
+	}
+	close(handlerErr)
+	for err := range handlerErr {
+		t.Error(err)
 	}
 }
 
@@ -2098,7 +2289,7 @@ func TestApplyEnsureErrorToStatusKeepsStateMessageParity(t *testing.T) {
 		"confirmed invalid": {
 			err:         &ValidationError{TrackerID: "PTP", ConfirmedInvalid: true, Err: errors.New("expired")},
 			wantState:   StateLoginRequired,
-			wantMessage: "stored session expired or invalid",
+			wantMessage: "stored session expired or invalid; log in again or import fresh cookies",
 		},
 		"2FA with challenge": {
 			err:         &Needs2FAError{TrackerID: "PTP", ChallengeID: "challenge-1"},
@@ -2366,8 +2557,8 @@ func TestCapabilitiesAdvertiseOnlySupportedManual2FA(t *testing.T) {
 				t.Fatalf("%s must not advertise 2FA actions: %#v", cap.TrackerID, cap)
 			}
 		case "AR":
-			if cap.SupportsLogin || cap.SupportsAutoLogin || cap.SupportsManual2FA {
-				t.Fatalf("%s auth check is validation-only in tracker-auth UI: %#v", cap.TrackerID, cap)
+			if !cap.SupportsLogin || !cap.SupportsAutoLogin || cap.SupportsManual2FA {
+				t.Fatalf("%s must advertise credential auto-login without manual 2FA: %#v", cap.TrackerID, cap)
 			}
 			if !cap.SupportsCookieFile {
 				t.Fatalf("%s must keep cookie import capability: %#v", cap.TrackerID, cap)
@@ -2945,6 +3136,111 @@ func TestValidateTransientAdapterFailurePreservesCookieCount(t *testing.T) {
 	}
 	if values["session"] != "abc" {
 		t.Fatal("expected transient adapter failure to preserve cookies")
+	}
+}
+
+func TestValidateManyRunsTrackerChecksConcurrentlyAndPreservesOrder(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newTrackerAuthTestDB(t)
+	trackerIDs := [maxConcurrentValidations + 1]string{"PTP", "MTV", "RTF", "AR", "HDB"}
+	entered := make(chan string, len(trackerIDs))
+	releases := make(map[string]chan struct{}, len(trackerIDs))
+	released := make(map[string]bool, len(trackerIDs))
+	releaseValidation := func(trackerID string) {
+		if !released[trackerID] {
+			close(releases[trackerID])
+			released[trackerID] = true
+		}
+	}
+	defer func() {
+		for _, trackerID := range trackerIDs {
+			releaseValidation(trackerID)
+		}
+	}()
+	newBlockingAdapter := func(trackerID string) *fakeAdapter {
+		release := make(chan struct{})
+		releases[trackerID] = release
+		return &fakeAdapter{
+			capability: api.TrackerAuthCapability{TrackerID: trackerID, SupportsLogin: true},
+			validate: func() (Session, error) {
+				entered <- trackerID
+				<-release
+				return Session{TrackerID: trackerID, State: SessionStateReady}, nil
+			},
+		}
+	}
+	trackerConfigs := make(map[string]config.TrackerConfig, len(trackerIDs))
+	for _, trackerID := range trackerIDs {
+		trackerConfigs[trackerID] = config.TrackerConfig{}
+	}
+	service := NewService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers:     config.TrackersConfig{Trackers: trackerConfigs},
+	})
+	for _, trackerID := range trackerIDs {
+		service.adapters[trackerID] = newBlockingAdapter(trackerID)
+	}
+
+	type result struct {
+		statuses []api.TrackerAuthStatus
+		err      error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		statuses, err := service.ValidateMany(context.Background(), trackerIDs[:])
+		resultCh <- result{statuses: statuses, err: err}
+	}()
+
+	seen := make(map[string]bool, len(trackerIDs))
+	firstEntered := ""
+	for range maxConcurrentValidations {
+		select {
+		case trackerID := <-entered:
+			seen[trackerID] = true
+			if firstEntered == "" {
+				firstEntered = trackerID
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("concurrent tracker validations did not reach the limit")
+		}
+	}
+	select {
+	case trackerID := <-entered:
+		t.Fatalf("expected only %d concurrent validations, but %s also entered", maxConcurrentValidations, trackerID)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	releaseValidation(firstEntered)
+	select {
+	case trackerID := <-entered:
+		seen[trackerID] = true
+	case <-time.After(2 * time.Second):
+		t.Fatal("queued tracker validation did not enter after a slot was released")
+	}
+	for _, trackerID := range trackerIDs {
+		releaseValidation(trackerID)
+	}
+
+	var got result
+	select {
+	case got = <-resultCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("ValidateMany did not return after all validations were released")
+	}
+	if got.err != nil {
+		t.Fatalf("ValidateMany: %v", got.err)
+	}
+	if len(seen) != len(trackerIDs) {
+		t.Fatalf("expected all tracker validations to start, got %#v", seen)
+	}
+	if len(got.statuses) != len(trackerIDs) {
+		t.Fatalf("expected input-ordered statuses, got %#v", got.statuses)
+	}
+	for i, trackerID := range trackerIDs {
+		if got.statuses[i].TrackerID != trackerID || got.statuses[i].State != StateConfigured {
+			t.Fatalf("expected successful input-ordered status for %s, got %#v", trackerID, got.statuses[i])
+		}
 	}
 }
 

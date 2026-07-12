@@ -680,6 +680,7 @@ func TestBackendSaveConfigAfterInvalidStartupMigratesLegacyCookies(t *testing.T)
 
 	startupCfg := backendConfigTestConfig(repoPath)
 	startupCfg.MainSettings.TMDBAPI = ""
+	startupCfg.ScreenshotHandling.Screens = 0
 	backend, err := NewBackend(startupCfg, newEventHub())
 	if err != nil {
 		t.Fatalf("new backend: %v", err)

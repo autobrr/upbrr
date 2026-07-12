@@ -4,6 +4,7 @@
 package core
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -75,6 +76,30 @@ func TestBuildMetadataPreviewMapsExternalData(t *testing.T) {
 	preview.TrackerRuleFailures["NBL"][0].Rule = "mutated"
 	if meta.TrackerRuleFailures["NBL"][0].Rule != "require_tv_only" {
 		t.Fatalf("preview rule failures must not alias prepared metadata, got %#v", meta.TrackerRuleFailures)
+	}
+}
+
+func TestBuildMetadataPreviewOmitsResolvedIDsWithoutProviderData(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "example.mkv")
+	meta := api.PreparedMetadata{
+		SourcePath: sourcePath,
+		ExternalIDs: api.ExternalIDs{
+			TMDBID:     123,
+			SourceTMDB: "tracker",
+		},
+	}
+
+	preview := buildMetadataPreview(meta, config.Config{})
+
+	if len(preview.ExternalIDInfo) != 1 {
+		t.Fatalf("expected resolved external ID to remain visible for editing, got %d", len(preview.ExternalIDInfo))
+	}
+	info := preview.ExternalIDInfo[0]
+	if info.Provider != "tmdb" || info.ID != 123 || info.Source != "tracker" {
+		t.Fatalf("expected preserved TMDB external ID info, got %#v", info)
+	}
+	if len(preview.ExternalPreview) != 0 {
+		t.Fatalf("expected no provider previews without fetched metadata, got %d", len(preview.ExternalPreview))
 	}
 }
 

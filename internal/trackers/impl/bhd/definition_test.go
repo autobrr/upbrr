@@ -44,7 +44,7 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 			Source:            "WEB",
 			Audio:             "DD+ 5.1",
 			HDR:               "HDR10+ DV",
-			Edition:           "Hybrid",
+			Edition:           "Hybrid Director",
 			TVPack:            true,
 			SeasonStr:         "S00",
 		},
@@ -70,6 +70,12 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	if entry.Payload["source"] != "WEB" {
 		t.Fatalf("expected source WEB, got %q", entry.Payload["source"])
 	}
+	if entry.Payload["imdb_id"] != "456" {
+		t.Fatalf("expected numeric imdb_id, got %q", entry.Payload["imdb_id"])
+	}
+	if entry.Payload["tmdb_id"] != "123" {
+		t.Fatalf("expected numeric tmdb_id, got %q", entry.Payload["tmdb_id"])
+	}
 	if entry.Payload["live"] != "0" {
 		t.Fatalf("expected live=0 for draft default, got %q", entry.Payload["live"])
 	}
@@ -79,8 +85,72 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	if entry.Payload["special"] != "1" {
 		t.Fatalf("expected special=1, got %q", entry.Payload["special"])
 	}
+	if entry.Payload["edition"] != "Director" {
+		t.Fatalf("expected title-cased edition, got %q", entry.Payload["edition"])
+	}
 	if got := entry.Payload["tags"]; !strings.Contains(got, "WEBDL") || !strings.Contains(got, "HDR10+") || !strings.Contains(got, "DV") {
 		t.Fatalf("expected BHD tags in payload, got %q", got)
+	}
+}
+
+func TestDefinitionBuildUploadDryRunPrerequisiteMessagesIncludeAction(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		req        trackers.UploadRequest
+		wantCause  string
+		wantAction string
+	}{
+		{
+			name: "missing api key",
+			req: trackers.UploadRequest{
+				Tracker: "BHD",
+				Meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{TMDBID: 123}},
+				Logger:  api.NopLogger{},
+			},
+			wantCause:  "missing api_key",
+			wantAction: "configure the BHD api_key",
+		},
+		{
+			name: "missing tmdb id",
+			req: trackers.UploadRequest{
+				Tracker:       "BHD",
+				TrackerConfig: config.TrackerConfig{APIKey: "token"},
+				Logger:        api.NopLogger{},
+			},
+			wantCause:  "missing tmdb id",
+			wantAction: "refresh metadata or set a TMDB id",
+		},
+		{
+			name: "missing mediainfo text",
+			req: trackers.UploadRequest{
+				Tracker:       "BHD",
+				TrackerConfig: config.TrackerConfig{APIKey: "token"},
+				Meta:          api.PreparedMetadata{ExternalIDs: api.ExternalIDs{TMDBID: 123}},
+				Logger:        api.NopLogger{},
+			},
+			wantCause:  "missing mediainfo text",
+			wantAction: "generate or attach MediaInfo",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := New().BuildUploadDryRun(context.Background(), tc.req)
+			if err == nil {
+				t.Fatalf("expected prerequisite error")
+			}
+			message := err.Error()
+			if !strings.Contains(message, tc.wantCause) {
+				t.Fatalf("expected cause %q in error, got %q", tc.wantCause, message)
+			}
+			if !strings.Contains(message, tc.wantAction) {
+				t.Fatalf("expected action %q in error, got %q", tc.wantAction, message)
+			}
+		})
 	}
 }
 
@@ -115,6 +185,57 @@ func TestDefinitionBuildUploadDryRunRejectsInvalidContainer(t *testing.T) {
 	}
 }
 
+func TestResolveTypeRejectsBHD576iResolution(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{Release: api.ReleaseInfo{Resolution: "576i"}}
+	if got := resolveType(meta); got != "Other" {
+		t.Fatalf("expected BHD type Other for 576i, got %q", got)
+	}
+}
+
+func TestResolveTypeRejectsHDDVDRemuxEvenWithUHD(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{Type: "REMUX", Source: "HDDVD", UHD: "UHD"}
+	if got := resolveType(meta); got != "Other" {
+		t.Fatalf("expected BHD type Other for HD-DVD remux, got %q", got)
+	}
+}
+
+func TestDefinitionBuildUploadDryRunRejectsInvalidSource(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
+	torrentPath := filepath.Join(tmp, "Example.torrent")
+	if err := os.WriteFile(mediaInfoPath, []byte("General\nUnique ID : 123"), 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+	if err := os.WriteFile(torrentPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	_, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+		Tracker: "BHD",
+		Meta: api.PreparedMetadata{
+			SourcePath:        filepath.Join(tmp, "Example.mkv"),
+			TorrentPath:       torrentPath,
+			MediaInfoTextPath: mediaInfoPath,
+			ExternalIDs:       api.ExternalIDs{TMDBID: 123, Category: "MOVIE"},
+			Release:           api.ReleaseInfo{Resolution: "1080p"},
+			Type:              "WEBDL",
+			Source:            "CAM",
+			Container:         "mkv",
+		},
+		TrackerConfig: config.TrackerConfig{APIKey: "token"},
+		Logger:        api.NopLogger{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported source") {
+		t.Fatalf("expected unsupported source error, got %v", err)
+	}
+}
+
 func TestUploadRetriesInvalidIMDb(t *testing.T) {
 	tmp := t.TempDir()
 	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
@@ -136,8 +257,29 @@ func TestUploadRetriesInvalidIMDb(t *testing.T) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if len(r.MultipartForm.File["mediainfo"]) != 1 {
+			t.Errorf("expected mediainfo file part")
+			return
+		}
+		if filename := r.MultipartForm.File["mediainfo"][0].Filename; filename != "upload" {
+			t.Errorf("expected Upload-Assistant-compatible mediainfo filename, got %q", filename)
+			return
+		}
+		if len(r.MultipartForm.File["file"]) != 1 {
+			t.Errorf("expected torrent file part")
+			return
+		}
+		if contentType := r.MultipartForm.File["file"][0].Header.Get("Content-Type"); contentType != "application/x-bittorrent" {
+			t.Errorf("expected Upload-Assistant-compatible torrent content type, got %q", contentType)
+			return
+		}
 		calls++
 		imdbID := r.FormValue("imdb_id")
+		tmdbID := r.FormValue("tmdb_id")
+		if tmdbID != "123" {
+			t.Errorf("expected tmdb_id 123, got %q", tmdbID)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if calls == 1 {
 			if imdbID != "456" {
@@ -190,6 +332,156 @@ func TestUploadRetriesInvalidIMDb(t *testing.T) {
 	}
 }
 
+func TestSendUploadRejectsOversizedResponseBody(t *testing.T) {
+	tmp := t.TempDir()
+	torrentPath := filepath.Join(tmp, "Example.torrent")
+	if err := os.WriteFile(torrentPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, strings.Repeat("x", int(bhdUploadResponseMaxBytes)+1))
+	}))
+	defer server.Close()
+
+	originalBaseURL := bhdBaseURL
+	bhdBaseURL = server.URL
+	defer func() { bhdBaseURL = originalBaseURL }()
+
+	_, _, err := sendUpload(context.Background(), trackers.UploadRequest{
+		Tracker:       "BHD",
+		TrackerConfig: config.TrackerConfig{APIKey: "token"},
+	}, uploadState{
+		torrentPath: torrentPath,
+		fields: map[string]string{
+			"name":        "Example.Release.2026.1080p-GRP",
+			"category_id": "1",
+			"type":        "1080p",
+			"source":      "WEB",
+			"tmdb_id":     "movie/123456",
+			"description": "Example description",
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "response body exceeds") {
+		t.Fatalf("expected oversized response error, got %v", err)
+	}
+}
+
+func TestSendUploadRejectsNonSuccessHTTPStatus(t *testing.T) {
+	tmp := t.TempDir()
+	torrentPath := filepath.Join(tmp, "Example.torrent")
+	if err := os.WriteFile(torrentPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantDetail string
+	}{
+		{
+			name:       "valid-looking success body",
+			statusCode: http.StatusInternalServerError,
+			body:       `{"status_code":1,"status_message":"https://beyond-hd.me/torrent/download/example.123456.torrent"}`,
+		},
+		{
+			name:       "ordinary error body",
+			statusCode: http.StatusUnprocessableEntity,
+			body:       `{"message":"upload rejected"}`,
+			wantDetail: "upload rejected",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.statusCode)
+				_, _ = fmt.Fprint(w, tt.body)
+			}))
+			defer server.Close()
+
+			originalBaseURL := bhdBaseURL
+			bhdBaseURL = server.URL
+			defer func() { bhdBaseURL = originalBaseURL }()
+
+			_, responseBody, err := sendUpload(context.Background(), trackers.UploadRequest{
+				Tracker:       "BHD",
+				TrackerConfig: config.TrackerConfig{APIKey: "token"},
+			}, uploadState{
+				torrentPath: torrentPath,
+				fields: map[string]string{
+					"name":        "Example.Release.2026.1080p-GRP",
+					"category_id": "1",
+					"type":        "1080p",
+					"source":      "WEB",
+					"tmdb_id":     "movie/123456",
+					"description": "Example description",
+				},
+			})
+			if err == nil {
+				t.Fatal("expected non-success HTTP status error")
+			}
+			if !strings.Contains(err.Error(), fmt.Sprintf("status=%d", tt.statusCode)) {
+				t.Fatal("expected HTTP status in upload error")
+			}
+			if tt.wantDetail != "" && !strings.Contains(err.Error(), tt.wantDetail) {
+				t.Fatal("expected redacted response detail in upload error")
+			}
+			if string(responseBody) != tt.body {
+				t.Fatal("expected bounded response body to be returned")
+			}
+		})
+	}
+}
+
+func TestWriteFailureArtifactPreservesRepeatedFailures(t *testing.T) {
+	tmp := t.TempDir()
+	req := trackers.UploadRequest{
+		Meta: api.PreparedMetadata{
+			SourcePath: filepath.Join(tmp, "Example.Release.2026.1080p-GRP.mkv"),
+		},
+		AppConfig: config.Config{
+			MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "upbrr.db")},
+		},
+	}
+
+	firstPayload := []byte(`{"message":"first failure"}`)
+	firstPath, err := writeFailureArtifact(req, firstPayload, "upload_failure")
+	if err != nil {
+		t.Fatalf("write first failure artifact: %v", err)
+	}
+	secondPayload := []byte(`{"message":"second failure"}`)
+	secondPath, err := writeFailureArtifact(req, secondPayload, "upload_failure")
+	if err != nil {
+		t.Fatalf("write second failure artifact: %v", err)
+	}
+
+	firstInfo, err := os.Stat(firstPath)
+	if err != nil {
+		t.Fatalf("stat first failure artifact: %v", err)
+	}
+	secondInfo, err := os.Stat(secondPath)
+	if err != nil {
+		t.Fatalf("stat second failure artifact: %v", err)
+	}
+	if os.SameFile(firstInfo, secondInfo) {
+		t.Fatal("repeated failures must use distinct artifacts")
+	}
+	firstStored, err := os.ReadFile(firstPath)
+	if err != nil {
+		t.Fatalf("read first failure artifact: %v", err)
+	}
+	secondStored, err := os.ReadFile(secondPath)
+	if err != nil {
+		t.Fatalf("read second failure artifact: %v", err)
+	}
+	if string(firstStored) != string(firstPayload) || string(secondStored) != string(secondPayload) {
+		t.Fatal("repeated failure artifacts did not preserve both payloads")
+	}
+}
+
 func TestDefinitionBuildDescriptionUsesProvidedAssets(t *testing.T) {
 	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
 		Tracker: "BHD",
@@ -215,6 +507,25 @@ func TestDefinitionBuildDescriptionUsesProvidedAssets(t *testing.T) {
 	}
 	if !strings.Contains(result.Description, "[img width=350]https://img.hdbits.org/full.jpg[/img]") {
 		t.Fatalf("expected raw image url to be used, got %q", result.Description)
+	}
+}
+
+func TestBuildScreenshotSectionUsesTwoImagesPerRow(t *testing.T) {
+	images := []api.ScreenshotImage{
+		{RawURL: "https://img.example/1.png", WebURL: "https://img.example/1"},
+		{RawURL: "https://img.example/2.png", WebURL: "https://img.example/2"},
+		{RawURL: "https://img.example/3.png", WebURL: "https://img.example/3"},
+		{RawURL: "https://img.example/4.png", WebURL: "https://img.example/4"},
+	}
+
+	got := buildScreenshotSection(images, len(images))
+	want := strings.Join([]string{
+		`[align=center][url=https://img.example/1][img width=350]https://img.example/1.png[/img][/url] [url=https://img.example/2][img width=350]https://img.example/2.png[/img][/url]`,
+		``,
+		`[url=https://img.example/3][img width=350]https://img.example/3.png[/img][/url] [url=https://img.example/4][img width=350]https://img.example/4.png[/img][/url][/align]`,
+	}, "\n")
+	if got != want {
+		t.Fatalf("unexpected BHD screenshot layout: %q", got)
 	}
 }
 

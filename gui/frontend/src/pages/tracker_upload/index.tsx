@@ -223,6 +223,19 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
     [trackerUploadItems, releasePageTrackerSelection],
   );
 
+  const ruleWarningsByTracker = useMemo(() => {
+    const warnings: Record<string, string[]> = {};
+    Object.entries(preview.TrackerRuleFailures || {}).forEach(([tracker, failures]) => {
+      const key = tracker.toLowerCase().trim();
+      const reasons = (failures || [])
+        .filter((failure) => String(failure.Severity || "").toLowerCase() === "warning")
+        .map((failure) => failure.Reason?.trim() || failure.Rule?.trim())
+        .filter((reason): reason is string => Boolean(reason));
+      if (key && reasons.length > 0) warnings[key] = reasons;
+    });
+    return warnings;
+  }, [preview.TrackerRuleFailures]);
+
   const trackerBlockState = useMemo(() => {
     const next: Record<string, { blocked: boolean; reasons: string[]; hardBlocked: boolean }> = {};
     visibleTrackers.forEach((tracker) => {
@@ -598,6 +611,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
             const dryRun = selected ? dryRunMap[normalizedTrackerName] : undefined;
             const imageHost = dryRun?.ImageHost;
             const imageHostWarnings = imageHost?.Warnings || [];
+            const ruleWarnings = ruleWarningsByTracker[normalizedTrackerName] || [];
             const iconSrc = trackerIconFor(trackerIconSrcByName, tracker.name);
             const imageHostStatus = String(imageHost?.Status || "").toLowerCase();
             const questionnaire = dryRun?.Questionnaire;
@@ -702,6 +716,14 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                     </p>
                   );
                 })}
+                {ruleWarnings.map((warning, index) => (
+                  <p
+                    className="m-0 rounded-md border border-amber-400/40 bg-amber-400/10 px-2 py-1 text-xs text-amber-100 [overflow-wrap:anywhere]"
+                    key={`${tracker.name}-rule-warning-${index}`}
+                  >
+                    Rule warning: {warning}
+                  </p>
+                ))}
 
                 {releaseNameChanged ? (
                   <div className="grid gap-1 rounded-md border border-amber-300/55 bg-amber-300/12 px-2.5 py-2">

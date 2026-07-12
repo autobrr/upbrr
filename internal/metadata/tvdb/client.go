@@ -1443,6 +1443,9 @@ func episodeIsPresent(episodes []Episode, query EpisodeQuery) bool {
 		if query.Season != 0 && query.Episode != 0 && ep.SeasonNumber == query.Season && ep.Number == query.Episode {
 			return true
 		}
+		if query.Episode != 0 && ep.AbsoluteNumber == query.Episode {
+			return true
+		}
 	}
 	return false
 }
@@ -1459,19 +1462,18 @@ func findEpisodeMatch(episodes []Episode, query EpisodeQuery) (EpisodeMatch, boo
 			}
 		}
 	}
-	if query.Season == 0 {
-		return EpisodeMatch{}, false
-	}
-	if query.Episode == 0 {
+	if query.Season != 0 && query.Episode == 0 {
 		for _, ep := range episodes {
 			if ep.SeasonNumber == query.Season {
 				return toMatch(ep), true
 			}
 		}
 	}
-	for _, ep := range episodes {
-		if ep.SeasonNumber == query.Season && ep.Number == query.Episode {
-			return toMatch(ep), true
+	if query.Season != 0 {
+		for _, ep := range episodes {
+			if ep.SeasonNumber == query.Season && ep.Number == query.Episode {
+				return toMatch(ep), true
+			}
 		}
 	}
 	if query.Absolute != 0 {

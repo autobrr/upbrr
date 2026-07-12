@@ -92,6 +92,8 @@ func rulesA4K() RuleSet {
 func rulesBHD() RuleSet {
 	return RuleSet{
 		RequireValidMISetting: true,
+		BlockAdult:            true,
+		AdultMessage:          "Porn/xxx is not allowed at BHD.",
 		ExtraCheck:            checkBHDRequirements,
 	}
 }

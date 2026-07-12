@@ -46,7 +46,11 @@ func (s *Service) applyTrackerRules(ctx context.Context, meta api.PreparedMetada
 			ruleFailures[name] = append([]api.RuleFailure{}, failures...)
 			if s.logger != nil {
 				for _, failure := range failures {
-					s.logger.Debugf("metadata: tracker rule failed tracker=%s rule=%s reason=%s", name, failure.Rule, failure.Reason)
+					if api.IsBlockingRuleFailure(failure) {
+						s.logger.Debugf("metadata: tracker rule result tracker=%s decision=blocked rule=%s reason=%s", name, failure.Rule, failure.Reason)
+					} else {
+						s.logger.Debugf("metadata: tracker rule result tracker=%s decision=warning rule=%s reason=%s", name, failure.Rule, failure.Reason)
+					}
 				}
 			}
 		} else {
@@ -100,6 +104,7 @@ func (s *Service) persistRuleFailures(ctx context.Context, sourcePath string, tr
 			Tracker:    strings.ToUpper(trimmedTracker),
 			Rule:       strings.TrimSpace(failure.Rule),
 			Reason:     strings.TrimSpace(failure.Reason),
+			Severity:   api.NormalizeRuleFailureSeverity(failure.Severity),
 			CreatedAt:  time.Now().UTC(),
 		})
 	}

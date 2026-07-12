@@ -323,18 +323,23 @@ func releaseNameRequestFromMeta(meta api.PreparedMetadata, logger api.Logger) ap
 	}
 }
 
+// resolveReleaseNameTitle selects naming fields from current matching provider
+// metadata while preserving parsed values when no eligible snapshot exists.
 func resolveReleaseNameTitle(category string, meta api.PreparedMetadata) (string, string, int) {
 	title := strings.TrimSpace(meta.Release.Title)
 	altTitle := strings.TrimSpace(meta.Release.Alt)
 	year := meta.Release.Year
 	isTV := strings.EqualFold(strings.TrimSpace(category), "TV")
 
-	if isTV && meta.ExternalMetadata.TVDB != nil {
+	if isTV && matchingTVDBMetadataForNaming(meta) {
 		tvdb := meta.ExternalMetadata.TVDB
-		if strings.TrimSpace(tvdb.NameEnglish) != "" {
-			title = strings.TrimSpace(tvdb.NameEnglish)
-		} else if strings.TrimSpace(tvdb.Name) != "" {
-			title = strings.TrimSpace(tvdb.Name)
+		englishTitle := strings.TrimSpace(tvdb.NameEnglish)
+		nativeTitle := strings.TrimSpace(tvdb.Name)
+		if englishTitle != "" {
+			title = englishTitle
+			altTitle = fillProviderAlternateTitle(altTitle, title, nativeTitle)
+		} else {
+			title = nativeTitle
 		}
 		if tvdb.Year > 0 && tvdb.YearFromAlias {
 			year = tvdb.Year
@@ -345,35 +350,73 @@ func resolveReleaseNameTitle(category string, meta api.PreparedMetadata) (string
 	}
 
 	switch {
-	case meta.ExternalMetadata.TMDB != nil:
+	case matchingTMDBMetadataForNaming(meta):
 		tmdb := meta.ExternalMetadata.TMDB
-		if strings.TrimSpace(tmdb.Title) != "" {
-			title = strings.TrimSpace(tmdb.Title)
-		}
-		if altTitle == "" && strings.TrimSpace(tmdb.OriginalTitle) != "" && !strings.EqualFold(tmdb.Title, tmdb.OriginalTitle) {
-			altTitle = "AKA " + strings.TrimSpace(tmdb.OriginalTitle)
-		}
+		title = strings.TrimSpace(tmdb.Title)
+		altTitle = fillProviderAlternateTitle(altTitle, title, tmdb.OriginalTitle)
 		if year == 0 && tmdb.Year > 0 {
 			year = tmdb.Year
 		}
-	case meta.ExternalMetadata.IMDB != nil:
+	case matchingIMDBMetadataForNaming(meta):
 		imdb := meta.ExternalMetadata.IMDB
-		if strings.TrimSpace(imdb.Title) != "" {
-			title = strings.TrimSpace(imdb.Title)
-		}
+		title = strings.TrimSpace(imdb.Title)
+		altTitle = fillProviderAlternateTitle(altTitle, title, imdb.AKA)
 		if year == 0 && imdb.Year > 0 {
 			year = imdb.Year
 		}
-	case meta.ExternalMetadata.TVDB != nil:
-		if strings.TrimSpace(meta.ExternalMetadata.TVDB.Name) != "" {
-			title = strings.TrimSpace(meta.ExternalMetadata.TVDB.Name)
-		}
-	case meta.ExternalMetadata.TVmaze != nil:
-		if strings.TrimSpace(meta.ExternalMetadata.TVmaze.Name) != "" {
-			title = strings.TrimSpace(meta.ExternalMetadata.TVmaze.Name)
-		}
 	}
 	return title, altTitle, year
+}
+
+// matchingTMDBMetadataForNaming reports whether TMDB can supply the naming title.
+func matchingTMDBMetadataForNaming(meta api.PreparedMetadata) bool {
+	value := meta.ExternalMetadata.TMDB
+	return namingProviderMetadataCurrent(meta) && value != nil && meta.ExternalIDs.TMDBID > 0 &&
+		value.TMDBID == meta.ExternalIDs.TMDBID && strings.TrimSpace(value.Title) != ""
+}
+
+// matchingIMDBMetadataForNaming reports whether IMDb can supply the naming title.
+func matchingIMDBMetadataForNaming(meta api.PreparedMetadata) bool {
+	value := meta.ExternalMetadata.IMDB
+	return namingProviderMetadataCurrent(meta) && value != nil && meta.ExternalIDs.IMDBID > 0 &&
+		value.IMDBID == meta.ExternalIDs.IMDBID && strings.TrimSpace(value.Title) != ""
+}
+
+// matchingTVDBMetadataForNaming reports whether TVDB can supply the TV naming title.
+func matchingTVDBMetadataForNaming(meta api.PreparedMetadata) bool {
+	value := meta.ExternalMetadata.TVDB
+	return namingProviderMetadataCurrent(meta) && value != nil && meta.ExternalIDs.TVDBID > 0 &&
+		value.TVDBID == meta.ExternalIDs.TVDBID &&
+		(strings.TrimSpace(value.NameEnglish) != "" || strings.TrimSpace(value.Name) != "")
+}
+
+// namingProviderMetadataCurrent reports whether both provider IDs and snapshots
+// are unscoped or belong to the prepared source.
+func namingProviderMetadataCurrent(meta api.PreparedMetadata) bool {
+	return namingSourceMatches(meta.ExternalIDs.SourcePath, meta.SourcePath) &&
+		namingSourceMatches(meta.ExternalMetadata.SourcePath, meta.SourcePath)
+}
+
+// namingSourceMatches accepts legacy unscoped data and case-insensitive source matches.
+func namingSourceMatches(scopedPath, currentPath string) bool {
+	trimmed := strings.TrimSpace(scopedPath)
+	return trimmed == "" || strings.EqualFold(trimmed, strings.TrimSpace(currentPath))
+}
+
+// fillProviderAlternateTitle preserves a parsed alternate and otherwise returns
+// one normalized AKA title when the provider candidate differs from the primary.
+func fillProviderAlternateTitle(current, primary, candidate string) string {
+	if strings.TrimSpace(current) != "" {
+		return strings.TrimSpace(current)
+	}
+	alternate := strings.TrimSpace(candidate)
+	if len(alternate) > len("AKA ") && strings.EqualFold(alternate[:len("AKA ")], "AKA ") {
+		alternate = strings.TrimSpace(alternate[len("AKA "):])
+	}
+	if alternate == "" || strings.EqualFold(strings.TrimSpace(primary), alternate) {
+		return ""
+	}
+	return "AKA " + alternate
 }
 
 func trimTrailingParentheticalYear(title string, year int) string {

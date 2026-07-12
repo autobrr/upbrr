@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/pathutil"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/additional"
 	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -51,6 +52,8 @@ func EvaluateRules(ctx context.Context, tracker string, meta api.PreparedMetadat
 			addFailure("modified_release", reason)
 		}
 	}
+	metadataFailures, metadataEvaluated := evaluateMetadataRequirements(name, meta)
+	failures = append(failures, metadataFailures...)
 
 	switch name {
 	case "AZ", "CZ", "PHD":
@@ -60,7 +63,7 @@ func EvaluateRules(ctx context.Context, tracker string, meta api.PreparedMetadat
 	// UNIT3D-known trackers without a tracker-specific RuleSet must still reach
 	// the MediaInfo-settings check below (rules is the zero value for them, which
 	// no-ops every other rule), so don't bail early when the tracker is known.
-	if !ok && name != "PTP" && !unit3dmeta.IsKnown(name) {
+	if !ok && name != "PTP" && !unit3dmeta.IsKnown(name) && !metadataEvaluated {
 		// Preserve the nil contract for trackers without their own rule set: the
 		// consumer (applyTrackerRules) treats a nil result as "not evaluated, keep
 		// pre-existing failures" but an empty slice as "evaluated, clear failures".
@@ -357,15 +360,33 @@ func countrySet(values ...string) map[string]struct{} {
 }
 
 func resolveCategory(meta api.PreparedMetadata) string {
-	if value := strings.ToLower(strings.TrimSpace(meta.ExternalIDs.Category)); value != "" {
-		return value
+	if sourceMatches(meta.ExternalIDs.SourcePath, meta.SourcePath) {
+		if value := strings.ToLower(strings.TrimSpace(meta.ExternalIDs.Category)); value != "" {
+			return value
+		}
 	}
 	if value := strings.ToLower(strings.TrimSpace(meta.MediaInfoCategory)); value != "" {
 		return value
 	}
-	if meta.ExternalMetadata.TMDB != nil {
-		if value := strings.ToLower(strings.TrimSpace(meta.ExternalMetadata.TMDB.Category)); value != "" {
-			return value
+	if sourceMatches(meta.ExternalMetadata.SourcePath, meta.SourcePath) {
+		if meta.ExternalMetadata.TMDB != nil {
+			if value := strings.ToLower(strings.TrimSpace(meta.ExternalMetadata.TMDB.Category)); value != "" {
+				return value
+			}
+		}
+		if (meta.ExternalMetadata.TVDB != nil &&
+			(strings.TrimSpace(meta.ExternalMetadata.TVDB.Name) != "" || strings.TrimSpace(meta.ExternalMetadata.TVDB.NameEnglish) != "")) ||
+			(meta.ExternalMetadata.TVmaze != nil && strings.TrimSpace(meta.ExternalMetadata.TVmaze.Name) != "") {
+			return "tv"
+		}
+		if meta.ExternalMetadata.IMDB != nil {
+			typeValue := strings.ToLower(strings.TrimSpace(meta.ExternalMetadata.IMDB.Type))
+			switch {
+			case strings.Contains(typeValue, "tv"), strings.Contains(typeValue, "series"), strings.Contains(typeValue, "episode"):
+				return "tv"
+			case strings.Contains(typeValue, "movie"), strings.Contains(typeValue, "film"), strings.Contains(typeValue, "feature"):
+				return "movie"
+			}
 		}
 	}
 	if value := strings.ToLower(strings.TrimSpace(meta.Release.Category)); value != "" {
@@ -475,11 +496,11 @@ func hasReleaseToken(meta api.PreparedMetadata, tokens []string) bool {
 
 func isAdultContent(meta api.PreparedMetadata) bool {
 	candidates := append([]string{}, splitCSV(meta.Release.Genre)...)
-	if meta.ExternalMetadata.TMDB != nil {
+	if meta.ExternalMetadata.TMDB != nil && externalMetadataMatchesCurrentSource(meta) {
 		candidates = append(candidates, splitCSV(meta.ExternalMetadata.TMDB.Genres)...)
 		candidates = append(candidates, splitCSV(meta.ExternalMetadata.TMDB.Keywords)...)
 	}
-	if meta.ExternalMetadata.IMDB != nil {
+	if meta.ExternalMetadata.IMDB != nil && externalMetadataMatchesCurrentSource(meta) {
 		candidates = append(candidates, splitCSV(meta.ExternalMetadata.IMDB.Genres)...)
 	}
 	normalized := normalizeStrings(candidates)
@@ -490,6 +511,11 @@ func isAdultContent(meta api.PreparedMetadata) bool {
 		}
 	}
 	return false
+}
+
+func externalMetadataMatchesCurrentSource(meta api.PreparedMetadata) bool {
+	storedSource := strings.TrimSpace(meta.ExternalMetadata.SourcePath)
+	return storedSource == "" || pathutil.SamePath(storedSource, strings.TrimSpace(meta.SourcePath))
 }
 
 func splitCSV(value string) []string {

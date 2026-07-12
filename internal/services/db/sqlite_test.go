@@ -538,6 +538,36 @@ func TestSQLiteRepositoryListHistoryEntriesSkipsInfoHashOnlyPlaceholders(t *test
 	}
 }
 
+func TestSQLiteRepositoryHistoryCountsRuleSeverities(t *testing.T) {
+	t.Parallel()
+	repo, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	ctx := context.Background()
+	sourcePath := filepath.Join(t.TempDir(), "example-release.mkv")
+	if err := repo.Save(ctx, FileMetadata{Path: sourcePath, Title: "Example Release", SourceSize: 1, UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("save metadata: %v", err)
+	}
+	if err := repo.SaveTrackerRuleFailures(ctx, sourcePath, "PTP", []TrackerRuleFailure{
+		{Rule: "blocking"},
+		{Rule: "warning", Severity: api.RuleFailureSeverityWarning},
+	}); err != nil {
+		t.Fatalf("save rule results: %v", err)
+	}
+	entries, err := repo.ListHistoryEntries(ctx)
+	if err != nil {
+		t.Fatalf("list history: %v", err)
+	}
+	if len(entries) != 1 || entries[0].RuleFailureCount != 1 || entries[0].RuleWarningCount != 1 {
+		t.Fatalf("unexpected history counts: %#v", entries)
+	}
+}
+
 func TestSQLiteRepositoryConcurrentDistinctPathWritesOnDisk(t *testing.T) {
 	t.Parallel()
 
@@ -957,12 +987,21 @@ func TestTrackerRuleFailuresCRUD(t *testing.T) {
 	path := "/tmp/source"
 	tracker := "AITHER"
 
-	failures := []TrackerRuleFailure{{
-		SourcePath: path,
-		Tracker:    tracker,
-		Rule:       "require_unique_id",
-		Reason:     "missing MediaInfo Unique ID",
-	}}
+	failures := []TrackerRuleFailure{
+		{
+			SourcePath: path,
+			Tracker:    tracker,
+			Rule:       "require_unique_id",
+			Reason:     "missing MediaInfo Unique ID",
+		},
+		{
+			SourcePath: path,
+			Tracker:    tracker,
+			Rule:       "recommended_id",
+			Reason:     "missing recommended ID",
+			Severity:   api.RuleFailureSeverityWarning,
+		},
+	}
 	if err := repo.SaveTrackerRuleFailures(ctx, path, tracker, failures); err != nil {
 		t.Fatalf("save tracker rule failures: %v", err)
 	}
@@ -971,11 +1010,14 @@ func TestTrackerRuleFailuresCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tracker rule failures: %v", err)
 	}
-	if len(stored) != 1 {
-		t.Fatalf("expected 1 tracker rule failure, got %d", len(stored))
+	if len(stored) != 2 {
+		t.Fatalf("expected 2 tracker rule results, got %d", len(stored))
 	}
-	if stored[0].Rule != "require_unique_id" || stored[0].Tracker != tracker {
+	if stored[0].Rule != "require_unique_id" || stored[0].Tracker != tracker || stored[0].Severity != api.RuleFailureSeverityBlocking {
 		t.Fatalf("unexpected rule failure: %#v", stored[0])
+	}
+	if stored[1].Severity != api.RuleFailureSeverityWarning {
+		t.Fatalf("unexpected rule warning: %#v", stored[1])
 	}
 
 	if err := repo.SaveTrackerRuleFailures(ctx, path, tracker, nil); err != nil {

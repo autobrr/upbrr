@@ -1162,7 +1162,7 @@ func (b *Backend) ListHistory() ([]api.HistoryEntry, error) {
 	result := make([]api.HistoryEntry, 0, len(entries))
 	for _, entry := range entries {
 		entryCopy := entry
-		entryCopy.LatestUploadStatus = historyStatusLabel(entry.LatestUploadStatus, entry.RuleFailureCount)
+		entryCopy.LatestUploadStatus = api.HistoryStatusLabel(entry.LatestUploadStatus, entry.RuleFailureCount)
 		result = append(result, entryCopy)
 	}
 	return result, nil
@@ -1601,32 +1601,7 @@ func historyOverviewFromRepo(repo *db.SQLiteRepository, sourcePath string) (api.
 		overview.LatestUploadStatus = uploadHistory[0].Status
 		overview.LatestUploadAt = uploadHistory[0].CreatedAt
 	}
-	overview.StatusLabel = historyStatusLabel(overview.LatestUploadStatus, len(ruleFailures))
+	blockingRuleFailures := api.CountBlockingRuleFailures(ruleFailures)
+	overview.StatusLabel = api.HistoryStatusLabel(overview.LatestUploadStatus, blockingRuleFailures)
 	return overview, nil
-}
-
-func historyStatusLabel(rawStatus string, ruleFailureCount int) string {
-	status := strings.TrimSpace(strings.ToLower(rawStatus))
-	switch status {
-	case "pending":
-		return "Pending"
-	case "pending-internal":
-		return "Pending Internal"
-	case "uploaded", "success", "completed":
-		return "Uploaded"
-	case "failed", "error":
-		return "Failed"
-	}
-	if status != "" {
-		normalized := strings.ReplaceAll(status, "-", " ")
-		words := strings.Fields(normalized)
-		for idx, word := range words {
-			words[idx] = strings.ToUpper(word[:1]) + word[1:]
-		}
-		return strings.Join(words, " ")
-	}
-	if ruleFailureCount > 0 {
-		return "Rule Issues"
-	}
-	return "Stored"
 }

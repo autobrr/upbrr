@@ -27,10 +27,11 @@ import (
 const dryRunPayloadPreviewLimit = 240
 
 // cliTrackerAuthService is the CLI-facing subset of tracker auth operations
-// needed to verify and refresh tracker auth before dupe checking.
+// needed to verify and refresh tracker auth before dupe checking. ValidateMany
+// must return one status per tracker in input order.
 type cliTrackerAuthService interface {
 	Capabilities(ctx context.Context) ([]api.TrackerAuthCapability, error)
-	Validate(ctx context.Context, trackerID string) (api.TrackerAuthStatus, error)
+	ValidateMany(ctx context.Context, trackerIDs []string) ([]api.TrackerAuthStatus, error)
 	Submit2FA(ctx context.Context, challengeID string, code string) (api.TrackerAuthStatus, error)
 }
 
@@ -382,7 +383,7 @@ func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx context.Context
 			readyByTracker[name] = struct{}{}
 			continue
 		}
-		if !cliTrackerRuleFailuresIgnored(req, name) && len(trackerRuleFailuresForPreview(preview, name)) > 0 {
+		if !cliTrackerRuleFailuresIgnored(req, name) && api.HasBlockingRuleFailures(trackerRuleFailuresForPreview(preview, name)) {
 			logger.Debugf("cli auth: tracker=%s skipped before auth due to rule failure", name)
 			continue
 		}
@@ -392,13 +393,19 @@ func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx context.Context
 	logger.Debugf("cli auth: pre-dupe auth check start trackers=%d", len(authCheckTrackers))
 	for _, name := range authCheckTrackers {
 		capability := capabilityByTracker[name]
-
 		logger.Debugf("cli auth: validating tracker=%s auth_kind=%s", name, cliAuthLogField(capability.AuthKind))
-		status, err := authSvc.Validate(ctx, name)
-		if err != nil {
-			logger.Warnf("cli auth: validation failed tracker=%s error=%s", name, cliAuthLogError(err))
-			return nil, fmt.Errorf("upbrr: tracker auth %s: %w", name, err)
-		}
+	}
+	statuses, err := authSvc.ValidateMany(ctx, authCheckTrackers)
+	if err != nil {
+		logger.Warnf("cli auth: concurrent validation failed error=%s", cliAuthLogError(err))
+		return nil, fmt.Errorf("upbrr: tracker auth validation: %w", err)
+	}
+	if len(statuses) != len(authCheckTrackers) {
+		return nil, fmt.Errorf("upbrr: tracker auth validation returned %d statuses for %d trackers", len(statuses), len(authCheckTrackers))
+	}
+	for i, name := range authCheckTrackers {
+		capability := capabilityByTracker[name]
+		status := statuses[i]
 		logCLITrackerAuthStatus(logger, "validation result", status)
 		status, keep, err := handleCLITrackerAuthStatusWithLogger(ctx, reader, authSvc, capability, status, req, logger)
 		if err != nil {
@@ -432,14 +439,7 @@ func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx context.Context
 // work, matching the frontend tracker-auth settings filter instead of static
 // API-key/passkey config.
 func cliTrackerAuthApplies(capability api.TrackerAuthCapability) bool {
-	authKind := strings.ToLower(strings.TrimSpace(capability.AuthKind))
-	return capability.SupportsCookieFile ||
-		capability.SupportsLogin ||
-		capability.SupportsAutoLogin ||
-		capability.SupportsTOTP ||
-		capability.SupportsManual2FA ||
-		strings.Contains(authKind, "refresh") ||
-		strings.Contains(authKind, "2fa")
+	return trackerauth.IsManagedCapability(capability)
 }
 
 // handleCLITrackerAuthStatusWithLogger converts one auth status into a CLI
@@ -569,15 +569,7 @@ func cliAuthLogField(value string) string {
 // cliTrackerAuthReady reports whether a tracker-auth status is usable without
 // further user input before CLI dupe checking.
 func cliTrackerAuthReady(status api.TrackerAuthStatus) bool {
-	if status.Needs2FA {
-		return false
-	}
-	switch strings.TrimSpace(status.State) {
-	case trackerauth.StateConfigured, trackerauth.StateHasCookies:
-		return true
-	default:
-		return false
-	}
+	return trackerauth.IsReadyStatus(status)
 }
 
 // cliTrackerAuthStatusMessage renders the tracker auth status display contract:
@@ -1091,12 +1083,7 @@ func runSiteCheckCLIPath(ctx context.Context, coreSvc api.Core, opts cliOptions,
 		if tracker.Banned && !tracker.DryRun.Banned {
 			fmt.Printf("Banned group: %s\n", tracker.BannedReason)
 		}
-		if len(tracker.RuleFailures) > 0 {
-			fmt.Println("Rule failures:")
-			for _, failure := range tracker.RuleFailures {
-				fmt.Printf("- %s: %s\n", failure.Rule, failure.Reason)
-			}
-		}
+		printRuleFailures(tracker.RuleFailures)
 		if !req.SkipDupeCheck && tracker.DupeCheck.HasDupes {
 			printDupeResult(tracker.DupeCheck)
 		}
@@ -1113,7 +1100,7 @@ func promptTrackerQuestionnaires(reader *bufio.Reader, review api.UploadReview, 
 	answers := make(map[string]map[string]string)
 	changed := false
 	for _, tracker := range review.Trackers {
-		if tracker.Banned || len(tracker.RuleFailures) > 0 || tracker.Questionnaire == nil || len(tracker.Questionnaire.Fields) == 0 {
+		if tracker.Banned || api.HasBlockingRuleFailures(tracker.RuleFailures) || tracker.Questionnaire == nil || len(tracker.Questionnaire.Fields) == 0 {
 			continue
 		}
 		trackerKey := strings.ToUpper(strings.TrimSpace(tracker.Tracker))
@@ -1574,16 +1561,29 @@ func printDryRunUploadReview(review api.UploadReview, req api.Request) {
 		if tracker.Banned && !tracker.DryRun.Banned {
 			fmt.Printf("Banned group: %s\n", tracker.BannedReason)
 		}
-		if len(tracker.RuleFailures) > 0 {
-			fmt.Println("Rule failures:")
-			for _, failure := range tracker.RuleFailures {
-				fmt.Printf("- %s: %s\n", failure.Rule, failure.Reason)
-			}
-		}
+		printRuleFailures(tracker.RuleFailures)
 		if !req.SkipDupeCheck && tracker.DupeCheck.HasDupes {
 			printDupeResult(tracker.DupeCheck)
 		}
 		printDryRunSummary(tracker.DryRun)
+	}
+}
+
+// printRuleFailures groups blocking results and advisory warnings for CLI output.
+func printRuleFailures(failures []api.RuleFailure) {
+	blocking := api.BlockingRuleFailures(failures)
+	if len(blocking) > 0 {
+		fmt.Println("Rule failures:")
+		for _, failure := range blocking {
+			fmt.Printf("- %s: %s\n", failure.Rule, failure.Reason)
+		}
+	}
+	warnings := api.WarningRuleFailures(failures)
+	if len(warnings) > 0 {
+		fmt.Println("Rule warnings:")
+		for _, warning := range warnings {
+			fmt.Printf("- %s: %s\n", warning.Rule, warning.Reason)
+		}
 	}
 }
 

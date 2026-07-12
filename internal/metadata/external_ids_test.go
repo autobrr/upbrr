@@ -301,6 +301,9 @@ type stubIMDB struct {
 	searchResult       imdb.SearchResult
 	searchFn           func(imdb.SearchInput) (imdb.SearchResult, error)
 	info               imdb.Info
+	infoFn             func(string) imdb.Info
+	episodeLookup      imdb.EpisodeLookup
+	episodeLookupCalls int
 	searchCalls        int
 	infoCalls          int
 	searchInputs       []imdb.SearchInput
@@ -316,10 +319,18 @@ func (s *stubIMDB) Search(_ context.Context, input imdb.SearchInput) (imdb.Searc
 	return s.searchResult, nil
 }
 
-func (s *stubIMDB) GetInfo(_ context.Context, _ string, manualLanguage string, _ bool) (imdb.Info, error) {
+func (s *stubIMDB) GetInfo(_ context.Context, imdbID string, manualLanguage string, _ bool) (imdb.Info, error) {
 	s.infoCalls++
 	s.lastManualLanguage = manualLanguage
+	if s.infoFn != nil {
+		return s.infoFn(imdbID), nil
+	}
 	return s.info, nil
+}
+
+func (s *stubIMDB) GetEpisodeInfo(_ context.Context, _ string, _ bool) (imdb.EpisodeLookup, error) {
+	s.episodeLookupCalls++
+	return s.episodeLookup, nil
 }
 
 type stubTVDB struct {
@@ -390,6 +401,8 @@ type stubTVmaze struct {
 	episodeData *tvmaze.EpisodeData
 	calls       int
 	inputs      []tvmaze.SearchInput
+	lastSeason  int
+	lastEpisode int
 }
 
 func (s *stubTVmaze) Search(_ context.Context, input tvmaze.SearchInput) (tvmaze.SearchResult, error) {
@@ -398,7 +411,9 @@ func (s *stubTVmaze) Search(_ context.Context, input tvmaze.SearchInput) (tvmaze
 	return s.result, nil
 }
 
-func (s *stubTVmaze) GetEpisodeByNumber(_ context.Context, _, _, _ int, _ tvmaze.EpisodeLookupContext) (*tvmaze.EpisodeData, error) {
+func (s *stubTVmaze) GetEpisodeByNumber(_ context.Context, _, season, episode int, _ tvmaze.EpisodeLookupContext) (*tvmaze.EpisodeData, error) {
+	s.lastSeason = season
+	s.lastEpisode = episode
 	return s.episodeData, nil
 }
 
@@ -446,6 +461,165 @@ func TestResolveExternalIDsPrecedence(t *testing.T) {
 	}
 	if result.ExternalMetadata.TMDB == nil || result.ExternalMetadata.IMDB == nil {
 		t.Fatalf("expected metadata results")
+	}
+}
+
+func TestResolveExternalIDsWithoutTMDBAPIKey(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo,
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:        "Example.Release.2026.1080p-GRP.mkv",
+		MediaInfoCategory: "MOVIE",
+		TrackerData:       []api.TrackerMetadata{{TMDBID: 123456}},
+	})
+	if err != nil {
+		t.Fatalf("resolve without TMDB API key: %v", err)
+	}
+	if result.ExternalIDs.TMDBID != 123456 || result.ExternalIDs.SourceTMDB != "tracker" {
+		t.Fatalf("expected tracker TMDB ID without enrichment, got %#v", result.ExternalIDs)
+	}
+	if result.ExternalMetadata.TMDB != nil {
+		t.Fatalf("expected TMDB enrichment to remain unavailable, got %#v", result.ExternalMetadata.TMDB)
+	}
+}
+
+func TestResolveExternalIDsAdjustsEpisodeIMDbIDToParentSeries(t *testing.T) {
+	repo := &fakeRepo{}
+	imdbClient := &stubIMDB{
+		infoFn: func(imdbID string) imdb.Info {
+			if imdbID == "tt7654321" {
+				return imdb.Info{IMDbID: imdbID, Title: "Example Episode", Type: "tvEpisode"}
+			}
+			return imdb.Info{IMDbID: imdbID, Title: "Example Series", Type: "tvSeries"}
+		},
+		episodeLookup: imdb.EpisodeLookup{Series: imdb.SeriesInfo{SeriesID: "tt1234567", SeriesTitle: "Example Series"}},
+	}
+	tvmazeClient := &stubTVmaze{result: tvmaze.SearchResult{
+		SelectedID: 55,
+		IMDBID:     1234567,
+		Candidates: []tvmaze.Candidate{{ID: 55, Name: "Example Series", Externals: tvmaze.Externals{IMDB: "tt1234567"}}},
+	}}
+	imdbOverride := 7654321
+	svc := NewService(repo,
+		WithIMDBClient(imdbClient),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(tvmazeClient),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:        "Example.Series.-.02.1080p-GRP.mkv",
+		MediaInfoCategory: "TV",
+		ExternalIDOverrides: api.ExternalIDOverrides{
+			IMDBID: &imdbOverride,
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve episode IMDb ID: %v", err)
+	}
+
+	if result.ExternalIDs.IMDBID != 1234567 || result.ExternalIDs.SourceIMDB != "imdb_episode_parent" {
+		t.Fatalf("expected parent-series IMDb ID, got %#v", result.ExternalIDs)
+	}
+	if result.ExternalMetadata.IMDB == nil || result.ExternalMetadata.IMDB.Title != "Example Series" || result.ExternalMetadata.IMDB.Type != "tvSeries" {
+		t.Fatalf("expected parent-series IMDb metadata, got %#v", result.ExternalMetadata.IMDB)
+	}
+	if imdbClient.episodeLookupCalls != 1 || imdbClient.infoCalls != 2 {
+		t.Fatalf("expected one parent lookup and parent metadata refetch, got lookups=%d info=%d", imdbClient.episodeLookupCalls, imdbClient.infoCalls)
+	}
+}
+
+func TestEnsureExternalClientsInitializesKeylessAniListWithoutTMDBAPIKey(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+
+	tmdbClient, anilistClient, _, _, _ := svc.ensureExternalClients()
+	if tmdbClient != nil {
+		t.Fatal("expected TMDB client to remain unavailable without API key")
+	}
+	if anilistClient == nil {
+		t.Fatal("expected keyless AniList client without TMDB API key")
+	}
+}
+
+func TestResolveExternalIDsRefreshesAniListWithoutTMDBAPIKey(t *testing.T) {
+	sourcePath := "Example.Anime.S01E01.2026.1080p-GRP.mkv"
+	repo := &fakeRepo{
+		meta: api.ExternalMetadata{
+			SourcePath: sourcePath,
+			AniList: &api.AniListMetadata{
+				AniListID:   100,
+				MALID:       200,
+				TitleRomaji: "Stale Anime",
+			},
+		},
+	}
+	anilistClient := &stubTMDB{
+		anilistMetadata: tmdb.AniListMetadataResult{
+			AniListID:   300,
+			MALID:       400,
+			TitleRomaji: "Current Anime",
+		},
+	}
+	svc := NewService(repo,
+		WithAniListClient(anilistClient),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath: sourcePath,
+		MALID:      400,
+	})
+	if err != nil {
+		t.Fatalf("resolve without TMDB API key: %v", err)
+	}
+	if svc.tmdb != nil {
+		t.Fatal("expected TMDB client to remain unavailable without API key")
+	}
+	if anilistClient.anilistCalls != 1 || len(anilistClient.anilistInputs) != 1 || anilistClient.anilistInputs[0] != 400 {
+		t.Fatalf("expected one keyless AniList fetch for MAL 400, got calls=%d inputs=%v", anilistClient.anilistCalls, anilistClient.anilistInputs)
+	}
+	if result.ExternalMetadata.TMDB != nil {
+		t.Fatalf("expected TMDB enrichment to remain unavailable, got %#v", result.ExternalMetadata.TMDB)
+	}
+	if result.ExternalMetadata.AniList == nil || result.ExternalMetadata.AniList.MALID != 400 || result.ExternalMetadata.AniList.TitleRomaji != "Current Anime" {
+		t.Fatalf("expected refreshed AniList metadata, got %#v", result.ExternalMetadata.AniList)
+	}
+	if repo.meta.AniList == nil || repo.meta.AniList.MALID != 400 {
+		t.Fatalf("expected refreshed AniList metadata persisted, got %#v", repo.meta.AniList)
+	}
+}
+
+func TestResolveExternalIDsDoesNotCreateTVmazePlaceholder(t *testing.T) {
+	repo := &fakeRepo{}
+	tvmazeClient := &stubTVmaze{}
+	svc := NewService(repo,
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(tvmazeClient),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:        "Example.Release.2026.S01.1080p.WEB-DL-GRP",
+		MediaInfoCategory: "TV",
+		SceneTVmazeID:     55,
+	})
+	if err != nil {
+		t.Fatalf("resolve unresolved TVmaze ID: %v", err)
+	}
+	if result.ExternalIDs.TVmazeID != 55 {
+		t.Fatalf("expected canonical TVmaze ID to remain, got %#v", result.ExternalIDs)
+	}
+	if result.ExternalMetadata.TVmaze != nil {
+		t.Fatalf("expected no placeholder TVmaze snapshot, got %#v", result.ExternalMetadata.TVmaze)
+	}
+	if tvmazeClient.calls == 0 {
+		t.Fatal("expected TVmaze fetch attempt")
 	}
 }
 
@@ -1456,6 +1630,51 @@ func TestResolveExternalIDsOverride(t *testing.T) {
 	}
 }
 
+func TestResolveExternalIDsRefetchesProviderSnapshotsAfterIDOverride(t *testing.T) {
+	repo := &fakeRepo{}
+	tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{Title: "Current TMDB", TMDBType: "Movie"}}
+	imdbClient := &stubIMDB{info: imdb.Info{IMDbID: "tt0000111", Title: "Current IMDb"}}
+
+	svc := NewService(repo,
+		WithTMDBClient(tmdbClient),
+		WithIMDBClient(imdbClient),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath:      "Example.Release.2026.1080p-GRP.mkv",
+		StoredDataFresh: true,
+		ExternalIDs: api.ExternalIDs{
+			SourcePath: "Example.Release.2026.1080p-GRP.mkv",
+			Category:   "movie",
+			TMDBID:     1,
+			IMDBID:     2,
+		},
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: "Example.Release.2026.1080p-GRP.mkv",
+			TMDB:       &api.TMDBMetadata{TMDBID: 1, Title: "Stale TMDB"},
+			IMDB:       &api.IMDBMetadata{IMDBID: 2, Title: "Stale IMDb"},
+		},
+		ExternalIDOverrides: api.ExternalIDOverrides{
+			TMDBID: new(999),
+			IMDBID: new(111),
+		},
+	})
+	if err != nil {
+		t.Fatalf("resolve changed provider IDs: %v", err)
+	}
+	if result.ExternalMetadata.TMDB == nil || result.ExternalMetadata.TMDB.TMDBID != 999 || result.ExternalMetadata.TMDB.Title != "Current TMDB" {
+		t.Fatalf("expected refetched TMDB snapshot, got %#v", result.ExternalMetadata.TMDB)
+	}
+	if result.ExternalMetadata.IMDB == nil || result.ExternalMetadata.IMDB.IMDBID != 111 || result.ExternalMetadata.IMDB.Title != "Current IMDb" {
+		t.Fatalf("expected refetched IMDb snapshot, got %#v", result.ExternalMetadata.IMDB)
+	}
+	if tmdbClient.metaCalls != 1 || imdbClient.infoCalls != 1 {
+		t.Fatalf("expected one provider refetch each, got tmdb=%d imdb=%d", tmdbClient.metaCalls, imdbClient.infoCalls)
+	}
+}
+
 func TestResolveExternalIDsClearIMDBReresolvesFromOverriddenTMDB(t *testing.T) {
 	repo := &fakeRepo{}
 	tmdbClient := &stubTMDB{metadata: tmdb.MetadataResult{IMDbID: 777, TMDBType: "Movie", Title: "Example"}}
@@ -1960,6 +2179,97 @@ func TestApplyTVEpisodeMetadataTVDBEpisodeTranslationApplied(t *testing.T) {
 	}
 	if updated.EpisodeOverview != "English episode overview" {
 		t.Fatalf("expected english episode overview, got %q", updated.EpisodeOverview)
+	}
+}
+
+func TestApplyTVEpisodeMetadataTVDBMapsSeasonlessAbsoluteWithoutTMDB(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	tvdbClient := &stubTVDB{
+		episodes: tvdb.EpisodesData{Episodes: []tvdb.Episode{{
+			ID:             112,
+			SeasonNumber:   1,
+			Number:         12,
+			AbsoluteNumber: 12,
+			Name:           "第12話",
+		}}},
+		episodeTranslate: tvdb.EpisodeTranslation{Name: "Take the Example Path"},
+	}
+	meta := api.PreparedMetadata{
+		SourcePath: "Example.Release.-.12.1080p-GRP.mkv",
+		EpisodeInt: 12,
+	}
+	ids := &api.ExternalIDs{TVDBID: 200, Category: "TV"}
+	external := &api.ExternalMetadata{
+		TVDB: &api.TVDBMetadata{TVDBID: 200, OriginalLanguage: "jpn"},
+	}
+
+	updated := svc.applyTVEpisodeMetadata(context.Background(), meta, ids, external, nil, tvdbClient, &stubTVmaze{})
+
+	if updated.SeasonInt != 1 || updated.EpisodeInt != 12 || updated.SeasonStr != "S01" || updated.EpisodeStr != "E12" {
+		t.Fatalf("expected TVDB absolute mapping to S01E12, got season=%d episode=%d strings=%q/%q", updated.SeasonInt, updated.EpisodeInt, updated.SeasonStr, updated.EpisodeStr)
+	}
+	if updated.EpisodeTitle != "Take the Example Path" {
+		t.Fatalf("expected translated TVDB episode title, got %q", updated.EpisodeTitle)
+	}
+	if tvdbClient.lastEpisodeQuery.Season != 0 || tvdbClient.lastEpisodeQuery.Episode != 12 || tvdbClient.lastEpisodeQuery.Absolute != 0 {
+		t.Fatalf("expected seasonless TVDB query independent of TMDB anime metadata, got %#v", tvdbClient.lastEpisodeQuery)
+	}
+}
+
+func TestApplyTVEpisodeMetadataIMDbMapsSeasonlessAbsoluteThenUsesTVmaze(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	tvmazeClient := &stubTVmaze{episodeData: &tvmaze.EpisodeData{
+		EpisodeName:   "TVmaze Episode Three",
+		Overview:      "TVmaze overview.",
+		SeasonNumber:  2,
+		EpisodeNumber: 1,
+		AirDate:       "2026-04-24",
+	}}
+	meta := api.PreparedMetadata{
+		SourcePath: "Example.Series.-.03.1080p-GRP.mkv",
+		EpisodeInt: 3,
+	}
+	ids := &api.ExternalIDs{IMDBID: 1234567, TVmazeID: 55, Category: "TV"}
+	external := &api.ExternalMetadata{IMDB: &api.IMDBMetadata{
+		IMDBID: 1234567,
+		Title:  "Example Series",
+		Type:   "tvSeries",
+		Episodes: []api.IMDBEpisode{
+			{ID: "tt1000001", Title: "Episode One", Season: 1, EpisodeText: "1"},
+			{ID: "tt1000002", Title: "Episode Two", Season: 1, EpisodeText: "2"},
+			{ID: "tt1000003", Title: "IMDb Episode Three", Season: 2, EpisodeText: "1", ReleaseYear: 2026},
+		},
+	}}
+
+	updated := svc.applyTVEpisodeMetadata(context.Background(), meta, ids, external, nil, &stubTVDB{}, tvmazeClient)
+
+	if updated.SeasonInt != 2 || updated.EpisodeInt != 1 || updated.SeasonStr != "S02" || updated.EpisodeStr != "E01" {
+		t.Fatalf("expected IMDb absolute mapping to S02E01, got season=%d episode=%d strings=%q/%q", updated.SeasonInt, updated.EpisodeInt, updated.SeasonStr, updated.EpisodeStr)
+	}
+	if tvmazeClient.lastSeason != 2 || tvmazeClient.lastEpisode != 1 {
+		t.Fatalf("expected mapped S02E01 TVmaze lookup, got S%02dE%02d", tvmazeClient.lastSeason, tvmazeClient.lastEpisode)
+	}
+	if updated.EpisodeTitle != "TVmaze Episode Three" || updated.EpisodeOverview != "TVmaze overview." || updated.EpisodeYear != 2026 {
+		t.Fatalf("expected TVmaze details with IMDb year fallback, got title=%q overview=%q year=%d", updated.EpisodeTitle, updated.EpisodeOverview, updated.EpisodeYear)
+	}
+}
+
+func TestApplyTVEpisodeMetadataIMDbTitleFallbackWithoutTVmaze(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	meta := api.PreparedMetadata{SourcePath: "Example.Series.S01E02.1080p-GRP.mkv", SeasonInt: 1, EpisodeInt: 2}
+	ids := &api.ExternalIDs{IMDBID: 1234567, Category: "TV"}
+	external := &api.ExternalMetadata{IMDB: &api.IMDBMetadata{
+		IMDBID: 1234567,
+		Title:  "Example Series",
+		Episodes: []api.IMDBEpisode{{
+			ID: "tt1000002", Title: "The Example Path", Season: 1, EpisodeText: "2", ReleaseYear: 2026,
+		}},
+	}}
+
+	updated := svc.applyTVEpisodeMetadata(context.Background(), meta, ids, external, nil, &stubTVDB{}, &stubTVmaze{})
+
+	if updated.EpisodeTitle != "The Example Path" || updated.EpisodeYear != 2026 {
+		t.Fatalf("expected IMDb episode fallback, got title=%q year=%d", updated.EpisodeTitle, updated.EpisodeYear)
 	}
 }
 

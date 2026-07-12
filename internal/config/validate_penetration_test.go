@@ -25,13 +25,12 @@ func withBase(mut func(*Config)) Config {
 	return cfg
 }
 
-func TestValidateMissingTMDBAPI(t *testing.T) {
+func TestValidateAllowsMissingTMDBAPI(t *testing.T) {
 	t.Parallel()
 
 	cfg := withBase(func(c *Config) { c.MainSettings.TMDBAPI = "" })
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "tmdb_api") {
-		t.Fatalf("want tmdb_api error, got %v", err)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("missing optional tmdb_api: %v", err)
 	}
 }
 

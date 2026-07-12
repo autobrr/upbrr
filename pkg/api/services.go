@@ -7,17 +7,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
 
 type ServiceSet struct {
-	Metadata    MetadataService
-	Trackers    TrackerService
-	Torrents    TorrentService
-	Clients     ClientService
-	Filesystem  FilesystemService
-	Dupes       DupeService
+	Metadata   MetadataService
+	Trackers   TrackerService
+	Torrents   TorrentService
+	Clients    ClientService
+	Filesystem FilesystemService
+	Dupes      DupeService
+	// TrackerAuth validates managed tracker sessions before duplicate checks.
+	TrackerAuth TrackerAuthService
 	Screenshots ScreenshotService
 	// DVDMenus handles automatic capture and persisted disc-menu lifecycle operations.
 	DVDMenus DVDMenuService
@@ -58,6 +61,17 @@ type FilesystemService interface {
 
 type DupeService interface {
 	Check(ctx context.Context, meta PreparedMetadata, trackers []string) (DupeCheckSummary, error)
+}
+
+// TrackerAuthService exposes the batch auth operations needed before GUI and
+// embedded-web duplicate checking.
+type TrackerAuthService interface {
+	// Capabilities returns the configured trackers whose auth workflows the
+	// service can classify.
+	Capabilities(ctx context.Context) ([]TrackerAuthCapability, error)
+	// ValidateMany returns one status per tracker in input order. An error means
+	// the batch has no usable status result.
+	ValidateMany(ctx context.Context, trackerIDs []string) ([]TrackerAuthStatus, error)
 }
 
 type ScreenshotService interface {
@@ -314,9 +328,79 @@ type ExternalIDCandidate struct {
 	Similarity    float64
 }
 
+// RuleFailureSeverity classifies whether a tracker rule result blocks work.
+// The zero value and unrecognized values are treated as blocking for backward
+// compatibility and fail-closed behavior.
+type RuleFailureSeverity string
+
+const (
+	// RuleFailureSeverityBlocking prevents the affected tracker operation.
+	RuleFailureSeverityBlocking RuleFailureSeverity = "blocking"
+	// RuleFailureSeverityWarning reports advice without preventing the operation.
+	RuleFailureSeverityWarning RuleFailureSeverity = "warning"
+)
+
+// RuleFailure describes a failed or advisory tracker rule result.
 type RuleFailure struct {
 	Rule   string
 	Reason string
+	// Severity defaults to blocking when empty or unrecognized.
+	Severity RuleFailureSeverity
+}
+
+// NormalizeRuleFailureSeverity maps the warning value to itself and all other
+// values, including legacy empty values, to blocking.
+func NormalizeRuleFailureSeverity(severity RuleFailureSeverity) RuleFailureSeverity {
+	if severity == RuleFailureSeverityWarning {
+		return RuleFailureSeverityWarning
+	}
+	return RuleFailureSeverityBlocking
+}
+
+// IsBlockingRuleFailure reports whether a rule result blocks tracker work.
+func IsBlockingRuleFailure(failure RuleFailure) bool {
+	return NormalizeRuleFailureSeverity(failure.Severity) == RuleFailureSeverityBlocking
+}
+
+// BlockingRuleFailures returns an independent slice containing only blocking
+// results. Legacy and unrecognized severities are included.
+func BlockingRuleFailures(failures []RuleFailure) []RuleFailure {
+	return filterRuleFailures(failures, true)
+}
+
+// WarningRuleFailures returns an independent slice containing only results with
+// the explicit warning severity.
+func WarningRuleFailures(failures []RuleFailure) []RuleFailure {
+	return filterRuleFailures(failures, false)
+}
+
+// HasBlockingRuleFailures reports whether any rule result blocks tracker work.
+func HasBlockingRuleFailures(failures []RuleFailure) bool {
+	return slices.ContainsFunc(failures, IsBlockingRuleFailure)
+}
+
+// CountBlockingRuleFailures returns the number of rule results that block
+// tracker work. Legacy and unrecognized severities are counted as blocking.
+func CountBlockingRuleFailures(failures []TrackerRuleFailure) int {
+	count := 0
+	for _, failure := range failures {
+		if NormalizeRuleFailureSeverity(failure.Severity) == RuleFailureSeverityBlocking {
+			count++
+		}
+	}
+	return count
+}
+
+// filterRuleFailures copies results whose normalized blocking state matches the
+// requested state.
+func filterRuleFailures(failures []RuleFailure, blocking bool) []RuleFailure {
+	filtered := make([]RuleFailure, 0, len(failures))
+	for _, failure := range failures {
+		if IsBlockingRuleFailure(failure) == blocking {
+			filtered = append(filtered, failure)
+		}
+	}
+	return filtered
 }
 
 // ExternalIDOverrides carries caller-supplied ID intent into metadata

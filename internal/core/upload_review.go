@@ -565,6 +565,10 @@ func filterTrackerRuleFailures(failures map[string][]api.RuleFailure, allowTrack
 	filtered := make(map[string][]api.RuleFailure, len(failures))
 	for tracker, trackerFailures := range failures {
 		if _, ok := allowed[strings.ToUpper(strings.TrimSpace(tracker))]; ok {
+			warnings := api.WarningRuleFailures(trackerFailures)
+			if len(warnings) > 0 {
+				filtered[tracker] = warnings
+			}
 			continue
 		}
 		filtered[tracker] = cloneRuleFailures(trackerFailures)

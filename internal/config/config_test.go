@@ -470,9 +470,9 @@ func TestLoadExampleConfig(t *testing.T) {
 	path := filepath.Join("defaults", "example.yaml")
 	_, err := Load(path)
 	if err == nil {
-		t.Fatalf("expected example config validation error, got nil")
+		t.Fatal("expected example config validation error")
 	}
-	if err.Error() != "config: main_settings.tmdb_api is required" {
+	if err.Error() != "config: torrent_clients.qbittorrent.url or qbit_url is required" {
 		t.Fatalf("unexpected example config error: %v", err)
 	}
 }

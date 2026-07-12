@@ -26,6 +26,7 @@ func skipReason(meta api.PreparedMetadata, tracker string) (string, []string) {
 		return "", nil
 	}
 	failures := meta.TrackerRuleFailures[tracker]
+	failures = api.BlockingRuleFailures(failures)
 	if len(failures) == 0 {
 		return "", nil
 	}

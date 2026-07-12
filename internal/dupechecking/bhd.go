@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers/bhdmeta"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -24,8 +25,10 @@ func (h bhdHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 	if !ok {
 		return nil, []string{noteSkip("missing api_key for tracker")}, nil
 	}
-	if meta.ExternalIDs.TMDBID == 0 {
-		return nil, []string{noteSkip("missing tmdb id for BHD dupe search")}, nil
+	tmdbID := meta.ExternalIDs.TMDBID
+	imdbID := imdbForLookup(meta)
+	if tmdbID == 0 && imdbID == "" {
+		return nil, []string{noteSkip("missing tmdb/imdb id for BHD dupe search")}, nil
 	}
 	category := "Movies"
 	tmdbPrefix := "movie"
@@ -35,8 +38,21 @@ func (h bhdHandler) Search(ctx context.Context, meta api.PreparedMetadata, _ str
 	}
 	payload := map[string]any{
 		"action":     "search",
-		"tmdb_id":    tmdbPrefix + "/" + strconv.Itoa(meta.ExternalIDs.TMDBID),
 		"categories": category,
+	}
+	if searchType, ok := bhdmeta.SearchType(meta); ok {
+		payload["types"] = searchType
+	} else {
+		payload["types"] = nil
+	}
+	if bhdmeta.IsSD(meta) {
+		payload["categories"] = nil
+		payload["types"] = nil
+	}
+	if tmdbID != 0 {
+		payload["tmdb_id"] = tmdbPrefix + "/" + strconv.Itoa(tmdbID)
+	} else {
+		payload["imdb_id"] = imdbID
 	}
 	if season := resolveSeasonValue(meta); season != "" && strings.EqualFold(category, "TV") {
 		payload["search"] = season
