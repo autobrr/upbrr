@@ -53,11 +53,15 @@ type TMDBClient interface {
 	FindByExternalID(ctx context.Context, input tmdb.FindInput) (tmdb.FindResult, error)
 	SearchID(ctx context.Context, input tmdb.SearchInput) (tmdb.SearchOutcome, error)
 	FetchMetadata(ctx context.Context, input tmdb.MetadataInput) (tmdb.MetadataResult, error)
-	FetchAniListMetadata(ctx context.Context, malID int) (tmdb.AniListMetadataResult, error)
 	GetEpisodeDetails(ctx context.Context, tmdbID, season, episode int) (tmdb.EpisodeDetails, error)
 	GetSeasonDetails(ctx context.Context, tmdbID, season int) (tmdb.SeasonDetails, error)
 	DailyToSeasonEpisode(ctx context.Context, tmdbID int, date time.Time) (int, int, error)
 	GetLocalizedData(ctx context.Context, input tmdb.LocalizedDataInput) (map[string]any, error)
+}
+
+// AniListClient is the keyless AniList metadata surface used by external-ID resolution.
+type AniListClient interface {
+	FetchAniListMetadata(ctx context.Context, malID int) (tmdb.AniListMetadataResult, error)
 }
 
 // IMDBClient is the IMDb metadata surface used by external-ID resolution.
@@ -216,7 +220,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 	}
 	metadataChanged := invalidateMismatchedProviderMetadata(&metadata, ids)
 
-	tmdbClient, imdbClient, tvdbClient, tvmazeClient := s.ensureExternalClients()
+	tmdbClient, anilistClient, imdbClient, tvdbClient, tvmazeClient := s.ensureExternalClients()
 
 	filename, secondary := resolveSearchTitles(meta)
 	year := resolveSearchYear(meta)
@@ -423,7 +427,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		if shouldFetchTMDBMetadata() {
 			return true
 		}
-		if tmdbClient != nil && shouldFetchAniListMetadata(ids.MALID, metadata.AniList) && !anilistFetchAttempted {
+		if anilistClient != nil && shouldFetchAniListMetadata(ids.MALID, metadata.AniList) && !anilistFetchAttempted {
 			return true
 		}
 		if shouldFetchIMDBMetadata() || shouldFetchTVDBMetadata() || shouldFetchTVmazeMetadata() {
@@ -443,7 +447,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 		if fetchTMDB && s.cfg.Description.AddLogo {
 			tmdbLogoFetchAttempted = true
 		}
-		fetchAniList := tmdbClient != nil && shouldFetchAniListMetadata(ids.MALID, metadata.AniList) && !anilistFetchAttempted
+		fetchAniList := anilistClient != nil && shouldFetchAniListMetadata(ids.MALID, metadata.AniList) && !anilistFetchAttempted
 		if fetchAniList {
 			anilistFetchAttempted = true
 		}
@@ -504,7 +508,7 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 
 		if fetchAniList {
 			group.Go(func() error {
-				result, err := tmdbClient.FetchAniListMetadata(gctx, ids.MALID)
+				result, err := anilistClient.FetchAniListMetadata(gctx, ids.MALID)
 				if err != nil {
 					mu.Lock()
 					if anilistErr == nil {
@@ -1144,14 +1148,21 @@ func mapIMDBCandidates(items []imdb.Candidate) []api.ExternalIDCandidate {
 
 // ensureExternalClients initializes missing provider clients. It returns a nil
 // TMDB client when no client was injected and no TMDB API key is configured;
-// the remaining provider clients are always initialized.
-func (s *Service) ensureExternalClients() (TMDBClient, IMDBClient, TVDBClient, TVmazeClient) {
+// the keyless AniList and remaining provider clients are always initialized.
+func (s *Service) ensureExternalClients() (TMDBClient, AniListClient, IMDBClient, TVDBClient, TVmazeClient) {
 	if s.tmdb == nil {
 		apiKey := strings.TrimSpace(s.cfg.MainSettings.TMDBAPI)
 		if apiKey != "" {
 			s.tmdb = tmdb.NewClient(nil, s.logger, apiKey)
 		} else if s.logger != nil {
 			s.logger.Debugf("metadata: tmdb client disabled reason=api_key_missing")
+		}
+	}
+	if s.anilist == nil {
+		if anilistClient, ok := s.tmdb.(AniListClient); ok {
+			s.anilist = anilistClient
+		} else {
+			s.anilist = tmdb.NewClient(nil, s.logger, "")
 		}
 	}
 	if s.imdb == nil {
@@ -1169,7 +1180,7 @@ func (s *Service) ensureExternalClients() (TMDBClient, IMDBClient, TVDBClient, T
 	if s.tvmaze == nil {
 		s.tvmaze = tvmaze.NewClient(nil, s.logger)
 	}
-	return s.tmdb, s.imdb, s.tvdb, s.tvmaze
+	return s.tmdb, s.anilist, s.imdb, s.tvdb, s.tvmaze
 }
 
 func isIMDbTVMovie(ids api.ExternalIDs, metadata api.ExternalMetadata) bool {

@@ -369,12 +369,19 @@ func TestBootstrapWithValidatorAcceptsMissingOptionalTMDBAPI(t *testing.T) {
 	if runtime.MainSettings.TMDBAPI != "from-env" {
 		t.Fatalf("runtime TMDBAPI: got %q want env override", runtime.MainSettings.TMDBAPI)
 	}
+
+	// Reload without the runtime overlay so this assertion proves the YAML
+	// candidate, including its empty optional TMDB key, was persisted.
+	t.Setenv("UA_DEFAULT_TMDB_API", "")
 	stored, loadErr := configstore.LoadFromDBPath(ctx, dbPath)
 	if loadErr != nil {
 		t.Fatalf("load stored: %v", loadErr)
 	}
-	if stored.MainSettings.TMDBAPI != "from-env" {
-		t.Fatalf("stored TMDBAPI: got %q want env override", stored.MainSettings.TMDBAPI)
+	if stored.MainSettings.TMDBAPI != "" {
+		t.Fatalf("stored TMDBAPI: got %q want empty persisted value", stored.MainSettings.TMDBAPI)
+	}
+	if stored.ScreenshotHandling.Screens != 2 {
+		t.Fatalf("stored screens: got %d want persisted YAML value 2", stored.ScreenshotHandling.Screens)
 	}
 }
 

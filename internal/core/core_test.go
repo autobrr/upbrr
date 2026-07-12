@@ -288,6 +288,106 @@ func TestGetHistoryOverviewIncludesGroupedDescriptionOverrides(t *testing.T) {
 	}
 }
 
+func TestHistoryStatusLabelsUseBlockingRuleFailuresAcrossListAndOverview(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "history-status.db")
+	repo, err := db.OpenWithLogger(repoPath, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("open repo: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := repo.Close(); closeErr != nil {
+			t.Fatalf("close repo: %v", closeErr)
+		}
+	})
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repo: %v", err)
+	}
+
+	tests := []struct {
+		name             string
+		failures         []db.TrackerRuleFailure
+		wantStatus       string
+		wantFailureCount int
+		wantWarningCount int
+	}{
+		{
+			name: "warning only",
+			failures: []db.TrackerRuleFailure{
+				{Rule: "recommended_metadata", Severity: api.RuleFailureSeverityWarning},
+			},
+			wantStatus:       "Stored",
+			wantWarningCount: 1,
+		},
+		{
+			name: "blocking only",
+			failures: []db.TrackerRuleFailure{
+				{Rule: "required_metadata"},
+			},
+			wantStatus:       "Rule Issues",
+			wantFailureCount: 1,
+		},
+		{
+			name: "mixed",
+			failures: []db.TrackerRuleFailure{
+				{Rule: "required_metadata"},
+				{Rule: "recommended_metadata", Severity: api.RuleFailureSeverityWarning},
+			},
+			wantStatus:       "Rule Issues",
+			wantFailureCount: 1,
+			wantWarningCount: 1,
+		},
+	}
+
+	ctx := context.Background()
+	paths := make(map[string]string, len(tests))
+	for idx, tt := range tests {
+		sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026."+strconv.Itoa(idx)+".mkv")
+		paths[tt.name] = sourcePath
+		if err := repo.Save(ctx, db.FileMetadata{
+			Path:       sourcePath,
+			Title:      "Example Release 2026",
+			SourceSize: 1,
+			UpdatedAt:  time.Now().UTC().Add(time.Duration(idx) * time.Second),
+		}); err != nil {
+			t.Fatalf("%s: save metadata: %v", tt.name, err)
+		}
+		if err := repo.SaveTrackerRuleFailures(ctx, sourcePath, "EXAMPLE", tt.failures); err != nil {
+			t.Fatalf("%s: save rule results: %v", tt.name, err)
+		}
+	}
+
+	core := &Core{repo: repo, logger: api.NopLogger{}}
+	entries, err := core.ListHistory(ctx)
+	if err != nil {
+		t.Fatalf("list history: %v", err)
+	}
+	entriesByPath := make(map[string]api.HistoryEntry, len(entries))
+	for _, entry := range entries {
+		entriesByPath[entry.SourcePath] = entry
+	}
+
+	for _, tt := range tests {
+		sourcePath := paths[tt.name]
+		entry, ok := entriesByPath[sourcePath]
+		if !ok {
+			t.Fatalf("%s: history entry missing", tt.name)
+		}
+		if entry.LatestUploadStatus != tt.wantStatus || entry.RuleFailureCount != tt.wantFailureCount || entry.RuleWarningCount != tt.wantWarningCount {
+			t.Fatalf("%s: unexpected list history state: %#v", tt.name, entry)
+		}
+
+		overview, err := core.GetHistoryOverview(ctx, sourcePath)
+		if err != nil {
+			t.Fatalf("%s: get history overview: %v", tt.name, err)
+		}
+		if overview.StatusLabel != tt.wantStatus {
+			t.Fatalf("%s: list status %q differs from overview status %q", tt.name, entry.LatestUploadStatus, overview.StatusLabel)
+		}
+	}
+}
+
 func TestRunUploadMultiplePaths(t *testing.T) {
 	t.Parallel()
 

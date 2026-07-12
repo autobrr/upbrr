@@ -473,6 +473,68 @@ func TestResolveExternalIDsWithoutTMDBAPIKey(t *testing.T) {
 	}
 }
 
+func TestEnsureExternalClientsInitializesKeylessAniListWithoutTMDBAPIKey(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+
+	tmdbClient, anilistClient, _, _, _ := svc.ensureExternalClients()
+	if tmdbClient != nil {
+		t.Fatal("expected TMDB client to remain unavailable without API key")
+	}
+	if anilistClient == nil {
+		t.Fatal("expected keyless AniList client without TMDB API key")
+	}
+}
+
+func TestResolveExternalIDsRefreshesAniListWithoutTMDBAPIKey(t *testing.T) {
+	sourcePath := "Example.Anime.S01E01.2026.1080p-GRP.mkv"
+	repo := &fakeRepo{
+		meta: api.ExternalMetadata{
+			SourcePath: sourcePath,
+			AniList: &api.AniListMetadata{
+				AniListID:   100,
+				MALID:       200,
+				TitleRomaji: "Stale Anime",
+			},
+		},
+	}
+	anilistClient := &stubTMDB{
+		anilistMetadata: tmdb.AniListMetadataResult{
+			AniListID:   300,
+			MALID:       400,
+			TitleRomaji: "Current Anime",
+		},
+	}
+	svc := NewService(repo,
+		WithAniListClient(anilistClient),
+		WithIMDBClient(&stubIMDB{}),
+		WithTVDBClient(&stubTVDB{}),
+		WithTVmazeClient(&stubTVmaze{}),
+	)
+
+	result, err := svc.ResolveExternalIDs(context.Background(), api.PreparedMetadata{
+		SourcePath: sourcePath,
+		MALID:      400,
+	})
+	if err != nil {
+		t.Fatalf("resolve without TMDB API key: %v", err)
+	}
+	if svc.tmdb != nil {
+		t.Fatal("expected TMDB client to remain unavailable without API key")
+	}
+	if anilistClient.anilistCalls != 1 || len(anilistClient.anilistInputs) != 1 || anilistClient.anilistInputs[0] != 400 {
+		t.Fatalf("expected one keyless AniList fetch for MAL 400, got calls=%d inputs=%v", anilistClient.anilistCalls, anilistClient.anilistInputs)
+	}
+	if result.ExternalMetadata.TMDB != nil {
+		t.Fatalf("expected TMDB enrichment to remain unavailable, got %#v", result.ExternalMetadata.TMDB)
+	}
+	if result.ExternalMetadata.AniList == nil || result.ExternalMetadata.AniList.MALID != 400 || result.ExternalMetadata.AniList.TitleRomaji != "Current Anime" {
+		t.Fatalf("expected refreshed AniList metadata, got %#v", result.ExternalMetadata.AniList)
+	}
+	if repo.meta.AniList == nil || repo.meta.AniList.MALID != 400 {
+		t.Fatalf("expected refreshed AniList metadata persisted, got %#v", repo.meta.AniList)
+	}
+}
+
 func TestResolveExternalIDsDoesNotCreateTVmazePlaceholder(t *testing.T) {
 	repo := &fakeRepo{}
 	tvmazeClient := &stubTVmaze{}
