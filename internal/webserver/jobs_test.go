@@ -625,6 +625,8 @@ func TestApplyDupeProgressCountsNewTrackersWithoutInflatingExplicitTotal(t *test
 	}{
 		{name: "explicit total", startTotal: 2, updateTotal: 2, wantTotal: 2},
 		{name: "total omitted", startTotal: 1, wantTotal: 2},
+		{name: "explicit total lower than current", startTotal: 3, updateTotal: 2, wantTotal: 3},
+		{name: "explicit total higher than current", startTotal: 2, updateTotal: 3, wantTotal: 3},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
