@@ -549,7 +549,7 @@ func TestSQLiteRepositoryHistoryCountsRuleSeverities(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	ctx := context.Background()
-	const sourcePath = "/media/example-release.mkv"
+	sourcePath := filepath.Join(t.TempDir(), "example-release.mkv")
 	if err := repo.Save(ctx, FileMetadata{Path: sourcePath, Title: "Example Release", SourceSize: 1, UpdatedAt: time.Now().UTC()}); err != nil {
 		t.Fatalf("save metadata: %v", err)
 	}

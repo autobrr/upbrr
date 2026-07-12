@@ -29,7 +29,7 @@ func (a *App) listHistoryFromRepo(ctx context.Context) ([]api.HistoryEntry, erro
 	result := make([]api.HistoryEntry, 0, len(entries))
 	for _, entry := range entries {
 		entryCopy := entry
-		entryCopy.LatestUploadStatus = historyStatusLabel(entry.LatestUploadStatus, entry.RuleFailureCount)
+		entryCopy.LatestUploadStatus = api.HistoryStatusLabel(entry.LatestUploadStatus, entry.RuleFailureCount)
 		result = append(result, entryCopy)
 	}
 
@@ -139,44 +139,10 @@ func (a *App) getHistoryOverviewFromRepo(ctx context.Context, sourcePath string)
 		overview.LatestUploadStatus = uploadHistory[0].Status
 		overview.LatestUploadAt = uploadHistory[0].CreatedAt
 	}
-	blockingRuleFailures := 0
-	for _, failure := range ruleFailures {
-		if api.NormalizeRuleFailureSeverity(failure.Severity) == api.RuleFailureSeverityBlocking {
-			blockingRuleFailures++
-		}
-	}
-	overview.StatusLabel = historyStatusLabel(overview.LatestUploadStatus, blockingRuleFailures)
+	blockingRuleFailures := api.CountBlockingRuleFailures(ruleFailures)
+	overview.StatusLabel = api.HistoryStatusLabel(overview.LatestUploadStatus, blockingRuleFailures)
 
 	return overview, nil
-}
-
-func historyStatusLabel(rawStatus string, ruleFailureCount int) string {
-	status := strings.TrimSpace(strings.ToLower(rawStatus))
-	switch status {
-	case "pending":
-		return "Pending"
-	case "pending-internal":
-		return "Pending Internal"
-	case "uploaded", "success", "completed":
-		return "Uploaded"
-	case "failed", "error":
-		return "Failed"
-	}
-	if status != "" {
-		normalized := strings.ReplaceAll(status, "-", " ")
-		words := strings.Fields(normalized)
-		for idx, word := range words {
-			if word == "" {
-				continue
-			}
-			words[idx] = strings.ToUpper(word[:1]) + word[1:]
-		}
-		return strings.Join(words, " ")
-	}
-	if ruleFailureCount > 0 {
-		return "Rule Issues"
-	}
-	return "Stored"
 }
 
 func preferredHistoryDescriptionOverride(overrides []api.DescriptionOverride) api.DescriptionOverride {

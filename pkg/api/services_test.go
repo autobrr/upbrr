@@ -41,6 +41,14 @@ func TestRuleFailureSeverityFailClosed(t *testing.T) {
 	if !HasBlockingRuleFailures(failures) {
 		t.Fatal("expected legacy and unknown severities to block")
 	}
+	storedFailures := []TrackerRuleFailure{
+		{Rule: "legacy"},
+		{Rule: "warning", Severity: RuleFailureSeverityWarning},
+		{Rule: "unknown", Severity: "unexpected"},
+	}
+	if got := CountBlockingRuleFailures(storedFailures); got != 2 {
+		t.Fatalf("blocking count = %d, want 2", got)
+	}
 	if got := BlockingRuleFailures(failures); len(got) != 2 || got[0].Rule != "legacy" || got[1].Rule != "unknown" {
 		t.Fatalf("unexpected blocking subset: %#v", got)
 	}

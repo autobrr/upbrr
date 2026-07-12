@@ -374,7 +374,9 @@ func resolveCategory(meta api.PreparedMetadata) string {
 				return value
 			}
 		}
-		if meta.ExternalMetadata.TVDB != nil || meta.ExternalMetadata.TVmaze != nil {
+		if (meta.ExternalMetadata.TVDB != nil &&
+			(strings.TrimSpace(meta.ExternalMetadata.TVDB.Name) != "" || strings.TrimSpace(meta.ExternalMetadata.TVDB.NameEnglish) != "")) ||
+			(meta.ExternalMetadata.TVmaze != nil && strings.TrimSpace(meta.ExternalMetadata.TVmaze.Name) != "") {
 			return "tv"
 		}
 		if meta.ExternalMetadata.IMDB != nil {

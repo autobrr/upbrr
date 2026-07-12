@@ -379,6 +379,18 @@ func HasBlockingRuleFailures(failures []RuleFailure) bool {
 	return slices.ContainsFunc(failures, IsBlockingRuleFailure)
 }
 
+// CountBlockingRuleFailures returns the number of rule results that block
+// tracker work. Legacy and unrecognized severities are counted as blocking.
+func CountBlockingRuleFailures(failures []TrackerRuleFailure) int {
+	count := 0
+	for _, failure := range failures {
+		if NormalizeRuleFailureSeverity(failure.Severity) == RuleFailureSeverityBlocking {
+			count++
+		}
+	}
+	return count
+}
+
 // filterRuleFailures copies results whose normalized blocking state matches the
 // requested state.
 func filterRuleFailures(failures []RuleFailure, blocking bool) []RuleFailure {
