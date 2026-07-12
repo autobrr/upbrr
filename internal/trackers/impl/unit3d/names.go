@@ -30,6 +30,9 @@ func buildUnit3DName(tracker string, meta api.PreparedMetadata, cfg config.Track
 	if trackerName == "RHD" {
 		return buildRHDName(meta)
 	}
+	if trackerName == "UTP" {
+		return buildUTPName(meta)
+	}
 
 	name := baseReleaseName(meta)
 	if name == "" {
@@ -64,12 +67,16 @@ func buildUnit3DName(tracker string, meta api.PreparedMetadata, cfg config.Track
 	}
 }
 
+func collapseSpaces(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 func baseReleaseName(meta api.PreparedMetadata) string {
 	name := strings.TrimSpace(meta.ReleaseName)
 	if name == "" {
 		name = strings.TrimSpace(meta.ReleaseNameNoTag)
 	}
-	return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
+	return collapseSpaces(name)
 }
 
 func buildDPName(name string, meta api.PreparedMetadata) string {
@@ -77,14 +84,14 @@ func buildDPName(name string, meta api.PreparedMetadata) string {
 	if audioLabel != "" {
 		name = strings.Replace(name, "Dual-Audio", audioLabel, 1)
 	}
-	return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
+	return collapseSpaces(name)
 }
 
 func buildULCXName(name string, meta api.PreparedMetadata) string {
 	if strings.EqualFold(strings.TrimSpace(meta.Type), "WEBDL") && (strings.Contains(strings.ToLower(strings.TrimSpace(meta.Edition)), "hybrid") || meta.WebDV) {
 		name = strings.Replace(name, "Hybrid ", "", 1)
 	}
-	return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
+	return collapseSpaces(name)
 }
 
 func resolveDPAudioLabel(languages []string) string {
@@ -115,7 +122,7 @@ func resolveDPAudioLabel(languages []string) string {
 func addNoGroupSuffix(name string, meta api.PreparedMetadata, suffix string) string {
 	tag := strings.TrimSpace(strings.TrimPrefix(meta.Tag, "-"))
 	normalizedName := noGroupTagPattern.ReplaceAllString(name, "")
-	normalizedName = strings.TrimSpace(strings.Join(strings.Fields(normalizedName), " "))
+	normalizedName = collapseSpaces(normalizedName)
 	if tag != "" && !isNoGroupTag(tag) {
 		return normalizedName
 	}
@@ -135,11 +142,11 @@ func buildLDUName(name string, meta api.PreparedMetadata) string {
 	isoSubtitle := firstSubtitleLanguageCode(meta.SubtitleLanguages)
 
 	if catID == "18" && isoSubtitle != "" {
-		return strings.TrimSpace(strings.Join(strings.Fields(name+" [Subs "+isoSubtitle+"]"), " "))
+		return collapseSpaces(name + " [Subs " + isoSubtitle + "]")
 	}
 
 	if !nonEnglishOriginal && !nonEnglishAudio {
-		return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
+		return collapseSpaces(name)
 	}
 
 	languageParts := make([]string, 0, 2)
@@ -150,10 +157,10 @@ func buildLDUName(name string, meta api.PreparedMetadata) string {
 		languageParts = append(languageParts, "[Subs "+isoSubtitle+"]")
 	}
 	if len(languageParts) == 0 {
-		return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
+		return collapseSpaces(name)
 	}
 
-	return strings.TrimSpace(strings.Join(strings.Fields(name+" "+strings.Join(languageParts, " ")), " "))
+	return collapseSpaces(name + " " + strings.Join(languageParts, " "))
 }
 
 func firstAudioLanguageCode(languages []string) (string, bool) {
@@ -291,7 +298,7 @@ func buildZNTHName(name string, meta api.PreparedMetadata) string {
 			name = replaceZNTHMovieYear(name, meta, year, imdbYear)
 		}
 	}
-	return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
+	return collapseSpaces(name)
 }
 
 // replaceZNTHEpisodeTitle removes the episode-title segment only when its

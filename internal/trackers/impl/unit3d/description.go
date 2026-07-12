@@ -17,6 +17,10 @@ func buildUnit3DDescription(ctx context.Context, tracker string, meta api.Prepar
 	if strings.EqualFold(strings.TrimSpace(tracker), "ACM") {
 		return buildACMDescription(ctx, meta, appConfig, trackerConfig, logger, keptDescription, menuImages, screenshots)
 	}
+	if strings.EqualFold(strings.TrimSpace(tracker), "UTP") {
+		menuImages = swapUTPImageURLs(menuImages)
+		screenshots = swapUTPImageURLs(screenshots)
+	}
 	description, err := descriptionunit3d.BuildDescription(ctx, meta, appConfig, trackerConfig, logger, keptDescription, menuImages, screenshots)
 	if err != nil {
 		return "", fmt.Errorf("trackers: %w", err)

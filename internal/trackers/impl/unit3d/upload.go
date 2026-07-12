@@ -815,6 +815,13 @@ func resolveUnit3DTypeID(meta api.PreparedMetadata) (string, error) {
 	return "", fmt.Errorf("trackers: unit3d unsupported type value %q", typeValue)
 }
 
+func resolveUnit3DTypeIDWithFallback(meta api.PreparedMetadata, fallback string) string {
+	if id := trackerdata.TypeID(inferUnit3DType(meta)); id != "" {
+		return id
+	}
+	return fallback
+}
+
 func inferUnit3DType(meta api.PreparedMetadata) string {
 	for _, candidate := range []string{meta.Type, meta.Release.Type} {
 		normalized := normalizeUnit3DTypeCandidate(candidate)
@@ -941,6 +948,13 @@ func hasExplicitMovieSignal(meta api.PreparedMetadata) bool {
 		}
 	}
 	return false
+}
+
+func lookupUnit3DID(key string, mapping map[string]string, fallback string) string {
+	if value, ok := mapping[key]; ok {
+		return value
+	}
+	return fallback
 }
 
 func resolveUnit3DResolutionID(meta api.PreparedMetadata) string {

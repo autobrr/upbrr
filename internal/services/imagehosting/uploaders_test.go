@@ -5,12 +5,14 @@ package imagehosting
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -581,6 +583,102 @@ func TestReelflixUploaderPostsSourceWithAPIKey(t *testing.T) {
 	}
 	if result.WebURL != "https://img.reelflix.cc/image/shot" {
 		t.Fatalf("unexpected web URL: %q", result.WebURL)
+	}
+}
+
+func TestUTPPMUploaderPostsBase64SourceWithAPIKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "shot.png")
+	content := []byte("testdata")
+	if err := os.WriteFile(imagePath, content, 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	wantSource := base64.StdEncoding.EncodeToString(content)
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() != "https://utp.pm/api/1/upload" {
+				t.Fatalf("unexpected request URL: %s", req.URL.String())
+			}
+			if req.Header.Get("X-Api-Key") != "secret" {
+				t.Fatal("expected X-Api-Key")
+			}
+			mediaType, _, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+			if err != nil {
+				t.Fatalf("parse media type: %v", err)
+			}
+			if mediaType != "application/x-www-form-urlencoded" {
+				t.Fatalf("unexpected media type: %s", mediaType)
+			}
+			body, err := io.ReadAll(req.Body)
+			if err != nil {
+				t.Fatalf("read request body: %v", err)
+			}
+			form, err := url.ParseQuery(string(body))
+			if err != nil {
+				t.Fatalf("parse form body: %v", err)
+			}
+			if got := form.Get("source"); got != wantSource {
+				t.Fatalf("unexpected source field: %q", got)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+					"image": {
+						"url": "https://utp.pm/images/shot.png",
+						"url_viewer": "https://utp.pm/image/shot",
+						"medium": {"url": "https://utp.pm/images/medium/shot.png"}
+					}
+				}`)),
+			}, nil
+		}),
+	}
+
+	result, err := (&utppmUploader{apiKey: "secret", client: client}).Upload(context.Background(), imagePath)
+	if err != nil {
+		t.Fatalf("Upload returned error: %v", err)
+	}
+	if result.ImgURL != "https://utp.pm/images/medium/shot.png" {
+		t.Fatalf("unexpected img URL: %q", result.ImgURL)
+	}
+	if result.RawURL != "https://utp.pm/images/shot.png" {
+		t.Fatalf("unexpected raw URL: %q", result.RawURL)
+	}
+	if result.WebURL != "https://utp.pm/image/shot" {
+		t.Fatalf("unexpected web URL: %q", result.WebURL)
+	}
+}
+
+func TestUTPPMUploaderRequiresAPIKey(t *testing.T) {
+	if _, err := (&utppmUploader{apiKey: "  ", client: http.DefaultClient}).Upload(context.Background(), "shot.png"); err == nil {
+		t.Fatal("expected error when api key missing")
+	}
+}
+
+func TestUTPPMUploaderRejectsEmptyImageURL(t *testing.T) {
+	tmpDir := t.TempDir()
+	imagePath := filepath.Join(tmpDir, "shot.png")
+	if err := os.WriteFile(imagePath, []byte("testdata"), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"Empty upload source"}}`)),
+			}, nil
+		}),
+	}
+
+	result, err := (&utppmUploader{apiKey: "secret", client: client}).Upload(context.Background(), imagePath)
+	if err == nil {
+		t.Fatal("expected error when image url is empty")
+	}
+	if result.RawURL != "" || result.ImgURL != "" || result.WebURL != "" {
+		t.Fatalf("expected empty result on failure, got %+v", result)
 	}
 }
 

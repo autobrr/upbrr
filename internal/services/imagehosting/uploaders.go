@@ -708,9 +708,15 @@ func (u *utppmUploader) Upload(ctx context.Context, imagePath string) (uploadRes
 			URL       string `json:"url"`
 			URLViewer string `json:"url_viewer"`
 		} `json:"image"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
 		return uploadResult{}, fmt.Errorf("utppm invalid response: %w", err)
+	}
+	if response.Image.URL == "" {
+		return uploadResult{}, fmt.Errorf("utppm upload failed: %s", safeResponseMessage(response.Error.Message))
 	}
 
 	return uploadResult{
