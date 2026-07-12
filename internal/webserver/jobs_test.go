@@ -614,6 +614,47 @@ func TestRunDupeCheckJobSplitsGroupedPathedResultsIntoTrackerStates(t *testing.T
 	}
 }
 
+func TestApplyDupeProgressCountsNewTrackersWithoutInflatingExplicitTotal(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		startTotal  int
+		updateTotal int
+		wantTotal   int
+	}{
+		{name: "explicit total", startTotal: 2, updateTotal: 2, wantTotal: 2},
+		{name: "total omitted", startTotal: 1, wantTotal: 2},
+		{name: "explicit total lower than current", startTotal: 3, updateTotal: 2, wantTotal: 3},
+		{name: "explicit total higher than current", startTotal: 2, updateTotal: 3, wantTotal: 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			job := newDupeCheckJobTestJob("session-a", `C:\Media\Example.Release.2026.1080p-GRP.mkv`, []string{"AITHER"})
+			job.totalCount = tt.startTotal
+			backend := &Backend{hub: newEventHub()}
+
+			backend.applyDupeProgress(job, api.DupeProgressUpdate{
+				Tracker: "BLU",
+				Status:  "running",
+				Total:   tt.updateTotal,
+			})
+
+			if job.totalCount != tt.wantTotal {
+				t.Fatalf("expected total count %d, got %d", tt.wantTotal, job.totalCount)
+			}
+			if len(job.trackers) != 2 || job.trackers[1] != "BLU" {
+				t.Fatalf("expected new tracker to be appended once, got %#v", job.trackers)
+			}
+			if got := job.states["BLU"].Status; got != "running" {
+				t.Fatalf("expected BLU running state, got %q", got)
+			}
+		})
+	}
+}
+
 func TestRunDupeCheckJobUsesJobCoreSnapshot(t *testing.T) {
 	t.Parallel()
 

@@ -1101,6 +1101,49 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckFailsUnattendedAuthRequired(t *testi
 	}
 }
 
+func TestEnsureCLITrackerAuthBeforeDupeCheckExplainsExpiredSessionAction(t *testing.T) {
+	t.Parallel()
+
+	authSvc := &cliTrackerAuthForTest{
+		capabilities: []api.TrackerAuthCapability{{
+			TrackerID:          "HDB",
+			SupportsCookieFile: true,
+			RequiresPasskey:    true,
+		}},
+		validateStatus: map[string]api.TrackerAuthStatus{
+			"HDB": {
+				TrackerID: "HDB",
+				State:     trackerauth.StateLoginRequired,
+				Message:   "stored session expired or invalid; log in again or import fresh cookies",
+			},
+		},
+	}
+
+	_, err := ensureCLITrackerAuthBeforeDupeCheckWithService(
+		context.Background(),
+		bufio.NewReader(strings.NewReader("")),
+		authSvc,
+		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeUnattended}},
+		[]string{"HDB"},
+	)
+	if err == nil {
+		t.Fatal("expected unattended expired-session error")
+	}
+	got := err.Error()
+	for _, expected := range []string{
+		"unattended",
+		"no-prompt",
+		"HDB",
+		"required action",
+		"log in again",
+		"import fresh cookies",
+	} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("expected expired-session error to include %q, got %q", expected, got)
+		}
+	}
+}
+
 func TestEnsureCLITrackerAuthBeforeDupeCheckFailsUnattendedBTN2FA(t *testing.T) {
 	t.Parallel()
 
@@ -1969,13 +2012,18 @@ func (s *cliTrackerAuthForTest) Capabilities(context.Context) ([]api.TrackerAuth
 	return append([]api.TrackerAuthCapability(nil), s.capabilities...), nil
 }
 
-func (s *cliTrackerAuthForTest) Validate(_ context.Context, trackerID string) (api.TrackerAuthStatus, error) {
-	name := strings.ToUpper(strings.TrimSpace(trackerID))
-	s.validated = append(s.validated, name)
-	if status, ok := s.validateStatus[name]; ok {
-		return status, nil
+func (s *cliTrackerAuthForTest) ValidateMany(_ context.Context, trackerIDs []string) ([]api.TrackerAuthStatus, error) {
+	statuses := make([]api.TrackerAuthStatus, 0, len(trackerIDs))
+	for _, trackerID := range trackerIDs {
+		name := strings.ToUpper(strings.TrimSpace(trackerID))
+		s.validated = append(s.validated, name)
+		if status, ok := s.validateStatus[name]; ok {
+			statuses = append(statuses, status)
+			continue
+		}
+		statuses = append(statuses, api.TrackerAuthStatus{TrackerID: name, State: trackerauth.StateConfigured})
 	}
-	return api.TrackerAuthStatus{TrackerID: name, State: trackerauth.StateConfigured}, nil
+	return statuses, nil
 }
 
 func (s *cliTrackerAuthForTest) Submit2FA(_ context.Context, challengeID string, code string) (api.TrackerAuthStatus, error) {

@@ -75,8 +75,8 @@ func buildScreenshotSection(images []api.ScreenshotImage, limit int) string {
 		return ""
 	}
 
-	lines := make([]string, 0, limit+2)
-	lines = append(lines, "[align=center]")
+	var section strings.Builder
+	section.WriteString("[align=center]")
 	count := 0
 	for _, image := range images {
 		if count >= limit {
@@ -87,18 +87,22 @@ func buildScreenshotSection(images []api.ScreenshotImage, limit int) string {
 		if imgURL == "" || webURL == "" {
 			continue
 		}
-		line := fmt.Sprintf("[url=%s][img width=350]%s[/img][/url]", webURL, imgURL)
-		if count > 0 && count%2 == 0 {
-			lines = append(lines, "")
+		if count > 0 {
+			if count%2 == 0 {
+				section.WriteString("\n\n")
+			} else {
+				section.WriteByte(' ')
+			}
 		}
-		lines = append(lines, line)
+		line := fmt.Sprintf("[url=%s][img width=350]%s[/img][/url]", webURL, imgURL)
+		section.WriteString(line)
 		count++
 	}
-	lines = append(lines, "[/align]")
 	if count == 0 {
 		return ""
 	}
-	return strings.Join(lines, "\n")
+	section.WriteString("[/align]")
+	return section.String()
 }
 
 func screenshotsFromReport(images []bbcode.Image) []api.ScreenshotImage {

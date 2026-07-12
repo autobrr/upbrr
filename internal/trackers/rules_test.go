@@ -5,6 +5,8 @@ package trackers
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -265,6 +267,108 @@ func TestEvaluateRulesBHDRequiresValidMISettings(t *testing.T) {
 	failures = evaluateNonMetadataRulesForTest(context.Background(), "BHD", meta)
 	if len(failures) != 0 {
 		t.Fatalf("expected no failures, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesBHDBlocksAdultContent(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ValidMediaInfoSettings: true,
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{Keywords: "adult"},
+		},
+	}
+
+	failures := EvaluateRules(context.Background(), "BHD", meta, nil)
+	if len(failures) != 1 {
+		t.Fatalf("expected 1 failure, got %#v", failures)
+	}
+	if failures[0].Rule != "block_adult" {
+		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	}
+	if failures[0].Reason != "Porn/xxx is not allowed at BHD." {
+		t.Fatalf("unexpected reason: %s", failures[0].Reason)
+	}
+}
+
+func TestEvaluateRulesBHDIgnoresStaleAdultMetadata(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		SourcePath:             "current",
+		ValidMediaInfoSettings: true,
+		Release:                api.ReleaseInfo{Genre: "Drama"},
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: "other",
+			TMDB:       &api.TMDBMetadata{Keywords: "adult", Genres: "pornography"},
+			IMDB:       &api.IMDBMetadata{Genres: "xxx"},
+		},
+	}
+
+	failures := EvaluateRules(context.Background(), "BHD", meta, nil)
+	if hasRuleFailure(failures, "block_adult") {
+		t.Fatalf("expected stale adult metadata to be ignored, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesBHDBlocksAdultMetadataForExactSourcePath(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+	meta := api.PreparedMetadata{
+		SourcePath:             sourcePath,
+		ValidMediaInfoSettings: true,
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: sourcePath,
+			TMDB:       &api.TMDBMetadata{Keywords: "adult"},
+		},
+	}
+
+	failures := EvaluateRules(context.Background(), "BHD", meta, nil)
+	if !hasRuleFailure(failures, "block_adult") {
+		t.Fatal("expected exact-source adult metadata to be applied")
+	}
+}
+
+func TestEvaluateRulesBHDIgnoresCaseOnlyDistinctAdultMetadata(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	currentPath := filepath.Join(tmp, "Example.Release.2026.1080p-GRP.mkv")
+	storedPath := filepath.Join(tmp, "example.release.2026.1080p-grp.mkv")
+	if err := os.WriteFile(currentPath, []byte("current"), 0o600); err != nil {
+		t.Fatalf("write current source fixture: %v", err)
+	}
+	if err := os.WriteFile(storedPath, []byte("stored"), 0o600); err != nil {
+		t.Fatalf("write stored source fixture: %v", err)
+	}
+	currentInfo, err := os.Stat(currentPath)
+	if err != nil {
+		t.Fatalf("stat current source fixture: %v", err)
+	}
+	storedInfo, err := os.Stat(storedPath)
+	if err != nil {
+		t.Fatalf("stat stored source fixture: %v", err)
+	}
+	if os.SameFile(currentInfo, storedInfo) {
+		t.Skip("filesystem does not distinguish case-only paths")
+	}
+
+	meta := api.PreparedMetadata{
+		SourcePath:             currentPath,
+		ValidMediaInfoSettings: true,
+		Release:                api.ReleaseInfo{Genre: "Drama"},
+		ExternalMetadata: api.ExternalMetadata{
+			SourcePath: storedPath,
+			TMDB:       &api.TMDBMetadata{Keywords: "adult", Genres: "pornography"},
+			IMDB:       &api.IMDBMetadata{Genres: "xxx"},
+		},
+	}
+
+	failures := EvaluateRules(context.Background(), "BHD", meta, nil)
+	if hasRuleFailure(failures, "block_adult") {
+		t.Fatal("expected case-only-distinct adult metadata to be ignored")
 	}
 }
 

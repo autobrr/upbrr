@@ -35,9 +35,13 @@ func (e2eCLITrackerAuthService) Capabilities(context.Context) ([]api.TrackerAuth
 	return nil, nil
 }
 
-// Validate returns configured state without contacting the tracker.
-func (e2eCLITrackerAuthService) Validate(_ context.Context, trackerID string) (api.TrackerAuthStatus, error) {
-	return api.TrackerAuthStatus{TrackerID: strings.ToUpper(strings.TrimSpace(trackerID)), State: trackerauth.StateConfigured}, nil
+// ValidateMany returns configured state without contacting trackers.
+func (e2eCLITrackerAuthService) ValidateMany(_ context.Context, trackerIDs []string) ([]api.TrackerAuthStatus, error) {
+	statuses := make([]api.TrackerAuthStatus, 0, len(trackerIDs))
+	for _, trackerID := range trackerIDs {
+		statuses = append(statuses, api.TrackerAuthStatus{TrackerID: strings.ToUpper(strings.TrimSpace(trackerID)), State: trackerauth.StateConfigured})
+	}
+	return statuses, nil
 }
 
 // Submit2FA completes the fake challenge without external IO.

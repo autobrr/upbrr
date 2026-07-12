@@ -21,6 +21,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
@@ -44,6 +46,11 @@ const (
 	StateLoginRequired = "login_required"
 	// StateEncryptedStorageUnavailable means cookie import cannot be used until web auth material exists.
 	StateEncryptedStorageUnavailable = "encrypted_storage_unavailable"
+
+	// maxConcurrentValidations bounds simultaneous tracker and auth DB work.
+	maxConcurrentValidations = 4
+
+	expiredSessionActionMessage = "stored session expired or invalid; log in again or import fresh cookies"
 )
 
 // Service reports and manages persisted tracker auth material for configured trackers.
@@ -52,6 +59,7 @@ type Service struct {
 	adapters           map[string]Adapter
 	challenges         *ChallengeManager
 	logger             api.Logger
+	now                func() time.Time
 	afterDeleteCleanup func()
 }
 
@@ -87,6 +95,7 @@ func NewServiceWithLogger(cfg config.Config, logger api.Logger) *Service {
 		adapters:   defaultAdapters(),
 		challenges: sharedChallengeManager,
 		logger:     logger,
+		now:        time.Now,
 	}
 }
 
@@ -230,7 +239,8 @@ func (s *Service) ImportCookies(ctx context.Context, trackerID string, fileName 
 // tracker has an adapter. Confirmed-invalid stored sessions are deleted and
 // reported as login-required status without returning an error. BTN session
 // success remains login-required until the API token needed for torrent
-// resolution is configured.
+// resolution is configured. Returned cookie counts and RFC3339 timestamps are
+// rebuilt after login or deletion side effects complete.
 func (s *Service) Validate(ctx context.Context, trackerID string) (status api.TrackerAuthStatus, err error) {
 	defer func() {
 		if err != nil {
@@ -256,6 +266,7 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (status api.Tr
 			AutoLogin: true,
 		})
 		if ensureErr != nil {
+			status = s.statusForSpec(ctx, spec)
 			applyEnsureErrorToStatus(&status, ensureErr)
 			if session.ChallengeID != "" {
 				status.ChallengeID = session.ChallengeID
@@ -274,6 +285,58 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (status api.Tr
 	}
 	status.Message = "remote auth validation is not supported for this tracker"
 	return status, nil
+}
+
+// ValidateMany validates every tracker concurrently and returns statuses in
+// input order. It waits for the full batch with bounded concurrency; if any
+// validation fails, it returns the first input-ordered error and no statuses.
+func (s *Service) ValidateMany(ctx context.Context, trackerIDs []string) ([]api.TrackerAuthStatus, error) {
+	statuses := make([]api.TrackerAuthStatus, len(trackerIDs))
+	errs := make([]error, len(trackerIDs))
+
+	var group errgroup.Group
+	group.SetLimit(maxConcurrentValidations)
+	for i, trackerID := range trackerIDs {
+		group.Go(func() error {
+			statuses[i], errs[i] = s.Validate(ctx, trackerID)
+			return nil
+		})
+	}
+	_ = group.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			return nil, fmt.Errorf("tracker auth: validate %s: %w", trackerLogID(trackerIDs[i]), err)
+		}
+	}
+	return statuses, nil
+}
+
+// IsManagedCapability reports whether a capability requires session, login,
+// refresh, or 2FA handling rather than only static API-key/passkey config.
+func IsManagedCapability(capability api.TrackerAuthCapability) bool {
+	authKind := strings.ToLower(strings.TrimSpace(capability.AuthKind))
+	return capability.SupportsCookieFile ||
+		capability.SupportsLogin ||
+		capability.SupportsAutoLogin ||
+		capability.SupportsTOTP ||
+		capability.SupportsManual2FA ||
+		strings.Contains(authKind, "refresh") ||
+		strings.Contains(authKind, "2fa")
+}
+
+// IsReadyStatus reports whether a status represents usable auth without further
+// user input. A pending 2FA challenge is never ready, regardless of state.
+func IsReadyStatus(status api.TrackerAuthStatus) bool {
+	if status.Needs2FA {
+		return false
+	}
+	switch strings.TrimSpace(status.State) {
+	case StateConfigured, StateHasCookies:
+		return true
+	default:
+		return false
+	}
 }
 
 // Login runs credential-based tracker auth when supported and returns status for
@@ -480,7 +543,7 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 		TrackerID:        spec.id,
 		DisplayName:      spec.id,
 		State:            StateNotConfigured,
-		LastCheckedAt:    time.Now().UTC().Format(time.RFC3339),
+		LastCheckedAt:    s.currentTime().UTC().Format(time.RFC3339),
 		EncryptedStorage: encryptedStorage,
 	}
 
@@ -537,6 +600,15 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 		status.Message = btnMissingAPIKeyMessage()
 	}
 	return status
+}
+
+// currentTime returns the service clock, falling back to the wall clock for
+// zero-value or test-constructed services without an injected clock.
+func (s *Service) currentTime() time.Time {
+	if s != nil && s.now != nil {
+		return s.now()
+	}
+	return time.Now()
 }
 
 // btnAPIKeyConfigured reports whether BTN has an API token in tracker config or
@@ -1138,8 +1210,9 @@ func mustTrackerConfig(cfg config.Config, trackerID string) config.TrackerConfig
 	return trackerCfg
 }
 
-// applyEnsureErrorToStatus maps typed ensure errors onto API status without
-// exposing an unactionable 2FA state when no challenge id exists.
+// applyEnsureErrorToStatus maps typed ensure errors onto API status. Confirmed
+// invalid sessions clear the reported cookie count and include recovery action;
+// 2FA is actionable only when a reusable challenge id exists.
 func applyEnsureErrorToStatus(status *api.TrackerAuthStatus, err error) {
 	status.LastError = redact(err.Error())
 	status.Message = "remote auth test failed"
@@ -1155,7 +1228,7 @@ func applyEnsureErrorToStatus(status *api.TrackerAuthStatus, err error) {
 		status.State = StateLoginRequired
 		if validation, ok := asValidationError(err); ok && validation.ConfirmedInvalid {
 			status.CookieCount = 0
-			status.Message = "stored session expired or invalid"
+			status.Message = expiredSessionActionMessage
 		} else {
 			status.Message = "login credentials or imported cookies required"
 		}
@@ -1189,7 +1262,7 @@ func applyEnsureErrorToStatus(status *api.TrackerAuthStatus, err error) {
 	if errors.As(err, &validation) && validation.ConfirmedInvalid {
 		status.State = StateLoginRequired
 		status.CookieCount = 0
-		status.Message = "stored session expired or invalid"
+		status.Message = expiredSessionActionMessage
 	}
 }
 

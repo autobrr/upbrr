@@ -22,6 +22,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackerauth"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -64,6 +65,9 @@ func maybeApplyE2EServices(_ context.Context, services *api.ServiceSet, cfg conf
 	}
 	if services.Dupes == nil {
 		services.Dupes = e2eDupeService{}
+	}
+	if services.TrackerAuth == nil {
+		services.TrackerAuth = e2eTrackerAuthService{}
 	}
 	return nil
 }
@@ -243,6 +247,23 @@ func (e2eDupeService) Check(_ context.Context, meta api.PreparedMetadata, tracke
 		results = append(results, api.DupeCheckResult{Tracker: strings.ToUpper(strings.TrimSpace(tracker)), Status: "completed"})
 	}
 	return api.DupeCheckSummary{SourcePath: meta.SourcePath, Results: results}, nil
+}
+
+// e2eTrackerAuthService keeps fake-services runs isolated from tracker auth IO.
+type e2eTrackerAuthService struct{}
+
+// Capabilities disables managed-auth preflight in fake-services runs.
+func (e2eTrackerAuthService) Capabilities(context.Context) ([]api.TrackerAuthCapability, error) {
+	return nil, nil
+}
+
+// ValidateMany returns configured statuses without contacting trackers.
+func (e2eTrackerAuthService) ValidateMany(_ context.Context, trackerIDs []string) ([]api.TrackerAuthStatus, error) {
+	statuses := make([]api.TrackerAuthStatus, 0, len(trackerIDs))
+	for _, trackerID := range trackerIDs {
+		statuses = append(statuses, api.TrackerAuthStatus{TrackerID: strings.ToUpper(strings.TrimSpace(trackerID)), State: trackerauth.StateConfigured})
+	}
+	return statuses, nil
 }
 
 type e2eTrackerService struct {
