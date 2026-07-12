@@ -41,10 +41,7 @@ Have these ready:
       The CLI can find ffmpeg when your shell PATH includes Homebrew. If you start the GUI from Finder, macOS may not pass your shell PATH to the app, so the GUI may not see Homebrew's ffmpeg. Start the GUI from Terminal, or make ffmpeg available in the environment used to launch the app.
     - Automatic DVD menu screenshots need an FFmpeg build whose `dvdvideo` demuxer exposes `menu`, `menu_lu`, `menu_vts`, `pgc`, and `pg`. A version number alone does not prove this capability. upbrr checks the selected FFmpeg at runtime; see [FFmpeg's dvdvideo documentation](https://ffmpeg.org/ffmpeg-formats.html#dvdvideo).
 
-A TMDB API key is optional, but required for specific trackers.
-When configured, upbrr uses it for additional metadata enrichment;
-tracker-required metadata IDs can be supplied by the tracker,
-media files, scene data, Arr integrations, or manual overrides.
+- A TMDB API key is optional, but required for most trackers in upbrr.
 
 By default, upbrr stores its database at:
 
