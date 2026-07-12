@@ -36,6 +36,8 @@ func FinalizeTrackerDescription(tracker string, desc string) string {
 		return finalizeFFDescription(trimmed)
 	case "FL":
 		return finalizeFLDescription(trimmed)
+	case "FLD":
+		return finalizeFLDDescription(trimmed)
 	case "GPW":
 		return finalizeGPWDescription(trimmed)
 	case "HDS":
@@ -125,6 +127,13 @@ func finalizeFLDescription(value string) string {
 	value = convertCodeToQuote(value)
 	value = convertComparisonToCentered(value, 900)
 	value = removeImgResize(value)
+	return removeExtraLines(value)
+}
+
+func finalizeFLDDescription(value string) string {
+	value = strings.ReplaceAll(value, "[user]", "")
+	value = strings.ReplaceAll(value, "[/user]", "")
+	value = strings.ReplaceAll(value, "[img]", "[img width=300]")
 	return removeExtraLines(value)
 }
 

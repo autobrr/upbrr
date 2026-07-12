@@ -46,6 +46,7 @@ var trackerUploadTorrentSpecs = map[string]trackerUploadTorrentSpec{
 	"DC":    {source: "DigitalCore.club"},
 	"FF":    {source: "FunFile"},
 	"FL":    {source: "FL"},
+	"FLD":   {source: "FLD"},
 	"GPW":   {source: "GreatPosterWall"},
 	"HDB":   {source: "HDBits"},
 	"HDS":   {source: "HD-Space"},
