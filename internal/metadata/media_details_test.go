@@ -1312,3 +1312,20 @@ func TestResolveAudioBloatPolicyWarnsButDoesNotBlockNonEnglishOriginal(t *testin
 		t.Fatalf("expected SPD warning for French bloat, got %#v", warned)
 	}
 }
+
+func TestResolveAudioBloatPolicyExemptsUTPUkrainian(t *testing.T) {
+	// UTP always carries Ukrainian + original + optional English; none of those are bloat.
+	blocked, warned := resolveAudioBloatPolicy(api.PreparedMetadata{
+		AudioLanguages: []string{"Ukrainian", "English", "French"},
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{OriginalLanguage: "fr"},
+		},
+	}, []string{"UTP"})
+
+	if blocked != nil {
+		t.Fatalf("expected no blocked trackers for UTP, got %#v", blocked)
+	}
+	if warned != nil {
+		t.Fatalf("expected no bloat warnings for UTP (uk+en+original exempt), got %#v", warned)
+	}
+}

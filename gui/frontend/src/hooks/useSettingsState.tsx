@@ -91,7 +91,6 @@ const imageHostOptions = [
   { value: "passtheimage", label: "PassTheImage" },
   { value: "seedpool_cdn", label: "Seedpool CDN" },
   { value: "sharex", label: "ShareX" },
-  { value: "utppm", label: "UTPPM" },
 ];
 
 const trackerImageHostOptions = [
@@ -99,6 +98,7 @@ const trackerImageHostOptions = [
   { value: "hdb", label: "HDB" },
   { value: "lostimg", label: "Lostimg" },
   { value: "reelflix", label: "Reelflix" },
+  { value: "utppm", label: "UTPPM" },
 ];
 const torrentClientTypeOptions = [
   { value: "qbit", label: "qBit" },
@@ -117,6 +117,7 @@ const defaultOwnedImageHosts: Record<string, string> = {
   hdb: "HDB",
   lostimg: "LST",
   reelflix: "RF",
+  utppm: "UTP",
 };
 const normalizeImageHostValue = (value: string) => value.trim().toLowerCase();
 const imageHostOptionFor = (host: string) => {
@@ -134,7 +135,6 @@ const imageHostKeyMap: Record<string, string[]> = {
   passtheimage: ["PassTheImageAPI"],
   seedpool_cdn: ["SeedpoolCDNAPI"],
   sharex: ["ShareXURL", "ShareXAPIKey"],
-  utppm: ["UTPPMAPI"],
 };
 
 const stringField = (key: string, meta: Omit<FieldMeta, "key" | "type"> = {}): FieldMeta => ({
@@ -755,6 +755,7 @@ const sensitiveKeyHints = [
 const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
   ImageHosting: {
     LostimgAPI: stringField("LostimgAPI", { label: "API key", sensitive: true }),
+    UTPPMAPI: stringField("UTPPMAPI", { label: "UTPPM API key", sensitive: true }),
   },
   MainSettings: {
     InputHistoryLimit: { key: "InputHistoryLimit", label: "Input history limit", type: "number" },
@@ -2548,6 +2549,22 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
               (rfTrackerCfg?.ImgAPI as ConfigValue) ?? "",
               ["Trackers", "Trackers", "RF", "ImgAPI"],
               trackerFieldMeta.ImgAPI,
+            )}
+            <div className="settings-switch-row">
+              <span>UTP UTPPM</span>
+              <Switch
+                aria-label="UTP UTPPM"
+                checked={Boolean(imageCfg.UTPPMEnabled)}
+                onChange={(event) =>
+                  updateConfigValue(["ImageHosting", "UTPPMEnabled"], event.target.checked)
+                }
+              />
+            </div>
+            {renderField(
+              "UTPPMAPI",
+              (imageCfg.UTPPMAPI as ConfigValue) ?? "",
+              ["ImageHosting", "UTPPMAPI"],
+              sectionFieldMeta.ImageHosting.UTPPMAPI,
             )}
           </div>
         </div>

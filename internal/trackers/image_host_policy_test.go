@@ -333,6 +333,45 @@ func TestNeededImageUploadTargetsSkipsLostimgWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestNeededImageUploadTargetsUsesConfiguredUTPPMForUTP(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargets(config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1:        "imgbb",
+			UTPPMEnabled: true,
+			UTPPMAPI:     "secret",
+		},
+	}, []string{"UTP"}, "imgbb")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("expected one target, got %#v", targets)
+	}
+	if targets[0].Host != "utppm" || targets[0].UsageScope != "tracker:UTP" {
+		t.Fatalf("expected UTP scoped utppm target, got %#v", targets[0])
+	}
+}
+
+// utppm is only a UTP-scoped host; with it disabled, UTP must still resolve to a
+// plain global host and never be forced onto utppm.
+func TestNeededImageUploadTargetsSkipsUTPPMWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargets(config.Config{
+		ImageHosting: config.ImageHostingConfig{
+			Host1: "imgbb",
+		},
+	}, []string{"UTP"}, "imgbb")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(targets) != 1 || targets[0].Host != "imgbb" {
+		t.Fatalf("expected global imgbb fallback for UTP, got %#v", targets)
+	}
+}
+
 func TestNeededImageUploadTargetsUsesConfiguredReelflixForRF(t *testing.T) {
 	t.Parallel()
 

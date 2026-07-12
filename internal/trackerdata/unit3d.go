@@ -473,6 +473,7 @@ func SetUnit3DAPIHeaders(req *http.Request, apiKey string) {
 		return
 	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "upbrr")
 	if apiKey = strings.TrimSpace(apiKey); apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}

@@ -761,6 +761,7 @@ func resolveAudioBloatPolicy(meta api.PreparedMetadata, candidateTrackers []stri
 		"AITHER": {"english"},
 		"ANT":    {"english"},
 		"SPD":    {"romanian"},
+		"UTP":    {"ukrainian", "english"},
 	}
 	hardBlockedForEnglishOriginal := map[string]struct{}{
 		"ANT": {}, "BHD": {}, "MTV": {},

@@ -65,3 +65,17 @@ func TestPolicyMetadataExposesReelflixAsRFOwnedUploadHost(t *testing.T) {
 		t.Fatalf("reelflix owner = %q, want RF", got)
 	}
 }
+
+func TestPolicyMetadataExposesUTPPMAsUTPOwnedUploadHost(t *testing.T) {
+	t.Parallel()
+
+	metadata := PolicyMetadata()
+	utpHosts := metadata.TrackerUploadHosts["UTP"]
+
+	if !HostAllowed("utppm", utpHosts) {
+		t.Fatalf("UTP upload hosts should include utppm: %v", utpHosts)
+	}
+	if got := metadata.OwnedHosts["utppm"]; got != "UTP" {
+		t.Fatalf("utppm owner = %q, want UTP", got)
+	}
+}

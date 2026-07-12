@@ -60,11 +60,13 @@ var ownedHosts = map[string]string{
 	"lostimg":  "LST",
 	"reelflix": "RF",
 	"thr":      "THR",
+	"utppm":    "UTP",
 }
 
 var trackerOptionalUploadHosts = map[string][]string{
 	"LST": {"lostimg"},
 	"RF":  {"reelflix"},
+	"UTP": {"utppm"},
 }
 
 func ForTracker(tracker string, imgRehost bool, imgAPI string) Policy {

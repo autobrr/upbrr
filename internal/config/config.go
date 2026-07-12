@@ -109,6 +109,7 @@ type ImageHostingConfig struct {
 	ShareXURL       string `yaml:"sharex_url"`
 	ShareXAPIKey    string `yaml:"sharex_api_key"`
 	UTPPMAPI        string `yaml:"utppm_api"`
+	UTPPMEnabled    bool   `yaml:"utppm_enabled"`
 	LostimgEnabled  bool   `yaml:"lostimg_enabled"`
 	LostimgAPI      string `yaml:"lostimg_api"`
 }

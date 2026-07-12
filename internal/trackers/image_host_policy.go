@@ -44,6 +44,9 @@ func policyForTrackerWithConfig(tracker string, appCfg config.Config, trackerCfg
 	if reelflixEnabledForTracker(tracker, trackerCfg) {
 		return newImageHostPolicy("reelflix")
 	}
+	if utppmEnabledForTracker(appCfg, tracker) {
+		return newImageHostPolicy("utppm")
+	}
 	return policyForTracker(tracker, trackerCfg)
 }
 
@@ -101,6 +104,9 @@ func resolveImageHostPolicyForMetadata(tracker string, appCfg config.Config, tra
 		trackerCfg.ImageHost = ""
 	}
 	if host == "reelflix" && !reelflixEnabledForTracker(tracker, trackerCfg) {
+		trackerCfg.ImageHost = ""
+	}
+	if host == "utppm" && !utppmEnabledForTracker(appCfg, tracker) {
 		trackerCfg.ImageHost = ""
 	}
 	if strings.TrimSpace(trackerCfg.ImageHost) != "" || overrides.PreferredHost != nil {
@@ -452,6 +458,9 @@ func imageUploadCandidatesForTracker(appCfg config.Config, tracker string, userH
 	if reelflixEnabledForTracker(tracker, trackerConfigForImageHostPolicy(appCfg, tracker)) {
 		candidates = appendUniqueHost(candidates, "reelflix")
 	}
+	if utppmEnabledForTracker(appCfg, tracker) {
+		candidates = appendUniqueHost(candidates, "utppm")
+	}
 	return candidates
 }
 
@@ -485,6 +494,13 @@ func reelflixEnabledForTracker(tracker string, trackerCfg config.TrackerConfig) 
 		return false
 	}
 	return strings.EqualFold(strings.TrimSpace(trackerCfg.ImageHost), "reelflix")
+}
+
+func utppmEnabledForTracker(appCfg config.Config, tracker string) bool {
+	if !strings.EqualFold(strings.TrimSpace(tracker), "UTP") {
+		return false
+	}
+	return appCfg.ImageHosting.UTPPMEnabled
 }
 
 func normalizeConfiguredImageUploadHosts(hosts ...string) []string {

@@ -26,6 +26,7 @@ image_hosting:
   sharex_url: ""
   sharex_api_key: ""
   utppm_api: ""
+  utppm_enabled: false
   lostimg_enabled: false
   lostimg_api: ""
 
