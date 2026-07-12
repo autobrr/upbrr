@@ -19,10 +19,12 @@ type MetadataPreview struct {
 	ReleaseNameOverrides ReleaseNameOverrides
 	ExternalIDs          ExternalIDs
 	ExternalIDCandidates ExternalIDCandidates
-	ExternalIDInfo       []ExternalIDInfo
-	ExternalPreview      []ExternalPreview
-	Bluray               *BlurayMetadata
-	TrackerData          []TrackerPreview
+	// ExternalIDInfo includes resolved IDs even when no metadata was fetched from that provider.
+	ExternalIDInfo []ExternalIDInfo
+	// ExternalPreview includes only providers whose metadata payload was fetched and populated.
+	ExternalPreview []ExternalPreview
+	Bluray          *BlurayMetadata
+	TrackerData     []TrackerPreview
 	// TrackerRuleFailures is keyed by normalized tracker code and contains
 	// upload rule failures known at preview time.
 	TrackerRuleFailures map[string][]RuleFailure
@@ -171,6 +173,8 @@ type ExternalIDInfo struct {
 	Source   string
 }
 
+// ExternalPreview contains fetched metadata for one resolved external provider ID.
+// A resolved ID without provider metadata appears in [MetadataPreview.ExternalIDInfo] only.
 type ExternalPreview struct {
 	Provider         string
 	ID               int

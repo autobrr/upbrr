@@ -78,6 +78,25 @@ func TestBuildMetadataPreviewMapsExternalData(t *testing.T) {
 	}
 }
 
+func TestBuildMetadataPreviewOmitsResolvedIDsWithoutProviderData(t *testing.T) {
+	meta := api.PreparedMetadata{
+		SourcePath: "/media/example.mkv",
+		ExternalIDs: api.ExternalIDs{
+			TMDBID:     123,
+			SourceTMDB: "tracker",
+		},
+	}
+
+	preview := buildMetadataPreview(meta, config.Config{})
+
+	if len(preview.ExternalIDInfo) != 1 {
+		t.Fatalf("expected resolved external ID to remain visible for editing, got %d", len(preview.ExternalIDInfo))
+	}
+	if len(preview.ExternalPreview) != 0 {
+		t.Fatalf("expected no provider previews without fetched metadata, got %d", len(preview.ExternalPreview))
+	}
+}
+
 func TestBuildMetadataPreviewMapsTVmazeRichData(t *testing.T) {
 	meta := api.PreparedMetadata{
 		SourcePath:  "/media/example-tv.mkv",
