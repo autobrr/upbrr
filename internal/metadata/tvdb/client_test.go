@@ -125,6 +125,15 @@ func TestFindEpisodeMatch(t *testing.T) {
 	if !ok || match.EpisodeID != 11 {
 		t.Fatalf("expected absolute number match")
 	}
+
+	match, ok = findEpisodeMatch(episodes, EpisodeQuery{Episode: 2})
+	if !ok || match.EpisodeID != 11 || match.SeasonNumber != 1 || match.EpisodeNumber != 2 {
+		t.Fatalf("expected seasonless episode to map by absolute number, got %#v", match)
+	}
+
+	if !episodeIsPresent(episodes, EpisodeQuery{Episode: 2}) {
+		t.Fatal("expected cached absolute episode to satisfy seasonless query")
+	}
 }
 
 func TestEpisodesResponseUnmarshal(t *testing.T) {

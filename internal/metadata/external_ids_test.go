@@ -2122,6 +2122,40 @@ func TestApplyTVEpisodeMetadataTVDBEpisodeTranslationApplied(t *testing.T) {
 	}
 }
 
+func TestApplyTVEpisodeMetadataTVDBMapsSeasonlessAbsoluteWithoutTMDB(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	tvdbClient := &stubTVDB{
+		episodes: tvdb.EpisodesData{Episodes: []tvdb.Episode{{
+			ID:             112,
+			SeasonNumber:   1,
+			Number:         12,
+			AbsoluteNumber: 12,
+			Name:           "第12話",
+		}}},
+		episodeTranslate: tvdb.EpisodeTranslation{Name: "Take the Example Path"},
+	}
+	meta := api.PreparedMetadata{
+		SourcePath: "Example.Release.-.12.1080p-GRP.mkv",
+		EpisodeInt: 12,
+	}
+	ids := &api.ExternalIDs{TVDBID: 200, Category: "TV"}
+	external := &api.ExternalMetadata{
+		TVDB: &api.TVDBMetadata{TVDBID: 200, OriginalLanguage: "jpn"},
+	}
+
+	updated := svc.applyTVEpisodeMetadata(context.Background(), meta, ids, external, nil, tvdbClient, &stubTVmaze{})
+
+	if updated.SeasonInt != 1 || updated.EpisodeInt != 12 || updated.SeasonStr != "S01" || updated.EpisodeStr != "E12" {
+		t.Fatalf("expected TVDB absolute mapping to S01E12, got season=%d episode=%d strings=%q/%q", updated.SeasonInt, updated.EpisodeInt, updated.SeasonStr, updated.EpisodeStr)
+	}
+	if updated.EpisodeTitle != "Take the Example Path" {
+		t.Fatalf("expected translated TVDB episode title, got %q", updated.EpisodeTitle)
+	}
+	if tvdbClient.lastEpisodeQuery.Season != 0 || tvdbClient.lastEpisodeQuery.Episode != 12 || tvdbClient.lastEpisodeQuery.Absolute != 0 {
+		t.Fatalf("expected seasonless TVDB query independent of TMDB anime metadata, got %#v", tvdbClient.lastEpisodeQuery)
+	}
+}
+
 func TestApplyTVEpisodeMetadataStoresTVDBSeasonEpisodesForPack(t *testing.T) {
 	svc := NewService(&fakeRepo{})
 	tmdbClient := &stubTMDB{}
