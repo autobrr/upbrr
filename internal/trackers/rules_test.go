@@ -275,8 +275,10 @@ func TestEvaluateRulesBHDBlocksAdultContent(t *testing.T) {
 
 	meta := api.PreparedMetadata{
 		ValidMediaInfoSettings: true,
+		ExternalIDs:            api.ExternalIDs{Category: "movie", IMDBID: 1234567},
 		ExternalMetadata: api.ExternalMetadata{
 			TMDB: &api.TMDBMetadata{Keywords: "adult"},
+			IMDB: &api.IMDBMetadata{IMDBID: 1234567, Title: "Example Release"},
 		},
 	}
 
