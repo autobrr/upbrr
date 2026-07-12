@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -68,6 +69,11 @@ type AniListClient interface {
 type IMDBClient interface {
 	Search(ctx context.Context, input imdb.SearchInput) (imdb.SearchResult, error)
 	GetInfo(ctx context.Context, imdbID string, manualLanguage string, debug bool) (imdb.Info, error)
+}
+
+// imdbEpisodeClient resolves an episode-level IMDb title to its parent series.
+type imdbEpisodeClient interface {
+	GetEpisodeInfo(ctx context.Context, imdbID string, debug bool) (imdb.EpisodeLookup, error)
 }
 
 // TVDBClient is the TVDB metadata surface used by external-ID resolution.
@@ -725,6 +731,25 @@ func (s *Service) ResolveExternalIDs(ctx context.Context, meta api.PreparedMetad
 
 	if shouldRunFetchPass() {
 		runFetchPass(false)
+	}
+	// Tracker and media metadata can supply an episode IMDb ID where downstream
+	// providers require the parent series ID. Clear the episode snapshot so the
+	// second fetch pass refreshes series metadata after a successful adjustment.
+	if episodeClient, ok := imdbClient.(imdbEpisodeClient); ok && shouldUseTVDBForCategory(meta, ids) && metadata.IMDB != nil && strings.EqualFold(strings.TrimSpace(metadata.IMDB.Type), "tvEpisode") {
+		lookup, err := episodeClient.GetEpisodeInfo(ctx, formatIMDbID(ids.IMDBID), meta.Options.Debug)
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Debugf("metadata: imdb episode parent lookup failed")
+			}
+		} else if parentID := metautil.ParseIMDbNumeric(lookup.Series.SeriesID); parentID != 0 && parentID != ids.IMDBID {
+			ids.IMDBID = parentID
+			ids.SourceIMDB = "imdb_episode_parent"
+			metadata.IMDB = nil
+			metadataChanged = true
+			if s.logger != nil {
+				s.logger.Debugf("metadata: imdb episode id adjusted to parent series id=%d", parentID)
+			}
+		}
 	}
 	if shouldRunFetchPass() {
 		runFetchPass(true)
@@ -2021,7 +2046,9 @@ func mapTVmazeMetadata(result tvmaze.SearchResult) *api.TVmazeMetadata {
 // Parsed release season/episode values may seed provider lookups, but only
 // canonical metadata or provider-confirmed mappings are persisted back to
 // SeasonInt and EpisodeInt. A nil TMDB client skips TMDB-specific mapping and
-// detail lookups without disabling TVDB or TVmaze enrichment.
+// detail lookups without disabling TVDB or TVmaze enrichment. TVDB episode
+// matches take precedence; otherwise IMDb can map an exact, dated, or
+// seasonless absolute episode before TVmaze and TMDB detail lookups run.
 func (s *Service) applyTVEpisodeMetadata(
 	ctx context.Context,
 	meta api.PreparedMetadata,
@@ -2129,6 +2156,8 @@ func (s *Service) applyTVEpisodeMetadata(
 	tvmazeEpisodeOverview := ""
 	tmdbEpisodeTitle := ""
 	tmdbEpisodeOverview := ""
+	imdbEpisodeTitle := ""
+	tvdbEpisodeMatched := false
 
 	if ids.TVDBID != 0 {
 		querySeason := metautil.FirstInt(season, fallbackSeason)
@@ -2176,6 +2205,7 @@ func (s *Service) applyTVEpisodeMetadata(
 			}
 			if !meta.TVPack {
 				if match, ok := tvdb.GetSpecificEpisodeData(episodes, query); ok {
+					tvdbEpisodeMatched = true
 					meta.TVDBAiredDate = strings.TrimSpace(match.Aired)
 					preferredTVDBEpisodeTitle := strings.TrimSpace(match.EpisodeName)
 					englishTVDBEpisodeTitle := ""
@@ -2238,6 +2268,21 @@ func (s *Service) applyTVEpisodeMetadata(
 			}
 		} else if s.logger != nil {
 			s.logger.Debugf("metadata: tvdb episode lookup failed: %v", err)
+		}
+	}
+
+	if !meta.TVPack && !tvdbEpisodeMatched && external != nil && external.IMDB != nil {
+		if match, ok := findIMDBEpisode(external.IMDB.Episodes, season, episode, dailyDate); ok {
+			imdbEpisodeTitle = strings.TrimSpace(match.Title)
+			if match.Season > 0 {
+				season = match.Season
+			}
+			if matchedEpisode := parseIMDBEpisodeNumber(match.EpisodeText); matchedEpisode > 0 {
+				episode = matchedEpisode
+			}
+			if episodeYear == 0 {
+				episodeYear = metautil.FirstInt(match.ReleaseYear, match.ReleaseDate.Year)
+			}
 		}
 	}
 
@@ -2316,7 +2361,7 @@ func (s *Service) applyTVEpisodeMetadata(
 	meta.SeasonStr = seasonep.FormatSeason(season)
 	meta.EpisodeStr = seasonep.FormatEpisode(episode)
 	meta.EpisodeYear = metautil.FirstInt(episodeYear, meta.EpisodeYear)
-	meta.EpisodeTitle = sanitizeEpisodeTitle(metautil.FirstNonEmptyTrimmed(episodeTitle, tvdbEpisodeTitle, tvmazeEpisodeTitle, tmdbEpisodeTitle))
+	meta.EpisodeTitle = sanitizeEpisodeTitle(metautil.FirstNonEmptyTrimmed(episodeTitle, tvdbEpisodeTitle, tvmazeEpisodeTitle, tmdbEpisodeTitle, imdbEpisodeTitle))
 	meta.EpisodeOverview = metautil.FirstNonEmptyTrimmed(episodeOverview, tvdbEpisodeOverview, tvmazeEpisodeOverview, tmdbEpisodeOverview)
 
 	if s.logger != nil && (initialSeason != season || initialEpisode != episode || initialSeasonStr != meta.SeasonStr || initialEpisodeStr != meta.EpisodeStr) {
@@ -2336,6 +2381,59 @@ func (s *Service) applyTVEpisodeMetadata(
 	}
 
 	return meta
+}
+
+// findIMDBEpisode matches by air date, then canonical season/episode. When the
+// season is unknown, episode is treated as a one-based absolute position among
+// numbered, non-special episodes ordered by season and episode number.
+func findIMDBEpisode(episodes []api.IMDBEpisode, season, episode int, airedDate string) (api.IMDBEpisode, bool) {
+	if len(episodes) == 0 {
+		return api.IMDBEpisode{}, false
+	}
+	if aired, err := time.Parse("2006-01-02", strings.TrimSpace(airedDate)); err == nil {
+		for _, candidate := range episodes {
+			if candidate.ReleaseDate.Year == aired.Year() && candidate.ReleaseDate.Month == int(aired.Month()) && candidate.ReleaseDate.Day == aired.Day() {
+				return candidate, true
+			}
+		}
+	}
+	if season > 0 && episode > 0 {
+		for _, candidate := range episodes {
+			if candidate.Season == season && parseIMDBEpisodeNumber(candidate.EpisodeText) == episode {
+				return candidate, true
+			}
+		}
+	}
+	if season != 0 || episode <= 0 {
+		return api.IMDBEpisode{}, false
+	}
+
+	ordered := make([]api.IMDBEpisode, 0, len(episodes))
+	for _, candidate := range episodes {
+		if candidate.Season > 0 && parseIMDBEpisodeNumber(candidate.EpisodeText) > 0 {
+			ordered = append(ordered, candidate)
+		}
+	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].Season != ordered[j].Season {
+			return ordered[i].Season < ordered[j].Season
+		}
+		return parseIMDBEpisodeNumber(ordered[i].EpisodeText) < parseIMDBEpisodeNumber(ordered[j].EpisodeText)
+	})
+	if episode > len(ordered) {
+		return api.IMDBEpisode{}, false
+	}
+	return ordered[episode-1], true
+}
+
+// parseIMDBEpisodeNumber returns a positive numeric IMDb episode label, or zero
+// when the label is empty, non-numeric, or non-positive.
+func parseIMDBEpisodeNumber(value string) int {
+	number, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || number <= 0 {
+		return 0
+	}
+	return number
 }
 
 func wantsSeasonEpisodeNaming(overrides api.ReleaseNameOverrides) bool {
