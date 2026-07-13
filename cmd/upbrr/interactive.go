@@ -958,7 +958,8 @@ func runCLIScreenshotHandling(ctx context.Context, coreSvc api.Core, req api.Req
 	}
 
 	finalImages := mergeScreenshotImages(nil, plan.FinalSelections)
-	if len(plan.SuggestedSelections) == 0 {
+	pending := pendingScreenshotSelections(plan)
+	if len(pending) == 0 {
 		if len(finalImages) > 0 {
 			return nil
 		}
@@ -972,7 +973,7 @@ func runCLIScreenshotHandling(ctx context.Context, coreSvc api.Core, req api.Req
 		return nil
 	}
 
-	result, err := coreSvc.GenerateScreenshots(ctx, req, plan.SuggestedSelections, api.ScreenshotPurposeFinal)
+	result, err := coreSvc.GenerateScreenshots(ctx, req, pending, api.ScreenshotPurposeFinal)
 	if err != nil {
 		return fmt.Errorf("upbrr: generate screenshots: %w", err)
 	}
@@ -990,6 +991,26 @@ func runCLIScreenshotHandling(ctx context.Context, coreSvc api.Core, req api.Req
 	}
 	fmt.Printf("Screenshots ready: %d\n", len(finalImages))
 	return nil
+}
+
+// pendingScreenshotSelections drops baseline slots that already exist on disk.
+// Plan reports the full baseline, so each final-capture path filters its own.
+func pendingScreenshotSelections(plan api.ScreenshotPlan) []api.ScreenshotSelection {
+	if len(plan.ExistingScreenshots) == 0 {
+		return plan.SuggestedSelections
+	}
+	existing := make(map[int]struct{}, len(plan.ExistingScreenshots))
+	for _, image := range plan.ExistingScreenshots {
+		existing[image.Index] = struct{}{}
+	}
+	pending := make([]api.ScreenshotSelection, 0, len(plan.SuggestedSelections))
+	for _, selection := range plan.SuggestedSelections {
+		if _, ok := existing[selection.Index]; ok {
+			continue
+		}
+		pending = append(pending, selection)
+	}
+	return pending
 }
 
 func mergeScreenshotImages(base []api.ScreenshotImage, extra []api.ScreenshotImage) []api.ScreenshotImage {

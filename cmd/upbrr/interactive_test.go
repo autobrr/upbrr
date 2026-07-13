@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -2260,4 +2261,48 @@ func (c *cliCoreForTest) SaveDescriptionOverride(_ context.Context, req api.Requ
 
 func (c *cliCoreForTest) Close() error {
 	return nil
+}
+
+func TestPendingScreenshotSelectionsSkipsExistingSlots(t *testing.T) {
+	t.Parallel()
+
+	plan := api.ScreenshotPlan{
+		SuggestedSelections: []api.ScreenshotSelection{
+			{Index: 0}, {Index: 1}, {Index: 2}, {Index: 3},
+		},
+		ExistingScreenshots: []api.ScreenshotImage{
+			{Index: 1}, {Index: 2},
+		},
+	}
+
+	indices := func(selections []api.ScreenshotSelection) []int {
+		out := make([]int, 0, len(selections))
+		for _, selection := range selections {
+			out = append(out, selection.Index)
+		}
+		return out
+	}
+
+	if got := indices(pendingScreenshotSelections(plan)); !slices.Equal(got, []int{0, 3}) {
+		t.Fatalf("expected only slots 0 and 3 pending, got %v", got)
+	}
+
+	plan.ExistingScreenshots = nil
+	if got := indices(pendingScreenshotSelections(plan)); !slices.Equal(got, []int{0, 1, 2, 3}) {
+		t.Fatalf("expected all 4 slots pending when nothing exists, got %v", got)
+	}
+
+	// Every slot captured: the CLI must find nothing to do rather than reshoot.
+	plan.ExistingScreenshots = []api.ScreenshotImage{{Index: 0}, {Index: 1}, {Index: 2}, {Index: 3}}
+	if got := pendingScreenshotSelections(plan); len(got) != 0 {
+		t.Fatalf("expected no pending slots when every slot is captured, got %v", indices(got))
+	}
+
+	// Plan already excludes captures that drifted off their slot, so a stale file
+	// never reaches ExistingScreenshots and its slot stays pending.
+	plan.SuggestedSelections = []api.ScreenshotSelection{{Index: 0}, {Index: 1}}
+	plan.ExistingScreenshots = []api.ScreenshotImage{{Index: 0}}
+	if got := indices(pendingScreenshotSelections(plan)); !slices.Equal(got, []int{1}) {
+		t.Fatalf("expected the uncaptured slot pending, got %v", got)
+	}
 }
