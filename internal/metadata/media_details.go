@@ -647,6 +647,8 @@ func RebuildReleaseName(meta *api.PreparedMetadata, logger api.Logger) {
 		return
 	}
 
+	applyReleaseNameValueOverrides(meta)
+
 	nameRequest := releaseNameRequestFromMeta(*meta, logger)
 	nameRequest = applyReleaseNameOverrides(nameRequest, meta.ReleaseNameOverrides, logger)
 	nameResult := BuildReleaseName(nameRequest, logger)
