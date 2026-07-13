@@ -14,16 +14,19 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+const testAnilistURL = "https://anilist.invalid/graphql"
+
 func TestAniListSearchRetriesTimeouts(t *testing.T) {
 	attempts := 0
 	client := &Client{
+		anilistURL: testAnilistURL,
 		http: &http.Client{
 			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 				attempts++
 				if attempts < 3 {
 					return nil, timeoutError{err: errors.New("timeout")}
 				}
-				body := `{"data":{"Page":{"media":[{"id":1,"idMal":20,"title":{"romaji":"Test","english":"Test"},"seasonYear":"2024","episodes":12,"tags":[{"name":"Shounen"}]}]}}}`
+				body := `{"data":{"Page":{"media":[{"id":1,"idMal":20,"title":{"romaji":"Test","english":"Test"},"seasonYear":2024,"episodes":12,"tags":[{"name":"Shounen"}]}]}}}`
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(body)),
@@ -49,6 +52,7 @@ func TestAniListSearchRetriesTimeouts(t *testing.T) {
 func TestAniListSearchDoesNotRetryNonTimeoutErrors(t *testing.T) {
 	attempts := 0
 	client := &Client{
+		anilistURL: testAnilistURL,
 		http: &http.Client{
 			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 				attempts++
@@ -70,6 +74,7 @@ func TestAniListSearchDoesNotRetryNonTimeoutErrors(t *testing.T) {
 func TestFetchAniListMetadataReturnsGraphQLErrors(t *testing.T) {
 	attempts := 0
 	client := &Client{
+		anilistURL: testAnilistURL,
 		http: &http.Client{
 			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 				attempts++
@@ -98,6 +103,7 @@ func TestFetchAniListMetadataReturnsGraphQLErrors(t *testing.T) {
 func TestFetchAniListMetadataRejectsOversizedResponse(t *testing.T) {
 	attempts := 0
 	client := &Client{
+		anilistURL: testAnilistURL,
 		http: &http.Client{
 			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 				attempts++
@@ -126,6 +132,7 @@ func TestFetchAniListMetadataRejectsOversizedResponse(t *testing.T) {
 func TestFetchAniListMetadataRetriesTimeoutsToMappedResult(t *testing.T) {
 	attempts := 0
 	client := &Client{
+		anilistURL: testAnilistURL,
 		http: &http.Client{
 			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 				attempts++
@@ -152,6 +159,79 @@ func TestFetchAniListMetadataRetriesTimeoutsToMappedResult(t *testing.T) {
 	}
 	if result.MALID != 20 || result.AniListID != 1 || result.TitleRomaji != "Example Anime" || result.Status != "FINISHED" {
 		t.Fatalf("expected mapped AniList metadata after retry, got %#v", result)
+	}
+}
+
+func TestAniListRequestsUseInjectedEndpoint(t *testing.T) {
+	var requested []string
+	client := &Client{
+		anilistURL: testAnilistURL,
+		http: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				requested = append(requested, req.URL.String())
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"data":{}}`)),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+		logger: api.NopLogger{},
+	}
+
+	if _, err := client.anilistSearch(context.Background(), "Example Anime", 0); err != nil {
+		t.Fatalf("anilist search: %v", err)
+	}
+	if _, err := client.FetchAniListMetadata(context.Background(), 20); err != nil {
+		t.Fatalf("anilist metadata: %v", err)
+	}
+	if len(requested) != 2 {
+		t.Fatalf("expected one search and one metadata request, got %d", len(requested))
+	}
+	for _, endpoint := range requested {
+		if endpoint != testAnilistURL {
+			t.Fatalf("expected injected endpoint %q, got %q", testAnilistURL, endpoint)
+		}
+	}
+}
+
+func TestResolveAnimeWarnsSanitizedOnSearchFailure(t *testing.T) {
+	logger := &captureTMDBLogger{}
+	client := &Client{
+		anilistURL: testAnilistURL,
+		http: &http.Client{
+			Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusInternalServerError,
+					Body:       io.NopCloser(strings.NewReader("upstream failure")),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+		logger: logger,
+	}
+
+	result, err := client.ResolveAnime(context.Background(), "Example Anime", MetadataInput{
+		Filename: "Example.Anime.2026.S01.1080p.WEB-DL-GRP",
+	})
+	if err != nil {
+		t.Fatalf("expected best-effort resolve to succeed, got %v", err)
+	}
+	if result.MALID != 0 {
+		t.Fatalf("expected no MAL id without candidates, got %d", result.MALID)
+	}
+
+	warnings := logger.warnings()
+	if len(warnings) != 2 {
+		t.Fatalf("expected one warning per failed search term, got %#v", warnings)
+	}
+	for _, warning := range warnings {
+		if !strings.HasPrefix(warning, "tmdb: anilist search failed mal=0 err=") {
+			t.Fatalf("expected key/value warning, got %q", warning)
+		}
+		if strings.Contains(warning, "Example") || strings.Contains(warning, "GRP") {
+			t.Fatalf("expected warning to omit the search term, got %q", warning)
+		}
 	}
 }
 
