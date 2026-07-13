@@ -725,6 +725,20 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                   </p>
                 ))}
 
+                {releaseNameChanged ? null : (
+                  <div className="grid gap-0.5">
+                    <p className="label">Release name</p>
+                    <p className="value mono [overflow-wrap:anywhere]">
+                      {uploadReleaseName || originalReleaseName || "No release name yet"}
+                    </p>
+                    {!uploadReleaseName && originalReleaseName ? (
+                      <p className="muted text-xs">
+                        Prepared name — run a dry run to resolve the {tracker.name} upload name.
+                      </p>
+                    ) : null}
+                  </div>
+                )}
+
                 {releaseNameChanged ? (
                   <div className="grid gap-1 rounded-md border border-amber-300/55 bg-amber-300/12 px-2.5 py-2">
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -899,21 +913,15 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                 {namingOverrides.length > 0 ? (
                   <details>
                     <summary className="cursor-pointer list-none text-sm font-semibold marker:content-[''] [&::-webkit-details-marker]:hidden">
-                      Naming changes
+                      Naming overrides ({namingOverrides.length})
                     </summary>
                     <div className="mt-2 grid gap-1.5">
-                      <div>
-                        <p className="label">Release name</p>
-                        <p className="value mono">{preview.ReleaseName || "No release name yet"}</p>
-                      </div>
-                      <div className="grid gap-1.5">
-                        {namingOverrides.map(([key, value]) => (
-                          <div className={subtleBox} key={key}>
-                            <p className="label">{formatLabel(key)}</p>
-                            <p className="value mono">{String(value)}</p>
-                          </div>
-                        ))}
-                      </div>
+                      {namingOverrides.map(([key, value]) => (
+                        <div className={subtleBox} key={key}>
+                          <p className="label">{formatLabel(key)}</p>
+                          <p className="value mono">{String(value)}</p>
+                        </div>
+                      ))}
                     </div>
                   </details>
                 ) : null}

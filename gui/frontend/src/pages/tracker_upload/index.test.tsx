@@ -126,6 +126,22 @@ describe("TrackerUploadPage", () => {
     expect(screen.queryByText(/Upload:/)).toBeNull();
   });
 
+  it("shows the prepared release name before a dry run runs", () => {
+    render(<TrackerUploadPage {...baseProps} dryRunPreview={{ ...dryRunPreview, Trackers: [] }} />);
+
+    expect(screen.getByText("Example Movie 2160p WEB-DL DD+ 5.1-GRP")).toBeTruthy();
+    expect(
+      screen.getByText(/Prepared name — run a dry run to resolve the AITHER upload name\./),
+    ).toBeTruthy();
+  });
+
+  it("lists the naming overrides in effect", () => {
+    render(<TrackerUploadPage {...baseProps} namingOverrides={[["Tag", "-GRP"]]} />);
+
+    expect(screen.getByText("Naming overrides (1)")).toBeTruthy();
+    expect(screen.getByText("-GRP")).toBeTruthy();
+  });
+
   it("shows rule warnings without blocking tracker eligibility", () => {
     render(
       <TrackerUploadPage
