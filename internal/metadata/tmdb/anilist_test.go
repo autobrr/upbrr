@@ -23,7 +23,7 @@ func TestAniListSearchRetriesTimeouts(t *testing.T) {
 				if attempts < 3 {
 					return nil, timeoutError{err: errors.New("timeout")}
 				}
-				body := `{"data":{"Page":{"media":[{"id":1,"idMal":20,"title":{"romaji":"Test","english":"Test"},"seasonYear":"2024","episodes":12,"tags":[{"name":"Shounen"}]}]}}}`
+				body := `{"data":{"Page":{"media":[{"id":1,"idMal":20,"title":{"romaji":"Test","english":"Test"},"seasonYear":2024,"episodes":12,"tags":[{"name":"Shounen"}]}]}}}`
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(body)),

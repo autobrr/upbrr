@@ -27,10 +27,11 @@ const defaultBaseURL = "https://api.themoviedb.org/3"
 var errNotFound = errors.New("tmdb: not found")
 
 type Client struct {
-	apiKey  string
-	baseURL string
-	http    *http.Client
-	logger  api.Logger
+	apiKey     string
+	baseURL    string
+	anilistURL string
+	http       *http.Client
+	logger     api.Logger
 }
 
 func NewClient(httpClient *http.Client, logger api.Logger, apiKey string) *Client {
@@ -41,10 +42,11 @@ func NewClient(httpClient *http.Client, logger api.Logger, apiKey string) *Clien
 		logger = api.NopLogger{}
 	}
 	return &Client{
-		apiKey:  strings.TrimSpace(apiKey),
-		baseURL: defaultBaseURL,
-		http:    httpClient,
-		logger:  logger,
+		apiKey:     strings.TrimSpace(apiKey),
+		baseURL:    defaultBaseURL,
+		anilistURL: anilistURL,
+		http:       httpClient,
+		logger:     logger,
 	}
 }
 
