@@ -3741,6 +3741,45 @@ func TestRunUploadPreparedDebugDryRunIgnoresCheckBlocksForArtifacts(t *testing.T
 	}
 }
 
+func TestFetchTrackerDryRunPreviewFetchesMetadataOnCacheMiss(t *testing.T) {
+	t.Parallel()
+
+	meta := &stubMeta{}
+	tracker := &stubTrackers{dryRunEntries: []api.TrackerDryRunEntry{{Tracker: "AITHER", Status: "ready"}}}
+	core, err := New(api.CoreDependencies{
+		Config: config.Config{MainSettings: config.MainSettingsConfig{TMDBAPI: "x"}, ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1}},
+		Services: api.ServiceSet{
+			Filesystem: &stubFS{},
+			Metadata:   meta,
+			Torrents:   &stubTorrent{},
+			Clients:    &stubClient{},
+			Trackers:   tracker,
+		},
+		Repository: &stubRepo{},
+	})
+	if err != nil {
+		t.Fatalf("new core: %v", err)
+	}
+
+	preview, err := core.FetchTrackerDryRunPreview(context.Background(), api.Request{
+		Paths:    []string{"/tmp/a"},
+		Mode:     api.ModeGUI,
+		Trackers: []string{"AITHER"},
+	})
+	if err != nil {
+		t.Fatalf("fetch tracker dry-run preview: %v", err)
+	}
+	if preview.SourcePath != "/tmp/a" {
+		t.Fatalf("expected source path /tmp/a, got %q", preview.SourcePath)
+	}
+	if meta.calls != 1 {
+		t.Fatalf("expected metadata to be prepared once on cache miss, got %d calls", meta.calls)
+	}
+	if tracker.dryRunCalls != 1 {
+		t.Fatalf("expected 1 dry-run build call, got %d", tracker.dryRunCalls)
+	}
+}
+
 func TestFetchTrackerDryRunPreviewNoSeedSkipsClient(t *testing.T) {
 	t.Parallel()
 
@@ -3968,7 +4007,7 @@ func TestFetchTrackerDryRunPreviewRequiresCachedMetadata(t *testing.T) {
 
 	_, err = core.FetchTrackerDryRunPreview(context.Background(), api.Request{
 		Paths: []string{"/tmp/a"},
-		Mode:  api.ModeGUI,
+		Mode:  api.ModeCLI,
 	})
 	assertRequiresPreparedMetadata(t, err, "/tmp/a")
 }

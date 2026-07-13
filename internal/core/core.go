@@ -2268,6 +2268,16 @@ func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (
 				}
 			}
 		}
+		if !ok {
+			// The prepared-metadata cache is in-memory, so a restarted GUI session has
+			// none until the metadata is fetched again. Fetch it here instead of
+			// refusing the dry run: the preview populates the same cache this reads.
+			c.logger.Debugf("core: tracker dry-run fetching metadata after cache miss for %s", uniquePaths[0])
+			if _, err := c.FetchMetadataPreview(ctx, singleReq); err != nil {
+				return api.TrackerDryRunPreview{}, err
+			}
+			meta, ok = c.getDupeCache(uniquePaths[0], signature)
+		}
 	} else {
 		if !ok {
 			return api.TrackerDryRunPreview{}, fmt.Errorf("core: tracker dry-run requires prepared metadata for %s", uniquePaths[0])
