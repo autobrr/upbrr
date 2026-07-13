@@ -71,6 +71,11 @@ func collapseSpaces(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+// isSet reports whether an optional override flag is present and enabled.
+func isSet(flag *bool) bool {
+	return flag != nil && *flag
+}
+
 func baseReleaseName(meta api.PreparedMetadata) string {
 	name := strings.TrimSpace(meta.ReleaseName)
 	if name == "" {

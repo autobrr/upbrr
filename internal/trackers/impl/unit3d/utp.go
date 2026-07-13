@@ -6,6 +6,7 @@ package unit3d
 import (
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -33,8 +34,8 @@ func buildUTPName(meta api.PreparedMetadata) string {
 	category := resolveUnit3DCategory(meta)
 	releaseType := inferUnit3DType(meta)
 
-	title := strings.TrimSpace(meta.Release.Title)
-	aka := strings.TrimSpace(utpAKA(meta))
+	title := utpTitle(meta, category)
+	aka := utpAKA(meta, title)
 	year := utpYear(meta.Release.Year)
 	threeD := strings.TrimSpace(meta.Is3D)
 	uhd := strings.TrimSpace(meta.UHD)
@@ -54,6 +55,19 @@ func buildUTPName(meta api.PreparedMetadata) string {
 	region := strings.TrimSpace(meta.Region)
 	season := strings.TrimSpace(meta.SeasonStr)
 	episode := strings.TrimSpace(meta.EpisodeStr)
+
+	// The name-suppression toggles are naming-only: they never reach a metadata
+	// field, so a from-scratch builder has to read them off the overrides.
+	overrides := meta.ReleaseNameOverrides
+	if isSet(overrides.NoYear) {
+		year = ""
+	}
+	if isSet(overrides.NoSeason) {
+		season, episode = "", ""
+	}
+	if isSet(overrides.NoAKA) {
+		aka = ""
+	}
 
 	sourceTag := strings.TrimSpace(meta.Source)
 	typeTag := ""
@@ -98,13 +112,63 @@ func buildUTPName(meta api.PreparedMetadata) string {
 	return name
 }
 
-// utpAKA returns the retrieved AKA string, stored on the TMDB metadata with the
-// "AKA " prefix already applied (empty when no AKA was retrieved).
-func utpAKA(meta api.PreparedMetadata) string {
+// utpTitle resolves the English name UTOPIA requires. The parsed title is only a
+// fallback: it is whatever the source directory happened to use, which for foreign
+// releases is a romaji or transliterated name rather than the English one.
+func utpTitle(meta api.PreparedMetadata, category string) string {
+	candidates := make([]string, 0, 4)
+	if category == "TV" && meta.ExternalMetadata.TVDB != nil {
+		candidates = append(candidates, meta.ExternalMetadata.TVDB.NameEnglish)
+	}
 	if meta.ExternalMetadata.TMDB != nil {
-		return meta.ExternalMetadata.TMDB.RetrievedAKA
+		candidates = append(candidates, meta.ExternalMetadata.TMDB.Title)
+	}
+	if meta.ExternalMetadata.IMDB != nil {
+		candidates = append(candidates, meta.ExternalMetadata.IMDB.Title)
+	}
+	candidates = append(candidates, meta.Release.Title)
+
+	for _, candidate := range candidates {
+		if value := strings.TrimSpace(candidate); value != "" {
+			return value
+		}
 	}
 	return ""
+}
+
+// utpAKA returns the "AKA <original title>" segment that follows the English name:
+// the AniList romaji for anime, otherwise the TMDB original title. TMDB stores
+// RetrievedAKA with the "AKA " prefix already applied.
+//
+// No other source qualifies. IMDb and the parsed release name carry a transliteration
+// of the native title rather than the romaji, which is not a name UTOPIA accepts: an
+// anime whose romaji already equals its English title must get no AKA at all instead
+// of a syllable-by-syllable rendering of the native one.
+func utpAKA(meta api.PreparedMetadata, title string) string {
+	candidates := make([]string, 0, 2)
+	if meta.ExternalMetadata.TMDB != nil {
+		candidates = append(candidates, meta.ExternalMetadata.TMDB.RetrievedAKA, meta.ExternalMetadata.TMDB.OriginalTitle)
+	}
+
+	for _, candidate := range candidates {
+		value := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(candidate), "AKA "))
+		if value == "" || strings.EqualFold(value, strings.TrimSpace(title)) || !isLatinScript(value) {
+			continue
+		}
+		return "AKA " + value
+	}
+	return ""
+}
+
+// isLatinScript reports whether every letter in value is Latin, so native titles
+// (kanji, Cyrillic, ...) never reach the release name.
+func isLatinScript(value string) bool {
+	for _, r := range value {
+		if unicode.IsLetter(r) && !unicode.Is(unicode.Latin, r) {
+			return false
+		}
+	}
+	return true
 }
 
 // utpYear renders the release year, returning an empty string when absent so the

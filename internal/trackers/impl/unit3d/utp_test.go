@@ -141,6 +141,67 @@ func TestBuildUTPName(t *testing.T) {
 			},
 			want: "Series S03 2023 DSNP WEB-DL 2160p H.265-GRP",
 		},
+		{
+			// The parsed title is the romaji the source directory was named with, so
+			// the name must take the English title from the providers and carry the
+			// romaji as the AKA.
+			name: "TV REMUX anime uses provider English title with romaji AKA",
+			meta: api.PreparedMetadata{
+				Type:        "REMUX",
+				Source:      "BluRay",
+				VideoCodec:  "AVC",
+				Audio:       "Dual-Audio AAC 2.0",
+				SeasonStr:   "S01",
+				Release:     api.ReleaseInfo{Title: "Rei No Sakuhin", Year: 2026, Resolution: "1080p"},
+				ExternalIDs: api.ExternalIDs{Category: "TV"},
+				Tag:         "-GRP",
+				ExternalMetadata: api.ExternalMetadata{
+					TVDB: &api.TVDBMetadata{Name: "サンプル作品", NameEnglish: "Example Anime Series"},
+					TMDB: &api.TMDBMetadata{
+						Title:         "Example Anime Series",
+						OriginalTitle: "サンプル作品",
+						RetrievedAKA:  "AKA Rei No Sakuhin",
+					},
+				},
+			},
+			want: "Example Anime Series AKA Rei No Sakuhin S01 2026 BDRemux 1080p AVC-GRP",
+		},
+		{
+			// The romaji equals the English title here, so TMDB retrieves no AKA at all.
+			// The transliterations IMDb and the source name carry are not romaji and must
+			// not stand in for one.
+			name: "TV anime without a romaji AKA drops the transliterated original",
+			meta: api.PreparedMetadata{
+				Type:        "REMUX",
+				Source:      "BluRay",
+				VideoCodec:  "AVC",
+				Audio:       "Dual-Audio AAC 2.0",
+				SeasonStr:   "S01",
+				Release:     api.ReleaseInfo{Title: "Example Series", Alt: "Egzâmpuru Shirîzu", Year: 2026, Resolution: "1080p"},
+				ExternalIDs: api.ExternalIDs{Category: "TV"},
+				Tag:         "-GRP",
+				ExternalMetadata: api.ExternalMetadata{
+					TMDB: &api.TMDBMetadata{Title: "Example Series", OriginalTitle: "サンプル作品", Anime: true},
+					IMDB: &api.IMDBMetadata{Title: "Example Series", AKA: "Egzâmpuru Shirîzu"},
+				},
+			},
+			want: "Example Series S01 2026 BDRemux 1080p AVC-GRP",
+		},
+		{
+			name: "TV drops non-Latin original title instead of putting it in the name",
+			meta: api.PreparedMetadata{
+				Type:        "REMUX",
+				Source:      "BluRay",
+				VideoCodec:  "AVC",
+				SeasonStr:   "S01",
+				Release:     api.ReleaseInfo{Title: "Example Series", Year: 2026, Resolution: "1080p"},
+				ExternalIDs: api.ExternalIDs{Category: "TV"},
+				ExternalMetadata: api.ExternalMetadata{
+					TMDB: &api.TMDBMetadata{Title: "Example Series", OriginalTitle: "サンプル作品"},
+				},
+			},
+			want: "Example Series S01 2026 BDRemux 1080p AVC",
+		},
 	}
 
 	for _, tt := range tests {
@@ -241,5 +302,37 @@ func TestSwapUTPImageURLs(t *testing.T) {
 	// Input slice must not be mutated.
 	if images[0].WebURL != "https://host/page" {
 		t.Fatalf("input slice mutated: %q", images[0].WebURL)
+	}
+}
+
+// TestBuildUTPNameHonoursSuppressionOverrides covers the naming-only toggles.
+// They never reach a metadata field, so a from-scratch builder like UTP has to
+// read them off ReleaseNameOverrides or it silently ignores the user.
+func TestBuildUTPNameHonoursSuppressionOverrides(t *testing.T) {
+	enabled := true
+	meta := api.PreparedMetadata{
+		Type:        "REMUX",
+		Source:      "BluRay",
+		VideoCodec:  "AVC",
+		SeasonStr:   "S01",
+		Release:     api.ReleaseInfo{Title: "Rei No Sakuhin", Year: 2026, Resolution: "1080p"},
+		ExternalIDs: api.ExternalIDs{Category: "TV"},
+		Tag:         "-GRP",
+		ExternalMetadata: api.ExternalMetadata{
+			TMDB: &api.TMDBMetadata{
+				Title:        "Example Anime Series",
+				RetrievedAKA: "AKA Rei No Sakuhin",
+			},
+		},
+	}
+	meta.ReleaseNameOverrides = api.ReleaseNameOverrides{
+		NoYear:   &enabled,
+		NoSeason: &enabled,
+		NoAKA:    &enabled,
+	}
+
+	want := "Example Anime Series BDRemux 1080p AVC-GRP"
+	if got := buildUTPName(meta); got != want {
+		t.Fatalf("buildUTPName()\n got: %q\nwant: %q", got, want)
 	}
 }
