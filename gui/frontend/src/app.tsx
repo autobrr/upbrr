@@ -88,6 +88,12 @@ import {
 import { hasFetchedExternalPreviewData } from "./utils/externalPreview";
 import { handleExternalLinkClick } from "./utils/externalLinks";
 import { normalizeJobStatus } from "./utils/jobStatus";
+import {
+  buildExistingSlotImages,
+  pendingSelections,
+  selectionTimestamp,
+  staleSlotPaths,
+} from "./utils/screenshotSlots";
 import { isMetadataProgressPathMatch } from "./utils/metadataProgress";
 import { dupeSkipReason, isRuleSkippedResult } from "./utils/dupeCheck";
 import {
@@ -1797,17 +1803,42 @@ export default function App() {
   );
 
   // Helper functions for screenshot management (not in the hook)
-  const handleDeleteExistingImage = (image: ScreenshotImage) => {
+  const handleDeleteExistingImage = async (image: ScreenshotImage) => {
     if (!image.Path) return;
+    if (!globalThis.confirm("Delete this image from the temp folder?")) {
+      return;
+    }
     const deletedPath = image.Path;
+    // Only prune local state once the file is actually gone, or it returns on reload.
+    if (!(await screenshots.deleteScreenshotFile(deletedPath))) {
+      return;
+    }
     screenshots.setExistingImages((prev) =>
       prev.filter((entry) => entry.image.Path !== deletedPath),
     );
+    screenshots.setExistingTrackerImages((prev) =>
+      prev.filter((entry) => entry.image.Path !== deletedPath),
+    );
+    screenshots.setPreviewImages((prev) =>
+      prev.filter((entry) => entry.image.Path !== deletedPath),
+    );
     if (screenshots.finalImagesRef.current.length > 0) {
-      screenshots.saveFinalSelections(
+      await screenshots.saveFinalSelections(
         screenshots.finalImagesRef.current.filter((entry) => entry.image.Path !== deletedPath),
       );
     }
+    screenshots.setScreenshotPlan((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        ExistingScreenshots: (prev.ExistingScreenshots || []).filter(
+          (entry) => entry.Path !== deletedPath,
+        ),
+        ExistingTrackerScreenshots: (prev.ExistingTrackerScreenshots || []).filter(
+          (entry) => entry.Path !== deletedPath,
+        ),
+      };
+    });
   };
 
   const mergeFinalSelections = (
@@ -1882,15 +1913,8 @@ export default function App() {
     return { selections: nextSelections, targetIndex: resolvedIndex };
   };
 
-  const normalizeSelectionTimestamp = (entry: ScreenshotSelection) => {
-    if (Number.isFinite(entry.TimestampSeconds) && entry.TimestampSeconds > 0) {
-      return entry.TimestampSeconds;
-    }
-    if (Number.isFinite(entry.Frame) && entry.Frame > 0) {
-      return entry.Frame / previewFrameRate;
-    }
-    return 0;
-  };
+  const normalizeSelectionTimestamp = (entry: ScreenshotSelection) =>
+    selectionTimestamp(entry, previewFrameRate);
 
   const desiredScreenCount = () => {
     if (
@@ -3034,21 +3058,11 @@ export default function App() {
     });
     const candidates = autoSelections.length > 0 ? autoSelections : baseSelections;
 
-    const resolveTimestamp = (entry: ScreenshotSelection) => {
-      if (Number.isFinite(entry.TimestampSeconds) && entry.TimestampSeconds > 0) {
-        return entry.TimestampSeconds;
-      }
-      if (Number.isFinite(entry.Frame) && entry.Frame > 0) {
-        return entry.Frame / previewFrameRate;
-      }
-      return 0;
-    };
-
     const closest = candidates.reduce(
       (best, entry) => {
-        const currentDiff = Math.abs(resolveTimestamp(entry) - timestamp);
+        const currentDiff = Math.abs(normalizeSelectionTimestamp(entry) - timestamp);
         if (!best) return entry;
-        const bestDiff = Math.abs(resolveTimestamp(best) - timestamp);
+        const bestDiff = Math.abs(normalizeSelectionTimestamp(best) - timestamp);
         if (currentDiff < bestDiff) return entry;
         return best;
       },
@@ -3077,7 +3091,7 @@ export default function App() {
     const manualSelection = reindexed.selections.find((entry) => {
       const source = (entry.Source || "").toLowerCase();
       if (source !== "manual") return false;
-      const ts = resolveTimestamp(entry);
+      const ts = normalizeSelectionTimestamp(entry);
       if (!Number.isFinite(ts) || ts <= 0) return false;
       return Math.abs(ts - timestamp) <= tolerance;
     });
@@ -3125,20 +3139,18 @@ export default function App() {
     }
   };
 
-  const buildExistingSelectionIndexSet = () => {
-    const indices = new Set<number>();
-    const addImages = (images: ScreenshotImage[] | undefined) => {
-      if (!images || images.length === 0) return;
-      images.forEach((image) => {
-        if (Number.isFinite(image.Index)) {
-          indices.add(image.Index);
-        }
-      });
-    };
-    addImages(screenshots.screenshotPlan?.ExistingScreenshots);
-    addImages(screenshots.existingImages.map((entry) => entry.image));
-    addImages(screenshots.finalImagesRef.current.map((entry) => entry.image));
-    return indices;
+  // Slot -> image currently filling it. A freshly loaded plan is passed in because
+  // setScreenshotPlan has not flushed yet.
+  const existingSlotImages = (plan?: ScreenshotPlan | null) => {
+    const finalPaths = new Set(
+      screenshots.finalImagesRef.current.map((entry) => entry.image.Path).filter(Boolean),
+    );
+    return buildExistingSlotImages(
+      (plan ?? screenshots.screenshotPlan)?.ExistingScreenshots,
+      screenshots.previewImages
+        .map((entry) => entry.image)
+        .filter((image) => image.Path && finalPaths.has(image.Path)),
+    );
   };
 
   const handleGenerateScreenshots = async () => {
@@ -3148,16 +3160,17 @@ export default function App() {
       return;
     }
     let selections = screenshots.screenshotSelections;
+    let loadedPlan: ScreenshotPlan | null = null;
     if (selections.length === 0) {
-      const plan = await screenshots.loadScreenshotPlan(false);
-      selections = plan?.SuggestedSelections || [];
+      loadedPlan = await screenshots.loadScreenshotPlan(false);
+      selections = loadedPlan?.SuggestedSelections || [];
     }
     if (selections.length === 0) {
       screenshots.setScreenshotsError("No screenshot selections available.");
       return;
     }
-    const existingIndices = buildExistingSelectionIndexSet();
-    const filteredSelections = selections.filter((entry) => !existingIndices.has(entry.Index));
+    const existingSlots = existingSlotImages(loadedPlan);
+    const filteredSelections = pendingSelections(selections, existingSlots, previewFrameRate);
     if (filteredSelections.length === 0) {
       screenshots.setScreenshotsError("All requested screenshots already exist.");
       return;
@@ -3167,9 +3180,29 @@ export default function App() {
       const result = await runScreenshotCapture(filteredSelections, "final");
       screenshots.setFinalResult(result);
       const images = result.Images || [];
+
+      const capturedPaths = new Set(images.map((image) => image.Path));
+      const stalePaths = staleSlotPaths(images, existingSlots);
+      for (const stalePath of stalePaths) {
+        await screenshots.deleteScreenshotFile(stalePath);
+      }
+
       const previews = await Promise.all(images.map(screenshots.readScreenshotImage));
-      const merged = mergeFinalSelections(screenshots.finalImagesRef.current, previews);
-      await screenshots.saveFinalSelections(merged);
+      const kept = screenshots.finalImagesRef.current.filter(
+        (entry) => !stalePaths.has(entry.image.Path),
+      );
+      await screenshots.saveFinalSelections(mergeFinalSelections(kept, previews));
+      screenshots.setPreviewImages((prev) =>
+        prev.filter((entry) => !stalePaths.has(entry.image.Path)),
+      );
+      // Record the captures so a repeat click skips them instead of re-shooting.
+      screenshots.setScreenshotPlan((prev) => {
+        if (!prev) return prev;
+        const retained = (prev.ExistingScreenshots || []).filter(
+          (entry) => !stalePaths.has(entry.Path) && !capturedPaths.has(entry.Path),
+        );
+        return { ...prev, ExistingScreenshots: [...retained, ...images] };
+      });
     } catch (err) {
       screenshots.setScreenshotsError(String(err));
     } finally {

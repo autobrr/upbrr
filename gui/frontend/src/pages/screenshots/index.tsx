@@ -52,7 +52,7 @@ type Props = Readonly<{
   handleDeleteAllExistingImages: () => void;
   existingTrackerImages: ScreenshotPreviewImage[];
   handleDeleteAllTrackerImages: () => void;
-  handleDeleteExistingImage: (image: ScreenshotImage) => void;
+  handleDeleteExistingImage: (image: ScreenshotImage) => Promise<void>;
   showFrameSelections: boolean;
   screenshotSelections: ScreenshotSelection[];
   updateSelectionTime: (index: number, value: string) => void;
