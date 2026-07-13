@@ -1612,7 +1612,7 @@ func editionFromMeta(meta api.PreparedMetadata, doc mediaInfoDoc) (string, strin
 	}
 	repack := repackFromMeta(meta, edition)
 	if edition == "" {
-		return "", repack
+		return withHybrid(meta, ""), repack
 	}
 	if repackPattern.MatchString(edition) {
 		if repack == "" {
@@ -1621,9 +1621,35 @@ func editionFromMeta(meta api.PreparedMetadata, doc mediaInfoDoc) (string, strin
 		edition = strings.TrimSpace(repackPattern.ReplaceAllString(edition, ""))
 	}
 	if isIMDbEdition {
-		return cleanIMDbEditionText(edition), strings.ToUpper(repack)
+		return withHybrid(meta, cleanIMDbEditionText(edition)), strings.ToUpper(repack)
 	}
-	return cleanEditionText(edition), strings.ToUpper(repack)
+	return withHybrid(meta, cleanEditionText(edition)), strings.ToUpper(repack)
+}
+
+// withHybrid folds a hybrid marker into the edition. rls files HYBRID under the
+// parsed Other tokens, but the release-name builder and the trackers read hybrid
+// off the edition, so a source that never carries it there loses the marker: the
+// name builder renders it in its own slot and BHD tags from the same field.
+func withHybrid(meta api.PreparedMetadata, edition string) string {
+	if !hybridFromMeta(meta, edition) {
+		return edition
+	}
+	if strings.Contains(strings.ToUpper(edition), "HYBRID") {
+		return edition
+	}
+	return strings.TrimSpace("Hybrid " + edition)
+}
+
+// hybridFromMeta scans source basenames and parsed release tokens for the hybrid
+// marker, the same way repack markers are recovered.
+func hybridFromMeta(meta api.PreparedMetadata, edition string) bool {
+	return hasReleaseToken(releaseTokens(
+		pathutil.Base(meta.SourcePath),
+		pathutil.Base(meta.VideoPath),
+		edition,
+		strings.Join(meta.Release.Edition, " "),
+		strings.Join(meta.Release.Other, " "),
+	), "HYBRID")
 }
 
 // repackFromMeta scans source basenames and parsed release tokens so repack

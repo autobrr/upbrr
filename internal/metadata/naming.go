@@ -66,11 +66,11 @@ func BuildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	dvdSize := strings.TrimSpace(req.DVDSize)
 	edition := strings.TrimSpace(req.Edition)
 
-	edition = removeHybrid(edition)
 	hybrid := ""
-	if req.WebDV {
+	if req.WebDV || hasHybridEdition(edition) {
 		hybrid = "Hybrid"
 	}
+	edition = removeHybrid(edition)
 
 	if req.ManualDate {
 		season = ""
@@ -552,6 +552,15 @@ func cleanFilename(name string) string {
 		result = strings.ReplaceAll(result, string(char), "-")
 	}
 	return result
+}
+
+func hasHybridEdition(edition string) bool {
+	for value := range strings.FieldsSeq(edition) {
+		if strings.EqualFold(value, "Hybrid") {
+			return true
+		}
+	}
+	return false
 }
 
 func removeHybrid(edition string) string {

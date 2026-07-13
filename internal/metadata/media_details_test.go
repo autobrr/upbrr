@@ -111,6 +111,32 @@ func TestEditionFromMetaMultiPlaylistFallsBackWhenNoIMDbMatch(t *testing.T) {
 	}
 }
 
+func TestEditionFromMetaRecoversHybridFromParsedTokens(t *testing.T) {
+	meta := api.PreparedMetadata{
+		SourcePath:  `D:\Shows\Example Series S01 2026 Hybrid BDRemux 1080p`,
+		ExternalIDs: api.ExternalIDs{Category: "TV"},
+		Release:     api.ReleaseInfo{Other: []string{"HYBRiD"}},
+	}
+
+	edition, _ := editionFromMeta(meta, mediaInfoDoc{})
+	if edition != "Hybrid" {
+		t.Fatalf("expected hybrid edition, got %q", edition)
+	}
+}
+
+func TestEditionFromMetaKeepsHybridAlongsideEdition(t *testing.T) {
+	meta := api.PreparedMetadata{
+		SourcePath:  `D:\Movies\Example.Movie.2026.Hybrid.Extended.1080p.BluRay.REMUX.AVC-GRP`,
+		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+		Release:     api.ReleaseInfo{Edition: []string{"Extended"}, Other: []string{"HYBRiD"}},
+	}
+
+	edition, _ := editionFromMeta(meta, mediaInfoDoc{})
+	if edition != "Hybrid Extended" {
+		t.Fatalf("expected hybrid to join the edition, got %q", edition)
+	}
+}
+
 func TestEditionFromMetaMatchesIMDbRuntimeForSingleFile(t *testing.T) {
 	meta := api.PreparedMetadata{
 		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},

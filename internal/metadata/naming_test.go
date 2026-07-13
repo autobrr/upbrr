@@ -84,6 +84,25 @@ func TestBuildReleaseNameHybridEdition(t *testing.T) {
 	}
 }
 
+func TestBuildReleaseNameHybridEditionWithoutWebDV(t *testing.T) {
+	result := BuildReleaseName(api.ReleaseNameRequest{
+		Category:   "MOVIE",
+		Type:       "REMUX",
+		Title:      "Example Movie",
+		Year:       2026,
+		Edition:    "Hybrid",
+		Resolution: "1080p",
+		Source:     "BluRay",
+		Audio:      "DTS",
+		VideoCodec: "AVC",
+	}, api.NopLogger{})
+
+	expected := "Example Movie 2026 Hybrid 1080p BluRay REMUX AVC DTS"
+	if result.NameNoTag != expected {
+		t.Fatalf("expected %q, got %q", expected, result.NameNoTag)
+	}
+}
+
 func TestBuildReleaseNameEncodeFallsBackToVideoCodec(t *testing.T) {
 	result := BuildReleaseName(api.ReleaseNameRequest{
 		Category:   "MOVIE",

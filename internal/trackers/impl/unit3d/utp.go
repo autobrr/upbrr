@@ -39,11 +39,7 @@ func buildUTPName(meta api.PreparedMetadata) string {
 	year := utpYear(meta.Release.Year)
 	threeD := strings.TrimSpace(meta.Is3D)
 	uhd := strings.TrimSpace(meta.UHD)
-	edition := strings.TrimSpace(meta.Edition)
-	hybrid := ""
-	if meta.WebDV {
-		hybrid = "Hybrid"
-	}
+	edition, hybrid := splitHybridEdition(meta)
 	repack := strings.TrimSpace(meta.Repack)
 	resolution := strings.TrimSpace(resolveResolution(meta))
 	hdr := strings.TrimSpace(meta.HDR)

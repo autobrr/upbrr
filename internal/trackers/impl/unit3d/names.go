@@ -76,6 +76,25 @@ func isSet(flag *bool) bool {
 	return flag != nil && *flag
 }
 
+// splitHybridEdition separates the hybrid marker from the edition. Hybrid is
+// carried inside the edition (metadata folds the parsed token in there), but the
+// names that build from components render it in its own slot.
+func splitHybridEdition(meta api.PreparedMetadata) (edition string, hybrid string) {
+	fields := strings.Fields(meta.Edition)
+	kept := fields[:0]
+	for _, value := range fields {
+		if strings.EqualFold(value, "Hybrid") {
+			hybrid = "Hybrid"
+			continue
+		}
+		kept = append(kept, value)
+	}
+	if meta.WebDV {
+		hybrid = "Hybrid"
+	}
+	return strings.Join(kept, " "), hybrid
+}
+
 func baseReleaseName(meta api.PreparedMetadata) string {
 	name := strings.TrimSpace(meta.ReleaseName)
 	if name == "" {

@@ -167,6 +167,22 @@ func TestBuildUTPName(t *testing.T) {
 			want: "Example Anime Series AKA Rei No Sakuhin S01 2026 BDRemux 1080p AVC-GRP",
 		},
 		{
+			// A BluRay hybrid carries the marker in the edition rather than WebDV, and
+			// the marker gets its own slot instead of being rendered as an edition.
+			name: "TV REMUX hybrid renders the edition-carried marker in the hybrid slot",
+			meta: api.PreparedMetadata{
+				Type:        "REMUX",
+				Source:      "BluRay",
+				VideoCodec:  "AVC",
+				SeasonStr:   "S01",
+				Edition:     "Hybrid",
+				Release:     api.ReleaseInfo{Title: "Example Series", Year: 2026, Resolution: "1080p"},
+				ExternalIDs: api.ExternalIDs{Category: "TV"},
+				Tag:         "-GRP",
+			},
+			want: "Example Series S01 2026 Hybrid BDRemux 1080p AVC-GRP",
+		},
+		{
 			// The romaji equals the English title here, so TMDB retrieves no AKA at all.
 			// The transliterations IMDb and the source name carry are not romaji and must
 			// not stand in for one.
