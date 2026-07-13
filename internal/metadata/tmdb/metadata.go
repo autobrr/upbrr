@@ -241,7 +241,9 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 		result.Anime = isAnime(media.OriginalLanguage, media.Genres)
 	}
 	if result.Anime {
-		animeResult, err := c.ResolveAnime(ctx, title, input)
+		// requestCtx, not ctx: the errgroup context above is canceled once Wait
+		// returns, which would fail every AniList request.
+		animeResult, err := c.ResolveAnime(requestCtx, title, input)
 		if err == nil {
 			result.MALID = animeResult.MALID
 			result.RetrievedAKA = animeResult.Romaji
