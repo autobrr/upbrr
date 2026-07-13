@@ -134,9 +134,13 @@ func IsNonUnit3DTracker(name string) bool {
 // modified/renamed-release rule (see isRenamedRelease). The rule is on for all
 // trackers by default; this is the single place to exempt special pseudo-trackers
 // or any tracker known to accept modified releases.
+//
+// UTP prescribes its own space-delimited release naming (utp.to/pages/33, see
+// buildUTPName), so renaming away from the dotted scene/P2P name is expected
+// there rather than a violation, and the rename signals do not apply.
 func skipsModifiedReleaseCheck(name string) bool {
 	switch strings.ToUpper(strings.TrimSpace(name)) {
-	case "MANUAL":
+	case "MANUAL", "UTP":
 		return true
 	default:
 		return false

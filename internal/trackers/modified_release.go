@@ -37,12 +37,15 @@ import (
 //
 // Both the source path (folder) and the primary video file are checked, since the
 // tracker inspects the file (MediaInfo "Complete name") and the in-torrent names.
-func isRenamedRelease(meta api.PreparedMetadata) (bool, string) {
+//
+// The third return value names the signal that fired ("srrdb", "arr-token",
+// "space-rename"). It is for logging only: the user-facing reason stays generic.
+func isRenamedRelease(meta api.PreparedMetadata) (bool, string, string) {
 	if meta.PersonalRelease {
-		return false, ""
+		return false, "", ""
 	}
 	if strings.TrimSpace(meta.DiscType) != "" {
-		return false, ""
+		return false, "", ""
 	}
 
 	// srrdb scene detection (the imdb: fallback) authoritatively compares the
@@ -55,12 +58,12 @@ func isRenamedRelease(meta api.PreparedMetadata) (bool, string) {
 		if reason == "" {
 			reason = modifiedReleaseReason
 		}
-		return true, reason
+		return true, reason, "srrdb"
 	}
 
 	group := strings.TrimSpace(meta.Release.Group)
 	if skipsStandardRenameCheck(group) {
-		return false, ""
+		return false, "", ""
 	}
 
 	names := candidateReleaseNames(meta)
@@ -69,19 +72,19 @@ func isRenamedRelease(meta api.PreparedMetadata) (bool, string) {
 	// (which an *arr rename often strips), so check them before the group gate.
 	for _, name := range names {
 		if arrRenameToken(name) != "" {
-			return true, modifiedReleaseReason
+			return true, modifiedReleaseReason, "arr-token"
 		}
 	}
 
 	if group == "" {
-		return false, ""
+		return false, "", ""
 	}
 	for _, name := range names {
 		if isRenamedReleaseName(name, group) {
-			return true, modifiedReleaseReason
+			return true, modifiedReleaseReason, "space-rename"
 		}
 	}
-	return false, ""
+	return false, "", ""
 }
 
 // modifiedReleaseReason is deliberately generic: it discloses neither the

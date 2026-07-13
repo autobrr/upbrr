@@ -4,6 +4,7 @@
 package trackers
 
 import (
+	"context"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -268,13 +269,40 @@ func TestIsRenamedRelease(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, reason := isRenamedRelease(tc.meta)
+			got, reason, signal := isRenamedRelease(tc.meta)
 			if got != tc.want {
 				t.Fatalf("isRenamedRelease = %v (%q), want %v", got, reason, tc.want)
 			}
-			if got && reason == "" {
-				t.Fatal("expected a non-empty reason when renamed")
+			if got && (reason == "" || signal == "") {
+				t.Fatalf("expected a non-empty reason and signal when renamed, got %q/%q", reason, signal)
 			}
 		})
+	}
+}
+
+// UTP prescribes space-delimited names, so a spaced source folder that trips the
+// space-rename heuristic must not fail the rule there while it still does elsewhere.
+func TestEvaluateRulesModifiedReleaseUTPExempt(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		SourcePath: `D:\Shows\Example Series S01 2026 BluRay REMUX 1080p-GRP`,
+		Release:    api.ReleaseInfo{Group: "GRP"},
+	}
+
+	hasModifiedRelease := func(tracker string) bool {
+		for _, failure := range EvaluateRules(context.Background(), tracker, meta, nil) {
+			if failure.Rule == "modified_release" {
+				return true
+			}
+		}
+		return false
+	}
+
+	if hasModifiedRelease("UTP") {
+		t.Fatal("UTP must not fail modified_release for a space-named source")
+	}
+	if !hasModifiedRelease("AITHER") {
+		t.Fatal("AITHER must still fail modified_release for a space-named source")
 	}
 }
