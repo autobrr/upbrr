@@ -268,12 +268,12 @@ func TestIsRenamedRelease(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, reason := isRenamedRelease(tc.meta)
+			got, reason, signal := isRenamedRelease(tc.meta)
 			if got != tc.want {
 				t.Fatalf("isRenamedRelease = %v (%q), want %v", got, reason, tc.want)
 			}
-			if got && reason == "" {
-				t.Fatal("expected a non-empty reason when renamed")
+			if got && (reason == "" || signal == "") {
+				t.Fatalf("expected a non-empty reason and signal when renamed, got %q/%q", reason, signal)
 			}
 		})
 	}
