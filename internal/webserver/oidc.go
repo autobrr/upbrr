@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,11 @@ const (
 	// oidcFlowLimit caps in-flight authorization requests so unfinished flows
 	// cannot grow memory without bound.
 	oidcFlowLimit = 64
+	// oidcHTTPTimeout bounds every call to the provider: discovery, token
+	// exchange, and background JWKS refreshes. Without it a hung provider would
+	// hold a login request open indefinitely, and — because discovery runs under
+	// the service mutex — stall every other login behind it.
+	oidcHTTPTimeout = 10 * time.Second
 )
 
 // errOIDCDisabled is returned when an OIDC route is reached while OIDC is off.
@@ -49,6 +55,12 @@ type oidcService struct {
 	cfg  OIDCConfig
 	logf func(string, ...any)
 
+	// httpTimeout bounds each individual call to the provider. The HTTP client
+	// carries the same bound, because go-oidc refreshes the key set on its own
+	// background context, where a deadline of ours would never apply.
+	httpTimeout time.Duration
+	httpClient  *http.Client
+
 	mu       sync.Mutex
 	provider *oidc.Provider
 	verifier *oidc.IDTokenVerifier
@@ -66,9 +78,11 @@ func newOIDCService(cfg OIDCConfig, logf func(string, ...any)) *oidcService {
 		return nil
 	}
 	return &oidcService{
-		cfg:   cfg,
-		logf:  logf,
-		flows: make(map[string]oidcFlow),
+		cfg:         cfg,
+		logf:        logf,
+		httpTimeout: oidcHTTPTimeout,
+		httpClient:  &http.Client{Timeout: oidcHTTPTimeout},
+		flows:       make(map[string]oidcFlow),
 	}
 }
 
@@ -82,8 +96,19 @@ func (s *oidcService) DisableBuiltInLogin() bool {
 	return s.Enabled() && s.cfg.DisableBuiltInLogin
 }
 
+// boundedContext attaches the bounded HTTP client and a deadline, so a provider
+// that stalls fails the request instead of holding it open.
+func (s *oidcService) boundedContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(oidc.ClientContext(ctx, s.httpClient), s.httpTimeout)
+}
+
 // ensureProvider performs discovery once and caches the result. It is safe to
 // call on every request: after the first success it is a mutex and a nil check.
+//
+// Discovery runs under the mutex so a burst of logins against a cold service
+// performs one discovery rather than one per request. That makes bounding it
+// essential: the deadline below is what stops a hung provider from parking
+// every concurrent login behind this lock.
 func (s *oidcService) ensureProvider(ctx context.Context) error {
 	if !s.Enabled() {
 		return errOIDCDisabled
@@ -95,7 +120,10 @@ func (s *oidcService) ensureProvider(ctx context.Context) error {
 		return nil
 	}
 
-	provider, err := oidc.NewProvider(ctx, s.cfg.Issuer)
+	discoverCtx, cancel := s.boundedContext(ctx)
+	defer cancel()
+
+	provider, err := oidc.NewProvider(discoverCtx, s.cfg.Issuer)
 	if err != nil {
 		return fmt.Errorf("oidc: discover issuer: %s", redaction.RedactValue(err.Error(), nil))
 	}
@@ -140,6 +168,8 @@ func oidcScopeList(scopes string) []string {
 	return list
 }
 
+// supportsPKCE reports whether the provider advertises S256. Only S256 counts:
+// the "plain" method offers no protection worth the name.
 func supportsPKCE(methods []string) bool {
 	for _, method := range methods {
 		if strings.EqualFold(strings.TrimSpace(method), "S256") {
@@ -206,7 +236,12 @@ func (s *oidcService) Exchange(ctx context.Context, state string, code string) (
 		opts = append(opts, oauth2.VerifierOption(flow.CodeVerifier))
 	}
 
-	token, err := oauthCfg.Exchange(ctx, code, opts...)
+	// Bounded like discovery: a provider that stalls mid-exchange must fail the
+	// login, not hold the callback open.
+	exchangeCtx, cancel := s.boundedContext(ctx)
+	defer cancel()
+
+	token, err := oauthCfg.Exchange(exchangeCtx, code, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("oidc: exchange authorization code: %s", redaction.RedactValue(err.Error(), nil))
 	}
@@ -216,7 +251,12 @@ func (s *oidcService) Exchange(ctx context.Context, state string, code string) (
 		return nil, errors.New("oidc: provider response did not include an id_token")
 	}
 
-	idToken, err := verifier.Verify(ctx, rawIDToken)
+	// Verification can trigger a JWKS fetch when the provider has rotated keys,
+	// so it gets its own deadline rather than the exchange's remaining budget.
+	verifyCtx, cancelVerify := s.boundedContext(ctx)
+	defer cancelVerify()
+
+	idToken, err := verifier.Verify(verifyCtx, rawIDToken)
 	if err != nil {
 		return nil, fmt.Errorf("oidc: verify id token: %s", redaction.RedactValue(err.Error(), nil))
 	}
@@ -251,6 +291,9 @@ func (c *oidcClaims) Username() string {
 	return ""
 }
 
+// storeFlow records a pending authorization request, evicting expired entries
+// and — once at the cap — the entry closest to expiry, so abandoned logins
+// cannot grow the map without bound.
 func (s *oidcService) storeFlow(state string, flow oidcFlow) {
 	s.flowMu.Lock()
 	defer s.flowMu.Unlock()
