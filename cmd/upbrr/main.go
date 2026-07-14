@@ -734,17 +734,35 @@ func hasServeWebConfigOverrides(visited map[string]bool) bool {
 // runtime web config. Env-derived settings are persisted only when
 // --persist-web-config is explicit.
 func hasServeEnvOverrides(visited map[string]bool) bool {
-	return visited["host"] || visited["port"] || visited["base-url"] || visited["open-browser"] || visited["trusted-proxies"]
+	return visited["host"] || visited["port"] || visited["base-url"] || visited["open-browser"] ||
+		visited["trusted-proxies"] || hasServeOIDCEnvOverrides(visited)
+}
+
+// hasServeOIDCEnvOverrides reports whether any OIDC setting came from the
+// environment. Note that persisting these with --persist-web-config writes the
+// client secret to web-config.json; deployments that keep secrets out of files
+// should supply them by env on every start and not persist.
+func hasServeOIDCEnvOverrides(visited map[string]bool) bool {
+	return visited["oidc-enabled"] || visited["oidc-issuer"] || visited["oidc-client-id"] ||
+		visited["oidc-client-secret"] || visited["oidc-redirect-url"] || visited["oidc-scopes"] ||
+		visited["oidc-disable-built-in-login"]
 }
 
 // serveEnvOptions stores raw UPBRR_WEB_* values so each field can be validated
 // with the same parser used by the matching CLI flag.
 type serveEnvOptions struct {
-	Host           string
-	Port           string
-	BaseURL        string
-	OpenBrowser    string
-	TrustedProxies string
+	Host                    string
+	Port                    string
+	BaseURL                 string
+	OpenBrowser             string
+	TrustedProxies          string
+	OIDCEnabled             string
+	OIDCIssuer              string
+	OIDCClientID            string
+	OIDCClientSecret        string
+	OIDCRedirectURL         string
+	OIDCScopes              string
+	OIDCDisableBuiltInLogin string
 }
 
 // readServeEnv returns configured UPBRR_WEB_* values plus visited markers that
@@ -771,6 +789,34 @@ func readServeEnv() (serveEnvOptions, map[string]bool) {
 	if value, ok := os.LookupEnv("UPBRR_WEB_TRUSTED_PROXIES"); ok {
 		env.TrustedProxies = value
 		visited["trusted-proxies"] = true
+	}
+	if value, ok := os.LookupEnv("UPBRR_WEB_OIDC_ENABLED"); ok {
+		env.OIDCEnabled = value
+		visited["oidc-enabled"] = true
+	}
+	if value, ok := os.LookupEnv("UPBRR_WEB_OIDC_ISSUER"); ok {
+		env.OIDCIssuer = value
+		visited["oidc-issuer"] = true
+	}
+	if value, ok := os.LookupEnv("UPBRR_WEB_OIDC_CLIENT_ID"); ok {
+		env.OIDCClientID = value
+		visited["oidc-client-id"] = true
+	}
+	if value, ok := os.LookupEnv("UPBRR_WEB_OIDC_CLIENT_SECRET"); ok {
+		env.OIDCClientSecret = value
+		visited["oidc-client-secret"] = true
+	}
+	if value, ok := os.LookupEnv("UPBRR_WEB_OIDC_REDIRECT_URL"); ok {
+		env.OIDCRedirectURL = value
+		visited["oidc-redirect-url"] = true
+	}
+	if value, ok := os.LookupEnv("UPBRR_WEB_OIDC_SCOPES"); ok {
+		env.OIDCScopes = value
+		visited["oidc-scopes"] = true
+	}
+	if value, ok := os.LookupEnv("UPBRR_WEB_OIDC_DISABLE_BUILT_IN_LOGIN"); ok {
+		env.OIDCDisableBuiltInLogin = value
+		visited["oidc-disable-built-in-login"] = true
 	}
 	return env, visited
 }
@@ -812,7 +858,53 @@ func applyServeEnvOverrides(webCfg webserver.CLIConfig, env serveEnvOptions, vis
 	if visited["trusted-proxies"] {
 		webCfg.TrustedProxies = splitCSV(env.TrustedProxies)
 	}
+	oidcCfg, err := applyServeOIDCEnvOverrides(webCfg.OIDC, env, visited)
+	if err != nil {
+		return webserver.CLIConfig{}, err
+	}
+	webCfg.OIDC = oidcCfg
 	return webCfg, nil
+}
+
+// applyServeOIDCEnvOverrides applies UPBRR_WEB_OIDC_* settings. Values are not
+// validated here; normalizeCLIConfig performs the cross-field validation so the
+// same rules apply to env, flags, and persisted config.
+func applyServeOIDCEnvOverrides(
+	oidcCfg webserver.OIDCConfig,
+	env serveEnvOptions,
+	visited map[string]bool,
+) (webserver.OIDCConfig, error) {
+	if visited["oidc-enabled"] {
+		enabled, err := parseServeBool(env.OIDCEnabled)
+		if err != nil {
+			return webserver.OIDCConfig{}, fmt.Errorf("parse serve env: UPBRR_WEB_OIDC_ENABLED: %w", err)
+		}
+		oidcCfg.Enabled = enabled
+	}
+	if visited["oidc-issuer"] {
+		oidcCfg.Issuer = strings.TrimSpace(env.OIDCIssuer)
+	}
+	if visited["oidc-client-id"] {
+		oidcCfg.ClientID = strings.TrimSpace(env.OIDCClientID)
+	}
+	if visited["oidc-client-secret"] {
+		oidcCfg.ClientSecret = strings.TrimSpace(env.OIDCClientSecret)
+	}
+	if visited["oidc-redirect-url"] {
+		oidcCfg.RedirectURL = strings.TrimSpace(env.OIDCRedirectURL)
+	}
+	if visited["oidc-scopes"] {
+		oidcCfg.Scopes = strings.TrimSpace(env.OIDCScopes)
+	}
+	if visited["oidc-disable-built-in-login"] {
+		disabled, err := parseServeBool(env.OIDCDisableBuiltInLogin)
+		if err != nil {
+			return webserver.OIDCConfig{}, fmt.Errorf(
+				"parse serve env: UPBRR_WEB_OIDC_DISABLE_BUILT_IN_LOGIN: %w", err)
+		}
+		oidcCfg.DisableBuiltInLogin = disabled
+	}
+	return oidcCfg, nil
 }
 
 // parseServeBool accepts common bool spellings used in container env files.
