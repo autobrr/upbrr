@@ -4,6 +4,7 @@
 package webserver
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
@@ -456,6 +457,71 @@ func TestOIDCRoutesAreAbsentWhenDisabled(t *testing.T) {
 	srv.handleOIDCLogin(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/auth/oidc/login", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("oidc login while disabled: status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+// TestOIDCDiscoveryIsBounded covers a provider that accepts the connection and
+// then never answers. Discovery runs under the service mutex, so an unbounded
+// call here would not just hang this login — it would park every concurrent one
+// behind the lock. The request must fail instead of hanging.
+func TestOIDCDiscoveryIsBounded(t *testing.T) {
+	blocked := make(chan struct{})
+
+	// Hangs until the test ends: it accepts, then never writes a response.
+	hung := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-blocked:
+		case <-r.Context().Done():
+		}
+	}))
+	// Release the handler BEFORE closing the server. httptest.Server.Close waits
+	// for in-flight requests, so closing first would deadlock against the very
+	// handler this test is keeping parked.
+	t.Cleanup(func() {
+		close(blocked)
+		hung.Close()
+	})
+
+	srv := newAuthTestServer(t, filepath.Join(t.TempDir(), "db.sqlite"))
+	srv.oidc = newOIDCService(OIDCConfig{
+		Enabled:      true,
+		Issuer:       hung.URL,
+		ClientID:     "test-client-id",
+		ClientSecret: "test-client-secret",
+		RedirectURL:  "https://upbrr.example.test/api/auth/oidc/callback",
+		Scopes:       DefaultOIDCScopes,
+	}, func(string, ...any) {})
+
+	// Shorten the service's own bound so the test does not sit for the full
+	// production timeout.
+	srv.oidc.httpTimeout = 500 * time.Millisecond
+	srv.oidc.httpClient = &http.Client{Timeout: 500 * time.Millisecond}
+
+	// Deliberately a context with NO deadline. If the service did not impose its
+	// own bound, nothing here would ever cancel the call — which is exactly the
+	// failure this test exists to catch. A test context with a deadline would
+	// pass even against the unbounded implementation, proving nothing.
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := srv.oidc.AuthCodeURL(context.Background())
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("AuthCodeURL succeeded against a provider that never responds")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("AuthCodeURL hung: discovery is not bounded")
+	}
+
+	// The failure must not leave a half-built provider cached.
+	srv.oidc.mu.Lock()
+	cached := srv.oidc.provider != nil
+	srv.oidc.mu.Unlock()
+	if cached {
+		t.Fatal("a failed discovery cached a provider")
 	}
 }
 

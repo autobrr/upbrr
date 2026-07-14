@@ -199,6 +199,8 @@ func (s *Server) writeOIDCStateCookie(w http.ResponseWriter, r *http.Request, st
 	})
 }
 
+// clearOIDCStateCookie removes the state cookie once a flow has completed or
+// failed, so a stale state cannot linger in the browser.
 func (s *Server) clearOIDCStateCookie(w http.ResponseWriter, r *http.Request) {
 	//nolint:gosec // State clear cookie sets HttpOnly, SameSite, and Secure for HTTPS requests.
 	http.SetCookie(w, &http.Cookie{
