@@ -49,6 +49,7 @@ type Server struct {
 	backend            *Backend
 	auth               *authStore
 	sessions           *sessionManager
+	oidc               *oidcService
 	hub                *eventHub
 	authLimiter        *fixedWindowLimiter
 	generalLimiter     *fixedWindowLimiter
@@ -139,6 +140,9 @@ func New(opts Options) (*Server, error) {
 			ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
 		}
 	}
+	srv.oidc = newOIDCService(cliCfg.OIDC, func(format string, args ...any) {
+		backend.logInfof(format, args...)
+	})
 	sessions.SetLogger(func(format string, args ...any) {
 		backend.logWarnf(format, args...)
 	})
