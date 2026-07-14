@@ -106,6 +106,7 @@ func SaveCLIConfig(dbPath string, cfg CLIConfig) error {
 	return nil
 }
 
+// cliConfigPath returns the web config path colocated with dbPath.
 func cliConfigPath(dbPath string) string {
 	return filepath.Join(filepath.Dir(strings.TrimSpace(dbPath)), cliConfigFileName)
 }
