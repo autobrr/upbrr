@@ -64,7 +64,7 @@ func TestAssessmentAuthorizationIsOutcomeBoundAndInClientCannotBeOverridden(t *t
 	t.Parallel()
 	meta := api.DuplicateSubject{SourcePath: "Example.Release.2026", ReleaseName: "Example.Release.2026.1080p-GRP"}
 	cfg := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-		"CANDIDATE": {URL: "https://tracker.example"},
+		"CANDIDATE": {APIKey: "candidate-key"},
 	}}}
 	assessment := NewAssessment(meta, cfg, []AssessmentEvidence{
 		{
@@ -103,7 +103,7 @@ func TestAssessmentAuthorizationIsOutcomeBoundAndInClientCannotBeOverridden(t *t
 		t.Fatal("clear authorization succeeded")
 	}
 	changed := cfg
-	changed.Trackers.Trackers = map[string]config.TrackerConfig{"CANDIDATE": {URL: "https://changed.example"}}
+	changed.Trackers.Trackers = map[string]config.TrackerConfig{"CANDIDATE": {APIKey: "changed-key"}}
 	if _, err := assessment.Authorize(meta, changed, []string{"CANDIDATE"}); err == nil {
 		t.Fatal("stale authorization succeeded")
 	}
@@ -143,8 +143,8 @@ func TestAssessmentRetainValidAndApplyUseOnlyBoundPrivateState(t *testing.T) {
 	t.Parallel()
 	meta := api.DuplicateSubject{SourcePath: "Example.Release.2026", ReleaseName: "Example.Release.2026.1080p-GRP"}
 	cfg := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-		"AITHER": {URL: "https://aither.example"},
-		"BLU":    {URL: "https://blu.example"},
+		"AITHER": {APIKey: "aither-key"},
+		"BLU":    {APIKey: "blu-key"},
 	}}}
 	assessment := NewAssessment(meta, cfg, []AssessmentEvidence{
 		{
@@ -161,8 +161,8 @@ func TestAssessmentRetainValidAndApplyUseOnlyBoundPrivateState(t *testing.T) {
 	})
 	changed := cfg
 	changed.Trackers.Trackers = map[string]config.TrackerConfig{
-		"AITHER": {URL: "https://changed.example"},
-		"BLU":    {URL: "https://blu.example"},
+		"AITHER": {APIKey: "changed-key"},
+		"BLU":    {APIKey: "blu-key"},
 	}
 	retained := assessment.RetainValid(meta, changed)
 	if _, ok := retained.Decision("AITHER"); ok {

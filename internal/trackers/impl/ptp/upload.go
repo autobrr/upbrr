@@ -85,8 +85,8 @@ type uploadState struct {
 	fields      map[string]string
 }
 
-func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
-	state, err := prepareUploadState(ctx, req, false)
+func uploadAt(ctx context.Context, req trackers.PreparationInput, baseURL string) (api.UploadSummary, error) {
+	state, err := prepareUploadStateAt(ctx, req, false, baseURL)
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
@@ -169,8 +169,8 @@ func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSumma
 	)
 }
 
-func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
-	state, err := prepareUploadState(ctx, req, true)
+func buildUploadDryRunAt(ctx context.Context, req trackers.PreparationInput, baseURL string) (api.TrackerDryRunEntry, error) {
+	state, err := prepareUploadStateAt(ctx, req, true, baseURL)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
@@ -198,11 +198,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.
 	}, nil
 }
 
-func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryRun bool) (uploadState, error) {
-	baseURL := strings.TrimRight(strings.TrimSpace(req.TrackerConfig.URL), "/")
-	if baseURL == "" {
-		baseURL = ptpBaseURL
-	}
+func prepareUploadStateAt(ctx context.Context, req trackers.PreparationInput, dryRun bool, baseURL string) (uploadState, error) {
 	announceURL := normalizedAnnounceURL(req.TrackerConfig.AnnounceURL)
 	torrentPath, err := resolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
 	if err != nil {
@@ -727,7 +723,11 @@ func resolveSessionLogin(
 // configured credentials. Credential login must produce an anti-CSRF token
 // before refreshed cookies are persisted.
 func ResolveSessionForTrackerAuth(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string) error {
-	return ResolveSessionForTrackerAuthLogin(ctx, trackerConfig, dbPath, api.TrackerAuthLoginRequest{})
+	return resolveSessionForTrackerAuthAt(ctx, trackerConfig, dbPath, ptpBaseURL)
+}
+
+func resolveSessionForTrackerAuthAt(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string, baseURL string) error {
+	return resolveSessionForTrackerAuthLoginAt(ctx, trackerConfig, dbPath, api.TrackerAuthLoginRequest{}, baseURL)
 }
 
 // ResolveSessionForTrackerAuthLogin validates PTP stored cookies or logs in
@@ -737,10 +737,16 @@ func ResolveSessionForTrackerAuth(ctx context.Context, trackerConfig config.Trac
 // returns [ErrSubmitted2FARejected] with the login-failed error before refreshed
 // cookies are persisted.
 func ResolveSessionForTrackerAuthLogin(ctx context.Context, trackerConfig config.TrackerConfig, dbPath string, login api.TrackerAuthLoginRequest) error {
-	baseURL := strings.TrimRight(strings.TrimSpace(trackerConfig.URL), "/")
-	if baseURL == "" {
-		baseURL = ptpBaseURL
-	}
+	return resolveSessionForTrackerAuthLoginAt(ctx, trackerConfig, dbPath, login, ptpBaseURL)
+}
+
+func resolveSessionForTrackerAuthLoginAt(
+	ctx context.Context,
+	trackerConfig config.TrackerConfig,
+	dbPath string,
+	login api.TrackerAuthLoginRequest,
+	baseURL string,
+) error {
 	_, _, err := resolveSessionLogin(ctx, trackerConfig, dbPath, baseURL, api.NopLogger{}, login)
 	return err
 }

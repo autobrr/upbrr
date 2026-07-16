@@ -248,6 +248,7 @@ type DatabaseRepairReport struct {
 	BackfilledDefaults bool
 	ChangedSections    []string
 	InvalidPaths       []string
+	DeprecatedPaths    []string
 }
 
 // LoadFromDatabaseWithRepairReport loads and decrypts full config from repo,
@@ -314,10 +315,12 @@ func loadFullConfigOverlayingDefaults(ctx context.Context, repo fullConfigLoader
 	if err := json.Unmarshal(merged, &cfg); err != nil {
 		return Config{}, DatabaseRepairReport{}, fmt.Errorf("config load from database: unmarshal merged defaults: %w", err)
 	}
+	sort.Strings(mergeReport.deprecatedPaths)
 	report := DatabaseRepairReport{
-		BackfilledDefaults: len(mergeReport.missingDefaultPaths) > 0 || len(mergeReport.invalidPaths) > 0,
+		BackfilledDefaults: len(mergeReport.missingDefaultPaths) > 0 || len(mergeReport.invalidPaths) > 0 || len(mergeReport.deprecatedPaths) > 0,
 		ChangedSections:    mergeReport.changedRootSections(),
 		InvalidPaths:       append([]string(nil), mergeReport.invalidPaths...),
+		DeprecatedPaths:    append([]string(nil), mergeReport.deprecatedPaths...),
 	}
 	return cfg, report, nil
 }
@@ -344,6 +347,7 @@ func configJSONMap(cfg *Config) (map[string]any, error) {
 type storedConfigMergeReport struct {
 	missingDefaultPaths []string
 	invalidPaths        []string
+	deprecatedPaths     []string
 	changedSections     map[string]struct{}
 	invalidSections     map[string]struct{}
 }
@@ -358,6 +362,7 @@ func newStoredConfigMergeReport() storedConfigMergeReport {
 func (r *storedConfigMergeReport) append(other storedConfigMergeReport) {
 	r.missingDefaultPaths = append(r.missingDefaultPaths, other.missingDefaultPaths...)
 	r.invalidPaths = append(r.invalidPaths, other.invalidPaths...)
+	r.deprecatedPaths = append(r.deprecatedPaths, other.deprecatedPaths...)
 	for section := range other.changedSections {
 		r.changedSections[section] = struct{}{}
 	}
@@ -404,6 +409,12 @@ func mergeStoredConfigMapWithReport(base map[string]any, overlay map[string]any,
 
 	overlayKeys := make([]string, 0, len(overlay))
 	for key := range overlay {
+		if isDeprecatedTrackerURLField(path, key) {
+			deprecatedPath := configMapPath(path, key)
+			report.deprecatedPaths = append(report.deprecatedPaths, deprecatedPath)
+			report.markChanged(deprecatedPath)
+			continue
+		}
 		if shouldDiscardStoredTrackerField(path, key, overlay) {
 			invalidPath := configMapPath(path, key)
 			report.invalidPaths = append(report.invalidPaths, invalidPath)
@@ -497,7 +508,18 @@ func mergeStoredDynamicConfigValue(base map[string]any, key string, overlayValue
 	}
 
 	if allowsStoredDynamicConfigEntry(path) {
-		if _, overlayOK := overlayValue.(map[string]any); !overlayOK {
+		overlayMap, overlayOK := overlayValue.(map[string]any)
+		if !overlayOK {
+			return report, nil
+		}
+		if usesASCIIStoredTrackerKeys(path) {
+			cleaned := map[string]any{}
+			childReport, err := mergeStoredConfigMapWithReport(cleaned, overlayMap, configMapPath(path, key))
+			if err != nil {
+				return report, err
+			}
+			base[key] = cleaned
+			report.append(childReport)
 			return report, nil
 		}
 	}
@@ -586,6 +608,12 @@ func shouldDiscardStoredTrackerField(path string, key string, values map[string]
 		}
 	}
 	return hasKnownFoldPeer
+}
+
+func isDeprecatedTrackerURLField(path string, key string) bool {
+	const trackerPathPrefix = "Trackers.Trackers."
+	trackerName, ok := strings.CutPrefix(path, trackerPathPrefix)
+	return ok && trackerName != "" && !strings.Contains(trackerName, ".") && strings.EqualFold(strings.TrimSpace(key), "URL")
 }
 
 // validateStoredOverlayKeys rejects duplicate stored keys that would fold into
@@ -741,6 +769,9 @@ func mergeStoredUnknownConfigValues(current, stored any, path string) error {
 		return nil
 	}
 	for key, storedValue := range storedMap {
+		if isDeprecatedTrackerURLField(path, key) {
+			continue
+		}
 		if shouldDiscardStoredTrackerField(path, key, storedMap) {
 			continue
 		}

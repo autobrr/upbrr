@@ -278,7 +278,6 @@ type TrackerConfig struct {
 	Passkey             string         `yaml:"passkey" json:"Passkey"`
 	AnnounceURL         string         `yaml:"announce_url" json:"AnnounceURL"`
 	MyAnnounceURL       string         `yaml:"my_announce_url" json:"MyAnnounceURL"`
-	URL                 string         `yaml:"url" json:"URL"`
 	FaviconURL          string         `yaml:"favicon_url" json:"FaviconURL"`
 	UploaderStatus      bool           `yaml:"uploader_status" json:"UploaderStatus"`
 	CustomLayout        string         `yaml:"custom_layout" json:"CustomLayout"`
@@ -316,7 +315,6 @@ type TrackerConfig struct {
 	LoginQuestion       string         `yaml:"login_question" json:"LoginQuestion"`
 	LoginAnswer         string         `yaml:"login_answer" json:"LoginAnswer"`
 	UserID              string         `yaml:"user_id" json:"UserID"`
-	Filebrowser         string         `yaml:"filebrowser" json:"Filebrowser"`
 	Internal            bool           `yaml:"internal" json:"Internal"`
 	InternalGroups      []string       `yaml:"internal_groups" json:"InternalGroups"`
 	Unknown             map[string]any `yaml:"-" json:"-"`
@@ -390,6 +388,7 @@ func trackerAllowedYAMLKeys(trackerName string) map[string]struct{} {
 	addGlobal := func(keys map[string]struct{}) map[string]struct{} {
 		keys["favicon_url"] = struct{}{}
 		keys["image_host"] = struct{}{}
+		keys["torrent_client"] = struct{}{}
 		return keys
 	}
 	if len(trackerSchema) == 0 {
@@ -443,6 +442,9 @@ func mergeUnknownKeys(target map[string]any, unknown map[string]any) {
 		return
 	}
 	for key, value := range unknown {
+		if strings.EqualFold(strings.TrimSpace(key), "url") {
+			continue
+		}
 		if _, exists := target[key]; exists {
 			continue
 		}
@@ -530,6 +532,9 @@ func extractTrackerUnknown(raw map[string]any) map[string]any {
 	initTrackerTagMetadata()
 	unknown := make(map[string]any)
 	for key, value := range raw {
+		if strings.EqualFold(strings.TrimSpace(key), "url") {
+			continue
+		}
 		if _, ok := trackerKnownJSONKeys[key]; ok {
 			continue
 		}
@@ -544,7 +549,16 @@ func extractTrackerUnknown(raw map[string]any) map[string]any {
 	return unknown
 }
 
+func stripDeprecatedTrackerURL(raw map[string]any) {
+	for key := range raw {
+		if strings.EqualFold(strings.TrimSpace(key), "url") {
+			delete(raw, key)
+		}
+	}
+}
+
 func decodeTrackerConfigFromJSON(raw map[string]any) (TrackerConfig, error) {
+	stripDeprecatedTrackerURL(raw)
 	payload, err := json.Marshal(raw)
 	if err != nil {
 		return TrackerConfig{}, fmt.Errorf("config: marshal tracker config from json: %w", err)
@@ -558,6 +572,7 @@ func decodeTrackerConfigFromJSON(raw map[string]any) (TrackerConfig, error) {
 }
 
 func decodeTrackerConfigFromYAML(raw map[string]any) (TrackerConfig, error) {
+	stripDeprecatedTrackerURL(raw)
 	payload, err := yaml.Marshal(raw)
 	if err != nil {
 		return TrackerConfig{}, fmt.Errorf("config: marshal tracker config from yaml: %w", err)
@@ -966,20 +981,6 @@ func (c Config) Validate() error {
 			if !imagehostpolicy.IsUploadHost(imageHost) {
 				return fmt.Errorf("config: trackers.%s.image_host %q is not supported", trackerName, trackerCfg.ImageHost)
 			}
-			if owner := imagehostpolicy.OwnerForHost(imageHost); owner != "" && !strings.EqualFold(strings.TrimSpace(trackerName), owner) {
-				return fmt.Errorf("config: trackers.%s.image_host %q is owned by %s", trackerName, trackerCfg.ImageHost, owner)
-			}
-			policy := imagehostpolicy.ForTracker(trackerName, trackerCfg.ImgRehost, trackerCfg.ImgAPI)
-			if len(policy.AllowedHosts) > 0 && !imagehostpolicy.HostAllowed(imageHost, policy.AllowedHosts) {
-				return fmt.Errorf("config: trackers.%s.image_host %q is not allowed for this tracker", trackerName, trackerCfg.ImageHost)
-			}
-		}
-		if !trackerCfg.ImgRehost {
-			continue
-		}
-		policy := imagehostpolicy.ForTracker(trackerName, true, trackerCfg.ImgAPI)
-		if len(policy.AllowedHosts) == 0 {
-			return fmt.Errorf("config: trackers.%s.img_rehost requires a tracker image-host policy, but none is defined", trackerName)
 		}
 	}
 
@@ -1050,29 +1051,6 @@ func lookupTorrentClient(clients map[string]TorrentClientConfig, selected string
 	}
 
 	return len(foldMatches) == 1
-}
-
-// DisableUnsupportedTrackerImageRehosts turns off img_rehost for trackers that
-// have no image-host policy and returns the tracker names that changed.
-func DisableUnsupportedTrackerImageRehosts(cfg *Config) []string {
-	if cfg == nil || len(cfg.Trackers.Trackers) == 0 {
-		return nil
-	}
-
-	disabled := make([]string, 0)
-	for trackerName, trackerCfg := range cfg.Trackers.Trackers {
-		if !trackerCfg.ImgRehost {
-			continue
-		}
-		policy := imagehostpolicy.ForTracker(trackerName, true, trackerCfg.ImgAPI)
-		if len(policy.AllowedHosts) != 0 {
-			continue
-		}
-		trackerCfg.ImgRehost = false
-		cfg.Trackers.Trackers[trackerName] = trackerCfg
-		disabled = append(disabled, trackerName)
-	}
-	return disabled
 }
 
 // ResolveBTNAPIToken returns the BTN tracker API key from ASCII case variants
@@ -1171,19 +1149,13 @@ func MergeMissingTrackerDefaultsWithReport(cfg *Config) (TrackerDefaultsMergeRep
 			continue
 		}
 		if asciiEqualFold(trackerName, "CZT") {
-			if strings.TrimSpace(existing.URL) != "" || strings.TrimSpace(existing.APIKey) != "" || strings.TrimSpace(existing.AnnounceURL) != "" {
-				existing.URL = ""
+			if strings.TrimSpace(existing.APIKey) != "" || strings.TrimSpace(existing.AnnounceURL) != "" {
 				existing.APIKey = ""
 				existing.AnnounceURL = ""
 				cfg.Trackers.Trackers[existingName] = existing
 				report.markChanged("Trackers")
 			}
 			continue
-		}
-		if strings.TrimSpace(existing.URL) == "" && strings.TrimSpace(trackerCfg.URL) != "" {
-			existing.URL = trackerCfg.URL
-			cfg.Trackers.Trackers[existingName] = existing
-			report.markChanged("Trackers")
 		}
 	}
 	if token := strings.TrimSpace(cfg.Metadata.BTNAPI); token != "" {
@@ -1205,11 +1177,10 @@ func MergeMissingTrackerDefaultsWithReport(cfg *Config) (TrackerDefaultsMergeRep
 		if !asciiEqualFold(trackerName, "CZT") {
 			continue
 		}
-		if strings.TrimSpace(trackerCfg.APIKey) == "" && strings.TrimSpace(trackerCfg.URL) == "" && strings.TrimSpace(trackerCfg.AnnounceURL) == "" {
+		if strings.TrimSpace(trackerCfg.APIKey) == "" && strings.TrimSpace(trackerCfg.AnnounceURL) == "" {
 			continue
 		}
 		trackerCfg.APIKey = ""
-		trackerCfg.URL = ""
 		trackerCfg.AnnounceURL = ""
 		cfg.Trackers.Trackers[trackerName] = trackerCfg
 		report.markChanged("Trackers")
@@ -1396,32 +1367,12 @@ func (c TorrentClientConfig) UsesQuiProxy() bool {
 	return strings.TrimSpace(c.QuiProxyURL) != ""
 }
 
-// ResolveTrackerDomain resolves a tracker name or raw domain into a domain name and its configured URL.
-func ResolveTrackerDomain(cfg *Config, trackerNameOrDomain string) (string, string) {
+// ResolveTrackerDomain normalizes a raw tracker domain.
+func ResolveTrackerDomain(_ *Config, trackerNameOrDomain string) (string, string) {
 	name := strings.TrimSpace(trackerNameOrDomain)
 	if name == "" {
 		return "", ""
 	}
-
-	if cfg != nil && cfg.Trackers.Trackers != nil {
-		for k, v := range cfg.Trackers.Trackers {
-			if strings.EqualFold(k, name) {
-				u := strings.TrimSpace(v.URL)
-				if u != "" {
-					// Prepend scheme if missing to allow url.Parse to extract hostname
-					urlString := u
-					if !strings.Contains(urlString, "://") {
-						urlString = "http://" + urlString
-					}
-					if parsed, err := url.Parse(urlString); err == nil && parsed.Hostname() != "" {
-						return parsed.Hostname(), u
-					}
-					return "", u
-				}
-			}
-		}
-	}
-
 	return name, ""
 }
 

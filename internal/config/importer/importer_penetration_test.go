@@ -176,10 +176,8 @@ func TestImportFromContentOverlayPreservesDefaults(t *testing.T) {
 	}
 }
 
-// A YAML overlay that sets img_rehost=true on a tracker without a policy must
-// be automatically disabled and a warning emitted — that warning is how users
-// find out they lost that setting.
-func TestImportFromContentWarnsOnImgRehostDisable(t *testing.T) {
+// Tracker image-host behavior is preserved for registry-owned runtime policy.
+func TestImportFromContentPreservesImgRehostForRegistryPolicy(t *testing.T) {
 	t.Parallel()
 
 	overlay := []byte("trackers:\n  trackers:\n    TL:\n      img_rehost: true\n")
@@ -187,17 +185,13 @@ func TestImportFromContentWarnsOnImgRehostDisable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
-	if cfg.Trackers.Trackers["TL"].ImgRehost {
-		t.Fatalf("TL img_rehost should have been disabled")
+	if !cfg.Trackers.Trackers["TL"].ImgRehost {
+		t.Fatalf("TL img_rehost should remain enabled until runtime policy evaluation")
 	}
-	found := false
 	for _, w := range warnings {
 		if strings.Contains(w, "TL") {
-			found = true
+			t.Fatalf("unexpected config-layer tracker policy warning: %v", warnings)
 		}
-	}
-	if !found {
-		t.Fatalf("expected warning mentioning TL, got %v", warnings)
 	}
 }
 

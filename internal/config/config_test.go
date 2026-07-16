@@ -319,7 +319,7 @@ func TestValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "invalid img rehost tracker without policy",
+			name: "img rehost policy is validated at runtime",
 			cfg: Config{
 				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
 				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
@@ -329,7 +329,7 @@ func TestValidate(t *testing.T) {
 					},
 				},
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "valid img rehost tracker with policy",
@@ -371,7 +371,7 @@ func TestValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "invalid tracker image host outside tracker policy",
+			name: "tracker image host policy is validated at runtime",
 			cfg: Config{
 				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
 				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
@@ -381,7 +381,7 @@ func TestValidate(t *testing.T) {
 					},
 				},
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "valid owned RF tracker image host",
@@ -657,7 +657,6 @@ func TestTrackersConfigCZTPasskeyFieldsRoundTrip(t *testing.T) {
 			DefaultTrackers: CSVList{"CZT"},
 			Trackers: map[string]TrackerConfig{
 				"CZT": {
-					URL:         "https://czteam.example",
 					APIKey:      "service-token",
 					Passkey:     "user-passkey",
 					AnnounceURL: "https://should-not-be-here",
@@ -675,9 +674,6 @@ func TestTrackersConfigCZTPasskeyFieldsRoundTrip(t *testing.T) {
 		t.Fatalf("import json: %v", err)
 	}
 	jsonCZT := jsonRoundTrip.Trackers.Trackers["CZT"]
-	if jsonCZT.URL != "" {
-		t.Fatalf("json CZT should not include URL, got %q", jsonCZT.URL)
-	}
 	if jsonCZT.APIKey != "" {
 		t.Fatalf("json CZT should not include APIKey, got %q", jsonCZT.APIKey)
 	}
@@ -716,9 +712,6 @@ func TestTrackersConfigCZTPasskeyFieldsRoundTrip(t *testing.T) {
 		t.Fatalf("import yaml: %v", err)
 	}
 	yamlCZT := yamlRoundTrip.Trackers.Trackers["CZT"]
-	if yamlCZT.URL != "" {
-		t.Fatalf("yaml CZT should not include URL, got %q", yamlCZT.URL)
-	}
 	if yamlCZT.APIKey != "" {
 		t.Fatalf("yaml CZT should not include APIKey, got %q", yamlCZT.APIKey)
 	}
@@ -841,9 +834,6 @@ func TestMergeMissingTrackerDefaults(t *testing.T) {
 	}
 	if got := cfg.Trackers.Trackers["AITHER"].APIKey; got != "existing" {
 		t.Fatalf("expected existing tracker config to be preserved, got %q", got)
-	}
-	if got := cfg.Trackers.Trackers["AITHER"].URL; got != "https://aither.cc" {
-		t.Fatalf("expected AITHER URL to be backfilled, got %q", got)
 	}
 }
 
@@ -1081,9 +1071,6 @@ func TestMergeMissingTrackerDefaultsDoesNotBackfillLegacyBTNAPIOverLowercaseTrac
 	if _, ok := cfg.Trackers.Trackers["BTN"]; ok {
 		t.Fatalf("expected canonical BTN default not to duplicate lowercase btn tracker")
 	}
-	if got := cfg.Trackers.Trackers["btn"].URL; got != "https://backup.landof.tv" {
-		t.Fatalf("expected lowercase btn URL to be backfilled, got %q", got)
-	}
 }
 
 func TestMergeMissingTrackerDefaultsReconcilesLowercaseBTNWithoutToken(t *testing.T) {
@@ -1118,9 +1105,6 @@ func TestMergeMissingTrackerDefaultsReconcilesLowercaseBTNWithoutToken(t *testin
 	}
 	if btn.Username != "user" || btn.Password != "pass" {
 		t.Fatalf("expected lowercase btn non-token fields to be preserved, got username=%q password=%q", btn.Username, btn.Password)
-	}
-	if got := btn.URL; got != "https://backup.landof.tv" {
-		t.Fatalf("expected lowercase btn URL to be backfilled, got %q", got)
 	}
 }
 
@@ -1163,7 +1147,6 @@ func TestMergeMissingTrackerDefaultsClearsCZTSensitiveFields(t *testing.T) {
 			Trackers: map[string]TrackerConfig{
 				"CZT": {
 					APIKey:      "stale-token",
-					URL:         "https://stale.example",
 					AnnounceURL: "https://czteam.me/announce.php?passkey=stale",
 					Passkey:     "passkey",
 				},
@@ -1183,9 +1166,6 @@ func TestMergeMissingTrackerDefaultsClearsCZTSensitiveFields(t *testing.T) {
 	czt := cfg.Trackers.Trackers["CZT"]
 	if czt.APIKey != "" {
 		t.Fatalf("expected CZT APIKey to be cleared, got %q", czt.APIKey)
-	}
-	if czt.URL != "" {
-		t.Fatalf("expected CZT URL to be cleared, got %q", czt.URL)
 	}
 	if czt.AnnounceURL != "" {
 		t.Fatalf("expected CZT AnnounceURL to be cleared, got %q", czt.AnnounceURL)
@@ -1345,41 +1325,8 @@ func TestTorrentClientConfigQbitHostPrecedence(t *testing.T) {
 	}
 }
 
-func TestDisableUnsupportedTrackerImageRehosts(t *testing.T) {
-	t.Parallel()
-
-	cfg := Config{
-		Trackers: TrackersConfig{
-			Trackers: map[string]TrackerConfig{
-				"TL":  {ImgRehost: true},
-				"HDB": {ImgRehost: true},
-			},
-		},
-	}
-
-	disabled := DisableUnsupportedTrackerImageRehosts(&cfg)
-	if len(disabled) != 1 || disabled[0] != "TL" {
-		t.Fatalf("expected TL to be disabled, got %v", disabled)
-	}
-	if cfg.Trackers.Trackers["TL"].ImgRehost {
-		t.Fatal("expected TL img_rehost to be disabled")
-	}
-	if !cfg.Trackers.Trackers["HDB"].ImgRehost {
-		t.Fatal("expected HDB img_rehost to remain enabled")
-	}
-}
-
 func TestResolveTrackerDomain(t *testing.T) {
 	t.Parallel()
-
-	cfg := &Config{
-		Trackers: TrackersConfig{
-			Trackers: map[string]TrackerConfig{
-				"AITHER": {URL: "https://aither.cc"},
-				"BLU":    {URL: "blutopia.cc"}, // no scheme
-			},
-		},
-	}
 
 	cases := []struct {
 		name         string
@@ -1388,25 +1335,7 @@ func TestResolveTrackerDomain(t *testing.T) {
 		expectedURL  string
 	}{
 		{
-			name:         "exact match with scheme",
-			input:        "AITHER",
-			expectedHost: "aither.cc",
-			expectedURL:  "https://aither.cc",
-		},
-		{
-			name:         "case-insensitive match",
-			input:        "aither",
-			expectedHost: "aither.cc",
-			expectedURL:  "https://aither.cc",
-		},
-		{
-			name:         "match without scheme",
-			input:        "BLU",
-			expectedHost: "blutopia.cc",
-			expectedURL:  "blutopia.cc",
-		},
-		{
-			name:         "unconfigured tracker is treated as raw domain",
+			name:         "input is treated as raw domain",
 			input:        "my-random-domain.com",
 			expectedHost: "my-random-domain.com",
 			expectedURL:  "",
@@ -1422,7 +1351,7 @@ func TestResolveTrackerDomain(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			gotHost, gotURL := ResolveTrackerDomain(cfg, tc.input)
+			gotHost, gotURL := ResolveTrackerDomain(nil, tc.input)
 			if gotHost != tc.expectedHost {
 				t.Errorf("expected host %q, got %q", tc.expectedHost, gotHost)
 			}

@@ -35,11 +35,6 @@ const (
 
 type imageHostPreflight map[string]descriptionImageHostResolution
 
-// NewService returns a tracker service backed by the default registry.
-func NewService(cfg config.Config, logger api.Logger, repo UploadPersistence) *Service {
-	return NewServiceWithRegistryAndImages(cfg, logger, repo, nil, nil)
-}
-
 // NewServiceWithRegistry returns a tracker service backed by registry.
 func NewServiceWithRegistry(cfg config.Config, logger api.Logger, repo UploadPersistence, registry *Registry) *Service {
 	return NewServiceWithRegistryAndImages(cfg, logger, repo, registry, nil)
@@ -133,9 +128,9 @@ func (s *Service) preflightDescriptionImageHostsWithPreferences(
 			continue
 		}
 		if host := preferredHost(effectiveImageHostSelectionPolicy(policy, preferredImageHosts[strings.ToUpper(strings.TrimSpace(tracker))])); host != "" {
-			targetKey = strings.ToLower(strings.TrimSpace(host)) + "\x00" + normalizeUsageScope(usageScopeForHost(host))
+			targetKey = strings.ToLower(strings.TrimSpace(host)) + "\x00" + normalizeUsageScope(usageScopeForHost(s.registry, host))
 		} else if host := preferredImageHosts[strings.ToUpper(strings.TrimSpace(tracker))]; strings.TrimSpace(host) != "" {
-			targetKey = strings.ToLower(strings.TrimSpace(host)) + "\x00" + normalizeUsageScope(usageScopeForHost(host))
+			targetKey = strings.ToLower(strings.TrimSpace(host)) + "\x00" + normalizeUsageScope(usageScopeForHost(s.registry, host))
 		}
 		entry := preflightEntry{
 			tracker:    tracker,
@@ -812,9 +807,6 @@ func filterKnownTrackersWithRegistry(trackers []string, logger api.Logger, regis
 			continue
 		}
 		_, registered := registry.LookupDescriptor(upper)
-		if registry == nil {
-			registered = IsKnownTracker(upper)
-		}
 		if !registered {
 			if logger != nil {
 				logger.Infof("trackers: unknown tracker %q, skipping", tracker)

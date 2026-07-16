@@ -22,6 +22,7 @@ import (
 
 type dupeSearcher struct {
 	tracker string
+	baseURL string
 	cfg     config.Config
 	http    *http.Client
 	logger  api.Logger
@@ -35,6 +36,7 @@ func (d *Definition) NewDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	_ = logger
 	return &dupeSearcher{
 		tracker: deps.Tracker(),
+		baseURL: d.site.BaseURL,
 		cfg:     cfg,
 		http:    httpClient,
 		logger:  logger,
@@ -46,10 +48,7 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 	if h.http == nil {
 		return dupe.Failed(dupe.FailureInternal, "AZ-family handler misconfigured: no HTTP client", nil)
 	}
-	site := azDupeSite(tracker)
-	if cfg, ok := trackerCfg(h.cfg, tracker); ok && strings.TrimSpace(cfg.URL) != "" {
-		site.baseURL = strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
-	}
+	site := azDupeSiteDef{baseURL: h.baseURL}
 	loadedCookies, err := loadAZFamilyCookies(ctx, h.cfg, tracker, site.baseURL)
 	if err != nil {
 		return dupe.NotRun(dupe.NotRunMissingCredentials, fmt.Sprintf("missing valid %s cookies", strings.ToUpper(strings.TrimSpace(tracker))), nil)
@@ -185,17 +184,6 @@ func (h dupeSearcher) fetchTorrentList(
 
 type azDupeSiteDef struct {
 	baseURL string
-}
-
-func azDupeSite(tracker string) azDupeSiteDef {
-	switch strings.ToUpper(strings.TrimSpace(tracker)) {
-	case "CZ":
-		return azDupeSiteDef{baseURL: "https://cinemaz.to"}
-	case "PHD":
-		return azDupeSiteDef{baseURL: "https://privatehd.to"}
-	default:
-		return azDupeSiteDef{baseURL: "https://avistaz.to"}
-	}
 }
 
 func loadAZFamilyCookies(ctx context.Context, cfg config.Config, tracker string, baseURL string) ([]*http.Cookie, error) {
@@ -392,15 +380,6 @@ func extractAZTorrentID(value string) string {
 		return last
 	}
 	return ""
-}
-
-func trackerCfg(cfg config.Config, tracker string) (config.TrackerConfig, bool) {
-	for name, entry := range cfg.Trackers.Trackers {
-		if strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(tracker)) {
-			return entry, true
-		}
-	}
-	return config.TrackerConfig{}, false
 }
 
 func stringFromAny(value any) string {

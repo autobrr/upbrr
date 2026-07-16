@@ -25,6 +25,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/redaction"
+	"github.com/autobrr/upbrr/internal/trackers"
 )
 
 type uploadResult struct {
@@ -47,14 +48,15 @@ type namedBatchUploader interface {
 
 const maxResponseBodyPreviewBytes int64 = 64 * 1024
 
-func newUploaderRegistry(cfg config.Config, client *http.Client) map[string]uploader {
+func newUploaderRegistry(cfg config.Config, client *http.Client, registry *trackers.Registry) map[string]uploader {
 	client = httpclient.CloneWithTimeout(client, httpclient.UploadTimeout)
+	hdbConfig := ownedHostTrackerConfig(cfg, registry, "hdb")
 	return map[string]uploader{
 		"imgbb":  &imgbbUploader{apiKey: cfg.ImageHosting.ImgBBAPI, client: client},
 		"imgbox": &imgboxUploader{client: client},
 		"hdb": &hdbUploader{
-			username: cfg.Trackers.Trackers["HDB"].Username,
-			passkey:  cfg.Trackers.Trackers["HDB"].Passkey,
+			username: hdbConfig.Username,
+			passkey:  hdbConfig.Passkey,
 			client:   client,
 		},
 		"pixhost":   &pixhostUploader{client: client},
@@ -69,16 +71,31 @@ func newUploaderRegistry(cfg config.Config, client *http.Client) map[string]uplo
 			client: client,
 		},
 		"passtheimage": &passTheImageUploader{apiKey: cfg.ImageHosting.PassTheImageAPI, client: client},
-		"reelflix":     &reelflixUploader{apiKey: cfg.Trackers.Trackers["RF"].ImgAPI, client: client},
+		"reelflix":     &reelflixUploader{apiKey: ownedHostTrackerConfig(cfg, registry, "reelflix").ImgAPI, client: client},
 		"seedpool_cdn": &seedpoolUploader{apiKey: cfg.ImageHosting.SeedpoolCDNAPI, client: client},
 		"sharex": &shareXUploader{
 			apiKey: cfg.ImageHosting.ShareXAPIKey,
 			url:    cfg.ImageHosting.ShareXURL,
 			client: client,
 		},
-		"thr":   &thrUploader{apiKey: cfg.Trackers.Trackers["THR"].ImgAPI, client: client},
+		"thr":   &thrUploader{apiKey: ownedHostTrackerConfig(cfg, registry, "thr").ImgAPI, client: client},
 		"utppm": &utppmUploader{apiKey: cfg.ImageHosting.UTPPMAPI, client: client},
 	}
+}
+
+// ownedHostTrackerConfig resolves private image-host credentials through the
+// tracker manifest instead of coupling uploaders to tracker identifiers.
+func ownedHostTrackerConfig(cfg config.Config, registry *trackers.Registry, host string) config.TrackerConfig {
+	if registry == nil {
+		return config.TrackerConfig{}
+	}
+	owner := registry.OwnerForImageHost(host)
+	for name, trackerConfig := range cfg.Trackers.Trackers {
+		if strings.EqualFold(strings.TrimSpace(name), owner) {
+			return trackerConfig
+		}
+	}
+	return config.TrackerConfig{}
 }
 
 type imgbbUploader struct {

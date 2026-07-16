@@ -5,12 +5,29 @@ package webserver
 
 import (
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/services/trackericon"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 )
+
+func resolveTrackerIconTarget(trackerName string, faviconURL string) (string, string, error) {
+	registry, err := trackerimpl.NewRegistry()
+	if err != nil {
+		return "", "", fmt.Errorf("tracker icon: build registry: %w", err)
+	}
+	descriptor, ok := registry.LookupDescriptor(trackerName)
+	if !ok {
+		return "", "", fmt.Errorf("tracker icon: unsupported tracker %q", strings.TrimSpace(trackerName))
+	}
+	urlToUse := strings.TrimSpace(faviconURL)
+	if urlToUse == "" {
+		urlToUse = descriptor.BaseURL
+	}
+	return descriptor.Name, urlToUse, nil
+}
 
 func (s *Server) handleTrackerIcon(w http.ResponseWriter, r *http.Request, _ session) {
 	if r.Method != http.MethodPost {
@@ -31,10 +48,10 @@ func (s *Server) handleTrackerIcon(w http.ResponseWriter, r *http.Request, _ ses
 	if s.backend != nil {
 		cfg = s.backend.currentConfig()
 	}
-	domain, resolvedURL := config.ResolveTrackerDomain(&cfg, strings.TrimSpace(req.Domain))
-	urlToUse := strings.TrimSpace(req.URL)
-	if urlToUse == "" {
-		urlToUse = resolvedURL
+	domain, urlToUse, err := resolveTrackerIconTarget(req.Domain, req.URL)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	sanitized := trackericon.SafeDomainFilename(domain)

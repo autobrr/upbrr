@@ -57,13 +57,12 @@ func TestUploadSuccessPersistsReturnedTorrentAndUsesProvidedAssets(t *testing.T)
 	}
 }
 
-func TestUploadIgnoresStaleConfigURLAndAPIKey(t *testing.T) {
+func TestUploadUsesProfileEndpointAndIgnoresAPIKey(t *testing.T) {
 	returnedTorrent := validTorrentBytes(t)
 	server := newCZTUploadTestServer(t, returnedTorrent, uploadPath)
 	defer server.Close()
 
 	req := cztUploadRequest(t, server.URL)
-	req.TrackerConfig.URL = "https://unused.example"
 	req.TrackerConfig.APIKey = "stale-api-key"
 
 	result, err := upload(context.Background(), req)

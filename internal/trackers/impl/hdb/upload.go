@@ -36,7 +36,7 @@ const (
 
 var hdbSuccessURLPattern = regexp.MustCompile(`(?i)details\.php\?id=(\d+)&uploaded=\d+`)
 
-func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
+func uploadAt(ctx context.Context, req trackers.PreparationInput, baseURL string, httpClient *http.Client) (api.UploadSummary, error) {
 	select {
 	case <-ctx.Done():
 		return api.UploadSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -77,10 +77,7 @@ func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSumma
 		return api.UploadSummary{}, err
 	}
 
-	uploadURL := strings.TrimRight(strings.TrimSpace(req.TrackerConfig.URL), "/")
-	if uploadURL == "" {
-		uploadURL = hdbBaseURL
-	}
+	uploadURL := strings.TrimRight(baseURL, "/")
 	uploadURL += hdbUploadPath
 
 	cookies, err := resolveHDBCookies(ctx, req.Runtime.DBPath)
@@ -104,7 +101,10 @@ func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSumma
 		httpReq.AddCookie(cookie)
 	}
 
-	client := &http.Client{Timeout: 40 * time.Second}
+	client := httpClient
+	if client == nil {
+		client = &http.Client{Timeout: 40 * time.Second}
+	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: HDB upload request: %w", err)
@@ -128,7 +128,17 @@ func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSumma
 		if err != nil {
 			return api.UploadSummary{}, err
 		}
-		if err := downloadPersonalizedTorrent(ctx, uploadURL, req.Meta, trackerTorrentPath, torrentID, passkey, cookies); err != nil && req.Logger != nil {
+		if err := downloadPersonalizedTorrent(
+			ctx,
+			client,
+			uploadURL,
+			req.Meta,
+			trackerTorrentPath,
+			torrentID,
+			passkey,
+			cookies,
+		); err != nil &&
+			req.Logger != nil {
 			req.Logger.Warnf("trackers: HDB torrent redownload failed: %v", err)
 		}
 	}
@@ -146,6 +156,10 @@ func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSumma
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
+	return buildUploadDryRunAt(ctx, req, hdbBaseURL)
+}
+
+func buildUploadDryRunAt(ctx context.Context, req trackers.PreparationInput, baseURL string) (api.TrackerDryRunEntry, error) {
 	select {
 	case <-ctx.Done():
 		return api.TrackerDryRunEntry{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -186,10 +200,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.
 		return api.TrackerDryRunEntry{}, err
 	}
 
-	uploadURL := strings.TrimRight(strings.TrimSpace(req.TrackerConfig.URL), "/")
-	if uploadURL == "" {
-		uploadURL = hdbBaseURL
-	}
+	uploadURL := strings.TrimRight(baseURL, "/")
 	uploadURL += hdbUploadPath
 
 	fields := buildUploadFields(req.Meta, req.Runtime.DescriptionConfig(), category, codec, medium, descriptionText)
@@ -386,6 +397,7 @@ func resolveHDBCookies(ctx context.Context, dbPath string) ([]*http.Cookie, erro
 
 func downloadPersonalizedTorrent(
 	ctx context.Context,
+	client *http.Client,
 	uploadURL string,
 	meta api.UploadSubject,
 	torrentPath string,
@@ -402,7 +414,6 @@ func downloadPersonalizedTorrent(
 		req.AddCookie(cookie)
 	}
 
-	client := &http.Client{Timeout: 40 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("trackers: HDB download personalized torrent: %w", err)

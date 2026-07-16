@@ -194,7 +194,7 @@ func extractTVDBIDFromQuery(host string, query url.Values) (int, bool) {
 }
 
 func extractUnit3DTrackerID(host string, path string, registry *trackers.Registry) (string, string, bool) {
-	trackerNames := registry.NamesByKind(trackers.KindUnit3D)
+	trackerNames := registry.NamesByFamily(trackers.FamilyUnit3D)
 	for _, tracker := range trackerNames {
 		baseURL, ok := registry.LookupBaseURL(tracker)
 		if !ok {

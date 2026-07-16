@@ -215,12 +215,7 @@ func imdbForLookup(meta api.DuplicateSubject) string {
 	}
 	return fmt.Sprintf("tt%07d", meta.Identity.IMDBID)
 }
-func trackerBaseURL(cfg config.Config, tracker, fallback string) string {
-	for name, entry := range cfg.Trackers.Trackers {
-		if strings.EqualFold(strings.TrimSpace(name), tracker) && strings.TrimSpace(entry.URL) != "" {
-			return strings.TrimRight(strings.TrimSpace(entry.URL), "/")
-		}
-	}
+func trackerBaseURL(_ config.Config, _ string, fallback string) string {
 	return strings.TrimRight(fallback, "/")
 }
 func trackerHost(baseURL, fallback string) string {

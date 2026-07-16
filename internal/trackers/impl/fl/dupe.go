@@ -103,12 +103,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	return dupe.Resolved(entries, nil)
 }
 
-func flBaseURL(cfg config.Config) string {
-	for name, entry := range cfg.Trackers.Trackers {
-		if strings.EqualFold(strings.TrimSpace(name), "FL") && strings.TrimSpace(entry.URL) != "" {
-			return strings.TrimRight(strings.TrimSpace(entry.URL), "/")
-		}
-	}
+func flBaseURL(_ config.Config) string {
 	return "https://filelist.io"
 }
 func flCategoryID(meta api.DuplicateSubject) int {

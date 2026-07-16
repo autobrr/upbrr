@@ -64,18 +64,32 @@ func TestTrackerAuthStatusConsumerContractsIncludeAPIFields(t *testing.T) {
 	assertContractBlockFields(t, frontendTypes, "export type TrackerAuthStatus = {", "};", fields)
 }
 
+func TestTrackerAuthCapabilityConsumerContractsIncludeAPIFields(t *testing.T) {
+	t.Parallel()
+
+	fields := jsonFieldNames[TrackerAuthCapability](t)
+	frontendTypes := readRepoFile(t, "webui", "src", "types.ts")
+
+	assertContractBlockFields(t, frontendTypes, "export type TrackerAuthCapability = {", "};", fields)
+}
+
 // trackerAuthStatusJSONFields returns the serialized field names that every
 // frontend-facing auth status consumer must keep in its local contract.
 func trackerAuthStatusJSONFields(t *testing.T) []string {
 	t.Helper()
+	return jsonFieldNames[TrackerAuthStatus](t)
+}
 
-	statusType := reflect.TypeFor[TrackerAuthStatus]()
-	fields := make([]string, 0, statusType.NumField())
-	for field := range statusType.Fields() {
+func jsonFieldNames[T any](t *testing.T) []string {
+	t.Helper()
+
+	contractType := reflect.TypeFor[T]()
+	fields := make([]string, 0, contractType.NumField())
+	for field := range contractType.Fields() {
 		tag := field.Tag.Get("json")
 		name, _, _ := strings.Cut(tag, ",")
 		if name == "" || name == "-" {
-			t.Fatalf("TrackerAuthStatus field %s missing JSON contract tag", field.Name)
+			t.Fatalf("%s field %s missing JSON contract tag", contractType.Name(), field.Name)
 		}
 		fields = append(fields, name)
 	}

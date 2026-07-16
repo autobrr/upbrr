@@ -5,6 +5,7 @@ package impl
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -26,6 +27,23 @@ import (
 	thrimpl "github.com/autobrr/upbrr/internal/trackers/impl/thr"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+type handlerRewriteTransport struct {
+	base *url.URL
+	rt   http.RoundTripper
+}
+
+func (t handlerRewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.URL.Scheme = t.base.Scheme
+	clone.URL.Host = t.base.Host
+	clone.Host = t.base.Host
+	response, err := t.rt.RoundTrip(clone)
+	if err != nil {
+		return response, fmt.Errorf("rewrite tracker request: %w", err)
+	}
+	return response, nil
+}
 
 func adapterEvidence(result dupe.AdapterResult) ([]api.DupeEntry, []string, error) {
 	return result.Entries(), result.Notes(), result.Cause()
@@ -50,8 +68,8 @@ func TestSiteHandlersSearch(t *testing.T) {
 				Release:    api.ReleaseInfo{Title: "Movie"},
 				SourcePath: "x",
 			},
-			setup: func(t *testing.T, baseURL string, dbPath string) {
-				writeTextCookie(t, dbPath, "BT", hostFromBaseURL(t, baseURL))
+			setup: func(t *testing.T, _ string, dbPath string) {
+				writeTextCookie(t, dbPath, "BT", hostFromBaseURL(t, "https://brasiltracker.org"))
 			},
 			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
 				return dupe.NewAdapter(btimpl.New(), "BT", cfg, client, api.NopLogger{})
@@ -86,8 +104,8 @@ func TestSiteHandlersSearch(t *testing.T) {
 			name:    "FF",
 			tracker: "FF",
 			meta:    api.DuplicateSubject{Identity: api.ExternalIdentity{IMDBID: 123}, SourcePath: "x"},
-			setup: func(t *testing.T, baseURL string, dbPath string) {
-				writeTextCookie(t, dbPath, "FF", hostFromBaseURL(t, baseURL))
+			setup: func(t *testing.T, _ string, dbPath string) {
+				writeTextCookie(t, dbPath, "FF", hostFromBaseURL(t, "https://www.funfile.org"))
 			},
 			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
 				return dupe.NewAdapter(ffimpl.New(), "FF", cfg, client, api.NopLogger{})
@@ -102,8 +120,8 @@ func TestSiteHandlersSearch(t *testing.T) {
 			name:    "BJS",
 			tracker: "BJS",
 			meta:    api.DuplicateSubject{Identity: api.ExternalIdentity{IMDBID: 123}, SourcePath: "x"},
-			setup: func(t *testing.T, baseURL string, dbPath string) {
-				writeTextCookie(t, dbPath, "BJS", hostFromBaseURL(t, baseURL))
+			setup: func(t *testing.T, _ string, dbPath string) {
+				writeTextCookie(t, dbPath, "BJS", hostFromBaseURL(t, "https://bj-share.info"))
 			},
 			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
 				return dupe.NewAdapter(bjsimpl.New(), "BJS", cfg, client, api.NopLogger{})
@@ -122,8 +140,8 @@ func TestSiteHandlersSearch(t *testing.T) {
 				Release:    api.ReleaseInfo{Resolution: "1080p"},
 				SourcePath: "x",
 			},
-			setup: func(t *testing.T, baseURL string, dbPath string) {
-				writeTextCookie(t, dbPath, "HDS", hostFromBaseURL(t, baseURL))
+			setup: func(t *testing.T, _ string, dbPath string) {
+				writeTextCookie(t, dbPath, "HDS", hostFromBaseURL(t, "https://hd-space.org"))
 			},
 			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
 				return dupe.NewAdapter(hdsimpl.New(), "HDS", cfg, client, api.NopLogger{})
@@ -142,8 +160,8 @@ func TestSiteHandlersSearch(t *testing.T) {
 				Release:    api.ReleaseInfo{Resolution: "1080p"},
 				SourcePath: "x",
 			},
-			setup: func(t *testing.T, baseURL string, dbPath string) {
-				writeTextCookie(t, dbPath, "HDT", hostFromBaseURL(t, baseURL))
+			setup: func(t *testing.T, _ string, dbPath string) {
+				writeTextCookie(t, dbPath, "HDT", hostFromBaseURL(t, "https://hd-torrents.me"))
 			},
 			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
 				return dupe.NewAdapter(hdtimpl.New(), "HDT", cfg, client, api.NopLogger{})
@@ -158,8 +176,8 @@ func TestSiteHandlersSearch(t *testing.T) {
 			name:    "IS",
 			tracker: "IS",
 			meta:    api.DuplicateSubject{Identity: api.ExternalIdentity{Category: "MOVIE", IMDBID: 123}, SourcePath: "x"},
-			setup: func(t *testing.T, baseURL string, dbPath string) {
-				writeTextCookie(t, dbPath, "IS", hostFromBaseURL(t, baseURL))
+			setup: func(t *testing.T, _ string, dbPath string) {
+				writeTextCookie(t, dbPath, "IS", hostFromBaseURL(t, "https://immortalseed.me"))
 			},
 			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
 				return dupe.NewAdapter(isimpl.New(), "IS", cfg, client, api.NopLogger{})
@@ -174,8 +192,8 @@ func TestSiteHandlersSearch(t *testing.T) {
 			name:    "PTS",
 			tracker: "PTS",
 			meta:    api.DuplicateSubject{Identity: api.ExternalIdentity{IMDBID: 123}, SourcePath: "x"},
-			setup: func(t *testing.T, baseURL string, dbPath string) {
-				writeTextCookie(t, dbPath, "PTS", hostFromBaseURL(t, baseURL))
+			setup: func(t *testing.T, _ string, dbPath string) {
+				writeTextCookie(t, dbPath, "PTS", hostFromBaseURL(t, "https://www.ptskit.org"))
 			},
 			handler: func(cfg config.Config, client *http.Client) dupe.Adapter {
 				return dupe.NewAdapter(ptsimpl.New(), "PTS", cfg, client, api.NopLogger{})
@@ -287,13 +305,17 @@ func TestSiteHandlersSearch(t *testing.T) {
 				MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 				Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 					tc.tracker: {
-						URL:      server.URL,
 						Username: "user",
 						Password: "pass",
 					},
 				}},
 			}
-			entries, notes, err := adapterEvidence(tc.handler(cfg, server.Client()).Search(context.Background(), tc.meta))
+			base, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatalf("parse test server URL: %v", err)
+			}
+			client := &http.Client{Transport: handlerRewriteTransport{base: base, rt: server.Client().Transport}}
+			entries, notes, err := adapterEvidence(tc.handler(cfg, client).Search(context.Background(), tc.meta))
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

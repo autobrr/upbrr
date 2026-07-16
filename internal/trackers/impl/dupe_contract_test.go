@@ -29,7 +29,7 @@ func TestEveryTrackerExposesOneStructuralDuplicateFactory(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s does not expose dupe.Factory", name)
 			}
-			adapter := dupe.NewAdapter(factory, name, config.Config{}, http.DefaultClient, api.NopLogger{})
+			adapter := dupe.NewAdapter(factory, name, config.Config{}, http.DefaultClient, api.NopLogger{}, registry)
 			if adapter == nil {
 				t.Fatal("factory returned nil adapter")
 			}

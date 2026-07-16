@@ -15,39 +15,20 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/internal/trackers/ruletypes"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-type antRuleDefinition struct{}
-type bhdPolicyDefinition struct{}
 type aitherRuleDefinition struct{}
 
-func (antRuleDefinition) Name() string { return "ANT" }
-func (antRuleDefinition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
-	return preparePolicyDefinition(ctx, input)
-}
-func (antRuleDefinition) Rules() *ruletypes.RuleSet {
-	return &ruletypes.RuleSet{RequireMovieOnly: true}
-}
-func (antRuleDefinition) AudioPolicy() *trackers.AudioPolicy {
-	return &trackers.AudioPolicy{AllowedLanguages: []string{"english"}, BlockEnglishOriginalWithForeign: true}
-}
-func (aitherRuleDefinition) Name() string { return "AITHER" }
+func (aitherRuleDefinition) Name() string           { return "AITHER" }
+func (aitherRuleDefinition) DefaultBaseURL() string { return "https://aither.cc" }
 func (aitherRuleDefinition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
 	return preparePolicyDefinition(ctx, input)
 }
 func (aitherRuleDefinition) ClaimPolicy() *trackers.ClaimPolicy {
 	return &trackers.ClaimPolicy{APIBacked: true}
 }
-func (bhdPolicyDefinition) Name() string { return "BHD" }
-func (bhdPolicyDefinition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
-	return preparePolicyDefinition(ctx, input)
-}
-func (bhdPolicyDefinition) AudioPolicy() *trackers.AudioPolicy {
-	return &trackers.AudioPolicy{BlockEnglishOriginalWithForeign: true}
-}
-
 func preparePolicyDefinition(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
 	return trackers.PrepareAdapter(
 		ctx,
@@ -66,12 +47,9 @@ func preparePolicyDefinition(ctx context.Context, input trackers.PreparationInpu
 
 func antRuleRegistry(t *testing.T) *trackers.Registry {
 	t.Helper()
-	registry := trackers.NewRegistry()
-	if err := registry.Register(antRuleDefinition{}); err != nil {
-		t.Fatalf("register ANT rules: %v", err)
-	}
-	if err := registry.Register(bhdPolicyDefinition{}); err != nil {
-		t.Fatalf("register BHD policy: %v", err)
+	registry, err := trackerimpl.NewRegistry()
+	if err != nil {
+		t.Fatalf("create tracker registry: %v", err)
 	}
 	return registry
 }

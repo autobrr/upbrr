@@ -7,7 +7,15 @@ import { configClient, trackerCatalogClient } from "../api/app";
 import { Button } from "../components/ui/button";
 import { PillCheckbox } from "../components/ui/checkbox";
 import { Switch } from "../components/ui/switch";
-import type { ConfigMap, ConfigValue, FieldMeta, ImageHostPolicyMetadata } from "../types";
+import { trackerFieldPresentation } from "../settings/trackerFields";
+import type {
+  ConfigMap,
+  ConfigValue,
+  FieldMeta,
+  ImageHostPolicyMetadata,
+  TrackerCatalog,
+  TrackerCatalogEntry,
+} from "../types";
 import { formatLabel, normalizeDefaultTrackerList } from "../utils/settings";
 
 type SettingsSection = { key: string; jsonKey: string; label: string };
@@ -95,12 +103,6 @@ const imageHostOptions = [
   { value: "utppm", label: "UTPPM" },
 ];
 
-const trackerImageHostOptions = [
-  ...imageHostOptions,
-  { value: "hdb", label: "HDB" },
-  { value: "lostimg", label: "Lostimg" },
-  { value: "reelflix", label: "Reelflix" },
-];
 const torrentClientTypeOptions = [
   { value: "qbit", label: "qBit" },
   { value: "watch", label: "Watch" },
@@ -112,17 +114,12 @@ const torrentClientLinkingOptions = [
   { value: "symlink", label: "Symlink" },
 ];
 const imageHostOptionLabels = new Map(
-  trackerImageHostOptions.map((option) => [option.value, option.label]),
+  imageHostOptions.map((option) => [option.value, option.label]),
 );
-const defaultOwnedImageHosts: Record<string, string> = {
-  hdb: "HDB",
-  lostimg: "LST",
-  reelflix: "RF",
-};
 const normalizeImageHostValue = (value: string) => value.trim().toLowerCase();
 const imageHostOptionFor = (host: string) => {
   const value = normalizeImageHostValue(host);
-  return { value, label: imageHostOptionLabels.get(value) ?? value };
+  return { value, label: imageHostOptionLabels.get(value) ?? formatLabel(value) };
 };
 
 const imageHostKeyMap: Record<string, string[]> = {
@@ -154,549 +151,8 @@ const numberField = (key: string, meta: Omit<FieldMeta, "key" | "type"> = {}): F
   ...meta,
 });
 
-const trackerFieldMeta: Record<string, FieldMeta> = {
-  LinkDirName: stringField("LinkDirName", { label: "Link dir name", advanced: true }),
-  APIKey: stringField("APIKey", { label: "API key", sensitive: true }),
-  ApiKey: stringField("ApiKey", { label: "API key", sensitive: true }),
-  ApiUser: stringField("ApiUser", { label: "API user", sensitive: true }),
-  Username: stringField("Username", { label: "Username" }),
-  Password: stringField("Password", { label: "Password", sensitive: true }),
-  Passkey: stringField("Passkey", { label: "Passkey", sensitive: true }),
-  AnnounceURL: stringField("AnnounceURL", {
-    label: "Announce URL",
-    sensitive: true,
-  }),
-  MyAnnounceURL: stringField("MyAnnounceURL", {
-    label: "My announce URL",
-    sensitive: true,
-  }),
-  URL: stringField("URL", { label: "URL" }),
-  FaviconURL: stringField("FaviconURL", { label: "Favicon URL", advanced: true }),
-  UploaderName: stringField("UploaderName", { label: "Uploader name" }),
-  UploaderStatus: boolField("UploaderStatus", { label: "Uploader status" }),
-  CustomLayout: stringField("CustomLayout", { label: "Custom layout" }),
-  TagForCustomRelease: stringField("TagForCustomRelease", { label: "Tag for custom release" }),
-  CheckForRules: boolField("CheckForRules", { label: "Check for rules" }),
-  ModQ: boolField("ModQ", { label: "Mod queue" }),
-  Draft: boolField("Draft", { label: "Draft" }),
-  DraftDefault: boolField("DraftDefault", { label: "Draft default" }),
-  Anon: boolField("Anon", { label: "Anonymous" }),
-  ShowGroupIfAnon: boolField("ShowGroupIfAnon", { label: "Show group if anon" }),
-  BhdRSSKey: stringField("BhdRSSKey", { label: "BHD RSS key", sensitive: true }),
-  CheckRequests: boolField("CheckRequests", { label: "Check requests" }),
-  FullMediainfo: boolField("FullMediainfo", { label: "Full mediainfo" }),
-  ImgRehost: boolField("ImgRehost", { label: "Image rehost" }),
-  ImageHost: stringField("ImageHost", {
-    label: "Image host",
-    options: imageHostOptions,
-  }),
-  TorrentClient: stringField("TorrentClient", { label: "Torrent client", advanced: true }),
-  UseSpanishTitle: boolField("UseSpanishTitle", { label: "Use Spanish title" }),
-  UseItalianTitle: boolField("UseItalianTitle", { label: "Use Italian title" }),
-  OTPURI: stringField("OTPURI", { label: "OTP URI", sensitive: true }),
-  SkipIfRehash: boolField("SkipIfRehash", { label: "Skip if rehash", advanced: true }),
-  PreferMTV: boolField("PreferMTV", { label: "Prefer MTV torrent", advanced: true }),
-  PTGenAPI: stringField("PTGenAPI", { label: "PTGen API", sensitive: true }),
-  AddWebSourceToDesc: boolField("AddWebSourceToDesc", {
-    label: "Add web source to desc",
-  }),
-  ImageCount: numberField("ImageCount", { label: "Image count" }),
-  Channel: stringField("Channel", { label: "Channel" }),
-  ImgAPI: stringField("ImgAPI", { label: "Image API", sensitive: true }),
-  PronfoAPIKey: stringField("PronfoAPIKey", {
-    label: "Pronfo API key",
-    sensitive: true,
-  }),
-  PronfoTheme: stringField("PronfoTheme", { label: "Pronfo theme" }),
-  PronfoRAPIID: stringField("PronfoRAPIID", { label: "Pronfo RAPI ID" }),
-  APIUpload: boolField("APIUpload", { label: "API upload" }),
-  Exclusive: boolField("Exclusive", { label: "Exclusive" }),
-  LoginQuestion: stringField("LoginQuestion", {
-    label: "Login question",
-    sensitive: true,
-  }),
-  LoginAnswer: stringField("LoginAnswer", {
-    label: "Login answer",
-    sensitive: true,
-  }),
-  UserID: stringField("UserID", { label: "User ID", sensitive: true }),
-  Filebrowser: stringField("Filebrowser", { label: "Filebrowser" }),
-};
-
-const trackerSchemas: Record<string, FieldMeta[]> = {
-  A4K: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.ModQ,
-  ],
-  ACM: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.Anon,
-  ],
-  AITHER: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.ModQ,
-  ],
-  ANT: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.Anon,
-  ],
-  AR: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.Username,
-    trackerFieldMeta.Password,
-    trackerFieldMeta.AnnounceURL,
-  ],
-  ASC: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.UploaderStatus,
-    trackerFieldMeta.CustomLayout,
-    trackerFieldMeta.AnnounceURL,
-  ],
-  AZ: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.CheckForRules,
-  ],
-  BHD: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.BhdRSSKey,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.DraftDefault,
-    trackerFieldMeta.Anon,
-  ],
-  BHDTV: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.MyAnnounceURL,
-    trackerFieldMeta.Anon,
-  ],
-  BJS: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.ShowGroupIfAnon,
-  ],
-  BLU: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-  ],
-  BT: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.Anon,
-  ],
-  BTN: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.Username,
-    trackerFieldMeta.Password,
-    trackerFieldMeta.URL,
-    trackerFieldMeta.OTPURI,
-  ],
-  CBR: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.ModQ,
-    trackerFieldMeta.TagForCustomRelease,
-  ],
-  CZ: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.CheckForRules,
-  ],
-  CZT: [trackerFieldMeta.FaviconURL, trackerFieldMeta.LinkDirName, trackerFieldMeta.Passkey],
-  DC: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-  ],
-  DP: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.ModQ,
-  ],
-  EMUW: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.UseSpanishTitle,
-  ],
-  FF: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.Username,
-    trackerFieldMeta.Password,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.CheckRequests,
-    trackerFieldMeta.FullMediainfo,
-  ],
-  FL: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.Username,
-    trackerFieldMeta.Passkey,
-    trackerFieldMeta.UploaderName,
-    trackerFieldMeta.Anon,
-  ],
-  FRIKI: [trackerFieldMeta.FaviconURL, trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey],
-  GPW: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.AnnounceURL,
-  ],
-  HDB: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.Username,
-    trackerFieldMeta.Passkey,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.ImgRehost,
-  ],
-  HDS: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.FullMediainfo,
-  ],
-  HDT: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.URL,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.FullMediainfo,
-  ],
-  HHD: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-  ],
-  IHD: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-  ],
-  IS: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.Anon,
-  ],
-  ITT: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-  ],
-  LCD: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.TagForCustomRelease,
-  ],
-  LDU: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-  ],
-  LST: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.ModQ,
-    trackerFieldMeta.Draft,
-  ],
-  LT: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.ModQ,
-  ],
-  LUME: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.ModQ,
-  ],
-  MNS: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-  ],
-  MTV: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Username,
-    trackerFieldMeta.Password,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.OTPURI,
-    trackerFieldMeta.SkipIfRehash,
-    trackerFieldMeta.PreferMTV,
-  ],
-  NBL: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.AnnounceURL,
-  ],
-  OE: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-  ],
-  OTW: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.ModQ,
-    trackerFieldMeta.Anon,
-  ],
-  PHD: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.CheckForRules,
-  ],
-  PT: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-  ],
-  PTP: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.AddWebSourceToDesc,
-    trackerFieldMeta.ApiUser,
-    trackerFieldMeta.ApiKey,
-    trackerFieldMeta.Username,
-    trackerFieldMeta.Password,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.OTPURI,
-  ],
-  PTS: [trackerFieldMeta.FaviconURL, trackerFieldMeta.LinkDirName, trackerFieldMeta.AnnounceURL],
-  PTT: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-  ],
-  R4E: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.Anon,
-  ],
-  RAS: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-  ],
-  RF: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.ImgAPI,
-    trackerFieldMeta.Anon,
-  ],
-  RTF: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.Username,
-    trackerFieldMeta.Password,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.Anon,
-  ],
-  SAM: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.TagForCustomRelease,
-  ],
-  SHRI: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.UseItalianTitle,
-  ],
-  SP: [trackerFieldMeta.FaviconURL, trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey],
-  SPD: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Channel,
-  ],
-  STC: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-  ],
-  THR: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.Username,
-    trackerFieldMeta.Password,
-    trackerFieldMeta.ImgAPI,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.PronfoAPIKey,
-    trackerFieldMeta.PronfoTheme,
-    trackerFieldMeta.PronfoRAPIID,
-    trackerFieldMeta.Anon,
-  ],
-  TIK: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-  ],
-  TL: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIUpload,
-    trackerFieldMeta.Passkey,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.ImgRehost,
-    trackerFieldMeta.FullMediainfo,
-  ],
-  TLZ: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-  ],
-  TOS: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.Exclusive,
-  ],
-  TTR: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.ModQ,
-  ],
-  TVC: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.ImageCount,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.AnnounceURL,
-    trackerFieldMeta.Anon,
-  ],
-  ULCX: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.ModQ,
-  ],
-  UTP: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-  ],
-  YUS: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-  ],
-  ZNTH: [
-    trackerFieldMeta.FaviconURL,
-    trackerFieldMeta.LinkDirName,
-    trackerFieldMeta.APIKey,
-    trackerFieldMeta.Anon,
-    trackerFieldMeta.ModQ,
-  ],
-  MANUAL: [trackerFieldMeta.FaviconURL, trackerFieldMeta.Filebrowser],
-};
-
-const trackerHasAdvancedFields = Object.values(trackerSchemas).some((fields) =>
-  fields.some((field) => field.advanced),
-);
-
 const REDACTED_VALUE = "[REDACTED]";
 const ENCRYPTED_SECRET_PREFIX = "upbrr-enc:v1:";
-const trackerActivationKeys = new Set([
-  "APIKey",
-  "ApiUser",
-  "ApiKey",
-  "Username",
-  "Password",
-  "Passkey",
-  "AnnounceURL",
-  "MyAnnounceURL",
-  "BhdRSSKey",
-  "OTPURI",
-  "PTGenAPI",
-  "ImageHost",
-  "ImgAPI",
-  "TorrentClient",
-  "PronfoAPIKey",
-  "LoginQuestion",
-  "LoginAnswer",
-  "UserID",
-  "Filebrowser",
-]);
 
 function hasConfiguredTrackerValue(
   value: ConfigValue | undefined,
@@ -739,6 +195,17 @@ function hasConfiguredTrackerValue(
   }
   return false;
 }
+
+const trackerConfigValue = (entries: ConfigMap, name: string): ConfigMap | null => {
+  const exact = entries[name];
+  if (exact && typeof exact === "object" && !Array.isArray(exact)) return exact as ConfigMap;
+  const foldedName = Object.keys(entries).find(
+    (candidate) => candidate.trim().toLowerCase() === name.trim().toLowerCase(),
+  );
+  if (!foldedName) return null;
+  const value = entries[foldedName];
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as ConfigMap) : null;
+};
 const sensitiveKeyHints = [
   "password",
   "passkey",
@@ -1050,7 +517,8 @@ export const normalizeTorrentClientsForSave = (input: ConfigMap) => {
   return { ...input, TorrentClients: nextClients };
 };
 
-const normalizeCZTTrackerForSave = (input: ConfigMap) => {
+/** Filters supported trackers to catalog fields and removes all legacy endpoint overrides. */
+const normalizeTrackersForSave = (input: ConfigMap, catalog: TrackerCatalog | null) => {
   const trackerRoot = input.Trackers;
   if (!trackerRoot || typeof trackerRoot !== "object" || Array.isArray(trackerRoot)) {
     return input;
@@ -1061,29 +529,29 @@ const normalizeCZTTrackerForSave = (input: ConfigMap) => {
   }
 
   let changed = false;
+  const catalogByName = new Map(
+    (catalog?.entries ?? []).map((entry) => [entry.name.trim().toUpperCase(), entry]),
+  );
   const nextEntries: ConfigMap = {};
   Object.entries(trackerEntries as ConfigMap).forEach(([name, value]) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       nextEntries[name] = value;
       return;
     }
-    if (name.trim().toUpperCase() !== "CZT") {
-      nextEntries[name] = value;
-      return;
-    }
-    const next = { ...(value as ConfigMap) };
-    if ("APIKey" in next) {
-      delete next.APIKey;
-      changed = true;
-    }
-    if ("URL" in next) {
-      delete next.URL;
-      changed = true;
-    }
-    if ("AnnounceURL" in next) {
-      delete next.AnnounceURL;
-      changed = true;
-    }
+    const supported = catalogByName.get(name.trim().toUpperCase());
+    const allowed = supported ? new Set(supported.fields.map((field) => field.key)) : null;
+    const next: ConfigMap = {};
+    Object.entries(value as ConfigMap).forEach(([key, fieldValue]) => {
+      if (key.trim().toLowerCase() === "url") {
+        changed = true;
+        return;
+      }
+      if (allowed && !allowed.has(key)) {
+        changed = true;
+        return;
+      }
+      next[key] = fieldValue;
+    });
     nextEntries[name] = next;
   });
 
@@ -1107,13 +575,13 @@ const normalizeCZTTrackerForSave = (input: ConfigMap) => {
 export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsStateResult => {
   const { activeTab } = options;
   const [configData, setConfigData] = useState<ConfigMap | null>(null);
-  const [defaultConfig, setDefaultConfig] = useState<ConfigMap | null>(null);
-  const [knownTrackers, setKnownTrackers] = useState<string[]>([]);
+  const [trackerCatalog, setTrackerCatalog] = useState<TrackerCatalog | null>(null);
   const [imageHostPolicyMetadata, setImageHostPolicyMetadata] =
     useState<ImageHostPolicyMetadata | null>(null);
   const [knownTrackersLoading, setKnownTrackersLoading] = useState(false);
+  const [trackerCatalogLoaded, setTrackerCatalogLoaded] = useState(false);
   const [trackerAddSelection, setTrackerAddSelection] = useState("");
-  const [manualTrackerEntries, setManualTrackerEntries] = useState<Record<string, boolean>>({});
+  const [draftTrackerEntries, setDraftTrackerEntries] = useState<Record<string, boolean>>({});
   const [settingsTrackerPanels, setSettingsTrackerPanels] = useState<Record<string, boolean>>({});
   const [defaultTrackersPanelOpen, setDefaultTrackersPanelOpen] = useState(false);
   const [settingsLoading, setSettingsLoading] = useState(false);
@@ -1220,8 +688,9 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     if (!configData) {
       return null;
     }
-    const restored = normalizeCZTTrackerForSave(
+    const restored = normalizeTrackersForSave(
       normalizeTorrentClientsForSave(restoreSensitiveConfig(configData, sensitiveValues)),
+      trackerCatalog,
     );
     return JSON.stringify(restored, null, 2);
   };
@@ -1249,14 +718,14 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     (trackerName: string) => {
       const trackerKey = trackerName.trim().toUpperCase();
       if (!imageHostPolicyMetadata) {
-        return trackerKey === "HDB" ? trackerImageHostOptions : imageHostOptions;
+        return imageHostOptions;
       }
 
       const policyHosts = imageHostPolicyMetadata.TrackerUploadHosts?.[trackerKey];
       const fallbackHosts =
         imageHostPolicyMetadata.UploadHosts?.map((host) => normalizeImageHostValue(host)) ??
         imageHostOptions.filter((option) => option.value).map((option) => option.value);
-      const ownerByHost = imageHostPolicyMetadata.OwnedHosts ?? defaultOwnedImageHosts;
+      const ownerByHost = imageHostPolicyMetadata.OwnedHosts ?? {};
       const imageCfg =
         configData?.ImageHosting &&
         typeof configData.ImageHosting === "object" &&
@@ -1415,7 +884,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       const masked = maskSensitiveConfig(parsed);
       setConfigData(masked.masked);
       setSensitiveValues(masked.originals);
-      setManualTrackerEntries({});
+      setDraftTrackerEntries({});
       setSettingsDirty(false);
     } catch (err) {
       setSettingsError(String(err));
@@ -1424,32 +893,24 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     }
   }, [clearSettingsStatus]);
 
-  const loadDefaultConfig = useCallback(async () => {
-    const getDefaultConfig = configClient.getDefault;
-    try {
-      const result = await getDefaultConfig();
-      const parsed = JSON.parse(result) as ConfigMap;
-      setDefaultConfig(parsed);
-    } catch (_err) {
-      // Silently fail if we can't load default config; it's optional for tracker comparison
-    }
-  }, []);
-
-  const loadKnownTrackers = useCallback(async () => {
-    if (knownTrackersLoading) return;
-    const listKnown = trackerCatalogClient.listKnown;
+  const loadTrackerCatalog = useCallback(async () => {
+    if (knownTrackersLoading || trackerCatalogLoaded) return;
     setKnownTrackersLoading(true);
     try {
-      const result = await listKnown();
-      if (Array.isArray(result)) {
-        setKnownTrackers(result.map((entry) => String(entry)));
+      const result = await trackerCatalogClient.list();
+      if (result && Array.isArray(result.entries) && Array.isArray(result.unsupported)) {
+        result.entries.forEach((entry) => {
+          entry.fields.forEach((field) => trackerFieldPresentation(field.key));
+        });
+        setTrackerCatalog(result);
       }
     } catch (err) {
       setSettingsError(String(err));
     } finally {
       setKnownTrackersLoading(false);
+      setTrackerCatalogLoaded(true);
     }
-  }, [knownTrackersLoading]);
+  }, [knownTrackersLoading, trackerCatalogLoaded]);
 
   const loadImageHostPolicyMetadata = useCallback(async () => {
     const getMetadata = trackerCatalogClient.getImageHostPolicyMetadata;
@@ -1498,19 +959,10 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   }, [activeTab, configData, loadSettings]);
 
   useEffect(() => {
-    if (
-      (activeTab === "settings" || activeTab === "input" || activeTab === "upload") &&
-      !defaultConfig
-    ) {
-      loadDefaultConfig();
+    if (!trackerCatalogLoaded && !knownTrackersLoading) {
+      loadTrackerCatalog();
     }
-  }, [activeTab, defaultConfig, loadDefaultConfig]);
-
-  useEffect(() => {
-    if (activeTab === "settings" && knownTrackers.length === 0 && !knownTrackersLoading) {
-      loadKnownTrackers();
-    }
-  }, [activeTab, knownTrackers.length, knownTrackersLoading, loadKnownTrackers]);
+  }, [trackerCatalogLoaded, knownTrackersLoading, loadTrackerCatalog]);
 
   useEffect(() => {
     if (activeTab === "settings" && !imageHostPolicyMetadata) {
@@ -1526,7 +978,11 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
 
   const advancedOpen = settingsAdvanced[settingsSection] ?? false;
   const showAdvancedToggle = (() => {
-    if (settingsSection === "trackers") return trackerHasAdvancedFields;
+    if (settingsSection === "trackers") {
+      return (trackerCatalog?.entries ?? []).some((entry) =>
+        entry.fields.some((field) => trackerFieldPresentation(field.key).advanced),
+      );
+    }
     const section = settingsSections.find((item) => item.key === settingsSection);
     if (!section) return false;
     const meta = effectiveSectionFieldMeta[section.jsonKey];
@@ -2066,59 +1522,14 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     );
   };
 
-  /**
-   * Check if a tracker has user-supplied upload/auth config. Catalog defaults
-   * include every tracker and URL, so entry presence or default_tracker membership
-   * cannot mean the tracker is enabled.
-   */
+  /** Reports configured state from backend-owned activation markers. */
   const isTrackerConfigured = useCallback(
-    (trackerName: string, trackerValue: ConfigMap): boolean => {
-      if (!defaultConfig || typeof defaultConfig !== "object" || Array.isArray(defaultConfig)) {
-        return Object.entries(trackerValue).some(([key, value]) =>
-          trackerActivationKeys.has(key) ? hasConfiguredTrackerValue(value, undefined) : false,
-        );
-      }
-
-      const defaultTrackersCfg = defaultConfig.Trackers;
-      if (
-        !defaultTrackersCfg ||
-        typeof defaultTrackersCfg !== "object" ||
-        Array.isArray(defaultTrackersCfg)
-      ) {
-        return Object.entries(trackerValue).some(([key, value]) =>
-          trackerActivationKeys.has(key) ? hasConfiguredTrackerValue(value, undefined) : false,
-        );
-      }
-
-      const defaultTrackersMap = defaultTrackersCfg.Trackers;
-      if (
-        !defaultTrackersMap ||
-        typeof defaultTrackersMap !== "object" ||
-        Array.isArray(defaultTrackersMap)
-      ) {
-        return Object.entries(trackerValue).some(([key, value]) =>
-          trackerActivationKeys.has(key) ? hasConfiguredTrackerValue(value, undefined) : false,
-        );
-      }
-
-      const baselineTracker = (defaultTrackersMap as ConfigMap)[trackerName];
-      const baseline =
-        baselineTracker && typeof baselineTracker === "object" && !Array.isArray(baselineTracker)
-          ? (baselineTracker as ConfigMap)
-          : {};
-
-      for (const [key, currentValue] of Object.entries(trackerValue)) {
-        if (!trackerActivationKeys.has(key)) {
-          continue;
-        }
-        if (hasConfiguredTrackerValue(currentValue, baseline[key])) {
-          return true;
-        }
-      }
-
-      return false;
-    },
-    [defaultConfig],
+    (entry: TrackerCatalogEntry, trackerValue: ConfigMap): boolean =>
+      entry.fields.some(
+        (field) =>
+          field.activation && hasConfiguredTrackerValue(trackerValue[field.key], field.default),
+      ),
+    [],
   );
 
   const trackerSelectionNames = useMemo(() => {
@@ -2137,23 +1548,22 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       rawEntries && typeof rawEntries === "object" && !Array.isArray(rawEntries)
         ? (rawEntries as ConfigMap)
         : {};
-    const allEntries = Object.entries(entriesRoot).filter(
-      ([, value]) => value && typeof value === "object" && !Array.isArray(value),
-    ) as Array<[string, ConfigMap]>;
-    const manualTrackerSet = new Set(
-      Object.entries(manualTrackerEntries)
+    const draftTrackerSet = new Set(
+      Object.entries(draftTrackerEntries)
         .filter(([, enabled]) => enabled)
         .map(([name]) => name),
     );
 
-    return allEntries
-      .filter(
-        ([trackerName, trackerValue]) =>
-          isTrackerConfigured(trackerName, trackerValue) || manualTrackerSet.has(trackerName),
-      )
-      .map(([trackerName]) => trackerName)
-      .sort((left, right) => left.localeCompare(right));
-  }, [configData, manualTrackerEntries, isTrackerConfigured]);
+    return (trackerCatalog?.entries ?? [])
+      .filter((entry) => {
+        const value = trackerConfigValue(entriesRoot, entry.name);
+        return (
+          draftTrackerSet.has(entry.name) ||
+          (value ? isTrackerConfigured(entry, value) : entry.configured)
+        );
+      })
+      .map((entry) => entry.name);
+  }, [configData, draftTrackerEntries, isTrackerConfigured, trackerCatalog]);
 
   const renderTrackerSection = (advancedOpen: boolean) => {
     try {
@@ -2174,13 +1584,11 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
           ? (rawEntries as ConfigMap)
           : {};
 
-      const allEntries = Object.entries(entriesRoot).filter(
-        ([, value]) => value && typeof value === "object" && !Array.isArray(value),
-      ) as Array<[string, ConfigMap]>;
       const visibleTrackerSet = new Set(trackerSelectionNames);
-      const visibleEntries = allEntries.filter(([trackerName]) =>
-        visibleTrackerSet.has(trackerName),
-      );
+      const catalogEntries = trackerCatalog?.entries ?? [];
+      const visibleEntries = catalogEntries
+        .filter((entry) => visibleTrackerSet.has(entry.name))
+        .map((entry) => ({ entry, value: trackerConfigValue(entriesRoot, entry.name) ?? {} }));
 
       const normalizedDefaultTrackers = normalizeDefaultTrackerList(defaultTrackers);
       const preferredTrackerRaw = trackerRoot.PreferredTracker;
@@ -2191,50 +1599,27 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       const selectedDefaultTrackerCount = normalizedDefaultTrackers.filter((name) =>
         normalizedTrackerNameSet.has(name.toLowerCase()),
       ).length;
-      const trackerOptions = (knownTrackers.length ? knownTrackers : Object.keys(trackerSchemas))
-        .filter((name) => typeof name === "string" && name.trim().length > 0)
-        .slice()
-        .sort((a, b) => a.localeCompare(b));
-      const allEntrySet = new Set(allEntries.map(([name]) => name));
+      const trackerOptions = catalogEntries.map((entry) => entry.name);
       const availableTrackers = trackerOptions.filter((name) => !visibleTrackerSet.has(name));
       const trackerClientOptions = [{ value: "", label: "" }, ...torrentClientOptions];
 
-      const trackerFallbackSchema = [
-        trackerFieldMeta.LinkDirName,
-        trackerFieldMeta.ImageHost,
-        trackerFieldMeta.APIKey,
-        trackerFieldMeta.AnnounceURL,
-        trackerFieldMeta.Username,
-        trackerFieldMeta.Password,
-        trackerFieldMeta.Anon,
-      ];
-      const trackerSchemaFor = (name: string) => {
-        const imageHostField = {
-          ...trackerFieldMeta.ImageHost,
-          options: trackerOptionsForImageHost(name),
-        };
-        const torrentClientField = {
-          ...trackerFieldMeta.TorrentClient,
-          options: trackerClientOptions,
-        };
-        const base = trackerSchemas[name] || trackerFallbackSchema;
-        return [
-          imageHostField,
-          torrentClientField,
-          ...base.filter((meta) => meta.key !== "ImageHost" && meta.key !== "TorrentClient"),
-        ];
+      const trackerSchemaFor = (entry: TrackerCatalogEntry) => {
+        return entry.fields.map((field) => {
+          const base = trackerFieldPresentation(field.key);
+          if (field.key === "ImageHost") {
+            return { ...base, options: trackerOptionsForImageHost(entry.name) };
+          }
+          if (field.key === "TorrentClient") {
+            return { ...base, options: trackerClientOptions };
+          }
+          return base;
+        });
       };
 
-      const buildDefault = (meta: FieldMeta) => {
-        if (meta.type === "boolean") return false;
-        if (meta.type === "number") return 0;
-        return "";
-      };
-
-      const buildTrackerDefaults = (schema: FieldMeta[]) => {
+      const buildTrackerDefaults = (entry: TrackerCatalogEntry) => {
         const defaults: ConfigMap = {};
-        schema.forEach((meta) => {
-          defaults[meta.key] = buildDefault(meta);
+        entry.fields.forEach((field) => {
+          defaults[field.key] = structuredClone(field.default);
         });
         return defaults;
       };
@@ -2342,11 +1727,12 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                 onClick={() => {
                   const name = trackerAddSelection.trim();
                   if (!name) return;
-                  if (!allEntrySet.has(name)) {
-                    const schema = trackerSchemaFor(name);
-                    addConfigKey(["Trackers", "Trackers"], name, buildTrackerDefaults(schema));
+                  const entry = catalogEntries.find((candidate) => candidate.name === name);
+                  if (!entry) return;
+                  if (!trackerConfigValue(entriesRoot, name)) {
+                    addConfigKey(["Trackers", "Trackers"], name, buildTrackerDefaults(entry));
                   }
-                  setManualTrackerEntries((prev) => ({ ...prev, [name]: true }));
+                  setDraftTrackerEntries((prev) => ({ ...prev, [name]: true }));
                   setTrackerAddSelection("");
                   setSettingsTrackerPanels((prev) => ({ ...prev, [name]: true }));
                 }}
@@ -2360,10 +1746,9 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
             {visibleEntries.length === 0 ? (
               <p className="muted">No configured entries yet.</p>
             ) : (
-              visibleEntries.map(([key, value]) => {
-                const schema = trackerSchemaFor(key).filter((meta): meta is FieldMeta =>
-                  Boolean(meta),
-                );
+              visibleEntries.map(({ entry, value }) => {
+                const key = entry.name;
+                const schema = trackerSchemaFor(entry);
                 return (
                   <details
                     className="settings-card settings-card--collapsible"
@@ -2381,8 +1766,15 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                         onClick={(event) => {
                           event.preventDefault();
                           event.stopPropagation();
-                          removeConfigKey(["Trackers", "Trackers"], key);
-                          setManualTrackerEntries((prev) => {
+                          updateConfigValue(
+                            ["Trackers", "Trackers", key],
+                            buildTrackerDefaults(entry),
+                          );
+                          toggleDefaultTracker(key, false);
+                          if (preferredTracker.toLowerCase() === key.toLowerCase()) {
+                            updatePreferredTracker("");
+                          }
+                          setDraftTrackerEntries((prev) => {
                             const next = { ...prev };
                             delete next[key];
                             return next;
@@ -2404,7 +1796,9 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                           .map((meta) =>
                             renderField(
                               meta.key,
-                              value[meta.key] ?? buildDefault(meta),
+                              value[meta.key] ??
+                                entry.fields.find((field) => field.key === meta.key)?.default ??
+                                "",
                               ["Trackers", "Trackers", key, meta.key],
                               meta,
                             ),
@@ -2416,6 +1810,42 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
               })
             )}
           </div>
+
+          {(trackerCatalog?.unsupported.length ?? 0) > 0 ? (
+            <div className="settings-subgroup">
+              <div className="settings-subgroup__title">Unsupported tracker entries</div>
+              <p className="muted">
+                Preserved config has no matching tracker implementation and cannot be used.
+              </p>
+              <div className="settings-map__grid">
+                {trackerCatalog?.unsupported.map((name) => (
+                  <div className="settings-card" key={`unsupported-${name}`}>
+                    <div className="settings-card__summary">
+                      <span className="settings-card__summary-name">{name}</span>
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          removeConfigKey(["Trackers", "Trackers"], name);
+                          setTrackerCatalog((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  unsupported: current.unsupported.filter(
+                                    (entry) => entry !== name,
+                                  ),
+                                }
+                              : current,
+                          );
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
       );
     } catch (err) {
@@ -2429,24 +1859,6 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     }
 
     const imageCfg = configData.ImageHosting as ConfigMap;
-    const trackersRoot =
-      configData.Trackers &&
-      typeof configData.Trackers === "object" &&
-      !Array.isArray(configData.Trackers)
-        ? (configData.Trackers as ConfigMap)
-        : null;
-    const trackerEntries =
-      trackersRoot?.Trackers &&
-      typeof trackersRoot.Trackers === "object" &&
-      !Array.isArray(trackersRoot.Trackers)
-        ? (trackersRoot.Trackers as ConfigMap)
-        : null;
-    const rfTrackerCfg =
-      trackerEntries?.RF &&
-      typeof trackerEntries.RF === "object" &&
-      !Array.isArray(trackerEntries.RF)
-        ? (trackerEntries.RF as ConfigMap)
-        : null;
     const hostFields = ["Host1", "Host2", "Host3", "Host4", "Host5", "Host6"];
     const requiredKeys = new Set<string>();
     hostFields.forEach((field) => {
@@ -2498,12 +1910,12 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         </div>
 
         <div className="settings-subgroup">
-          <div className="settings-subgroup__title">Tracker Image Hosts</div>
+          <div className="settings-subgroup__title">Additional Hosts</div>
           <div className="settings-grid">
             <div className="settings-switch-row">
-              <span>LST Lostimg</span>
+              <span>Lostimg enabled</span>
               <Switch
-                aria-label="LST Lostimg"
+                aria-label="Lostimg enabled"
                 checked={Boolean(imageCfg.LostimgEnabled)}
                 onChange={(event) =>
                   updateConfigValue(["ImageHosting", "LostimgEnabled"], event.target.checked)
@@ -2515,27 +1927,6 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
               (imageCfg.LostimgAPI as ConfigValue) ?? "",
               ["ImageHosting", "LostimgAPI"],
               sectionFieldMeta.ImageHosting.LostimgAPI,
-            )}
-            <div className="settings-switch-row">
-              <span>RF Reelflix</span>
-              <Switch
-                aria-label="RF Reelflix"
-                checked={
-                  normalizeImageHostValue(String(rfTrackerCfg?.ImageHost ?? "")) === "reelflix"
-                }
-                onChange={(event) =>
-                  updateConfigValue(
-                    ["Trackers", "Trackers", "RF", "ImageHost"],
-                    event.target.checked ? "reelflix" : "",
-                  )
-                }
-              />
-            </div>
-            {renderField(
-              "ImgAPI",
-              (rfTrackerCfg?.ImgAPI as ConfigValue) ?? "",
-              ["Trackers", "Trackers", "RF", "ImgAPI"],
-              trackerFieldMeta.ImgAPI,
             )}
           </div>
         </div>

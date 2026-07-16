@@ -57,6 +57,7 @@ func screenshotSlotsFromSource(
 	repo UploadPersistence,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
+	registry *Registry,
 ) ([]api.ScreenshotSlot, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("trackers: load screenshot slots canceled: %w", err)
@@ -90,7 +91,7 @@ func screenshotSlotsFromSource(
 		return cloneScreenshotSlots(slots), nil
 	}
 
-	slots, err = synthesizeScreenshotSlots(ctx, tracker, meta, repo, logger, preloaded)
+	slots, err = synthesizeScreenshotSlots(ctx, tracker, meta, repo, logger, preloaded, registry)
 	if err != nil {
 		return nil, err
 	}
@@ -174,8 +175,9 @@ func synthesizeScreenshotSlots(
 	repo UploadPersistence,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
+	registry *Registry,
 ) ([]api.ScreenshotSlot, error) {
-	description, _, _ := resolveTrackerDescription(ctx, tracker, meta, repo, logger, preloaded)
+	description, _, _ := resolveTrackerDescription(ctx, tracker, meta, repo, logger, preloaded, registry)
 	selections, err := finalSelectionsFromSource(ctx, meta, repo, preloaded)
 	if err != nil && !errorsIsNotFound(err) {
 		return nil, err

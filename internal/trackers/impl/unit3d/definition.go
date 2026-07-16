@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -17,55 +16,12 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// IsConfiguredTracker reports whether tracker is either a known Unit3D site or
-// a custom config entry whose auth shape identifies the Unit3D protocol.
-func IsConfiguredTracker(cfg config.Config, tracker string) bool {
-	return IsConfiguredTrackerWithRegistry(cfg, tracker, nil)
-}
-
-// IsConfiguredTrackerWithRegistry reports whether tracker is registered as Unit3D or is a custom Unit3D-shaped config entry.
-func IsConfiguredTrackerWithRegistry(cfg config.Config, tracker string, registry *trackers.Registry) bool {
-	key := strings.ToUpper(strings.TrimSpace(tracker))
-	if key == "" {
-		return false
-	}
-	if kind, ok := registry.LookupKind(key); ok {
-		return kind == trackers.KindUnit3D
-	}
-	if trackers.IsUnit3DTracker(key) {
-		return true
-	}
-	if trackers.IsKnownTracker(key) {
-		return false
-	}
-	entry, ok := cfg.Trackers.Trackers[key]
-	if !ok {
-		for name, candidate := range cfg.Trackers.Trackers {
-			if strings.EqualFold(name, key) {
-				entry, ok = candidate, true
-				break
-			}
-		}
-	}
-	if !ok {
-		return false
-	}
-	return strings.TrimSpace(entry.APIKey) != "" &&
-		strings.TrimSpace(entry.AnnounceURL) != "" &&
-		strings.TrimSpace(entry.Username) == "" &&
-		strings.TrimSpace(entry.Password) == "" &&
-		strings.TrimSpace(entry.Passkey) == "" &&
-		strings.TrimSpace(entry.PTPAPIUser) == "" &&
-		strings.TrimSpace(entry.PTPAPIKey) == ""
-}
-
 // Definition provides one Unit3D site profile through the shared tracker contracts.
 type Definition struct {
 	profile Profile
 }
 
-// Profile declares Unit3D site identity and default endpoint metadata.
-// Runtime tracker config remains authoritative for endpoint overrides.
+// Profile declares Unit3D site identity, endpoint, and site-owned policies.
 type Profile struct {
 	// Name is the stable normalized tracker identifier.
 	Name string
@@ -75,6 +31,8 @@ type Profile struct {
 	Site SiteProfile
 	// Rules contains site-specific release validation requirements.
 	Rules *ruletypes.RuleSet
+	// AudioPolicy contains site-specific multi-language constraints.
+	AudioPolicy *trackers.AudioPolicy
 	// DupePolicy contains site-specific duplicate comparison settings.
 	DupePolicy *trackers.DupePolicy
 	// UploadArtifact contains site-specific torrent personalization settings.
@@ -85,6 +43,8 @@ type Profile struct {
 	BannedGroups []string
 	// ImageHost contains accepted image-host restrictions.
 	ImageHost *trackers.ImageHostPolicy
+	// TorrentIdentity contains site-specific torrent identity aliases or overrides.
+	TorrentIdentity *trackers.TorrentIdentityPolicy
 	// ClaimPolicy contains generic claim-orchestration settings.
 	ClaimPolicy *trackers.ClaimPolicy
 	// DescriptionGroup identifies the site's description override group.
@@ -156,16 +116,48 @@ func (d *Definition) BannedGroupPolicy() *trackers.BannedGroupPolicy { return d.
 // DupePolicy returns the site's duplicate comparison settings.
 func (d *Definition) DupePolicy() *trackers.DupePolicy { return d.profile.DupePolicy }
 
+// AudioPolicy returns the site's multi-language constraints.
+func (d *Definition) AudioPolicy() *trackers.AudioPolicy { return d.profile.AudioPolicy }
+
 // ImageHostPolicy returns the site's accepted image-host restrictions.
 func (d *Definition) ImageHostPolicy() *trackers.ImageHostPolicy { return d.profile.ImageHost }
+
+// TorrentIdentityPolicy returns common Unit3D identity behavior plus site aliases.
+func (d *Definition) TorrentIdentityPolicy() *trackers.TorrentIdentityPolicy {
+	policy := trackers.TorrentIdentityPolicy{
+		TrackerURLPatterns: []string{d.profile.BaseURL},
+		CommentURLPatterns: []string{d.profile.BaseURL},
+		DetailIDPattern:    `/(\d+)`,
+	}
+	if d.profile.TorrentIdentity != nil {
+		policy.TrackerURLPatterns = append(policy.TrackerURLPatterns, d.profile.TorrentIdentity.TrackerURLPatterns...)
+		policy.CommentURLPatterns = append(policy.CommentURLPatterns, d.profile.TorrentIdentity.CommentURLPatterns...)
+		if d.profile.TorrentIdentity.DetailIDPattern != "" {
+			policy.DetailIDPattern = d.profile.TorrentIdentity.DetailIDPattern
+		}
+		policy.WorkingTrackerID = d.profile.TorrentIdentity.WorkingTrackerID
+		policy.SearchPreference = d.profile.TorrentIdentity.SearchPreference
+	}
+	return &policy
+}
 
 // Name returns the stable tracker identifier for this Unit3D profile.
 func (d *Definition) Name() string {
 	return d.profile.Name
 }
 
-// TrackerKind identifies the definition as Unit3D-backed.
-func (d *Definition) TrackerKind() trackers.Kind { return trackers.KindUnit3D }
+// TrackerFamily identifies the definition as Unit3D-backed.
+func (d *Definition) TrackerFamily() trackers.Family { return trackers.FamilyUnit3D }
+
+// AuthCapability declares the API key required by standard Unit3D APIs.
+func (d *Definition) AuthCapability() api.TrackerAuthCapability {
+	return api.TrackerAuthCapability{
+		TrackerID:      d.profile.Name,
+		DisplayName:    d.profile.Name,
+		AuthKind:       "api_key",
+		RequiresAPIKey: true,
+	}
+}
 
 // Prepare builds a fresh intent-scoped tracker plan for this Unit3D profile.
 func (d *Definition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
@@ -173,11 +165,8 @@ func (d *Definition) Prepare(ctx context.Context, input trackers.PreparationInpu
 }
 
 func (d *Definition) submit(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
-	if d.profile.BaseURL != "" || strings.TrimSpace(req.TrackerConfig.URL) != "" {
-		if strings.TrimSpace(req.TrackerConfig.URL) == "" {
-			req.TrackerConfig.URL = d.profile.BaseURL
-		}
-		return uploadUnit3D(ctx, req, d.profile.Site)
+	if d.profile.BaseURL != "" {
+		return uploadUnit3D(ctx, req, d.profile.BaseURL, d.profile.Site)
 	}
 	select {
 	case <-ctx.Done():
@@ -191,11 +180,8 @@ func (d *Definition) submit(ctx context.Context, req trackers.PreparationInput) 
 }
 
 func (d *Definition) prepareDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
-	if d.profile.BaseURL != "" || strings.TrimSpace(req.TrackerConfig.URL) != "" {
-		if strings.TrimSpace(req.TrackerConfig.URL) == "" {
-			req.TrackerConfig.URL = d.profile.BaseURL
-		}
-		return buildUploadDryRunUnit3D(ctx, req, d.profile.Site)
+	if d.profile.BaseURL != "" {
+		return buildUploadDryRunUnit3D(ctx, req, d.profile.BaseURL, d.profile.Site)
 	}
 	select {
 	case <-ctx.Done():

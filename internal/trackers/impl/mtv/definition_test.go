@@ -82,7 +82,7 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	d := New()
+	d := &Definition{baseURL: server.URL}
 	result, err := d.submit(context.Background(), trackers.PreparationInput{
 		Tracker: "MTV",
 		Meta: api.UploadSubject{
@@ -94,7 +94,7 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 			ReleaseName:     "My.Release.2026.2160p.WEBDL.HEVC",
 			ServiceLongName: "Netflix",
 		},
-		TrackerConfig: config.TrackerConfig{URL: server.URL},
+		TrackerConfig: config.TrackerConfig{},
 		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 		Logger:        api.NopLogger{},
 	})
@@ -165,7 +165,7 @@ func TestDefinitionUploadLoginBootstrapSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	d := New()
+	d := &Definition{baseURL: server.URL}
 	result, err := d.submit(context.Background(), trackers.PreparationInput{
 		Tracker: "MTV",
 		Meta: api.UploadSubject{
@@ -178,7 +178,6 @@ func TestDefinitionUploadLoginBootstrapSuccess(t *testing.T) {
 			ServiceLongName: "Netflix",
 		},
 		TrackerConfig: config.TrackerConfig{
-			URL:      server.URL,
 			Username: "user",
 			Password: "pass",
 		},

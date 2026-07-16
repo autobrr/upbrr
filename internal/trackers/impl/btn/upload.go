@@ -226,7 +226,7 @@ var btnNameNormalizationRules = []btnNameNormalizationRule{
 	{pattern: regexp.MustCompile(`\.{2,}`), replacement: `.`},
 }
 
-func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
+func uploadAt(ctx context.Context, req trackers.PreparationInput, baseURL string) (api.UploadSummary, error) {
 	if err := validateBTNRequest(req); err != nil {
 		return api.UploadSummary{}, err
 	}
@@ -242,7 +242,7 @@ func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSumma
 		return api.UploadSummary{}, err
 	}
 
-	uploadCtx, err := newUploadContext(ctx, req)
+	uploadCtx, err := newUploadContextAt(ctx, req, baseURL)
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
@@ -384,11 +384,15 @@ func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSumma
 // canonical season or episode metadata as zero are returned as blocked so the
 // operator sees the remediation before upload.
 func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
+	return buildUploadDryRunAt(ctx, req, btnDefaultBaseURL)
+}
+
+func buildUploadDryRunAt(ctx context.Context, req trackers.PreparationInput, baseURL string) (api.TrackerDryRunEntry, error) {
 	if err := validateBTNRequest(req); err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
 
-	uploadCtx, err := newUploadContext(ctx, req)
+	uploadCtx, err := newUploadContextAt(ctx, req, baseURL)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
@@ -494,16 +498,12 @@ func validateBTNDryRunUploadAuth(ctx context.Context, req trackers.PreparationIn
 	return nil
 }
 
-func newUploadContext(ctx context.Context, req trackers.PreparationInput) (uploadContext, error) {
+func newUploadContextAt(ctx context.Context, req trackers.PreparationInput, baseURL string) (uploadContext, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return uploadContext{}, fmt.Errorf("trackers: BTN create cookie jar: %w", err)
 	}
 	client := &http.Client{Timeout: 45 * time.Second, Jar: jar}
-	baseURL := strings.TrimRight(strings.TrimSpace(req.TrackerConfig.URL), "/")
-	if baseURL == "" {
-		baseURL = btnDefaultBaseURL
-	}
 	uploadCtx := uploadContext{
 		baseURL:   baseURL,
 		uploadURL: baseURL + btnUploadPath,
@@ -552,7 +552,11 @@ func ensureBTNUploadSession(ctx context.Context, cfg config.TrackerConfig, dbPat
 // configured credentials. Credential login must produce reusable cookies before
 // refreshed cookies are persisted.
 func ResolveSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConfig, dbPath string) error {
-	return ResolveSessionForTrackerAuthLogin(ctx, cfg, dbPath, api.TrackerAuthLoginRequest{})
+	return resolveSessionForTrackerAuthAt(ctx, cfg, dbPath, btnDefaultBaseURL)
+}
+
+func resolveSessionForTrackerAuthAt(ctx context.Context, cfg config.TrackerConfig, dbPath string, baseURL string) error {
+	return resolveSessionForTrackerAuthLoginAt(ctx, cfg, dbPath, api.TrackerAuthLoginRequest{}, baseURL)
 }
 
 // ResolveSessionForTrackerAuthLogin validates BTN stored cookies or logs in
@@ -561,10 +565,16 @@ func ResolveSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConfig,
 // configured TOTP. Missing 2FA input preserves existing cookies; a rejected
 // submitted code returns [ErrSubmitted2FARejected] before persistence.
 func ResolveSessionForTrackerAuthLogin(ctx context.Context, cfg config.TrackerConfig, dbPath string, login api.TrackerAuthLoginRequest) error {
-	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
-	if baseURL == "" {
-		baseURL = btnDefaultBaseURL
-	}
+	return resolveSessionForTrackerAuthLoginAt(ctx, cfg, dbPath, login, btnDefaultBaseURL)
+}
+
+func resolveSessionForTrackerAuthLoginAt(
+	ctx context.Context,
+	cfg config.TrackerConfig,
+	dbPath string,
+	login api.TrackerAuthLoginRequest,
+	baseURL string,
+) error {
 	err := validateBTNStoredCookies(ctx, baseURL, dbPath)
 	if err == nil {
 		return nil

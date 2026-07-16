@@ -36,7 +36,7 @@ type unit3dUploadResponse struct {
 	Data    string `json:"data"`
 }
 
-func uploadUnit3D(ctx context.Context, req trackers.PreparationInput, profiles ...SiteProfile) (api.UploadSummary, error) {
+func uploadUnit3D(ctx context.Context, req trackers.PreparationInput, configuredBaseURL string, profiles ...SiteProfile) (api.UploadSummary, error) {
 	profile := firstSiteProfile(profiles)
 	trackerName := strings.ToUpper(strings.TrimSpace(req.Tracker))
 	logger := req.Logger
@@ -58,7 +58,7 @@ func uploadUnit3D(ctx context.Context, req trackers.PreparationInput, profiles .
 		return api.UploadSummary{}, err
 	}
 
-	baseURL, uploadURL := resolveUnit3DURLs(req.TrackerConfig.URL)
+	baseURL, uploadURL := resolveUnit3DURLs(configuredBaseURL)
 	logger.Debugf("trackers: %s upload URL: %s", trackerName, uploadURL)
 
 	originalName := strings.TrimSpace(req.Meta.ReleaseName)
@@ -344,7 +344,12 @@ func isNumericID(value string) bool {
 // files, and endpoint that would be used locally. TV payloads with zero-valued
 // canonical season or episode metadata are returned as blocked because the
 // payload no longer satisfies upload prerequisites.
-func buildUploadDryRunUnit3D(ctx context.Context, req trackers.PreparationInput, profiles ...SiteProfile) (api.TrackerDryRunEntry, error) {
+func buildUploadDryRunUnit3D(
+	ctx context.Context,
+	req trackers.PreparationInput,
+	configuredBaseURL string,
+	profiles ...SiteProfile,
+) (api.TrackerDryRunEntry, error) {
 	profile := firstSiteProfile(profiles)
 	select {
 	case <-ctx.Done():
@@ -366,7 +371,7 @@ func buildUploadDryRunUnit3D(ctx context.Context, req trackers.PreparationInput,
 		return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: %s mediainfo missing required fields", trackerName)
 	}
 
-	_, uploadURL := resolveUnit3DURLs(req.TrackerConfig.URL)
+	_, uploadURL := resolveUnit3DURLs(configuredBaseURL)
 
 	originalName := strings.TrimSpace(req.Meta.ReleaseName)
 	if originalName == "" {

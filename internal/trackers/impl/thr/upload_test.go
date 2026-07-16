@@ -62,11 +62,10 @@ func TestLoginSessionBootstrapsHiddenFieldsAndFollowsRedirect(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	client, err := LoginSession(context.Background(), config.TrackerConfig{
-		URL:      server.URL,
+	client, err := loginSessionAt(context.Background(), config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	})
+	}, server.URL)
 	if err != nil {
 		t.Fatalf("LoginSession: %v", err)
 	}
@@ -96,11 +95,10 @@ func TestLoginSessionRejectsRedirectWithoutAuthenticatedMarker(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	client, err := LoginSession(context.Background(), config.TrackerConfig{
-		URL:      server.URL,
+	client, err := loginSessionAt(context.Background(), config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	})
+	}, server.URL)
 	if !errors.Is(err, ErrLoginFailed) {
 		t.Fatalf("expected ErrLoginFailed, got %v", err)
 	}
@@ -151,11 +149,10 @@ func TestLoginSessionRejectsWeakAuthenticatedMarkers(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			client, err := LoginSession(context.Background(), config.TrackerConfig{
-				URL:      server.URL,
+			client, err := loginSessionAt(context.Background(), config.TrackerConfig{
 				Username: "user",
 				Password: "pass",
-			})
+			}, server.URL)
 			if !errors.Is(err, ErrLoginFailed) {
 				t.Fatalf("expected ErrLoginFailed, got %v", err)
 			}

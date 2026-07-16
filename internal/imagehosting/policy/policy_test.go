@@ -3,65 +3,35 @@
 
 package policy
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
-func TestPolicyMetadataExposesOnlySupportedTrackerUploadHosts(t *testing.T) {
+func TestKnownUploadHostsAreDeterministic(t *testing.T) {
 	t.Parallel()
 
-	metadata := Snapshot()
-	ptpHosts := metadata.TrackerUploadHosts["PTP"]
-
-	if !HostAllowed("pixhost", ptpHosts) {
-		t.Fatalf("PTP upload hosts should include supported host pixhost: %v", ptpHosts)
+	hosts := KnownUploadHosts()
+	if !slices.IsSorted(hosts) {
+		t.Fatalf("upload hosts are not sorted: %v", hosts)
 	}
-	for _, host := range []string{"imgbb", "onlyimage", "ptscreens", "passtheimage"} {
-		if !HostAllowed(host, ptpHosts) {
-			t.Fatalf("PTP upload hosts should include supported host %s: %v", host, ptpHosts)
+	for _, host := range []string{"hdb", "lostimg", "pixhost", "reelflix", "thr"} {
+		if !IsUploadHost(host) {
+			t.Errorf("expected upload host %q", host)
 		}
 	}
-	if len(ptpHosts) != 5 {
-		t.Fatalf("PTP upload hosts should only allow supported PTP hosts: %v", ptpHosts)
-	}
-	if HostAllowed("imgur", ptpHosts) {
-		t.Fatalf("PTP upload hosts should exclude unsupported host: %v", ptpHosts)
-	}
 }
 
-func TestPolicyMetadataDefensivelyCopiesOwnedHosts(t *testing.T) {
+func TestHostAllowedUsesGenericAllowlist(t *testing.T) {
 	t.Parallel()
 
-	metadata := Snapshot()
-	metadata.OwnedHosts["hdb"] = "OTHER"
-
-	if got := OwnerForHost("hdb"); got != "HDB" {
-		t.Fatalf("OwnerForHost(hdb) = %q, want HDB", got)
+	if !HostAllowed("PIXHOST", []string{"pixhost"}) {
+		t.Fatal("expected case-insensitive allowlist match")
 	}
-}
-
-func TestPolicyMetadataExposesLostimgAsLSTOwnedUploadHost(t *testing.T) {
-	t.Parallel()
-
-	metadata := Snapshot()
-	lstHosts := metadata.TrackerUploadHosts["LST"]
-
-	if !HostAllowed("lostimg", lstHosts) {
-		t.Fatalf("LST upload hosts should include lostimg: %v", lstHosts)
+	if HostAllowed("imgbox", []string{"pixhost"}) {
+		t.Fatal("unexpected allowlist match")
 	}
-	if got := metadata.OwnedHosts["lostimg"]; got != "LST" {
-		t.Fatalf("lostimg owner = %q, want LST", got)
-	}
-}
-
-func TestPolicyMetadataExposesReelflixAsRFOwnedUploadHost(t *testing.T) {
-	t.Parallel()
-
-	metadata := Snapshot()
-	rfHosts := metadata.TrackerUploadHosts["RF"]
-
-	if !HostAllowed("reelflix", rfHosts) {
-		t.Fatalf("RF upload hosts should include reelflix: %v", rfHosts)
-	}
-	if got := metadata.OwnedHosts["reelflix"]; got != "RF" {
-		t.Fatalf("reelflix owner = %q, want RF", got)
+	if !HostAllowed("imgbox", nil) {
+		t.Fatal("empty allowlist must permit every host")
 	}
 }

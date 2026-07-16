@@ -14,11 +14,11 @@ import (
 )
 
 // Definition provides MTV tracker preparation and optional policy capabilities.
-type Definition struct{}
+type Definition struct{ baseURL string }
 
 // New returns a fresh MTV tracker definition.
 func New() *Definition {
-	return &Definition{}
+	return &Definition{baseURL: mtvBaseURL}
 }
 
 // Name returns the stable MTV tracker identifier.
@@ -37,11 +37,11 @@ func (d *Definition) Prepare(ctx context.Context, input trackers.PreparationInpu
 }
 
 func (d *Definition) submit(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
-	return upload(ctx, req)
+	return uploadAt(ctx, req, d.baseURL)
 }
 
 func (d *Definition) prepareDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
-	return buildUploadDryRun(ctx, req)
+	return buildUploadDryRunAt(ctx, req, d.baseURL)
 }
 
 func (d *Definition) prepareDescription(ctx context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {

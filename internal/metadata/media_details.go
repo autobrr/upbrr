@@ -669,27 +669,10 @@ func resolveAudioBloatPolicyWithRegistry(
 		return nil, nil
 	}
 
-	bloatAllowed := map[string]struct{}{
-		"ASC": {},
-		"BJS": {},
-		"BT":  {},
-		"DC":  {},
-		"FF":  {},
-		"TL":  {},
-	}
-	trackerAllowedLanguages := map[string][]string{
-		"AITHER": {"english"},
-		"SPD":    {"romanian"},
-	}
-	hardBlockedForEnglishOriginal := map[string]struct{}{
-		"MTV": {},
-	}
+	trackerPolicies := make(map[string]trackers.AudioPolicy, len(resolvedTrackers))
 	for _, tracker := range resolvedTrackers {
 		if policy, ok := registry.LookupAudioPolicy(tracker); ok {
-			trackerAllowedLanguages[tracker] = policy.AllowedLanguages
-			if policy.BlockEnglishOriginalWithForeign {
-				hardBlockedForEnglishOriginal[tracker] = struct{}{}
-			}
+			trackerPolicies[tracker] = policy
 		}
 	}
 	isEnglishOriginalWithNonEnglish := original == "english" && hasEnglish && hasOther
@@ -701,17 +684,16 @@ func resolveAudioBloatPolicyWithRegistry(
 			continue
 		}
 		for _, tracker := range resolvedTrackers {
-			if _, ok := bloatAllowed[tracker]; ok {
+			policy := trackerPolicies[tracker]
+			if policy.AllowBloat {
 				continue
 			}
-			if allowed, ok := trackerAllowedLanguages[tracker]; ok && containsCanonicalLanguage(allowed, language) {
+			if containsCanonicalLanguage(policy.AllowedLanguages, language) {
 				continue
 			}
-			if isEnglishOriginalWithNonEnglish {
-				if _, ok := hardBlockedForEnglishOriginal[tracker]; ok {
-					blocked[tracker] = appendUniqueString(blocked[tracker], languageutil.NormalizeLanguageDisplay(language))
-					continue
-				}
+			if isEnglishOriginalWithNonEnglish && policy.BlockEnglishOriginalWithForeign {
+				blocked[tracker] = appendUniqueString(blocked[tracker], languageutil.NormalizeLanguageDisplay(language))
+				continue
 			}
 			warned[tracker] = appendUniqueString(warned[tracker], languageutil.NormalizeLanguageDisplay(language))
 		}

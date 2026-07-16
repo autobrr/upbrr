@@ -26,6 +26,8 @@ type barrierPlanDefinition struct {
 
 func (d barrierPlanDefinition) Name() string { return d.name }
 
+func (barrierPlanDefinition) DefaultBaseURL() string { return "https://tracker.example.invalid" }
+
 func (d barrierPlanDefinition) Prepare(ctx context.Context, _ PreparationInput) (TrackerPlan, *PreparationFailure) {
 	d.started <- d.name
 	select {
@@ -97,11 +99,17 @@ type readyReleasePlanDefinition struct {
 	name      string
 	releases  *atomic.Int32
 	submitted *atomic.Int32
+	prepared  chan<- struct{}
 }
 
 func (d readyReleasePlanDefinition) Name() string { return d.name }
 
+func (readyReleasePlanDefinition) DefaultBaseURL() string { return "https://tracker.example.invalid" }
+
 func (d readyReleasePlanDefinition) Prepare(context.Context, PreparationInput) (TrackerPlan, *PreparationFailure) {
+	if d.prepared != nil {
+		d.prepared <- struct{}{}
+	}
 	return NewUploadPlan(d.name, api.TrackerDryRunEntry{}, func(context.Context) (api.UploadSummary, error) {
 		d.submitted.Add(1)
 		return api.UploadSummary{Uploaded: 1}, nil
@@ -114,11 +122,19 @@ func (d readyReleasePlanDefinition) Prepare(context.Context, PreparationInput) (
 type canceledPreparationDefinition struct {
 	name    string
 	started chan<- struct{}
+	wait    <-chan struct{}
 }
 
 func (d canceledPreparationDefinition) Name() string { return d.name }
 
+func (canceledPreparationDefinition) DefaultBaseURL() string {
+	return "https://tracker.example.invalid"
+}
+
 func (d canceledPreparationDefinition) Prepare(ctx context.Context, _ PreparationInput) (TrackerPlan, *PreparationFailure) {
+	if d.wait != nil {
+		<-d.wait
+	}
 	d.started <- struct{}{}
 	<-ctx.Done()
 	return TrackerPlan{}, NewPreparationFailure(d.name, "canceled", "preparation canceled", ctx.Err())
@@ -129,15 +145,21 @@ func TestUploadCancellationBeforeBarrierSubmitsNoneAndReleasesReadyPlans(t *test
 	var releases atomic.Int32
 	var submits atomic.Int32
 	started := make(chan struct{}, 1)
+	ready := make(chan struct{}, 1)
 	registry := NewRegistry()
 	if err := registry.Register(readyReleasePlanDefinition{
 		name:      "AITHER",
 		releases:  &releases,
 		submitted: &submits,
+		prepared:  ready,
 	}); err != nil {
 		t.Fatalf("register ready: %v", err)
 	}
-	if err := registry.Register(canceledPreparationDefinition{name: "BLU", started: started}); err != nil {
+	if err := registry.Register(canceledPreparationDefinition{
+name: "BLU",
+ started: started,
+ wait: ready,
+}); err != nil {
 		t.Fatalf("register blocking: %v", err)
 	}
 	svc := NewServiceWithRegistry(config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}}}, nil, nil, registry)

@@ -19,11 +19,22 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/sourcelayout"
+	"github.com/autobrr/upbrr/internal/trackers"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 var errSyntheticDVDMenuCapture = errors.New("synthetic DVD menu capture failure")
+
+func newCLITrackerRegistryForTest(t *testing.T) *trackers.Registry {
+	t.Helper()
+	registry, err := trackerimpl.NewRegistry()
+	if err != nil {
+		t.Fatalf("create tracker registry: %v", err)
+	}
+	return registry
+}
 
 func assertDVDMenuCaptureError(t *testing.T, err error) {
 	t.Helper()
@@ -712,6 +723,7 @@ func TestResolveCLIUploadTrackersExplicitTrackersSuppressDefaults(t *testing.T) 
 		},
 		api.MetadataPreview{},
 		config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}}},
+		newCLITrackerRegistryForTest(t),
 	)
 	if len(selected) != 1 || selected[0] != "BLU" {
 		t.Fatalf("expected explicit BLU selection, got %#v", selected)
@@ -1412,19 +1424,19 @@ func TestPromptTrackerDupeReviewApprovesUserSkippedDupeChecksInUnattendedMode(t 
 	}
 	coreSvc := &cliCoreForTest{dupeSummary: api.DupeCheckSummary{Results: []api.DupeCheckResult{
 		{
-Tracker: "ANT",
- Status: "skipped",
- Skipped: true,
- SkipCode: "user_requested",
- SkipReason: "duplicate search not run by request",
-},
+			Tracker:    "ANT",
+			Status:     "skipped",
+			Skipped:    true,
+			SkipCode:   "user_requested",
+			SkipReason: "duplicate search not run by request",
+		},
 		{
-Tracker: "BLU",
- Status: "skipped",
- Skipped: true,
- SkipCode: "user_requested",
- SkipReason: "duplicate search not run by request",
-},
+			Tracker:    "BLU",
+			Status:     "skipped",
+			Skipped:    true,
+			SkipCode:   "user_requested",
+			SkipReason: "duplicate search not run by request",
+		},
 	}}}
 	summary, err := runCLIDupeCheck(context.Background(), coreSvc, req)
 	if err != nil {
@@ -2127,8 +2139,8 @@ func TestMaybeEditCLIDescriptionsSkipsOnlyID(t *testing.T) {
 	}
 	req := api.Request{
 		SourcePath: "movie.mkv",
-		Trackers: []string{"AITHER"},
-		Options:  api.UploadOptions{OnlyID: true},
+		Trackers:   []string{"AITHER"},
+		Options:    api.UploadOptions{OnlyID: true},
 	}
 	updatedReq, _, err := maybeEditCLIDescriptions(context.Background(), coreSvc, bufio.NewReader(strings.NewReader("y\n")), req, api.UploadReview{}, cliOptions{})
 	if err != nil {

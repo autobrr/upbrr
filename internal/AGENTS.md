@@ -117,7 +117,8 @@ Current expected local/generated ignores: `dist/`, `webui/dist/`, `internal/webs
 ## Domain Guardrails
 
 - Tracker behavior belongs in `internal/trackers/impl/<tracker>`; Unit3D site exceptions belong in `internal/trackers/impl/unit3d/sites/<tracker>`. Register capabilities explicitly in `internal/trackers/impl/registry.go`; generic packages must not import individual implementations.
-- Tracker changes may also require shared registry contract/parity tests, `internal/config/defaults/example.yaml`, and compatibility catalog tests. Do not add new tracker-name dispatch to `internal/trackers/catalog.go` or `internal/trackers/unit3dmeta`; those are compatibility read models.
+- `internal/trackers/impl/registry.go` is the only complete supported-tracker composition list and groups definitions by family. Tracker profiles/definitions own endpoints and typed policy; `internal/config/defaults/example.yaml` owns ordered config surfaces/defaults. Generic metadata, auth, image-hosting, torrent-client, and frontend code must consume registry/catalog capabilities without tracker-name dispatch.
+- Standard Unit3D additions require the site profile/rules, one Unit3D registry entry, one example-config stanza without `url`, and combined rule cases. Do not infer configured custom trackers; unsupported saved entries stay inert and preserve non-URL unknown fields.
 - DB schema changes use stable, additive, forward-only, idempotent SQLite migrations where practical; preserve `schema_migrations` and the legacy `user_version` bridge.
 - WebUI client changes need matching `/api/app/*` routes, typed request shapes, and unit/embedded browser verification.
 - Generated/built outputs are mostly ignored; do not commit populated `internal/webserver/assets` unless deliberately updating generated artifacts.

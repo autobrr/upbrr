@@ -9,15 +9,17 @@ type TrackerAuthCapability struct {
 	TrackerID   string `json:"trackerID"`
 	DisplayName string `json:"displayName"`
 	// AuthKind is a compact capability label such as "cookies", "credential_login", or "api_key_cookies_login".
-	AuthKind           string   `json:"authKind"`
-	SupportsCookieFile bool     `json:"supportsCookieFile"`
-	SupportsLogin      bool     `json:"supportsLogin"`
-	SupportsAutoLogin  bool     `json:"supportsAutoLogin"`
-	SupportsTOTP       bool     `json:"supportsTOTP"`
-	SupportsManual2FA  bool     `json:"supportsManual2FA"`
-	RequiresAPIKey     bool     `json:"requiresAPIKey"`
-	RequiresPasskey    bool     `json:"requiresPasskey"`
-	Notes              []string `json:"notes"`
+	AuthKind           string `json:"authKind"`
+	SupportsCookieFile bool   `json:"supportsCookieFile"`
+	SupportsLogin      bool   `json:"supportsLogin"`
+	SupportsAutoLogin  bool   `json:"supportsAutoLogin"`
+	SupportsTOTP       bool   `json:"supportsTOTP"`
+	SupportsManual2FA  bool   `json:"supportsManual2FA"`
+	// SupportsRemoteValidation reports whether Check Auth can execute a tracker-owned remote resolver.
+	SupportsRemoteValidation bool     `json:"supportsRemoteValidation"`
+	RequiresAPIKey           bool     `json:"requiresAPIKey"`
+	RequiresPasskey          bool     `json:"requiresPasskey"`
+	Notes                    []string `json:"notes"`
 }
 
 // TrackerAuthStatus reports the current local tracker auth state after a

@@ -234,7 +234,6 @@ func TestBTNUploadEndToEndSuccess(t *testing.T) {
 			Tag:                 "GRP",
 		},
 		TrackerConfig: config.TrackerConfig{
-			URL:      server.URL,
 			Username: "user",
 			Password: "pass",
 		},
@@ -246,7 +245,7 @@ func TestBTNUploadEndToEndSuccess(t *testing.T) {
 		}),
 	}
 
-	summary, err := upload(context.Background(), req)
+	summary, err := uploadAt(context.Background(), req, server.URL)
 	handlerErrs.Check()
 	if err != nil {
 		t.Fatalf("upload failed: %v", err)
@@ -362,13 +361,13 @@ func TestBTNUploadAnnounceURLWritesTorrentArtifact(t *testing.T) {
 	}))
 	defer server.Close()
 
-	req := newBTNUploadTestRequest(t, server.URL)
+	req := newBTNUploadTestRequest(t)
 	torrentPath := filepath.Join(t.TempDir(), "input.torrent")
 	writeBTNTestTorrent(t, torrentPath)
 	req.Meta.TorrentPath = torrentPath
 	req.TrackerConfig.AnnounceURL = "https://tracker.btn.example/announce/passkey"
 
-	summary, err := upload(context.Background(), req)
+	summary, err := uploadAt(context.Background(), req, server.URL)
 	if err != nil {
 		t.Fatalf("upload failed: %v", err)
 	}
@@ -481,7 +480,7 @@ func TestBTNUploadUsesValidImportedCookiesWithoutCredentials(t *testing.T) {
 				Episode:    1,
 			},
 		},
-		TrackerConfig: config.TrackerConfig{URL: server.URL},
+		TrackerConfig: config.TrackerConfig{},
 		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{
 			MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 			Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
@@ -490,7 +489,7 @@ func TestBTNUploadUsesValidImportedCookiesWithoutCredentials(t *testing.T) {
 		}),
 	}
 
-	summary, err := upload(context.Background(), req)
+	summary, err := uploadAt(context.Background(), req, server.URL)
 	handlerErrs.Check()
 	if err != nil {
 		t.Fatalf("upload failed: %v", err)
@@ -534,7 +533,6 @@ func TestBTNUploadStoredCookieLoadErrorPreventsLogin(t *testing.T) {
 	}
 
 	_, err := ensureBTNUploadSession(context.Background(), config.TrackerConfig{
-		URL:      server.URL,
 		Username: "user",
 		Password: "pass",
 	}, dbPath, uploadContext{baseURL: server.URL})
@@ -591,8 +589,7 @@ func TestBTNDryRunRequiresUploadAuthPrerequisites(t *testing.T) {
 	}))
 	defer server.Close()
 	cookieReq := newBTNDryRunTestRequest(t, cookieDBPath)
-	cookieReq.TrackerConfig.URL = server.URL
-	entry, err = buildUploadDryRun(context.Background(), cookieReq)
+	entry, err = buildUploadDryRunAt(context.Background(), cookieReq, server.URL)
 	handlerErrs.Check()
 	if err != nil {
 		t.Fatalf("BuildUploadDryRun with stored cookies: %v", err)
@@ -627,9 +624,8 @@ func TestBTNDryRunRejectsStaleStoredCookiesWithoutCredentials(t *testing.T) {
 	defer server.Close()
 
 	req := newBTNDryRunTestRequest(t, dbPath)
-	req.TrackerConfig.URL = server.URL
 
-	_, err := buildUploadDryRun(context.Background(), req)
+	_, err := buildUploadDryRunAt(context.Background(), req, server.URL)
 	handlerErrs.Check()
 	if !errors.Is(err, errBTNSessionConfirmedInvalid) {
 		t.Fatalf("expected stale stored cookies to block dry-run readiness, got %v", err)
@@ -715,7 +711,6 @@ func TestBTNDryRunDebugRunsBTNAutofillAndReportsBothPayloads(t *testing.T) {
 	defer server.Close()
 
 	req := newBTNDryRunTestRequest(t, dbPath)
-	req.TrackerConfig.URL = server.URL
 	req.Meta.MediaInfoTextPath = writeBTNTestMediaInfo(t, filepath.Dir(req.Meta.SourcePath), "General\nFormat: Matroska")
 	req.Meta.Options.Debug = true
 	req.Meta.TVPack = true
@@ -729,7 +724,7 @@ func TestBTNDryRunDebugRunsBTNAutofillAndReportsBothPayloads(t *testing.T) {
 		OriginalLanguage: "en",
 	}
 
-	entry, err := buildUploadDryRun(context.Background(), req)
+	entry, err := buildUploadDryRunAt(context.Background(), req, server.URL)
 	handlerErrs.Check()
 	if err != nil {
 		t.Fatalf("BuildUploadDryRun: %v", err)
@@ -790,7 +785,6 @@ func TestBTNUploadBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
 
 	logger := &captureBTNLogger{}
 	req := newBTNDryRunTestRequest(t, newBTNAuthDB(t))
-	req.TrackerConfig.URL = server.URL
 	req.TrackerConfig.Username = "user"
 	req.TrackerConfig.Password = "pass"
 	req.Logger = logger
@@ -799,7 +793,7 @@ func TestBTNUploadBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
 	req.Meta.Release.Season = 1
 	req.Meta.Release.Episode = 1
 
-	_, err := upload(context.Background(), req)
+	_, err := uploadAt(context.Background(), req, server.URL)
 	if err == nil {
 		t.Fatal("expected canonical TV metadata gap to block upload")
 	}
@@ -837,11 +831,10 @@ func TestResolveSessionForTrackerAuthLoginStorageErrorPreventsLogin(t *testing.T
 		t.Fatalf("write corrupt db: %v", err)
 	}
 
-	err := ResolveSessionForTrackerAuthLogin(context.Background(), config.TrackerConfig{
-		URL:      server.URL,
+	err := resolveSessionForTrackerAuthLoginAt(context.Background(), config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	}, dbPath, api.TrackerAuthLoginRequest{})
+	}, dbPath, api.TrackerAuthLoginRequest{}, server.URL)
 	if err == nil {
 		t.Fatal("expected stored cookie load error")
 	}
@@ -882,11 +875,10 @@ func TestResolveSessionForTrackerAuthLoginDecryptErrorPreventsPersistence(t *tes
 	}
 	corruptBTNCookieAuthTag(t, dbPath)
 
-	err := ResolveSessionForTrackerAuthLogin(ctx, config.TrackerConfig{
-		URL:      server.URL,
+	err := resolveSessionForTrackerAuthLoginAt(ctx, config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	}, dbPath, api.TrackerAuthLoginRequest{})
+	}, dbPath, api.TrackerAuthLoginRequest{}, server.URL)
 	if err == nil {
 		t.Fatal("expected stored cookie decrypt error")
 	}
@@ -1270,7 +1262,6 @@ func TestBTNUploadCredentialLoginDoesNotPersistInvalidSession(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	_, err := ensureBTNUploadSession(ctx, config.TrackerConfig{
-		URL:      server.URL,
 		Username: "user",
 		Password: "pass",
 	}, dbPath, uploadContext{baseURL: server.URL})
@@ -1462,11 +1453,10 @@ func TestResolveSessionForTrackerAuthLoginPersistsCookies(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	err := ResolveSessionForTrackerAuthLogin(ctx, config.TrackerConfig{
-		URL:      server.URL,
+	err := resolveSessionForTrackerAuthLoginAt(ctx, config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	}, dbPath, api.TrackerAuthLoginRequest{})
+	}, dbPath, api.TrackerAuthLoginRequest{}, server.URL)
 	handlerErrs.Check()
 	if err != nil {
 		t.Fatalf("ResolveSessionForTrackerAuthLogin: %v", err)
@@ -1508,11 +1498,10 @@ func TestResolveSessionForTrackerAuthLoginIgnoresIncidentalTwoFactorText(t *test
 	}))
 	t.Cleanup(server.Close)
 
-	err := ResolveSessionForTrackerAuthLogin(ctx, config.TrackerConfig{
-		URL:      server.URL,
+	err := resolveSessionForTrackerAuthLoginAt(ctx, config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	}, dbPath, api.TrackerAuthLoginRequest{})
+	}, dbPath, api.TrackerAuthLoginRequest{}, server.URL)
 	handlerErrs.Check()
 	if err != nil {
 		t.Fatalf("ResolveSessionForTrackerAuthLogin: %v", err)
@@ -1539,11 +1528,10 @@ func TestResolveSessionForTrackerAuthLoginRequiresManual2FA(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	err := ResolveSessionForTrackerAuthLogin(context.Background(), config.TrackerConfig{
-		URL:      server.URL,
+	err := resolveSessionForTrackerAuthLoginAt(context.Background(), config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	}, dbPath, api.TrackerAuthLoginRequest{})
+	}, dbPath, api.TrackerAuthLoginRequest{}, server.URL)
 	if err == nil || !strings.Contains(err.Error(), "2FA required") {
 		t.Fatalf("expected 2FA required error, got %v", err)
 	}
@@ -1562,11 +1550,10 @@ func TestResolveSessionForTrackerAuthLoginMarksSubmitted2FARejected(t *testing.T
 	}))
 	t.Cleanup(server.Close)
 
-	err := ResolveSessionForTrackerAuthLogin(context.Background(), config.TrackerConfig{
-		URL:      server.URL,
+	err := resolveSessionForTrackerAuthLoginAt(context.Background(), config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	}, dbPath, api.TrackerAuthLoginRequest{Code: "000000"})
+	}, dbPath, api.TrackerAuthLoginRequest{Code: "000000"}, server.URL)
 	if !errors.Is(err, ErrSubmitted2FARejected) {
 		t.Fatalf("expected submitted 2FA rejection marker, got %v", err)
 	}
@@ -1679,7 +1666,6 @@ func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
 			Tag: "GRP",
 		},
 		TrackerConfig: config.TrackerConfig{
-			URL:      server.URL,
 			Username: "user",
 			Password: "pass",
 			Unknown: map[string]any{
@@ -1694,7 +1680,7 @@ func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
 		}),
 	}
 
-	summary, err := upload(context.Background(), req)
+	summary, err := uploadAt(context.Background(), req, server.URL)
 	if err != nil {
 		t.Fatalf("upload failed: %v", err)
 	}
@@ -1884,8 +1870,8 @@ func TestBTNUploadFollowsIntermediateDetailPage(t *testing.T) {
 	}))
 	defer server.Close()
 
-	req := newBTNUploadTestRequest(t, server.URL)
-	summary, err := upload(context.Background(), req)
+	req := newBTNUploadTestRequest(t)
+	summary, err := uploadAt(context.Background(), req, server.URL)
 	if err != nil {
 		t.Fatalf("upload failed: %v", err)
 	}
@@ -1976,9 +1962,9 @@ func TestBTNUploadIntermediateFailureFallsBackToAPI(t *testing.T) {
 	}))
 	defer server.Close()
 
-	req := newBTNUploadTestRequest(t, server.URL)
+	req := newBTNUploadTestRequest(t)
 	req.TrackerConfig.Unknown = map[string]any{"api_url": server.URL + "/rpc"}
-	summary, err := upload(context.Background(), req)
+	summary, err := uploadAt(context.Background(), req, server.URL)
 	if err != nil {
 		t.Fatalf("upload failed: %v", err)
 	}
@@ -1996,7 +1982,7 @@ func TestBTNUploadIntermediateFailureFallsBackToAPI(t *testing.T) {
 	}
 }
 
-func newBTNUploadTestRequest(t *testing.T, serverURL string) trackers.PreparationInput {
+func newBTNUploadTestRequest(t *testing.T) trackers.PreparationInput {
 	t.Helper()
 
 	tempDir := t.TempDir()
@@ -2038,7 +2024,6 @@ func newBTNUploadTestRequest(t *testing.T, serverURL string) trackers.Preparatio
 			Tag: "GRP",
 		},
 		TrackerConfig: config.TrackerConfig{
-			URL:      serverURL,
 			Username: "user",
 			Password: "pass",
 		},

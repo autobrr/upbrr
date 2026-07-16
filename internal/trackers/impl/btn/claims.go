@@ -361,9 +361,6 @@ func (s *claimChecker) loginBTNForClaims(ctx context.Context, client *http.Clien
 }
 
 func resolveBTNLoginBaseURL(entry config.TrackerConfig) string {
-	if baseURL := sanitizeBTNWebBaseURL(entry.URL); baseURL != "" {
-		return baseURL
-	}
 	if baseURL := sanitizeBTNWebBaseURL(entry.AnnounceURL); baseURL != "" {
 		return baseURL
 	}

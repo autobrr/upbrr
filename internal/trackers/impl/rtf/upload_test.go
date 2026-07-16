@@ -84,20 +84,19 @@ func TestUploadRefreshesExpiredAPIKeyAndPersistsIt(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	summary, err := upload(context.Background(), trackers.PreparationInput{
+	summary, err := uploadAt(context.Background(), trackers.PreparationInput{
 		Tracker: "RTF",
 		Meta: api.UploadSubject{
 			TorrentPath: torrentPath,
 			ReleaseName: "Release",
 		},
 		TrackerConfig: config.TrackerConfig{
-			URL:      server.URL,
 			APIKey:   "old-token",
 			Username: "user",
 			Password: "pass",
 		},
 		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
-	})
+	}, server.URL)
 	if err != nil {
 		t.Fatalf("upload: %v", err)
 	}
@@ -138,7 +137,7 @@ func TestUploadBlockedExpiredAPIKeyDoesNotRefreshOrPersist(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	_, err := upload(context.Background(), trackers.PreparationInput{
+	_, err := uploadAt(context.Background(), trackers.PreparationInput{
 		Tracker: "RTF",
 		Meta: api.UploadSubject{
 			TorrentPath: torrentPath,
@@ -146,13 +145,12 @@ func TestUploadBlockedExpiredAPIKeyDoesNotRefreshOrPersist(t *testing.T) {
 			Release:     api.ReleaseInfo{Year: 9999},
 		},
 		TrackerConfig: config.TrackerConfig{
-			URL:      server.URL,
 			APIKey:   "old-token",
 			Username: "user",
 			Password: "pass",
 		},
 		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
-	})
+	}, server.URL)
 	if err == nil {
 		t.Fatal("expected blocked upload error")
 	}
@@ -194,17 +192,16 @@ func TestUploadUsesValidAPIKeyWithoutRefresh(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	if _, err := upload(context.Background(), trackers.PreparationInput{
+	if _, err := uploadAt(context.Background(), trackers.PreparationInput{
 		Tracker: "RTF",
 		Meta: api.UploadSubject{
 			TorrentPath: torrentPath,
 			ReleaseName: "Release",
 		},
 		TrackerConfig: config.TrackerConfig{
-			URL:    server.URL,
 			APIKey: "valid-token",
 		},
-	}); err != nil {
+	}, server.URL); err != nil {
 		t.Fatalf("upload: %v", err)
 	}
 	if loginCalled {
@@ -244,19 +241,18 @@ func TestUploadGeneratesMissingAPIKeyFromCredentials(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	if _, err := upload(context.Background(), trackers.PreparationInput{
+	if _, err := uploadAt(context.Background(), trackers.PreparationInput{
 		Tracker: "RTF",
 		Meta: api.UploadSubject{
 			TorrentPath: torrentPath,
 			ReleaseName: "Release",
 		},
 		TrackerConfig: config.TrackerConfig{
-			URL:      server.URL,
 			Username: "user",
 			Password: "pass",
 		},
 		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
-	}); err != nil {
+	}, server.URL); err != nil {
 		t.Fatalf("upload: %v", err)
 	}
 	if testCalled {
@@ -271,10 +267,10 @@ func TestUploadGeneratesMissingAPIKeyFromCredentials(t *testing.T) {
 }
 
 func TestUploadRejectsMalformedBaseURL(t *testing.T) {
-	_, err := upload(context.Background(), trackers.PreparationInput{
+	_, err := uploadAt(context.Background(), trackers.PreparationInput{
 		Tracker:       "RTF",
-		TrackerConfig: config.TrackerConfig{URL: "not a url", APIKey: "token"},
-	})
+		TrackerConfig: config.TrackerConfig{APIKey: "token"},
+	}, "not a url")
 	if err == nil {
 		t.Fatal("expected malformed base URL error")
 	}

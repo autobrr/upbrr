@@ -5,9 +5,7 @@ package impl
 
 import (
 	"fmt"
-	"strings"
 
-	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/ant"
 	"github.com/autobrr/upbrr/internal/trackers/impl/ar"
@@ -78,59 +76,8 @@ import (
 
 func NewRegistry() (*trackers.Registry, error) {
 	registry := trackers.NewRegistry()
-	profiles := []unit3d.Profile{
-		a4k.Profile(),
-		acm.Profile(),
-		aither.Profile(),
-		blu.Profile(),
-		cbr.Profile(),
-		dp.Profile(),
-		emuw.Profile(),
-		friki.Profile(),
-		hhd.Profile(),
-		ihd.Profile(),
-		itt.Profile(),
-		lcd.Profile(),
-		ldu.Profile(),
-		lt.Profile(),
-		lume.Profile(),
-		lst.Profile(),
-		mns.Profile(),
-		pt.Profile(),
-		ptt.Profile(),
-		r4e.Profile(),
-		ras.Profile(),
-		rf.Profile(),
-		rhd.Profile(),
-		sam.Profile(),
-		oe.Profile(),
-		otw.Profile(),
-		shri.Profile(),
-		sp.Profile(),
-		stc.Profile(),
-		tik.Profile(),
-		tlz.Profile(),
-		tos.Profile(),
-		ttr.Profile(),
-		ulcx.Profile(),
-		znth.Profile(),
-		utp.Profile(),
-		yus.Profile(),
-	}
-	if err := unit3d.RegisterProfiles(registry, profiles); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	definitions := []trackers.Definition{
-		hdb.New(), mtv.New(), ant.New(), ar.New(), asc.New(), bhd.New(), bhdtv.New(), bjs.New(), btn.New(), bt.New(), czt.New(), dc.New(), ff.New(),
-		fl.New(), gpw.New(), hds.New(), hdt.New(), is.New(), nbl.New(), ptp.New(), pts.New(), rtf.New(), spd.New(), thr.New(), tl.New(), tvc.New(),
-	}
-	for _, definition := range definitions {
+	for _, definition := range builtInDefinitions() {
 		if err := registry.Register(definition); err != nil {
-			return nil, fmt.Errorf("trackers: %w", err)
-		}
-	}
-	for _, name := range []string{"AZ", "CZ", "PHD"} {
-		if err := registry.Register(azfamily.New(name)); err != nil {
 			return nil, fmt.Errorf("trackers: %w", err)
 		}
 	}
@@ -138,27 +85,44 @@ func NewRegistry() (*trackers.Registry, error) {
 	return registry, nil
 }
 
-// NewRegistryWithConfig composes built-in definitions and configured custom
-// Unit3D trackers. Runtime config URLs remain authoritative in the Unit3D client.
-func NewRegistryWithConfig(cfg config.Config) (*trackers.Registry, error) {
+// MustNewRegistry returns the built-in tracker registry or panics when the
+// compiled manifest violates registry invariants.
+func MustNewRegistry() *trackers.Registry {
 	registry, err := NewRegistry()
 	if err != nil {
-		return nil, err
+		panic(fmt.Sprintf("trackers: invalid built-in registry: %v", err))
 	}
-	for name := range cfg.Trackers.Trackers {
-		normalized := strings.ToUpper(strings.TrimSpace(name))
-		if normalized == "" {
-			continue
-		}
-		if _, exists := registry.LookupDescriptor(normalized); exists {
-			continue
-		}
-		if !unit3d.IsConfiguredTrackerWithRegistry(cfg, normalized, registry) {
-			continue
-		}
-		if err := registry.Register(unit3d.New(normalized)); err != nil {
-			return nil, fmt.Errorf("trackers: register custom unit3d %s: %w", normalized, err)
-		}
+	return registry
+}
+
+func unit3DDefinitions() []trackers.Definition {
+	profiles := []unit3d.Profile{
+		a4k.Profile(), acm.Profile(), aither.Profile(), blu.Profile(), cbr.Profile(), dp.Profile(), emuw.Profile(), friki.Profile(), hhd.Profile(),
+		ihd.Profile(), itt.Profile(), lcd.Profile(), ldu.Profile(), lst.Profile(), lt.Profile(), lume.Profile(), mns.Profile(), oe.Profile(), otw.Profile(),
+		pt.Profile(), ptt.Profile(), r4e.Profile(), ras.Profile(), rf.Profile(), rhd.Profile(), sam.Profile(), shri.Profile(), sp.Profile(), stc.Profile(),
+		tik.Profile(), tlz.Profile(), tos.Profile(), ttr.Profile(), ulcx.Profile(), utp.Profile(), yus.Profile(), znth.Profile(),
 	}
-	return registry, nil
+	definitions := make([]trackers.Definition, 0, len(profiles))
+	for _, profile := range profiles {
+		definitions = append(definitions, unit3d.NewWithProfile(profile))
+	}
+	return definitions
+}
+
+func azFamilyDefinitions() []trackers.Definition {
+	return []trackers.Definition{azfamily.New("AZ"), azfamily.New("CZ"), azfamily.New("PHD")}
+}
+
+func standaloneDefinitions() []trackers.Definition {
+	return []trackers.Definition{
+		hdb.New(), mtv.New(), ant.New(), ar.New(), asc.New(), bhd.New(), bhdtv.New(), bjs.New(), btn.New(), bt.New(), czt.New(), dc.New(), ff.New(),
+		fl.New(), gpw.New(), hds.New(), hdt.New(), is.New(), nbl.New(), ptp.New(), pts.New(), rtf.New(), spd.New(), thr.New(), tl.New(), tvc.New(),
+	}
+}
+
+func builtInDefinitions() []trackers.Definition {
+	definitions := unit3DDefinitions()
+	definitions = append(definitions, azFamilyDefinitions()...)
+	definitions = append(definitions, standaloneDefinitions()...)
+	return definitions
 }

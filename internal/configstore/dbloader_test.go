@@ -18,7 +18,7 @@ import (
 	"github.com/autobrr/upbrr/internal/webserver"
 )
 
-func TestLoadFromDBPathDisablesUnsupportedTrackerImageRehost(t *testing.T) {
+func TestLoadFromDBPathPreservesTrackerImageRehostForRuntimePolicyValidation(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "webui.db")
@@ -51,8 +51,8 @@ func TestLoadFromDBPathDisablesUnsupportedTrackerImageRehost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config from database: %v", err)
 	}
-	if loaded.Trackers.Trackers["TL"].ImgRehost {
-		t.Fatal("expected unsupported TL img_rehost to be disabled on load")
+	if !loaded.Trackers.Trackers["TL"].ImgRehost {
+		t.Fatal("expected TL img_rehost to remain available for registry policy validation")
 	}
 }
 

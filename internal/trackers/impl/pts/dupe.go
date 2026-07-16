@@ -81,12 +81,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	return dupe.Resolved(entries, nil)
 }
 
-func ptsBaseURL(cfg config.Config) string {
-	for name, entry := range cfg.Trackers.Trackers {
-		if strings.EqualFold(strings.TrimSpace(name), "PTS") && strings.TrimSpace(entry.URL) != "" {
-			return strings.TrimRight(strings.TrimSpace(entry.URL), "/")
-		}
-	}
+func ptsBaseURL(_ config.Config) string {
 	return "https://www.ptskit.org"
 }
 

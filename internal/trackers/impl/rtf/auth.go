@@ -4,12 +4,17 @@
 package rtf
 
 import (
+	"context"
+
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func (d Definition) AuthSessionResolver() trackers.AuthSessionResolver {
-	return ResolveSessionForTrackerAuthLogin
+	return func(ctx context.Context, cfg config.TrackerConfig, dbPath string, request api.TrackerAuthLoginRequest) error {
+		return resolveSessionForTrackerAuthLoginAt(ctx, cfg, dbPath, request, d.baseURL)
+	}
 }
 
 func (d Definition) AuthCapability() api.TrackerAuthCapability {

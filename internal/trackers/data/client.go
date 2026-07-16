@@ -30,13 +30,11 @@ type Client struct {
 	registry *trackers.Registry
 }
 
-// NewClient returns a lookup client backed by the default tracker registry.
-func NewClient(cfg config.Config, logger api.Logger, httpClient *http.Client) *Client {
-	return NewClientWithRegistry(cfg, logger, httpClient, nil)
-}
-
 // NewClientWithRegistry returns a lookup client backed by registry.
 func NewClientWithRegistry(cfg config.Config, logger api.Logger, httpClient *http.Client, registry *trackers.Registry) *Client {
+	if registry == nil {
+		panic("tracker data: registry is required")
+	}
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
@@ -82,8 +80,8 @@ func (c *Client) Lookup(
 		}
 		return result, nil
 	}
-	kind, registered := c.registry.LookupKind(normalized)
-	if (registered && kind == trackers.KindUnit3D) || (c.registry == nil && IsUnit3DTracker(normalized)) {
+	family, registered := c.registry.LookupFamily(normalized)
+	if registered && family == trackers.FamilyUnit3D {
 		return c.lookupUnit3D(ctx, normalized, trackerID, searchFileName, onlyID, keepImages)
 	}
 

@@ -634,7 +634,6 @@ type trackerConfig struct {
 	Secret string
 	TorrentPass string
 	AnnounceURL string
-	URL string
 }
 type metaInfo struct{ Announce string }
 
@@ -649,7 +648,6 @@ func check(t testingT, cfg config, meta metaInfo) {
 	t.Fatalf("tracker secret mismatch: got %q", cfg.Trackers.Trackers["BTN"].Secret)
 	t.Fatalf("tracker torrent pass mismatch: got %q", cfg.Trackers.Trackers["BTN"].TorrentPass)
 	t.Fatalf("tracker announce mismatch: got %q", cfg.Trackers.Trackers["CZT"].AnnounceURL)
-	t.Fatalf("tracker URL mismatch: got %q", cfg.Trackers.Trackers["BTN"].URL)
 	t.Fatalf("torrent announce mismatch: got %q", meta.Announce)
 }
 
@@ -663,8 +661,8 @@ type testingT interface {
 	if err != nil {
 		t.Fatalf("CheckRepository returned error: %v", err)
 	}
-	if len(violations) != 12 {
-		t.Fatalf("expected 12 violations, got %d: %#v", len(violations), violations)
+	if len(violations) != 11 {
+		t.Fatalf("expected 11 violations, got %d: %#v", len(violations), violations)
 	}
 }
 

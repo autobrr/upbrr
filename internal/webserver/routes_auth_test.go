@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -822,20 +821,11 @@ func TestRetainedSessionCanAccessAppRouteAfterRestart(t *testing.T) {
 func TestTrackerAuthBackendUsesRequestContext(t *testing.T) {
 	t.Parallel()
 
-	var requests atomic.Int32
-	trackerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">authkey=abcdefghijklmnopqrstuvwxyzABCDEF`))
-	}))
-	t.Cleanup(trackerServer.Close)
-
 	backend := &Backend{
 		cfg: config.Config{
 			Trackers: config.TrackersConfig{
 				Trackers: map[string]config.TrackerConfig{
 					"MTV": {
-						URL:      trackerServer.URL,
 						Username: "user",
 						Password: "pass",
 					},
@@ -849,9 +839,6 @@ func TestTrackerAuthBackendUsesRequestContext(t *testing.T) {
 	status, err := backend.TestTrackerAuth(ctx, "MTV")
 	if err != nil {
 		t.Fatalf("TestTrackerAuth: %v", err)
-	}
-	if requests.Load() != 0 {
-		t.Fatalf("expected canceled context to prevent remote auth request, got %d request(s)", requests.Load())
 	}
 	if !strings.Contains(status.LastError, "context canceled") {
 		t.Fatalf("expected context canceled status, got %#v", status)

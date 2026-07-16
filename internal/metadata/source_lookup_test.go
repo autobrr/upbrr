@@ -16,7 +16,7 @@ func sourceLookupRegistry(t *testing.T) *trackers.Registry {
 	registry := trackers.NewRegistry()
 	if err := registry.RegisterDescriptor(trackers.Descriptor{
 		Name:       "AITHER",
-		Kind:       trackers.KindUnit3D,
+		Family:     trackers.FamilyUnit3D,
 		BaseURL:    "https://aither.cc",
 		Definition: aitherRuleDefinition{},
 	}); err != nil {

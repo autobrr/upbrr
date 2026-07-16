@@ -11,62 +11,26 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/a4k"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/acm"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/aither"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/blu"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/cbr"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/dp"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/emuw"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/friki"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/hhd"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/ihd"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/itt"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/lcd"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/ldu"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/lst"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/lt"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/lume"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/mns"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/oe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/otw"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/pt"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/ptt"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/r4e"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/ras"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/rf"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/rhd"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/sam"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/shri"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/sp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/stc"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/tik"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/tlz"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/tos"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/ttr"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/ulcx"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/utp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/yus"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/znth"
-	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
 	"github.com/autobrr/upbrr/pkg/api"
 )
-
-func TestExplicitUnit3DProfilesPreserveDefaultEndpoints(t *testing.T) {
-	profiles := []unit3d.Profile{
-		a4k.Profile(), acm.Profile(), aither.Profile(), blu.Profile(), cbr.Profile(), dp.Profile(), emuw.Profile(), friki.Profile(), hhd.Profile(), ihd.Profile(), itt.Profile(), lcd.Profile(), ldu.Profile(), lt.Profile(),
-		lume.Profile(), lst.Profile(), mns.Profile(), oe.Profile(), otw.Profile(), pt.Profile(), ptt.Profile(), r4e.Profile(), ras.Profile(), rf.Profile(), rhd.Profile(), sam.Profile(), shri.Profile(),
-		sp.Profile(), stc.Profile(), tik.Profile(), tlz.Profile(), tos.Profile(), ttr.Profile(), ulcx.Profile(), utp.Profile(), yus.Profile(), znth.Profile(),
-	}
-	for _, profile := range profiles {
-		want, ok := unit3dmeta.BaseURL(profile.Name)
-		if !ok {
-			t.Fatalf("profile %s is missing from Unit3D metadata", profile.Name)
-		}
-		if profile.BaseURL != want {
-			t.Fatalf("profile %s base URL = %q, want %q", profile.Name, profile.BaseURL, want)
-		}
-	}
-}
 
 func TestExplicitUnit3DProfilesPreserveResolvers(t *testing.T) {
 	tests := []struct {

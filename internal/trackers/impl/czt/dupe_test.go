@@ -423,7 +423,7 @@ func TestCZTHandlerSearchRemoteFailuresReturnErrors(t *testing.T) {
 			defer server.Close()
 
 			handler := cztHandler{
-				cfg:     cztTestConfig(config.TrackerConfig{URL: "https://unused.example", Passkey: "passkey123"}),
+				cfg:     cztTestConfig(config.TrackerConfig{Passkey: "passkey123"}),
 				http:    server.Client(),
 				logger:  api.NopLogger{},
 				baseURL: server.URL,
@@ -454,7 +454,7 @@ func TestCZTHandlerSearchMissingTitleSkipsWithoutHTTP(t *testing.T) {
 	defer server.Close()
 
 	handler := cztHandler{
-		cfg:     cztTestConfig(config.TrackerConfig{URL: "https://unused.example", Passkey: "passkey123"}),
+		cfg:     cztTestConfig(config.TrackerConfig{Passkey: "passkey123"}),
 		http:    server.Client(),
 		logger:  api.NopLogger{},
 		baseURL: server.URL,

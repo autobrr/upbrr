@@ -259,6 +259,9 @@ trackers:
     password: "e2e"
     url: "http://127.0.0.1"
     image_host: "imgbb"
+  OLD:
+    api_key: "preserved"
+    url: "http://retired.invalid"
 torrent_clients: {}
 `;
 }

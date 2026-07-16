@@ -51,22 +51,18 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 		failures = append(failures, api.RuleFailure{Rule: rule, Reason: trimmed})
 	}
 
-	// Renamed/modified releases are rejected by trackers regardless of family, so
-	// evaluate this before the family-specific gates below. It is enabled for all
-	// trackers by default (skipsModifiedReleaseCheck exempts special cases) and is
+	// Renamed/modified releases are rejected by every supported tracker and are
 	// overridable via IgnoreTrackerRuleFailuresFor like any other rule failure.
-	if !skipsModifiedReleaseCheck(name) {
-		if renamed, reason := releasepolicy.DetectModifiedRelease(releasepolicy.ModifiedReleaseSubject{
-			SourcePath:         meta.SourcePath,
-			VideoPath:          meta.VideoPath,
-			DiscType:           meta.DiscType,
-			PersonalRelease:    meta.PersonalRelease,
-			SceneRenamed:       meta.SceneRenamed,
-			SceneRenamedReason: meta.SceneRenamedReason,
-			Release:            meta.Release,
-		}); renamed {
-			addFailure("modified_release", reason)
-		}
+	if renamed, reason := releasepolicy.DetectModifiedRelease(releasepolicy.ModifiedReleaseSubject{
+		SourcePath:         meta.SourcePath,
+		VideoPath:          meta.VideoPath,
+		DiscType:           meta.DiscType,
+		PersonalRelease:    meta.PersonalRelease,
+		SceneRenamed:       meta.SceneRenamed,
+		SceneRenamedReason: meta.SceneRenamedReason,
+		Release:            meta.Release,
+	}); renamed {
+		addFailure("modified_release", reason)
 	}
 	metadataFailures, metadataEvaluated := evaluateMetadataRequirementsWithRegistry(registry, name, meta)
 	failures = append(failures, metadataFailures...)

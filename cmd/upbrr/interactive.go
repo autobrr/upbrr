@@ -20,6 +20,7 @@ import (
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -246,7 +247,11 @@ func runInteractiveCLIPathWithInputLoggerAndPlaylist(
 	}
 	req.PlaylistInstruction = cloneCLIPlaylistInstruction(playlist)
 
-	candidateTrackers, removalBase := resolveCLIUploadTrackers(currentVisited, req, metadataPreview, cfg)
+	registry, err := trackerimpl.NewRegistry()
+	if err != nil {
+		return fmt.Errorf("upbrr: compose tracker registry: %w", err)
+	}
+	candidateTrackers, removalBase := resolveCLIUploadTrackers(currentVisited, req, metadataPreview, cfg, registry)
 	if len(candidateTrackers) == 0 {
 		fmt.Printf("No trackers configured for %s\n", formatPathLabel(sourcePath))
 		return nil
@@ -368,15 +373,21 @@ func resolvedCLIMetadataSourcePath(input string, preview api.MetadataPreview) st
 	return input
 }
 
-func resolveCLIUploadTrackers(visited map[string]bool, req api.Request, preview api.MetadataPreview, cfg config.Config) ([]string, []string) {
+func resolveCLIUploadTrackers(
+	visited map[string]bool,
+	req api.Request,
+	preview api.MetadataPreview,
+	cfg config.Config,
+	registry *trackers.Registry,
+) ([]string, []string) {
 	remove := append([]string{}, req.TrackersRemove...)
 	if !req.Options.Debug && !req.Options.DryRun {
 		remove = append(remove, matchedPreviewTrackers(preview)...)
 	}
-	removalBase := trackers.ResolveTrackersWithDefaults(cfg, req.Trackers, remove, api.NopLogger{})
+	removalBase := trackers.ResolveTrackersWithDefaultsAndRegistry(cfg, req.Trackers, remove, api.NopLogger{}, registry)
 	available := removalBase
 	if visited["trackers"] || req.Execution.SiteUploadTracker != "" {
-		available = trackers.ResolveTrackers(cfg, req.Trackers, remove, api.NopLogger{})
+		available = trackers.ResolveTrackersWithRegistry(cfg, req.Trackers, remove, api.NopLogger{}, registry)
 	}
 	return available, removalBase
 }

@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/config"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/services/trackericon"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
@@ -758,13 +757,13 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]any{"result": result, "warnings": warnings})
 	}))
 
-	mux.HandleFunc("/api/app/ListKnownTrackers", s.requireSession(func(w http.ResponseWriter, _ *http.Request, _ session) {
-		value, err := s.backend.ListKnownTrackers()
+	mux.HandleFunc("/api/app/ListTrackerCatalog", s.requireSession(func(w http.ResponseWriter, _ *http.Request, _ session) {
+		value, err := s.backend.ListTrackerCatalog()
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, nonNilAppList(value))
+		writeJSON(w, http.StatusOK, value)
 	}))
 
 	mux.HandleFunc("/api/app/GetImageHostPolicyMetadata", s.requireSession(func(w http.ResponseWriter, _ *http.Request, _ session) {
@@ -1055,10 +1054,10 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		if s.backend != nil {
 			cfg = s.backend.currentConfig()
 		}
-		domain, resolvedURL := config.ResolveTrackerDomain(&cfg, req.Domain)
-		urlToUse := req.URL
-		if urlToUse == "" {
-			urlToUse = resolvedURL
+		domain, urlToUse, err := resolveTrackerIconTarget(req.Domain, req.URL)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
 		}
 		value, err := trackericon.GetTrackerIcon(r.Context(), cfg.MainSettings.DBPath, domain, urlToUse)
 		if err != nil {

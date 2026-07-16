@@ -111,11 +111,7 @@ func loadFromDBPath(ctx context.Context, dbPath string, applyEnv bool) (*config.
 		return nil, fmt.Errorf("config store: %w", err)
 	}
 	changedSections = append(changedSections, mergeReport.ChangedSections...)
-	sanitizedTrackers := len(config.DisableUnsupportedTrackerImageRehosts(loaded)) > 0
-	if sanitizedTrackers {
-		changedSections = append(changedSections, "Trackers")
-	}
-	if repairReport.BackfilledDefaults || mergeReport.Changed || sanitizedTrackers {
+	if repairReport.BackfilledDefaults || mergeReport.Changed {
 		if err := config.SaveSectionsToDatabase(ctx, loaded, changedSections, repo); err != nil {
 			return nil, fmt.Errorf("config store: %w", err)
 		}
@@ -405,7 +401,6 @@ func loadStoredConfigForProvidedMerge(ctx context.Context, dbPath string) (*conf
 	if _, err := config.MergeMissingTrackerDefaults(loaded); err != nil {
 		return nil, fmt.Errorf("config store: %w", err)
 	}
-	config.DisableUnsupportedTrackerImageRehosts(loaded)
 	return loaded, nil
 }
 
@@ -622,7 +617,6 @@ func finalizeMergedConfig(cfg *config.Config) (*config.Config, error) {
 	if _, err := config.MergeMissingTrackerDefaults(decrypted); err != nil {
 		return nil, fmt.Errorf("config store: merge tracker defaults: %w", err)
 	}
-	config.DisableUnsupportedTrackerImageRehosts(decrypted)
 	return decrypted, nil
 }
 

@@ -172,7 +172,7 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 	if err := maybeApplyE2EServices(ctx, &services, cfg, repositories, logger); err != nil {
 		return nil, err
 	}
-	registry, err := trackerimpl.NewRegistryWithConfig(cfg)
+	registry, err := trackerimpl.NewRegistry()
 	if err != nil {
 		return nil, fmt.Errorf("core: tracker registry: %w", err)
 	}
@@ -226,7 +226,7 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		services.DVDMenus = dvdmenus.NewService(logger, tmpDir, repositories.Media())
 	}
 	if services.Images == nil {
-		services.Images = imagehosting.NewService(cfg, logger, repositories.Media())
+		services.Images = imagehosting.NewServiceWithRegistry(cfg, logger, repositories.Media(), registry)
 	}
 	if services.Trackers == nil {
 		services.Trackers = trackers.NewServiceWithRegistryAndImages(

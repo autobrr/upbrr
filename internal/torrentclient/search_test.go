@@ -800,7 +800,10 @@ func TestCommonPathDoesNotFoldCaseDistinctSegments(t *testing.T) {
 func TestMatchTrackerURLsMatchesBTNLandOfTVAnnounce(t *testing.T) {
 	t.Parallel()
 
-	matched := matchTrackerURLs([]string{"https://landof.tv/redacted/announce"})
+	matched := matchTrackerURLs(
+		[]string{"https://landof.tv/redacted/announce"},
+		buildTrackerIDPatterns(trackerPatternRegistry(t)),
+	)
 	if !containsString(matched, "BTN") {
 		t.Fatalf("expected BTN in matched trackers, got %v", matched)
 	}
@@ -809,7 +812,10 @@ func TestMatchTrackerURLsMatchesBTNLandOfTVAnnounce(t *testing.T) {
 func TestMatchTrackerURLsMatchesCZTAnnounce(t *testing.T) {
 	t.Parallel()
 
-	matched := matchTrackerURLs([]string{"https://czteam.me/announce.php?passkey=redacted"})
+	matched := matchTrackerURLs(
+		[]string{"https://czteam.me/announce.php?passkey=redacted"},
+		buildTrackerIDPatterns(trackerPatternRegistry(t)),
+	)
 	if !containsString(matched, "CZT") {
 		t.Fatalf("expected CZT in matched trackers, got %v", matched)
 	}
@@ -818,7 +824,9 @@ func TestMatchTrackerURLsMatchesCZTAnnounce(t *testing.T) {
 func TestEnsureMatchedTrackersForKnownIDsAddsBTN(t *testing.T) {
 	t.Parallel()
 
-	matched := ensureMatchedTrackersForKnownIDs(nil, map[string]string{"btn": "2202392"})
+	matched := ensureMatchedTrackersForKnownIDs(nil, map[string]string{"btn": "2202392"}, map[string]trackerPattern{
+		"btn": {inferMatchFromID: true},
+	})
 	if !containsString(matched, "BTN") {
 		t.Fatalf("expected BTN in matched trackers, got %v", matched)
 	}
@@ -846,11 +854,13 @@ func TestExtractTrackerMatchesHandlesReelFlixAliasComment(t *testing.T) {
 func TestExtractTrackerMatchesHandlesRetroFlixBrowseComment(t *testing.T) {
 	t.Parallel()
 
-	matches, found := extractTrackerMatches(
+	registry := trackerPatternRegistry(t)
+	matches, found := extractTrackerMatchesWithPatterns(
 		"https://retroflix.club/browse/t/10004",
 		[]string{"http://peer.retroflix.club/announce.php?passkey=redacted"},
 		true,
 		[]string{"rtf"},
+		buildTrackerIDPatterns(registry),
 	)
 
 	if !found {
@@ -864,11 +874,13 @@ func TestExtractTrackerMatchesHandlesRetroFlixBrowseComment(t *testing.T) {
 func TestExtractTrackerMatchesIncludesPatternsOutsidePriority(t *testing.T) {
 	t.Parallel()
 
-	matches, found := extractTrackerMatches(
+	registry := trackerPatternRegistry(t)
+	matches, found := extractTrackerMatchesWithPatterns(
 		"https://retroflix.club/browse/t/10004",
 		[]string{"http://peer.retroflix.club/announce.php?passkey=redacted"},
 		true,
-		trackers.TrackerPriority(),
+		registry.Priority(),
+		buildTrackerIDPatterns(registry),
 	)
 
 	if !found {
@@ -1092,7 +1104,7 @@ func TestResolveSearchClientsNormalizesSelectorCase(t *testing.T) {
 func TestBuildTrackerIDPatternsIncludesUnit3DBaseURLs(t *testing.T) {
 	registry := trackerPatternRegistry(t)
 	patterns := buildTrackerIDPatterns(registry)
-	for _, tracker := range registry.NamesByKind(trackers.KindUnit3D) {
+	for _, tracker := range registry.NamesByFamily(trackers.FamilyUnit3D) {
 		baseURL, ok := registry.LookupBaseURL(tracker)
 		if !ok {
 			t.Fatalf("expected base URL for %s", tracker)
@@ -1102,8 +1114,15 @@ func TestBuildTrackerIDPatternsIncludesUnit3DBaseURLs(t *testing.T) {
 		if !found {
 			t.Fatalf("expected unit3d tracker pattern for %s", key)
 		}
-		if pattern.url != strings.ToLower(baseURL) {
-			t.Fatalf("expected %s URL %q, got %q", key, strings.ToLower(baseURL), pattern.url)
+		foundBaseURL := false
+		for _, trackerURL := range pattern.trackerURLs {
+			if strings.EqualFold(trackerURL, baseURL) {
+				foundBaseURL = true
+				break
+			}
+		}
+		if !foundBaseURL {
+			t.Fatalf("expected %s URL %q, got %q", key, baseURL, pattern.trackerURLs)
 		}
 		match := pattern.pattern.FindStringSubmatch(strings.ToLower(baseURL) + "/torrents/12345")
 		if len(match) != 2 || match[1] != "12345" {
@@ -1113,7 +1132,8 @@ func TestBuildTrackerIDPatternsIncludesUnit3DBaseURLs(t *testing.T) {
 }
 
 func TestTrackerPriorityPlacesPreferredTrackersBeforeRemainingUnit3D(t *testing.T) {
-	result := trackers.TrackerPriority()
+	registry := trackerPatternRegistry(t)
+	result := registry.Priority()
 	expectedPrefix := []string{"aither", "ulcx", "lst", "blu", "oe", "btn", "bhd", "hdb", "ant", "rf", "otw", "yus", "dp", "sp", "ptp"}
 
 	prevIdx := -1
@@ -1129,7 +1149,7 @@ func TestTrackerPriorityPlacesPreferredTrackersBeforeRemainingUnit3D(t *testing.
 	}
 
 	remaining := make([]string, 0)
-	for _, tracker := range trackers.Unit3DTrackers() {
+	for _, tracker := range registry.NamesByFamily(trackers.FamilyUnit3D) {
 		lower := strings.ToLower(tracker)
 		if hasValue(expectedPrefix, lower) {
 			continue
@@ -1150,7 +1170,7 @@ func TestTrackerPriorityPlacesPreferredTrackersBeforeRemainingUnit3D(t *testing.
 }
 
 func TestApplyPreferredTrackerPriorityMovesToFront(t *testing.T) {
-	result := applyPreferredTrackerPriority(trackers.TrackerPriority(), "PTP")
+	result := applyPreferredTrackerPriority(trackerPatternRegistry(t).Priority(), "PTP")
 	if len(result) == 0 {
 		t.Fatalf("expected non-empty priority list")
 	}
@@ -1160,7 +1180,7 @@ func TestApplyPreferredTrackerPriorityMovesToFront(t *testing.T) {
 }
 
 func TestApplyPreferredTrackerPriorityNoopForUnknown(t *testing.T) {
-	priority := trackers.TrackerPriority()
+	priority := trackerPatternRegistry(t).Priority()
 	result := applyPreferredTrackerPriority(priority, "UNKNOWN")
 	if len(result) != len(priority) {
 		t.Fatalf("expected unchanged list length")

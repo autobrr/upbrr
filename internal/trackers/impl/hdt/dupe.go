@@ -85,12 +85,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	return dupe.Resolved(entries, nil)
 }
 
-func hdtBaseURL(cfg config.Config) string {
-	for name, entry := range cfg.Trackers.Trackers {
-		if strings.EqualFold(strings.TrimSpace(name), "HDT") && strings.TrimSpace(entry.URL) != "" {
-			return strings.TrimRight(strings.TrimSpace(entry.URL), "/")
-		}
-	}
+func hdtBaseURL(_ config.Config) string {
 	return "https://hd-torrents.me"
 }
 func hdtCategoryID(meta api.DuplicateSubject) int {

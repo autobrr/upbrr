@@ -40,10 +40,7 @@ func (Definition) AuthCapability() api.TrackerAuthCapability {
 func (Definition) AuthSessionResolver() trackers.AuthSessionResolver { return resolveAuthSession }
 
 func resolveAuthSession(ctx context.Context, cfg config.TrackerConfig, dbPath string, _ api.TrackerAuthLoginRequest) error {
-	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
-	if baseURL == "" {
-		baseURL = "https://filelist.io"
-	}
+	baseURL := "https://filelist.io"
 	values, loadErr := cookies.LoadTrackerHTTPCookies(ctx, dbPath, "FL", ".filelist.io")
 	if loadErr == nil && len(values) > 0 {
 		validationErr := validateAuthCookies(ctx, baseURL, values)

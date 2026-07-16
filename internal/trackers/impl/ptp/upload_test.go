@@ -49,12 +49,11 @@ func TestResolveSessionForTrackerAuthPreservesCookiesOnTransientTokenFetch(t *te
 	baseURL := server.URL
 	server.Close()
 
-	err := ResolveSessionForTrackerAuth(ctx, config.TrackerConfig{
-		URL:         baseURL,
+	err := resolveSessionForTrackerAuthAt(ctx, config.TrackerConfig{
 		Username:    "user",
 		Password:    "pass",
 		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
-	}, dbPath)
+	}, dbPath, baseURL)
 	if err == nil {
 		t.Fatal("expected transient token fetch error")
 	}
@@ -85,7 +84,6 @@ func TestLoginAndFetchAntiCsrfTokenReturnsPersistenceError(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	_, _, err := resolveSession(context.Background(), config.TrackerConfig{
-		URL:         server.URL,
 		Username:    "user",
 		Password:    "pass",
 		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
@@ -125,7 +123,6 @@ func TestLoginAndFetchAntiCsrfTokenDoesNotOverwriteCookiesWhenTokenMissing(t *te
 	t.Cleanup(server.Close)
 
 	_, _, err := resolveSession(ctx, config.TrackerConfig{
-		URL:         server.URL,
 		Username:    "user",
 		Password:    "pass",
 		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
@@ -162,7 +159,6 @@ func TestLoginAndFetchAntiCsrfTokenPersistsCookiesAfterTokenGate(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	_, token, err := resolveSession(ctx, config.TrackerConfig{
-		URL:         server.URL,
 		Username:    "user",
 		Password:    "pass",
 		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
@@ -203,7 +199,6 @@ func TestLoginAndFetchAntiCsrfTokenRejectsEmptyJarWithoutReplacingCookies(t *tes
 	t.Cleanup(server.Close)
 
 	_, _, err := resolveSession(ctx, config.TrackerConfig{
-		URL:         server.URL,
 		Username:    "user",
 		Password:    "pass",
 		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
@@ -251,12 +246,11 @@ func TestResolveSessionForTrackerAuthLoginUsesManual2FACode(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	err := ResolveSessionForTrackerAuthLogin(ctx, config.TrackerConfig{
-		URL:         server.URL,
+	err := resolveSessionForTrackerAuthLoginAt(ctx, config.TrackerConfig{
 		Username:    "user",
 		Password:    "pass",
 		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
-	}, dbPath, api.TrackerAuthLoginRequest{Code: "654321"})
+	}, dbPath, api.TrackerAuthLoginRequest{Code: "654321"}, server.URL)
 	if err != nil {
 		t.Fatalf("ResolveSessionForTrackerAuthLogin: %v", err)
 	}
@@ -295,12 +289,11 @@ func TestResolveSessionForTrackerAuthLoginMarksSubmitted2FARejected(t *testing.T
 	}))
 	t.Cleanup(server.Close)
 
-	err := ResolveSessionForTrackerAuthLogin(ctx, config.TrackerConfig{
-		URL:         server.URL,
+	err := resolveSessionForTrackerAuthLoginAt(ctx, config.TrackerConfig{
 		Username:    "user",
 		Password:    "pass",
 		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
-	}, dbPath, api.TrackerAuthLoginRequest{Code: "000000"})
+	}, dbPath, api.TrackerAuthLoginRequest{Code: "000000"}, server.URL)
 	if !errors.Is(err, ErrSubmitted2FARejected) {
 		t.Fatalf("expected submitted 2FA rejection marker, got %v", err)
 	}
@@ -330,12 +323,11 @@ func TestResolveSessionForTrackerAuthLoginPreCodeFailureIsNotSubmitted2FARejecte
 	}))
 	t.Cleanup(server.Close)
 
-	err := ResolveSessionForTrackerAuthLogin(ctx, config.TrackerConfig{
-		URL:         server.URL,
+	err := resolveSessionForTrackerAuthLoginAt(ctx, config.TrackerConfig{
 		Username:    "user",
 		Password:    "pass",
 		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
-	}, dbPath, api.TrackerAuthLoginRequest{Code: "000000"})
+	}, dbPath, api.TrackerAuthLoginRequest{Code: "000000"}, server.URL)
 	if err == nil || !strings.Contains(err.Error(), "login failed") {
 		t.Fatalf("expected pre-code login failed error, got %v", err)
 	}
@@ -376,12 +368,11 @@ func TestResolveSessionForTrackerAuthLoginMissing2FACodePreservesCookies(t *test
 	}))
 	t.Cleanup(server.Close)
 
-	err := ResolveSessionForTrackerAuthLogin(ctx, config.TrackerConfig{
-		URL:         server.URL,
+	err := resolveSessionForTrackerAuthLoginAt(ctx, config.TrackerConfig{
 		Username:    "user",
 		Password:    "pass",
 		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
-	}, dbPath, api.TrackerAuthLoginRequest{})
+	}, dbPath, api.TrackerAuthLoginRequest{}, server.URL)
 	if err == nil || !strings.Contains(err.Error(), "2FA required") {
 		t.Fatalf("expected missing 2FA error, got %v", err)
 	}

@@ -48,12 +48,10 @@ func TestAZNetworkHandlerSearchParsesHTMLResults(t *testing.T) {
 		t.Fatalf("write cookie file: %v", err)
 	}
 
-	handler := dupe.NewAdapter(New("AZ"), "AZ",
+	handler := dupe.NewAdapter(testDefinitionAt(server.URL), "AZ",
 		config.Config{
 			MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-			Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-				"AZ": {URL: server.URL},
-			}},
+			Trackers:     config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"AZ": {}}},
 		}, server.Client(), api.NopLogger{})
 	entries, notes, err := adapterEvidence(handler.Search(context.Background(), api.DuplicateSubject{
 		Identity: api.ExternalIdentity{Category: "MOVIE", IMDBID: 123},

@@ -11,10 +11,10 @@ import (
 )
 
 // Definition provides RTF tracker preparation and optional policy capabilities.
-type Definition struct{}
+type Definition struct{ baseURL string }
 
 // New returns a fresh RTF tracker definition.
-func New() *Definition { return &Definition{} }
+func New() *Definition { return &Definition{baseURL: defaultBaseURL} }
 
 // Name returns the stable RTF tracker identifier.
 func (Definition) Name() string { return "RTF" }
@@ -29,12 +29,12 @@ func (d Definition) Prepare(ctx context.Context, input trackers.PreparationInput
 	return trackers.PrepareAdapter(ctx, input, d.prepareDescription, d.prepareDryRun, d.submit)
 }
 
-func (Definition) submit(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
-	return upload(ctx, req)
+func (d Definition) submit(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
+	return uploadAt(ctx, req, d.baseURL)
 }
 
-func (Definition) prepareDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
-	return buildUploadDryRun(ctx, req)
+func (d Definition) prepareDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
+	return buildUploadDryRunAt(ctx, req, d.baseURL)
 }
 
 func (Definition) prepareDescription(_ context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {

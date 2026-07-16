@@ -108,10 +108,10 @@ type Definition interface {
 	Prepare(ctx context.Context, input PreparationInput) (TrackerPlan, *PreparationFailure)
 }
 
-// KindProvider declares a tracker's protocol family.
-type KindProvider interface {
-	// TrackerKind returns the tracker's protocol family.
-	TrackerKind() Kind
+// FamilyProvider declares a tracker's protocol family.
+type FamilyProvider interface {
+	// TrackerFamily returns the tracker's protocol family.
+	TrackerFamily() Family
 }
 
 // BaseURLProvider declares a tracker's default endpoint.
@@ -145,6 +145,57 @@ type AuthSessionProvider interface {
 type AuthCapabilityProvider interface {
 	// AuthCapability describes supported tracker authentication interactions.
 	AuthCapability() api.TrackerAuthCapability
+}
+
+// AuthPolicy declares coordinator behavior that cannot be inferred from the
+// user-facing auth capability alone.
+type AuthPolicy struct {
+	// ResolveAPIKey returns the effective API credential, including any legacy
+	// config source still supported by the owning tracker.
+	ResolveAPIKey func(config.Config, config.TrackerConfig) string
+	// APIKeyRequiresUploadSession keeps API-only search auth separate from
+	// cookie/login-based upload readiness.
+	APIKeyRequiresUploadSession bool
+	// CookieCompletesAPIKeyAuth promotes API-key plus stored-cookie auth to configured state.
+	CookieCompletesAPIKeyAuth bool
+	// MissingAPIKeyMessage explains a separate API prerequisite after session auth succeeds.
+	MissingAPIKeyMessage string
+	// UploadSessionMissingMessage explains why an API key alone is not upload-ready.
+	UploadSessionMissingMessage string
+	// LoginRequiresAnnounceURL requires a personal announce URL in addition to credentials.
+	LoginRequiresAnnounceURL bool
+	// PasskeyCoversAuth allows a passkey alone to satisfy auth readiness.
+	PasskeyCoversAuth bool
+	// PasskeyRequiresUsername requires username alongside the passkey.
+	PasskeyRequiresUsername bool
+	// PasskeyRequiresCookie requires a validated stored cookie alongside passkey credentials.
+	PasskeyRequiresCookie bool
+}
+
+// AuthPolicyProvider declares tracker-owned auth coordinator policy.
+type AuthPolicyProvider interface {
+	// AuthPolicy returns tracker-specific auth readiness semantics.
+	AuthPolicy() *AuthPolicy
+}
+
+// AuthStateSnapshot restores tracker-owned auth state after a later deletion step fails.
+type AuthStateSnapshot interface {
+	// Restore performs best-effort rollback independent of caller cancellation.
+	Restore(context.Context) error
+}
+
+// AuthStateManager owns tracker-specific persisted auth material outside generic cookies.
+type AuthStateManager interface {
+	// Snapshot captures state needed to roll back a multi-step delete.
+	Snapshot(context.Context, string) (AuthStateSnapshot, error)
+	// Delete removes tracker-owned persisted auth state.
+	Delete(context.Context, string) error
+}
+
+// AuthStateManagerProvider declares tracker-owned persisted auth cleanup.
+type AuthStateManagerProvider interface {
+	// AuthStateManager returns the tracker-specific auth state manager.
+	AuthStateManager() AuthStateManager
 }
 
 // RuleProvider declares tracker-owned validation rules.
@@ -299,6 +350,8 @@ type DupePolicyProvider interface {
 
 // AudioPolicy declares tracker-specific multi-language upload constraints.
 type AudioPolicy struct {
+	// AllowBloat accepts additional non-original audio languages without warning.
+	AllowBloat bool
 	// AllowedLanguages contains normalized languages accepted for foreign audio.
 	AllowedLanguages []string
 	// BlockEnglishOriginalWithForeign rejects foreign tracks when English is original audio.
@@ -315,6 +368,8 @@ type AudioPolicyProvider interface {
 type ImageHostPolicy struct {
 	// AllowedHosts lists normalized image hosts accepted in descriptions.
 	AllowedHosts []string
+	// OwnedHosts lists private upload hosts scoped to this tracker.
+	OwnedHosts []string
 	// DisableWithoutRehost disables the policy unless image rehosting is enabled.
 	DisableWithoutRehost bool
 	// DisableWithoutAPI disables the policy unless tracker image API credentials exist.
@@ -331,6 +386,39 @@ type ImageHostPolicy struct {
 type ImageHostPolicyProvider interface {
 	// ImageHostPolicy returns accepted host and activation settings.
 	ImageHostPolicy() *ImageHostPolicy
+}
+
+// TorrentSearchPreference identifies tracker-owned torrent reuse selection behavior.
+type TorrentSearchPreference string
+
+const (
+	// TorrentSearchPreferenceNone applies the global torrent reuse preference.
+	TorrentSearchPreferenceNone TorrentSearchPreference = ""
+	// TorrentSearchPreferenceSmallPieces prefers the smallest reusable torrent pieces.
+	TorrentSearchPreferenceSmallPieces TorrentSearchPreference = "small_pieces"
+)
+
+// TorrentIdentityPolicy declares how torrent-client metadata identifies a tracker.
+type TorrentIdentityPolicy struct {
+	// TrackerURLPatterns match announce URLs reported by torrent clients.
+	TrackerURLPatterns []string
+	// CommentURLPatterns match tracker detail URLs in torrent comments.
+	CommentURLPatterns []string
+	// DetailIDPattern extracts a tracker torrent ID from a matching comment.
+	DetailIDPattern string
+	// WorkingTrackerID supplies a stable synthetic ID when a working announce URL is sufficient.
+	WorkingTrackerID string
+	// SearchPreference selects optional tracker-owned torrent reuse behavior.
+	SearchPreference TorrentSearchPreference
+	// InferMatchFromResolvedID treats a resolved tracker ID as provenance even
+	// when no announce URL was available in the matched torrent response.
+	InferMatchFromResolvedID bool
+}
+
+// TorrentIdentityPolicyProvider declares torrent-client identity and search behavior.
+type TorrentIdentityPolicyProvider interface {
+	// TorrentIdentityPolicy returns tracker-owned torrent identity patterns and search behavior.
+	TorrentIdentityPolicy() *TorrentIdentityPolicy
 }
 
 // ClaimChecker evaluates tracker-owned active-claim rules.
@@ -363,8 +451,8 @@ type ClaimPolicyProvider interface {
 type Descriptor struct {
 	// Name is the stable normalized tracker identifier.
 	Name string
-	// Kind identifies the tracker protocol family.
-	Kind Kind
+	// Family identifies the tracker protocol family.
+	Family Family
 	// BaseURL is the tracker's default endpoint.
 	BaseURL string
 	// Definition is the required preparation adapter.
@@ -391,6 +479,8 @@ type Descriptor struct {
 	AudioPolicy *AudioPolicy
 	// ImageHost contains optional accepted-host restrictions.
 	ImageHost *ImageHostPolicy
+	// TorrentIdentity contains optional torrent-client identity and search behavior.
+	TorrentIdentity *TorrentIdentityPolicy
 	// ClaimFactory constructs optional claim checking support.
 	ClaimFactory ClaimCheckerFactory
 	// ClaimPolicy contains optional generic claim orchestration settings.
@@ -399,6 +489,10 @@ type Descriptor struct {
 	AuthResolver AuthSessionResolver
 	// AuthCapability describes optional interactive auth support.
 	AuthCapability *api.TrackerAuthCapability
+	// AuthPolicy contains optional tracker-owned auth readiness semantics.
+	AuthPolicy *AuthPolicy
+	// AuthStateManager owns optional tracker-specific persisted auth cleanup.
+	AuthStateManager AuthStateManager
 	// MetadataLocale is the optional locale for tracker-owned rendering.
 	MetadataLocale string
 	// DescriptionGroup is the optional tracker-specific description override group.

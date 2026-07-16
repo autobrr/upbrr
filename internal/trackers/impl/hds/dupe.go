@@ -115,11 +115,6 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	return dupe.Resolved(entries, nil)
 }
 
-func hdsBaseURL(cfg config.Config) string {
-	for name, entry := range cfg.Trackers.Trackers {
-		if strings.EqualFold(strings.TrimSpace(name), "HDS") && strings.TrimSpace(entry.URL) != "" {
-			return strings.TrimRight(strings.TrimSpace(entry.URL), "/")
-		}
-	}
+func hdsBaseURL(_ config.Config) string {
 	return "https://hd-space.org"
 }

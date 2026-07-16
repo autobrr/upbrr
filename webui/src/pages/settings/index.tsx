@@ -38,19 +38,6 @@ const trackerAuthChipClass =
   "max-w-full whitespace-normal rounded-full border border-slate-400/20 bg-slate-950/35 px-[0.45rem] py-[0.2rem] text-[0.74rem] leading-none text-[var(--muted)] [overflow-wrap:anywhere]";
 const trackerAuthMetaClass = "m-0 text-[0.8rem] text-[var(--muted)]";
 
-/** Trackers with backend adapters that can perform a remote auth check. */
-const remoteAuthValidationTrackers = new Set([
-  "AR",
-  "BTN",
-  "FF",
-  "FL",
-  "HDB",
-  "MTV",
-  "PTP",
-  "RTF",
-  "THR",
-]);
-
 /** Builds the case-insensitive key shared by main tracker config and tracker auth rows. */
 const trackerNameKey = (name: string) => name.trim().toLowerCase();
 
@@ -437,9 +424,7 @@ export default function SettingsPage(props: Props) {
             const actionError = trackerAuthActionErrors[capability.trackerID] || "";
             const code = trackerAuthCodes[capability.trackerID] || "";
             const statusDisplay = trackerAuthStatusDisplay(status);
-            const canTestAuth = remoteAuthValidationTrackers.has(
-              capability.trackerID.trim().toUpperCase(),
-            );
+            const canTestAuth = capability.supportsRemoteValidation === true;
             return (
               <div
                 className="settings-card tracker-auth-card grid min-w-0 gap-3"

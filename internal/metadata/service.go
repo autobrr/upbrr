@@ -262,7 +262,7 @@ func NewService(repo repository, opts ...Option) *Service {
 		detector.logger = service.logger
 		service.scene = detector
 	}
-	if service.tracker == nil {
+	if service.tracker == nil && service.registry != nil {
 		service.tracker = trackerdata.NewClientWithRegistry(service.cfg, service.logger, nil, service.registry)
 	}
 	if service.bluray == nil {

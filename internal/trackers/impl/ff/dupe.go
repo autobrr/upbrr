@@ -98,11 +98,6 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	return dupe.Resolved(entries, nil)
 }
 
-func ffBaseURL(cfg config.Config) string {
-	for name, entry := range cfg.Trackers.Trackers {
-		if strings.EqualFold(strings.TrimSpace(name), "FF") && strings.TrimSpace(entry.URL) != "" {
-			return strings.TrimRight(strings.TrimSpace(entry.URL), "/")
-		}
-	}
+func ffBaseURL(_ config.Config) string {
 	return "https://www.funfile.org"
 }

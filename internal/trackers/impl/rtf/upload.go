@@ -47,8 +47,7 @@ type uploadState struct {
 	blockedReason string
 }
 
-func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
-	baseURL := resolveBaseURL(req.TrackerConfig)
+func uploadAt(ctx context.Context, req trackers.PreparationInput, baseURL string) (api.UploadSummary, error) {
 	uploadURL, err := joinURL(baseURL, "/api/upload")
 	if err != nil {
 		return api.UploadSummary{}, err
@@ -62,7 +61,7 @@ func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSumma
 		return api.UploadSummary{}, fmt.Errorf("trackers: RTF %s", state.blockedReason)
 	}
 
-	apiKey, err := resolveAPIKey(ctx, req)
+	apiKey, err := resolveAPIKey(ctx, req, baseURL)
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
@@ -136,6 +135,10 @@ func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSumma
 }
 
 func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
+	return buildUploadDryRunAt(ctx, req, defaultBaseURL)
+}
+
+func buildUploadDryRunAt(ctx context.Context, req trackers.PreparationInput, baseURL string) (api.TrackerDryRunEntry, error) {
 	state, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
@@ -150,7 +153,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.
 	for key, value := range state.payload {
 		payload[key] = strings.TrimSpace(fmt.Sprint(value))
 	}
-	endpoint, err := joinURL(resolveBaseURL(req.TrackerConfig), "/api/upload")
+	endpoint, err := joinURL(baseURL, "/api/upload")
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
@@ -220,9 +223,8 @@ func prepareUploadState(_ context.Context, req trackers.PreparationInput) (uploa
 
 // resolveAPIKey validates configured RTF API auth and persists a refreshed token when credentials are used.
 // Callers must complete no-upload eligibility gates before invoking it.
-func resolveAPIKey(ctx context.Context, req trackers.PreparationInput) (string, error) {
+func resolveAPIKey(ctx context.Context, req trackers.PreparationInput, baseURL string) (string, error) {
 	apiKey := strings.TrimSpace(req.TrackerConfig.APIKey)
-	baseURL := resolveBaseURL(req.TrackerConfig)
 	if apiKey != "" {
 		valid, err := testAPIKey(ctx, baseURL, apiKey)
 		if err == nil && valid {
@@ -251,8 +253,17 @@ func resolveAPIKey(ctx context.Context, req trackers.PreparationInput) (string, 
 // ResolveSessionForTrackerAuthLogin validates RTF API auth or refreshes and
 // persists the API key with configured credentials for tracker-auth checks.
 func ResolveSessionForTrackerAuthLogin(ctx context.Context, cfg config.TrackerConfig, dbPath string, _ api.TrackerAuthLoginRequest) error {
+	return resolveSessionForTrackerAuthLoginAt(ctx, cfg, dbPath, api.TrackerAuthLoginRequest{}, defaultBaseURL)
+}
+
+func resolveSessionForTrackerAuthLoginAt(
+	ctx context.Context,
+	cfg config.TrackerConfig,
+	dbPath string,
+	_ api.TrackerAuthLoginRequest,
+	baseURL string,
+) error {
 	apiKey := strings.TrimSpace(cfg.APIKey)
-	baseURL := resolveBaseURL(cfg)
 	if apiKey != "" {
 		valid, err := testAPIKey(ctx, baseURL, apiKey)
 		if err == nil && valid {
@@ -371,14 +382,7 @@ func persistRefreshedAPIKey(ctx context.Context, dbPath string, token string) er
 	return nil
 }
 
-func resolveBaseURL(cfg config.TrackerConfig) string {
-	if value := strings.TrimRight(strings.TrimSpace(cfg.URL), "/"); value != "" {
-		return value
-	}
-	return defaultBaseURL
-}
-
-// joinURL resolves path against baseURL and rejects malformed configured URLs instead of falling back to the default tracker host.
+// joinURL resolves path against a profile-owned base URL.
 func joinURL(baseURL string, path string) (string, error) {
 	parsed, err := url.Parse(strings.TrimRight(baseURL, "/") + "/")
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {

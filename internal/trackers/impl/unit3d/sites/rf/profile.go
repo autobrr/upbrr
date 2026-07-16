@@ -24,7 +24,13 @@ func Profile() unit3d.Profile {
 		},
 		ImageHost: &trackers.ImageHostPolicy{
 			ConditionalHost:      "reelflix",
+			OwnedHosts:           []string{"reelflix"},
 			EnableWhenConfigured: true,
+		},
+		TorrentIdentity: &trackers.TorrentIdentityPolicy{
+			TrackerURLPatterns: []string{"https://reelflix.xyz"},
+			CommentURLPatterns: []string{"https://reelflix.xyz"},
+			DetailIDPattern:    `(?i)reelflix\.(?:cc|xyz)/torrents/(\d+)`,
 		},
 	}
 }

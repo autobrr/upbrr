@@ -382,12 +382,7 @@ type responseInfo struct {
 func (r responseInfo) ok() bool {
 	return r.StatusCode >= http.StatusOK && r.StatusCode < http.StatusMultipleChoices
 }
-func trackerBaseURL(cfg config.Config, tracker, fallback string) string {
-	for name, entry := range cfg.Trackers.Trackers {
-		if strings.EqualFold(strings.TrimSpace(name), tracker) && strings.TrimSpace(entry.URL) != "" {
-			return strings.TrimRight(strings.TrimSpace(entry.URL), "/")
-		}
-	}
+func trackerBaseURL(_ config.Config, _ string, fallback string) string {
 	return strings.TrimRight(fallback, "/")
 }
 func trackerHost(baseURL, fallback string) string {

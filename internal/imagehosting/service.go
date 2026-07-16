@@ -32,6 +32,7 @@ type Service struct {
 	repo      repository
 	client    *http.Client
 	uploaders map[string]uploader
+	registry  *trackers.Registry
 }
 
 type repository interface {
@@ -44,19 +45,23 @@ type repository interface {
 	UpsertScreenshotSlotVariants(context.Context, string, []api.ScreenshotSlotVariant) error
 }
 
-// NewService returns an image-hosting service using uploaders enabled by cfg.
-func NewService(cfg config.Config, logger api.Logger, repo repository) *Service {
+// NewServiceWithRegistry returns an image-hosting service with tracker-owned host scope metadata.
+func NewServiceWithRegistry(cfg config.Config, logger api.Logger, repo repository, registry *trackers.Registry) *Service {
+	if registry == nil {
+		panic("image hosting: tracker registry is nil")
+	}
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
 	client := httpclient.New(httpclient.UploadTimeout)
 	service := &Service{
-		cfg:    cfg,
-		logger: logger,
-		repo:   repo,
-		client: client,
+		cfg:      cfg,
+		logger:   logger,
+		repo:     repo,
+		client:   client,
+		registry: registry,
 	}
-	service.uploaders = newUploaderRegistry(cfg, client)
+	service.uploaders = newUploaderRegistry(cfg, client, registry)
 	return service
 }
 
@@ -138,7 +143,7 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 				"image hosting: found uploaded image file=%s host=%s tracker=%s",
 				filepath.Base(pathValue),
 				uploadInfo.Host,
-				imageHostLogTracker(uploadInfo.Host),
+				s.imageHostLogTracker(uploadInfo.Host),
 			)
 		}
 
@@ -185,7 +190,7 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 				"image hosting: found uploaded final selection file=%s host=%s tracker=%s",
 				filepath.Base(pathValue),
 				uploadInfo.Host,
-				imageHostLogTracker(uploadInfo.Host),
+				s.imageHostLogTracker(uploadInfo.Host),
 			)
 		}
 
@@ -224,7 +229,7 @@ func (s *Service) ListCandidates(ctx context.Context, meta api.ImageHostingSubje
 			"image hosting: found uploaded-only image file=%s host=%s tracker=%s",
 			filepath.Base(pathValue),
 			upload.Host,
-			imageHostLogTracker(upload.Host),
+			s.imageHostLogTracker(upload.Host),
 		)
 	}
 
@@ -261,7 +266,7 @@ func (s *Service) Upload(
 	if normalizedScope == "" {
 		normalizedScope = "global"
 	}
-	if owner := trackers.TrackerForOwnedImageHost(normalizedHost); owner != "" {
+	if owner := trackers.TrackerForOwnedImageHost(s.registry, normalizedHost); owner != "" {
 		expectedScope := trackers.TrackerImageUsageScope(owner)
 		if !strings.EqualFold(normalizedScope, expectedScope) {
 			return nil, fmt.Errorf(
@@ -286,7 +291,7 @@ func (s *Service) Upload(
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("image hosting: upload canceled: %w", err)
 	}
-	logTracker := imageHostLogTracker(normalizedHost)
+	logTracker := s.imageHostLogTracker(normalizedHost)
 
 	s.logger.Infof("image hosting: uploading images count=%d host=%s tracker=%s", len(images), normalizedHost, logTracker)
 	s.logger.Debugf("image hosting: upload source path=%s host=%s tracker=%s", meta.SourcePath, normalizedHost, logTracker)
@@ -800,8 +805,8 @@ func resolveGalleryName(meta api.ImageHostingSubject) string {
 // imageHostLogTracker returns the tracker that owns a private image host, or
 // "shared" for hosts usable outside one tracker. Logging both host and tracker
 // keeps tracker-owned rehosting identifiable in operator output.
-func imageHostLogTracker(host string) string {
-	if tracker := trackers.TrackerForOwnedImageHost(host); tracker != "" {
+func (s *Service) imageHostLogTracker(host string) string {
+	if tracker := trackers.TrackerForOwnedImageHost(s.registry, host); tracker != "" {
 		return tracker
 	}
 	return "shared"

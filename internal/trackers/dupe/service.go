@@ -55,11 +55,6 @@ type Service struct {
 	cancelWarningThreshold time.Duration
 }
 
-// NewService returns a duplicate-check service backed by the default tracker registry.
-func NewService(cfg config.Config, logger api.Logger) *Service {
-	return NewServiceWithRegistry(cfg, logger, nil)
-}
-
 // NewServiceWithRegistry constructs and validates one adapter for every registered tracker.
 func NewServiceWithRegistry(cfg config.Config, logger api.Logger, registry *trackerspkg.Registry) *Service {
 	if logger == nil {
@@ -94,7 +89,9 @@ func NewServiceWithRegistry(cfg config.Config, logger api.Logger, registry *trac
 			return service
 		}
 		trackerConfig := effectiveTrackerConfig(cfg, name)
-		adapter := factory.NewDuplicateAdapter(NewDependencies(name, trackerConfig, cfg.MainSettings.DBPath, httpClient, logger))
+		dependencies := NewDependencies(name, trackerConfig, cfg.MainSettings.DBPath, httpClient, logger)
+		dependencies.registry = registry
+		adapter := factory.NewDuplicateAdapter(dependencies)
 		if adapter == nil {
 			service.initErr = fmt.Errorf("dupechecking: tracker duplicate adapter unavailable: %s", name)
 			return service

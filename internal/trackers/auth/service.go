@@ -14,7 +14,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -27,7 +26,6 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/redaction"
-	servicedb "github.com/autobrr/upbrr/internal/services/db"
 	trackerscatalog "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -78,28 +76,20 @@ type trackerSpec struct {
 	passkey          bool
 	needsCredentials bool
 	notes            []string
-}
-
-// NewService builds a tracker auth service with default remote adapters and the shared manual 2FA challenge manager.
-func NewService(cfg config.Config) *Service {
-	return NewServiceWithLogger(cfg, api.NopLogger{})
-}
-
-// NewServiceWithLogger builds a tracker auth service that writes auth operation
-// outcomes to logger without logging cookie values, credentials, 2FA codes, or
-// challenge identifiers. Nil logger uses [api.NopLogger].
-func NewServiceWithLogger(cfg config.Config, logger api.Logger) *Service {
-	return NewServiceWithRegistryAndLogger(cfg, nil, logger)
+	policy           trackerscatalog.AuthPolicy
 }
 
 // NewServiceWithRegistryAndLogger builds a tracker auth service using tracker-owned auth capabilities.
 func NewServiceWithRegistryAndLogger(cfg config.Config, registry *trackerscatalog.Registry, logger api.Logger) *Service {
+	if registry == nil {
+		panic("tracker auth: registry is required")
+	}
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
 	return &Service{
 		cfg:        cfg,
-		adapters:   defaultAdapters(registry),
+		adapters:   registryAdapters(registry),
 		challenges: sharedChallengeManager,
 		logger:     logger,
 		now:        time.Now,
@@ -167,7 +157,7 @@ func trackerLogID(trackerID string) string {
 	return trackerID
 }
 
-// Capabilities returns tracker auth support metadata for built-in trackers and configured custom trackers.
+// Capabilities returns tracker-owned authentication metadata from the registry.
 func (s *Service) Capabilities(_ context.Context) (caps []api.TrackerAuthCapability, err error) {
 	defer func() {
 		if err != nil {
@@ -236,7 +226,7 @@ func (s *Service) ImportCookies(ctx context.Context, trackerID string, fileName 
 		return api.TrackerAuthStatus{}, fmt.Errorf("tracker auth: import %s cookies: %w", spec.id, err)
 	}
 	status = s.statusForSpec(ctx, spec)
-	if status.State != StateLoginRequired || !isBTNSpec(spec) || !strings.Contains(status.Message, "API key is required") {
+	if status.State != StateLoginRequired || spec.policy.MissingAPIKeyMessage == "" || status.Message != spec.policy.MissingAPIKeyMessage {
 		status.State = StateHasCookies
 		status.Message = "cookies imported"
 	}
@@ -282,9 +272,9 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (status api.Tr
 			return status, nil
 		}
 		status = s.statusForSpec(ctx, spec)
-		if isBTNSpec(spec) && !s.btnAPIKeyConfigured() {
+		if spec.policy.MissingAPIKeyMessage != "" && s.effectiveAPIKey(spec, mustTrackerConfig(s.cfg, spec.id)) == "" {
 			status.State = StateLoginRequired
-			status.Message = btnMissingAPIKeyMessage()
+			status.Message = spec.policy.MissingAPIKeyMessage
 			return status, nil
 		}
 		status.State = StateConfigured
@@ -393,7 +383,7 @@ func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAu
 			}
 			return status, nil
 		}
-		if isBTNSpec(spec) && !s.btnAPIKeyConfigured() {
+		if spec.policy.MissingAPIKeyMessage != "" && s.effectiveAPIKey(spec, trackerCfg) == "" {
 			return s.statusForSpec(ctx, spec), nil
 		}
 		status.State = StateConfigured
@@ -467,13 +457,17 @@ func (s *Service) Submit2FA(ctx context.Context, challengeID string, code string
 	if err != nil {
 		return api.TrackerAuthStatus{}, err
 	}
-	missingBTNAPIKey := isBTNSpec(trackerSpec{id: challenge.TrackerID}) && !s.btnAPIKeyConfigured()
-	if (strings.TrimSpace(session.State) == "" || session.State == SessionStateReady) && !missingBTNAPIKey {
+	spec, specErr := s.specFor(challenge.TrackerID)
+	if specErr != nil {
+		return api.TrackerAuthStatus{}, specErr
+	}
+	missingAPIKey := spec.policy.MissingAPIKeyMessage != "" && s.effectiveAPIKey(spec, mustTrackerConfig(s.cfg, spec.id)) == ""
+	if (strings.TrimSpace(session.State) == "" || session.State == SessionStateReady) && !missingAPIKey {
 		status.State = StateConfigured
 	}
 	status.Needs2FA = false
 	status.ChallengeID = ""
-	if !missingBTNAPIKey {
+	if !missingAPIKey {
 		status.Message = "2FA auth completed"
 	}
 	return status, nil
@@ -513,12 +507,19 @@ func (s *Service) Delete(ctx context.Context, trackerID string) (status api.Trac
 	if err != nil {
 		return api.TrackerAuthStatus{}, err
 	}
-	authSnapshot, err := snapshotTrackerAuthState(ctx, s.cfg.MainSettings.DBPath, spec.id)
-	if err != nil {
-		return api.TrackerAuthStatus{}, err
+	stateManager, hasStateManager := s.registry.LookupAuthStateManager(spec.id)
+	var authSnapshot trackerscatalog.AuthStateSnapshot
+	if hasStateManager {
+		authSnapshot, err = stateManager.Snapshot(ctx, s.cfg.MainSettings.DBPath)
+		if err != nil {
+			return api.TrackerAuthStatus{}, fmt.Errorf("tracker auth: snapshot %s auth state: %w", spec.id, err)
+		}
 	}
-	if err := deleteTrackerAuthState(ctx, s.cfg.MainSettings.DBPath, spec.id); err != nil {
-		restoreErr := authSnapshot.restore(ctx)
+	if hasStateManager {
+		err = stateManager.Delete(ctx, s.cfg.MainSettings.DBPath)
+	}
+	if err != nil {
+		restoreErr := restoreAuthStateSnapshot(ctx, authSnapshot)
 		deleteErr := fmt.Errorf("tracker auth: delete %s auth state: %w", spec.id, err)
 		if restoreErr != nil {
 			return api.TrackerAuthStatus{}, errors.Join(deleteErr, restoreErr)
@@ -526,7 +527,7 @@ func (s *Service) Delete(ctx context.Context, trackerID string) (status api.Trac
 		return api.TrackerAuthStatus{}, deleteErr
 	}
 	if err := cookies.DeleteTrackerCookies(ctx, s.cfg.MainSettings.DBPath, spec.id); err != nil {
-		restoreErr := authSnapshot.restore(ctx)
+		restoreErr := restoreAuthStateSnapshot(ctx, authSnapshot)
 		deleteErr := fmt.Errorf("tracker auth: delete %s cookies: %w", spec.id, err)
 		if restoreErr != nil {
 			return api.TrackerAuthStatus{}, errors.Join(deleteErr, restoreErr)
@@ -540,6 +541,16 @@ func (s *Service) Delete(ctx context.Context, trackerID string) (status api.Trac
 	status.CookieCount = 0
 	status.Message = "stored auth deleted"
 	return status, nil
+}
+
+func restoreAuthStateSnapshot(ctx context.Context, snapshot trackerscatalog.AuthStateSnapshot) error {
+	if snapshot == nil {
+		return nil
+	}
+	if err := snapshot.Restore(ctx); err != nil {
+		return fmt.Errorf("tracker auth: restore auth state: %w", err)
+	}
+	return nil
 }
 
 // statusForSpec reports configured auth material without hiding encrypted
@@ -556,10 +567,7 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 	}
 
 	cfg, hasCfg := trackerConfig(s.cfg, spec.id)
-	hasAPIKey := spec.apiKey && configAPIKey(cfg) != ""
-	if isBTNSpec(spec) {
-		hasAPIKey = s.btnAPIKeyConfigured()
-	}
+	hasAPIKey := spec.apiKey && s.effectiveAPIKey(spec, cfg) != ""
 	hasPasskey := strings.TrimSpace(cfg.Passkey) != ""
 	hasCredentials := spec.login && hasCfg && hasUsableLoginConfig(spec, cfg)
 	if spec.cookies {
@@ -572,20 +580,22 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 		}
 	}
 
-	if hasAPIKey && (!uploadAuthNeedsCookiesOrLogin(spec) || hasCredentials || (isMTVSpec(spec) && status.CookieCount > 0)) {
+	if hasAPIKey && (!spec.policy.APIKeyRequiresUploadSession || hasCredentials || (spec.policy.CookieCompletesAPIKeyAuth && status.CookieCount > 0)) {
 		status.State = StateConfigured
 	}
-	missingBTNAPIKey := isBTNSpec(spec) && !hasAPIKey && (status.CookieCount > 0 || hasCredentials)
-	if missingBTNAPIKey {
+	missingAPIKey := spec.policy.MissingAPIKeyMessage != "" && !hasAPIKey && (status.CookieCount > 0 || hasCredentials)
+	if missingAPIKey {
 		status.State = StateLoginRequired
 	}
 	if passkeyCoversAuth(spec) && hasPasskey {
 		status.State = StateConfigured
 	}
-	if isHDBSpec(spec) && hasPasskey && strings.TrimSpace(cfg.Username) != "" && status.CookieCount > 0 {
+	if spec.policy.PasskeyRequiresUsername && hasPasskey && strings.TrimSpace(cfg.Username) != "" &&
+		(!spec.policy.PasskeyRequiresCookie || status.CookieCount > 0) {
 		status.State = StateConfigured
 	}
-	if isHDBSpec(spec) && hasPasskey && strings.TrimSpace(cfg.Username) != "" && status.CookieCount == 0 {
+	if spec.policy.PasskeyRequiresUsername && spec.policy.PasskeyRequiresCookie && hasPasskey && strings.TrimSpace(cfg.Username) != "" &&
+		status.CookieCount == 0 {
 		status.State = StateLoginRequired
 	}
 	if spec.login {
@@ -597,16 +607,16 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 			status.State = StateLoginRequired
 		}
 	}
-	if !missingBTNAPIKey && spec.cookies && status.CookieCount == 0 && !encryptedStorage &&
+	if !missingAPIKey && spec.cookies && status.CookieCount == 0 && !encryptedStorage &&
 		authStatusRequiresEncryptedStorage(spec, hasCredentials, hasAPIKey, hasPasskey) {
 		status.State = StateEncryptedStorageUnavailable
 	}
 	status.Message = validationMessage(spec, status)
-	if status.State != StateEncryptedStorageUnavailable && uploadAuthNeedsCookiesOrLogin(spec) && hasAPIKey && status.CookieCount == 0 && !hasCredentials {
-		status.Message = uploadAuthRequiredMessage(spec)
+	if status.State != StateEncryptedStorageUnavailable && spec.policy.APIKeyRequiresUploadSession && hasAPIKey && status.CookieCount == 0 && !hasCredentials {
+		status.Message = spec.policy.UploadSessionMissingMessage
 	}
-	if missingBTNAPIKey {
-		status.Message = btnMissingAPIKeyMessage()
+	if missingAPIKey {
+		status.Message = spec.policy.MissingAPIKeyMessage
 	}
 	return status
 }
@@ -620,47 +630,17 @@ func (s *Service) currentTime() time.Time {
 	return time.Now()
 }
 
-// btnAPIKeyConfigured reports whether BTN has an API token in tracker config or
-// legacy metadata; a valid browser session is not upload-ready without it.
-func (s *Service) btnAPIKeyConfigured() bool {
-	return strings.TrimSpace(config.ResolveBTNAPIToken(s.cfg)) != ""
-}
-
-// btnMissingAPIKeyMessage is the shared user-visible status for BTN when
-// cookies or credentials can cover upload auth but torrent resolution cannot run.
-func btnMissingAPIKeyMessage() string {
-	return "API key is required for torrent resolution; imported cookies or login credentials cover upload auth"
-}
-
-func isMTVSpec(spec trackerSpec) bool {
-	return strings.EqualFold(spec.id, "MTV")
-}
-
-func isBTNSpec(spec trackerSpec) bool {
-	return strings.EqualFold(spec.id, "BTN")
-}
-
-func isHDBSpec(spec trackerSpec) bool {
-	return strings.EqualFold(spec.id, "HDB")
-}
-
-// uploadAuthNeedsCookiesOrLogin reports trackers where an API key is necessary
-// but does not prove upload-session readiness.
-func uploadAuthNeedsCookiesOrLogin(spec trackerSpec) bool {
-	return isMTVSpec(spec) || isBTNSpec(spec)
-}
-
-// uploadAuthRequiredMessage explains the split between API/search auth and
-// browser-session upload auth for trackers that need both.
-func uploadAuthRequiredMessage(spec trackerSpec) string {
-	if isBTNSpec(spec) {
-		return "API key covers torrent resolution; imported cookies or login credentials required for upload auth"
+// effectiveAPIKey resolves a tracker-owned compatibility credential when one
+// exists, otherwise using the tracker entry's standard API-key fields.
+func (s *Service) effectiveAPIKey(spec trackerSpec, cfg config.TrackerConfig) string {
+	if spec.policy.ResolveAPIKey != nil {
+		return strings.TrimSpace(spec.policy.ResolveAPIKey(s.cfg, cfg))
 	}
-	return "API key covers Torznab/search; imported cookies or login credentials required for upload auth"
+	return configAPIKey(cfg)
 }
 
 func passkeyCoversAuth(spec trackerSpec) bool {
-	return spec.passkey && !isHDBSpec(spec)
+	return spec.passkey && spec.policy.PasskeyCoversAuth
 }
 
 // hasUsableLoginConfig reports whether credential login has every config value
@@ -670,7 +650,7 @@ func hasUsableLoginConfig(spec trackerSpec, cfg config.TrackerConfig) bool {
 	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
 		return false
 	}
-	if strings.EqualFold(spec.id, "PTP") && strings.TrimSpace(cfg.AnnounceURL) == "" {
+	if spec.policy.LoginRequiresAnnounceURL && strings.TrimSpace(cfg.AnnounceURL) == "" {
 		return false
 	}
 	return true
@@ -695,10 +675,10 @@ func authStatusRequiresEncryptedStorage(spec trackerSpec, hasCredentials bool, h
 	if passkeyCoversAuth(spec) && hasPasskey {
 		return false
 	}
-	if spec.apiKey && hasAPIKey && !uploadAuthNeedsCookiesOrLogin(spec) {
+	if spec.apiKey && hasAPIKey && !spec.policy.APIKeyRequiresUploadSession {
 		return false
 	}
-	return !hasAPIKey || uploadAuthNeedsCookiesOrLogin(spec) || hasCredentials
+	return !hasAPIKey || spec.policy.APIKeyRequiresUploadSession || hasCredentials
 }
 
 // specFor resolves built-in and configured tracker IDs through normalizeTrackerID
@@ -732,198 +712,32 @@ func (s *Service) validateTrackerConfigIDs() error {
 	return nil
 }
 
-// specs returns built-ins plus configured trackers indexed by the same
-// canonical ID used by lookup and duplicate-config validation.
+// specs projects tracker-owned registry capabilities into coordinator state.
 func (s *Service) specs() []trackerSpec {
-	index := map[string]trackerSpec{}
-	for _, spec := range builtInSpecs() {
-		index[spec.id] = spec
-	}
-	for id, cfg := range s.cfg.Trackers.Trackers {
-		trimmedID := strings.TrimSpace(id)
-		if trimmedID == "" {
+	out := make([]trackerSpec, 0)
+	for _, id := range s.registry.Names() {
+		capability, ok := s.registry.LookupAuthCapability(id)
+		if !ok {
 			continue
 		}
-		normalizedID := normalizeTrackerID(trimmedID)
-		spec, ok := index[normalizedID]
-		if !ok {
-			spec = trackerSpec{id: normalizedID, authKind: "config"}
-		}
-		if configAPIKey(cfg) != "" {
-			spec.apiKey = true
-			if spec.authKind == "config" {
-				spec.authKind = "api_key"
-			}
-		}
-		if strings.TrimSpace(cfg.Passkey) != "" {
-			spec.passkey = true
-			if spec.authKind == "config" {
-				spec.authKind = "passkey"
-			}
-		}
-		if strings.TrimSpace(cfg.Username) != "" || strings.TrimSpace(cfg.Password) != "" {
-			if !ok || spec.login {
-				spec.login = true
-				spec.autoLogin = spec.autoLogin || spec.id == "AR" || spec.id == "BTN" || spec.id == "FF" || spec.id == "FL" || spec.id == "MTV" ||
-					spec.id == "PTP" ||
-					spec.id == "RTF" ||
-					spec.id == "THR"
-				if spec.authKind == "config" {
-					spec.authKind = "credential_login"
-				}
-			}
-		}
-		index[normalizedID] = spec
-	}
-
-	out := make([]trackerSpec, 0, len(index))
-	for _, spec := range index {
-		out = append(out, spec)
+		policy, _ := s.registry.LookupAuthPolicy(id)
+		out = append(out, trackerSpec{
+			id:               normalizeTrackerID(capability.TrackerID),
+			authKind:         capability.AuthKind,
+			cookies:          capability.SupportsCookieFile,
+			login:            capability.SupportsLogin,
+			autoLogin:        capability.SupportsAutoLogin,
+			totp:             capability.SupportsTOTP,
+			manual2FA:        capability.SupportsManual2FA,
+			apiKey:           capability.RequiresAPIKey,
+			passkey:          capability.RequiresPasskey,
+			needsCredentials: capability.SupportsLogin && capability.AuthKind != "api_key_credential_refresh",
+			notes:            append([]string(nil), capability.Notes...),
+			policy:           policy,
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].id < out[j].id })
 	return out
-}
-
-// builtInSpecs defines static tracker auth capabilities before adapter support
-// is applied. Manual 2FA is enabled only where login can retry with a submitted
-// api.TrackerAuthLoginRequest.Code.
-func builtInSpecs() []trackerSpec {
-	return []trackerSpec{
-		{
-			id:               "AR",
-			authKind:         "cookies_login",
-			cookies:          true,
-			login:            true,
-			autoLogin:        true,
-			needsCredentials: true,
-		},
-		{
-			id:               "BTN",
-			authKind:         "api_key_cookies_login_manual_2fa",
-			cookies:          true,
-			login:            true,
-			autoLogin:        true,
-			totp:             true,
-			manual2FA:        true,
-			apiKey:           true,
-			needsCredentials: true,
-			notes:            []string{"API key is required for torrent resolution; cookies/login cover upload auth."},
-		},
-		{
-			id:               "FF",
-			authKind:         "cookies_login",
-			cookies:          true,
-			login:            true,
-			autoLogin:        true,
-			needsCredentials: true,
-		},
-		{
-			id:               "FL",
-			authKind:         "cookies_login",
-			cookies:          true,
-			login:            true,
-			autoLogin:        true,
-			needsCredentials: true,
-		},
-		{
-			id:               "MTV",
-			authKind:         "api_key_cookies_login_manual_2fa",
-			cookies:          true,
-			login:            true,
-			autoLogin:        true,
-			totp:             true,
-			manual2FA:        true,
-			apiKey:           true,
-			needsCredentials: true,
-			notes:            []string{"API key covers Torznab/search; cookies/login cover upload authkey."},
-		},
-		{
-			id:               "PTP",
-			authKind:         "cookies_login_manual_2fa",
-			cookies:          true,
-			login:            true,
-			autoLogin:        true,
-			totp:             true,
-			manual2FA:        true,
-			needsCredentials: true,
-		},
-		{
-			id:               "THR",
-			authKind:         "credential_login",
-			login:            true,
-			autoLogin:        true,
-			needsCredentials: true,
-		},
-		{
-			id:               "RTF",
-			authKind:         "api_key_credential_refresh",
-			login:            true,
-			autoLogin:        true,
-			apiKey:           true,
-			needsCredentials: false,
-		},
-		{
-			id:       "ASC",
-			authKind: "cookies",
-			cookies:  true,
-		},
-		{
-			id:       "AZ",
-			authKind: "cookies",
-			cookies:  true,
-		},
-		{
-			id:       "BJS",
-			authKind: "cookies",
-			cookies:  true,
-		},
-		{
-			id:       "BT",
-			authKind: "cookies",
-			cookies:  true,
-		},
-		{
-			id:       "CZ",
-			authKind: "cookies",
-			cookies:  true,
-		},
-		{
-			id:       "HDB",
-			authKind: "passkey_cookies",
-			cookies:  true,
-			passkey:  true,
-		},
-		{
-			id:       "HDS",
-			authKind: "cookies",
-			cookies:  true,
-		},
-		{
-			id:       "HDT",
-			authKind: "cookies",
-			cookies:  true,
-		},
-		{
-			id:       "IS",
-			authKind: "cookies",
-			cookies:  true,
-		},
-		{
-			id:       "PHD",
-			authKind: "cookies",
-			cookies:  true,
-		},
-		{
-			id:       "PTS",
-			authKind: "cookies",
-			cookies:  true,
-		},
-		{
-			id:       "TL",
-			authKind: "cookies",
-			cookies:  true,
-		},
-	}
 }
 
 func capabilityFromSpec(spec trackerSpec) api.TrackerAuthCapability {
@@ -946,6 +760,7 @@ func capabilityFromSpec(spec trackerSpec) api.TrackerAuthCapability {
 // when this service has an adapter that can execute them.
 func (s *Service) capabilityForSpec(spec trackerSpec) api.TrackerAuthCapability {
 	if capability, ok := s.registry.LookupAuthCapability(spec.id); ok {
+		_, capability.SupportsRemoteValidation = s.registry.LookupAuthSessionResolver(spec.id)
 		if _, hasAdapter := s.adapterFor(spec.id); !hasAdapter {
 			capability.SupportsLogin = false
 			capability.SupportsAutoLogin = false
@@ -1447,68 +1262,6 @@ func ReadCookieImportContent(r io.Reader) (string, error) {
 	return string(payload), nil
 }
 
-// trackerAuthStateSnapshot keeps the AR auth material needed to roll back a
-// partial delete after tracker cookie cleanup reports failure.
-type trackerAuthStateSnapshot struct {
-	dbPath          string
-	trackerID       string
-	authKeyValue    string
-	hadAuthKey      bool
-	legacyAuthPath  string
-	legacyAuthValue []byte
-	hadLegacyAuth   bool
-}
-
-// snapshotTrackerAuthState captures AR encrypted and legacy auth keys before a
-// destructive delete; non-AR trackers have no tracker-specific auth state here.
-func snapshotTrackerAuthState(ctx context.Context, dbPath string, trackerID string) (trackerAuthStateSnapshot, error) {
-	snapshot := trackerAuthStateSnapshot{dbPath: dbPath, trackerID: trackerID}
-	if !strings.EqualFold(strings.TrimSpace(trackerID), "AR") {
-		return snapshot, nil
-	}
-	authKey, err := LoadAuthState(ctx, dbPath, "AR", "auth_key")
-	if err == nil {
-		snapshot.authKeyValue = authKey
-		snapshot.hadAuthKey = true
-	} else if !errors.Is(err, ErrAuthStateNotFound) && encryptedAuthStateMayExist(dbPath) {
-		return snapshot, fmt.Errorf("tracker auth: snapshot AR auth state: %w", err)
-	}
-	if legacyPath, err := servicedb.CookiePath(dbPath, "AR_auth.txt"); err == nil {
-		snapshot.legacyAuthPath = legacyPath
-		legacyValue, readErr := os.ReadFile(legacyPath)
-		if readErr == nil {
-			snapshot.legacyAuthValue = legacyValue
-			snapshot.hadLegacyAuth = true
-		} else if !os.IsNotExist(readErr) {
-			return snapshot, fmt.Errorf("tracker auth: snapshot AR legacy auth key: %w", readErr)
-		}
-	}
-	return snapshot, nil
-}
-
-// restore writes captured AR auth material back using a rollback context so a
-// canceled request cannot prevent best-effort restoration.
-func (s trackerAuthStateSnapshot) restore(ctx context.Context) error {
-	if !strings.EqualFold(strings.TrimSpace(s.trackerID), "AR") {
-		return nil
-	}
-	rollbackCtx := contextWithoutCancel(ctx)
-	var errs []error
-	if s.hadAuthKey {
-		if err := SaveAuthState(rollbackCtx, s.dbPath, "AR", "auth_key", s.authKeyValue); err != nil {
-			errs = append(errs, fmt.Errorf("tracker auth: restore AR auth state: %w", err))
-		}
-	}
-	if s.hadLegacyAuth && s.legacyAuthPath != "" {
-		if err := os.MkdirAll(filepath.Dir(s.legacyAuthPath), 0o700); err != nil {
-			errs = append(errs, fmt.Errorf("tracker auth: restore AR legacy auth key dir: %w", err))
-		} else if err := os.WriteFile(s.legacyAuthPath, s.legacyAuthValue, 0o600); err != nil {
-			errs = append(errs, fmt.Errorf("tracker auth: restore AR legacy auth key: %w", err))
-		}
-	}
-	return errors.Join(errs...)
-}
-
 // contextWithoutCancel preserves context values for rollback work while
 // detaching cancellation and deadline state.
 func contextWithoutCancel(ctx context.Context) context.Context {
@@ -1516,36 +1269,4 @@ func contextWithoutCancel(ctx context.Context) context.Context {
 		return context.Background()
 	}
 	return context.WithoutCancel(ctx)
-}
-
-// deleteTrackerAuthState removes tracker-specific encrypted state in addition
-// to generic cookie storage. AR also has a legacy plaintext auth key path, so
-// deletion reports uncertain encrypted cleanup instead of silently leaving stale
-// auth material when helper state cannot prove absence.
-func deleteTrackerAuthState(ctx context.Context, dbPath string, trackerID string) error {
-	if !strings.EqualFold(strings.TrimSpace(trackerID), "AR") {
-		return nil
-	}
-	var errs []error
-	if err := DeleteAuthState(ctx, dbPath, "AR", "auth_key"); err != nil && encryptedAuthStateMayExist(dbPath) {
-		errs = append(errs, fmt.Errorf("tracker auth: delete AR auth state: %w", err))
-	} else if err != nil && !errors.Is(err, ErrAuthStateNotFound) {
-		errs = append(errs, fmt.Errorf("tracker auth: delete AR auth state uncertain: %w", err))
-	}
-	if legacyPath, err := servicedb.CookiePath(dbPath, "AR_auth.txt"); err == nil {
-		if err := os.Remove(legacyPath); err != nil && !os.IsNotExist(err) {
-			errs = append(errs, fmt.Errorf("tracker auth: delete AR legacy auth key: %w", err))
-		}
-	} else {
-		errs = append(errs, fmt.Errorf("tracker auth: resolve AR legacy auth key path: %w", err))
-	}
-	return errors.Join(errs...)
-}
-
-func encryptedAuthStateMayExist(dbPath string) bool {
-	if strings.TrimSpace(dbPath) == "" {
-		return false
-	}
-	_, err := authmaterial.LoadFromDBPath(dbPath)
-	return err == nil
 }

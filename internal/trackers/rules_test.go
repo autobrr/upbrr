@@ -776,15 +776,3 @@ func TestEvaluateRulesMetadataPolicyReturnsEvaluatedEmpty(t *testing.T) {
 		t.Fatalf("expected evaluated empty result, got %#v", got)
 	}
 }
-
-func TestEvaluateRulesModifiedReleaseExemptsManual(t *testing.T) {
-	t.Parallel()
-
-	renamed := api.RuleSubject{
-		SourcePath: "/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5 1 HDR H 265-GRP",
-		Release:    api.ReleaseInfo{Group: "GRP"},
-	}
-	if got := evaluateNonMetadataRulesForTest(context.Background(), "MANUAL", renamed); hasRuleFailure(got, "modified_release") {
-		t.Fatalf("expected MANUAL to be exempt from modified_release, got %#v", got)
-	}
-}

@@ -26,7 +26,6 @@ import (
 	"github.com/autobrr/upbrr/internal/logging"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
-	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/sourcelayout"
@@ -68,14 +67,7 @@ type blurayCandidateSelectionRequest struct {
 }
 
 func newTrackerAuthService(cfg config.Config, logger api.Logger) *trackerauth.Service {
-	registry, err := trackerimpl.NewRegistryWithConfig(cfg)
-	if err != nil {
-		if logger != nil {
-			logger.Warnf("tracker auth: registry construction failed err=%s", redaction.RedactValue(err.Error(), nil))
-		}
-		return trackerauth.NewServiceWithLogger(cfg, logger)
-	}
-	return trackerauth.NewServiceWithRegistryAndLogger(cfg, registry, logger)
+	return trackerauth.NewServiceWithRegistryAndLogger(cfg, trackerimpl.MustNewRegistry(), logger)
 }
 
 // Backend owns the embedded web API runtime and request-scoped background jobs.
@@ -1312,18 +1304,114 @@ func (b *Backend) ImportConfig(fileName, fileContent string) (string, []string, 
 	return result, warnings, nil
 }
 
-// ListKnownTrackers returns registered tracker identifiers in stable registry order.
-func (b *Backend) ListKnownTrackers() ([]string, error) {
-	registry, err := trackerimpl.NewRegistryWithConfig(b.currentConfig())
+// ListTrackerCatalog returns ordered tracker identity, config schemas, and local
+// configured state without exposing current credential values.
+func (b *Backend) ListTrackerCatalog() (api.TrackerCatalog, error) {
+	registry, err := trackerimpl.NewRegistry()
 	if err != nil {
-		return nil, fmt.Errorf("webserver: tracker registry: %w", err)
+		return api.TrackerCatalog{}, fmt.Errorf("webserver: tracker registry: %w", err)
 	}
-	return registry.Names(), nil
+	schemas, err := config.OrderedTrackerSchemas()
+	if err != nil {
+		return api.TrackerCatalog{}, fmt.Errorf("webserver: tracker config catalog: %w", err)
+	}
+
+	cfg := b.currentConfig()
+	entries := make([]api.TrackerCatalogEntry, 0, len(schemas))
+	seen := make(map[string]struct{}, len(schemas))
+	for _, schema := range schemas {
+		descriptor, ok := registry.LookupDescriptor(schema.Name)
+		if !ok {
+			return api.TrackerCatalog{}, fmt.Errorf("webserver: tracker config catalog entry %s has no implementation", schema.Name)
+		}
+		fields := make([]api.TrackerCatalogField, len(schema.Fields))
+		for index, field := range schema.Fields {
+			fields[index] = api.TrackerCatalogField{
+				Key:        field.JSONKey,
+				YAMLKey:    field.YAMLKey,
+				Default:    field.Default,
+				Activation: field.Activation,
+			}
+		}
+		trackerCfg, _ := trackerConfigByName(cfg.Trackers.Trackers, schema.Name)
+		entries = append(entries, api.TrackerCatalogEntry{
+			Name:       schema.Name,
+			Family:     string(descriptor.Family),
+			BaseURL:    descriptor.BaseURL,
+			Fields:     fields,
+			Configured: config.TrackerConfigured(trackerCfg, schema),
+		})
+		seen[schema.Name] = struct{}{}
+	}
+	for _, name := range registry.Names() {
+		if _, ok := seen[name]; !ok {
+			return api.TrackerCatalog{}, fmt.Errorf("webserver: tracker implementation %s has no config catalog entry", name)
+		}
+	}
+
+	unsupported := make([]string, 0)
+	for name := range cfg.Trackers.Trackers {
+		normalized := strings.ToUpper(strings.TrimSpace(name))
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; !ok {
+			unsupported = append(unsupported, name)
+		}
+	}
+	slices.SortFunc(unsupported, func(left, right string) int {
+		return strings.Compare(strings.ToUpper(left), strings.ToUpper(right))
+	})
+	return api.TrackerCatalog{Entries: entries, Unsupported: unsupported}, nil
+}
+
+func trackerConfigByName(entries map[string]config.TrackerConfig, name string) (config.TrackerConfig, bool) {
+	if cfg, ok := entries[name]; ok {
+		return cfg, true
+	}
+	for entryName, cfg := range entries {
+		if strings.EqualFold(strings.TrimSpace(entryName), strings.TrimSpace(name)) {
+			return cfg, true
+		}
+	}
+	return config.TrackerConfig{}, false
 }
 
 // GetImageHostPolicyMetadata returns image-host policy metadata consumed by settings and upload UI.
 func (b *Backend) GetImageHostPolicyMetadata() (imagehostpolicy.Metadata, error) {
-	return imagehostpolicy.Snapshot(), nil
+	registry, err := trackerimpl.NewRegistry()
+	if err != nil {
+		return imagehostpolicy.Metadata{}, fmt.Errorf("webserver: tracker registry: %w", err)
+	}
+	metadata := imagehostpolicy.Metadata{
+		UploadHosts:        imagehostpolicy.KnownUploadHosts(),
+		TrackerUploadHosts: make(map[string][]string),
+		OwnedHosts:         make(map[string]string),
+	}
+	for _, tracker := range registry.Names() {
+		policy, ok := registry.LookupImageHostPolicy(tracker)
+		if !ok {
+			continue
+		}
+		hosts := append([]string(nil), policy.AllowedHosts...)
+		if host := strings.ToLower(strings.TrimSpace(policy.ConditionalHost)); host != "" {
+			hosts = append(hosts, host)
+		}
+		uploadHosts := make([]string, 0, len(hosts))
+		for _, host := range hosts {
+			normalized := strings.ToLower(strings.TrimSpace(host))
+			if imagehostpolicy.IsUploadHost(normalized) && !slices.Contains(uploadHosts, normalized) {
+				uploadHosts = append(uploadHosts, normalized)
+			}
+		}
+		if len(uploadHosts) > 0 {
+			metadata.TrackerUploadHosts[tracker] = uploadHosts
+		}
+		for _, host := range policy.OwnedHosts {
+			metadata.OwnedHosts[strings.ToLower(strings.TrimSpace(host))] = tracker
+		}
+	}
+	return metadata, nil
 }
 
 // ListHistory returns persisted release history in repository-defined order.

@@ -155,7 +155,7 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	d := New()
+	d := &Definition{baseURL: server.URL, httpClient: server.Client()}
 	result, err := d.submit(context.Background(), trackers.PreparationInput{
 		Tracker: "HDB",
 		Meta: api.UploadSubject{
@@ -167,7 +167,6 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 			ReleaseName: "My.Release.2026.2160p.WEBDL.HEVC",
 		},
 		TrackerConfig: config.TrackerConfig{
-			URL:      server.URL,
 			Username: "user",
 			Passkey:  "pass",
 		},

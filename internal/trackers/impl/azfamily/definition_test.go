@@ -20,6 +20,13 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func testDefinitionAt(baseURL string) *Definition {
+	site := siteFor("AZ")
+	site.BaseURL = baseURL
+	site.RequestsURL = strings.TrimRight(baseURL, "/") + "/requests"
+	return &Definition{site: site}
+}
+
 func TestBuildUploadDryRunBlockedWhenMediaMissing(t *testing.T) {
 	tmp := t.TempDir()
 
@@ -37,10 +44,10 @@ func TestBuildUploadDryRunBlockedWhenMediaMissing(t *testing.T) {
 	parsedServerURL, _ := url.Parse(server.URL)
 	writeAZCookieFile(t, tmp, "AZ", parsedServerURL.Hostname())
 
-	entry, err := New("AZ").prepareDryRun(context.Background(), trackers.PreparationInput{
+	entry, err := testDefinitionAt(server.URL).prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker:       "AZ",
 		Meta:          api.UploadSubject{Identity: api.ExternalIdentity{Category: "MOVIE", IMDBID: 123}},
-		TrackerConfig: config.TrackerConfig{URL: server.URL},
+		TrackerConfig: config.TrackerConfig{},
 		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
 		Logger:        api.NopLogger{},
 	})
@@ -93,7 +100,7 @@ func TestUploadSuccess(t *testing.T) {
 	parsedServerURL, _ := url.Parse(server.URL)
 	writeAZCookieFile(t, tmp, "AZ", parsedServerURL.Hostname())
 
-	result, err := New("AZ").submit(context.Background(), trackers.PreparationInput{
+	result, err := testDefinitionAt(server.URL).submit(context.Background(), trackers.PreparationInput{
 		Tracker: "AZ",
 		Meta: api.UploadSubject{
 			SourcePath:        filepath.Join(tmp, "Movie.mkv"),
@@ -112,7 +119,7 @@ func TestUploadSuccess(t *testing.T) {
 			SubtitleLanguages: []string{"English"},
 			Options:           api.UploadOptions{KeepImages: true},
 		},
-		TrackerConfig: config.TrackerConfig{URL: server.URL},
+		TrackerConfig: config.TrackerConfig{},
 		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
 		Logger:        api.NopLogger{},
 		Assets: &trackers.DescriptionAssets{Screenshots: []api.ScreenshotImage{
@@ -162,7 +169,7 @@ func TestBuildUploadDryRunAllowsTVWebDLRipType(t *testing.T) {
 	parsedServerURL, _ := url.Parse(server.URL)
 	writeAZCookieFile(t, tmp, "AZ", parsedServerURL.Hostname())
 
-	entry, err := New("AZ").prepareDryRun(context.Background(), trackers.PreparationInput{
+	entry, err := testDefinitionAt(server.URL).prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "AZ",
 		Meta: api.UploadSubject{
 			SourcePath:        filepath.Join(tmp, "Show.S01E02.1080p.WEB-DL.mkv"),
@@ -185,7 +192,7 @@ func TestBuildUploadDryRunAllowsTVWebDLRipType(t *testing.T) {
 			SeasonInt:         1,
 			EpisodeInt:        2,
 		},
-		TrackerConfig: config.TrackerConfig{URL: server.URL},
+		TrackerConfig: config.TrackerConfig{},
 		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
 		Logger:        api.NopLogger{},
 		Assets:        &trackers.DescriptionAssets{},

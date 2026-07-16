@@ -150,11 +150,6 @@ func cloneTrackerMetadata(records []api.TrackerMetadata) []api.TrackerMetadata {
 	return cloned
 }
 
-// DescriptionOverrideGroupForTracker returns the override group used by tracker.
-func DescriptionOverrideGroupForTracker(tracker string) string {
-	return DescriptionOverrideGroupForTrackerWithRegistry(tracker, nil)
-}
-
 // DescriptionOverrideGroupForTrackerWithRegistry resolves tracker-owned description grouping.
 func DescriptionOverrideGroupForTrackerWithRegistry(tracker string, registry *Registry) string {
 	normalized := strings.ToUpper(strings.TrimSpace(tracker))
@@ -162,22 +157,12 @@ func DescriptionOverrideGroupForTrackerWithRegistry(tracker string, registry *Re
 		if group := strings.ToLower(strings.TrimSpace(descriptor.DescriptionGroup)); group != "" {
 			return group
 		}
-		if descriptor.Kind == KindUnit3D {
+		if descriptor.Family == FamilyUnit3D {
 			return "unit3d"
 		}
 		return strings.ToLower(normalized)
 	}
-	switch {
-	case normalized == "":
-		return ""
-	case IsUnit3DTracker(normalized):
-		if normalized == "ACM" {
-			return "acm"
-		}
-		return "unit3d"
-	default:
-		return strings.ToLower(normalized)
-	}
+	return ""
 }
 
 func normalizeDescriptionOverrideGroupKey(groupKey string) string {
@@ -191,8 +176,9 @@ func ResolveDescriptionAssets(
 	meta api.UploadSubject,
 	repo UploadPersistence,
 	logger api.Logger,
+	registries ...*Registry,
 ) (DescriptionAssets, error) {
-	return resolveDescriptionAssets(ctx, tracker, meta, repo, logger, nil)
+	return resolveDescriptionAssets(ctx, tracker, meta, repo, logger, nil, registries...)
 }
 
 // LogDescriptionAssetResolutionFailure records a redacted tracker asset-resolution failure.
@@ -214,14 +200,19 @@ func resolveDescriptionAssets(
 	repo UploadPersistence,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
+	registries ...*Registry,
 ) (DescriptionAssets, error) {
+	registry := firstRegistry(registries)
+	if registry == nil {
+		registry = preloadedRegistry(preloaded)
+	}
 	if err := ctx.Err(); err != nil {
 		return DescriptionAssets{}, fmt.Errorf("trackers: resolve description assets canceled: %w", err)
 	}
 	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
 		description := meta.DescriptionOverride
 		final := false
-		if canonical := descriptionGroupFromPreparedMeta(meta, tracker, preloaded); strings.TrimSpace(canonical) != "" {
+		if canonical := descriptionGroupFromPreparedMeta(meta, tracker, preloaded, registry); strings.TrimSpace(canonical) != "" {
 			description = canonical
 			final = true
 		}
@@ -237,8 +228,8 @@ func resolveDescriptionAssets(
 		logger.Tracef("trackers: description assets start tracker=%s source=%s", strings.TrimSpace(tracker), meta.SourcePath)
 	}
 
-	description, overridden, final := resolveTrackerDescription(ctx, tracker, meta, repo, logger, preloaded)
-	slots, screenshots, err := resolveDescriptionScreenshots(ctx, tracker, meta, repo, logger, preloaded)
+	description, overridden, final := resolveTrackerDescription(ctx, tracker, meta, repo, logger, preloaded, registry)
+	slots, screenshots, err := resolveDescriptionScreenshots(ctx, tracker, meta, repo, logger, preloaded, registry)
 	if err != nil {
 		if logger != nil {
 			logger.Warnf("trackers: description assets screenshots degraded for %s: %v", strings.TrimSpace(tracker), err)
@@ -421,11 +412,12 @@ func resolveTrackerDescription(
 	repo UploadPersistence,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
+	registry *Registry,
 ) (string, bool, bool) {
 	if err := ctx.Err(); err != nil {
 		return "", false, false
 	}
-	if canonical := descriptionGroupFromPreparedMeta(meta, tracker, preloaded); strings.TrimSpace(canonical) != "" {
+	if canonical := descriptionGroupFromPreparedMeta(meta, tracker, preloaded, registry); strings.TrimSpace(canonical) != "" {
 		if logger != nil {
 			logger.Tracef(
 				"trackers: canonical group description applied source=%s tracker=%s len=%d",
@@ -443,7 +435,7 @@ func resolveTrackerDescription(
 		return meta.DescriptionOverride, true, false
 	}
 	if repo != nil && strings.TrimSpace(meta.SourcePath) != "" {
-		for _, groupKey := range descriptionOverrideLookupKeys(meta.DescriptionGroups, tracker, preloadedRegistry(preloaded)) {
+		for _, groupKey := range descriptionOverrideLookupKeys(meta.DescriptionGroups, tracker, registry) {
 			override, err := descriptionOverrideFromSource(ctx, meta, repo, groupKey, preloaded)
 			if err == nil {
 				trimmed := strings.TrimSpace(override.Description)
@@ -492,7 +484,7 @@ func resolveTrackerDescription(
 	return result, false, false
 }
 
-func descriptionGroupFromPreparedMeta(meta api.UploadSubject, tracker string, preloaded *preloadedDescriptionAssetData) string {
+func descriptionGroupFromPreparedMeta(meta api.UploadSubject, tracker string, preloaded *preloadedDescriptionAssetData, registry *Registry) string {
 	if len(meta.DescriptionGroups) == 0 {
 		return ""
 	}
@@ -502,7 +494,7 @@ func descriptionGroupFromPreparedMeta(meta api.UploadSubject, tracker string, pr
 		return ""
 	}
 
-	for _, groupKey := range descriptionOverrideLookupKeys(meta.DescriptionGroups, tracker, preloadedRegistry(preloaded)) {
+	for _, groupKey := range descriptionOverrideLookupKeys(meta.DescriptionGroups, tracker, registry) {
 		if description, ok := groupDescriptions[strings.ToUpper(strings.TrimSpace(groupKey))]; ok {
 			return description
 		}
@@ -699,11 +691,12 @@ func resolveDescriptionScreenshots(
 	repo UploadPersistence,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
+	registry *Registry,
 ) ([]api.ScreenshotSlot, []api.ScreenshotImage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, fmt.Errorf("trackers: resolve description screenshots canceled: %w", err)
 	}
-	slots, err := screenshotSlotsFromSource(ctx, tracker, meta, repo, logger, preloaded)
+	slots, err := screenshotSlotsFromSource(ctx, tracker, meta, repo, logger, preloaded, registry)
 	if err != nil {
 		if logger != nil {
 			logger.Debugf("trackers: description assets failed to load screenshot slots: %v", err)
@@ -783,7 +776,7 @@ func preloadDescriptionAssetData(
 	}
 	preloaded.uploads = uploads
 
-	slots, err := screenshotSlotsFromSource(ctx, "", meta, repo, nil, preloaded)
+	slots, err := screenshotSlotsFromSource(ctx, "", meta, repo, nil, preloaded, registry)
 	if err != nil {
 		return nil, err
 	}

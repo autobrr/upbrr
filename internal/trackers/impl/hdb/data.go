@@ -28,7 +28,7 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _
 	return &dataLookup{
 		cfg:      cfg,
 		http:     httpClient,
-		endpoint: "https://hdbits.org/api/torrents",
+		endpoint: strings.TrimRight(d.baseURL, "/") + "/api/torrents",
 	}
 }
 

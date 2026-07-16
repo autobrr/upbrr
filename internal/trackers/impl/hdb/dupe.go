@@ -38,7 +38,7 @@ func (d *Definition) NewDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 		cfg:      cfg,
 		http:     httpClient,
 		logger:   logger,
-		endpoint: "https://hdbits.org/api/torrents",
+		endpoint: strings.TrimRight(d.baseURL, "/") + "/api/torrents",
 	}
 }
 

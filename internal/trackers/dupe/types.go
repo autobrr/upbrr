@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -72,11 +73,12 @@ var validFailureCodes = map[string]struct{}{
 // Dependencies are the narrow, construction-bound inputs for one duplicate adapter.
 // Config contains only the effective tracker entry; DBPath anchors credential/session access.
 type Dependencies struct {
-	tracker string
-	config  config.TrackerConfig
-	dbPath  string
-	http    *http.Client
-	logger  api.Logger
+	tracker  string
+	config   config.TrackerConfig
+	dbPath   string
+	http     *http.Client
+	logger   api.Logger
+	registry *trackerspkg.Registry
 }
 
 // NewDependencies binds one adapter to its normalized tracker identity and effective config.
@@ -109,6 +111,7 @@ func NewAdapter(
 	cfg config.Config,
 	httpClient *http.Client,
 	logger api.Logger,
+	registries ...*trackerspkg.Registry,
 ) Adapter {
 	tracker = strings.ToUpper(strings.TrimSpace(tracker))
 	var trackerConfig config.TrackerConfig
@@ -118,7 +121,11 @@ func NewAdapter(
 			break
 		}
 	}
-	return factory.NewDuplicateAdapter(NewDependencies(tracker, trackerConfig, cfg.MainSettings.DBPath, httpClient, logger))
+	dependencies := NewDependencies(tracker, trackerConfig, cfg.MainSettings.DBPath, httpClient, logger)
+	if len(registries) > 0 {
+		dependencies.registry = registries[0]
+	}
+	return factory.NewDuplicateAdapter(dependencies)
 }
 
 // Tracker returns the normalized tracker identity bound to the adapter.
@@ -140,6 +147,9 @@ func (d Dependencies) HTTPClient() *http.Client { return d.http }
 
 // Logger returns the adapter diagnostic sink.
 func (d Dependencies) Logger() api.Logger { return d.logger }
+
+// Registry returns the composed tracker registry when construction occurs through the duplicate service.
+func (d Dependencies) Registry() *trackerspkg.Registry { return d.registry }
 
 // BoundConfig returns a minimal config snapshot containing only this adapter's bound inputs.
 // It exists for tracker protocol helpers shared with upload/auth code; it never contains unrelated app config.

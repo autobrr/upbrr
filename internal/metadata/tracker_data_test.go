@@ -29,6 +29,7 @@ import (
 	dbsvc "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	btnimpl "github.com/autobrr/upbrr/internal/trackers/impl/btn"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -87,6 +88,15 @@ func trackerRecordFor(trackerData []api.TrackerMetadata, tracker string) (api.Tr
 	return api.TrackerMetadata{}, false
 }
 
+func trackerDataTestRegistry(t *testing.T) *trackers.Registry {
+	t.Helper()
+	registry, err := trackerimpl.NewRegistry()
+	if err != nil {
+		t.Fatalf("create tracker registry: %v", err)
+	}
+	return registry
+}
+
 func TestTrackerLookupFileNameHonorsSkipWithoutTrackerID(t *testing.T) {
 	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Show.S04E01.2160p.WEB.h265-GRP.mkv`,
@@ -141,7 +151,7 @@ func TestEnrichTrackerDataStopsAfterFirstPriorityIDWinner(t *testing.T) {
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
@@ -196,7 +206,7 @@ func TestEnrichTrackerDataPreferredTrackerOverridesStaticPriority(t *testing.T) 
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
@@ -245,7 +255,7 @@ func TestEnrichTrackerDataUsesConcurrentWinnerWithoutClientTrackerIDs(t *testing
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	meta := preparationstate.State{
 		SourcePath:       `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
@@ -301,7 +311,7 @@ func TestEnrichTrackerDataPreferredTrackerIsSourceOfTruthWithoutClientTrackerIDs
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	meta := preparationstate.State{
 		SourcePath:       `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
@@ -359,7 +369,7 @@ func TestEnrichTrackerDataContinuesUntilIDsFound(t *testing.T) {
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
@@ -588,7 +598,7 @@ func TestEnrichTrackerDataSkipsLookupWhenStoredFresh(t *testing.T) {
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	meta := preparationstate.State{
 		SourcePath:       `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
@@ -729,7 +739,7 @@ func TestEnrichTrackerDataKeepsDescriptionFromSingleTracker(t *testing.T) {
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
@@ -797,7 +807,7 @@ func TestEnrichTrackerDataDropsImageURLsWhenArtifactDownloadRejected(t *testing.
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	meta := preparationstate.State{
 		SourcePath: filepath.Join(t.TempDir(), "Movie.2026.2160p.mkv"),
@@ -861,7 +871,7 @@ func TestEnrichTrackerDataRejectedImageURLsDoNotChooseAssetSource(t *testing.T) 
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	result, err := svc.collectTrackerEvidence(context.Background(), preparationstate.State{
 		SourcePath:       filepath.Join(t.TempDir(), "Movie.2026.2160p.mkv"),
@@ -907,7 +917,7 @@ func TestEnrichTrackerDataPreservesDuplicateImageURLPositionsForArtifactLinks(t 
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	result, err := svc.collectTrackerEvidence(context.Background(), preparationstate.State{
 		SourcePath: sourcePath,
@@ -947,7 +957,7 @@ func TestEnrichTrackerDataPreservesDuplicateImageURLPositionsForLocalScreenshots
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
 	result, err := svc.collectTrackerEvidence(context.Background(), preparationstate.State{
 		SourcePath: sourcePath,
@@ -969,7 +979,11 @@ func TestEnrichTrackerDataPreservesDuplicateImageURLPositionsForLocalScreenshots
 }
 
 func TestMetadataTrackerPriorityPlacesPreferredTrackersBeforeRemainingUnit3D(t *testing.T) {
-	result := trackers.TrackerPriority()
+	registry, err := trackerimpl.NewRegistry()
+	if err != nil {
+		t.Fatalf("create tracker registry: %v", err)
+	}
+	result := registry.Priority()
 	expectedPrefix := []string{"aither", "ulcx", "lst", "blu", "oe", "btn", "bhd", "hdb", "ant", "rf", "otw", "yus", "dp", "sp", "ptp"}
 
 	prevIdx := -1
@@ -985,7 +999,7 @@ func TestMetadataTrackerPriorityPlacesPreferredTrackersBeforeRemainingUnit3D(t *
 	}
 
 	remaining := make([]string, 0)
-	for _, tracker := range trackers.Unit3DTrackers() {
+	for _, tracker := range registry.NamesByFamily(trackers.FamilyUnit3D) {
 		lower := strings.ToLower(tracker)
 		if hasTracker(expectedPrefix, lower) {
 			continue

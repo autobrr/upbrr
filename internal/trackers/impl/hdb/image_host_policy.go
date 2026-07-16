@@ -6,5 +6,9 @@ package hdb
 import "github.com/autobrr/upbrr/internal/trackers"
 
 func (d *Definition) ImageHostPolicy() *trackers.ImageHostPolicy {
-	return &trackers.ImageHostPolicy{AllowedHosts: []string{"hdb"}, DisableWithoutRehost: true}
+	return &trackers.ImageHostPolicy{
+		AllowedHosts:         []string{"hdb"},
+		OwnedHosts:           []string{"hdb"},
+		DisableWithoutRehost: true,
+	}
 }

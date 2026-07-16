@@ -49,17 +49,13 @@ var ErrSubmitted2FARejected = trackers.ErrSubmitted2FARejected
 
 var errMTVAuthKeyNotFound = errors.New("trackers: MTV auth key not found")
 
-func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
+func uploadAt(ctx context.Context, req trackers.PreparationInput, baseURL string) (api.UploadSummary, error) {
 	select {
 	case <-ctx.Done():
 		return api.UploadSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
-	baseURL := strings.TrimRight(strings.TrimSpace(req.TrackerConfig.URL), "/")
-	if baseURL == "" {
-		baseURL = mtvBaseURL
-	}
 	uploadURL := baseURL + mtvUploadPath
 
 	cookies, err := loadMTVCookies(ctx, req.Runtime.DBPath)
@@ -150,7 +146,7 @@ func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSumma
 	return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("MTV", resp.StatusCode, finalURL, bodyPreview)
 }
 
-func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
+func buildUploadDryRunAt(ctx context.Context, req trackers.PreparationInput, baseURL string) (api.TrackerDryRunEntry, error) {
 	select {
 	case <-ctx.Done():
 		return api.TrackerDryRunEntry{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -181,10 +177,6 @@ func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.
 		return api.TrackerDryRunEntry{}, err
 	}
 
-	baseURL := strings.TrimRight(strings.TrimSpace(req.TrackerConfig.URL), "/")
-	if baseURL == "" {
-		baseURL = mtvBaseURL
-	}
 	uploadURL := baseURL + mtvUploadPath
 
 	const dryRunAuthPlaceholder = "dry-run-auth"
@@ -270,7 +262,11 @@ func saveMTVCookies(ctx context.Context, dbPath string, values map[string]string
 // configured credentials. After a successful login, cookie persistence failures
 // are returned distinctly from remote authentication failures.
 func ResolveSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConfig, dbPath string) error {
-	return ResolveSessionForTrackerAuthLogin(ctx, cfg, dbPath, api.TrackerAuthLoginRequest{})
+	return resolveSessionForTrackerAuthAt(ctx, cfg, dbPath, mtvBaseURL)
+}
+
+func resolveSessionForTrackerAuthAt(ctx context.Context, cfg config.TrackerConfig, dbPath string, baseURL string) error {
+	return resolveSessionForTrackerAuthLoginAt(ctx, cfg, dbPath, api.TrackerAuthLoginRequest{}, baseURL)
 }
 
 // ResolveSessionForTrackerAuthLogin validates MTV stored cookies or logs in
@@ -281,10 +277,16 @@ func ResolveSessionForTrackerAuth(ctx context.Context, cfg config.TrackerConfig,
 // refreshed cookies are persisted. Response read errors are returned directly
 // and are not classified as submitted-code rejections.
 func ResolveSessionForTrackerAuthLogin(ctx context.Context, cfg config.TrackerConfig, dbPath string, login api.TrackerAuthLoginRequest) error {
-	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
-	if baseURL == "" {
-		baseURL = mtvBaseURL
-	}
+	return resolveSessionForTrackerAuthLoginAt(ctx, cfg, dbPath, login, mtvBaseURL)
+}
+
+func resolveSessionForTrackerAuthLoginAt(
+	ctx context.Context,
+	cfg config.TrackerConfig,
+	dbPath string,
+	login api.TrackerAuthLoginRequest,
+	baseURL string,
+) error {
 	cookies, err := loadMTVCookies(ctx, dbPath)
 	if err == nil && len(cookies) > 0 {
 		if _, _, err := resolveAuthKey(ctx, baseURL, cookies); err == nil {

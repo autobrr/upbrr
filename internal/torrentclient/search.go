@@ -43,127 +43,44 @@ const (
 // trackerPattern associates a tracker endpoint with the expression used to
 // extract its torrent identifier.
 type trackerPattern struct {
-	url     string
-	pattern *regexp.Regexp
-}
-
-var (
-	unit3dTrackerIDPattern = regexp.MustCompile(`/(\d+)`)
-	trackerIDPatterns      = buildTrackerIDPatterns(nil)
-)
-
-var trackerIDCommentAliases = map[string][]string{
-	"rf": {"https://reelflix.xyz"},
-}
-
-var trackerURLPatterns = map[string][]string{
-	"acm":    {"https://eiga.moi"},
-	"aither": {"https://aither.cc"},
-	"ant":    {"tracker.anthelion.me"},
-	"ar":     {"tracker.alpharatio"},
-	"asc":    {"amigos-share.club"},
-	"az":     {"tracker.avistaz.to"},
-	"bhd":    {"https://beyond-hd.me", "tracker.beyond-hd.me"},
-	"bjs":    {"tracker.bj-share.info"},
-	"blu":    {"https://blutopia.cc"},
-	"bt":     {"t.brasiltracker.org"},
-	"btn":    {"https://broadcasthe.net", "https://backup.landof.tv", "https://landof.tv", "landof.tv/"},
-	"cbr":    {"capybarabr.com"},
-	"cz":     {"tracker.cinemaz.to"},
-	// CZTeam exposes tracker provenance through announce URLs; it has no
-	// separate client-visible torrent id pattern.
-	"czt":  {"czteam.me"},
-	"dc":   {"tracker.digitalcore.club", "trackerprxy.digitalcore.club"},
-	"dp":   {"https://darkpeers.org"},
-	"ff":   {"tracker.funfile.org"},
-	"fl":   {"reactor.filelist", "reactor.thefl.org"},
-	"gpw":  {"https://tracker.greatposterwall.com"},
-	"hdb":  {"https://tracker.hdbits.org"},
-	"hds":  {"hd-space.pw"},
-	"hdt":  {"https://hdts-announce.ru"},
-	"hhd":  {"https://homiehelpdesk.net"},
-	"ihd":  {"https://infinityhd.net"},
-	"is":   {"https://immortalseed.me"},
-	"itt":  {"https://itatorrents.xyz"},
-	"lcd":  {"locadora.cc"},
-	"ldu":  {"theldu.to"},
-	"lst":  {"https://lst.gg"},
-	"lt":   {"https://lat-team.com"},
-	"lume": {"https://luminarr.me"},
-	"mns":  {"https://midnightscene.cc"},
-	"mtv":  {"tracker.morethantv"},
-	"nbl":  {"tracker.nebulance"},
-	"oe":   {"https://onlyencodes.cc"},
-	"otw":  {"https://oldtoons.world"},
-	"phd":  {"tracker.privatehd"},
-	"pt":   {"https://portugas.org"},
-	"ptp":  {"passthepopcorn.me"},
-	"pts":  {"https://tracker.ptskit.com"},
-	"ras":  {"https://rastastugan.org"},
-	"rf":   {"https://reelflix.xyz", "https://reelflix.cc"},
-	"rtf":  {"peer.retroflix"},
-	"sam":  {"https://samaritano.cc"},
-	"sp":   {"https://seedpool.org"},
-	"spd":  {"ramjet.speedapp.io", "ramjet.speedapp.to", "ramjet.speedappio.org"},
-	"stc":  {"https://skipthecommercials.xyz"},
-	"thr":  {"torrenthr"},
-	"tl":   {"tracker.tleechreload", "tracker.torrentleech"},
-	"tlz":  {"https://tlzdigital.com/"},
-	"tos":  {"https://theoldschool.cc"},
-	"ttr":  {"https://torrenteros.org"},
-	"tvc":  {"https://tvchaosuk.com"},
-	"ulcx": {"https://upload.cx"},
-	"yus":  {"https://yu-scene.net"},
-	"znth": {"https://znth.cx"},
-}
-
-var lowerTrackerURLPatterns = buildLowerTrackerURLPatterns(trackerURLPatterns)
-
-func buildLowerTrackerURLPatterns(source map[string][]string) map[string][]string {
-	if len(source) == 0 {
-		return nil
-	}
-	lowered := make(map[string][]string, len(source))
-	for id, patterns := range source {
-		normalized := make([]string, 0, len(patterns))
-		for _, pattern := range patterns {
-			trimmed := strings.ToLower(strings.TrimSpace(pattern))
-			if trimmed == "" {
-				continue
-			}
-			normalized = append(normalized, trimmed)
-		}
-		lowered[id] = normalized
-	}
-	return lowered
+	trackerURLs      []string
+	commentURLs      []string
+	pattern          *regexp.Regexp
+	workingTrackerID string
+	inferMatchFromID bool
 }
 
 func buildTrackerIDPatterns(registry *trackers.Registry) map[string]trackerPattern {
-	patterns := map[string]trackerPattern{
-		"hdb": {url: "https://hdbits.org", pattern: regexp.MustCompile(`id=(\d+)`)},
-		"btn": {url: "https://broadcasthe.net", pattern: regexp.MustCompile(`id=(\d+)`)},
-		"bhd": {url: "https://beyond-hd.me", pattern: regexp.MustCompile(`details/(\d+)`)},
-		"ptp": {url: "passthepopcorn.me", pattern: regexp.MustCompile(`torrentid=(\d+)`)},
-		"rtf": {url: "https://retroflix.club", pattern: regexp.MustCompile(`(?i)retroflix\.club/browse/t/(\d+)`)},
-	}
-
-	for _, tracker := range registry.NamesByKind(trackers.KindUnit3D) {
-		baseURL, ok := registry.LookupBaseURL(tracker)
-		if !ok || strings.TrimSpace(baseURL) == "" {
+	patterns := make(map[string]trackerPattern)
+	for _, tracker := range registry.Names() {
+		policy, ok := registry.LookupTorrentIdentityPolicy(tracker)
+		if !ok {
 			continue
 		}
-		key := strings.ToLower(strings.TrimSpace(tracker))
-		if key == "" {
-			continue
+		var pattern *regexp.Regexp
+		if policy.DetailIDPattern != "" {
+			pattern = regexp.MustCompile(policy.DetailIDPattern)
 		}
-		patterns[key] = trackerPattern{url: strings.ToLower(baseURL), pattern: unit3dTrackerIDPattern}
+		patterns[strings.ToLower(tracker)] = trackerPattern{
+			trackerURLs:      append([]string(nil), policy.TrackerURLPatterns...),
+			commentURLs:      append([]string(nil), policy.CommentURLPatterns...),
+			pattern:          pattern,
+			workingTrackerID: policy.WorkingTrackerID,
+			inferMatchFromID: policy.InferMatchFromResolvedID,
+		}
 	}
-	if pattern, ok := patterns["rf"]; ok {
-		pattern.pattern = regexp.MustCompile(`(?i)reelflix\.(?:cc|xyz)/torrents/(\d+)`)
-		patterns["rf"] = pattern
-	}
-
 	return patterns
+}
+
+func trackerSearchPreferenceNames(registry *trackers.Registry, preference trackers.TorrentSearchPreference) []string {
+	names := make([]string, 0)
+	for _, tracker := range registry.Names() {
+		policy, ok := registry.LookupTorrentIdentityPolicy(tracker)
+		if ok && policy.SearchPreference == preference {
+			names = append(names, tracker)
+		}
+	}
+	return names
 }
 
 // proxySearchResponse models the torrent list returned by the Qui search proxy.
@@ -214,7 +131,7 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 		return api.ClientSearchResult{}, internalerrors.ErrInvalidInput
 	}
 
-	constraints := resolvePieceConstraints(s.cfg)
+	constraints := resolvePieceConstraints(s.cfg, s.smallPieceTrackers)
 	result = api.ClientSearchResult{PieceSizeConstraint: constraints.label}
 	s.logger.Tracef("clients: pathed search start source=%s constraints=%q", meta.SourcePath, constraints.label)
 
@@ -358,13 +275,20 @@ func formatTrackerMatches(matches []api.TrackerMatch) string {
 	return strings.Join(formatted, ",")
 }
 
-func resolvePieceConstraints(cfg config.Config) pieceConstraints {
-	mtv := false
-	if trackerCfg, ok := cfg.Trackers.Trackers["MTV"]; ok {
-		mtv = trackerCfg.PreferMTV
-	}
-	if mtv {
-		return pieceConstraints{label: "MTV", preferSmall: true}
+func resolvePieceConstraints(cfg config.Config, smallPieceTrackers []string) pieceConstraints {
+	for _, tracker := range smallPieceTrackers {
+		trackerCfg, ok := cfg.Trackers.Trackers[tracker]
+		if !ok {
+			for name, candidate := range cfg.Trackers.Trackers {
+				if strings.EqualFold(strings.TrimSpace(name), tracker) {
+					trackerCfg, ok = candidate, true
+					break
+				}
+			}
+		}
+		if ok && trackerCfg.PreferMTV {
+			return pieceConstraints{label: strings.ToUpper(tracker), preferSmall: true}
+		}
 	}
 	if cfg.TorrentCreation.PreferMax16 {
 		return pieceConstraints{label: "16MiB", preferMax16: true}
@@ -632,8 +556,8 @@ func (s *Service) searchQbitClient(
 	s.logger.Tracef("clients: %s validated %d of %d matched torrents", name, len(selection.matches), len(matches))
 
 	trackerIDs := collectTrackerIDs(selection.matches, priorityOrder)
-	matchedTrackers := collectMatchedTrackers(selection.matches)
-	matchedTrackers = ensureMatchedTrackersForKnownIDs(matchedTrackers, trackerIDs)
+	matchedTrackers := collectMatchedTrackers(selection.matches, s.trackerPatterns)
+	matchedTrackers = ensureMatchedTrackersForKnownIDs(matchedTrackers, trackerIDs, s.trackerPatterns)
 
 	result := api.ClientSearchResult{
 		InfoHash:            selection.infoHash,
@@ -987,10 +911,6 @@ func collectTrackerURLs(primary string, trackers []qbittorrent.TorrentTracker) [
 	return urls
 }
 
-func extractTrackerMatches(comment string, trackerURLs []string, hasWorkingTracker bool, priority []string) ([]api.TrackerMatch, bool) {
-	return extractTrackerMatchesWithPatterns(comment, trackerURLs, hasWorkingTracker, priority, trackerIDPatterns)
-}
-
 func extractTrackerMatchesWithPatterns(
 	comment string,
 	trackerURLs []string,
@@ -1007,7 +927,7 @@ func extractTrackerMatchesWithPatterns(
 		if !ok {
 			continue
 		}
-		if !hasWorkingTracker || !trackerPatternMatchesComment(trackerID, lowerComment, pattern) {
+		if !hasWorkingTracker || pattern.pattern == nil || !trackerPatternMatchesComment(lowerComment, pattern) {
 			continue
 		}
 		match := pattern.pattern.FindStringSubmatch(comment)
@@ -1018,13 +938,14 @@ func extractTrackerMatchesWithPatterns(
 		trackerFound = true
 	}
 
-	for _, url := range trackerURLs {
-		lowerURL := strings.ToLower(url)
-		if strings.Contains(lowerURL, "tracker.anthelion.me") {
-			if hasWorkingTracker {
-				matches = append(matches, api.TrackerMatch{ID: "ant", TrackerID: "1"})
-				trackerFound = true
+	if hasWorkingTracker {
+		for _, trackerID := range trackerIDExtractionOrder(priority, patterns) {
+			pattern := patterns[trackerID]
+			if pattern.workingTrackerID == "" || !trackerURLsMatch(trackerURLs, pattern.trackerURLs) {
+				continue
 			}
+			matches = append(matches, api.TrackerMatch{ID: trackerID, TrackerID: pattern.workingTrackerID})
+			trackerFound = true
 		}
 	}
 
@@ -1061,27 +982,24 @@ func trackerIDExtractionOrder(priority []string, patterns map[string]trackerPatt
 	return ordered
 }
 
-func trackerPatternMatchesComment(trackerID string, lowerComment string, pattern trackerPattern) bool {
-	if strings.Contains(lowerComment, strings.ToLower(pattern.url)) {
-		return true
-	}
-	for _, alias := range trackerIDCommentAliases[strings.ToLower(strings.TrimSpace(trackerID))] {
-		if strings.Contains(lowerComment, strings.ToLower(strings.TrimSpace(alias))) {
+func trackerPatternMatchesComment(lowerComment string, pattern trackerPattern) bool {
+	for _, commentURL := range pattern.commentURLs {
+		if strings.Contains(lowerComment, strings.ToLower(strings.TrimSpace(commentURL))) {
 			return true
 		}
 	}
 	return false
 }
 
-func matchTrackerURLs(trackerURLs []string) []string {
+func matchTrackerURLs(trackerURLs []string, patterns map[string]trackerPattern) []string {
 	found := make(map[string]struct{})
 	for _, trackerURL := range trackerURLs {
 		lowerURL := strings.ToLower(strings.TrimSpace(trackerURL))
 		if lowerURL == "" {
 			continue
 		}
-		for id, patterns := range lowerTrackerURLPatterns {
-			for _, pattern := range patterns {
+		for id, identity := range patterns {
+			for _, pattern := range identity.trackerURLs {
 				if strings.Contains(lowerURL, pattern) {
 					found[strings.ToUpper(id)] = struct{}{}
 				}
@@ -1089,6 +1007,18 @@ func matchTrackerURLs(trackerURLs []string) []string {
 		}
 	}
 	return mapKeys(found)
+}
+
+func trackerURLsMatch(trackerURLs []string, patterns []string) bool {
+	for _, trackerURL := range trackerURLs {
+		lowerURL := strings.ToLower(strings.TrimSpace(trackerURL))
+		for _, pattern := range patterns {
+			if strings.Contains(lowerURL, strings.ToLower(strings.TrimSpace(pattern))) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func sortMatchingTorrents(matches []api.TorrentMatch, priority []string) {
@@ -1174,10 +1104,10 @@ func collectTrackerIDs(matches []api.TorrentMatch, priority []string) map[string
 
 // collectMatchedTrackers derives matched tracker names from validated torrent
 // announce URLs only.
-func collectMatchedTrackers(matches []api.TorrentMatch) []string {
+func collectMatchedTrackers(matches []api.TorrentMatch, patterns map[string]trackerPattern) []string {
 	matched := make([]string, 0, len(matches))
 	for _, match := range matches {
-		matched = append(matched, matchTrackerURLs(match.TrackerURLsRaw)...)
+		matched = append(matched, matchTrackerURLs(match.TrackerURLsRaw, patterns)...)
 	}
 	return dedupeStrings(matched)
 }
@@ -1192,7 +1122,11 @@ func hasTrackerIDMatch(matches []api.TorrentMatch) bool {
 	return false
 }
 
-func ensureMatchedTrackersForKnownIDs(matchedTrackers []string, trackerIDs map[string]string) []string {
+func ensureMatchedTrackersForKnownIDs(
+	matchedTrackers []string,
+	trackerIDs map[string]string,
+	patterns map[string]trackerPattern,
+) []string {
 	if len(trackerIDs) == 0 {
 		return matchedTrackers
 	}
@@ -1201,8 +1135,10 @@ func ensureMatchedTrackersForKnownIDs(matchedTrackers []string, trackerIDs map[s
 		if strings.TrimSpace(id) == "" {
 			continue
 		}
-		if strings.EqualFold(strings.TrimSpace(tracker), "btn") && !hasMatchedTracker(resolved, "BTN") {
-			resolved = append(resolved, "BTN")
+		normalized := strings.ToLower(strings.TrimSpace(tracker))
+		pattern, ok := patterns[normalized]
+		if ok && pattern.inferMatchFromID && !hasMatchedTracker(resolved, tracker) {
+			resolved = append(resolved, strings.ToUpper(normalized))
 		}
 	}
 	return resolved
@@ -1258,7 +1194,7 @@ func shouldStopSearch(constraints string, foundPreferred string) bool {
 	if foundPreferred == "no_constraints" {
 		return true
 	}
-	if foundPreferred == "MTV" {
+	if constraints != "" && foundPreferred == constraints {
 		return true
 	}
 	if foundPreferred == "16MiB" && constraints == "16MiB" {
@@ -1766,7 +1702,7 @@ func preferredPieceLabel(pieceSize int64, constraints pieceConstraints) string {
 		return "no_constraints"
 	}
 	if constraints.preferSmall && pieceSize <= mtvPieceSizeLimit {
-		return "MTV"
+		return constraints.label
 	}
 	if constraints.preferMax16 && pieceSize <= max16PieceSize {
 		return "16MiB"

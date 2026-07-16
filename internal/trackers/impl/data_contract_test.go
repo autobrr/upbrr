@@ -17,6 +17,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	ptpimpl "github.com/autobrr/upbrr/internal/trackers/impl/ptp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -25,6 +26,15 @@ func unit3DTestConfig() config.Config {
 	return config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 		"BLU": {AnnounceURL: "https://blutopia.cc/announce"},
 	}}}
+}
+
+func newUnit3DDataClient(t *testing.T, httpClient *http.Client) *trackerdata.Client {
+	t.Helper()
+	registry, err := trackerimpl.NewRegistry()
+	if err != nil {
+		t.Fatalf("create tracker registry: %v", err)
+	}
+	return trackerdata.NewClientWithRegistry(unit3DTestConfig(), api.NopLogger{}, httpClient, registry)
 }
 
 type rewriteHostTransport struct {
@@ -145,7 +155,7 @@ func TestLookupUnit3DOnlyIDKeepsImages(t *testing.T) {
 	}
 	httpClient.Transport = rewriteHostTransport{base: baseURL, rt: transport}
 
-	client := trackerdata.NewClient(unit3DTestConfig(), api.NopLogger{}, httpClient)
+	client := newUnit3DDataClient(t, httpClient)
 
 	result, err := client.Lookup(context.Background(), "BLU", "777", api.UploadSubject{}, "release.mkv", true, true)
 	if err != nil {
@@ -197,7 +207,7 @@ func TestLookupUnit3DRejectsLinkedPrivateRawURLBeforeFetch(t *testing.T) {
 	}
 	httpClient.Transport = rewriteHostTransport{base: baseURL, rt: transport}
 
-	client := trackerdata.NewClient(unit3DTestConfig(), api.NopLogger{}, httpClient)
+	client := newUnit3DDataClient(t, httpClient)
 	result, err := client.Lookup(context.Background(), "BLU", "777", api.UploadSubject{}, "release.mkv", false, true)
 	if err != nil {
 		t.Fatalf("unit3d lookup failed: %v", err)
@@ -262,7 +272,7 @@ func TestLookupUnit3DAllowsPublicLinkedRawURL(t *testing.T) {
 	}
 	httpClient.Transport = rewriteHostTransport{base: baseURL, rt: transport}
 
-	client := trackerdata.NewClient(unit3DTestConfig(), api.NopLogger{}, httpClient)
+	client := newUnit3DDataClient(t, httpClient)
 	result, err := client.Lookup(context.Background(), "BLU", "777", api.UploadSubject{}, "release.mkv", false, true)
 	if err != nil {
 		t.Fatalf("unit3d lookup failed: %v", err)
@@ -331,7 +341,7 @@ func TestLookupUnit3DDescriptionFlagsGateDescriptionAndImages(t *testing.T) {
 	}
 	httpClient.Transport = rewriteHostTransport{base: baseURL, rt: transport}
 
-	client := trackerdata.NewClient(unit3DTestConfig(), api.NopLogger{}, httpClient)
+	client := newUnit3DDataClient(t, httpClient)
 	ctx := context.Background()
 
 	result, err := client.Lookup(ctx, "BLU", "777", api.UploadSubject{}, "release.mkv", false, false)

@@ -7,7 +7,6 @@ package main
 
 import (
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/redaction"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -15,12 +14,5 @@ import (
 
 // newCLITrackerAuthService returns the production tracker-auth implementation.
 func newCLITrackerAuthService(cfg config.Config, logger api.Logger) cliTrackerAuthService {
-	registry, err := trackerimpl.NewRegistryWithConfig(cfg)
-	if err != nil {
-		if logger != nil {
-			logger.Warnf("tracker auth: registry construction failed err=%s", redaction.RedactValue(err.Error(), nil))
-		}
-		return trackerauth.NewServiceWithLogger(cfg, logger)
-	}
-	return trackerauth.NewServiceWithRegistryAndLogger(cfg, registry, logger)
+	return trackerauth.NewServiceWithRegistryAndLogger(cfg, trackerimpl.MustNewRegistry(), logger)
 }

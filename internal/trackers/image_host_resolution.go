@@ -52,23 +52,6 @@ var descriptionSlotImageBlockedIPRanges = []netip.Prefix{
 
 var descriptionSlotImageLookupIPAddrs = net.DefaultResolver.LookupIPAddr
 
-//nolint:unparam // Compatibility helper is test-only; production passes the service logger through the registry-aware variant.
-func ensureDescriptionImageHost(
-	ctx context.Context,
-	tracker string,
-	meta api.UploadSubject,
-	appCfg config.Config,
-	trackerCfg config.TrackerConfig,
-	repo UploadPersistence,
-	images api.ImageHostingService,
-	logger api.Logger,
-) (descriptionImageHostResolution, error) {
-	if logger == nil {
-		logger = api.NopLogger{}
-	}
-	return ensureDescriptionImageHostWithRegistry(ctx, tracker, meta, appCfg, trackerCfg, repo, images, logger, nil)
-}
-
 func ensureDescriptionImageHostWithRegistry(
 	ctx context.Context,
 	tracker string,
@@ -81,24 +64,6 @@ func ensureDescriptionImageHostWithRegistry(
 	registry *Registry,
 ) (descriptionImageHostResolution, error) {
 	return ensureDescriptionImageHostWithDataAndRegistry(ctx, tracker, meta, appCfg, trackerCfg, repo, images, logger, registry, nil)
-}
-
-// ensureDescriptionImageHostWithData resolves description screenshots against a
-// tracker's image-host rules, uploading local-only slots when a preferred host
-// is supplied and no reusable hosted variant already exists.
-func ensureDescriptionImageHostWithData(
-	ctx context.Context,
-	tracker string,
-	meta api.UploadSubject,
-	appCfg config.Config,
-	trackerCfg config.TrackerConfig,
-	repo UploadPersistence,
-	images api.ImageHostingService,
-	logger api.Logger,
-	preloaded *preloadedDescriptionAssetData,
-	preferredHosts ...string,
-) (descriptionImageHostResolution, error) {
-	return ensureDescriptionImageHostWithDataAndRegistry(ctx, tracker, meta, appCfg, trackerCfg, repo, images, logger, nil, preloaded, preferredHosts...)
 }
 
 func ensureDescriptionImageHostWithDataAndRegistry(
@@ -128,7 +93,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 		return descriptionImageHostResolution{feedback: feedback}, nil
 	}
 
-	slots, err := screenshotSlotsForImageHostResolution(ctx, tracker, meta, repo, logger, preloaded, skipUpload)
+	slots, err := screenshotSlotsForImageHostResolution(ctx, tracker, meta, repo, logger, preloaded, registry, skipUpload)
 	if err != nil {
 		if logger != nil {
 			logger.Debugf("trackers: image host resolution screenshot slots failed tracker=%s: %v", tracker, err)
@@ -263,7 +228,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 	}
 
 	for _, host := range reusableHostCandidates(selectionPolicy) {
-		usageScope := usageScopeForHost(host)
+		usageScope := usageScopeForHost(registry, host)
 		screenshots, err := reusableUploadedScreenshotsForHost(ctx, tracker, meta, repo, preloaded, host, usageScope, sourceImages)
 		if err != nil {
 			return descriptionImageHostResolution{}, err
@@ -291,7 +256,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 			}, nil
 		}
 		for _, host := range reusableHostCandidates(fallbackPolicy) {
-			usageScope := usageScopeForHost(host)
+			usageScope := usageScopeForHost(registry, host)
 			screenshots, err := reusableUploadedScreenshotsForHost(ctx, tracker, meta, repo, preloaded, host, usageScope, sourceImages)
 			if err != nil {
 				return descriptionImageHostResolution{}, err
@@ -313,7 +278,7 @@ func ensureDescriptionImageHostWithDataAndRegistry(
 
 	var lastErr error
 	for _, host := range uploadAttemptHosts(policy, preferredHosts...) {
-		usageScope := usageScopeForHost(host)
+		usageScope := usageScopeForHost(registry, host)
 		uploaded, err := images.Upload(ctx, imageHostingSubject(meta), host, usageScope, sourceImages)
 		if err != nil {
 			lastErr = err
@@ -474,12 +439,13 @@ func screenshotSlotsForImageHostResolution(
 	repo UploadPersistence,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
+	registry *Registry,
 	skipUpload bool,
 ) ([]api.ScreenshotSlot, error) {
 	if !skipUpload {
-		return screenshotSlotsFromSource(ctx, tracker, meta, repo, logger, preloaded)
+		return screenshotSlotsFromSource(ctx, tracker, meta, repo, logger, preloaded, registry)
 	}
-	return screenshotSlotsFromSourceWithoutPersist(ctx, tracker, meta, repo, logger, preloaded)
+	return screenshotSlotsFromSourceWithoutPersist(ctx, tracker, meta, repo, logger, preloaded, registry)
 }
 
 func screenshotSlotsFromSourceWithoutPersist(
@@ -489,6 +455,7 @@ func screenshotSlotsFromSourceWithoutPersist(
 	repo UploadPersistence,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
+	registry *Registry,
 ) ([]api.ScreenshotSlot, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("trackers: load screenshot slots canceled: %w", err)
@@ -522,7 +489,7 @@ func screenshotSlotsFromSourceWithoutPersist(
 		return cloneScreenshotSlots(slots), nil
 	}
 
-	slots, err = synthesizeScreenshotSlots(ctx, tracker, meta, repo, logger, preloaded)
+	slots, err = synthesizeScreenshotSlots(ctx, tracker, meta, repo, logger, preloaded, registry)
 	if err != nil {
 		return nil, err
 	}

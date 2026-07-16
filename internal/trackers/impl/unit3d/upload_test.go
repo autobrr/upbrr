@@ -412,7 +412,7 @@ func TestBuildUnit3DDryRunBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
 			Description: "description",
 			Final:       true,
 		},
-	})
+	}, "https://aither.cc")
 	if err != nil {
 		t.Fatalf("build Unit3D dry-run: %v", err)
 	}
@@ -444,12 +444,9 @@ func TestUploadUnit3DBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
 
 	logger := &captureUnit3DLogger{}
 	_, err := uploadUnit3D(context.Background(), trackers.PreparationInput{
-		Tracker: "AITHER",
-		TrackerConfig: config.TrackerConfig{
-			URL:    server.URL,
-			APIKey: "test-key",
-		},
-		Logger: logger,
+		Tracker:       "AITHER",
+		TrackerConfig: config.TrackerConfig{APIKey: "test-key"},
+		Logger:        logger,
 		Meta: api.UploadSubject{
 			ReleaseName:       "Daily.Show.2025.07.01.1080p.WEB-DL-GRP",
 			TorrentPath:       torrentPath,
@@ -471,7 +468,7 @@ func TestUploadUnit3DBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
 			Description: "description",
 			Final:       true,
 		},
-	})
+	}, server.URL)
 	if err == nil {
 		t.Fatal("expected canonical TV metadata gap to block upload")
 	}
@@ -576,13 +573,13 @@ func TestBuildUnit3DDataSkipsTVFieldsWhenMovieSignalsExist(t *testing.T) {
 		Tracker: "AITHER",
 		Meta: api.UploadSubject{
 			ReleaseName: "Example.Movie.2026.2160p.WEB-DL.DDP5.1.H.265-GRP",
-			Identity:    api.ExternalIdentity{
-Category: "movie",
- TMDBID: 765432,
- IMDBID: 1234567,
-},
-			Type:        "movie",
-			Source:      "WEB-DL",
+			Identity: api.ExternalIdentity{
+				Category: "movie",
+				TMDBID:   765432,
+				IMDBID:   1234567,
+			},
+			Type:   "movie",
+			Source: "WEB-DL",
 			Release: api.ReleaseInfo{
 				Type:       "movie",
 				Source:     "WEB-DL",

@@ -32,7 +32,7 @@ import (
 func TestUploadNoTrackers(t *testing.T) {
 	t.Parallel()
 
-	svc := NewService(config.Config{}, nil, nil)
+	svc := NewServiceWithRegistry(config.Config{}, nil, nil, NewRegistry())
 	summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -46,10 +46,13 @@ func TestUploadConfiguredTrackers(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"blU", "bhd"}}}
-	svc := NewService(cfg, nil, nil)
-	_, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file"})
-	if err == nil || !strings.Contains(err.Error(), "registry not configured") {
-		t.Fatalf("expected unusable registry error, got %v", err)
+	svc := NewServiceWithRegistry(cfg, nil, nil, NewRegistry())
+	summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.Uploaded != 0 {
+		t.Fatalf("expected unsupported configured trackers to remain inert, got %d uploads", summary.Uploaded)
 	}
 }
 
@@ -57,10 +60,13 @@ func TestUploadOverrideTrackers(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}}}
-	svc := NewService(cfg, nil, nil)
-	_, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file", Trackers: []string{"aither"}})
-	if err == nil || !strings.Contains(err.Error(), "registry not configured") {
-		t.Fatalf("expected unusable registry error, got %v", err)
+	svc := NewServiceWithRegistry(cfg, nil, nil, NewRegistry())
+	summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file", Trackers: []string{"aither"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.Uploaded != 0 {
+		t.Fatalf("expected unsupported override tracker to remain inert, got %d uploads", summary.Uploaded)
 	}
 }
 
@@ -110,10 +116,13 @@ func TestUploadRemovesTrackers(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU", "BHD"}}}
-	svc := NewService(cfg, nil, nil)
-	_, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file", TrackersRemove: []string{"bhd"}})
-	if err == nil || !strings.Contains(err.Error(), "registry not configured") {
-		t.Fatalf("expected unusable registry error, got %v", err)
+	svc := NewServiceWithRegistry(cfg, nil, nil, NewRegistry())
+	summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file", TrackersRemove: []string{"bhd"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if summary.Uploaded != 0 {
+		t.Fatalf("expected unsupported configured trackers to remain inert, got %d uploads", summary.Uploaded)
 	}
 }
 
@@ -121,7 +130,7 @@ func TestUploadUnknownTrackers(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"NOPE"}}}
-	svc := NewService(cfg, nil, nil)
+	svc := NewServiceWithRegistry(cfg, nil, nil, NewRegistry())
 	summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -174,11 +183,12 @@ func TestUploadSkipsDynamicBannedRefreshForEmptyEffectiveGroup(t *testing.T) {
 		Trackers: config.TrackersConfig{
 			DefaultTrackers: config.CSVList{"AITHER"},
 			Trackers: map[string]config.TrackerConfig{
-				"AITHER": {APIKey: "aither-key", URL: server.URL},
+				"AITHER": {APIKey: "aither-key"},
 			},
 		},
 	}
 	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
+	svc.banned.client = bannedRewriteClient(t, server)
 
 	for _, tag := range []string{"-", " - ", "   "} {
 		summary, err := svc.Upload(context.Background(), api.UploadSubject{SourcePath: "/tmp/file", Tag: tag})
@@ -287,6 +297,53 @@ type cancelAfterUploadDefinition struct {
 }
 
 type testHDBPreparationDefinition struct{}
+
+func (stubDryRunDefinition) DefaultBaseURL() string         { return "https://tracker.example.invalid" }
+func (stubUploadArtifactDefinition) DefaultBaseURL() string { return "https://tracker.example.invalid" }
+func (stubPreparationDefinition) DefaultBaseURL() string    { return "https://tracker.example.invalid" }
+func (trackingUploadDefinition) DefaultBaseURL() string     { return "https://tracker.example.invalid" }
+func (blockingUploadDefinition) DefaultBaseURL() string     { return "https://tracker.example.invalid" }
+func (cancelAfterUploadDefinition) DefaultBaseURL() string  { return "https://tracker.example.invalid" }
+func (hostAwareDescriptionDefinition) DefaultBaseURL() string {
+	return "https://tracker.example.invalid"
+}
+func (testHDBPreparationDefinition) DefaultBaseURL() string { return "https://tracker.example.invalid" }
+
+func (s stubDryRunDefinition) TrackerFamily() Family         { return testTrackerFamily(s.name) }
+func (s stubUploadArtifactDefinition) TrackerFamily() Family { return testTrackerFamily(s.name) }
+func (s stubPreparationDefinition) TrackerFamily() Family    { return testTrackerFamily(s.name) }
+func (t trackingUploadDefinition) TrackerFamily() Family     { return testTrackerFamily(t.name) }
+func (b blockingUploadDefinition) TrackerFamily() Family     { return testTrackerFamily(b.name) }
+func (d cancelAfterUploadDefinition) TrackerFamily() Family  { return testTrackerFamily(d.name) }
+func (s hostAwareDescriptionDefinition) TrackerFamily() Family {
+	return testTrackerFamily(s.name)
+}
+func (testHDBPreparationDefinition) TrackerFamily() Family { return FamilyStandalone }
+
+func (s stubDryRunDefinition) ImageHostPolicy() *ImageHostPolicy {
+	return testImageHostPolicyForTracker(s.name)
+}
+func (s stubUploadArtifactDefinition) ImageHostPolicy() *ImageHostPolicy {
+	return testImageHostPolicyForTracker(s.name)
+}
+func (s stubPreparationDefinition) ImageHostPolicy() *ImageHostPolicy {
+	return testImageHostPolicyForTracker(s.name)
+}
+func (t trackingUploadDefinition) ImageHostPolicy() *ImageHostPolicy {
+	return testImageHostPolicyForTracker(t.name)
+}
+func (b blockingUploadDefinition) ImageHostPolicy() *ImageHostPolicy {
+	return testImageHostPolicyForTracker(b.name)
+}
+func (d cancelAfterUploadDefinition) ImageHostPolicy() *ImageHostPolicy {
+	return testImageHostPolicyForTracker(d.name)
+}
+func (s hostAwareDescriptionDefinition) ImageHostPolicy() *ImageHostPolicy {
+	return testImageHostPolicyForTracker(s.name)
+}
+func (testHDBPreparationDefinition) ImageHostPolicy() *ImageHostPolicy {
+	return testImageHostPolicyForTracker("HDB")
+}
 
 func (b blockingUploadDefinition) Name() string {
 	return b.name

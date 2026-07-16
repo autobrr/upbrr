@@ -19,8 +19,32 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
 	"github.com/autobrr/upbrr/internal/metadata/tvdb"
 	"github.com/autobrr/upbrr/internal/metadata/tvmaze"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+type localizedMetadataTestDefinition struct{}
+
+func (localizedMetadataTestDefinition) Name() string { return "BJS" }
+
+func (localizedMetadataTestDefinition) DefaultBaseURL() string {
+	return "https://tracker.example.invalid"
+}
+
+func (localizedMetadataTestDefinition) LocalizedMetadataLocale() string { return "pt-BR" }
+
+func (localizedMetadataTestDefinition) Prepare(context.Context, trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
+	return trackers.TrackerPlan{}, nil
+}
+
+func localizedMetadataTestRegistry(t *testing.T) *trackers.Registry {
+	t.Helper()
+	registry := trackers.NewRegistry()
+	if err := registry.Register(localizedMetadataTestDefinition{}); err != nil {
+		t.Fatalf("register localized metadata test tracker: %v", err)
+	}
+	return registry
+}
 
 type fakeRepo struct {
 	ids                 api.ExternalIdentity
@@ -775,10 +799,10 @@ func TestResolveExternalIDsPreservesCanonicalTrackerIdentity(t *testing.T) {
 			TVDBID:     3,
 			Category:   api.CanonicalCategoryMovie,
 			Provenance: api.IdentityProvenanceSet{
-TMDB: api.IdentityProvenanceTracker,
- IMDB: api.IdentityProvenanceTracker,
- TVDB: api.IdentityProvenanceTracker,
-},
+				TMDB: api.IdentityProvenanceTracker,
+				IMDB: api.IdentityProvenanceTracker,
+				TVDB: api.IdentityProvenanceTracker,
+			},
 		},
 		MediaInfoTMDBID:   999,
 		MediaInfoIMDBID:   888,
@@ -840,10 +864,10 @@ TMDB: api.IdentityProvenanceTracker,
 			TVDBID:     3,
 			Category:   api.CanonicalCategoryMovie,
 			Provenance: api.IdentityProvenanceSet{
-TMDB: api.IdentityProvenanceTracker,
- IMDB: api.IdentityProvenanceTracker,
- TVDB: api.IdentityProvenanceTracker,
-},
+				TMDB: api.IdentityProvenanceTracker,
+				IMDB: api.IdentityProvenanceTracker,
+				TVDB: api.IdentityProvenanceTracker,
+			},
 		},
 		ProviderMetadata: api.SourceScopedMetadata{
 			SourcePath: "/media/file.mkv",
@@ -1239,10 +1263,10 @@ func TestResolveExternalIDsUsesStoredFreshData(t *testing.T) {
 			TVmazeID:   55,
 			Category:   api.CanonicalCategoryTV,
 			Provenance: api.IdentityProvenanceSet{
-				TMDB: api.IdentityProvenanceLegacy,
- IMDB: api.IdentityProvenanceLegacy,
-				TVDB: api.IdentityProvenanceLegacy,
- TVmaze: api.IdentityProvenanceLegacy,
+				TMDB:   api.IdentityProvenanceLegacy,
+				IMDB:   api.IdentityProvenanceLegacy,
+				TVDB:   api.IdentityProvenanceLegacy,
+				TVmaze: api.IdentityProvenanceLegacy,
 			},
 		},
 		ProviderMetadata: api.SourceScopedMetadata{
@@ -3319,6 +3343,7 @@ func TestResolveExternalIDsLocalizedFetchSucceedsWhenTMDBMetadataIsNil(t *testin
 		},
 	}
 	svc := NewService(repo,
+		WithTrackerRegistry(localizedMetadataTestRegistry(t)),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
@@ -3362,6 +3387,7 @@ func TestResolveExternalIDsSkipsIncompleteLocalizedPTBR(t *testing.T) {
 		},
 	}
 	svc := NewService(repo,
+		WithTrackerRegistry(localizedMetadataTestRegistry(t)),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
@@ -3401,6 +3427,7 @@ func TestResolveExternalIDsStoresEpisodeOverviewWithoutEpisodeTitle(t *testing.T
 		},
 	}
 	svc := NewService(repo,
+		WithTrackerRegistry(localizedMetadataTestRegistry(t)),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
@@ -3440,6 +3467,7 @@ func TestResolveExternalIDsSkipsEpisodeLocalizedPTBRWithoutScopedOverview(t *tes
 		},
 	}
 	svc := NewService(repo,
+		WithTrackerRegistry(localizedMetadataTestRegistry(t)),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
@@ -3473,6 +3501,7 @@ func TestResolveExternalIDsMergesLocalizedPTBRWithoutBlankOverwrite(t *testing.T
 		},
 	}
 	svc := NewService(repo,
+		WithTrackerRegistry(localizedMetadataTestRegistry(t)),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
@@ -3532,6 +3561,7 @@ func TestResolveExternalIDsPreservesExistingLocalizedPTBRWhenEpisodeFetchFails(t
 		},
 	}
 	svc := NewService(repo,
+		WithTrackerRegistry(localizedMetadataTestRegistry(t)),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
 		WithTVDBClient(&stubTVDB{}),
@@ -3593,6 +3623,7 @@ func TestResolveExternalIDsLocalizedFetchUsesVariantCachePaths(t *testing.T) {
 		},
 	}
 	svc := NewService(repo,
+		WithTrackerRegistry(localizedMetadataTestRegistry(t)),
 		WithConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 		WithTMDBClient(tmdbClient),
 		WithIMDBClient(&stubIMDB{}),
@@ -3603,7 +3634,7 @@ func TestResolveExternalIDsLocalizedFetchUsesVariantCachePaths(t *testing.T) {
 	_, err := svc.resolveExternalIdentity(context.Background(), preparationstate.State{
 		SourcePath:       "/media/show.mkv",
 		Release:          api.ReleaseInfo{Title: "Example", Year: 2024},
-		EvidenceTrackers: []string{"ASC"},
+		EvidenceTrackers: []string{"BJS"},
 		SeasonInt:        1,
 		EpisodeInt:       2,
 	})

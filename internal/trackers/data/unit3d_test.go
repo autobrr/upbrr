@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -33,18 +34,26 @@ func (t rewriteHostTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	return resp, nil
 }
 
-func TestIsUnit3DTracker(t *testing.T) {
-	t.Parallel()
+type testDefinition struct{ name string }
 
-	if !IsUnit3DTracker("BLU") {
-		t.Fatalf("expected BLU to be a Unit3D tracker")
+func (d testDefinition) Name() string { return d.name }
+
+func (testDefinition) Prepare(context.Context, trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
+	return trackers.TrackerPlan{}, nil
+}
+
+func testUnit3DRegistry(t *testing.T, name string, baseURL string) *trackers.Registry {
+	t.Helper()
+	registry := trackers.NewRegistry()
+	if err := registry.RegisterDescriptor(trackers.Descriptor{
+		Name:       name,
+		Family:     trackers.FamilyUnit3D,
+		BaseURL:    baseURL,
+		Definition: testDefinition{name: name},
+	}); err != nil {
+		t.Fatalf("register test tracker: %v", err)
 	}
-	if !IsUnit3DTracker("ACM") {
-		t.Fatalf("expected ACM to be a Unit3D tracker")
-	}
-	if IsUnit3DTracker("PTP") {
-		t.Fatalf("did not expect PTP to be a Unit3D tracker")
-	}
+	return registry
 }
 
 func TestSetUnit3DAPIHeadersUsesBearerAuthorization(t *testing.T) {
@@ -193,16 +202,20 @@ func TestSearchTorrentsCBRIncludesPendingAndFiltersTMDB(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(config.Config{
+	baseURL := "https://cbr.example"
+	base, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse test server URL: %v", err)
+	}
+	client := NewClientWithRegistry(config.Config{
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
 				"CBR": {
 					APIKey: "secret",
-					URL:    server.URL,
 				},
 			},
 		},
-	}, api.NopLogger{}, server.Client())
+	}, api.NopLogger{}, &http.Client{Transport: rewriteHostTransport{base: base, rt: server.Client().Transport}}, testUnit3DRegistry(t, "CBR", baseURL))
 
 	params := url.Values{}
 	params.Set("tmdbId", "42")
@@ -225,7 +238,7 @@ func TestSearchTorrentsCBRIncludesPendingAndFiltersTMDB(t *testing.T) {
 	if entries[0].Name != "Existing.Release" || entries[0].Link != "https://example.test/torrents/101" {
 		t.Fatalf("unexpected filter entry: %#v", entries[0])
 	}
-	if entries[1].Name != "Pending.Release" || entries[1].Link != server.URL+"/torrents/pending" {
+	if entries[1].Name != "Pending.Release" || entries[1].Link != baseURL+"/torrents/pending" {
 		t.Fatalf("unexpected pending entry: %#v", entries[1])
 	}
 	if entries[1].ID != "202" || entries[1].SizeBytes != 456 || entries[1].Files[0] != "pending.mkv" {
@@ -254,11 +267,11 @@ func TestTorrentInfoUsesBearerAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal("parse test server URL")
 	}
-	client := NewClient(config.Config{
+	client := NewClientWithRegistry(config.Config{
 		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 			"AITHER": {APIKey: "secret", AnnounceURL: "https://aither.cc/announce"},
 		}},
-	}, api.NopLogger{}, &http.Client{Transport: rewriteHostTransport{base: base, rt: server.Client().Transport}})
+	}, api.NopLogger{}, &http.Client{Transport: rewriteHostTransport{base: base, rt: server.Client().Transport}}, testUnit3DRegistry(t, "AITHER", "https://aither.cc"))
 
 	result, err := client.TorrentInfo(context.Background(), "AITHER", "123", "", true, false)
 	if err != nil {
@@ -266,31 +279,5 @@ func TestTorrentInfoUsesBearerAuthorization(t *testing.T) {
 	}
 	if result.TMDBID != 123 || result.Category != "MOVIE" {
 		t.Fatalf("unexpected Unit3D lookup result: %#v", result)
-	}
-}
-
-func TestIsUnit3DTrackerWithConfig(t *testing.T) {
-	t.Parallel()
-
-	cfg := config.Config{
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{
-				"CUSTOM": {
-					APIKey:      "token",
-					AnnounceURL: "https://custom.unit3d.example/announce",
-				},
-				"BHD": {
-					APIKey:      "token",
-					AnnounceURL: "https://beyond-hd.me/announce",
-				},
-			},
-		},
-	}
-
-	if !IsUnit3DTrackerWithConfig(cfg, "CUSTOM") {
-		t.Fatalf("expected CUSTOM to be detected as Unit3D by config")
-	}
-	if IsUnit3DTrackerWithConfig(cfg, "BHD") {
-		t.Fatalf("did not expect BHD to be detected as Unit3D")
 	}
 }

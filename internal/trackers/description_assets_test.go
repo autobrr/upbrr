@@ -49,6 +49,60 @@ type uploadStatusUpdate struct {
 	status  string
 }
 
+type descriptionAssetsTestDefinition struct {
+	name   string
+	family Family
+}
+
+func (d descriptionAssetsTestDefinition) Name() string { return d.name }
+
+func (descriptionAssetsTestDefinition) DefaultBaseURL() string {
+	return "https://tracker.example.invalid"
+}
+
+func (d descriptionAssetsTestDefinition) TrackerFamily() Family { return d.family }
+
+func (descriptionAssetsTestDefinition) Prepare(context.Context, PreparationInput) (TrackerPlan, *PreparationFailure) {
+	return TrackerPlan{}, nil
+}
+
+func descriptionAssetsTestRegistry(t *testing.T) *Registry {
+	t.Helper()
+	registry := NewRegistry()
+	policies := map[string]*ImageHostPolicy{
+		"HDB": {
+AllowedHosts: []string{"hdb"},
+ OwnedHosts: []string{"hdb"},
+ DisableWithoutRehost: true,
+},
+		"MTV": {AllowedHosts: []string{"imgbox", "imgbb"}},
+		"OE":  {AllowedHosts: []string{"imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"}},
+		"PTP": {AllowedHosts: []string{"pixhost", "imgbb", "onlyimage", "ptscreens", "passtheimage"}},
+	}
+	for _, item := range []descriptionAssetsTestDefinition{
+		{name: "AITHER", family: FamilyUnit3D},
+		{name: "HHD", family: FamilyUnit3D},
+		{name: "ANT", family: FamilyStandalone},
+		{name: "HDB", family: FamilyStandalone},
+		{name: "MTV", family: FamilyStandalone},
+		{name: "NBL", family: FamilyStandalone},
+		{name: "OE", family: FamilyUnit3D},
+		{name: "PTP", family: FamilyStandalone},
+		{name: "RHD", family: FamilyUnit3D},
+	} {
+		policy := policies[item.name]
+		if err := registry.RegisterDescriptor(Descriptor{
+			Name:       item.name,
+			Definition: item,
+			Family:     item.family,
+			ImageHost:  policy,
+		}); err != nil {
+			t.Fatalf("register %s description asset policy: %v", item.name, err)
+		}
+	}
+	return registry
+}
+
 func (s *stubRepo) GetByPath(context.Context, string) (api.FileMetadata, error) {
 	return api.FileMetadata{}, nil
 }
@@ -286,7 +340,7 @@ func TestResolveDescriptionAssetsPrefersDBDescription(t *testing.T) {
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source", TrackerData: []api.TrackerMetadata{{Tracker: "AITHER", Description: "meta desc"}}}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -324,7 +378,7 @@ func TestResolveDescriptionAssetsDedupesAfterSanitizingBotSignatures(t *testing.
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -414,7 +468,7 @@ func TestDescriptionAssetsPreserveMenuClassificationAcrossRehost(t *testing.T) {
 	images := &stubImageService{repo: repo}
 	meta := api.UploadSubject{SourcePath: sourcePath}
 
-	resolution, err := ensureDescriptionImageHost(
+	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
 		"PTP",
 		meta,
@@ -423,6 +477,7 @@ func TestDescriptionAssetsPreserveMenuClassificationAcrossRehost(t *testing.T) {
 		repo,
 		images,
 		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
 	)
 	if err != nil {
 		t.Fatalf("rehost description assets: %v", err)
@@ -431,7 +486,7 @@ func TestDescriptionAssetsPreserveMenuClassificationAcrossRehost(t *testing.T) {
 		t.Fatalf("rehost feedback = %#v", resolution.feedback)
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "PTP", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "PTP", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("resolve rehosted assets: %v", err)
 	}
@@ -563,7 +618,7 @@ func TestPartialMenuRemovalUpdatesResolvedAndRenderedDescription(t *testing.T) {
 
 func resolveAssetsForTest(t *testing.T, meta api.UploadSubject, repo UploadPersistence) DescriptionAssets {
 	t.Helper()
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("resolve description assets: %v", err)
 	}
@@ -641,7 +696,7 @@ func TestResolveDescriptionAssetsAppendsMenuSelectionToStoredSlots(t *testing.T)
 		},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("resolve description assets: %v", err)
 	}
@@ -661,7 +716,7 @@ func TestResolveDescriptionAssetsUsesOverride(t *testing.T) {
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -681,7 +736,7 @@ func TestResolveDescriptionAssetsClearsOverrideWhenSanitizedDescriptionIsEmpty(t
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -708,7 +763,7 @@ func TestResolveDescriptionAssetsUsesCompositeGroupOverride(t *testing.T) {
 		}},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -734,7 +789,7 @@ func TestResolveDescriptionAssetsClearsFinalWhenSanitizedDescriptionIsEmpty(t *t
 		}},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, nil, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, nil, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -848,7 +903,7 @@ func TestResolveDescriptionAssetsLoadsStoredCompositeGroupOverride(t *testing.T)
 		}},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -876,7 +931,7 @@ func TestResolveDescriptionAssetsUsesTrackerMatchedVariantGroup(t *testing.T) {
 		},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "HHD", meta, nil, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "HHD", meta, nil, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -895,7 +950,7 @@ func TestResolveDescriptionAssetsDoesNotFallbackToLegacyDefaultGroupOverride(t *
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -922,7 +977,7 @@ func TestResolveDescriptionAssetsPrefersCanonicalGroupDescription(t *testing.T) 
 		}},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -956,7 +1011,7 @@ func TestResolveDescriptionAssetsPrefersTrackerScopedCompositeGroupDescription(t
 		},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -978,7 +1033,7 @@ func TestResolveDescriptionAssetsUsesCanonicalGroupDescriptionWithoutRepo(t *tes
 		}},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, nil, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, nil, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1002,7 +1057,7 @@ func TestResolveDescriptionAssetsUsesCanonicalGroupDescriptionWithoutSourcePath(
 		}},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1039,7 +1094,7 @@ func TestResolveDescriptionAssetsIgnoresAmbiguousTrackerGroupFallback(t *testing
 		},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1058,7 +1113,7 @@ func TestResolveDescriptionAssetsStripsEmbeddedNFOBlocksFromOverride(t *testing.
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "ANT", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "ANT", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1107,7 +1162,7 @@ func TestResolveDescriptionAssetsSelectsMostCommonHost(t *testing.T) {
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1131,7 +1186,7 @@ func TestResolveDescriptionAssetsFallbackTrackerImages(t *testing.T) {
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1152,7 +1207,7 @@ func TestResolveDescriptionAssetsSkipsTrackerImagesWhenNotKeepingImages(t *testi
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1178,7 +1233,7 @@ func TestResolveDescriptionAssetsSkipsStoredTrackerSlotsWhenNotKeepingImages(t *
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1196,7 +1251,7 @@ func TestResolveDescriptionAssetsSkipsTMDBTrackerImages(t *testing.T) {
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1216,7 +1271,7 @@ func TestResolveDescriptionAssetsFallbackOtherTrackerDescription(t *testing.T) {
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1233,7 +1288,7 @@ func TestResolveDescriptionAssetsFallbackSanitizesByRecordTracker(t *testing.T) 
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1251,7 +1306,7 @@ func TestResolveDescriptionAssetsPrefersMatchingTrackerDescription(t *testing.T)
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1268,7 +1323,7 @@ func TestResolveDescriptionAssetsStripsEmbeddedNFOBlocksFromTrackerDescriptions(
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "ANT", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "ANT", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1295,7 +1350,7 @@ func TestResolveDescriptionAssetsStripsDefaultSignatureForNBL(t *testing.T) {
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "NBL", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "NBL", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1331,7 +1386,7 @@ func TestResolveDescriptionAssetsStripsKnownBotSignaturesFromTrackerDescriptions
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1370,7 +1425,7 @@ func TestResolveDescriptionAssetsStripsKnownBotSignaturesFromDescriptionGroups(t
 		}},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, nil, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, nil, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1388,7 +1443,7 @@ func TestResolveDescriptionAssetsFallbackOtherTrackerImages(t *testing.T) {
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1455,7 +1510,7 @@ func TestResolveDescriptionAssetsIgnoresTrackerScopedUploadsForOtherTrackers(t *
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1524,7 +1579,7 @@ func TestResolveDescriptionAssetsPrefersTrackerScopedUploadsForMatchingTracker(t
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1548,7 +1603,7 @@ func TestResolveDescriptionAssetsDegradesGracefullyOnScreenshotReadFailure(t *te
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("expected graceful degradation, got %v", err)
 	}
@@ -1588,7 +1643,7 @@ func TestResolveDescriptionAssetsDegradesGracefullyOnSelectedUploadMismatch(t *t
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("expected graceful degradation, got %v", err)
 	}
@@ -1611,7 +1666,7 @@ Some text
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1652,7 +1707,7 @@ func TestResolveDescriptionAssetsLimitsDescriptionSlotsToSelectedImages(t *testi
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2070,7 +2125,7 @@ func TestEnsureDescriptionImageHostReusesAllowedHost(t *testing.T) {
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2134,7 +2189,7 @@ func TestEnsureDescriptionImageHostReusesUploadedRecordsBeforeUploading(t *testi
 	}
 	images := &stubImageService{}
 
-	resolution, err := ensureDescriptionImageHost(
+	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
 		"HHD",
 		meta,
@@ -2143,6 +2198,7 @@ func TestEnsureDescriptionImageHostReusesUploadedRecordsBeforeUploading(t *testi
 		repo,
 		images,
 		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2193,7 +2249,7 @@ func TestEnsureDescriptionImageHostReuploadsForRequiredTracker(t *testing.T) {
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, &stubImageService{}, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, &stubImageService{}, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2241,7 +2297,7 @@ func TestEnsureDescriptionImageHostReuploadsWhenAllowedHostCoverageIsPartial(t *
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 	images := &stubImageService{}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, images, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, images, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2295,7 +2351,7 @@ func TestEnsureDescriptionImageHostAlignsDescriptionSlotsToLocalTrackerImages(t 
 	repo := &stubRepo{}
 	images := &stubImageService{}
 
-	resolution, err := ensureDescriptionImageHost(
+	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
 		"PTP",
 		meta,
@@ -2304,6 +2360,7 @@ func TestEnsureDescriptionImageHostAlignsDescriptionSlotsToLocalTrackerImages(t 
 		repo,
 		images,
 		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2374,7 +2431,7 @@ func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionIm
 
 	repo := &stubRepo{}
 	images := &stubImageService{}
-	resolution, err := ensureDescriptionImageHost(
+	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
 		"PTP",
 		meta,
@@ -2383,6 +2440,7 @@ func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionIm
 		repo,
 		images,
 		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2398,7 +2456,7 @@ func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionIm
 	if !strings.Contains(resolution.screenshots[3].Path, "aither") {
 		t.Fatalf("expected normal screenshot to use extracted tracker image, got %#v", resolution.screenshots[3])
 	}
-	assets, err := ResolveDescriptionAssets(context.Background(), "PTP", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "PTP", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("resolve assets: %v", err)
 	}
@@ -2443,7 +2501,7 @@ func TestEnsureDescriptionImageHostFallsBackAfterConfiguredHostFailure(t *testin
 		errs: map[string]error{"onlyimage": errors.New("onlyimage unavailable")},
 	}
 
-	resolution, err := ensureDescriptionImageHost(
+	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
 		"OE",
 		meta,
@@ -2452,6 +2510,7 @@ func TestEnsureDescriptionImageHostFallsBackAfterConfiguredHostFailure(t *testin
 		repo,
 		images,
 		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2490,7 +2549,7 @@ func TestEnsureDescriptionImageHostFallsBackFromConfiguredHostForUnrestrictedTra
 		errs: map[string]error{"pixhost": errors.New("pixhost unavailable")},
 	}
 
-	resolution, err := ensureDescriptionImageHost(
+	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
 		"HHD",
 		meta,
@@ -2499,6 +2558,7 @@ func TestEnsureDescriptionImageHostFallsBackFromConfiguredHostForUnrestrictedTra
 		repo,
 		images,
 		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2538,7 +2598,7 @@ func TestEnsureDescriptionImageHostUploadsPreferredHostForUnrestrictedTracker(t 
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 	images := &stubImageService{}
 
-	resolution, err := ensureDescriptionImageHostWithData(
+	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(
 		context.Background(),
 		"RHD",
 		meta,
@@ -2547,6 +2607,7 @@ func TestEnsureDescriptionImageHostUploadsPreferredHostForUnrestrictedTracker(t 
 		repo,
 		images,
 		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
 		nil,
 		"imgbb",
 	)
@@ -2594,7 +2655,7 @@ func TestEnsureDescriptionImageHostBlocksWhenAllUploadHostsFail(t *testing.T) {
 		},
 	}
 
-	resolution, err := ensureDescriptionImageHost(
+	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
 		"PTP",
 		meta,
@@ -2603,6 +2664,7 @@ func TestEnsureDescriptionImageHostBlocksWhenAllUploadHostsFail(t *testing.T) {
 		repo,
 		images,
 		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2678,7 +2740,7 @@ func TestEnsureDescriptionImageHostUsesPreferredOverrideWhenAllowed(t *testing.T
 		},
 	}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "OE", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "OE", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2742,7 +2804,7 @@ func TestEnsureDescriptionImageHostReusesGlobalUploadsInsteadOfOtherTrackerScope
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "OE", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "OE", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2797,7 +2859,7 @@ func TestEnsureDescriptionImageHostSkipsAutomaticUploadWhenDisabled(t *testing.T
 		},
 	}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, &stubImageService{}, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, &stubImageService{}, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2842,7 +2904,7 @@ func TestEnsureDescriptionImageHostWarnsOnPartialAllowedHostCoverageWithoutUploa
 	}
 	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2885,7 +2947,7 @@ func TestEnsureDescriptionImageHostRollsBackUploadedImagesOnSelectionError(t *te
 		},
 	}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, images, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, images, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -32,7 +32,6 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/tvmaze"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/services/db"
-	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -759,9 +758,6 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	meta = s.applyTVEpisodeMetadata(ctx, meta, &ids, &metadata, tmdbClient, tvdbClient, tvmazeClient)
 
 	needsPTBR := s.registry.NeedsLocalizedMetadata(meta.EvidenceTrackers, "pt-BR") || s.registry.NeedsLocalizedMetadata(meta.MatchedEvidenceTrackers, "pt-BR")
-	if s.registry == nil {
-		needsPTBR = trackers.AnyNeedsPTBRLocalizedMetadata(meta.EvidenceTrackers) || trackers.AnyNeedsPTBRLocalizedMetadata(meta.MatchedEvidenceTrackers)
-	}
 
 	if tmdbClient != nil && needsPTBR && ids.TMDBID != 0 {
 		var mainData, seasonData, episodeData map[string]any

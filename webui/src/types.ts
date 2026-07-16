@@ -582,6 +582,8 @@ export type TrackerAuthCapability = {
   supportsAutoLogin: boolean;
   supportsTOTP: boolean;
   supportsManual2FA: boolean;
+  /** Whether Check Auth can execute a tracker-owned remote resolver. */
+  supportsRemoteValidation: boolean;
   requiresAPIKey: boolean;
   requiresPasskey: boolean;
   /** Optional tracker-specific UI notes; the Go API may serialize a nil slice as null. */
@@ -1356,6 +1358,23 @@ export type TrackerDryRunPreview = {
 
 export type ConfigValue = string | number | boolean | null | ConfigMap | ConfigValue[];
 export type ConfigMap = { [key: string]: ConfigValue };
+export type TrackerCatalogField = {
+  key: string;
+  yamlKey: string;
+  default: ConfigValue;
+  activation: boolean;
+};
+export type TrackerCatalogEntry = {
+  name: string;
+  family: "unit3d" | "azfamily" | "standalone" | string;
+  baseURL: string;
+  fields: TrackerCatalogField[];
+  configured: boolean;
+};
+export type TrackerCatalog = {
+  entries: TrackerCatalogEntry[];
+  unsupported: string[];
+};
 export type ImageHostPolicyMetadata = {
   UploadHosts?: string[];
   TrackerUploadHosts?: Record<string, string[]>;

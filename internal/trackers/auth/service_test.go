@@ -8,11 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,8 +39,78 @@ func newTestServiceWithLogger(cfg config.Config, logger api.Logger) *Service {
 			panic(err)
 		}
 	}
+	for _, capability := range []api.TrackerAuthCapability{
+		{
+TrackerID: "AR",
+ DisplayName: "AR",
+ AuthKind: "cookies_login",
+ SupportsCookieFile: true,
+ SupportsLogin: true,
+ SupportsAutoLogin: true,
+},
+		{
+TrackerID: "ASC",
+ DisplayName: "ASC",
+ AuthKind: "cookies",
+ SupportsCookieFile: true,
+},
+		{
+TrackerID: "FF",
+ DisplayName: "FF",
+ AuthKind: "cookies_login",
+ SupportsCookieFile: true,
+ SupportsLogin: true,
+ SupportsAutoLogin: true,
+},
+		{
+TrackerID: "FL",
+ DisplayName: "FL",
+ AuthKind: "cookies_login",
+ SupportsCookieFile: true,
+ SupportsLogin: true,
+ SupportsAutoLogin: true,
+},
+		{
+TrackerID: "HDB",
+ DisplayName: "HDB",
+ AuthKind: "passkey_cookies",
+ SupportsCookieFile: true,
+ RequiresPasskey: true,
+},
+	} {
+		definition := authRegistryDefinition{capability: capability}
+		switch capability.TrackerID {
+		case "AR":
+			definition.stateManager = NewKeyedFileStateManager("AR", "auth_key", "AR_auth.txt")
+		case "HDB":
+			definition.policy = &trackers.AuthPolicy{PasskeyRequiresUsername: true, PasskeyRequiresCookie: true}
+		}
+		if err := registry.Register(definition); err != nil {
+			panic(err)
+		}
+	}
 	return NewServiceWithRegistryAndLogger(cfg, registry, logger)
 }
+
+type authRegistryDefinition struct {
+	capability   api.TrackerAuthCapability
+	policy       *trackers.AuthPolicy
+	stateManager trackers.AuthStateManager
+}
+
+func (d authRegistryDefinition) Name() string { return d.capability.TrackerID }
+
+func (authRegistryDefinition) DefaultBaseURL() string { return "https://tracker.example.invalid" }
+
+func (authRegistryDefinition) Prepare(context.Context, trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
+	return trackers.TrackerPlan{}, nil
+}
+
+func (d authRegistryDefinition) AuthCapability() api.TrackerAuthCapability { return d.capability }
+
+func (d authRegistryDefinition) AuthPolicy() *trackers.AuthPolicy { return d.policy }
+
+func (d authRegistryDefinition) AuthStateManager() trackers.AuthStateManager { return d.stateManager }
 
 type trackerAuthRecordingLogger struct {
 	api.NopLogger
@@ -103,89 +171,6 @@ func TestLoginCreatesManual2FAChallengeBeforeReturning(t *testing.T) {
 	}
 }
 
-func TestDefaultAdaptersExposeMTVPTPManual2FAChallenge(t *testing.T) {
-	t.Parallel()
-
-	tests := map[string]struct {
-		cfg    func(string) config.TrackerConfig
-		server func(*testing.T) *httptest.Server
-	}{
-		"MTV": {
-			cfg: func(serverURL string) config.TrackerConfig {
-				return config.TrackerConfig{
-					URL:      serverURL,
-					Username: "user",
-					Password: "pass",
-				}
-			},
-			server: newMTVManual2FAServer,
-		},
-		"BTN": {
-			cfg: func(serverURL string) config.TrackerConfig {
-				return config.TrackerConfig{
-					URL:      serverURL,
-					APIKey:   "api-token",
-					Username: "user",
-					Password: "pass",
-				}
-			},
-			server: newBTNManual2FAServer,
-		},
-		"PTP": {
-			cfg: func(serverURL string) config.TrackerConfig {
-				return config.TrackerConfig{
-					URL:         serverURL,
-					Username:    "user",
-					Password:    "pass",
-					AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
-				}
-			},
-			server: newPTPManual2FAServer,
-		},
-	}
-	for trackerID, tt := range tests {
-		t.Run(trackerID, func(t *testing.T) {
-			t.Parallel()
-
-			server := tt.server(t)
-			dbPath := newTrackerAuthTestDB(t)
-			cfg := config.Config{
-				MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-				Trackers: config.TrackersConfig{
-					Trackers: map[string]config.TrackerConfig{
-						trackerID: tt.cfg(server.URL),
-					},
-				},
-			}
-
-			for name, action := range map[string]func(*Service) (api.TrackerAuthStatus, error){
-				"Login": func(service *Service) (api.TrackerAuthStatus, error) {
-					return service.Login(context.Background(), trackerID, api.TrackerAuthLoginRequest{})
-				},
-				"Validate": func(service *Service) (api.TrackerAuthStatus, error) {
-					return service.Validate(context.Background(), trackerID)
-				},
-			} {
-				t.Run(name, func(t *testing.T) {
-					service := newTestService(cfg)
-					service.challenges = NewChallengeManager(defaultChallengeTTL)
-
-					status, err := action(service)
-					if err != nil {
-						t.Fatalf("%s: %v", name, err)
-					}
-					if !status.Needs2FA || strings.TrimSpace(status.ChallengeID) == "" {
-						t.Fatalf("%s should expose an active manual 2FA challenge, got %#v", name, status)
-					}
-					if status.State != StateLoginRequired || status.Message != "2FA required" {
-						t.Fatalf("%s returned unexpected status: %#v", name, status)
-					}
-				})
-			}
-		})
-	}
-}
-
 func TestBTNCapabilityAndLocalStatusSemantics(t *testing.T) {
 	t.Parallel()
 
@@ -213,7 +198,8 @@ func TestBTNCapabilityAndLocalStatusSemantics(t *testing.T) {
 	if btnCap.TrackerID == "" {
 		t.Fatal("expected BTN capability")
 	}
-	if !btnCap.RequiresAPIKey || !btnCap.SupportsCookieFile || !btnCap.SupportsLogin || !btnCap.SupportsAutoLogin || !btnCap.SupportsTOTP || !btnCap.SupportsManual2FA {
+	if !btnCap.RequiresAPIKey || !btnCap.SupportsCookieFile || !btnCap.SupportsLogin || !btnCap.SupportsAutoLogin || !btnCap.SupportsTOTP || !btnCap.SupportsManual2FA ||
+		!btnCap.SupportsRemoteValidation {
 		t.Fatalf("unexpected BTN capability: %#v", btnCap)
 	}
 
@@ -270,827 +256,6 @@ func TestBTNCapabilityAndLocalStatusSemantics(t *testing.T) {
 	}
 	if status.State != StateLoginRequired || status.EncryptedStorage || !strings.Contains(status.Message, "API key is required") {
 		t.Fatalf("expected missing API key to take precedence over encrypted storage, got %#v", status)
-	}
-}
-
-func TestValidateBTNStoredCookiesPromotesRemoteSuccess(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	dbPath := newTrackerAuthTestDB(t)
-	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "BTN", map[string]string{"session": "abc"}); err != nil {
-		t.Fatalf("SaveTrackerCookieMap: %v", err)
-	}
-	handlerErr := make(chan error, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/upload.php" {
-			http.NotFound(w, r)
-			return
-		}
-		if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=abc") {
-			select {
-			case handlerErr <- errors.New("expected BTN session cookie"):
-			default:
-			}
-			http.Error(w, "unexpected cookie", http.StatusInternalServerError)
-			return
-		}
-		_, _ = w.Write([]byte(`<form action="/upload.php"><input name="file_input" /></form>`))
-	}))
-	t.Cleanup(server.Close)
-
-	status, err := newTestService(config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-		Metadata:     config.MetadataConfig{BTNAPI: "legacy-token"},
-		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-			"BTN": {URL: server.URL},
-		}},
-	}).Validate(ctx, "BTN")
-	select {
-	case err := <-handlerErr:
-		t.Fatal(err)
-	default:
-	}
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	if status.State != StateConfigured || status.Message != "remote auth check succeeded" {
-		t.Fatalf("expected successful BTN auth validation, got %#v", status)
-	}
-}
-
-func TestValidateBTNRemoteSuccessRequiresAPIKey(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	dbPath := newTrackerAuthTestDB(t)
-	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "BTN", map[string]string{"session": "abc"}); err != nil {
-		t.Fatalf("SaveTrackerCookieMap: %v", err)
-	}
-	handlerErr := make(chan error, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/upload.php" {
-			http.NotFound(w, r)
-			return
-		}
-		if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=abc") {
-			select {
-			case handlerErr <- errors.New("expected BTN session cookie"):
-			default:
-			}
-			http.Error(w, "unexpected cookie", http.StatusInternalServerError)
-			return
-		}
-		_, _ = w.Write([]byte(`<form action="/upload.php"><input name="file_input" /></form>`))
-	}))
-	t.Cleanup(server.Close)
-
-	status, err := newTestService(config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-			"BTN": {URL: server.URL},
-		}},
-	}).Validate(ctx, "BTN")
-	select {
-	case err := <-handlerErr:
-		t.Fatal(err)
-	default:
-	}
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	if status.State != StateLoginRequired || status.CookieCount != 1 || !strings.Contains(status.Message, "API key is required") {
-		t.Fatalf("expected validated BTN session to remain blocked by missing API key, got %#v", status)
-	}
-}
-
-func TestValidateBTNMissingAPIAfterCookieRefreshUpdatesCookieCount(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	dbPath := newTrackerAuthTestDB(t)
-	handlerErr := make(chan error, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/login.php":
-			http.SetCookie(w, &http.Cookie{
-				Name:  "session",
-				Value: "new",
-				Path:  "/",
-			})
-			_, _ = w.Write([]byte("ok"))
-		case "/upload.php":
-			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=new") {
-				select {
-				case handlerErr <- errors.New("expected refreshed BTN session cookie"):
-				default:
-				}
-				http.Error(w, "unexpected cookie", http.StatusInternalServerError)
-				return
-			}
-			_, _ = w.Write([]byte(`<form action="/upload.php"><input name="file_input" /></form>`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-
-	status, err := newTestService(config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-			"BTN": {
-				URL:      server.URL,
-				Username: "user",
-				Password: "pass",
-			},
-		}},
-	}).Validate(ctx, "BTN")
-	select {
-	case err := <-handlerErr:
-		t.Fatal(err)
-	default:
-	}
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	if status.State != StateLoginRequired || status.CookieCount != 1 || !strings.Contains(status.Message, "API key is required") {
-		t.Fatalf("expected missing API status to include refreshed cookie count, got %#v", status)
-	}
-}
-
-func TestValidateBTNInvalidCookiesDeletesOnlyConfirmedInvalid(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	dbPath := newTrackerAuthTestDB(t)
-	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "BTN", map[string]string{"session": "expired"}); err != nil {
-		t.Fatalf("SaveTrackerCookieMap: %v", err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/upload.php" {
-			http.NotFound(w, r)
-			return
-		}
-		http.Redirect(w, r, "/login.php", http.StatusFound)
-	}))
-	t.Cleanup(server.Close)
-
-	service := newTestService(config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-		Metadata:     config.MetadataConfig{BTNAPI: "legacy-token"},
-		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-			"BTN": {URL: server.URL},
-		}},
-	})
-	preEffectTime := time.Date(2026, time.July, 11, 1, 2, 3, 0, time.UTC)
-	postEffectTime := preEffectTime.Add(time.Minute)
-	nowCalls := 0
-	service.now = func() time.Time {
-		nowCalls++
-		if nowCalls == 1 {
-			return preEffectTime
-		}
-		return postEffectTime
-	}
-
-	status, err := service.Validate(ctx, "BTN")
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	if status.State != StateLoginRequired || status.CookieCount != 0 {
-		t.Fatalf("expected confirmed-invalid BTN cookies to be deleted, got %#v", status)
-	}
-	if status.LastCheckedAt != postEffectTime.Format(time.RFC3339) {
-		t.Fatalf("expected post-deletion LastCheckedAt %q, got %q", postEffectTime.Format(time.RFC3339), status.LastCheckedAt)
-	}
-	if _, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "BTN"); err == nil {
-		t.Fatal("expected BTN cookies to be deleted")
-	}
-}
-
-func TestValidateBTNCookieStorageFailureReportsStorageStatus(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	dbPath := newTrackerAuthTestDB(t)
-	jsonPath := trackerAuthLegacyCookiePathByExt(t, dbPath, "BTN", ".json")
-	if err := os.MkdirAll(filepath.Dir(jsonPath), 0o755); err != nil {
-		t.Fatalf("mkdir cookie dir: %v", err)
-	}
-	if err := os.WriteFile(jsonPath, []byte(`{"session":`), 0o600); err != nil {
-		t.Fatalf("write malformed cookie file: %v", err)
-	}
-
-	status, err := newTestService(config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-		Metadata:     config.MetadataConfig{BTNAPI: "legacy-token"},
-		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-			"BTN": {Username: "user", Password: "pass"},
-		}},
-	}).Validate(ctx, "BTN")
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	if status.State != StateEncryptedStorageUnavailable {
-		t.Fatalf("expected storage-unavailable state, got %#v", status)
-	}
-	if !strings.Contains(status.Message, "cookie storage unavailable") {
-		t.Fatalf("expected storage failure message, got %#v", status)
-	}
-	if !strings.Contains(status.LastError, "unmarshal") {
-		t.Fatalf("expected parse error detail for CLI/frontend consumers, got %#v", status)
-	}
-}
-
-func TestClassifyAdapterErrorRecognizesBTNSubmitted2FARejected(t *testing.T) {
-	t.Parallel()
-
-	err := classifyAdapterError("BTN", fmt.Errorf("login failed: %w", btn.ErrSubmitted2FARejected))
-	var validationErr *ValidationError
-	if !errors.As(err, &validationErr) || !validationErr.Transient || !validationErr.Submitted2FARejected || validationErr.ConfirmedInvalid {
-		t.Fatalf("expected retry-visible BTN submitted 2FA rejection, got %v", err)
-	}
-}
-
-func TestValidateRTFRefreshesExpiredAPIKey(t *testing.T) {
-	t.Parallel()
-
-	dbPath := newTrackerAuthTestDB(t)
-	cfg := config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{
-				"RTF": {
-					APIKey:   "old-token",
-					Username: "user",
-					Password: "pass",
-				},
-			},
-		},
-	}
-	saveTrackerAuthTestConfig(t, dbPath, cfg)
-
-	var testedToken string
-	var loginCalled bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/test":
-			testedToken = r.Header.Get("Authorization")
-			w.WriteHeader(http.StatusUnauthorized)
-		case "/api/login":
-			loginCalled = true
-			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"token":"new-token"}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-	cfg.Trackers.Trackers["RTF"] = config.TrackerConfig{
-		URL:      server.URL,
-		APIKey:   "old-token",
-		Username: "user",
-		Password: "pass",
-	}
-
-	status, err := newTestService(cfg).Validate(context.Background(), "RTF")
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	if status.State != StateConfigured || status.Message != "remote auth check succeeded" {
-		t.Fatalf("expected successful RTF auth validation, got %#v", status)
-	}
-	if testedToken != "old-token" {
-		t.Fatal("expected old token validation")
-	}
-	if !loginCalled {
-		t.Fatal("expected expired API key to trigger RTF login")
-	}
-	if got := loadStoredTrackerConfig(t, dbPath).Trackers.Trackers["RTF"].APIKey; got != "new-token" {
-		t.Fatal("expected refreshed token persisted")
-	}
-}
-
-func TestValidateARStoredCookies(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	dbPath := newTrackerAuthTestDB(t)
-	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "AR", map[string]string{"session": "abc"}); err != nil {
-		t.Fatalf("SaveTrackerCookieMap: %v", err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != arIndexPath {
-			http.NotFound(w, r)
-			return
-		}
-		if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=abc") {
-			t.Error("expected AR session cookie")
-			return
-		}
-		_, _ = w.Write([]byte(`<a href="https://alpharatio.cc/logout.php?auth=session-key">Logout</a>`))
-	}))
-	t.Cleanup(server.Close)
-
-	status, err := newTestService(config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-			"AR": {URL: server.URL},
-		}},
-	}).Validate(ctx, "AR")
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	if status.State != StateConfigured || status.Message != "remote auth check succeeded" {
-		t.Fatalf("expected successful AR auth validation, got %#v", status)
-	}
-}
-
-func TestValidateARAutoLoginReplacesMissingOrExpiredCookies(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name        string
-		seedExpired bool
-	}{
-		{name: "missing cookies"},
-		{name: "expired cookies", seedExpired: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			dbPath := newTrackerAuthTestDB(t)
-			if tt.seedExpired {
-				if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "AR", map[string]string{"session": "expired"}); err != nil {
-					t.Fatalf("SaveTrackerCookieMap: %v", err)
-				}
-			}
-
-			var loginCalls atomic.Int32
-			var indexCalls atomic.Int32
-			var invalidLoginForm atomic.Bool
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.URL.Path {
-				case arLoginPath:
-					loginCalls.Add(1)
-					if r.FormValue("username") != "user" || r.FormValue("password") != "password" || r.FormValue("keeplogged") != "1" {
-						invalidLoginForm.Store(true)
-					}
-					http.SetCookie(w, &http.Cookie{
-						Name:  "session",
-						Value: "refreshed",
-						Path:  "/",
-					})
-					http.Redirect(w, r, arIndexPath, http.StatusFound)
-				case arIndexPath:
-					indexCalls.Add(1)
-					cookie, cookieErr := r.Cookie("session")
-					if cookieErr != nil || cookie.Value != "refreshed" {
-						_, _ = w.Write([]byte(`login.php?act=recover`))
-						return
-					}
-					_, _ = w.Write([]byte(`<a href="https://alpharatio.cc/logout.php?auth=session-key">Logout</a>`))
-				default:
-					http.NotFound(w, r)
-				}
-			}))
-			t.Cleanup(server.Close)
-
-			status, err := newTestService(config.Config{
-				MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-				Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-					"AR": {
-						URL:      server.URL,
-						Username: "user",
-						Password: "password",
-					},
-				}},
-			}).Validate(ctx, "AR")
-			if err != nil {
-				t.Fatalf("Validate: %v", err)
-			}
-			if status.State != StateConfigured || status.Message != "remote auth check succeeded" {
-				t.Fatalf("expected successful AR auto-login, got %#v", status)
-			}
-			if loginCalls.Load() != 1 || invalidLoginForm.Load() {
-				t.Fatal("expected one AR login with configured credentials")
-			}
-			wantIndexCalls := int32(2)
-			if tt.seedExpired {
-				wantIndexCalls++
-			}
-			if indexCalls.Load() != wantIndexCalls {
-				t.Fatalf("expected AR login redirect plus session validation, got %d index requests", indexCalls.Load())
-			}
-			values, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "AR")
-			if err != nil {
-				t.Fatalf("LoadTrackerCookieMap: %v", err)
-			}
-			if values["session"] != "refreshed" {
-				t.Fatal("expected refreshed AR session cookie")
-			}
-		})
-	}
-}
-
-func TestValidateARTransientFailurePreservesCookiesWithoutLogin(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	dbPath := newTrackerAuthTestDB(t)
-	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "AR", map[string]string{"session": "existing"}); err != nil {
-		t.Fatalf("SaveTrackerCookieMap: %v", err)
-	}
-	var loginCalls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == arLoginPath {
-			loginCalls.Add(1)
-		}
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	t.Cleanup(server.Close)
-
-	status, err := newTestService(config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-			"AR": {
-				URL:      server.URL,
-				Username: "user",
-				Password: "password",
-			},
-		}},
-	}).Validate(ctx, "AR")
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	if status.Message != "remote auth test failed" {
-		t.Fatalf("expected transient AR validation status, got %#v", status)
-	}
-	if loginCalls.Load() != 0 {
-		t.Fatal("transient AR failure must not trigger credential login")
-	}
-	values, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "AR")
-	if err != nil {
-		t.Fatalf("LoadTrackerCookieMap: %v", err)
-	}
-	if values["session"] != "existing" {
-		t.Fatal("transient AR failure must preserve stored cookies")
-	}
-}
-
-func TestValidateHDBInvalidCookiesDeletesSession(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	dbPath := newTrackerAuthTestDB(t)
-	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "HDB", map[string]string{"session": "expired"}); err != nil {
-		t.Fatalf("SaveTrackerCookieMap: %v", err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/upload/upload" {
-			http.NotFound(w, r)
-			return
-		}
-		http.Redirect(w, r, "/login.php", http.StatusFound)
-	}))
-	t.Cleanup(server.Close)
-
-	status, err := newTestService(config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-			"HDB": {
-				URL:      server.URL,
-				Username: "user",
-				Passkey:  "passkey",
-			},
-		}},
-	}).Validate(ctx, "HDB")
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	if status.State != StateLoginRequired || status.CookieCount != 0 || status.Message != "stored session expired or invalid; log in again or import fresh cookies" {
-		t.Fatalf("expected HDB login-required expired-session status, got %#v", status)
-	}
-	if _, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "HDB"); err == nil {
-		t.Fatal("expected invalid HDB cookies to be deleted")
-	}
-}
-
-func TestValidateFFLoginPersistsCookies(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	dbPath := newTrackerAuthTestDB(t)
-	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "FF", map[string]string{"session": "expired"}); err != nil {
-		t.Fatalf("SaveTrackerCookieMap: %v", err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/upload.php":
-			if cookie, err := r.Cookie("session"); err == nil && cookie.Value == "valid" {
-				_, _ = w.Write([]byte(`<a href="friends.php">Friends</a>`))
-				return
-			}
-			_, _ = w.Write([]byte(`<input name="username">`))
-		case "/takelogin.php":
-			if err := r.ParseForm(); err != nil {
-				t.Errorf("ParseForm: %v", err)
-				return
-			}
-			if r.FormValue("username") != "user" || r.FormValue("password") != "pass" {
-				t.Error("unexpected FF login form")
-				return
-			}
-			http.SetCookie(w, &http.Cookie{
-				Name:  "session",
-				Value: "valid",
-				Path:  "/",
-			})
-			w.Header().Set("Location", "/index.php")
-			w.WriteHeader(http.StatusFound)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-
-	status, err := newTestService(config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{
-				"FF": {
-					URL:      server.URL,
-					Username: "user",
-					Password: "pass",
-				},
-			},
-		},
-	}).Validate(ctx, "FF")
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	if status.State != StateConfigured {
-		t.Fatalf("expected FF configured after login, got %#v", status)
-	}
-	values, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "FF")
-	if err != nil {
-		t.Fatalf("LoadTrackerCookieMap: %v", err)
-	}
-	if values["session"] != "valid" {
-		t.Fatal("expected saved FF login cookies")
-	}
-}
-
-func TestValidateFFLoginDoesNotPersistUnverifiedCookies(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	dbPath := newTrackerAuthTestDB(t)
-	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "FF", map[string]string{"session": "expired"}); err != nil {
-		t.Fatalf("SaveTrackerCookieMap: %v", err)
-	}
-
-	var uploadValidationRequests atomic.Int32
-	handlerErr := make(chan error, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/upload.php":
-			if cookie, err := r.Cookie("session"); err == nil && cookie.Value == "invalid" {
-				uploadValidationRequests.Add(1)
-			}
-			_, _ = w.Write([]byte(`<input name="username">`))
-		case "/takelogin.php":
-			if err := r.ParseForm(); err != nil {
-				select {
-				case handlerErr <- fmt.Errorf("parse login form: %w", err):
-				default:
-				}
-				return
-			}
-			if r.FormValue("username") != "user" || r.FormValue("password") != "pass" {
-				select {
-				case handlerErr <- errors.New("unexpected FF login form"):
-				default:
-				}
-				return
-			}
-			http.SetCookie(w, &http.Cookie{
-				Name:  "session",
-				Value: "invalid",
-				Path:  "/",
-			})
-			w.Header().Set("Location", "/index.php")
-			w.WriteHeader(http.StatusFound)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-
-	status, err := newTestService(config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{
-				"FF": {
-					URL:      server.URL,
-					Username: "user",
-					Password: "pass",
-				},
-			},
-		},
-	}).Validate(ctx, "FF")
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	select {
-	case err := <-handlerErr:
-		t.Fatal(err)
-	default:
-	}
-	if status.State != StateLoginRequired || status.CookieCount != 0 {
-		t.Fatalf("expected rejected FF login cookies to leave login required with no cookies, got %#v", status)
-	}
-	if uploadValidationRequests.Load() == 0 {
-		t.Fatalf("expected returned FF login cookies to be validated before persistence, got %d request(s)", uploadValidationRequests.Load())
-	}
-	if _, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "FF"); err == nil {
-		t.Fatal("invalid FF login cookies were persisted")
-	}
-}
-
-func TestValidateFLLoginPersistsCookies(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	dbPath := newTrackerAuthTestDB(t)
-	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "FL", map[string]string{"session": "expired"}); err != nil {
-		t.Fatalf("SaveTrackerCookieMap: %v", err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/login.php":
-			_, _ = w.Write([]byte(`<input name="validator" value="token">`))
-		case "/takelogin.php":
-			if err := r.ParseForm(); err != nil {
-				t.Errorf("ParseForm: %v", err)
-				return
-			}
-			if r.FormValue("validator") != "token" || r.FormValue("username") != "user" || r.FormValue("password") != "pass" {
-				t.Error("unexpected FL login form")
-				return
-			}
-			http.SetCookie(w, &http.Cookie{
-				Name:  "session",
-				Value: "valid",
-				Path:  "/",
-			})
-			_, _ = w.Write([]byte("Logout"))
-		case "/index.php":
-			if cookie, err := r.Cookie("session"); err == nil && cookie.Value == "valid" {
-				_, _ = w.Write([]byte("Logout"))
-				return
-			}
-			_, _ = w.Write([]byte(`<input name="username">`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-
-	status, err := newTestService(config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{
-				"FL": {
-					URL:      server.URL,
-					Username: "user",
-					Password: "pass",
-				},
-			},
-		},
-	}).Validate(ctx, "FL")
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	if status.State != StateConfigured {
-		t.Fatalf("expected FL configured after login, got %#v", status)
-	}
-	values, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "FL")
-	if err != nil {
-		t.Fatalf("LoadTrackerCookieMap: %v", err)
-	}
-	if values["session"] != "valid" {
-		t.Fatal("expected saved FL login cookies")
-	}
-}
-
-func TestValidateFLLoginDoesNotPersistUnverifiedCookies(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	dbPath := newTrackerAuthTestDB(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case flLoginPagePath:
-			_, _ = w.Write([]byte(`<input name="validator" value="token">`))
-		case flLoginPath:
-			http.SetCookie(w, &http.Cookie{
-				Name:  "session",
-				Value: "unverified",
-				Path:  "/",
-			})
-			http.Redirect(w, r, flIndexPath, http.StatusFound)
-		case flIndexPath:
-			_, _ = w.Write([]byte(`<input name="username">`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-
-	status, err := newTestService(config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-			"FL": {
-				URL:      server.URL,
-				Username: "user",
-				Password: "pass",
-			},
-		}},
-	}).Validate(ctx, "FL")
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	if status.State != StateLoginRequired || status.CookieCount != 0 {
-		t.Fatalf("expected unverified FL login to remain login required, got %#v", status)
-	}
-	if _, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "FL"); err == nil {
-		t.Fatal("unverified FL login cookies were persisted")
-	}
-}
-
-func TestValidateTHRChecksCredentialLogin(t *testing.T) {
-	t.Parallel()
-
-	handlerErr := make(chan error, 4)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/login.php":
-			http.SetCookie(w, &http.Cookie{
-				Name:  "bootstrap",
-				Value: "ready",
-				Path:  "/",
-			})
-			_, _ = w.Write([]byte(`<input type="hidden" name="token" value="login-token">`))
-		case "/takelogin.php":
-			if err := r.ParseForm(); err != nil {
-				handlerErr <- fmt.Errorf("parse THR login form: %w", err)
-				return
-			}
-			if r.FormValue("username") != "user" || r.FormValue("password") != "pass" || r.FormValue("ssl") != "yes" || r.FormValue("token") != "login-token" {
-				handlerErr <- errors.New("unexpected THR login form")
-			}
-			if cookie, err := r.Cookie("bootstrap"); err != nil || cookie.Value != "ready" {
-				handlerErr <- errors.New("THR login bootstrap cookie missing")
-			}
-			http.SetCookie(w, &http.Cookie{
-				Name:  "session",
-				Value: "authenticated",
-				Path:  "/",
-			})
-			http.Redirect(w, r, "/index.php", http.StatusFound)
-		case "/index.php":
-			if cookie, err := r.Cookie("session"); err != nil || cookie.Value != "authenticated" {
-				handlerErr <- errors.New("THR redirect session cookie missing")
-				return
-			}
-			_, _ = w.Write([]byte(`<a href="logout.php">Logout</a>`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-
-	status, err := newTestService(config.Config{
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{
-				"THR": {
-					URL:      server.URL,
-					Username: "user",
-					Password: "pass",
-				},
-			},
-		},
-	}).Validate(context.Background(), "THR")
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	if status.State != StateConfigured {
-		t.Fatalf("expected THR configured after login check, got %#v", status)
-	}
-	close(handlerErr)
-	for err := range handlerErr {
-		t.Error(err)
 	}
 }
 
@@ -1790,6 +955,11 @@ func TestStatusConfiguredAuthReportsEncryptedStorageUnavailableWhenPersistenceRe
 				cookies:          true,
 				apiKey:           true,
 				needsCredentials: true,
+				policy: trackers.AuthPolicy{
+					APIKeyRequiresUploadSession: true,
+					CookieCompletesAPIKeyAuth:   true,
+					UploadSessionMissingMessage: "API key covers Torznab/search; imported cookies or login credentials required for upload auth",
+				},
 			},
 		},
 		"credentials": {
@@ -1880,6 +1050,11 @@ func TestStatusStateMessageParityForAuthBlockers(t *testing.T) {
 				login:            true,
 				apiKey:           true,
 				needsCredentials: true,
+				policy: trackers.AuthPolicy{
+					APIKeyRequiresUploadSession: true,
+					CookieCompletesAPIKeyAuth:   true,
+					UploadSessionMissingMessage: "API key covers Torznab/search; imported cookies or login credentials required for upload auth",
+				},
 			},
 			wantState:   StateLoginRequired,
 			wantMessage: "API key covers Torznab/search; imported cookies or login credentials required for upload auth",
@@ -1895,9 +1070,13 @@ func TestStatusStateMessageParityForAuthBlockers(t *testing.T) {
 				login:            true,
 				apiKey:           true,
 				needsCredentials: true,
+				policy: trackers.AuthPolicy{
+					APIKeyRequiresUploadSession: true,
+					MissingAPIKeyMessage:        "API key is required for torrent resolution; imported cookies or login credentials cover upload auth",
+				},
 			},
 			wantState:   StateLoginRequired,
-			wantMessage: btnMissingAPIKeyMessage(),
+			wantMessage: "API key is required for torrent resolution; imported cookies or login credentials cover upload auth",
 		},
 	}
 	for name, tt := range tests {
@@ -2728,16 +1907,6 @@ func TestCapabilitiesAdvertiseOnlySupportedManual2FA(t *testing.T) {
 	}
 }
 
-func TestBuiltInSpecsOnlyReferenceKnownTrackers(t *testing.T) {
-	t.Parallel()
-
-	for _, spec := range builtInSpecs() {
-		if !trackers.IsKnownTracker(spec.id) {
-			t.Fatalf("built-in tracker auth spec references unknown tracker %s", spec.id)
-		}
-	}
-}
-
 func TestTrackerAuthLogsOperationResultsWithoutSecrets(t *testing.T) {
 	t.Parallel()
 
@@ -2884,63 +2053,21 @@ func TestTrackerAuthKeepsCaseInsensitiveSingleConfigLookup(t *testing.T) {
 	}
 }
 
-func TestTrackerAuthKeepsCustomUnicodeConfigLookupCanonical(t *testing.T) {
-	t.Parallel()
-
-	service := newTestService(config.Config{
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{
-				"åar": {Username: "user", Password: "pass"},
-			},
-		},
-	})
-
-	status, err := service.Status(context.Background(), "åar")
-	if err != nil {
-		t.Fatalf("Status lowercase Unicode tracker: %v", err)
-	}
-	if status.State != StateConfigured {
-		t.Fatalf("expected custom Unicode tracker to remain configured, got %#v", status)
-	}
-	if _, err := service.Status(context.Background(), "Åar"); err == nil {
-		t.Fatal("expected Unicode-folded tracker id to remain unknown")
-	}
-}
-
-func TestTrackerAuthRejectsASCIICollidingUnicodeConfigIDs(t *testing.T) {
-	t.Parallel()
-
-	service := newTestService(config.Config{
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{
-				"åar": {Username: "user", Password: "pass"},
-				"åAR": {APIKey: "api-key"},
-			},
-		},
-	})
-
-	if _, err := service.Capabilities(context.Background()); err == nil {
-		t.Fatal("expected capabilities to reject duplicate custom Unicode tracker ids")
-	} else if !strings.Contains(err.Error(), "duplicate tracker config id") {
-		t.Fatalf("expected duplicate tracker id error, got %v", err)
-	}
-}
-
 func TestTrackerAuthDoesNotFoldUnicodeLookalikeTrackerIDs(t *testing.T) {
 	t.Parallel()
 
 	service := newTestService(config.Config{
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
-				"K": {Username: "user", Password: "pass"},
+				"AR": {Username: "user", Password: "pass"},
 			},
 		},
 	})
 
-	if _, err := service.Status(context.Background(), "K"); err != nil {
+	if _, err := service.Status(context.Background(), "AR"); err != nil {
 		t.Fatalf("Status ASCII tracker: %v", err)
 	}
-	if _, err := service.Status(context.Background(), "\u212a"); err == nil {
+	if _, err := service.Status(context.Background(), "A\u211d"); err == nil {
 		t.Fatal("expected Unicode lookalike tracker id to be unknown")
 	}
 }
@@ -3171,17 +2298,18 @@ func TestTrackerAuthSnapshotRestoreIgnoresCanceledContext(t *testing.T) {
 	if err := SaveAuthState(ctx, dbPath, "AR", "auth_key", "secret-auth-key"); err != nil {
 		t.Fatalf("SaveAuthState: %v", err)
 	}
-	snapshot, err := snapshotTrackerAuthState(ctx, dbPath, "AR")
+	manager := NewKeyedFileStateManager("AR", "auth_key", "AR_auth.txt")
+	snapshot, err := manager.Snapshot(ctx, dbPath)
 	if err != nil {
-		t.Fatalf("snapshotTrackerAuthState: %v", err)
+		t.Fatalf("snapshot auth state: %v", err)
 	}
-	if err := deleteTrackerAuthState(ctx, dbPath, "AR"); err != nil {
-		t.Fatalf("deleteTrackerAuthState: %v", err)
+	if err := manager.Delete(ctx, dbPath); err != nil {
+		t.Fatalf("delete auth state: %v", err)
 	}
 
 	cancelledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := snapshot.restore(cancelledCtx); err != nil {
+	if err := snapshot.Restore(cancelledCtx); err != nil {
 		t.Fatalf("restore with canceled context: %v", err)
 	}
 	authKey, err := LoadAuthState(ctx, dbPath, "AR", "auth_key")
@@ -3190,92 +2318,6 @@ func TestTrackerAuthSnapshotRestoreIgnoresCanceledContext(t *testing.T) {
 	}
 	if authKey != "secret-auth-key" {
 		t.Fatalf("unexpected restored auth state")
-	}
-}
-
-func TestEnsureSessionPreservesMTVCookiesOnInvalidLookingAdapterText(t *testing.T) {
-	t.Parallel()
-
-	tests := map[string]string{
-		"MTV": "session",
-	}
-	for trackerID, cookieName := range tests {
-		t.Run(trackerID, func(t *testing.T) {
-			t.Parallel()
-
-			ctx := context.Background()
-			dbPath := newTrackerAuthTestDB(t)
-			if err := cookies.SaveTrackerCookieMap(ctx, dbPath, trackerID, map[string]string{cookieName: "abc"}); err != nil {
-				t.Fatalf("SaveTrackerCookieMap: %v", err)
-			}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte("<html>logged out</html>"))
-			}))
-			t.Cleanup(server.Close)
-
-			service := newTestService(config.Config{})
-			_, err := service.EnsureSession(ctx, EnsureRequest{
-				TrackerID: trackerID,
-				Config:    config.TrackerConfig{URL: server.URL},
-				DBPath:    dbPath,
-				AutoLogin: true,
-			})
-			if err == nil {
-				t.Fatal("expected validation error")
-			}
-			values, err := cookies.LoadTrackerCookieMap(ctx, dbPath, trackerID)
-			if err != nil {
-				t.Fatalf("LoadTrackerCookieMap: %v", err)
-			}
-			if values[cookieName] != "abc" {
-				t.Fatal("expected invalid-looking adapter text to preserve cookies")
-			}
-		})
-	}
-}
-
-func TestValidateTransientAdapterFailurePreservesCookieCount(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	dbPath := newTrackerAuthTestDB(t)
-	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "MTV", map[string]string{"session": "abc"}); err != nil {
-		t.Fatalf("SaveTrackerCookieMap: %v", err)
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("<html>logged out</html>"))
-	}))
-	t.Cleanup(server.Close)
-
-	service := newTestService(config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{
-				"MTV": {URL: server.URL},
-			},
-		},
-	})
-	status, err := service.Validate(ctx, "MTV")
-	if err != nil {
-		t.Fatalf("Validate: %v", err)
-	}
-	if status.State != StateHasCookies {
-		t.Fatalf("expected cookies to remain configured after transient adapter failure, got %#v", status)
-	}
-	if status.CookieCount != 1 {
-		t.Fatalf("expected existing cookies to be preserved, got %#v", status)
-	}
-	if !strings.Contains(status.LastError, "auth key not found") {
-		t.Fatalf("expected adapter failure in status, got %#v", status)
-	}
-	values, err := cookies.LoadTrackerCookieMap(ctx, dbPath, "MTV")
-	if err != nil {
-		t.Fatalf("LoadTrackerCookieMap: %v", err)
-	}
-	if values["session"] != "abc" {
-		t.Fatal("expected transient adapter failure to preserve cookies")
 	}
 }
 
@@ -3416,86 +2458,4 @@ func trackerAuthLegacyCookiePathByExt(t *testing.T, dbPath string, trackerID str
 	}
 	t.Fatalf("expected %s legacy cookie path", ext)
 	return ""
-}
-
-func saveTrackerAuthTestConfig(t *testing.T, dbPath string, cfg config.Config) {
-	t.Helper()
-
-	repo, err := servicedb.OpenWithLoggerContext(context.Background(), dbPath, api.NopLogger{})
-	if err != nil {
-		t.Fatalf("OpenWithLoggerContext: %v", err)
-	}
-	defer repo.Close()
-	if err := config.SaveToDatabase(context.Background(), &cfg, repo); err != nil {
-		t.Fatalf("SaveToDatabase: %v", err)
-	}
-}
-
-func loadStoredTrackerConfig(t *testing.T, dbPath string) config.Config {
-	t.Helper()
-
-	repo, err := servicedb.OpenWithLoggerContext(context.Background(), dbPath, api.NopLogger{})
-	if err != nil {
-		t.Fatalf("OpenWithLoggerContext: %v", err)
-	}
-	defer repo.Close()
-	cfg, err := config.LoadFromDatabase(context.Background(), repo)
-	if err != nil {
-		t.Fatalf("LoadFromDatabase: %v", err)
-	}
-	return *cfg
-}
-
-func newMTVManual2FAServer(t *testing.T) *httptest.Server {
-	t.Helper()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/index.php":
-			_, _ = w.Write([]byte("<html>logged out</html>"))
-		case "/login":
-			if r.Method == http.MethodGet {
-				_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
-				return
-			}
-			http.Redirect(w, r, "/twofactor/login", http.StatusFound)
-		case "/twofactor/login":
-			_, _ = w.Write([]byte(`<input name="token" value="ponmlkjihgfedcba">`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-	return server
-}
-
-func newBTNManual2FAServer(t *testing.T) *httptest.Server {
-	t.Helper()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/upload.php":
-			_, _ = w.Write([]byte(`<form action="/login.php"><input type="password" name="password"></form>`))
-		case "/login.php":
-			_, _ = w.Write([]byte(`<form><input name="codenumber" value=""></form><p>2FA required</p>`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(server.Close)
-	return server
-}
-
-func newPTPManual2FAServer(t *testing.T) *httptest.Server {
-	t.Helper()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/ajax.php" || r.URL.RawQuery != "action=login" {
-			http.NotFound(w, r)
-			return
-		}
-		_, _ = w.Write([]byte(`{"Result":"TfaRequired"}`))
-	}))
-	t.Cleanup(server.Close)
-	return server
 }

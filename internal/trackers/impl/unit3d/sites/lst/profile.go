@@ -29,6 +29,7 @@ func Profile() unit3d.Profile {
 		},
 		ImageHost: &trackers.ImageHostPolicy{
 			ConditionalHost:   "lostimg",
+			OwnedHosts:        []string{"lostimg"},
 			EnableWithLostimg: true,
 		},
 	}

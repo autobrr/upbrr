@@ -30,9 +30,25 @@ func (d *Definition) AuthCapability() api.TrackerAuthCapability {
 	}
 }
 
-func (d *Definition) AuthSessionResolver() trackers.AuthSessionResolver { return resolveAuthSession }
+// AuthPolicy records HDB's username/passkey and validated-cookie readiness contract.
+func (d *Definition) AuthPolicy() *trackers.AuthPolicy {
+	return &trackers.AuthPolicy{PasskeyRequiresUsername: true, PasskeyRequiresCookie: true}
+}
 
-func resolveAuthSession(ctx context.Context, cfg config.TrackerConfig, dbPath string, _ api.TrackerAuthLoginRequest) error {
+func (d *Definition) AuthSessionResolver() trackers.AuthSessionResolver {
+	return func(ctx context.Context, cfg config.TrackerConfig, dbPath string, request api.TrackerAuthLoginRequest) error {
+		return resolveAuthSessionAt(ctx, cfg, dbPath, request, d.baseURL, d.httpClient)
+	}
+}
+
+func resolveAuthSessionAt(
+	ctx context.Context,
+	cfg config.TrackerConfig,
+	dbPath string,
+	_ api.TrackerAuthLoginRequest,
+	baseURL string,
+	httpClient *http.Client,
+) error {
 	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Passkey) == "" {
 		return &trackers.AuthResolutionError{
 			Reason:       "username/passkey missing",
@@ -51,10 +67,6 @@ func resolveAuthSession(ctx context.Context, cfg config.TrackerConfig, dbPath st
 			Err:          fmt.Errorf("trackers: HDB cookies unavailable: %w", err),
 		}
 	}
-	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
-	if baseURL == "" {
-		baseURL = "https://hdbits.org"
-	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/upload/upload", nil)
 	if err != nil {
 		return fmt.Errorf("trackers: HDB session validation request build: %w", err)
@@ -65,7 +77,10 @@ func resolveAuthSession(ctx context.Context, cfg config.TrackerConfig, dbPath st
 			req.AddCookie(cookie)
 		}
 	}
-	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	client := httpClient
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return &trackers.AuthResolutionError{

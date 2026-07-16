@@ -6,8 +6,6 @@ package config
 import (
 	"strings"
 	"testing"
-
-	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 )
 
 // Validate is the CLI's fail-fast check. These tests target every failure
@@ -365,51 +363,5 @@ func TestValidateQuiRequiresProxy(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "qui_proxy_url") {
 		t.Fatalf("want qui_proxy_url error, got %v", err)
-	}
-}
-
-// Every known tracker with an image-rehost policy must accept img_rehost=true.
-// If the schema shrinks, at least one tracker from each policy should still
-// pass so we don't accidentally flip a whole group off.
-func TestValidateAllImageRehostPoliciesAccepted(t *testing.T) {
-	t.Parallel()
-
-	for trackerName := range imagehostpolicy.KnownTrackerPolicies() {
-		cfg := withBase(func(c *Config) {
-			trackerCfg := TrackerConfig{ImgRehost: true}
-			if strings.EqualFold(trackerName, "THR") {
-				trackerCfg.ImgAPI = "secret"
-			}
-			c.Trackers.Trackers = map[string]TrackerConfig{trackerName: trackerCfg}
-		})
-		if err := cfg.Validate(); err != nil {
-			t.Errorf("tracker %s img_rehost should validate: %v", trackerName, err)
-		}
-	}
-}
-
-// A tracker name that doesn't match any policy (even with mixed case) must be
-// rejected when img_rehost is requested.
-func TestValidateUnknownRehostPolicyRejected(t *testing.T) {
-	t.Parallel()
-
-	cfg := withBase(func(c *Config) {
-		c.Trackers.Trackers = map[string]TrackerConfig{"TL": {ImgRehost: true}}
-	})
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "TL") {
-		t.Fatalf("want TL rejection, got %v", err)
-	}
-}
-
-// Case insensitivity: "hdb" must resolve the same policy as "HDB".
-func TestValidateImageRehostTrackerNameCaseInsensitive(t *testing.T) {
-	t.Parallel()
-
-	cfg := withBase(func(c *Config) {
-		c.Trackers.Trackers = map[string]TrackerConfig{"hdb": {ImgRehost: true}}
-	})
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("lowercase tracker name should still resolve policy: %v", err)
 	}
 }

@@ -5,6 +5,7 @@ import { createElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { installAppOperationMocks } from "../test/appRequestMock";
+import type { ConfigValue, TrackerCatalog, TrackerCatalogEntry } from "../types";
 
 import {
   nextQbitDirectState,
@@ -181,6 +182,20 @@ function TrackerSettingsAdvancedHarness() {
   );
 }
 
+function TrackerSettingsErrorHarness() {
+  const state = useSettingsState({ activeTab: "settings" });
+  return createElement("div", null, state.settingsError);
+}
+
+function InputTrackerSelectionHarness() {
+  const state = useSettingsState({ activeTab: "input" });
+  return createElement(
+    "div",
+    { "data-testid": "tracker-selection" },
+    state.trackerSelectionNames.join(","),
+  );
+}
+
 function ImageHostingHarness() {
   const state = useSettingsState({ activeTab: "settings" });
 
@@ -212,6 +227,34 @@ function ScreenshotSettingsHarness() {
 }
 
 let latestPayload = "";
+
+type TestTrackerField = [key: string, defaultValue: ConfigValue, activation?: boolean];
+
+/** Builds a typed tracker-catalog fixture without tracker-name logic in the hook. */
+function trackerCatalogEntry(
+  name: string,
+  fields: TestTrackerField[],
+  configured = false,
+  family: TrackerCatalogEntry["family"] = "unit3d",
+): TrackerCatalogEntry {
+  return {
+    name,
+    family,
+    baseURL: `https://${name.toLowerCase()}.example.invalid`,
+    configured,
+    fields: fields.map(([key, defaultValue, activation = false]) => ({
+      key,
+      yamlKey: key,
+      default: defaultValue,
+      activation,
+    })),
+  };
+}
+
+/** Wraps catalog entries in the backend response shape. */
+function trackerCatalog(...entries: TrackerCatalogEntry[]): TrackerCatalog {
+  return { entries, unsupported: [] };
+}
 
 /** Captures save payloads without rendering secret-shaped values into DOM snapshots. */
 function PayloadCapture({ value }: { value: string | null }) {
@@ -288,7 +331,7 @@ describe("DVD menu screenshot settings", () => {
     installAppOperationMocks({
       GetConfig: async () => JSON.stringify({ ScreenshotHandling: { MaxMenuItems: 6 } }),
       GetDefaultConfig: async () => JSON.stringify({}),
-      ListKnownTrackers: async () => [],
+      ListTrackerCatalog: async () => trackerCatalog(),
       GetImageHostPolicyMetadata: async () => ({}),
     });
 
@@ -324,7 +367,7 @@ describe("renderTorrentClientsSection", () => {
           },
         }),
       GetDefaultConfig: async () => JSON.stringify({}),
-      ListKnownTrackers: async () => [],
+      ListTrackerCatalog: async () => trackerCatalog(),
       GetImageHostPolicyMetadata: async () => ({}),
     });
 
@@ -396,7 +439,7 @@ describe("ClientSetup client selectors", () => {
           },
         }),
       GetDefaultConfig: async () => JSON.stringify({}),
-      ListKnownTrackers: async () => [],
+      ListTrackerCatalog: async () => trackerCatalog(),
       GetImageHostPolicyMetadata: async () => ({}),
     });
 
@@ -450,7 +493,7 @@ describe("ClientSetup client selectors", () => {
           },
         }),
       GetDefaultConfig: async () => JSON.stringify({}),
-      ListKnownTrackers: async () => [],
+      ListTrackerCatalog: async () => trackerCatalog(),
       GetImageHostPolicyMetadata: async () => ({}),
     });
 
@@ -503,7 +546,13 @@ describe("Tracker client selectors", () => {
           },
         }),
       GetDefaultConfig: async () => JSON.stringify({}),
-      ListKnownTrackers: async () => ["CZT"],
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry("CZT", [
+            ["LinkDirName", ""],
+            ["Passkey", "", true],
+          ]),
+        ),
       GetImageHostPolicyMetadata: async () => ({}),
     });
 
@@ -542,7 +591,13 @@ describe("Tracker client selectors", () => {
           },
         }),
       GetDefaultConfig: async () => JSON.stringify({}),
-      ListKnownTrackers: async () => ["CZT"],
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry("CZT", [
+            ["LinkDirName", ""],
+            ["Passkey", "", true],
+          ]),
+        ),
       GetImageHostPolicyMetadata: async () => ({}),
     });
 
@@ -581,7 +636,7 @@ describe("Tracker client selectors", () => {
             Trackers: {
               AITHER: {
                 LinkDirName: "",
-                APIKey: "",
+                APIKey: "tracker-token",
                 ImageHost: "",
                 TorrentClient: "qbit",
                 Anon: false,
@@ -603,7 +658,16 @@ describe("Tracker client selectors", () => {
           },
         }),
       GetDefaultConfig: async () => JSON.stringify({}),
-      ListKnownTrackers: async () => ["AITHER"],
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry("AITHER", [
+            ["LinkDirName", ""],
+            ["APIKey", "", true],
+            ["ImageHost", ""],
+            ["TorrentClient", ""],
+            ["Anon", false],
+          ]),
+        ),
       GetImageHostPolicyMetadata: async () => ({}),
     });
 
@@ -646,17 +710,14 @@ describe("Tracker client selectors", () => {
             PreferredTracker: "",
             Trackers: {
               AITHER: {
-                URL: "https://aither.cc",
                 APIKey: "",
                 Anon: false,
               },
               BLU: {
-                URL: "https://blutopia.cc",
                 APIKey: "",
                 Anon: false,
               },
               BHD: {
-                URL: "https://beyond-hd.me",
                 APIKey: "tracker-token",
                 Anon: false,
               },
@@ -670,24 +731,29 @@ describe("Tracker client selectors", () => {
             PreferredTracker: "",
             Trackers: {
               AITHER: {
-                URL: "https://aither.cc",
                 APIKey: "",
                 Anon: false,
               },
               BLU: {
-                URL: "https://blutopia.cc",
                 APIKey: "",
                 Anon: false,
               },
               BHD: {
-                URL: "https://beyond-hd.me",
                 APIKey: "",
                 Anon: false,
               },
             },
           },
         }),
-      ListKnownTrackers: async () => ["AITHER", "BLU", "BHD"],
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          ...["AITHER", "BLU", "BHD"].map((name) =>
+            trackerCatalogEntry(name, [
+              ["APIKey", "", true],
+              ["Anon", false],
+            ]),
+          ),
+        ),
       GetImageHostPolicyMetadata: async () => ({}),
     });
 
@@ -704,8 +770,8 @@ describe("Tracker client selectors", () => {
     expect(screen.getByText("1/1")).toBeInTheDocument();
   });
 
-  it("masks encrypted envelopes on tracker URL fields and preserves them for saves", async () => {
-    const encryptedURL = "upbrr-enc:v1:encrypted-btn-url";
+  it("masks encrypted tracker credentials and preserves them for saves", async () => {
+    const encryptedAPIKey = "upbrr-enc:v1:encrypted-btn-api-key";
     installAppOperationMocks({
       GetConfig: async () =>
         JSON.stringify({
@@ -714,8 +780,7 @@ describe("Tracker client selectors", () => {
             PreferredTracker: "",
             Trackers: {
               BTN: {
-                APIKey: "tracker-token",
-                URL: encryptedURL,
+                APIKey: encryptedAPIKey,
                 Username: "",
                 Password: "",
               },
@@ -723,7 +788,19 @@ describe("Tracker client selectors", () => {
           },
         }),
       GetDefaultConfig: async () => JSON.stringify({}),
-      ListKnownTrackers: async () => ["BTN"],
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry(
+            "BTN",
+            [
+              ["APIKey", "", true],
+              ["Username", "", true],
+              ["Password", "", true],
+            ],
+            true,
+            "standalone",
+          ),
+        ),
       GetImageHostPolicyMetadata: async () => ({}),
     });
 
@@ -736,23 +813,25 @@ describe("Tracker client selectors", () => {
     );
     fireEvent.click(screen.getByText("BTN", { selector: ".settings-card__summary-name" }));
 
-    expect(screen.getByLabelText("URL")).toHaveValue("[REDACTED]");
+    expect(screen.getByLabelText("API key")).toHaveValue("[REDACTED]");
 
     let payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
     }>();
-    expect(payload.Trackers?.Trackers?.BTN?.URL === encryptedURL).toBe(true);
+    expect(payload.Trackers?.Trackers?.BTN?.APIKey === encryptedAPIKey).toBe(true);
 
-    fireEvent.change(screen.getByLabelText("URL"), {
-      target: { value: "https://btn.example" },
+    fireEvent.change(screen.getByLabelText("API key"), {
+      target: { value: "replacement-api-key" },
     });
 
-    await waitFor(() => expect(screen.getByLabelText("URL")).toHaveValue("https://btn.example"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("API key")).toHaveValue("replacement-api-key"),
+    );
 
     payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
     }>();
-    expect(payload.Trackers?.Trackers?.BTN?.URL).toBe("https://btn.example");
+    expect(payload.Trackers?.Trackers?.BTN?.APIKey).toBe("replacement-api-key");
   });
 
   it("renders BTN announce URL from tracker schema when stored config lacks the key", async () => {
@@ -765,7 +844,6 @@ describe("Tracker client selectors", () => {
             Trackers: {
               BTN: {
                 APIKey: "tracker-token",
-                URL: "https://backup.landof.tv",
                 Username: "",
                 Password: "",
               },
@@ -773,7 +851,20 @@ describe("Tracker client selectors", () => {
           },
         }),
       GetDefaultConfig: async () => JSON.stringify({}),
-      ListKnownTrackers: async () => ["BTN"],
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry(
+            "BTN",
+            [
+              ["APIKey", "", true],
+              ["Username", "", true],
+              ["Password", "", true],
+              ["AnnounceURL", "", true],
+            ],
+            false,
+            "standalone",
+          ),
+        ),
       GetImageHostPolicyMetadata: async () => ({}),
     });
 
@@ -811,7 +902,15 @@ describe("Tracker client selectors", () => {
           },
         }),
       GetDefaultConfig: async () => JSON.stringify({}),
-      ListKnownTrackers: async () => ["LST"],
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry("LST", [
+            ["LinkDirName", ""],
+            ["APIKey", "", true],
+            ["ImageHost", ""],
+            ["Anon", false],
+          ]),
+        ),
       GetImageHostPolicyMetadata: async () => ({
         TrackerUploadHosts: { LST: ["lostimg"] },
         OwnedHosts: { lostimg: "LST" },
@@ -854,7 +953,15 @@ describe("Tracker client selectors", () => {
           },
         }),
       GetDefaultConfig: async () => JSON.stringify({}),
-      ListKnownTrackers: async () => ["LST"],
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry("LST", [
+            ["LinkDirName", ""],
+            ["APIKey", "", true],
+            ["ImageHost", ""],
+            ["Anon", false],
+          ]),
+        ),
       GetImageHostPolicyMetadata: async () => ({
         TrackerUploadHosts: { LST: ["lostimg"] },
         OwnedHosts: { lostimg: "LST" },
@@ -888,7 +995,7 @@ describe("Tracker client selectors", () => {
             Trackers: {
               RF: {
                 LinkDirName: "",
-                APIKey: "",
+                APIKey: "tracker-token",
                 ImgAPI: "",
                 ImageHost: "reelflix",
                 Anon: false,
@@ -897,7 +1004,16 @@ describe("Tracker client selectors", () => {
           },
         }),
       GetDefaultConfig: async () => JSON.stringify({}),
-      ListKnownTrackers: async () => ["RF"],
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry("RF", [
+            ["LinkDirName", ""],
+            ["APIKey", "", true],
+            ["ImgAPI", ""],
+            ["ImageHost", ""],
+            ["Anon", false],
+          ]),
+        ),
       GetImageHostPolicyMetadata: async () => ({
         TrackerUploadHosts: { RF: ["reelflix"] },
         OwnedHosts: { reelflix: "RF" },
@@ -950,7 +1066,16 @@ describe("Tracker client selectors", () => {
           },
         }),
       GetDefaultConfig: async () => JSON.stringify({}),
-      ListKnownTrackers: async () => ["RF"],
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry("RF", [
+            ["LinkDirName", ""],
+            ["APIKey", "", true],
+            ["ImgAPI", ""],
+            ["ImageHost", ""],
+            ["Anon", false],
+          ]),
+        ),
       GetImageHostPolicyMetadata: async () => ({
         TrackerUploadHosts: { RF: ["reelflix"] },
         OwnedHosts: { reelflix: "RF" },
@@ -971,6 +1096,223 @@ describe("Tracker client selectors", () => {
     ).map((option) => option.value);
     expect(values).toContain("imgbb");
     expect(values).not.toContain("reelflix");
+  });
+});
+
+describe("tracker catalog loading", () => {
+  it("loads configured tracker selections outside the settings page", async () => {
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          Trackers: { Trackers: { BTN: { APIKey: "configured" } } },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () =>
+        trackerCatalog(trackerCatalogEntry("BTN", [["APIKey", "", true]], true, "standalone")),
+    });
+
+    render(createElement(InputTrackerSelectionHarness));
+
+    expect(await screen.findByTestId("tracker-selection")).toHaveTextContent("BTN");
+  });
+});
+
+describe("tracker catalog interactions", () => {
+  it("renders configured RHD without a frontend tracker schema entry", async () => {
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          Trackers: {
+            DefaultTrackers: [],
+            PreferredTracker: "",
+            Trackers: { RHD: { APIKey: "tracker-token", Anon: false } },
+          },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry("RHD", [
+            ["APIKey", "", true],
+            ["Anon", false],
+          ]),
+        ),
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(TrackerSettingsHarness));
+
+    expect(
+      await screen.findByText("RHD", { selector: ".settings-card__summary-name" }),
+    ).toBeInTheDocument();
+  });
+
+  it("adds a synthetic Unit3D tracker and preserves catalog field order", async () => {
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          Trackers: { DefaultTrackers: [], PreferredTracker: "", Trackers: {} },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry("EXAMPLE", [
+            ["UploaderName", ""],
+            ["APIKey", "", true],
+            ["ImageHost", ""],
+          ]),
+        ),
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(TrackerSettingsHarness));
+
+    const trackerSelect = await screen.findByDisplayValue("Select tracker");
+    fireEvent.change(trackerSelect, { target: { value: "EXAMPLE" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add entry" }));
+
+    const card = (
+      await screen.findByText("EXAMPLE", { selector: ".settings-card__summary-name" })
+    ).closest(".settings-card");
+    expect(card).toBeTruthy();
+    const labels = Array.from(
+      (card as HTMLElement).querySelectorAll<HTMLSpanElement>("label.settings-field > span"),
+    ).map((label) => label.textContent);
+    expect(labels).toEqual(["Uploader name", "API key", "Image host"]);
+  });
+
+  it("shows a tracker as configured when only one required credential is present", async () => {
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          Trackers: {
+            DefaultTrackers: [],
+            PreferredTracker: "",
+            Trackers: { BTN: { Username: "user", Password: "" } },
+          },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry(
+            "BTN",
+            [
+              ["Username", "", true],
+              ["Password", "", true],
+            ],
+            true,
+            "standalone",
+          ),
+        ),
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(TrackerSettingsHarness));
+
+    expect(
+      await screen.findByText("BTN", { selector: ".settings-card__summary-name" }),
+    ).toBeInTheDocument();
+  });
+
+  it("removes an entry by resetting defaults and returning it to the selector", async () => {
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          Trackers: {
+            DefaultTrackers: ["AITHER"],
+            PreferredTracker: "AITHER",
+            Trackers: { AITHER: { APIKey: "tracker-token", Anon: true } },
+          },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry("AITHER", [
+            ["APIKey", "", true],
+            ["Anon", false],
+          ]),
+        ),
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(TrackerSettingsHarness));
+
+    const cardName = await screen.findByText("AITHER", {
+      selector: ".settings-card__summary-name",
+    });
+    const card = cardName.closest(".settings-card");
+    fireEvent.click(within(card as HTMLElement).getByRole("button", { name: "Remove" }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText("AITHER", { selector: ".settings-card__summary-name" }),
+      ).not.toBeInTheDocument(),
+    );
+    const availableSelector = screen.getByDisplayValue("Select tracker");
+    expect(within(availableSelector).getByRole("option", { name: "AITHER" })).toBeInTheDocument();
+    const payload = readPayload<{
+      Trackers?: {
+        DefaultTrackers?: string[];
+        PreferredTracker?: string;
+        Trackers?: Record<string, Record<string, unknown>>;
+      };
+    }>();
+    expect(payload.Trackers?.DefaultTrackers).toEqual([]);
+    expect(payload.Trackers?.PreferredTracker).toBe("");
+    expect(payload.Trackers?.Trackers?.AITHER).toEqual({ APIKey: "", Anon: false });
+  });
+
+  it("separates unsupported entries and deletes them without making them selectable", async () => {
+    const catalog = trackerCatalog(trackerCatalogEntry("AITHER", [["APIKey", "", true]]));
+    catalog.unsupported = ["OLD"];
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          Trackers: {
+            DefaultTrackers: [],
+            PreferredTracker: "",
+            Trackers: { OLD: { APIKey: "preserved" } },
+          },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () => catalog,
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(TrackerSettingsHarness));
+
+    const unsupported = await screen.findByText("Unsupported tracker entries");
+    expect(unsupported).toBeInTheDocument();
+    const oldCard = screen
+      .getByText("OLD", { selector: ".settings-card__summary-name" })
+      .closest(".settings-card");
+    expect(screen.queryByRole("option", { name: "OLD" })).not.toBeInTheDocument();
+    fireEvent.click(within(oldCard as HTMLElement).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText("OLD", { selector: ".settings-card__summary-name" }),
+      ).not.toBeInTheDocument(),
+    );
+    const payload = readPayload<{
+      Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
+    }>();
+    expect(payload.Trackers?.Trackers?.OLD).toBeUndefined();
+  });
+
+  it("reports a stable error for an unknown catalog field", async () => {
+    installAppOperationMocks({
+      GetConfig: async () => JSON.stringify({ Trackers: { Trackers: {} } }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () =>
+        trackerCatalog(trackerCatalogEntry("BROKEN", [["UnknownField", "", true]])),
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(TrackerSettingsErrorHarness));
+
+    expect(
+      await screen.findByText(/Unsupported tracker config field: UnknownField/),
+    ).toBeInTheDocument();
   });
 });
 
@@ -999,7 +1341,26 @@ describe("tracker advanced fields", () => {
           },
         }),
       GetDefaultConfig: async () => JSON.stringify({}),
-      ListKnownTrackers: async () => ["MTV"],
+      ListTrackerCatalog: async () =>
+        trackerCatalog(
+          trackerCatalogEntry(
+            "MTV",
+            [
+              ["FaviconURL", ""],
+              ["LinkDirName", ""],
+              ["APIKey", "", true],
+              ["Username", "", true],
+              ["Password", "", true],
+              ["AnnounceURL", "", true],
+              ["Anon", false],
+              ["OTPURI", ""],
+              ["SkipIfRehash", false],
+              ["PreferMTV", false],
+            ],
+            false,
+            "standalone",
+          ),
+        ),
       GetImageHostPolicyMetadata: async () => ({}),
     });
 
@@ -1022,7 +1383,7 @@ describe("tracker advanced fields", () => {
 });
 
 describe("Image hosting settings", () => {
-  it("renders Lostimg as tracker-specific and keeps it out of global host priority", async () => {
+  it("renders Lostimg config and keeps it out of global host priority", async () => {
     installAppOperationMocks({
       GetConfig: async () =>
         JSON.stringify({
@@ -1038,23 +1399,23 @@ describe("Image hosting settings", () => {
           },
         }),
       GetDefaultConfig: async () => JSON.stringify({}),
-      ListKnownTrackers: async () => [],
+      ListTrackerCatalog: async () => trackerCatalog(),
       GetImageHostPolicyMetadata: async () => ({}),
     });
 
     render(createElement(ImageHostingHarness));
 
-    await waitFor(() => expect(screen.getByLabelText("LST Lostimg")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText("Lostimg enabled")).toBeInTheDocument());
 
     const hostOne = screen.getByLabelText("Host 1") as HTMLSelectElement;
     expect(Array.from(hostOne.options).map((option) => option.value)).not.toContain("lostimg");
 
-    fireEvent.click(screen.getByLabelText("LST Lostimg"));
+    fireEvent.click(screen.getByLabelText("Lostimg enabled"));
     fireEvent.change(screen.getByLabelText("API key"), {
       target: { value: "secret" },
     });
 
-    await waitFor(() => expect(screen.getByLabelText("LST Lostimg")).toBeChecked());
+    await waitFor(() => expect(screen.getByLabelText("Lostimg enabled")).toBeChecked());
 
     const payload = readPayload<{
       ImageHosting?: {
@@ -1066,7 +1427,7 @@ describe("Image hosting settings", () => {
     expect(payload.ImageHosting?.LostimgAPI).toBe("secret");
   });
 
-  it("renders Reelflix as an RF image host in image hosting settings", async () => {
+  it("does not hard-code tracker-owned host fields into global image hosting", async () => {
     installAppOperationMocks({
       GetConfig: async () =>
         JSON.stringify({
@@ -1088,28 +1449,18 @@ describe("Image hosting settings", () => {
           },
         }),
       GetDefaultConfig: async () => JSON.stringify({}),
-      ListKnownTrackers: async () => [],
+      ListTrackerCatalog: async () => trackerCatalog(),
       GetImageHostPolicyMetadata: async () => ({}),
     });
 
     render(createElement(ImageHostingHarness));
 
-    await waitFor(() => expect(screen.getByLabelText("RF Reelflix")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText("Host 1")).toBeInTheDocument());
 
     const hostOne = screen.getByLabelText("Host 1") as HTMLSelectElement;
     expect(Array.from(hostOne.options).map((option) => option.value)).not.toContain("reelflix");
 
-    fireEvent.click(screen.getByLabelText("RF Reelflix"));
-    fireEvent.change(screen.getByLabelText("Image API"), {
-      target: { value: "secret" },
-    });
-
-    await waitFor(() => expect(screen.getByLabelText("RF Reelflix")).toBeChecked());
-
-    const payload = readPayload<{
-      Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
-    }>();
-    expect(payload.Trackers?.Trackers?.RF?.ImageHost).toBe("reelflix");
-    expect(payload.Trackers?.Trackers?.RF?.ImgAPI).toBe("secret");
+    expect(screen.queryByLabelText("RF Reelflix")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Image API")).not.toBeInTheDocument();
   });
 });

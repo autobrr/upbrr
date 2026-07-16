@@ -35,7 +35,7 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _
 	return &dataLookup{
 		cfg:      cfg,
 		http:     httpClient,
-		endpoint: ptpBaseURL + ptpTorrentPath,
+		endpoint: strings.TrimRight(d.baseURL, "/") + ptpTorrentPath,
 	}
 }
 

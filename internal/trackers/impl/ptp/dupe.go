@@ -32,7 +32,7 @@ func (d *Definition) NewDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	return &dupeSearcher{
 		cfg:      cfg,
 		http:     httpClient,
-		endpoint: ptpBaseURL + ptpTorrentPath,
+		endpoint: strings.TrimRight(d.baseURL, "/") + ptpTorrentPath,
 	}
 }
 
@@ -57,7 +57,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	if err != nil || len(payload) == 0 {
 		return dupe.Failed(dupe.FailureRequest, "PTP torrent search failed", err)
 	}
-	return dupe.Resolved(ptpDupeEntries(payload, meta.Release.Resolution), nil)
+	return dupe.Resolved(ptpDupeEntries(payload, meta.Release.Resolution, strings.TrimSuffix(s.endpoint, ptpTorrentPath)), nil)
 }
 
 func (s *dupeSearcher) get(ctx context.Context, params url.Values, headers map[string]string) (map[string]any, error) {
@@ -104,7 +104,7 @@ func ptpGroupID(payload map[string]any) string {
 	return ptpString(payload["GroupId"])
 }
 
-func ptpDupeEntries(payload map[string]any, resolution string) []api.DupeEntry {
+func ptpDupeEntries(payload map[string]any, resolution string, baseURL string) []api.DupeEntry {
 	quality := "High Definition"
 	res := strings.ToLower(strings.TrimSpace(resolution))
 	if res == "480p" || res == "480i" || res == "576p" || res == "576i" || res == "sd" {
@@ -123,7 +123,7 @@ func ptpDupeEntries(payload map[string]any, resolution string) []api.DupeEntry {
 		entries = append(entries, api.DupeEntry{
 			Name: strings.TrimSpace("[" + ptpString(item["Resolution"]) + "] " + ptpString(item["ReleaseName"])),
 			ID:   id,
-			Link: ptpBaseURL + ptpTorrentPath + "?torrentid=" + id,
+			Link: strings.TrimRight(baseURL, "/") + ptpTorrentPath + "?torrentid=" + id,
 		})
 	}
 	return entries

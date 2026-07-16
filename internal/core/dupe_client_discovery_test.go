@@ -9,12 +9,23 @@ import (
 
 	"github.com/autobrr/upbrr/internal/clientdiscovery"
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
 	dupechecking "github.com/autobrr/upbrr/internal/trackers/dupe"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type duplicateFactsStub struct {
 	subject api.DuplicateSubject
+}
+
+func duplicateTestRegistry(t *testing.T) *trackers.Registry {
+	t.Helper()
+	registry, err := trackerimpl.NewRegistry()
+	if err != nil {
+		t.Fatalf("create tracker registry: %v", err)
+	}
+	return registry
 }
 
 func (*duplicateFactsStub) Prepare(context.Context, api.PrepareInput) (api.PrepareResult, error) {
@@ -77,7 +88,7 @@ func TestAcceptedDuplicateCheckRefreshesCurrentClientEvidenceOnce(t *testing.T) 
 		config.Config{},
 		api.NopLogger{},
 		api.ServiceSet{Dupes: checker},
-		nil,
+		duplicateTestRegistry(t),
 		&duplicateFactsStub{subject: api.DuplicateSubject{
 			SourcePath: "Example.Release.2026.mkv",
 			FileList:   []string{"Example.Release.2026.mkv"},
@@ -112,7 +123,7 @@ func TestAcceptedDuplicateCheckContinuesRemoteAssessmentWithoutLocalMatch(t *tes
 		config.Config{},
 		api.NopLogger{},
 		api.ServiceSet{Dupes: checker},
-		nil,
+		duplicateTestRegistry(t),
 		&duplicateFactsStub{subject: api.DuplicateSubject{SourcePath: "Example.Release.2026.mkv"}},
 		clientdiscovery.New(client, api.NopLogger{}),
 	)

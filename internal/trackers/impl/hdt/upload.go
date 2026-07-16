@@ -149,7 +149,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.
 }
 
 func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryRun bool) (uploadState, []*http.Cookie, error) {
-	base := resolveBaseURL(req.TrackerConfig.URL)
+	base := resolveBaseURL()
 	cookies, err := loadCookies(ctx, req.Runtime.DBPath, base)
 	if err != nil {
 		return uploadState{}, nil, err
@@ -211,16 +211,8 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryR
 	return state, cookies, nil
 }
 
-func resolveBaseURL(configURL string) string {
-	trimmed := strings.TrimSpace(configURL)
-	if trimmed == "" {
-		return "https://hd-torrents.me"
-	}
-	parsed, err := url.Parse(trimmed)
-	if err == nil && parsed.Host != "" {
-		return "https://" + parsed.Host
-	}
-	return strings.TrimRight(trimmed, "/")
+func resolveBaseURL() string {
+	return "https://hd-torrents.me"
 }
 
 func loadCookies(ctx context.Context, dbPath string, baseURL string) ([]*http.Cookie, error) {

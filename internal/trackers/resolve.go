@@ -10,13 +10,6 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// ResolveTrackers returns known trackers from explicit overrides when provided,
-// otherwise configured defaults, after applying removals. Returned names are
-// trimmed and uppercased.
-func ResolveTrackers(cfg config.Config, override []string, remove []string, logger api.Logger) []string {
-	return ResolveTrackersWithRegistry(cfg, override, remove, logger, nil)
-}
-
 // ResolveTrackersWithRegistry resolves trackers against composed descriptors.
 func ResolveTrackersWithRegistry(cfg config.Config, override []string, remove []string, logger api.Logger, registry *Registry) []string {
 	resolved := resolveTrackers(cfg, override, remove)
@@ -46,14 +39,6 @@ func ResolveExplicitTrackersWithRegistry(override []string, logger api.Logger, r
 		result = append(result, name)
 	}
 	return result
-}
-
-// ResolveTrackersWithDefaults returns known configured default trackers plus
-// explicit overrides, after applying removals. Use it for flows where explicit
-// tracker selections augment defaults instead of replacing them. Returned names
-// are trimmed and uppercased.
-func ResolveTrackersWithDefaults(cfg config.Config, override []string, remove []string, logger api.Logger) []string {
-	return ResolveTrackersWithDefaultsAndRegistry(cfg, override, remove, logger, nil)
 }
 
 // ResolveTrackersWithDefaultsAndRegistry resolves default and explicit trackers against composed descriptors.

@@ -13,36 +13,41 @@
 // Shared protocol behavior lives in this package. Site-owned profiles, rules,
 // banned groups, and payload hooks live under sites/<tracker>.
 //
-// # Adding a New Unit3D Tracker
+// # Adding a Standard Unit3D Tracker
 //
 // To add support for a new Unit3D tracker (e.g., "EXAMPLE"):
 //
-// 1. Create sites/example/profile.go. Profile returns the complete site
-// manifest, including rules and banned groups supplied by sibling files:
+// 1. Create sites/example/profile.go. Profile owns the tracker identity,
+// endpoint, and composed site policies:
 //
 //	func Profile() unit3d.Profile {
 //	    return unit3d.Profile{
-//	        Name:         "EXAMPLE",
-//	        BaseURL:      "https://example.invalid",
-//	        Rules:        Rules(),
-//	        BannedGroups: BannedGroups(),
+//	        Name:    "EXAMPLE",
+//	        BaseURL: "https://example.invalid",
+//	        Rules:   Rules(),
 //	    }
 //	}
 //
-// Add only behavior that differs from shared Unit3D handling to Profile.Site.
+// 2. Create sites/example/rules.go for release eligibility and typed policies
+// such as language and audio handling. Optional site-owned behavior stays beside
+// these files, for example banned_groups.go, auth.go, or custom payload hooks.
 //
-// 2. Add one import and one Profile() entry in impl/registry.go.
+// 3. Add one import and one Profile() entry to unit3DDefinitions in
+// internal/trackers/impl/registry.go.
 //
-// 3. Add the identity and default endpoint to the temporary compatibility
-// catalog in trackers/unit3dmeta. Registry parity tests keep both lists aligned
-// until all callers consume the composed registry directly.
+// 4. Add one credential/config stanza to internal/config/defaults/example.yaml.
+// Do not add a tracker URL; Profile.BaseURL is authoritative.
 //
-// Shared upload, dry-run, dupe, description, and capability registration then
-// apply automatically.
+// 5. Add cross-tracker rule cases to internal/trackers/rules_test.go. Add
+// focused site tests only for behavior that differs from shared Unit3D handling.
+//
+// No generic metadata, auth, image-hosting, torrent-client, or frontend
+// tracker-name edit is required. Unsupported saved entries remain inert; the
+// runtime does not infer or register custom Unit3D trackers.
 //
 // # Testing
 //
-// Unit tests live in upload_test.go and cover:
+// Shared unit tests live in upload_test.go and cover:
 //   - Category/type/resolution mapping
 //   - Site profile callbacks
 //   - Form payload construction

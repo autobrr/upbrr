@@ -6,6 +6,8 @@ package trackers
 import (
 	"errors"
 	"fmt"
+	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -39,7 +41,7 @@ func (r *Registry) Priority() []string {
 	for _, name := range ordered {
 		seen[name] = struct{}{}
 	}
-	for _, name := range r.NamesByKind(KindUnit3D) {
+	for _, name := range r.NamesByFamily(FamilyUnit3D) {
 		lower := strings.ToLower(name)
 		if _, ok := seen[lower]; ok {
 			continue
@@ -78,12 +80,12 @@ func (r *Registry) Register(def Definition) error {
 	descriptor := Descriptor{Definition: def}
 	if def != nil {
 		descriptor.Name = def.Name()
-		descriptor.Kind = KindNonUnit3D
+		descriptor.Family = FamilyStandalone
 		if provider, ok := def.(BaseURLProvider); ok {
 			descriptor.BaseURL = strings.TrimSpace(provider.DefaultBaseURL())
 		}
-		if provider, ok := def.(KindProvider); ok {
-			descriptor.Kind = provider.TrackerKind()
+		if provider, ok := def.(FamilyProvider); ok {
+			descriptor.Family = provider.TrackerFamily()
 		}
 		if provider, ok := def.(LocalizedMetadataProvider); ok {
 			descriptor.MetadataLocale = strings.TrimSpace(provider.LocalizedMetadataLocale())
@@ -126,6 +128,15 @@ func (r *Registry) Register(def Definition) error {
 		if provider, ok := def.(ImageHostPolicyProvider); ok {
 			descriptor.ImageHost = provider.ImageHostPolicy()
 		}
+		if provider, ok := def.(TorrentIdentityPolicyProvider); ok {
+			descriptor.TorrentIdentity = provider.TorrentIdentityPolicy()
+		} else if descriptor.Family == FamilyUnit3D && descriptor.BaseURL != "" {
+			descriptor.TorrentIdentity = &TorrentIdentityPolicy{
+				TrackerURLPatterns: []string{descriptor.BaseURL},
+				CommentURLPatterns: []string{descriptor.BaseURL},
+				DetailIDPattern:    `/(\d+)`,
+			}
+		}
 		if provider, ok := def.(AuthSessionProvider); ok {
 			descriptor.AuthResolver = provider.AuthSessionResolver()
 		}
@@ -133,8 +144,26 @@ func (r *Registry) Register(def Definition) error {
 			capability := provider.AuthCapability()
 			descriptor.AuthCapability = &capability
 		}
+		if provider, ok := def.(AuthPolicyProvider); ok {
+			descriptor.AuthPolicy = provider.AuthPolicy()
+		}
+		if provider, ok := def.(AuthStateManagerProvider); ok {
+			descriptor.AuthStateManager = provider.AuthStateManager()
+		}
 	}
 	return r.RegisterDescriptor(descriptor)
+}
+
+// LookupTorrentIdentityPolicy returns tracker-owned torrent-client identity behavior.
+func (r *Registry) LookupTorrentIdentityPolicy(tracker string) (TorrentIdentityPolicy, bool) {
+	descriptor, ok := r.LookupDescriptor(tracker)
+	if !ok || descriptor.TorrentIdentity == nil {
+		return TorrentIdentityPolicy{}, false
+	}
+	policy := *descriptor.TorrentIdentity
+	policy.TrackerURLPatterns = append([]string(nil), policy.TrackerURLPatterns...)
+	policy.CommentURLPatterns = append([]string(nil), policy.CommentURLPatterns...)
+	return policy, true
 }
 
 // NeedsLocalizedMetadata reports whether any registered tracker consumes locale.
@@ -177,6 +206,21 @@ func (r *Registry) LookupAuthSessionResolver(tracker string) (AuthSessionResolve
 	return descriptor.AuthResolver, ok && descriptor.AuthResolver != nil
 }
 
+// LookupAuthPolicy returns tracker-owned auth readiness semantics.
+func (r *Registry) LookupAuthPolicy(tracker string) (AuthPolicy, bool) {
+	descriptor, ok := r.LookupDescriptor(tracker)
+	if !ok || descriptor.AuthPolicy == nil {
+		return AuthPolicy{}, false
+	}
+	return *descriptor.AuthPolicy, true
+}
+
+// LookupAuthStateManager returns tracker-owned persisted auth cleanup.
+func (r *Registry) LookupAuthStateManager(tracker string) (AuthStateManager, bool) {
+	descriptor, ok := r.LookupDescriptor(tracker)
+	return descriptor.AuthStateManager, ok && descriptor.AuthStateManager != nil
+}
+
 // LookupImageHostPolicy returns tracker-owned accepted image hosts.
 func (r *Registry) LookupImageHostPolicy(tracker string) (ImageHostPolicy, bool) {
 	descriptor, ok := r.LookupDescriptor(tracker)
@@ -185,7 +229,28 @@ func (r *Registry) LookupImageHostPolicy(tracker string) (ImageHostPolicy, bool)
 	}
 	policy := *descriptor.ImageHost
 	policy.AllowedHosts = append([]string(nil), policy.AllowedHosts...)
+	policy.OwnedHosts = append([]string(nil), policy.OwnedHosts...)
 	return policy, true
+}
+
+// OwnerForImageHost returns the tracker that owns a private image host.
+func (r *Registry) OwnerForImageHost(host string) string {
+	normalized := strings.ToLower(strings.TrimSpace(host))
+	if normalized == "" {
+		return ""
+	}
+	for _, tracker := range r.Names() {
+		policy, ok := r.LookupImageHostPolicy(tracker)
+		if !ok {
+			continue
+		}
+		for _, ownedHost := range policy.OwnedHosts {
+			if strings.EqualFold(strings.TrimSpace(ownedHost), normalized) {
+				return tracker
+			}
+		}
+	}
+	return ""
 }
 
 // LookupDataPolicy returns tracker-owned lookup orchestration policy.
@@ -197,20 +262,20 @@ func (r *Registry) LookupDataPolicy(tracker string) (DataLookupPolicy, bool) {
 	return *descriptor.DataPolicy, true
 }
 
-// LookupKind returns the registered tracker protocol family.
-func (r *Registry) LookupKind(tracker string) (Kind, bool) {
+// LookupFamily returns the registered tracker protocol family.
+func (r *Registry) LookupFamily(tracker string) (Family, bool) {
 	descriptor, ok := r.LookupDescriptor(tracker)
-	return descriptor.Kind, ok && descriptor.Kind != KindUnknown
+	return descriptor.Family, ok && descriptor.Family != FamilyUnknown
 }
 
-// NamesByKind returns registered tracker names of kind in deterministic order.
-func (r *Registry) NamesByKind(kind Kind) []string {
+// NamesByFamily returns registered tracker names of family in deterministic order.
+func (r *Registry) NamesByFamily(family Family) []string {
 	if r == nil {
 		return nil
 	}
 	names := make([]string, 0)
 	for name, descriptor := range r.descriptors {
-		if descriptor.Kind == kind {
+		if descriptor.Family == family {
 			names = append(names, name)
 		}
 	}
@@ -334,15 +399,79 @@ func (r *Registry) RegisterDescriptor(descriptor Descriptor) error {
 		descriptor.AuthCapability.Notes = append([]string(nil), descriptor.AuthCapability.Notes...)
 	}
 	descriptor.Name = name
-	if descriptor.Kind == KindUnknown {
-		descriptor.Kind = KindNonUnit3D
-		if provider, ok := def.(KindProvider); ok {
-			descriptor.Kind = provider.TrackerKind()
+	if descriptor.Family == FamilyUnknown {
+		descriptor.Family = FamilyStandalone
+		if provider, ok := def.(FamilyProvider); ok {
+			descriptor.Family = provider.TrackerFamily()
+		}
+	}
+	if strings.TrimSpace(descriptor.BaseURL) == "" {
+		if provider, ok := def.(BaseURLProvider); ok {
+			descriptor.BaseURL = provider.DefaultBaseURL()
 		}
 	}
 	descriptor.BaseURL = strings.TrimRight(strings.TrimSpace(descriptor.BaseURL), "/")
+	if descriptor.BaseURL == "" {
+		return fmt.Errorf("trackers: definition %s has empty base URL", name)
+	}
+	endpoint, err := url.Parse(descriptor.BaseURL)
+	if err != nil || !strings.EqualFold(endpoint.Scheme, "https") || endpoint.Host == "" {
+		return fmt.Errorf("trackers: definition %s has invalid HTTPS base URL %q", name, descriptor.BaseURL)
+	}
+	if descriptor.Family != FamilyUnit3D && descriptor.Family != FamilyAZFamily && descriptor.Family != FamilyStandalone {
+		return fmt.Errorf("trackers: definition %s has invalid family %q", name, descriptor.Family)
+	}
+	if descriptor.TorrentIdentity != nil {
+		policy := *descriptor.TorrentIdentity
+		policy.TrackerURLPatterns = normalizePolicyPatterns(policy.TrackerURLPatterns)
+		policy.CommentURLPatterns = normalizePolicyPatterns(policy.CommentURLPatterns)
+		policy.DetailIDPattern = strings.TrimSpace(policy.DetailIDPattern)
+		if policy.DetailIDPattern != "" {
+			compiled, compileErr := regexp.Compile(policy.DetailIDPattern)
+			if compileErr != nil || compiled.NumSubexp() < 1 {
+				return fmt.Errorf("trackers: definition %s has invalid torrent ID pattern %q", name, policy.DetailIDPattern)
+			}
+		}
+		policy.WorkingTrackerID = strings.TrimSpace(policy.WorkingTrackerID)
+		descriptor.TorrentIdentity = &policy
+	}
+	if descriptor.ImageHost != nil {
+		policy := *descriptor.ImageHost
+		policy.AllowedHosts = normalizePolicyPatterns(policy.AllowedHosts)
+		policy.OwnedHosts = normalizePolicyPatterns(policy.OwnedHosts)
+		for _, ownedHost := range policy.OwnedHosts {
+			for registeredName, registered := range r.descriptors {
+				if registered.ImageHost == nil {
+					continue
+				}
+				for _, existingHost := range registered.ImageHost.OwnedHosts {
+					if strings.EqualFold(existingHost, ownedHost) {
+						return fmt.Errorf("trackers: image host %s is owned by both %s and %s", ownedHost, registeredName, name)
+					}
+				}
+			}
+		}
+		descriptor.ImageHost = &policy
+	}
 	r.descriptors[name] = descriptor
 	return nil
+}
+
+func normalizePolicyPatterns(patterns []string) []string {
+	normalized := make([]string, 0, len(patterns))
+	seen := make(map[string]struct{}, len(patterns))
+	for _, pattern := range patterns {
+		trimmed := strings.ToLower(strings.TrimSpace(pattern))
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		normalized = append(normalized, trimmed)
+	}
+	return normalized
 }
 
 // LookupBaseURL returns tracker's registered default endpoint.

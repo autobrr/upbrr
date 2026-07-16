@@ -170,7 +170,7 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 	}))
 	defer server.Close()
 
-	entry, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
+	entry, err := (&Definition{baseURL: server.URL}).prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "PTP",
 		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
@@ -189,7 +189,6 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 			},
 		},
 		TrackerConfig: config.TrackerConfig{
-			URL:        server.URL,
 			PTPAPIUser: "user",
 			PTPAPIKey:  "key",
 		},
@@ -382,7 +381,7 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := New().submit(context.Background(), trackers.PreparationInput{
+	result, err := (&Definition{baseURL: server.URL}).submit(context.Background(), trackers.PreparationInput{
 		Tracker: "PTP",
 		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
@@ -402,7 +401,6 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 			},
 		},
 		TrackerConfig: config.TrackerConfig{
-			URL:         server.URL,
 			Username:    "user",
 			Password:    "pass",
 			AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",

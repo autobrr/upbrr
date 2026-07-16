@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -1117,8 +1118,11 @@ func parseInfoHash(raw string) (string, error) {
 
 func parseImageHost(raw string) (string, error) {
 	trimmed := strings.ToLower(strings.TrimSpace(raw))
-	if imagehostpolicy.IsUploadHost(trimmed) && imagehostpolicy.OwnerForHost(trimmed) == "" {
-		return trimmed, nil
+	if imagehostpolicy.IsUploadHost(trimmed) {
+		registry, err := trackerimpl.NewRegistry()
+		if err == nil && registry.OwnerForImageHost(trimmed) == "" {
+			return trimmed, nil
+		}
 	}
 	return "", fmt.Errorf("invalid imghost %q", raw)
 }

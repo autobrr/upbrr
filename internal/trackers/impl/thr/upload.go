@@ -196,10 +196,14 @@ func login(ctx context.Context, cfg config.TrackerConfig) (*http.Client, error) 
 // returns the live client only after the final index page contains a structured
 // logout link on the same scheme and hostname.
 func LoginSession(ctx context.Context, cfg config.TrackerConfig) (*http.Client, error) {
+	return loginSessionAt(ctx, cfg, baseURL)
+}
+
+func loginSessionAt(ctx context.Context, cfg config.TrackerConfig, endpoint string) (*http.Client, error) {
 	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
 		return nil, errors.New("trackers: THR missing username/password")
 	}
-	resolvedBaseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
+	resolvedBaseURL := strings.TrimRight(strings.TrimSpace(endpoint), "/")
 	if resolvedBaseURL == "" {
 		resolvedBaseURL = baseURL
 	}

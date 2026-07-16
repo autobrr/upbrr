@@ -37,3 +37,66 @@ test("embedded web boots with dev auth, navigates core pages, and reports invali
     await workspace.cleanup();
   }
 });
+
+test("embedded tracker settings use the catalog for entries, reset, and unsupported config", async ({
+  page,
+}) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await page.goto(app.url);
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("button", { name: "Trackers", exact: true }).click();
+
+    await expect(
+      page.getByText("BTN", { exact: true }).filter({ visible: true }).first(),
+    ).toBeVisible();
+    await expect(page.getByText("Unsupported tracker entries")).toBeVisible();
+    await expect(page.getByText("OLD", { exact: true })).toBeVisible();
+
+    const entryControls = page.locator(".settings-map__header .settings-map__controls");
+    const trackerSelector = entryControls.locator("select");
+    await expect(trackerSelector.locator('option[value="OLD"]')).toHaveCount(0);
+    await trackerSelector.selectOption("AITHER");
+    await entryControls.getByRole("button", { name: "Add entry" }).click();
+
+    let aitherCard = page
+      .locator("details.settings-card")
+      .filter({ has: page.locator("summary", { hasText: "AITHER" }) });
+    await expect(aitherCard).toBeVisible();
+    await expect(
+      aitherCard.locator("label.settings-field > span, .settings-switch-row > span"),
+    ).toHaveText(["API key", "Anonymous", "Mod queue", "Image host"]);
+    await aitherCard.getByLabel("API key").fill("e2e-aither-activation");
+
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByText("Settings saved and applied.")).toBeVisible();
+    await page.getByRole("button", { name: "Reload", exact: true }).click();
+
+    aitherCard = page
+      .locator("details.settings-card")
+      .filter({ has: page.locator("summary", { hasText: "AITHER" }) });
+    await expect(aitherCard).toBeVisible();
+    await aitherCard.getByRole("button", { name: "Remove" }).click();
+    await expect(aitherCard).toHaveCount(0);
+    await expect(trackerSelector.locator('option[value="AITHER"]')).toHaveCount(1);
+
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await page.getByRole("button", { name: "Reload", exact: true }).click();
+    await expect(
+      page.locator("details.settings-card").filter({
+        has: page.locator("summary", { hasText: "AITHER" }),
+      }),
+    ).toHaveCount(0);
+
+    const unsupportedCard = page
+      .locator(".settings-card")
+      .filter({ has: page.locator(".settings-card__summary-name", { hasText: "OLD" }) });
+    await unsupportedCard.getByRole("button", { name: "Delete" }).click();
+    await expect(page.getByText("OLD", { exact: true })).toHaveCount(0);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});

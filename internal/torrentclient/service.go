@@ -32,10 +32,11 @@ import (
 
 // Service coordinates torrent-client injection and search operations.
 type Service struct {
-	cfg             config.Config
-	logger          api.Logger
-	trackerPatterns map[string]trackerPattern
-	trackerPriority []string
+	cfg                config.Config
+	logger             api.Logger
+	trackerPatterns    map[string]trackerPattern
+	trackerPriority    []string
+	smallPieceTrackers []string
 }
 
 // qbit injection HTTP uses a short, single-attempt client so a dead WebUI or
@@ -81,7 +82,7 @@ func (t qbitLoginValidatingTransport) RoundTrip(req *http.Request) (*http.Respon
 	return resp, nil
 }
 
-// NewService returns a torrent-client service backed by the default tracker registry.
+// NewService returns a torrent-client service without tracker-specific search policies.
 func NewService(cfg config.Config, logger api.Logger) *Service {
 	return NewServiceWithRegistry(cfg, logger, nil)
 }
@@ -91,15 +92,15 @@ func NewServiceWithRegistry(cfg config.Config, logger api.Logger, registry *trac
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
-	priority := trackers.TrackerPriority()
-	if registry != nil {
-		priority = registry.Priority()
+	if registry == nil {
+		registry = trackers.NewRegistry()
 	}
 	return &Service{
-		cfg:             cfg,
-		logger:          logger,
-		trackerPatterns: buildTrackerIDPatterns(registry),
-		trackerPriority: priority,
+		cfg:                cfg,
+		logger:             logger,
+		trackerPatterns:    buildTrackerIDPatterns(registry),
+		trackerPriority:    registry.Priority(),
+		smallPieceTrackers: trackerSearchPreferenceNames(registry, trackers.TorrentSearchPreferenceSmallPieces),
 	}
 }
 

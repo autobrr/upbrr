@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -27,6 +29,15 @@ type recordingRepo struct {
 	screens     []api.Screenshot
 	selections  []api.ScreenshotFinalSelection
 	uploads     []api.UploadedImageLink
+}
+
+func imageHostingTestRegistry(t *testing.T) *trackers.Registry {
+	t.Helper()
+	registry, err := trackerimpl.NewRegistry()
+	if err != nil {
+		t.Fatalf("create tracker registry: %v", err)
+	}
+	return registry
 }
 
 func (r *recordingRepo) SaveUploadedImages(_ context.Context, path string, host string, images []api.UploadedImageLink) error {
@@ -430,6 +441,7 @@ func TestUploadImagesRejectsTrackerOwnedHostOutsideOwnerScope(t *testing.T) {
 	service := &Service{
 		logger:    api.NopLogger{},
 		uploaders: map[string]uploader{"hdb": &fakeUploader{}},
+		registry:  imageHostingTestRegistry(t),
 	}
 	tmp, err := os.CreateTemp(t.TempDir(), "imagehosting-owned-host-*.png")
 	if err != nil {
@@ -468,7 +480,7 @@ func TestUploadImagesMissingFile(t *testing.T) {
 
 func TestImgboxUploaderInRegistry(t *testing.T) {
 	cfg := config.Config{}
-	registry := newUploaderRegistry(cfg, nil)
+	registry := newUploaderRegistry(cfg, nil, trackers.NewRegistry())
 	if _, ok := registry["imgbox"]; !ok {
 		t.Fatal("imgbox not found in uploader registry")
 	}
@@ -490,6 +502,7 @@ func TestUploadImagesUsesBatchUploader(t *testing.T) {
 		logger:    api.NopLogger{},
 		repo:      &recordingRepo{},
 		uploaders: map[string]uploader{"hdb": uploaderStub},
+		registry:  imageHostingTestRegistry(t),
 	}
 
 	_, err := service.Upload(context.Background(), api.ImageHostingSubject{
@@ -539,6 +552,7 @@ func TestUploadImagesSeparatesHDBMenuGalleryWithoutDuplicates(t *testing.T) {
 		logger:    logger,
 		repo:      &recordingRepo{},
 		uploaders: map[string]uploader{"hdb": uploaderStub},
+		registry:  imageHostingTestRegistry(t),
 	}
 
 	result, err := service.Upload(context.Background(), api.ImageHostingSubject{
@@ -577,6 +591,7 @@ func TestUploadImagesSeparatesHDBMenuGalleryWithoutDuplicates(t *testing.T) {
 
 func TestImageHostLogTrackerNamesEveryOwnedHost(t *testing.T) {
 	t.Parallel()
+	service := &Service{registry: imageHostingTestRegistry(t)}
 
 	for host, expected := range map[string]string{
 		"hdb":      "HDB",
@@ -584,11 +599,11 @@ func TestImageHostLogTrackerNamesEveryOwnedHost(t *testing.T) {
 		"reelflix": "RF",
 		"thr":      "THR",
 	} {
-		if got := imageHostLogTracker(host); got != expected {
+		if got := service.imageHostLogTracker(host); got != expected {
 			t.Errorf("host %q tracker = %q, want %q", host, got, expected)
 		}
 	}
-	if got := imageHostLogTracker("imgbox"); got != "shared" {
+	if got := service.imageHostLogTracker("imgbox"); got != "shared" {
 		t.Errorf("shared host tracker = %q, want shared", got)
 	}
 }

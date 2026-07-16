@@ -28,6 +28,7 @@ import type {
   TrackerAuthCapability,
   TrackerAuthLoginRequest,
   TrackerAuthStatus,
+  TrackerCatalog,
   TrackerDryRunPreview,
   TrackerUploadSnapshot,
   UploadedImageLink,
@@ -392,7 +393,7 @@ export const loggingClient = {
 
 /** Tracker catalog and image-host policy metadata. */
 export const trackerCatalogClient = {
-  listKnown: () => requestApp<string[]>("ListKnownTrackers"),
+  list: () => requestApp<TrackerCatalog>("ListTrackerCatalog"),
   getImageHostPolicyMetadata: () =>
     requestApp<ImageHostPolicyMetadata>("GetImageHostPolicyMetadata"),
   getIcon: (domain: string, url: string) =>

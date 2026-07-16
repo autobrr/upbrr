@@ -6,5 +6,9 @@ package thr
 import "github.com/autobrr/upbrr/internal/trackers"
 
 func (d Definition) ImageHostPolicy() *trackers.ImageHostPolicy {
-	return &trackers.ImageHostPolicy{AllowedHosts: []string{"thr"}, DisableWithoutAPI: true}
+	return &trackers.ImageHostPolicy{
+		AllowedHosts:      []string{"thr"},
+		OwnedHosts:        []string{"thr"},
+		DisableWithoutAPI: true,
+	}
 }

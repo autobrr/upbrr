@@ -28,7 +28,7 @@ func (d *Definition) NewDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	return &dupeSearcher{
 		trackerID: deps.Tracker(),
 		cfg:       cfg,
-		client:    trackerdata.NewClient(cfg, logger, httpClient),
+		client:    trackerdata.NewClientWithRegistry(cfg, logger, httpClient, deps.Registry()),
 	}
 }
 

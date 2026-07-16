@@ -27,6 +27,17 @@ func (d *Definition) Name() string {
 	return d.site.Name
 }
 
+// TrackerFamily identifies the definition as AZ-family-backed.
+func (d *Definition) TrackerFamily() trackers.Family { return trackers.FamilyAZFamily }
+
+// DefaultBaseURL returns the profile-owned tracker endpoint.
+func (d *Definition) DefaultBaseURL() string { return d.site.BaseURL }
+
+// TorrentIdentityPolicy returns this site's tracker announce identity patterns.
+func (d *Definition) TorrentIdentityPolicy() *trackers.TorrentIdentityPolicy {
+	return &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{d.site.DefaultAnnounceURL}}
+}
+
 // UploadArtifactPolicy returns torrent personalization for this AZ-family profile.
 func (d *Definition) UploadArtifactPolicy() *trackers.UploadArtifactPolicy {
 	return &trackers.UploadArtifactPolicy{

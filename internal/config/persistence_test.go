@@ -1236,8 +1236,87 @@ func TestLoadFromDatabaseMergesCaseInsensitiveStoredTrackerName(t *testing.T) {
 	if btn.APIKey != "stored-token" {
 		t.Fatalf("expected stored BTN API key, got %q", btn.APIKey)
 	}
-	if btn.URL != "https://stored.btn.example" {
-		t.Fatalf("expected stored BTN URL, got %q", btn.URL)
+	if _, ok := btn.Unknown["URL"]; ok {
+		t.Fatal("expected deprecated BTN URL to be removed")
+	}
+}
+
+func TestLoadFromDatabaseRemovesSupportedAndUnsupportedTrackerURLs(t *testing.T) {
+	t.Parallel()
+
+	raw := defaultDatabaseConfigMap(t)
+	trackerSection, ok := raw["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatal("default database config Trackers section has unexpected shape")
+	}
+	trackerEntries, ok := trackerSection["Trackers"].(map[string]any)
+	if !ok {
+		t.Fatal("default database config tracker entries have unexpected shape")
+	}
+	btnEntry, ok := trackerEntries["BTN"].(map[string]any)
+	if !ok {
+		t.Fatal("default database config BTN entry has unexpected shape")
+	}
+	btnEntry["uRl"] = "https://btn.invalid"
+	trackerEntries["RETIRED"] = map[string]any{
+		"Url":     "https://retired.invalid",
+		"keep_me": "retained",
+	}
+
+	loaded, report, err := LoadFromDatabaseWithRepairReport(context.Background(), &rawConfigRepo{raw: raw})
+	if err != nil {
+		t.Fatalf("LoadFromDatabaseWithRepairReport: %v", err)
+	}
+	for _, path := range []string{"Trackers.Trackers.BTN.uRl", "Trackers.Trackers.RETIRED.Url"} {
+		if !slices.Contains(report.DeprecatedPaths, path) {
+			t.Fatalf("missing deprecated path %q in %#v", path, report.DeprecatedPaths)
+		}
+	}
+	if !slices.Contains(report.ChangedSections, "Trackers") {
+		t.Fatalf("expected Trackers repair section, got %#v", report.ChangedSections)
+	}
+	unsupported := loaded.Trackers.Trackers["RETIRED"]
+	if got := unsupported.Unknown["keep_me"]; got != "retained" {
+		t.Fatalf("unsupported field = %#v", got)
+	}
+	for key := range unsupported.Unknown {
+		if strings.EqualFold(strings.TrimSpace(key), "url") {
+			t.Fatalf("deprecated URL survived in Unknown as %q", key)
+		}
+	}
+}
+
+func TestTrackerURLCannotReappearThroughUnknownOrExport(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{Trackers: TrackersConfig{Trackers: map[string]TrackerConfig{
+		"RETIRED": {Unknown: map[string]any{"UrL": "https://retired.invalid", "keep_me": "retained"}},
+	}}}
+
+	jsonPayload, err := ExportToPlaintextJSON(cfg)
+	if err != nil {
+		t.Fatalf("ExportToPlaintextJSON: %v", err)
+	}
+	if strings.Contains(strings.ToLower(jsonPayload), "retired.invalid") {
+		t.Fatalf("deprecated URL survived JSON export: %s", jsonPayload)
+	}
+	if !strings.Contains(jsonPayload, "keep_me") {
+		t.Fatalf("unrelated unknown field missing from JSON export: %s", jsonPayload)
+	}
+
+	yamlPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := ExportToPlaintextYAML(cfg, yamlPath); err != nil {
+		t.Fatalf("ExportToPlaintextYAML: %v", err)
+	}
+	yamlPayload, err := os.ReadFile(yamlPath)
+	if err != nil {
+		t.Fatalf("read YAML export: %v", err)
+	}
+	if strings.Contains(strings.ToLower(string(yamlPayload)), "retired.invalid") {
+		t.Fatalf("deprecated URL survived YAML export: %s", yamlPayload)
+	}
+	if !strings.Contains(string(yamlPayload), "keep_me") {
+		t.Fatalf("unrelated unknown field missing from YAML export: %s", yamlPayload)
 	}
 }
 
@@ -1320,7 +1399,6 @@ func TestMergeStoredConfigMapMergesCaseInsensitiveStoredTrackerField(t *testing.
 
 	base := map[string]any{
 		"APIKey": "",
-		"URL":    "https://default.example",
 	}
 	overlay := map[string]any{
 		"apikey": "stored-token",
@@ -1547,12 +1625,7 @@ func TestExportImportJSONEncryptsSecrets(t *testing.T) {
 		ArrIntegration: ArrIntegrationConfig{
 			SonarrAPIKey: "plain-sonarr-token",
 		},
-		Trackers: TrackersConfig{
-			Trackers: map[string]TrackerConfig{
-				"BTN": {URL: "https://secret.btn.example"},
-				"HDT": {URL: "https://public.hdt.example"},
-			},
-		},
+		Trackers:           TrackersConfig{Trackers: map[string]TrackerConfig{}},
 		ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 	}
 
@@ -1566,12 +1639,6 @@ func TestExportImportJSONEncryptsSecrets(t *testing.T) {
 	}
 	if strings.Contains(exported, "plain-sonarr-token") {
 		t.Fatalf("exported JSON leaked plaintext Sonarr key")
-	}
-	if strings.Contains(exported, "https://secret.btn.example") {
-		t.Fatalf("exported JSON leaked plaintext BTN URL")
-	}
-	if !strings.Contains(exported, "https://public.hdt.example") {
-		t.Fatalf("exported JSON should keep non-BTN tracker URL plaintext")
 	}
 	if !strings.Contains(exported, encryptedEnvelopePrefix) {
 		t.Fatalf("exported JSON did not contain encrypted secret envelopes")
@@ -1587,12 +1654,6 @@ func TestExportImportJSONEncryptsSecrets(t *testing.T) {
 	}
 	if imported.ArrIntegration.SonarrAPIKey != "plain-sonarr-token" {
 		t.Fatalf("Sonarr API key mismatch after round-trip: got %q", imported.ArrIntegration.SonarrAPIKey)
-	}
-	if imported.Trackers.Trackers["BTN"].URL != "https://secret.btn.example" {
-		t.Fatalf("BTN URL mismatch after round-trip: got %q", imported.Trackers.Trackers["BTN"].URL)
-	}
-	if imported.Trackers.Trackers["HDT"].URL != "https://public.hdt.example" {
-		t.Fatalf("HDT URL mismatch after round-trip: got %q", imported.Trackers.Trackers["HDT"].URL)
 	}
 }
 

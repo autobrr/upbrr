@@ -78,51 +78,6 @@ var unit3DResolutionNamesByID = map[string][]string{
 	"9":  {"480I"},
 }
 
-// IsUnit3DTracker reports whether tracker is known to the Unit3D compatibility catalog.
-func IsUnit3DTracker(tracker string) bool {
-	return trackers.IsUnit3DTracker(tracker)
-}
-
-// IsUnit3DTrackerWithConfig reports whether tracker is built-in or configured as Unit3D.
-func IsUnit3DTrackerWithConfig(cfg config.Config, tracker string) bool {
-	key := strings.ToUpper(strings.TrimSpace(tracker))
-	if key == "" {
-		return false
-	}
-	if IsUnit3DTracker(key) {
-		return true
-	}
-	if trackers.IsKnownTracker(key) {
-		return false
-	}
-	entry, ok := cfg.Trackers.Trackers[key]
-	if !ok {
-		for name, candidate := range cfg.Trackers.Trackers {
-			if strings.EqualFold(name, key) {
-				entry = candidate
-				ok = true
-				break
-			}
-		}
-	}
-	if !ok {
-		return false
-	}
-	if strings.TrimSpace(entry.APIKey) == "" {
-		return false
-	}
-	if strings.TrimSpace(entry.AnnounceURL) == "" {
-		return false
-	}
-	if strings.TrimSpace(entry.Username) != "" || strings.TrimSpace(entry.Password) != "" || strings.TrimSpace(entry.Passkey) != "" {
-		return false
-	}
-	if strings.TrimSpace(entry.PTPAPIUser) != "" || strings.TrimSpace(entry.PTPAPIKey) != "" {
-		return false
-	}
-	return true
-}
-
 // CategoryID returns the Unit3D category ID for a canonical category name.
 func CategoryID(category string) string {
 	return reverseLookupCanonicalID(CanonicalUnit3DCategory(category), unit3DCategoryNamesByID)
@@ -815,54 +770,9 @@ func isUnit3DImagePublicIP(addr netip.Addr) bool {
 	return true
 }
 
-// baseURLForTrackerWithConfig prefers case-insensitive runtime configuration
-// before falling back to the registry definition.
-func baseURLForTrackerWithConfig(cfg config.Config, registry *trackers.Registry, tracker string) (string, bool) {
-	key := strings.ToUpper(strings.TrimSpace(tracker))
-	if key != "" {
-		if entry, ok := cfg.Trackers.Trackers[key]; ok {
-			if base := configuredUnit3DBaseURL(entry); base != "" {
-				return base, true
-			}
-		}
-		if entry, ok := cfg.Trackers.Trackers[strings.ToLower(key)]; ok {
-			if base := configuredUnit3DBaseURL(entry); base != "" {
-				return base, true
-			}
-		}
-		for name, entry := range cfg.Trackers.Trackers {
-			if strings.EqualFold(name, key) {
-				if base := configuredUnit3DBaseURL(entry); base != "" {
-					return base, true
-				}
-			}
-		}
-	}
+// baseURLForTrackerWithConfig returns the profile-owned endpoint.
+func baseURLForTrackerWithConfig(_ config.Config, registry *trackers.Registry, tracker string) (string, bool) {
 	return registry.LookupBaseURL(tracker)
-}
-
-// configuredUnit3DBaseURL prefers an explicit site URL and otherwise derives
-// the origin from the configured announce URL.
-func configuredUnit3DBaseURL(entry config.TrackerConfig) string {
-	if base := strings.TrimRight(strings.TrimSpace(entry.URL), "/"); base != "" {
-		return base
-	}
-	return baseFromAnnounce(entry.AnnounceURL)
-}
-
-func baseFromAnnounce(announce string) string {
-	trimmed := strings.TrimSpace(announce)
-	if trimmed == "" {
-		return ""
-	}
-	parsed, err := url.Parse(trimmed)
-	if err != nil {
-		return ""
-	}
-	parsed.Path = "/"
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return strings.TrimRight(parsed.String(), "/")
 }
 
 func parseNumberToInt64(value json.Number) (int64, error) {

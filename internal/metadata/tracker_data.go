@@ -86,7 +86,6 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 
 	now := time.Now().UTC()
 	meta.TrackerData = append([]api.TrackerMetadata{}, meta.TrackerData...)
-	unit3dClient := trackerdata.NewClientWithRegistry(s.cfg, s.logger, nil, s.registry)
 	eligible := make([]string, 0, len(trackers))
 	for _, tracker := range trackers {
 		select {
@@ -104,10 +103,10 @@ func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationst
 	}
 
 	if !shouldUseStrictPriorityLookup(meta, eligible, s.cfg.Trackers.PreferredTracker) {
-		return s.enrichTrackerDataConcurrent(ctx, meta, eligible, now, unit3dClient)
+		return s.enrichTrackerDataConcurrent(ctx, meta, eligible, now)
 	}
 
-	return s.enrichTrackerDataPriority(ctx, meta, eligible, now, unit3dClient)
+	return s.enrichTrackerDataPriority(ctx, meta, eligible, now)
 }
 
 func shouldUseStrictPriorityLookup(meta preparationstate.State, eligible []string, preferred string) bool {
@@ -131,7 +130,6 @@ func (s *Service) enrichTrackerDataPriority(
 	meta preparationstate.State,
 	eligible []string,
 	now time.Time,
-	unit3dClient *trackerdata.Client,
 ) (preparationstate.State, error) {
 	assetSourceTracker := ""
 	for _, tracker := range eligible {
@@ -141,7 +139,7 @@ func (s *Service) enrichTrackerDataPriority(
 		default:
 		}
 
-		record, persistable, hasIDs, err := s.lookupTrackerData(ctx, meta, tracker, now, unit3dClient)
+		record, persistable, hasIDs, err := s.lookupTrackerData(ctx, meta, tracker, now)
 		if err != nil {
 			if s.logger != nil {
 				s.logger.Warnf("metadata: tracker lookup failed tracker=%s: %s", tracker, redaction.RedactValue(err.Error(), nil))
@@ -194,7 +192,6 @@ func (s *Service) enrichTrackerDataConcurrent(
 	meta preparationstate.State,
 	eligible []string,
 	now time.Time,
-	unit3dClient *trackerdata.Client,
 ) (preparationstate.State, error) {
 	lookupCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -212,7 +209,7 @@ func (s *Service) enrichTrackerDataConcurrent(
 	for idx := 0; idx < workerCount; idx++ {
 		workers.Go(func() {
 			for tracker := range jobs {
-				record, persistable, hasIDs, err := s.lookupTrackerData(lookupCtx, lookupMeta, tracker, now, unit3dClient)
+				record, persistable, hasIDs, err := s.lookupTrackerData(lookupCtx, lookupMeta, tracker, now)
 				results <- trackerLookupOutcome{
 					tracker:     tracker,
 					record:      record,
@@ -301,7 +298,6 @@ func (s *Service) lookupTrackerData(
 	meta preparationstate.State,
 	tracker string,
 	now time.Time,
-	unit3dClient *trackerdata.Client,
 ) (api.TrackerMetadata, bool, bool, error) {
 	select {
 	case <-ctx.Done():
@@ -316,74 +312,6 @@ func (s *Service) lookupTrackerData(
 		InfoHash:   meta.InfoHash,
 		Matched:    trackerMatched(meta, tracker),
 		UpdatedAt:  now,
-	}
-
-	kind, registered := s.registry.LookupKind(tracker)
-	if (registered && kind == trackerscatalog.KindUnit3D) || (s.registry == nil && trackerdata.IsUnit3DTracker(tracker)) {
-		fileName := trackerLookupFileName(meta, record.TrackerID, s.cfg.Metadata.SkipTrackerFilenameLookup)
-		if s.logger != nil {
-			s.logger.Tracef("metadata: unit3d lookup start tracker=%s id=%q file=%q", tracker, record.TrackerID, fileName)
-		}
-		result, err := unit3dClient.TorrentInfo(
-			ctx,
-			tracker,
-			record.TrackerID,
-			fileName,
-			meta.Policy.OnlyID,
-			meta.Policy.KeepImages,
-		)
-		if err != nil {
-			return api.TrackerMetadata{}, false, false, fmt.Errorf("metadata: %w", err)
-		}
-		if !hasUnit3DData(result) {
-			if s.logger != nil {
-				s.logger.Debugf("metadata: unit3d lookup empty tracker=%s id=%q", tracker, record.TrackerID)
-			}
-			if !trackerRecordHasPathedData(record) {
-				if s.logger != nil {
-					s.logger.Debugf("metadata: tracker %s has no pathed data, skipping", tracker)
-				}
-				return api.TrackerMetadata{}, false, false, nil
-			}
-			return record, true, false, nil
-		}
-
-		downloadedImages := s.persistUnit3DArtifacts(ctx, meta, tracker, result, meta.Policy.KeepImages)
-		if s.logger != nil {
-			s.logger.Debugf("metadata: unit3d downloaded %d of %d images", len(downloadedImages), len(result.Validated))
-		}
-		record.TMDBID = result.TMDBID
-		record.IMDBID = result.IMDBID
-		record.TVDBID = result.TVDBID
-		record.MALID = result.MALID
-		record.Category = normalizeUnit3DCategory(result.Category)
-		record.InfoHash = metautil.FirstNonEmptyTrimmed(record.InfoHash, result.InfoHash)
-		record.Description = result.Description
-		record.ImageURLs = trackerImageURLsFromResult(result, downloadedImages, meta.Policy.KeepImages)
-		record.Filename = result.FileName
-		record.Matched = true
-		if s.logger != nil {
-			s.logger.Debugf(
-				"metadata: unit3d lookup applied tracker=%s tmdb=%d imdb=%d tvdb=%d mal=%d desc=%t images=%d infohash=%t file=%t",
-				tracker,
-				record.TMDBID,
-				record.IMDBID,
-				record.TVDBID,
-				record.MALID,
-				record.Description != "",
-				len(record.ImageURLs),
-				record.InfoHash != "",
-				record.Filename != "",
-			)
-		}
-
-		if !trackerRecordHasPathedData(record) {
-			if s.logger != nil {
-				s.logger.Debugf("metadata: tracker %s has no pathed data, skipping", tracker)
-			}
-			return api.TrackerMetadata{}, false, false, nil
-		}
-		return record, true, hasTrackerMetadataIDs(record), nil
 	}
 
 	if s.tracker == nil {
@@ -653,10 +581,7 @@ func orderTrackersByPriority(trackers []string, registry *trackerscatalog.Regist
 	if len(trackers) == 0 {
 		return trackers
 	}
-	trackerPriority := trackerscatalog.TrackerPriority()
-	if registry != nil {
-		trackerPriority = registry.Priority()
-	}
+	trackerPriority := registry.Priority()
 	priority := make(map[string]int, len(trackerPriority))
 	for idx, value := range trackerPriority {
 		priority[strings.ToUpper(value)] = idx
@@ -985,28 +910,6 @@ func normalizeUnit3DCategory(category string) api.Category {
 		return normalized.Canonical()
 	}
 	return api.CategoryUnknown
-}
-
-func hasUnit3DData(result trackerdata.Result) bool {
-	if result.HasIDs() {
-		return true
-	}
-	if strings.TrimSpace(result.Description) != "" {
-		return true
-	}
-	if len(result.Images) > 0 {
-		return true
-	}
-	if strings.TrimSpace(result.InfoHash) != "" {
-		return true
-	}
-	if strings.TrimSpace(result.FileName) != "" {
-		return true
-	}
-	if strings.TrimSpace(result.Category) != "" {
-		return true
-	}
-	return false
 }
 
 func hasTrackerMetadataIDs(record api.TrackerMetadata) bool {

@@ -23,25 +23,7 @@ type trackerAdapter struct {
 	resolve    sessionResolver
 }
 
-func defaultAdapters(registry *trackerscatalog.Registry) map[string]Adapter {
-	if registry != nil {
-		adapters := registryAdapters(registry)
-		// Partial registries are supported for focused tests and compatibility
-		// callers. Full application composition registers every known tracker,
-		// so production behavior comes exclusively from owner capabilities.
-		for trackerID, adapter := range legacyDefaultAdapters() {
-			if _, exists := adapters[trackerID]; !exists {
-				adapters[trackerID] = adapter
-			}
-		}
-		return adapters
-	}
-	return legacyDefaultAdapters()
-}
-
-// registryAdapters builds production adapters exclusively from tracker-owned
-// capabilities. The legacy table remains only for callers that intentionally
-// construct auth without the application registry.
+// registryAdapters builds adapters exclusively from tracker-owned capabilities.
 func registryAdapters(registry *trackerscatalog.Registry) map[string]Adapter {
 	adapters := map[string]Adapter{}
 	for _, trackerID := range registry.Names() {
@@ -58,37 +40,7 @@ func registryAdapters(registry *trackerscatalog.Registry) map[string]Adapter {
 	return adapters
 }
 
-func legacyDefaultAdapters() map[string]Adapter {
-	adapters := map[string]Adapter{}
-	for _, spec := range builtInSpecs() {
-		switch spec.id {
-		case "AR":
-			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec), resolve: resolveARSessionForTrackerAuth}
-		case "BTN":
-			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec)}
-		case "FF":
-			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec), resolve: resolveFFSessionForTrackerAuth}
-		case "FL":
-			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec), resolve: resolveFLSessionForTrackerAuth}
-		case "HDB":
-			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec), resolve: resolveHDBStoredSessionForTrackerAuth}
-		case "MTV":
-			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec)}
-		case "PTP":
-			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec)}
-		case "RTF":
-			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec)}
-		case "THR":
-			adapters[spec.id] = trackerAdapter{capability: capabilityFromSpec(spec)}
-		}
-	}
-	return adapters
-}
-
 func (s *Service) adapterFor(trackerID string) (Adapter, bool) {
-	if s.adapters == nil {
-		s.adapters = defaultAdapters(nil)
-	}
 	adapter, ok := s.adapters[normalizeTrackerID(trackerID)]
 	return adapter, ok
 }
@@ -195,7 +147,7 @@ func classifyAdapterError(trackerID string, err error) error {
 			Err:              err,
 		}
 	}
-	if strings.EqualFold(trackerID, "BTN") && strings.Contains(strings.ToLower(err.Error()), "stored session confirmed invalid") {
+	if strings.Contains(strings.ToLower(err.Error()), "stored session confirmed invalid") {
 		return &ValidationError{
 			TrackerID:        trackerID,
 			ConfirmedInvalid: true,

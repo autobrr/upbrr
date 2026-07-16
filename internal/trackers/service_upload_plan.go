@@ -103,15 +103,15 @@ func (s *Service) Upload(ctx context.Context, meta api.UploadSubject) (api.Uploa
 		return api.UploadSummary{}, errors.New("trackers: prepared release source is missing")
 	}
 	resolved := resolveTrackers(s.cfg, meta.Trackers, meta.TrackersRemove)
+	if len(resolved) > 0 && s.registry == nil {
+		return api.UploadSummary{}, errors.New("trackers: registry not configured")
+	}
 	resolved = filterKnownTrackersWithRegistry(resolved, s.logger, s.registry)
 	resolved = filterTrackersByRuleFailures(resolved, meta.TrackerRuleFailures, meta.IgnoreTrackerRuleFailures, s.logger)
 	resolved = filterTrackersByBlocks(resolved, meta.BlockedTrackers, s.logger)
 	if len(resolved) == 0 {
 		s.logger.Infof("trackers: no trackers configured, skipping upload")
 		return api.UploadSummary{}, nil
-	}
-	if s.registry == nil {
-		return api.UploadSummary{}, errors.New("trackers: registry not configured")
 	}
 	if baseTorrent, err := ResolveUploadTorrentPath(meta, s.cfg.MainSettings.DBPath); err == nil {
 		meta.TorrentPath = baseTorrent
@@ -248,7 +248,7 @@ func (s *Service) prepareUploadPlans(
 				emitTrackerPlanProgress(ctx, meta.SourcePath, tracker, "tracker_preparation", "failed", message)
 				continue
 			}
-			assets, err := ResolveDescriptionAssets(ctx, tracker, trackerMeta, s.repo, s.logger)
+			assets, err := ResolveDescriptionAssets(ctx, tracker, trackerMeta, s.repo, s.logger, s.registry)
 			if err != nil {
 				slot.failure = trackerFailure(tracker, "description_assets", err)
 				slots[idx] = slot
@@ -327,7 +327,7 @@ func (s *Service) preparationInput(
 	if s.images != nil && input.SelectedImageHost != "" {
 		host := input.SelectedImageHost
 		input.UploadImages = func(ctx context.Context, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
-			return s.images.Upload(ctx, imageHostingSubject(meta), host, usageScopeForHost(host), append([]api.ScreenshotImage(nil), images...))
+			return s.images.Upload(ctx, imageHostingSubject(meta), host, usageScopeForHost(s.registry, host), append([]api.ScreenshotImage(nil), images...))
 		}
 	}
 	return input

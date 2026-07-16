@@ -131,10 +131,7 @@ func thrConfig(cfg config.Config) (config.TrackerConfig, bool) {
 	}
 	return config.TrackerConfig{}, false
 }
-func thrBaseURL(cfg config.TrackerConfig) string {
-	if strings.TrimSpace(cfg.URL) != "" {
-		return strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
-	}
+func thrBaseURL(_ config.TrackerConfig) string {
 	return "https://www.torrenthr.org"
 }
 func thrName(value string) string {

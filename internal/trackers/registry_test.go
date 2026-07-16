@@ -6,6 +6,7 @@ package trackers
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -25,6 +26,52 @@ func (stubAuthDefinition) AuthSessionResolver() AuthSessionResolver {
 
 func (s stubDefinition) Name() string {
 	return s.name
+}
+
+func (stubDefinition) DefaultBaseURL() string { return "https://tracker.example.invalid" }
+
+func testTrackerFamily(name string) Family {
+	switch strings.ToUpper(strings.TrimSpace(name)) {
+	case "AITHER", "BLU", "HHD", "LST", "OE", "RF", "RHD", "STC":
+		return FamilyUnit3D
+	default:
+		return FamilyStandalone
+	}
+}
+
+func testImageHostPolicyForTracker(name string) *ImageHostPolicy {
+	switch strings.ToUpper(strings.TrimSpace(name)) {
+	case "GPW":
+		return &ImageHostPolicy{AllowedHosts: []string{"kshare", "pixhost", "pterclub", "ilikeshots", "imgbox"}}
+	case "HDB":
+		return &ImageHostPolicy{
+AllowedHosts: []string{"hdb"},
+ OwnedHosts: []string{"hdb"},
+ DisableWithoutRehost: true,
+}
+	case "LST":
+		return &ImageHostPolicy{
+ConditionalHost: "lostimg",
+ OwnedHosts: []string{"lostimg"},
+ EnableWithLostimg: true,
+}
+	case "MTV":
+		return &ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb"}}
+	case "OE":
+		return &ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"}}
+	case "PTP":
+		return &ImageHostPolicy{AllowedHosts: []string{"pixhost", "imgbb", "onlyimage", "ptscreens", "passtheimage"}}
+	case "RF":
+		return &ImageHostPolicy{
+ConditionalHost: "reelflix",
+ OwnedHosts: []string{"reelflix"},
+ EnableWhenConfigured: true,
+}
+	case "STC":
+		return &ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb"}}
+	default:
+		return nil
+	}
 }
 
 func (s stubDefinition) Prepare(ctx context.Context, input PreparationInput) (TrackerPlan, *PreparationFailure) {

@@ -72,11 +72,10 @@ func TestResolveSessionForTrackerAuthPreservesCookiesOnTransientAuthFetch(t *tes
 	baseURL := server.URL
 	server.Close()
 
-	err := ResolveSessionForTrackerAuth(ctx, config.TrackerConfig{
-		URL:      baseURL,
+	err := resolveSessionForTrackerAuthAt(ctx, config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	}, dbPath)
+	}, dbPath, baseURL)
 	if err == nil {
 		t.Fatal("expected transient auth fetch error")
 	}
@@ -109,11 +108,10 @@ func TestResolveSessionForTrackerAuthReportsPostLoginCookiePersistenceFailure(t 
 	}))
 	t.Cleanup(server.Close)
 
-	err := ResolveSessionForTrackerAuth(context.Background(), config.TrackerConfig{
-		URL:      server.URL,
+	err := resolveSessionForTrackerAuthAt(context.Background(), config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	}, filepath.Join(t.TempDir(), "upbrr.db"))
+	}, filepath.Join(t.TempDir(), "upbrr.db"), server.URL)
 	if !errors.Is(err, cookiepkg.ErrAuthHelperUnavailable) {
 		t.Fatalf("expected auth helper unavailable error, got %v", err)
 	}
@@ -150,11 +148,10 @@ func TestResolveSessionForTrackerAuthSavesCookiesWhenLoginResponseContainsAuthKe
 	}))
 	t.Cleanup(server.Close)
 
-	err := ResolveSessionForTrackerAuth(ctx, config.TrackerConfig{
-		URL:      server.URL,
+	err := resolveSessionForTrackerAuthAt(ctx, config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	}, dbPath)
+	}, dbPath, server.URL)
 	if err != nil {
 		t.Fatalf("ResolveSessionForTrackerAuth: %v", err)
 	}
@@ -264,11 +261,10 @@ func TestResolveSessionForTrackerAuthPostsLoginToRedirectedHost(t *testing.T) {
 	canonicalURL = server.URL
 	sourceURL := strings.Replace(server.URL, "127.0.0.1", "localhost", 1)
 
-	err := ResolveSessionForTrackerAuth(ctx, config.TrackerConfig{
-		URL:      sourceURL,
+	err := resolveSessionForTrackerAuthAt(ctx, config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	}, dbPath)
+	}, dbPath, sourceURL)
 	if err != nil {
 		t.Fatalf("ResolveSessionForTrackerAuth: %v", err)
 	}
@@ -328,20 +324,19 @@ func TestUploadPostsToRedirectedLoginHost(t *testing.T) {
 	canonicalURL = server.URL
 	sourceURL := strings.Replace(server.URL, "127.0.0.1", "localhost", 1)
 
-	summary, err := upload(ctx, trackers.PreparationInput{
+	summary, err := uploadAt(ctx, trackers.PreparationInput{
 		Tracker: "MTV",
 		Meta: api.UploadSubject{
 			TorrentPath: torrentPath,
 			ReleaseName: "Release",
 		},
 		TrackerConfig: config.TrackerConfig{
-			URL:      sourceURL,
 			Username: "user",
 			Password: "pass",
 		},
 		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 		Assets:  &trackers.DescriptionAssets{Final: true, Description: "desc"},
-	})
+	}, sourceURL)
 	if err != nil {
 		t.Fatalf("upload: %v", err)
 	}
@@ -383,11 +378,10 @@ func TestResolveSessionForTrackerAuthRejectsEmptyLoginCookiesWithoutReplacingSto
 	}))
 	t.Cleanup(server.Close)
 
-	err := ResolveSessionForTrackerAuth(ctx, config.TrackerConfig{
-		URL:      server.URL,
+	err := resolveSessionForTrackerAuthAt(ctx, config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	}, dbPath)
+	}, dbPath, server.URL)
 	if err == nil || !strings.Contains(err.Error(), "no usable cookies") {
 		t.Fatalf("expected empty login cookie error, got %v", err)
 	}
@@ -426,11 +420,10 @@ func TestResolveSessionForTrackerAuthDoesNotPersistCookiesBeforeAuthKeyValidatio
 	}))
 	t.Cleanup(server.Close)
 
-	err := ResolveSessionForTrackerAuth(ctx, config.TrackerConfig{
-		URL:      server.URL,
+	err := resolveSessionForTrackerAuthAt(ctx, config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	}, dbPath)
+	}, dbPath, server.URL)
 	if err == nil || !strings.Contains(err.Error(), "auth key not found") {
 		t.Fatalf("expected auth-key validation failure, got %v", err)
 	}
@@ -479,11 +472,10 @@ func TestResolveSessionForTrackerAuthLoginUsesManual2FACode(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	err := ResolveSessionForTrackerAuthLogin(ctx, config.TrackerConfig{
-		URL:      server.URL,
+	err := resolveSessionForTrackerAuthLoginAt(ctx, config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	}, dbPath, api.TrackerAuthLoginRequest{Code: "654321"})
+	}, dbPath, api.TrackerAuthLoginRequest{Code: "654321"}, server.URL)
 	if err != nil {
 		t.Fatalf("ResolveSessionForTrackerAuthLogin: %v", err)
 	}
@@ -532,11 +524,10 @@ func TestResolveSessionForTrackerAuthLoginMarksSubmitted2FAAuthKeyMiss(t *testin
 	}))
 	t.Cleanup(server.Close)
 
-	err := ResolveSessionForTrackerAuthLogin(ctx, config.TrackerConfig{
-		URL:      server.URL,
+	err := resolveSessionForTrackerAuthLoginAt(ctx, config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	}, dbPath, api.TrackerAuthLoginRequest{Code: "000000"})
+	}, dbPath, api.TrackerAuthLoginRequest{Code: "000000"}, server.URL)
 	if !errors.Is(err, ErrSubmitted2FARejected) {
 		t.Fatalf("expected submitted 2FA rejection marker, got %v", err)
 	}
@@ -585,11 +576,10 @@ func TestResolveSessionForTrackerAuthLoginReturns2FAReadError(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	err := ResolveSessionForTrackerAuthLogin(ctx, config.TrackerConfig{
-		URL:      server.URL,
+	err := resolveSessionForTrackerAuthLoginAt(ctx, config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	}, dbPath, api.TrackerAuthLoginRequest{Code: "123456"})
+	}, dbPath, api.TrackerAuthLoginRequest{Code: "123456"}, server.URL)
 	assertNoHandlerError(t, handlerErrs)
 	if err == nil {
 		t.Fatal("expected 2FA response read error")
@@ -635,11 +625,10 @@ func TestResolveSessionForTrackerAuthLoginReportsSafeAuthKeyDiagnostics(t *testi
 	}))
 	t.Cleanup(server.Close)
 
-	err := ResolveSessionForTrackerAuthLogin(ctx, config.TrackerConfig{
-		URL:      server.URL,
+	err := resolveSessionForTrackerAuthLoginAt(ctx, config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	}, dbPath, api.TrackerAuthLoginRequest{})
+	}, dbPath, api.TrackerAuthLoginRequest{}, server.URL)
 	if !errors.Is(err, errMTVAuthKeyNotFound) {
 		t.Fatalf("expected auth key miss, got %v", err)
 	}
@@ -679,11 +668,10 @@ func TestResolveSessionForTrackerAuthLoginMissing2FACodePreservesCookies(t *test
 	}))
 	t.Cleanup(server.Close)
 
-	err := ResolveSessionForTrackerAuthLogin(ctx, config.TrackerConfig{
-		URL:      server.URL,
+	err := resolveSessionForTrackerAuthLoginAt(ctx, config.TrackerConfig{
 		Username: "user",
 		Password: "pass",
-	}, dbPath, api.TrackerAuthLoginRequest{})
+	}, dbPath, api.TrackerAuthLoginRequest{}, server.URL)
 	if err == nil || !strings.Contains(err.Error(), "2FA required") {
 		t.Fatalf("expected missing 2FA error, got %v", err)
 	}

@@ -972,7 +972,7 @@ func (m *mediaModule) uploadImagesToTarget(
 		m.logger.Tracef(
 			"core: uploading images host=%s tracker=%s scope=%s trackers=%v count=%d",
 			target.Host,
-			imageHostOwnerLogValue(target.Host),
+			m.imageHostOwnerLogValue(target.Host),
 			target.UsageScope,
 			target.Trackers,
 			len(images),
@@ -1008,7 +1008,7 @@ func (m *mediaModule) uploadImagesToTarget(
 		m.logger.Tracef(
 			"core: reusing uploaded images host=%s tracker=%s scope=%s trackers=%v count=%d",
 			target.Host,
-			imageHostOwnerLogValue(target.Host),
+			m.imageHostOwnerLogValue(target.Host),
 			target.UsageScope,
 			target.Trackers,
 			len(results),
@@ -1037,7 +1037,7 @@ func (m *mediaModule) uploadImagesToTarget(
 	m.logger.Debugf(
 		"core: uploading missing images host=%s tracker=%s scope=%s trackers=%v missing=%d reused=%d",
 		target.Host,
-		imageHostOwnerLogValue(target.Host),
+		m.imageHostOwnerLogValue(target.Host),
 		target.UsageScope,
 		target.Trackers,
 		len(missing),
@@ -1164,8 +1164,8 @@ func normalizeImageUploadUsageScope(scope string) string {
 }
 
 // imageHostOwnerLogValue identifies tracker-owned hosts in core upload logs.
-func imageHostOwnerLogValue(host string) string {
-	if tracker := trackers.TrackerForOwnedImageHost(host); tracker != "" {
+func (m *mediaModule) imageHostOwnerLogValue(host string) string {
+	if tracker := trackers.TrackerForOwnedImageHost(m.registry, host); tracker != "" {
 		return tracker
 	}
 	return "shared"
@@ -1190,6 +1190,6 @@ func (m *mediaModule) deleteAcceptedUploadedImage(
 	if err != nil {
 		return fmt.Errorf("core: resolve uploaded image deletion subject: %w", err)
 	}
-	m.logger.Debugf("core: deleting uploaded image path=%s host=%s tracker=%s", imagePath, host, imageHostOwnerLogValue(host))
+	m.logger.Debugf("core: deleting uploaded image path=%s host=%s tracker=%s", imagePath, host, m.imageHostOwnerLogValue(host))
 	return wrapCoreError(m.repo.DeleteUploadedImage(ctx, subject.SourcePath, imagePath, host))
 }

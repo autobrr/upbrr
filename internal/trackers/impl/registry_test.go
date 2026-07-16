@@ -111,9 +111,20 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 	if !slices.IsSorted(names) {
 		t.Fatalf("registry names are not deterministic: %v", names)
 	}
-	want := slices.DeleteFunc(trackers.KnownTrackers(), func(name string) bool { return name == "MANUAL" })
+	schemas, err := config.OrderedTrackerSchemas()
+	if err != nil {
+		t.Fatalf("ordered tracker schemas: %v", err)
+	}
+	want := make([]string, 0, len(schemas))
+	for _, schema := range schemas {
+		want = append(want, schema.Name)
+	}
+	slices.Sort(want)
 	if !slices.Equal(names, want) {
 		t.Fatalf("registered trackers = %v, want %v", names, want)
+	}
+	if slices.Contains(names, "MANUAL") {
+		t.Fatal("MANUAL must not be registered")
 	}
 	if definition, ok := registry.Lookup("BHDTV"); !ok {
 		t.Fatal("expected BHDTV definition")
@@ -394,18 +405,21 @@ func TestNewRegistryIncludesAuthCapabilities(t *testing.T) {
 	}
 }
 
-func TestNewRegistryClassifiesTrackerKinds(t *testing.T) {
+func TestNewRegistryClassifiesTrackerFamilies(t *testing.T) {
 	registry, err := NewRegistry()
 	if err != nil {
 		t.Fatalf("new registry: %v", err)
 	}
-	if kind, ok := registry.LookupKind("AITHER"); !ok || kind != trackers.KindUnit3D {
-		t.Fatalf("AITHER kind = %q, %t", kind, ok)
+	if family, ok := registry.LookupFamily("AITHER"); !ok || family != trackers.FamilyUnit3D {
+		t.Fatalf("AITHER family = %q, %t", family, ok)
 	}
-	if kind, ok := registry.LookupKind("PTP"); !ok || kind != trackers.KindNonUnit3D {
-		t.Fatalf("PTP kind = %q, %t", kind, ok)
+	if family, ok := registry.LookupFamily("AZ"); !ok || family != trackers.FamilyAZFamily {
+		t.Fatalf("AZ family = %q, %t", family, ok)
 	}
-	if !slices.Contains(registry.NamesByKind(trackers.KindUnit3D), "AITHER") {
+	if family, ok := registry.LookupFamily("PTP"); !ok || family != trackers.FamilyStandalone {
+		t.Fatalf("PTP family = %q, %t", family, ok)
+	}
+	if !slices.Contains(registry.NamesByFamily(trackers.FamilyUnit3D), "AITHER") {
 		t.Fatal("expected AITHER in Unit3D registry names")
 	}
 }

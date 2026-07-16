@@ -42,6 +42,7 @@ var trashGuideBannedGroupsURL = "https://raw.githubusercontent.com/TRaSH-Guides/
 type BannedGroupChecker struct {
 	basePath string
 	registry *Registry
+	client   *http.Client
 	mu       sync.Mutex
 	cache    map[string]map[string]struct{}
 }
@@ -92,6 +93,7 @@ func NewBannedGroupCheckerWithRegistry(dbPath string, registry *Registry) *Banne
 	return &BannedGroupChecker{
 		basePath: basePath,
 		registry: registry,
+		client:   &http.Client{Timeout: 20 * time.Second},
 		cache:    make(map[string]map[string]struct{}),
 	}
 }
@@ -127,7 +129,7 @@ func (c *BannedGroupChecker) IsBanned(tracker, group string) (bool, error) {
 // before durable writes so canceled refreshes do not replace cache files.
 func (c *BannedGroupChecker) RefreshDynamic(ctx context.Context, cfg config.Config, trackerNames []string, logger api.Logger) error {
 	fetch := func(ctx context.Context, cfg config.Config, tracker string) ([]string, []json.RawMessage, error) {
-		return fetchDynamicBannedGroups(ctx, cfg, tracker, c.registry)
+		return fetchDynamicBannedGroupsWithClient(ctx, cfg, tracker, c.registry, c.client)
 	}
 	return c.refreshDynamic(ctx, cfg, trackerNames, logger, fetch)
 }
@@ -423,18 +425,19 @@ func normalizedBannedGroupList(groups []string) []string {
 	return out
 }
 
-// fetchDynamicBannedGroups downloads every page for API-backed trackers, or the
-// TRaSH guide source for LUME. Missing endpoint config or API key returns
-// errBannedGroupsRefreshSkipped so callers do not overwrite an existing cache
-// with an empty file. Pagination is bounded and repeated cursors fail instead
-// of looping indefinitely.
-func fetchDynamicBannedGroups(ctx context.Context, cfg config.Config, tracker string, registry *Registry) ([]string, []json.RawMessage, error) {
+func fetchDynamicBannedGroupsWithClient(
+	ctx context.Context,
+	cfg config.Config,
+	tracker string,
+	registry *Registry,
+	client *http.Client,
+) ([]string, []json.RawMessage, error) {
 	policy, ok := registry.LookupBannedGroupPolicy(tracker)
 	if !ok {
 		return nil, nil, errBannedGroupsRefreshSkipped
 	}
 	if endpoint := strings.TrimSpace(policy.TRaSHGuideURL); endpoint != "" {
-		return fetchTRaSHGuideBannedGroups(ctx, endpoint)
+		return fetchTRaSHGuideBannedGroupsWithClient(ctx, endpoint, client)
 	}
 
 	endpoint, ok := bannedGroupsEndpoint(cfg, tracker, registry, policy)
@@ -446,7 +449,9 @@ func fetchDynamicBannedGroups(ctx context.Context, cfg config.Config, tracker st
 		return nil, nil, errBannedGroupsRefreshSkipped
 	}
 
-	client := &http.Client{Timeout: 20 * time.Second}
+	if client == nil {
+		client = &http.Client{Timeout: 20 * time.Second}
+	}
 	cursor := ""
 	groups := make([]string, 0)
 	rawItems := make([]json.RawMessage, 0)
@@ -478,7 +483,17 @@ func fetchDynamicBannedGroups(ctx context.Context, cfg config.Config, tracker st
 // extracts release-group specifications into the same cache shape as tracker
 // API-backed banned groups.
 func fetchTRaSHGuideBannedGroups(ctx context.Context, endpoint string) ([]string, []json.RawMessage, error) {
-	client := &http.Client{Timeout: 20 * time.Second}
+	return fetchTRaSHGuideBannedGroupsWithClient(ctx, endpoint, &http.Client{Timeout: 20 * time.Second})
+}
+
+func fetchTRaSHGuideBannedGroupsWithClient(
+	ctx context.Context,
+	endpoint string,
+	client *http.Client,
+) ([]string, []json.RawMessage, error) {
+	if client == nil {
+		client = &http.Client{Timeout: 20 * time.Second}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build TRaSH banned groups request: %w", err)
@@ -859,26 +874,12 @@ func bannedGroupName(raw json.RawMessage) string {
 // bannedGroupsEndpoint resolves the tracker-specific blacklist URL. AITHER and
 // LST use Unit3D-style base URLs; SPD uses its SpeedApp API endpoint.
 func bannedGroupsEndpoint(cfg config.Config, tracker string, registry *Registry, policy BannedGroupPolicy) (string, bool) {
-	if base, ok := configuredTrackerBaseURL(cfg, tracker); ok && strings.TrimSpace(policy.EndpointPath) != "" {
-		return strings.TrimRight(base, "/") + policy.EndpointPath, true
-	}
+	_ = cfg
 	if base, ok := registry.LookupBaseURL(tracker); ok && strings.TrimSpace(policy.EndpointPath) != "" {
 		return strings.TrimRight(base, "/") + policy.EndpointPath, true
 	}
 	endpoint := strings.TrimSpace(policy.DefaultEndpoint)
 	return endpoint, endpoint != ""
-}
-
-// configuredTrackerBaseURL derives a web base URL from configured tracker URL
-// fields without retaining announce paths or query strings.
-func configuredTrackerBaseURL(cfg config.Config, tracker string) (string, bool) {
-	entry := trackerConfigFor(cfg, tracker)
-	for _, value := range []string{entry.URL, entry.AnnounceURL, entry.MyAnnounceURL} {
-		if base := webBaseURL(value); base != "" {
-			return base, true
-		}
-	}
-	return "", false
 }
 
 // bannedGroupAPIKey returns the configured tracker API key used for dynamic
@@ -889,17 +890,3 @@ func bannedGroupAPIKey(cfg config.Config, tracker string) string {
 
 // webBaseURL strips a configured URL to scheme and host for API endpoint
 // construction.
-func webBaseURL(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	parsed, err := url.Parse(trimmed)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return ""
-	}
-	parsed.Path = ""
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return strings.TrimRight(parsed.String(), "/")
-}
