@@ -72,14 +72,50 @@ func TestMergeNativeConfigObjectOverlayMatrix(t *testing.T) {
 		payload []byte
 		wantErr bool
 	}{
-		{name: "yaml-null", format: "yaml", payload: []byte("main_settings: null\n")},
-		{name: "yaml-empty-map", format: "yaml", payload: []byte("main_settings: {}\n")},
-		{name: "yaml-empty-array", format: "yaml", payload: []byte("main_settings: []\n"), wantErr: true},
-		{name: "yaml-scalar", format: "yaml", payload: []byte("main_settings: nope\n"), wantErr: true},
-		{name: "json-null", format: "json", payload: []byte(`{"MainSettings":null}`)},
-		{name: "json-empty-map", format: "json", payload: []byte(`{"MainSettings":{}}`)},
-		{name: "json-empty-array", format: "json", payload: []byte(`{"MainSettings":[]}`), wantErr: true},
-		{name: "json-scalar", format: "json", payload: []byte(`{"MainSettings":"nope"}`), wantErr: true},
+		{
+			name:    "yaml-null",
+			format:  "yaml",
+			payload: []byte("main_settings: null\n"),
+		},
+		{
+			name:    "yaml-empty-map",
+			format:  "yaml",
+			payload: []byte("main_settings: {}\n"),
+		},
+		{
+			name:    "yaml-empty-array",
+			format:  "yaml",
+			payload: []byte("main_settings: []\n"),
+			wantErr: true,
+		},
+		{
+			name:    "yaml-scalar",
+			format:  "yaml",
+			payload: []byte("main_settings: nope\n"),
+			wantErr: true,
+		},
+		{
+			name:    "json-null",
+			format:  "json",
+			payload: []byte(`{"MainSettings":null}`),
+		},
+		{
+			name:    "json-empty-map",
+			format:  "json",
+			payload: []byte(`{"MainSettings":{}}`),
+		},
+		{
+			name:    "json-empty-array",
+			format:  "json",
+			payload: []byte(`{"MainSettings":[]}`),
+			wantErr: true,
+		},
+		{
+			name:    "json-scalar",
+			format:  "json",
+			payload: []byte(`{"MainSettings":"nope"}`),
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -190,8 +226,16 @@ func TestMergeNativeConfigTorrentClientCollectionNullKeepsStoredClients(t *testi
 		format  string
 		payload []byte
 	}{
-		{name: "yaml", format: "yaml", payload: []byte("torrent_clients: null\n")},
-		{name: "json", format: "json", payload: []byte(`{"TorrentClients":null}`)},
+		{
+			name:    "yaml",
+			format:  "yaml",
+			payload: []byte("torrent_clients: null\n"),
+		},
+		{
+			name:    "json",
+			format:  "json",
+			payload: []byte(`{"TorrentClients":null}`),
+		},
 	}
 
 	for _, tt := range tests {
@@ -232,10 +276,26 @@ func TestMergeNativeConfigRejectsInvalidDynamicTorrentClientEntries(t *testing.T
 		format  string
 		payload []byte
 	}{
-		{name: "yaml-scalar", format: "yaml", payload: []byte("torrent_clients:\n  watch-client: nope\n")},
-		{name: "yaml-array", format: "yaml", payload: []byte("torrent_clients:\n  watch-client: []\n")},
-		{name: "json-scalar", format: "json", payload: []byte(`{"TorrentClients":{"watch-client":"nope"}}`)},
-		{name: "json-array", format: "json", payload: []byte(`{"TorrentClients":{"watch-client":[]}}`)},
+		{
+			name:    "yaml-scalar",
+			format:  "yaml",
+			payload: []byte("torrent_clients:\n  watch-client: nope\n"),
+		},
+		{
+			name:    "yaml-array",
+			format:  "yaml",
+			payload: []byte("torrent_clients:\n  watch-client: []\n"),
+		},
+		{
+			name:    "json-scalar",
+			format:  "json",
+			payload: []byte(`{"TorrentClients":{"watch-client":"nope"}}`),
+		},
+		{
+			name:    "json-array",
+			format:  "json",
+			payload: []byte(`{"TorrentClients":{"watch-client":[]}}`),
+		},
 	}
 
 	for _, tt := range tests {
@@ -340,16 +400,56 @@ func TestMergeNativeConfigRejectsUnknownTopLevelSections(t *testing.T) {
 		format  string
 		payload []byte
 	}{
-		{name: "yaml-scalar", format: "yaml", payload: []byte("unknown_section: nope\n")},
-		{name: "yaml-array", format: "yaml", payload: []byte("unknown_section: []\n")},
-		{name: "yaml-object", format: "yaml", payload: []byte("unknown_section:\n  nested: true\n")},
-		{name: "yaml-null", format: "yaml", payload: []byte("unknown_section: null\n")},
-		{name: "yaml-case-twin", format: "yaml", payload: []byte("MainSettings:\n  TMDBAPI: wrong\n")},
-		{name: "json-scalar", format: "json", payload: []byte(`{"UnknownSection":"nope"}`)},
-		{name: "json-array", format: "json", payload: []byte(`{"UnknownSection":[]}`)},
-		{name: "json-object", format: "json", payload: []byte(`{"UnknownSection":{"nested":true}}`)},
-		{name: "json-null", format: "json", payload: []byte(`{"UnknownSection":null}`)},
-		{name: "json-case-twin", format: "json", payload: []byte(`{"main_settings":{"tmdb_api":"wrong"}}`)},
+		{
+			name:    "yaml-scalar",
+			format:  "yaml",
+			payload: []byte("unknown_section: nope\n"),
+		},
+		{
+			name:    "yaml-array",
+			format:  "yaml",
+			payload: []byte("unknown_section: []\n"),
+		},
+		{
+			name:    "yaml-object",
+			format:  "yaml",
+			payload: []byte("unknown_section:\n  nested: true\n"),
+		},
+		{
+			name:    "yaml-null",
+			format:  "yaml",
+			payload: []byte("unknown_section: null\n"),
+		},
+		{
+			name:    "yaml-case-twin",
+			format:  "yaml",
+			payload: []byte("MainSettings:\n  TMDBAPI: wrong\n"),
+		},
+		{
+			name:    "json-scalar",
+			format:  "json",
+			payload: []byte(`{"UnknownSection":"nope"}`),
+		},
+		{
+			name:    "json-array",
+			format:  "json",
+			payload: []byte(`{"UnknownSection":[]}`),
+		},
+		{
+			name:    "json-object",
+			format:  "json",
+			payload: []byte(`{"UnknownSection":{"nested":true}}`),
+		},
+		{
+			name:    "json-null",
+			format:  "json",
+			payload: []byte(`{"UnknownSection":null}`),
+		},
+		{
+			name:    "json-case-twin",
+			format:  "json",
+			payload: []byte(`{"main_settings":{"tmdb_api":"wrong"}}`),
+		},
 	}
 
 	for _, tt := range tests {

@@ -20,10 +20,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/autobrr/upbrr/internal/paths"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
-	"github.com/autobrr/upbrr/internal/trackerdata"
-	"github.com/autobrr/upbrr/pkg/api"
+	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 )
 
 const (
@@ -36,7 +37,13 @@ var newUnit3DArtifactImageHTTPClient = func() *http.Client {
 	return trackerdata.Unit3DImageHTTPClient(&http.Client{Timeout: unit3dImageTimeout})
 }
 
-func (s *Service) persistUnit3DArtifacts(ctx context.Context, meta api.PreparedMetadata, tracker string, result trackerdata.Result, keepImages bool) []string {
+func (s *Service) persistUnit3DArtifacts(
+	ctx context.Context,
+	meta preparationstate.State,
+	tracker string,
+	result trackerdata.Result,
+	keepImages bool,
+) []string {
 	if strings.TrimSpace(result.Description) == "" && (len(result.Validated) == 0 || !keepImages) {
 		if s.logger != nil {
 			s.logger.Debugf("metadata: unit3d artifacts skipped (no description/images)")
@@ -71,7 +78,13 @@ func (s *Service) persistUnit3DArtifacts(ctx context.Context, meta api.PreparedM
 		return nil
 	}
 	if s.logger != nil {
-		s.logger.Debugf("metadata: unit3d artifacts dir=%s desc=%t images=%d keepImages=%t", artifactDir, strings.TrimSpace(result.Description) != "", len(result.Validated), keepImages)
+		s.logger.Debugf(
+			"metadata: unit3d artifacts dir=%s desc=%t images=%d keepImages=%t",
+			artifactDir,
+			strings.TrimSpace(result.Description) != "",
+			len(result.Validated),
+			keepImages,
+		)
 	}
 
 	if strings.TrimSpace(result.Description) != "" {

@@ -10,7 +10,7 @@ import (
 
 	"github.com/moistari/rls"
 
-	"github.com/autobrr/upbrr/internal/pathutil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 )
 
 type ParsedRelease struct {
@@ -99,7 +99,14 @@ func ReduceTitle(filename string, drop int) string {
 	if len(words) <= drop {
 		return ""
 	}
-	extensions := map[string]struct{}{"mp4": {}, "mkv": {}, "avi": {}, "webm": {}, "mov": {}, "wmv": {}}
+	extensions := map[string]struct{}{
+		"mp4":  {},
+		"mkv":  {},
+		"avi":  {},
+		"webm": {},
+		"mov":  {},
+		"wmv":  {},
+	}
 	filtered := make([]string, 0, len(words))
 	for _, word := range words {
 		if _, ok := extensions[strings.ToLower(word)]; ok {

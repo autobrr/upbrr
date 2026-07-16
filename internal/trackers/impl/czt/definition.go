@@ -13,40 +13,50 @@ import (
 type definition struct{}
 
 // New returns the CZTeam tracker definition used by the tracker registry.
+// New returns a fresh CZT tracker definition through the shared preparation contract.
 func New() trackers.Definition  { return definition{} }
 func (definition) Name() string { return "CZT" }
 
+func (definition) MetadataPolicy() *trackers.TrackerMetadataPolicy {
+	return &trackers.TrackerMetadataPolicy{
+		Requirements: []trackers.MetadataRequirement{{Scope: trackers.MetadataScopeAny, AnyOf: []trackers.MetadataField{trackers.MetadataFieldIMDBIDOnly}}},
+	}
+}
+
 // Upload submits a CZTeam upload request and returns the persisted registered
 // torrent artifact on tracker success.
-func (definition) Upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
+func (d definition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
+	return trackers.PrepareAdapter(ctx, input, d.prepareDescription, d.prepareDryRun, d.submit)
+}
+
+func (definition) submit(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
 	return upload(ctx, req)
 }
 
 // BuildUploadDryRun builds the CZTeam multipart payload preview without
 // sending it to the tracker.
-func (definition) BuildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
+func (definition) prepareDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
 	return buildUploadDryRun(ctx, req)
 }
 
 // BuildDescription renders the CZTeam user description, preferring caller
 // supplied description assets and resolving assets only as a fallback.
-func (definition) BuildDescription(ctx context.Context, req trackers.DescriptionRequest) (trackers.DescriptionResult, error) {
+func (definition) prepareDescription(_ context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {
 	assets := trackers.DescriptionAssets{}
 	if req.Assets != nil {
 		assets = *req.Assets
 	} else {
-		resolved, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+		resolved, err := trackers.PreparedDescriptionAssets(req.Assets)
 		if err == nil {
 			assets = resolved
 		}
 	}
-	description := buildDescription(trackers.UploadRequest{
+	description := buildDescription(trackers.PreparationInput{
 		Tracker:       req.Tracker,
 		Meta:          req.Meta,
 		TrackerConfig: req.TrackerConfig,
-		AppConfig:     req.AppConfig,
+		Runtime:       req.Runtime,
 		Logger:        req.Logger,
-		Repo:          req.Repo,
 	}, assets)
 	return trackers.DescriptionResult{Group: descGroup, Description: description}, nil
 }

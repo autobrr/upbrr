@@ -17,32 +17,32 @@ import (
 func TestResolveTypeID(t *testing.T) {
 	t.Parallel()
 
-	if got := resolveTypeID(api.PreparedMetadata{
+	if got := resolveTypeID(api.UploadSubject{
 		Type:   "REMUX",
 		Source: "Blu-ray",
 	}); got != "14" {
 		t.Fatalf("expected bluray remux type 14, got %q", got)
 	}
 
-	if got := resolveTypeID(api.PreparedMetadata{
+	if got := resolveTypeID(api.UploadSubject{
 		Anime:   true,
 		Release: api.ReleaseInfo{Resolution: "1080p"},
 	}); got != "16" {
 		t.Fatalf("expected anime hd type 16, got %q", got)
 	}
 
-	if got := resolveTypeID(api.PreparedMetadata{
-		TVPack:      true,
-		ExternalIDs: api.ExternalIDs{Category: "TV"},
-		Release:     api.ReleaseInfo{Resolution: "480p"},
+	if got := resolveTypeID(api.UploadSubject{
+		TVPack:   true,
+		Identity: api.ExternalIdentity{Category: "TV"},
+		Release:  api.ReleaseInfo{Resolution: "480p"},
 	}); got != "4" {
 		t.Fatalf("expected tv pack sd type 4, got %q", got)
 	}
 
-	if got := resolveTypeID(api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
-		Release:     api.ReleaseInfo{Resolution: "1080p"},
-		ExternalMetadata: api.ExternalMetadata{
+	if got := resolveTypeID(api.UploadSubject{
+		Identity: api.ExternalIdentity{Category: "MOVIE"},
+		Release:  api.ReleaseInfo{Resolution: "1080p"},
+		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{Genres: "Drama", Keywords: "adult"},
 		},
 	}); got != "13" {
@@ -59,16 +59,16 @@ func TestDefinitionBuildUploadDryRunBlockedWithoutPoster(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	entry, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+	entry, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "AR",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath: torrentPath,
 			Release:     api.ReleaseInfo{Title: "Movie", Resolution: "1080p"},
-			ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+			Identity:    api.ExternalIdentity{Category: "MOVIE"},
 		},
 		TrackerConfig: config.TrackerConfig{},
-		AppConfig:     config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}},
+		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
 		Logger:        api.NopLogger{},
 	})
 	if err != nil {

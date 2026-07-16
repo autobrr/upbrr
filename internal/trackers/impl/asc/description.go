@@ -21,7 +21,7 @@ import (
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
-	"github.com/autobrr/upbrr/internal/paths"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -210,7 +210,7 @@ func fetchRichEpisode(ctx context.Context, client *tmdb.Client, tmdbID, season, 
 	return ep, nil
 }
 
-func buildDescription(ctx context.Context, meta api.PreparedMetadata, cfg config.Config, assets trackers.DescriptionAssets, layoutID string) string {
+func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Config, assets trackers.DescriptionAssets, layoutID string) string {
 	if assets.Override && strings.TrimSpace(assets.Description) != "" {
 		return strings.TrimSpace(assets.Description)
 	}
@@ -238,7 +238,7 @@ func buildDescription(ctx context.Context, meta api.PreparedMetadata, cfg config
 	}
 
 	apiKey := strings.TrimSpace(cfg.MainSettings.TMDBAPI)
-	tmdbID := meta.ExternalIDs.TMDBID
+	tmdbID := meta.Identity.TMDBID
 
 	// TMDB Sub-queries
 	var richMedia *richMediaResponse
@@ -350,10 +350,10 @@ func buildDescription(ctx context.Context, meta api.PreparedMetadata, cfg config
 			hasTMDbRating = true
 		}
 	}
-	if !hasIMDbRating && meta.ExternalMetadata.IMDB != nil && meta.ExternalMetadata.IMDB.Rating > 0 {
+	if !hasIMDbRating && meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Rating > 0 {
 		ratingsList = append(ratingsList, map[string]any{
 			"Source": "Internet Movie Database",
-			"Value":  fmt.Sprintf("%.1f/10", meta.ExternalMetadata.IMDB.Rating),
+			"Value":  fmt.Sprintf("%.1f/10", meta.ProviderMetadata.IMDB.Rating),
 		})
 	}
 	if !hasTMDbRating && richMedia != nil && richMedia.VoteAverage > 0 {
@@ -390,7 +390,7 @@ func buildDescription(ctx context.Context, meta api.PreparedMetadata, cfg config
 	return strings.TrimSpace(strings.Join(filterEmpty(parts), "\n\n"))
 }
 
-func fetchLayout(ctx context.Context, dbPath string, meta api.PreparedMetadata, layoutID string) (layoutData, error) {
+func fetchLayout(ctx context.Context, dbPath string, meta api.UploadSubject, layoutID string) (layoutData, error) {
 	cached, err := readLayoutCache(dbPath, layoutID)
 	if err == nil {
 		return cached, nil
@@ -496,7 +496,7 @@ func layoutCachePath(dbPath string, layoutID string) string {
 	return filepath.Join(cacheRoot, "asc_layout_"+metautil.FirstNonEmptyTrimmed(strings.TrimSpace(layoutID), "2")+".json")
 }
 
-func buildTechnicalSheet(meta api.PreparedMetadata, richMedia *richMediaResponse) string {
+func buildTechnicalSheet(meta api.UploadSubject, richMedia *richMediaResponse) string {
 	items := make([]string, 0, 5)
 	if runtime := resolveRuntime(meta); runtime != "" {
 		items = append(items, "Duração: "+runtime)
@@ -572,13 +572,13 @@ func hasEscapedBBCodeURLAttributeUnsafeChar(parsed *url.URL) bool {
 	return false
 }
 
-func buildProductionCompanies(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB == nil || len(meta.ExternalMetadata.TMDB.ProductionCompanies) == 0 {
+func buildProductionCompanies(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.TMDB == nil || len(meta.ProviderMetadata.TMDB.ProductionCompanies) == 0 {
 		return ""
 	}
 	var parts []string
 	parts = append(parts, "[size=4][b]Produtoras[/b][/size]")
-	for _, comp := range meta.ExternalMetadata.TMDB.ProductionCompanies {
+	for _, comp := range meta.ProviderMetadata.TMDB.ProductionCompanies {
 		if strings.TrimSpace(comp.Name) == "" {
 			continue
 		}
@@ -595,7 +595,7 @@ func buildProductionCompanies(meta api.PreparedMetadata) string {
 	return strings.Join(parts, "\n")
 }
 
-func buildCastSection(meta api.PreparedMetadata, richCast []richCreditItem) string {
+func buildCastSection(meta api.UploadSubject, richCast []richCreditItem) string {
 	if len(richCast) == 0 {
 		names := resolveCast(meta)
 		if len(names) == 0 {
@@ -630,7 +630,7 @@ func buildCastSection(meta api.PreparedMetadata, richCast []richCreditItem) stri
 	return strings.Join(parts, "")
 }
 
-func buildRatingsBBCode(meta api.PreparedMetadata, ratingsList []map[string]any) string {
+func buildRatingsBBCode(meta api.UploadSubject, ratingsList []map[string]any) string {
 	if len(ratingsList) == 0 {
 		return ""
 	}
@@ -655,16 +655,16 @@ func buildRatingsBBCode(meta api.PreparedMetadata, ratingsList []map[string]any)
 		switch source {
 		case "Internet Movie Database":
 			imdbURL := ""
-			if meta.ExternalMetadata.IMDB != nil {
-				imdbURL = meta.ExternalMetadata.IMDB.IMDbURL
+			if meta.ProviderMetadata.IMDB != nil {
+				imdbURL = meta.ProviderMetadata.IMDB.IMDbURL
 			}
-			if imdbURL == "" && meta.ExternalIDs.IMDBID > 0 {
-				imdbURL = fmt.Sprintf("https://www.imdb.com/title/tt%07d", meta.ExternalIDs.IMDBID)
+			if imdbURL == "" && meta.Identity.IMDBID > 0 {
+				imdbURL = fmt.Sprintf("https://www.imdb.com/title/tt%07d", meta.Identity.IMDBID)
 			}
 			parts = append(parts, fmt.Sprintf("\n[url=%s]%s[/url]\n[b]%s[/b]\n", imdbURL, imgTag, value))
 		case "TMDb":
 			category := strings.ToLower(categoryOf(meta))
-			tmdbID := meta.ExternalIDs.TMDBID
+			tmdbID := meta.Identity.TMDBID
 			parts = append(parts, fmt.Sprintf("[url=https://www.themoviedb.org/%s/%d]%s[/url]\n[b]%s[/b]\n", category, tmdbID, imgTag, value))
 		default:
 			parts = append(parts, fmt.Sprintf("%s\n[b]%s[/b]\n", imgTag, value))
@@ -684,7 +684,7 @@ func formatDate(dateStr string) string {
 	return dateStr
 }
 
-func buildMediaInfo(meta api.PreparedMetadata, dbPath string) string {
+func buildMediaInfo(meta api.UploadSubject, dbPath string) string {
 	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
 	case "BDMV":
 		text, _ := readBDSummary(meta, dbPath)
@@ -696,16 +696,16 @@ func buildMediaInfo(meta api.PreparedMetadata, dbPath string) string {
 	}
 }
 
-func readBDSummary(meta api.PreparedMetadata, dbPath string) (string, error) {
+func readBDSummary(meta api.UploadSubject, dbPath string) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
 		return "", fmt.Errorf("trackers: %w", err)
 	}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return "", fmt.Errorf("trackers: %w", err)
 	}
-	return readTextFile(paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta)))
+	return readTextFile(paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylistFor(meta.SelectedBDMVPlaylists)))
 }
 
 func sanitizeDescriptionNotes(value string) string {

@@ -123,12 +123,12 @@ func TestCleanAndNormalizeBTNName(t *testing.T) {
 func TestResolveUploadNameGroupTag(t *testing.T) {
 	tests := []struct {
 		name     string
-		meta     api.PreparedMetadata
+		meta     api.UploadSubject
 		expected string
 	}{
 		{
 			name: "Valid group tag in meta.Tag",
-			meta: api.PreparedMetadata{
+			meta: api.UploadSubject{
 				ReleaseName: "Example.Show.S01E01.1080p.Web-DL.x265-GRP",
 				Tag:         "GRP",
 			},
@@ -136,7 +136,7 @@ func TestResolveUploadNameGroupTag(t *testing.T) {
 		},
 		{
 			name: "Valid group tag appended to ReleaseNameNoTag",
-			meta: api.PreparedMetadata{
+			meta: api.UploadSubject{
 				ReleaseNameNoTag: "Example.Show.S01E01.1080p.Web-DL",
 				Tag:              "GRP",
 			},
@@ -144,7 +144,7 @@ func TestResolveUploadNameGroupTag(t *testing.T) {
 		},
 		{
 			name: "Missing group tag",
-			meta: api.PreparedMetadata{
+			meta: api.UploadSubject{
 				ReleaseName: "Example.Show.S01E01.1080p.Web-DL.x265",
 				Tag:         "",
 			},
@@ -152,7 +152,7 @@ func TestResolveUploadNameGroupTag(t *testing.T) {
 		},
 		{
 			name: "Missing parsed tag preserves existing release suffix",
-			meta: api.PreparedMetadata{
+			meta: api.UploadSubject{
 				ReleaseName: "Example.Show.S01E01.1080p.Web-DL.x265-GRP",
 				Tag:         "",
 			},
@@ -160,7 +160,7 @@ func TestResolveUploadNameGroupTag(t *testing.T) {
 		},
 		{
 			name: "Unknown group tag in meta.Tag",
-			meta: api.PreparedMetadata{
+			meta: api.UploadSubject{
 				ReleaseName: "Example.Show.S01E01.1080p.Web-DL.x265",
 				Tag:         "nogrp",
 			},
@@ -168,7 +168,7 @@ func TestResolveUploadNameGroupTag(t *testing.T) {
 		},
 		{
 			name: "Existing unknown group tag in ReleaseName",
-			meta: api.PreparedMetadata{
+			meta: api.UploadSubject{
 				ReleaseName: "Example.Show.S01E01.1080p.Web-DL.x265-unknown",
 				Tag:         "unknown",
 			},
@@ -176,7 +176,7 @@ func TestResolveUploadNameGroupTag(t *testing.T) {
 		},
 		{
 			name: "Generated episode title absent from filename stripped",
-			meta: api.PreparedMetadata{
+			meta: api.UploadSubject{
 				Filename:     "Example.Show.S01E01.1080p.WEB-DL.x265-GRP.mkv",
 				ReleaseName:  "Example.Show.S01E01.Episode.One.1080p.WEB-DL.x265-GRP",
 				EpisodeTitle: "Episode One",
@@ -186,7 +186,7 @@ func TestResolveUploadNameGroupTag(t *testing.T) {
 		},
 		{
 			name: "Filename episode title preserved",
-			meta: api.PreparedMetadata{
+			meta: api.UploadSubject{
 				Filename:     "Example.Show.S01E01.Episode.One.1080p.WEB-DL.x265-GRP.mkv",
 				ReleaseName:  "Example.Show.S01E01.Episode.One.1080p.WEB-DL.x265-GRP",
 				EpisodeTitle: "Episode One",
@@ -196,7 +196,7 @@ func TestResolveUploadNameGroupTag(t *testing.T) {
 		},
 		{
 			name: "Episode title substring preserved",
-			meta: api.PreparedMetadata{
+			meta: api.UploadSubject{
 				Filename:     "Example.Show.S01E01.1080p.WEB-DL.x265-GRP.mkv",
 				ReleaseName:  "Example.Show.S01E01.Someone.1080p.WEB-DL.x265-GRP",
 				EpisodeTitle: "One",
@@ -221,27 +221,27 @@ func TestResolveOrigin(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		meta     api.PreparedMetadata
+		meta     api.UploadSubject
 		expected string
 	}{
 		{
 			name:     "scene metadata",
-			meta:     api.PreparedMetadata{Scene: true},
+			meta:     api.UploadSubject{Scene: true},
 			expected: "Scene",
 		},
 		{
 			name:     "scene name metadata",
-			meta:     api.PreparedMetadata{SceneName: "Example.Show.S01E01.1080p.WEB-DL.x264-GRP"},
+			meta:     api.UploadSubject{SceneName: "Example.Show.S01E01.1080p.WEB-DL.x264-GRP"},
 			expected: "Scene",
 		},
 		{
 			name:     "non-scene metadata",
-			meta:     api.PreparedMetadata{ReleaseName: "Example.Show.S01E01.1080p.WEB-DL.x264-GRP"},
+			meta:     api.UploadSubject{ReleaseName: "Example.Show.S01E01.1080p.WEB-DL.x264-GRP"},
 			expected: "P2P",
 		},
 		{
 			name: "mixed season pack groups",
-			meta: api.PreparedMetadata{
+			meta: api.UploadSubject{
 				TVPack: true,
 				FileList: []string{
 					`C:\media\Example.Show.S01E01.1080p.WEB-DL.x264-GRP.mkv`,
@@ -252,7 +252,7 @@ func TestResolveOrigin(t *testing.T) {
 		},
 		{
 			name: "same season pack groups",
-			meta: api.PreparedMetadata{
+			meta: api.UploadSubject{
 				TVPack: true,
 				FileList: []string{
 					`C:\media\Example.Show.S01E01.1080p.WEB-DL.x264-GRP.mkv`,
@@ -263,7 +263,7 @@ func TestResolveOrigin(t *testing.T) {
 		},
 		{
 			name: "mixed file groups ignored outside season packs",
-			meta: api.PreparedMetadata{
+			meta: api.UploadSubject{
 				FileList: []string{
 					`C:\media\Example.Show.S01E01.1080p.WEB-DL.x264-GRP.mkv`,
 					`C:\media\Example.Show.S01E02.1080p.WEB-DL.x264-ALT.mkv`,
@@ -273,7 +273,7 @@ func TestResolveOrigin(t *testing.T) {
 		},
 		{
 			name: "none origin for no group tag",
-			meta: api.PreparedMetadata{
+			meta: api.UploadSubject{
 				Release: api.ReleaseInfo{Group: "nogrp"},
 			},
 			expected: "None",
@@ -304,27 +304,27 @@ func TestResolveBTNUploadFilesSceneNFO(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		meta       api.PreparedMetadata
+		meta       api.UploadSubject
 		wantFields []string
 	}{
 		{
 			name:       "scene release attaches nfo",
-			meta:       api.PreparedMetadata{Scene: true, SceneNFOPath: nfoPath},
+			meta:       api.UploadSubject{Scene: true, SceneNFOPath: nfoPath},
 			wantFields: []string{"file_input", "nfo"},
 		},
 		{
 			name:       "scene name attaches nfo",
-			meta:       api.PreparedMetadata{SceneName: "Example.Show.S01E01.1080p.WEB-DL.x264-GRP", SceneNFOPath: nfoPath},
+			meta:       api.UploadSubject{SceneName: "Example.Show.S01E01.1080p.WEB-DL.x264-GRP", SceneNFOPath: nfoPath},
 			wantFields: []string{"file_input", "nfo"},
 		},
 		{
 			name:       "non-scene ignores nfo path",
-			meta:       api.PreparedMetadata{SceneNFOPath: nfoPath},
+			meta:       api.UploadSubject{SceneNFOPath: nfoPath},
 			wantFields: []string{"file_input"},
 		},
 		{
 			name:       "scene release skips missing nfo path",
-			meta:       api.PreparedMetadata{Scene: true, SceneNFOPath: filepath.Join(dir, "missing.nfo")},
+			meta:       api.UploadSubject{Scene: true, SceneNFOPath: filepath.Join(dir, "missing.nfo")},
 			wantFields: []string{"file_input"},
 		},
 	}
@@ -357,40 +357,40 @@ func TestResolveCountryIDUsesExactAliases(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		meta     api.PreparedMetadata
+		meta     api.UploadSubject
 		expected string
 	}{
 		{
 			name: "TVDB alpha3 exact",
-			meta: api.PreparedMetadata{ExternalMetadata: api.ExternalMetadata{
+			meta: api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{
 				TVDB: &api.TVDBMetadata{OriginalCountry: "usa"},
 			}},
 			expected: "2",
 		},
 		{
 			name: "TMDB alpha2 exact",
-			meta: api.PreparedMetadata{ExternalMetadata: api.ExternalMetadata{
+			meta: api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{
 				TMDB: &api.TMDBMetadata{OriginCountry: []string{"GB"}},
 			}},
 			expected: "12",
 		},
 		{
 			name: "IMDB compound alias",
-			meta: api.PreparedMetadata{ExternalMetadata: api.ExternalMetadata{
+			meta: api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{
 				IMDB: &api.IMDBMetadata{Country: "Trinidad and Tobago"},
 			}},
 			expected: "75",
 		},
 		{
 			name: "punctuation normalized exact alias",
-			meta: api.PreparedMetadata{ExternalMetadata: api.ExternalMetadata{
+			meta: api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{
 				IMDB: &api.IMDBMetadata{Country: "Bosnia & Herzegovina"},
 			}},
 			expected: "64",
 		},
 		{
 			name: "ambiguous partial name rejected",
-			meta: api.PreparedMetadata{ExternalMetadata: api.ExternalMetadata{
+			meta: api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{
 				IMDB: &api.IMDBMetadata{Country: "Korea"},
 			}},
 			expected: "",
@@ -526,7 +526,7 @@ func TestResolveCountryIDSupportsBTNCountryOptions(t *testing.T) {
 	}
 
 	for name, expected := range countries {
-		meta := api.PreparedMetadata{ExternalMetadata: api.ExternalMetadata{
+		meta := api.UploadSubject{ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{Country: name},
 		}}
 		if got := resolveCountryID(meta); got != expected {
@@ -579,7 +579,7 @@ func TestBTNDropdownMappingsPreferMetadataThenAutofill(t *testing.T) {
 		"media":      "HDTV",
 		"resolution": "2160p",
 	}
-	metadata := api.PreparedMetadata{
+	metadata := api.UploadSubject{
 		Container:   "mkv",
 		VideoEncode: "x265",
 		Source:      "WEB-DL",
@@ -599,7 +599,7 @@ func TestBTNDropdownMappingsPreferMetadataThenAutofill(t *testing.T) {
 		t.Fatalf("expected metadata resolution, got %q", got)
 	}
 
-	invalidMetadata := api.PreparedMetadata{
+	invalidMetadata := api.UploadSubject{
 		Container:   "unknown-container",
 		VideoEncode: "unknown-codec",
 		Source:      "unknown-source",
@@ -618,10 +618,10 @@ func TestBTNDropdownMappingsPreferMetadataThenAutofill(t *testing.T) {
 	if got := mapResolution(invalidMetadata, autofillFields); got != "2160p" {
 		t.Fatalf("expected autofill resolution, got %q", got)
 	}
-	if got := mapResolution(api.PreparedMetadata{Release: api.ReleaseInfo{Resolution: "Portable Device"}}, autofillFields); got != "Portable Device" {
+	if got := mapResolution(api.UploadSubject{Release: api.ReleaseInfo{Resolution: "Portable Device"}}, autofillFields); got != "Portable Device" {
 		t.Fatalf("expected metadata portable-device resolution, got %q", got)
 	}
-	if got := mapResolution(api.PreparedMetadata{Release: api.ReleaseInfo{Resolution: "Mixed"}}, autofillFields); got != "Mixed" {
+	if got := mapResolution(api.UploadSubject{Release: api.ReleaseInfo{Resolution: "Mixed"}}, autofillFields); got != "Mixed" {
 		t.Fatalf("expected metadata mixed resolution, got %q", got)
 	}
 }
@@ -629,8 +629,8 @@ func TestBTNDropdownMappingsPreferMetadataThenAutofill(t *testing.T) {
 func TestResolveBTNTagsUsesAutofillThenMetadataGenres(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
-		ExternalMetadata: api.ExternalMetadata{
+	meta := api.UploadSubject{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TVDB: &api.TVDBMetadata{Genres: "Drama, Science-Fiction, Mystery, Unlisted"},
 			IMDB: &api.IMDBMetadata{Genres: "Comedy, Crime"},
 		},
@@ -642,11 +642,11 @@ func TestResolveBTNTagsUsesAutofillThenMetadataGenres(t *testing.T) {
 		t.Fatalf("expected TVDB fallback tags, got %q", got)
 	}
 
-	meta.ExternalMetadata.TVDB.Genres = ""
+	meta.ProviderMetadata.TVDB.Genres = ""
 	if got := resolveBTNTags(meta, map[string]string{}); got != "Comedy, Crime" {
 		t.Fatalf("expected IMDb fallback tags, got %q", got)
 	}
-	if got := resolveBTNTags(api.PreparedMetadata{}, map[string]string{}); got != "" {
+	if got := resolveBTNTags(api.UploadSubject{}, map[string]string{}); got != "" {
 		t.Fatalf("expected empty tags without autofill or provider genres, got %q", got)
 	}
 }
@@ -654,8 +654,8 @@ func TestResolveBTNTagsUsesAutofillThenMetadataGenres(t *testing.T) {
 func TestResolveBTNImageUsesAutofillThenMetadataPosters(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
-		ExternalMetadata: api.ExternalMetadata{
+	meta := api.UploadSubject{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TVDB:   &api.TVDBMetadata{Poster: "https://img.example/tvdb.jpg"},
 			IMDB:   &api.IMDBMetadata{Cover: "https://img.example/imdb.jpg"},
 			TVmaze: &api.TVmazeMetadata{Poster: "https://img.example/tvmaze.jpg", PosterMedium: "https://img.example/tvmaze-medium.jpg"},
@@ -669,19 +669,19 @@ func TestResolveBTNImageUsesAutofillThenMetadataPosters(t *testing.T) {
 		t.Fatalf("expected TVDB poster, got %q", got)
 	}
 
-	meta.ExternalMetadata.TVDB = nil
+	meta.ProviderMetadata.TVDB = nil
 	if got := resolveBTNImage(meta, map[string]string{}); got != "https://img.example/imdb.jpg" {
 		t.Fatalf("expected IMDb poster, got %q", got)
 	}
-	meta.ExternalMetadata.IMDB = nil
+	meta.ProviderMetadata.IMDB = nil
 	if got := resolveBTNImage(meta, map[string]string{}); got != "https://img.example/tvmaze.jpg" {
 		t.Fatalf("expected TVmaze poster, got %q", got)
 	}
-	meta.ExternalMetadata.TVmaze.Poster = ""
+	meta.ProviderMetadata.TVmaze.Poster = ""
 	if got := resolveBTNImage(meta, map[string]string{}); got != "https://img.example/tvmaze-medium.jpg" {
 		t.Fatalf("expected TVmaze medium poster, got %q", got)
 	}
-	meta.ExternalMetadata.TVmaze = nil
+	meta.ProviderMetadata.TVmaze = nil
 	if got := resolveBTNImage(meta, map[string]string{}); got != "https://img.example/tmdb.jpg" {
 		t.Fatalf("expected TMDB poster, got %q", got)
 	}
@@ -745,9 +745,9 @@ func TestDecodeBTNAPIJSONRejectsDuplicateKeysAndLargeBodies(t *testing.T) {
 func TestBTNUploadPayloadUsesCanonicalSeasonEpisodeOnly(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{Category: "TV"},
-		Release:     api.ReleaseInfo{Season: 4, Episode: 9},
+	meta := api.UploadSubject{
+		Identity: api.ExternalIdentity{Category: "TV"},
+		Release:  api.ReleaseInfo{Season: 4, Episode: 9},
 	}
 
 	if got := resolveUploadType(meta); got != "Season" {
@@ -770,11 +770,11 @@ func TestBTNUploadPayloadUsesCanonicalSeasonEpisodeOnly(t *testing.T) {
 func TestBTNUploadTypeUsesCanonicalEpisode(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{Category: "TV"},
-		SeasonInt:   4,
-		EpisodeInt:  9,
-		Release:     api.ReleaseInfo{Season: 1, Episode: 2},
+	meta := api.UploadSubject{
+		Identity:   api.ExternalIdentity{Category: "TV"},
+		SeasonInt:  4,
+		EpisodeInt: 9,
+		Release:    api.ReleaseInfo{Season: 1, Episode: 2},
 	}
 
 	if got := resolveUploadType(meta); got != "Episode" {
@@ -788,10 +788,10 @@ func TestBTNUploadTypeUsesCanonicalEpisode(t *testing.T) {
 func TestResolveBTNTVSeasonEpisodePrefersTVDBThenIMDBThenMetadata(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		SeasonInt:  2,
 		EpisodeInt: 7,
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TVDB: &api.TVDBMetadata{EpisodeSeason: 4, EpisodeNumber: 12},
 		},
 	}
@@ -800,33 +800,33 @@ func TestResolveBTNTVSeasonEpisodePrefersTVDBThenIMDBThenMetadata(t *testing.T) 
 	if season != 4 || episode != 12 {
 		t.Fatalf("expected TVDB season/episode 4/12, got %d/%d", season, episode)
 	}
-	if got := btnTVPayloadMetadataMessage(api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{Category: "TV"},
-		ExternalMetadata: api.ExternalMetadata{
+	if got := btnTVPayloadMetadataMessage(api.UploadSubject{
+		Identity: api.ExternalIdentity{Category: "TV"},
+		ProviderMetadata: api.SourceScopedMetadata{
 			TVDB: &api.TVDBMetadata{EpisodeSeason: 4, EpisodeNumber: 12},
 		},
 	}); got != "" {
 		t.Fatalf("expected TVDB season/episode to satisfy BTN metadata check, got %q", got)
 	}
 
-	meta.ExternalMetadata.TVDB = &api.TVDBMetadata{}
-	meta.ExternalMetadata.IMDB = &api.IMDBMetadata{Episodes: []api.IMDBEpisode{{Season: 2, EpisodeText: "E07"}}}
+	meta.ProviderMetadata.TVDB = &api.TVDBMetadata{}
+	meta.ProviderMetadata.IMDB = &api.IMDBMetadata{Episodes: []api.IMDBEpisode{{Season: 2, EpisodeText: "E07"}}}
 	season, episode = resolveBTNTVSeasonEpisode(meta)
 	if season != 2 || episode != 7 {
 		t.Fatalf("expected IMDb season/episode 2/7, got %d/%d", season, episode)
 	}
 
-	if got := btnTVPayloadMetadataMessage(api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{Category: "TV"},
-		ExternalMetadata: api.ExternalMetadata{
+	if got := btnTVPayloadMetadataMessage(api.UploadSubject{
+		Identity: api.ExternalIdentity{Category: "TV"},
+		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{Episodes: []api.IMDBEpisode{{Season: 3, EpisodeText: "Episode 8"}}},
 		},
 	}); got != "" {
 		t.Fatalf("expected sole IMDb episode to satisfy BTN metadata check, got %q", got)
 	}
 
-	meta.ExternalMetadata.TVDB = nil
-	meta.ExternalMetadata.IMDB = nil
+	meta.ProviderMetadata.TVDB = nil
+	meta.ProviderMetadata.IMDB = nil
 	season, episode = resolveBTNTVSeasonEpisode(meta)
 	if season != 2 || episode != 7 {
 		t.Fatalf("expected metadata season/episode 2/7, got %d/%d", season, episode)
@@ -836,13 +836,13 @@ func TestResolveBTNTVSeasonEpisodePrefersTVDBThenIMDBThenMetadata(t *testing.T) 
 func TestBuildAlbumDescFallsBackToIMDBEpisodeMetadata(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
-		ExternalIDs:     api.ExternalIDs{Category: "TV"},
+	meta := api.UploadSubject{
+		Identity:        api.ExternalIdentity{Category: "TV"},
 		SeasonInt:       2,
 		EpisodeInt:      7,
 		EpisodeTitle:    "Metadata Episode",
 		EpisodeOverview: "Metadata overview",
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TVDB: &api.TVDBMetadata{},
 			IMDB: &api.IMDBMetadata{
 				Plot: "IMDb overview",
@@ -850,7 +850,11 @@ func TestBuildAlbumDescFallsBackToIMDBEpisodeMetadata(t *testing.T) {
 					Title:       "IMDb Episode",
 					Season:      2,
 					EpisodeText: "7",
-					ReleaseDate: api.IMDBReleaseDate{Year: 2026, Month: 3, Day: 4},
+					ReleaseDate: api.IMDBReleaseDate{
+						Year:  2026,
+						Month: 3,
+						Day:   4,
+					},
 				}},
 			},
 		},
@@ -871,11 +875,11 @@ func TestBuildAlbumDescFallsBackToIMDBEpisodeMetadata(t *testing.T) {
 func TestBuildAlbumDescUsesSingleTVDBEpisodeBlock(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{Category: "TV"},
-		SeasonInt:   2,
-		EpisodeInt:  1,
-		ExternalMetadata: api.ExternalMetadata{
+	meta := api.UploadSubject{
+		Identity:   api.ExternalIdentity{Category: "TV"},
+		SeasonInt:  2,
+		EpisodeInt: 1,
+		ProviderMetadata: api.SourceScopedMetadata{
 			TVDB: &api.TVDBMetadata{
 				Episodes: []api.TVDBEpisodeMetadata{
 					{
@@ -919,11 +923,11 @@ func TestBuildAlbumDescUsesSingleTVDBEpisodeBlock(t *testing.T) {
 func TestBuildAlbumDescUsesTVDBSeasonEpisodeBlocks(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{Category: "TV"},
-		SeasonInt:   2,
-		TVPack:      true,
-		ExternalMetadata: api.ExternalMetadata{
+	meta := api.UploadSubject{
+		Identity:  api.ExternalIdentity{Category: "TV"},
+		SeasonInt: 2,
+		TVPack:    true,
+		ProviderMetadata: api.SourceScopedMetadata{
 			TVDB: &api.TVDBMetadata{
 				Episodes: []api.TVDBEpisodeMetadata{
 					{
@@ -978,8 +982,8 @@ func TestBuildAlbumDescUsesTVDBSeasonEpisodeBlocks(t *testing.T) {
 func TestResolveBTNOriginalLanguageUsesTVDBThenIMDB(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
-		ExternalMetadata: api.ExternalMetadata{
+	meta := api.UploadSubject{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TVDB: &api.TVDBMetadata{OriginalLanguage: "jpn"},
 			IMDB: &api.IMDBMetadata{OriginalLanguage: "fra"},
 		},
@@ -987,7 +991,7 @@ func TestResolveBTNOriginalLanguageUsesTVDBThenIMDB(t *testing.T) {
 	if got := resolveBTNOriginalLanguage(meta); got != "jpn" {
 		t.Fatalf("expected TVDB language, got %q", got)
 	}
-	meta.ExternalMetadata.TVDB.OriginalLanguage = ""
+	meta.ProviderMetadata.TVDB.OriginalLanguage = ""
 	if got := resolveBTNOriginalLanguage(meta); got != "fra" {
 		t.Fatalf("expected IMDb fallback language, got %q", got)
 	}

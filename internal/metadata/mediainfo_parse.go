@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -84,7 +86,7 @@ var scanTypeRegex = regexp.MustCompile(`(?i)Scan\s*type\s*:\s*([^\r\n]+)`)
 var interlacedResolutionHintRegex = regexp.MustCompile(`(?i)\b(1080i|576i|480i)\b`)
 var numericRegex = regexp.MustCompile(`\d+(?:\.\d+)?`)
 
-func extractDVDMediaInfo(meta api.PreparedMetadata) api.DVDMediaInfo {
+func extractDVDMediaInfo(meta preparationstate.State) api.DVDMediaInfo {
 	if !strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
 		return api.DVDMediaInfo{}
 	}

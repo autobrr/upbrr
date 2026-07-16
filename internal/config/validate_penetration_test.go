@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/imagehostpolicy"
+	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 )
 
 // Validate is the CLI's fail-fast check. These tests target every failure
@@ -116,7 +116,11 @@ func TestValidateTorrentClientTypeDefaultsToQbit(t *testing.T) {
 
 	cfg := withBase(func(c *Config) {
 		c.TorrentClients = map[string]TorrentClientConfig{
-			"q": {QbitURL: "http://x", QbitUser: "u", QbitPass: "p"},
+			"q": {
+				QbitURL:  "http://x",
+				QbitUser: "u",
+				QbitPass: "p",
+			},
 		}
 	})
 	if err := cfg.Validate(); err != nil {
@@ -161,8 +165,18 @@ func TestValidateQbitHostAlternatives(t *testing.T) {
 		name   string
 		client TorrentClientConfig
 	}{
-		{"url", TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p"}},
-		{"qbit_url", TorrentClientConfig{Type: "qbit", QbitURL: "http://x", QbitUser: "u", QbitPass: "p"}},
+		{"url", TorrentClientConfig{
+			Type:     "qbit",
+			URL:      "http://x",
+			Username: "u",
+			Password: "p",
+		}},
+		{"qbit_url", TorrentClientConfig{
+			Type:     "qbit",
+			QbitURL:  "http://x",
+			QbitUser: "u",
+			QbitPass: "p",
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -212,9 +226,21 @@ func TestValidateQbitMissingCredentials(t *testing.T) {
 		client TorrentClientConfig
 		msg    string
 	}{
-		{"missing host", TorrentClientConfig{Type: "qbit", Username: "u", Password: "p"}, "url"},
-		{"missing user", TorrentClientConfig{Type: "qbit", URL: "http://x", Password: "p"}, "username"},
-		{"missing pass", TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u"}, "password"},
+		{"missing host", TorrentClientConfig{
+			Type:     "qbit",
+			Username: "u",
+			Password: "p",
+		}, "url"},
+		{"missing user", TorrentClientConfig{
+			Type:     "qbit",
+			URL:      "http://x",
+			Password: "p",
+		}, "username"},
+		{"missing pass", TorrentClientConfig{
+			Type:     "qbit",
+			URL:      "http://x",
+			Username: "u",
+		}, "password"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -239,26 +265,58 @@ func TestValidateQbitLinking(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "hardlink requires linked folder",
-			client:  TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "hardlink"},
+			name: "hardlink requires linked folder",
+			client: TorrentClientConfig{
+				Type:     "qbit",
+				URL:      "http://x",
+				Username: "u",
+				Password: "p",
+				Linking:  "hardlink",
+			},
 			wantErr: "linked_folder",
 		},
 		{
-			name:   "symlink accepts linked folder",
-			client: TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "symlink", LinkedFolder: StringList{"D:\\Links"}},
+			name: "symlink accepts linked folder",
+			client: TorrentClientConfig{
+				Type:         "qbit",
+				URL:          "http://x",
+				Username:     "u",
+				Password:     "p",
+				Linking:      "symlink",
+				LinkedFolder: StringList{"D:\\Links"},
+			},
 		},
 		{
-			name:   "reflink accepts linked folder",
-			client: TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "reflink", LinkedFolder: StringList{"D:\\Links"}},
+			name: "reflink accepts linked folder",
+			client: TorrentClientConfig{
+				Type:         "qbit",
+				URL:          "http://x",
+				Username:     "u",
+				Password:     "p",
+				Linking:      "reflink",
+				LinkedFolder: StringList{"D:\\Links"},
+			},
 		},
 		{
-			name:    "reflink requires linked folder",
-			client:  TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "reflink"},
+			name: "reflink requires linked folder",
+			client: TorrentClientConfig{
+				Type:     "qbit",
+				URL:      "http://x",
+				Username: "u",
+				Password: "p",
+				Linking:  "reflink",
+			},
 			wantErr: "linked_folder",
 		},
 		{
-			name:    "invalid mode rejected",
-			client:  TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "copy"},
+			name: "invalid mode rejected",
+			client: TorrentClientConfig{
+				Type:     "qbit",
+				URL:      "http://x",
+				Username: "u",
+				Password: "p",
+				Linking:  "copy",
+			},
 			wantErr: "linking",
 		},
 	}

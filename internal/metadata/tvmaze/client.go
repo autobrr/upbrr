@@ -62,7 +62,12 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 		if c.logger != nil {
 			c.logger.Infof("tvmaze: manual selected id=%d imdb=%d tvdb=%d", selected, imdbID, tvdbID)
 		}
-		return SearchResult{SelectedID: selected, IMDBID: imdbID, TVDBID: tvdbID, Candidates: candidates}, nil
+		return SearchResult{
+			SelectedID: selected,
+			IMDBID:     imdbID,
+			TVDBID:     tvdbID,
+			Candidates: candidates,
+		}, nil
 	}
 
 	results := make([]Candidate, 0)

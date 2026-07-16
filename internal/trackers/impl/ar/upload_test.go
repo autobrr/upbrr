@@ -18,14 +18,14 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
-	"github.com/autobrr/upbrr/internal/trackerauth"
+	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestResolveARNameAddsNoGRP(t *testing.T) {
 	t.Parallel()
 
-	got := resolveARName(api.PreparedMetadata{
+	got := resolveARName(api.UploadSubject{
 		SourcePath: "C:/data/My Movie (2024).mkv",
 		Release:    api.ReleaseInfo{Title: "My Movie", Year: 2024},
 	})
@@ -37,7 +37,7 @@ func TestResolveARNameAddsNoGRP(t *testing.T) {
 func TestResolveARNameUsesSceneName(t *testing.T) {
 	t.Parallel()
 
-	got := resolveARName(api.PreparedMetadata{
+	got := resolveARName(api.UploadSubject{
 		Scene:     true,
 		SceneName: "Scene.Release-GRP",
 		Tag:       "-GRP",
@@ -431,9 +431,8 @@ func newARAuthTestDB(t *testing.T) string {
 func TestBuildDatabaseLinksSkipsTVDBForMovie(t *testing.T) {
 	t.Parallel()
 
-	got := buildDatabaseLinks(api.PreparedMetadata{
-		MediaInfoCategory: "TV",
-		ExternalIDs:       api.ExternalIDs{Category: "MOVIE", TVDBID: 456},
+	got := buildDatabaseLinks(api.UploadSubject{
+		Identity: api.ExternalIdentity{Category: "MOVIE", TVDBID: 456},
 	})
 	if strings.Contains(got, "thetvdb.com") {
 		t.Fatalf("did not expect tvdb link for movie description, got %q", got)
@@ -443,9 +442,8 @@ func TestBuildDatabaseLinksSkipsTVDBForMovie(t *testing.T) {
 func TestBuildDatabaseLinksIncludesTVDBForMediaInfoTV(t *testing.T) {
 	t.Parallel()
 
-	got := buildDatabaseLinks(api.PreparedMetadata{
-		MediaInfoCategory: "TV",
-		ExternalIDs:       api.ExternalIDs{TVDBID: 456},
+	got := buildDatabaseLinks(api.UploadSubject{
+		Identity: api.ExternalIdentity{Category: "TV", TVDBID: 456},
 	})
 	if !strings.Contains(got, "thetvdb.com/?id=456") {
 		t.Fatalf("expected tvdb link for MediaInfo TV description, got %q", got)
@@ -455,8 +453,8 @@ func TestBuildDatabaseLinksIncludesTVDBForMediaInfoTV(t *testing.T) {
 func TestBuildDatabaseLinksIncludesTVDBForTV(t *testing.T) {
 	t.Parallel()
 
-	got := buildDatabaseLinks(api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{Category: "TV", TVDBID: 456},
+	got := buildDatabaseLinks(api.UploadSubject{
+		Identity: api.ExternalIdentity{Category: "TV", TVDBID: 456},
 	})
 	if !strings.Contains(got, "thetvdb.com/?id=456") {
 		t.Fatalf("expected tvdb link for TV description, got %q", got)

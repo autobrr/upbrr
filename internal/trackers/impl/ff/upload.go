@@ -20,7 +20,6 @@ import (
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
-	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -45,7 +44,7 @@ type uploadState struct {
 	blockedReason string
 }
 
-func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
+func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
 	state, cookies, err := prepareUploadState(ctx, req, false)
 	if err != nil {
 		return api.UploadSummary{}, err
@@ -69,7 +68,10 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("User-Agent", "upbrr")
 	commonhttp.ApplyCookies(httpReq, cookies)
-	client := httpclient.CloneWithTimeout(&http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}, httpclient.DefaultTimeout)
+	client := httpclient.CloneWithTimeout(
+		&http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
+		httpclient.DefaultTimeout,
+	)
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: FF upload request: %w", err)
@@ -83,7 +85,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		tURL := torrentURL + id
 		artifactPath := ""
 		if announce := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announce != "" {
-			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "FF")
+			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "FF")
 			if err != nil {
 				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
@@ -91,13 +93,19 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
 		}
-		return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{Tracker: "FF", TorrentID: id, TorrentURL: tURL, DownloadURL: tURL, TorrentPath: artifactPath}}}, nil
+		return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{
+			Tracker:     "FF",
+			TorrentID:   id,
+			TorrentURL:  tURL,
+			DownloadURL: tURL,
+			TorrentPath: artifactPath,
+		}}}, nil
 	}
-	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "FF", "upload_failure", bodyBytes, ".html")
+	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "FF", "upload_failure", bodyBytes, ".html")
 	return api.UploadSummary{}, commonhttp.UploadHTTPError("FF", resp.StatusCode, bodyBytes)
 }
 
-func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
+func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
 	state, _, err := prepareUploadState(ctx, req, true)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
@@ -117,20 +125,24 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		Description:      state.description,
 		Endpoint:         uploadURL,
 		Payload:          cloneFields(state.fields),
-		Files:            []api.TrackerDryRunFile{{Field: "file", Path: state.torrentPath, Present: strings.TrimSpace(state.torrentPath) != ""}},
+		Files: []api.TrackerDryRunFile{{
+			Field:   "file",
+			Path:    state.torrentPath,
+			Present: strings.TrimSpace(state.torrentPath) != "",
+		}},
 	}, nil
 }
 
-func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun bool) (uploadState, []*http.Cookie, error) {
-	cookies, err := resolveCookies(ctx, req.Logger, req.TrackerConfig, req.AppConfig.MainSettings.DBPath, dryRun)
+func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryRun bool) (uploadState, []*http.Cookie, error) {
+	cookies, err := resolveCookies(ctx, req.Logger, req.TrackerConfig, req.Runtime.DBPath, dryRun)
 	if err != nil {
 		return uploadState{}, nil, err
 	}
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
@@ -189,7 +201,12 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 			return nil, errors.New("trackers: FF cookies not found")
 		}
 		// #nosec G124 -- Dry-run sentinel is an outbound tracker jar cookie, not a browser-set cookie.
-		return []*http.Cookie{{Name: "dryrun", Value: "1", Domain: ".funfile.org", Path: "/"}}, nil
+		return []*http.Cookie{{
+			Name:   "dryrun",
+			Value:  "1",
+			Domain: ".funfile.org",
+			Path:   "/",
+		}}, nil
 	}
 	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
 		return nil, errors.New("trackers: FF cookie invalid/missing and username/password not configured")
@@ -205,7 +222,10 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "upbrr")
-	client := httpclient.CloneWithTimeout(&http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}, httpclient.DefaultTimeout)
+	client := httpclient.CloneWithTimeout(
+		&http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
+		httpclient.DefaultTimeout,
+	)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("trackers: FF login request: %w", err)
@@ -219,12 +239,12 @@ func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerCo
 
 func buildDescription(assets trackers.DescriptionAssets) string {
 	if strings.TrimSpace(assets.Description) != "" {
-		return bbcode.FinalizeTrackerDescription("FF", strings.TrimSpace(assets.Description))
+		return finalizeDescription(strings.TrimSpace(assets.Description))
 	}
 	return ""
 }
 
-func resolveExtraFiles(ctx context.Context, meta api.PreparedMetadata) []commonhttp.FileField {
+func resolveExtraFiles(ctx context.Context, meta api.UploadSubject) []commonhttp.FileField {
 	files := make([]commonhttp.FileField, 0, 2)
 	if ctx == nil {
 		return files
@@ -236,19 +256,27 @@ func resolveExtraFiles(ctx context.Context, meta api.PreparedMetadata) []commonh
 			if err == nil {
 				defer resp.Body.Close()
 				if body, err := io.ReadAll(resp.Body); err == nil && len(body) > 0 {
-					files = append(files, commonhttp.FileField{FieldName: "poster", FileName: "poster.jpg", Content: body})
+					files = append(files, commonhttp.FileField{
+						FieldName: "poster",
+						FileName:  "poster.jpg",
+						Content:   body,
+					})
 				}
 			}
 		}
 	}
 	dir := filepath.Dir(metautil.FirstNonEmptyTrimmed(meta.MediaInfoTextPath, meta.SourcePath))
 	if payload, path, err := commonhttp.ReadFirstMatching(dir, "*.nfo"); err == nil {
-		files = append(files, commonhttp.FileField{FieldName: "nfo", FileName: filepath.Base(path), Content: payload})
+		files = append(files, commonhttp.FileField{
+			FieldName: "nfo",
+			FileName:  filepath.Base(path),
+			Content:   payload,
+		})
 	}
 	return files
 }
 
-func resolveTypeID(meta api.PreparedMetadata) string {
+func resolveTypeID(meta api.UploadSubject) string {
 	if meta.Anime {
 		return "44"
 	}
@@ -258,7 +286,7 @@ func resolveTypeID(meta api.PreparedMetadata) string {
 	return "19"
 }
 
-func resolveMovieType(meta api.PreparedMetadata) string {
+func resolveMovieType(meta api.UploadSubject) string {
 	if strings.EqualFold(strings.TrimSpace(meta.Source), "DVD") {
 		return "DVDR"
 	}
@@ -268,7 +296,7 @@ func resolveMovieType(meta api.PreparedMetadata) string {
 	return "x264"
 }
 
-func resolveTVType(meta api.PreparedMetadata) string {
+func resolveTVType(meta api.UploadSubject) string {
 	if strings.EqualFold(strings.TrimSpace(meta.Source), "DVD") {
 		return "DVDR"
 	}
@@ -290,7 +318,7 @@ func resolveTVType(meta api.PreparedMetadata) string {
 	return "x264-HD"
 }
 
-func resolveAnimeType(meta api.PreparedMetadata) string {
+func resolveAnimeType(meta api.UploadSubject) string {
 	if meta.SeasonInt == 0 {
 		return "TVSpecial"
 	}
@@ -300,7 +328,7 @@ func resolveAnimeType(meta api.PreparedMetadata) string {
 	return "TVSeries"
 }
 
-func resolveMovieSource(meta api.PreparedMetadata) string {
+func resolveMovieSource(meta api.UploadSubject) string {
 	switch strings.ToLower(strings.TrimSpace(meta.Source)) {
 	case "dvd":
 		return "DVD"
@@ -315,7 +343,7 @@ func resolveMovieSource(meta api.PreparedMetadata) string {
 	}
 }
 
-func resolveTVSource(meta api.PreparedMetadata) string {
+func resolveTVSource(meta api.UploadSubject) string {
 	switch strings.ToLower(strings.TrimSpace(meta.Source)) {
 	case "dvd":
 		return "DVD"
@@ -330,7 +358,7 @@ func resolveTVSource(meta api.PreparedMetadata) string {
 	}
 }
 
-func resolveAnimeSource(meta api.PreparedMetadata) string {
+func resolveAnimeSource(meta api.UploadSubject) string {
 	switch strings.ToLower(strings.TrimSpace(meta.Source)) {
 	case "dvd":
 		return "DVD"
@@ -341,7 +369,7 @@ func resolveAnimeSource(meta api.PreparedMetadata) string {
 	}
 }
 
-func resolveAnimeVCodec(meta api.PreparedMetadata) string {
+func resolveAnimeVCodec(meta api.UploadSubject) string {
 	if strings.Contains(strings.ToLower(meta.VideoCodec), "vc-1") {
 		return "VC1"
 	}
@@ -351,41 +379,42 @@ func resolveAnimeVCodec(meta api.PreparedMetadata) string {
 	return "x264"
 }
 
-func resolveName(meta api.PreparedMetadata) string {
+func resolveName(meta api.UploadSubject) string {
 	if meta.Scene && strings.TrimSpace(meta.SceneName) != "" {
 		return strings.TrimSpace(meta.SceneName)
 	}
 	return strings.ReplaceAll(metautil.FirstNonEmptyTrimmed(meta.ReleaseNameClean, meta.ReleaseName, meta.Filename), " ", ".")
 }
 
-func resolveIMDbURL(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.IMDB != nil {
-		return strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbURL)
+func resolveIMDbURL(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.IMDB != nil {
+		return strings.TrimSpace(meta.ProviderMetadata.IMDB.IMDbURL)
 	}
-	if meta.ExternalIDs.IMDBID > 0 {
-		return fmt.Sprintf("https://www.imdb.com/title/tt%07d", meta.ExternalIDs.IMDBID)
-	}
-	return ""
-}
-
-func resolvePoster(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB != nil {
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Poster)
-	}
-	if meta.ExternalMetadata.IMDB != nil {
-		return strings.TrimSpace(meta.ExternalMetadata.IMDB.Cover)
+	if meta.Identity.IMDBID > 0 {
+		return fmt.Sprintf("https://www.imdb.com/title/tt%07d", meta.Identity.IMDBID)
 	}
 	return ""
 }
 
-func categoryOf(meta api.PreparedMetadata) string {
-	if category := strings.TrimSpace(meta.ExternalIDs.Category); category != "" {
-		return category
+func resolvePoster(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.TMDB != nil {
+		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Poster)
 	}
-	return strings.TrimSpace(meta.MediaInfoCategory)
+	if meta.ProviderMetadata.IMDB != nil {
+		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Cover)
+	}
+	return ""
 }
 
-func isSD(meta api.PreparedMetadata) bool {
+func categoryOf(meta api.UploadSubject) string {
+	category, err := meta.Identity.RequireCategory()
+	if err != nil {
+		return ""
+	}
+	return string(category)
+}
+
+func isSD(meta api.UploadSubject) bool {
 	return strings.EqualFold(strings.TrimSpace(meta.Release.Resolution), "480p") || strings.EqualFold(strings.TrimSpace(meta.Release.Resolution), "576p")
 }
 

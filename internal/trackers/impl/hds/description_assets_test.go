@@ -29,12 +29,12 @@ func TestBuildDescriptionUsesPreparedDiscMenuAssets(t *testing.T) {
 			WebURL: "https://images.example.invalid/normal-view",
 		}},
 	}
-	result, err := (definition{}).BuildDescription(context.Background(), trackers.DescriptionRequest{
+	result, err := (Definition{}).prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "HDS",
-		AppConfig: config.Config{Description: config.DescriptionSettingsConfig{
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{Description: config.DescriptionSettingsConfig{
 			DiscMenuHeader:   "Disc menu token",
 			ScreenshotHeader: "Screenshots token",
-		}},
+		}}),
 		Assets: &assets,
 	})
 	if err != nil {
@@ -42,8 +42,12 @@ func TestBuildDescriptionUsesPreparedDiscMenuAssets(t *testing.T) {
 	}
 	assertDescriptionTokensInOrder(t, result.Description, "Body token", "Disc menu token", "menu-thumb.png", "Screenshots token", "normal-thumb.png")
 
-	final := trackers.DescriptionAssets{Description: " Authoritative final token ", Final: true, MenuImages: assets.MenuImages}
-	result, err = (definition{}).BuildDescription(context.Background(), trackers.DescriptionRequest{Tracker: "HDS", Assets: &final})
+	final := trackers.DescriptionAssets{
+		Description: " Authoritative final token ",
+		Final:       true,
+		MenuImages:  assets.MenuImages,
+	}
+	result, err = (Definition{}).prepareDescription(context.Background(), trackers.PreparationInput{Tracker: "HDS", Assets: &final})
 	if err != nil {
 		t.Fatalf("build final description: %v", err)
 	}

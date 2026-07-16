@@ -8,12 +8,12 @@ ARG GO_VERSION=1.26.4
 
 FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend
 
-WORKDIR /src/gui/frontend
+WORKDIR /src/webui
 
-COPY gui/frontend/package.json gui/frontend/pnpm-lock.yaml ./
+COPY webui/package.json webui/pnpm-lock.yaml ./
 RUN corepack enable && pnpm install --frozen-lockfile
 
-COPY gui/frontend/ ./
+COPY webui/ ./
 RUN pnpm run build:bundle
 
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS cli-builder
@@ -27,8 +27,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY . .
 
 # Embed the built web UI so `upbrr serve` can serve it. Mirrors
-# scripts/sync-frontend-assets.ps1 used by the binary release workflow.
-COPY --from=frontend /src/gui/frontend/dist/ ./internal/guiapp/assets/
+# scripts/sync-webui-assets.ps1 used by the binary release workflow.
+COPY --from=frontend /src/webui/dist/ ./internal/webserver/assets/
 
 ARG TARGETOS
 ARG TARGETARCH

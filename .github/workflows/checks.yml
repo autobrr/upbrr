@@ -56,10 +56,10 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: gui/frontend/pnpm-lock.yaml
+          cache-dependency-path: webui/pnpm-lock.yaml
 
       - name: Install frontend dependencies
-        working-directory: gui/frontend
+        working-directory: webui
         run: pnpm install --frozen-lockfile
 
       # Prettier keeps its own per-file cache keyed on Prettier's version and the
@@ -70,29 +70,29 @@ jobs:
         id: prettier-cache
         uses: actions/cache/restore@v4
         with:
-          path: gui/frontend/node_modules/.cache/prettier
-          key: prettier-${{ runner.os }}-${{ hashFiles('gui/frontend/package.json', 'gui/frontend/pnpm-lock.yaml', 'gui/frontend/.prettierrc*', 'gui/frontend/prettier.config.*') }}
+          path: webui/node_modules/.cache/prettier
+          key: prettier-${{ runner.os }}-${{ hashFiles('webui/package.json', 'webui/pnpm-lock.yaml', 'webui/.prettierrc*', 'webui/prettier.config.*') }}
           restore-keys: |
             prettier-${{ runner.os }}-
 
       - name: Run frontend lint
-        working-directory: gui/frontend
+        working-directory: webui
         run: pnpm run lint
 
       - name: Run frontend dead-code lint
-        working-directory: gui/frontend
+        working-directory: webui
         run: pnpm run lint:dead
 
       - name: Run frontend typecheck
-        working-directory: gui/frontend
+        working-directory: webui
         run: pnpm run typecheck
 
       - name: Run frontend unit tests
-        working-directory: gui/frontend
+        working-directory: webui
         run: pnpm run test:unit
 
       - name: Check frontend formatting
-        working-directory: gui/frontend
+        working-directory: webui
         run: pnpm run format:check
 
       # Save only when the primary key wasn't an exact restore-hit so we don't retry
@@ -104,5 +104,5 @@ jobs:
         if: always() && steps.prettier-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: gui/frontend/node_modules/.cache/prettier
+          path: webui/node_modules/.cache/prettier
           key: ${{ steps.prettier-cache.outputs.cache-primary-key }}

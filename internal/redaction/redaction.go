@@ -37,12 +37,18 @@ var (
 	apiPathTokenRe      = regexp.MustCompile(`(?i)(/api/torrents/)([A-Za-z0-9]{10,})($|[/?#"])`)
 	proxyPathRe         = regexp.MustCompile(`(?i)(/proxy/)([^/\s?#"]+)`) // /proxy/<secret>
 	urlUserinfoRe       = regexp.MustCompile(`(?i)(\b[a-z][a-z0-9+.-]*://|//)([^/@\s]+)@`)
-	queryParamRe        = regexp.MustCompile(`(?i)([?&](anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|auth|auth[_-]?key|csrf|info[_-]?hash|key|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass|uid|user|user[_-]?id|userid)=)[^&]+`)
-	keyValueQuotedRe    = regexp.MustCompile(`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass)\b(\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`)
-	keyValuePlainRe     = regexp.MustCompile(`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass)\b(\s*[:=]\s*)(bearer\s+)?([^"'\s,;)\]}]+)`)
-	cookieTailRe        = regexp.MustCompile(`(?i)(\bcookie\b\s*[:=]\s*\[REDACTED\])(?:[;]\s*[^,\r\n]+)+`)
-	authTailRe          = regexp.MustCompile(`(?i)(\bauthorization\b\s*[:=]\s*bearer\s+\[REDACTED\])(?:,\s*[^,\s]+)+`)
-	longHexTokenRe      = regexp.MustCompile(`\b[a-fA-F0-9]{32,}\b`)
+	queryParamRe        = regexp.MustCompile(
+		`(?i)([?&](anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|auth|auth[_-]?key|csrf|info[_-]?hash|key|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass|uid|user|user[_-]?id|userid)=)[^&]+`,
+	)
+	keyValueQuotedRe = regexp.MustCompile(
+		`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass)\b(\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`,
+	)
+	keyValuePlainRe = regexp.MustCompile(
+		`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass)\b(\s*[:=]\s*)(bearer\s+)?([^"'\s,;)\]}]+)`,
+	)
+	cookieTailRe   = regexp.MustCompile(`(?i)(\bcookie\b\s*[:=]\s*\[REDACTED\])(?:[;]\s*[^,\r\n]+)+`)
+	authTailRe     = regexp.MustCompile(`(?i)(\bauthorization\b\s*[:=]\s*bearer\s+\[REDACTED\])(?:,\s*[^,\s]+)+`)
+	longHexTokenRe = regexp.MustCompile(`\b[a-fA-F0-9]{32,}\b`)
 )
 
 // ExtractJSONBlocks returns candidate JSON substrings based on bracket counting.

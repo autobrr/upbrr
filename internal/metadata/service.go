@@ -15,6 +15,9 @@ import (
 	"strings"
 	"time"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
+	"github.com/autobrr/upbrr/internal/clientdiscovery"
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
@@ -23,16 +26,19 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/seasonep"
-	"github.com/autobrr/upbrr/internal/paths"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
-	"github.com/autobrr/upbrr/internal/trackerdata"
+	"github.com/autobrr/upbrr/internal/trackers"
+	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Service collects source-scoped metadata evidence for canonical preparation.
+// Optional providers and client discovery are installed through [Option] values.
 type Service struct {
-	repo     db.MetadataRepository
+	repo     repository
 	tagsPath string
 	scene    SceneDetector
 	mi       mediainfo.Exporter
@@ -50,6 +56,23 @@ type Service struct {
 	radarr   ArrLookupClient
 	tracker  TrackerDataLookup
 	bluray   *bluraycom.Client
+	registry *trackers.Registry
+	clients  *clientdiscovery.Module
+}
+
+type repository interface {
+	GetByPath(context.Context, string) (api.FileMetadata, error)
+	Save(context.Context, api.FileMetadata) error
+	GetExternalIdentity(context.Context, string) (api.ExternalIdentity, error)
+	GetExternalMetadata(context.Context, string) (api.SourceScopedMetadata, error)
+	SaveDVDMediaInfo(context.Context, api.DVDMediaInfo) error
+	GetReleaseNameOverrides(context.Context, string) (api.ReleaseNameOverrides, error)
+	SaveReleaseNameOverrides(context.Context, string, api.ReleaseNameOverrides) error
+	GetPlaylistSelection(context.Context, string) (api.PlaylistSelection, error)
+	GetTrackerTimestamp(context.Context, string) (time.Time, error)
+	SaveTrackerTimestamp(context.Context, api.TrackerTimestamp) error
+	SaveTrackerMetadata(context.Context, api.TrackerMetadata) error
+	SaveTrackerRuleFailures(context.Context, string, string, []api.TrackerRuleFailure) error
 }
 
 type cachedBDMVSummary struct {
@@ -87,7 +110,7 @@ type TrackerDataLookup interface {
 		ctx context.Context,
 		tracker string,
 		trackerID string,
-		meta api.PreparedMetadata,
+		subject api.UploadSubject,
 		searchFileName string,
 		onlyID bool,
 		keepImages bool,
@@ -95,7 +118,7 @@ type TrackerDataLookup interface {
 }
 
 type ArrLookupClient interface {
-	Lookup(ctx context.Context, meta api.PreparedMetadata) (ArrLookupResult, error)
+	Lookup(ctx context.Context, meta preparationstate.State) (ArrLookupResult, error)
 }
 
 type Option func(*Service)
@@ -128,6 +151,15 @@ func WithConfig(cfg config.Config) Option {
 	return func(s *Service) {
 		s.cfg = cfg
 	}
+}
+
+func WithTrackerRegistry(registry *trackers.Registry) Option {
+	return func(s *Service) { s.registry = registry }
+}
+
+// WithClientDiscovery installs canonical preparation-time client discovery.
+func WithClientDiscovery(discovery *clientdiscovery.Module) Option {
+	return func(s *Service) { s.clients = discovery }
 }
 
 func WithTMDBClient(client TMDBClient) Option {
@@ -201,7 +233,7 @@ func WithSRRDBPaths(dbPath string) Option {
 	}
 }
 
-func NewService(repo db.MetadataRepository, opts ...Option) *Service {
+func NewService(repo repository, opts ...Option) *Service {
 	service := &Service{repo: repo, logger: api.NopLogger{}}
 	for _, opt := range opts {
 		if opt != nil {
@@ -231,7 +263,7 @@ func NewService(repo db.MetadataRepository, opts ...Option) *Service {
 		service.scene = detector
 	}
 	if service.tracker == nil {
-		service.tracker = trackerdata.NewClient(service.cfg, service.logger, nil)
+		service.tracker = trackerdata.NewClientWithRegistry(service.cfg, service.logger, nil, service.registry)
 	}
 	if service.bluray == nil {
 		service.bluray = bluraycom.NewClient(nil, service.logger)
@@ -280,177 +312,144 @@ func cloneTrackerIDs(values map[string]string) map[string]string {
 	return cloned
 }
 
-func applyTorrentOverridesToPreparedMeta(meta *api.PreparedMetadata) {
-	if meta == nil {
-		return
-	}
-
-	if meta.TorrentOverrides.InfoHash != nil {
-		meta.InfoHash = strings.ToLower(strings.TrimSpace(*meta.TorrentOverrides.InfoHash))
-	}
-}
-
-func (s *Service) Prepare(ctx context.Context, req api.Request) (meta api.PreparedMetadata, err error) {
+// collectSourceEvidence validates source resources, resolves Blu-ray selection,
+// and gathers filesystem evidence before provider and client enrichment.
+func (s *Service) collectSourceEvidence(ctx context.Context, request preparationstate.Request) (meta preparationstate.State, err error) {
+	bdinfoActive := false
+	bdinfoTerminal := false
 	defer func() {
 		if err != nil {
+			if bdinfoActive && !bdinfoTerminal {
+				api.EmitPreparationProgress(
+					ctx,
+					api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, api.PreparationProgressFailed, "Blu-ray analysis failed."),
+				)
+			}
 			s.logger.Warnf("metadata: preparation blocked err=%s", redaction.RedactValue(err.Error(), nil))
 		}
 	}()
 
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
+		return preparationstate.State{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
-	s.logger.Debugf("metadata: preparing metadata for %d paths", len(req.Paths))
-
-	if len(req.Paths) == 0 {
-		return api.PreparedMetadata{}, internalerrors.ErrInvalidInput
-	}
+	s.logger.Debugf("metadata: preparing source")
 	if s.repo == nil {
-		return api.PreparedMetadata{}, errors.New("metadata: repository not configured")
+		return preparationstate.State{}, errors.New("metadata: repository not configured")
 	}
 
-	primary := strings.TrimSpace(req.Paths[0])
+	input := request.Input
+	primary := strings.TrimSpace(request.Layout.SourcePath)
 	if primary == "" {
-		return api.PreparedMetadata{}, fmt.Errorf("metadata: empty primary path: %w", internalerrors.ErrInvalidInput)
+		return preparationstate.State{}, fmt.Errorf("metadata: empty primary path: %w", internalerrors.ErrInvalidInput)
 	}
 
 	absPath, err := filepath.Abs(primary)
 	if err != nil {
-		return api.PreparedMetadata{}, fmt.Errorf("metadata: resolve path: %w", err)
+		return preparationstate.State{}, fmt.Errorf("metadata: resolve path: %w", err)
 	}
 	primary = absPath
 	s.logger.Debugf("metadata: primary path resolved to %s", primary)
 
-	normalizedPaths := make([]string, 0, len(req.Paths))
-	seenPaths := make(map[string]struct{}, len(req.Paths))
-	for _, value := range req.Paths {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
-			return api.PreparedMetadata{}, fmt.Errorf("metadata: empty path: %w", internalerrors.ErrInvalidInput)
-		}
-		abs, err := filepath.Abs(trimmed)
-		if err != nil {
-			return api.PreparedMetadata{}, fmt.Errorf("metadata: resolve path: %w", err)
-		}
-		if _, exists := seenPaths[abs]; exists {
-			continue
-		}
-		seenPaths[abs] = struct{}{}
-		normalizedPaths = append(normalizedPaths, abs)
-		s.logger.Tracef("metadata: normalized path %s", abs)
-	}
+	normalizedPaths := []string{primary}
+	s.logger.Tracef("metadata: normalized path %s", primary)
 
-	meta = api.PreparedMetadata{
-		SourcePath:             primary,
-		SourceLookupURL:        strings.TrimSpace(req.SourceLookupURL),
-		Paths:                  normalizedPaths,
-		Mode:                   req.Mode,
-		Trackers:               append([]string{}, req.Trackers...),
-		Options:                req.Options,
-		TrackersRemove:         append([]string{}, req.TrackersRemove...),
-		TrackerIDs:             cloneTrackerIDs(req.TrackerIDOverrides),
-		DescriptionOverride:    strings.TrimSpace(req.DescriptionOverrideRaw),
-		MetadataOverrides:      req.MetadataOverrides,
-		TrackerConfigOverrides: req.TrackerConfigOverrides,
-		TrackerSiteOverrides:   req.TrackerSiteOverrides,
-		ClientOverrides:        req.ClientOverrides,
-		ImageHostOverrides:     req.ImageHostOverrides,
-		ScreenshotOverrides:    normalizeScreenshotOverrides(req.ScreenshotOverrides),
-		TorrentOverrides:       req.TorrentOverrides,
-		ExternalIDOverrides:    req.ExternalIDOverrides,
-		ReleaseNameOverrides:   req.ReleaseNameOverrides,
+	meta = preparationstate.State{
+		SourcePath:      primary,
+		SourceLookupURL: strings.TrimSpace(input.Instructions.SourceLookup),
+		Paths:           normalizedPaths,
+		Policy: preparationstate.CollectionPolicy{
+			OnlyID:          input.Policy.OnlyID,
+			KeepFolder:      input.Policy.KeepFolder,
+			KeepImages:      input.Policy.KeepImages,
+			InteractionMode: input.Controls.Interaction,
+		},
+		TrackerIDs:           cloneTrackerIDs(input.Instructions.TrackerIDs),
+		MetadataOverrides:    input.Instructions.Metadata,
+		ExternalIDOverrides:  input.Instructions.Identity,
+		ReleaseNameOverrides: input.Instructions.ReleaseName,
 	}
-	applyTorrentOverridesToPreparedMeta(&meta)
-	applySourceLookupOverride(&meta)
+	applySourceLookupOverrideWithRegistry(&meta, s.registry)
 	meta.Release = ParseReleaseInfo(primary)
 
-	discType, err := filesystem.DetectDiscType(ctx, primary)
-	if err != nil {
-		return api.PreparedMetadata{}, fmt.Errorf("metadata: detect disc: %w", err)
-	}
+	discType := request.Layout.DiscType
 	meta.DiscType = discType
 	if discType != "" {
 		s.logger.Debugf("metadata: detected disc type %s", discType)
 	}
 
 	// For BDMV discs, check if a playlist was selected
-	if discType == "BDMV" && s.repo != nil {
-		var sel db.PlaylistSelection
-		var playlistPath string
-		var found bool
-
+	if discType == "BDMV" {
 		s.logger.Debugf("metadata: checking playlist selection, bdinfo=%v", s.bdinfo != nil)
-
-		// Normalize primary path for DB lookup (must match normalized save path)
-		primaryNorm := filepath.ToSlash(filepath.Clean(primary))
-		bdmvNorm := filepath.ToSlash(filepath.Clean(filepath.Join(primary, "BDMV")))
-
-		s.logger.Debugf("metadata: querying playlist selection for normalized path: %s", primaryNorm)
-
-		// Try normalized primary path first
-		if result, err := s.repo.GetPlaylistSelection(ctx, primaryNorm); err == nil && len(result.SelectedPlaylists) > 0 {
-			sel = result
-			playlistPath = primary // Use original path for file operations
-			found = true
-			s.logger.Debugf("metadata: found playlist selection at normalized primary path: %s", primaryNorm)
-		} else {
-			// Try normalized BDMV path
-			s.logger.Debugf("metadata: querying playlist selection for normalized BDMV path: %s", bdmvNorm)
-			if result, err := s.repo.GetPlaylistSelection(ctx, bdmvNorm); err == nil && len(result.SelectedPlaylists) > 0 {
-				sel = result
-				playlistPath = filepath.Join(primary, "BDMV")
-				found = true
-				s.logger.Debugf("metadata: found playlist selection at normalized BDMV path: %s", bdmvNorm)
-			} else {
-				s.logger.Debugf("metadata: no playlist selection found, err=%s", redaction.RedactValue(fmt.Sprint(err), nil))
-			}
+		selectedPlaylists, derr := s.resolveBDMVPlaylistSelection(ctx, request)
+		if derr != nil {
+			return preparationstate.State{}, derr
 		}
-
-		if found && len(sel.SelectedPlaylists) > 0 {
-			s.logger.Debugf("metadata: found playlist selection playlists=%d path=%s", len(sel.SelectedPlaylists), playlistPath)
-			selectedPlaylists, derr := loadSelectedBDMVPlaylists(ctx, playlistPath, sel.SelectedPlaylists)
-			if derr != nil {
-				return api.PreparedMetadata{}, fmt.Errorf("metadata: discover selected playlists: %w", derr)
-			}
-			meta.SelectedBDMVPlaylists = selectedPlaylists
+		meta.SelectedBDMVPlaylists = selectedPlaylists
+		if len(selectedPlaylists) > 0 {
+			playlistPath := request.Layout.BDMVRoot
+			s.logger.Debugf("metadata: resolved playlist selection playlists=%d", len(selectedPlaylists))
 			selectedPlaylistNames := playlistNames(meta.SelectedBDMVPlaylists)
 
 			// Execute BDInfo on selected playlists
 			if s.bdinfo != nil {
+				bdinfoActive = true
+				api.EmitPreparationProgress(
+					ctx,
+					api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, api.PreparationProgressRunning, "Preparing Blu-ray analysis."),
+				)
 				tmpRoot, rerr := db.Subdir(s.cfg.MainSettings.DBPath, "tmp")
 				if rerr != nil {
-					return api.PreparedMetadata{}, fmt.Errorf("metadata: resolve tmp root: %w", rerr)
+					bdinfoTerminal = true
+					api.EmitPreparationProgress(
+						ctx,
+						api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, api.PreparationProgressFailed, "Blu-ray analysis failed."),
+					)
+					return preparationstate.State{}, fmt.Errorf("metadata: resolve tmp root: %w", rerr)
 				}
 				tmpDir, _, rerr := paths.ReleaseTempDir(tmpRoot, meta, primary)
 				if rerr != nil {
-					return api.PreparedMetadata{}, fmt.Errorf("metadata: resolve bdinfo temp dir: %w", rerr)
+					return preparationstate.State{}, fmt.Errorf("metadata: resolve bdinfo temp dir: %w", rerr)
 				}
 				s.logger.Debugf("metadata: bdinfo temp dir: %s", tmpDir)
 				if err := os.MkdirAll(tmpDir, 0755); err != nil {
-					return api.PreparedMetadata{}, fmt.Errorf("metadata: create bdinfo temp dir: %w", err)
+					return preparationstate.State{}, fmt.Errorf("metadata: create bdinfo temp dir: %w", err)
 				}
 
-				outputPath, needScan, berr := s.resolveOrCreateBDMVSummaries(ctx, req, tmpDir, playlistPath, selectedPlaylistNames)
+				outputPath, needScan, berr := s.resolveOrCreateBDMVSummaries(ctx, input, tmpDir, playlistPath, selectedPlaylistNames)
 				if berr != nil {
-					return api.PreparedMetadata{}, berr
+					bdinfoTerminal = true
+					api.EmitPreparationProgress(
+						ctx,
+						api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, api.PreparationProgressFailed, "Blu-ray analysis failed."),
+					)
+					return preparationstate.State{}, berr
 				}
 				if strings.TrimSpace(outputPath) != "" {
 					s.logger.Debugf("metadata: parsing canonical bdinfo output from %s", outputPath)
 					bdinfoParsed, perr := parseBDInfoOutput(s.bdinfo, outputPath)
 					if perr != nil {
-						return api.PreparedMetadata{}, fmt.Errorf("metadata: bdinfo parse failed: %w", perr)
+						return preparationstate.State{}, fmt.Errorf("metadata: bdinfo parse failed: %w", perr)
 					}
 					meta.BDInfo = bdinfoParsed
 					s.logger.Debugf("metadata: bdinfo data collected with %d fields", len(bdinfoParsed))
 				}
 				if needScan {
 					s.logger.Debugf("metadata: bdinfo scan completed for %d selected playlists", len(selectedPlaylistNames))
+					api.EmitPreparationProgress(
+						ctx,
+						api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, api.PreparationProgressCompleted, "Blu-ray analysis complete."),
+					)
+					bdinfoTerminal = true
+				} else {
+					api.SkipPreparationProgress(ctx, api.PreparationPhaseBDInfo, "Reused cached Blu-ray analysis.")
+					bdinfoTerminal = true
 				}
 			} else {
 				s.logger.Debugf("metadata: bdinfo service is nil, skipping disc analysis")
+				api.SkipPreparationProgress(ctx, api.PreparationPhaseBDInfo, "Blu-ray analysis is unavailable.")
 			}
 
 			// Extract m2ts files from selected playlist(s)
@@ -469,7 +468,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (meta api.Prepar
 	if discType == "" {
 		video, filelist, err := filesystem.CollectVideoFiles(ctx, primary, false)
 		if err != nil {
-			return api.PreparedMetadata{}, fmt.Errorf("metadata: collect video files: %w", err)
+			return preparationstate.State{}, fmt.Errorf("metadata: collect video files: %w", err)
 		}
 		meta.VideoPath = video
 		meta.FileList = filelist
@@ -477,16 +476,6 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (meta api.Prepar
 	}
 
 	applySeasonEpisodeMetadata(&meta, seasonep.Extract(primary, meta), s.logger)
-	if shouldCollapseCLIFolderToVideo(meta, primary) {
-		meta.VideoPath = preferredCLIFolderVideo(meta, primary)
-		primary = strings.TrimSpace(meta.VideoPath)
-		meta.SourcePath = primary
-		meta.Paths = []string{primary}
-		meta.FileList = []string{primary}
-		clearSeasonEpisodeMetadata(&meta)
-		applySeasonEpisodeMetadata(&meta, seasonep.Extract(primary, meta), s.logger)
-		s.logger.Debugf("metadata: collapsed CLI folder input to video file %s", primary)
-	}
 	release := ParseReleaseInfo(primary)
 	meta.Release = release
 
@@ -494,19 +483,19 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (meta api.Prepar
 	if stored, err := s.repo.GetReleaseNameOverrides(ctx, primary); err == nil {
 		storedOverrides = stored
 	} else if !errors.Is(err, internalerrors.ErrNotFound) {
-		return api.PreparedMetadata{}, fmt.Errorf("metadata: release overrides lookup: %w", err)
+		return preparationstate.State{}, fmt.Errorf("metadata: release overrides lookup: %w", err)
 	}
-	mergedOverrides := mergeReleaseNameOverrides(storedOverrides, req.ReleaseNameOverrides)
+	mergedOverrides := mergeReleaseNameOverrides(storedOverrides, input.Instructions.ReleaseName)
 	meta.ReleaseNameOverrides = mergedOverrides
-	if hasReleaseNameOverrides(req.ReleaseNameOverrides) {
+	if hasReleaseNameOverrides(input.Instructions.ReleaseName) {
 		if err := s.repo.SaveReleaseNameOverrides(ctx, primary, mergedOverrides); err != nil {
-			return api.PreparedMetadata{}, fmt.Errorf("metadata: release overrides persist: %w", err)
+			return preparationstate.State{}, fmt.Errorf("metadata: release overrides persist: %w", err)
 		}
 	}
 
 	size, err := filesystem.SourceSize(ctx, primary, meta.DiscType, meta.FileList, meta.VideoPath)
 	if err != nil {
-		return api.PreparedMetadata{}, fmt.Errorf("metadata: source size: %w", err)
+		return preparationstate.State{}, fmt.Errorf("metadata: source size: %w", err)
 	}
 	meta.SourceSize = size
 	s.logger.Debugf("metadata: source size %d bytes", size)
@@ -525,27 +514,43 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (meta api.Prepar
 			s.logger.Debugf("metadata: stored metadata stale for %s; recomputing", primary)
 		}
 	} else if !errors.Is(err, internalerrors.ErrNotFound) {
-		return api.PreparedMetadata{}, fmt.Errorf("metadata: lookup: %w", err)
+		return preparationstate.State{}, fmt.Errorf("metadata: lookup: %w", err)
 	}
 
 	if meta.StoredDataFresh {
-		if storedIDs, err := s.repo.GetExternalIDs(ctx, primary); err == nil {
-			meta.ExternalIDs = storedIDs
+		if storedIDs, err := s.repo.GetExternalIdentity(ctx, primary); err == nil {
+			meta.Identity = storedIDs
 		} else if !errors.Is(err, internalerrors.ErrNotFound) {
-			return api.PreparedMetadata{}, fmt.Errorf("metadata: external ids lookup: %w", err)
+			return preparationstate.State{}, fmt.Errorf("metadata: external ids lookup: %w", err)
 		}
 		if storedMeta, err := s.repo.GetExternalMetadata(ctx, primary); err == nil {
-			meta.ExternalMetadata = storedMeta
+			meta.ProviderMetadata = storedMeta
 		} else if !errors.Is(err, internalerrors.ErrNotFound) {
-			return api.PreparedMetadata{}, fmt.Errorf("metadata: external metadata lookup: %w", err)
+			return preparationstate.State{}, fmt.Errorf("metadata: external metadata lookup: %w", err)
 		}
 	}
 
-	// Scene detection was moved out of Prepare into ApplyMediaDetails: it needs a
-	// resolved IMDb id and the rebuilt release name (both produced after
-	// ResolveExternalIDs), so running it here — before tracker/external-ID
-	// resolution — missed renamed releases entirely.
-	if release.Title != "" || release.Alt != "" || release.Subtitle != "" || release.Artist != "" || release.Year != 0 || release.Month != 0 || release.Day != 0 || release.Source != "" || release.Resolution != "" || release.Ext != "" || release.Site != "" || release.Genre != "" || release.Channels != "" || release.Collection != "" || release.Region != "" || release.Size != "" || release.Group != "" || release.Disc != "" || release.Type != "" || release.Category != "" || len(release.Codec) > 0 || len(release.Audio) > 0 || len(release.HDR) > 0 || len(release.Language) > 0 {
+	// Scene detection runs during fact derivation after provider evidence and
+	// rebuilt naming are available. Running it here would miss renamed releases.
+	if release.Title != "" || release.Alt != "" || release.Subtitle != "" || release.Artist != "" || release.Year != 0 || release.Month != 0 ||
+		release.Day != 0 ||
+		release.Source != "" ||
+		release.Resolution != "" ||
+		release.Ext != "" ||
+		release.Site != "" ||
+		release.Genre != "" ||
+		release.Channels != "" ||
+		release.Collection != "" ||
+		release.Region != "" ||
+		release.Size != "" ||
+		release.Group != "" ||
+		release.Disc != "" ||
+		release.Type != "" ||
+		release.Category != "" ||
+		len(release.Codec) > 0 ||
+		len(release.Audio) > 0 ||
+		len(release.HDR) > 0 ||
+		len(release.Language) > 0 {
 		s.logger.Debugf(
 			"metadata: release parsed category=%q type=%q artist=%q title=%q subtitle=%q alt=%q year=%d month=%d day=%d source=%q resolution=%q codec=%v audio=%v hdr=%v ext=%q language=%v site=%q genre=%q channels=%q collection=%q region=%q size=%q group=%q disc=%q",
 			release.Category,
@@ -583,14 +588,14 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (meta api.Prepar
 
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
+		return preparationstate.State{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
 	if s.mi != nil {
 		tmpRoot, err := db.Subdir(s.cfg.MainSettings.DBPath, "tmp")
 		if err != nil {
-			return api.PreparedMetadata{}, fmt.Errorf("metadata: tmp dir: %w", err)
+			return preparationstate.State{}, fmt.Errorf("metadata: tmp dir: %w", err)
 		}
 		miResult, err := s.mi.Export(ctx, mediainfo.Request{
 			SourcePath: meta.SourcePath,
@@ -600,7 +605,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (meta api.Prepar
 			Release:    meta.Release,
 		})
 		if err != nil {
-			return api.PreparedMetadata{}, fmt.Errorf("metadata: mediainfo: %w", err)
+			return preparationstate.State{}, fmt.Errorf("metadata: mediainfo: %w", err)
 		}
 		meta.MediaInfoJSONPath = miResult.JSONPath
 		meta.MediaInfoTextPath = miResult.TextPath
@@ -620,7 +625,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (meta api.Prepar
 			dvdDetails.VOBMediaInfoRaw = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(miResult.VOBText), strings.TrimSpace(miResult.VOBJSON))
 			dvdDetails.UpdatedAt = time.Now().UTC()
 			if err := s.repo.SaveDVDMediaInfo(ctx, dvdDetails); err != nil {
-				return api.PreparedMetadata{}, fmt.Errorf("metadata: persist dvd mediainfo: %w", err)
+				return preparationstate.State{}, fmt.Errorf("metadata: persist dvd mediainfo: %w", err)
 			}
 		}
 	}
@@ -648,13 +653,13 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (meta api.Prepar
 
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
+		return preparationstate.State{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
+		return preparationstate.State{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 	if err := s.repo.Save(ctx, db.FileMetadata{
@@ -692,7 +697,7 @@ func (s *Service) Prepare(ctx context.Context, req api.Request) (meta api.Prepar
 		Edition:    meta.Release.Edition,
 		Other:      meta.Release.Other,
 	}); err != nil {
-		return api.PreparedMetadata{}, fmt.Errorf("metadata: persist: %w", err)
+		return preparationstate.State{}, fmt.Errorf("metadata: persist: %w", err)
 	}
 	s.logger.Debugf("metadata: persisted metadata for %s", primary)
 
@@ -716,7 +721,7 @@ func sceneResultHasData(result SceneResult) bool {
 
 // applySceneResult copies detector scene metadata into prepared metadata,
 // preserving existing service labels unless the detector supplied them first.
-func applySceneResult(meta *api.PreparedMetadata, result SceneResult) {
+func applySceneResult(meta *preparationstate.State, result SceneResult) {
 	meta.Scene = result.IsScene
 	meta.SceneName = result.SceneName
 	meta.SceneTMDBID = result.TMDBID
@@ -790,43 +795,6 @@ func (s *Service) extractM2TSFromPlaylist(bdmvPath string, playlistFiles []strin
 
 	s.logger.Debugf("metadata: extracted %d m2ts files from playlists, largest is %s (%d bytes)", len(m2tsFiles), filepath.Base(largestFile), largestSize)
 	return m2tsFiles, largestFile, nil
-}
-
-func loadSelectedBDMVPlaylists(ctx context.Context, bdmvPath string, selected []string) ([]api.PlaylistInfo, error) {
-	discovered, err := discoverBDMVPlaylists(ctx, bdmvPath)
-	if err != nil {
-		return nil, err
-	}
-
-	byName := make(map[string]filesystem.PlaylistInfo, len(discovered))
-	for _, playlist := range discovered {
-		byName[discparse.NormalizePlaylistName(playlist.File)] = playlist
-	}
-
-	result := make([]api.PlaylistInfo, 0, len(selected))
-	for _, name := range selected {
-		normalized := discparse.NormalizePlaylistName(name)
-		playlist, ok := byName[normalized]
-		if !ok {
-			return nil, fmt.Errorf("selected playlist %s was not found during discovery", normalized)
-		}
-		items := make([]api.PlaylistItem, 0, len(playlist.Items))
-		for _, item := range playlist.Items {
-			items = append(items, api.PlaylistItem{
-				File: item.File,
-				Size: item.Size,
-			})
-		}
-		result = append(result, api.PlaylistInfo{
-			File:     playlist.File,
-			Duration: playlist.Duration,
-			Items:    items,
-			Score:    playlist.Score,
-			Edition:  playlist.Edition,
-		})
-	}
-
-	return result, nil
 }
 
 func playlistNames(playlists []api.PlaylistInfo) []string {
@@ -930,7 +898,8 @@ func discoverBDMVSummaryCache(tmpDir string) (bdmvSummaryCache, error) {
 			continue
 		}
 		name := entry.Name()
-		if !strings.HasPrefix(name, "BD_SUMMARY_") || strings.HasPrefix(name, "BD_SUMMARY_EXT_") || strings.HasPrefix(name, "BD_SUMMARY_FULL_") || !strings.HasSuffix(name, ".txt") {
+		if !strings.HasPrefix(name, "BD_SUMMARY_") || strings.HasPrefix(name, "BD_SUMMARY_EXT_") || strings.HasPrefix(name, "BD_SUMMARY_FULL_") ||
+			!strings.HasSuffix(name, ".txt") {
 			continue
 		}
 		playlistFromName := paths.BDMVPlaylistKey(strings.TrimSuffix(strings.TrimPrefix(name, "BD_SUMMARY_"), ".txt"))
@@ -957,7 +926,11 @@ func discoverBDMVSummaryCache(tmpDir string) (bdmvSummaryCache, error) {
 		if extPath != "" {
 			cleanTmpDir := filepath.Clean(tmpDir)
 			cleanExtPath := filepath.Clean(extPath)
-			if relPath, err := filepath.Rel(cleanTmpDir, cleanExtPath); err == nil && relPath != ".." && !strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
+			if relPath, err := filepath.Rel(
+				cleanTmpDir,
+				cleanExtPath,
+			); err == nil && relPath != ".." &&
+				!strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
 				if rawExt, err := os.ReadFile(cleanExtPath); err == nil {
 					extPayload = string(rawExt)
 				}
@@ -968,7 +941,11 @@ func discoverBDMVSummaryCache(tmpDir string) (bdmvSummaryCache, error) {
 		if fullPath != "" {
 			cleanTmpDir := filepath.Clean(tmpDir)
 			cleanFullPath := filepath.Clean(fullPath)
-			if relPath, err := filepath.Rel(cleanTmpDir, cleanFullPath); err == nil && relPath != ".." && !strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
+			if relPath, err := filepath.Rel(
+				cleanTmpDir,
+				cleanFullPath,
+			); err == nil && relPath != ".." &&
+				!strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
 				if rawFull, err := os.ReadFile(cleanFullPath); err == nil {
 					fullPayload = string(rawFull)
 				}
@@ -1019,7 +996,15 @@ func cachedPlaylistNames(cache bdmvSummaryCache) []string {
 	return names
 }
 
-func (s *Service) resolveOrCreateBDMVSummaries(ctx context.Context, req api.Request, tmpDir string, playlistPath string, selected []string) (string, bool, error) {
+// resolveOrCreateBDMVSummaries reuses complete cached playlist reports or runs
+// the minimum permitted BDInfo scan, requiring confirmation for partial caches.
+func (s *Service) resolveOrCreateBDMVSummaries(
+	ctx context.Context,
+	input api.PrepareInput,
+	tmpDir string,
+	playlistPath string,
+	selected []string,
+) (string, bool, error) {
 	cache, err := discoverBDMVSummaryCache(tmpDir)
 	if err != nil {
 		return "", false, fmt.Errorf("metadata: discover bdmv tmp cache: %w", err)
@@ -1034,9 +1019,9 @@ func (s *Service) resolveOrCreateBDMVSummaries(ctx context.Context, req api.Requ
 		}
 		return outputPath, false, nil
 	case len(missing) > 0 && len(missing) < len(selected):
-		if req.Options.InteractionMode != api.InteractionModeUnattended && !req.ConfirmBDMVRescan {
+		if input.Controls.Interaction != api.InteractionModeUnattended && !input.Controls.ConfirmBDMVRescan {
 			return "", false, &api.BDMVRescanRequiredError{
-				SourcePath:        req.Paths[0],
+				SourcePath:        input.SourcePath,
 				SelectedPlaylists: append([]string(nil), selected...),
 				CachedPlaylists:   cachedPlaylistNames(cache),
 				MissingPlaylists:  missing,
@@ -1077,7 +1062,7 @@ func (s *Service) resolveOrCreateBDMVSummaries(ctx context.Context, req api.Requ
 	return outputPath, true, nil
 }
 
-func metadataFingerprintMatches(primary string, current api.PreparedMetadata, stored db.FileMetadata) bool {
+func metadataFingerprintMatches(primary string, current preparationstate.State, stored db.FileMetadata) bool {
 	if !pathEqualForFingerprint(primary, stored.Path) {
 		return false
 	}
@@ -1087,7 +1072,8 @@ func metadataFingerprintMatches(primary string, current api.PreparedMetadata, st
 	if current.SourceSize != 0 && stored.SourceSize != 0 && current.SourceSize != stored.SourceSize {
 		return false
 	}
-	if strings.TrimSpace(current.VideoPath) != "" && strings.TrimSpace(stored.VideoPath) != "" && !pathEqualForFingerprint(current.VideoPath, stored.VideoPath) {
+	if strings.TrimSpace(current.VideoPath) != "" && strings.TrimSpace(stored.VideoPath) != "" &&
+		!pathEqualForFingerprint(current.VideoPath, stored.VideoPath) {
 		return false
 	}
 	if len(current.FileList) > 0 && len(stored.FileList) > 0 {
@@ -1130,45 +1116,7 @@ func normalizePathForFingerprint(path string) string {
 	return normalized
 }
 
-func normalizeScreenshotOverrides(overrides api.ScreenshotOverrides) api.ScreenshotOverrides {
-	if len(overrides.ManualFrames) > 0 {
-		frames := make([]int, 0, len(overrides.ManualFrames))
-		for _, frame := range overrides.ManualFrames {
-			if frame <= 0 {
-				continue
-			}
-			frames = append(frames, frame)
-		}
-		overrides.ManualFrames = frames
-	}
-	if len(overrides.ComparisonPaths) > 0 {
-		paths := make([]string, 0, len(overrides.ComparisonPaths))
-		seen := make(map[string]struct{}, len(overrides.ComparisonPaths))
-		for _, value := range overrides.ComparisonPaths {
-			trimmed := strings.TrimSpace(value)
-			if trimmed == "" {
-				continue
-			}
-			absPath, err := filepath.Abs(trimmed)
-			if err != nil {
-				continue
-			}
-			normalized := normalizePathForFingerprint(absPath)
-			if _, ok := seen[normalized]; ok {
-				continue
-			}
-			seen[normalized] = struct{}{}
-			paths = append(paths, absPath)
-		}
-		overrides.ComparisonPaths = paths
-	}
-	if overrides.ComparisonPrimaryIndex != nil && *overrides.ComparisonPrimaryIndex <= 0 {
-		overrides.ComparisonPrimaryIndex = nil
-	}
-	return overrides
-}
-
-func applySeasonEpisodeMetadata(meta *api.PreparedMetadata, result seasonep.Result, logger api.Logger) {
+func applySeasonEpisodeMetadata(meta *preparationstate.State, result seasonep.Result, logger api.Logger) {
 	if meta == nil {
 		return
 	}
@@ -1193,147 +1141,14 @@ func applySeasonEpisodeMetadata(meta *api.PreparedMetadata, result seasonep.Resu
 	meta.TVPack = result.TVPack
 
 	if logger != nil && (meta.SeasonStr != "" || meta.EpisodeStr != "" || meta.DailyEpisodeDate != "" || meta.TVPack) {
-		logger.Debugf("metadata: parsed season/episode season=%q episode=%q daily_date=%q tv_pack=%t", meta.SeasonStr, meta.EpisodeStr, meta.DailyEpisodeDate, meta.TVPack)
+		logger.Debugf(
+			"metadata: parsed season/episode season=%q episode=%q daily_date=%q tv_pack=%t",
+			meta.SeasonStr,
+			meta.EpisodeStr,
+			meta.DailyEpisodeDate,
+			meta.TVPack,
+		)
 	}
-}
-
-func clearSeasonEpisodeMetadata(meta *api.PreparedMetadata) {
-	if meta == nil {
-		return
-	}
-	meta.SeasonInt = 0
-	meta.EpisodeInt = 0
-	meta.SeasonStr = ""
-	meta.EpisodeStr = ""
-	meta.DailyEpisodeDate = ""
-	meta.TVPack = false
-	meta.Release.Season = 0
-	meta.Release.Episode = 0
-}
-
-func shouldCollapseCLIFolderToVideo(meta api.PreparedMetadata, sourcePath string) bool {
-	if meta.Mode != api.ModeCLI || meta.Options.KeepFolder || meta.TVPack || strings.TrimSpace(meta.DiscType) != "" {
-		return false
-	}
-	videoPath := strings.TrimSpace(meta.VideoPath)
-	if videoPath == "" || strings.EqualFold(videoPath, strings.TrimSpace(sourcePath)) {
-		return false
-	}
-	info, err := os.Stat(strings.TrimSpace(sourcePath))
-	if err != nil || !info.IsDir() {
-		return false
-	}
-	return true
-}
-
-func largestVideoFile(fileList []string, fallback string) string {
-	largest := strings.TrimSpace(fallback)
-	largestSize := int64(-1)
-	for _, candidate := range fileList {
-		trimmed := strings.TrimSpace(candidate)
-		if trimmed == "" {
-			continue
-		}
-		info, err := os.Stat(trimmed)
-		if err != nil || !info.Mode().IsRegular() {
-			continue
-		}
-		if info.Size() > largestSize {
-			largest = trimmed
-			largestSize = info.Size()
-		}
-	}
-	return largest
-}
-
-func preferredCLIFolderVideo(meta api.PreparedMetadata, sourcePath string) string {
-	if matched := exactFolderNamedVideoFile(meta.FileList, sourcePath); matched != "" {
-		return matched
-	}
-	if matched := seasonEpisodeMatchedVideoFile(meta.FileList, meta); matched != "" {
-		return matched
-	}
-	fallback := strings.TrimSpace(meta.VideoPath)
-	if isRegularPathInList(meta.FileList, fallback) {
-		return fallback
-	}
-	return largestVideoFile(meta.FileList, fallback)
-}
-
-func exactFolderNamedVideoFile(fileList []string, sourcePath string) string {
-	folderBase := strings.TrimSpace(filepath.Base(filepath.Clean(sourcePath)))
-	if folderBase == "" {
-		return ""
-	}
-	normalizedFolder := normalizeVideoStem(folderBase)
-	for _, candidate := range fileList {
-		trimmed := strings.TrimSpace(candidate)
-		if trimmed == "" {
-			continue
-		}
-		if normalizeVideoStem(filepath.Base(trimmed)) == normalizedFolder && isRegularPathInList([]string{trimmed}, trimmed) {
-			return trimmed
-		}
-	}
-	return ""
-}
-
-func seasonEpisodeMatchedVideoFile(fileList []string, meta api.PreparedMetadata) string {
-	if meta.SeasonInt <= 0 && meta.EpisodeInt <= 0 && strings.TrimSpace(meta.DailyEpisodeDate) == "" {
-		return ""
-	}
-	matches := make([]string, 0, len(fileList))
-	for _, candidate := range fileList {
-		trimmed := strings.TrimSpace(candidate)
-		if trimmed == "" || !isRegularPathInList([]string{trimmed}, trimmed) {
-			continue
-		}
-		if releaseMatchesPreparedEpisode(ParseReleaseInfo(trimmed), meta) {
-			matches = append(matches, trimmed)
-		}
-	}
-	if len(matches) == 0 {
-		return ""
-	}
-	fallback := strings.TrimSpace(meta.VideoPath)
-	if isRegularPathInList(matches, fallback) {
-		return fallback
-	}
-	return largestVideoFile(matches, matches[0])
-}
-
-func releaseMatchesPreparedEpisode(release api.ReleaseInfo, meta api.PreparedMetadata) bool {
-	if strings.TrimSpace(meta.DailyEpisodeDate) != "" && release.Year > 0 && release.Month > 0 && release.Day > 0 {
-		expected := fmt.Sprintf("%04d-%02d-%02d", release.Year, release.Month, release.Day)
-		if expected == strings.TrimSpace(meta.DailyEpisodeDate) {
-			return true
-		}
-	}
-	return meta.SeasonInt > 0 && meta.EpisodeInt > 0 && release.Season == meta.SeasonInt && release.Episode == meta.EpisodeInt
-}
-
-func normalizeVideoStem(value string) string {
-	base := strings.TrimSuffix(strings.TrimSpace(value), filepath.Ext(value))
-	return strings.ToLower(base)
-}
-
-func isRegularPathInList(fileList []string, candidate string) bool {
-	trimmedCandidate := strings.TrimSpace(candidate)
-	if trimmedCandidate == "" {
-		return false
-	}
-	found := false
-	for _, value := range fileList {
-		if pathEqualForFingerprint(value, trimmedCandidate) {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return false
-	}
-	info, err := os.Stat(trimmedCandidate)
-	return err == nil && info.Mode().IsRegular()
 }
 
 func safeWriteFile(dir string, path string, data []byte) error {

@@ -9,7 +9,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/trackerauth"
+	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
+	dupechecking "github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -32,7 +33,31 @@ type trackerAuthPreflightDupeService struct {
 	trackers []string
 }
 
-func (s *trackerAuthPreflightDupeService) Check(_ context.Context, meta api.PreparedMetadata, trackerIDs []string) (api.DupeCheckSummary, error) {
+func checkWithAuthForTest(
+	ctx context.Context,
+	module *dupeModule,
+	interaction api.InteractionMode,
+	subject api.DuplicateSubject,
+	trackerIDs []string,
+) (api.DupeCheckSummary, error) {
+	ready := trackerIDs
+	var blocked []api.DupeCheckResult
+	var err error
+	if interaction == api.InteractionModeInteractive {
+		ready, blocked, err = module.preflightGUITrackerAuth(ctx, subject, trackerIDs)
+		if err != nil {
+			return api.DupeCheckSummary{}, err
+		}
+	}
+	summary, _, err := checkDuplicateAssessment(ctx, module.services.Dupes, subject, ready, dupechecking.CheckOptions{})
+	if err != nil {
+		return summary, err
+	}
+	summary.Results = append(summary.Results, blocked...)
+	return summary, nil
+}
+
+func (s *trackerAuthPreflightDupeService) Check(_ context.Context, meta api.DuplicateSubject, trackerIDs []string) (api.DupeCheckSummary, error) {
 	s.trackers = append([]string(nil), trackerIDs...)
 	results := make([]api.DupeCheckResult, 0, len(trackerIDs))
 	for _, trackerID := range trackerIDs {
@@ -41,11 +66,25 @@ func (s *trackerAuthPreflightDupeService) Check(_ context.Context, meta api.Prep
 	return api.DupeCheckSummary{SourcePath: meta.SourcePath, Results: results}, nil
 }
 
+func (s *trackerAuthPreflightDupeService) CheckWithAssessment(
+	ctx context.Context,
+	meta api.DuplicateSubject,
+	trackerIDs []string,
+	_ dupechecking.CheckOptions,
+) (api.DupeCheckSummary, dupechecking.Assessment, error) {
+	summary, err := s.Check(ctx, meta, trackerIDs)
+	return summary, dupechecking.EmptyAssessment(), err
+}
+
 func TestCheckGUIDupesWithAuthSkipsBlockedTrackerAndContinuesReadyTrackers(t *testing.T) {
 	t.Parallel()
 
 	auth := &trackerAuthPreflightTestService{
-		capabilities: []api.TrackerAuthCapability{{TrackerID: "PTP", SupportsLogin: true, SupportsManual2FA: true}},
+		capabilities: []api.TrackerAuthCapability{{
+			TrackerID:         "PTP",
+			SupportsLogin:     true,
+			SupportsManual2FA: true,
+		}},
 		statuses: []api.TrackerAuthStatus{{
 			TrackerID: "PTP",
 			State:     trackerauth.StateLoginRequired,
@@ -54,21 +93,21 @@ func TestCheckGUIDupesWithAuthSkipsBlockedTrackerAndContinuesReadyTrackers(t *te
 		}},
 	}
 	dupes := &trackerAuthPreflightDupeService{}
-	coreSvc := &Core{
+	coreSvc := newTestCore(testCoreOptions{
 		logger: api.NopLogger{},
 		services: api.ServiceSet{
 			Dupes:       dupes,
 			TrackerAuth: auth,
 		},
-	}
+	})
 	var progress []api.DupeProgressUpdate
 	ctx := api.WithDupeProgressReporter(context.Background(), func(update api.DupeProgressUpdate) {
 		progress = append(progress, update)
 	})
 
-	summary, err := coreSvc.checkGUIDupesWithAuth(ctx, api.ModeGUI, api.PreparedMetadata{SourcePath: "source.mkv"}, []string{"PTP", "AITHER"})
+	summary, err := checkWithAuthForTest(ctx, coreSvc.dupe, api.InteractionModeInteractive, api.DuplicateSubject{SourcePath: "source.mkv"}, []string{"PTP", "AITHER"})
 	if err != nil {
-		t.Fatalf("check GUI dupes with auth: %v", err)
+		t.Fatalf("check WebUI dupes with auth: %v", err)
 	}
 	if !slices.Equal(auth.validated, []string{"PTP"}) {
 		t.Fatalf("expected managed auth validation for PTP, got %v", auth.validated)
@@ -137,41 +176,77 @@ func TestCheckGUIDupesWithAuthPreservesReadyTrackerOrder(t *testing.T) {
 		statuses:     []api.TrackerAuthStatus{{TrackerID: "PTP", State: trackerauth.StateConfigured}},
 	}
 	dupes := &trackerAuthPreflightDupeService{}
-	coreSvc := &Core{logger: api.NopLogger{}, services: api.ServiceSet{Dupes: dupes, TrackerAuth: auth}}
+	coreSvc := newTestCore(testCoreOptions{logger: api.NopLogger{}, services: api.ServiceSet{Dupes: dupes, TrackerAuth: auth}})
 
-	_, err := coreSvc.checkGUIDupesWithAuth(context.Background(), api.ModeGUI, api.PreparedMetadata{SourcePath: "source.mkv"}, []string{"PTP", "AITHER"})
+	_, err := checkWithAuthForTest(context.Background(), coreSvc.dupe, api.InteractionModeInteractive, api.DuplicateSubject{SourcePath: "source.mkv"}, []string{"PTP", "AITHER"})
 	if err != nil {
-		t.Fatalf("check GUI dupes with auth: %v", err)
+		t.Fatalf("check WebUI dupes with auth: %v", err)
 	}
 	if !slices.Equal(dupes.trackers, []string{"PTP", "AITHER"}) {
 		t.Fatalf("expected input tracker order after auth preflight, got %v", dupes.trackers)
 	}
 }
 
-func TestCheckGUIDupesWithAuthAvoidsAuthForRuleFailedTracker(t *testing.T) {
+func TestCheckGUIDupesWithAuthAvoidsAuthForBlockingRuleFailedTracker(t *testing.T) {
 	t.Parallel()
 
 	auth := &trackerAuthPreflightTestService{
 		capabilities: []api.TrackerAuthCapability{{TrackerID: "PTP", SupportsLogin: true}},
 	}
 	dupes := &trackerAuthPreflightDupeService{}
-	coreSvc := &Core{logger: api.NopLogger{}, services: api.ServiceSet{Dupes: dupes, TrackerAuth: auth}}
-	meta := api.PreparedMetadata{
+	coreSvc := newTestCore(testCoreOptions{logger: api.NopLogger{}, services: api.ServiceSet{Dupes: dupes, TrackerAuth: auth}})
+	meta := api.DuplicateSubject{
 		SourcePath: "source.mkv",
 		TrackerRuleFailures: map[string][]api.RuleFailure{
-			"PTP": {{Rule: "example_rule", Reason: "example rule failed"}},
+			"PTP": {{
+				Rule:     "example_rule",
+				Reason:   "example rule failed",
+				Severity: api.RuleFailureSeverityBlocking,
+			}},
 		},
 	}
 
-	_, err := coreSvc.checkGUIDupesWithAuth(context.Background(), api.ModeGUI, meta, []string{"PTP"})
+	_, err := checkWithAuthForTest(context.Background(), coreSvc.dupe, api.InteractionModeInteractive, meta, []string{"PTP"})
 	if err != nil {
-		t.Fatalf("check GUI dupes with auth: %v", err)
+		t.Fatalf("check WebUI dupes with auth: %v", err)
 	}
 	if len(auth.validated) != 0 {
 		t.Fatalf("expected terminal rule failure to skip auth validation, got %v", auth.validated)
 	}
 	if !slices.Equal(dupes.trackers, []string{"PTP"}) {
 		t.Fatalf("expected dupe service to retain rule-failed tracker for its skip result, got %v", dupes.trackers)
+	}
+}
+
+func TestCheckGUIDupesWithAuthStillValidatesWarningOnlyTracker(t *testing.T) {
+	t.Parallel()
+
+	auth := &trackerAuthPreflightTestService{
+		capabilities: []api.TrackerAuthCapability{{TrackerID: "PTP", SupportsLogin: true}},
+		statuses:     []api.TrackerAuthStatus{{TrackerID: "PTP", State: trackerauth.StateConfigured}},
+	}
+	dupes := &trackerAuthPreflightDupeService{}
+	coreSvc := newTestCore(testCoreOptions{logger: api.NopLogger{}, services: api.ServiceSet{Dupes: dupes, TrackerAuth: auth}})
+	meta := api.DuplicateSubject{
+		SourcePath: "Example.Release.2026.1080p-GRP.mkv",
+		TrackerRuleFailures: map[string][]api.RuleFailure{
+			"PTP": {{
+				Rule:     "example_advice",
+				Reason:   "example advisory",
+				Severity: api.RuleFailureSeverityWarning,
+			}},
+		},
+	}
+
+	_, err := checkWithAuthForTest(context.Background(), coreSvc.dupe, api.InteractionModeInteractive, meta, []string{"PTP"})
+	if err != nil {
+		t.Fatalf("check WebUI dupes with auth: %v", err)
+	}
+	if !slices.Equal(auth.validated, []string{"PTP"}) {
+		t.Fatalf("expected warning-only tracker to require managed auth validation, got %v", auth.validated)
+	}
+	if !slices.Equal(dupes.trackers, []string{"PTP"}) {
+		t.Fatalf("expected warning-only tracker to reach dupe search, got %v", dupes.trackers)
 	}
 }
 
@@ -182,9 +257,9 @@ func TestCheckGUIDupesWithAuthLeavesCLIAuthOwnershipUnchanged(t *testing.T) {
 		capabilities: []api.TrackerAuthCapability{{TrackerID: "PTP", SupportsLogin: true}},
 	}
 	dupes := &trackerAuthPreflightDupeService{}
-	coreSvc := &Core{logger: api.NopLogger{}, services: api.ServiceSet{Dupes: dupes, TrackerAuth: auth}}
+	coreSvc := newTestCore(testCoreOptions{logger: api.NopLogger{}, services: api.ServiceSet{Dupes: dupes, TrackerAuth: auth}})
 
-	_, err := coreSvc.checkGUIDupesWithAuth(context.Background(), api.ModeCLI, api.PreparedMetadata{SourcePath: "source.mkv"}, []string{"PTP"})
+	_, err := checkWithAuthForTest(context.Background(), coreSvc.dupe, api.InteractionModeUnattended, api.DuplicateSubject{SourcePath: "source.mkv"}, []string{"PTP"})
 	if err != nil {
 		t.Fatalf("check CLI dupes: %v", err)
 	}

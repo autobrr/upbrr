@@ -221,14 +221,14 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 }
 
 // ParseOutput parses BDInfo output and returns structured data
-func (s *Service) ParseOutput(filePath string) (map[string]interface{}, error) {
+func (s *Service) ParseOutput(filePath string) (map[string]any, error) {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("bdinfo: read output: %w", err)
 	}
 
 	text := string(content)
-	result := make(map[string]interface{})
+	result := make(map[string]any)
 
 	// Extract basic info
 	if idx := strings.Index(text, "Disc Title:"); idx >= 0 {

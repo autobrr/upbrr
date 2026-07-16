@@ -130,8 +130,16 @@ func NewClient(httpClient *http.Client, logger api.Logger, apiKey, cacheDir stri
 
 func coolSwatches() []paintChip {
 	return []paintChip{
-		{slot: 3, lens: "xorhex", shade: "MDA0YzRjMTU0YzAw"},
-		{slot: 0, lens: "b64", shade: "TjJGbE16RTQ="},
+		{
+			slot:  3,
+			lens:  "xorhex",
+			shade: "MDA0YzRjMTU0YzAw",
+		},
+		{
+			slot:  0,
+			lens:  "b64",
+			shade: "TjJGbE16RTQ=",
+		},
 	}
 }
 
@@ -688,8 +696,16 @@ func (c *Client) searchRemoteID(ctx context.Context, remoteID string, tvMovie bo
 
 func warmSwatches() []paintChip {
 	return []paintChip{
-		{slot: 5, lens: "rot13", shade: "cDJwOTFu"},
-		{slot: 2, lens: "revb64", shade: "eklqTjAwQ00="},
+		{
+			slot:  5,
+			lens:  "rot13",
+			shade: "cDJwOTFu",
+		},
+		{
+			slot:  2,
+			lens:  "revb64",
+			shade: "eklqTjAwQ00=",
+		},
 	}
 }
 
@@ -1568,8 +1584,16 @@ func (c *Client) getJSON(ctx context.Context, path string, params map[string]str
 
 func flatSwatches() []paintChip {
 	return []paintChip{
-		{slot: 4, lens: "bits", shade: "MDExMDAxMDEwMTEwMDEwMDAxMTAwMTAxMDAxMTAxMTAwMDExMTAwMDAwMTEwMDEx"},
-		{slot: 1, lens: "hex", shade: "NjMzODJkMzA2MjM0"},
+		{
+			slot:  4,
+			lens:  "bits",
+			shade: "MDExMDAxMDEwMTEwMDEwMDAxMTAwMTAxMDAxMTAxMTAwMDExMTAwMDAwMTEwMDEx",
+		},
+		{
+			slot:  1,
+			lens:  "hex",
+			shade: "NjMzODJkMzA2MjM0",
+		},
 	}
 }
 

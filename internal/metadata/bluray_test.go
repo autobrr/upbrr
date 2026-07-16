@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -67,9 +69,9 @@ func TestShouldLookupBlurayWhenDescriptionNeedsBlurayData(t *testing.T) {
 				t.Fatalf("blurayLookupEnabled() = %t, want %t", gotEnabled, tt.wantEnabled)
 			}
 
-			meta := api.PreparedMetadata{
-				DiscType:    "BDMV",
-				ExternalIDs: api.ExternalIDs{IMDBID: 75784},
+			meta := preparationstate.State{
+				DiscType: "BDMV",
+				Identity: api.ExternalIdentity{IMDBID: 75784},
 			}
 			if gotLookup := service.shouldLookupBluray(meta); gotLookup != tt.wantLookup {
 				t.Fatalf("shouldLookupBluray() = %t, want %t", gotLookup, tt.wantLookup)

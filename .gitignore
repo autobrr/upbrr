@@ -1,12 +1,9 @@
-gui/frontend/node_modules/
-gui/frontend/dist/
-gui/frontend/package.json.md5
-gui/frontend/tsconfig.tsbuildinfo
-gui/frontend/wailsjs/go/
-gui/build/bin/
-internal/webserver/assets/
-internal/guiapp/assets/*
-!internal/guiapp/assets/.keep
+webui/node_modules/
+webui/dist/
+webui/package.json.md5
+webui/tsconfig.tsbuildinfo
+internal/webserver/assets/*
+!internal/webserver/assets/.keep
 dist/
 docs/
 tmp/
@@ -19,8 +16,8 @@ tmp/
 /scripts/*.py
 
 # E2E / Playwright artifacts
-gui/frontend/playwright-report/
-gui/frontend/test-results/
+webui/playwright-report/
+webui/test-results/
 
 # Lefthook
 .lefthook-local.yml
@@ -28,8 +25,8 @@ gui/frontend/test-results/
 
 # Lint / formatter caches
 lint-report.json
-gui/frontend/.eslintcache
-gui/frontend/node_modules/.cache/prettier/
+webui/.eslintcache
+webui/node_modules/.cache/prettier/
 
 # App Configs
 /config/*.yaml

@@ -20,26 +20,36 @@ import (
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
-	"github.com/autobrr/upbrr/internal/paths"
-	"github.com/autobrr/upbrr/internal/pathutil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
-	"github.com/autobrr/upbrr/internal/torrentmeta"
+	torrentmeta "github.com/autobrr/upbrr/internal/torrent/metainfo"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type Service struct {
-	logger  api.Logger
-	tmpRoot string
+	logger   api.Logger
+	tmpRoot  string
+	registry *trackers.Registry
 }
 
 func NewService(logger api.Logger, tmpRoot string) *Service {
+	return NewServiceWithRegistry(logger, tmpRoot, nil)
+}
+
+func NewServiceWithRegistry(logger api.Logger, tmpRoot string, registry *trackers.Registry) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
-	return &Service{logger: logger, tmpRoot: strings.TrimSpace(tmpRoot)}
+	return &Service{
+		logger:   logger,
+		tmpRoot:  strings.TrimSpace(tmpRoot),
+		registry: registry,
+	}
 }
 
-func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.TorrentResult, error) {
+func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.TorrentResult, error) {
 	select {
 	case <-ctx.Done():
 		return api.TorrentResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -53,7 +63,7 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 	meta.SourcePath = source
 
 	s.logger.Debugf("torrent: preparing for %s", source)
-	policy := resolveTrackerPolicy(meta)
+	policy := resolveTrackerPolicy(meta, s.registry)
 	forceRehash := torrentOverrideEnabled(meta.TorrentOverrides.Rehash)
 	reuseOnly := torrentOverrideEnabled(meta.TorrentOverrides.NoHash)
 	if forceRehash && reuseOnly {
@@ -92,7 +102,7 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 	}
 
 	if !forceRehash && s.tmpRoot != "" {
-		tmpTorrentPath, err := TempTorrentPath(s.tmpRoot, meta, source)
+		tmpTorrentPath, err := TempTorrentPath(s.tmpRoot, source)
 		if err != nil {
 			return api.TorrentResult{}, err
 		}
@@ -145,7 +155,13 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 	if err != nil {
 		return api.TorrentResult{}, err
 	}
-	s.logger.Debugf("torrent: create spec path=%s name=%q include_patterns=%d staged=%t", createSpec.path, createSpec.name, len(createSpec.includePatterns), createSpec.cleanupPath != "")
+	s.logger.Debugf(
+		"torrent: create spec path=%s name=%q include_patterns=%d staged=%t",
+		createSpec.path,
+		createSpec.name,
+		len(createSpec.includePatterns),
+		createSpec.cleanupPath != "",
+	)
 	if createSpec.cleanupPath != "" {
 		defer func() {
 			if err := os.RemoveAll(createSpec.cleanupPath); err != nil {
@@ -169,7 +185,7 @@ func (s *Service) Create(ctx context.Context, meta api.PreparedMetadata) (api.To
 	if s.tmpRoot == "" {
 		return api.TorrentResult{}, errors.New("torrent: tmp root is required")
 	}
-	outputPath, err := TempTorrentPath(s.tmpRoot, meta, source)
+	outputPath, err := TempTorrentPath(s.tmpRoot, source)
 	if err != nil {
 		return api.TorrentResult{}, err
 	}
@@ -228,7 +244,7 @@ func setCreatedBy(path string, createdBy string) error {
 	return nil
 }
 
-func resultFromExistingTorrent(ctx context.Context, meta api.PreparedMetadata, path string, message string) (api.TorrentResult, error) {
+func resultFromExistingTorrent(ctx context.Context, meta api.TorrentSubject, path string, message string) (api.TorrentResult, error) {
 	result, err := resultFromPath(path)
 	if err != nil {
 		return api.TorrentResult{}, err
@@ -237,11 +253,11 @@ func resultFromExistingTorrent(ctx context.Context, meta api.PreparedMetadata, p
 	return result, nil
 }
 
-func emitTorrentProgress(ctx context.Context, meta api.PreparedMetadata, status string, message string) {
+func emitTorrentProgress(ctx context.Context, meta api.TorrentSubject, status string, message string) {
 	emitTorrentHashProgress(ctx, meta, status, message, 0, 0, 0)
 }
 
-func torrentProgressCallback(ctx context.Context, meta api.PreparedMetadata) mkbrr.ProgressCallback {
+func torrentProgressCallback(ctx context.Context, meta api.TorrentSubject) mkbrr.ProgressCallback {
 	return func(completed, total int, hashRate float64) {
 		if total <= 0 {
 			emitTorrentHashProgress(ctx, meta, "running", "Preparing torrent pieces", completed, total, hashRate)
@@ -260,7 +276,7 @@ func torrentProgressCallback(ctx context.Context, meta api.PreparedMetadata) mkb
 	}
 }
 
-func emitTorrentHashProgress(ctx context.Context, meta api.PreparedMetadata, status string, message string, completed int, total int, hashRate float64) {
+func emitTorrentHashProgress(ctx context.Context, meta api.TorrentSubject, status string, message string, completed int, total int, hashRate float64) {
 	tracker := ""
 	if len(meta.Trackers) == 1 {
 		tracker = meta.Trackers[0]
@@ -300,7 +316,7 @@ func torrentOverrideEnabled(value *bool) bool {
 // validateCandidateTorrent checks an existing torrent against the active
 // tracker policy and prepared source layout. Expected candidate rejection is
 // logged at debug level so discovery can continue without operator warnings.
-func validateCandidateTorrent(path string, policy *trackerTorrentPolicy, meta api.PreparedMetadata, logger api.Logger) error {
+func validateCandidateTorrent(path string, policy *trackerTorrentPolicy, meta api.TorrentSubject, logger api.Logger) error {
 	if policy != nil {
 		if err := policy.validateTorrent(path, meta); err != nil {
 			if logger != nil {
@@ -337,7 +353,7 @@ type sourceContentFile struct {
 	contentFile
 }
 
-func resolveCreateSpec(meta api.PreparedMetadata, source string, tmpRoot string) (createSpec, error) {
+func resolveCreateSpec(meta api.TorrentSubject, source string, tmpRoot string) (createSpec, error) {
 	source = strings.TrimSpace(source)
 	if source == "" {
 		return createSpec{}, internalerrors.ErrInvalidInput
@@ -577,7 +593,7 @@ func globLiteral(value string) string {
 	return "{" + builder.String() + "}"
 }
 
-func validateTorrentContent(path string, meta api.PreparedMetadata) error {
+func validateTorrentContent(path string, meta api.TorrentSubject) error {
 	expectedFiles, ok, err := expectedTorrentFiles(meta)
 	if err != nil {
 		return err
@@ -611,7 +627,7 @@ func validateTorrentContent(path string, meta api.PreparedMetadata) error {
 	return nil
 }
 
-func expectedTorrentFiles(meta api.PreparedMetadata) ([]sourceContentFile, bool, error) {
+func expectedTorrentFiles(meta api.TorrentSubject) ([]sourceContentFile, bool, error) {
 	source := strings.TrimSpace(meta.SourcePath)
 	if source == "" || strings.EqualFold(filepath.Ext(source), ".torrent") {
 		return nil, false, nil
@@ -671,7 +687,7 @@ func expectedTorrentFiles(meta api.PreparedMetadata) ([]sourceContentFile, bool,
 	return expected, true, nil
 }
 
-func expectedTorrentName(meta api.PreparedMetadata) (string, bool, error) {
+func expectedTorrentName(meta api.TorrentSubject) (string, bool, error) {
 	source := strings.TrimSpace(meta.SourcePath)
 	if source == "" || strings.EqualFold(filepath.Ext(source), ".torrent") {
 		return "", false, nil
@@ -823,8 +839,8 @@ func sortContentFiles(files []contentFile) {
 	})
 }
 
-func TempTorrentPath(tmpRoot string, meta api.PreparedMetadata, source string) (string, error) {
-	contentDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, source)
+func TempTorrentPath(tmpRoot string, source string) (string, error) {
+	contentDir, base, err := paths.ReleaseTempDirFor(tmpRoot, source, api.ReleaseInfo{})
 	if err != nil {
 		return "", fmt.Errorf("torrent: tmp dir: %w", err)
 	}

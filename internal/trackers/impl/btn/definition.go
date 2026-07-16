@@ -14,32 +14,75 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Definition provides BTN tracker preparation and optional policy capabilities.
 type Definition struct{}
 
+// New returns a fresh BTN tracker definition.
 func New() *Definition {
 	return &Definition{}
 }
 
+// Name returns the stable BTN tracker identifier.
 func (d *Definition) Name() string {
 	return "BTN"
 }
 
-func (d *Definition) Upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
+// MetadataPolicy returns BTN metadata requirements.
+func (d *Definition) MetadataPolicy() *trackers.TrackerMetadataPolicy {
+	return &trackers.TrackerMetadataPolicy{
+		RequireKnownCategory: true,
+		Requirements: []trackers.MetadataRequirement{
+			{Scope: trackers.MetadataScopeTV, AnyOf: []trackers.MetadataField{trackers.MetadataFieldIMDB, trackers.MetadataFieldTVDB}},
+		},
+	}
+}
+
+// UploadArtifactPolicy returns BTN torrent personalization settings.
+func (d *Definition) UploadArtifactPolicy() *trackers.UploadArtifactPolicy {
+	return &trackers.UploadArtifactPolicy{Source: "BTN", RequireAnnounce: true}
+}
+
+// DataLookupConfigured reports whether the BTN API token is available.
+func (d *Definition) DataLookupConfigured(cfg config.Config) bool {
+	return len(config.ResolveBTNAPIToken(cfg)) >= 25
+}
+
+// DataLookupPolicy returns BTN metadata lookup orchestration settings.
+func (d *Definition) DataLookupPolicy() *trackers.DataLookupPolicy {
+	return &trackers.DataLookupPolicy{DeferWhenCollectingImages: true}
+}
+
+// BannedGroups returns BTN's static banned release-group list.
+func (d *Definition) BannedGroups() []string {
+	return []string{
+		"3LTON", "4yEo", "7VFr33104D", "AFG", "AniHLS", "AnimeRG", "AniURL", "DeadFish", "ELiTE", "eSc",
+		"EVO", "FGT", "FUM", "GalaxyTV", "GRANiTEN", "HAiKU", "Hi10", "ION10", "JFF", "JIVE", "LOAD", "MeGusta",
+		"mSD", "NhaNc3", "NOIVTC", "PHOENiX", "PlaySD", "playXD", "Pr1M371M3", "RAPiDCOWS", "REsuRRecTioN", "RMTeam",
+		"ROBOTS", "RUBiK", "SPASM", "Telly", "TM", "URANiME", "ViSiON", "W45Ps", "xRed", "XS", "ZKBL", "ZmN", "ZMNT", "[Oj]",
+	}
+}
+
+// Prepare builds a fresh intent-scoped BTN tracker plan.
+func (d *Definition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
+	return trackers.PrepareAdapter(ctx, input, d.prepareDescription, d.prepareDryRun, d.submit)
+}
+
+func (d *Definition) submit(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
 	return upload(ctx, req)
 }
 
-func (d *Definition) BuildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
+func (d *Definition) prepareDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
 	return buildUploadDryRun(ctx, req)
 }
 
-func (d *Definition) BuildDescription(ctx context.Context, req trackers.DescriptionRequest) (trackers.DescriptionResult, error) {
+func (d *Definition) prepareDescription(ctx context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {
 	select {
 	case <-ctx.Done():
 		return trackers.DescriptionResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
 	if err != nil {
 		assets = trackers.DescriptionAssets{}
 	}
@@ -58,11 +101,12 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 	}, nil
 }
 
-func validateBTNRequest(req trackers.UploadRequest) error {
-	if !strings.EqualFold(strings.TrimSpace(req.Meta.ExternalIDs.Category), "TV") && !strings.EqualFold(strings.TrimSpace(req.Meta.MediaInfoCategory), "TV") {
+func validateBTNRequest(req trackers.PreparationInput) error {
+	category, err := req.Meta.Identity.RequireCategory()
+	if err != nil || category != api.CanonicalCategoryTV {
 		return errors.New("trackers: BTN only supports TV uploads")
 	}
-	if strings.TrimSpace(config.ResolveBTNAPIToken(req.AppConfig)) == "" {
+	if strings.TrimSpace(req.Runtime.BTNAPIToken) == "" {
 		return errors.New("trackers: BTN requires trackers.BTN.api_key")
 	}
 	return nil
@@ -84,7 +128,7 @@ var btnInternalGroups = []string{
 	"TVSmash",
 }
 
-func isBTNInternalGroup(meta api.PreparedMetadata) bool {
+func isBTNInternalGroup(meta api.UploadSubject) bool {
 	if strings.TrimSpace(meta.Tag) == "" {
 		return false
 	}

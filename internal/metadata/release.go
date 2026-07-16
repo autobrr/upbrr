@@ -6,11 +6,13 @@ package metadata
 import (
 	"strings"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	"github.com/moistari/rls"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/seasonep"
-	"github.com/autobrr/upbrr/internal/pathutil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -32,7 +34,7 @@ func ParseReleaseInfo(path string) api.ReleaseInfo {
 	season := release.Series
 	episode := release.Episode
 	if season == 0 || episode == 0 {
-		extracted := seasonep.Extract(base, api.PreparedMetadata{})
+		extracted := seasonep.Extract(base, preparationstate.State{})
 		if season == 0 {
 			season = extracted.Season
 		}

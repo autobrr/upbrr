@@ -26,10 +26,9 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
-	"github.com/autobrr/upbrr/internal/paths"
-	"github.com/autobrr/upbrr/internal/pathutil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
-	descriptionmtv "github.com/autobrr/upbrr/internal/services/description/mtv"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -46,11 +45,11 @@ var mtvTokenPattern = regexp.MustCompile(`name="token"\s+value="([^"]{16,128})"`
 
 // ErrSubmitted2FARejected marks an MTV failure after a submitted manual 2FA code
 // reached the tracker and was rejected.
-var ErrSubmitted2FARejected = errors.New("trackers: MTV submitted 2FA rejected")
+var ErrSubmitted2FARejected = trackers.ErrSubmitted2FARejected
 
 var errMTVAuthKeyNotFound = errors.New("trackers: MTV auth key not found")
 
-func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
+func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
 	select {
 	case <-ctx.Done():
 		return api.UploadSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -63,7 +62,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	uploadURL := baseURL + mtvUploadPath
 
-	cookies, err := loadMTVCookies(ctx, req.AppConfig.MainSettings.DBPath)
+	cookies, err := loadMTVCookies(ctx, req.Runtime.DBPath)
 	if err != nil {
 		cookies = nil
 	}
@@ -84,7 +83,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 			baseURL = effectiveBaseURL
 			uploadURL = baseURL + mtvUploadPath
 		}
-		if persistErr := saveMTVCookies(ctx, req.AppConfig.MainSettings.DBPath, cookies); persistErr != nil && req.Logger != nil {
+		if persistErr := saveMTVCookies(ctx, req.Runtime.DBPath, cookies); persistErr != nil && req.Logger != nil {
 			req.Logger.Warnf("trackers: MTV failed to persist cookies: %v", persistErr)
 		}
 	}
@@ -93,7 +92,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	if req.Assets != nil {
 		assets = *req.Assets
 	} else {
-		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+		assets, err = trackers.PreparedDescriptionAssets(req.Assets)
 		if err != nil {
 			trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 			assets = trackers.DescriptionAssets{}
@@ -101,13 +100,13 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	descText := strings.TrimSpace(assets.Description)
 	if !assets.Final {
-		descText, err = descriptionmtv.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
+		descText, err = BuildDescription(ctx, req.Meta, req.Runtime.DescriptionConfig(), assets.Description, assets.Screenshots)
 		if err != nil {
 			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 	}
 
-	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	torrentPath, err := resolveTorrentPath(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
@@ -151,7 +150,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("MTV", resp.StatusCode, finalURL, bodyPreview)
 }
 
-func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
+func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
 	select {
 	case <-ctx.Done():
 		return api.TrackerDryRunEntry{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -163,7 +162,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	if req.Assets != nil {
 		assets = *req.Assets
 	} else {
-		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+		assets, err = trackers.PreparedDescriptionAssets(req.Assets)
 		if err != nil {
 			trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 			assets = trackers.DescriptionAssets{}
@@ -171,13 +170,13 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}
 	descText := strings.TrimSpace(assets.Description)
 	if !assets.Final {
-		descText, err = descriptionmtv.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.Screenshots)
+		descText, err = BuildDescription(ctx, req.Meta, req.Runtime.DescriptionConfig(), assets.Description, assets.Screenshots)
 		if err != nil {
 			return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: %w", err)
 		}
 	}
 
-	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	torrentPath, err := resolveTorrentPath(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
@@ -223,7 +222,12 @@ func resolveAuthKey(ctx context.Context, baseURL string, cookies map[string]stri
 			continue
 		}
 		// #nosec G124 -- Outbound tracker jar cookie mirrors configured MTV session values.
-		jarCookies = append(jarCookies, &http.Cookie{Name: name, Value: value, Path: "/", Domain: parsedBase.Hostname()})
+		jarCookies = append(jarCookies, &http.Cookie{
+			Name:   name,
+			Value:  value,
+			Path:   "/",
+			Domain: parsedBase.Hostname(),
+		})
 	}
 	jar.SetCookies(parsedBase, jarCookies)
 
@@ -312,7 +316,12 @@ func ResolveSessionForTrackerAuthLogin(ctx context.Context, cfg config.TrackerCo
 // follows a submitted manual code. Authenticated cookies and the effective base
 // URL are returned only after auth-key discovery so upload can reuse any
 // canonical host reached during login redirects.
-func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseURL string, login api.TrackerAuthLoginRequest) (string, *http.Client, map[string]string, string, error) {
+func loginAndResolveAuthKey(
+	ctx context.Context,
+	cfg config.TrackerConfig,
+	baseURL string,
+	login api.TrackerAuthLoginRequest,
+) (string, *http.Client, map[string]string, string, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return "", nil, nil, "", fmt.Errorf("trackers: MTV create login cookie jar: %w", err)
@@ -383,7 +392,12 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseU
 		twoFactorForm.Set("token", twoFactorTokenMatch[1])
 		twoFactorForm.Set("code", code)
 		twoFactorForm.Set("submit", "login")
-		twoReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(effectiveBaseURL, "/")+"/twofactor/login", strings.NewReader(twoFactorForm.Encode()))
+		twoReq, err := http.NewRequestWithContext(
+			ctx,
+			http.MethodPost,
+			strings.TrimRight(effectiveBaseURL, "/")+"/twofactor/login",
+			strings.NewReader(twoFactorForm.Encode()),
+		)
 		if err != nil {
 			return "", nil, nil, "", fmt.Errorf("trackers: MTV build 2FA login request: %w", err)
 		}
@@ -410,7 +424,12 @@ func loginAndResolveAuthKey(ctx context.Context, cfg config.TrackerConfig, baseU
 	auth, authedClient, err := resolveAuthKeyFromClient(ctx, effectiveBaseURL, client)
 	if err != nil {
 		if submittedManualCode && errors.Is(err, errMTVAuthKeyNotFound) {
-			return "", nil, nil, "", fmt.Errorf("trackers: MTV auth key not found after submitted 2FA final_%s: %w: %w", finalAuthTrace, err, ErrSubmitted2FARejected)
+			return "", nil, nil, "", fmt.Errorf(
+				"trackers: MTV auth key not found after submitted 2FA final_%s: %w: %w",
+				finalAuthTrace,
+				err,
+				ErrSubmitted2FARejected,
+			)
 		}
 		if errors.Is(err, errMTVAuthKeyNotFound) {
 			return "", nil, nil, "", fmt.Errorf("trackers: MTV auth key not found after login final_%s: %w", finalAuthTrace, err)
@@ -557,7 +576,7 @@ func totpFromOTPURI(otpURI string, now time.Time) (string, error) {
 	return fmt.Sprintf("%06d", code%1000000), nil
 }
 
-func buildUploadFields(req trackers.UploadRequest, auth string, description string) map[string]string {
+func buildUploadFields(req trackers.PreparationInput, auth string, description string) map[string]string {
 	meta := req.Meta
 	anon := "1"
 	if !req.TrackerConfig.Anon {
@@ -614,7 +633,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
-func resolveTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error) {
+func resolveTorrentPath(meta api.UploadSubject, dbPath string) (string, error) {
 	candidates := []string{
 		strings.TrimSpace(meta.TorrentPath),
 		strings.TrimSpace(meta.ClientTorrentPath),
@@ -631,7 +650,7 @@ func resolveTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error
 	if strings.TrimSpace(dbPath) != "" && strings.TrimSpace(meta.SourcePath) != "" {
 		tmpRoot, err := db.Subdir(dbPath, "tmp")
 		if err == nil {
-			tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+			tmpDir, base, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 			if err == nil {
 				guessed := filepath.Join(tmpDir, base+".torrent")
 				if info, err := os.Stat(guessed); err == nil && !info.IsDir() {
@@ -643,7 +662,7 @@ func resolveTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error
 	return "", errors.New("trackers: MTV torrent file not found")
 }
 
-func resolveUploadName(meta api.PreparedMetadata) string {
+func resolveUploadName(meta api.UploadSubject) string {
 	if name := strings.TrimSpace(meta.ReleaseName); name != "" {
 		return cleanName(name)
 	}
@@ -663,7 +682,7 @@ func cleanName(value string) string {
 	return strings.TrimSpace(value)
 }
 
-func resolveResolution(meta api.PreparedMetadata) string {
+func resolveResolution(meta api.UploadSubject) string {
 	if value := strings.TrimSpace(meta.Release.Resolution); value != "" {
 		return value
 	}
@@ -673,10 +692,20 @@ func resolveResolution(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func resolveResolutionID(meta api.PreparedMetadata) string {
+func resolveResolutionID(meta api.UploadSubject) string {
 	res := strings.ToLower(strings.TrimSpace(resolveResolution(meta)))
 	values := map[string]string{
-		"8640p": "0", "4320p": "4000", "2160p": "2160", "1440p": "1440", "1080p": "1080", "1080i": "1080", "720p": "720", "576p": "0", "576i": "0", "480p": "480", "480i": "480",
+		"8640p": "0",
+		"4320p": "4000",
+		"2160p": "2160",
+		"1440p": "1440",
+		"1080p": "1080",
+		"1080i": "1080",
+		"720p":  "720",
+		"576p":  "0",
+		"576i":  "0",
+		"480p":  "480",
+		"480i":  "480",
 	}
 	if value, ok := values[res]; ok {
 		return value
@@ -684,20 +713,20 @@ func resolveResolutionID(meta api.PreparedMetadata) string {
 	return "10"
 }
 
-func isSD(meta api.PreparedMetadata) bool {
+func isSD(meta api.UploadSubject) bool {
 	res := strings.ToLower(resolveResolution(meta))
 	return strings.Contains(res, "480") || strings.Contains(res, "576")
 }
 
-func resolveCategory(meta api.PreparedMetadata) string {
-	category := strings.ToUpper(strings.TrimSpace(meta.ExternalIDs.Category))
-	if category == "" {
-		category = strings.ToUpper(strings.TrimSpace(meta.MediaInfoCategory))
+func resolveCategory(meta api.UploadSubject) string {
+	category, err := meta.Identity.RequireCategory()
+	if err != nil {
+		return ""
 	}
-	return category
+	return strings.ToUpper(string(category))
 }
 
-func resolveCategoryID(meta api.PreparedMetadata) string {
+func resolveCategoryID(meta api.UploadSubject) string {
 	category := resolveCategory(meta)
 	if category == "MOVIE" {
 		if isSD(meta) {
@@ -720,7 +749,7 @@ func resolveCategoryID(meta api.PreparedMetadata) string {
 	return "0"
 }
 
-func resolveType(meta api.PreparedMetadata) string {
+func resolveType(meta api.UploadSubject) string {
 	value := strings.ToUpper(strings.TrimSpace(meta.Type))
 	if value == "" {
 		value = strings.ToUpper(strings.TrimSpace(meta.Release.Type))
@@ -728,7 +757,7 @@ func resolveType(meta api.PreparedMetadata) string {
 	return strings.ReplaceAll(strings.ReplaceAll(value, "-", ""), " ", "")
 }
 
-func resolveSourceID(meta api.PreparedMetadata) string {
+func resolveSourceID(meta api.UploadSubject) string {
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
 		return "1"
 	}
@@ -736,7 +765,18 @@ func resolveSourceID(meta api.PreparedMetadata) string {
 		return "7"
 	}
 	mapping := map[string]string{
-		"DISC": "1", "WEBDL": "9", "WEBRIP": "10", "HDTV": "1", "SDTV": "2", "TVRIP": "3", "DVD": "4", "DVDRIP": "5", "BDRIP": "8", "VHS": "6", "MIXED": "11", "ENCODE": "7",
+		"DISC":   "1",
+		"WEBDL":  "9",
+		"WEBRIP": "10",
+		"HDTV":   "1",
+		"SDTV":   "2",
+		"TVRIP":  "3",
+		"DVD":    "4",
+		"DVDRIP": "5",
+		"BDRIP":  "8",
+		"VHS":    "6",
+		"MIXED":  "11",
+		"ENCODE": "7",
 	}
 	if value, ok := mapping[resolveType(meta)]; ok {
 		return value
@@ -744,7 +784,7 @@ func resolveSourceID(meta api.PreparedMetadata) string {
 	return "0"
 }
 
-func resolveOriginID(meta api.PreparedMetadata) string {
+func resolveOriginID(meta api.UploadSubject) string {
 	if meta.PersonalRelease {
 		return "4"
 	}
@@ -754,7 +794,7 @@ func resolveOriginID(meta api.PreparedMetadata) string {
 	return "3"
 }
 
-func resolveTags(meta api.PreparedMetadata) string {
+func resolveTags(meta api.UploadSubject) string {
 	tags := make([]string, 0, 12)
 	resolution := strings.ToLower(strings.TrimSpace(resolveResolution(meta)))
 	if resolution != "" {
@@ -820,28 +860,28 @@ func resolveTags(meta api.PreparedMetadata) string {
 	return strings.Join(tags, " ")
 }
 
-func resolveGroupDescription(meta api.PreparedMetadata) string {
+func resolveGroupDescription(meta api.UploadSubject) string {
 	parts := make([]string, 0, 5)
-	if meta.ExternalMetadata.IMDB != nil {
-		if imdbURL := strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbURL); imdbURL != "" {
+	if meta.ProviderMetadata.IMDB != nil {
+		if imdbURL := strings.TrimSpace(meta.ProviderMetadata.IMDB.IMDbURL); imdbURL != "" {
 			parts = append(parts, imdbURL)
 		}
 	}
-	if meta.ExternalIDs.TMDBID != 0 {
+	if meta.Identity.TMDBID != 0 {
 		category := strings.ToLower(strings.TrimSpace(resolveCategory(meta)))
 		if category == "" {
 			category = "movie"
 		}
-		parts = append(parts, "https://www.themoviedb.org/"+category+"/"+strconv.Itoa(meta.ExternalIDs.TMDBID))
+		parts = append(parts, "https://www.themoviedb.org/"+category+"/"+strconv.Itoa(meta.Identity.TMDBID))
 	}
-	if strings.EqualFold(resolveCategory(meta), "TV") && meta.ExternalIDs.TVDBID != 0 {
-		parts = append(parts, "https://www.thetvdb.com/?id="+strconv.Itoa(meta.ExternalIDs.TVDBID))
+	if strings.EqualFold(resolveCategory(meta), "TV") && meta.Identity.TVDBID != 0 {
+		parts = append(parts, "https://www.thetvdb.com/?id="+strconv.Itoa(meta.Identity.TVDBID))
 	}
-	if meta.ExternalIDs.TVmazeID != 0 {
-		parts = append(parts, "https://www.tvmaze.com/shows/"+strconv.Itoa(meta.ExternalIDs.TVmazeID))
+	if meta.Identity.TVmazeID != 0 {
+		parts = append(parts, "https://www.tvmaze.com/shows/"+strconv.Itoa(meta.Identity.TVmazeID))
 	}
-	if meta.ExternalIDs.MALID != 0 {
-		parts = append(parts, "https://myanimelist.net/anime/"+strconv.Itoa(meta.ExternalIDs.MALID))
+	if meta.Identity.MALID != 0 {
+		parts = append(parts, "https://myanimelist.net/anime/"+strconv.Itoa(meta.Identity.MALID))
 	}
 	return strings.Join(parts, "\n")
 }

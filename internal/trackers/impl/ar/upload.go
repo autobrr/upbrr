@@ -26,12 +26,12 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
-	"github.com/autobrr/upbrr/internal/paths"
-	"github.com/autobrr/upbrr/internal/pathutil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
-	"github.com/autobrr/upbrr/internal/trackerauth"
 	"github.com/autobrr/upbrr/internal/trackers"
+	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -60,7 +60,7 @@ type uploadState struct {
 	blockedReason string
 }
 
-func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
+func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
 	state, client, err := prepareUploadState(ctx, req, false)
 	if err != nil {
 		return api.UploadSummary{}, err
@@ -100,7 +100,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		downloadURL := buildDownloadURL(torrentID, torrentURL)
 		artifactPath := ""
 		if announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announceURL != "" {
-			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "AR")
+			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "AR")
 			if err != nil {
 				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
@@ -122,18 +122,22 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 
 	failurePath := ""
-	if pathValue, pathErr := resolveFailurePath(req.Meta, req.AppConfig.MainSettings.DBPath); pathErr == nil {
+	if pathValue, pathErr := resolveFailurePath(req.Meta, req.Runtime.DBPath); pathErr == nil {
 		failurePath = pathValue
 		redactedBody := []byte(redaction.RedactValue(string(responsePreview), nil))
 		_ = os.WriteFile(failurePath, redactedBody, 0o600)
 	}
 	if failurePath != "" {
-		return api.UploadSummary{}, fmt.Errorf("%w failure=%s", commonhttp.UploadHTTPErrorWithURL("AR", resp.StatusCode, finalURL, responsePreview), failurePath)
+		return api.UploadSummary{}, fmt.Errorf(
+			"%w failure=%s",
+			commonhttp.UploadHTTPErrorWithURL("AR", resp.StatusCode, finalURL, responsePreview),
+			failurePath,
+		)
 	}
 	return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("AR", resp.StatusCode, finalURL, responsePreview)
 }
 
-func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
+func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
 	state, _, err := prepareUploadState(ctx, req, true)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
@@ -161,14 +165,14 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}, nil
 }
 
-func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun bool) (uploadState, *http.Client, error) {
+func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryRun bool) (uploadState, *http.Client, error) {
 	select {
 	case <-ctx.Done():
 		return uploadState{}, nil, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
@@ -176,13 +180,13 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	if req.Assets != nil {
 		assets = *req.Assets
 	} else {
-		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+		assets, err = trackers.PreparedDescriptionAssets(req.Assets)
 		if err != nil {
 			trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 			assets = trackers.DescriptionAssets{}
 		}
 	}
-	description := buildDescription(req.Meta, req.AppConfig.MainSettings.DBPath, assets)
+	description := buildDescription(req.Meta, req.Runtime.DBPath, assets)
 
 	fields := map[string]string{
 		"submit": "true",
@@ -202,14 +206,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	}
 
 	if dryRun {
-		if authProblem := dryRunAuthProblem(ctx, req.TrackerConfig, req.AppConfig.MainSettings.DBPath); authProblem != "" && state.blockedReason == "" {
+		if authProblem := dryRunAuthProblem(ctx, req.TrackerConfig, req.Runtime.DBPath); authProblem != "" && state.blockedReason == "" {
 			state.blockedReason = authProblem
 		}
 		fields["auth"] = "dry-run-auth"
 		return state, nil, nil
 	}
 
-	client, authKey, err := resolveSession(ctx, req.TrackerConfig, req.AppConfig.MainSettings.DBPath, req.Logger)
+	client, authKey, err := resolveSession(ctx, req.TrackerConfig, req.Runtime.DBPath, req.Logger)
 	if err != nil {
 		return uploadState{}, nil, err
 	}
@@ -217,7 +221,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, dryRun 
 	return state, client, nil
 }
 
-func buildDescription(meta api.PreparedMetadata, dbPath string, assets trackers.DescriptionAssets) string {
+func buildDescription(meta api.UploadSubject, dbPath string, assets trackers.DescriptionAssets) string {
 	if assets.Final {
 		return strings.TrimSpace(assets.Description)
 	}
@@ -264,43 +268,33 @@ func buildDescription(meta api.PreparedMetadata, dbPath string, assets trackers.
 	return strings.TrimSpace(strings.Join(parts, "\n\n"))
 }
 
-func buildDatabaseLinks(meta api.PreparedMetadata) string {
+func buildDatabaseLinks(meta api.UploadSubject) string {
 	links := make([]string, 0, 5)
 	if imdb := resolveIMDbURL(meta); imdb != "" {
 		links = append(links, imdb)
 	}
-	category := strings.ToLower(strings.TrimSpace(meta.ExternalIDs.Category))
-	if category == "" {
-		category = "movie"
-	}
-	if id := meta.ExternalIDs.TMDBID; id > 0 {
+	category, categoryErr := meta.Identity.RequireCategory()
+	if id := meta.Identity.TMDBID; id > 0 && categoryErr == nil {
 		links = append(links, fmt.Sprintf("https://www.themoviedb.org/%s/%d", category, id))
 	}
-	if isTVDBCategory(meta) && meta.ExternalIDs.TVDBID > 0 {
-		id := meta.ExternalIDs.TVDBID
+	if isTVDBCategory(meta) && meta.Identity.TVDBID > 0 {
+		id := meta.Identity.TVDBID
 		links = append(links, fmt.Sprintf("https://www.thetvdb.com/?id=%d&tab=series", id))
 	}
-	if id := meta.ExternalIDs.TVmazeID; id > 0 {
+	if id := meta.Identity.TVmazeID; id > 0 {
 		links = append(links, fmt.Sprintf("https://www.tvmaze.com/shows/%d", id))
 	}
-	if meta.ExternalIDs.MALID > 0 {
-		links = append(links, fmt.Sprintf("https://myanimelist.net/anime/%d", meta.ExternalIDs.MALID))
+	if meta.Identity.MALID > 0 {
+		links = append(links, fmt.Sprintf("https://myanimelist.net/anime/%d", meta.Identity.MALID))
 	}
 	return strings.Join(links, "\n")
 }
 
 // isTVDBCategory reports whether AR descriptions may include a TVDB series link.
-// Explicit movie categories suppress TVDB links even when MediaInfo or episode hints classify the release as TV.
-func isTVDBCategory(meta api.PreparedMetadata) bool {
-	if strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "MOVIE") ||
-		strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "MOVIE") ||
-		strings.EqualFold(strings.TrimSpace(meta.Release.Category), "MOVIE") {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") ||
-		strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "TV") ||
-		strings.EqualFold(strings.TrimSpace(meta.Release.Category), "TV") ||
-		meta.TVPack || meta.SeasonInt > 0 || meta.EpisodeInt > 0
+// Canonical movie identity suppresses TVDB links even when episode facts exist.
+func isTVDBCategory(meta api.UploadSubject) bool {
+	category, err := meta.Identity.RequireCategory()
+	return err == nil && category == api.CanonicalCategoryTV
 }
 
 func buildScreenshotSection(images []api.ScreenshotImage) string {
@@ -339,7 +333,7 @@ func cleanNotes(value string) string {
 	return strings.TrimSpace(trimmed)
 }
 
-func resolveTypeID(meta api.PreparedMetadata) string {
+func resolveTypeID(meta api.UploadSubject) string {
 	genres := strings.ToLower(resolveGenres(meta) + " " + resolveKeywords(meta))
 	adultKeywords := []string{"xxx", "erotic", "porn", "adult", "orgy"}
 	if (strings.EqualFold(meta.Type, "DISC") || strings.EqualFold(meta.Type, "REMUX")) && strings.EqualFold(meta.Source, "Blu-ray") {
@@ -351,7 +345,7 @@ func resolveTypeID(meta api.PreparedMetadata) string {
 		}
 		return "16"
 	}
-	if strings.EqualFold(meta.ExternalIDs.Category, "TV") {
+	if strings.EqualFold(string(meta.Identity.Category), "TV") {
 		if meta.TVPack {
 			if isSD(meta.Release.Resolution) {
 				return "4"
@@ -383,11 +377,11 @@ func resolveTypeID(meta api.PreparedMetadata) string {
 	return "8"
 }
 
-func resolveARName(meta api.PreparedMetadata) string {
+func resolveARName(meta api.UploadSubject) string {
 	if meta.Scene && strings.TrimSpace(meta.SceneName) != "" {
 		return strings.TrimSpace(meta.SceneName)
 	}
-	name := paths.ReleaseTempBase(meta, meta.SourcePath)
+	name := paths.ReleaseTempBaseFor(meta.SourcePath, meta.Release)
 	if ext := strings.TrimSpace(filepath.Ext(name)); ext != "" {
 		name = strings.TrimSuffix(name, ext)
 	}
@@ -412,10 +406,10 @@ func resolveARName(meta api.PreparedMetadata) string {
 	return name
 }
 
-func resolveTags(meta api.PreparedMetadata) string {
+func resolveTags(meta api.UploadSubject) string {
 	values := make([]string, 0, 8)
-	if meta.ExternalIDs.IMDBID > 0 {
-		values = append(values, "tt"+strconv.Itoa(meta.ExternalIDs.IMDBID))
+	if meta.Identity.IMDBID > 0 {
+		values = append(values, "tt"+strconv.Itoa(meta.Identity.IMDBID))
 	}
 	for value := range strings.SplitSeq(resolveGenres(meta), ",") {
 		for sub := range strings.SplitSeq(value, "&") {
@@ -429,72 +423,72 @@ func resolveTags(meta api.PreparedMetadata) string {
 	return strings.Join(uniqueStrings(values), ", ")
 }
 
-func resolvePoster(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Poster) != "" {
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Poster)
+func resolvePoster(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.Poster) != "" {
+		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Poster)
 	}
-	if meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.Cover) != "" {
-		return strings.TrimSpace(meta.ExternalMetadata.IMDB.Cover)
+	if meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.Cover) != "" {
+		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Cover)
 	}
-	if meta.ExternalMetadata.TVDB != nil && strings.TrimSpace(meta.ExternalMetadata.TVDB.Poster) != "" {
-		return strings.TrimSpace(meta.ExternalMetadata.TVDB.Poster)
+	if meta.ProviderMetadata.TVDB != nil && strings.TrimSpace(meta.ProviderMetadata.TVDB.Poster) != "" {
+		return strings.TrimSpace(meta.ProviderMetadata.TVDB.Poster)
 	}
-	if meta.ExternalMetadata.TVmaze != nil && strings.TrimSpace(meta.ExternalMetadata.TVmaze.Poster) != "" {
-		return strings.TrimSpace(meta.ExternalMetadata.TVmaze.Poster)
+	if meta.ProviderMetadata.TVmaze != nil && strings.TrimSpace(meta.ProviderMetadata.TVmaze.Poster) != "" {
+		return strings.TrimSpace(meta.ProviderMetadata.TVmaze.Poster)
 	}
 	return ""
 }
 
-func resolveOverview(meta api.PreparedMetadata) string {
+func resolveOverview(meta api.UploadSubject) string {
 	switch {
-	case meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Overview) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Overview)
-	case meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.Plot) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.IMDB.Plot)
-	case meta.ExternalMetadata.TVDB != nil && strings.TrimSpace(meta.ExternalMetadata.TVDB.Overview) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TVDB.Overview)
-	case meta.ExternalMetadata.TVmaze != nil && strings.TrimSpace(meta.ExternalMetadata.TVmaze.Summary) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TVmaze.Summary)
+	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.Overview) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Overview)
+	case meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.Plot) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Plot)
+	case meta.ProviderMetadata.TVDB != nil && strings.TrimSpace(meta.ProviderMetadata.TVDB.Overview) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.TVDB.Overview)
+	case meta.ProviderMetadata.TVmaze != nil && strings.TrimSpace(meta.ProviderMetadata.TVmaze.Summary) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.TVmaze.Summary)
 	default:
 		return strings.TrimSpace(meta.EpisodeOverview)
 	}
 }
 
-func resolveGenres(meta api.PreparedMetadata) string {
+func resolveGenres(meta api.UploadSubject) string {
 	switch {
-	case meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres)
-	case meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.Genres) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.IMDB.Genres)
-	case meta.ExternalMetadata.TVDB != nil && strings.TrimSpace(meta.ExternalMetadata.TVDB.Genres) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TVDB.Genres)
-	case meta.ExternalMetadata.TVmaze != nil && strings.TrimSpace(meta.ExternalMetadata.TVmaze.Genres) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TVmaze.Genres)
+	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres)
+	case meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres)
+	case meta.ProviderMetadata.TVDB != nil && strings.TrimSpace(meta.ProviderMetadata.TVDB.Genres) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.TVDB.Genres)
+	case meta.ProviderMetadata.TVmaze != nil && strings.TrimSpace(meta.ProviderMetadata.TVmaze.Genres) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.TVmaze.Genres)
 	default:
 		return strings.TrimSpace(meta.Release.Genre)
 	}
 }
 
-func resolveKeywords(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB != nil {
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Keywords)
+func resolveKeywords(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.TMDB != nil {
+		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Keywords)
 	}
 	return ""
 }
 
-func resolveYouTube(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB != nil {
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.YouTube)
+func resolveYouTube(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.TMDB != nil {
+		return strings.TrimSpace(meta.ProviderMetadata.TMDB.YouTube)
 	}
 	return ""
 }
 
-func resolveIMDbURL(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbURL) != "" {
-		return strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbURL)
+func resolveIMDbURL(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.IMDbURL) != "" {
+		return strings.TrimSpace(meta.ProviderMetadata.IMDB.IMDbURL)
 	}
-	if meta.ExternalIDs.IMDBID > 0 {
-		return fmt.Sprintf("https://www.imdb.com/title/tt%07d", meta.ExternalIDs.IMDBID)
+	if meta.Identity.IMDBID > 0 {
+		return fmt.Sprintf("https://www.imdb.com/title/tt%07d", meta.Identity.IMDBID)
 	}
 	return ""
 }
@@ -766,24 +760,24 @@ func buildDownloadURL(torrentID string, fallback string) string {
 	return arBaseURL + "/torrents.php?action=download&id=" + url.QueryEscape(torrentID)
 }
 
-func readBDSummary(meta api.PreparedMetadata, dbPath string) (string, error) {
+func readBDSummary(meta api.UploadSubject, dbPath string) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
 		return "", fmt.Errorf("trackers: %w", err)
 	}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return "", fmt.Errorf("trackers: %w", err)
 	}
-	return readTextFile(paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta)))
+	return readTextFile(paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylistFor(meta.SelectedBDMVPlaylists)))
 }
 
-func resolveFailurePath(meta api.PreparedMetadata, dbPath string) (string, error) {
+func resolveFailurePath(meta api.UploadSubject, dbPath string) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
 		return "", fmt.Errorf("trackers: %w", err)
 	}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return "", fmt.Errorf("trackers: %w", err)
 	}
@@ -836,7 +830,10 @@ func writeAuthKey(ctx context.Context, dbPath string, authKey string) error {
 	if legacyPath := authPath(dbPath); legacyPath != "" {
 		if err := os.Remove(legacyPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			if rollbackErr := restoreEncryptedAuthKey(context.WithoutCancel(ctx), dbPath, previous); rollbackErr != nil {
-				return errors.Join(fmt.Errorf("trackers: AR remove legacy auth key: %w", err), fmt.Errorf("trackers: AR rollback encrypted auth key: %w", rollbackErr))
+				return errors.Join(
+					fmt.Errorf("trackers: AR remove legacy auth key: %w", err),
+					fmt.Errorf("trackers: AR rollback encrypted auth key: %w", rollbackErr),
+				)
 			}
 			return fmt.Errorf("trackers: AR remove legacy auth key: %w", err)
 		}
@@ -854,7 +851,11 @@ type encryptedAuthKeySnapshot struct {
 func snapshotEncryptedAuthKey(ctx context.Context, dbPath string) (encryptedAuthKeySnapshot, error) {
 	value, err := trackerauth.LoadAuthState(ctx, dbPath, "AR", arAuthKeyKey)
 	if err == nil {
-		return encryptedAuthKeySnapshot{value: value, existed: true, available: true}, nil
+		return encryptedAuthKeySnapshot{
+			value:     value,
+			existed:   true,
+			available: true,
+		}, nil
 	}
 	if errors.Is(err, trackerauth.ErrAuthStateNotFound) {
 		return encryptedAuthKeySnapshot{available: true}, nil

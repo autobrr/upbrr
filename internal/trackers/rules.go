@@ -6,14 +6,12 @@ package trackers
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
-	"github.com/autobrr/upbrr/internal/pathutil"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/additional"
-	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	"github.com/autobrr/upbrr/internal/releasepolicy"
+	"github.com/autobrr/upbrr/internal/trackers/ruletypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -31,7 +29,17 @@ var ruleResolutionOrder = map[string]int{
 	"8640p": 11,
 }
 
-func EvaluateRules(ctx context.Context, tracker string, meta api.PreparedMetadata, logger api.Logger) []api.RuleFailure {
+// EvaluateRules returns metadata and upload-policy failures for tracker.
+func EvaluateRules(ctx context.Context, tracker string, meta api.RuleSubject, logger api.Logger) []api.RuleFailure {
+	return evaluateRules(ctx, nil, tracker, meta, logger)
+}
+
+// EvaluateRulesWithRegistry evaluates tracker rules using composed capabilities.
+func EvaluateRulesWithRegistry(ctx context.Context, registry *Registry, tracker string, meta api.RuleSubject, logger api.Logger) []api.RuleFailure {
+	return evaluateRules(ctx, registry, tracker, meta, logger)
+}
+
+func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta api.RuleSubject, logger api.Logger) []api.RuleFailure {
 	name := strings.ToUpper(strings.TrimSpace(tracker))
 
 	failures := make([]api.RuleFailure, 0)
@@ -48,22 +56,23 @@ func EvaluateRules(ctx context.Context, tracker string, meta api.PreparedMetadat
 	// trackers by default (skipsModifiedReleaseCheck exempts special cases) and is
 	// overridable via IgnoreTrackerRuleFailuresFor like any other rule failure.
 	if !skipsModifiedReleaseCheck(name) {
-		if renamed, reason := isRenamedRelease(meta); renamed {
+		if renamed, reason := releasepolicy.DetectModifiedRelease(releasepolicy.ModifiedReleaseSubject{
+			SourcePath:         meta.SourcePath,
+			VideoPath:          meta.VideoPath,
+			DiscType:           meta.DiscType,
+			PersonalRelease:    meta.PersonalRelease,
+			SceneRenamed:       meta.SceneRenamed,
+			SceneRenamedReason: meta.SceneRenamedReason,
+			Release:            meta.Release,
+		}); renamed {
 			addFailure("modified_release", reason)
 		}
 	}
-	metadataFailures, metadataEvaluated := evaluateMetadataRequirements(name, meta)
+	metadataFailures, metadataEvaluated := evaluateMetadataRequirementsWithRegistry(registry, name, meta)
 	failures = append(failures, metadataFailures...)
 
-	switch name {
-	case "AZ", "CZ", "PHD":
-		return append(failures, evaluateAZFamilyRules(name, meta)...)
-	}
-	rules, ok := additional.RulesFor(name)
-	// UNIT3D-known trackers without a tracker-specific RuleSet must still reach
-	// the MediaInfo-settings check below (rules is the zero value for them, which
-	// no-ops every other rule), so don't bail early when the tracker is known.
-	if !ok && name != "PTP" && !unit3dmeta.IsKnown(name) && !metadataEvaluated {
+	rules, ok := registry.LookupRules(name)
+	if !ok && !metadataEvaluated {
 		// Preserve the nil contract for trackers without their own rule set: the
 		// consumer (applyTrackerRules) treats a nil result as "not evaluated, keep
 		// pre-existing failures" but an empty slice as "evaluated, clear failures".
@@ -74,25 +83,17 @@ func EvaluateRules(ctx context.Context, tracker string, meta api.PreparedMetadat
 		return nil
 	}
 
-	if rules.RequireUniqueID && !meta.ValidMediaInfo {
+	if rules.RequireUniqueID && !meta.Assessments.UniqueIDRequirementSatisfied() {
 		addFailure("require_unique_id", "missing MediaInfo Unique ID")
 	}
-	// Every UNIT3D upload rejects encodes that lack MediaInfo encoding settings
-	// (see internal/trackers/impl/unit3d/upload.go), so enforce it at
-	// metadata-prep time for all UNIT3D trackers instead of relying on each
-	// RuleSet to opt in. This lets the release be skipped before
-	// screenshots/torrent/upload rather than failing at the upload step.
-	// ValidMediaInfoSettings is only false for encodes missing settings, so
-	// remux/web/disc uploads are unaffected. The per-tracker flag still covers
-	// non-UNIT3D trackers (e.g. BHD) that opt in via their RuleSet.
-	if (rules.RequireValidMISetting || unit3dmeta.IsKnown(name)) && !meta.ValidMediaInfoSettings {
+	if rules.RequireValidMISetting && !meta.Assessments.EncodeSettingsRequirementSatisfied() {
 		addFailure("require_valid_mi_setting", "missing MediaInfo encode settings")
 	}
 
 	if rules.RequireDiscOnly && !isDiscType(meta.DiscType) {
 		addFailure("require_disc_only", "requires disc upload")
 	}
-	if name == "PTP" && !meta.TVPack {
+	if rules.RequireMovieUnlessTVPack && !meta.TVPack {
 		category := resolveCategory(meta)
 		if category != "" && category != "movie" {
 			addFailure("require_movie_only", fmt.Sprintf("category %s is not movie", category))
@@ -189,213 +190,35 @@ func EvaluateRules(ctx context.Context, tracker string, meta api.PreparedMetadat
 			addFailure("extra_check", result.Reason)
 		}
 	}
-
-	return failures
-}
-
-func evaluateAZFamilyRules(name string, meta api.PreparedMetadata) []api.RuleFailure {
-	failures := make([]api.RuleFailure, 0)
-	add := func(rule, reason string) {
-		failures = append(failures, api.RuleFailure{Rule: rule, Reason: reason})
-	}
-
-	category := strings.ToUpper(strings.TrimSpace(resolveCategory(meta)))
-	if category != "MOVIE" && category != "TV" {
-		add("content_type", "only movies and TV shows are allowed")
-	}
-	if meta.Anime {
-		add("anime_redirect", "anime should be uploaded to AnimeTorrents instead")
-	}
-
-	origin := originCountries(meta)
-	switch name {
-	case "AZ":
-		if intersects(origin, phdCountries()) {
-			add("country_redirect", "major English-language content belongs on PrivateHD")
-		} else if intersects(origin, cinemaZCountries()) {
-			add("country_redirect", "non-Asian western content belongs on CinemaZ")
-		}
-	case "CZ":
-		switch {
-		case intersects(origin, phdCountries()) && !isOlderThan50Years(meta):
-			add("country_redirect", "recent mainstream English content belongs on PrivateHD")
-		case intersects(origin, azCountries()):
-			add("country_redirect", "Asian content belongs on AvistaZ")
-		case len(origin) > 0 && !intersects(origin, czAllowedCountries()):
-			add("country_block", "content origin is outside CinemaZ allowed regions")
-		}
-	case "PHD":
-		if isOlderThan50Years(meta) {
-			add("age_redirect", "50+ year-old content belongs on CinemaZ")
-		}
-		switch {
-		case intersects(origin, cinemaZCountries()):
-			add("country_redirect", "European, South American, and African content belongs on CinemaZ")
-		case intersects(origin, azCountries()):
-			add("country_redirect", "Asian content belongs on AvistaZ")
-		case len(origin) > 0 && !intersects(origin, phdCountries()):
-			add("country_block", "PrivateHD only allows major English-language territories")
-		}
-	}
-
-	if name == "PHD" {
-		evaluatePHDTechnicalRules(meta, add)
+	if rules.FailureCheck != nil {
+		failures = append(failures, rules.FailureCheck(ctx, meta, logger)...)
 	}
 
 	return failures
 }
 
-func evaluatePHDTechnicalRules(meta api.PreparedMetadata, add func(string, string)) {
-	if strings.EqualFold(strings.TrimSpace(meta.Release.Resolution), "480p") ||
-		strings.EqualFold(strings.TrimSpace(meta.Release.Resolution), "576p") ||
-		strings.EqualFold(strings.TrimSpace(meta.Release.Resolution), "480i") ||
-		strings.EqualFold(strings.TrimSpace(meta.Release.Resolution), "576i") {
-		add("sd_forbidden", "SD content is forbidden")
-	}
+// ResolveRuleCategory returns the common category used by tracker rules.
+func ResolveRuleCategory(meta api.RuleSubject) string { return resolveCategory(meta) }
 
-	if !isDiscType(meta.DiscType) {
-		container := strings.ToLower(strings.TrimSpace(meta.Container))
-		if container != "" && container != "mkv" && container != "mp4" {
-			add("container", "allowed containers: MKV, MP4")
-		}
-	}
+// ResolveRuleType returns the common release type used by tracker rules.
+func ResolveRuleType(meta api.RuleSubject) string { return resolveType(meta) }
 
-	group := strings.ToUpper(strings.TrimPrefix(strings.TrimSpace(meta.Tag), "-"))
-	switch group {
-	case "RARBG", "FGT", "GRYM", "TBS":
-		add("group_block", "RARBG, FGT, Grym, and TBS are not allowed")
-	}
-	if group == "EVO" && !strings.EqualFold(strings.TrimSpace(meta.Source), "WEB") {
-		add("group_block", "non-web EVO releases are not allowed")
-	}
+// ResolveRuleResolution returns the common resolution used by tracker rules.
+func ResolveRuleResolution(meta api.RuleSubject) string { return resolveResolution(meta) }
 
-	codec := strings.ToLower(strings.TrimSpace(meta.VideoCodec))
-	encode := strings.ToLower(strings.TrimSpace(meta.VideoEncode))
-	releaseType := strings.ToLower(strings.TrimSpace(resolveType(meta)))
-	source := strings.ToLower(strings.TrimSpace(meta.Source))
-	bitDepth := strings.TrimSpace(meta.BitDepth)
+// IsDiscType reports whether value identifies a supported disc source.
+func IsDiscType(value string) bool { return isDiscType(value) }
 
-	if releaseType == "remux" && codec != "" && codec != "mpeg-2" && codec != "vc-1" && codec != "h.264" && codec != "h.265" && codec != "avc" {
-		add("video_codec", "BluRay remuxes require MPEG-2, VC-1, H.264, or H.265")
-	}
-	if releaseType == "encode" && strings.Contains(source, "bluray") && encode != "" && encode != "h.264" && encode != "h.265" && encode != "x264" && encode != "x265" {
-		add("video_encode", "BluRay encodes require H.264/H.265 with x264/x265")
-	}
-	if (releaseType == "webdl" || releaseType == "web-dl") && source == "web" && encode != "" && encode != "h.264" && encode != "h.265" && encode != "vp9" {
-		add("video_encode", "WEB-DL requires H.264, H.265, or VP9")
-	}
-	if releaseType == "encode" && source == "web" && encode != "" && encode != "h.264" && encode != "h.265" && encode != "x264" && encode != "x265" {
-		add("video_encode", "WEB encodes require H.264/H.265 with x264/x265")
-	}
-	if releaseType == "encode" && encode == "x265" && bitDepth != "10" {
-		add("bit_depth", "x265 encodes must be 10-bit")
-	}
-	if res := strings.ToLower(strings.TrimSpace(resolveResolution(meta))); strings.HasSuffix(res, "p") {
-		value := strings.TrimSuffix(res, "p")
-		if height, err := strconv.Atoi(value); err == nil && height > 1080 && (encode == "h.264" || encode == "x264") {
-			add("video_encode", "H.264/x264 is only allowed for 1080p and below")
-		}
-	}
-}
-
-func originCountries(meta api.PreparedMetadata) []string {
-	if meta.ExternalMetadata.TMDB != nil && len(meta.ExternalMetadata.TMDB.OriginCountry) > 0 {
-		return meta.ExternalMetadata.TMDB.OriginCountry
-	}
-	return nil
-}
-
-func isOlderThan50Years(meta api.PreparedMetadata) bool {
-	year := meta.Release.Year
-	if year == 0 && meta.ExternalMetadata.TMDB != nil {
-		year = meta.ExternalMetadata.TMDB.Year
-	}
-	return year > 0 && time.Now().UTC().Year()-year >= 50
-}
-
-func intersects(left []string, right map[string]struct{}) bool {
-	for _, value := range left {
-		if _, ok := right[strings.ToUpper(strings.TrimSpace(value))]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-func azCountries() map[string]struct{} {
-	return countrySet("BD", "BN", "BT", "CN", "HK", "ID", "IN", "JP", "KH", "KP", "KR", "LA", "LK", "MM", "MN", "MO", "MY", "NP", "PH", "PK", "SG", "TH", "TL", "TW", "VN")
-}
-
-func phdCountries() map[string]struct{} {
-	return countrySet("AG", "AI", "AU", "BB", "BM", "BS", "BZ", "CA", "CW", "DM", "GB", "GD", "IE", "JM", "KN", "KY", "LC", "MS", "NZ", "PR", "TC", "TT", "US", "VC", "VG", "VI")
-}
-
-func cinemaZCountries() map[string]struct{} {
-	all := countrySet("AO", "BF", "BI", "BJ", "BW", "CD", "CF", "CG", "CI", "CM", "CV", "DJ", "DZ", "EG", "EH", "ER", "ET", "GA", "GH", "GM", "GN", "GQ", "GW", "IO", "KE", "KM", "LR", "LS", "LY", "MA", "MG", "ML", "MR", "MU", "MW", "MZ", "NA", "NE", "NG", "RE", "RW", "SC", "SD", "SH", "SL", "SN", "SO", "SS", "ST", "SZ", "TD", "TF", "TG", "TN", "TZ", "UG", "YT", "ZA", "ZM", "ZW",
-		"AG", "AI", "AR", "AW", "BB", "BL", "BM", "BO", "BQ", "BR", "BS", "BV", "BZ", "CA", "CL", "CO", "CR", "CU", "CW", "DM", "DO", "EC", "FK", "GD", "GF", "GL", "GP", "GS", "GT", "GY", "HN", "HT", "JM", "KN", "KY", "LC", "MF", "MQ", "MS", "MX", "NI", "PA", "PE", "PM", "PR", "PY", "SR", "SV", "SX", "TC", "TT", "US", "UY", "VC", "VE", "VG", "VI",
-		"AD", "AL", "AT", "AX", "BA", "BE", "BG", "BY", "CH", "CZ", "DE", "DK", "EE", "ES", "FI", "FO", "FR", "GB", "GG", "GI", "GR", "HR", "HU", "IE", "IM", "IS", "IT", "JE", "LI", "LT", "LU", "LV", "MC", "MD", "ME", "MK", "MT", "NL", "NO", "PL", "PT", "RO", "RS", "RU", "SE", "SI", "SJ", "SK", "SM", "SU", "UA", "VA", "XC",
-		"AS", "AU", "CC", "CK", "CX", "FJ", "FM", "GU", "HM", "KI", "MH", "MP", "NC", "NF", "NR", "NU", "NZ", "PF", "PG", "PN", "PW", "SB", "TK", "TO", "TV", "UM", "VU", "WF", "WS")
-	for code := range phdCountries() {
-		delete(all, code)
-	}
-	for code := range azCountries() {
-		delete(all, code)
-	}
-	return all
-}
-
-func czAllowedCountries() map[string]struct{} {
-	return countrySet("AD", "AL", "AT", "AX", "BA", "BE", "BG", "BY", "CH", "CZ", "DE", "DK", "EE", "ES", "FI", "FO", "FR", "GI", "GR", "HR", "HU", "IS", "IT", "LI", "LT", "LU", "LV", "MC", "MD", "ME", "MK", "MT", "NL", "NO", "PL", "PT", "RO", "RS", "RU", "SE", "SI", "SJ", "SK", "SM", "SU", "UA", "VA", "XC",
-		"AG", "AI", "AR", "AW", "BL", "BO", "BQ", "BR", "BV", "CL", "CO", "CU", "DO", "EC", "FK", "GF", "GL", "GP", "GS", "GT", "GY", "HN", "HT", "MF", "MQ", "MX", "NI", "PA", "PE", "PM", "PY", "SR", "SV", "SX", "UY", "VE",
-		"AO", "BF", "BI", "BJ", "BW", "CD", "CF", "CG", "CI", "CM", "CV", "DJ", "DZ", "EG", "EH", "ER", "ET", "GA", "GH", "GM", "GN", "GQ", "GW", "IO", "KE", "KM", "LR", "LS", "LY", "MA", "MG", "ML", "MR", "MU", "MW", "MZ", "NA", "NE", "NG", "RE", "RW", "SC", "SD", "SH", "SL", "SN", "SO", "SS", "ST", "SZ", "TD", "TF", "TG", "TN", "TZ", "UG", "YT", "ZA", "ZM", "ZW",
-		"AE", "BH", "CY", "IR", "IQ", "IL", "JO", "KW", "LB", "OM", "PS", "QA", "SA", "SY", "TR", "YE")
-}
-
-func countrySet(values ...string) map[string]struct{} {
-	out := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		out[value] = struct{}{}
-	}
-	return out
-}
-
-func resolveCategory(meta api.PreparedMetadata) string {
-	if sourceMatches(meta.ExternalIDs.SourcePath, meta.SourcePath) {
-		if value := strings.ToLower(strings.TrimSpace(meta.ExternalIDs.Category)); value != "" {
+func resolveCategory(meta api.RuleSubject) string {
+	if sourceMatches(meta.Identity.SourcePath, meta.SourcePath) {
+		if value := strings.ToLower(strings.TrimSpace(string(meta.Identity.Category))); value != "" && value != string(api.CanonicalCategoryUnknown) {
 			return value
 		}
-	}
-	if value := strings.ToLower(strings.TrimSpace(meta.MediaInfoCategory)); value != "" {
-		return value
-	}
-	if sourceMatches(meta.ExternalMetadata.SourcePath, meta.SourcePath) {
-		if meta.ExternalMetadata.TMDB != nil {
-			if value := strings.ToLower(strings.TrimSpace(meta.ExternalMetadata.TMDB.Category)); value != "" {
-				return value
-			}
-		}
-		if (meta.ExternalMetadata.TVDB != nil &&
-			(strings.TrimSpace(meta.ExternalMetadata.TVDB.Name) != "" || strings.TrimSpace(meta.ExternalMetadata.TVDB.NameEnglish) != "")) ||
-			(meta.ExternalMetadata.TVmaze != nil && strings.TrimSpace(meta.ExternalMetadata.TVmaze.Name) != "") {
-			return "tv"
-		}
-		if meta.ExternalMetadata.IMDB != nil {
-			typeValue := strings.ToLower(strings.TrimSpace(meta.ExternalMetadata.IMDB.Type))
-			switch {
-			case strings.Contains(typeValue, "tv"), strings.Contains(typeValue, "series"), strings.Contains(typeValue, "episode"):
-				return "tv"
-			case strings.Contains(typeValue, "movie"), strings.Contains(typeValue, "film"), strings.Contains(typeValue, "feature"):
-				return "movie"
-			}
-		}
-	}
-	if value := strings.ToLower(strings.TrimSpace(meta.Release.Category)); value != "" {
-		return value
 	}
 	return ""
 }
 
-func resolveType(meta api.PreparedMetadata) string {
+func resolveType(meta api.RuleSubject) string {
 	value := strings.ToUpper(strings.TrimSpace(meta.Type))
 	if value == "" {
 		value = strings.ToUpper(strings.TrimSpace(meta.Release.Type))
@@ -403,14 +226,14 @@ func resolveType(meta api.PreparedMetadata) string {
 	return value
 }
 
-func resolveGroup(meta api.PreparedMetadata) string {
+func resolveGroup(meta api.RuleSubject) string {
 	if group := strings.TrimSpace(meta.Release.Group); group != "" {
 		return group
 	}
 	return strings.TrimPrefix(strings.TrimSpace(meta.Tag), "-")
 }
 
-func resolveResolution(meta api.PreparedMetadata) string {
+func resolveResolution(meta api.RuleSubject) string {
 	resolution := strings.TrimSpace(meta.Release.Resolution)
 	if resolution == "" {
 		resolution = detectResolution(meta.ReleaseName)
@@ -437,7 +260,7 @@ func isDiscType(value string) bool {
 	}
 }
 
-func isHEVC(meta api.PreparedMetadata) bool {
+func isHEVC(meta api.RuleSubject) bool {
 	codec := strings.ToUpper(strings.TrimSpace(meta.VideoCodec))
 	if codec == "" {
 		for _, value := range meta.Release.Codec {
@@ -462,7 +285,7 @@ func hasTypeRequirement(value string, allowed []string) bool {
 	return false
 }
 
-func hasSingleFileFolder(meta api.PreparedMetadata) bool {
+func hasSingleFileFolder(meta api.RuleSubject) bool {
 	if isDiscType(meta.DiscType) {
 		return false
 	}
@@ -472,7 +295,7 @@ func hasSingleFileFolder(meta api.PreparedMetadata) bool {
 	return !strings.EqualFold(strings.TrimSpace(meta.FileList[0]), strings.TrimSpace(meta.SourcePath))
 }
 
-func hasReleaseToken(meta api.PreparedMetadata, tokens []string) bool {
+func hasReleaseToken(meta api.RuleSubject, tokens []string) bool {
 	values := make([]string, 0, len(meta.Release.Other)+len(meta.Release.Edition)+2)
 	values = append(values, meta.Release.Other...)
 	values = append(values, meta.Release.Edition...)
@@ -494,14 +317,14 @@ func hasReleaseToken(meta api.PreparedMetadata, tokens []string) bool {
 	return false
 }
 
-func isAdultContent(meta api.PreparedMetadata) bool {
+func isAdultContent(meta api.RuleSubject) bool {
 	candidates := append([]string{}, splitCSV(meta.Release.Genre)...)
-	if meta.ExternalMetadata.TMDB != nil && externalMetadataMatchesCurrentSource(meta) {
-		candidates = append(candidates, splitCSV(meta.ExternalMetadata.TMDB.Genres)...)
-		candidates = append(candidates, splitCSV(meta.ExternalMetadata.TMDB.Keywords)...)
+	if meta.ProviderMetadata.TMDB != nil && externalMetadataMatchesCurrentSource(meta) {
+		candidates = append(candidates, splitCSV(meta.ProviderMetadata.TMDB.Genres)...)
+		candidates = append(candidates, splitCSV(meta.ProviderMetadata.TMDB.Keywords)...)
 	}
-	if meta.ExternalMetadata.IMDB != nil && externalMetadataMatchesCurrentSource(meta) {
-		candidates = append(candidates, splitCSV(meta.ExternalMetadata.IMDB.Genres)...)
+	if meta.ProviderMetadata.IMDB != nil && externalMetadataMatchesCurrentSource(meta) {
+		candidates = append(candidates, splitCSV(meta.ProviderMetadata.IMDB.Genres)...)
 	}
 	normalized := normalizeStrings(candidates)
 	for _, token := range normalized {
@@ -513,8 +336,8 @@ func isAdultContent(meta api.PreparedMetadata) bool {
 	return false
 }
 
-func externalMetadataMatchesCurrentSource(meta api.PreparedMetadata) bool {
-	storedSource := strings.TrimSpace(meta.ExternalMetadata.SourcePath)
+func externalMetadataMatchesCurrentSource(meta api.RuleSubject) bool {
+	storedSource := strings.TrimSpace(meta.ProviderMetadata.SourcePath)
 	return storedSource == "" || pathutil.SamePath(storedSource, strings.TrimSpace(meta.SourcePath))
 }
 
@@ -566,7 +389,7 @@ func containsAny(values []string, targets []string) bool {
 	return false
 }
 
-func evaluateLanguageRule(meta api.PreparedMetadata, rule *additional.LanguageRule) (bool, string) {
+func evaluateLanguageRule(meta api.RuleSubject, rule *ruletypes.LanguageRule) (bool, string) {
 	if rule == nil {
 		return true, ""
 	}
@@ -633,13 +456,13 @@ func evaluateLanguageRule(meta api.PreparedMetadata, rule *additional.LanguageRu
 	return false, "requires audio or subtitles in " + strings.Join(required, ", ")
 }
 
-func resolveOriginalLanguage(meta api.PreparedMetadata) string {
+func resolveOriginalLanguage(meta api.RuleSubject) string {
 	var raw string
-	if meta.ExternalMetadata.TMDB != nil {
-		raw = strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage)
+	if meta.ProviderMetadata.TMDB != nil {
+		raw = strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage)
 	}
-	if raw == "" && meta.ExternalMetadata.IMDB != nil {
-		raw = strings.TrimSpace(meta.ExternalMetadata.IMDB.OriginalLanguage)
+	if raw == "" && meta.ProviderMetadata.IMDB != nil {
+		raw = strings.TrimSpace(meta.ProviderMetadata.IMDB.OriginalLanguage)
 	}
 	normalized := languageutil.NormalizeLanguageDisplay(raw)
 	if normalized == "" {

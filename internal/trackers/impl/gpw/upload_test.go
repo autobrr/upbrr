@@ -14,9 +14,9 @@ import (
 func TestBuildFieldsPersonalReleaseAndExclusiveFlags(t *testing.T) {
 	t.Parallel()
 
-	base := api.PreparedMetadata{PersonalRelease: true}
+	base := api.UploadSubject{PersonalRelease: true}
 
-	nonDisc := buildFields(trackers.UploadRequest{Meta: base}, config.TrackerConfig{Exclusive: true}, "description", "group", nil)
+	nonDisc := buildFields(trackers.PreparationInput{Meta: base}, config.TrackerConfig{Exclusive: true}, "description", "group", nil)
 	if nonDisc["diy"] != "on" {
 		t.Fatalf("expected non-disc personal release to use diy flag, got %#v", nonDisc)
 	}
@@ -29,7 +29,7 @@ func TestBuildFieldsPersonalReleaseAndExclusiveFlags(t *testing.T) {
 
 	discMeta := base
 	discMeta.DiscType = "BDMV"
-	disc := buildFields(trackers.UploadRequest{Meta: discMeta}, config.TrackerConfig{}, "description", "group", nil)
+	disc := buildFields(trackers.PreparationInput{Meta: discMeta}, config.TrackerConfig{}, "description", "group", nil)
 	if disc["buy"] != "on" {
 		t.Fatalf("expected disc personal release to use buy flag, got %#v", disc)
 	}

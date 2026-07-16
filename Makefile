@@ -1,24 +1,21 @@
-.PHONY: help build backend frontend frontend-bundle gui dev dev-frontend test test-go test-frontend e2e e2e-build e2e-web e2e-cli e2e-wails lint lint-json logpolicy pathpolicy precommit prepush fmt fmt-go fmt-frontend gofix gofix-check gofix-changed gofix-check-changed commitmsg-check clean
+.PHONY: help build backend frontend frontend-bundle dev dev-frontend test test-go test-frontend e2e e2e-build e2e-web e2e-cli lint lint-json logpolicy pathpolicy literalpolicy architecturepolicy literalpolicy-fix precommit prepush fmt fmt-go fmt-frontend gofix gofix-check gofix-changed gofix-check-changed commitmsg-check clean
 
 ifeq ($(OS),Windows_NT)
 EXE := .exe
 FULL_BUILD := powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1
 MKDIR_DIST := powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path dist | Out-Null"
-RM_DIST := powershell -NoProfile -Command "Remove-Item -Recurse -Force dist, gui/frontend/dist, gui/build/bin -ErrorAction SilentlyContinue"
-WAILS_PLATFORM := windows/amd64
+RM_DIST := powershell -NoProfile -Command "Remove-Item -Recurse -Force dist, webui/dist -ErrorAction SilentlyContinue"
 BLANK := echo.
 else
 EXE :=
 FULL_BUILD := ./scripts/build.sh
 MKDIR_DIST := mkdir -p dist
-RM_DIST := rm -rf dist gui/frontend/dist gui/build/bin
-WAILS_PLATFORM :=
+RM_DIST := rm -rf dist webui/dist
 BLANK := echo
 endif
 
 CLI_OUT := dist/upbrr$(EXE)
 E2E_CLI_OUT := dist/upbrr-e2e$(EXE)
-WAILS_CLI := go run github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
 GO_TEST_FLAGS := -race -v -timeout 20m
 GOLANGCI_FLAGS := --timeout=5m
 GO_CHANGED_FILES := $(shell git diff --name-only --diff-filter=ACMR HEAD -- '*.go')
@@ -26,14 +23,13 @@ GO_CHANGED_PKGS := $(addprefix ./,$(sort $(patsubst %/,%,$(dir $(GO_CHANGED_FILE
 
 help:
 	@echo Build
-	@echo   make build              Full build: frontend, embedded assets, CLI, Wails GUI
+	@echo   make build              Full build: WebUI, embedded assets, CLI
 	@echo   make backend            Build CLI binary only
 	@echo   make frontend           Typecheck and build frontend bundle
 	@echo   make frontend-bundle    Build frontend bundle only
-	@echo   make gui                Build Wails GUI with current embedded assets
 	@$(BLANK)
 	@echo Development
-	@echo   make dev                Start Wails dev mode
+	@echo   make dev                Start WebUI server without auth on loopback
 	@echo   make dev-frontend       Start Vite dev server only
 	@$(BLANK)
 	@echo Testing
@@ -43,10 +39,10 @@ help:
 	@echo   make e2e                Run all Playwright E2E projects
 	@echo   make e2e-web            Run embedded web E2E projects
 	@echo   make e2e-cli            Run CLI full-upload E2E project
-	@echo   make e2e-wails          Run Wails/backend parity E2E project
 	@$(BLANK)
 	@echo Linting
-	@echo   make lint               Run path policy and full Go lint
+	@echo   make lint               Run architecture/path/literal policies and full Go lint
+	@echo   make architecturepolicy Run architecture ownership policy check
 	@echo   make lint-json          Write Go lint JSON to lint-report.json
 	@echo   make logpolicy          Run logging policy check
 	@echo   make pathpolicy         Run path portability policy check
@@ -72,23 +68,16 @@ backend:
 	go build -o $(CLI_OUT) ./cmd/upbrr
 
 frontend:
-	pnpm --dir gui/frontend run build
+	pnpm --dir webui run build
 
 frontend-bundle:
-	pnpm --dir gui/frontend run build:bundle
-
-gui:
-ifeq ($(WAILS_PLATFORM),)
-	cd gui && $(WAILS_CLI) build
-else
-	cd gui && $(WAILS_CLI) build -platform $(WAILS_PLATFORM)
-endif
+	pnpm --dir webui run build:bundle
 
 dev:
-	cd gui && $(WAILS_CLI) dev
+	go run ./cmd/upbrr serve --dev-no-auth
 
 dev-frontend:
-	pnpm --dir gui/frontend run dev
+	pnpm --dir webui run dev
 
 test: test-go test-frontend
 
@@ -96,37 +85,33 @@ test-go:
 	go test $(GO_TEST_FLAGS) ./...
 
 test-frontend:
-	pnpm --dir gui/frontend run lint
-	pnpm --dir gui/frontend run lint:dead
-	pnpm --dir gui/frontend run typecheck
-	pnpm --dir gui/frontend run test:unit
-	pnpm --dir gui/frontend run format:check
+	pnpm --dir webui run lint
+	pnpm --dir webui run lint:dead
+	pnpm --dir webui run typecheck
+	pnpm --dir webui run test:unit
+	pnpm --dir webui run format:check
 
 e2e: e2e-build
-	pnpm --dir gui/frontend run test:e2e:full
+	pnpm --dir webui run test:e2e:full
 
 e2e-build:
-	pnpm --dir gui/frontend install --frozen-lockfile
-	pnpm --dir gui/frontend run build
+	pnpm --dir webui install --frozen-lockfile
+	pnpm --dir webui run build
 ifeq ($(OS),Windows_NT)
-	pwsh -NoProfile -File ./scripts/sync-frontend-assets.ps1
+	pwsh -NoProfile -File ./scripts/sync-webui-assets.ps1
 else
-	sh ./scripts/sync-frontend-assets.sh
+	sh ./scripts/sync-webui-assets.sh
 endif
 	$(MKDIR_DIST)
 	go build -tags e2e -o $(E2E_CLI_OUT) ./cmd/upbrr
 
 e2e-web: e2e-build
-	pnpm --dir gui/frontend run test:e2e:web
+	pnpm --dir webui run test:e2e:web
 
 e2e-cli: e2e-build
-	pnpm --dir gui/frontend exec playwright test --project=cli-full-upload
+	pnpm --dir webui exec playwright test --project=cli-full-upload
 
-e2e-wails:
-	pnpm --dir gui/frontend install --frozen-lockfile
-	pnpm --dir gui/frontend exec playwright test --project=wails-basic
-
-lint: pathpolicy
+lint: architecturepolicy pathpolicy literalpolicy
 	golangci-lint run $(GOLANGCI_FLAGS) ./...
 
 lint-json:
@@ -137,6 +122,16 @@ logpolicy:
 
 pathpolicy:
 	go run ./cmd/pathpolicy
+
+literalpolicy:
+	go run ./cmd/literalpolicy
+
+architecturepolicy:
+	go run ./cmd/architecturepolicy
+
+literalpolicy-fix:
+	go run ./cmd/literalpolicy -fix
+	golangci-lint fmt
 
 precommit:
 	lefthook run pre-commit
@@ -152,10 +147,11 @@ prepush:
 fmt: fmt-go fmt-frontend
 
 fmt-go:
+	go run ./cmd/literalpolicy -fix
 	golangci-lint fmt
 
 fmt-frontend:
-	pnpm --dir gui/frontend run format
+	pnpm --dir webui run format
 
 gofix:
 	go fix -omitzero=false ./...

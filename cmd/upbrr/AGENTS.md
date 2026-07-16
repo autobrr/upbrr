@@ -36,5 +36,5 @@ Add touched service/tracker/internal packages to focused `go test` runs.
 
 ## Parity
 
-- CLI request/options behavior shares contracts with Wails and embedded web.
-- Request-shape changes usually require checking `pkg/api`, `internal/core`, `internal/guiapp`, `internal/webserver`, and `gui/frontend/src`.
+- CLI request/options behavior shares contracts with WebUI workflows.
+- Request-shape changes usually require checking `pkg/api`, `internal/core`, `internal/webserver`, and `webui/src`.

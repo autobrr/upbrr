@@ -6,7 +6,7 @@ package trackers
 import (
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/imagehostpolicy"
+	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 )
 
 const globalImageUsageScope = "global"

@@ -19,9 +19,8 @@ import (
 	"time"
 	"unicode"
 
+	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
-	"github.com/autobrr/upbrr/internal/services/bbcode"
-	descriptionunit3d "github.com/autobrr/upbrr/internal/services/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 
@@ -56,7 +55,7 @@ type channelResult struct {
 	Tag string `json:"tag"`
 }
 
-func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
+func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
 	state, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return api.UploadSummary{}, err
@@ -89,7 +88,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 
 	var decoded uploadResponse
 	if err := json.Unmarshal(responseBody, &decoded); err != nil {
-		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "SPD", "upload_failure", responsePreview, ".txt")
+		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "SPD", "upload_failure", responsePreview, ".txt")
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return api.UploadSummary{}, commonhttp.UploadHTTPError("SPD", resp.StatusCode, responsePreview)
 		}
@@ -99,7 +98,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		torrentID := strings.TrimSpace(fmt.Sprint(decoded.Torrent.ID))
 		artifactPath := ""
 		if torrentID != "" {
-			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "SPD")
+			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "SPD")
 			if err == nil {
 				if dlErr := downloadTrackerTorrent(ctx, baseURL+"/api/torrent/"+torrentID+"/download", req.TrackerConfig.APIKey, artifactPath); dlErr != nil {
 					artifactPath = ""
@@ -118,11 +117,11 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		}, nil
 	}
 
-	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "SPD", "upload_failure", responsePreview, ".json")
+	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "SPD", "upload_failure", responsePreview, ".json")
 	return api.UploadSummary{}, commonhttp.UploadHTTPError("SPD", resp.StatusCode, responsePreview)
 }
 
-func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
+func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
 	state, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
@@ -147,19 +146,23 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		Endpoint:         uploadURL,
 		Payload:          payload,
 		Questionnaire:    state.questionnaire,
-		Files:            []api.TrackerDryRunFile{{Field: "file", Path: state.torrentPath, Present: strings.TrimSpace(state.torrentPath) != ""}},
+		Files: []api.TrackerDryRunFile{{
+			Field:   "file",
+			Path:    state.torrentPath,
+			Present: strings.TrimSpace(state.torrentPath) != "",
+		}},
 	}, nil
 }
 
-func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, error) {
+func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (uploadState, error) {
 	if strings.TrimSpace(req.TrackerConfig.APIKey) == "" {
 		return uploadState{}, errors.New("trackers: SPD missing api_key")
 	}
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
@@ -172,14 +175,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}
 	releaseName := normalizeName(metautil.FirstNonEmptyTrimmed(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename))
 	payload := map[string]any{
-		"bdInfo":           trackers.ReadBDinfoOrMediaInfo(req.AppConfig.MainSettings.DBPath, req.Meta),
-		"coverPhotoUrl":    metautil.FirstNonEmptyTrimmed(req.Meta.ExternalMetadata.TMDB.Backdrop, req.Meta.ExternalMetadata.TMDB.Poster),
+		"bdInfo":           trackers.ReadBDinfoOrMediaInfo(req.Runtime.DBPath, req.Meta),
+		"coverPhotoUrl":    metautil.FirstNonEmptyTrimmed(req.Meta.ProviderMetadata.TMDB.Backdrop, req.Meta.ProviderMetadata.TMDB.Poster),
 		"description":      genresText(req.Meta),
 		"media_info":       commonhttp.ReadOptionalFile(strings.TrimSpace(req.Meta.MediaInfoTextPath)),
 		"name":             releaseName,
 		"nfo":              "",
-		"plot":             metautil.FirstNonEmptyTrimmed(req.Meta.EpisodeOverview, req.Meta.ExternalMetadata.TMDB.Overview),
-		"poster":           metautil.FirstNonEmptyTrimmed(req.Meta.ExternalMetadata.TMDB.Poster),
+		"plot":             metautil.FirstNonEmptyTrimmed(req.Meta.EpisodeOverview, req.Meta.ProviderMetadata.TMDB.Overview),
+		"poster":           metautil.FirstNonEmptyTrimmed(req.Meta.ProviderMetadata.TMDB.Poster),
 		"technicalDetails": description,
 		"screenshots":      combineUniqueScreenshots(assets.MenuImages, assets.Screenshots),
 		"type":             resolveCategory(req.Meta),
@@ -197,7 +200,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	}, nil
 }
 
-func resolveChannel(ctx context.Context, req trackers.UploadRequest) (string, string, *api.TrackerQuestionnaire) {
+func resolveChannel(ctx context.Context, req trackers.PreparationInput) (string, string, *api.TrackerQuestionnaire) {
 	answers := questionnaireAnswers(req.Meta)
 	input := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["channel"]), strings.TrimSpace(req.TrackerConfig.Channel))
 	if input == "" {
@@ -213,7 +216,12 @@ func resolveChannel(ctx context.Context, req trackers.UploadRequest) (string, st
 	return "", "answer the channel questionnaire with a valid channel id or tag", &api.TrackerQuestionnaire{
 		Tracker: "SPD",
 		Fields: []api.TrackerQuestionnaireField{{
-			Key: "channel", Label: "Channel", Kind: "text", Value: input, Placeholder: "1 or channel tag", Required: true,
+			Key:         "channel",
+			Label:       "Channel",
+			Kind:        "text",
+			Value:       input,
+			Placeholder: "1 or channel tag",
+			Required:    true,
 		}},
 	}
 }
@@ -243,19 +251,19 @@ func lookupChannelID(ctx context.Context, apiKey string, input string) (string, 
 	return "", errors.New("channel not found")
 }
 
-func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) string {
+func buildDescription(req trackers.PreparationInput, assets trackers.DescriptionAssets) string {
 	meta := req.Meta
 	var parts []string
 
 	// Avoid unnecessary descriptions
 	if strings.TrimSpace(assets.Description) != "" || strings.TrimSpace(meta.EpisodeOverview) != "" {
 		// Custom Header
-		if header := strings.TrimSpace(req.AppConfig.Description.CustomDescriptionHeader); header != "" {
+		if header := strings.TrimSpace(req.Runtime.Description.CustomDescriptionHeader); header != "" {
 			parts = append(parts, header)
 		}
 
 		// Logo
-		if logo, logoSize := descriptionunit3d.ResolveLogo(meta, req.AppConfig); logo != "" {
+		if logo, logoSize := descriptionunit3d.ResolveLogo(api.NewDescriptionSubject(meta), req.Runtime.DescriptionConfig()); logo != "" {
 			parts = append(parts, fmt.Sprintf("[center][img=%d]https://image.tmdb.org/t/p/w300/%s[/img][/center]", logoSize, logo))
 		}
 
@@ -272,12 +280,15 @@ func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAss
 	}
 
 	// Tonemapped Header
-	if tonemapHeader := strings.TrimSpace(req.AppConfig.Description.TonemappedHeader); tonemapHeader != "" && descriptionunit3d.ShouldIncludeTonemappedHeader(meta, req.AppConfig, assets.Screenshots) {
+	if tonemapHeader := strings.TrimSpace(
+		req.Runtime.Description.TonemappedHeader,
+	); tonemapHeader != "" &&
+		descriptionunit3d.ShouldIncludeTonemappedHeader(api.NewDescriptionSubject(meta), req.Runtime.DescriptionConfig(), assets.Screenshots) {
 		parts = append(parts, tonemapHeader)
 	}
 
 	// custom user signature
-	if signature := strings.TrimSpace(req.AppConfig.Description.CustomSignature); signature != "" {
+	if signature := strings.TrimSpace(req.Runtime.Description.CustomSignature); signature != "" {
 		parts = append(parts, signature)
 	}
 
@@ -287,17 +298,20 @@ func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAss
 
 	// Join and finalize
 	description := strings.Join(parts, "\n\n")
-	finalized := bbcode.FinalizeTrackerDescription("SPD", description)
+	finalized := finalizeDescription(description)
 
 	// Debug saving
 	if meta.Options.Debug {
-		descriptionunit3d.SaveDescriptionDebug(meta, "SPD", req.AppConfig.MainSettings.DBPath, finalized, req.Logger)
+		descriptionunit3d.SaveDescriptionDebug(api.NewDescriptionSubject(meta), "SPD", req.Runtime.DBPath, finalized, req.Logger)
 	}
 
 	return finalized
 }
 
-func resolveCategory(meta api.PreparedMetadata) string {
+func resolveCategory(meta api.UploadSubject) string {
+	if _, err := meta.Identity.RequireCategory(); err != nil {
+		return ""
+	}
 	romanian := hasRomanian(meta)
 	if containsWord(genresText(meta), "documentary") || containsWord(keywordsText(meta), "documentary") {
 		if romanian {
@@ -344,13 +358,13 @@ func resolveCategory(meta api.PreparedMetadata) string {
 	return "8"
 }
 
-func hasRomanian(meta api.PreparedMetadata) bool {
+func hasRomanian(meta api.UploadSubject) bool {
 	for _, value := range append([]string{}, append(meta.AudioLanguages, meta.SubtitleLanguages...)...) {
 		if strings.EqualFold(strings.TrimSpace(value), "romanian") {
 			return true
 		}
 	}
-	for _, code := range meta.ExternalMetadata.TMDB.OriginCountry {
+	for _, code := range meta.ProviderMetadata.TMDB.OriginCountry {
 		if strings.EqualFold(strings.TrimSpace(code), "RO") {
 			return true
 		}
@@ -397,11 +411,11 @@ func normalizeName(input string) string {
 	return strings.Join(strings.Fields(strings.Map(mapper, strings.ReplaceAll(input, ":", " -"))), " ")
 }
 
-func imdbURL(meta api.PreparedMetadata) string {
-	if meta.ExternalIDs.IMDBID <= 0 {
+func imdbURL(meta api.UploadSubject) string {
+	if meta.Identity.IMDBID <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("https://www.imdb.com/title/tt%07d", meta.ExternalIDs.IMDBID)
+	return fmt.Sprintf("https://www.imdb.com/title/tt%07d", meta.Identity.IMDBID)
 }
 
 func downloadTrackerTorrent(ctx context.Context, urlValue string, apiKey string, output string) error {
@@ -428,7 +442,7 @@ func downloadTrackerTorrent(ctx context.Context, urlValue string, apiKey string,
 	return nil
 }
 
-func questionnaireAnswers(meta api.PreparedMetadata) map[string]string {
+func questionnaireAnswers(meta api.UploadSubject) map[string]string {
 	if len(meta.TrackerQuestionnaireAnswers) == 0 {
 		return nil
 	}
@@ -445,17 +459,19 @@ func containsWord(a string, b string) bool {
 }
 
 func isSD(res string) bool {
-	return strings.HasPrefix(strings.TrimSpace(res), "480") || strings.HasPrefix(strings.TrimSpace(res), "576") || strings.HasPrefix(strings.TrimSpace(res), "540")
+	return strings.HasPrefix(strings.TrimSpace(res), "480") || strings.HasPrefix(strings.TrimSpace(res), "576") ||
+		strings.HasPrefix(strings.TrimSpace(res), "540")
 }
 
-func genresText(meta api.PreparedMetadata) string {
-	return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Genres, meta.Release.Genre)
+func genresText(meta api.UploadSubject) string {
+	return metautil.FirstNonEmptyTrimmed(meta.ProviderMetadata.TMDB.Genres, meta.Release.Genre)
 }
 
-func keywordsText(meta api.PreparedMetadata) string {
-	return strings.TrimSpace(meta.ExternalMetadata.TMDB.Keywords)
+func keywordsText(meta api.UploadSubject) string {
+	return strings.TrimSpace(meta.ProviderMetadata.TMDB.Keywords)
 }
 
-func isTV(meta api.PreparedMetadata) bool {
-	return meta.TVPack || meta.SeasonInt > 0 || meta.EpisodeInt > 0 || strings.EqualFold(meta.ExternalIDs.Category, "TV")
+func isTV(meta api.UploadSubject) bool {
+	category, err := meta.Identity.RequireCategory()
+	return err == nil && category == api.CanonicalCategoryTV
 }

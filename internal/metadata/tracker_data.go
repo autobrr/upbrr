@@ -12,35 +12,36 @@ import (
 	"sync"
 	"time"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
-	"github.com/autobrr/upbrr/internal/pathutil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
-	"github.com/autobrr/upbrr/internal/trackerdata"
 	trackerscatalog "github.com/autobrr/upbrr/internal/trackers"
+	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 const (
 	defaultTrackerCooldown = 15 * time.Second
-	ptpTrackerCooldown     = 60 * time.Second
 	trackerLookupWorkers   = 4
 )
 
-func (s *Service) EnrichTrackerData(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationstate.State) (preparationstate.State, error) {
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
+		return preparationstate.State{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
 	if s.repo == nil {
-		return api.PreparedMetadata{}, internalerrors.ErrInvalidInput
+		return preparationstate.State{}, internalerrors.ErrInvalidInput
 	}
 	if strings.TrimSpace(meta.SourcePath) == "" {
-		return api.PreparedMetadata{}, internalerrors.ErrInvalidInput
+		return preparationstate.State{}, internalerrors.ErrInvalidInput
 	}
 	if meta.StoredDataFresh {
 		if s.logger != nil {
@@ -56,7 +57,7 @@ func (s *Service) EnrichTrackerData(ctx context.Context, meta api.PreparedMetada
 
 	trackers := normalizeTrackers(candidates)
 	if s.logger != nil {
-		configured, missing := configuredTrackers(s.cfg)
+		configured, missing := configuredTrackers(s.cfg, s.registry)
 		s.logger.Debugf("metadata: tracker candidates %v", trackers)
 		if len(configured) > 0 {
 			s.logger.Debugf("metadata: trackers configured %v", configured)
@@ -69,9 +70,9 @@ func (s *Service) EnrichTrackerData(ctx context.Context, meta api.PreparedMetada
 		logPathedTrackerDetails(meta, s.logger)
 		logClientSearchIDs(meta, s.logger)
 	}
-	trackers = filterConfiguredTrackers(s.cfg, trackers, s.logger)
-	trackers = orderTrackersByPriority(trackers)
-	trackers = reorderTrackersForMetadataNeeds(trackers, meta.Options)
+	trackers = filterConfiguredTrackers(s.cfg, trackers, s.logger, s.registry)
+	trackers = orderTrackersByPriority(trackers, s.registry)
+	trackers = reorderTrackersForMetadataNeeds(trackers, api.UploadOptions{OnlyID: meta.Policy.OnlyID, KeepImages: meta.Policy.KeepImages}, s.registry)
 	trackers = applyPreferredTracker(trackers, s.cfg.Trackers.PreferredTracker)
 	if len(trackers) == 0 {
 		if s.logger != nil {
@@ -85,12 +86,12 @@ func (s *Service) EnrichTrackerData(ctx context.Context, meta api.PreparedMetada
 
 	now := time.Now().UTC()
 	meta.TrackerData = append([]api.TrackerMetadata{}, meta.TrackerData...)
-	unit3dClient := trackerdata.NewClient(s.cfg, s.logger, nil)
+	unit3dClient := trackerdata.NewClientWithRegistry(s.cfg, s.logger, nil, s.registry)
 	eligible := make([]string, 0, len(trackers))
 	for _, tracker := range trackers {
 		select {
 		case <-ctx.Done():
-			return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
+			return preparationstate.State{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 		if s.isTrackerCoolingDown(ctx, tracker, now) {
@@ -109,7 +110,7 @@ func (s *Service) EnrichTrackerData(ctx context.Context, meta api.PreparedMetada
 	return s.enrichTrackerDataPriority(ctx, meta, eligible, now, unit3dClient)
 }
 
-func shouldUseStrictPriorityLookup(meta api.PreparedMetadata, eligible []string, preferred string) bool {
+func shouldUseStrictPriorityLookup(meta preparationstate.State, eligible []string, preferred string) bool {
 	if len(meta.TrackerIDs) > 0 {
 		return true
 	}
@@ -127,16 +128,16 @@ func shouldUseStrictPriorityLookup(meta api.PreparedMetadata, eligible []string,
 
 func (s *Service) enrichTrackerDataPriority(
 	ctx context.Context,
-	meta api.PreparedMetadata,
+	meta preparationstate.State,
 	eligible []string,
 	now time.Time,
 	unit3dClient *trackerdata.Client,
-) (api.PreparedMetadata, error) {
+) (preparationstate.State, error) {
 	assetSourceTracker := ""
 	for _, tracker := range eligible {
 		select {
 		case <-ctx.Done():
-			return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
+			return preparationstate.State{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
@@ -159,7 +160,11 @@ func (s *Service) enrichTrackerDataPriority(
 				}
 			} else if !strings.EqualFold(assetSourceTracker, tracker) {
 				if s.logger != nil {
-					s.logger.Debugf("metadata: ignoring description/images from %s (source=%s)", strings.ToUpper(strings.TrimSpace(tracker)), assetSourceTracker)
+					s.logger.Debugf(
+						"metadata: ignoring description/images from %s (source=%s)",
+						strings.ToUpper(strings.TrimSpace(tracker)),
+						assetSourceTracker,
+					)
 				}
 				record.Description = ""
 				record.ImageURLs = nil
@@ -167,10 +172,10 @@ func (s *Service) enrichTrackerDataPriority(
 		}
 
 		if err := s.repo.SaveTrackerMetadata(ctx, record); err != nil {
-			return api.PreparedMetadata{}, fmt.Errorf("metadata: save tracker metadata: %w", err)
+			return preparationstate.State{}, fmt.Errorf("metadata: save tracker metadata: %w", err)
 		}
 		if err := s.repo.SaveTrackerTimestamp(ctx, db.TrackerTimestamp{Tracker: tracker, UpdatedAt: now}); err != nil {
-			return api.PreparedMetadata{}, fmt.Errorf("metadata: save tracker timestamp: %w", err)
+			return preparationstate.State{}, fmt.Errorf("metadata: save tracker timestamp: %w", err)
 		}
 		meta.TrackerData = append(meta.TrackerData, record)
 		if hasIDs {
@@ -186,11 +191,11 @@ func (s *Service) enrichTrackerDataPriority(
 
 func (s *Service) enrichTrackerDataConcurrent(
 	ctx context.Context,
-	meta api.PreparedMetadata,
+	meta preparationstate.State,
 	eligible []string,
 	now time.Time,
 	unit3dClient *trackerdata.Client,
-) (api.PreparedMetadata, error) {
+) (preparationstate.State, error) {
 	lookupCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -249,7 +254,11 @@ func (s *Service) enrichTrackerDataConcurrent(
 				}
 			} else if !strings.EqualFold(assetSourceTracker, outcome.tracker) {
 				if s.logger != nil {
-					s.logger.Debugf("metadata: ignoring description/images from %s (source=%s)", strings.ToUpper(strings.TrimSpace(outcome.tracker)), assetSourceTracker)
+					s.logger.Debugf(
+						"metadata: ignoring description/images from %s (source=%s)",
+						strings.ToUpper(strings.TrimSpace(outcome.tracker)),
+						assetSourceTracker,
+					)
 				}
 				outcome.record.Description = ""
 				outcome.record.ImageURLs = nil
@@ -258,11 +267,11 @@ func (s *Service) enrichTrackerDataConcurrent(
 
 		if err := s.repo.SaveTrackerMetadata(ctx, outcome.record); err != nil {
 			workers.Wait()
-			return api.PreparedMetadata{}, fmt.Errorf("metadata: save tracker metadata: %w", err)
+			return preparationstate.State{}, fmt.Errorf("metadata: save tracker metadata: %w", err)
 		}
 		if err := s.repo.SaveTrackerTimestamp(ctx, db.TrackerTimestamp{Tracker: outcome.tracker, UpdatedAt: now}); err != nil {
 			workers.Wait()
-			return api.PreparedMetadata{}, fmt.Errorf("metadata: save tracker timestamp: %w", err)
+			return preparationstate.State{}, fmt.Errorf("metadata: save tracker timestamp: %w", err)
 		}
 		meta.TrackerData = append(meta.TrackerData, outcome.record)
 		if outcome.hasIDs {
@@ -289,7 +298,7 @@ type trackerLookupOutcome struct {
 
 func (s *Service) lookupTrackerData(
 	ctx context.Context,
-	meta api.PreparedMetadata,
+	meta preparationstate.State,
 	tracker string,
 	now time.Time,
 	unit3dClient *trackerdata.Client,
@@ -309,7 +318,8 @@ func (s *Service) lookupTrackerData(
 		UpdatedAt:  now,
 	}
 
-	if trackerdata.IsUnit3DTracker(tracker) {
+	kind, registered := s.registry.LookupKind(tracker)
+	if (registered && kind == trackerscatalog.KindUnit3D) || (s.registry == nil && trackerdata.IsUnit3DTracker(tracker)) {
 		fileName := trackerLookupFileName(meta, record.TrackerID, s.cfg.Metadata.SkipTrackerFilenameLookup)
 		if s.logger != nil {
 			s.logger.Tracef("metadata: unit3d lookup start tracker=%s id=%q file=%q", tracker, record.TrackerID, fileName)
@@ -319,8 +329,8 @@ func (s *Service) lookupTrackerData(
 			tracker,
 			record.TrackerID,
 			fileName,
-			meta.Options.OnlyID,
-			meta.Options.KeepImages,
+			meta.Policy.OnlyID,
+			meta.Policy.KeepImages,
 		)
 		if err != nil {
 			return api.TrackerMetadata{}, false, false, fmt.Errorf("metadata: %w", err)
@@ -338,7 +348,7 @@ func (s *Service) lookupTrackerData(
 			return record, true, false, nil
 		}
 
-		downloadedImages := s.persistUnit3DArtifacts(ctx, meta, tracker, result, meta.Options.KeepImages)
+		downloadedImages := s.persistUnit3DArtifacts(ctx, meta, tracker, result, meta.Policy.KeepImages)
 		if s.logger != nil {
 			s.logger.Debugf("metadata: unit3d downloaded %d of %d images", len(downloadedImages), len(result.Validated))
 		}
@@ -349,7 +359,7 @@ func (s *Service) lookupTrackerData(
 		record.Category = normalizeUnit3DCategory(result.Category)
 		record.InfoHash = metautil.FirstNonEmptyTrimmed(record.InfoHash, result.InfoHash)
 		record.Description = result.Description
-		record.ImageURLs = trackerImageURLsFromResult(result, downloadedImages, meta.Options.KeepImages)
+		record.ImageURLs = trackerImageURLsFromResult(result, downloadedImages, meta.Policy.KeepImages)
 		record.Filename = result.FileName
 		record.Matched = true
 		if s.logger != nil {
@@ -390,10 +400,10 @@ func (s *Service) lookupTrackerData(
 		ctx,
 		tracker,
 		record.TrackerID,
-		meta,
+		trackerLookupSubject(meta),
 		trackerLookupFileName(meta, record.TrackerID, s.cfg.Metadata.SkipTrackerFilenameLookup),
-		meta.Options.OnlyID,
-		meta.Options.KeepImages,
+		meta.Policy.OnlyID,
+		meta.Policy.KeepImages,
 	)
 	if err != nil {
 		return api.TrackerMetadata{}, false, false, fmt.Errorf("metadata: %w", err)
@@ -418,9 +428,9 @@ func (s *Service) lookupTrackerData(
 			meta,
 			tracker,
 			trackerdata.Result{Description: result.Description, Validated: result.Images},
-			meta.Options.KeepImages,
+			meta.Policy.KeepImages,
 		)
-		record.ImageURLs = trackerImageURLsFromResult(result, downloadedImages, meta.Options.KeepImages)
+		record.ImageURLs = trackerImageURLsFromResult(result, downloadedImages, meta.Policy.KeepImages)
 	}
 	if s.logger != nil {
 		s.logger.Debugf(
@@ -443,6 +453,83 @@ func (s *Service) lookupTrackerData(
 		return api.TrackerMetadata{}, false, false, nil
 	}
 	return record, true, hasTrackerMetadataIDs(record), nil
+}
+
+func trackerLookupSubject(meta preparationstate.State) api.UploadSubject {
+	identity := meta.Identity
+	if identity.Category == "" || identity.Category == api.CanonicalCategoryUnknown {
+		identity.Category, _ = api.NormalizeCanonicalCategory(meta.MediaInfoCategory)
+	}
+	return api.UploadSubject{
+		SourcePath:            meta.SourcePath,
+		Paths:                 append([]string(nil), meta.Paths...),
+		DiscType:              meta.DiscType,
+		VideoPath:             meta.VideoPath,
+		FileList:              append([]string(nil), meta.FileList...),
+		SourceSize:            meta.SourceSize,
+		MediaInfoJSONPath:     meta.MediaInfoJSONPath,
+		MediaInfoTextPath:     meta.MediaInfoTextPath,
+		DVDVOBMediaInfoText:   meta.DVDVOBMediaInfoText,
+		Scene:                 meta.Scene,
+		SceneName:             meta.SceneName,
+		SceneNFOPath:          meta.SceneNFOPath,
+		SceneRenamed:          meta.SceneRenamed,
+		SceneRenamedReason:    meta.SceneRenamedReason,
+		Trackers:              append([]string(nil), meta.EvidenceTrackers...),
+		MatchedTrackers:       append([]string(nil), meta.MatchedEvidenceTrackers...),
+		Tag:                   meta.Tag,
+		Release:               meta.Release,
+		DescriptionTemplate:   meta.DescriptionTemplate,
+		PersonalRelease:       meta.PersonalRelease,
+		InfoHash:              meta.InfoHash,
+		TrackerIDs:            cloneTrackerIDs(meta.TrackerIDs),
+		TrackerData:           append([]api.TrackerMetadata(nil), meta.TrackerData...),
+		ArrReleaseGroup:       meta.ArrReleaseGroup,
+		ReleaseNameOverrides:  meta.ReleaseNameOverrides,
+		SeasonInt:             meta.SeasonInt,
+		EpisodeInt:            meta.EpisodeInt,
+		SeasonStr:             meta.SeasonStr,
+		EpisodeStr:            meta.EpisodeStr,
+		TVDBAiredDate:         meta.TVDBAiredDate,
+		TVDBAirsTime:          meta.TVDBAirsTime,
+		TVDBAirsTimezone:      meta.TVDBAirsTimezone,
+		TVPack:                meta.TVPack,
+		DailyEpisodeDate:      meta.DailyEpisodeDate,
+		Anime:                 meta.Anime,
+		EpisodeTitle:          meta.EpisodeTitle,
+		EpisodeOverview:       meta.EpisodeOverview,
+		SelectedBDMVPlaylists: append([]api.PlaylistInfo(nil), meta.SelectedBDMVPlaylists...),
+		Identity:              identity,
+		ProviderMetadata:      meta.ProviderMetadata,
+		AudioLanguages:        append([]string(nil), meta.AudioLanguages...),
+		SubtitleLanguages:     append([]string(nil), meta.SubtitleLanguages...),
+		Container:             meta.Container,
+		Audio:                 meta.Audio,
+		Channels:              meta.Channels,
+		HasCommentary:         meta.HasCommentary,
+		Is3D:                  meta.Is3D,
+		Source:                meta.Source,
+		Type:                  meta.Type,
+		UHD:                   meta.UHD,
+		HDR:                   meta.HDR,
+		Distributor:           meta.Distributor,
+		Region:                meta.Region,
+		VideoCodec:            meta.VideoCodec,
+		VideoEncode:           meta.VideoEncode,
+		HasEncodeSettings:     meta.HasEncodeSettings,
+		BitDepth:              meta.BitDepth,
+		Edition:               meta.Edition,
+		Repack:                meta.Repack,
+		WebDV:                 meta.WebDV,
+		Assessments:           meta.ReleaseAssessments(),
+		StreamOptimized:       meta.StreamOptimized,
+		Service:               meta.Service,
+		ServiceLongName:       meta.ServiceLongName,
+		Filename:              meta.Filename,
+		ReleaseName:           meta.ReleaseName,
+		ReleaseNameNoTag:      meta.ReleaseNameNoTag,
+		ReleaseNameClean:      meta.ReleaseNameClean,
+	}
 }
 
 func trackerImageURLsFromResult(_ trackerdata.Result, downloadedImages []string, keepImages bool) []string {
@@ -484,7 +571,7 @@ func (s *Service) isTrackerCoolingDown(ctx context.Context, tracker string, now 
 		}
 		return false
 	}
-	cooldown := trackerCooldown(tracker)
+	cooldown := trackerCooldown(s.registry, tracker)
 	if cooldown <= 0 {
 		return false
 	}
@@ -497,26 +584,49 @@ func (s *Service) isTrackerCoolingDown(ctx context.Context, tracker string, now 
 	return false
 }
 
-func trackerCooldown(tracker string) time.Duration {
-	if strings.EqualFold(tracker, "PTP") {
-		return ptpTrackerCooldown
+func trackerCooldown(registry *trackerscatalog.Registry, tracker string) time.Duration {
+	if policy, ok := registry.LookupDataPolicy(tracker); ok {
+		return policy.Cooldown
 	}
 	return defaultTrackerCooldown
 }
 
-func resolveTrackerCandidates(meta api.PreparedMetadata) []string {
+// resolveTrackerCandidates orders trackers with current matched evidence first,
+// then appends remaining tracker-ID keys deterministically.
+func resolveTrackerCandidates(meta preparationstate.State) []string {
 	if len(meta.TrackerIDs) > 0 {
 		result := make([]string, 0, len(meta.TrackerIDs))
-		for key := range meta.TrackerIDs {
-			result = append(result, key)
+		seen := make(map[string]struct{}, len(meta.TrackerIDs))
+		appendKnown := func(values []string) {
+			for _, value := range values {
+				key := strings.ToLower(strings.TrimSpace(value))
+				if _, exists := meta.TrackerIDs[key]; !exists {
+					continue
+				}
+				if _, exists := seen[key]; exists {
+					continue
+				}
+				seen[key] = struct{}{}
+				result = append(result, value)
+			}
 		}
+		appendKnown(meta.MatchedEvidenceTrackers)
+		appendKnown(meta.EvidenceTrackers)
+		remaining := make([]string, 0, len(meta.TrackerIDs)-len(result))
+		for key := range meta.TrackerIDs {
+			if _, exists := seen[key]; !exists {
+				remaining = append(remaining, key)
+			}
+		}
+		sort.Strings(remaining)
+		result = append(result, remaining...)
 		return result
 	}
-	if len(meta.MatchedTrackers) > 0 {
-		return meta.MatchedTrackers
+	if len(meta.MatchedEvidenceTrackers) > 0 {
+		return meta.MatchedEvidenceTrackers
 	}
-	if len(meta.Trackers) > 0 {
-		return meta.Trackers
+	if len(meta.EvidenceTrackers) > 0 {
+		return meta.EvidenceTrackers
 	}
 	return nil
 }
@@ -539,11 +649,14 @@ func normalizeTrackers(values []string) []string {
 	return out
 }
 
-func orderTrackersByPriority(trackers []string) []string {
+func orderTrackersByPriority(trackers []string, registry *trackerscatalog.Registry) []string {
 	if len(trackers) == 0 {
 		return trackers
 	}
 	trackerPriority := trackerscatalog.TrackerPriority()
+	if registry != nil {
+		trackerPriority = registry.Priority()
+	}
 	priority := make(map[string]int, len(trackerPriority))
 	for idx, value := range trackerPriority {
 		priority[strings.ToUpper(value)] = idx
@@ -569,30 +682,28 @@ func orderTrackersByPriority(trackers []string) []string {
 	return trackers
 }
 
-func reorderTrackersForMetadataNeeds(trackers []string, opts api.UploadOptions) []string {
-	if len(trackers) == 0 {
-		return trackers
+func reorderTrackersForMetadataNeeds(trackerNames []string, opts api.UploadOptions, registry *trackerscatalog.Registry) []string {
+	if len(trackerNames) == 0 {
+		return trackerNames
 	}
 	if opts.OnlyID || !opts.KeepImages {
-		return trackers
+		return trackerNames
 	}
 
-	nonBTN := make([]string, 0, len(trackers))
-	btnCount := 0
-	for _, tracker := range trackers {
-		if strings.EqualFold(strings.TrimSpace(tracker), "BTN") {
-			btnCount++
+	preferred := make([]string, 0, len(trackerNames))
+	deferred := make([]string, 0, len(trackerNames))
+	for _, tracker := range trackerNames {
+		policy, ok := registry.LookupDataPolicy(tracker)
+		if ok && policy.DeferWhenCollectingImages {
+			deferred = append(deferred, tracker)
 			continue
 		}
-		nonBTN = append(nonBTN, tracker)
+		preferred = append(preferred, tracker)
 	}
-	if btnCount == 0 {
-		return trackers
+	if len(deferred) == 0 {
+		return trackerNames
 	}
-	for idx := 0; idx < btnCount; idx++ {
-		nonBTN = append(nonBTN, "BTN")
-	}
-	return nonBTN
+	return append(preferred, deferred...)
 }
 
 func applyPreferredTracker(trackers []string, preferred string) []string {
@@ -621,7 +732,7 @@ func applyPreferredTracker(trackers []string, preferred string) []string {
 	return trackers
 }
 
-func configuredTrackers(cfg config.Config) ([]string, []string) {
+func configuredTrackers(cfg config.Config, registry *trackerscatalog.Registry) ([]string, []string) {
 	configured := make([]string, 0)
 	missing := make([]string, 0)
 	for name, entry := range cfg.Trackers.Trackers {
@@ -630,32 +741,39 @@ func configuredTrackers(cfg config.Config) ([]string, []string) {
 			continue
 		}
 		upper := strings.ToUpper(trimmed)
-		if !trackerLookupConfigured(upper, entry) {
+		ready, owned := registry.DataLookupConfigured(upper, cfg)
+		if !owned {
+			ready = customTrackerLookupConfigured(entry)
+		}
+		if !ready {
 			missing = append(missing, upper)
 			continue
 		}
 		configured = append(configured, upper)
 	}
-	if len(config.ResolveBTNAPIToken(cfg)) >= minTrackerTokenLen {
-		configured = append(configured, "BTN")
+	for _, name := range registry.Names() {
+		if ready, owned := registry.DataLookupConfigured(name, cfg); owned && ready {
+			configured = append(configured, name)
+		}
 	}
 	configured = uniqueSorted(configured)
 	missing = uniqueSorted(missing)
 	return configured, missing
 }
 
-func filterConfiguredTrackers(cfg config.Config, trackers []string, logger api.Logger) []string {
+func filterConfiguredTrackers(cfg config.Config, trackers []string, logger api.Logger, registry *trackerscatalog.Registry) []string {
 	if len(trackers) == 0 {
 		return trackers
 	}
 
 	filtered := make([]string, 0, len(trackers))
 	for _, tracker := range trackers {
-		if strings.EqualFold(strings.TrimSpace(tracker), "BTN") {
-			if len(config.ResolveBTNAPIToken(cfg)) >= minTrackerTokenLen {
+		configured, owned := registry.DataLookupConfigured(tracker, cfg)
+		if owned {
+			if configured {
 				filtered = append(filtered, tracker)
 			} else if logger != nil {
-				logger.Debugf("metadata: tracker %s missing BTN api token", tracker)
+				logger.Debugf("metadata: tracker %s missing lookup credentials", tracker)
 			}
 			continue
 		}
@@ -666,15 +784,10 @@ func filterConfiguredTrackers(cfg config.Config, trackers []string, logger api.L
 			}
 			continue
 		}
-		if !trackerLookupConfigured(tracker, entry) {
+		configured = customTrackerLookupConfigured(entry)
+		if !configured {
 			if logger != nil {
 				logger.Debugf("metadata: tracker %s missing lookup credentials", tracker)
-			}
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(tracker), "ANT") && strings.TrimSpace(entry.APIKey) == "" {
-			if logger != nil {
-				logger.Debugf("metadata: tracker %s missing api_key", tracker)
 			}
 			continue
 		}
@@ -683,22 +796,11 @@ func filterConfiguredTrackers(cfg config.Config, trackers []string, logger api.L
 	return filtered
 }
 
-const minTrackerTokenLen = 25
-
-func trackerLookupConfigured(tracker string, entry config.TrackerConfig) bool {
-	switch strings.ToUpper(strings.TrimSpace(tracker)) {
-	case "BHD":
-		return len(strings.TrimSpace(entry.APIKey)) >= minTrackerTokenLen &&
-			len(strings.TrimSpace(entry.BhdRSSKey)) >= minTrackerTokenLen
-	case "PTP":
-		return strings.TrimSpace(entry.PTPAPIUser) != "" && strings.TrimSpace(entry.PTPAPIKey) != ""
-	case "HDB":
-		return strings.TrimSpace(entry.Username) != "" && strings.TrimSpace(entry.Passkey) != ""
-	case "ANT":
-		return strings.TrimSpace(entry.APIKey) != ""
-	default:
-		return strings.TrimSpace(entry.APIKey) != "" || strings.TrimSpace(entry.AnnounceURL) != ""
-	}
+func customTrackerLookupConfigured(entry config.TrackerConfig) bool {
+	return strings.TrimSpace(entry.APIKey) != "" ||
+		strings.TrimSpace(entry.AnnounceURL) != "" ||
+		(strings.TrimSpace(entry.Username) != "" && strings.TrimSpace(entry.Passkey) != "") ||
+		(strings.TrimSpace(entry.PTPAPIUser) != "" && strings.TrimSpace(entry.PTPAPIKey) != "")
 }
 
 func applyTrackerDataResult(record *api.TrackerMetadata, result trackerdata.Result) {
@@ -744,7 +846,7 @@ func trackerConfigFor(cfg config.Config, tracker string) (config.TrackerConfig, 
 	return config.TrackerConfig{}, false
 }
 
-func trackerIDFor(meta api.PreparedMetadata, tracker string) string {
+func trackerIDFor(meta preparationstate.State, tracker string) string {
 	if len(meta.TrackerIDs) == 0 {
 		return ""
 	}
@@ -755,15 +857,15 @@ func trackerIDFor(meta api.PreparedMetadata, tracker string) string {
 	return strings.TrimSpace(meta.TrackerIDs[key])
 }
 
-func trackerMatched(meta api.PreparedMetadata, tracker string) bool {
-	if !meta.FoundTrackerMatch || len(meta.MatchedTrackers) == 0 {
+func trackerMatched(meta preparationstate.State, tracker string) bool {
+	if !meta.FoundTrackerMatch || len(meta.MatchedEvidenceTrackers) == 0 {
 		return false
 	}
 	target := strings.ToUpper(strings.TrimSpace(tracker))
 	if target == "" {
 		return false
 	}
-	for _, value := range meta.MatchedTrackers {
+	for _, value := range meta.MatchedEvidenceTrackers {
 		if strings.EqualFold(strings.TrimSpace(value), target) {
 			return true
 		}
@@ -792,7 +894,7 @@ func uniqueSorted(values []string) []string {
 	return result
 }
 
-func logPathedTrackerDetails(meta api.PreparedMetadata, logger api.Logger) {
+func logPathedTrackerDetails(meta preparationstate.State, logger api.Logger) {
 	if logger == nil {
 		return
 	}
@@ -820,7 +922,7 @@ func logPathedTrackerDetails(meta api.PreparedMetadata, logger api.Logger) {
 	}
 }
 
-func logClientSearchIDs(meta api.PreparedMetadata, logger api.Logger) {
+func logClientSearchIDs(meta preparationstate.State, logger api.Logger) {
 	if logger == nil {
 		return
 	}
@@ -862,7 +964,7 @@ func redactStrings(values []string) []string {
 	return redacted
 }
 
-func searchFileName(meta api.PreparedMetadata) string {
+func searchFileName(meta preparationstate.State) string {
 	base := strings.TrimSpace(meta.SourcePath)
 	if base == "" {
 		return ""
@@ -870,7 +972,7 @@ func searchFileName(meta api.PreparedMetadata) string {
 	return pathutil.Base(base)
 }
 
-func trackerLookupFileName(meta api.PreparedMetadata, trackerID string, skipFilenameLookup bool) string {
+func trackerLookupFileName(meta preparationstate.State, trackerID string, skipFilenameLookup bool) string {
 	if skipFilenameLookup && strings.TrimSpace(trackerID) == "" {
 		return ""
 	}

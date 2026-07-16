@@ -15,12 +15,13 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/autobrr/upbrr/internal/config"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	"github.com/autobrr/upbrr/internal/languageutil"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
-	"github.com/autobrr/upbrr/internal/paths"
-	"github.com/autobrr/upbrr/internal/pathutil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -35,22 +36,22 @@ var durationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(millisecon
 var numericPattern = regexp.MustCompile(`\d+`)
 var releaseTokenSeparatorPattern = regexp.MustCompile(`[^A-Z0-9]+`)
 
-// ApplyMediaDetails enriches prepared metadata from MediaInfo, BDInfo, filename
+// deriveMediaFacts enriches prepared evidence from MediaInfo, BDInfo, and filename
 // tokens, overrides, and tracker rules, then rebuilds the release name.
-func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.State) (preparationstate.State, error) {
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
+		return preparationstate.State{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
 	miDoc, err := loadMediaInfoDoc(meta.MediaInfoJSONPath)
 	if err != nil {
-		return api.PreparedMetadata{}, err
+		return preparationstate.State{}, err
 	}
 
-	meta.MediaInfoUniqueID, meta.ValidMediaInfo = validateMediaInfoUniqueID(meta, miDoc)
-	if !meta.ValidMediaInfo && s.logger != nil {
+	meta.MediaInfoUniqueID, meta.MediaInfoUniqueIDPresent = validateMediaInfoUniqueID(meta, miDoc)
+	if !meta.MediaInfoUniqueIDPresent && s.logger != nil {
 		s.logger.Warnf("metadata: mediainfo validation failed (missing unique id)")
 	}
 	meta.AudioLanguages, meta.SubtitleLanguages = extractMediaInfoLanguages(miDoc)
@@ -101,7 +102,7 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 		dvdDetails.VOBMediaInfoRaw = metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.DVDVOBMediaInfoText), strings.TrimSpace(meta.DVDVOBMediaInfoJSON))
 		dvdDetails.UpdatedAt = time.Now().UTC()
 		if err := s.repo.SaveDVDMediaInfo(ctx, dvdDetails); err != nil {
-			return api.PreparedMetadata{}, fmt.Errorf("metadata: persist dvd mediainfo details: %w", err)
+			return preparationstate.State{}, fmt.Errorf("metadata: persist dvd mediainfo details: %w", err)
 		}
 	}
 	// For non-DVD content, if rls did not parse a resolution from the filename,
@@ -125,12 +126,15 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 		s.logger.Debugf("metadata: media details uhd=%q hdr=%q", meta.UHD, meta.HDR)
 	}
 
-	meta, err = s.applyBlurayMetadata(ctx, meta, bdinfo)
-	if err != nil {
-		return api.PreparedMetadata{}, err
-	}
-	if s.logger != nil && meta.ExternalMetadata.Bluray != nil {
-		s.logger.Debugf("metadata: blu-ray.com candidates=%d selected=%q score=%.1f threshold=%.1f", len(meta.ExternalMetadata.Bluray.Candidates), meta.ExternalMetadata.Bluray.SelectedReleaseID, meta.ExternalMetadata.Bluray.BestScore, meta.ExternalMetadata.Bluray.Threshold)
+	meta = s.applyBlurayMetadata(ctx, meta, bdinfo)
+	if s.logger != nil && meta.ProviderMetadata.Bluray != nil {
+		s.logger.Debugf(
+			"metadata: blu-ray.com candidates=%d selected=%q score=%.1f threshold=%.1f",
+			len(meta.ProviderMetadata.Bluray.Candidates),
+			meta.ProviderMetadata.Bluray.SelectedReleaseID,
+			meta.ProviderMetadata.Bluray.BestScore,
+			meta.ProviderMetadata.Bluray.Threshold,
+		)
 	}
 
 	meta.Distributor = normalizeDistributor(meta.Distributor)
@@ -145,7 +149,13 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 		meta.VideoEncode, meta.VideoCodec, meta.HasEncodeSettings, meta.BitDepth = videoEncodeFromMedia(miDoc, meta.Type)
 	}
 	if s.logger != nil {
-		s.logger.Debugf("metadata: media details region=%q video_encode=%q video_codec=%q bit_depth=%q", meta.Region, meta.VideoEncode, meta.VideoCodec, meta.BitDepth)
+		s.logger.Debugf(
+			"metadata: media details region=%q video_encode=%q video_codec=%q bit_depth=%q",
+			meta.Region,
+			meta.VideoEncode,
+			meta.VideoCodec,
+			meta.BitDepth,
+		)
 	}
 
 	meta.Edition, meta.Repack = editionFromMeta(meta, miDoc)
@@ -154,10 +164,10 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 		s.logger.Debugf("metadata: media details edition=%q repack=%q webdv=%t", meta.Edition, meta.Repack, meta.WebDV)
 	}
 
-	meta.ValidMediaInfoSettings = true
+	meta.MediaInfoEncodeSettingsPresent = true
 	if !strings.EqualFold(meta.DiscType, "BDMV") && strings.EqualFold(meta.Type, "ENCODE") && !strings.EqualFold(meta.VideoCodec, "AV1") {
-		meta.ValidMediaInfoSettings = validateMediaInfoSettings(miDoc)
-		if !meta.ValidMediaInfoSettings && s.logger != nil {
+		meta.MediaInfoEncodeSettingsPresent = validateMediaInfoSettings(miDoc)
+		if !meta.MediaInfoEncodeSettingsPresent && s.logger != nil {
 			s.logger.Warnf("metadata: mediainfo validation failed (missing encode settings)")
 		}
 	}
@@ -184,7 +194,7 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 	}
 
 	applyMetadataOverrides(&meta)
-	ApplyRequestScopedAudioPolicy(&meta, s.cfg, s.logger)
+	meta.Audio = applyAudioLanguagePrefix(meta.Audio, meta)
 	RebuildReleaseName(&meta, s.logger)
 
 	// Scene detection runs here — after external IDs are resolved and the release
@@ -193,16 +203,11 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 	// rules (which read meta.Scene / meta.SceneNFOPath / meta.SceneRenamed).
 	meta, err = s.applySceneDetection(ctx, meta)
 	if err != nil {
-		return api.PreparedMetadata{}, err
+		return preparationstate.State{}, err
 	}
 	// Scene detection can supply the service (from the NFO), which WEB release
 	// names embed, so rebuild once more to fold in scene-derived metadata.
 	RebuildReleaseName(&meta, s.logger)
-
-	meta, err = s.applyTrackerRules(ctx, meta)
-	if err != nil {
-		return api.PreparedMetadata{}, err
-	}
 
 	return meta, nil
 }
@@ -212,7 +217,7 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 // never block the upload), but context cancellation/deadline is propagated so the
 // pipeline aborts rather than continuing into tracker rules. Detection is gated
 // by config (scene_detection) via a nil detector.
-func (s *Service) applySceneDetection(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *Service) applySceneDetection(ctx context.Context, meta preparationstate.State) (preparationstate.State, error) {
 	if s.scene == nil {
 		return meta, nil
 	}
@@ -241,8 +246,8 @@ func (s *Service) applySceneDetection(ctx context.Context, meta api.PreparedMeta
 	applySceneResult(&meta, result)
 	// Detection now runs after ID resolution, so backfill a scene-discovered IMDb
 	// id only when resolution found none, so upload payloads still carry it.
-	if meta.ExternalIDs.IMDBID == 0 && result.IMDBID > 0 {
-		meta.ExternalIDs.IMDBID = result.IMDBID
+	if meta.Identity.IMDBID == 0 && result.IMDBID > 0 {
+		meta.Identity.IMDBID = result.IMDBID
 	}
 	if s.logger != nil {
 		if meta.Scene {
@@ -259,64 +264,7 @@ func (s *Service) applySceneDetection(ctx context.Context, meta api.PreparedMeta
 	return meta, nil
 }
 
-// ApplyTrackerClaims refreshes claim-based tracker blocks after media details
-// and tracker rules have populated the release attributes used for matching.
-func (s *Service) ApplyTrackerClaims(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
-	return s.applyTrackerClaims(ctx, meta)
-}
-
-// RefreshPreparedMetadata reapplies request-scoped audio, naming, rule, and
-// claim state without rereading media files. HDR may be refreshed from the
-// current source path only when it still matches the parsed release HDR.
-func (s *Service) RefreshPreparedMetadata(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
-	if s == nil {
-		return meta, nil
-	}
-	refreshService := *s
-
-	meta.BlockedTrackers = removeTrackerBlockReason(meta.BlockedTrackers, api.TrackerBlockReasonAudio)
-	meta.BlockedTrackers = removeTrackerBlockReason(meta.BlockedTrackers, api.TrackerBlockReasonClaim)
-	meta.TrackerRuleFailures = removeTrackerRule(meta.TrackerRuleFailures, trackerClaimRuleActive)
-
-	if filenameHDR := filenameHDRFromMeta(meta); filenameHDR != "" && meta.HDR == normalizeFilenameHDRTokens(meta.Release.HDR) {
-		meta.HDR = filenameHDR
-	}
-	normalizeMediaInfoSettings(&meta)
-	ApplyRequestScopedAudioPolicy(&meta, refreshService.cfg, refreshService.logger)
-	RebuildReleaseName(&meta, refreshService.logger)
-
-	var err error
-	meta, err = refreshService.applyTrackerRules(ctx, meta)
-	if err != nil {
-		return api.PreparedMetadata{}, err
-	}
-	meta, err = refreshService.applyTrackerClaims(ctx, meta)
-	if err != nil {
-		return api.PreparedMetadata{}, err
-	}
-	return meta, nil
-}
-
-// normalizeMediaInfoSettings re-asserts the ValidMediaInfoSettings invariant on
-// refresh paths that reuse cached or imported metadata without re-reading media.
-// The full media pass (PrepareMetadata) only ever sets this false for a non-BDMV,
-// non-AV1 encode that is missing encoding settings; for every other release kind
-// it is unconditionally true. Cached or imported metadata can carry a stale or
-// zero-value false here, which would wrongly trip the UNIT3D MediaInfo-settings
-// rule (see internal/trackers/rules.go) and block valid remux/web/disc uploads,
-// so restore true whenever the release cannot be a validatable encode.
-func normalizeMediaInfoSettings(meta *api.PreparedMetadata) {
-	if meta == nil || meta.ValidMediaInfoSettings {
-		return
-	}
-	if strings.EqualFold(meta.DiscType, "BDMV") ||
-		!strings.EqualFold(meta.Type, "ENCODE") ||
-		strings.EqualFold(meta.VideoCodec, "AV1") {
-		meta.ValidMediaInfoSettings = true
-	}
-}
-
-func applyMetadataOverrides(meta *api.PreparedMetadata) {
+func applyMetadataOverrides(meta *preparationstate.State) {
 	if meta == nil {
 		return
 	}
@@ -347,7 +295,7 @@ func applyMetadataOverrides(meta *api.PreparedMetadata) {
 	}
 }
 
-func applyOriginalLanguageOverride(meta *api.PreparedMetadata, language *string) {
+func applyOriginalLanguageOverride(meta *preparationstate.State, language *string) {
 	if meta == nil || language == nil {
 		return
 	}
@@ -356,21 +304,21 @@ func applyOriginalLanguageOverride(meta *api.PreparedMetadata, language *string)
 	if trimmed == "" {
 		return
 	}
-	if meta.ExternalMetadata.TMDB != nil {
-		meta.ExternalMetadata.TMDB.OriginalLanguage = trimmed
+	if meta.ProviderMetadata.TMDB != nil {
+		meta.ProviderMetadata.TMDB.OriginalLanguage = trimmed
 	}
-	if meta.ExternalMetadata.IMDB != nil {
-		meta.ExternalMetadata.IMDB.OriginalLanguage = trimmed
+	if meta.ProviderMetadata.IMDB != nil {
+		meta.ProviderMetadata.IMDB.OriginalLanguage = trimmed
 	}
-	if meta.ExternalMetadata.TVDB != nil {
-		meta.ExternalMetadata.TVDB.OriginalLanguage = trimmed
+	if meta.ProviderMetadata.TVDB != nil {
+		meta.ProviderMetadata.TVDB.OriginalLanguage = trimmed
 	}
-	if meta.ExternalMetadata.TVmaze != nil {
-		meta.ExternalMetadata.TVmaze.Language = trimmed
+	if meta.ProviderMetadata.TVmaze != nil {
+		meta.ProviderMetadata.TVmaze.Language = trimmed
 	}
 }
 
-func loadBDInfo(meta api.PreparedMetadata, dbPath string) *discparse.BDInfo {
+func loadBDInfo(meta preparationstate.State, dbPath string) *discparse.BDInfo {
 	if !strings.EqualFold(meta.DiscType, "BDMV") && !strings.EqualFold(meta.DiscType, "DVD") {
 		return nil
 	}
@@ -397,7 +345,7 @@ func loadBDInfo(meta api.PreparedMetadata, dbPath string) *discparse.BDInfo {
 	return discparse.ParseBDInfoSummary(summary, files, meta.SourcePath)
 }
 
-func containerFromMeta(meta api.PreparedMetadata) string {
+func containerFromMeta(meta preparationstate.State) string {
 	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
 	case "BDMV":
 		return "m2ts"
@@ -431,7 +379,7 @@ func containerFromMeta(meta api.PreparedMetadata) string {
 // Atmos are emitted after the channel count to match release-name ordering.
 // MediaInfo title-derived markers such as Auro3D come from the selected
 // primary audio track.
-func audioFromMedia(meta api.PreparedMetadata, doc mediaInfoDoc, bdinfo *discparse.BDInfo) (string, string, bool) {
+func audioFromMedia(meta preparationstate.State, doc mediaInfoDoc, bdinfo *discparse.BDInfo) (string, string, bool) {
 	if bdinfo != nil && len(bdinfo.Audio) > 0 {
 		track := bdinfo.Audio[0]
 		codec := normalizeAudioFormat(map[string]any{
@@ -523,7 +471,7 @@ func audioTrackTitle(track map[string]any) string {
 	return trackString(track, "Title", "title", "Title_String", "Title_String2", "Title_String3")
 }
 
-func audioLanguagePrefix(meta api.PreparedMetadata, tracks []map[string]any) string {
+func audioLanguagePrefix(meta preparationstate.State, tracks []map[string]any) string {
 	filtered := make([]map[string]any, 0, len(tracks))
 	for _, track := range tracks {
 		if isCommentaryOrCompatibilityAudioValue(audioTrackTitle(track)) {
@@ -542,7 +490,7 @@ func audioLanguagePrefix(meta api.PreparedMetadata, tracks []map[string]any) str
 	return audioLanguagePrefixFromLanguages(meta, languages)
 }
 
-func audioLanguagePrefixFromLanguages(meta api.PreparedMetadata, languages []string) string {
+func audioLanguagePrefixFromLanguages(meta preparationstate.State, languages []string) string {
 	if len(languages) == 0 {
 		return ""
 	}
@@ -580,16 +528,16 @@ func audioLanguagePrefixFromLanguages(meta api.PreparedMetadata, languages []str
 	return ""
 }
 
-func originalAudioLanguage(meta api.PreparedMetadata) string {
+func originalAudioLanguage(meta preparationstate.State) string {
 	switch {
-	case meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage) != "":
-		return meta.ExternalMetadata.TMDB.OriginalLanguage
-	case meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.OriginalLanguage) != "":
-		return meta.ExternalMetadata.IMDB.OriginalLanguage
-	case meta.ExternalMetadata.TVDB != nil && strings.TrimSpace(meta.ExternalMetadata.TVDB.OriginalLanguage) != "":
-		return meta.ExternalMetadata.TVDB.OriginalLanguage
-	case meta.ExternalMetadata.TVmaze != nil && strings.TrimSpace(meta.ExternalMetadata.TVmaze.Language) != "":
-		return meta.ExternalMetadata.TVmaze.Language
+	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage) != "":
+		return meta.ProviderMetadata.TMDB.OriginalLanguage
+	case meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.OriginalLanguage) != "":
+		return meta.ProviderMetadata.IMDB.OriginalLanguage
+	case meta.ProviderMetadata.TVDB != nil && strings.TrimSpace(meta.ProviderMetadata.TVDB.OriginalLanguage) != "":
+		return meta.ProviderMetadata.TVDB.OriginalLanguage
+	case meta.ProviderMetadata.TVmaze != nil && strings.TrimSpace(meta.ProviderMetadata.TVmaze.Language) != "":
+		return meta.ProviderMetadata.TVmaze.Language
 	default:
 		return ""
 	}
@@ -629,20 +577,10 @@ func isCommentaryOrCompatibilityAudioValue(value string) bool {
 
 // ApplyRequestScopedAudioPolicy updates audio labels and tracker audio blocks
 // for the request's active tracker set.
-func ApplyRequestScopedAudioPolicy(meta *api.PreparedMetadata, cfg config.Config, logger api.Logger) {
-	if meta == nil {
-		return
-	}
-
-	meta.Audio = applyAudioLanguagePrefix(meta.Audio, *meta)
-	meta.BlockedTrackers = removeTrackerBlockReason(meta.BlockedTrackers, api.TrackerBlockReasonAudio)
-	meta.TrackerRuleFailures = removeTrackerRule(meta.TrackerRuleFailures, "audio_bloat")
-	applyAudioBloatPolicy(meta, trackers.ResolveTrackersWithDefaults(cfg, meta.Trackers, meta.TrackersRemove, logger), logger)
-}
 
 // RebuildReleaseName regenerates the prepared release-name fields from the
 // current metadata and release-name overrides.
-func RebuildReleaseName(meta *api.PreparedMetadata, logger api.Logger) {
+func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 	if meta == nil {
 		return
 	}
@@ -659,7 +597,7 @@ func RebuildReleaseName(meta *api.PreparedMetadata, logger api.Logger) {
 	}
 }
 
-func applyAudioLanguagePrefix(audio string, meta api.PreparedMetadata) string {
+func applyAudioLanguagePrefix(audio string, meta preparationstate.State) string {
 	base := strings.TrimSpace(audio)
 	for _, prefix := range []string{"Dual-Audio", "Dubbed"} {
 		if strings.EqualFold(base, prefix) {
@@ -691,34 +629,11 @@ func applyAudioLanguagePrefix(audio string, meta api.PreparedMetadata) string {
 	return strings.TrimSpace(prefix + " " + base)
 }
 
-func applyAudioBloatPolicy(meta *api.PreparedMetadata, candidateTrackers []string, logger api.Logger) {
-	if meta == nil || strings.TrimSpace(meta.DiscType) != "" {
-		return
-	}
-
-	blocked, warned := resolveAudioBloatPolicy(*meta, candidateTrackers)
-	if len(blocked) == 0 && len(warned) == 0 {
-		return
-	}
-
-	for tracker, languages := range blocked {
-		meta.BlockedTrackers = addMetadataTrackerBlockReason(meta.BlockedTrackers, tracker, api.TrackerBlockReasonAudio)
-		meta.TrackerRuleFailures = addMetadataTrackerRuleFailure(meta.TrackerRuleFailures, tracker, api.RuleFailure{
-			Rule:   "audio_bloat",
-			Reason: audioBloatReason(languages, true),
-		})
-		if logger != nil {
-			logger.Warnf("metadata: removed tracker %s due to audio bloat languages=%v", tracker, languages)
-		}
-	}
-	for tracker, languages := range warned {
-		if logger != nil {
-			logger.Warnf("metadata: audio may be considered bloated on %s languages=%v", tracker, languages)
-		}
-	}
-}
-
-func resolveAudioBloatPolicy(meta api.PreparedMetadata, candidateTrackers []string) (map[string][]string, map[string][]string) {
+func resolveAudioBloatPolicyWithRegistry(
+	meta preparationstate.State,
+	candidateTrackers []string,
+	registry *trackers.Registry,
+) (map[string][]string, map[string][]string) {
 	original := canonicalAudioLanguage(originalAudioLanguage(meta))
 	if original == "" || original == "unknown" {
 		return nil, nil
@@ -755,15 +670,27 @@ func resolveAudioBloatPolicy(meta api.PreparedMetadata, candidateTrackers []stri
 	}
 
 	bloatAllowed := map[string]struct{}{
-		"ASC": {}, "BJS": {}, "BT": {}, "DC": {}, "FF": {}, "TL": {},
+		"ASC": {},
+		"BJS": {},
+		"BT":  {},
+		"DC":  {},
+		"FF":  {},
+		"TL":  {},
 	}
 	trackerAllowedLanguages := map[string][]string{
 		"AITHER": {"english"},
-		"ANT":    {"english"},
 		"SPD":    {"romanian"},
 	}
 	hardBlockedForEnglishOriginal := map[string]struct{}{
-		"ANT": {}, "BHD": {}, "MTV": {},
+		"MTV": {},
+	}
+	for _, tracker := range resolvedTrackers {
+		if policy, ok := registry.LookupAudioPolicy(tracker); ok {
+			trackerAllowedLanguages[tracker] = policy.AllowedLanguages
+			if policy.BlockEnglishOriginalWithForeign {
+				hardBlockedForEnglishOriginal[tracker] = struct{}{}
+			}
+		}
 	}
 	isEnglishOriginalWithNonEnglish := original == "english" && hasEnglish && hasOther
 
@@ -829,31 +756,6 @@ func removeTrackerBlockReason(blocked map[string][]api.TrackerBlockReason, reaso
 			continue
 		}
 		filtered[tracker] = append([]api.TrackerBlockReason{}, kept...)
-	}
-	if len(filtered) == 0 {
-		return nil
-	}
-	return filtered
-}
-
-func removeTrackerRule(failures map[string][]api.RuleFailure, rule string) map[string][]api.RuleFailure {
-	if len(failures) == 0 {
-		return failures
-	}
-
-	filtered := make(map[string][]api.RuleFailure, len(failures))
-	for tracker, trackerFailures := range failures {
-		kept := make([]api.RuleFailure, 0, len(trackerFailures))
-		for _, failure := range trackerFailures {
-			if strings.EqualFold(strings.TrimSpace(failure.Rule), strings.TrimSpace(rule)) {
-				continue
-			}
-			kept = append(kept, failure)
-		}
-		if len(kept) == 0 {
-			continue
-		}
-		filtered[tracker] = kept
 	}
 	if len(filtered) == 0 {
 		return nil
@@ -1263,7 +1165,7 @@ func threeDFromBDInfo(info *discparse.BDInfo) string {
 	return ""
 }
 
-func sourceAndType(meta api.PreparedMetadata, doc mediaInfoDoc) (string, string) {
+func sourceAndType(meta preparationstate.State, doc mediaInfoDoc) (string, string) {
 	source := strings.TrimSpace(meta.Release.Source)
 	typeValue := strings.TrimSpace(meta.Release.Type)
 	if typeValue == "" || isCategoryType(typeValue) {
@@ -1348,7 +1250,7 @@ func dvdSystemFromMedia(doc mediaInfoDoc) string {
 	return ""
 }
 
-func uhdFromMeta(meta api.PreparedMetadata) string {
+func uhdFromMeta(meta preparationstate.State) string {
 	upperPath := strings.ToUpper(meta.SourcePath)
 	if strings.Contains(upperPath, "UHD") {
 		return "UHD"
@@ -1374,7 +1276,7 @@ func uhdFromMeta(meta api.PreparedMetadata) string {
 // filename tokens from the current source path or parsed release. Bare PQ
 // transfer metadata is normalized to HDR only when BT.2020 primaries confirm
 // the HDR color space.
-func hdrFromMedia(doc mediaInfoDoc, bdinfo *discparse.BDInfo, meta api.PreparedMetadata) string {
+func hdrFromMedia(doc mediaInfoDoc, bdinfo *discparse.BDInfo, meta preparationstate.State) string {
 	if bdinfo != nil && len(bdinfo.Video) > 0 {
 		hdr := ""
 		dv := ""
@@ -1440,7 +1342,7 @@ func hdrFromMedia(doc mediaInfoDoc, bdinfo *discparse.BDInfo, meta api.PreparedM
 
 // filenameHDRFromMeta returns normalized HDR tokens from SourcePath before
 // falling back to previously parsed release tokens.
-func filenameHDRFromMeta(meta api.PreparedMetadata) string {
+func filenameHDRFromMeta(meta preparationstate.State) string {
 	if sourceHDR := normalizeFilenameHDRTokens(ParseReleaseInfo(meta.SourcePath).HDR); sourceHDR != "" {
 		return sourceHDR
 	}
@@ -1586,7 +1488,7 @@ func videoEncodeFromMedia(doc mediaInfoDoc, typeValue string) (string, string, b
 	return videoEncode, videoCodec, encodedSettings != "", bitDepth
 }
 
-func editionFromMeta(meta api.PreparedMetadata, doc mediaInfoDoc) (string, string) {
+func editionFromMeta(meta preparationstate.State, doc mediaInfoDoc) (string, string) {
 	edition := ""
 	isIMDbEdition := false
 	applyAnimeOverride(&meta)
@@ -1625,7 +1527,7 @@ func editionFromMeta(meta api.PreparedMetadata, doc mediaInfoDoc) (string, strin
 
 // repackFromMeta scans source basenames and parsed release tokens so repack
 // markers do not depend on guessit/rls placing them in the edition field.
-func repackFromMeta(meta api.PreparedMetadata, edition string) string {
+func repackFromMeta(meta preparationstate.State, edition string) string {
 	return repackFromText(
 		pathutil.Base(meta.SourcePath),
 		pathutil.Base(meta.VideoPath),
@@ -1685,11 +1587,11 @@ func hasReleaseToken(tokens map[string]struct{}, value string) bool {
 	return ok
 }
 
-func resolveMultiPlaylistEdition(meta api.PreparedMetadata) string {
+func resolveMultiPlaylistEdition(meta preparationstate.State) string {
 	if !strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
 		return ""
 	}
-	if len(meta.SelectedBDMVPlaylists) < 2 || meta.ExternalMetadata.IMDB == nil || len(meta.ExternalMetadata.IMDB.EditionDetails) == 0 {
+	if len(meta.SelectedBDMVPlaylists) < 2 || meta.ProviderMetadata.IMDB == nil || len(meta.ProviderMetadata.IMDB.EditionDetails) == 0 {
 		return ""
 	}
 
@@ -1701,7 +1603,7 @@ func resolveMultiPlaylistEdition(meta api.PreparedMetadata) string {
 			continue
 		}
 
-		matches := imdbEditionMatches(playlist.Duration, meta.ExternalMetadata.IMDB.EditionDetails, true)
+		matches := imdbEditionMatches(playlist.Duration, meta.ProviderMetadata.IMDB.EditionDetails, true)
 		if len(matches) == 0 {
 			continue
 		}
@@ -1741,18 +1643,18 @@ type imdbEditionMatch struct {
 	minutes       int
 }
 
-func resolveIMDbEditionFromMediaDuration(meta api.PreparedMetadata, doc mediaInfoDoc) string {
+func resolveIMDbEditionFromMediaDuration(meta preparationstate.State, doc mediaInfoDoc) string {
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") || !isMovieMetadata(meta) || meta.Anime {
 		return ""
 	}
-	if meta.ExternalMetadata.IMDB == nil || len(meta.ExternalMetadata.IMDB.EditionDetails) <= 1 {
+	if meta.ProviderMetadata.IMDB == nil || len(meta.ProviderMetadata.IMDB.EditionDetails) <= 1 {
 		return ""
 	}
 	duration := mediaDurationSeconds(doc)
 	if duration <= 0 {
 		return ""
 	}
-	matches := imdbEditionMatches(duration, meta.ExternalMetadata.IMDB.EditionDetails, true)
+	matches := imdbEditionMatches(duration, meta.ProviderMetadata.IMDB.EditionDetails, true)
 	if len(matches) == 0 || !matches[0].hasAttribute {
 		return ""
 	}
@@ -1988,7 +1890,7 @@ func cleanEditionResidue(edition string) string {
 	return strings.TrimSpace(edition)
 }
 
-func applyAnimeOverride(meta *api.PreparedMetadata) {
+func applyAnimeOverride(meta *preparationstate.State) {
 	if meta == nil || meta.MetadataOverrides.Anime == nil {
 		return
 	}
@@ -2003,8 +1905,8 @@ func hasNoEditionOverride(overrides api.ReleaseNameOverrides) bool {
 	return overrides.NoEdition != nil && *overrides.NoEdition
 }
 
-func isMovieMetadata(meta api.PreparedMetadata) bool {
-	category := normalizeNamingCategory(meta.ExternalIDs.Category)
+func isMovieMetadata(meta preparationstate.State) bool {
+	category := normalizeNamingCategory(string(meta.Identity.Category))
 	if category == "" {
 		category = normalizeNamingCategory(meta.MediaInfoCategory)
 	}

@@ -325,7 +325,11 @@ func addRegionalGenericCandidate(candidates map[string]localizedTitleCandidate, 
 	if currentOK && current.priority < priority {
 		return
 	}
-	candidates[language] = localizedTitleCandidate{title: title, regionalKey: regionalKey, priority: priority}
+	candidates[language] = localizedTitleCandidate{
+		title:       title,
+		regionalKey: regionalKey,
+		priority:    priority,
+	}
 }
 
 // defaultRegionalTitleKey returns the language's conventional same-region tag
@@ -409,7 +413,7 @@ func (c *Client) GetEpisodeDetails(ctx context.Context, tmdbID, season, episode 
 		EpisodeNumber: resp.EpisodeNumber,
 		SeasonNumber:  resp.SeasonNumber,
 		Runtime:       resp.Runtime,
-		IMDbID:        resp.ExternalIDs.IMDbID,
+		IMDbID:        resp.Identity.IMDbID,
 	}
 	if resp.StillPath != "" {
 		details.StillURL = imageBaseURL + resp.StillPath
@@ -985,7 +989,7 @@ type episodeDetailsResponse struct {
 	EpisodeNumber int     `json:"episode_number"`
 	SeasonNumber  int     `json:"season_number"`
 	Runtime       int     `json:"runtime"`
-	ExternalIDs   struct {
+	Identity      struct {
 		IMDbID string `json:"imdb_id"`
 	} `json:"external_ids"`
 	Crew       []creditMember `json:"crew"`

@@ -10,31 +10,39 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-type definition struct{}
+// Definition provides TL tracker preparation and optional policy capabilities.
+type Definition struct{}
 
-func New() trackers.Definition  { return definition{} }
-func (definition) Name() string { return "TL" }
+// New returns a fresh TL tracker definition.
+func New() *Definition { return &Definition{} }
 
-func (definition) Upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
+// Name returns the stable TL tracker identifier.
+func (Definition) Name() string { return "TL" }
+
+// Prepare builds a fresh intent-scoped TL tracker plan.
+func (d Definition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
+	return trackers.PrepareAdapter(ctx, input, d.prepareDescription, d.prepareDryRun, d.submit)
+}
+
+func (Definition) submit(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
 	return upload(ctx, req)
 }
 
-func (definition) BuildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
+func (Definition) prepareDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
 	return buildUploadDryRun(ctx, req)
 }
 
-func (definition) BuildDescription(ctx context.Context, req trackers.DescriptionRequest) (trackers.DescriptionResult, error) {
-	assets, err := trackers.ResolveDescriptionAssetsWithPrepared(ctx, req.Tracker, req.Meta, req.Repo, req.Logger, req.Assets)
+func (Definition) prepareDescription(_ context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {
+	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
 	if err != nil {
 		assets = trackers.DescriptionAssets{}
 	}
-	description := buildDescription(trackers.UploadRequest{
+	description := buildDescription(trackers.PreparationInput{
 		Tracker:       req.Tracker,
 		Meta:          req.Meta,
 		TrackerConfig: req.TrackerConfig,
-		AppConfig:     req.AppConfig,
+		Runtime:       req.Runtime,
 		Logger:        req.Logger,
-		Repo:          req.Repo,
 	}, assets)
 	return trackers.DescriptionResult{Group: "tl", Description: description}, nil
 }

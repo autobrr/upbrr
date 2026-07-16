@@ -18,8 +18,8 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/redaction"
-	"github.com/autobrr/upbrr/internal/trackerauth"
 	"github.com/autobrr/upbrr/internal/trackers"
+	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -35,23 +35,131 @@ type cliTrackerAuthService interface {
 	Submit2FA(ctx context.Context, challengeID string, code string) (api.TrackerAuthStatus, error)
 }
 
-func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, opts cliOptions, visited map[string]bool, sourcePath string, cfg config.Config) error {
+// cliSiteCheckCore composes metadata preparation and review for site-check-only runs.
+type cliSiteCheckCore interface {
+	cliMetadataPreviewer
+	cliUploadReviewer
+}
+
+// cliScreenshotCore is the CLI-facing screenshot seam.
+type cliScreenshotCore interface {
+	FetchScreenshotPlan(context.Context, api.Request) (api.ScreenshotPlan, error)
+	GenerateScreenshots(context.Context, api.Request, []api.ScreenshotSelection, api.ScreenshotPurpose) (api.ScreenshotResult, error)
+	SaveFinalScreenshotSelections(context.Context, api.Request, []api.ScreenshotImage) error
+}
+
+type cliDupeChecker interface {
+	CheckDupes(context.Context, api.Request) (api.DupeCheckSummary, error)
+}
+
+// cliInteractiveCore composes only capabilities used by the interactive path.
+type cliInteractiveCore interface {
+	cliPreparedUploadRunner
+	cliMetadataPreviewer
+	cliUploadReviewer
+	cliScreenshotCore
+	cliDVDMenuCore
+	cliDupeChecker
+	cliDescriptionEditorCore
+}
+
+func runInteractiveCLIPath(
+	ctx context.Context,
+	coreSvc cliInteractiveCore,
+	opts cliOptions,
+	visited map[string]bool,
+	sourcePath string,
+	cfg config.Config,
+) error {
 	return runInteractiveCLIPathWithInputAndLogger(ctx, coreSvc, nil, opts, visited, sourcePath, 1, cfg, os.Stdin, api.NopLogger{})
 }
 
-// runInteractiveCLIPathWithLogger runs one interactive CLI upload path and
-// sends CLI-only tracker auth decisions to logger.
-func runInteractiveCLIPathWithLogger(ctx context.Context, coreSvc api.Core, baseArgs []string, opts cliOptions, visited map[string]bool, sourcePath string, screens int, cfg config.Config, logger api.Logger) error {
-	return runInteractiveCLIPathWithInputAndLogger(ctx, coreSvc, baseArgs, opts, visited, sourcePath, screens, cfg, os.Stdin, logger)
+// runInteractiveCLIPathWithLoggerAndPlaylist runs the interactive workflow with
+// one pre-resolved playlist instruction and process stdin.
+func runInteractiveCLIPathWithLoggerAndPlaylist(
+	ctx context.Context,
+	coreSvc cliInteractiveCore,
+	baseArgs []string,
+	opts cliOptions,
+	visited map[string]bool,
+	sourcePath string,
+	playlist api.PlaylistInstruction,
+	screens int,
+	cfg config.Config,
+	logger api.Logger,
+) error {
+	return runInteractiveCLIPathWithInputLoggerAndPlaylist(
+		ctx,
+		coreSvc,
+		baseArgs,
+		opts,
+		visited,
+		sourcePath,
+		playlist,
+		screens,
+		cfg,
+		os.Stdin,
+		logger,
+	)
 }
 
-func runInteractiveCLIPathWithInput(ctx context.Context, coreSvc api.Core, opts cliOptions, visited map[string]bool, sourcePath string, screens int, cfg config.Config, stdin io.Reader) error {
+func runInteractiveCLIPathWithInput(
+	ctx context.Context,
+	coreSvc cliInteractiveCore,
+	opts cliOptions,
+	visited map[string]bool,
+	sourcePath string,
+	screens int,
+	cfg config.Config,
+	stdin io.Reader,
+) error {
 	return runInteractiveCLIPathWithInputAndLogger(ctx, coreSvc, nil, opts, visited, sourcePath, screens, cfg, stdin, api.NopLogger{})
 }
 
-// runInteractiveCLIPathWithInputAndLogger is the injectable form of
-// runInteractiveCLIPathWithLogger used when tests need controlled stdin.
-func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Core, baseArgs []string, opts cliOptions, visited map[string]bool, sourcePath string, screens int, cfg config.Config, stdin io.Reader, logger api.Logger) error {
+// runInteractiveCLIPathWithInputAndLogger is the injectable interactive runner
+// used when tests need controlled stdin and logging.
+func runInteractiveCLIPathWithInputAndLogger(
+	ctx context.Context,
+	coreSvc cliInteractiveCore,
+	baseArgs []string,
+	opts cliOptions,
+	visited map[string]bool,
+	sourcePath string,
+	screens int,
+	cfg config.Config,
+	stdin io.Reader,
+	logger api.Logger,
+) error {
+	return runInteractiveCLIPathWithInputLoggerAndPlaylist(
+		ctx,
+		coreSvc,
+		baseArgs,
+		opts,
+		visited,
+		sourcePath,
+		api.PlaylistInstruction{},
+		screens,
+		cfg,
+		stdin,
+		logger,
+	)
+}
+
+// runInteractiveCLIPathWithInputLoggerAndPlaylist owns the interactive retry
+// loop while preserving the source-specific playlist instruction across retries.
+func runInteractiveCLIPathWithInputLoggerAndPlaylist(
+	ctx context.Context,
+	coreSvc cliInteractiveCore,
+	baseArgs []string,
+	opts cliOptions,
+	visited map[string]bool,
+	sourcePath string,
+	playlist api.PlaylistInstruction,
+	screens int,
+	cfg config.Config,
+	stdin io.Reader,
+	logger api.Logger,
+) error {
 	logger = cliAuthLogger(logger)
 	reader := bufio.NewReader(stdin)
 	currentArgs := append([]string(nil), baseArgs...)
@@ -64,11 +172,19 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 		if err != nil {
 			return err
 		}
+		req.PlaylistInstruction = cloneCLIPlaylistInstruction(playlist)
 		preview, err := coreSvc.FetchMetadataPreview(ctx, req)
 		if err != nil {
 			var rescanErr *api.BDMVRescanRequiredError
 			if errors.As(err, &rescanErr) && currentOpts.interactionMode() != api.InteractionModeUnattended {
-				confirm, promptErr := promptYesNo(reader, fmt.Sprintf("Cached BDMV summaries exist, but selected playlist(s) %s require a rescan. Rescan now? [Y/n]: ", strings.Join(rescanErr.MissingPlaylists, ", ")), true)
+				confirm, promptErr := promptYesNo(
+					reader,
+					fmt.Sprintf(
+						"Cached BDMV summaries exist, but selected playlist(s) %s require a rescan. Rescan now? [Y/n]: ",
+						strings.Join(rescanErr.MissingPlaylists, ", "),
+					),
+					true,
+				)
 				if promptErr != nil {
 					return promptErr
 				}
@@ -128,6 +244,7 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 	if err != nil {
 		return err
 	}
+	req.PlaylistInstruction = cloneCLIPlaylistInstruction(playlist)
 
 	candidateTrackers, removalBase := resolveCLIUploadTrackers(currentVisited, req, metadataPreview, cfg)
 	if len(candidateTrackers) == 0 {
@@ -158,7 +275,6 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 		resultByTracker := mapDupeResultsByTracker(dupeSummary)
 		printUnattendedDupeReviewSummary(resultByTracker, candidateTrackers)
 		approved = debugDryRunApprovedTrackers(resultByTracker, candidateTrackers)
-		ignoreDupesFor = appendTrackerRemovals(nil, approved...)
 	} else {
 		approved, ignoreDupesFor, ruleOverrides, err = promptTrackerDupeReview(reader, dupeSummary, req, candidateTrackers, nil)
 		if err != nil {
@@ -331,7 +447,15 @@ func removeUnreadyCLIAuthTrackers(candidateTrackers []string, readyTrackers []st
 
 // ensureCLITrackerAuthBeforeDupeCheckWithLogger validates tracker auth using a
 // service that shares the CLI logger for service-level and CLI decision logs.
-func ensureCLITrackerAuthBeforeDupeCheckWithLogger(ctx context.Context, reader *bufio.Reader, cfg config.Config, req api.Request, trackerNames []string, preview api.MetadataPreview, logger api.Logger) ([]string, error) {
+func ensureCLITrackerAuthBeforeDupeCheckWithLogger(
+	ctx context.Context,
+	reader *bufio.Reader,
+	cfg config.Config,
+	req api.Request,
+	trackerNames []string,
+	preview api.MetadataPreview,
+	logger api.Logger,
+) ([]string, error) {
 	if len(trackerNames) == 0 {
 		return trackerNames, nil
 	}
@@ -341,7 +465,13 @@ func ensureCLITrackerAuthBeforeDupeCheckWithLogger(ctx context.Context, reader *
 
 // ensureCLITrackerAuthBeforeDupeCheckWithService is the injectable form of
 // ensureCLITrackerAuthBeforeDupeCheck used by tests.
-func ensureCLITrackerAuthBeforeDupeCheckWithService(ctx context.Context, reader *bufio.Reader, authSvc cliTrackerAuthService, req api.Request, trackerNames []string) ([]string, error) {
+func ensureCLITrackerAuthBeforeDupeCheckWithService(
+	ctx context.Context,
+	reader *bufio.Reader,
+	authSvc cliTrackerAuthService,
+	req api.Request,
+	trackerNames []string,
+) ([]string, error) {
 	return ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx, reader, authSvc, req, trackerNames, api.MetadataPreview{}, api.NopLogger{})
 }
 
@@ -350,7 +480,15 @@ func ensureCLITrackerAuthBeforeDupeCheckWithService(ctx context.Context, reader 
 // Preview rule failures suppress managed-auth checks only after capability
 // classification and leave those managed trackers out of the ready result, so
 // static API-key/passkey trackers stay quiet here.
-func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx context.Context, reader *bufio.Reader, authSvc cliTrackerAuthService, req api.Request, trackerNames []string, preview api.MetadataPreview, logger api.Logger) ([]string, error) {
+func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(
+	ctx context.Context,
+	reader *bufio.Reader,
+	authSvc cliTrackerAuthService,
+	req api.Request,
+	trackerNames []string,
+	preview api.MetadataPreview,
+	logger api.Logger,
+) ([]string, error) {
 	logger = cliAuthLogger(logger)
 
 	capabilities, err := authSvc.Capabilities(ctx)
@@ -444,7 +582,15 @@ func cliTrackerAuthApplies(capability api.TrackerAuthCapability) bool {
 
 // handleCLITrackerAuthStatusWithLogger converts one auth status into a CLI
 // decision and logs blocked, prompt, and skip outcomes without secret material.
-func handleCLITrackerAuthStatusWithLogger(ctx context.Context, reader *bufio.Reader, authSvc cliTrackerAuthService, capability api.TrackerAuthCapability, status api.TrackerAuthStatus, req api.Request, logger api.Logger) (api.TrackerAuthStatus, bool, error) {
+func handleCLITrackerAuthStatusWithLogger(
+	ctx context.Context,
+	reader *bufio.Reader,
+	authSvc cliTrackerAuthService,
+	capability api.TrackerAuthCapability,
+	status api.TrackerAuthStatus,
+	req api.Request,
+	logger api.Logger,
+) (api.TrackerAuthStatus, bool, error) {
 	logger = cliAuthLogger(logger)
 	if cliTrackerAuthReady(status) {
 		return status, true, nil
@@ -457,7 +603,10 @@ func handleCLITrackerAuthStatusWithLogger(ctx context.Context, reader *bufio.Rea
 	if status.Needs2FA && strings.TrimSpace(status.ChallengeID) != "" {
 		if isUnattendedNoConfirm(req) {
 			logger.Warnf("cli auth: tracker=%s decision=blocked reason=2fa_required unattended=true", trackerID)
-			return status, false, fmt.Errorf("upbrr: unattended no-prompt tracker auth %s requires manual 2FA code before dupe check; run without --unattended or use --unattended_confirm to enter 2FA", trackerID)
+			return status, false, fmt.Errorf(
+				"upbrr: unattended no-prompt tracker auth %s requires manual 2FA code before dupe check; run without --unattended or use --unattended_confirm to enter 2FA",
+				trackerID,
+			)
 		}
 		logger.Infof("cli auth: tracker=%s decision=prompt_2fa", trackerID)
 		return promptCLITrackerAuth2FAWithLogger(ctx, reader, authSvc, trackerID, status, logger)
@@ -474,7 +623,14 @@ func handleCLITrackerAuthStatusWithLogger(ctx context.Context, reader *bufio.Rea
 
 // promptCLITrackerAuth2FAWithLogger prompts for manual 2FA and logs only the
 // submitted outcome; it never logs codes or challenge identifiers.
-func promptCLITrackerAuth2FAWithLogger(ctx context.Context, reader *bufio.Reader, authSvc cliTrackerAuthService, trackerID string, status api.TrackerAuthStatus, logger api.Logger) (api.TrackerAuthStatus, bool, error) {
+func promptCLITrackerAuth2FAWithLogger(
+	ctx context.Context,
+	reader *bufio.Reader,
+	authSvc cliTrackerAuthService,
+	trackerID string,
+	status api.TrackerAuthStatus,
+	logger api.Logger,
+) (api.TrackerAuthStatus, bool, error) {
 	logger = cliAuthLogger(logger)
 	for {
 		fmt.Printf("\n[%s Auth]\n%s\n", trackerID, cliTrackerAuthStatusMessage(status))
@@ -574,7 +730,7 @@ func cliTrackerAuthReady(status api.TrackerAuthStatus) bool {
 
 // cliTrackerAuthStatusMessage renders the tracker auth status display contract:
 // Message is the stable summary and LastError is redacted detail displayed when
-// distinct, matching GUI/web auth cards.
+// distinct, matching WebUI auth cards.
 func cliTrackerAuthStatusMessage(status api.TrackerAuthStatus) string {
 	message := cliTrackerAuthDisplayField(status.Message)
 	detail := cliTrackerAuthDisplayField(status.LastError)
@@ -673,23 +829,7 @@ func appendTrackerRemovals(existing []string, extra ...string) []string {
 	return merged
 }
 
-func runCLIDupeCheck(ctx context.Context, coreSvc api.Core, req api.Request) (api.DupeCheckSummary, error) {
-	if req.SkipDupeCheck {
-		results := make([]api.DupeCheckResult, 0, len(req.Trackers))
-		for _, tracker := range req.Trackers {
-			name := strings.ToUpper(strings.TrimSpace(tracker))
-			if name == "" {
-				continue
-			}
-			results = append(results, api.DupeCheckResult{
-				Tracker:    name,
-				Skipped:    true,
-				Status:     "skipped",
-				SkipReason: "dupe check skipped",
-			})
-		}
-		return api.DupeCheckSummary{Results: results}, nil
-	}
+func runCLIDupeCheck(ctx context.Context, coreSvc cliDupeChecker, req api.Request) (api.DupeCheckSummary, error) {
 	summary, err := coreSvc.CheckDupes(ctx, req)
 	if err != nil {
 		return api.DupeCheckSummary{}, fmt.Errorf("upbrr: %w", err)
@@ -697,7 +837,13 @@ func runCLIDupeCheck(ctx context.Context, coreSvc api.Core, req api.Request) (ap
 	return summary, nil
 }
 
-func promptTrackerDupeReview(reader *bufio.Reader, summary api.DupeCheckSummary, req api.Request, trackers []string, namePreview map[string]api.TrackerDryRunEntry) ([]string, []string, []string, error) {
+func promptTrackerDupeReview(
+	reader *bufio.Reader,
+	summary api.DupeCheckSummary,
+	req api.Request,
+	trackers []string,
+	namePreview map[string]api.TrackerDryRunEntry,
+) ([]string, []string, []string, error) {
 	resultByTracker := mapDupeResultsByTracker(summary)
 	approved := make([]string, 0, len(trackers))
 	ignoreDupesFor := make([]string, 0)
@@ -740,7 +886,7 @@ func promptTrackerDupeReview(reader *bufio.Reader, summary api.DupeCheckSummary,
 		approved = append(approved, name)
 		if blocked {
 			ignoreDupesFor = append(ignoreDupesFor, name)
-			if result.Skipped || strings.Contains(strings.ToLower(result.SkipReason), "rule") || strings.Contains(strings.ToLower(result.Error), "rule") {
+			if isRuleSkippedDupeResult(result) {
 				ruleOverrides = append(ruleOverrides, name)
 			}
 		}
@@ -800,16 +946,13 @@ func printUnattendedDupeReviewSummary(resultByTracker map[string]api.DupeCheckRe
 	return approved
 }
 
-// debugDryRunApprovedTrackers keeps duplicate-hit trackers eligible for
-// debug/dry-run processing while preserving rule failures as terminal skips.
-func debugDryRunApprovedTrackers(resultByTracker map[string]api.DupeCheckResult, trackers []string) []string {
+// debugDryRunApprovedTrackers keeps every selected tracker eligible for payload
+// inspection without creating a duplicate override or waiver.
+func debugDryRunApprovedTrackers(_ map[string]api.DupeCheckResult, trackers []string) []string {
 	approved := make([]string, 0, len(trackers))
 	for _, tracker := range trackers {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
 		if name == "" {
-			continue
-		}
-		if result, ok := resultByTracker[name]; ok && isRuleSkippedDupeResult(result) {
 			continue
 		}
 		approved = append(approved, name)
@@ -822,6 +965,9 @@ func debugDryRunApprovedTrackers(resultByTracker map[string]api.DupeCheckResult,
 func isRuleSkippedDupeResult(result api.DupeCheckResult) bool {
 	if !result.Skipped {
 		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(result.SkipCode), "rule_failed") {
+		return true
 	}
 	for _, rule := range result.SkipRules {
 		if strings.TrimSpace(rule) != "" {
@@ -840,15 +986,13 @@ func dupeReviewBlockReason(result api.DupeCheckResult) string {
 	if reason := strings.TrimSpace(result.Error); reason != "" {
 		return reason
 	}
-	if len(result.Notes) > 0 {
-		for _, note := range result.Notes {
-			note = strings.TrimSpace(note)
-			if note != "" {
-				return strings.TrimPrefix(note, "skip: ")
-			}
-		}
+	if code := strings.TrimSpace(result.SkipCode); code != "" {
+		return "duplicate search not run (" + code + ")"
 	}
-	return "skipped"
+	if strings.EqualFold(strings.TrimSpace(result.Status), "failed") {
+		return "duplicate search failed"
+	}
+	return "duplicate search not run"
 }
 
 // unattendedDupeSkipReasonLines groups skipped tracker names by exact reason so
@@ -898,19 +1042,12 @@ func buildTrackerUploadPrompt(tracker string, blocked bool, dryRun api.TrackerDr
 func mapDupeResultsByTracker(summary api.DupeCheckSummary) map[string]api.DupeCheckResult {
 	mapped := make(map[string]api.DupeCheckResult, len(summary.Results))
 	for _, result := range summary.Results {
-		trackers := splitCSV(strings.ReplaceAll(result.Tracker, ", ", ","))
-		if len(trackers) == 0 {
-			trackers = []string{result.Tracker}
+		name := strings.ToUpper(strings.TrimSpace(result.Tracker))
+		if name == "" {
+			continue
 		}
-		for _, tracker := range trackers {
-			name := strings.ToUpper(strings.TrimSpace(tracker))
-			if name == "" {
-				continue
-			}
-			copyResult := result
-			copyResult.Tracker = name
-			mapped[name] = copyResult
-		}
+		result.Tracker = name
+		mapped[name] = result
 	}
 	return mapped
 }
@@ -925,30 +1062,18 @@ func dupeResultNeedsConfirmation(result api.DupeCheckResult, hasResult bool) boo
 	if result.HasDupes || result.Skipped {
 		return true
 	}
-	if strings.EqualFold(strings.TrimSpace(result.Status), "failed") {
-		return true
-	}
-	return strings.TrimSpace(result.Error) != ""
+	return strings.EqualFold(strings.TrimSpace(result.Status), "failed")
 }
 
 func dupeResultSkipsPrompt(result api.DupeCheckResult) bool {
-	return isPathedTorrentDupeResult(result)
-}
-
-func isPathedTorrentDupeResult(result api.DupeCheckResult) bool {
-	for _, note := range result.Notes {
-		if strings.EqualFold(strings.TrimSpace(note), "pathed torrent match found; skipping dupe search") {
-			return true
-		}
-	}
-	return false
+	return result.HasDupes && strings.EqualFold(strings.TrimSpace(result.Match.MatchedReason), "in_client")
 }
 
 func isUserRequestedDupeSkipResult(result api.DupeCheckResult) bool {
-	return result.Skipped && strings.EqualFold(strings.TrimSpace(result.SkipReason), "dupe check skipped")
+	return result.Skipped && strings.EqualFold(strings.TrimSpace(result.SkipCode), "user_requested")
 }
 
-func runCLIScreenshotHandling(ctx context.Context, coreSvc api.Core, req api.Request) error {
+func runCLIScreenshotHandling(ctx context.Context, coreSvc cliScreenshotCore, req api.Request) error {
 	plan, err := coreSvc.FetchScreenshotPlan(ctx, req)
 	if err != nil {
 		return fmt.Errorf("upbrr: screenshot plan: %w", err)
@@ -1058,17 +1183,33 @@ func formatScreenshotErrors(errorsList []api.ScreenshotError) string {
 	return strings.Join(parts, "; ")
 }
 
-func runSiteCheckCLIPath(ctx context.Context, coreSvc api.Core, opts cliOptions, visited map[string]bool, sourcePath string, screens int) error {
+// runSiteCheckCLIPath adapts a plain path to the source-scoped site-check item workflow.
+func runSiteCheckCLIPath(ctx context.Context, coreSvc cliSiteCheckCore, opts cliOptions, visited map[string]bool, sourcePath string, screens int) error {
+	return runSiteCheckCLIItem(ctx, coreSvc, opts, visited, cliPreparationItem{originalPath: sourcePath, resolvedPath: sourcePath}, screens)
+}
+
+// runSiteCheckCLIItem prepares and reviews one source while preserving its
+// playlist instruction and original display path.
+func runSiteCheckCLIItem(
+	ctx context.Context,
+	coreSvc cliSiteCheckCore,
+	opts cliOptions,
+	visited map[string]bool,
+	item cliPreparationItem,
+	screens int,
+) error {
+	sourcePath := item.originalPath
 	req, err := buildCLIRequest(opts, visited, []string{sourcePath}, screens)
 	if err != nil {
 		return err
 	}
+	req.PlaylistInstruction = cloneCLIPlaylistInstruction(item.playlistInstruction)
 
 	preview, err := coreSvc.FetchMetadataPreview(ctx, req)
 	if err != nil {
 		return fmt.Errorf("upbrr: %w", err)
 	}
-	req.Paths = []string{resolvedCLIMetadataSourcePath(sourcePath, preview)}
+	req.SourcePath = resolvedCLIMetadataSourcePath(sourcePath, preview)
 	review, err := coreSvc.BuildUploadReview(ctx, req)
 	if err != nil {
 		return fmt.Errorf("upbrr: %w", err)
@@ -1114,11 +1255,19 @@ func promptTrackerQuestionnaires(reader *bufio.Reader, review api.UploadReview, 
 			if opts.Unattended && !opts.UnattendedConfirm {
 				if field.Required && defaultValue == "" {
 					if opts.Debug {
-						fmt.Printf("Debug mode: %s questionnaire value missing for %s; continuing without prompt.\n", questionnaireFieldLabel(field), tracker.Tracker)
+						fmt.Printf(
+							"Debug mode: %s questionnaire value missing for %s; continuing without prompt.\n",
+							questionnaireFieldLabel(field),
+							tracker.Tracker,
+						)
 						values[field.Key] = ""
 						continue
 					}
-					return nil, false, fmt.Errorf("upbrr: unattended upload requires %s questionnaire value for %s", questionnaireFieldLabel(field), tracker.Tracker)
+					return nil, false, fmt.Errorf(
+						"upbrr: unattended upload requires %s questionnaire value for %s",
+						questionnaireFieldLabel(field),
+						tracker.Tracker,
+					)
 				}
 				values[field.Key] = defaultValue
 				continue
@@ -1160,7 +1309,7 @@ func questionnaireFieldLabel(field api.TrackerQuestionnaireField) string {
 	return strings.TrimSpace(field.Key)
 }
 
-func runDoubleDupeCheck(ctx context.Context, reader *bufio.Reader, coreSvc api.Core, req api.Request, trackers []string) ([]string, error) {
+func runDoubleDupeCheck(ctx context.Context, reader *bufio.Reader, coreSvc cliDupeChecker, req api.Request, trackers []string) ([]string, error) {
 	recheckReq := req
 	recheckReq.Trackers = trackers
 	summary, err := coreSvc.CheckDupes(ctx, recheckReq)
@@ -1241,55 +1390,59 @@ func printMetadataPreview(preview api.MetadataPreview, debug bool) {
 	if preview.TrackerName != "" {
 		fmt.Printf("Tracker data from: %s\n", preview.TrackerName)
 	}
-	printMetadataExternalIDs(preview)
-	if len(preview.ExternalIDCandidates.TMDB) > 0 || len(preview.ExternalIDCandidates.IMDB) > 0 {
+	printMetadataExternalIdentity(preview)
+	if metadataPreviewHasCandidates(preview.Diagnostics) {
 		fmt.Println("Candidate IDs available; use override args if needed.")
 	}
-	if len(preview.Warnings) > 0 {
+	warnings := make([]string, 0)
+	for _, diagnostic := range preview.Diagnostics {
+		if diagnostic.Severity == api.DiagnosticSeverityWarning && strings.TrimSpace(diagnostic.Message) != "" {
+			warnings = append(warnings, diagnostic.Message)
+		}
+	}
+	if len(warnings) > 0 {
 		fmt.Println("Warnings:")
-		for _, warning := range preview.Warnings {
+		for _, warning := range warnings {
 			fmt.Printf("- %s\n", warning)
 		}
 	}
 }
 
-func printMetadataDatabaseInfo(external api.ExternalPreview, preview api.MetadataPreview) {
+func printMetadataDatabaseInfo(external api.ProviderDisplay, _ api.MetadataPreview) {
 	fmt.Println()
 	fmt.Println("Database info")
-	title := strings.TrimSpace(external.Title)
-	if title == "" {
-		title = strings.TrimSpace(preview.ReleaseName)
+	summary := external.Summary
+	if summary.Title != "" && summary.Year != 0 {
+		fmt.Printf("Title: %s (%d)\n", summary.Title, summary.Year)
+	} else if summary.Title != "" {
+		fmt.Printf("Title: %s\n", summary.Title)
 	}
-	if title != "" && external.Year != 0 {
-		fmt.Printf("Title: %s (%d)\n", title, external.Year)
-	} else if title != "" {
-		fmt.Printf("Title: %s\n", title)
-	}
-	if overview := summarizeMetadataText(external.Overview, 260); overview != "" {
+	if overview := summarizeMetadataText(summary.Overview, 260); overview != "" {
 		fmt.Printf("Overview: %s\n", overview)
 	}
-	if genres := strings.TrimSpace(external.Genres); genres != "" {
+	if genres := strings.TrimSpace(summary.Genres); genres != "" {
 		fmt.Printf("Genres: %s\n", genres)
 	}
-	if category := metadataPreviewCategory(external, preview); category != "" {
-		fmt.Printf("Category: %s\n", category)
+	if summary.Category != "" {
+		fmt.Printf("Category: %s\n", strings.ToUpper(summary.Category))
 	}
-	if date := metadataPreviewDate(external); date != "" {
-		fmt.Printf("Date: %s\n", date)
+	if summary.Date != "" {
+		fmt.Printf("Date: %s\n", summary.Date)
 	}
-	if runtime := metadataPreviewRuntime(external); runtime != "" {
-		fmt.Printf("Runtime: %s\n", runtime)
+	if summary.RuntimeMinutes != 0 {
+		fmt.Printf("Runtime: %d min\n", summary.RuntimeMinutes)
 	}
-	if external.Rating != 0 {
-		if external.RatingCount != 0 {
-			fmt.Printf("Rating: %.1f (%d votes)\n", external.Rating, external.RatingCount)
+	if summary.Rating != 0 {
+		if summary.RatingCount != 0 {
+			fmt.Printf("Rating: %.1f (%d votes)\n", summary.Rating, summary.RatingCount)
 		} else {
-			fmt.Printf("Rating: %.1f\n", external.Rating)
+			fmt.Printf("Rating: %.1f\n", summary.Rating)
 		}
 	}
 }
 
-func printMetadataExternalIDs(preview api.MetadataPreview) {
+func printMetadataExternalIdentity(preview api.MetadataPreview) {
+	identity := preview.Identity
 	printedHeader := false
 	printHeader := func() {
 		if printedHeader {
@@ -1299,117 +1452,44 @@ func printMetadataExternalIDs(preview api.MetadataPreview) {
 		fmt.Println("External IDs")
 		printedHeader = true
 	}
-	if preview.ExternalIDs.TMDBID != 0 {
+	if identity.TMDBID != 0 {
 		printHeader()
-		fmt.Printf("TMDB: %s\n", tmdbURL(preview.ExternalIDs.TMDBID, metadataPreviewTMDBCategory(preview)))
+		fmt.Printf("TMDB: %d\n", identity.TMDBID)
 	}
-	if preview.ExternalIDs.IMDBID != 0 {
+	if identity.IMDBID != 0 {
 		printHeader()
-		fmt.Printf("IMDb: https://www.imdb.com/title/tt%07d\n", preview.ExternalIDs.IMDBID)
+		fmt.Printf("IMDb: tt%07d\n", identity.IMDBID)
 	}
-	if preview.ExternalIDs.TVDBID != 0 {
+	if identity.TVDBID != 0 {
 		printHeader()
-		fmt.Printf("TVDB: https://www.thetvdb.com/?id=%d&tab=series\n", preview.ExternalIDs.TVDBID)
+		fmt.Printf("TVDB: %d\n", identity.TVDBID)
 	}
-	if preview.ExternalIDs.TVmazeID != 0 {
+	if identity.TVmazeID != 0 {
 		printHeader()
-		fmt.Printf("TVmaze: https://www.tvmaze.com/shows/%d\n", preview.ExternalIDs.TVmazeID)
+		fmt.Printf("TVmaze: %d\n", identity.TVmazeID)
 	}
-	if preview.ExternalIDs.MALID != 0 {
+	if identity.MALID != 0 {
 		printHeader()
-		fmt.Printf("MAL: https://myanimelist.net/anime/%d\n", preview.ExternalIDs.MALID)
+		fmt.Printf("MAL: %d\n", identity.MALID)
 	}
 }
 
-func primaryMetadataPreview(preview api.MetadataPreview) *api.ExternalPreview {
-	preferred := []string{"tmdb", "tvdb", "imdb", "tvmaze"}
-	for _, provider := range preferred {
-		for i := range preview.ExternalPreview {
-			external := &preview.ExternalPreview[i]
-			if strings.EqualFold(strings.TrimSpace(external.Provider), provider) && metadataPreviewHasDetails(*external) {
-				return external
-			}
-		}
-	}
-	for i := range preview.ExternalPreview {
-		if metadataPreviewHasDetails(preview.ExternalPreview[i]) {
-			return &preview.ExternalPreview[i]
+func primaryMetadataPreview(preview api.MetadataPreview) *api.ProviderDisplay {
+	for index := range preview.Display.Providers {
+		if preview.Display.Providers[index].SummaryAvailable {
+			return &preview.Display.Providers[index]
 		}
 	}
 	return nil
 }
 
-func metadataPreviewHasDetails(external api.ExternalPreview) bool {
-	return strings.TrimSpace(external.Title) != "" ||
-		strings.TrimSpace(external.Overview) != "" ||
-		strings.TrimSpace(external.Genres) != "" ||
-		external.Year != 0 ||
-		external.Rating != 0 ||
-		external.Runtime != 0 ||
-		external.RuntimeMinutes != 0
-}
-
-func metadataPreviewCategory(external api.ExternalPreview, preview api.MetadataPreview) string {
-	if category := strings.TrimSpace(external.Category); category != "" {
-		return strings.ToUpper(category)
-	}
-	if category := strings.TrimSpace(preview.ExternalIDs.Category); category != "" {
-		return strings.ToUpper(category)
-	}
-	if tmdbType := strings.TrimSpace(external.TMDBType); tmdbType != "" {
-		return strings.ToUpper(tmdbType)
-	}
-	if imdbType := strings.TrimSpace(external.IMDBType); imdbType != "" {
-		return strings.ToUpper(imdbType)
-	}
-	return ""
-}
-
-func metadataPreviewDate(external api.ExternalPreview) string {
-	for _, value := range []string{external.ReleaseDate, external.FirstAirDate, external.Premiered} {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
+func metadataPreviewHasCandidates(diagnostics []api.PreparationDiagnostic) bool {
+	for _, diagnostic := range diagnostics {
+		if len(diagnostic.Candidates) > 0 {
+			return true
 		}
 	}
-	return ""
-}
-
-func metadataPreviewRuntime(external api.ExternalPreview) string {
-	runtime := external.Runtime
-	if runtime == 0 {
-		runtime = external.RuntimeMinutes
-	}
-	if runtime == 0 {
-		return ""
-	}
-	return fmt.Sprintf("%d min", runtime)
-}
-
-func metadataPreviewTMDBCategory(preview api.MetadataPreview) string {
-	for _, external := range preview.ExternalPreview {
-		if !strings.EqualFold(strings.TrimSpace(external.Provider), "tmdb") {
-			continue
-		}
-		if category := strings.TrimSpace(external.Category); category != "" {
-			return category
-		}
-		if tmdbType := strings.TrimSpace(external.TMDBType); tmdbType != "" {
-			return tmdbType
-		}
-	}
-	if category := strings.TrimSpace(preview.ExternalIDs.Category); category != "" {
-		return category
-	}
-	return "movie"
-}
-
-func tmdbURL(id int, category string) string {
-	switch strings.ToLower(strings.TrimSpace(category)) {
-	case "tv", "series", "show":
-		return fmt.Sprintf("https://www.themoviedb.org/tv/%d", id)
-	default:
-		return fmt.Sprintf("https://www.themoviedb.org/movie/%d", id)
-	}
+	return false
 }
 
 func summarizeMetadataText(value string, limit int) string {
@@ -1475,7 +1555,10 @@ func writeDryRunSummary(w io.Writer, entry api.TrackerDryRunEntry) {
 	} else if entry.ReleaseName != "" {
 		fmt.Fprintf(w, "Tracker release name: %s\n", entry.ReleaseName)
 	}
-	if imageMessage := strings.TrimSpace(entry.ImageHost.Message); imageMessage != "" && (entry.ImageHost.Reuploaded || strings.EqualFold(entry.ImageHost.Status, "warning")) {
+	if imageMessage := strings.TrimSpace(
+		entry.ImageHost.Message,
+	); imageMessage != "" &&
+		(entry.ImageHost.Reuploaded || strings.EqualFold(entry.ImageHost.Status, "warning")) {
 		fmt.Fprintf(w, "Images: %s\n", imageMessage)
 	}
 	for _, warning := range entry.ImageHost.Warnings {
@@ -1747,7 +1830,19 @@ func payloadIncludesDescription(payload map[string]string) bool {
 
 func isDryRunBodyPayloadField(key string) bool {
 	switch normalizedDryRunPayloadKey(key) {
-	case "description", "desc", "descr", "release_desc", "album_desc", "mediainfo", "mediainfo[]", "media_info", "bdinfo", "bd_info", "techinfo", "technical_info", "technicaldetails":
+	case "description",
+		"desc",
+		"descr",
+		"release_desc",
+		"album_desc",
+		"mediainfo",
+		"mediainfo[]",
+		"media_info",
+		"bdinfo",
+		"bd_info",
+		"techinfo",
+		"technical_info",
+		"technicaldetails":
 		return true
 	default:
 		return false

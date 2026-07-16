@@ -12,7 +12,7 @@ import (
 func TestResolveGenresPreservesUnknownGenres(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		Release: api.ReleaseInfo{
 			Genre: "Sci-Fi,MyCustomGenre",
 		},
@@ -37,16 +37,16 @@ func TestResolveOverviewUsesScopedTVOverviewOnlyForEpisodeOrSeasonPack(t *testin
 
 	tests := []struct {
 		name string
-		meta api.PreparedMetadata
+		meta api.UploadSubject
 		want string
 	}{
 		{
 			name: "episode upload uses episode overview",
-			meta: api.PreparedMetadata{
-				ExternalIDs: api.ExternalIDs{Category: "TV"},
-				SeasonInt:   1,
-				EpisodeInt:  2,
-				ExternalMetadata: api.ExternalMetadata{
+			meta: api.UploadSubject{
+				Identity:   api.ExternalIdentity{Category: "TV"},
+				SeasonInt:  1,
+				EpisodeInt: 2,
+				ProviderMetadata: api.SourceScopedMetadata{
 					TMDB: &api.TMDBMetadata{Localized: map[string]api.TMDBLocalizedData{"pt-BR": ptBR}},
 				},
 			},
@@ -54,11 +54,11 @@ func TestResolveOverviewUsesScopedTVOverviewOnlyForEpisodeOrSeasonPack(t *testin
 		},
 		{
 			name: "season pack uses season overview from episode field",
-			meta: api.PreparedMetadata{
-				ExternalIDs: api.ExternalIDs{Category: "TV"},
-				SeasonInt:   1,
-				TVPack:      true,
-				ExternalMetadata: api.ExternalMetadata{
+			meta: api.UploadSubject{
+				Identity:  api.ExternalIdentity{Category: "TV"},
+				SeasonInt: 1,
+				TVPack:    true,
+				ProviderMetadata: api.SourceScopedMetadata{
 					TMDB: &api.TMDBMetadata{Localized: map[string]api.TMDBLocalizedData{"pt-BR": ptBR}},
 				},
 			},
@@ -66,9 +66,9 @@ func TestResolveOverviewUsesScopedTVOverviewOnlyForEpisodeOrSeasonPack(t *testin
 		},
 		{
 			name: "series upload uses title overview",
-			meta: api.PreparedMetadata{
-				ExternalIDs: api.ExternalIDs{Category: "TV"},
-				ExternalMetadata: api.ExternalMetadata{
+			meta: api.UploadSubject{
+				Identity: api.ExternalIdentity{Category: "TV"},
+				ProviderMetadata: api.SourceScopedMetadata{
 					TMDB: &api.TMDBMetadata{Localized: map[string]api.TMDBLocalizedData{"pt-BR": ptBR}},
 				},
 			},
@@ -76,11 +76,11 @@ func TestResolveOverviewUsesScopedTVOverviewOnlyForEpisodeOrSeasonPack(t *testin
 		},
 		{
 			name: "movie ignores episode overview",
-			meta: api.PreparedMetadata{
-				ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
-				SeasonInt:   1,
-				EpisodeInt:  2,
-				ExternalMetadata: api.ExternalMetadata{
+			meta: api.UploadSubject{
+				Identity:   api.ExternalIdentity{Category: "MOVIE"},
+				SeasonInt:  1,
+				EpisodeInt: 2,
+				ProviderMetadata: api.SourceScopedMetadata{
 					TMDB: &api.TMDBMetadata{Localized: map[string]api.TMDBLocalizedData{"pt-BR": ptBR}},
 				},
 			},

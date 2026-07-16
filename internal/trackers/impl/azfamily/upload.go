@@ -16,15 +16,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/paths"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func upload(ctx context.Context, site siteDefinition, req trackers.UploadRequest) (api.UploadSummary, error) {
-	state, err := newSession(ctx, site, req.AppConfig.MainSettings.DBPath, req.Logger)
+func upload(ctx context.Context, site siteDefinition, req trackers.PreparationInput) (api.UploadSummary, error) {
+	state, err := newSession(ctx, site, req.Runtime.DBPath, req.Logger)
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
@@ -33,13 +33,18 @@ func upload(ctx context.Context, site siteDefinition, req trackers.UploadRequest
 		return api.UploadSummary{}, err
 	}
 	if media.Missing || strings.TrimSpace(media.MediaCode) == "" {
-		return api.UploadSummary{}, fmt.Errorf("trackers: %s media missing from tracker database; add it on-site at %s/add/%s then retry", site.Name, site.BaseURL, categorySlug(req.Meta))
+		return api.UploadSummary{}, fmt.Errorf(
+			"trackers: %s media missing from tracker database; add it on-site at %s/add/%s then retry",
+			site.Name,
+			site.BaseURL,
+			categorySlug(req.Meta),
+		)
 	}
 	if requests, err := searchRequests(ctx, site, state, req.Meta); err == nil && len(requests) > 0 && req.Logger != nil {
 		req.Logger.Infof("trackers: %s matched %d open request(s)", site.Name, len(requests))
 	}
 
-	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	torrentPath, err := resolveTorrentPath(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
@@ -82,7 +87,7 @@ func upload(ctx context.Context, site siteDefinition, req trackers.UploadRequest
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s upload failed: missing torrent id", site.Name)
 	}
 	downloadURL := strings.Replace(torrentURL, "/torrent/", "/download/torrent/", 1)
-	trackerTorrentPath, err := resolveTrackerTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath, site.Name)
+	trackerTorrentPath, err := resolveTrackerTorrentPath(req.Meta, req.Runtime.DBPath, site.Name)
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
@@ -101,8 +106,8 @@ func upload(ctx context.Context, site siteDefinition, req trackers.UploadRequest
 	}, nil
 }
 
-func buildUploadDryRun(ctx context.Context, site siteDefinition, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
-	state, err := newSession(ctx, site, req.AppConfig.MainSettings.DBPath, req.Logger)
+func buildUploadDryRun(ctx context.Context, site siteDefinition, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
+	state, err := newSession(ctx, site, req.Runtime.DBPath, req.Logger)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
@@ -110,7 +115,7 @@ func buildUploadDryRun(ctx context.Context, site siteDefinition, req trackers.Up
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
-	torrentPath, _ := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	torrentPath, _ := resolveTorrentPath(req.Meta, req.Runtime.DBPath)
 	if media.Missing || strings.TrimSpace(media.MediaCode) == "" {
 		return api.TrackerDryRunEntry{
 			Tracker: site.Name,
@@ -152,7 +157,13 @@ func buildUploadDryRun(ctx context.Context, site siteDefinition, req trackers.Up
 	}, nil
 }
 
-func createTask(ctx context.Context, site siteDefinition, state sessionState, req trackers.UploadRequest, mediaCode, fileInfo, torrentPath string) (taskInfo, error) {
+func createTask(
+	ctx context.Context,
+	site siteDefinition,
+	state sessionState,
+	req trackers.PreparationInput,
+	mediaCode, fileInfo, torrentPath string,
+) (taskInfo, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	for key, value := range map[string]string{
@@ -210,7 +221,7 @@ func createTask(ctx context.Context, site siteDefinition, state sessionState, re
 	}, nil
 }
 
-func resolveMediaInfoText(meta api.PreparedMetadata) (string, error) {
+func resolveMediaInfoText(meta api.UploadSubject) (string, error) {
 	if path := strings.TrimSpace(meta.MediaInfoTextPath); path != "" {
 		if data, err := os.ReadFile(path); err == nil {
 			return string(data), nil
@@ -219,7 +230,7 @@ func resolveMediaInfoText(meta api.PreparedMetadata) (string, error) {
 	return "", errors.New("trackers: missing MediaInfo/BDInfo text")
 }
 
-func resolveTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error) {
+func resolveTorrentPath(meta api.UploadSubject, dbPath string) (string, error) {
 	for _, candidate := range []string{strings.TrimSpace(meta.TorrentPath), strings.TrimSpace(meta.ClientTorrentPath)} {
 		if candidate == "" {
 			continue
@@ -231,7 +242,7 @@ func resolveTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error
 	if strings.TrimSpace(dbPath) != "" && strings.TrimSpace(meta.SourcePath) != "" {
 		tmpRoot, err := db.Subdir(dbPath, "tmp")
 		if err == nil {
-			tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+			tmpDir, base, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 			if err == nil {
 				guessed := filepath.Join(tmpDir, base+".torrent")
 				if info, err := os.Stat(guessed); err == nil && !info.IsDir() {
@@ -243,12 +254,12 @@ func resolveTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error
 	return "", errors.New("trackers: torrent file not found")
 }
 
-func resolveTrackerTorrentPath(meta api.PreparedMetadata, dbPath string, tracker string) (string, error) {
+func resolveTrackerTorrentPath(meta api.UploadSubject, dbPath string, tracker string) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
 		return "", fmt.Errorf("trackers: %w", err)
 	}
-	tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	tmpDir, base, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return "", fmt.Errorf("trackers: %w", err)
 	}

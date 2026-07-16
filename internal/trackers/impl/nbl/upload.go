@@ -18,7 +18,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/httpclient"
-	"github.com/autobrr/upbrr/internal/pathutil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -33,7 +33,7 @@ type uploadState struct {
 	fields      map[string]string
 }
 
-func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
+func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
 	state, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return api.UploadSummary{}, err
@@ -56,7 +56,11 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	defer resp.Body.Close()
 
-	bodyBytes, bodyPreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 300, commonhttp.DefaultResponsePreviewBytes)
+	bodyBytes, bodyPreview, err := commonhttp.ReadUploadResponseBody(
+		resp,
+		resp.StatusCode >= 200 && resp.StatusCode < 300,
+		commonhttp.DefaultResponsePreviewBytes,
+	)
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: NBL read response: %w", err)
 	}
@@ -75,7 +79,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 
 	artifactPath := ""
 	if announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announceURL != "" {
-		artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "NBL")
+		artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "NBL")
 		if err != nil {
 			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
@@ -96,7 +100,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}, nil
 }
 
-func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
+func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
 	state, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
@@ -117,7 +121,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}, nil
 }
 
-func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, error) {
+func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (uploadState, error) {
 	select {
 	case <-ctx.Done():
 		return uploadState{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -127,7 +131,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		return uploadState{}, errors.New("trackers: NBL missing api_key")
 	}
 
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
@@ -139,7 +143,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	fields := map[string]string{
 		"action":      "upload",
 		"api_key":     strings.TrimSpace(req.TrackerConfig.APIKey),
-		"tvmazeid":    strconv.Itoa(req.Meta.ExternalIDs.TVmazeID),
+		"tvmazeid":    strconv.Itoa(req.Meta.Identity.TVmazeID),
 		"mediainfo":   mediaInfo,
 		"category":    strconv.Itoa(resolveCategoryID(req.Meta)),
 		"ignoredupes": "1",
@@ -178,7 +182,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
-func resolveMediaInfo(meta api.PreparedMetadata) (string, error) {
+func resolveMediaInfo(meta api.UploadSubject) (string, error) {
 	if strings.TrimSpace(meta.MediaInfoTextPath) == "" {
 		return "", errors.New("trackers: NBL missing mediainfo text")
 	}
@@ -189,14 +193,14 @@ func resolveMediaInfo(meta api.PreparedMetadata) (string, error) {
 	return string(payload), nil
 }
 
-func resolveCategoryID(meta api.PreparedMetadata) int {
+func resolveCategoryID(meta api.UploadSubject) int {
 	if meta.TVPack {
 		return 3
 	}
 	return 1
 }
 
-func resolveUploadName(meta api.PreparedMetadata) string {
+func resolveUploadName(meta api.UploadSubject) string {
 	if name := strings.TrimSpace(meta.ReleaseName); name != "" {
 		return name
 	}

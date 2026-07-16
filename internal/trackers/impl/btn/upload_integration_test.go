@@ -131,7 +131,11 @@ func TestBTNUploadEndToEndSuccess(t *testing.T) {
 		switch {
 		case r.URL.Path == "/login.php" && r.Method == http.MethodPost:
 			loginCalls.Add(1)
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "new",
+				Path:  "/",
+			})
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
 		case r.URL.Path == "/upload.php" && r.Method == http.MethodGet:
@@ -201,9 +205,9 @@ func TestBTNUploadEndToEndSuccess(t *testing.T) {
 	mediaInfoText := "General\nFormat: Matroska\nVideo\nCodec: H.265"
 	mediaInfoPath := writeBTNTestMediaInfo(t, tempDir, mediaInfoText)
 
-	req := trackers.UploadRequest{
+	req := trackers.PreparationInput{
 		Tracker: "BTN",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:        sourcePath,
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
@@ -218,7 +222,7 @@ func TestBTNUploadEndToEndSuccess(t *testing.T) {
 			EpisodeTitle:      "Episode One",
 			EpisodeOverview:   "Overview",
 			TVDBAiredDate:     "2025-01-01",
-			ExternalIDs: api.ExternalIDs{
+			Identity: api.ExternalIdentity{
 				Category: "TV",
 			},
 			Release: api.ReleaseInfo{
@@ -234,12 +238,12 @@ func TestBTNUploadEndToEndSuccess(t *testing.T) {
 			Username: "user",
 			Password: "pass",
 		},
-		AppConfig: config.Config{
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{
 			MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 			Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 				"BTN": {APIKey: strings.Repeat("x", 30)},
 			}},
-		},
+		}),
 	}
 
 	summary, err := upload(context.Background(), req)
@@ -320,7 +324,11 @@ func TestBTNUploadAnnounceURLWritesTorrentArtifact(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/login.php" && r.Method == http.MethodPost:
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "new",
+				Path:  "/",
+			})
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
 		case r.URL.Path == "/upload.php" && r.Method == http.MethodGet:
@@ -453,9 +461,9 @@ func TestBTNUploadUsesValidImportedCookiesWithoutCredentials(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	req := trackers.UploadRequest{
+	req := trackers.PreparationInput{
 		Tracker: "BTN",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:  sourcePath,
 			TorrentPath: torrentPath,
 			ReleaseName: "Example.Show.S01E01.1080p.WEB-DL.x265-GRP",
@@ -466,16 +474,20 @@ func TestBTNUploadUsesValidImportedCookiesWithoutCredentials(t *testing.T) {
 			VideoCodec:  "HEVC",
 			SeasonInt:   1,
 			EpisodeInt:  1,
-			ExternalIDs: api.ExternalIDs{Category: "TV"},
-			Release:     api.ReleaseInfo{Resolution: "1080p", Season: 1, Episode: 1},
+			Identity:    api.ExternalIdentity{Category: "TV"},
+			Release: api.ReleaseInfo{
+				Resolution: "1080p",
+				Season:     1,
+				Episode:    1,
+			},
 		},
 		TrackerConfig: config.TrackerConfig{URL: server.URL},
-		AppConfig: config.Config{
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{
 			MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 			Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 				"BTN": {APIKey: strings.Repeat("x", 30)},
 			}},
-		},
+		}),
 	}
 
 	summary, err := upload(context.Background(), req)
@@ -502,7 +514,11 @@ func TestBTNUploadStoredCookieLoadErrorPreventsLogin(t *testing.T) {
 		switch r.URL.Path {
 		case "/login.php":
 			loginCalls.Add(1)
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "new",
+				Path:  "/",
+			})
 			_, _ = w.Write([]byte("ok"))
 		case "/upload.php":
 			_, _ = w.Write([]byte(`<form action="/upload.php"><input name="file_input" /></form>`))
@@ -706,7 +722,8 @@ func TestBTNDryRunDebugRunsBTNAutofillAndReportsBothPayloads(t *testing.T) {
 	req.Meta.EpisodeInt = 0
 	req.Meta.ReleaseName = "Example.Show.S05.1080p.WEB-DL.x265-GRP"
 	req.Meta.SeasonInt = 3
-	req.Meta.ExternalMetadata.TVDB = &api.TVDBMetadata{
+	req.Meta.Identity.TVDBID = 12345
+	req.Meta.ProviderMetadata.TVDB = &api.TVDBMetadata{
 		TVDBID:           12345,
 		EpisodeSeason:    5,
 		OriginalLanguage: "en",
@@ -844,7 +861,11 @@ func TestResolveSessionForTrackerAuthLoginDecryptErrorPreventsPersistence(t *tes
 		switch r.URL.Path {
 		case "/login.php":
 			loginCalls.Add(1)
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "new",
+				Path:  "/",
+			})
 			_, _ = w.Write([]byte("ok"))
 		case "/upload.php":
 			_, _ = w.Write([]byte(`<form action="/upload.php"><input name="file_input" /></form>`))
@@ -901,7 +922,18 @@ func TestBTNPrepareUploadDataFailsOnAutofillFailure(t *testing.T) {
 		client:    server.Client(),
 	}
 
-	req := trackers.UploadRequest{Meta: api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "TV"}, ReleaseName: "Show.S01E01", Type: "WEBDL", Source: "WEB-DL", Container: "MKV", VideoEncode: "x265", VideoCodec: "HEVC", SeasonInt: 1, EpisodeInt: 1, Release: api.ReleaseInfo{Resolution: "1080p"}}}
+	req := trackers.PreparationInput{Meta: api.UploadSubject{
+		Identity:    api.ExternalIdentity{Category: "TV"},
+		ReleaseName: "Show.S01E01",
+		Type:        "WEBDL",
+		Source:      "WEB-DL",
+		Container:   "MKV",
+		VideoEncode: "x265",
+		VideoCodec:  "HEVC",
+		SeasonInt:   1,
+		EpisodeInt:  1,
+		Release:     api.ReleaseInfo{Resolution: "1080p"},
+	}}
 	_, err := prepareUploadData(context.Background(), req, uploadCtx)
 	if err == nil {
 		t.Fatalf("expected autofill validation error")
@@ -955,9 +987,9 @@ func TestBTNPrepareUploadDataUsesEpisodeIntForTVDBAutoTitle(t *testing.T) {
 		client:    server.Client(),
 	}
 	logger := &captureBTNLogger{}
-	req := trackers.UploadRequest{
+	req := trackers.PreparationInput{
 		Logger: logger,
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			ReleaseName:         "Example.Show.S02E07.1080p.WEB-DL.x265-GRP",
 			Type:                "WEBDL",
 			Source:              "WEB-DL",
@@ -969,8 +1001,8 @@ func TestBTNPrepareUploadDataUsesEpisodeIntForTVDBAutoTitle(t *testing.T) {
 			EpisodeTitle:        "Episode Seven",
 			EpisodeOverview:     "Overview",
 			DescriptionOverride: "Description",
-			ExternalIDs:         api.ExternalIDs{Category: "TV"},
-			ExternalMetadata: api.ExternalMetadata{
+			Identity:            api.ExternalIdentity{Category: "TV", TVDBID: 12345},
+			ProviderMetadata: api.SourceScopedMetadata{
 				TVDB: &api.TVDBMetadata{
 					TVDBID:                 12345,
 					Name:                   "Native Show",
@@ -1107,8 +1139,8 @@ func TestBTNPrepareUploadDataUsesSeasonIntForTVDBSeasonPack(t *testing.T) {
 		uploadURL: server.URL + "/upload.php",
 		client:    server.Client(),
 	}
-	req := trackers.UploadRequest{
-		Meta: api.PreparedMetadata{
+	req := trackers.PreparationInput{
+		Meta: api.UploadSubject{
 			ReleaseName:         "Example.Show.S03.1080p.WEB-DL.x265-GRP",
 			Type:                "WEBDL",
 			Source:              "WEB-DL",
@@ -1118,9 +1150,15 @@ func TestBTNPrepareUploadDataUsesSeasonIntForTVDBSeasonPack(t *testing.T) {
 			SeasonInt:           3,
 			TVPack:              true,
 			DescriptionOverride: "Description",
-			ExternalIDs:         api.ExternalIDs{Category: "TV"},
-			ExternalMetadata: api.ExternalMetadata{
-				TVDB: &api.TVDBMetadata{TVDBID: 12345, OriginalLanguage: "en", EpisodeSeason: 5, Genres: "Drama, Science-Fiction", Poster: "https://img.example/tvdb.jpg"},
+			Identity:            api.ExternalIdentity{Category: "TV", TVDBID: 12345},
+			ProviderMetadata: api.SourceScopedMetadata{
+				TVDB: &api.TVDBMetadata{
+					TVDBID:           12345,
+					OriginalLanguage: "en",
+					EpisodeSeason:    5,
+					Genres:           "Drama, Science-Fiction",
+					Poster:           "https://img.example/tvdb.jpg",
+				},
 			},
 			Release: api.ReleaseInfo{
 				Resolution: "1080p",
@@ -1176,16 +1214,16 @@ func TestBTNPrepareUploadDataBlocksMissingCanonicalTVMetadataBeforeAutofill(t *t
 		uploadURL: server.URL + "/upload.php",
 		client:    server.Client(),
 	}
-	req := trackers.UploadRequest{
-		Meta: api.PreparedMetadata{
+	req := trackers.PreparationInput{
+		Meta: api.UploadSubject{
 			ReleaseName: "Example.Show.S01E01.1080p.WEB-DL.x265-GRP",
 			Type:        "WEBDL",
 			Source:      "WEB-DL",
 			Container:   "MKV",
 			VideoEncode: "x265",
 			VideoCodec:  "HEVC",
-			ExternalIDs: api.ExternalIDs{Category: "TV"},
-			ExternalMetadata: api.ExternalMetadata{
+			Identity:    api.ExternalIdentity{Category: "TV"},
+			ProviderMetadata: api.SourceScopedMetadata{
 				TVDB: &api.TVDBMetadata{TVDBID: 12345, OriginalLanguage: "en"},
 			},
 			Release: api.ReleaseInfo{
@@ -1217,7 +1255,11 @@ func TestBTNUploadCredentialLoginDoesNotPersistInvalidSession(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/login.php":
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "new",
+				Path:  "/",
+			})
 			_, _ = w.Write([]byte("ok"))
 		case "/upload.php":
 			_, _ = w.Write([]byte(`<form action="/login.php"><input type="password" name="password" /></form>`))
@@ -1401,7 +1443,11 @@ func TestResolveSessionForTrackerAuthLoginPersistsCookies(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/login.php":
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "new",
+				Path:  "/",
+			})
 			_, _ = w.Write([]byte("ok"))
 		case "/upload.php":
 			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=new") {
@@ -1443,7 +1489,11 @@ func TestResolveSessionForTrackerAuthLoginIgnoresIncidentalTwoFactorText(t *test
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/login.php":
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "new",
+				Path:  "/",
+			})
 			_, _ = w.Write([]byte(`<html><p>Keep your two-factor recovery codes safe.</p></html>`))
 		case "/upload.php":
 			if got := r.Header.Get("Cookie"); !strings.Contains(got, "session=new") {
@@ -1532,7 +1582,11 @@ func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/login.php" && r.Method == http.MethodPost:
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "new",
+				Path:  "/",
+			})
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
 		case r.URL.Path == "/upload.php" && r.Method == http.MethodGet:
@@ -1597,9 +1651,9 @@ func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	req := trackers.UploadRequest{
+	req := trackers.PreparationInput{
 		Tracker: "BTN",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:          sourcePath,
 			TorrentPath:         torrentPath,
 			ReleaseName:         "Example.Show.S01E01.1080p.WEB-DL.x265-GRP",
@@ -1614,7 +1668,7 @@ func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
 			EpisodeOverview:     "Overview",
 			TVDBAiredDate:       "2025-01-01",
 			DescriptionOverride: "[b]Test[/b] description",
-			ExternalIDs: api.ExternalIDs{
+			Identity: api.ExternalIdentity{
 				Category: "TV",
 			},
 			Release: api.ReleaseInfo{
@@ -1632,12 +1686,12 @@ func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
 				"api_url": server.URL + "/rpc",
 			},
 		},
-		AppConfig: config.Config{
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{
 			MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 			Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 				"BTN": {APIKey: strings.Repeat("x", 30)},
 			}},
-		},
+		}),
 	}
 
 	summary, err := upload(context.Background(), req)
@@ -1699,12 +1753,12 @@ func TestBTNSeasonPackReservationFailsClosedOnMalformedAPISearch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	req := trackers.UploadRequest{
-		Meta: api.PreparedMetadata{
+	req := trackers.PreparationInput{
+		Meta: api.UploadSubject{
 			TVPack:    true,
 			SeasonInt: 1,
 			Tag:       "NTb",
-			ExternalIDs: api.ExternalIDs{
+			Identity: api.ExternalIdentity{
 				TVDBID:   123456,
 				Category: "TV",
 			},
@@ -1750,16 +1804,16 @@ func TestBTNSeasonPackReservationUsesTranslatedTVDBSeason(t *testing.T) {
 	}))
 	defer server.Close()
 
-	req := trackers.UploadRequest{
-		Meta: api.PreparedMetadata{
+	req := trackers.PreparationInput{
+		Meta: api.UploadSubject{
 			TVPack:    true,
 			SeasonInt: 3,
 			Tag:       "NTb",
-			ExternalIDs: api.ExternalIDs{
+			Identity: api.ExternalIdentity{
 				TVDBID:   123456,
 				Category: "TV",
 			},
-			ExternalMetadata: api.ExternalMetadata{
+			ProviderMetadata: api.SourceScopedMetadata{
 				TVDB: &api.TVDBMetadata{EpisodeSeason: 5},
 			},
 		},
@@ -1787,7 +1841,11 @@ func TestBTNUploadFollowsIntermediateDetailPage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/login.php" && r.Method == http.MethodPost:
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "new",
+				Path:  "/",
+			})
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
 		case r.URL.Path == "/upload.php" && r.Method == http.MethodGet:
@@ -1864,7 +1922,11 @@ func TestBTNUploadIntermediateFailureFallsBackToAPI(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/login.php" && r.Method == http.MethodPost:
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "new",
+				Path:  "/",
+			})
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
 		case r.URL.Path == "/upload.php" && r.Method == http.MethodGet:
@@ -1934,7 +1996,7 @@ func TestBTNUploadIntermediateFailureFallsBackToAPI(t *testing.T) {
 	}
 }
 
-func newBTNUploadTestRequest(t *testing.T, serverURL string) trackers.UploadRequest {
+func newBTNUploadTestRequest(t *testing.T, serverURL string) trackers.PreparationInput {
 	t.Helper()
 
 	tempDir := t.TempDir()
@@ -1948,9 +2010,9 @@ func newBTNUploadTestRequest(t *testing.T, serverURL string) trackers.UploadRequ
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	return trackers.UploadRequest{
+	return trackers.PreparationInput{
 		Tracker: "BTN",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:          sourcePath,
 			TorrentPath:         torrentPath,
 			ReleaseName:         "Example.Show.S01E01.1080p.WEB-DL.x265-GRP",
@@ -1965,7 +2027,7 @@ func newBTNUploadTestRequest(t *testing.T, serverURL string) trackers.UploadRequ
 			EpisodeOverview:     "Overview",
 			TVDBAiredDate:       "2025-01-01",
 			DescriptionOverride: "[b]Test[/b] description",
-			ExternalIDs: api.ExternalIDs{
+			Identity: api.ExternalIdentity{
 				Category: "TV",
 			},
 			Release: api.ReleaseInfo{
@@ -1980,12 +2042,12 @@ func newBTNUploadTestRequest(t *testing.T, serverURL string) trackers.UploadRequ
 			Username: "user",
 			Password: "pass",
 		},
-		AppConfig: config.Config{
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{
 			MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 			Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 				"BTN": {APIKey: strings.Repeat("x", 30)},
 			}},
-		},
+		}),
 	}
 }
 
@@ -2078,7 +2140,7 @@ func corruptBTNCookieAuthTag(t *testing.T, dbPath string) {
 
 // newBTNDryRunTestRequest returns a minimal TV upload request with a BTN API key.
 // Callers add credentials or stored cookies to exercise dry-run auth gating.
-func newBTNDryRunTestRequest(t *testing.T, dbPath string) trackers.UploadRequest {
+func newBTNDryRunTestRequest(t *testing.T, dbPath string) trackers.PreparationInput {
 	t.Helper()
 
 	tempDir := t.TempDir()
@@ -2090,9 +2152,9 @@ func newBTNDryRunTestRequest(t *testing.T, dbPath string) trackers.UploadRequest
 	if err := os.WriteFile(torrentPath, []byte("d8:announce13:https://x.ee"), 0o600); err != nil {
 		t.Fatalf("write torrent: %v", err)
 	}
-	return trackers.UploadRequest{
+	return trackers.PreparationInput{
 		Tracker: "BTN",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:          sourcePath,
 			TorrentPath:         torrentPath,
 			ReleaseName:         "Example.Show.S01E01.1080p.WEB-DL.x265-GRP",
@@ -2107,7 +2169,7 @@ func newBTNDryRunTestRequest(t *testing.T, dbPath string) trackers.UploadRequest
 			EpisodeOverview:     "Overview",
 			TVDBAiredDate:       "2025-01-01",
 			DescriptionOverride: "[b]Test[/b] description",
-			ExternalIDs: api.ExternalIDs{
+			Identity: api.ExternalIdentity{
 				Category: "TV",
 			},
 			Release: api.ReleaseInfo{
@@ -2117,11 +2179,11 @@ func newBTNDryRunTestRequest(t *testing.T, dbPath string) trackers.UploadRequest
 			},
 		},
 		TrackerConfig: config.TrackerConfig{},
-		AppConfig: config.Config{
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{
 			MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 			Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
 				"BTN": {APIKey: strings.Repeat("x", 30)},
 			}},
-		},
+		}),
 	}
 }

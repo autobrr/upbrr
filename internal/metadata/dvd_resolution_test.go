@@ -6,11 +6,11 @@ package metadata
 import (
 	"testing"
 
-	"github.com/autobrr/upbrr/pkg/api"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 )
 
 func TestExtractDVDMediaInfoFromVOBJSON(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		DiscType:            "DVD",
 		SourcePath:          `/releases/Movie.DVD`,
 		DVDVOBMediaInfoJSON: `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"720","Height":"576","FrameRate":"25.000","ScanType":"Interlaced"}]}}`,
@@ -29,7 +29,7 @@ func TestExtractDVDMediaInfoFromVOBJSON(t *testing.T) {
 }
 
 func TestExtractDVDMediaInfoFallsBackToText(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		DiscType:            "DVD",
 		SourcePath:          `/releases/Movie.DVD`,
 		DVDVOBMediaInfoJSON: `{"media":{"track":[{"@type":"General"},{"@type":"Video"}]}}`,
@@ -52,7 +52,7 @@ func TestExtractDVDMediaInfoFallsBackToText(t *testing.T) {
 }
 
 func TestExtractDVDMediaInfoUsesInterlacedHintFromSourcePath(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		DiscType:            "DVD",
 		SourcePath:          `/releases/Movie.1080i.DVD`,
 		DVDVOBMediaInfoJSON: `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1920","Height":"1080","FrameRate":"25.000"}]}}`,
@@ -68,7 +68,7 @@ func TestExtractDVDMediaInfoUsesInterlacedHintFromSourcePath(t *testing.T) {
 }
 
 func TestExtractDVDMediaInfoDefaultsUnknownScanToProgressive(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		DiscType:            "DVD",
 		SourcePath:          `/releases/Movie.DVD`,
 		DVDVOBMediaInfoJSON: `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"720","Height":"576","FrameRate":"25.000"}]}}`,
@@ -84,7 +84,7 @@ func TestExtractDVDMediaInfoDefaultsUnknownScanToProgressive(t *testing.T) {
 }
 
 func TestExtractDVDMediaInfoDoesNotOverrideJSONProgressiveScan(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		DiscType:            "DVD",
 		SourcePath:          `/releases/Movie.DVD`,
 		DVDVOBMediaInfoJSON: `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"720","Height":"576","FrameRate":"25.000","ScanType":"Progressive"}]}}`,

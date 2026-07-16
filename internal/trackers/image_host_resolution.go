@@ -19,10 +19,10 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/internal/logging"
-	"github.com/autobrr/upbrr/internal/paths"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	dbsvc "github.com/autobrr/upbrr/internal/services/db"
-	"github.com/autobrr/upbrr/internal/services/imagehost"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -52,17 +52,35 @@ var descriptionSlotImageBlockedIPRanges = []netip.Prefix{
 
 var descriptionSlotImageLookupIPAddrs = net.DefaultResolver.LookupIPAddr
 
+//nolint:unparam // Compatibility helper is test-only; production passes the service logger through the registry-aware variant.
 func ensureDescriptionImageHost(
 	ctx context.Context,
 	tracker string,
-	meta api.PreparedMetadata,
+	meta api.UploadSubject,
 	appCfg config.Config,
 	trackerCfg config.TrackerConfig,
-	repo api.MetadataRepository,
+	repo UploadPersistence,
 	images api.ImageHostingService,
 	logger api.Logger,
 ) (descriptionImageHostResolution, error) {
-	return ensureDescriptionImageHostWithData(ctx, tracker, meta, appCfg, trackerCfg, repo, images, logger, nil)
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
+	return ensureDescriptionImageHostWithRegistry(ctx, tracker, meta, appCfg, trackerCfg, repo, images, logger, nil)
+}
+
+func ensureDescriptionImageHostWithRegistry(
+	ctx context.Context,
+	tracker string,
+	meta api.UploadSubject,
+	appCfg config.Config,
+	trackerCfg config.TrackerConfig,
+	repo UploadPersistence,
+	images api.ImageHostingService,
+	logger api.Logger,
+	registry *Registry,
+) (descriptionImageHostResolution, error) {
+	return ensureDescriptionImageHostWithDataAndRegistry(ctx, tracker, meta, appCfg, trackerCfg, repo, images, logger, registry, nil)
 }
 
 // ensureDescriptionImageHostWithData resolves description screenshots against a
@@ -71,16 +89,32 @@ func ensureDescriptionImageHost(
 func ensureDescriptionImageHostWithData(
 	ctx context.Context,
 	tracker string,
-	meta api.PreparedMetadata,
+	meta api.UploadSubject,
 	appCfg config.Config,
 	trackerCfg config.TrackerConfig,
-	repo api.MetadataRepository,
+	repo UploadPersistence,
 	images api.ImageHostingService,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
 	preferredHosts ...string,
 ) (descriptionImageHostResolution, error) {
-	policy, err := resolveImageHostPolicyForMetadata(tracker, appCfg, trackerCfg, meta, meta.ImageHostOverrides)
+	return ensureDescriptionImageHostWithDataAndRegistry(ctx, tracker, meta, appCfg, trackerCfg, repo, images, logger, nil, preloaded, preferredHosts...)
+}
+
+func ensureDescriptionImageHostWithDataAndRegistry(
+	ctx context.Context,
+	tracker string,
+	meta api.UploadSubject,
+	appCfg config.Config,
+	trackerCfg config.TrackerConfig,
+	repo UploadPersistence,
+	images api.ImageHostingService,
+	logger api.Logger,
+	registry *Registry,
+	preloaded *preloadedDescriptionAssetData,
+	preferredHosts ...string,
+) (descriptionImageHostResolution, error) {
+	policy, err := resolveImageHostPolicyForMetadataWithRegistry(registry, tracker, appCfg, trackerCfg, meta.ImageHostOverrides)
 	if err != nil {
 		return descriptionImageHostResolution{}, err
 	}
@@ -119,7 +153,11 @@ func ensureDescriptionImageHostWithData(
 		if err == nil && len(screenshots) > 0 {
 			feedback.SelectedHost = host
 			feedback.Message = buildReuseMessage(tracker, host, usageScope, false)
-			return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: usageScope}, nil
+			return descriptionImageHostResolution{
+				screenshots: screenshots,
+				feedback:    feedback,
+				usageScope:  usageScope,
+			}, nil
 		}
 		urls := resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded)
 		screenshots = resolveTrackerScreenshots(urls)
@@ -128,23 +166,41 @@ func ensureDescriptionImageHostWithData(
 			feedback.Message = buildReuseMessage(tracker, feedback.SelectedHost, globalImageUsageScope, false)
 		}
 		if len(screenshots) > 0 || preferredHost == "" {
-			return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: globalImageUsageScope}, nil
+			return descriptionImageHostResolution{
+				screenshots: screenshots,
+				feedback:    feedback,
+				usageScope:  globalImageUsageScope,
+			}, nil
 		}
 		policy = optionalImageHostUploadPolicy(policy, preferredHosts...)
 		selectionPolicy = reusableImageHostSelectionPolicy(policy, preferredHosts...)
 	}
 
-	if screenshots, host, usageScope, err := selectScreenshotsFromSlots(tracker, slots, selectionPolicy); err == nil && len(screenshots) > 0 && reusableSelectionMatchesPolicy(host, selectionPolicy) {
+	if screenshots, host, usageScope, err := selectScreenshotsFromSlots(
+		tracker,
+		slots,
+		selectionPolicy,
+	); err == nil && len(screenshots) > 0 &&
+		reusableSelectionMatchesPolicy(host, selectionPolicy) {
 		feedback.SelectedHost = host
 		feedback.Message = buildReuseMessage(tracker, host, usageScope, host != preferredHost(selectionPolicy))
-		return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: usageScope}, nil
-	} else if err != nil && allRenderableSlotsHaveEligibleVariant(slots, tracker, selectionPolicy) {
+		return descriptionImageHostResolution{
+			screenshots: screenshots,
+			feedback:    feedback,
+			usageScope:  usageScope,
+		}, nil
+	} else if err != nil &&
+		allRenderableSlotsHaveEligibleVariant(slots, tracker, selectionPolicy) {
 		return descriptionImageHostResolution{}, err
 	}
 
 	if skipUpload {
 		feedback.Status = "warning"
-		feedback.Message = fmt.Sprintf("%s requires screenshots from %s, but automatic image-host uploads are disabled.", tracker, imageHostRequirementLabel(policy))
+		feedback.Message = fmt.Sprintf(
+			"%s requires screenshots from %s, but automatic image-host uploads are disabled.",
+			tracker,
+			imageHostRequirementLabel(policy),
+		)
 		return descriptionImageHostResolution{feedback: feedback}, nil
 	}
 
@@ -163,7 +219,15 @@ func ensureDescriptionImageHostWithData(
 		if appendSourceImageSlots(&slots, meta.SourcePath, localTrackerImages) {
 			changed = true
 		}
-		if materialized, materializeChanged := materializeDescriptionSlotImages(ctx, meta, appCfg, tracker, slots, logger); len(materialized) > 0 || materializeChanged {
+		if materialized, materializeChanged := materializeDescriptionSlotImages(
+			ctx,
+			meta,
+			appCfg,
+			tracker,
+			slots,
+			logger,
+		); len(materialized) > 0 ||
+			materializeChanged {
 			changed = changed || materializeChanged
 		}
 		if changed {
@@ -176,13 +240,25 @@ func ensureDescriptionImageHostWithData(
 	}
 	if len(sourceImages) == 0 {
 		urls := resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded)
-		if screenshots, host := resolveTrackerScreenshotsForAllowedHost(urls, selectionPolicy); len(screenshots) > 0 && reusableSelectionMatchesPolicy(host, selectionPolicy) {
+		if screenshots, host := resolveTrackerScreenshotsForAllowedHost(
+			urls,
+			selectionPolicy,
+		); len(screenshots) > 0 &&
+			reusableSelectionMatchesPolicy(host, selectionPolicy) {
 			feedback.SelectedHost = host
 			feedback.Message = buildReuseMessage(tracker, host, globalImageUsageScope, host != preferredHost(selectionPolicy))
-			return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: globalImageUsageScope}, nil
+			return descriptionImageHostResolution{
+				screenshots: screenshots,
+				feedback:    feedback,
+				usageScope:  globalImageUsageScope,
+			}, nil
 		}
 		feedback.Status = "warning"
-		feedback.Message = fmt.Sprintf("%s requires screenshots from %s, but no local screenshots are available to rehost.", tracker, imageHostRequirementLabel(policy))
+		feedback.Message = fmt.Sprintf(
+			"%s requires screenshots from %s, but no local screenshots are available to rehost.",
+			tracker,
+			imageHostRequirementLabel(policy),
+		)
 		return descriptionImageHostResolution{feedback: feedback}, nil
 	}
 
@@ -195,7 +271,11 @@ func ensureDescriptionImageHostWithData(
 		if len(screenshots) > 0 {
 			feedback.SelectedHost = host
 			feedback.Message = buildReuseMessage(tracker, host, usageScope, host != preferredHost(selectionPolicy))
-			return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: usageScope}, nil
+			return descriptionImageHostResolution{
+				screenshots: screenshots,
+				feedback:    feedback,
+				usageScope:  usageScope,
+			}, nil
 		}
 	}
 
@@ -204,7 +284,11 @@ func ensureDescriptionImageHostWithData(
 		if screenshots, host, usageScope, err := selectScreenshotsFromSlots(tracker, slots, fallbackPolicy); err == nil && len(screenshots) > 0 {
 			feedback.SelectedHost = host
 			feedback.Message = buildReuseMessage(tracker, host, usageScope, host != preferredHost(selectionPolicy))
-			return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: usageScope}, nil
+			return descriptionImageHostResolution{
+				screenshots: screenshots,
+				feedback:    feedback,
+				usageScope:  usageScope,
+			}, nil
 		}
 		for _, host := range reusableHostCandidates(fallbackPolicy) {
 			usageScope := usageScopeForHost(host)
@@ -215,7 +299,11 @@ func ensureDescriptionImageHostWithData(
 			if len(screenshots) > 0 {
 				feedback.SelectedHost = host
 				feedback.Message = buildReuseMessage(tracker, host, usageScope, host != preferredHost(selectionPolicy))
-				return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: usageScope}, nil
+				return descriptionImageHostResolution{
+					screenshots: screenshots,
+					feedback:    feedback,
+					usageScope:  usageScope,
+				}, nil
 			}
 		}
 		feedback.Status = "warning"
@@ -226,7 +314,7 @@ func ensureDescriptionImageHostWithData(
 	var lastErr error
 	for _, host := range uploadAttemptHosts(policy, preferredHosts...) {
 		usageScope := usageScopeForHost(host)
-		uploaded, err := images.Upload(ctx, meta, host, usageScope, sourceImages)
+		uploaded, err := images.Upload(ctx, imageHostingSubject(meta), host, usageScope, sourceImages)
 		if err != nil {
 			lastErr = err
 			if len(uploaded) > 0 {
@@ -285,7 +373,11 @@ func ensureDescriptionImageHostWithData(
 		} else {
 			feedback.Message = uploadSuccessMessage(tracker, host, usageScope, feedback.Warnings)
 		}
-		return descriptionImageHostResolution{screenshots: screenshots, feedback: feedback, usageScope: usageScope}, nil
+		return descriptionImageHostResolution{
+			screenshots: screenshots,
+			feedback:    feedback,
+			usageScope:  usageScope,
+		}, nil
 	}
 
 	feedback.Status = "warning"
@@ -299,6 +391,23 @@ func ensureDescriptionImageHostWithData(
 		feedback.Message = fmt.Sprintf("%s could not find an allowed screenshot host to upload to (%s).", tracker, attemptHosts)
 	}
 	return descriptionImageHostResolution{feedback: feedback, blocking: true}, nil
+}
+
+func imageHostingSubject(meta api.UploadSubject) api.ImageHostingSubject {
+	galleryName := ""
+	for _, candidate := range []string{
+		meta.ReleaseName,
+		meta.ReleaseNameNoTag,
+		meta.Release.Title,
+		meta.Filename,
+		filepath.Base(meta.SourcePath),
+	} {
+		if trimmed := strings.TrimSpace(candidate); trimmed != "" {
+			galleryName = trimmed
+			break
+		}
+	}
+	return api.ImageHostingSubject{SourcePath: meta.SourcePath, GalleryName: galleryName}
 }
 
 func firstPreferredDescriptionImageHost(hosts []string) string {
@@ -354,15 +463,15 @@ func imageHostRequirementLabel(policy imageHostPolicy) string {
 	return "a configured image host"
 }
 
-func imageHostUploadSkipped(meta api.PreparedMetadata) bool {
+func imageHostUploadSkipped(meta api.UploadSubject) bool {
 	return meta.ImageHostOverrides.SkipUpload != nil && *meta.ImageHostOverrides.SkipUpload
 }
 
 func screenshotSlotsForImageHostResolution(
 	ctx context.Context,
 	tracker string,
-	meta api.PreparedMetadata,
-	repo api.MetadataRepository,
+	meta api.UploadSubject,
+	repo UploadPersistence,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
 	skipUpload bool,
@@ -376,8 +485,8 @@ func screenshotSlotsForImageHostResolution(
 func screenshotSlotsFromSourceWithoutPersist(
 	ctx context.Context,
 	tracker string,
-	meta api.PreparedMetadata,
-	repo api.MetadataRepository,
+	meta api.UploadSubject,
+	repo UploadPersistence,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
 ) ([]api.ScreenshotSlot, error) {
@@ -423,8 +532,8 @@ func screenshotSlotsFromSourceWithoutPersist(
 func reusableUploadedScreenshotsForHost(
 	ctx context.Context,
 	tracker string,
-	meta api.PreparedMetadata,
-	repo api.MetadataRepository,
+	meta api.UploadSubject,
+	repo UploadPersistence,
 	preloaded *preloadedDescriptionAssetData,
 	host string,
 	usageScope string,
@@ -482,7 +591,7 @@ func reusableUploadedScreenshotsForHost(
 	return screenshots, nil
 }
 
-func cleanupUploadedImages(ctx context.Context, repo api.MetadataRepository, sourcePath string, uploaded []api.UploadedImageLink, logger api.Logger) {
+func cleanupUploadedImages(ctx context.Context, repo UploadPersistence, sourcePath string, uploaded []api.UploadedImageLink, logger api.Logger) {
 	if repo == nil || len(uploaded) == 0 || strings.TrimSpace(sourcePath) == "" {
 		return
 	}
@@ -499,7 +608,13 @@ func cleanupUploadedImages(ctx context.Context, repo api.MetadataRepository, sou
 		}
 		seen[key] = struct{}{}
 		if err := repo.DeleteUploadedImage(ctx, sourcePath, pathValue, hostValue); err != nil && logger != nil {
-			logger.Warnf("trackers: failed to roll back uploaded image tracker=%s host=%s path=%s: %v", strings.TrimSpace(sourcePath), hostValue, pathValue, err)
+			logger.Warnf(
+				"trackers: failed to roll back uploaded image tracker=%s host=%s path=%s: %v",
+				strings.TrimSpace(sourcePath),
+				hostValue,
+				pathValue,
+				err,
+			)
 		}
 	}
 }
@@ -657,7 +772,7 @@ func resolveTrackerScreenshotsForAllowedHost(urls []string, policy imageHostPoli
 	return nil, ""
 }
 
-func resolveLocalTrackerScreenshots(meta api.PreparedMetadata, appCfg config.Config, tracker string, logger api.Logger) []api.ScreenshotImage {
+func resolveLocalTrackerScreenshots(meta api.UploadSubject, appCfg config.Config, tracker string, logger api.Logger) []api.ScreenshotImage {
 	if strings.TrimSpace(meta.SourcePath) == "" {
 		return nil
 	}
@@ -668,7 +783,7 @@ func resolveLocalTrackerScreenshots(meta api.PreparedMetadata, appCfg config.Con
 		}
 		return nil
 	}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		if logger != nil {
 			logger.Debugf("trackers: local tracker screenshots release dir failed tracker=%s: %v", tracker, err)
@@ -720,7 +835,7 @@ func slotsContainComparison(slots []api.ScreenshotSlot) bool {
 
 func materializeDescriptionSlotImages(
 	ctx context.Context,
-	meta api.PreparedMetadata,
+	meta api.UploadSubject,
 	appCfg config.Config,
 	tracker string,
 	slots []api.ScreenshotSlot,
@@ -736,7 +851,7 @@ func materializeDescriptionSlotImages(
 		}
 		return nil, false
 	}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		if logger != nil {
 			logger.Debugf("trackers: description slot image release dir failed tracker=%s: %v", tracker, err)
@@ -966,7 +1081,8 @@ func resolveDescriptionSlotImagePublicAddrs(ctx context.Context, host string) ([
 
 func isDescriptionSlotPublicIP(addr netip.Addr) bool {
 	addr = addr.Unmap()
-	if !addr.IsValid() || !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsMulticast() || addr.IsUnspecified() {
+	if !addr.IsValid() || !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsMulticast() ||
+		addr.IsUnspecified() {
 		return false
 	}
 	for _, blocked := range descriptionSlotImageBlockedIPRanges {
@@ -981,7 +1097,7 @@ func isDescriptionSlotImageContentType(contentType string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "image/")
 }
 
-func prioritizedTrackerRecords(meta api.PreparedMetadata, tracker string) []api.TrackerMetadata {
+func prioritizedTrackerRecords(meta api.UploadSubject, tracker string) []api.TrackerMetadata {
 	if len(meta.TrackerData) == 0 {
 		return nil
 	}

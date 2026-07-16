@@ -8,22 +8,22 @@ import (
 	"os"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
-	"github.com/autobrr/upbrr/internal/paths"
-	"github.com/autobrr/upbrr/internal/services/bbcode"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func buildDescription(meta api.PreparedMetadata, cfg config.Config, assets trackers.DescriptionAssets) string {
+func buildDescription(meta api.UploadSubject, cfg config.Config, assets trackers.DescriptionAssets) string {
 	base := strings.TrimSpace(assets.Description)
 	if assets.Final {
 		return base
 	}
 
-	cleaned := bbcode.CleanBHDDescription(base, bbcode.BHDOptions{
+	cleaned := CleanDescription(base, BBCodeOptions{
 		Framestor: hasGroup(meta.Tag, "framestor"),
 		Flux:      hasGroup(meta.Tag, "flux"),
 	})
@@ -51,7 +51,7 @@ func buildDescription(meta api.PreparedMetadata, cfg config.Config, assets track
 	return strings.TrimSpace(strings.Join(parts, "\n\n"))
 }
 
-func buildDiscSection(meta api.PreparedMetadata, dbPath string) string {
+func buildDiscSection(meta api.UploadSubject, dbPath string) string {
 	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
 	case "DVD":
 		media := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.DVDVOBMediaInfoText), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
@@ -163,7 +163,7 @@ func readTextFileNoErr(path string) string {
 	return string(payload)
 }
 
-func readBDInfoNoErr(dbPath string, meta api.PreparedMetadata) string {
+func readBDInfoNoErr(dbPath string, meta api.UploadSubject) string {
 	if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
 		return ""
 	}
@@ -171,11 +171,11 @@ func readBDInfoNoErr(dbPath string, meta api.PreparedMetadata) string {
 	if err != nil {
 		return ""
 	}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return ""
 	}
-	return readTextFileNoErr(paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta)))
+	return readTextFileNoErr(paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylistFor(meta.SelectedBDMVPlaylists)))
 }
 
 func hasGroup(tag string, name string) bool {

@@ -10,31 +10,49 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-type definition struct{}
+// Definition provides SPD tracker preparation and optional policy capabilities.
+type Definition struct{}
 
-func New() trackers.Definition  { return definition{} }
-func (definition) Name() string { return "SPD" }
+// New returns a fresh SPD tracker definition.
+func New() *Definition { return &Definition{} }
 
-func (definition) Upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
+// Name returns the stable SPD tracker identifier.
+func (Definition) Name() string { return "SPD" }
+
+// BannedGroupPolicy returns SPD's dynamic release-group blacklist settings.
+func (Definition) BannedGroupPolicy() *trackers.BannedGroupPolicy {
+	return &trackers.BannedGroupPolicy{
+		DefaultEndpoint:   "https://speedapp.io/api/torrent/release-group/blacklist",
+		EndpointPath:      "/api/torrent/release-group/blacklist",
+		RequireAPIKey:     true,
+		RawAPIKeyFallback: true,
+	}
+}
+
+// Prepare builds a fresh intent-scoped SPD tracker plan.
+func (d Definition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
+	return trackers.PrepareAdapter(ctx, input, d.prepareDescription, d.prepareDryRun, d.submit)
+}
+
+func (Definition) submit(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
 	return upload(ctx, req)
 }
 
-func (definition) BuildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
+func (Definition) prepareDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
 	return buildUploadDryRun(ctx, req)
 }
 
-func (definition) BuildDescription(ctx context.Context, req trackers.DescriptionRequest) (trackers.DescriptionResult, error) {
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+func (Definition) prepareDescription(_ context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {
+	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
 	if err != nil {
 		assets = trackers.DescriptionAssets{}
 	}
-	description := buildDescription(trackers.UploadRequest{
+	description := buildDescription(trackers.PreparationInput{
 		Tracker:       req.Tracker,
 		Meta:          req.Meta,
 		TrackerConfig: req.TrackerConfig,
-		AppConfig:     req.AppConfig,
+		Runtime:       req.Runtime,
 		Logger:        req.Logger,
-		Repo:          req.Repo,
 	}, assets)
 	return trackers.DescriptionResult{Group: "spd", Description: description}, nil
 }

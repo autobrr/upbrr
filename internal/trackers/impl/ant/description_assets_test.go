@@ -21,11 +21,11 @@ func TestBuildDescriptionUsesPreparedDiscMenuAssets(t *testing.T) {
 		MenuImages:  []api.ScreenshotImage{{RawURL: "https://images.example.invalid/menu.png"}},
 		Screenshots: []api.ScreenshotImage{{RawURL: "https://images.example.invalid/normal.png"}},
 	}
-	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+	result, err := New().prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "ANT",
-		AppConfig: config.Config{Description: config.DescriptionSettingsConfig{
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{Description: config.DescriptionSettingsConfig{
 			DiscMenuHeader: "Disc menu token",
-		}},
+		}}),
 		Assets: &assets,
 	})
 	if err != nil {
@@ -36,8 +36,12 @@ func TestBuildDescriptionUsesPreparedDiscMenuAssets(t *testing.T) {
 		t.Fatalf("normal screenshot leaked into ANT description: %q", result.Description)
 	}
 
-	final := trackers.DescriptionAssets{Description: " Authoritative final token ", Final: true, MenuImages: assets.MenuImages}
-	result, err = New().BuildDescription(context.Background(), trackers.DescriptionRequest{Tracker: "ANT", Assets: &final})
+	final := trackers.DescriptionAssets{
+		Description: " Authoritative final token ",
+		Final:       true,
+		MenuImages:  assets.MenuImages,
+	}
+	result, err = New().prepareDescription(context.Background(), trackers.PreparationInput{Tracker: "ANT", Assets: &final})
 	if err != nil {
 		t.Fatalf("build final description: %v", err)
 	}

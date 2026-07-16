@@ -9,23 +9,22 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
-	"github.com/autobrr/upbrr/internal/paths"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
-	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // ReadBDInfo reads the BDInfo from the given path.
-func ReadBDInfo(dbPath string, meta api.PreparedMetadata) (string, error) {
+func ReadBDInfo(dbPath string, meta api.UploadSubject) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
 		return "", fmt.Errorf("trackers: resolve tmp root: %w", err)
 	}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return "", fmt.Errorf("trackers: resolve release tmp dir: %w", err)
 	}
-	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta))
+	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylistFor(meta.SelectedBDMVPlaylists))
 	if strings.TrimSpace(path) == "" {
 		return "", nil
 	}
@@ -36,12 +35,20 @@ func ReadBDInfo(dbPath string, meta api.PreparedMetadata) (string, error) {
 }
 
 // ReadBDinfoOrMediaInfo reads the BDInfo if the disc type is BDMV, otherwise it reads the MediaInfoTextPath.
-func ReadBDinfoOrMediaInfo(dbPath string, meta api.PreparedMetadata) string {
+func ReadBDinfoOrMediaInfo(dbPath string, meta api.UploadSubject) string {
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
 		bdinfo, _ := ReadBDInfo(dbPath, meta)
 		return strings.TrimSpace(bdinfo)
 	}
-	return metautil.FirstNonEmptyTrimmed(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath), commonhttp.ReadOptionalFile(meta.DVDVOBMediaInfoText))
+	return metautil.FirstNonEmptyTrimmed(readOptionalTextFile(meta.MediaInfoTextPath), readOptionalTextFile(meta.DVDVOBMediaInfoText))
+}
+
+func readOptionalTextFile(path string) string {
+	payload, err := readTextFile(path)
+	if err != nil {
+		return ""
+	}
+	return payload
 }
 
 // existsFile checks if a file exists.

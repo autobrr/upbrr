@@ -15,16 +15,13 @@ type MetadataPreview struct {
 	SourcePath           string
 	TrackerName          string
 	ReleaseName          string
-	Warnings             []string
 	ReleaseNameOverrides ReleaseNameOverrides
-	ExternalIDs          ExternalIDs
-	ExternalIDCandidates ExternalIDCandidates
-	// ExternalIDInfo includes resolved IDs even when no metadata was fetched from that provider.
-	ExternalIDInfo []ExternalIDInfo
-	// ExternalPreview includes only providers whose metadata payload was fetched and populated.
-	ExternalPreview []ExternalPreview
-	Bluray          *BlurayMetadata
-	TrackerData     []TrackerPreview
+	Release              ReleaseRef
+	Identity             ExternalIdentity
+	Display              PreparedReleaseDisplay
+	Bluray               *BlurayMetadata
+	Diagnostics          []PreparationDiagnostic
+	TrackerData          []TrackerPreview
 	// TrackerRuleFailures is keyed by normalized tracker code and contains
 	// upload rule failures known at preview time.
 	TrackerRuleFailures map[string][]RuleFailure
@@ -57,8 +54,9 @@ type TrackerDryRunPreview struct {
 }
 
 type UploadReview struct {
-	SourcePath string
-	Trackers   []TrackerReview
+	SourcePath  string
+	Trackers    []TrackerReview
+	Eligibility TrackerEligibility
 }
 
 type TrackerReview struct {
@@ -171,42 +169,4 @@ type ExternalIDInfo struct {
 	Provider string
 	ID       int
 	Source   string
-}
-
-// ExternalPreview contains fetched metadata for one resolved external provider ID.
-// A resolved ID without provider metadata appears in [MetadataPreview.ExternalIDInfo] only.
-type ExternalPreview struct {
-	Provider         string
-	ID               int
-	Source           string
-	Title            string
-	Year             int
-	Overview         string
-	PosterURL        string
-	BackdropURL      string
-	Category         string
-	OriginalTitle    string
-	ReleaseDate      string
-	FirstAirDate     string
-	LastAirDate      string
-	OriginalLanguage string
-	TMDBType         string
-	Runtime          int
-	Genres           string
-	Keywords         string
-	YouTube          string
-	IMDBType         string
-	Rating           float64
-	RatingCount      int
-	RuntimeMinutes   int
-	Country          string
-	Premiered        string
-	IMDBID           int
-	TVDBID           int
-	TMDB             *TMDBMetadata
-	IMDB             *IMDBMetadata
-	TVDB             *TVDBMetadata
-	TVmaze           *TVmazeMetadata
-	// AniList contains rich preview metadata when Provider is "mal".
-	AniList *AniListMetadata
 }

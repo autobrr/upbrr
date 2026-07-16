@@ -14,11 +14,11 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
-	"github.com/autobrr/upbrr/internal/pathutil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func resolveContainer(meta api.PreparedMetadata) string {
+func resolveContainer(meta api.UploadSubject) string {
 	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
 	case "BDMV":
 		return "5"
@@ -39,7 +39,7 @@ func resolveContainer(meta api.PreparedMetadata) string {
 	}
 }
 
-func resolveQuality(meta api.PreparedMetadata) string {
+func resolveQuality(meta api.UploadSubject) string {
 	if !strings.EqualFold(meta.Type, "DISC") {
 		switch strings.ToUpper(strings.TrimSpace(meta.Type)) {
 		case "ENCODE":
@@ -79,7 +79,7 @@ func resolveQuality(meta api.PreparedMetadata) string {
 	}
 }
 
-func resolveResolution(meta api.PreparedMetadata) map[string]string {
+func resolveResolution(meta api.UploadSubject) map[string]string {
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
 		heightStr := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(meta.Release.Resolution), "p"), "i")
 		heightNum, err := strconv.Atoi(heightStr)
@@ -136,7 +136,7 @@ func resolveResolution(meta api.PreparedMetadata) map[string]string {
 	}
 }
 
-func resolveVideoCodec(meta api.PreparedMetadata) string {
+func resolveVideoCodec(meta api.UploadSubject) string {
 	codec := strings.ToUpper(strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.VideoEncode, meta.VideoCodec)))
 	codecClean := codec
 	if strings.Contains(codec, "264") {
@@ -168,7 +168,7 @@ func resolveVideoCodec(meta api.PreparedMetadata) string {
 	}
 }
 
-func resolveAudioCodec(meta api.PreparedMetadata) string {
+func resolveAudioCodec(meta api.UploadSubject) string {
 	audio := strings.ToUpper(strings.TrimSpace(meta.Audio))
 	switch {
 	case strings.Contains(audio, "ATMOS"):
@@ -204,7 +204,7 @@ func resolveAudioCodec(meta api.PreparedMetadata) string {
 	}
 }
 
-func resolveAudio(meta api.PreparedMetadata) string {
+func resolveAudio(meta api.UploadSubject) string {
 	original := strings.ToLower(strings.TrimSpace(resolveOriginalLanguage(meta)))
 	audioLangs := lowerStrings(meta.AudioLanguages)
 	hasPTAudio := containsAny(audioLangs, []string{"portuguese", "português", "pt"})
@@ -224,52 +224,78 @@ func resolveAudio(meta api.PreparedMetadata) string {
 	}
 }
 
-func resolveSubtitle(meta api.PreparedMetadata) string {
+func resolveSubtitle(meta api.UploadSubject) string {
 	if containsAny(lowerStrings(meta.SubtitleLanguages), []string{"portuguese", "português", "pt", "brazilian portuguese"}) {
 		return "Embutida"
 	}
 	return "S_legenda"
 }
 
-func resolveLanguage(meta api.PreparedMetadata) string {
+func resolveLanguage(meta api.UploadSubject) string {
 	return mapLanguage(resolveOriginalLanguage(meta), map[string]string{
-		"bg": "15", "da": "12", "de": "3", "en": "1", "es": "6", "fi": "14", "fr": "2",
-		"hi": "23", "it": "4", "ja": "5", "ko": "20", "nl": "17", "no": "16", "pl": "19",
-		"pt": "8", "ru": "7", "sv": "13", "th": "21", "tr": "25", "zh": "10",
+		"bg": "15",
+		"da": "12",
+		"de": "3",
+		"en": "1",
+		"es": "6",
+		"fi": "14",
+		"fr": "2",
+		"hi": "23",
+		"it": "4",
+		"ja": "5",
+		"ko": "20",
+		"nl": "17",
+		"no": "16",
+		"pl": "19",
+		"pt": "8",
+		"ru": "7",
+		"sv": "13",
+		"th": "21",
+		"tr": "25",
+		"zh": "10",
 	}, "11")
 }
 
-func resolveAnimeLanguage(meta api.PreparedMetadata) string {
+func resolveAnimeLanguage(meta api.UploadSubject) string {
 	return mapLanguage(resolveOriginalLanguage(meta), map[string]string{
-		"de": "3", "en": "4", "es": "1", "ja": "8", "ko": "11", "pt": "5", "ru": "2", "zh": "9",
+		"de": "3",
+		"en": "4",
+		"es": "1",
+		"ja": "8",
+		"ko": "11",
+		"pt": "5",
+		"ru": "2",
+		"zh": "9",
 	}, "6")
 }
 
-func resolveAnimeAudioLanguage(meta api.PreparedMetadata) string {
+func resolveAnimeAudioLanguage(meta api.UploadSubject) string {
 	if audio := resolveAudio(meta); audio == "2" || audio == "3" || audio == "4" {
 		return "8"
 	}
 	return resolveLanguage(meta)
 }
 
-func resolveAnimeType(meta api.PreparedMetadata) string {
+func resolveAnimeType(meta api.UploadSubject) string {
 	if categoryOf(meta) == "TV" {
 		return "118"
 	}
 	return "116"
 }
 
-func resolveUploadTitle(meta api.PreparedMetadata) string {
+func resolveUploadTitle(meta api.UploadSubject) string {
 	base := resolveDisplayTitle(meta)
 	if categoryOf(meta) == "TV" {
-		return strings.TrimSpace(base + " - " + metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.SeasonStr)+strings.TrimSpace(meta.EpisodeStr), seasonEpisodeText(meta)))
+		return strings.TrimSpace(
+			base + " - " + metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.SeasonStr)+strings.TrimSpace(meta.EpisodeStr), seasonEpisodeText(meta)),
+		)
 	}
 	return base
 }
 
-func resolveDisplayTitle(meta api.PreparedMetadata) string {
-	ptBR := api.ExtractLocalizedPTBR(meta)
-	if tmdb := meta.ExternalMetadata.TMDB; tmdb != nil {
+func resolveDisplayTitle(meta api.UploadSubject) string {
+	ptBR := api.ExtractTrackerLocalizedPTBR(meta)
+	if tmdb := meta.ProviderMetadata.TMDB; tmdb != nil {
 		main := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(ptBR.Title, tmdb.Title, meta.Release.Title))
 		alt := strings.TrimSpace(tmdb.OriginalTitle)
 		if categoryOf(meta) == "TV" {
@@ -285,34 +311,34 @@ func resolveDisplayTitle(meta api.PreparedMetadata) string {
 	return strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName, pathutil.Base(meta.SourcePath)))
 }
 
-func resolvePoster(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB != nil {
-		if meta.ExternalMetadata.TMDB.Localized != nil {
-			if localized, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok && strings.TrimSpace(localized.Poster) != "" {
+func resolvePoster(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.TMDB != nil {
+		if meta.ProviderMetadata.TMDB.Localized != nil {
+			if localized, ok := meta.ProviderMetadata.TMDB.Localized["pt-BR"]; ok && strings.TrimSpace(localized.Poster) != "" {
 				return strings.TrimSpace(localized.Poster)
 			}
 		}
-		if strings.TrimSpace(meta.ExternalMetadata.TMDB.Poster) != "" {
-			return strings.TrimSpace(meta.ExternalMetadata.TMDB.Poster)
+		if strings.TrimSpace(meta.ProviderMetadata.TMDB.Poster) != "" {
+			return strings.TrimSpace(meta.ProviderMetadata.TMDB.Poster)
 		}
 	}
 	switch {
-	case meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.Cover) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.IMDB.Cover)
-	case meta.ExternalMetadata.TVDB != nil && strings.TrimSpace(meta.ExternalMetadata.TVDB.Poster) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TVDB.Poster)
-	case meta.ExternalMetadata.TVmaze != nil && strings.TrimSpace(meta.ExternalMetadata.TVmaze.Poster) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TVmaze.Poster)
+	case meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.Cover) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Cover)
+	case meta.ProviderMetadata.TVDB != nil && strings.TrimSpace(meta.ProviderMetadata.TVDB.Poster) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.TVDB.Poster)
+	case meta.ProviderMetadata.TVmaze != nil && strings.TrimSpace(meta.ProviderMetadata.TVmaze.Poster) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.TVmaze.Poster)
 	default:
 		return ""
 	}
 }
 
-func resolveOverview(meta api.PreparedMetadata, answers map[string]string) string {
+func resolveOverview(meta api.UploadSubject, answers map[string]string) string {
 	if strings.TrimSpace(answers["overview"]) != "" {
 		return strings.TrimSpace(answers["overview"])
 	}
-	ptBR := api.ExtractLocalizedPTBR(meta)
+	ptBR := api.ExtractTrackerLocalizedPTBR(meta)
 	if shouldUseScopedTVOverview(meta) && ptBR.EpisodeOverview != "" {
 		return strings.TrimSpace(ptBR.EpisodeOverview)
 	}
@@ -320,14 +346,14 @@ func resolveOverview(meta api.PreparedMetadata, answers map[string]string) strin
 		return strings.TrimSpace(ptBR.Overview)
 	}
 	switch {
-	case meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Overview) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Overview)
-	case meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.Plot) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.IMDB.Plot)
-	case meta.ExternalMetadata.TVDB != nil && strings.TrimSpace(meta.ExternalMetadata.TVDB.Overview) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TVDB.Overview)
-	case meta.ExternalMetadata.TVmaze != nil && strings.TrimSpace(meta.ExternalMetadata.TVmaze.Summary) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TVmaze.Summary)
+	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.Overview) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Overview)
+	case meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.Plot) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Plot)
+	case meta.ProviderMetadata.TVDB != nil && strings.TrimSpace(meta.ProviderMetadata.TVDB.Overview) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.TVDB.Overview)
+	case meta.ProviderMetadata.TVmaze != nil && strings.TrimSpace(meta.ProviderMetadata.TVmaze.Summary) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.TVmaze.Summary)
 	default:
 		return strings.TrimSpace(meta.EpisodeOverview)
 	}
@@ -335,7 +361,7 @@ func resolveOverview(meta api.PreparedMetadata, answers map[string]string) strin
 
 // shouldUseScopedTVOverview reports whether ASC should prefer season or
 // episode localized overview over title-level synopsis text.
-func shouldUseScopedTVOverview(meta api.PreparedMetadata) bool {
+func shouldUseScopedTVOverview(meta api.UploadSubject) bool {
 	if meta.SeasonInt <= 0 {
 		return false
 	}
@@ -348,11 +374,11 @@ func shouldUseScopedTVOverview(meta api.PreparedMetadata) bool {
 	return meta.EpisodeInt > 0
 }
 
-func resolveGenres(meta api.PreparedMetadata, answers map[string]string) string {
+func resolveGenres(meta api.UploadSubject, answers map[string]string) string {
 	if strings.TrimSpace(answers["genre"]) != "" {
 		return strings.TrimSpace(answers["genre"])
 	}
-	ptBR := api.ExtractLocalizedPTBR(meta)
+	ptBR := api.ExtractTrackerLocalizedPTBR(meta)
 
 	// 1. Use localized if available
 	if ptBR.Genres != "" {
@@ -371,14 +397,14 @@ func resolveGenres(meta api.PreparedMetadata, answers map[string]string) string 
 	// 2. Use metautil.TranslateGenreToPortugueseStrict to translate
 	var genreText string
 	switch {
-	case meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres) != "":
-		genreText = strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres)
-	case meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.Genres) != "":
-		genreText = strings.TrimSpace(meta.ExternalMetadata.IMDB.Genres)
-	case meta.ExternalMetadata.TVDB != nil && strings.TrimSpace(meta.ExternalMetadata.TVDB.Genres) != "":
-		genreText = strings.TrimSpace(meta.ExternalMetadata.TVDB.Genres)
-	case meta.ExternalMetadata.TVmaze != nil && strings.TrimSpace(meta.ExternalMetadata.TVmaze.Genres) != "":
-		genreText = strings.TrimSpace(meta.ExternalMetadata.TVmaze.Genres)
+	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres) != "":
+		genreText = strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres)
+	case meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres) != "":
+		genreText = strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres)
+	case meta.ProviderMetadata.TVDB != nil && strings.TrimSpace(meta.ProviderMetadata.TVDB.Genres) != "":
+		genreText = strings.TrimSpace(meta.ProviderMetadata.TVDB.Genres)
+	case meta.ProviderMetadata.TVmaze != nil && strings.TrimSpace(meta.ProviderMetadata.TVmaze.Genres) != "":
+		genreText = strings.TrimSpace(meta.ProviderMetadata.TVmaze.Genres)
 	default:
 		genreText = strings.TrimSpace(meta.Release.Genre)
 	}
@@ -406,14 +432,14 @@ func resolveGenres(meta api.PreparedMetadata, answers map[string]string) string 
 	return strings.Join(out, ", ")
 }
 
-func resolveTrailer(meta api.PreparedMetadata) string {
+func resolveTrailer(meta api.UploadSubject) string {
 	value := ""
-	ptBR := api.ExtractLocalizedPTBR(meta)
+	ptBR := api.ExtractTrackerLocalizedPTBR(meta)
 	if ptBR.TrailerURL != "" {
 		value = ptBR.TrailerURL
 	}
-	if value == "" && meta.ExternalMetadata.TMDB != nil {
-		value = strings.TrimSpace(meta.ExternalMetadata.TMDB.YouTube)
+	if value == "" && meta.ProviderMetadata.TMDB != nil {
+		value = strings.TrimSpace(meta.ProviderMetadata.TMDB.YouTube)
 	}
 	if value == "" {
 		return ""
@@ -424,40 +450,37 @@ func resolveTrailer(meta api.PreparedMetadata) string {
 	return "https://www.youtube.com/watch?v=" + value
 }
 
-func resolveIMDbIDText(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbIDText) != "" {
-		return strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbIDText)
-	}
-	if meta.ExternalIDs.IMDBID > 0 {
-		return fmt.Sprintf("tt%07d", meta.ExternalIDs.IMDBID)
+func resolveIMDbIDText(meta api.UploadSubject) string {
+	if meta.Identity.IMDBID > 0 {
+		return fmt.Sprintf("tt%07d", meta.Identity.IMDBID)
 	}
 	return ""
 }
 
-func resolveOriginalLanguage(meta api.PreparedMetadata) string {
+func resolveOriginalLanguage(meta api.UploadSubject) string {
 	switch {
-	case meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalLanguage)
-	case meta.ExternalMetadata.IMDB != nil && strings.TrimSpace(meta.ExternalMetadata.IMDB.OriginalLanguage) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.IMDB.OriginalLanguage)
-	case meta.ExternalMetadata.TVDB != nil && strings.TrimSpace(meta.ExternalMetadata.TVDB.OriginalLanguage) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TVDB.OriginalLanguage)
-	case meta.ExternalMetadata.TVmaze != nil && strings.TrimSpace(meta.ExternalMetadata.TVmaze.Language) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TVmaze.Language)
+	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalLanguage)
+	case meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.OriginalLanguage) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.IMDB.OriginalLanguage)
+	case meta.ProviderMetadata.TVDB != nil && strings.TrimSpace(meta.ProviderMetadata.TVDB.OriginalLanguage) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.TVDB.OriginalLanguage)
+	case meta.ProviderMetadata.TVmaze != nil && strings.TrimSpace(meta.ProviderMetadata.TVmaze.Language) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.TVmaze.Language)
 	default:
 		return ""
 	}
 }
 
-func resolveRuntime(meta api.PreparedMetadata) string {
+func resolveRuntime(meta api.UploadSubject) string {
 	minutes := 0
 	switch {
-	case meta.ExternalMetadata.TMDB != nil:
-		minutes = meta.ExternalMetadata.TMDB.Runtime
-	case meta.ExternalMetadata.IMDB != nil:
-		minutes = meta.ExternalMetadata.IMDB.RuntimeMinutes
-	case meta.ExternalMetadata.TVmaze != nil:
-		minutes = meta.ExternalMetadata.TVmaze.Runtime
+	case meta.ProviderMetadata.TMDB != nil:
+		minutes = meta.ProviderMetadata.TMDB.Runtime
+	case meta.ProviderMetadata.IMDB != nil:
+		minutes = meta.ProviderMetadata.IMDB.RuntimeMinutes
+	case meta.ProviderMetadata.TVmaze != nil:
+		minutes = meta.ProviderMetadata.TVmaze.Runtime
 	}
 	if minutes <= 0 {
 		return ""
@@ -470,29 +493,29 @@ func resolveRuntime(meta api.PreparedMetadata) string {
 	return fmt.Sprintf("%d hora%s e %02d minutos", hours, pluralSuffix(hours), remain)
 }
 
-func resolveCountries(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB != nil && len(meta.ExternalMetadata.TMDB.ProductionCountries) > 0 {
-		names := make([]string, 0, len(meta.ExternalMetadata.TMDB.ProductionCountries))
-		for _, country := range meta.ExternalMetadata.TMDB.ProductionCountries {
+func resolveCountries(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.TMDB != nil && len(meta.ProviderMetadata.TMDB.ProductionCountries) > 0 {
+		names := make([]string, 0, len(meta.ProviderMetadata.TMDB.ProductionCountries))
+		for _, country := range meta.ProviderMetadata.TMDB.ProductionCountries {
 			if strings.TrimSpace(country.Name) != "" {
 				names = append(names, strings.TrimSpace(country.Name))
 			}
 		}
 		return strings.Join(names, ", ")
 	}
-	if meta.ExternalMetadata.IMDB != nil {
-		return strings.TrimSpace(meta.ExternalMetadata.IMDB.CountryList)
+	if meta.ProviderMetadata.IMDB != nil {
+		return strings.TrimSpace(meta.ProviderMetadata.IMDB.CountryList)
 	}
 	return ""
 }
 
-func resolveCast(meta api.PreparedMetadata) []string {
+func resolveCast(meta api.UploadSubject) []string {
 	switch {
-	case meta.ExternalMetadata.TMDB != nil && len(meta.ExternalMetadata.TMDB.Cast) > 0:
-		return append([]string{}, meta.ExternalMetadata.TMDB.Cast...)
-	case meta.ExternalMetadata.IMDB != nil && len(meta.ExternalMetadata.IMDB.Stars) > 0:
-		names := make([]string, 0, len(meta.ExternalMetadata.IMDB.Stars))
-		for _, person := range meta.ExternalMetadata.IMDB.Stars {
+	case meta.ProviderMetadata.TMDB != nil && len(meta.ProviderMetadata.TMDB.Cast) > 0:
+		return append([]string{}, meta.ProviderMetadata.TMDB.Cast...)
+	case meta.ProviderMetadata.IMDB != nil && len(meta.ProviderMetadata.IMDB.Stars) > 0:
+		names := make([]string, 0, len(meta.ProviderMetadata.IMDB.Stars))
+		for _, person := range meta.ProviderMetadata.IMDB.Stars {
 			if strings.TrimSpace(person.Name) != "" {
 				names = append(names, strings.TrimSpace(person.Name))
 			}
@@ -503,50 +526,45 @@ func resolveCast(meta api.PreparedMetadata) []string {
 	}
 }
 
-func resolveReleaseDate(meta api.PreparedMetadata) string {
+func resolveReleaseDate(meta api.UploadSubject) string {
 	switch {
-	case meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.ReleaseDate) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.ReleaseDate)
-	case meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.FirstAirDate) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.FirstAirDate)
-	case meta.ExternalMetadata.TVDB != nil && strings.TrimSpace(meta.ExternalMetadata.TVDB.FirstAired) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TVDB.FirstAired)
-	case meta.ExternalMetadata.TVmaze != nil && strings.TrimSpace(meta.ExternalMetadata.TVmaze.Premiered) != "":
-		return strings.TrimSpace(meta.ExternalMetadata.TVmaze.Premiered)
+	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.ReleaseDate) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.TMDB.ReleaseDate)
+	case meta.ProviderMetadata.TMDB != nil && strings.TrimSpace(meta.ProviderMetadata.TMDB.FirstAirDate) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.TMDB.FirstAirDate)
+	case meta.ProviderMetadata.TVDB != nil && strings.TrimSpace(meta.ProviderMetadata.TVDB.FirstAired) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.TVDB.FirstAired)
+	case meta.ProviderMetadata.TVmaze != nil && strings.TrimSpace(meta.ProviderMetadata.TVmaze.Premiered) != "":
+		return strings.TrimSpace(meta.ProviderMetadata.TVmaze.Premiered)
 	default:
 		return ""
 	}
 }
 
-func resolveYear(meta api.PreparedMetadata) int {
+func resolveYear(meta api.UploadSubject) int {
 	switch {
 	case meta.Release.Year > 0:
 		return meta.Release.Year
-	case meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Year > 0:
-		return meta.ExternalMetadata.TMDB.Year
-	case meta.ExternalMetadata.IMDB != nil && meta.ExternalMetadata.IMDB.Year > 0:
-		return meta.ExternalMetadata.IMDB.Year
-	case meta.ExternalMetadata.TVDB != nil && meta.ExternalMetadata.TVDB.Year > 0:
-		return meta.ExternalMetadata.TVDB.Year
+	case meta.ProviderMetadata.TMDB != nil && meta.ProviderMetadata.TMDB.Year > 0:
+		return meta.ProviderMetadata.TMDB.Year
+	case meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Year > 0:
+		return meta.ProviderMetadata.IMDB.Year
+	case meta.ProviderMetadata.TVDB != nil && meta.ProviderMetadata.TVDB.Year > 0:
+		return meta.ProviderMetadata.TVDB.Year
 	default:
 		return 0
 	}
 }
 
-func categoryOf(meta api.PreparedMetadata) string {
-	switch strings.ToUpper(strings.TrimSpace(meta.ExternalIDs.Category)) {
-	case "TV":
-		return "TV"
-	case "MOVIE":
-		return "MOVIE"
+func categoryOf(meta api.UploadSubject) string {
+	category, err := meta.Identity.RequireCategory()
+	if err != nil {
+		return ""
 	}
-	if meta.TVPack || meta.SeasonInt > 0 || meta.EpisodeInt > 0 {
-		return "TV"
-	}
-	return "MOVIE"
+	return strings.ToUpper(string(category))
 }
 
-func seasonEpisodeText(meta api.PreparedMetadata) string {
+func seasonEpisodeText(meta api.UploadSubject) string {
 	if meta.EpisodeInt > 0 {
 		return fmt.Sprintf("S%02dE%02d", meta.SeasonInt, meta.EpisodeInt)
 	}

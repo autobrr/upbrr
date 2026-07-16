@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -38,11 +37,11 @@ func TestBuildUploadDryRunBlockedWhenMediaMissing(t *testing.T) {
 	parsedServerURL, _ := url.Parse(server.URL)
 	writeAZCookieFile(t, tmp, "AZ", parsedServerURL.Hostname())
 
-	entry, err := New("AZ").BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+	entry, err := New("AZ").prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker:       "AZ",
-		Meta:          api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "MOVIE", IMDBID: 123}},
+		Meta:          api.UploadSubject{Identity: api.ExternalIdentity{Category: "MOVIE", IMDBID: 123}},
 		TrackerConfig: config.TrackerConfig{URL: server.URL},
-		AppConfig:     config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}},
+		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
 		Logger:        api.NopLogger{},
 	})
 	if err != nil {
@@ -94,23 +93,19 @@ func TestUploadSuccess(t *testing.T) {
 	parsedServerURL, _ := url.Parse(server.URL)
 	writeAZCookieFile(t, tmp, "AZ", parsedServerURL.Hostname())
 
-	repo := azRepoStub{
-		images: []string{
-			server.URL + imagePaths[0],
-			server.URL + imagePaths[1],
-			server.URL + imagePaths[2],
-		},
-	}
-
-	result, err := New("AZ").Upload(context.Background(), trackers.UploadRequest{
+	result, err := New("AZ").submit(context.Background(), trackers.PreparationInput{
 		Tracker: "AZ",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:        filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
-			ExternalIDs:       api.ExternalIDs{Category: "MOVIE", IMDBID: 123},
+			Identity:          api.ExternalIdentity{Category: "MOVIE", IMDBID: 123},
 			ReleaseName:       "Movie.2024.1080p.WEB-DL.x265-GRP",
-			Release:           api.ReleaseInfo{Title: "Movie", Year: 2024, Resolution: "1080p"},
+			Release: api.ReleaseInfo{
+				Title:      "Movie",
+				Year:       2024,
+				Resolution: "1080p",
+			},
 			Type:              "WEBDL",
 			Container:         "mkv",
 			AudioLanguages:    []string{"English"},
@@ -118,9 +113,13 @@ func TestUploadSuccess(t *testing.T) {
 			Options:           api.UploadOptions{KeepImages: true},
 		},
 		TrackerConfig: config.TrackerConfig{URL: server.URL},
-		AppConfig:     config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}},
+		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
 		Logger:        api.NopLogger{},
-		Repo:          repo,
+		Assets: &trackers.DescriptionAssets{Screenshots: []api.ScreenshotImage{
+			{RawURL: server.URL + imagePaths[0]},
+			{RawURL: server.URL + imagePaths[1]},
+			{RawURL: server.URL + imagePaths[2]},
+		}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected upload error: %v", err)
@@ -163,13 +162,13 @@ func TestBuildUploadDryRunAllowsTVWebDLRipType(t *testing.T) {
 	parsedServerURL, _ := url.Parse(server.URL)
 	writeAZCookieFile(t, tmp, "AZ", parsedServerURL.Hostname())
 
-	entry, err := New("AZ").BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+	entry, err := New("AZ").prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "AZ",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:        filepath.Join(tmp, "Show.S01E02.1080p.WEB-DL.mkv"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
-			ExternalIDs:       api.ExternalIDs{Category: "TV", IMDBID: 123},
+			Identity:          api.ExternalIdentity{Category: "TV", IMDBID: 123},
 			ReleaseName:       "Show.S01E02.1080p.WEB-DL-GRP",
 			Release: api.ReleaseInfo{
 				Category:   "TV",
@@ -187,9 +186,9 @@ func TestBuildUploadDryRunAllowsTVWebDLRipType(t *testing.T) {
 			EpisodeInt:        2,
 		},
 		TrackerConfig: config.TrackerConfig{URL: server.URL},
-		AppConfig:     config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}},
+		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
 		Logger:        api.NopLogger{},
-		Repo:          azRepoStub{},
+		Assets:        &trackers.DescriptionAssets{},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -213,99 +212,3 @@ func writeAZCookieFile(t *testing.T, tmp string, tracker string, domain string) 
 		t.Fatalf("write cookie file: %v", err)
 	}
 }
-
-type azRepoStub struct {
-	images []string
-}
-
-func (a azRepoStub) GetByPath(context.Context, string) (api.FileMetadata, error) {
-	return api.FileMetadata{}, nil
-}
-func (a azRepoStub) Save(context.Context, api.FileMetadata) error { return nil }
-func (a azRepoStub) GetExternalIDs(context.Context, string) (api.ExternalIDs, error) {
-	return api.ExternalIDs{}, nil
-}
-func (a azRepoStub) SaveExternalIDs(context.Context, api.ExternalIDs) error { return nil }
-func (a azRepoStub) GetExternalMetadata(context.Context, string) (api.ExternalMetadata, error) {
-	return api.ExternalMetadata{}, nil
-}
-func (a azRepoStub) SaveExternalMetadata(context.Context, api.ExternalMetadata) error { return nil }
-func (a azRepoStub) GetDVDMediaInfo(context.Context, string) (api.DVDMediaInfo, error) {
-	return api.DVDMediaInfo{}, nil
-}
-func (a azRepoStub) SaveDVDMediaInfo(context.Context, api.DVDMediaInfo) error { return nil }
-func (a azRepoStub) GetReleaseNameOverrides(context.Context, string) (api.ReleaseNameOverrides, error) {
-	return api.ReleaseNameOverrides{}, nil
-}
-func (a azRepoStub) SaveReleaseNameOverrides(context.Context, string, api.ReleaseNameOverrides) error {
-	return nil
-}
-func (a azRepoStub) DeleteReleaseNameOverrides(context.Context, string) error { return nil }
-func (a azRepoStub) GetDescriptionOverride(context.Context, string, string) (api.DescriptionOverride, error) {
-	return api.DescriptionOverride{}, nil
-}
-func (a azRepoStub) ListDescriptionOverridesByPath(context.Context, string) ([]api.DescriptionOverride, error) {
-	return nil, nil
-}
-func (a azRepoStub) SaveDescriptionOverride(context.Context, api.DescriptionOverride) error {
-	return nil
-}
-func (a azRepoStub) DeleteDescriptionOverride(context.Context, string, string) error { return nil }
-func (a azRepoStub) GetPlaylistSelection(context.Context, string) (api.PlaylistSelection, error) {
-	return api.PlaylistSelection{}, nil
-}
-func (a azRepoStub) SavePlaylistSelection(context.Context, string, []string, bool) error { return nil }
-func (a azRepoStub) DeletePlaylistSelection(context.Context, string) error               { return nil }
-func (a azRepoStub) ListHistoryEntries(context.Context) ([]api.HistoryEntry, error)      { return nil, nil }
-func (a azRepoStub) ListUploadHistoryByPath(context.Context, string) ([]api.UploadRecord, error) {
-	return nil, nil
-}
-func (a azRepoStub) ListPendingUploads(context.Context) ([]api.UploadRecord, error) { return nil, nil }
-func (a azRepoStub) CreateUploadRecord(context.Context, api.UploadRecord) error     { return nil }
-func (a azRepoStub) UpdateLatestUploadRecordStatus(context.Context, string, string, string) error {
-	return nil
-}
-func (a azRepoStub) SaveTrackerRuleFailures(context.Context, string, string, []api.TrackerRuleFailure) error {
-	return nil
-}
-func (a azRepoStub) ListTrackerRuleFailuresByPath(context.Context, string) ([]api.TrackerRuleFailure, error) {
-	return nil, nil
-}
-func (a azRepoStub) GetTrackerTimestamp(context.Context, string) (time.Time, error) {
-	return time.Time{}, nil
-}
-func (a azRepoStub) SaveTrackerTimestamp(context.Context, api.TrackerTimestamp) error { return nil }
-func (a azRepoStub) SaveTrackerMetadata(context.Context, api.TrackerMetadata) error   { return nil }
-func (a azRepoStub) ListTrackerMetadataByPath(context.Context, string) ([]api.TrackerMetadata, error) {
-	return []api.TrackerMetadata{{Tracker: "AZ", ImageURLs: a.images}}, nil
-}
-func (a azRepoStub) SaveScreenshot(context.Context, api.Screenshot) error { return nil }
-func (a azRepoStub) ListScreenshotsByPath(context.Context, string) ([]api.Screenshot, error) {
-	return nil, nil
-}
-func (a azRepoStub) DeleteScreenshot(context.Context, string) error { return nil }
-func (a azRepoStub) SaveFinalSelections(context.Context, string, []api.ScreenshotFinalSelection) error {
-	return nil
-}
-func (a azRepoStub) ListFinalSelections(context.Context, string) ([]api.ScreenshotFinalSelection, error) {
-	return nil, nil
-}
-func (a azRepoStub) DeleteFinalSelection(context.Context, string) error { return nil }
-func (a azRepoStub) ReplaceScreenshotSlots(context.Context, string, []api.ScreenshotSlot) error {
-	return nil
-}
-func (a azRepoStub) ListScreenshotSlotsByPath(context.Context, string) ([]api.ScreenshotSlot, error) {
-	return nil, nil
-}
-func (a azRepoStub) UpsertScreenshotSlotVariants(context.Context, string, []api.ScreenshotSlotVariant) error {
-	return nil
-}
-func (a azRepoStub) SaveUploadedImages(context.Context, string, string, []api.UploadedImageLink) error {
-	return nil
-}
-func (a azRepoStub) ListUploadedImagesByPath(context.Context, string) ([]api.UploadedImageLink, error) {
-	return nil, nil
-}
-func (a azRepoStub) DeleteUploadedImage(context.Context, string, string, string) error { return nil }
-func (a azRepoStub) ListStoredReleasePaths(context.Context) ([]string, error)          { return nil, nil }
-func (a azRepoStub) PurgeContentData(context.Context, string) error                    { return nil }

@@ -23,9 +23,8 @@ import (
 )
 
 func TestResolveGroupDescriptionSkipsTVDBForMovie(t *testing.T) {
-	got := resolveGroupDescription(api.PreparedMetadata{
-		MediaInfoCategory: "TV",
-		ExternalIDs:       api.ExternalIDs{Category: "MOVIE", TVDBID: 456},
+	got := resolveGroupDescription(api.UploadSubject{
+		Identity: api.ExternalIdentity{Category: "MOVIE", TVDBID: 456},
 	})
 	if strings.Contains(got, "thetvdb.com") {
 		t.Fatalf("did not expect tvdb link for movie description, got %q", got)
@@ -33,8 +32,8 @@ func TestResolveGroupDescriptionSkipsTVDBForMovie(t *testing.T) {
 }
 
 func TestResolveGroupDescriptionIncludesTVDBForTV(t *testing.T) {
-	got := resolveGroupDescription(api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{Category: "TV", TVDBID: 456},
+	got := resolveGroupDescription(api.UploadSubject{
+		Identity: api.ExternalIdentity{Category: "TV", TVDBID: 456},
 	})
 	if !strings.Contains(got, "thetvdb.com/?id=456") {
 		t.Fatalf("expected tvdb link for TV description, got %q", got)
@@ -96,7 +95,11 @@ func TestResolveSessionForTrackerAuthReportsPostLoginCookiePersistenceFailure(t 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/login":
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "abc", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "abc",
+				Path:  "/",
+			})
 			_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
 		case "/index.php":
 			_, _ = w.Write([]byte(`authkey=abcdefghijklmnopqrstuvwxyzABCDEF`))
@@ -132,7 +135,11 @@ func TestResolveSessionForTrackerAuthSavesCookiesWhenLoginResponseContainsAuthKe
 				_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
 				return
 			}
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "fresh", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "fresh",
+				Path:  "/",
+			})
 			_, _ = w.Write([]byte(`authkey=abcdefghijklmnopqrstuvwxyzABCDEF`))
 		case "/index.php":
 			indexRequests++
@@ -243,7 +250,11 @@ func TestResolveSessionForTrackerAuthPostsLoginToRedirectedHost(t *testing.T) {
 			return
 		case r.URL.Path == "/login" && r.Method == http.MethodPost:
 			postedCanonicalLogin = true
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "fresh", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "fresh",
+				Path:  "/",
+			})
 			_, _ = w.Write([]byte(`authkey=abcdefghijklmnopqrstuvwxyzABCDEF`))
 		default:
 			http.NotFound(w, r)
@@ -291,7 +302,11 @@ func TestUploadPostsToRedirectedLoginHost(t *testing.T) {
 		case r.URL.Path == "/login" && r.Method == http.MethodGet:
 			_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
 		case r.URL.Path == "/login" && r.Method == http.MethodPost:
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "fresh", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "fresh",
+				Path:  "/",
+			})
 			_, _ = w.Write([]byte(`authkey=abcdefghijklmnopqrstuvwxyzABCDEF`))
 		case r.URL.Path == mtvUploadPath && r.Method == http.MethodPost && strings.HasPrefix(r.Host, "localhost:"):
 			t.Error("upload POST used original host")
@@ -313,9 +328,9 @@ func TestUploadPostsToRedirectedLoginHost(t *testing.T) {
 	canonicalURL = server.URL
 	sourceURL := strings.Replace(server.URL, "127.0.0.1", "localhost", 1)
 
-	summary, err := upload(ctx, trackers.UploadRequest{
+	summary, err := upload(ctx, trackers.PreparationInput{
 		Tracker: "MTV",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			TorrentPath: torrentPath,
 			ReleaseName: "Release",
 		},
@@ -324,8 +339,8 @@ func TestUploadPostsToRedirectedLoginHost(t *testing.T) {
 			Username: "user",
 			Password: "pass",
 		},
-		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
-		Assets:    &trackers.DescriptionAssets{Final: true, Description: "desc"},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
+		Assets:  &trackers.DescriptionAssets{Final: true, Description: "desc"},
 	})
 	if err != nil {
 		t.Fatalf("upload: %v", err)
@@ -397,7 +412,11 @@ func TestResolveSessionForTrackerAuthDoesNotPersistCookiesBeforeAuthKeyValidatio
 				_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
 				return
 			}
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "unverified", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "unverified",
+				Path:  "/",
+			})
 			_, _ = w.Write([]byte(`<html>logged in without auth key</html>`))
 		case "/index.php":
 			_, _ = w.Write([]byte(`<html>temporary account notice</html>`))
@@ -448,7 +467,11 @@ func TestResolveSessionForTrackerAuthLoginUsesManual2FACode(t *testing.T) {
 				return
 			}
 			gotCode = r.FormValue("code")
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "new",
+				Path:  "/",
+			})
 			_, _ = w.Write([]byte(`authkey=abcdefghijklmnopqrstuvwxyzABCDEF`))
 		default:
 			http.NotFound(w, r)
@@ -598,7 +621,11 @@ func TestResolveSessionForTrackerAuthLoginReportsSafeAuthKeyDiagnostics(t *testi
 				_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">`))
 				return
 			}
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "new",
+				Path:  "/",
+			})
 			_, _ = w.Write([]byte(`<html>login accepted but no upload token secret-response-body</html>`))
 		case "/index.php":
 			_, _ = w.Write([]byte(`<html>logged in but no upload token other-secret-body</html>`))

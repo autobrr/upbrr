@@ -8,26 +8,29 @@ import (
 	"testing"
 )
 
-func TestPreparedMetadataSeasonEpisodeHelpers(t *testing.T) {
-	meta := PreparedMetadata{
-		SeasonInt: 9,
-		Release: ReleaseInfo{
-			Season:  1,
-			Episode: 2,
-		},
-	}
+func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
+	t.Parallel()
 
-	canonicalSeason, canonicalEpisode := meta.CanonicalSeasonEpisode()
-	if canonicalSeason != 9 || canonicalEpisode != 0 {
-		t.Fatalf("canonical season/episode = %d/%d, want 9/0", canonicalSeason, canonicalEpisode)
+	source := UploadSubject{
+		Release: ReleaseInfo{Codec: []string{"H.265"}},
+		ProviderMetadata: SourceScopedMetadata{TMDB: &TMDBMetadata{
+			LocalizedTitles: map[string]string{"en": "Example Release 2026"},
+		}},
+		SelectedBDMVPlaylists: []PlaylistInfo{{File: "00001.mpls"}},
 	}
+	projected := NewDescriptionSubject(source)
+	projected.Release.Codec[0] = "changed"
+	projected.ProviderMetadata.TMDB.LocalizedTitles["en"] = "changed"
+	projected.SelectedBDMVPlaylists[0].File = "changed"
 
-	fallbackSeason, fallbackEpisode := meta.SeasonEpisodeWithParsedFallback()
-	if fallbackSeason != 9 || fallbackEpisode != 2 {
-		t.Fatalf("fallback season/episode = %d/%d, want 9/2", fallbackSeason, fallbackEpisode)
+	if source.Release.Codec[0] != "H.265" {
+		t.Fatal("release facts share storage with description subject")
 	}
-	if !meta.HasTVSeasonEpisodeSignal() {
-		t.Fatalf("expected parsed release episode to provide TV signal")
+	if source.ProviderMetadata.TMDB.LocalizedTitles["en"] != "Example Release 2026" {
+		t.Fatal("provider metadata shares storage with description subject")
+	}
+	if source.SelectedBDMVPlaylists[0].File != "00001.mpls" {
+		t.Fatal("playlist facts share storage with description subject")
 	}
 }
 

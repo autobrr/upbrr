@@ -38,7 +38,11 @@ func NewClient(httpClient *http.Client, logger api.Logger) *Client {
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
-	return &Client{baseURL: defaultBaseURL, http: httpClient, logger: logger}
+	return &Client{
+		baseURL: defaultBaseURL,
+		http:    httpClient,
+		logger:  logger,
+	}
 }
 
 func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage string, debug bool) (Info, error) {
@@ -48,7 +52,10 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 		return info, nil
 	}
 
-	query := fmt.Sprintf(`query GetTitleInfo { title(id: "%s") { id titleText { text isOriginalTitle country { text } } originalTitleText { text } releaseYear { year endYear } titleType { id } plot { plotText { plainText } } ratingsSummary { aggregateRating voteCount } primaryImage { url } runtime { displayableProperty { value { plainText } } seconds } titleGenres { genres { genre { text } } } principalCredits { category { text id } credits { name { id nameText { text } } } } episodes { episodes(first: 500) { edges { node { id series { displayableEpisodeNumber { displayableSeason { season } episodeNumber { text } } } titleText { text } releaseYear { year } releaseDate { year month day } } } pageInfo { hasNextPage hasPreviousPage } total } } runtimes(first: 10) { edges { node { id seconds displayableProperty { value { plainText } } attributes { text } } } } technicalSpecifications { soundMixes { items { text attributes { text } } } } akas(first: 100) { edges { node { text country { text } language { text } attributes { text } } } } countriesOfOrigin { countries { text } } } }`, escapeGraphQLString(id))
+	query := fmt.Sprintf(
+		`query GetTitleInfo { title(id: "%s") { id titleText { text isOriginalTitle country { text } } originalTitleText { text } releaseYear { year endYear } titleType { id } plot { plotText { plainText } } ratingsSummary { aggregateRating voteCount } primaryImage { url } runtime { displayableProperty { value { plainText } } seconds } titleGenres { genres { genre { text } } } principalCredits { category { text id } credits { name { id nameText { text } } } } episodes { episodes(first: 500) { edges { node { id series { displayableEpisodeNumber { displayableSeason { season } episodeNumber { text } } } titleText { text } releaseYear { year } releaseDate { year month day } } } pageInfo { hasNextPage hasPreviousPage } total } } runtimes(first: 10) { edges { node { id seconds displayableProperty { value { plainText } } attributes { text } } } } technicalSpecifications { soundMixes { items { text attributes { text } } } } akas(first: 100) { edges { node { text country { text } language { text } attributes { text } } } } countriesOfOrigin { countries { text } } } }`,
+		escapeGraphQLString(id),
+	)
 
 	var response map[string]any
 	if err := c.postGraphQL(ctx, query, &response); err != nil {
@@ -381,14 +388,22 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 				if c.logger != nil {
 					c.logger.Infof("imdb: search auto-selected id=%d similarity=%.2f", best.IMDbID, best.Similarity)
 				}
-				return SearchResult{IMDbID: best.IMDbID, Candidates: candidates, AutoSelected: true}, nil
+				return SearchResult{
+					IMDbID:       best.IMDbID,
+					Candidates:   candidates,
+					AutoSelected: true,
+				}, nil
 			}
 		}
 		if input.Unattended {
 			if c.logger != nil {
 				c.logger.Infof("imdb: search unattended auto-selected id=%d similarity=%.2f", best.IMDbID, best.Similarity)
 			}
-			return SearchResult{IMDbID: best.IMDbID, Candidates: candidates, AutoSelected: true}, nil
+			return SearchResult{
+				IMDbID:       best.IMDbID,
+				Candidates:   candidates,
+				AutoSelected: true,
+			}, nil
 		}
 		return SearchResult{IMDbID: 0, Candidates: candidates}, nil
 	}
@@ -442,7 +457,10 @@ func (c *Client) GetEpisodeInfo(ctx context.Context, imdbID string, debug bool) 
 		return EpisodeLookup{}, nil
 	}
 
-	query := fmt.Sprintf(`query { title(id: "%s") { id titleText { text } series { displayableEpisodeNumber { displayableSeason { id season text } episodeNumber { id text } } nextEpisode { id titleText { text } } previousEpisode { id titleText { text } } series { id titleText { text } } } } }`, escapeGraphQLString(id))
+	query := fmt.Sprintf(
+		`query { title(id: "%s") { id titleText { text } series { displayableEpisodeNumber { displayableSeason { id season text } episodeNumber { id text } } nextEpisode { id titleText { text } } previousEpisode { id titleText { text } } series { id titleText { text } } } } }`,
+		escapeGraphQLString(id),
+	)
 	var response map[string]any
 	if err := c.postGraphQL(ctx, query, &response); err != nil {
 		return EpisodeLookup{}, err
@@ -488,7 +506,13 @@ func (c *Client) GetEpisodeInfo(ctx context.Context, imdbID string, debug bool) 
 		c.logger.Debugf("imdb: episode lookup loaded for %s", id)
 	}
 	if c.logger != nil {
-		c.logger.Tracef("imdb: episode lookup loaded id=%s series=%q season=%s episode=%s", id, lookup.Series.SeriesTitle, lookup.Series.SeasonText, lookup.Series.EpisodeText)
+		c.logger.Tracef(
+			"imdb: episode lookup loaded id=%s series=%q season=%s episode=%s",
+			id,
+			lookup.Series.SeriesTitle,
+			lookup.Series.SeasonText,
+			lookup.Series.EpisodeText,
+		)
 	}
 
 	return lookup, nil
@@ -515,7 +539,10 @@ func (c *Client) runSearch(ctx context.Context, filename string, searchYear int,
 	}
 	constraintsString := strings.Join(constraints, ", ")
 
-	query := fmt.Sprintf(`{ advancedTitleSearch(first: 10, constraints: {%s}) { total edges { node { title { id titleText { text } titleType { text } releaseYear { year } plot { plotText { plainText } } } } } } }`, constraintsString)
+	query := fmt.Sprintf(
+		`{ advancedTitleSearch(first: 10, constraints: {%s}) { total edges { node { title { id titleText { text } titleType { text } releaseYear { year } plot { plotText { plainText } } } } } } }`,
+		constraintsString,
+	)
 	var response map[string]any
 	if err := c.postGraphQL(ctx, query, &response); err != nil {
 		return nil
@@ -598,7 +625,15 @@ func rankCandidates(results []map[string]any, filename string, searchYear int) [
 				similarity += 0.05
 			}
 		}
-		candidates = append(candidates, Candidate{IMDbID: imdbID, Title: text, Year: year, Type: getStringFromMap(title, "titleType", "text"), Plot: plot, PosterURL: posterURL, Similarity: similarity})
+		candidates = append(candidates, Candidate{
+			IMDbID:     imdbID,
+			Title:      text,
+			Year:       year,
+			Type:       getStringFromMap(title, "titleType", "text"),
+			Plot:       plot,
+			PosterURL:  posterURL,
+			Similarity: similarity,
+		})
 	}
 
 	sort.SliceStable(candidates, func(i, j int) bool {

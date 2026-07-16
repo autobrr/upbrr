@@ -93,14 +93,50 @@ func TestImportFromContentRejectsDestructiveObjectOverlays(t *testing.T) {
 		payload []byte
 		wantErr bool
 	}{
-		{name: "yaml-null", file: "config.yaml", payload: []byte("main_settings: null\n")},
-		{name: "yaml-empty-map", file: "config.yaml", payload: []byte("main_settings: {}\n")},
-		{name: "yaml-empty-array", file: "config.yaml", payload: []byte("main_settings: []\n"), wantErr: true},
-		{name: "yaml-scalar", file: "config.yaml", payload: []byte("main_settings: nope\n"), wantErr: true},
-		{name: "json-null", file: "config.json", payload: []byte(`{"MainSettings":null}`)},
-		{name: "json-empty-map", file: "config.json", payload: []byte(`{"MainSettings":{}}`)},
-		{name: "json-empty-array", file: "config.json", payload: []byte(`{"MainSettings":[]}`), wantErr: true},
-		{name: "json-scalar", file: "config.json", payload: []byte(`{"MainSettings":"nope"}`), wantErr: true},
+		{
+			name:    "yaml-null",
+			file:    "config.yaml",
+			payload: []byte("main_settings: null\n"),
+		},
+		{
+			name:    "yaml-empty-map",
+			file:    "config.yaml",
+			payload: []byte("main_settings: {}\n"),
+		},
+		{
+			name:    "yaml-empty-array",
+			file:    "config.yaml",
+			payload: []byte("main_settings: []\n"),
+			wantErr: true,
+		},
+		{
+			name:    "yaml-scalar",
+			file:    "config.yaml",
+			payload: []byte("main_settings: nope\n"),
+			wantErr: true,
+		},
+		{
+			name:    "json-null",
+			file:    "config.json",
+			payload: []byte(`{"MainSettings":null}`),
+		},
+		{
+			name:    "json-empty-map",
+			file:    "config.json",
+			payload: []byte(`{"MainSettings":{}}`),
+		},
+		{
+			name:    "json-empty-array",
+			file:    "config.json",
+			payload: []byte(`{"MainSettings":[]}`),
+			wantErr: true,
+		},
+		{
+			name:    "json-scalar",
+			file:    "config.json",
+			payload: []byte(`{"MainSettings":"nope"}`),
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -131,16 +167,56 @@ func TestImportFromContentRejectsUnknownTopLevelSections(t *testing.T) {
 		file    string
 		payload []byte
 	}{
-		{name: "yaml-scalar", file: "config.yaml", payload: []byte("unknown_section: nope\n")},
-		{name: "yaml-array", file: "config.yaml", payload: []byte("unknown_section: []\n")},
-		{name: "yaml-object", file: "config.yaml", payload: []byte("unknown_section:\n  nested: true\n")},
-		{name: "yaml-null", file: "config.yaml", payload: []byte("unknown_section: null\n")},
-		{name: "yaml-case-twin", file: "config.yaml", payload: []byte("MainSettings:\n  TMDBAPI: wrong\n")},
-		{name: "json-scalar", file: "config.json", payload: []byte(`{"UnknownSection":"nope"}`)},
-		{name: "json-array", file: "config.json", payload: []byte(`{"UnknownSection":[]}`)},
-		{name: "json-object", file: "config.json", payload: []byte(`{"UnknownSection":{"nested":true}}`)},
-		{name: "json-null", file: "config.json", payload: []byte(`{"UnknownSection":null}`)},
-		{name: "json-case-twin", file: "config.json", payload: []byte(`{"main_settings":{"tmdb_api":"wrong"}}`)},
+		{
+			name:    "yaml-scalar",
+			file:    "config.yaml",
+			payload: []byte("unknown_section: nope\n"),
+		},
+		{
+			name:    "yaml-array",
+			file:    "config.yaml",
+			payload: []byte("unknown_section: []\n"),
+		},
+		{
+			name:    "yaml-object",
+			file:    "config.yaml",
+			payload: []byte("unknown_section:\n  nested: true\n"),
+		},
+		{
+			name:    "yaml-null",
+			file:    "config.yaml",
+			payload: []byte("unknown_section: null\n"),
+		},
+		{
+			name:    "yaml-case-twin",
+			file:    "config.yaml",
+			payload: []byte("MainSettings:\n  TMDBAPI: wrong\n"),
+		},
+		{
+			name:    "json-scalar",
+			file:    "config.json",
+			payload: []byte(`{"UnknownSection":"nope"}`),
+		},
+		{
+			name:    "json-array",
+			file:    "config.json",
+			payload: []byte(`{"UnknownSection":[]}`),
+		},
+		{
+			name:    "json-object",
+			file:    "config.json",
+			payload: []byte(`{"UnknownSection":{"nested":true}}`),
+		},
+		{
+			name:    "json-null",
+			file:    "config.json",
+			payload: []byte(`{"UnknownSection":null}`),
+		},
+		{
+			name:    "json-case-twin",
+			file:    "config.json",
+			payload: []byte(`{"main_settings":{"tmdb_api":"wrong"}}`),
+		},
 	}
 
 	for _, tt := range tests {

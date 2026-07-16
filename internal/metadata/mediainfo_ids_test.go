@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -21,7 +23,7 @@ func TestApplyMediaInfoIDsFromJSON(t *testing.T) {
 	}
 
 	svc := &Service{}
-	meta, err := svc.ApplyMediaInfoIDs(context.Background(), api.PreparedMetadata{MediaInfoJSONPath: jsonPath})
+	meta, err := svc.collectMediaInfoIdentityEvidence(context.Background(), preparationstate.State{MediaInfoJSONPath: jsonPath})
 	if err != nil {
 		t.Fatalf("apply mediainfo ids: %v", err)
 	}
@@ -48,7 +50,7 @@ func TestApplyMediaInfoIDsTextTVDBPriority(t *testing.T) {
 	}
 
 	svc := &Service{}
-	meta, err := svc.ApplyMediaInfoIDs(context.Background(), api.PreparedMetadata{MediaInfoTextPath: textPath})
+	meta, err := svc.collectMediaInfoIdentityEvidence(context.Background(), preparationstate.State{MediaInfoTextPath: textPath})
 	if err != nil {
 		t.Fatalf("apply mediainfo ids: %v", err)
 	}
@@ -66,7 +68,7 @@ func TestApplyMediaInfoIDsMismatch(t *testing.T) {
 	}
 
 	svc := &Service{}
-	meta, err := svc.ApplyMediaInfoIDs(context.Background(), api.PreparedMetadata{
+	meta, err := svc.collectMediaInfoIdentityEvidence(context.Background(), preparationstate.State{
 		MediaInfoJSONPath: jsonPath,
 		TrackerData:       []api.TrackerMetadata{{TMDBID: 999}},
 	})

@@ -19,9 +19,9 @@ import (
 
 func TestDefinitionBuildDescriptionUsesMTVGroup(t *testing.T) {
 	d := New()
-	result, err := d.BuildDescription(context.Background(), trackers.DescriptionRequest{
+	result, err := d.prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "MTV",
-		Meta:    api.PreparedMetadata{},
+		Meta:    api.UploadSubject{},
 		Logger:  api.NopLogger{},
 	})
 	if err != nil {
@@ -34,10 +34,10 @@ func TestDefinitionBuildDescriptionUsesMTVGroup(t *testing.T) {
 
 func TestDefinitionUploadMissingCookieFile(t *testing.T) {
 	d := New()
-	_, err := d.Upload(context.Background(), trackers.UploadRequest{
-		Tracker:   "MTV",
-		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "ua.db")}},
-		Logger:    api.NopLogger{},
+	_, err := d.submit(context.Background(), trackers.PreparationInput{
+		Tracker: "MTV",
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "ua.db")}}),
+		Logger:  api.NopLogger{},
 	})
 	if err == nil {
 		t.Fatal("expected missing cookie file error")
@@ -83,19 +83,19 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	defer server.Close()
 
 	d := New()
-	result, err := d.Upload(context.Background(), trackers.UploadRequest{
+	result, err := d.submit(context.Background(), trackers.PreparationInput{
 		Tracker: "MTV",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:      filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath:     torrentPath,
-			ExternalIDs:     api.ExternalIDs{Category: "MOVIE"},
+			Identity:        api.ExternalIdentity{Category: "MOVIE"},
 			Type:            "WEBDL",
 			VideoCodec:      "HEVC",
 			ReleaseName:     "My.Release.2026.2160p.WEBDL.HEVC",
 			ServiceLongName: "Netflix",
 		},
 		TrackerConfig: config.TrackerConfig{URL: server.URL},
-		AppConfig:     config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 		Logger:        api.NopLogger{},
 	})
 	if err != nil {
@@ -130,7 +130,11 @@ func TestDefinitionUploadLoginBootstrapSuccess(t *testing.T) {
 				t.Error("unexpected login credentials")
 				return
 			}
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "cookievalue", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "cookievalue",
+				Path:  "/",
+			})
 			http.Redirect(w, r, "/index.php", http.StatusFound)
 		case "/index.php":
 			if _, err := r.Cookie("session"); err != nil {
@@ -162,20 +166,24 @@ func TestDefinitionUploadLoginBootstrapSuccess(t *testing.T) {
 	defer server.Close()
 
 	d := New()
-	result, err := d.Upload(context.Background(), trackers.UploadRequest{
+	result, err := d.submit(context.Background(), trackers.PreparationInput{
 		Tracker: "MTV",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:      filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath:     torrentPath,
-			ExternalIDs:     api.ExternalIDs{Category: "MOVIE"},
+			Identity:        api.ExternalIdentity{Category: "MOVIE"},
 			Type:            "WEBDL",
 			VideoCodec:      "HEVC",
 			ReleaseName:     "My.Release.2026.2160p.WEBDL.HEVC",
 			ServiceLongName: "Netflix",
 		},
-		TrackerConfig: config.TrackerConfig{URL: server.URL, Username: "user", Password: "pass"},
-		AppConfig:     config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
-		Logger:        api.NopLogger{},
+		TrackerConfig: config.TrackerConfig{
+			URL:      server.URL,
+			Username: "user",
+			Password: "pass",
+		},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
+		Logger:  api.NopLogger{},
 	})
 	if err != nil {
 		t.Fatalf("unexpected upload error: %v", err)

@@ -20,9 +20,9 @@ import (
 
 func TestDefinitionBuildDescriptionUsesHDBGroup(t *testing.T) {
 	d := New()
-	result, err := d.BuildDescription(context.Background(), trackers.DescriptionRequest{
+	result, err := d.prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "HDB",
-		Meta:    api.PreparedMetadata{},
+		Meta:    api.UploadSubject{},
 		Logger:  api.NopLogger{},
 	})
 	if err != nil {
@@ -35,9 +35,9 @@ func TestDefinitionBuildDescriptionUsesHDBGroup(t *testing.T) {
 
 func TestDefinitionBuildDescriptionUsesProvidedAssets(t *testing.T) {
 	d := New()
-	result, err := d.BuildDescription(context.Background(), trackers.DescriptionRequest{
+	result, err := d.prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "HDB",
-		Meta:    api.PreparedMetadata{},
+		Meta:    api.UploadSubject{},
 		Logger:  api.NopLogger{},
 		Assets: &trackers.DescriptionAssets{
 			Description: "kept description",
@@ -58,9 +58,9 @@ func TestDefinitionBuildDescriptionUsesProvidedAssets(t *testing.T) {
 
 func TestDefinitionBuildDescriptionUsesProvidedMenuImages(t *testing.T) {
 	d := New()
-	result, err := d.BuildDescription(context.Background(), trackers.DescriptionRequest{
+	result, err := d.prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "HDB",
-		Meta:    api.PreparedMetadata{},
+		Meta:    api.UploadSubject{},
 		Logger:  api.NopLogger{},
 		Assets: &trackers.DescriptionAssets{
 			MenuImages: []api.ScreenshotImage{{
@@ -80,7 +80,7 @@ func TestDefinitionBuildDescriptionUsesProvidedMenuImages(t *testing.T) {
 
 func TestDefinitionUploadMissingCredentials(t *testing.T) {
 	d := New()
-	_, err := d.Upload(context.Background(), trackers.UploadRequest{Tracker: "HDB", Logger: api.NopLogger{}})
+	_, err := d.submit(context.Background(), trackers.PreparationInput{Tracker: "HDB", Logger: api.NopLogger{}})
 	if err == nil {
 		t.Fatal("expected missing credentials error")
 	}
@@ -156,12 +156,12 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	defer server.Close()
 
 	d := New()
-	result, err := d.Upload(context.Background(), trackers.UploadRequest{
+	result, err := d.submit(context.Background(), trackers.PreparationInput{
 		Tracker: "HDB",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath: torrentPath,
-			ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+			Identity:    api.ExternalIdentity{Category: "MOVIE"},
 			Type:        "WEBDL",
 			VideoCodec:  "HEVC",
 			ReleaseName: "My.Release.2026.2160p.WEBDL.HEVC",
@@ -171,8 +171,8 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 			Username: "user",
 			Passkey:  "pass",
 		},
-		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
-		Logger:    api.NopLogger{},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
+		Logger:  api.NopLogger{},
 		Assets: &trackers.DescriptionAssets{
 			Description: "kept description",
 			Screenshots: []api.ScreenshotImage{{
@@ -230,12 +230,12 @@ func TestDefinitionBuildUploadDryRunUsesProvidedAssets(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	entry, err := buildUploadDryRun(context.Background(), trackers.UploadRequest{
+	entry, err := buildUploadDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "HDB",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath: torrentPath,
-			ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+			Identity:    api.ExternalIdentity{Category: "MOVIE"},
 			Type:        "WEBDL",
 			VideoCodec:  "HEVC",
 			ReleaseName: "My.Release.2026.2160p.WEBDL.HEVC",
@@ -244,8 +244,8 @@ func TestDefinitionBuildUploadDryRunUsesProvidedAssets(t *testing.T) {
 			Username: "user",
 			Passkey:  "pass",
 		},
-		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}},
-		Logger:    api.NopLogger{},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
+		Logger:  api.NopLogger{},
 		Assets: &trackers.DescriptionAssets{
 			Description: "kept description",
 			Screenshots: []api.ScreenshotImage{{
@@ -264,9 +264,8 @@ func TestDefinitionBuildUploadDryRunUsesProvidedAssets(t *testing.T) {
 }
 
 func TestBuildUploadFieldsSkipsTVDBForMovie(t *testing.T) {
-	fields := buildUploadFields(api.PreparedMetadata{
-		MediaInfoCategory: "TV",
-		ExternalIDs:       api.ExternalIDs{Category: "MOVIE", TVDBID: 765432},
+	fields := buildUploadFields(api.UploadSubject{
+		Identity: api.ExternalIdentity{Category: "MOVIE", TVDBID: 765432},
 	}, config.Config{}, 1, 5, 6, "description")
 
 	if _, ok := fields["tvdb"]; ok {
@@ -281,10 +280,10 @@ func TestBuildUploadFieldsSkipsTVDBForMovie(t *testing.T) {
 }
 
 func TestBuildUploadFieldsIncludesTVDBForTV(t *testing.T) {
-	fields := buildUploadFields(api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{Category: "TV", TVDBID: 765432},
-		SeasonInt:   2,
-		EpisodeInt:  3,
+	fields := buildUploadFields(api.UploadSubject{
+		Identity:   api.ExternalIdentity{Category: "TV", TVDBID: 765432},
+		SeasonInt:  2,
+		EpisodeInt: 3,
 	}, config.Config{}, 2, 5, 6, "description")
 
 	if got := fields["tvdb"]; got != "765432" {

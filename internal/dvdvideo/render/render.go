@@ -155,7 +155,11 @@ func Probe(ctx context.Context, runner Runner, executable string) (Capability, e
 	if version == "" {
 		version = firstLine(string(versionOutput.Stderr))
 	}
-	return Capability{Available: true, Version: version, Options: options}, nil
+	return Capability{
+		Available: true,
+		Version:   version,
+		Options:   options,
+	}, nil
 }
 
 func firstLine(value string) string {
@@ -191,7 +195,10 @@ func BuildArgs(request FrameRequest) ([]string, error) {
 	if strings.TrimSpace(request.SourcePath) == "" {
 		return nil, fmt.Errorf("%w: empty source", ErrFrame)
 	}
-	if request.VTS < 0 || request.VTS > 99 || request.LanguageUnit < 1 || request.LanguageUnit > 99 || request.PGC < 1 || request.PGC > 999 || request.Program < 1 || request.Program > 255 || request.Target < 0 {
+	if request.VTS < 0 || request.VTS > 99 || request.LanguageUnit < 1 || request.LanguageUnit > 99 || request.PGC < 1 || request.PGC > 999 ||
+		request.Program < 1 ||
+		request.Program > 255 ||
+		request.Target < 0 {
 		return nil, fmt.Errorf("%w: invalid menu coordinate", ErrFrame)
 	}
 	args := []string{
@@ -239,7 +246,8 @@ func DecodeFrame(ctx context.Context, runner Runner, executable string, request 
 	if err != nil {
 		return nil, fmt.Errorf("%w: image header", ErrFrame)
 	}
-	if config.Width <= 0 || config.Height <= 0 || config.Width > MaxFrameWidth || config.Height > MaxFrameHeight || uint64(config.Width)*uint64(config.Height) > MaxFramePixels {
+	if config.Width <= 0 || config.Height <= 0 || config.Width > MaxFrameWidth || config.Height > MaxFrameHeight ||
+		uint64(config.Width)*uint64(config.Height) > MaxFramePixels {
 		return nil, fmt.Errorf("%w: image dimensions", ErrFrame)
 	}
 	frame, err := png.Decode(io.LimitReader(bytes.NewReader(output.Stdout), MaxFrameBytes))

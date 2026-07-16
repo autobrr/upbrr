@@ -8,7 +8,11 @@ import "testing"
 func TestExtractMediaInfoLanguagesSkipsCommentary(t *testing.T) {
 	doc := mediaInfoDoc{}
 	doc.Media.Track = []map[string]any{
-		{"@type": "Audio", "Language": "en", "Title": "Director Commentary"},
+		{
+			"@type":    "Audio",
+			"Language": "en",
+			"Title":    "Director Commentary",
+		},
 		{"@type": "Audio", "Language": "fr"},
 		{"@type": "Text", "Language": "en"},
 	}
@@ -24,7 +28,11 @@ func TestExtractMediaInfoLanguagesSkipsCommentary(t *testing.T) {
 func TestExtractMediaInfoLanguagesSkipsCompatibility(t *testing.T) {
 	doc := mediaInfoDoc{}
 	doc.Media.Track = []map[string]any{
-		{"@type": "Audio", "Language": "en", "Title": "Compatibility Track"},
+		{
+			"@type":    "Audio",
+			"Language": "en",
+			"Title":    "Compatibility Track",
+		},
 		{"@type": "Audio", "Language": "ja"},
 	}
 	audio, _ := extractMediaInfoLanguages(doc)

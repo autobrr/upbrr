@@ -13,11 +13,31 @@ func TestSupportsHDSResolution(t *testing.T) {
 		resolution string
 		expected   bool
 	}{
-		{name: "2160p", resolution: "2160p", expected: true},
-		{name: "1080i", resolution: "1080i", expected: true},
-		{name: "720p", resolution: "720p", expected: true},
-		{name: "576p", resolution: "576p", expected: false},
-		{name: "480p", resolution: "480p", expected: false},
+		{
+			name:       "2160p",
+			resolution: "2160p",
+			expected:   true,
+		},
+		{
+			name:       "1080i",
+			resolution: "1080i",
+			expected:   true,
+		},
+		{
+			name:       "720p",
+			resolution: "720p",
+			expected:   true,
+		},
+		{
+			name:       "576p",
+			resolution: "576p",
+			expected:   false,
+		},
+		{
+			name:       "480p",
+			resolution: "480p",
+			expected:   false,
+		},
 	}
 
 	for _, tc := range cases {

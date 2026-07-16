@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/autobrr/upbrr/pkg/api"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 )
 
 func TestDetectSeasonPackGroupTags(t *testing.T) {
@@ -16,13 +16,13 @@ func TestDetectSeasonPackGroupTags(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		meta       api.PreparedMetadata
+		meta       preparationstate.State
 		wantMixed  bool
 		wantGroups []string
 	}{
 		{
 			name: "mixed season pack groups",
-			meta: api.PreparedMetadata{
+			meta: preparationstate.State{
 				TVPack: true,
 				FileList: []string{
 					"Example.Show.S01E01.1080p.WEB-DL.x264-GRP.mkv",
@@ -34,7 +34,7 @@ func TestDetectSeasonPackGroupTags(t *testing.T) {
 		},
 		{
 			name: "same season pack groups",
-			meta: api.PreparedMetadata{
+			meta: preparationstate.State{
 				TVPack: true,
 				FileList: []string{
 					"Example.Show.S01E01.1080p.WEB-DL.x264-GRP.mkv",
@@ -45,7 +45,7 @@ func TestDetectSeasonPackGroupTags(t *testing.T) {
 		},
 		{
 			name: "mixed groups ignored outside season packs",
-			meta: api.PreparedMetadata{
+			meta: preparationstate.State{
 				FileList: []string{
 					"Example.Show.S01E01.1080p.WEB-DL.x264-GRP.mkv",
 					"Example.Show.S01E02.1080p.WEB-DL.x264-ALT.mkv",
@@ -55,7 +55,7 @@ func TestDetectSeasonPackGroupTags(t *testing.T) {
 		},
 		{
 			name: "unknown groups ignored",
-			meta: api.PreparedMetadata{
+			meta: preparationstate.State{
 				TVPack: true,
 				FileList: []string{
 					"Example.Show.S01E01.1080p.WEB-DL.x264-GRP.mkv",

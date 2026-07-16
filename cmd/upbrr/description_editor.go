@@ -19,7 +19,21 @@ import (
 
 var editCLIDescriptionFile = editDescriptionFile
 
-func maybeEditCLIDescriptions(ctx context.Context, coreSvc api.Core, reader *bufio.Reader, req api.Request, review api.UploadReview, opts cliOptions) (api.Request, api.UploadReview, error) {
+// cliDescriptionEditorCore composes description editing with the review rebuild required after a save.
+type cliDescriptionEditorCore interface {
+	cliUploadReviewer
+	FetchDescriptionBuilderPreview(context.Context, api.Request) (api.DescriptionBuilderPreview, error)
+	SaveDescriptionOverride(context.Context, api.Request, string) (api.DescriptionBuilderGroup, error)
+}
+
+func maybeEditCLIDescriptions(
+	ctx context.Context,
+	coreSvc cliDescriptionEditorCore,
+	reader *bufio.Reader,
+	req api.Request,
+	review api.UploadReview,
+	opts cliOptions,
+) (api.Request, api.UploadReview, error) {
 	if req.Options.OnlyID || opts.OnlyID {
 		return req, review, nil
 	}

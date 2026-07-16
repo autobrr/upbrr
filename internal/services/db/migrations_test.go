@@ -312,6 +312,31 @@ func TestMigrateAddAniListExternalMetadataCreatesMissingTable(t *testing.T) {
 	}
 }
 
+func TestCanonicalReleaseGenerationMigrationIsOnlyBranchMigration(t *testing.T) {
+	const (
+		publicBoundary = "2026_07_add_tracker_rule_failure_severity"
+		finalID        = "2026_07_add_canonical_release_generations"
+		removedID      = "2026_07_add_prepared_release_generations"
+	)
+
+	var final *migrationStep
+	for i := range migrationRegistry {
+		step := &migrationRegistry[i]
+		if step.id == removedID {
+			t.Fatalf("removed branch-only migration %q remains registered", removedID)
+		}
+		if step.id == finalID {
+			final = step
+		}
+	}
+	if final == nil {
+		t.Fatalf("final migration %q is not registered", finalID)
+	}
+	if !slices.Equal(final.dependsOn, []string{publicBoundary}) {
+		t.Fatalf("final migration dependencies = %v, want [%s]", final.dependsOn, publicBoundary)
+	}
+}
+
 func assertSQLiteObjectExists(t *testing.T, db *sql.DB, objectType, name string) {
 	t.Helper()
 

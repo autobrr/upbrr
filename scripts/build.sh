@@ -3,21 +3,17 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
-wails_cli="github.com/wailsapp/wails/v2/cmd/wails@v2.12.0"
-
-echo "Building frontend..."
+echo "Building WebUI..."
 (
-  cd gui/frontend
-  pnpm install
+  cd webui
+  pnpm install --frozen-lockfile
   pnpm run build
 )
 
-echo "Syncing embedded GUI assets..."
-mkdir -p internal/guiapp/assets
-find internal/guiapp/assets -mindepth 1 ! -name '.keep' -exec rm -rf {} +
-cp -R gui/frontend/dist/* internal/guiapp/assets/
+echo "Syncing embedded WebUI assets..."
+sh scripts/sync-webui-assets.sh
 
-echo "Building CLI binary..."
+echo "Building upbrr binary..."
 mkdir -p dist
 GOOS="" GOARCH="" go build -o dist/upbrr ./cmd/upbrr
 if [[ -d bin ]]; then
@@ -28,10 +24,4 @@ else
   echo "Skipping optional bundled tools: no top-level bin directory found."
 fi
 
-echo "Building GUI binary..."
-(
-  cd gui
-  go run "$wails_cli" build
-)
-
-echo "Done. Binaries: dist/upbrr (CLI) and gui/build/bin/upbrr-gui (GUI)"
+echo "Done. Binary: dist/upbrr"

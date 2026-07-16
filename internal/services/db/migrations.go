@@ -59,19 +59,212 @@ type migrationExecutor interface {
 //     bridge mapping also changed historically.
 var migrationRegistry = []migrationStep{
 	{id: baselineMigrationID, apply: createBaselineSchema},
-	{id: "2026_04_add_dvd_mediainfo", dependsOn: []string{baselineMigrationID}, apply: migrateAddDVDMediaInfo},
-	{id: "2026_04_add_release_override_use_season_episode", dependsOn: []string{baselineMigrationID}, apply: migrateAddReleaseOverrideUseSeasonEpisode},
-	{id: "2026_04_add_history_indexes", dependsOn: []string{baselineMigrationID}, apply: migrateAddHistoryIndexes},
-	{id: "2026_04_backfill_uploaded_image_usage_scope", dependsOn: []string{"2026_04_add_history_indexes"}, apply: migrateBackfillUploadedImageUsageScope},
-	{id: "2026_04_add_screenshot_slot_tables", dependsOn: []string{"2026_04_backfill_uploaded_image_usage_scope"}, apply: migrateAddScreenshotSlotTables},
-	{id: "2026_04_normalize_description_overrides", dependsOn: []string{"2026_04_add_screenshot_slot_tables"}, apply: migrateNormalizeDescriptionOverrides},
-	{id: "2026_04_add_tracker_cookies", dependsOn: []string{"2026_04_normalize_description_overrides"}, apply: migrateAddTrackerCookies},
-	{id: "2026_04_add_release_category", dependsOn: []string{"2026_04_add_tracker_cookies"}, apply: migrateAddReleaseCategory},
-	{id: "2026_05_add_bluray_external_metadata", dependsOn: []string{"2026_04_add_release_category"}, apply: migrateAddBlurayExternalMetadata},
-	{id: "2026_06_add_tracker_auth_state", dependsOn: []string{"2026_05_add_bluray_external_metadata"}, apply: migrateAddTrackerAuthState},
-	{id: "2026_07_add_external_ids_mal", dependsOn: []string{"2026_06_add_tracker_auth_state"}, apply: migrateAddExternalIDsMAL},
-	{id: "2026_07_add_anilist_external_metadata", dependsOn: []string{"2026_07_add_external_ids_mal"}, apply: migrateAddAniListExternalMetadata},
-	{id: "2026_07_add_tracker_rule_failure_severity", dependsOn: []string{"2026_07_add_anilist_external_metadata"}, apply: migrateAddTrackerRuleFailureSeverity},
+	{
+		id:        "2026_04_add_dvd_mediainfo",
+		dependsOn: []string{baselineMigrationID},
+		apply:     migrateAddDVDMediaInfo,
+	},
+	{
+		id:        "2026_04_add_release_override_use_season_episode",
+		dependsOn: []string{baselineMigrationID},
+		apply:     migrateAddReleaseOverrideUseSeasonEpisode,
+	},
+	{
+		id:        "2026_04_add_history_indexes",
+		dependsOn: []string{baselineMigrationID},
+		apply:     migrateAddHistoryIndexes,
+	},
+	{
+		id:        "2026_04_backfill_uploaded_image_usage_scope",
+		dependsOn: []string{"2026_04_add_history_indexes"},
+		apply:     migrateBackfillUploadedImageUsageScope,
+	},
+	{
+		id:        "2026_04_add_screenshot_slot_tables",
+		dependsOn: []string{"2026_04_backfill_uploaded_image_usage_scope"},
+		apply:     migrateAddScreenshotSlotTables,
+	},
+	{
+		id:        "2026_04_normalize_description_overrides",
+		dependsOn: []string{"2026_04_add_screenshot_slot_tables"},
+		apply:     migrateNormalizeDescriptionOverrides,
+	},
+	{
+		id:        "2026_04_add_tracker_cookies",
+		dependsOn: []string{"2026_04_normalize_description_overrides"},
+		apply:     migrateAddTrackerCookies,
+	},
+	{
+		id:        "2026_04_add_release_category",
+		dependsOn: []string{"2026_04_add_tracker_cookies"},
+		apply:     migrateAddReleaseCategory,
+	},
+	{
+		id:        "2026_05_add_bluray_external_metadata",
+		dependsOn: []string{"2026_04_add_release_category"},
+		apply:     migrateAddBlurayExternalMetadata,
+	},
+	{
+		id:        "2026_06_add_tracker_auth_state",
+		dependsOn: []string{"2026_05_add_bluray_external_metadata"},
+		apply:     migrateAddTrackerAuthState,
+	},
+	{
+		id:        "2026_07_add_external_ids_mal",
+		dependsOn: []string{"2026_06_add_tracker_auth_state"},
+		apply:     migrateAddExternalIDsMAL,
+	},
+	{
+		id:        "2026_07_add_anilist_external_metadata",
+		dependsOn: []string{"2026_07_add_external_ids_mal"},
+		apply:     migrateAddAniListExternalMetadata,
+	},
+	{
+		id:        "2026_07_add_tracker_rule_failure_severity",
+		dependsOn: []string{"2026_07_add_anilist_external_metadata"},
+		apply:     migrateAddTrackerRuleFailureSeverity,
+	},
+	{
+		id:        "2026_07_add_canonical_release_generations",
+		dependsOn: []string{"2026_07_add_tracker_rule_failure_severity"},
+		apply:     migrateAddCanonicalReleaseGenerations,
+	},
+}
+
+// migrateAddCanonicalReleaseGenerations is the branch's single first-time
+// migration from the last public schema to canonical prepared generations.
+func migrateAddCanonicalReleaseGenerations(ctx context.Context, exec migrationExecutor) error {
+	if _, err := exec.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS prepared_release_current (
+			source_path TEXT PRIMARY KEY,
+			generation INTEGER NOT NULL,
+			source_fingerprint TEXT NOT NULL,
+			fact_instruction_fingerprint TEXT NOT NULL,
+			policy_fingerprint TEXT NOT NULL,
+			contract_version TEXT NOT NULL,
+			source_json TEXT NOT NULL,
+			naming_json TEXT NOT NULL,
+			episode_json TEXT NOT NULL,
+			media_json TEXT NOT NULL,
+			disc_json TEXT NOT NULL,
+			assessments_json TEXT NOT NULL,
+			prepared_at TEXT NOT NULL
+		)
+	`); err != nil {
+		return fmt.Errorf("db: create prepared release current: %w", err)
+	}
+	if _, err := exec.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_prepared_release_current_generation
+		ON prepared_release_current (source_path, generation)
+	`); err != nil {
+		return fmt.Errorf("db: index prepared release current: %w", err)
+	}
+
+	if err := ensurePreparedExternalIDsSchema(ctx, exec); err != nil {
+		return err
+	}
+	if err := ensurePreparedExternalMetadataSchema(ctx, exec); err != nil {
+		return err
+	}
+	if _, err := exec.ExecContext(ctx, `
+		UPDATE external_ids SET
+			source_tmdb = CASE WHEN tmdb_id > 0 AND source_tmdb = "" THEN "legacy" ELSE source_tmdb END,
+			source_imdb = CASE WHEN imdb_id > 0 AND source_imdb = "" THEN "legacy" ELSE source_imdb END,
+			source_tvdb = CASE WHEN tvdb_id > 0 AND source_tvdb = "" THEN "legacy" ELSE source_tvdb END,
+			source_tvmaze = CASE WHEN tvmaze_id > 0 AND source_tvmaze = "" THEN "legacy" ELSE source_tvmaze END,
+			source_mal = CASE WHEN mal_id > 0 AND source_mal = "" THEN "legacy" ELSE source_mal END,
+			category_provenance = CASE WHEN category != "" AND category_provenance = "" THEN "legacy" ELSE category_provenance END,
+			contract_version = CASE WHEN contract_version = "" THEN "legacy" ELSE contract_version END
+	`); err != nil {
+		return fmt.Errorf("db: seed legacy external identity lineage: %w", err)
+	}
+	return nil
+}
+
+func ensurePreparedExternalIDsSchema(ctx context.Context, exec migrationExecutor) error {
+	exists, err := tableExists(ctx, exec, "external_ids")
+	if err != nil {
+		return fmt.Errorf("db: inspect external_ids for prepared release: %w", err)
+	}
+	if !exists {
+		if _, err := exec.ExecContext(ctx, `
+			CREATE TABLE external_ids (
+				source_path TEXT PRIMARY KEY,
+				generation INTEGER NOT NULL DEFAULT 0,
+				tmdb_id INTEGER NOT NULL DEFAULT 0,
+				imdb_id INTEGER NOT NULL DEFAULT 0,
+				tvdb_id INTEGER NOT NULL DEFAULT 0,
+				tvmaze_id INTEGER NOT NULL DEFAULT 0,
+				mal_id INTEGER NOT NULL DEFAULT 0,
+				category TEXT NOT NULL DEFAULT "",
+				source_tmdb TEXT NOT NULL DEFAULT "",
+				source_imdb TEXT NOT NULL DEFAULT "",
+				source_tvdb TEXT NOT NULL DEFAULT "",
+				source_tvmaze TEXT NOT NULL DEFAULT "",
+				source_mal TEXT NOT NULL DEFAULT "",
+				category_provenance TEXT NOT NULL DEFAULT "",
+				override_json TEXT NOT NULL DEFAULT "{}",
+				conflict_status TEXT NOT NULL DEFAULT "none",
+				source_fingerprint TEXT NOT NULL DEFAULT "",
+				intent_fingerprint TEXT NOT NULL DEFAULT "",
+				contract_version TEXT NOT NULL DEFAULT "legacy",
+				resolved_at TEXT NOT NULL DEFAULT "",
+				updated_at TEXT NOT NULL
+			)
+		`); err != nil {
+			return fmt.Errorf("db: create external_ids for prepared release: %w", err)
+		}
+		return nil
+	}
+
+	columns := []struct {
+		name string
+		ddl  string
+	}{
+		{name: "generation", ddl: `ALTER TABLE external_ids ADD COLUMN generation INTEGER NOT NULL DEFAULT 0`},
+		{name: "category_provenance", ddl: `ALTER TABLE external_ids ADD COLUMN category_provenance TEXT NOT NULL DEFAULT ""`},
+		{name: "override_json", ddl: `ALTER TABLE external_ids ADD COLUMN override_json TEXT NOT NULL DEFAULT "{}"`},
+		{name: "conflict_status", ddl: `ALTER TABLE external_ids ADD COLUMN conflict_status TEXT NOT NULL DEFAULT "none"`},
+		{name: "source_fingerprint", ddl: `ALTER TABLE external_ids ADD COLUMN source_fingerprint TEXT NOT NULL DEFAULT ""`},
+		{name: "intent_fingerprint", ddl: `ALTER TABLE external_ids ADD COLUMN intent_fingerprint TEXT NOT NULL DEFAULT ""`},
+		{name: "contract_version", ddl: `ALTER TABLE external_ids ADD COLUMN contract_version TEXT NOT NULL DEFAULT "legacy"`},
+		{name: "resolved_at", ddl: `ALTER TABLE external_ids ADD COLUMN resolved_at TEXT NOT NULL DEFAULT ""`},
+	}
+	for _, column := range columns {
+		columnExists, err := tableColumnExists(ctx, exec, "external_ids", column.name)
+		if err != nil {
+			return fmt.Errorf("db: inspect external_ids.%s: %w", column.name, err)
+		}
+		if columnExists {
+			continue
+		}
+		if _, err := exec.ExecContext(ctx, column.ddl); err != nil {
+			return fmt.Errorf("db: add external_ids.%s: %w", column.name, err)
+		}
+	}
+	return nil
+}
+
+func ensurePreparedExternalMetadataSchema(ctx context.Context, exec migrationExecutor) error {
+	exists, err := tableExists(ctx, exec, "external_metadata")
+	if err != nil {
+		return fmt.Errorf("db: inspect external_metadata for prepared release: %w", err)
+	}
+	if !exists {
+		if err := createExternalMetadataSchema(ctx, exec); err != nil {
+			return err
+		}
+	}
+	columnExists, err := tableColumnExists(ctx, exec, "external_metadata", "generation")
+	if err != nil {
+		return fmt.Errorf("db: inspect external_metadata.generation: %w", err)
+	}
+	if !columnExists {
+		if _, err := exec.ExecContext(ctx, `ALTER TABLE external_metadata ADD COLUMN generation INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("db: add external_metadata.generation: %w", err)
+		}
+	}
+	return nil
 }
 
 // migrateAddTrackerRuleFailureSeverity creates the rule-results table when
@@ -120,10 +313,40 @@ var legacyVersionToMigrationIDs = map[int][]string{
 	2: {baselineMigrationID, "2026_04_add_dvd_mediainfo"},
 	3: {baselineMigrationID, "2026_04_add_dvd_mediainfo", "2026_04_add_release_override_use_season_episode"},
 	4: {baselineMigrationID, "2026_04_add_dvd_mediainfo", "2026_04_add_release_override_use_season_episode", "2026_04_add_history_indexes"},
-	5: {baselineMigrationID, "2026_04_add_dvd_mediainfo", "2026_04_add_release_override_use_season_episode", "2026_04_add_history_indexes", "2026_04_backfill_uploaded_image_usage_scope"},
-	6: {baselineMigrationID, "2026_04_add_dvd_mediainfo", "2026_04_add_release_override_use_season_episode", "2026_04_add_history_indexes", "2026_04_backfill_uploaded_image_usage_scope", "2026_04_add_screenshot_slot_tables"},
-	7: {baselineMigrationID, "2026_04_add_dvd_mediainfo", "2026_04_add_release_override_use_season_episode", "2026_04_add_history_indexes", "2026_04_backfill_uploaded_image_usage_scope", "2026_04_add_screenshot_slot_tables", "2026_04_normalize_description_overrides"},
-	8: {baselineMigrationID, "2026_04_add_dvd_mediainfo", "2026_04_add_release_override_use_season_episode", "2026_04_add_history_indexes", "2026_04_backfill_uploaded_image_usage_scope", "2026_04_add_screenshot_slot_tables", "2026_04_normalize_description_overrides", "2026_04_add_tracker_cookies"},
+	5: {
+		baselineMigrationID,
+		"2026_04_add_dvd_mediainfo",
+		"2026_04_add_release_override_use_season_episode",
+		"2026_04_add_history_indexes",
+		"2026_04_backfill_uploaded_image_usage_scope",
+	},
+	6: {
+		baselineMigrationID,
+		"2026_04_add_dvd_mediainfo",
+		"2026_04_add_release_override_use_season_episode",
+		"2026_04_add_history_indexes",
+		"2026_04_backfill_uploaded_image_usage_scope",
+		"2026_04_add_screenshot_slot_tables",
+	},
+	7: {
+		baselineMigrationID,
+		"2026_04_add_dvd_mediainfo",
+		"2026_04_add_release_override_use_season_episode",
+		"2026_04_add_history_indexes",
+		"2026_04_backfill_uploaded_image_usage_scope",
+		"2026_04_add_screenshot_slot_tables",
+		"2026_04_normalize_description_overrides",
+	},
+	8: {
+		baselineMigrationID,
+		"2026_04_add_dvd_mediainfo",
+		"2026_04_add_release_override_use_season_episode",
+		"2026_04_add_history_indexes",
+		"2026_04_backfill_uploaded_image_usage_scope",
+		"2026_04_add_screenshot_slot_tables",
+		"2026_04_normalize_description_overrides",
+		"2026_04_add_tracker_cookies",
+	},
 }
 
 func migrateAddDVDMediaInfo(ctx context.Context, exec migrationExecutor) error {
@@ -276,7 +499,10 @@ func migrateNormalizeDescriptionOverrides(ctx context.Context, exec migrationExe
 		`); err != nil {
 			return fmt.Errorf("db: %w", err)
 		}
-		if _, err := exec.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_description_overrides_source_path ON description_overrides (source_path)`); err != nil {
+		if _, err := exec.ExecContext(
+			ctx,
+			`CREATE INDEX IF NOT EXISTS idx_description_overrides_source_path ON description_overrides (source_path)`,
+		); err != nil {
 			return fmt.Errorf("db: %w", err)
 		}
 		return nil

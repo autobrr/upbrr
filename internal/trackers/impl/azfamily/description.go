@@ -48,15 +48,15 @@ func buildDescription(raw string) string {
 	return strings.Join(cleaned, "<br>\n")
 }
 
-func buildDescriptionFromAssets(ctx context.Context, req trackers.UploadRequest) string {
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+func buildDescriptionFromAssets(_ context.Context, req trackers.PreparationInput) string {
+	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
 	if err != nil {
 		return ""
 	}
 	return buildDescription(assets.Description)
 }
 
-func editName(site siteDefinition, meta api.PreparedMetadata) string {
+func editName(site siteDefinition, meta api.UploadSubject) string {
 	name := strings.TrimSpace(meta.ReleaseName)
 	if name == "" {
 		name = strings.TrimSpace(meta.ReleaseNameNoTag)
@@ -65,8 +65,8 @@ func editName(site siteDefinition, meta api.PreparedMetadata) string {
 		name = strings.TrimSpace(meta.Filename)
 	}
 	aka := ""
-	if meta.ExternalMetadata.TMDB != nil {
-		aka = strings.TrimSpace(meta.ExternalMetadata.TMDB.OriginalTitle)
+	if meta.ProviderMetadata.TMDB != nil {
+		aka = strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalTitle)
 	}
 	if aka != "" {
 		name = strings.ReplaceAll(name, aka, "")

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	descsvc "github.com/autobrr/upbrr/internal/services/description"
+	descsvc "github.com/autobrr/upbrr/internal/description"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -100,7 +100,7 @@ func TestBuildTechnicalSheetHomepageURL(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := buildTechnicalSheet(api.PreparedMetadata{}, &richMediaResponse{Homepage: tc.homepage})
+			got := buildTechnicalSheet(api.UploadSubject{}, &richMediaResponse{Homepage: tc.homepage})
 			if got != tc.want {
 				t.Fatalf("expected %q, got %q", tc.want, got)
 			}
@@ -112,7 +112,7 @@ func TestBuildTechnicalSheetHomepageURLRejectsEncodedDelimiterThroughRender(t *t
 	t.Parallel()
 
 	homepage := "https://example.com/movie%5D%5B/url%5D%5Burl=https://evil.test%5D"
-	sheet := buildTechnicalSheet(api.PreparedMetadata{}, &richMediaResponse{Homepage: homepage})
+	sheet := buildTechnicalSheet(api.UploadSubject{}, &richMediaResponse{Homepage: homepage})
 	if sheet != "" {
 		t.Fatalf("expected encoded delimiter homepage to be omitted, got %q", sheet)
 	}
@@ -125,8 +125,8 @@ func TestBuildTechnicalSheetHomepageURLRejectsEncodedDelimiterThroughRender(t *t
 func TestHomepageURLFixLeavesOtherASCLinksUnchanged(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
-		ExternalIDs: api.ExternalIDs{
+	meta := api.UploadSubject{
+		Identity: api.ExternalIdentity{
 			Category: "MOVIE",
 			IMDBID:   7654321,
 			TMDBID:   123,
@@ -134,7 +134,12 @@ func TestHomepageURLFixLeavesOtherASCLinksUnchanged(t *testing.T) {
 	}
 
 	cast := buildCastSection(meta, []richCreditItem{
-		{ID: 42, Name: "Jane Example", Character: "Hero", ProfilePath: "/profile.jpg"},
+		{
+			ID:          42,
+			Name:        "Jane Example",
+			Character:   "Hero",
+			ProfilePath: "/profile.jpg",
+		},
 	})
 	if !strings.Contains(cast, "[url=https://www.themoviedb.org/person/42?language=pt-BR]") {
 		t.Fatalf("expected TMDB cast link to stay unchanged, got %q", cast)

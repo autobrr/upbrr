@@ -14,8 +14,10 @@ import (
 	"strconv"
 	"strings"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/pathutil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -44,10 +46,10 @@ type httpArrLookupClient struct {
 	logger    api.Logger
 }
 
-func (s *Service) ApplyArrData(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *Service) collectArrIdentityEvidence(ctx context.Context, meta preparationstate.State) (preparationstate.State, error) {
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
+		return preparationstate.State{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 
@@ -92,7 +94,8 @@ func (s *Service) ApplyArrData(ctx context.Context, meta api.PreparedMetadata) (
 		}
 		return meta, nil
 	}
-	if result.TMDBID == 0 && result.IMDBID == 0 && result.TVDBID == 0 && result.TVmazeID == 0 && result.Year == 0 && len(result.Genres) == 0 && result.ReleaseGroup == "" {
+	if result.TMDBID == 0 && result.IMDBID == 0 && result.TVDBID == 0 && result.TVmazeID == 0 && result.Year == 0 && len(result.Genres) == 0 &&
+		result.ReleaseGroup == "" {
 		return meta, nil
 	}
 
@@ -157,7 +160,7 @@ func (s *Service) ensureRadarrClient() (ArrLookupClient, error) {
 	return s.radarr, nil
 }
 
-func (c *httpArrLookupClient) Lookup(ctx context.Context, meta api.PreparedMetadata) (ArrLookupResult, error) {
+func (c *httpArrLookupClient) Lookup(ctx context.Context, meta preparationstate.State) (ArrLookupResult, error) {
 	if c == nil {
 		return ArrLookupResult{}, errors.New("arr client not configured")
 	}
@@ -176,7 +179,8 @@ func (c *httpArrLookupClient) Lookup(ctx context.Context, meta api.PreparedMetad
 			}
 			continue
 		}
-		if result.TMDBID != 0 || result.IMDBID != 0 || result.TVDBID != 0 || result.TVmazeID != 0 || result.Year != 0 || len(result.Genres) != 0 || result.ReleaseGroup != "" {
+		if result.TMDBID != 0 || result.IMDBID != 0 || result.TVDBID != 0 || result.TVmazeID != 0 || result.Year != 0 || len(result.Genres) != 0 ||
+			result.ReleaseGroup != "" {
 			return result, nil
 		}
 	}
@@ -186,7 +190,12 @@ func (c *httpArrLookupClient) Lookup(ctx context.Context, meta api.PreparedMetad
 	return ArrLookupResult{}, nil
 }
 
-func (c *httpArrLookupClient) lookupInstance(ctx context.Context, httpClient *http.Client, instance arrInstance, meta api.PreparedMetadata) (ArrLookupResult, error) {
+func (c *httpArrLookupClient) lookupInstance(
+	ctx context.Context,
+	httpClient *http.Client,
+	instance arrInstance,
+	meta preparationstate.State,
+) (ArrLookupResult, error) {
 	switch c.service {
 	case "sonarr":
 		return lookupSonarr(ctx, httpClient, instance, meta)
@@ -197,7 +206,7 @@ func (c *httpArrLookupClient) lookupInstance(ctx context.Context, httpClient *ht
 	}
 }
 
-func lookupSonarr(ctx context.Context, httpClient *http.Client, instance arrInstance, meta api.PreparedMetadata) (ArrLookupResult, error) {
+func lookupSonarr(ctx context.Context, httpClient *http.Client, instance arrInstance, meta preparationstate.State) (ArrLookupResult, error) {
 	title, _ := resolveSearchTitles(meta)
 	if strings.TrimSpace(title) != "" {
 		parseURL, err := urlWithQuery(instance.baseURL, "/api/v3/parse", map[string]string{
@@ -217,7 +226,7 @@ func lookupSonarr(ctx context.Context, httpClient *http.Client, instance arrInst
 		}
 	}
 
-	tvdbID := firstNonZero(meta.ArrTVDBID, meta.MediaInfoTVDBID, meta.ExternalIDs.TVDBID)
+	tvdbID := firstNonZero(meta.ArrTVDBID, meta.MediaInfoTVDBID, meta.Identity.TVDBID)
 	if tvdbID == 0 {
 		return ArrLookupResult{}, nil
 	}
@@ -237,7 +246,7 @@ func lookupSonarr(ctx context.Context, httpClient *http.Client, instance arrInst
 	return result, nil
 }
 
-func lookupRadarr(ctx context.Context, httpClient *http.Client, instance arrInstance, meta api.PreparedMetadata) (ArrLookupResult, error) {
+func lookupRadarr(ctx context.Context, httpClient *http.Client, instance arrInstance, meta preparationstate.State) (ArrLookupResult, error) {
 	term := pathutil.Base(meta.SourcePath)
 	if term == "" {
 		term = strings.TrimSpace(meta.SourcePath)
@@ -259,7 +268,7 @@ func lookupRadarr(ctx context.Context, httpClient *http.Client, instance arrInst
 		}
 	}
 
-	tmdbID := firstNonZero(meta.ArrTMDBID, meta.MediaInfoTMDBID, meta.ExternalIDs.TMDBID)
+	tmdbID := firstNonZero(meta.ArrTMDBID, meta.MediaInfoTMDBID, meta.Identity.TMDBID)
 	if tmdbID == 0 {
 		return ArrLookupResult{}, nil
 	}
@@ -412,19 +421,51 @@ func (r ArrLookupResult) hasIDs() bool {
 
 func sonarrInstances(cfg config.ArrIntegrationConfig) []arrInstance {
 	return collectArrInstances("sonarr", []arrInstance{
-		{name: "default", baseURL: cfg.SonarrURL, apiKey: cfg.SonarrAPIKey},
-		{name: "1", baseURL: cfg.SonarrURL1, apiKey: cfg.SonarrAPIKey1},
-		{name: "2", baseURL: cfg.SonarrURL2, apiKey: cfg.SonarrAPIKey2},
-		{name: "3", baseURL: cfg.SonarrURL3, apiKey: cfg.SonarrAPIKey3},
+		{
+			name:    "default",
+			baseURL: cfg.SonarrURL,
+			apiKey:  cfg.SonarrAPIKey,
+		},
+		{
+			name:    "1",
+			baseURL: cfg.SonarrURL1,
+			apiKey:  cfg.SonarrAPIKey1,
+		},
+		{
+			name:    "2",
+			baseURL: cfg.SonarrURL2,
+			apiKey:  cfg.SonarrAPIKey2,
+		},
+		{
+			name:    "3",
+			baseURL: cfg.SonarrURL3,
+			apiKey:  cfg.SonarrAPIKey3,
+		},
 	})
 }
 
 func radarrInstances(cfg config.ArrIntegrationConfig) []arrInstance {
 	return collectArrInstances("radarr", []arrInstance{
-		{name: "default", baseURL: cfg.RadarrURL, apiKey: cfg.RadarrAPIKey},
-		{name: "1", baseURL: cfg.RadarrURL1, apiKey: cfg.RadarrAPIKey1},
-		{name: "2", baseURL: cfg.RadarrURL2, apiKey: cfg.RadarrAPIKey2},
-		{name: "3", baseURL: cfg.RadarrURL3, apiKey: cfg.RadarrAPIKey3},
+		{
+			name:    "default",
+			baseURL: cfg.RadarrURL,
+			apiKey:  cfg.RadarrAPIKey,
+		},
+		{
+			name:    "1",
+			baseURL: cfg.RadarrURL1,
+			apiKey:  cfg.RadarrAPIKey1,
+		},
+		{
+			name:    "2",
+			baseURL: cfg.RadarrURL2,
+			apiKey:  cfg.RadarrAPIKey2,
+		},
+		{
+			name:    "3",
+			baseURL: cfg.RadarrURL3,
+			apiKey:  cfg.RadarrAPIKey3,
+		},
 	})
 }
 

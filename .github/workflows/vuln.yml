@@ -3,7 +3,7 @@ name: vuln
 on:
   workflow_dispatch:
   schedule:
-    - cron: '17 8 * * 1'
+    - cron: "17 8 * * 1"
 
 permissions:
   contents: read
@@ -36,4 +36,4 @@ jobs:
         run: go run golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION} ./...
 
       - name: Run OSV dependency scan
-        run: go run github.com/google/osv-scanner/v2/cmd/osv-scanner@${OSV_SCANNER_VERSION} scan source --lockfile go.mod --lockfile gui/frontend/pnpm-lock.yaml
+        run: go run github.com/google/osv-scanner/v2/cmd/osv-scanner@${OSV_SCANNER_VERSION} scan source --lockfile go.mod --lockfile webui/pnpm-lock.yaml

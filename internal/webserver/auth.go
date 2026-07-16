@@ -184,6 +184,7 @@ type sessionManager struct {
 	stopOnce     sync.Once
 	store        *sessionStore
 	logf         func(string, ...any)
+	onRemoved    func(string)
 	mu           sync.Mutex
 	sessions     map[string]session
 }
@@ -216,6 +217,34 @@ func (m *sessionManager) SetLogger(logf func(string, ...any)) {
 		return
 	}
 	m.logf = logf
+}
+
+// SetRemovedCallback installs a callback invoked after the manager mutex is
+// released whenever a session is permanently removed.
+func (m *sessionManager) SetRemovedCallback(callback func(string)) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.onRemoved = callback
+	m.mu.Unlock()
+}
+
+func (m *sessionManager) notifyRemoved(ids ...string) {
+	if m == nil || len(ids) == 0 {
+		return
+	}
+	m.mu.Lock()
+	callback := m.onRemoved
+	m.mu.Unlock()
+	if callback == nil {
+		return
+	}
+	for _, id := range ids {
+		if strings.TrimSpace(id) != "" {
+			callback(id)
+		}
+	}
 }
 
 func (m *sessionManager) Create(username string, retainLogin bool) (session, error) {
@@ -269,6 +298,7 @@ func (m *sessionManager) Get(id string) (session, bool) {
 				m.logPersistError("cleanup expired retained session", err)
 			}
 		}
+		m.notifyRemoved(id)
 		return session{}, false
 	}
 	m.mu.Unlock()
@@ -286,12 +316,14 @@ func (m *sessionManager) GetByCSRFToken(token string) (session, bool) {
 
 	now := time.Now().UTC()
 	changedRetained := false
+	removed := make([]string, 0)
 	var matched session
 	matchedOK := false
 	m.mu.Lock()
 	for id, current := range m.sessions {
 		if now.After(current.ExpiresAt) {
 			delete(m.sessions, id)
+			removed = append(removed, id)
 			if current.Retain {
 				changedRetained = true
 			}
@@ -309,6 +341,7 @@ func (m *sessionManager) GetByCSRFToken(token string) (session, bool) {
 			m.logPersistError("cleanup expired retained session", err)
 		}
 	}
+	m.notifyRemoved(removed...)
 	if matchedOK {
 		return matched, true
 	}
@@ -328,6 +361,9 @@ func (m *sessionManager) Delete(id string) error {
 			m.mu.Unlock()
 			return err
 		}
+	}
+	if ok {
+		m.notifyRemoved(id)
 	}
 	return nil
 }
@@ -362,10 +398,12 @@ func (m *sessionManager) cleanupLoop() {
 func (m *sessionManager) deleteExpired(now time.Time) {
 	m.mu.Lock()
 	changed := false
+	removed := make([]string, 0)
 
 	for id, current := range m.sessions {
 		if now.After(current.ExpiresAt) {
 			delete(m.sessions, id)
+			removed = append(removed, id)
 			if current.Retain {
 				changed = true
 			}
@@ -378,6 +416,7 @@ func (m *sessionManager) deleteExpired(now time.Time) {
 			m.logPersistError("cleanup expired retained sessions", err)
 		}
 	}
+	m.notifyRemoved(removed...)
 }
 
 func (m *sessionManager) loadPersisted() error {

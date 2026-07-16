@@ -5,7 +5,6 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -60,16 +59,9 @@ func TestTrackerAuthStatusConsumerContractsIncludeAPIFields(t *testing.T) {
 	t.Parallel()
 
 	fields := trackerAuthStatusJSONFields(t)
-	frontendTypes := readRepoFile(t, "gui", "frontend", "src", "types.ts")
+	frontendTypes := readRepoFile(t, "webui", "src", "types.ts")
 
 	assertContractBlockFields(t, frontendTypes, "export type TrackerAuthStatus = {", "};", fields)
-
-	wailsModels, ok := readOptionalRepoFile(t, "gui", "frontend", "wailsjs", "go", "models.ts")
-	if !ok {
-		t.Log("skipping generated Wails model contract check; gui/frontend/wailsjs/go/models.ts is ignored and absent in clean checkouts")
-		return
-	}
-	assertContractBlockFields(t, wailsModels, "export class TrackerAuthStatus {", "static createFrom", fields)
 }
 
 // trackerAuthStatusJSONFields returns the serialized field names that every
@@ -121,20 +113,6 @@ func readRepoFile(t *testing.T, parts ...string) string {
 		t.Fatalf("read repo contract file %v: %v", parts, err)
 	}
 	return string(content)
-}
-
-func readOptionalRepoFile(t *testing.T, parts ...string) (string, bool) {
-	t.Helper()
-
-	content, err := readRepoFileContent(parts...)
-	if err == nil {
-		return string(content), true
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return "", false
-	}
-	t.Fatalf("read optional repo contract file %v: %v", parts, err)
-	return "", false
 }
 
 func readRepoFileContent(parts ...string) ([]byte, error) {

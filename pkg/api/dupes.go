@@ -83,7 +83,8 @@ type DupeCheckResult struct {
 // DupeCheckSummary groups duplicate-search results for one prepared source
 // path.
 type DupeCheckSummary struct {
-	SourcePath string
-	Results    []DupeCheckResult
-	Notes      []string
+	SourcePath  string
+	Results     []DupeCheckResult
+	Notes       []string
+	Eligibility TrackerEligibility
 }

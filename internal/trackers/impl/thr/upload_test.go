@@ -21,7 +21,11 @@ func TestLoginSessionBootstrapsHiddenFieldsAndFollowsRedirect(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case loginPagePath:
-			http.SetCookie(w, &http.Cookie{Name: "bootstrap", Value: "ready", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "bootstrap",
+				Value: "ready",
+				Path:  "/",
+			})
 			_, _ = w.Write([]byte(`<form><input type="hidden" name="token" value="login-token"><input type="hidden" name="blank" value=""></form>`))
 		case takeLoginPath:
 			if err := r.ParseForm(); err != nil {
@@ -40,7 +44,11 @@ func TestLoginSessionBootstrapsHiddenFieldsAndFollowsRedirect(t *testing.T) {
 			if r.Referer() != "http://"+r.Host+loginPagePath {
 				handlerErr <- fmt.Errorf("unexpected login referer %q", r.Referer())
 			}
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "authenticated", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "authenticated",
+				Path:  "/",
+			})
 			http.Redirect(w, r, "/index.php", http.StatusFound)
 		case "/index.php":
 			if cookie, err := r.Cookie("session"); err != nil || cookie.Value != "authenticated" {
@@ -54,7 +62,11 @@ func TestLoginSessionBootstrapsHiddenFieldsAndFollowsRedirect(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	client, err := LoginSession(context.Background(), config.TrackerConfig{URL: server.URL, Username: "user", Password: "pass"})
+	client, err := LoginSession(context.Background(), config.TrackerConfig{
+		URL:      server.URL,
+		Username: "user",
+		Password: "pass",
+	})
 	if err != nil {
 		t.Fatalf("LoginSession: %v", err)
 	}
@@ -84,7 +96,11 @@ func TestLoginSessionRejectsRedirectWithoutAuthenticatedMarker(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	client, err := LoginSession(context.Background(), config.TrackerConfig{URL: server.URL, Username: "user", Password: "pass"})
+	client, err := LoginSession(context.Background(), config.TrackerConfig{
+		URL:      server.URL,
+		Username: "user",
+		Password: "pass",
+	})
 	if !errors.Is(err, ErrLoginFailed) {
 		t.Fatalf("expected ErrLoginFailed, got %v", err)
 	}
@@ -135,7 +151,11 @@ func TestLoginSessionRejectsWeakAuthenticatedMarkers(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			client, err := LoginSession(context.Background(), config.TrackerConfig{URL: server.URL, Username: "user", Password: "pass"})
+			client, err := LoginSession(context.Background(), config.TrackerConfig{
+				URL:      server.URL,
+				Username: "user",
+				Password: "pass",
+			})
 			if !errors.Is(err, ErrLoginFailed) {
 				t.Fatalf("expected ErrLoginFailed, got %v", err)
 			}

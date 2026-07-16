@@ -505,7 +505,12 @@ func resolveSecretHelper(cfg *Config) (string, error) {
 
 	// Enforce owner-only rw permissions on Unix-like systems.
 	if runtime.GOOS != "windows" && info.Mode().Perm()&^0o600 != 0 {
-		return "", fmt.Errorf("%w: %s must have permissions 0600 (owner read/write only), got %o", ErrSecretEncryptionHelperUnavailable, webAuthFileName, info.Mode().Perm())
+		return "", fmt.Errorf(
+			"%w: %s must have permissions 0600 (owner read/write only), got %o",
+			ErrSecretEncryptionHelperUnavailable,
+			webAuthFileName,
+			info.Mode().Perm(),
+		)
 	}
 
 	record, err := authmaterial.LoadFromDBPath(dbPath)
@@ -597,7 +602,11 @@ func decryptSecretString(value string, helper string) (string, error) {
 		return "", fmt.Errorf("secrets: decode auth tag: %w", err)
 	}
 
-	return decryptSecretValue(secretPayload{ciphertext: ciphertext, nonce: nonce, authTag: authTag}, key)
+	return decryptSecretValue(secretPayload{
+		ciphertext: ciphertext,
+		nonce:      nonce,
+		authTag:    authTag,
+	}, key)
 }
 
 func isSecretEnvelope(value string) bool {

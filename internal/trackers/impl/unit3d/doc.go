@@ -10,52 +10,41 @@
 //
 // # Architecture
 //
-// The implementation is split into:
-//   - definition.go: Tracker registry and routing to specific implementations
-//   - upload.go: Core Unit3D upload logic (multipart form, API calls)
-//   - <tracker>_name.go: Tracker-specific name formatting rules
+// Shared protocol behavior lives in this package. Site-owned profiles, rules,
+// banned groups, and payload hooks live under sites/<tracker>.
 //
 // # Adding a New Unit3D Tracker
 //
 // To add support for a new Unit3D tracker (e.g., "EXAMPLE"):
 //
-// 1. Add the tracker to the known list in definition.go:
+// 1. Create sites/example/profile.go. Profile returns the complete site
+// manifest, including rules and banned groups supplied by sibling files:
 //
-//	knownUnit3DTrackers = []string{"AITHER", "BLU", "LST", "LUME", "EXAMPLE"}
-//
-// 2. Create a name formatter in example_name.go:
-//
-//	func buildExampleName(meta api.PreparedMetadata) string {
-//	    name := meta.ReleaseName
-//	    // Apply EXAMPLE-specific name formatting rules
-//	    return name
+//	func Profile() unit3d.Profile {
+//	    return unit3d.Profile{
+//	        Name:         "EXAMPLE",
+//	        BaseURL:      "https://example.invalid",
+//	        Rules:        Rules(),
+//	        BannedGroups: BannedGroups(),
+//	    }
 //	}
 //
-// 3. Add the name formatter to the routing in definition.go Upload():
+// Add only behavior that differs from shared Unit3D handling to Profile.Site.
 //
-//	case "EXAMPLE":
-//	    name = buildExampleName(meta)
+// 2. Add one import and one Profile() entry in impl/registry.go.
 //
-// 4. Add configuration in config.yaml:
+// 3. Add the identity and default endpoint to the temporary compatibility
+// catalog in trackers/unit3dmeta. Registry parity tests keep both lists aligned
+// until all callers consume the composed registry directly.
 //
-//	EXAMPLE:
-//	  api_key: "your-api-key"
-//	  announce_url: "https://example.tracker/announce/PASSKEY"
-//	  anon: false
-//	  modq: false
-//
-// 5. Register in impl/registry.go if not auto-registered:
-//
-//	registry.Register(unit3d.New())
-//
-// That's it! The core upload logic in upload.go is tracker-agnostic and will
-// handle the API interaction, torrent/NFO attachments, and response parsing.
+// Shared upload, dry-run, dupe, description, and capability registration then
+// apply automatically.
 //
 // # Testing
 //
 // Unit tests live in upload_test.go and cover:
 //   - Category/type/resolution mapping
-//   - Name formatting per tracker
+//   - Site profile callbacks
 //   - Form payload construction
 //   - Response parsing
 //

@@ -12,25 +12,33 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Definition provides NBL tracker preparation and optional policy capabilities.
 type Definition struct{}
 
+// New returns a fresh NBL tracker definition.
 func New() *Definition {
 	return &Definition{}
 }
 
+// Name returns the stable NBL tracker identifier.
 func (d *Definition) Name() string {
 	return "NBL"
 }
 
-func (d *Definition) Upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
+// Prepare builds a fresh intent-scoped NBL tracker plan.
+func (d *Definition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
+	return trackers.PrepareAdapter(ctx, input, d.prepareDescription, d.prepareDryRun, d.submit)
+}
+
+func (d *Definition) submit(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
 	return upload(ctx, req)
 }
 
-func (d *Definition) BuildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
+func (d *Definition) prepareDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
 	return buildUploadDryRun(ctx, req)
 }
 
-func (d *Definition) BuildDescription(ctx context.Context, req trackers.DescriptionRequest) (trackers.DescriptionResult, error) {
+func (d *Definition) prepareDescription(ctx context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {
 	select {
 	case <-ctx.Done():
 		return trackers.DescriptionResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -42,7 +50,7 @@ func (d *Definition) BuildDescription(ctx context.Context, req trackers.Descript
 	if req.Assets != nil {
 		assets = *req.Assets
 	} else {
-		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+		assets, err = trackers.PreparedDescriptionAssets(req.Assets)
 		if err != nil {
 			if req.Logger != nil {
 				req.Logger.Errorf(

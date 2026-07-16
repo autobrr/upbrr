@@ -15,7 +15,7 @@ import (
 	"strings"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
-	"github.com/autobrr/upbrr/internal/services/imagehost"
+	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -38,7 +38,11 @@ var (
 	slotComparisonURL     = regexp.MustCompile(`(?i)https?://[^\s\]]+\.(?:png|jpe?g|gif|webp)`)
 	slotURLImgPattern     = regexp.MustCompile(`(?is)\[url=(https?://[^\]]+)\]\s*\[img[^\]]*\](.*?)\[/img\]\s*\[/url\]`)
 	slotImgPattern        = regexp.MustCompile(`(?is)\[img[^\]]*\](.*?)\[/img\]`)
-	posterLikeSlotHosts   = map[string]struct{}{"image.tmdb.org": {}, "themoviedb.org": {}, "www.themoviedb.org": {}}
+	posterLikeSlotHosts   = map[string]struct{}{
+		"image.tmdb.org":     {},
+		"themoviedb.org":     {},
+		"www.themoviedb.org": {},
+	}
 )
 
 type parsedDescriptionSlot struct {
@@ -49,8 +53,8 @@ type parsedDescriptionSlot struct {
 func screenshotSlotsFromSource(
 	ctx context.Context,
 	tracker string,
-	meta api.PreparedMetadata,
-	repo api.MetadataRepository,
+	meta api.UploadSubject,
+	repo UploadPersistence,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
 ) ([]api.ScreenshotSlot, error) {
@@ -101,8 +105,8 @@ func screenshotSlotsFromSource(
 
 func filterStoredSlotsForSelectedImages(
 	ctx context.Context,
-	meta api.PreparedMetadata,
-	repo api.MetadataRepository,
+	meta api.UploadSubject,
+	repo UploadPersistence,
 	slots []api.ScreenshotSlot,
 	preloaded *preloadedDescriptionAssetData,
 ) ([]api.ScreenshotSlot, error) {
@@ -137,8 +141,8 @@ func filterStoredSlotsForSelectedImages(
 
 func appendStoredSelectionSlots(
 	ctx context.Context,
-	meta api.PreparedMetadata,
-	repo api.MetadataRepository,
+	meta api.UploadSubject,
+	repo UploadPersistence,
 	slots []api.ScreenshotSlot,
 	preloaded *preloadedDescriptionAssetData,
 ) ([]api.ScreenshotSlot, error) {
@@ -166,8 +170,8 @@ func selectedPathExists(selectedPaths map[string]struct{}, imagePath string) boo
 func synthesizeScreenshotSlots(
 	ctx context.Context,
 	tracker string,
-	meta api.PreparedMetadata,
-	repo api.MetadataRepository,
+	meta api.UploadSubject,
+	repo UploadPersistence,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
 ) ([]api.ScreenshotSlot, error) {
@@ -718,12 +722,14 @@ func normalizeSlotOrders(slots []api.ScreenshotSlot) []api.ScreenshotSlot {
 	return slots
 }
 
+// SlotUploadAttachmentResult contains updated screenshot slots and unmatched uploads.
 type SlotUploadAttachmentResult struct {
 	MatchedUploads   int
 	FallbackMatched  int
 	UnmatchedUploads int
 }
 
+// ApplyUploadedVariantsToSlots attaches uploaded variants to their matching screenshot slots.
 func ApplyUploadedVariantsToSlots(slots []api.ScreenshotSlot, uploads []api.UploadedImageLink) SlotUploadAttachmentResult {
 	if len(slots) == 0 || len(uploads) == 0 {
 		return SlotUploadAttachmentResult{}
@@ -745,7 +751,13 @@ func ApplyUploadedVariantsToSlots(slots []api.ScreenshotSlot, uploads []api.Uplo
 	result := SlotUploadAttachmentResult{}
 	seenUploads := make(map[string]struct{}, len(uploads))
 	for _, upload := range uploads {
-		uploadKey := strings.ToLower(strings.TrimSpace(upload.Host)) + "\x00" + normalizeUsageScope(upload.UsageScope) + "\x00" + strings.TrimSpace(upload.ImagePath)
+		uploadKey := strings.ToLower(
+			strings.TrimSpace(upload.Host),
+		) + "\x00" + normalizeUsageScope(
+			upload.UsageScope,
+		) + "\x00" + strings.TrimSpace(
+			upload.ImagePath,
+		)
 		if _, exists := seenUploads[uploadKey]; exists {
 			continue
 		}
@@ -1035,7 +1047,13 @@ func slotIdentity(slot api.ScreenshotSlot) string {
 	return "unknown"
 }
 
-func upsertScreenshotVariantsFromUploads(ctx context.Context, repo api.MetadataRepository, sourcePath string, slots []api.ScreenshotSlot, uploads []api.UploadedImageLink) error {
+func upsertScreenshotVariantsFromUploads(
+	ctx context.Context,
+	repo UploadPersistence,
+	sourcePath string,
+	slots []api.ScreenshotSlot,
+	uploads []api.UploadedImageLink,
+) error {
 	if repo == nil || len(slots) == 0 || len(uploads) == 0 {
 		return nil
 	}

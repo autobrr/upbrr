@@ -12,8 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/autobrr/upbrr/internal/pathutil"
-	"github.com/autobrr/upbrr/pkg/api"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 )
 
 var (
@@ -31,7 +32,17 @@ var (
 )
 
 var videoExtensions = map[string]struct{}{
-	".mkv": {}, ".mp4": {}, ".avi": {}, ".mov": {}, ".wmv": {}, ".webm": {}, ".ts": {}, ".m2ts": {}, ".m2v": {}, ".mpg": {}, ".mpeg": {},
+	".mkv":  {},
+	".mp4":  {},
+	".avi":  {},
+	".mov":  {},
+	".wmv":  {},
+	".webm": {},
+	".ts":   {},
+	".m2ts": {},
+	".m2v":  {},
+	".mpg":  {},
+	".mpeg": {},
 }
 
 type Result struct {
@@ -43,7 +54,7 @@ type Result struct {
 	MultiEpisode    []int
 }
 
-func Extract(path string, meta api.PreparedMetadata) Result {
+func Extract(path string, meta preparationstate.State) Result {
 	candidates := buildCandidates(path, meta)
 	primaryCandidate := ""
 	if len(candidates) > 0 {
@@ -129,7 +140,7 @@ func FormatEpisode(value int) string {
 	return fmt.Sprintf("E%02d", value)
 }
 
-func buildCandidates(path string, meta api.PreparedMetadata) []string {
+func buildCandidates(path string, meta preparationstate.State) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, 2)
 	add := func(value string) {

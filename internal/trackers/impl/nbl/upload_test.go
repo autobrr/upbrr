@@ -27,8 +27,8 @@ func TestPrepareUploadStateUsesNumericIgnoreDupes(t *testing.T) {
 		t.Fatalf("write mediainfo: %v", err)
 	}
 
-	state, err := prepareUploadState(context.Background(), trackers.UploadRequest{
-		Meta: api.PreparedMetadata{
+	state, err := prepareUploadState(context.Background(), trackers.PreparationInput{
+		Meta: api.UploadSubject{
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
 		},

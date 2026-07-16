@@ -25,21 +25,29 @@ func TestDefinitionBuildUploadDryRunBlockedWithoutCookies(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	entry, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+	entry, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "ASC",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "movie.mkv"),
 			TorrentPath: torrentPath,
-			Release:     api.ReleaseInfo{Title: "Movie", Year: 2024, Resolution: "1080p"},
-			ExternalIDs: api.ExternalIDs{Category: "MOVIE", IMDBID: 1234567},
-			ExternalMetadata: api.ExternalMetadata{
-				TMDB: &api.TMDBMetadata{Poster: "https://img/poster.jpg", Overview: "Overview", Genres: "Drama"},
+			Release: api.ReleaseInfo{
+				Title:      "Movie",
+				Year:       2024,
+				Resolution: "1080p",
+			},
+			Identity: api.ExternalIdentity{Category: "MOVIE", IMDBID: 1234567},
+			ProviderMetadata: api.SourceScopedMetadata{
+				TMDB: &api.TMDBMetadata{
+					Poster:   "https://img/poster.jpg",
+					Overview: "Overview",
+					Genres:   "Drama",
+				},
 				IMDB: &api.IMDBMetadata{IMDbIDText: "tt1234567"},
 			},
 		},
-		AppConfig: config.Config{
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{
 			MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")},
-		},
+		}),
 		Logger: api.NopLogger{},
 	})
 	if err != nil {
@@ -67,21 +75,25 @@ func TestDefinitionBuildUploadDryRunQuestionnaireForMissingMetadata(t *testing.T
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	entry, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+	entry, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "ASC",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "movie.mkv"),
 			TorrentPath: torrentPath,
-			Release:     api.ReleaseInfo{Title: "Movie", Year: 2024, Resolution: "1080p"},
-			ExternalIDs: api.ExternalIDs{Category: "MOVIE", IMDBID: 1234567},
-			ExternalMetadata: api.ExternalMetadata{
+			Release: api.ReleaseInfo{
+				Title:      "Movie",
+				Year:       2024,
+				Resolution: "1080p",
+			},
+			Identity: api.ExternalIdentity{Category: "MOVIE", IMDBID: 1234567},
+			ProviderMetadata: api.SourceScopedMetadata{
 				TMDB: &api.TMDBMetadata{Poster: "https://img/poster.jpg"},
 				IMDB: &api.IMDBMetadata{IMDbIDText: "tt1234567"},
 			},
 		},
-		AppConfig: config.Config{
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{
 			MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")},
-		},
+		}),
 		Logger: api.NopLogger{},
 	})
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 )
@@ -143,10 +144,8 @@ type TrackerMetadata struct {
 	IMDBID     int
 	TVDBID     int
 	MALID      int
-	// Category is the site-reported movie/TV content category from the tracker
-	// API. Supported values take precedence over MediaInfoCategory and
-	// Release.Category when resolving ExternalIDs.Category for upload
-	// classification; unsupported categories are ignored.
+	// Category is site-reported movie/TV evidence consumed only by canonical
+	// external-identity resolution; unsupported values are ignored.
 	Category    Category
 	Description string
 	ImageURLs   []string
@@ -254,36 +253,92 @@ type DVDMediaInfo struct {
 	UpdatedAt       time.Time `ts_type:"string"`
 }
 
-type MetadataRepository interface {
+// ReleaseStateRepository persists the state used to prepare one release.
+// Implementations preserve path validation, UTC timestamps, and ErrNotFound
+// identity for missing optional records.
+type ReleaseStateRepository interface {
 	GetByPath(ctx context.Context, path string) (FileMetadata, error)
 	Save(ctx context.Context, metadata FileMetadata) error
-	GetExternalIDs(ctx context.Context, path string) (ExternalIDs, error)
-	SaveExternalIDs(ctx context.Context, ids ExternalIDs) error
-	GetExternalMetadata(ctx context.Context, path string) (ExternalMetadata, error)
-	SaveExternalMetadata(ctx context.Context, metadata ExternalMetadata) error
-	GetDVDMediaInfo(ctx context.Context, path string) (DVDMediaInfo, error)
+	GetExternalIdentity(ctx context.Context, path string) (ExternalIdentity, error)
+	SaveExternalIdentity(ctx context.Context, ids ExternalIdentity) error
+	GetExternalMetadata(ctx context.Context, path string) (SourceScopedMetadata, error)
+	SaveExternalMetadata(ctx context.Context, metadata SourceScopedMetadata) error
 	SaveDVDMediaInfo(ctx context.Context, info DVDMediaInfo) error
 	GetReleaseNameOverrides(ctx context.Context, path string) (ReleaseNameOverrides, error)
 	SaveReleaseNameOverrides(ctx context.Context, path string, overrides ReleaseNameOverrides) error
-	DeleteReleaseNameOverrides(ctx context.Context, path string) error
+}
+
+// PreparedReleaseRepository owns whole-generation prepared facts. Commits and
+// purges include canonical identity and source-scoped provider metadata in one
+// transaction.
+type PreparedReleaseRepository interface {
+	LoadPreparedRelease(ctx context.Context, sourcePath string) (PreparedRelease, error)
+	CommitPreparedRelease(ctx context.Context, release PreparedRelease) error
+	PurgePreparedRelease(ctx context.Context, sourcePath string) error
+}
+
+// ReleaseSelectionRepository persists user-selected description and playlist
+// state. Explicit empty selections are distinct from missing records.
+type ReleaseSelectionRepository interface {
 	GetDescriptionOverride(ctx context.Context, path string, groupKey string) (DescriptionOverride, error)
 	ListDescriptionOverridesByPath(ctx context.Context, path string) ([]DescriptionOverride, error)
 	SaveDescriptionOverride(ctx context.Context, override DescriptionOverride) error
 	DeleteDescriptionOverride(ctx context.Context, path string, groupKey string) error
 	GetPlaylistSelection(ctx context.Context, sourcePath string) (PlaylistSelection, error)
 	SavePlaylistSelection(ctx context.Context, sourcePath string, playlists []string, useAll bool) error
-	DeletePlaylistSelection(ctx context.Context, sourcePath string) error
+}
+
+// HistoryCleanupSnapshot contains persisted local paths needed by Core's
+// filesystem cleanup policy. ArtifactPaths is an isolated caller-owned slice.
+type HistoryCleanupSnapshot struct {
+	Metadata      *FileMetadata
+	ArtifactPaths []string
+}
+
+// HistoryRepository owns persisted history projection, cleanup discovery, and
+// atomic release-state purge. Filesystem deletion remains outside this seam.
+type HistoryRepository interface {
 	ListHistoryEntries(ctx context.Context) ([]HistoryEntry, error)
+	LoadHistoryRecord(ctx context.Context, sourcePath string) (HistoryRecord, error)
+	LoadHistoryCleanupSnapshot(ctx context.Context, sourcePath string) (HistoryCleanupSnapshot, error)
+	ListStoredReleasePaths(ctx context.Context) ([]string, error)
+	PurgeContentData(ctx context.Context, path string) error
+}
+
+// UploadLedgerRepository owns upload-attempt creation, latest-record status
+// transitions, and canonical newest-first history queries.
+type UploadLedgerRepository interface {
 	ListUploadHistoryByPath(ctx context.Context, sourcePath string) ([]UploadRecord, error)
-	ListPendingUploads(ctx context.Context) ([]UploadRecord, error)
 	CreateUploadRecord(ctx context.Context, record UploadRecord) error
 	UpdateLatestUploadRecordStatus(ctx context.Context, sourcePath string, tracker string, status string) error
+}
+
+// TrackerStateRepository persists tracker-derived metadata, refresh times, and
+// atomic replacement of rule-failure sets.
+type TrackerStateRepository interface {
 	SaveTrackerRuleFailures(ctx context.Context, sourcePath string, tracker string, failures []TrackerRuleFailure) error
 	ListTrackerRuleFailuresByPath(ctx context.Context, path string) ([]TrackerRuleFailure, error)
 	GetTrackerTimestamp(ctx context.Context, tracker string) (time.Time, error)
 	SaveTrackerTimestamp(ctx context.Context, timestamp TrackerTimestamp) error
 	SaveTrackerMetadata(ctx context.Context, metadata TrackerMetadata) error
 	ListTrackerMetadataByPath(ctx context.Context, path string) ([]TrackerMetadata, error)
+}
+
+// MediaAssetSnapshot is a coherent caller-owned view of persisted media
+// records for one release. Returned slices and nested variant slices may be
+// mutated by callers without changing repository state.
+type MediaAssetSnapshot struct {
+	Screenshots     []Screenshot
+	FinalSelections []ScreenshotFinalSelection
+	ScreenshotSlots []ScreenshotSlot
+	UploadedImages  []UploadedImageLink
+}
+
+// MediaAssetRepository persists screenshot, selection, slot, variant, and
+// uploaded-image records. Screenshot lifecycle mutations are atomic.
+type MediaAssetRepository interface {
+	ScreenshotLifecycleRepository
+	LoadMediaAssetSnapshot(ctx context.Context, path string) (MediaAssetSnapshot, error)
 	SaveScreenshot(ctx context.Context, screenshot Screenshot) error
 	ListScreenshotsByPath(ctx context.Context, path string) ([]Screenshot, error)
 	DeleteScreenshot(ctx context.Context, imagePath string) error
@@ -296,6 +351,125 @@ type MetadataRepository interface {
 	SaveUploadedImages(ctx context.Context, path string, host string, images []UploadedImageLink) error
 	ListUploadedImagesByPath(ctx context.Context, path string) ([]UploadedImageLink, error)
 	DeleteUploadedImage(ctx context.Context, path string, imagePath string, host string) error
-	ListStoredReleasePaths(ctx context.Context) ([]string, error)
-	PurgeContentData(ctx context.Context, path string) error
+}
+
+var (
+	// ErrMissingReleaseStateRepository indicates incomplete repository composition.
+	ErrMissingReleaseStateRepository = errors.New("api: release state repository is required")
+	// ErrMissingPreparedReleaseRepository indicates incomplete prepared-generation persistence.
+	ErrMissingPreparedReleaseRepository = errors.New("api: prepared release repository is required")
+	// ErrMissingReleaseSelectionRepository indicates incomplete repository composition.
+	ErrMissingReleaseSelectionRepository = errors.New("api: release selection repository is required")
+	// ErrMissingHistoryRepository indicates incomplete repository composition.
+	ErrMissingHistoryRepository = errors.New("api: history repository is required")
+	// ErrMissingUploadLedgerRepository indicates incomplete repository composition.
+	ErrMissingUploadLedgerRepository = errors.New("api: upload ledger repository is required")
+	// ErrMissingTrackerStateRepository indicates incomplete repository composition.
+	ErrMissingTrackerStateRepository = errors.New("api: tracker state repository is required")
+	// ErrMissingMediaAssetRepository indicates incomplete repository composition.
+	ErrMissingMediaAssetRepository = errors.New("api: media asset repository is required")
+)
+
+// RepositoryCapabilities is an immutable set of borrowed persistence
+// capabilities. Construct it from one adapter so production capabilities share
+// connection, retry, transaction, and lifecycle ownership.
+type RepositoryCapabilities struct {
+	releaseState ReleaseStateRepository
+	prepared     PreparedReleaseRepository
+	selections   ReleaseSelectionRepository
+	history      HistoryRepository
+	uploads      UploadLedgerRepository
+	trackers     TrackerStateRepository
+	media        MediaAssetRepository
+}
+
+// RepositoryCapabilitiesFrom projects one adapter onto every repository seam.
+// Call [RepositoryCapabilities.Validate] before installing the result.
+func RepositoryCapabilitiesFrom(adapter any) RepositoryCapabilities {
+	releaseState, _ := adapter.(ReleaseStateRepository)
+	prepared, _ := adapter.(PreparedReleaseRepository)
+	selections, _ := adapter.(ReleaseSelectionRepository)
+	history, _ := adapter.(HistoryRepository)
+	uploads, _ := adapter.(UploadLedgerRepository)
+	trackers, _ := adapter.(TrackerStateRepository)
+	media, _ := adapter.(MediaAssetRepository)
+	return RepositoryCapabilities{
+		releaseState: releaseState,
+		prepared:     prepared,
+		selections:   selections,
+		history:      history,
+		uploads:      uploads,
+		trackers:     trackers,
+		media:        media,
+	}
+}
+
+// NewRepositoryCapabilities constructs and validates borrowed capabilities
+// projected from one adapter.
+func NewRepositoryCapabilities(adapter any) (RepositoryCapabilities, error) {
+	capabilities := RepositoryCapabilitiesFrom(adapter)
+	if err := capabilities.Validate(); err != nil {
+		return RepositoryCapabilities{}, err
+	}
+	return capabilities, nil
+}
+
+// Validate rejects missing and typed-nil capabilities before runtime use.
+func (c RepositoryCapabilities) Validate() error {
+	checks := []struct {
+		value any
+		err   error
+	}{
+		{value: c.releaseState, err: ErrMissingReleaseStateRepository},
+		{value: c.prepared, err: ErrMissingPreparedReleaseRepository},
+		{value: c.selections, err: ErrMissingReleaseSelectionRepository},
+		{value: c.history, err: ErrMissingHistoryRepository},
+		{value: c.uploads, err: ErrMissingUploadLedgerRepository},
+		{value: c.trackers, err: ErrMissingTrackerStateRepository},
+		{value: c.media, err: ErrMissingMediaAssetRepository},
+	}
+	for _, check := range checks {
+		if isNilRepositoryCapability(check.value) {
+			return check.err
+		}
+	}
+	return nil
+}
+
+// IsZero reports whether no repository capabilities were supplied.
+func (c RepositoryCapabilities) IsZero() bool {
+	return c.releaseState == nil && c.prepared == nil && c.selections == nil && c.history == nil && c.uploads == nil && c.trackers == nil && c.media == nil
+}
+
+// ReleaseState returns the borrowed release-state capability.
+func (c RepositoryCapabilities) ReleaseState() ReleaseStateRepository { return c.releaseState }
+
+// Prepared returns the borrowed whole-generation prepared-release capability.
+func (c RepositoryCapabilities) Prepared() PreparedReleaseRepository { return c.prepared }
+
+// Selections returns the borrowed release-selection capability.
+func (c RepositoryCapabilities) Selections() ReleaseSelectionRepository { return c.selections }
+
+// History returns the borrowed history capability.
+func (c RepositoryCapabilities) History() HistoryRepository { return c.history }
+
+// Uploads returns the borrowed upload-ledger capability.
+func (c RepositoryCapabilities) Uploads() UploadLedgerRepository { return c.uploads }
+
+// Trackers returns the borrowed tracker-state capability.
+func (c RepositoryCapabilities) Trackers() TrackerStateRepository { return c.trackers }
+
+// Media returns the borrowed media-asset capability.
+func (c RepositoryCapabilities) Media() MediaAssetRepository { return c.media }
+
+func isNilRepositoryCapability(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	kind := reflected.Kind()
+	if kind == reflect.Chan || kind == reflect.Func || kind == reflect.Interface || kind == reflect.Map || kind == reflect.Pointer || kind == reflect.Slice {
+		return reflected.IsNil()
+	}
+	return false
 }

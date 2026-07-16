@@ -7,7 +7,7 @@ Scoped rules for backend Go under `internal/`. Root repo rules still apply.
 - Go lint config: `.golangci.yml`
 - Hook wiring: `lefthook.yml`
 - Make targets: `Makefile`
-- API/runtime contracts: `pkg/api`, `cmd/upbrr`, `internal/guiapp`, `internal/webserver`, `gui/frontend`
+- API/runtime contracts: `pkg/api`, `cmd/upbrr`, `internal/webserver`, `webui`
 
 Tool output and config win over prose.
 
@@ -21,7 +21,7 @@ make logpolicy
 make pathpolicy
 make gofix-check-changed
 go test -race -v -timeout 20m ./cmd/upbrr ./internal/core ./pkg/api
-go test -race -v -timeout 20m ./internal/guiapp ./internal/webserver ./internal/guishared ./pkg/api
+go test -race -v -timeout 20m ./internal/webserver/... ./pkg/api
 ```
 
 ## Check Selection
@@ -29,7 +29,7 @@ go test -race -v -timeout 20m ./internal/guiapp ./internal/webserver ./internal/
 - Touched Go package: `go test -race -v -timeout 20m <package>`.
 - CLI behavior/flags/prompts: `go test -race -v -timeout 20m ./cmd/upbrr ./internal/core ./pkg/api` plus touched services/trackers, then `make backend`.
 - Core upload flow, tracker orchestration, config, DB, or API contracts: run focused package tests, then add `make test-go` when shared behavior can regress broadly.
-- Wails/web/embedded API parity: `go test -race -v -timeout 20m ./internal/guiapp ./internal/webserver ./internal/guishared ./pkg/api`; add frontend `typecheck`/unit checks for request/response or bridge changes.
+- WebUI/API contracts: `go test -race -v -timeout 20m ./internal/webserver/... ./pkg/api`; add frontend `typecheck`/unit checks for request/response or browser-client changes.
 - Tracker changes: test the tracker impl package and touched shared tracker packages; include config/defaults and catalog tests when definitions or auth material change.
 - Logging/internal Go changes: `make logpolicy`.
 - Path handling/local FS changes: `make pathpolicy`; use `make lint` before commit.
@@ -37,21 +37,32 @@ go test -race -v -timeout 20m ./internal/guiapp ./internal/webserver ./internal/
 
 ## Runtime Flow
 
-1. Entrypoints build request/options from CLI args, Wails method input, or web route payload.
-2. `internal/core` prepares metadata, config, services, repository access, validation, screenshots/images, tracker review, and upload.
-3. Services under `internal/services` handle metadata, torrents, image hosts, dupe checks, screenshots, and tracker orchestration.
-4. Tracker implementations under `internal/trackers/impl` produce tracker-specific payloads and rule handling.
-5. DB/repository layers persist config, history, images, upload records, and status.
+1. Entrypoints build request/options from CLI args or WebUI route payloads.
+2. `internal/preparedrelease` owns immutable source-scoped prepared generations and display projections, using `internal/sourcelayout` and `internal/externalidentity` for source resources and canonical identity.
+3. `internal/core` consumes exact prepared generations and owns workflow orchestration, tracker eligibility, validation, screenshots/images, review, and upload.
+4. `internal/clientdiscovery` owns normalized source-scoped torrent-client search.
+5. `internal/webserver` owns browser transport, retained background jobs, and runtime activation through `RuntimeActivator`.
+6. Generic tracker orchestration under `internal/trackers` consumes typed registry capabilities; auth, dupe, and data coordinators live in dedicated subpackages.
+7. Tracker implementations under `internal/trackers/impl/<tracker>` own tracker-specific endpoints, payloads, auth, lookup, rules, descriptions, and policy. Unit3D sites live under `internal/trackers/impl/unit3d/sites/<tracker>`.
+8. DB/repository layers persist config, prepared generations, history, images, upload records, and status.
 
-Preserve behavior across CLI, Wails GUI, and embedded web unless intentionally changing an entrypoint.
+Preserve behavior across CLI and WebUI unless intentionally changing an entrypoint.
 
 ## Config / Runtime Ownership
 
-- Runtime config can change after `SaveConfig` / `applyConfig`.
-- Read Wails/web config/core/logger via `currentConfig()`, `requireRuntime()`, or snapshots.
-- Do not read `App.cfg` / `Backend.cfg` directly outside helpers.
+- Runtime config can change after `SaveConfig` delegates activation to `RuntimeActivator`.
+- Read WebUI config/core/logger via `currentConfig()`, `requireRuntime()`, or snapshots.
+- Do not read `Backend.cfg` directly outside helpers.
 - `Server.cfg` is startup-only.
 - Config schema changes need `internal/config.Config`, embedded defaults, import/export, env overrides where relevant, settings UI/web parity, and secret redaction/encryption review.
+
+## Canonical Release Ownership
+
+- Canonical preparation contracts are single-source and preserve the caller's interaction mode.
+- `PreparedRelease` contains typed, reusable source facts only. Do not retain workflow options, tracker choices, questionnaire answers, overrides, or outcomes in prepared state.
+- Operations consume owner-local inputs plus an exact `ReleaseRef`; workflow interfaces must not accept a broad `PreparedRelease` when a narrower contract suffices.
+- `PreparedReleaseDisplay` and `ProviderDisplay` construction belongs to `internal/preparedrelease`; `TrackerEligibility` construction belongs to `internal/core`.
+- Browser correlation IDs and event timestamps are transport concerns. Inject them under `internal/webserver`, not canonical preparation inputs or facts.
 
 ## Go Rules
 
@@ -80,7 +91,7 @@ Preserve behavior across CLI, Wails GUI, and embedded web unless intentionally c
 - Slash-data such as torrent paths, URLs, and API payload paths use `path` only with import-local `//nolint:depguard // <reason>`.
 - Slash-data -> local FS: validate slash path, then `filepath.FromSlash`.
 - Reject POSIX + Windows escapes on every OS: leading `/`, leading `\`, drive letters, UNC, `..`.
-- Use `internal/pathutil.IsWithinRoot` / `SamePath`; no ad-hoc `filepath.Rel` + prefix guards.
+- Use `internal/pathing.IsWithinRoot` / `SamePath`; no ad-hoc `filepath.Rel` + prefix guards.
 - Tests: `t.TempDir`, `filepath.Join`, `filepath.ToSlash`; no hardcoded OS-rooted literals/raw slash assertions for local FS.
 - `cmd/pathpolicy` flags wrong path APIs, string-built local paths, slash-data FS calls/assertions, and ad-hoc guards. Rare exceptions need `//pathpolicy:allow <reason>` same/previous line.
 
@@ -89,7 +100,7 @@ Preserve behavior across CLI, Wails GUI, and embedded web unless intentionally c
 - Pre-commit hook: Go format, log policy, path policy, frontend Prettier/ESLint on staged files.
 - Pre-push hook: `make lint` and frontend typecheck.
 - Do not rely on `make prepush` before a commit exists. Run relevant underlying checks before commit when the change can affect them.
-- `make lint` runs path policy plus full `golangci-lint run --timeout=5m ./...`.
+- `make lint` runs architecture, path, and literal policies plus full `golangci-lint run --timeout=5m ./...`.
 - Fix checker failures in the smallest relevant scope. Do not weaken checks, remove tests, or add broad `nolint` to hide failures.
 
 ## Generated / Scratch Path Risk
@@ -101,11 +112,12 @@ Preserve behavior across CLI, Wails GUI, and embedded web unless intentionally c
 - After creating generated dirs or broad Go tooling, run `make lint` before commit.
 - Keep generated artifacts out of commits unless the task explicitly updates generated output.
 
-Current expected local/generated ignores: `dist/`, `gui/frontend/dist/`, `gui/build/bin/`, `internal/guiapp/assets/*` except `.keep`, `gui/frontend/playwright-report/`, `gui/frontend/test-results/`, `tmp/`.
+Current expected local/generated ignores: `dist/`, `webui/dist/`, `internal/webserver/assets/*` except `.keep`, `webui/playwright-report/`, `webui/test-results/`, `tmp/`.
 
 ## Domain Guardrails
 
-- Tracker changes often touch `internal/trackers/impl/*`, `internal/trackers/impl/registry.go`, `internal/trackers/catalog.go`, `internal/trackers/unit3dmeta`, `internal/config/defaults/example.yaml`, and policy tests.
+- Tracker behavior belongs in `internal/trackers/impl/<tracker>`; Unit3D site exceptions belong in `internal/trackers/impl/unit3d/sites/<tracker>`. Register capabilities explicitly in `internal/trackers/impl/registry.go`; generic packages must not import individual implementations.
+- Tracker changes may also require shared registry contract/parity tests, `internal/config/defaults/example.yaml`, and compatibility catalog tests. Do not add new tracker-name dispatch to `internal/trackers/catalog.go` or `internal/trackers/unit3dmeta`; those are compatibility read models.
 - DB schema changes use stable, additive, forward-only, idempotent SQLite migrations where practical; preserve `schema_migrations` and the legacy `user_version` bridge.
-- Runtime bridge changes involving `globalThis.go.guiapp.App` need matching Wails `internal/guiapp` methods, web `/api/app/*` routes, browser bridge request shapes, and unit/embedded browser verification.
-- Generated/built outputs are mostly ignored; do not commit populated `internal/guiapp/assets` unless deliberately updating generated artifacts.
+- WebUI client changes need matching `/api/app/*` routes, typed request shapes, and unit/embedded browser verification.
+- Generated/built outputs are mostly ignored; do not commit populated `internal/webserver/assets` unless deliberately updating generated artifacts.

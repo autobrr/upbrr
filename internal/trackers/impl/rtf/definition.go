@@ -10,20 +10,34 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-type definition struct{}
+// Definition provides RTF tracker preparation and optional policy capabilities.
+type Definition struct{}
 
-func New() trackers.Definition  { return definition{} }
-func (definition) Name() string { return "RTF" }
+// New returns a fresh RTF tracker definition.
+func New() *Definition { return &Definition{} }
 
-func (definition) Upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
+// Name returns the stable RTF tracker identifier.
+func (Definition) Name() string { return "RTF" }
+
+// DupePolicy returns RTF-specific duplicate comparison settings.
+func (Definition) DupePolicy() *trackers.DupePolicy {
+	return &trackers.DupePolicy{ContainsFilenameMatch: true}
+}
+
+// Prepare builds a fresh intent-scoped RTF tracker plan.
+func (d Definition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
+	return trackers.PrepareAdapter(ctx, input, d.prepareDescription, d.prepareDryRun, d.submit)
+}
+
+func (Definition) submit(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
 	return upload(ctx, req)
 }
 
-func (definition) BuildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
+func (Definition) prepareDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
 	return buildUploadDryRun(ctx, req)
 }
 
-func (definition) BuildDescription(ctx context.Context, req trackers.DescriptionRequest) (trackers.DescriptionResult, error) {
+func (Definition) prepareDescription(_ context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {
 	var (
 		err    error
 		assets trackers.DescriptionAssets
@@ -31,7 +45,7 @@ func (definition) BuildDescription(ctx context.Context, req trackers.Description
 	if req.Assets != nil {
 		assets = *req.Assets
 	} else {
-		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+		assets, err = trackers.PreparedDescriptionAssets(req.Assets)
 		if err != nil {
 			assets = trackers.DescriptionAssets{}
 		}

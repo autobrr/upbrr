@@ -18,7 +18,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/autobrr/upbrr/internal/imagehostpolicy"
+	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 	"github.com/autobrr/upbrr/internal/redaction"
 )
 
@@ -594,7 +594,11 @@ func (t TrackersConfig) MarshalJSON() ([]byte, error) {
 	}
 	preferredTracker := strings.TrimSpace(t.PreferredTracker)
 
-	payload, err := json.Marshal(trackersJSON{DefaultTrackers: defaultTrackers, PreferredTracker: preferredTracker, Trackers: trackers})
+	payload, err := json.Marshal(trackersJSON{
+		DefaultTrackers:  defaultTrackers,
+		PreferredTracker: preferredTracker,
+		Trackers:         trackers,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("config: marshal trackers config: %w", err)
 	}
@@ -1106,7 +1110,7 @@ func trackerAPIKeyForExactName(trackers map[string]TrackerConfig, name string) s
 }
 
 // MergeMissingTrackerDefaults backfills tracker stubs from the embedded example
-// config so older saved configs can discover newly added trackers in the GUI.
+// config so older saved configs can discover newly added trackers in the WebUI.
 // Existing exact tracker names are preserved; ASCII case variants of "BTN" are
 // treated as the BTN entry so default backfill and legacy metadata tokens do not
 // create a duplicate canonical "BTN" entry.

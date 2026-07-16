@@ -47,7 +47,7 @@ type uploadState struct {
 	blockedReason string
 }
 
-func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
+func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
 	baseURL := resolveBaseURL(req.TrackerConfig)
 	uploadURL, err := joinURL(baseURL, "/api/upload")
 	if err != nil {
@@ -104,7 +104,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		tURL := torrentURL + id
 		artifactPath := ""
 		if announce := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announce != "" {
-			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "RTF")
+			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "RTF")
 			if err != nil {
 				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
@@ -124,11 +124,18 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		}, nil
 	}
 
-	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "RTF", "upload_failure", responseBody, ".json")
-	return api.UploadSummary{}, fmt.Errorf("trackers: RTF %s", metautil.FirstNonEmptyTrimmed(commonhttp.ExtractHTTPErrorDetail(responseBody), commonhttp.RedactErrorDetail(decoded.Message), fmt.Sprintf("upload failed with status %d", resp.StatusCode)))
+	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "RTF", "upload_failure", responseBody, ".json")
+	return api.UploadSummary{}, fmt.Errorf(
+		"trackers: RTF %s",
+		metautil.FirstNonEmptyTrimmed(
+			commonhttp.ExtractHTTPErrorDetail(responseBody),
+			commonhttp.RedactErrorDetail(decoded.Message),
+			fmt.Sprintf("upload failed with status %d", resp.StatusCode),
+		),
+	)
 }
 
-func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
+func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
 	state, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
@@ -156,15 +163,20 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		Description:      state.description,
 		Endpoint:         endpoint,
 		Payload:          payload,
-		Files:            []api.TrackerDryRunFile{{Field: "file", Path: state.torrentPath, Present: strings.TrimSpace(state.torrentPath) != ""}},
+		Files: []api.TrackerDryRunFile{{
+			Field:   "file",
+			Path:    state.torrentPath,
+			Present: strings.TrimSpace(state.torrentPath) != "",
+		}},
 	}, nil
 }
 
-func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, error) {
-	if strings.TrimSpace(req.TrackerConfig.APIKey) == "" && (strings.TrimSpace(req.TrackerConfig.Username) == "" || strings.TrimSpace(req.TrackerConfig.Password) == "") {
+func prepareUploadState(_ context.Context, req trackers.PreparationInput) (uploadState, error) {
+	if strings.TrimSpace(req.TrackerConfig.APIKey) == "" &&
+		(strings.TrimSpace(req.TrackerConfig.Username) == "" || strings.TrimSpace(req.TrackerConfig.Password) == "") {
 		return uploadState{}, errors.New("trackers: RTF missing api_key or username/password")
 	}
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
@@ -172,7 +184,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	if req.Assets != nil {
 		assets = *req.Assets
 	} else {
-		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+		assets, err = trackers.PreparedDescriptionAssets(req.Assets)
 		if err != nil {
 			trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 			assets = trackers.DescriptionAssets{}
@@ -208,7 +220,7 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 
 // resolveAPIKey validates configured RTF API auth and persists a refreshed token when credentials are used.
 // Callers must complete no-upload eligibility gates before invoking it.
-func resolveAPIKey(ctx context.Context, req trackers.UploadRequest) (string, error) {
+func resolveAPIKey(ctx context.Context, req trackers.PreparationInput) (string, error) {
 	apiKey := strings.TrimSpace(req.TrackerConfig.APIKey)
 	baseURL := resolveBaseURL(req.TrackerConfig)
 	if apiKey != "" {
@@ -230,7 +242,7 @@ func resolveAPIKey(ctx context.Context, req trackers.UploadRequest) (string, err
 	if err != nil {
 		return "", err
 	}
-	if err := persistRefreshedAPIKey(ctx, req.AppConfig.MainSettings.DBPath, refreshed); err != nil && req.Logger != nil {
+	if err := persistRefreshedAPIKey(ctx, req.Runtime.DBPath, refreshed); err != nil && req.Logger != nil {
 		req.Logger.Warnf("trackers: RTF failed to persist refreshed API key: %v", err)
 	}
 	return refreshed, nil
@@ -383,7 +395,7 @@ func buildDescription(assets trackers.DescriptionAssets) string {
 	return strings.TrimSpace(assets.Description)
 }
 
-func validateEligibility(meta api.PreparedMetadata) string {
+func validateEligibility(meta api.UploadSubject) string {
 	genres := strings.ToLower(genresText(meta) + "," + keywordsText(meta))
 	for _, value := range []string{"xxx", "erotic", "porn", "adult", "orgy"} {
 		if strings.Contains(genres, value) {
@@ -403,14 +415,14 @@ func validateEligibility(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func releaseDate(meta api.PreparedMetadata) time.Time {
-	if meta.ExternalMetadata.TMDB == nil {
+func releaseDate(meta api.UploadSubject) time.Time {
+	if meta.ProviderMetadata.TMDB == nil {
 		return time.Time{}
 	}
 	for _, value := range []string{
-		strings.TrimSpace(meta.ExternalMetadata.TMDB.ReleaseDate),
-		strings.TrimSpace(meta.ExternalMetadata.TMDB.LastAirDate),
-		strings.TrimSpace(meta.ExternalMetadata.TMDB.FirstAirDate),
+		strings.TrimSpace(meta.ProviderMetadata.TMDB.ReleaseDate),
+		strings.TrimSpace(meta.ProviderMetadata.TMDB.LastAirDate),
+		strings.TrimSpace(meta.ProviderMetadata.TMDB.FirstAirDate),
 	} {
 		if value == "" {
 			continue
@@ -422,18 +434,22 @@ func releaseDate(meta api.PreparedMetadata) time.Time {
 	return time.Time{}
 }
 
-func resolveYear(meta api.PreparedMetadata) int {
+func resolveYear(meta api.UploadSubject) int {
 	if meta.Release.Year > 0 {
 		return meta.Release.Year
 	}
-	if meta.ExternalMetadata.TMDB == nil {
+	if meta.ProviderMetadata.TMDB == nil {
 		return 0
 	}
-	return meta.ExternalMetadata.TMDB.Year
+	return meta.ProviderMetadata.TMDB.Year
 }
 
-func resolveType(meta api.PreparedMetadata) string {
-	if !isTV(meta) {
+func resolveType(meta api.UploadSubject) string {
+	category, err := meta.Identity.RequireCategory()
+	if err != nil {
+		return ""
+	}
+	if category == api.CanonicalCategoryMovie {
 		return "401"
 	}
 	return "402"
@@ -449,34 +465,30 @@ func screenshots(images []api.ScreenshotImage) []string {
 	return out
 }
 
-func imdbURL(meta api.PreparedMetadata) string {
-	if meta.ExternalIDs.IMDBID <= 0 {
+func imdbURL(meta api.UploadSubject) string {
+	if meta.Identity.IMDBID <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("https://www.imdb.com/title/tt%07d/", meta.ExternalIDs.IMDBID)
+	return fmt.Sprintf("https://www.imdb.com/title/tt%07d/", meta.Identity.IMDBID)
 }
 
-func resolvePoster(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB == nil {
+func resolvePoster(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.TMDB == nil {
 		return ""
 	}
-	return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Poster)
+	return metautil.FirstNonEmptyTrimmed(meta.ProviderMetadata.TMDB.Poster)
 }
 
-func isTV(meta api.PreparedMetadata) bool {
-	return meta.TVPack || meta.SeasonInt > 0 || meta.EpisodeInt > 0 || strings.EqualFold(meta.ExternalIDs.Category, "TV")
-}
-
-func genresText(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB != nil {
-		return metautil.FirstNonEmptyTrimmed(meta.ExternalMetadata.TMDB.Genres, meta.Release.Genre)
+func genresText(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.TMDB != nil {
+		return metautil.FirstNonEmptyTrimmed(meta.ProviderMetadata.TMDB.Genres, meta.Release.Genre)
 	}
 	return metautil.FirstNonEmptyTrimmed(meta.Release.Genre)
 }
 
-func keywordsText(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB == nil {
+func keywordsText(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.TMDB == nil {
 		return ""
 	}
-	return strings.TrimSpace(meta.ExternalMetadata.TMDB.Keywords)
+	return strings.TrimSpace(meta.ProviderMetadata.TMDB.Keywords)
 }

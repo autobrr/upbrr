@@ -21,10 +21,9 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
-	"github.com/autobrr/upbrr/internal/paths"
-	"github.com/autobrr/upbrr/internal/pathutil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
-	descriptionhdb "github.com/autobrr/upbrr/internal/services/description/hdb"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -37,7 +36,7 @@ const (
 
 var hdbSuccessURLPattern = regexp.MustCompile(`(?i)details\.php\?id=(\d+)&uploaded=\d+`)
 
-func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
+func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
 	select {
 	case <-ctx.Done():
 		return api.UploadSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -57,23 +56,23 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, fmt.Errorf("trackers: HDB mapping failed category=%d codec=%d medium=%d", category, codec, medium)
 	}
 
-	assets, err := resolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger, req.Assets)
+	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return api.UploadSummary{}, err
+			return api.UploadSummary{}, fmt.Errorf("trackers: HDB description assets: %w", err)
 		}
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
 	descriptionText := strings.TrimSpace(assets.Description)
 	if !assets.Final {
-		descriptionText, err = descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.MenuImages, assets.Screenshots)
+		descriptionText, err = BuildDescription(ctx, req.Meta, req.Runtime.DescriptionConfig(), assets.Description, assets.MenuImages, assets.Screenshots)
 		if err != nil {
 			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 		}
 	}
 
-	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	torrentPath, err := resolveTorrentPath(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
@@ -84,12 +83,12 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	uploadURL += hdbUploadPath
 
-	cookies, err := resolveHDBCookies(ctx, req.AppConfig.MainSettings.DBPath)
+	cookies, err := resolveHDBCookies(ctx, req.Runtime.DBPath)
 	if err != nil {
 		return api.UploadSummary{}, err
 	}
 
-	fields := buildUploadFields(req.Meta, req.AppConfig, category, codec, medium, descriptionText)
+	fields := buildUploadFields(req.Meta, req.Runtime.DescriptionConfig(), category, codec, medium, descriptionText)
 	body, contentType, err := buildMultipartPayload(fields, torrentPath)
 	if err != nil {
 		return api.UploadSummary{}, err
@@ -125,7 +124,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	torrentID := strings.TrimSpace(matches[1])
 	trackerTorrentPath := ""
 	if torrentID != "" {
-		trackerTorrentPath, err = resolveTrackerTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath, "HDB")
+		trackerTorrentPath, err = resolveTrackerTorrentPath(req.Meta, req.Runtime.DBPath, "HDB")
 		if err != nil {
 			return api.UploadSummary{}, err
 		}
@@ -146,7 +145,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}, nil
 }
 
-func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
+func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
 	select {
 	case <-ctx.Done():
 		return api.TrackerDryRunEntry{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -166,23 +165,23 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: HDB mapping failed category=%d codec=%d medium=%d", category, codec, medium)
 	}
 
-	assets, err := resolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger, req.Assets)
+	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return api.TrackerDryRunEntry{}, err
+			return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: HDB description assets: %w", err)
 		}
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
 	}
 	descriptionText := strings.TrimSpace(assets.Description)
 	if !assets.Final {
-		descriptionText, err = descriptionhdb.BuildDescription(ctx, req.Meta, req.AppConfig, assets.Description, assets.MenuImages, assets.Screenshots)
+		descriptionText, err = BuildDescription(ctx, req.Meta, req.Runtime.DescriptionConfig(), assets.Description, assets.MenuImages, assets.Screenshots)
 		if err != nil {
 			return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: %w", err)
 		}
 	}
 
-	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	torrentPath, err := resolveTorrentPath(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
@@ -193,7 +192,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}
 	uploadURL += hdbUploadPath
 
-	fields := buildUploadFields(req.Meta, req.AppConfig, category, codec, medium, descriptionText)
+	fields := buildUploadFields(req.Meta, req.Runtime.DescriptionConfig(), category, codec, medium, descriptionText)
 
 	return api.TrackerDryRunEntry{
 		Tracker:          "HDB",
@@ -212,7 +211,7 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}, nil
 }
 
-func buildUploadFields(meta api.PreparedMetadata, appConfig config.Config, categoryID int, codecID int, mediumID int, description string) map[string]string {
+func buildUploadFields(meta api.UploadSubject, appConfig config.Config, categoryID int, codecID int, mediumID int, description string) map[string]string {
 	fields := map[string]string{
 		"name":     resolveUploadName(meta),
 		"category": strconv.Itoa(categoryID),
@@ -236,8 +235,8 @@ func buildUploadFields(meta api.PreparedMetadata, appConfig config.Config, categ
 		}
 	}
 
-	if isHDBTVCategory(meta) && meta.ExternalIDs.TVDBID != 0 {
-		fields["tvdb"] = strconv.Itoa(meta.ExternalIDs.TVDBID)
+	if isHDBTVCategory(meta) && meta.Identity.TVDBID != 0 {
+		fields["tvdb"] = strconv.Itoa(meta.Identity.TVDBID)
 	}
 	if imdb := resolveIMDbURL(meta); imdb != "" {
 		fields["imdb"] = imdb
@@ -261,49 +260,13 @@ func buildUploadFields(meta api.PreparedMetadata, appConfig config.Config, categ
 }
 
 // isHDBTVCategory reports whether HDB upload payloads may include TVDB fields.
-// Explicit movie categories suppress TVDB fields even when MediaInfo or overrides classify the release as TV.
-func isHDBTVCategory(meta api.PreparedMetadata) bool {
-	if isHDBMovieCategory(meta) {
-		return false
-	}
-	if strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "TV") ||
-		strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "TV") ||
-		strings.EqualFold(strings.TrimSpace(meta.Release.Category), "TV") {
-		return true
-	}
-	if meta.ReleaseNameOverrides.Category != nil {
-		return strings.EqualFold(strings.TrimSpace(*meta.ReleaseNameOverrides.Category), "TV")
-	}
-	return false
+// Canonical movie identity suppresses TVDB fields even when episode facts exist.
+func isHDBTVCategory(meta api.UploadSubject) bool {
+	category, err := meta.Identity.RequireCategory()
+	return err == nil && category == api.CanonicalCategoryTV
 }
 
-func isHDBMovieCategory(meta api.PreparedMetadata) bool {
-	if strings.EqualFold(strings.TrimSpace(meta.ExternalIDs.Category), "MOVIE") ||
-		strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "MOVIE") ||
-		strings.EqualFold(strings.TrimSpace(meta.Release.Category), "MOVIE") {
-		return true
-	}
-	if meta.ReleaseNameOverrides.Category != nil {
-		return strings.EqualFold(strings.TrimSpace(*meta.ReleaseNameOverrides.Category), "MOVIE")
-	}
-	return false
-}
-
-func resolveDescriptionAssets(
-	ctx context.Context,
-	tracker string,
-	meta api.PreparedMetadata,
-	repo db.MetadataRepository,
-	logger api.Logger,
-	provided *trackers.DescriptionAssets,
-) (trackers.DescriptionAssets, error) {
-	if provided != nil {
-		return *provided, nil
-	}
-	return wrapTrackerResult(trackers.ResolveDescriptionAssets(ctx, tracker, meta, repo, logger))
-}
-
-func resolveUploadName(meta api.PreparedMetadata) string {
+func resolveUploadName(meta api.UploadSubject) string {
 	if name := strings.TrimSpace(meta.ReleaseName); name != "" {
 		return name
 	}
@@ -316,17 +279,17 @@ func resolveUploadName(meta api.PreparedMetadata) string {
 	return pathutil.Base(meta.SourcePath)
 }
 
-func resolveIMDbURL(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.IMDB != nil {
-		if value := strings.TrimSpace(meta.ExternalMetadata.IMDB.IMDbURL); value != "" {
+func resolveIMDbURL(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.IMDB != nil {
+		if value := strings.TrimSpace(meta.ProviderMetadata.IMDB.IMDbURL); value != "" {
 			if !strings.HasSuffix(value, "/") {
 				return value + "/"
 			}
 			return value
 		}
 	}
-	if meta.ExternalIDs.IMDBID != 0 {
-		return fmt.Sprintf("https://www.imdb.com/title/tt%07d/", meta.ExternalIDs.IMDBID)
+	if meta.Identity.IMDBID != 0 {
+		return fmt.Sprintf("https://www.imdb.com/title/tt%07d/", meta.Identity.IMDBID)
 	}
 	return ""
 }
@@ -365,7 +328,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
-func resolveTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error) {
+func resolveTorrentPath(meta api.UploadSubject, dbPath string) (string, error) {
 	candidates := []string{
 		strings.TrimSpace(meta.TorrentPath),
 		strings.TrimSpace(meta.ClientTorrentPath),
@@ -383,7 +346,7 @@ func resolveTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error
 	if strings.TrimSpace(dbPath) != "" && strings.TrimSpace(meta.SourcePath) != "" {
 		tmpRoot, err := db.Subdir(dbPath, "tmp")
 		if err == nil {
-			tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+			tmpDir, base, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 			if err == nil {
 				guessed := filepath.Join(tmpDir, base+".torrent")
 				if info, err := os.Stat(guessed); err == nil && !info.IsDir() {
@@ -396,7 +359,7 @@ func resolveTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error
 	return "", errors.New("trackers: HDB torrent file not found")
 }
 
-func resolveTrackerTorrentPath(meta api.PreparedMetadata, dbPath string, tracker string) (string, error) {
+func resolveTrackerTorrentPath(meta api.UploadSubject, dbPath string, tracker string) (string, error) {
 	if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
 		return "", errors.New("trackers: HDB tracker torrent path requires db path and source path")
 	}
@@ -405,7 +368,7 @@ func resolveTrackerTorrentPath(meta api.PreparedMetadata, dbPath string, tracker
 	if err != nil {
 		return "", fmt.Errorf("trackers: HDB tmp root: %w", err)
 	}
-	tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	tmpDir, base, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return "", fmt.Errorf("trackers: HDB tmp release dir: %w", err)
 	}
@@ -421,7 +384,15 @@ func resolveHDBCookies(ctx context.Context, dbPath string) ([]*http.Cookie, erro
 	return wrapTrackerResult(cookiepkg.LoadTrackerHTTPCookies(ctx, dbPath, "HDB", "hdbits.org"))
 }
 
-func downloadPersonalizedTorrent(ctx context.Context, uploadURL string, meta api.PreparedMetadata, torrentPath string, torrentID string, passkey string, cookies []*http.Cookie) error {
+func downloadPersonalizedTorrent(
+	ctx context.Context,
+	uploadURL string,
+	meta api.UploadSubject,
+	torrentPath string,
+	torrentID string,
+	passkey string,
+	cookies []*http.Cookie,
+) error {
 	downloadURL := buildHDBDownloadURL(uploadURL, meta, torrentID, passkey)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
@@ -456,7 +427,7 @@ func downloadPersonalizedTorrent(ctx context.Context, uploadURL string, meta api
 	return nil
 }
 
-func buildHDBDownloadURL(uploadURL string, meta api.PreparedMetadata, torrentID string, passkey string) string {
+func buildHDBDownloadURL(uploadURL string, meta api.UploadSubject, torrentID string, passkey string) string {
 	if strings.TrimSpace(torrentID) == "" || strings.TrimSpace(passkey) == "" {
 		return ""
 	}
@@ -465,35 +436,36 @@ func buildHDBDownloadURL(uploadURL string, meta api.PreparedMetadata, torrentID 
 	if filePart == "" || filePart == "." || filePart == string(filepath.Separator) {
 		filePart = "download"
 	}
-	return fmt.Sprintf("%s/download.php/%s?id=%s&passkey=%s", strings.TrimRight(base, "/"), url.PathEscape(filePart), url.QueryEscape(torrentID), url.QueryEscape(passkey))
+	return fmt.Sprintf(
+		"%s/download.php/%s?id=%s&passkey=%s",
+		strings.TrimRight(base, "/"),
+		url.PathEscape(filePart),
+		url.QueryEscape(torrentID),
+		url.QueryEscape(passkey),
+	)
 }
 
-func hdbCategoryID(meta api.PreparedMetadata) int {
-	category := strings.ToUpper(strings.TrimSpace(meta.ExternalIDs.Category))
-	if category == "" {
-		category = strings.ToUpper(strings.TrimSpace(meta.MediaInfoCategory))
-	}
-	if category == "" && meta.ReleaseNameOverrides.Category != nil {
-		category = strings.ToUpper(strings.TrimSpace(*meta.ReleaseNameOverrides.Category))
-	}
+func hdbCategoryID(meta api.UploadSubject) int {
+	category, _ := meta.Identity.RequireCategory()
 	switch category {
-	case "MOVIE":
+	case api.CanonicalCategoryMovie:
 		return 1
-	case "TV":
+	case api.CanonicalCategoryTV:
 		return 2
+	case api.CanonicalCategoryUnknown:
 	}
 	genres := ""
 	keywords := ""
-	if meta.ExternalMetadata.TMDB != nil {
-		genres = strings.ToLower(strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres))
-		keywords = strings.ToLower(strings.TrimSpace(meta.ExternalMetadata.TMDB.Keywords))
+	if meta.ProviderMetadata.TMDB != nil {
+		genres = strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres))
+		keywords = strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.TMDB.Keywords))
 	}
 	if strings.Contains(genres, "documentary") || strings.Contains(keywords, "documentary") {
 		return 3
 	}
-	if meta.ExternalMetadata.IMDB != nil {
-		imdbType := strings.ToLower(strings.TrimSpace(meta.ExternalMetadata.IMDB.Type))
-		imdbGenres := strings.ToLower(strings.TrimSpace(meta.ExternalMetadata.IMDB.Genres))
+	if meta.ProviderMetadata.IMDB != nil {
+		imdbType := strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.IMDB.Type))
+		imdbGenres := strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres))
 		if strings.Contains(imdbType, "concert") || (strings.Contains(imdbType, "video") && strings.Contains(imdbGenres, "music")) {
 			return 4
 		}
@@ -501,7 +473,7 @@ func hdbCategoryID(meta api.PreparedMetadata) int {
 	return 0
 }
 
-func hdbCodecID(meta api.PreparedMetadata) int {
+func hdbCodecID(meta api.UploadSubject) int {
 	codec := strings.ToUpper(strings.TrimSpace(meta.VideoCodec))
 	if codec == "" {
 		codec = strings.ToUpper(strings.TrimSpace(meta.VideoEncode))
@@ -524,7 +496,7 @@ func hdbCodecID(meta api.PreparedMetadata) int {
 	}
 }
 
-func hdbMediumID(meta api.PreparedMetadata) int {
+func hdbMediumID(meta api.UploadSubject) int {
 	discType := strings.ToUpper(strings.TrimSpace(meta.DiscType))
 	contentType := resolveHDBType(meta)
 	if discType == "BDMV" || discType == "HD DVD" {
@@ -548,7 +520,7 @@ func hdbMediumID(meta api.PreparedMetadata) int {
 	}
 }
 
-func resolveHDBType(meta api.PreparedMetadata) string {
+func resolveHDBType(meta api.UploadSubject) string {
 	typeValue := normalizeHDBType(meta.Type)
 	if typeValue == "" || isHDBCategoryType(typeValue) {
 		if meta.ReleaseNameOverrides.Type != nil {

@@ -303,7 +303,8 @@ func parseReleaseDetails(htmlText string, release api.BlurayReleaseCandidate) (a
 		return release, fmt.Errorf("bluray.com: parse release details html: %w", err)
 	}
 	specsNode := findFirst(root, func(n *html.Node) bool {
-		return n.Type == html.ElementNode && n.Data == "td" && attr(n, "width") == "228px" && strings.Contains(strings.ToLower(attr(n, "style")), "font-size: 12px")
+		return n.Type == html.ElementNode && n.Data == "td" && attr(n, "width") == "228px" &&
+			strings.Contains(strings.ToLower(attr(n, "style")), "font-size: 12px")
 	})
 	if specsNode == nil {
 		release.SpecsMissing = true

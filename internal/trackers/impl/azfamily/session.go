@@ -54,7 +54,12 @@ func newSession(ctx context.Context, site siteDefinition, dbPath string, logger 
 	defer resp.Body.Close()
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if readErr != nil && logger != nil {
-		logger.Debugf("trackers: %s cookie validation body read failed status=%d err=%s", site.Name, resp.StatusCode, redaction.RedactValue(readErr.Error(), nil))
+		logger.Debugf(
+			"trackers: %s cookie validation body read failed status=%d err=%s",
+			site.Name,
+			resp.StatusCode,
+			redaction.RedactValue(readErr.Error(), nil),
+		)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 || strings.Contains(strings.ToLower(string(body)), "page not found") {
 		return sessionState{}, fmt.Errorf("trackers: %s missing valid cookies", site.Name)
@@ -66,7 +71,7 @@ func newSession(ctx context.Context, site siteDefinition, dbPath string, logger 
 	return sessionState{client: client, token: token}, nil
 }
 
-func lookupMediaCode(ctx context.Context, site siteDefinition, state sessionState, meta api.PreparedMetadata) (mediaLookupResult, error) {
+func lookupMediaCode(ctx context.Context, site siteDefinition, state sessionState, meta api.UploadSubject) (mediaLookupResult, error) {
 	categoryIDValue := categoryID(meta)
 	if categoryIDValue == "" {
 		return mediaLookupResult{}, fmt.Errorf("trackers: %s unsupported category", site.Name)
@@ -150,7 +155,7 @@ func mediaItemMatchesIDs(item map[string]any, imdbID, tmdbID, tvdbID string) boo
 		(tvdbID != "" && strings.EqualFold(stringValue(item["tvdb"]), tvdbID))
 }
 
-func searchRequests(ctx context.Context, site siteDefinition, state sessionState, meta api.PreparedMetadata) ([]string, error) {
+func searchRequests(ctx context.Context, site siteDefinition, state sessionState, meta api.UploadSubject) ([]string, error) {
 	query := lookupTitle(meta)
 	if isTV(meta) {
 		query = strings.TrimSpace(query + " " + tvCode(meta))

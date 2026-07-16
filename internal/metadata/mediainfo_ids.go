@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -22,10 +24,10 @@ type mediaInfoIDs struct {
 	TVDBID   int
 }
 
-func (s *Service) ApplyMediaInfoIDs(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+func (s *Service) collectMediaInfoIdentityEvidence(ctx context.Context, meta preparationstate.State) (preparationstate.State, error) {
 	select {
 	case <-ctx.Done():
-		return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
+		return preparationstate.State{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 

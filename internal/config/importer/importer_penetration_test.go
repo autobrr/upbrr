@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// The importer is the only interface the GUI and web upload path use to
+// The importer is the only interface the WebUI upload path uses to
 // ingest a user's old config. These tests make sure every bad input is
 // rejected with a clean error instead of crashing or partially-loading.
 
@@ -70,7 +70,7 @@ func TestImportFromContentYAMLWithBOM(t *testing.T) {
 	}
 }
 
-// An empty byte slice must be treated as "use defaults" so the GUI can
+// An empty byte slice must be treated as "use defaults" so the WebUI can
 // import a freshly-created empty file without crashing.
 func TestImportFromContentEmptyBytes(t *testing.T) {
 	t.Parallel()
@@ -202,7 +202,7 @@ func TestImportFromContentWarnsOnImgRehostDisable(t *testing.T) {
 }
 
 // Files that live under a symlinked parent directory must still be readable,
-// so GUI users working out of a symlinked workspace aren't locked out.
+// so WebUI users working out of a symlinked workspace aren't locked out.
 func TestImportFromFileThroughSymlink(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink privilege on Windows requires elevation")

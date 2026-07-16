@@ -434,7 +434,7 @@ func TestUploadCancellationAfterResponsePreservesRemoteSuccessWithoutPersistingA
 	defer server.Close()
 
 	req := cztUploadRequest(t, server.URL)
-	artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, trackerName)
+	artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, trackerName)
 	if err != nil {
 		t.Fatalf("resolve artifact path: %v", err)
 	}
@@ -546,7 +546,7 @@ func TestUploadCancellationAfterPersistPreservesArtifactSummary(t *testing.T) {
 	defer server.Close()
 
 	req := cztUploadRequest(t, server.URL)
-	artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, trackerName)
+	artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, trackerName)
 	if err != nil {
 		t.Fatalf("resolve artifact path: %v", err)
 	}
@@ -616,7 +616,7 @@ func TestUploadOmitsArtifactPathWhenBackupCleanupFails(t *testing.T) {
 	defer server.Close()
 
 	req := cztUploadRequest(t, server.URL)
-	artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, trackerName)
+	artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, trackerName)
 	if err != nil {
 		t.Fatalf("resolve artifact path: %v", err)
 	}
@@ -649,7 +649,7 @@ func TestUploadOmitsArtifactPathWhenBackupCleanupFails(t *testing.T) {
 
 func TestPersistReturnedTorrentReturnsPathWhenBackupCleanupFails(t *testing.T) {
 	req := cztUploadRequest(t, defaultBaseURL)
-	artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, trackerName)
+	artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, trackerName)
 	if err != nil {
 		t.Fatalf("resolve artifact path: %v", err)
 	}
@@ -700,21 +700,96 @@ func TestJoinCZTURL(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{name: "leading slash", base: "https://czteam.me", raw: "/download.php?id=1", want: "https://czteam.me/download.php?id=1"},
-		{name: "no leading slash", base: "https://czteam.me", raw: "download.php?id=1", want: "https://czteam.me/download.php?id=1"},
-		{name: "same host absolute", base: "https://czteam.me", raw: "https://czteam.me/download.php?id=1", want: "https://czteam.me/download.php?id=1"},
-		{name: "base userinfo stripped", base: "https://user:pass@czteam.me", raw: "download.php?id=1", want: "https://czteam.me/download.php?id=1"},
-		{name: "same host absolute userinfo stripped", base: "https://czteam.me", raw: "https://user:pass@czteam.me/download.php?id=1", want: "https://czteam.me/download.php?id=1"},
-		{name: "same host scheme relative", base: "https://czteam.me", raw: "//czteam.me/download.php?id=1", want: "https://czteam.me/download.php?id=1"},
-		{name: "base path ignored", base: "https://czteam.me/nested/path?x=1", raw: "download.php?id=1", want: "https://czteam.me/download.php?id=1"},
-		{name: "absolute offsite", base: "https://czteam.me", raw: "https://cdn.example/download/1", wantErr: true},
-		{name: "scheme-relative offsite", base: "https://czteam.me", raw: "//cdn.example/download/1", wantErr: true},
-		{name: "same host wrong scheme", base: "https://czteam.me", raw: "http://czteam.me/download.php?id=1", wantErr: true},
-		{name: "root path", base: "https://czteam.me", raw: "/", wantErr: true},
-		{name: "root query", base: "https://czteam.me", raw: "/?id=1", wantErr: true},
-		{name: "query only", base: "https://czteam.me", raw: "?id=1", wantErr: true},
-		{name: "pathless", base: "https://czteam.me", raw: "https://czteam.me", wantErr: true},
-		{name: "empty", base: "https://czteam.me", raw: " ", wantErr: true},
+		{
+			name: "leading slash",
+			base: "https://czteam.me",
+			raw:  "/download.php?id=1",
+			want: "https://czteam.me/download.php?id=1",
+		},
+		{
+			name: "no leading slash",
+			base: "https://czteam.me",
+			raw:  "download.php?id=1",
+			want: "https://czteam.me/download.php?id=1",
+		},
+		{
+			name: "same host absolute",
+			base: "https://czteam.me",
+			raw:  "https://czteam.me/download.php?id=1",
+			want: "https://czteam.me/download.php?id=1",
+		},
+		{
+			name: "base userinfo stripped",
+			base: "https://user:pass@czteam.me",
+			raw:  "download.php?id=1",
+			want: "https://czteam.me/download.php?id=1",
+		},
+		{
+			name: "same host absolute userinfo stripped",
+			base: "https://czteam.me",
+			raw:  "https://user:pass@czteam.me/download.php?id=1",
+			want: "https://czteam.me/download.php?id=1",
+		},
+		{
+			name: "same host scheme relative",
+			base: "https://czteam.me",
+			raw:  "//czteam.me/download.php?id=1",
+			want: "https://czteam.me/download.php?id=1",
+		},
+		{
+			name: "base path ignored",
+			base: "https://czteam.me/nested/path?x=1",
+			raw:  "download.php?id=1",
+			want: "https://czteam.me/download.php?id=1",
+		},
+		{
+			name:    "absolute offsite",
+			base:    "https://czteam.me",
+			raw:     "https://cdn.example/download/1",
+			wantErr: true,
+		},
+		{
+			name:    "scheme-relative offsite",
+			base:    "https://czteam.me",
+			raw:     "//cdn.example/download/1",
+			wantErr: true,
+		},
+		{
+			name:    "same host wrong scheme",
+			base:    "https://czteam.me",
+			raw:     "http://czteam.me/download.php?id=1",
+			wantErr: true,
+		},
+		{
+			name:    "root path",
+			base:    "https://czteam.me",
+			raw:     "/",
+			wantErr: true,
+		},
+		{
+			name:    "root query",
+			base:    "https://czteam.me",
+			raw:     "/?id=1",
+			wantErr: true,
+		},
+		{
+			name:    "query only",
+			base:    "https://czteam.me",
+			raw:     "?id=1",
+			wantErr: true,
+		},
+		{
+			name:    "pathless",
+			base:    "https://czteam.me",
+			raw:     "https://czteam.me",
+			wantErr: true,
+		},
+		{
+			name:    "empty",
+			base:    "https://czteam.me",
+			raw:     " ",
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -739,36 +814,157 @@ func TestJoinCZTURL(t *testing.T) {
 func TestResolveCategoryMatrix(t *testing.T) {
 	tests := []struct {
 		name    string
-		meta    api.PreparedMetadata
+		meta    api.UploadSubject
 		want    string
 		wantErr bool
 	}{
-		{name: "display name answer", meta: api.PreparedMetadata{TrackerQuestionnaireAnswers: map[string]map[string]string{trackerName: {"category": "Software"}}}, want: "22"},
-		{name: "numeric answer", meta: api.PreparedMetadata{TrackerQuestionnaireAnswers: map[string]map[string]string{trackerName: {"category": "6"}}}, want: "6"},
-		{name: "movie hd", meta: api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "MOVIE"}, Release: api.ReleaseInfo{Resolution: "1080p"}}, want: "29"},
-		{name: "tv hd ro", meta: api.PreparedMetadata{ExternalIDs: api.ExternalIDs{Category: "TV"}, Release: api.ReleaseInfo{Resolution: "1080p"}, SeasonInt: 1, SubtitleLanguages: []string{"ro"}}, want: "34"},
-		{name: "anime", meta: api.PreparedMetadata{Anime: true}, want: "23"},
-		{name: "anime hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Anime-Video"}}, want: "23"},
-		{name: "video game hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "video-game"}}, want: "29"},
-		{name: "game video hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "game-video"}}, want: "29"},
-		{name: "game movie hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "game movie"}}, want: "29"},
-		{name: "videogame compound", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "videogame"}}, wantErr: true},
-		{name: "gameplay compound", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "gameplay"}}, wantErr: true},
-		{name: "console hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Games/Consoles"}}, want: "12"},
-		{name: "release source dvd", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Source: "DVD"}}, want: "20"},
-		{name: "documentary hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Documentary"}}, want: "29"},
-		{name: "movie documentary hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Movie Documentary"}}, want: "29"},
-		{name: "docs hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Docs"}}, want: "25"},
-		{name: "ebook hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "eBook"}}, want: "25"},
-		{name: "software", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Software"}}, want: "22"},
-		{name: "music", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Music/Audio"}}, want: "6"},
-		{name: "music video phrase", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Music Video"}}, want: "30"},
-		{name: "music video separator", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "music-video"}}, want: "30"},
-		{name: "music video dotted uppercase", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "MUSIC.VIDEO"}}, want: "30"},
-		{name: "mvid", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "MVID"}}, want: "30"},
-		{name: "generic video hint", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Video", Resolution: "1080p"}}, want: "29"},
-		{name: "no hints unknown metadata", meta: api.PreparedMetadata{}, wantErr: true},
-		{name: "unknown non-video", meta: api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Other Data"}}, wantErr: true},
+		{
+			name: "display name answer",
+			meta: api.UploadSubject{TrackerQuestionnaireAnswers: map[string]map[string]string{trackerName: {"category": "Software"}}},
+			want: "22",
+		},
+		{
+			name: "numeric answer",
+			meta: api.UploadSubject{TrackerQuestionnaireAnswers: map[string]map[string]string{trackerName: {"category": "6"}}},
+			want: "6",
+		},
+		{
+			name: "movie hd",
+			meta: api.UploadSubject{Identity: api.ExternalIdentity{Category: "MOVIE"}, Release: api.ReleaseInfo{Resolution: "1080p"}},
+			want: "29",
+		},
+		{
+			name: "tv hd ro",
+			meta: api.UploadSubject{
+				Identity:          api.ExternalIdentity{Category: "TV"},
+				Release:           api.ReleaseInfo{Resolution: "1080p"},
+				SeasonInt:         1,
+				SubtitleLanguages: []string{"ro"},
+			},
+			want: "34",
+		},
+		{
+			name: "anime",
+			meta: api.UploadSubject{Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie}, Anime: true},
+			want: "23",
+		},
+		{
+			name:    "parsed anime hint is not canonical identity",
+			meta:    api.UploadSubject{Release: api.ReleaseInfo{Category: "Anime-Video"}},
+			wantErr: true,
+		},
+		{
+			name:    "video game hint",
+			meta:    api.UploadSubject{Release: api.ReleaseInfo{Category: "video-game"}},
+			wantErr: true,
+		},
+		{
+			name:    "game video hint",
+			meta:    api.UploadSubject{Release: api.ReleaseInfo{Category: "game-video"}},
+			wantErr: true,
+		},
+		{
+			name:    "game movie hint",
+			meta:    api.UploadSubject{Release: api.ReleaseInfo{Category: "game movie"}},
+			wantErr: true,
+		},
+		{
+			name:    "videogame compound",
+			meta:    api.UploadSubject{Release: api.ReleaseInfo{Category: "videogame"}},
+			wantErr: true,
+		},
+		{
+			name:    "gameplay compound",
+			meta:    api.UploadSubject{Release: api.ReleaseInfo{Category: "gameplay"}},
+			wantErr: true,
+		},
+		{
+			name:    "console hint",
+			meta:    api.UploadSubject{Release: api.ReleaseInfo{Category: "Games/Consoles"}},
+			wantErr: true,
+		},
+		{
+			name: "release source dvd",
+			meta: api.UploadSubject{
+				Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+				Release:  api.ReleaseInfo{Source: "DVD"},
+			},
+			want: "20",
+		},
+		{
+			name: "documentary hint",
+			meta: api.UploadSubject{
+				Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+				Release:  api.ReleaseInfo{Category: "Documentary"},
+			},
+			want: "29",
+		},
+		{
+			name: "movie documentary hint",
+			meta: api.UploadSubject{
+				Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+				Release:  api.ReleaseInfo{Category: "Movie Documentary"},
+			},
+			want: "29",
+		},
+		{
+			name:    "docs hint",
+			meta:    api.UploadSubject{Release: api.ReleaseInfo{Category: "Docs"}},
+			wantErr: true,
+		},
+		{
+			name:    "ebook hint",
+			meta:    api.UploadSubject{Release: api.ReleaseInfo{Category: "eBook"}},
+			wantErr: true,
+		},
+		{
+			name:    "software",
+			meta:    api.UploadSubject{Release: api.ReleaseInfo{Category: "Software"}},
+			wantErr: true,
+		},
+		{
+			name:    "music",
+			meta:    api.UploadSubject{Release: api.ReleaseInfo{Category: "Music/Audio"}},
+			wantErr: true,
+		},
+		{
+			name:    "music video phrase",
+			meta:    api.UploadSubject{Release: api.ReleaseInfo{Category: "Music Video"}},
+			wantErr: true,
+		},
+		{
+			name:    "music video separator",
+			meta:    api.UploadSubject{Release: api.ReleaseInfo{Category: "music-video"}},
+			wantErr: true,
+		},
+		{
+			name:    "music video dotted uppercase",
+			meta:    api.UploadSubject{Release: api.ReleaseInfo{Category: "MUSIC.VIDEO"}},
+			wantErr: true,
+		},
+		{
+			name:    "mvid",
+			meta:    api.UploadSubject{Release: api.ReleaseInfo{Category: "MVID"}},
+			wantErr: true,
+		},
+		{
+			name: "generic video hint",
+			meta: api.UploadSubject{
+				Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+				Release:  api.ReleaseInfo{Category: "Video", Resolution: "1080p"},
+			},
+			want: "29",
+		},
+		{
+			name:    "no hints unknown metadata",
+			meta:    api.UploadSubject{},
+			wantErr: true,
+		},
+		{
+			name:    "unknown non-video",
+			meta:    api.UploadSubject{Release: api.ReleaseInfo{Category: "Other Data"}},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -791,7 +987,7 @@ func TestResolveCategoryMatrix(t *testing.T) {
 }
 
 func TestCategoryQuestionnaireRequiresUnknownNonVideo(t *testing.T) {
-	questionnaire := categoryQuestionnaire(api.PreparedMetadata{Release: api.ReleaseInfo{Category: "Other Data"}})
+	questionnaire := categoryQuestionnaire(api.UploadSubject{Release: api.ReleaseInfo{Category: "Other Data"}})
 	if questionnaire == nil || len(questionnaire.Fields) != 1 {
 		t.Fatalf("expected one category questionnaire field, got %+v", questionnaire)
 	}
@@ -806,7 +1002,7 @@ func TestCategoryQuestionnaireRequiresUnknownNonVideo(t *testing.T) {
 
 func TestBuildUploadDryRunBlocksMissingRequiredCategory(t *testing.T) {
 	req := cztUploadRequest(t, defaultBaseURL)
-	req.Meta.ExternalIDs.Category = ""
+	req.Meta.Identity.Category = api.CanonicalCategoryUnknown
 	req.Meta.Release.Category = "Other Data"
 
 	entry, err := buildUploadDryRun(context.Background(), req)
@@ -848,7 +1044,7 @@ func TestBuildDescriptionAndDryRunUseProvidedAssets(t *testing.T) {
 		t.Fatalf("expected CZT screenshot BBCode to use only img tags, got %q", entry.Payload["user_descr"])
 	}
 
-	result, err := (definition{}).BuildDescription(context.Background(), trackers.DescriptionRequest{
+	result, err := (definition{}).prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "CZT",
 		Meta:    req.Meta,
 		Logger:  api.NopLogger{},
@@ -871,9 +1067,21 @@ func TestBuildDescriptionAndDryRunUseProvidedAssets(t *testing.T) {
 func TestBBCODEScreenshotBlockUsesRawURLsAndCapsAtTwo(t *testing.T) {
 	got := bbcodeScreenshotBlock([]api.ScreenshotImage{
 		{ImgURL: "https://img.example/rehosted-only.jpg", WebURL: "https://img.example/page-only"},
-		{ImgURL: "https://img.example/rehosted-1.jpg", WebURL: "https://img.example/page-1", RawURL: "https://img.example/raw-1.jpg"},
-		{ImgURL: "https://img.example/rehosted-2.jpg", WebURL: "https://img.example/page-2", RawURL: "https://img.example/raw-2.jpg"},
-		{ImgURL: "https://img.example/rehosted-3.jpg", WebURL: "https://img.example/page-3", RawURL: "https://img.example/raw-3.jpg"},
+		{
+			ImgURL: "https://img.example/rehosted-1.jpg",
+			WebURL: "https://img.example/page-1",
+			RawURL: "https://img.example/raw-1.jpg",
+		},
+		{
+			ImgURL: "https://img.example/rehosted-2.jpg",
+			WebURL: "https://img.example/page-2",
+			RawURL: "https://img.example/raw-2.jpg",
+		},
+		{
+			ImgURL: "https://img.example/rehosted-3.jpg",
+			WebURL: "https://img.example/page-3",
+			RawURL: "https://img.example/raw-3.jpg",
+		},
 	})
 	want := "[img]https://img.example/raw-1.jpg[/img]\n[img]https://img.example/raw-2.jpg[/img]"
 	if got != want {
@@ -1003,7 +1211,7 @@ func (s *cztUploadTestServer) handlerError() error {
 	}
 }
 
-func cztUploadRequest(t *testing.T, trackerURL string) trackers.UploadRequest {
+func cztUploadRequest(t *testing.T, trackerURL string) trackers.PreparationInput {
 	t.Helper()
 	if strings.TrimSpace(trackerURL) != "" {
 		withCZTBaseURL(t, trackerURL)
@@ -1017,20 +1225,20 @@ func cztUploadRequest(t *testing.T, trackerURL string) trackers.UploadRequest {
 	if err := os.WriteFile(sourcePath, []byte("video"), 0o600); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
-	return trackers.UploadRequest{
+	return trackers.PreparationInput{
 		Tracker: "CZT",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:  sourcePath,
 			TorrentPath: torrentPath,
 			ReleaseName: "Release.2026.1080p.WEB-DL",
-			ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+			Identity:    api.ExternalIdentity{Category: "MOVIE"},
 			Release:     api.ReleaseInfo{Resolution: "1080p"},
 		},
 		TrackerConfig: config.TrackerConfig{
 			Passkey: "pass",
 		},
-		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "state", "upbrr.db")}},
-		Logger:    api.NopLogger{},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "state", "upbrr.db")}}),
+		Logger:  api.NopLogger{},
 		Assets: &trackers.DescriptionAssets{
 			Description: "kept description",
 			Screenshots: []api.ScreenshotImage{{

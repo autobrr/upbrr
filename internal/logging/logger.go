@@ -524,7 +524,11 @@ func newRotatingWriter(path string, maxBytes int64, maxFiles int) (*rotatingWrit
 	if maxFiles <= 0 {
 		return nil, errors.New("logging: max files must be greater than zero")
 	}
-	writer := &rotatingWriter{path: path, maxBytes: maxBytes, maxFiles: maxFiles}
+	writer := &rotatingWriter{
+		path:     path,
+		maxBytes: maxBytes,
+		maxFiles: maxFiles,
+	}
 	if err := writer.open(); err != nil {
 		return nil, err
 	}

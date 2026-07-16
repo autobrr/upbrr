@@ -22,7 +22,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -83,7 +82,7 @@ type uploadState struct {
 	questionnaire *api.TrackerQuestionnaire
 }
 
-func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
+func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
 	state, err := prepareUploadState(ctx, req, true)
 	if err != nil {
 		return api.UploadSummary{}, err
@@ -130,7 +129,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	// release name already exists; surface it as an error (the response still
 	// carries the existing torrent for callers who want to cross-seed).
 	if resp.StatusCode != http.StatusCreated {
-		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, trackerName, "upload_failure", responsePreview, ".json")
+		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, trackerName, "upload_failure", responsePreview, ".json")
 		return api.UploadSummary{}, commonhttp.UploadHTTPError(trackerName, resp.StatusCode, responsePreview)
 	}
 
@@ -139,7 +138,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, fmt.Errorf("trackers: CZT parse upload response id: %w", err)
 	}
 	if torrentIDValue <= 0 {
-		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, trackerName, "upload_failure", responsePreview, ".json")
+		_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, trackerName, "upload_failure", responsePreview, ".json")
 		return api.UploadSummary{}, commonhttp.UploadHTTPError(trackerName, resp.StatusCode, responsePreview)
 	}
 
@@ -361,7 +360,7 @@ func parseOptionalStringField(fields map[string]json.RawMessage, name string, de
 	}
 }
 
-func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
+func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
 	state, err := prepareUploadState(ctx, req, false)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
@@ -382,12 +381,16 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		Endpoint:         state.endpoint,
 		Payload:          cloneFields(state.fields),
 		Questionnaire:    state.questionnaire,
-		Files:            []api.TrackerDryRunFile{{Field: "file", Path: state.torrentPath, Present: strings.TrimSpace(state.torrentPath) != ""}},
+		Files: []api.TrackerDryRunFile{{
+			Field:   "file",
+			Path:    state.torrentPath,
+			Present: strings.TrimSpace(state.torrentPath) != "",
+		}},
 	}, nil
 }
 
-func prepareUploadState(ctx context.Context, req trackers.UploadRequest, requireCategory bool) (uploadState, error) {
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+func prepareUploadState(ctx context.Context, req trackers.PreparationInput, requireCategory bool) (uploadState, error) {
+	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
@@ -463,11 +466,11 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest, require
 
 // uploadDescriptionAssets uses caller-prepared assets when available, falling
 // back to local resolution and an empty asset set on resolution failure.
-func uploadDescriptionAssets(ctx context.Context, req trackers.UploadRequest) trackers.DescriptionAssets {
+func uploadDescriptionAssets(_ context.Context, req trackers.PreparationInput) trackers.DescriptionAssets {
 	if req.Assets != nil {
 		return *req.Assets
 	}
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		return trackers.DescriptionAssets{}
@@ -480,7 +483,7 @@ func uploadDescriptionAssets(ctx context.Context, req trackers.UploadRequest) tr
 // read/write permissions only. Cleanup errors after replacement return the
 // artifact path with a non-nil error so callers can avoid reporting it as
 // successfully persisted.
-func persistReturnedTorrent(req trackers.UploadRequest, b64 string) (string, error) {
+func persistReturnedTorrent(req trackers.PreparationInput, b64 string) (string, error) {
 	if strings.TrimSpace(b64) == "" {
 		return "", errors.New("empty torrent_b64")
 	}
@@ -498,7 +501,7 @@ func persistReturnedTorrent(req trackers.UploadRequest, b64 string) (string, err
 	if _, err := torrentMeta.UnmarshalInfo(); err != nil {
 		return "", fmt.Errorf("unmarshal returned torrent info: %w", err)
 	}
-	path, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, trackerName)
+	path, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, trackerName)
 	if err != nil {
 		return "", fmt.Errorf("resolve returned torrent path: %w", err)
 	}
@@ -622,15 +625,15 @@ func reserveReturnedTorrentBackupPath(dir string, pattern string) (string, error
 
 // buildMediaInfo returns the raw MediaInfo/BDInfo text for the CZTeam `descr`
 // field.
-func buildMediaInfo(req trackers.UploadRequest) string {
-	return strings.TrimSpace(trackers.ReadBDinfoOrMediaInfo(req.AppConfig.MainSettings.DBPath, req.Meta))
+func buildMediaInfo(req trackers.PreparationInput) string {
+	return strings.TrimSpace(trackers.ReadBDinfoOrMediaInfo(req.Runtime.DBPath, req.Meta))
 }
 
 // buildDescription assembles the CZTeam `user_descr` body: the (possibly
 // user-edited) description text followed by a BBCode screenshot block. Kept as a
 // separate function so definition.BuildDescription can drive the description
 // builder UI with the same output.
-func buildDescription(_ trackers.UploadRequest, assets trackers.DescriptionAssets) string {
+func buildDescription(_ trackers.PreparationInput, assets trackers.DescriptionAssets) string {
 	// A "final" description is the already-assembled body (saved override or
 	// canonical group description) with screenshots embedded; the resolver does
 	// not clear assets.Screenshots here, so re-appending would duplicate them.
@@ -729,7 +732,7 @@ func resolveCZTURLBase(baseURL string) string {
 	return strings.TrimRight(parsed.String(), "/")
 }
 
-func resolveName(meta api.PreparedMetadata) string {
+func resolveName(meta api.UploadSubject) string {
 	if name := strings.TrimSpace(meta.SceneName); name != "" {
 		return name
 	}
@@ -800,7 +803,7 @@ func categoryNameForID(id string) string {
 	return ""
 }
 
-func questionnaireAnswers(meta api.PreparedMetadata) map[string]string {
+func questionnaireAnswers(meta api.UploadSubject) map[string]string {
 	if len(meta.TrackerQuestionnaireAnswers) == 0 {
 		return nil
 	}
@@ -810,7 +813,7 @@ func questionnaireAnswers(meta api.PreparedMetadata) map[string]string {
 // categoryQuestionnaire offers a (non-blocking) category dropdown pre-filled
 // with the auto-detected category, so the user can override it for content
 // upbrr can't classify from video metadata.
-func categoryQuestionnaire(meta api.PreparedMetadata) *api.TrackerQuestionnaire {
+func categoryQuestionnaire(meta api.UploadSubject) *api.TrackerQuestionnaire {
 	auto := autoCategory(meta)
 	return &api.TrackerQuestionnaire{
 		Tracker: trackerName,
@@ -828,7 +831,7 @@ func categoryQuestionnaire(meta api.PreparedMetadata) *api.TrackerQuestionnaire 
 
 // resolveCategory returns the CZTeam category id: an explicit questionnaire
 // override when the user picked one, otherwise the auto-detected video category.
-func resolveCategory(meta api.PreparedMetadata) (string, error) {
+func resolveCategory(meta api.UploadSubject) (string, error) {
 	if id := resolveQuestionnaireCategory(questionnaireAnswers(meta)["category"]); id != "" {
 		return id, nil
 	}
@@ -858,9 +861,10 @@ func resolveQuestionnaireCategory(value string) string {
 // metadata supports automatic classification. Unknown non-video content returns
 // empty so callers can require an explicit questionnaire category instead of
 // falling back to a movie bucket.
-func autoCategory(meta api.PreparedMetadata) string {
-	if id, ok := nonVideoCategory(meta); ok {
-		return id
+func autoCategory(meta api.UploadSubject) string {
+	category, err := meta.Identity.RequireCategory()
+	if err != nil {
+		return ""
 	}
 
 	ro := hasRomanianSubs(meta)
@@ -869,7 +873,7 @@ func autoCategory(meta api.PreparedMetadata) string {
 	switch {
 	case meta.Anime:
 		return "23" // Anime
-	case isTV(meta):
+	case category == api.CanonicalCategoryTV:
 		if hd && ro {
 			return "34" // TvEps/HD-RO
 		}
@@ -884,7 +888,7 @@ func autoCategory(meta api.PreparedMetadata) string {
 	isDVD := strings.Contains(src, "DVD") || strings.EqualFold(meta.DiscType, "DVD") || strings.EqualFold(meta.Type, "DVDRIP")
 	isFullBluRay := strings.EqualFold(meta.DiscType, "BDMV") ||
 		(strings.EqualFold(meta.Type, "REMUX") && strings.Contains(src, "BLURAY"))
-	if !hasMovieCategoryEvidence(meta, src) && !isDVD && !isFullBluRay {
+	if category != api.CanonicalCategoryMovie {
 		return ""
 	}
 
@@ -912,72 +916,6 @@ func autoCategory(meta api.PreparedMetadata) string {
 	}
 }
 
-func hasMovieCategoryEvidence(meta api.PreparedMetadata, upperSource string) bool {
-	for _, hint := range []string{meta.ExternalIDs.Category, meta.MediaInfoCategory, meta.Release.Category} {
-		normalized := normalizeCategoryHint(hint)
-		if isVideoCategoryHint(normalized) {
-			return true
-		}
-	}
-	return strings.TrimSpace(upperSource) != "" ||
-		strings.TrimSpace(meta.Release.Resolution) != "" ||
-		firstCodec(meta) != "" ||
-		strings.TrimSpace(meta.DiscType) != "" ||
-		strings.TrimSpace(meta.Type) != ""
-}
-
-// nonVideoCategory classifies explicit non-video category hints. Video hints are
-// ignored here so mixed hints can still use video classification; the boolean
-// reports whether a non-video hint was found even when it still requires a
-// manual questionnaire answer.
-func nonVideoCategory(meta api.PreparedMetadata) (string, bool) {
-	hints := []string{
-		meta.ExternalIDs.Category,
-		meta.MediaInfoCategory,
-		meta.Release.Category,
-	}
-	for _, hint := range hints {
-		normalized := normalizeCategoryHint(hint)
-		if normalized == "" {
-			continue
-		}
-		if isMusicVideoCategoryHint(normalized) {
-			return "30", true
-		}
-		switch {
-		case hasCategoryHintToken(normalized, "anime"):
-			return "23", true
-		case hasCategoryHintToken(normalized, "xxx", "adult"):
-			return "1", true
-		case isVideoCategoryHint(normalized):
-			continue
-		case hasCategoryHintToken(normalized, "console", "consoles"):
-			return "12", true
-		case hasCategoryHintToken(normalized, "game", "games"):
-			return "4", true
-		case hasCategoryHintToken(normalized, "lossless", "flac"):
-			return "35", true
-		case hasCategoryHintToken(normalized, "music", "audio"):
-			return "6", true
-		case hasCategoryHintToken(normalized, "software", "app", "apps", "application", "applications"):
-			return "22", true
-		case hasCategoryHintToken(normalized, "mobile", "android", "ios"):
-			return "9", true
-		case hasCategoryHintToken(normalized, "image", "images", "photo", "photos"):
-			return "24", true
-		case hasCategoryHintToken(normalized, "doc", "docs", "book", "books", "ebook", "ebooks"):
-			return "25", true
-		case hasCategoryHintToken(normalized, "mac"):
-			return "31", true
-		case hasCategoryHintToken(normalized, "sport", "sports"):
-			return "32", true
-		default:
-			return "", true
-		}
-	}
-	return "", false
-}
-
 func missingRequiredCategory(state uploadState) bool {
 	if state.questionnaire == nil {
 		return false
@@ -993,39 +931,7 @@ func missingRequiredCategory(state uploadState) bool {
 	return false
 }
 
-func normalizeCategoryHint(value string) string {
-	replacer := strings.NewReplacer("-", " ", "_", " ", ".", " ", "/", " ", "\\", " ", ":", " ")
-	return strings.ToLower(strings.TrimSpace(replacer.Replace(value)))
-}
-
-func isMusicVideoCategoryHint(value string) bool {
-	fields := strings.Fields(value)
-	for i, field := range fields {
-		if field == "mvid" {
-			return true
-		}
-		if field == "music" && i+1 < len(fields) && fields[i+1] == "video" {
-			return true
-		}
-	}
-	compact := strings.Join(fields, "")
-	return strings.Contains(compact, "musicvideo") || strings.Contains(compact, "mvid")
-}
-
-func isVideoCategoryHint(value string) bool {
-	return hasCategoryHintToken(value, "movie", "movies", "film", "films", "tv", "tveps", "episode", "episodes", "anime", "video", "videos", "documentary", "documentaries")
-}
-
-func hasCategoryHintToken(value string, want ...string) bool {
-	for field := range strings.FieldsSeq(value) {
-		if slices.Contains(want, field) {
-			return true
-		}
-	}
-	return false
-}
-
-func hasRomanianSubs(meta api.PreparedMetadata) bool {
+func hasRomanianSubs(meta api.UploadSubject) bool {
 	for _, s := range meta.SubtitleLanguages {
 		v := strings.ToLower(strings.TrimSpace(s))
 		if v == "ro" || v == "rum" || v == "ron" || strings.HasPrefix(v, "roman") {
@@ -1033,10 +939,6 @@ func hasRomanianSubs(meta api.PreparedMetadata) bool {
 		}
 	}
 	return false
-}
-
-func isTV(meta api.PreparedMetadata) bool {
-	return meta.TVPack || meta.SeasonInt > 0 || meta.EpisodeInt > 0 || strings.EqualFold(meta.ExternalIDs.Category, "TV")
 }
 
 func isHD(res string) bool {
@@ -1049,7 +951,7 @@ func isHD(res string) bool {
 	return false
 }
 
-func hasCodec(meta api.PreparedMetadata, want string) bool {
+func hasCodec(meta api.UploadSubject, want string) bool {
 	for _, c := range meta.Release.Codec {
 		if strings.EqualFold(strings.TrimSpace(c), want) {
 			return true
@@ -1058,7 +960,7 @@ func hasCodec(meta api.PreparedMetadata, want string) bool {
 	return false
 }
 
-func firstCodec(meta api.PreparedMetadata) string {
+func firstCodec(meta api.UploadSubject) string {
 	for _, c := range meta.Release.Codec {
 		if v := strings.TrimSpace(c); v != "" {
 			return v
@@ -1067,11 +969,11 @@ func firstCodec(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func imdbID(meta api.PreparedMetadata) string {
-	if meta.ExternalIDs.IMDBID <= 0 {
+func imdbID(meta api.UploadSubject) string {
+	if meta.Identity.IMDBID <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("tt%07d", meta.ExternalIDs.IMDBID)
+	return fmt.Sprintf("tt%07d", meta.Identity.IMDBID)
 }
 
 func cloneFields(input map[string]string) map[string]string {

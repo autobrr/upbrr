@@ -11,10 +11,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	gomediainfo "github.com/autobrr/go-mediainfo"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
-	"github.com/autobrr/upbrr/internal/paths"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -81,7 +83,7 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 		return Result{}, errors.New("mediainfo: empty target")
 	}
 
-	tmpDir, _, err := paths.ReleaseTempDir(req.TempRoot, api.PreparedMetadata{Release: req.Release}, req.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDir(req.TempRoot, preparationstate.State{Release: req.Release}, req.SourcePath)
 	if err != nil {
 		return Result{}, fmt.Errorf("metadata: %w", err)
 	}
@@ -100,7 +102,15 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 			if s.logger != nil {
 				s.logger.Debugf("mediainfo: reusing existing artifacts from %s", tmpDir)
 			}
-			return Result{JSONPath: jsonPath, TextPath: textPath, IFOPath: target.IFOPath, VOBPath: target.VOBPath, VOBSet: target.VOBSet, VOBText: vobText, VOBJSON: vobJSON}, nil
+			return Result{
+				JSONPath: jsonPath,
+				TextPath: textPath,
+				IFOPath:  target.IFOPath,
+				VOBPath:  target.VOBPath,
+				VOBSet:   target.VOBSet,
+				VOBText:  vobText,
+				VOBJSON:  vobJSON,
+			}, nil
 		}
 		if s.logger != nil {
 			if err != nil {
@@ -138,7 +148,15 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 
-	return Result{JSONPath: jsonPath, TextPath: textPath, IFOPath: target.IFOPath, VOBPath: target.VOBPath, VOBSet: target.VOBSet, VOBText: vobText, VOBJSON: vobJSON}, nil
+	return Result{
+		JSONPath: jsonPath,
+		TextPath: textPath,
+		IFOPath:  target.IFOPath,
+		VOBPath:  target.VOBPath,
+		VOBSet:   target.VOBSet,
+		VOBText:  vobText,
+		VOBJSON:  vobJSON,
+	}, nil
 }
 
 func analyzeVOB(ctx context.Context, analyzer Analyzer, vobPath string) (string, string, error) {

@@ -11,9 +11,11 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
 )
 
+// Kind identifies a tracker protocol family.
 type Kind string
 
 const (
+	// KindUnknown identifies an unclassified tracker.
 	KindUnknown   Kind = ""
 	KindUnit3D    Kind = "unit3d"
 	KindNonUnit3D Kind = "non-unit3d"
@@ -118,14 +120,17 @@ func buildTrackerPriority() []string {
 	return ordered
 }
 
+// IsKnownTracker reports whether name is present in the compatibility catalog.
 func IsKnownTracker(name string) bool {
 	return TrackerKind(name) != KindUnknown
 }
 
+// IsUnit3DTracker reports whether name uses the Unit3D protocol.
 func IsUnit3DTracker(name string) bool {
 	return TrackerKind(name) == KindUnit3D
 }
 
+// IsNonUnit3DTracker reports whether name is a known non-Unit3D tracker.
 func IsNonUnit3DTracker(name string) bool {
 	return TrackerKind(name) == KindNonUnit3D
 }
@@ -160,6 +165,7 @@ func AnyNeedsPTBRLocalizedMetadata(names []string) bool {
 	return slices.ContainsFunc(names, NeedsPTBRLocalizedMetadata)
 }
 
+// TrackerKind returns the compatibility-catalog kind for name.
 func TrackerKind(name string) Kind {
 	return trackerKinds[strings.ToUpper(strings.TrimSpace(name))]
 }

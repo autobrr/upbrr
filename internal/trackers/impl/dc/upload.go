@@ -14,10 +14,9 @@ import (
 	"strconv"
 	"strings"
 
+	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
-	"github.com/autobrr/upbrr/internal/services/bbcode"
-	descriptionunit3d "github.com/autobrr/upbrr/internal/services/description/unit3d"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 
@@ -44,7 +43,7 @@ type uploadResponse struct {
 	Message string `json:"message"`
 }
 
-func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
+func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
 	state, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return api.UploadSummary{}, err
@@ -78,7 +77,11 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 	}
 	defer resp.Body.Close()
 
-	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode >= 200 && resp.StatusCode < 300, commonhttp.DefaultResponsePreviewBytes)
+	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(
+		resp,
+		resp.StatusCode >= 200 && resp.StatusCode < 300,
+		commonhttp.DefaultResponsePreviewBytes,
+	)
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: DC read upload response: %w", err)
 	}
@@ -97,7 +100,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		downloadURL := apiBaseURL + "/download/" + torrentID
 		artifactPath := ""
 		if announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announceURL != "" {
-			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "DC")
+			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "DC")
 			if err != nil {
 				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
@@ -117,14 +120,27 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		}, nil
 	}
 
-	if _, artifactErr := commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "DC", "upload_failure", responsePreview, ".json"); artifactErr != nil && req.Logger != nil {
+	if _, artifactErr := commonhttp.WriteFailureArtifact(
+		req.Meta,
+		req.Runtime.DBPath,
+		"DC",
+		"upload_failure",
+		responsePreview,
+		".json",
+	); artifactErr != nil &&
+		req.Logger != nil {
 		req.Logger.Warnf("trackers: DC failure artifact write failed: %v", artifactErr)
 	}
-	message := metautil.FirstNonEmptyTrimmed(commonhttp.ExtractHTTPErrorDetail(responsePreview), commonhttp.RedactErrorDetail(decoded.Message), commonhttp.RedactErrorDetail(string(responsePreview)), "upload failed")
+	message := metautil.FirstNonEmptyTrimmed(
+		commonhttp.ExtractHTTPErrorDetail(responsePreview),
+		commonhttp.RedactErrorDetail(decoded.Message),
+		commonhttp.RedactErrorDetail(string(responsePreview)),
+		"upload failed",
+	)
 	return api.UploadSummary{}, fmt.Errorf("trackers: DC %s", message)
 }
 
-func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
+func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
 	state, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
@@ -152,15 +168,15 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 	}, nil
 }
 
-func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, error) {
+func prepareUploadState(_ context.Context, req trackers.PreparationInput) (uploadState, error) {
 	if strings.TrimSpace(req.TrackerConfig.APIKey) == "" {
 		return uploadState{}, errors.New("trackers: DC missing api_key")
 	}
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
@@ -196,12 +212,12 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 	return state, nil
 }
 
-func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAssets) string {
+func buildDescription(req trackers.PreparationInput, assets trackers.DescriptionAssets) string {
 	meta := req.Meta
 	var parts []string
 
 	// Custom Header
-	if header := strings.TrimSpace(req.AppConfig.Description.CustomDescriptionHeader); header != "" {
+	if header := strings.TrimSpace(req.Runtime.Description.CustomDescriptionHeader); header != "" {
 		parts = append(parts, header)
 	}
 
@@ -230,7 +246,10 @@ func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAss
 	}
 
 	// Tonemapped Header
-	if tonemapHeader := strings.TrimSpace(req.AppConfig.Description.TonemappedHeader); tonemapHeader != "" && descriptionunit3d.ShouldIncludeTonemappedHeader(meta, req.AppConfig, assets.Screenshots) {
+	if tonemapHeader := strings.TrimSpace(
+		req.Runtime.Description.TonemappedHeader,
+	); tonemapHeader != "" &&
+		descriptionunit3d.ShouldIncludeTonemappedHeader(api.NewDescriptionSubject(meta), req.Runtime.DescriptionConfig(), assets.Screenshots) {
 		parts = append(parts, tonemapHeader)
 	}
 
@@ -240,17 +259,17 @@ func buildDescription(req trackers.UploadRequest, assets trackers.DescriptionAss
 
 	// Join and finalize
 	description := strings.Join(parts, "\n\n")
-	finalized := bbcode.FinalizeTrackerDescription("DC", description)
+	finalized := finalizeDescription(description)
 
 	// Debug saving
 	if meta.Options.Debug {
-		descriptionunit3d.SaveDescriptionDebug(meta, "DC", req.AppConfig.MainSettings.DBPath, finalized, req.Logger)
+		descriptionunit3d.SaveDescriptionDebug(api.NewDescriptionSubject(meta), "DC", req.Runtime.DBPath, finalized, req.Logger)
 	}
 
 	return finalized
 }
 
-func resolveCategoryID(meta api.PreparedMetadata) int {
+func resolveCategoryID(meta api.UploadSubject) int {
 	resolution := strings.ToLower(strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.Release.Resolution, meta.ReleaseNameNoTag, meta.ReleaseName)))
 	category := categoryOf(meta)
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
@@ -300,8 +319,13 @@ func resolveCategoryID(meta api.PreparedMetadata) int {
 	}
 }
 
-func resolveUploadName(meta api.PreparedMetadata) string {
-	name := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.SceneName), strings.TrimSpace(meta.ReleaseNameClean), strings.TrimSpace(meta.ReleaseName), strings.TrimSpace(meta.Filename))
+func resolveUploadName(meta api.UploadSubject) string {
+	name := metautil.FirstNonEmptyTrimmed(
+		strings.TrimSpace(meta.SceneName),
+		strings.TrimSpace(meta.ReleaseNameClean),
+		strings.TrimSpace(meta.ReleaseName),
+		strings.TrimSpace(meta.Filename),
+	)
 	if name == "" {
 		name = "release"
 	}
@@ -321,40 +345,41 @@ func resolveUploadName(meta api.PreparedMetadata) string {
 	return strings.TrimSpace(out.String())
 }
 
-func resolveMediaInfo(meta api.PreparedMetadata) (string, error) {
+func resolveMediaInfo(meta api.UploadSubject) (string, error) {
 	if text := metautil.FirstNonEmptyTrimmed(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath), strings.TrimSpace(meta.DVDVOBMediaInfoText)); text != "" {
 		return text, nil
 	}
 	return "", errors.New("trackers: DC missing mediainfo")
 }
 
-func resolveMedia(req trackers.UploadRequest, meta api.PreparedMetadata) string {
+func resolveMedia(req trackers.PreparationInput, meta api.UploadSubject) string {
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-		bdinfo, _ := trackers.ReadBDInfo(req.AppConfig.MainSettings.DBPath, meta)
+		bdinfo, _ := trackers.ReadBDInfo(req.Runtime.DBPath, meta)
 		return strings.TrimSpace(bdinfo)
 	}
 	return metautil.FirstNonEmptyTrimmed(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath), strings.TrimSpace(meta.DVDVOBMediaInfoText))
 }
 
-func resolveIMDbID(meta api.PreparedMetadata) string {
-	if meta.ExternalIDs.IMDBID > 0 {
-		return "tt" + strconv.Itoa(meta.ExternalIDs.IMDBID)
+func resolveIMDbID(meta api.UploadSubject) string {
+	if meta.Identity.IMDBID > 0 {
+		return "tt" + strconv.Itoa(meta.Identity.IMDBID)
 	}
 	return ""
 }
 
-func resolveAnon(req trackers.UploadRequest) string {
+func resolveAnon(req trackers.PreparationInput) string {
 	if req.TrackerConfig.Anon {
 		return "1"
 	}
 	return "0"
 }
 
-func categoryOf(meta api.PreparedMetadata) string {
-	if category := strings.ToUpper(strings.TrimSpace(meta.ExternalIDs.Category)); category != "" {
-		return category
+func categoryOf(meta api.UploadSubject) string {
+	category, err := meta.Identity.RequireCategory()
+	if err != nil {
+		return ""
 	}
-	return strings.ToUpper(strings.TrimSpace(meta.MediaInfoCategory))
+	return strings.ToUpper(string(category))
 }
 
 func screenshotBlock(images []api.ScreenshotImage) string {
@@ -374,7 +399,7 @@ func screenshotBlock(images []api.ScreenshotImage) string {
 	return "[center]" + strings.Join(parts, " ") + "[/center]"
 }
 
-func isSD(meta api.PreparedMetadata) bool {
+func isSD(meta api.UploadSubject) bool {
 	resolution := strings.TrimSpace(meta.Release.Resolution)
 	return resolution == "480p" || resolution == "576p" || resolution == ""
 }

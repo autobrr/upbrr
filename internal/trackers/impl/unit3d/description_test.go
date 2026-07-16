@@ -11,14 +11,14 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/paths"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestBuildUnit3DDescriptionTemplate(t *testing.T) {
-	meta := api.PreparedMetadata{DescriptionTemplate: "  Example Template  "}
+	meta := api.UploadSubject{DescriptionTemplate: "  Example Template  "}
 	cfg := config.Config{}
 	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", nil, nil)
 	if err != nil {
@@ -33,7 +33,7 @@ func TestBuildUnit3DDescriptionTemplate(t *testing.T) {
 }
 
 func TestBuildUnit3DDescriptionKeptAppendsScreenshots(t *testing.T) {
-	meta := api.PreparedMetadata{}
+	meta := api.UploadSubject{}
 	cfg := config.Config{Description: config.DescriptionSettingsConfig{ThumbnailSize: 350}}
 	kept := "Kept Description"
 	screens := []api.ScreenshotImage{{ImgURL: "https://img.example/s1.png"}}
@@ -53,7 +53,7 @@ func TestBuildUnit3DDescriptionKeptAppendsScreenshots(t *testing.T) {
 }
 
 func TestBuildUnit3DDescriptionAppliesDescriptionConfig(t *testing.T) {
-	meta := api.PreparedMetadata{}
+	meta := api.UploadSubject{}
 	cfg := config.Config{
 		Description: config.DescriptionSettingsConfig{
 			ThumbnailSize:    300,
@@ -87,9 +87,9 @@ func TestBuildUnit3DDescriptionAppliesDescriptionConfig(t *testing.T) {
 }
 
 func TestBuildUnit3DDescriptionAddsLogoEpisodeOverviewAndMenuImages(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		EpisodeOverview: "Episode [b]overview[/b] text",
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{Logo: "https://image.tmdb.org/t/p/original/logo.png"},
 		},
 	}
@@ -121,9 +121,9 @@ func TestBuildUnit3DDescriptionAddsLogoEpisodeOverviewAndMenuImages(t *testing.T
 }
 
 func TestBuildUnit3DDescriptionAddsBlurayLinkAndImages(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		DiscType: "BDMV",
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			Bluray: &api.BlurayMetadata{
 				SelectedReleaseID: "123",
 				Candidates: []api.BlurayReleaseCandidate{
@@ -172,9 +172,9 @@ func TestBuildUnit3DDescriptionSanitizesBlurayLink(t *testing.T) {
 			AddBlurayLink: true,
 		},
 	}
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		DiscType: "BDMV",
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			Bluray: &api.BlurayMetadata{
 				SelectedReleaseID: "123",
 				Candidates: []api.BlurayReleaseCandidate{
@@ -198,7 +198,7 @@ func TestBuildUnit3DDescriptionSanitizesBlurayLink(t *testing.T) {
 		t.Fatalf("expected raw BBCode brackets to be escaped, got %q", result)
 	}
 
-	meta.ExternalMetadata.Bluray.Candidates[0].URL = "not a url"
+	meta.ProviderMetadata.Bluray.Candidates[0].URL = "not a url"
 	result, err = buildUnit3DDescription(context.Background(), "AITHER", meta, cfg, config.TrackerConfig{}, api.NopLogger{}, "", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -209,7 +209,7 @@ func TestBuildUnit3DDescriptionSanitizesBlurayLink(t *testing.T) {
 }
 
 func TestBuildUnit3DDescriptionKeptIncludesScreenshots(t *testing.T) {
-	meta := api.PreparedMetadata{}
+	meta := api.UploadSubject{}
 	cfg := config.Config{Description: config.DescriptionSettingsConfig{ThumbnailSize: 350}}
 	kept := "Kept [img]https://img.example/keep.png[/img]"
 	screens := []api.ScreenshotImage{{ImgURL: "https://img.example/s1.png"}}
@@ -229,7 +229,7 @@ func TestBuildUnit3DDescriptionSkipsBDInfo(t *testing.T) {
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 		Description:  config.DescriptionSettingsConfig{CustomDescriptionHeader: "Header"},
 	}
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		SourcePath: filepath.Join(root, "Movie.mkv"),
 		DiscType:   "BDMV",
 		SelectedBDMVPlaylists: []api.PlaylistInfo{
@@ -241,7 +241,7 @@ func TestBuildUnit3DDescriptionSkipsBDInfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tmp root: %v", err)
 	}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		t.Fatalf("release temp dir: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestBuildUnit3DDescriptionSkipsMediaInfo(t *testing.T) {
 	}
 
 	cfg := config.Config{}
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		SourcePath:        filepath.Join(root, "Movie.mkv"),
 		MediaInfoTextPath: miPath,
 	}
@@ -285,7 +285,7 @@ func TestBuildUnit3DDescriptionSkipsMediaInfo(t *testing.T) {
 }
 
 func TestBuildUnit3DDescriptionIncludesDVDVOBMediaInfo(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		DiscType:            "DVD",
 		DVDVOBMediaInfoText: "VOB_MI_CONTENT",
 	}
@@ -303,7 +303,7 @@ func TestBuildUnit3DDescriptionIncludesDVDVOBMediaInfo(t *testing.T) {
 }
 
 func TestBuildUnit3DDescriptionSkipsDVDVOBMediaInfoForNonDVD(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		DiscType:            "BDMV",
 		DVDVOBMediaInfoText: "VOB_MI_CONTENT",
 	}
@@ -318,7 +318,7 @@ func TestBuildUnit3DDescriptionSkipsDVDVOBMediaInfoForNonDVD(t *testing.T) {
 }
 
 func TestBuildUnit3DDescriptionSkipsDVDVOBMediaInfoWhenEmpty(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		DiscType:            "DVD",
 		DVDVOBMediaInfoText: "   \n\t",
 	}
@@ -333,7 +333,7 @@ func TestBuildUnit3DDescriptionSkipsDVDVOBMediaInfoWhenEmpty(t *testing.T) {
 }
 
 func TestBuildUnit3DDescriptionIncludesTonemapHeaderForHDRScreens(t *testing.T) {
-	meta := api.PreparedMetadata{HDR: "HDR10"}
+	meta := api.UploadSubject{HDR: "HDR10"}
 	cfg := config.Config{
 		ScreenshotHandling: config.ScreenshotHandlingConfig{ToneMap: true},
 		Description: config.DescriptionSettingsConfig{
@@ -352,7 +352,7 @@ func TestBuildUnit3DDescriptionIncludesTonemapHeaderForHDRScreens(t *testing.T) 
 }
 
 func TestBuildUnit3DDescriptionSkipsTonemapHeaderForNonHDR(t *testing.T) {
-	meta := api.PreparedMetadata{}
+	meta := api.UploadSubject{}
 	cfg := config.Config{
 		ScreenshotHandling: config.ScreenshotHandlingConfig{ToneMap: true},
 		Description: config.DescriptionSettingsConfig{
@@ -370,31 +370,8 @@ func TestBuildUnit3DDescriptionSkipsTonemapHeaderForNonHDR(t *testing.T) {
 	}
 }
 
-func TestBuildUnit3DDescriptionACMTransformsBaseDescription(t *testing.T) {
-	meta := api.PreparedMetadata{
-		Type:            "WEBDL",
-		ServiceLongName: "Netflix",
-	}
-	result, err := buildUnit3DDescription(context.Background(), "ACM", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "[pre]x[/pre]\n[hide=test]y[/hide]\n[img]https://img.example/z.png[/img]", nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(result, "[code]x[/code]") {
-		t.Fatalf("expected pre converted to code, got %q", result)
-	}
-	if !strings.Contains(result, "[spoiler=test]y[/spoiler]") {
-		t.Fatalf("expected hide converted to spoiler, got %q", result)
-	}
-	if !strings.Contains(result, "not transcoded, just remuxed from the direct Netflix stream") {
-		t.Fatalf("expected ACM web source header, got %q", result)
-	}
-	if !strings.Contains(result, "[img=300]https://img.example/z.png[/img]") {
-		t.Fatalf("expected img resize normalization, got %q", result)
-	}
-}
-
 func TestBuildUnit3DDescriptionFinalizesUnit3DBBCode(t *testing.T) {
-	meta := api.PreparedMetadata{}
+	meta := api.UploadSubject{}
 	kept := "[hide=Extras]notes[/hide]\n[user]name[/user]\n[comparison=Source, Encode]https://img.example/a.png https://img.example/b.png[/comparison]"
 
 	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil, nil)
@@ -415,37 +392,6 @@ func TestBuildUnit3DDescriptionFinalizesUnit3DBBCode(t *testing.T) {
 	}
 }
 
-func TestBuildUnit3DDescriptionAddsSHRIIslandReleaseNotes(t *testing.T) {
-	meta := api.PreparedMetadata{
-		Release: api.ReleaseInfo{Group: "island"},
-	}
-
-	result, err := buildUnit3DDescription(context.Background(), "SHRI", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "Base description", nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(result, "Release Shareisland 🏴‍☠️") {
-		t.Fatalf("expected Shareisland notes, got %q", result)
-	}
-	if !strings.Contains(result, "Base description") {
-		t.Fatalf("expected base description to be preserved, got %q", result)
-	}
-}
-
-func TestBuildUnit3DDescriptionSkipsSHRIIslandReleaseNotesForOtherGroups(t *testing.T) {
-	meta := api.PreparedMetadata{
-		Release: api.ReleaseInfo{Group: "other"},
-	}
-
-	result, err := buildUnit3DDescription(context.Background(), "SHRI", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, "Base description", nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if strings.Contains(result, "Release Shareisland") {
-		t.Fatalf("did not expect Shareisland notes, got %q", result)
-	}
-}
-
 func TestBuildUnit3DDescriptionSkipsDuplicateTemplateAndKeptContent(t *testing.T) {
 	block := `[center]
 [url=https://pixhost.to/8ca234.png][img=350]https://pixhost.to/8ca234.png[/img][/url]
@@ -453,7 +399,7 @@ func TestBuildUnit3DDescriptionSkipsDuplicateTemplateAndKeptContent(t *testing.T
 [/center]
 
 [right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/right]`
-	meta := api.PreparedMetadata{DescriptionTemplate: block}
+	meta := api.UploadSubject{DescriptionTemplate: block}
 
 	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, block, nil, nil)
 	if err != nil {
@@ -479,7 +425,7 @@ func TestBuildUnit3DDescriptionStripsKnownBotSignatures(t *testing.T) {
 		"[right]Created by Upload Assistant[/right]",
 	}, "\n")
 
-	result, err := buildUnit3DDescription(context.Background(), "AITHER", api.PreparedMetadata{}, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil, nil)
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", api.UploadSubject{}, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -500,7 +446,7 @@ func TestBuildUnit3DDescriptionKeepsCenteredScreenshotsBeforeAitherFooter(t *tes
 		"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
 	}, "\n\n")
 
-	result, err := buildUnit3DDescription(context.Background(), "AITHER", api.PreparedMetadata{}, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil, nil)
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", api.UploadSubject{}, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -532,7 +478,7 @@ func TestBuildUnit3DDescriptionReplacesExistingScreenshotBlock(t *testing.T) {
 		{RawURL: "https://new.example/4.png", WebURL: "https://web.example/4"},
 	}
 
-	result, err := buildUnit3DDescription(context.Background(), "AITHER", api.PreparedMetadata{}, config.Config{
+	result, err := buildUnit3DDescription(context.Background(), "AITHER", api.UploadSubject{}, config.Config{
 		Description: config.DescriptionSettingsConfig{ThumbnailSize: 350, ScreensPerRow: "2"},
 	}, config.TrackerConfig{}, api.NopLogger{}, base, nil, screens)
 	if err != nil {
@@ -556,7 +502,7 @@ func TestBuildUnit3DDescriptionStripsExistingSceneNFOBlock(t *testing.T) {
 	kept := `[center][spoiler=Scene NFO:][code]stale scene nfo[/code][/spoiler][/center]
 
 Custom body`
-	meta := api.PreparedMetadata{Scene: true}
+	meta := api.UploadSubject{Scene: true}
 
 	result, err := buildUnit3DDescription(context.Background(), "AITHER", meta, config.Config{}, config.TrackerConfig{}, api.NopLogger{}, kept, nil, nil)
 	if err != nil {
@@ -575,12 +521,12 @@ Custom body`
 
 func TestDefinitionBuildDescriptionFormatsOverrideContent(t *testing.T) {
 	definition := New("AITHER")
-	result, err := definition.BuildDescription(context.Background(), trackers.DescriptionRequest{
+	result, err := definition.prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "AITHER",
-		Meta:    api.PreparedMetadata{},
-		AppConfig: config.Config{
+		Meta:    api.UploadSubject{},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{
 			Description: config.DescriptionSettingsConfig{ThumbnailSize: 350},
-		},
+		}),
 		Logger: api.NopLogger{},
 		Assets: &trackers.DescriptionAssets{
 			Description: "[align=center][img width=350]https://img.example/a.png[/img][/align]",
@@ -599,7 +545,7 @@ func TestDefinitionBuildDescriptionFormatsOverrideContent(t *testing.T) {
 }
 
 func TestBuildUnit3DDescriptionFiltersMenuImagesFromScreenshots(t *testing.T) {
-	meta := api.PreparedMetadata{}
+	meta := api.UploadSubject{}
 	cfg := config.Config{}
 	menuImages := []api.ScreenshotImage{{ImgURL: "https://img.example/menu1.png"}}
 	screenshots := []api.ScreenshotImage{

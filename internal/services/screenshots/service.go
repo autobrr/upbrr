@@ -24,12 +24,12 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/internal/logging"
-	"github.com/autobrr/upbrr/internal/paths"
-	"github.com/autobrr/upbrr/internal/pathutil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
-	"github.com/autobrr/upbrr/internal/services/imagehost"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -38,7 +38,18 @@ type Service struct {
 	logger  api.Logger
 	tmpRoot string
 	runner  Runner
-	repo    api.MetadataRepository
+	repo    repository
+}
+
+type repository interface {
+	api.ScreenshotLifecycleRepository
+	SaveScreenshot(context.Context, api.Screenshot) error
+	ListScreenshotsByPath(context.Context, string) ([]api.Screenshot, error)
+	DeleteScreenshot(context.Context, string) error
+	ListFinalSelections(context.Context, string) ([]api.ScreenshotFinalSelection, error)
+	DeleteFinalSelection(context.Context, string) error
+	ListTrackerMetadataByPath(context.Context, string) ([]api.TrackerMetadata, error)
+	SaveTrackerMetadata(context.Context, api.TrackerMetadata) error
 }
 
 func NewService(cfg config.Config, logger api.Logger, tmpRoot string, runner Runner) *Service {
@@ -48,20 +59,31 @@ func NewService(cfg config.Config, logger api.Logger, tmpRoot string, runner Run
 	if runner == nil {
 		runner = commandRunner{}
 	}
-	return &Service{cfg: cfg, logger: logger, tmpRoot: tmpRoot, runner: runner}
+	return &Service{
+		cfg:     cfg,
+		logger:  logger,
+		tmpRoot: tmpRoot,
+		runner:  runner,
+	}
 }
 
-func NewServiceWithRepo(cfg config.Config, logger api.Logger, tmpRoot string, runner Runner, repo api.MetadataRepository) *Service {
+func NewServiceWithRepo(cfg config.Config, logger api.Logger, tmpRoot string, runner Runner, repo repository) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
 	if runner == nil {
 		runner = commandRunner{}
 	}
-	return &Service{cfg: cfg, logger: logger, tmpRoot: tmpRoot, runner: runner, repo: repo}
+	return &Service{
+		cfg:     cfg,
+		logger:  logger,
+		tmpRoot: tmpRoot,
+		runner:  runner,
+		repo:    repo,
+	}
 }
 
-func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int) (plan api.ScreenshotPlan, err error) {
+func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count int) (plan api.ScreenshotPlan, err error) {
 	defer func() {
 		if err != nil {
 			s.logger.Warnf("screenshots: planning blocked err=%s", redaction.RedactValue(err.Error(), nil))
@@ -80,7 +102,7 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 	}
 
 	if count <= 0 {
-		count = meta.Options.Screens
+		count = meta.DefaultCount
 	}
 	if count <= 0 {
 		count = s.cfg.ScreenshotHandling.Screens
@@ -101,13 +123,13 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 		screenshotSourceKind(meta),
 		screenshotLogField(meta.DiscType),
 		count,
-		len(meta.ScreenshotOverrides.ManualFrames),
+		len(meta.ManualFrames),
 		plan.DurationSeconds,
 		plan.FrameRate,
 		info.SourcePath,
 	)
 
-	manualSelections := buildManualFrameSelections(meta.ScreenshotOverrides.ManualFrames, plan.FrameRate)
+	manualSelections := buildManualFrameSelections(meta.ManualFrames, plan.FrameRate)
 	if len(manualSelections) == 0 && (plan.DurationSeconds <= 0 || plan.FrameRate <= 0) {
 		plan.RequiresManualFrames = true
 		s.logger.Debugf("screenshots: manual frames required reason=missing_timing duration_seconds=%.3f frame_rate=%.3f", plan.DurationSeconds, plan.FrameRate)
@@ -119,7 +141,7 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 		total = count + 1
 	}
 
-	tmpDir, _, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return api.ScreenshotPlan{}, fmt.Errorf("screenshots: %w", err)
 	}
@@ -206,7 +228,7 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 	plan.SuggestedSelections = suggestions
 
 	plan.ExistingScreenshots = filterScreenshotsMatchingSelections(listExistingScreens(tmpDir, base), baselineSelections, plan.FrameRate)
-	plan.TrackerImageLinks = buildTrackerImageLinks(meta, tmpDir)
+	plan.TrackerImageLinks = buildTrackerImageLinks(s.loadTrackerMetadata(ctx, meta.SourcePath), tmpDir)
 	plan.ExistingTrackerScreenshots = filterUnlinkedTrackerScreens(
 		listTrackerScreens(tmpDir, base),
 		plan.TrackerImageLinks,
@@ -231,7 +253,12 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 // Capture renders the requested frames into the prepared release's managed temp
 // directory and records each image with purpose. It returns successful images
 // plus per-selection failures and honors context cancellation.
-func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, selections []api.ScreenshotSelection, purpose api.ScreenshotPurpose) (result api.ScreenshotResult, err error) {
+func (s *Service) Capture(
+	ctx context.Context,
+	meta api.ScreenshotSubject,
+	selections []api.ScreenshotSelection,
+	purpose api.ScreenshotPurpose,
+) (result api.ScreenshotResult, err error) {
 	defer func() {
 		if err != nil {
 			s.logger.Warnf("screenshots: capture blocked err=%s", redaction.RedactValue(err.Error(), nil))
@@ -261,7 +288,7 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 		return api.ScreenshotResult{}, err
 	}
 
-	tmpDir, _, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return api.ScreenshotResult{}, fmt.Errorf("screenshots: %w", err)
 	}
@@ -365,7 +392,16 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 			var usedLib bool
 			var captureErr error
 			for _, candidate := range resolveSegmentCandidates(info, ts) {
-				s.logger.Tracef("screenshots: capture queued index=%d timestamp_seconds=%.3f input_timestamp_seconds=%.3f segment=%d fallback=%d input=%s output=%s", selection.Index, ts, candidate.Timestamp, candidate.SegmentIndex, candidate.FallbackIndex, candidate.SourcePath, output)
+				s.logger.Tracef(
+					"screenshots: capture queued index=%d timestamp_seconds=%.3f input_timestamp_seconds=%.3f segment=%d fallback=%d input=%s output=%s",
+					selection.Index,
+					ts,
+					candidate.Timestamp,
+					candidate.SegmentIndex,
+					candidate.FallbackIndex,
+					candidate.SourcePath,
+					output,
+				)
 				capture := captureRequest{
 					InputPath:     candidate.SourcePath,
 					OutputPath:    output,
@@ -390,7 +426,13 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 				if captureErr == nil {
 					break
 				}
-				s.logger.Debugf("screenshots: capture segment failed index=%d segment=%d fallback=%d err=%s", selection.Index, candidate.SegmentIndex, candidate.FallbackIndex, redaction.RedactValue(captureErr.Error(), nil))
+				s.logger.Debugf(
+					"screenshots: capture segment failed index=%d segment=%d fallback=%d err=%s",
+					selection.Index,
+					candidate.SegmentIndex,
+					candidate.FallbackIndex,
+					redaction.RedactValue(captureErr.Error(), nil),
+				)
 			}
 			if captureErr != nil {
 				s.logger.Warnf("screenshots: capture frame failed index=%d err=%s", selection.Index, redaction.RedactValue(captureErr.Error(), nil))
@@ -404,7 +446,12 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 				usedLibplacebo.Store(true)
 			}
 
-			img := api.ScreenshotImage{Index: selection.Index, TimestampSeconds: ts, Path: output, Purpose: purpose}
+			img := api.ScreenshotImage{
+				Index:            selection.Index,
+				TimestampSeconds: ts,
+				Path:             output,
+				Purpose:          purpose,
+			}
 			if stat, err := os.Stat(output); err == nil {
 				img.SizeBytes = stat.Size()
 			}
@@ -481,7 +528,7 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, select
 	return result, nil
 }
 
-func (s *Service) PreviewFrame(ctx context.Context, meta api.PreparedMetadata, timestampSeconds float64) (preview api.ScreenshotPreview, err error) {
+func (s *Service) PreviewFrame(ctx context.Context, meta api.ScreenshotSubject, timestampSeconds float64) (preview api.ScreenshotPreview, err error) {
 	defer func() {
 		if err != nil {
 			s.logger.Warnf("screenshots: preview blocked err=%s", redaction.RedactValue(err.Error(), nil))
@@ -512,10 +559,25 @@ func (s *Service) PreviewFrame(ctx context.Context, meta api.PreparedMetadata, t
 	}
 	candidates := resolveSegmentCandidates(info, timestampSeconds)
 
-	s.logger.Debugf("screenshots: preview setup kind=%s disc=%s timestamp_seconds=%.3f candidates=%d selected_path=%s ffmpeg=%s", screenshotSourceKind(meta), screenshotLogField(meta.DiscType), timestampSeconds, len(candidates), candidates[0].SourcePath, cmd)
+	s.logger.Debugf(
+		"screenshots: preview setup kind=%s disc=%s timestamp_seconds=%.3f candidates=%d selected_path=%s ffmpeg=%s",
+		screenshotSourceKind(meta),
+		screenshotLogField(meta.DiscType),
+		timestampSeconds,
+		len(candidates),
+		candidates[0].SourcePath,
+		cmd,
+	)
 	var payload []byte
 	for _, candidate := range candidates {
-		s.logger.Tracef("screenshots: preview queued timestamp_seconds=%.3f input_timestamp_seconds=%.3f segment=%d fallback=%d input=%s", timestampSeconds, candidate.Timestamp, candidate.SegmentIndex, candidate.FallbackIndex, candidate.SourcePath)
+		s.logger.Tracef(
+			"screenshots: preview queued timestamp_seconds=%.3f input_timestamp_seconds=%.3f segment=%d fallback=%d input=%s",
+			timestampSeconds,
+			candidate.Timestamp,
+			candidate.SegmentIndex,
+			candidate.FallbackIndex,
+			candidate.SourcePath,
+		)
 		payload, err = captureFrameBytes(ctx, s.runner, cmd, previewRequest{
 			InputPath: candidate.SourcePath,
 			Timestamp: candidate.Timestamp,
@@ -523,7 +585,12 @@ func (s *Service) PreviewFrame(ctx context.Context, meta api.PreparedMetadata, t
 		if err == nil {
 			break
 		}
-		s.logger.Debugf("screenshots: preview segment failed segment=%d fallback=%d err=%s", candidate.SegmentIndex, candidate.FallbackIndex, redaction.RedactValue(err.Error(), nil))
+		s.logger.Debugf(
+			"screenshots: preview segment failed segment=%d fallback=%d err=%s",
+			candidate.SegmentIndex,
+			candidate.FallbackIndex,
+			redaction.RedactValue(err.Error(), nil),
+		)
 	}
 	if err != nil {
 		return api.ScreenshotPreview{}, err
@@ -542,7 +609,7 @@ func (s *Service) PreviewFrame(ctx context.Context, meta api.PreparedMetadata, t
 	return preview, nil
 }
 
-func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePath string) error {
+func (s *Service) Delete(ctx context.Context, meta api.ScreenshotSubject, imagePath string) error {
 	select {
 	case <-ctx.Done():
 		return fmt.Errorf("context canceled: %w", ctx.Err())
@@ -557,7 +624,7 @@ func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePa
 		s.logger.Tracef("screenshots: delete requested path=%s", trimmed)
 	}
 
-	tmpDir, _, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return fmt.Errorf("screenshots: %w", err)
 	}
@@ -616,7 +683,7 @@ func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePa
 	return nil
 }
 
-func (s *Service) removeTrackerImageReference(ctx context.Context, meta api.PreparedMetadata, tmpDir string, absTarget string) {
+func (s *Service) removeTrackerImageReference(ctx context.Context, meta api.ScreenshotSubject, tmpDir string, absTarget string) {
 	if s.repo == nil {
 		return
 	}
@@ -624,7 +691,7 @@ func (s *Service) removeTrackerImageReference(ctx context.Context, meta api.Prep
 		return
 	}
 	fileStem := strings.ToLower(strings.TrimSuffix(filepath.Base(absTarget), filepath.Ext(absTarget)))
-	records := meta.TrackerData
+	var records []api.TrackerMetadata
 	if strings.TrimSpace(meta.SourcePath) != "" {
 		stored, err := s.repo.ListTrackerMetadataByPath(ctx, meta.SourcePath)
 		if err != nil {
@@ -670,7 +737,11 @@ func (s *Service) removeTrackerImageReference(ctx context.Context, meta api.Prep
 				if baseStem != "" && (fileStem == baseStem || strings.HasPrefix(fileStem, baseStem+"_")) {
 					removed = true
 					if s.logger != nil {
-						s.logger.Tracef("screenshots: tracker image stem match tracker=%s url=%s", strings.TrimSpace(record.Tracker), strings.TrimSpace(urlValue))
+						s.logger.Tracef(
+							"screenshots: tracker image stem match tracker=%s url=%s",
+							strings.TrimSpace(record.Tracker),
+							strings.TrimSpace(urlValue),
+						)
 					}
 					continue
 				}
@@ -692,6 +763,20 @@ func (s *Service) removeTrackerImageReference(ctx context.Context, meta api.Prep
 			s.logger.Tracef("screenshots: updated tracker metadata tracker=%s remaining=%d", strings.TrimSpace(record.Tracker), len(record.ImageURLs))
 		}
 	}
+}
+
+func (s *Service) loadTrackerMetadata(ctx context.Context, sourcePath string) []api.TrackerMetadata {
+	if s.repo == nil || strings.TrimSpace(sourcePath) == "" {
+		return nil
+	}
+	records, err := s.repo.ListTrackerMetadataByPath(ctx, sourcePath)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Debugf("screenshots: failed to load tracker metadata: %v", err)
+		}
+		return nil
+	}
+	return records
 }
 
 func retrySQLiteBusy(ctx context.Context, attempts int, fn func() error) error {
@@ -726,7 +811,7 @@ func isSQLiteBusyError(err error) bool {
 // SaveFinalSelections replaces normal final selections from images while
 // preserving manual and automatic disc-menu selections. Menu-purpose images in
 // the input are ignored rather than reclassified as normal screenshots.
-func (s *Service) SaveFinalSelections(ctx context.Context, meta api.PreparedMetadata, images []api.ScreenshotImage) error {
+func (s *Service) SaveFinalSelections(ctx context.Context, meta api.ScreenshotSubject, images []api.ScreenshotImage) error {
 	if s.repo == nil {
 		return nil
 	}
@@ -736,7 +821,7 @@ func (s *Service) SaveFinalSelections(ctx context.Context, meta api.PreparedMeta
 	default:
 	}
 
-	tmpDir, _, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return fmt.Errorf("screenshots: %w", err)
 	}
@@ -765,20 +850,14 @@ func (s *Service) SaveFinalSelections(ctx context.Context, meta api.PreparedMeta
 		})
 	}
 
-	if lifecycle, ok := s.repo.(api.ScreenshotLifecycleRepository); ok {
-		if err := lifecycle.ReplaceNormalFinalSelections(ctx, meta.SourcePath, selections); err != nil {
-			return fmt.Errorf("screenshots: replace normal final selections: %w", err)
-		}
-		return nil
-	}
-	if err := s.repo.SaveFinalSelections(ctx, meta.SourcePath, selections); err != nil {
-		return fmt.Errorf("screenshots: save final selections: %w", err)
+	if err := s.repo.ReplaceNormalFinalSelections(ctx, meta.SourcePath, selections); err != nil {
+		return fmt.Errorf("screenshots: replace normal final selections: %w", err)
 	}
 	return nil
 }
 
-func screenshotBaseName(meta api.PreparedMetadata) string {
-	base := paths.ReleaseTempBase(meta, meta.SourcePath)
+func screenshotBaseName(meta api.ScreenshotSubject) string {
+	base := paths.ReleaseTempBaseFor(meta.SourcePath, meta.Release)
 	return sanitizeFilename(base)
 }
 
@@ -897,7 +976,11 @@ func listTrackerScreens(tmpDir, base string) []api.ScreenshotImage {
 		if infoErr != nil {
 			return nil
 		}
-		results = append(results, api.ScreenshotImage{Path: path, Purpose: api.ScreenshotPurposeFinal, SizeBytes: info.Size()})
+		results = append(results, api.ScreenshotImage{
+			Path:      path,
+			Purpose:   api.ScreenshotPurposeFinal,
+			SizeBytes: info.Size(),
+		})
 		return nil
 	})
 
@@ -905,7 +988,7 @@ func listTrackerScreens(tmpDir, base string) []api.ScreenshotImage {
 	return results
 }
 
-func (s *Service) loadFinalSelections(ctx context.Context, meta api.PreparedMetadata, tmpDir string) []api.ScreenshotImage {
+func (s *Service) loadFinalSelections(ctx context.Context, meta api.ScreenshotSubject, tmpDir string) []api.ScreenshotImage {
 	if s.repo == nil {
 		return nil
 	}
@@ -1051,15 +1134,15 @@ func reindexScreenshotImages(images []api.ScreenshotImage) []api.ScreenshotImage
 	return images
 }
 
-func buildTrackerImageLinks(meta api.PreparedMetadata, tmpDir string) []api.ScreenshotLinkedImage {
+func buildTrackerImageLinks(records []api.TrackerMetadata, tmpDir string) []api.ScreenshotLinkedImage {
 	if strings.TrimSpace(tmpDir) == "" {
 		return nil
 	}
-	if len(meta.TrackerData) == 0 {
+	if len(records) == 0 {
 		return nil
 	}
 	results := make([]api.ScreenshotLinkedImage, 0)
-	for _, record := range meta.TrackerData {
+	for _, record := range records {
 		tracker := strings.TrimSpace(record.Tracker)
 		if tracker == "" {
 			continue

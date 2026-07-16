@@ -199,9 +199,21 @@ func TestExecuteForPlaylistNormalizesLowercaseAndPathPlaylist(t *testing.T) {
 		playlistFile string
 		want         string
 	}{
-		{name: "lowercase extension", playlistFile: "00001.mpls", want: "00001.MPLS"},
-		{name: "full windows path", playlistFile: `D:\Disc\BDMV\PLAYLIST\00002.mpls`, want: "00002.MPLS"},
-		{name: "full slash path no ext", playlistFile: "BDMV/PLAYLIST/00003", want: "00003.MPLS"},
+		{
+			name:         "lowercase extension",
+			playlistFile: "00001.mpls",
+			want:         "00001.MPLS",
+		},
+		{
+			name:         "full windows path",
+			playlistFile: `D:\Disc\BDMV\PLAYLIST\00002.mpls`,
+			want:         "00002.MPLS",
+		},
+		{
+			name:         "full slash path no ext",
+			playlistFile: "BDMV/PLAYLIST/00003",
+			want:         "00003.MPLS",
+		},
 	}
 
 	for _, tc := range tests {
@@ -238,11 +250,31 @@ func TestNormalizePlaylistSelector(t *testing.T) {
 		input string
 		want  string
 	}{
-		{name: "trim and add extension", input: " 00001 ", want: "00001.MPLS"},
-		{name: "preserve extension uppercase", input: "00001.MPLS", want: "00001.MPLS"},
-		{name: "normalize lowercase extension", input: "00001.mpls", want: "00001.MPLS"},
-		{name: "strip windows path", input: `D:\Movie\BDMV\PLAYLIST\00004.mpls`, want: "00004.MPLS"},
-		{name: "strip slash path", input: "BDMV/PLAYLIST/00005", want: "00005.MPLS"},
+		{
+			name:  "trim and add extension",
+			input: " 00001 ",
+			want:  "00001.MPLS",
+		},
+		{
+			name:  "preserve extension uppercase",
+			input: "00001.MPLS",
+			want:  "00001.MPLS",
+		},
+		{
+			name:  "normalize lowercase extension",
+			input: "00001.mpls",
+			want:  "00001.MPLS",
+		},
+		{
+			name:  "strip windows path",
+			input: `D:\Movie\BDMV\PLAYLIST\00004.mpls`,
+			want:  "00004.MPLS",
+		},
+		{
+			name:  "strip slash path",
+			input: "BDMV/PLAYLIST/00005",
+			want:  "00005.MPLS",
+		},
 	}
 
 	for _, tc := range tests {

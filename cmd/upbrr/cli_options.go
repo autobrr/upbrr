@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/imagehostpolicy"
+	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -713,9 +713,12 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, s
 		runLogLevel = normalized
 	}
 
+	sourcePath := ""
+	if len(paths) == 1 {
+		sourcePath = paths[0]
+	}
 	req := api.Request{
-		Paths: paths,
-		Mode:  api.ModeCLI,
+		SourcePath: sourcePath,
 		Execution: api.ExecutionOptions{
 			QueueName:         strings.TrimSpace(opts.QueueName),
 			QueueLimit:        opts.LimitQueue,
@@ -948,15 +951,51 @@ func buildTrackerIDOverrides(opts cliOptions, visited map[string]bool) (map[stri
 		tracker     string
 		value       string
 	}{
-		{visitedName: "ptp", tracker: "ptp", value: opts.PTP},
-		{visitedName: "blu", tracker: "blu", value: opts.BLU},
-		{visitedName: "aither", tracker: "aither", value: opts.Aither},
-		{visitedName: "lst", tracker: "lst", value: opts.LST},
-		{visitedName: "oe", tracker: "oe", value: opts.OE},
-		{visitedName: "hdb", tracker: "hdb", value: opts.HDB},
-		{visitedName: "btn", tracker: "btn", value: opts.BTN},
-		{visitedName: "bhd", tracker: "bhd", value: opts.BHD},
-		{visitedName: "ulcx", tracker: "ulcx", value: opts.ULCX},
+		{
+			visitedName: "ptp",
+			tracker:     "ptp",
+			value:       opts.PTP,
+		},
+		{
+			visitedName: "blu",
+			tracker:     "blu",
+			value:       opts.BLU,
+		},
+		{
+			visitedName: "aither",
+			tracker:     "aither",
+			value:       opts.Aither,
+		},
+		{
+			visitedName: "lst",
+			tracker:     "lst",
+			value:       opts.LST,
+		},
+		{
+			visitedName: "oe",
+			tracker:     "oe",
+			value:       opts.OE,
+		},
+		{
+			visitedName: "hdb",
+			tracker:     "hdb",
+			value:       opts.HDB,
+		},
+		{
+			visitedName: "btn",
+			tracker:     "btn",
+			value:       opts.BTN,
+		},
+		{
+			visitedName: "bhd",
+			tracker:     "bhd",
+			value:       opts.BHD,
+		},
+		{
+			visitedName: "ulcx",
+			tracker:     "ulcx",
+			value:       opts.ULCX,
+		},
 	}
 
 	overrides := make(map[string]string)

@@ -75,7 +75,11 @@ func TestLoginAndFetchAntiCsrfTokenReturnsPersistenceError(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+		http.SetCookie(w, &http.Cookie{
+			Name:  "session",
+			Value: "new",
+			Path:  "/",
+		})
 		_, _ = w.Write([]byte(`{"Result":"Ok","AntiCsrfToken":"token"}`))
 	}))
 	t.Cleanup(server.Close)
@@ -111,7 +115,11 @@ func TestLoginAndFetchAntiCsrfTokenDoesNotOverwriteCookiesWhenTokenMissing(t *te
 			http.NotFound(w, r)
 			return
 		}
-		http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+		http.SetCookie(w, &http.Cookie{
+			Name:  "session",
+			Value: "new",
+			Path:  "/",
+		})
 		_, _ = w.Write([]byte(`{"Result":"Ok"}`))
 	}))
 	t.Cleanup(server.Close)
@@ -144,7 +152,11 @@ func TestLoginAndFetchAntiCsrfTokenPersistsCookiesAfterTokenGate(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+		http.SetCookie(w, &http.Cookie{
+			Name:  "session",
+			Value: "new",
+			Path:  "/",
+		})
 		_, _ = w.Write([]byte(`{"Result":"Ok","AntiCsrfToken":"token"}`))
 	}))
 	t.Cleanup(server.Close)
@@ -230,7 +242,11 @@ func TestResolveSessionForTrackerAuthLoginUsesManual2FACode(t *testing.T) {
 			return
 		}
 		gotCode = r.FormValue("TfaCode")
-		http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+		http.SetCookie(w, &http.Cookie{
+			Name:  "session",
+			Value: "new",
+			Path:  "/",
+		})
 		_, _ = w.Write([]byte(`{"Result":"Ok","AntiCsrfToken":"token"}`))
 	}))
 	t.Cleanup(server.Close)
@@ -348,7 +364,11 @@ func TestResolveSessionForTrackerAuthLoginMissing2FACodePreservesCookies(t *test
 		case r.URL.Path == ptpUploadPath:
 			_, _ = w.Write([]byte("<html>logged out</html>"))
 		case r.URL.Path == "/ajax.php" && r.URL.RawQuery == "action=login":
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "new", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "new",
+				Path:  "/",
+			})
 			_, _ = w.Write([]byte(`{"Result":"TfaRequired"}`))
 		default:
 			http.NotFound(w, r)

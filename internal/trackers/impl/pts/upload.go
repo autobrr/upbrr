@@ -15,7 +15,6 @@ import (
 
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
-	"github.com/autobrr/upbrr/internal/services/bbcode"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -38,7 +37,7 @@ type uploadState struct {
 	blockedReason string
 }
 
-func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
+func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
 	state, cookies, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return api.UploadSummary{}, err
@@ -71,7 +70,11 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, fmt.Errorf("trackers: PTS upload request: %w", err)
 	}
 	defer resp.Body.Close()
-	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusSeeOther, commonhttp.DefaultResponsePreviewBytes)
+	responseBody, responsePreview, err := commonhttp.ReadUploadResponseBody(
+		resp,
+		resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusSeeOther,
+		commonhttp.DefaultResponsePreviewBytes,
+	)
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: PTS read upload response: %w", err)
 	}
@@ -82,7 +85,7 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		tURL := baseURL + "/details.php?id=" + url.QueryEscape(torrentID)
 		artifactPath := ""
 		if announce := strings.TrimSpace(req.TrackerConfig.AnnounceURL); announce != "" {
-			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.AppConfig.MainSettings.DBPath, "PTS")
+			artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "PTS")
 			if err != nil {
 				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
 			}
@@ -102,11 +105,11 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		}, nil
 	}
 
-	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.AppConfig.MainSettings.DBPath, "PTS", "upload_failure", responsePreview, ".html")
+	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "PTS", "upload_failure", responsePreview, ".html")
 	return api.UploadSummary{}, commonhttp.UploadHTTPError("PTS", resp.StatusCode, responsePreview)
 }
 
-func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
+func buildUploadDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
 	state, _, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
@@ -127,16 +130,20 @@ func buildUploadDryRun(ctx context.Context, req trackers.UploadRequest) (api.Tra
 		Endpoint:         uploadURL,
 		Payload:          cloneFields(state.fields),
 		Questionnaire:    state.questionnaire,
-		Files:            []api.TrackerDryRunFile{{Field: "file", Path: state.torrentPath, Present: strings.TrimSpace(state.torrentPath) != ""}},
+		Files: []api.TrackerDryRunFile{{
+			Field:   "file",
+			Path:    state.torrentPath,
+			Present: strings.TrimSpace(state.torrentPath) != "",
+		}},
 	}, nil
 }
 
-func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (uploadState, []*http.Cookie, error) {
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (uploadState, []*http.Cookie, error) {
+	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
 	if err != nil {
 		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
 	if err != nil {
 		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
 		assets = trackers.DescriptionAssets{}
@@ -151,14 +158,14 @@ func prepareUploadState(ctx context.Context, req trackers.UploadRequest) (upload
 		questionnaire: buildQuestionnaire(req.Meta),
 		blockedReason: validateUpload(req.Meta),
 	}
-	cookies, err := loadCookies(ctx, req.AppConfig.MainSettings.DBPath)
+	cookies, err := loadCookies(ctx, req.Runtime.DBPath)
 	if err != nil {
 		return uploadState{}, nil, fmt.Errorf("trackers: PTS load cookies: %w", err)
 	}
 	return state, cookies, nil
 }
 
-func buildPayload(meta api.PreparedMetadata, description string) map[string]string {
+func buildPayload(meta api.UploadSubject, description string) map[string]string {
 	return map[string]string{
 		"name":  metautil.FirstNonEmptyTrimmed(meta.ReleaseName, meta.Release.Title, meta.Filename),
 		"url":   imdbURL(meta),
@@ -167,7 +174,7 @@ func buildPayload(meta api.PreparedMetadata, description string) map[string]stri
 	}
 }
 
-func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAssets) string {
+func buildDescription(meta api.UploadSubject, assets trackers.DescriptionAssets) string {
 	parts := make([]string, 0, 4)
 	if info := commonhttp.ReadOptionalFile(strings.TrimSpace(meta.MediaInfoTextPath)); strings.TrimSpace(info) != "" {
 		parts = append(parts, info)
@@ -179,10 +186,10 @@ func buildDescription(meta api.PreparedMetadata, assets trackers.DescriptionAsse
 		parts = append(parts, shots)
 	}
 	parts = append(parts, "[right][url=https://github.com/autobrr/upbrr][size=1]upbrr[/size][/url][/right]")
-	return bbcode.FinalizeTrackerDescription("PTS", strings.TrimSpace(strings.Join(parts, "\n\n")))
+	return finalizeDescription(strings.TrimSpace(strings.Join(parts, "\n\n")))
 }
 
-func buildQuestionnaire(meta api.PreparedMetadata) *api.TrackerQuestionnaire {
+func buildQuestionnaire(meta api.UploadSubject) *api.TrackerQuestionnaire {
 	if hasMandarin(meta) {
 		return nil
 	}
@@ -201,7 +208,7 @@ func buildQuestionnaire(meta api.PreparedMetadata) *api.TrackerQuestionnaire {
 	}
 }
 
-func validateUpload(meta api.PreparedMetadata) string {
+func validateUpload(meta api.UploadSubject) string {
 	if hasMandarin(meta) {
 		return ""
 	}
@@ -211,7 +218,7 @@ func validateUpload(meta api.PreparedMetadata) string {
 	return "missing Mandarin audio/subtitles; answer the override questionnaire to continue"
 }
 
-func hasMandarin(meta api.PreparedMetadata) bool {
+func hasMandarin(meta api.UploadSubject) bool {
 	for _, values := range [][]string{meta.AudioLanguages, meta.SubtitleLanguages} {
 		for _, value := range values {
 			lower := strings.ToLower(strings.TrimSpace(value))
@@ -227,7 +234,10 @@ func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
 	return wrapTrackerResult(cookies.LoadTrackerHTTPCookies(ctx, dbPath, "PTS", "ptskit.org"))
 }
 
-func resolveType(meta api.PreparedMetadata) string {
+func resolveType(meta api.UploadSubject) string {
+	if _, err := meta.Identity.RequireCategory(); err != nil {
+		return ""
+	}
 	if meta.Anime {
 		return "407"
 	}
@@ -238,7 +248,7 @@ func resolveType(meta api.PreparedMetadata) string {
 }
 
 func sanitizeDescription(input string) string {
-	return bbcode.FinalizeTrackerDescription("PTS", input)
+	return finalizeDescription(input)
 }
 
 func screenshotBlock(images []api.ScreenshotImage) string {
@@ -268,14 +278,14 @@ func parseUploadID(location string, body string) string {
 	return ""
 }
 
-func imdbURL(meta api.PreparedMetadata) string {
-	if meta.ExternalIDs.IMDBID <= 0 {
+func imdbURL(meta api.UploadSubject) string {
+	if meta.Identity.IMDBID <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("https://www.imdb.com/title/tt%07d", meta.ExternalIDs.IMDBID)
+	return fmt.Sprintf("https://www.imdb.com/title/tt%07d", meta.Identity.IMDBID)
 }
 
-func questionnaireAnswers(meta api.PreparedMetadata) map[string]string {
+func questionnaireAnswers(meta api.UploadSubject) map[string]string {
 	if len(meta.TrackerQuestionnaireAnswers) == 0 {
 		return nil
 	}
@@ -288,6 +298,7 @@ func cloneFields(input map[string]string) map[string]string {
 	return out
 }
 
-func isTV(meta api.PreparedMetadata) bool {
-	return meta.TVPack || meta.SeasonInt > 0 || meta.EpisodeInt > 0 || strings.EqualFold(meta.ExternalIDs.Category, "TV")
+func isTV(meta api.UploadSubject) bool {
+	category, err := meta.Identity.RequireCategory()
+	return err == nil && category == api.CanonicalCategoryTV
 }

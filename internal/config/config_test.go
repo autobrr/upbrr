@@ -56,7 +56,12 @@ func TestValidate(t *testing.T) {
 				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
 				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 				TorrentClients: map[string]TorrentClientConfig{
-					"qbit": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+					"qbit": {
+						Type:     "qbit",
+						URL:      "http://localhost",
+						Username: "user",
+						Password: "pass",
+					},
 				},
 			},
 			wantErr: false,
@@ -72,7 +77,12 @@ func TestValidate(t *testing.T) {
 					SearchClients: CSVList{"QBIT"},
 				},
 				TorrentClients: map[string]TorrentClientConfig{
-					"qbit": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+					"qbit": {
+						Type:     "qbit",
+						URL:      "http://localhost",
+						Username: "user",
+						Password: "pass",
+					},
 				},
 			},
 			wantErr: false,
@@ -97,7 +107,12 @@ func TestValidate(t *testing.T) {
 				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 				ClientSetup:        ClientSetupConfig{DefaultClient: "missing"},
 				TorrentClients: map[string]TorrentClientConfig{
-					"qbit": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+					"qbit": {
+						Type:     "qbit",
+						URL:      "http://localhost",
+						Username: "user",
+						Password: "pass",
+					},
 				},
 			},
 			wantErr: true,
@@ -109,7 +124,12 @@ func TestValidate(t *testing.T) {
 				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 				ClientSetup:        ClientSetupConfig{SearchClients: CSVList{"missing"}},
 				TorrentClients: map[string]TorrentClientConfig{
-					"qbit": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+					"qbit": {
+						Type:     "qbit",
+						URL:      "http://localhost",
+						Username: "user",
+						Password: "pass",
+					},
 				},
 			},
 			wantErr: true,
@@ -121,7 +141,12 @@ func TestValidate(t *testing.T) {
 				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 				ClientSetup:        ClientSetupConfig{InjectClients: CSVList{"missing"}},
 				TorrentClients: map[string]TorrentClientConfig{
-					"qbit": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+					"qbit": {
+						Type:     "qbit",
+						URL:      "http://localhost",
+						Username: "user",
+						Password: "pass",
+					},
 				},
 			},
 			wantErr: true,
@@ -145,7 +170,12 @@ func TestValidate(t *testing.T) {
 				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
 				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 				TorrentClients: map[string]TorrentClientConfig{
-					"qbit": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+					"qbit": {
+						Type:     "qbit",
+						URL:      "http://localhost",
+						Username: "user",
+						Password: "pass",
+					},
 				},
 				Trackers: TrackersConfig{
 					Trackers: map[string]TrackerConfig{
@@ -195,7 +225,12 @@ func TestValidate(t *testing.T) {
 				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
 				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 				TorrentClients: map[string]TorrentClientConfig{
-					"qbit": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+					"qbit": {
+						Type:     "qbit",
+						URL:      "http://localhost",
+						Username: "user",
+						Password: "pass",
+					},
 				},
 				Trackers: TrackersConfig{
 					Trackers: map[string]TrackerConfig{
@@ -211,7 +246,12 @@ func TestValidate(t *testing.T) {
 				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
 				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 				TorrentClients: map[string]TorrentClientConfig{
-					"qbit": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+					"qbit": {
+						Type:     "qbit",
+						URL:      "http://localhost",
+						Username: "user",
+						Password: "pass",
+					},
 				},
 				Trackers: TrackersConfig{
 					Trackers: map[string]TrackerConfig{
@@ -227,7 +267,12 @@ func TestValidate(t *testing.T) {
 				MainSettings:       MainSettingsConfig{TMDBAPI: "x"},
 				ScreenshotHandling: ScreenshotHandlingConfig{Screens: 1},
 				TorrentClients: map[string]TorrentClientConfig{
-					"none": {Type: "qbit", URL: "http://localhost", Username: "user", Password: "pass"},
+					"none": {
+						Type:     "qbit",
+						URL:      "http://localhost",
+						Username: "user",
+						Password: "pass",
+					},
 				},
 				Trackers: TrackersConfig{
 					Trackers: map[string]TrackerConfig{
@@ -1116,7 +1161,12 @@ func TestMergeMissingTrackerDefaultsClearsCZTSensitiveFields(t *testing.T) {
 	cfg := &Config{
 		Trackers: TrackersConfig{
 			Trackers: map[string]TrackerConfig{
-				"CZT":                {APIKey: "stale-token", URL: "https://stale.example", AnnounceURL: "https://czteam.me/announce.php?passkey=stale", Passkey: "passkey"},
+				"CZT": {
+					APIKey:      "stale-token",
+					URL:         "https://stale.example",
+					AnnounceURL: "https://czteam.me/announce.php?passkey=stale",
+					Passkey:     "passkey",
+				},
 				"czt":                {AnnounceURL: "https://czteam.me/announce.php?passkey=lowercase"},
 				"\uFF23\uFF3A\uFF34": {AnnounceURL: "https://czteam.me/announce.php?passkey=fullwidth"},
 			},
@@ -1220,8 +1270,16 @@ func TestTorrentClientConfigAutomaticManagementPathsAcceptsStringOrList(t *testi
 		value    string
 		expected StringList
 	}{
-		{name: "string", value: `media-root`, expected: StringList{"media-root"}},
-		{name: "list", value: "[media-root, archive-root]", expected: StringList{"media-root", "archive-root"}},
+		{
+			name:     "string",
+			value:    `media-root`,
+			expected: StringList{"media-root"},
+		},
+		{
+			name:     "list",
+			value:    "[media-root, archive-root]",
+			expected: StringList{"media-root", "archive-root"},
+		},
 	}
 
 	for _, tt := range tests {

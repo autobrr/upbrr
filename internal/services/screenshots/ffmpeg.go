@@ -44,7 +44,11 @@ func (commandRunner) Run(ctx context.Context, name string, args []string, dir st
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
-	result := CommandResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), ExitCode: 0}
+	result := CommandResult{
+		Stdout:   stdout.Bytes(),
+		Stderr:   stderr.Bytes(),
+		ExitCode: 0,
+	}
 	if err != nil {
 		exitCode := 1
 		var exitErr *exec.ExitError
@@ -178,7 +182,14 @@ func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captur
 
 	useLibplacebo := req.UseLibplacebo && req.ToneMap && !req.FrameOverlay
 	args := buildFFmpegArgs(req, useLibplacebo)
-	logger.Tracef("screenshots: ffmpeg capture attempt mode=%s timestamp_seconds=%.3f input=%s output=%s filters=%s", ffmpegModeLabel(useLibplacebo), req.Timestamp, req.InputPath, req.OutputPath, ffmpegFilterFromArgs(args))
+	logger.Tracef(
+		"screenshots: ffmpeg capture attempt mode=%s timestamp_seconds=%.3f input=%s output=%s filters=%s",
+		ffmpegModeLabel(useLibplacebo),
+		req.Timestamp,
+		req.InputPath,
+		req.OutputPath,
+		ffmpegFilterFromArgs(args),
+	)
 	result, err := runner.Run(ctx, cmdPath, args, "")
 	if err == nil && result.ExitCode == 0 {
 		if err = validateCaptureOutput(req.OutputPath); err == nil {
@@ -190,7 +201,15 @@ func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captur
 	if useLibplacebo {
 		logger.Debugf("screenshots: ffmpeg capture retry mode=%s reason=%s", ffmpegModeLabel(true), ffmpegResultPreview(result, err))
 		args = buildFFmpegArgs(req, true)
-		logger.Tracef("screenshots: ffmpeg capture attempt mode=%s retry=%t timestamp_seconds=%.3f input=%s output=%s filters=%s", ffmpegModeLabel(true), true, req.Timestamp, req.InputPath, req.OutputPath, ffmpegFilterFromArgs(args))
+		logger.Tracef(
+			"screenshots: ffmpeg capture attempt mode=%s retry=%t timestamp_seconds=%.3f input=%s output=%s filters=%s",
+			ffmpegModeLabel(true),
+			true,
+			req.Timestamp,
+			req.InputPath,
+			req.OutputPath,
+			ffmpegFilterFromArgs(args),
+		)
 		result, err = runner.Run(ctx, cmdPath, args, "")
 		if err == nil && result.ExitCode == 0 {
 			if err = validateCaptureOutput(req.OutputPath); err == nil {
@@ -199,9 +218,21 @@ func captureFrame(ctx context.Context, runner Runner, cmdPath string, req captur
 			}
 		}
 
-		logger.Debugf("screenshots: ffmpeg capture fallback from_mode=%s to_mode=%s reason=%s", ffmpegModeLabel(true), ffmpegModeLabel(false), ffmpegResultPreview(result, err))
+		logger.Debugf(
+			"screenshots: ffmpeg capture fallback from_mode=%s to_mode=%s reason=%s",
+			ffmpegModeLabel(true),
+			ffmpegModeLabel(false),
+			ffmpegResultPreview(result, err),
+		)
 		args = buildFFmpegArgs(req, false)
-		logger.Tracef("screenshots: ffmpeg capture attempt mode=%s timestamp_seconds=%.3f input=%s output=%s filters=%s", ffmpegModeLabel(false), req.Timestamp, req.InputPath, req.OutputPath, ffmpegFilterFromArgs(args))
+		logger.Tracef(
+			"screenshots: ffmpeg capture attempt mode=%s timestamp_seconds=%.3f input=%s output=%s filters=%s",
+			ffmpegModeLabel(false),
+			req.Timestamp,
+			req.InputPath,
+			req.OutputPath,
+			ffmpegFilterFromArgs(args),
+		)
 		result, err = runner.Run(ctx, cmdPath, args, "")
 		if err == nil && result.ExitCode == 0 {
 			if err = validateCaptureOutput(req.OutputPath); err == nil {
@@ -508,7 +539,10 @@ func overlayFilters(req captureRequest) []string {
 		fmt.Sprintf("drawtext=text='Frame Type\\: %s':fontcolor=white:fontsize=%d:x=%d:y=%d:box=1:boxcolor=black@0.5", frameType, fontSize, xAll, yType),
 	}
 	if req.ToneMap {
-		filters = append(filters, fmt.Sprintf("drawtext=text='Tonemapped HDR':fontcolor=white:fontsize=%d:x=%d:y=%d:box=1:boxcolor=black@0.5", fontSize, xAll, yHDR))
+		filters = append(
+			filters,
+			fmt.Sprintf("drawtext=text='Tonemapped HDR':fontcolor=white:fontsize=%d:x=%d:y=%d:box=1:boxcolor=black@0.5", fontSize, xAll, yHDR),
+		)
 	}
 	return filters
 }

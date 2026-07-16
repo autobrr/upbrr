@@ -27,9 +27,9 @@ import (
 
 func TestDefinitionBuildDescriptionUsesPTPGroup(t *testing.T) {
 	d := New()
-	result, err := d.BuildDescription(context.Background(), trackers.DescriptionRequest{
+	result, err := d.prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "PTP",
-		Meta:    api.PreparedMetadata{},
+		Meta:    api.UploadSubject{},
 		Logger:  api.NopLogger{},
 	})
 	if err != nil {
@@ -47,9 +47,9 @@ func TestDefinitionBuildDescriptionUsesResolvedAssetsAndMediaInfo(t *testing.T) 
 		t.Fatalf("write mediainfo: %v", err)
 	}
 
-	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+	result, err := New().prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "PTP",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			MediaInfoTextPath: mediaInfoPath,
 			Options:           api.UploadOptions{Screens: 1},
 		},
@@ -88,9 +88,9 @@ func TestDefinitionBuildDescriptionUsesAllResolvedPixhostScreenshots(t *testing.
 		{Host: "pixhost", RawURL: "https://pixhost.to/2.png"},
 		{Host: "pixhost", RawURL: "https://pixhost.to/3.png"},
 	}
-	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+	result, err := New().prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "PTP",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			MediaInfoTextPath: mediaInfoPath,
 			Options:           api.UploadOptions{Screens: 2},
 		},
@@ -115,13 +115,25 @@ func TestDefinitionBuildDescriptionUsesAllowedNonPixhostRawScreenshots(t *testin
 	}
 
 	screenshots := []api.ScreenshotImage{
-		{Host: "imgbb", RawURL: "https://i.ibb.co/raw-1/source.png", ImgURL: "https://i.ibb.co/thumb-1/source.png"},
-		{Host: "onlyimage", RawURL: "https://onlyimage.org/images/raw-2.png", ImgURL: "https://onlyimage.org/images/medium-2.png"},
-		{Host: "ptscreens", RawURL: "https://ptscreens.com/images/raw-3.png", ImgURL: "https://ptscreens.com/images/medium-3.png"},
+		{
+			Host:   "imgbb",
+			RawURL: "https://i.ibb.co/raw-1/source.png",
+			ImgURL: "https://i.ibb.co/thumb-1/source.png",
+		},
+		{
+			Host:   "onlyimage",
+			RawURL: "https://onlyimage.org/images/raw-2.png",
+			ImgURL: "https://onlyimage.org/images/medium-2.png",
+		},
+		{
+			Host:   "ptscreens",
+			RawURL: "https://ptscreens.com/images/raw-3.png",
+			ImgURL: "https://ptscreens.com/images/medium-3.png",
+		},
 	}
-	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+	result, err := New().prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "PTP",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			MediaInfoTextPath: mediaInfoPath,
 			Options:           api.UploadOptions{Screens: 2},
 		},
@@ -158,17 +170,22 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 	}))
 	defer server.Close()
 
-	entry, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+	entry, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "PTP",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath: torrentPath,
 			ReleaseName: "Movie.2026.1080p.BluRay.x264",
 			Source:      "BluRay",
 			VideoCodec:  "AVC",
-			ExternalIDs: api.ExternalIDs{Category: "MOVIE", IMDBID: 1234567},
-			ExternalMetadata: api.ExternalMetadata{
-				TMDB: &api.TMDBMetadata{Title: "Movie", Year: 2026, Poster: "https://img.example/poster.jpg", Genres: "Action"},
+			Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 1234567},
+			ProviderMetadata: api.SourceScopedMetadata{
+				TMDB: &api.TMDBMetadata{
+					Title:  "Movie",
+					Year:   2026,
+					Poster: "https://img.example/poster.jpg",
+					Genres: "Action",
+				},
 			},
 		},
 		TrackerConfig: config.TrackerConfig{
@@ -176,8 +193,8 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 			PTPAPIUser: "user",
 			PTPAPIKey:  "key",
 		},
-		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}},
-		Logger:    api.NopLogger{},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
+		Logger:  api.NopLogger{},
 	})
 	if err != nil {
 		t.Fatalf("unexpected dry-run error: %v", err)
@@ -198,16 +215,16 @@ func TestDefinitionBuildUploadDryRunForNewGroupIncludesQuestionnaire(t *testing.
 	torrentPath := filepath.Join(tmp, "release.torrent")
 	createTestTorrent(t, filepath.Join(tmp, "source.bin"), torrentPath)
 
-	entry, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+	entry, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "PTP",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath: torrentPath,
 			ReleaseName: "Movie.2026.1080p.BluRay.x264",
 			Source:      "BluRay",
 			VideoCodec:  "AVC",
-			ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
-			ExternalMetadata: api.ExternalMetadata{
+			Identity:    api.ExternalIdentity{Category: "MOVIE"},
+			ProviderMetadata: api.SourceScopedMetadata{
 				TMDB: &api.TMDBMetadata{
 					Title:    "Movie",
 					Year:     2026,
@@ -218,7 +235,7 @@ func TestDefinitionBuildUploadDryRunForNewGroupIncludesQuestionnaire(t *testing.
 			},
 		},
 		TrackerConfig: config.TrackerConfig{},
-		AppConfig:     config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}},
+		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
 		Logger:        api.NopLogger{},
 	})
 	if err != nil {
@@ -246,7 +263,7 @@ func TestResolveUploadTorrentPathReusesPreparedPTPArtifact(t *testing.T) {
 	createTestTorrent(t, filepath.Join(tmp, "source.bin"), torrentPath)
 
 	preparedMeta, err := trackers.PrepareTrackerUploadTorrent(
-		api.PreparedMetadata{SourcePath: sourcePath, TorrentPath: torrentPath},
+		api.UploadSubject{SourcePath: sourcePath, TorrentPath: torrentPath},
 		dbPath,
 		"PTP",
 		config.TrackerConfig{AnnounceURL: "https://please.passthepopcorn.me/passkey/announce"},
@@ -297,7 +314,11 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 				t.Error("unexpected login credentials")
 				return
 			}
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "cookievalue", Path: "/"})
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "cookievalue",
+				Path:  "/",
+			})
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"Result":        "Ok",
 				"AntiCsrfToken": "csrf-token",
@@ -361,16 +382,16 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := New().Upload(context.Background(), trackers.UploadRequest{
+	result, err := New().submit(context.Background(), trackers.PreparationInput{
 		Tracker: "PTP",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath: torrentPath,
 			ReleaseName: "Movie.2026.1080p.BluRay.x264",
 			Source:      "BluRay",
 			VideoCodec:  "AVC",
-			ExternalIDs: api.ExternalIDs{Category: "MOVIE", IMDBID: 1234567},
-			ExternalMetadata: api.ExternalMetadata{
+			Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 1234567},
+			ProviderMetadata: api.SourceScopedMetadata{
 				TMDB: &api.TMDBMetadata{
 					Title:    "Movie",
 					Year:     2026,
@@ -386,8 +407,8 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 			Password:    "pass",
 			AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
 		},
-		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
-		Logger:    api.NopLogger{},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
+		Logger:  api.NopLogger{},
 	})
 	if err != nil {
 		t.Fatalf("unexpected upload error: %v", err)
@@ -447,7 +468,11 @@ func TestLoginAndFetchAntiCsrfTokenHandles2FA(t *testing.T) {
 			t.Errorf("expected six digit TfaCode, got %q", code)
 			return
 		}
-		http.SetCookie(w, &http.Cookie{Name: "session", Value: "cookievalue", Path: "/"})
+		http.SetCookie(w, &http.Cookie{
+			Name:  "session",
+			Value: "cookievalue",
+			Path:  "/",
+		})
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"Result":        "Ok",
 			"AntiCsrfToken": "csrf-token",
@@ -501,13 +526,16 @@ func TestRehostPosterToSelectedHostUploadsPoster(t *testing.T) {
 			RawURL: "https://pixhost.to/rehosted.png",
 		}},
 	}
-	got := rehostPosterToSelectedHost(context.Background(), trackers.UploadRequest{
-		Meta: api.PreparedMetadata{
+	got := rehostPosterToSelectedHost(context.Background(), trackers.PreparationInput{
+		Meta: api.UploadSubject{
 			SourcePath: sourcePath,
 		},
-		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
-		Logger:    api.NopLogger{},
-		Images:    images,
+		Runtime:           trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
+		Logger:            api.NopLogger{},
+		SelectedImageHost: "pixhost",
+		UploadImages: func(ctx context.Context, uploaded []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+			return images.Upload(ctx, api.ImageHostingSubject{}, "pixhost", "global", uploaded)
+		},
 	}, posterServer.URL+"/poster")
 
 	if got != "https://pixhost.to/rehosted.png" {
@@ -549,13 +577,16 @@ func TestRehostPosterToSelectedHostRejectsLoopbackPoster(t *testing.T) {
 			RawURL: "https://pixhost.to/rehosted.png",
 		}},
 	}
-	got := rehostPosterToSelectedHost(context.Background(), trackers.UploadRequest{
-		Meta: api.PreparedMetadata{
+	got := rehostPosterToSelectedHost(context.Background(), trackers.PreparationInput{
+		Meta: api.UploadSubject{
 			SourcePath: sourcePath,
 		},
-		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}},
-		Logger:    api.NopLogger{},
-		Images:    images,
+		Runtime:           trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
+		Logger:            api.NopLogger{},
+		SelectedImageHost: "pixhost",
+		UploadImages: func(ctx context.Context, uploaded []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+			return images.Upload(ctx, api.ImageHostingSubject{}, "pixhost", "global", uploaded)
+		},
 	}, posterServer.URL+"/poster")
 
 	if got != posterServer.URL+"/poster" {
@@ -581,8 +612,11 @@ func TestIsPublicPosterIPRejectsPrivateRanges(t *testing.T) {
 
 func TestRehostPosterToSelectedHostSkipsSelectedHost(t *testing.T) {
 	images := &stubPTPImageHosting{}
-	got := rehostPosterToSelectedHost(context.Background(), trackers.UploadRequest{
-		Images: images,
+	got := rehostPosterToSelectedHost(context.Background(), trackers.PreparationInput{
+		SelectedImageHost: "pixhost",
+		UploadImages: func(ctx context.Context, uploaded []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+			return images.Upload(ctx, api.ImageHostingSubject{}, "pixhost", "global", uploaded)
+		},
 	}, "https://pixhost.to/existing.jpg")
 	if got != "https://pixhost.to/existing.jpg" {
 		t.Fatalf("expected original poster URL, got %q", got)
@@ -599,11 +633,11 @@ type stubPTPImageHosting struct {
 	uploaded []api.UploadedImageLink
 }
 
-func (s *stubPTPImageHosting) ListCandidates(context.Context, api.PreparedMetadata) ([]api.ScreenshotImage, error) {
+func (s *stubPTPImageHosting) ListCandidates(context.Context, api.ImageHostingSubject) ([]api.ScreenshotImage, error) {
 	return nil, nil
 }
 
-func (s *stubPTPImageHosting) Upload(_ context.Context, _ api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+func (s *stubPTPImageHosting) Upload(_ context.Context, _ api.ImageHostingSubject, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 	s.host = host
 	s.scope = usageScope
 	s.images = append([]api.ScreenshotImage(nil), images...)

@@ -21,49 +21,49 @@ func TestResolveOverviewUsesScopedTVOverviewOnlyForEpisodeOrSeasonPack(t *testin
 
 	tests := []struct {
 		name string
-		meta api.PreparedMetadata
+		meta api.UploadSubject
 		want string
 	}{
 		{
 			name: "episode upload uses episode overview",
-			meta: api.PreparedMetadata{
-				ExternalIDs: api.ExternalIDs{Category: "TV"},
-				SeasonInt:   1,
-				EpisodeInt:  2,
+			meta: api.UploadSubject{
+				Identity:   api.ExternalIdentity{Category: "TV"},
+				SeasonInt:  1,
+				EpisodeInt: 2,
 			},
 			want: "Episode Overview",
 		},
 		{
 			name: "lowercase episode upload uses episode overview",
-			meta: api.PreparedMetadata{
-				ExternalIDs: api.ExternalIDs{Category: "tv"},
-				SeasonInt:   1,
-				EpisodeInt:  2,
+			meta: api.UploadSubject{
+				Identity:   api.ExternalIdentity{Category: "tv"},
+				SeasonInt:  1,
+				EpisodeInt: 2,
 			},
 			want: "Episode Overview",
 		},
 		{
 			name: "season pack uses season overview from episode field",
-			meta: api.PreparedMetadata{
-				ExternalIDs: api.ExternalIDs{Category: "TV"},
-				SeasonInt:   1,
-				TVPack:      true,
+			meta: api.UploadSubject{
+				Identity:  api.ExternalIdentity{Category: "TV"},
+				SeasonInt: 1,
+				TVPack:    true,
 			},
 			want: "Episode Overview",
 		},
 		{
 			name: "series upload uses title overview",
-			meta: api.PreparedMetadata{
-				ExternalIDs: api.ExternalIDs{Category: "TV"},
+			meta: api.UploadSubject{
+				Identity: api.ExternalIdentity{Category: "TV"},
 			},
 			want: "Series Overview",
 		},
 		{
 			name: "movie ignores episode overview",
-			meta: api.PreparedMetadata{
-				ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
-				SeasonInt:   1,
-				EpisodeInt:  2,
+			meta: api.UploadSubject{
+				Identity:   api.ExternalIdentity{Category: "MOVIE"},
+				SeasonInt:  1,
+				EpisodeInt: 2,
 			},
 			want: "Series Overview",
 		},
@@ -83,7 +83,7 @@ func TestResolveOverviewUsesScopedTVOverviewOnlyForEpisodeOrSeasonPack(t *testin
 func TestResolveTagsPreservesUnknownGenres(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		Release: api.ReleaseInfo{
 			Genre: "Sci-Fi,MyCustomGenre",
 		},
@@ -101,9 +101,9 @@ func TestResolveTagsPreservesUnknownGenres(t *testing.T) {
 func TestBuildDescriptionOmitsBlankLocalizedEpisodeTitleRow(t *testing.T) {
 	t.Parallel()
 
-	description := buildDescription(trackers.UploadRequest{
-		Meta: api.PreparedMetadata{
-			ExternalMetadata: api.ExternalMetadata{
+	description := buildDescription(trackers.PreparationInput{
+		Meta: api.UploadSubject{
+			ProviderMetadata: api.SourceScopedMetadata{
 				TMDB: &api.TMDBMetadata{
 					Localized: map[string]api.TMDBLocalizedData{
 						"pt-BR": {EpisodeOverview: "Resumo do episodio"},
@@ -124,9 +124,9 @@ func TestBuildDescriptionOmitsBlankLocalizedEpisodeTitleRow(t *testing.T) {
 func TestBuildDescriptionKeepsLocalizedEpisodeTitleWhenPresent(t *testing.T) {
 	t.Parallel()
 
-	description := buildDescription(trackers.UploadRequest{
-		Meta: api.PreparedMetadata{
-			ExternalMetadata: api.ExternalMetadata{
+	description := buildDescription(trackers.PreparationInput{
+		Meta: api.UploadSubject{
+			ProviderMetadata: api.SourceScopedMetadata{
 				TMDB: &api.TMDBMetadata{
 					Localized: map[string]api.TMDBLocalizedData{
 						"pt-BR": {
@@ -150,9 +150,9 @@ func TestBuildDescriptionKeepsLocalizedEpisodeTitleWhenPresent(t *testing.T) {
 func TestBuildDescriptionTreatsWhitespaceLocalizedEpisodeTitleAsEmpty(t *testing.T) {
 	t.Parallel()
 
-	description := buildDescription(trackers.UploadRequest{
-		Meta: api.PreparedMetadata{
-			ExternalMetadata: api.ExternalMetadata{
+	description := buildDescription(trackers.PreparationInput{
+		Meta: api.UploadSubject{
+			ProviderMetadata: api.SourceScopedMetadata{
 				TMDB: &api.TMDBMetadata{
 					Localized: map[string]api.TMDBLocalizedData{
 						"pt-BR": {
@@ -181,17 +181,41 @@ func TestResolveVideoCodecMapsH264H265(t *testing.T) {
 		isHDR    bool
 		expected string
 	}{
-		{codec: "H264", isHDR: false, expected: "x264"},
-		{codec: "H265", isHDR: false, expected: "x265"},
-		{codec: "H265", isHDR: true, expected: "x265 HDR"},
-		{codec: "hevc", isHDR: false, expected: "x265"},
-		{codec: "avc", isHDR: false, expected: "x264"},
-		{codec: "OtherCodec", isHDR: false, expected: "OtherCodec"},
+		{
+			codec:    "H264",
+			isHDR:    false,
+			expected: "x264",
+		},
+		{
+			codec:    "H265",
+			isHDR:    false,
+			expected: "x265",
+		},
+		{
+			codec:    "H265",
+			isHDR:    true,
+			expected: "x265 HDR",
+		},
+		{
+			codec:    "hevc",
+			isHDR:    false,
+			expected: "x265",
+		},
+		{
+			codec:    "avc",
+			isHDR:    false,
+			expected: "x264",
+		},
+		{
+			codec:    "OtherCodec",
+			isHDR:    false,
+			expected: "OtherCodec",
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.codec, func(t *testing.T) {
-			meta := api.PreparedMetadata{
+			meta := api.UploadSubject{
 				VideoCodec: tc.codec,
 			}
 			if tc.isHDR {
@@ -288,12 +312,10 @@ func TestParseMediaInfoDurationMinutes(t *testing.T) {
 func TestResolveRuntimeFallsBackWhenMediaInfoDurationInvalid(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		DVDVOBMediaInfoText: "Duration/String : not a duration",
 		DiscType:            "BDMV",
-		BDInfo: map[string]any{
-			"length": "01:30:00.000",
-		},
+		Disc:                api.DiscFacts{DurationSeconds: 5400},
 	}
 
 	if got := resolveRuntime(meta); got != 90 {

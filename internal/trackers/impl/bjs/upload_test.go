@@ -20,9 +20,9 @@ func TestResolveRuntimePrefersMediaInfoDuration(t *testing.T) {
 		t.Fatalf("write mediainfo: %v", err)
 	}
 
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		MediaInfoTextPath: miPath,
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{RuntimeMinutes: 120},
 		},
 	}
@@ -33,8 +33,8 @@ func TestResolveRuntimePrefersMediaInfoDuration(t *testing.T) {
 }
 
 func TestResolveRuntimeFallsBackToExternalMetadata(t *testing.T) {
-	meta := api.PreparedMetadata{
-		ExternalMetadata: api.ExternalMetadata{
+	meta := api.UploadSubject{
+		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{RuntimeMinutes: 95},
 		},
 	}
@@ -45,12 +45,10 @@ func TestResolveRuntimeFallsBackToExternalMetadata(t *testing.T) {
 }
 
 func TestResolveRuntimePrefersBDInfoLengthForBDMV(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		DiscType: "BDMV",
-		BDInfo: map[string]any{
-			"length": "01:40:00.000",
-		},
-		ExternalMetadata: api.ExternalMetadata{
+		Disc:     api.DiscFacts{DurationSeconds: 6000},
+		ProviderMetadata: api.SourceScopedMetadata{
 			IMDB: &api.IMDBMetadata{RuntimeMinutes: 120},
 		},
 	}
@@ -143,12 +141,12 @@ func TestParseMediaInfoDurationMinutes(t *testing.T) {
 func TestBuildFieldsLimitsDirectorCreatorAndSetsRepack(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		Repack: "REPACK",
-		ExternalIDs: api.ExternalIDs{
+		Identity: api.ExternalIdentity{
 			Category: "TV",
 		},
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{
 				Creators:      []string{"Creator One", "Creator Two"},
 				Directors:     []string{"Director One", "Director Two"},
@@ -177,14 +175,14 @@ func TestBuildFieldsLimitsDirectorCreatorAndSetsRepack(t *testing.T) {
 func TestBuildFieldsWithNilMetadata(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		Release: api.ReleaseInfo{
 			Title: "Test TV Title",
 		},
-		ExternalIDs: api.ExternalIDs{
+		Identity: api.ExternalIdentity{
 			Category: "TV",
 		},
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: nil,
 			IMDB: nil,
 		},
@@ -221,14 +219,14 @@ func TestBuildFieldsWithNilMetadata(t *testing.T) {
 func TestBuildFieldsWithTMDBNilAndIMDBPresent(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		Release: api.ReleaseInfo{
 			Title: "Test TV Title",
 		},
-		ExternalIDs: api.ExternalIDs{
+		Identity: api.ExternalIdentity{
 			Category: "TV",
 		},
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: nil,
 			IMDB: &api.IMDBMetadata{
 				Rating: 8.5,
@@ -252,14 +250,14 @@ func TestBuildFieldsWithTMDBNilAndIMDBPresent(t *testing.T) {
 func TestBuildFieldsWithTMDBPresentAndIMDBNil(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		Release: api.ReleaseInfo{
 			Title: "Test TV Title",
 		},
-		ExternalIDs: api.ExternalIDs{
+		Identity: api.ExternalIdentity{
 			Category: "TV",
 		},
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{
 				OriginalTitle:    "Original Title",
 				Title:            "Title",
@@ -296,14 +294,14 @@ func TestBuildFieldsWithTMDBPresentAndIMDBNil(t *testing.T) {
 func TestBuildFieldsWithTMDBLocalizedAndIMDBNil(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		Release: api.ReleaseInfo{
 			Title: "Test TV Title",
 		},
-		ExternalIDs: api.ExternalIDs{
+		Identity: api.ExternalIdentity{
 			Category: "TV",
 		},
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{
 				OriginalTitle: "Original Title",
 				Title:         "Title",
@@ -337,49 +335,49 @@ func TestResolveOverviewUsesScopedTVOverviewOnlyForEpisodeOrSeasonPack(t *testin
 
 	tests := []struct {
 		name string
-		meta api.PreparedMetadata
+		meta api.UploadSubject
 		want string
 	}{
 		{
 			name: "episode upload uses episode overview",
-			meta: api.PreparedMetadata{
-				ExternalIDs: api.ExternalIDs{Category: "TV"},
-				SeasonInt:   1,
-				EpisodeInt:  2,
+			meta: api.UploadSubject{
+				Identity:   api.ExternalIdentity{Category: "TV"},
+				SeasonInt:  1,
+				EpisodeInt: 2,
 			},
 			want: "Episode Overview",
 		},
 		{
 			name: "lowercase episode upload uses episode overview",
-			meta: api.PreparedMetadata{
-				ExternalIDs: api.ExternalIDs{Category: "tv"},
-				SeasonInt:   1,
-				EpisodeInt:  2,
+			meta: api.UploadSubject{
+				Identity:   api.ExternalIdentity{Category: "tv"},
+				SeasonInt:  1,
+				EpisodeInt: 2,
 			},
 			want: "Episode Overview",
 		},
 		{
 			name: "season pack uses season overview from episode field",
-			meta: api.PreparedMetadata{
-				ExternalIDs: api.ExternalIDs{Category: "TV"},
-				SeasonInt:   1,
-				TVPack:      true,
+			meta: api.UploadSubject{
+				Identity:  api.ExternalIdentity{Category: "TV"},
+				SeasonInt: 1,
+				TVPack:    true,
 			},
 			want: "Episode Overview",
 		},
 		{
 			name: "series upload uses title overview",
-			meta: api.PreparedMetadata{
-				ExternalIDs: api.ExternalIDs{Category: "TV"},
+			meta: api.UploadSubject{
+				Identity: api.ExternalIdentity{Category: "TV"},
 			},
 			want: "Series Overview",
 		},
 		{
 			name: "movie ignores episode overview",
-			meta: api.PreparedMetadata{
-				ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
-				SeasonInt:   1,
-				EpisodeInt:  2,
+			meta: api.UploadSubject{
+				Identity:   api.ExternalIdentity{Category: "MOVIE"},
+				SeasonInt:  1,
+				EpisodeInt: 2,
 			},
 			want: "Series Overview",
 		},
@@ -399,8 +397,8 @@ func TestResolveOverviewUsesScopedTVOverviewOnlyForEpisodeOrSeasonPack(t *testin
 func TestBuildDescriptionOmitsBlankEpisodeTitle(t *testing.T) {
 	t.Parallel()
 
-	req := trackers.UploadRequest{Meta: api.PreparedMetadata{
-		ExternalMetadata: api.ExternalMetadata{
+	req := trackers.PreparationInput{Meta: api.UploadSubject{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{
 				Localized: map[string]api.TMDBLocalizedData{
 					"pt-BR": {
@@ -423,8 +421,8 @@ func TestBuildDescriptionOmitsBlankEpisodeTitle(t *testing.T) {
 func TestBuildDescriptionKeepsEpisodeTitleWhenPresent(t *testing.T) {
 	t.Parallel()
 
-	req := trackers.UploadRequest{Meta: api.PreparedMetadata{
-		ExternalMetadata: api.ExternalMetadata{
+	req := trackers.PreparationInput{Meta: api.UploadSubject{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{
 				Localized: map[string]api.TMDBLocalizedData{
 					"pt-BR": {
@@ -448,7 +446,7 @@ func TestBuildDescriptionKeepsEpisodeTitleWhenPresent(t *testing.T) {
 func TestResolveTagsPreservesUnknownFallbackGenres(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		Release: api.ReleaseInfo{
 			Genre: "Sci-Fi, MyCustomGenre",
 		},
@@ -464,9 +462,9 @@ func TestResolveTagsPreservesUnknownFallbackGenres(t *testing.T) {
 func TestResolveTagsFallbackPriority(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		Release: api.ReleaseInfo{Genre: "ReleaseGenre"},
-		ExternalMetadata: api.ExternalMetadata{
+		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{Genres: "Drama"},
 			IMDB: &api.IMDBMetadata{Genres: "Comedy"},
 		},
@@ -479,7 +477,7 @@ func TestResolveTagsFallbackPriority(t *testing.T) {
 		t.Fatalf("expected TMDB tags to beat IMDb and release, got %q", got)
 	}
 
-	meta.ExternalMetadata.TMDB = nil
+	meta.ProviderMetadata.TMDB = nil
 	if got := resolveTags(meta, api.TMDBLocalizedData{}); got != "comedia" {
 		t.Fatalf("expected IMDb tags to beat release, got %q", got)
 	}
@@ -488,7 +486,7 @@ func TestResolveTagsFallbackPriority(t *testing.T) {
 func TestBuildFieldsTagsAnswerOverridesComputedTags(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		Release: api.ReleaseInfo{Genre: "Drama"},
 	}
 
@@ -503,13 +501,13 @@ func TestResolveAdultLocalizedAndCanonicalGenres(t *testing.T) {
 
 	tests := []struct {
 		name string
-		meta api.PreparedMetadata
+		meta api.UploadSubject
 		want string
 	}{
 		{
 			name: "localized Portuguese adult genre",
-			meta: api.PreparedMetadata{
-				ExternalMetadata: api.ExternalMetadata{
+			meta: api.UploadSubject{
+				ProviderMetadata: api.SourceScopedMetadata{
 					TMDB: &api.TMDBMetadata{Localized: map[string]api.TMDBLocalizedData{
 						"pt-BR": {Genres: "Adulto"},
 					}},
@@ -519,8 +517,8 @@ func TestResolveAdultLocalizedAndCanonicalGenres(t *testing.T) {
 		},
 		{
 			name: "IMDb-only adult genre",
-			meta: api.PreparedMetadata{
-				ExternalMetadata: api.ExternalMetadata{
+			meta: api.UploadSubject{
+				ProviderMetadata: api.SourceScopedMetadata{
 					IMDB: &api.IMDBMetadata{Genres: "Adult"},
 				},
 			},
@@ -528,7 +526,7 @@ func TestResolveAdultLocalizedAndCanonicalGenres(t *testing.T) {
 		},
 		{
 			name: "anime hentai detection remains adult",
-			meta: api.PreparedMetadata{
+			meta: api.UploadSubject{
 				Anime:   true,
 				Release: api.ReleaseInfo{Genre: "Hentai"},
 			},
@@ -536,8 +534,8 @@ func TestResolveAdultLocalizedAndCanonicalGenres(t *testing.T) {
 		},
 		{
 			name: "nonadult Portuguese genre stays nonadult",
-			meta: api.PreparedMetadata{
-				ExternalMetadata: api.ExternalMetadata{
+			meta: api.UploadSubject{
+				ProviderMetadata: api.SourceScopedMetadata{
 					TMDB: &api.TMDBMetadata{Localized: map[string]api.TMDBLocalizedData{
 						"pt-BR": {Genres: "Drama"},
 					}},

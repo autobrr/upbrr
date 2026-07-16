@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/paths"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -30,19 +30,19 @@ func TestDefinitionBuildUploadDryRunIncludesQuestionnaire(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	entry, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+	entry, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "ANT",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:        filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
-			ExternalIDs:       api.ExternalIDs{TMDBID: 123},
-			ExternalMetadata: api.ExternalMetadata{
+			Identity:          api.ExternalIdentity{TMDBID: 123},
+			ProviderMetadata: api.SourceScopedMetadata{
 				TMDB: &api.TMDBMetadata{Genres: "Adult", Keywords: "adult"},
 			},
 		},
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
-		AppConfig:     config.Config{},
+		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{}),
 		Logger:        api.NopLogger{},
 	})
 	if err != nil {
@@ -81,19 +81,19 @@ func TestDefinitionBuildUploadDryRunMarksManualTagsWhenOnlyIMDbGenresExist(t *te
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	entry, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+	entry, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "ANT",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:        filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
-			ExternalIDs:       api.ExternalIDs{TMDBID: 123},
-			ExternalMetadata: api.ExternalMetadata{
+			Identity:          api.ExternalIdentity{TMDBID: 123},
+			ProviderMetadata: api.SourceScopedMetadata{
 				IMDB: &api.IMDBMetadata{Genres: "Action, Drama"},
 			},
 		},
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
-		AppConfig:     config.Config{},
+		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{}),
 		Logger:        api.NopLogger{},
 	})
 	if err != nil {
@@ -121,20 +121,20 @@ func TestDefinitionBuildUploadDryRunUsesBDInfoForBDMV(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		SourcePath:            sourcePath,
 		TorrentPath:           torrentPath,
 		DiscType:              "BDMV",
 		SelectedBDMVPlaylists: []api.PlaylistInfo{{File: "00001.MPLS"}},
-		ExternalIDs:           api.ExternalIDs{TMDBID: 123},
-		ExternalMetadata: api.ExternalMetadata{
+		Identity:              api.ExternalIdentity{TMDBID: 123},
+		ProviderMetadata: api.SourceScopedMetadata{
 			TMDB: &api.TMDBMetadata{Genres: "Action"},
 		},
 		TrackerQuestionnaireAnswers: map[string]map[string]string{
 			"ANT": {"type": "Feature Film"},
 		},
 	}
-	tmpDir, _, err := paths.ReleaseTempDir(filepath.Join(tmp, "tmp"), meta, sourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(filepath.Join(tmp, "tmp"), sourcePath, meta.Release)
 	if err != nil {
 		t.Fatalf("resolve temp dir: %v", err)
 	}
@@ -143,11 +143,11 @@ func TestDefinitionBuildUploadDryRunUsesBDInfoForBDMV(t *testing.T) {
 		t.Fatalf("write bdinfo: %v", err)
 	}
 
-	entry, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+	entry, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker:       "ANT",
 		Meta:          meta,
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
-		AppConfig:     config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 		Logger:        api.NopLogger{},
 	})
 	if err != nil {
@@ -170,7 +170,7 @@ func TestDefinitionBuildUploadDryRunUsesBDInfoForBDMV(t *testing.T) {
 func TestResolveFlagsIncludesIMAXAndCriterionEdition(t *testing.T) {
 	t.Parallel()
 
-	flags := resolveFlags(api.PreparedMetadata{Edition: "IMAX Criterion Collection"})
+	flags := resolveFlags(api.UploadSubject{Edition: "IMAX Criterion Collection"})
 	if !containsString(flags, "IMAX") {
 		t.Fatalf("expected IMAX flag, got %#v", flags)
 	}
@@ -193,7 +193,7 @@ func TestResolveReleaseGroupBansUpdatedGroups(t *testing.T) {
 }
 
 func TestBuildDescriptionRemovesScreenshotOnlyBlockAndDefaultSignature(t *testing.T) {
-	description := buildDescription(trackers.UploadRequest{}, trackers.DescriptionAssets{
+	description := buildDescription(trackers.PreparationInput{}, trackers.DescriptionAssets{
 		Description: `[align=center]
 [url=https://pixhost.to/fv71hr.png][img width=350]https://pixhost.to/fv71hr.png[/img][/url]
 [/align]

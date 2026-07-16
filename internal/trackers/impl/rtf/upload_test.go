@@ -25,13 +25,14 @@ func TestBuildUploadDryRunUsesDescriptionPayloadAndLeavesNFOEmpty(t *testing.T) 
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	entry, err := buildUploadDryRun(context.Background(), trackers.UploadRequest{
+	entry, err := buildUploadDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "RTF",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			TorrentPath:         torrentPath,
 			DescriptionOverride: "Custom description",
 		},
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
+		Assets:        &trackers.DescriptionAssets{Description: "Custom description"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -55,7 +56,11 @@ func TestUploadRefreshesExpiredAPIKeyAndPersistsIt(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 	dbPath := filepath.Join(root, "upbrr.db")
-	seedRTFConfig(t, dbPath, config.TrackerConfig{APIKey: "old-token", Username: "user", Password: "pass"})
+	seedRTFConfig(t, dbPath, config.TrackerConfig{
+		APIKey:   "old-token",
+		Username: "user",
+		Password: "pass",
+	})
 
 	var testedToken string
 	var loginCalled bool
@@ -79,9 +84,9 @@ func TestUploadRefreshesExpiredAPIKeyAndPersistsIt(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	summary, err := upload(context.Background(), trackers.UploadRequest{
+	summary, err := upload(context.Background(), trackers.PreparationInput{
 		Tracker: "RTF",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			TorrentPath: torrentPath,
 			ReleaseName: "Release",
 		},
@@ -91,7 +96,7 @@ func TestUploadRefreshesExpiredAPIKeyAndPersistsIt(t *testing.T) {
 			Username: "user",
 			Password: "pass",
 		},
-		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 	})
 	if err != nil {
 		t.Fatalf("upload: %v", err)
@@ -120,7 +125,11 @@ func TestUploadBlockedExpiredAPIKeyDoesNotRefreshOrPersist(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 	dbPath := filepath.Join(root, "upbrr.db")
-	seedRTFConfig(t, dbPath, config.TrackerConfig{APIKey: "old-token", Username: "user", Password: "pass"})
+	seedRTFConfig(t, dbPath, config.TrackerConfig{
+		APIKey:   "old-token",
+		Username: "user",
+		Password: "pass",
+	})
 
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -129,9 +138,9 @@ func TestUploadBlockedExpiredAPIKeyDoesNotRefreshOrPersist(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	_, err := upload(context.Background(), trackers.UploadRequest{
+	_, err := upload(context.Background(), trackers.PreparationInput{
 		Tracker: "RTF",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			TorrentPath: torrentPath,
 			ReleaseName: "Recent Release",
 			Release:     api.ReleaseInfo{Year: 9999},
@@ -142,7 +151,7 @@ func TestUploadBlockedExpiredAPIKeyDoesNotRefreshOrPersist(t *testing.T) {
 			Username: "user",
 			Password: "pass",
 		},
-		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 	})
 	if err == nil {
 		t.Fatal("expected blocked upload error")
@@ -185,9 +194,9 @@ func TestUploadUsesValidAPIKeyWithoutRefresh(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	if _, err := upload(context.Background(), trackers.UploadRequest{
+	if _, err := upload(context.Background(), trackers.PreparationInput{
 		Tracker: "RTF",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			TorrentPath: torrentPath,
 			ReleaseName: "Release",
 		},
@@ -235,9 +244,9 @@ func TestUploadGeneratesMissingAPIKeyFromCredentials(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	if _, err := upload(context.Background(), trackers.UploadRequest{
+	if _, err := upload(context.Background(), trackers.PreparationInput{
 		Tracker: "RTF",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			TorrentPath: torrentPath,
 			ReleaseName: "Release",
 		},
@@ -246,7 +255,7 @@ func TestUploadGeneratesMissingAPIKeyFromCredentials(t *testing.T) {
 			Username: "user",
 			Password: "pass",
 		},
-		AppConfig: config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 	}); err != nil {
 		t.Fatalf("upload: %v", err)
 	}
@@ -262,7 +271,7 @@ func TestUploadGeneratesMissingAPIKeyFromCredentials(t *testing.T) {
 }
 
 func TestUploadRejectsMalformedBaseURL(t *testing.T) {
-	_, err := upload(context.Background(), trackers.UploadRequest{
+	_, err := upload(context.Background(), trackers.PreparationInput{
 		Tracker:       "RTF",
 		TrackerConfig: config.TrackerConfig{URL: "not a url", APIKey: "token"},
 	})

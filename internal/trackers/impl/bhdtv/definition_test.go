@@ -31,19 +31,18 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	}
 
 	def := New()
-	entry, err := def.BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+	entry, err := def.prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "BHDTV",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:                  filepath.Join(tempDir, "Show.S01E01.mkv"),
 			TorrentPath:                 torrentPath,
 			MediaInfoTextPath:           mediaPath,
 			Type:                        "WEBDL",
-			MediaInfoCategory:           "TV",
 			TVPack:                      false,
 			ReleaseName:                 "Show: S01E01 DD+ 1080p WEB-DL H.265",
 			ReleaseNameNoTag:            "Show: S01E01 DD+ 1080p WEB-DL H.265",
-			ExternalIDs:                 api.ExternalIDs{Category: "TV", TVmazeID: 321},
-			ExternalMetadata:            api.ExternalMetadata{IMDB: &api.IMDBMetadata{IMDbURL: "https://www.imdb.com/title/tt1234567/"}},
+			Identity:                    api.ExternalIdentity{Category: "TV", TVmazeID: 321},
+			ProviderMetadata:            api.SourceScopedMetadata{IMDB: &api.IMDBMetadata{IMDbURL: "https://www.imdb.com/title/tt1234567/"}},
 			TrackerQuestionnaireAnswers: map[string]map[string]string{},
 		},
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
@@ -113,22 +112,22 @@ func TestUploadParsesViewAndWritesArtifact(t *testing.T) {
 	uploadURL = server.URL
 	defer func() { uploadURL = originalURL }()
 
-	summary, err := upload(context.Background(), trackers.UploadRequest{
+	summary, err := upload(context.Background(), trackers.PreparationInput{
 		Tracker: "BHDTV",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:        filepath.Join(tempDir, "Movie.2160p.mkv"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaPath,
 			Type:              "REMUX",
 			ReleaseName:       "Movie 2160p REMUX x265",
-			ExternalIDs:       api.ExternalIDs{Category: "MOVIE"},
+			Identity:          api.ExternalIdentity{Category: "MOVIE"},
 		},
 		TrackerConfig: config.TrackerConfig{
 			APIKey: "token",
 		},
-		AppConfig: config.Config{
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{
 			MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "ua.db")},
-		},
+		}),
 	})
 	if err != nil {
 		t.Fatalf("upload: %v", err)

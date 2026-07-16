@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -548,7 +549,6 @@ func TestDevelopmentNoAuthStatusBypassesMissingAuthOnLoopback(t *testing.T) {
 			CSRFToken: "dev-csrf",
 			ExpiresAt: time.Now().UTC().Add(time.Hour),
 		},
-		picker: &stubNativePicker{},
 	}
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/auth/status", nil)
@@ -791,7 +791,6 @@ func TestLogoutRejectsMismatchedCSRFAndCookieSession(t *testing.T) {
 func TestRetainedSessionCanAccessAppRouteAfterRestart(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
 	server := newAuthTestServer(t, dbPath)
-	server.picker = &stubNativePicker{filePath: `C:\Media\movie.mkv`}
 
 	current, err := server.sessions.Create("admin", true)
 	if err != nil {
@@ -800,12 +799,11 @@ func TestRetainedSessionCanAccessAppRouteAfterRestart(t *testing.T) {
 	server.sessions.Close()
 
 	reloaded := newAuthTestServer(t, dbPath)
-	reloaded.picker = &stubNativePicker{filePath: `C:\Media\movie.mkv`}
 
 	mux := http.NewServeMux()
 	reloaded.registerAppRoutes(mux)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/BrowseFile", strings.NewReader(`{}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/GetApplicationInfo", strings.NewReader(`{}`))
 	req.Host = "127.0.0.1:7480"
 	req.RemoteAddr = "127.0.0.1:5000"
 	req.Header.Set("Content-Type", "application/json")
@@ -1072,23 +1070,15 @@ func TestCancelDupeCheckRequiresPost(t *testing.T) {
 	}
 
 	canceled := make(chan struct{}, 1)
-	server.backend.dupes = map[string]*dupeCheckJob{
-		"job-1": {
-			sessionID: current.ID,
-			id:        "job-1",
-			cancel: func() {
-				select {
-				case canceled <- struct{}{}:
-				default:
-				}
-			},
-		},
-	}
+	release := make(chan struct{})
+	jobID := installBlockingDupeJob(t, server.backend, current.ID, canceled, release)
+	t.Cleanup(func() { close(release) })
+	body := fmt.Sprintf(`{"JobID":%q}`, jobID)
 
 	mux := http.NewServeMux()
 	server.registerAppRoutes(mux)
 
-	getReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/CancelDupeCheck", strings.NewReader(`{"JobID":"job-1"}`))
+	getReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/CancelDupeCheck", strings.NewReader(body))
 	getReq.Header.Set("Content-Type", "application/json")
 	getReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
 	getRecorder := httptest.NewRecorder()
@@ -1104,7 +1094,7 @@ func TestCancelDupeCheckRequiresPost(t *testing.T) {
 	default:
 	}
 
-	postReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/CancelDupeCheck", strings.NewReader(`{"JobID":"job-1"}`))
+	postReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/CancelDupeCheck", strings.NewReader(body))
 	postReq.Host = "127.0.0.1:7480"
 	postReq.Header.Set("Content-Type", "application/json")
 	postReq.Header.Set("Origin", "http://127.0.0.1:7480")
@@ -1133,23 +1123,15 @@ func TestCancelTrackerUploadRequiresPost(t *testing.T) {
 	}
 
 	canceled := make(chan struct{}, 1)
-	server.backend.uploads = map[string]*trackerUploadJob{
-		"job-1": {
-			id:        "job-1",
-			sessionID: current.ID,
-			cancel: func() {
-				select {
-				case canceled <- struct{}{}:
-				default:
-				}
-			},
-		},
-	}
+	release := make(chan struct{})
+	jobID := installBlockingUploadJob(t, server.backend, current.ID, canceled, release)
+	t.Cleanup(func() { close(release) })
+	body := fmt.Sprintf(`{"JobID":%q}`, jobID)
 
 	mux := http.NewServeMux()
 	server.registerAppRoutes(mux)
 
-	getReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/CancelTrackerUpload", strings.NewReader(`{"JobID":"job-1"}`))
+	getReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/CancelTrackerUpload", strings.NewReader(body))
 	getReq.Header.Set("Content-Type", "application/json")
 	getReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
 	getRecorder := httptest.NewRecorder()
@@ -1165,7 +1147,7 @@ func TestCancelTrackerUploadRequiresPost(t *testing.T) {
 	default:
 	}
 
-	postReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/CancelTrackerUpload", strings.NewReader(`{"JobID":"job-1"}`))
+	postReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/CancelTrackerUpload", strings.NewReader(body))
 	postReq.Host = "127.0.0.1:7480"
 	postReq.Header.Set("Content-Type", "application/json")
 	postReq.Header.Set("Origin", "http://127.0.0.1:7480")

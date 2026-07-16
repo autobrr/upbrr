@@ -31,31 +31,35 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	entry, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+	entry, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:        filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
-			ExternalIDs:       api.ExternalIDs{TMDBID: 123, IMDBID: 456, Category: "TV"},
-			ReleaseName:       "Movie.2025.1080p.WEB-DL.DD+5.1.H264-GRP",
-			Release:           api.ReleaseInfo{Resolution: "1080p"},
-			Type:              "WEBDL",
-			Source:            "WEB",
-			Audio:             "DD+ 5.1",
-			HDR:               "HDR10+ DV",
-			Edition:           "Hybrid Director",
-			TVPack:            true,
-			SeasonStr:         "S00",
+			Identity: api.ExternalIdentity{
+				TMDBID:   123,
+				IMDBID:   456,
+				Category: "TV",
+			},
+			ReleaseName: "Movie.2025.1080p.WEB-DL.DD+5.1.H264-GRP",
+			Release:     api.ReleaseInfo{Resolution: "1080p"},
+			Type:        "WEBDL",
+			Source:      "WEB",
+			Audio:       "DD+ 5.1",
+			HDR:         "HDR10+ DV",
+			Edition:     "Hybrid Director",
+			TVPack:      true,
+			SeasonStr:   "S00",
 		},
 		TrackerConfig: config.TrackerConfig{APIKey: "token", DraftDefault: true},
-		AppConfig: config.Config{
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{
 			Trackers: config.TrackersConfig{
 				Trackers: map[string]config.TrackerConfig{
 					"BHD": {DraftDefault: true},
 				},
 			},
-		},
+		}),
 		Logger: api.NopLogger{},
 	})
 	if err != nil {
@@ -98,15 +102,15 @@ func TestDefinitionBuildUploadDryRunPrerequisiteMessagesIncludeAction(t *testing
 
 	cases := []struct {
 		name       string
-		req        trackers.UploadRequest
+		req        trackers.PreparationInput
 		wantCause  string
 		wantAction string
 	}{
 		{
 			name: "missing api key",
-			req: trackers.UploadRequest{
+			req: trackers.PreparationInput{
 				Tracker: "BHD",
-				Meta:    api.PreparedMetadata{ExternalIDs: api.ExternalIDs{TMDBID: 123}},
+				Meta:    api.UploadSubject{Identity: api.ExternalIdentity{TMDBID: 123}},
 				Logger:  api.NopLogger{},
 			},
 			wantCause:  "missing api_key",
@@ -114,7 +118,7 @@ func TestDefinitionBuildUploadDryRunPrerequisiteMessagesIncludeAction(t *testing
 		},
 		{
 			name: "missing tmdb id",
-			req: trackers.UploadRequest{
+			req: trackers.PreparationInput{
 				Tracker:       "BHD",
 				TrackerConfig: config.TrackerConfig{APIKey: "token"},
 				Logger:        api.NopLogger{},
@@ -124,10 +128,10 @@ func TestDefinitionBuildUploadDryRunPrerequisiteMessagesIncludeAction(t *testing
 		},
 		{
 			name: "missing mediainfo text",
-			req: trackers.UploadRequest{
+			req: trackers.PreparationInput{
 				Tracker:       "BHD",
 				TrackerConfig: config.TrackerConfig{APIKey: "token"},
-				Meta:          api.PreparedMetadata{ExternalIDs: api.ExternalIDs{TMDBID: 123}},
+				Meta:          api.UploadSubject{Identity: api.ExternalIdentity{TMDBID: 123}},
 				Logger:        api.NopLogger{},
 			},
 			wantCause:  "missing mediainfo text",
@@ -139,7 +143,7 @@ func TestDefinitionBuildUploadDryRunPrerequisiteMessagesIncludeAction(t *testing
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := New().BuildUploadDryRun(context.Background(), tc.req)
+			_, err := New().prepareDryRun(context.Background(), tc.req)
 			if err == nil {
 				t.Fatalf("expected prerequisite error")
 			}
@@ -167,13 +171,13 @@ func TestDefinitionBuildUploadDryRunRejectsInvalidContainer(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	_, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+	_, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:        filepath.Join(tmp, "Movie.avi"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
-			ExternalIDs:       api.ExternalIDs{TMDBID: 123, Category: "MOVIE"},
+			Identity:          api.ExternalIdentity{TMDBID: 123, Category: "MOVIE"},
 			Type:              "REMUX",
 			Container:         "avi",
 		},
@@ -188,7 +192,7 @@ func TestDefinitionBuildUploadDryRunRejectsInvalidContainer(t *testing.T) {
 func TestResolveTypeRejectsBHD576iResolution(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{Release: api.ReleaseInfo{Resolution: "576i"}}
+	meta := api.UploadSubject{Release: api.ReleaseInfo{Resolution: "576i"}}
 	if got := resolveType(meta); got != "Other" {
 		t.Fatalf("expected BHD type Other for 576i, got %q", got)
 	}
@@ -197,7 +201,11 @@ func TestResolveTypeRejectsBHD576iResolution(t *testing.T) {
 func TestResolveTypeRejectsHDDVDRemuxEvenWithUHD(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{Type: "REMUX", Source: "HDDVD", UHD: "UHD"}
+	meta := api.UploadSubject{
+		Type:   "REMUX",
+		Source: "HDDVD",
+		UHD:    "UHD",
+	}
 	if got := resolveType(meta); got != "Other" {
 		t.Fatalf("expected BHD type Other for HD-DVD remux, got %q", got)
 	}
@@ -216,13 +224,13 @@ func TestDefinitionBuildUploadDryRunRejectsInvalidSource(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	_, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+	_, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:        filepath.Join(tmp, "Example.mkv"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
-			ExternalIDs:       api.ExternalIDs{TMDBID: 123, Category: "MOVIE"},
+			Identity:          api.ExternalIdentity{TMDBID: 123, Category: "MOVIE"},
 			Release:           api.ReleaseInfo{Resolution: "1080p"},
 			Type:              "WEBDL",
 			Source:            "CAM",
@@ -301,21 +309,25 @@ func TestUploadRetriesInvalidIMDb(t *testing.T) {
 	bhdBaseURL = server.URL
 	defer func() { bhdBaseURL = originalBaseURL }()
 
-	summary, err := New().Upload(context.Background(), trackers.UploadRequest{
+	summary, err := New().submit(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:        filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
-			ExternalIDs:       api.ExternalIDs{TMDBID: 123, IMDBID: 456, Category: "MOVIE"},
-			ReleaseName:       "Movie.2025.1080p.BluRay.DD+5.1.H264-GRP",
-			Release:           api.ReleaseInfo{Resolution: "1080p"},
-			Type:              "REMUX",
-			Source:            "BluRay",
-			Audio:             "DD+ 5.1",
+			Identity: api.ExternalIdentity{
+				TMDBID:   123,
+				IMDBID:   456,
+				Category: "MOVIE",
+			},
+			ReleaseName: "Movie.2025.1080p.BluRay.DD+5.1.H264-GRP",
+			Release:     api.ReleaseInfo{Resolution: "1080p"},
+			Type:        "REMUX",
+			Source:      "BluRay",
+			Audio:       "DD+ 5.1",
 		},
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
-		AppConfig:     config.Config{},
+		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{}),
 		Logger:        api.NopLogger{},
 	})
 	if err != nil {
@@ -349,7 +361,7 @@ func TestSendUploadRejectsOversizedResponseBody(t *testing.T) {
 	bhdBaseURL = server.URL
 	defer func() { bhdBaseURL = originalBaseURL }()
 
-	_, _, err := sendUpload(context.Background(), trackers.UploadRequest{
+	_, _, err := sendUpload(context.Background(), trackers.PreparationInput{
 		Tracker:       "BHD",
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
 	}, uploadState{
@@ -406,7 +418,7 @@ func TestSendUploadRejectsNonSuccessHTTPStatus(t *testing.T) {
 			bhdBaseURL = server.URL
 			defer func() { bhdBaseURL = originalBaseURL }()
 
-			_, responseBody, err := sendUpload(context.Background(), trackers.UploadRequest{
+			_, responseBody, err := sendUpload(context.Background(), trackers.PreparationInput{
 				Tracker:       "BHD",
 				TrackerConfig: config.TrackerConfig{APIKey: "token"},
 			}, uploadState{
@@ -438,13 +450,13 @@ func TestSendUploadRejectsNonSuccessHTTPStatus(t *testing.T) {
 
 func TestWriteFailureArtifactPreservesRepeatedFailures(t *testing.T) {
 	tmp := t.TempDir()
-	req := trackers.UploadRequest{
-		Meta: api.PreparedMetadata{
+	req := trackers.PreparationInput{
+		Meta: api.UploadSubject{
 			SourcePath: filepath.Join(tmp, "Example.Release.2026.1080p-GRP.mkv"),
 		},
-		AppConfig: config.Config{
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{
 			MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "upbrr.db")},
-		},
+		}),
 	}
 
 	firstPayload := []byte(`{"message":"first failure"}`)
@@ -483,13 +495,13 @@ func TestWriteFailureArtifactPreservesRepeatedFailures(t *testing.T) {
 }
 
 func TestDefinitionBuildDescriptionUsesProvidedAssets(t *testing.T) {
-	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+	result, err := New().prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			Options: api.UploadOptions{Screens: 4},
 		},
-		AppConfig: config.Config{},
-		Logger:    api.NopLogger{},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{}),
+		Logger:  api.NopLogger{},
 		Assets: &trackers.DescriptionAssets{
 			Description: `[align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]`,
 			Screenshots: []api.ScreenshotImage{{
@@ -530,13 +542,13 @@ func TestBuildScreenshotSectionUsesTwoImagesPerRow(t *testing.T) {
 }
 
 func TestDefinitionBuildDescriptionStripsLegacyCreatedFooter(t *testing.T) {
-	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+	result, err := New().prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			Options: api.UploadOptions{Screens: 4},
 		},
-		AppConfig: config.Config{},
-		Logger:    api.NopLogger{},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{}),
+		Logger:  api.NopLogger{},
 		Assets: &trackers.DescriptionAssets{
 			Description: strings.Join([]string{
 				"Body",
@@ -559,13 +571,13 @@ func TestDefinitionBuildDescriptionStripsLegacyCreatedFooter(t *testing.T) {
 }
 
 func TestDefinitionBuildDescriptionDoesNotRestoreRawImagesOnlyBody(t *testing.T) {
-	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+	result, err := New().prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			Options: api.UploadOptions{Screens: 4},
 		},
-		AppConfig: config.Config{},
-		Logger:    api.NopLogger{},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{}),
+		Logger:  api.NopLogger{},
 		Assets: &trackers.DescriptionAssets{
 			Description: strings.Join([]string{
 				`[url=https://example.com/page][img]https://example.com/full.jpg[/img][/url]`,
@@ -588,13 +600,13 @@ func TestDefinitionBuildDescriptionDoesNotRestoreRawImagesOnlyBody(t *testing.T)
 }
 
 func TestDefinitionBuildDescriptionStripsRightFormUpbrrFooter(t *testing.T) {
-	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+	result, err := New().prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			Options: api.UploadOptions{Screens: 4},
 		},
-		AppConfig: config.Config{},
-		Logger:    api.NopLogger{},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{}),
+		Logger:  api.NopLogger{},
 		Assets: &trackers.DescriptionAssets{
 			Description: strings.Join([]string{
 				"Body",
@@ -617,13 +629,13 @@ func TestDefinitionBuildDescriptionStripsRightFormUpbrrFooter(t *testing.T) {
 }
 
 func TestDefinitionBuildDescriptionDoesNotRestoreBotOnlyBody(t *testing.T) {
-	result, err := New().BuildDescription(context.Background(), trackers.DescriptionRequest{
+	result, err := New().prepareDescription(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			Options: api.UploadOptions{Screens: 4},
 		},
-		AppConfig: config.Config{},
-		Logger:    api.NopLogger{},
+		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{}),
+		Logger:  api.NopLogger{},
 		Assets: &trackers.DescriptionAssets{
 			Description: `[right]Created by Upload Assistant[/right]`,
 		},

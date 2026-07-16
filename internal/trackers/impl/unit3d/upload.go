@@ -20,14 +20,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/autobrr/upbrr/internal/paths"
+	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
-	descriptionunit3d "github.com/autobrr/upbrr/internal/services/description/unit3d"
-	"github.com/autobrr/upbrr/internal/trackerdata"
 	"github.com/autobrr/upbrr/internal/trackers"
+	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
-	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -37,7 +36,8 @@ type unit3dUploadResponse struct {
 	Data    string `json:"data"`
 }
 
-func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary, error) {
+func uploadUnit3D(ctx context.Context, req trackers.PreparationInput, profiles ...SiteProfile) (api.UploadSummary, error) {
+	profile := firstSiteProfile(profiles)
 	trackerName := strings.ToUpper(strings.TrimSpace(req.Tracker))
 	logger := req.Logger
 	if logger == nil {
@@ -52,20 +52,20 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 		logger.Errorf("trackers: %s upload aborted: %v", trackerName, err)
 		return api.UploadSummary{}, err
 	}
-	if !req.Meta.ValidMediaInfoSettings {
+	if !req.Meta.Assessments.EncodeSettingsRequirementSatisfied() {
 		err := fmt.Errorf("trackers: %s mediainfo missing required fields", trackerName)
 		logger.Errorf("trackers: %s upload aborted: %v", trackerName, err)
 		return api.UploadSummary{}, err
 	}
 
-	baseURL, uploadURL := resolveUnit3DURLs(trackerName, req.TrackerConfig.URL)
+	baseURL, uploadURL := resolveUnit3DURLs(req.TrackerConfig.URL)
 	logger.Debugf("trackers: %s upload URL: %s", trackerName, uploadURL)
 
 	originalName := strings.TrimSpace(req.Meta.ReleaseName)
 	if originalName == "" {
 		originalName = strings.TrimSpace(req.Meta.ReleaseNameNoTag)
 	}
-	name := buildUnit3DName(trackerName, req.Meta, req.TrackerConfig)
+	name := buildUnit3DName(trackerName, req.Meta, req.TrackerConfig, profile)
 	if name != originalName {
 		logger.Infof("trackers: %s name formatting applied", trackerName)
 		logger.Infof("  Original: %s", originalName)
@@ -79,7 +79,7 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 	if req.Assets != nil {
 		assets = *req.Assets
 	} else {
-		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, logger)
+		assets, err = trackers.PreparedDescriptionAssets(req.Assets)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
@@ -90,7 +90,18 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 	}
 	description := strings.TrimSpace(assets.Description)
 	if !assets.Final {
-		description, err = buildUnit3DDescription(ctx, trackerName, req.Meta, req.AppConfig, req.TrackerConfig, logger, assets.Description, assets.MenuImages, assets.Screenshots)
+		description, err = buildUnit3DDescription(
+			ctx,
+			trackerName,
+			req.Meta,
+			req.Runtime.DescriptionConfig(),
+			req.TrackerConfig,
+			logger,
+			assets.Description,
+			assets.MenuImages,
+			assets.Screenshots,
+			profile,
+		)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return api.UploadSummary{}, err
@@ -100,13 +111,13 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 		}
 	}
 	description = ensureUnit3DDVDVOBDescription(description, req.Meta)
-	mediainfo, bdinfo, err := loadUnit3DMedia(req.Meta, req.AppConfig.MainSettings.DBPath, logger)
+	mediainfo, bdinfo, err := loadUnit3DMedia(req.Meta, req.Runtime.DBPath, logger)
 	if err != nil {
 		logger.Errorf("trackers: %s failed to load media info: %v", trackerName, err)
 		return api.UploadSummary{}, err
 	}
 
-	data, err := buildUnit3DData(req, name, description, mediainfo, bdinfo)
+	data, err := buildUnit3DData(req, name, description, mediainfo, bdinfo, profile)
 	if err != nil {
 		logger.Errorf("trackers: %s failed to build upload data: %v", trackerName, err)
 		return api.UploadSummary{}, err
@@ -174,7 +185,11 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 
 	logger.Debugf("trackers: %s received HTTP %d response", trackerName, resp.StatusCode)
 
-	body, bodyPreview, err := commonhttp.ReadUploadResponseBody(resp, resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices, commonhttp.DefaultResponsePreviewBytes)
+	body, bodyPreview, err := commonhttp.ReadUploadResponseBody(
+		resp,
+		resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices,
+		commonhttp.DefaultResponsePreviewBytes,
+	)
 	if err != nil {
 		logger.Errorf("trackers: %s failed to read response body: %v", trackerName, err)
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s read response body: %w", trackerName, err)
@@ -229,22 +244,8 @@ func uploadUnit3D(ctx context.Context, req trackers.UploadRequest) (api.UploadSu
 	return summary, nil
 }
 
-func defaultUnit3DBaseURL(tracker string) string {
-	if baseURL, ok := unit3dmeta.BaseURL(tracker); ok {
-		return baseURL
-	}
-	baseURL, ok := unit3dmeta.BaseURL(unit3dmeta.DefaultTracker())
-	if ok {
-		return baseURL
-	}
-	return ""
-}
-
-func resolveUnit3DURLs(tracker string, configuredBaseURL string) (string, string) {
+func resolveUnit3DURLs(configuredBaseURL string) (string, string) {
 	baseURL := strings.TrimSpace(configuredBaseURL)
-	if baseURL == "" {
-		baseURL = defaultUnit3DBaseURL(tracker)
-	}
 	return baseURL, strings.TrimRight(baseURL, "/") + "/api/torrents/upload"
 }
 
@@ -343,7 +344,8 @@ func isNumericID(value string) bool {
 // files, and endpoint that would be used locally. TV payloads with zero-valued
 // canonical season or episode metadata are returned as blocked because the
 // payload no longer satisfies upload prerequisites.
-func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
+func buildUploadDryRunUnit3D(ctx context.Context, req trackers.PreparationInput, profiles ...SiteProfile) (api.TrackerDryRunEntry, error) {
+	profile := firstSiteProfile(profiles)
 	select {
 	case <-ctx.Done():
 		return api.TrackerDryRunEntry{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -360,17 +362,17 @@ func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (a
 	if apiKey == "" {
 		return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: %s missing api_key", trackerName)
 	}
-	if !req.Meta.ValidMediaInfoSettings {
+	if !req.Meta.Assessments.EncodeSettingsRequirementSatisfied() {
 		return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: %s mediainfo missing required fields", trackerName)
 	}
 
-	_, uploadURL := resolveUnit3DURLs(trackerName, req.TrackerConfig.URL)
+	_, uploadURL := resolveUnit3DURLs(req.TrackerConfig.URL)
 
 	originalName := strings.TrimSpace(req.Meta.ReleaseName)
 	if originalName == "" {
 		originalName = strings.TrimSpace(req.Meta.ReleaseNameNoTag)
 	}
-	name := buildUnit3DName(trackerName, req.Meta, req.TrackerConfig)
+	name := buildUnit3DName(trackerName, req.Meta, req.TrackerConfig, profile)
 	if name != originalName {
 		logger.Infof("trackers: %s dry-run name formatting applied", trackerName)
 	}
@@ -380,7 +382,7 @@ func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (a
 	if req.Assets != nil {
 		assets = *req.Assets
 	} else {
-		assets, err = trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, logger)
+		assets, err = trackers.PreparedDescriptionAssets(req.Assets)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return api.TrackerDryRunEntry{}, fmt.Errorf("trackers: %w", err)
@@ -391,7 +393,18 @@ func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (a
 	}
 	description := strings.TrimSpace(assets.Description)
 	if !assets.Final {
-		description, err = buildUnit3DDescription(ctx, trackerName, req.Meta, req.AppConfig, req.TrackerConfig, logger, assets.Description, assets.MenuImages, assets.Screenshots)
+		description, err = buildUnit3DDescription(
+			ctx,
+			trackerName,
+			req.Meta,
+			req.Runtime.DescriptionConfig(),
+			req.TrackerConfig,
+			logger,
+			assets.Description,
+			assets.MenuImages,
+			assets.Screenshots,
+			profile,
+		)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return api.TrackerDryRunEntry{}, err
@@ -401,12 +414,12 @@ func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (a
 	}
 	description = ensureUnit3DDVDVOBDescription(description, req.Meta)
 
-	mediainfo, bdinfo, err := loadUnit3DMedia(req.Meta, req.AppConfig.MainSettings.DBPath, logger)
+	mediainfo, bdinfo, err := loadUnit3DMedia(req.Meta, req.Runtime.DBPath, logger)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
 
-	data, err := buildUnit3DData(req, name, description, mediainfo, bdinfo)
+	data, err := buildUnit3DData(req, name, description, mediainfo, bdinfo, profile)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
@@ -415,11 +428,11 @@ func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (a
 		data["exclusive"] = "1"
 	}
 
-	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath, logger)
+	torrentPath, err := resolveTorrentPath(req.Meta, req.Runtime.DBPath, logger)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
-	nfoPath := resolveNFOPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	nfoPath := resolveNFOPath(req.Meta, req.Runtime.DBPath)
 
 	files := []api.TrackerDryRunFile{{
 		Field:   "torrent",
@@ -427,7 +440,11 @@ func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (a
 		Present: strings.TrimSpace(torrentPath) != "",
 	}}
 	if strings.TrimSpace(nfoPath) != "" {
-		files = append(files, api.TrackerDryRunFile{Field: "nfo", Path: nfoPath, Present: true})
+		files = append(files, api.TrackerDryRunFile{
+			Field:   "nfo",
+			Path:    nfoPath,
+			Present: true,
+		})
 	}
 
 	message := "dry-run payload generated"
@@ -450,7 +467,7 @@ func buildUploadDryRunUnit3D(ctx context.Context, req trackers.UploadRequest) (a
 	}, nil
 }
 
-func buildMultipartPayload(req trackers.UploadRequest, data map[string]string, logger api.Logger) (*strings.Reader, string, error) {
+func buildMultipartPayload(req trackers.PreparationInput, data map[string]string, logger api.Logger) (*strings.Reader, string, error) {
 	var builder strings.Builder
 	writer := multipart.NewWriter(&builder)
 
@@ -462,7 +479,7 @@ func buildMultipartPayload(req trackers.UploadRequest, data map[string]string, l
 		}
 	}
 
-	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath, logger)
+	torrentPath, err := resolveTorrentPath(req.Meta, req.Runtime.DBPath, logger)
 	if err != nil {
 		_ = writer.Close()
 		logger.Errorf("trackers: failed to resolve torrent path: %v", err)
@@ -475,7 +492,7 @@ func buildMultipartPayload(req trackers.UploadRequest, data map[string]string, l
 		return nil, "", err
 	}
 
-	if nfoPath := resolveNFOPath(req.Meta, req.AppConfig.MainSettings.DBPath); nfoPath != "" {
+	if nfoPath := resolveNFOPath(req.Meta, req.Runtime.DBPath); nfoPath != "" {
 		logger.Debugf("trackers: attaching NFO file: %s", filepath.Base(nfoPath))
 		if err := addFile(writer, "nfo", nfoPath); err != nil {
 			_ = writer.Close()
@@ -510,11 +527,11 @@ func addFile(writer *multipart.Writer, field, path string) error {
 	return nil
 }
 
-func ensureUnit3DDVDVOBDescription(description string, meta api.PreparedMetadata) string {
-	return descriptionunit3d.AppendDVDVOBMediaInfoBlock(description, meta)
+func ensureUnit3DDVDVOBDescription(description string, meta api.UploadSubject) string {
+	return descriptionunit3d.AppendDVDVOBMediaInfoBlock(description, api.NewDescriptionSubject(meta))
 }
 
-func loadUnit3DMedia(meta api.PreparedMetadata, dbPath string, logger api.Logger) (string, string, error) {
+func loadUnit3DMedia(meta api.UploadSubject, dbPath string, logger api.Logger) (string, string, error) {
 	bdinfo := ""
 	mediainfo := ""
 
@@ -560,7 +577,7 @@ func readTextFile(path string) (string, error) {
 	return string(payload), nil
 }
 
-func resolveTorrentPath(meta api.PreparedMetadata, dbPath string, logger api.Logger) (string, error) {
+func resolveTorrentPath(meta api.UploadSubject, dbPath string, logger api.Logger) (string, error) {
 	logger.Tracef("trackers: attempting to resolve torrent file path")
 	candidates := []string{
 		strings.TrimSpace(meta.TorrentPath),
@@ -600,15 +617,15 @@ func resolveTorrentPath(meta api.PreparedMetadata, dbPath string, logger api.Log
 	return "", err
 }
 
-func torrentPathFromTemp(tmpRoot string, meta api.PreparedMetadata) (string, error) {
-	tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+func torrentPathFromTemp(tmpRoot string, meta api.UploadSubject) (string, error) {
+	tmpDir, base, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return "", fmt.Errorf("trackers: %w", err)
 	}
 	return filepath.Join(tmpDir, base+".torrent"), nil
 }
 
-func resolveNFOPath(meta api.PreparedMetadata, dbPath string) string {
+func resolveNFOPath(meta api.UploadSubject, dbPath string) string {
 	if path := strings.TrimSpace(meta.SceneNFOPath); path != "" && existsFile(path) {
 		return path
 	}
@@ -620,7 +637,7 @@ func resolveNFOPath(meta api.PreparedMetadata, dbPath string) string {
 	if err != nil {
 		return ""
 	}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return ""
 	}
@@ -640,11 +657,15 @@ func resolveNFOPath(meta api.PreparedMetadata, dbPath string) string {
 	return ""
 }
 
-func buildUnit3DData(req trackers.UploadRequest, name, description, mediainfo, bdinfo string) (map[string]string, error) {
+func buildUnit3DData(req trackers.PreparationInput, name, description, mediainfo, bdinfo string, profiles ...SiteProfile) (map[string]string, error) {
+	profile := firstSiteProfile(profiles)
 	meta := req.Meta
-	typeID, err := resolveUnit3DTypeIDForTracker(req.Tracker, meta)
+	typeID, err := resolveUnit3DTypeIDForTracker(req.Tracker, meta, profile)
 	if err != nil {
 		return nil, err
+	}
+	if _, err := meta.Identity.RequireCategory(); err != nil {
+		return nil, fmt.Errorf("trackers: Unit3D category: %w", err)
 	}
 	category := resolveUnit3DCategory(meta)
 	data := map[string]string{
@@ -652,19 +673,19 @@ func buildUnit3DData(req trackers.UploadRequest, name, description, mediainfo, b
 		"description":      description,
 		"mediainfo":        mediainfo,
 		"bdinfo":           bdinfo,
-		"category_id":      resolveUnit3DCategoryIDForTracker(req.Tracker, meta),
+		"category_id":      resolveUnit3DCategoryIDForTracker(req.Tracker, meta, profile),
 		"type_id":          typeID,
-		"resolution_id":    resolveUnit3DResolutionIDForTracker(req.Tracker, meta),
-		"tmdb":             formatOptionalInt(meta.ExternalIDs.TMDBID),
-		"imdb":             formatOptionalInt(meta.ExternalIDs.IMDBID),
-		"mal":              formatOptionalInt(meta.ExternalIDs.MALID),
+		"resolution_id":    resolveUnit3DResolutionIDForTracker(req.Tracker, meta, profile),
+		"tmdb":             formatOptionalInt(meta.Identity.TMDBID),
+		"imdb":             formatOptionalInt(meta.Identity.IMDBID),
+		"mal":              formatOptionalInt(meta.Identity.MALID),
 		"igdb":             "0",
 		"anonymous":        boolFlag(req.TrackerConfig.Anon),
 		"stream":           boolFlag(meta.StreamOptimized != 0),
 		"sd":               boolFlag(isSDResolution(resolveResolution(meta))),
-		"keywords":         resolveKeywordsForTracker(req.Tracker, meta),
+		"keywords":         resolveKeywordsForTracker(req.Tracker, meta, profile),
 		"personal_release": boolFlag(meta.PersonalRelease),
-		"internal":         boolFlag(trackers.IsInternalGroup(req.AppConfig, req.Tracker, meta)),
+		"internal":         boolFlag(req.Runtime.Internal),
 		"featured":         "0",
 		"free":             "0",
 		"doubleup":         "0",
@@ -673,7 +694,7 @@ func buildUnit3DData(req trackers.UploadRequest, name, description, mediainfo, b
 
 	if strings.EqualFold(category, "TV") {
 		if !shouldIncludeUnit3DTVFields(meta, category) {
-			applyUnit3DAdditionalPayload(req, data)
+			applyUnit3DAdditionalPayload(req, data, profile)
 			return data, nil
 		}
 		data["tvdb"] = formatOptionalInt(resolveTVDBID(meta))
@@ -681,26 +702,26 @@ func buildUnit3DData(req trackers.UploadRequest, name, description, mediainfo, b
 		data["episode_number"] = resolveEpisode(meta)
 	}
 
-	applyUnit3DAdditionalPayload(req, data)
+	applyUnit3DAdditionalPayload(req, data, profile)
 
 	return data, nil
 }
 
-func applyUnit3DAdditionalPayload(req trackers.UploadRequest, data map[string]string) {
-	profile, ok := unit3DSiteProfileFor(req.Tracker)
-	if !ok || profile.applyAdditionalPayload == nil {
+func applyUnit3DAdditionalPayload(req trackers.PreparationInput, data map[string]string, profiles ...SiteProfile) {
+	profile := firstSiteProfile(profiles)
+	if profile.ApplyAdditionalPayload == nil {
 		return
 	}
-	profile.applyAdditionalPayload(req, data)
+	profile.ApplyAdditionalPayload(req, data)
 }
 
-func resolveUnit3DTypeIDForTracker(tracker string, meta api.PreparedMetadata) (string, error) {
+func resolveUnit3DTypeIDForTracker(tracker string, meta api.UploadSubject, profiles ...SiteProfile) (string, error) {
 	trackerName := strings.ToUpper(strings.TrimSpace(tracker))
-	profile, ok := unit3DSiteProfileFor(trackerName)
-	if !ok || profile.resolveTypeID == nil {
+	profile := firstSiteProfile(profiles)
+	if profile.ResolveTypeID == nil {
 		return resolveUnit3DTypeID(meta)
 	}
-	typeID := profile.resolveTypeID(meta)
+	typeID := profile.ResolveTypeID(meta)
 	if strings.TrimSpace(typeID) == "" || typeID == "0" {
 		resolvedType := inferUnit3DType(meta)
 		if resolvedType == "" {
@@ -711,97 +732,73 @@ func resolveUnit3DTypeIDForTracker(tracker string, meta api.PreparedMetadata) (s
 	return typeID, nil
 }
 
-func resolveUnit3DResolutionIDForTracker(tracker string, meta api.PreparedMetadata) string {
-	profile, ok := unit3DSiteProfileFor(tracker)
-	if ok && profile.resolveResolutionID != nil {
-		return profile.resolveResolutionID(meta)
+func resolveUnit3DResolutionIDForTracker(_ string, meta api.UploadSubject, profiles ...SiteProfile) string {
+	profile := firstSiteProfile(profiles)
+	if profile.ResolveResolutionID != nil {
+		return profile.ResolveResolutionID(meta)
 	}
 	return resolveUnit3DResolutionID(meta)
 }
 
-func resolveUnit3DCategoryIDForTracker(tracker string, meta api.PreparedMetadata) string {
-	profile, ok := unit3DSiteProfileFor(tracker)
-	if ok && profile.resolveCategoryID != nil {
-		return profile.resolveCategoryID(meta)
+func resolveUnit3DCategoryIDForTracker(_ string, meta api.UploadSubject, profiles ...SiteProfile) string {
+	profile := firstSiteProfile(profiles)
+	if profile.ResolveCategoryID != nil {
+		return profile.ResolveCategoryID(meta)
 	}
 	return resolveUnit3DCategoryID(meta)
 }
 
-func resolveKeywords(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB != nil {
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Keywords)
+func resolveKeywords(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.TMDB != nil {
+		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Keywords)
 	}
 	return ""
 }
 
-func resolveKeywordsForTracker(tracker string, meta api.PreparedMetadata) string {
-	if strings.EqualFold(strings.TrimSpace(tracker), "ACM") {
-		return resolveACMKeywords(meta)
+func resolveKeywordsForTracker(_ string, meta api.UploadSubject, profiles ...SiteProfile) string {
+	profile := firstSiteProfile(profiles)
+	if profile.ResolveKeywords != nil {
+		return profile.ResolveKeywords(meta)
 	}
 	return resolveKeywords(meta)
 }
 
-func resolveTVDBID(meta api.PreparedMetadata) int {
+func resolveTVDBID(meta api.UploadSubject) int {
 	if strings.EqualFold(resolveUnit3DCategory(meta), "TV") {
-		if meta.ExternalIDs.TVDBID != 0 {
-			return meta.ExternalIDs.TVDBID
+		if meta.Identity.TVDBID != 0 {
+			return meta.Identity.TVDBID
 		}
 	}
 	return 0
 }
 
-// resolveUnit3DCategory resolves the upload category from recognized explicit
-// tracker metadata, parsed release metadata, structured episode fields, then
-// release-name heuristics.
-func resolveUnit3DCategory(meta api.PreparedMetadata) string {
-	if category := resolveExplicitUnit3DCategory(meta.ExternalIDs.Category); category != "" {
-		return category
-	}
-	if category := resolveExplicitUnit3DCategory(meta.MediaInfoCategory); category != "" {
-		return category
-	}
-	if category := canonicalUnit3DCategory(meta.Release.Category); category != "" {
-		return category
-	}
-	if meta.HasTVSeasonEpisodeSignal() {
-		return "TV"
-	}
-	if hasSeasonEpisode(meta.ReleaseName) {
-		return "TV"
-	}
-	return "MOVIE"
+// resolveUnit3DCategory maps only the canonical prepared identity category.
+func resolveUnit3DCategory(meta api.UploadSubject) string {
+	return resolveExplicitUnit3DCategory(string(meta.Identity.Category))
 }
 
-// resolveExplicitUnit3DCategory treats unrecognized explicit values as absent
-// so parsed release metadata can still determine the category.
+// resolveExplicitUnit3DCategory accepts only finalized canonical values.
 func resolveExplicitUnit3DCategory(value string) string {
-	if strings.TrimSpace(value) == "" {
+	category, err := api.NormalizeCanonicalCategory(value)
+	if err != nil {
 		return ""
 	}
-	if category := canonicalUnit3DCategory(value); category != "" {
-		return category
+	switch category {
+	case api.CanonicalCategoryMovie:
+		return "MOVIE"
+	case api.CanonicalCategoryTV:
+		return "TV"
+	case api.CanonicalCategoryUnknown:
+		return ""
 	}
 	return ""
 }
 
-func canonicalUnit3DCategory(value string) string {
-	switch api.NormalizeCategory(value) {
-	case api.CategoryMovie:
-		return "MOVIE"
-	case api.CategoryTV:
-		return "TV"
-	case api.CategoryUnknown:
-		return ""
-	default:
-		return ""
-	}
-}
-
-func resolveUnit3DCategoryID(meta api.PreparedMetadata) string {
+func resolveUnit3DCategoryID(meta api.UploadSubject) string {
 	return trackerdata.CategoryID(resolveUnit3DCategory(meta))
 }
 
-func resolveUnit3DTypeID(meta api.PreparedMetadata) (string, error) {
+func resolveUnit3DTypeID(meta api.UploadSubject) (string, error) {
 	typeValue := inferUnit3DType(meta)
 	if value := trackerdata.TypeID(typeValue); value != "" {
 		return value, nil
@@ -815,7 +812,7 @@ func resolveUnit3DTypeID(meta api.PreparedMetadata) (string, error) {
 	return "", fmt.Errorf("trackers: unit3d unsupported type value %q", typeValue)
 }
 
-func inferUnit3DType(meta api.PreparedMetadata) string {
+func inferUnit3DType(meta api.UploadSubject) string {
 	for _, candidate := range []string{meta.Type, meta.Release.Type} {
 		normalized := normalizeUnit3DTypeCandidate(candidate)
 		if normalized != "" && !isUnit3DCategoryType(normalized) {
@@ -909,41 +906,11 @@ func isUnit3DCategoryType(value string) bool {
 	}
 }
 
-func shouldIncludeUnit3DTVFields(meta api.PreparedMetadata, category string) bool {
-	if !strings.EqualFold(strings.TrimSpace(category), "TV") {
-		return false
-	}
-
-	if hasExplicitMovieSignal(meta) {
-		return false
-	}
-
-	if strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "TV") {
-		return true
-	}
-	if meta.HasTVSeasonEpisodeSignal() {
-		return true
-	}
-
-	releaseType := normalizeUnit3DTypeCandidate(meta.Release.Type)
-	if strings.EqualFold(releaseType, "EPISODE") || strings.EqualFold(releaseType, "SERIES") {
-		return true
-	}
-
-	return hasSeasonEpisode(meta.ReleaseName)
+func shouldIncludeUnit3DTVFields(_ api.UploadSubject, category string) bool {
+	return strings.EqualFold(strings.TrimSpace(category), "TV")
 }
 
-func hasExplicitMovieSignal(meta api.PreparedMetadata) bool {
-	for _, value := range []string{meta.ExternalIDs.Category, meta.MediaInfoCategory, meta.Type, meta.Release.Type} {
-		normalized := normalizeUnit3DTypeCandidate(value)
-		if strings.EqualFold(normalized, "MOVIE") || strings.EqualFold(normalized, "FILM") {
-			return true
-		}
-	}
-	return false
-}
-
-func resolveUnit3DResolutionID(meta api.PreparedMetadata) string {
+func resolveUnit3DResolutionID(meta api.UploadSubject) string {
 	resolution := resolveResolution(meta)
 	if value := trackerdata.ResolutionID(resolution); value != "" {
 		return value
@@ -951,10 +918,14 @@ func resolveUnit3DResolutionID(meta api.PreparedMetadata) string {
 	return "10"
 }
 
-func resolveResolution(meta api.PreparedMetadata) string {
-	resolution := strings.TrimSpace(meta.Release.Resolution)
+func resolveResolution(meta api.UploadSubject) string {
+	return resolveResolutionValues(meta.Release, meta.ReleaseName)
+}
+
+func resolveResolutionValues(release api.ReleaseInfo, releaseName string) string {
+	resolution := strings.TrimSpace(release.Resolution)
 	if resolution == "" {
-		resolution = detectResolution(meta.ReleaseName)
+		resolution = detectResolution(releaseName)
 	}
 	return resolution
 }
@@ -970,7 +941,7 @@ func detectResolution(value string) string {
 }
 
 // resolveSeason returns the Unit3D payload season value from SeasonInt only.
-func resolveSeason(meta api.PreparedMetadata) string {
+func resolveSeason(meta api.UploadSubject) string {
 	if meta.SeasonInt <= 0 {
 		return "0"
 	}
@@ -978,7 +949,7 @@ func resolveSeason(meta api.PreparedMetadata) string {
 }
 
 // resolveEpisode returns the Unit3D payload episode value from EpisodeInt only.
-func resolveEpisode(meta api.PreparedMetadata) string {
+func resolveEpisode(meta api.UploadSubject) string {
 	if meta.EpisodeInt <= 0 {
 		return "0"
 	}
@@ -988,7 +959,7 @@ func resolveEpisode(meta api.PreparedMetadata) string {
 // validateUnit3DTVPayloadMetadata returns the shared Unit3D TV metadata block
 // reason used by live upload and dry-run when canonical season or episode data
 // is missing from payload fields that would otherwise be submitted as zero.
-func validateUnit3DTVPayloadMetadata(trackerName string, meta api.PreparedMetadata, data map[string]string) (string, error) {
+func validateUnit3DTVPayloadMetadata(trackerName string, meta api.UploadSubject, data map[string]string) (string, error) {
 	message := unit3DTVPayloadMetadataMessage(meta, data)
 	if message == "" {
 		return "", nil
@@ -1000,7 +971,7 @@ func validateUnit3DTVPayloadMetadata(trackerName string, meta api.PreparedMetada
 // canonical season or episode metadata is missing. Parsed release and manual
 // naming values are reported only as ignored signals, and the message includes
 // the operator action required by blocked dry-run entries.
-func unit3DTVPayloadMetadataMessage(meta api.PreparedMetadata, data map[string]string) string {
+func unit3DTVPayloadMetadataMessage(meta api.UploadSubject, data map[string]string) string {
 	if _, hasSeason := data["season_number"]; !hasSeason {
 		return ""
 	}
@@ -1033,7 +1004,7 @@ func unit3DTVPayloadMetadataMessage(meta api.PreparedMetadata, data map[string]s
 	return message
 }
 
-func hasParsedSeasonSignal(meta api.PreparedMetadata) bool {
+func hasParsedSeasonSignal(meta api.UploadSubject) bool {
 	if meta.Release.Season > 0 {
 		return true
 	}
@@ -1044,7 +1015,7 @@ func hasParsedSeasonSignal(meta api.PreparedMetadata) bool {
 	return season > 0
 }
 
-func hasParsedEpisodeSignal(meta api.PreparedMetadata) bool {
+func hasParsedEpisodeSignal(meta api.UploadSubject) bool {
 	if meta.Release.Episode > 0 {
 		return true
 	}
@@ -1068,10 +1039,6 @@ func parseSeasonEpisode(name string) (int, int) {
 		episode = atoi(matches[2])
 	}
 	return season, episode
-}
-
-func hasSeasonEpisode(name string) bool {
-	return seasonEpisodePattern.MatchString(name)
 }
 
 func isSDResolution(resolution string) bool {

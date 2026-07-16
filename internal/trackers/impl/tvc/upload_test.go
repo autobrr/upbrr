@@ -21,22 +21,25 @@ func TestPrepareUploadStateSkipsTVDBForMovie(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	state, err := prepareUploadState(context.Background(), trackers.UploadRequest{
+	state, err := prepareUploadState(context.Background(), trackers.PreparationInput{
 		Tracker: "TVC",
-		Meta: api.PreparedMetadata{
-			SourcePath:        filepath.Join(tmp, "Movie.mkv"),
-			TorrentPath:       torrentPath,
-			MediaInfoCategory: "TV",
-			ExternalIDs: api.ExternalIDs{
+		Meta: api.UploadSubject{
+			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
+			TorrentPath: torrentPath,
+			Identity: api.ExternalIdentity{
 				Category: "MOVIE",
 				TMDBID:   123,
 				TVDBID:   456,
 			},
-			ExternalMetadata: api.ExternalMetadata{
+			ProviderMetadata: api.SourceScopedMetadata{
 				TMDB: &api.TMDBMetadata{Title: "Movie", Year: 2025},
 			},
-			Release: api.ReleaseInfo{Title: "Movie", Year: 2025, Resolution: "1080p"},
-			Type:    "WEBDL",
+			Release: api.ReleaseInfo{
+				Title:      "Movie",
+				Year:       2025,
+				Resolution: "1080p",
+			},
+			Type: "WEBDL",
 		},
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
 	})
@@ -55,20 +58,24 @@ func TestPrepareUploadStateIncludesTVDBForTV(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	state, err := prepareUploadState(context.Background(), trackers.UploadRequest{
+	state, err := prepareUploadState(context.Background(), trackers.PreparationInput{
 		Tracker: "TVC",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "Show.S02E03.mkv"),
 			TorrentPath: torrentPath,
-			ExternalIDs: api.ExternalIDs{
+			Identity: api.ExternalIdentity{
 				Category: "TV",
 				TMDBID:   123,
 				TVDBID:   456,
 			},
-			ExternalMetadata: api.ExternalMetadata{
+			ProviderMetadata: api.SourceScopedMetadata{
 				TMDB: &api.TMDBMetadata{Title: "Show", Year: 2025},
 			},
-			Release:    api.ReleaseInfo{Title: "Show", Year: 2025, Resolution: "1080p"},
+			Release: api.ReleaseInfo{
+				Title:      "Show",
+				Year:       2025,
+				Resolution: "1080p",
+			},
 			Type:       "WEBDL",
 			SeasonInt:  2,
 			EpisodeInt: 3,
@@ -90,18 +97,25 @@ func TestPrepareUploadStateIncludesTVDBForMediaInfoTV(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	state, err := prepareUploadState(context.Background(), trackers.UploadRequest{
+	state, err := prepareUploadState(context.Background(), trackers.PreparationInput{
 		Tracker: "TVC",
-		Meta: api.PreparedMetadata{
-			SourcePath:        filepath.Join(tmp, "Show.mkv"),
-			TorrentPath:       torrentPath,
-			MediaInfoCategory: "TV",
-			ExternalIDs:       api.ExternalIDs{TMDBID: 123, TVDBID: 456},
-			ExternalMetadata: api.ExternalMetadata{
+		Meta: api.UploadSubject{
+			SourcePath:  filepath.Join(tmp, "Show.mkv"),
+			TorrentPath: torrentPath,
+			Identity:    api.ExternalIdentity{
+Category: "TV",
+ TMDBID: 123,
+ TVDBID: 456,
+},
+			ProviderMetadata: api.SourceScopedMetadata{
 				TMDB: &api.TMDBMetadata{Title: "Show", Year: 2025},
 			},
-			Release: api.ReleaseInfo{Title: "Show", Year: 2025, Resolution: "1080p"},
-			Type:    "WEBDL",
+			Release: api.ReleaseInfo{
+				Title:      "Show",
+				Year:       2025,
+				Resolution: "1080p",
+			},
+			Type: "WEBDL",
 		},
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
 	})
@@ -113,26 +127,31 @@ func TestPrepareUploadStateIncludesTVDBForMediaInfoTV(t *testing.T) {
 	}
 }
 
-func TestPrepareUploadStateIncludesTVDBForSeasonPackWithoutCategory(t *testing.T) {
+func TestPrepareUploadStateIncludesTVDBForCanonicalTVSeasonPack(t *testing.T) {
 	tmp := t.TempDir()
 	torrentPath := filepath.Join(tmp, "season.torrent")
 	if err := os.WriteFile(torrentPath, []byte("dummy"), 0o600); err != nil {
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	state, err := prepareUploadState(context.Background(), trackers.UploadRequest{
+	state, err := prepareUploadState(context.Background(), trackers.PreparationInput{
 		Tracker: "TVC",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "Show.S02.mkv"),
 			TorrentPath: torrentPath,
-			ExternalIDs: api.ExternalIDs{
-				TMDBID: 123,
-				TVDBID: 456,
+			Identity: api.ExternalIdentity{
+				Category: api.CanonicalCategoryTV,
+				TMDBID:   123,
+				TVDBID:   456,
 			},
-			ExternalMetadata: api.ExternalMetadata{
+			ProviderMetadata: api.SourceScopedMetadata{
 				TMDB: &api.TMDBMetadata{Title: "Show", Year: 2025},
 			},
-			Release:   api.ReleaseInfo{Title: "Show", Year: 2025, Resolution: "1080p"},
+			Release: api.ReleaseInfo{
+				Title:      "Show",
+				Year:       2025,
+				Resolution: "1080p",
+			},
 			Type:      "WEBDL",
 			TVPack:    true,
 			SeasonInt: 2,

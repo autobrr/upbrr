@@ -27,17 +27,17 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	entry, err := New().BuildUploadDryRun(context.Background(), trackers.UploadRequest{
+	entry, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "NBL",
-		Meta: api.PreparedMetadata{
+		Meta: api.UploadSubject{
 			SourcePath:        filepath.Join(tmp, "Show.mkv"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
-			ExternalIDs:       api.ExternalIDs{TVmazeID: 987},
+			Identity:          api.ExternalIdentity{TVmazeID: 987},
 			TVPack:            true,
 		},
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
-		AppConfig:     config.Config{},
+		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{}),
 		Logger:        api.NopLogger{},
 	})
 	if err != nil {

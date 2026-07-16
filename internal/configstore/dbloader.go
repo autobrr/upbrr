@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 // Package configstore bridges the config package and the sqlite repository
-// so CLI, GUI, and webserver share a single implementation of the
+// so CLI and WebUI share a single implementation of the
 // open-database → migrate → load/save flow that used to be duplicated across
-// cmd/upbrr/main.go and internal/guiapp/config.go.
+// cmd/upbrr/main.go and internal/webserver runtime activation.
 package configstore
 
 import (
@@ -81,7 +81,7 @@ func LoadFromPathOrEmbedded(path string) (*config.Config, error) {
 // database, and applies environment overrides.
 //
 // Callers decide whether to validate the returned config — the CLI fails fast
-// while the web/GUI start with invalid config so users can fix it via the UI.
+// while the WebUI starts with invalid config so users can fix it via the UI.
 func LoadFromDBPath(ctx context.Context, dbPath string) (*config.Config, error) {
 	return loadFromDBPath(ctx, dbPath, true)
 }
@@ -208,7 +208,12 @@ func Bootstrap(ctx context.Context, configPath string, configProvided, persistYA
 // so environment-only fixes cannot write a config that fails after env removal.
 // Without a hook, provided YAML/JSON is merged with stored DB config when
 // present and persisted only if the persisted candidate validates.
-func BootstrapWithValidator(ctx context.Context, configPath string, configProvided, persistYAML bool, validateBeforePersist func(*config.Config) error) (config.Config, string, error) {
+func BootstrapWithValidator(
+	ctx context.Context,
+	configPath string,
+	configProvided, persistYAML bool,
+	validateBeforePersist func(*config.Config) error,
+) (config.Config, string, error) {
 	if configProvided {
 		resolved, err := ResolveYAMLPath(configPath, configProvided)
 		if err != nil {
@@ -333,7 +338,13 @@ func validatePersistableConfig(cfg *config.Config, dbPath string, validate func(
 // prepareProvidedConfigForSave decides whether a provided config should replace
 // or merge with stored DB config. It uses the already-read providedData for
 // native YAML/JSON overlays so validation and persistence share one input.
-func prepareProvidedConfigForSave(ctx context.Context, configPath string, providedData []byte, imported *config.Config, dbPath string) (*config.Config, *config.Config, bool, error) {
+func prepareProvidedConfigForSave(
+	ctx context.Context,
+	configPath string,
+	providedData []byte,
+	imported *config.Config,
+	dbPath string,
+) (*config.Config, *config.Config, bool, error) {
 	stored, err := loadStoredConfigForProvidedMerge(ctx, dbPath)
 	storedLoaded := err == nil
 	if err != nil && !errors.Is(err, internalerrors.ErrNotFound) {
@@ -369,7 +380,8 @@ func prepareProvidedConfigForSave(ctx context.Context, configPath string, provid
 // disabled only in the returned copy so an invalid provided config cannot mutate
 // the database during validation.
 func loadStoredConfigForProvidedMerge(ctx context.Context, dbPath string) (*config.Config, error) {
-	if _, err := os.Stat(dbPath); err != nil { //nolint:gosec // Existence probe for resolved DB path avoids creating SQLite DB before provided config validates.
+	//nolint:gosec // Existence probe for resolved DB path avoids creating SQLite DB before provided config validates.
+	if _, err := os.Stat(dbPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, internalerrors.ErrNotFound
 		}

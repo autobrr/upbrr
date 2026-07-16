@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/pathpolicy"
+	pathpolicy "github.com/autobrr/upbrr/internal/pathing/policy"
 )
 
 func TestRunPrintsSuccessWhenNoIssuesFound(t *testing.T) {

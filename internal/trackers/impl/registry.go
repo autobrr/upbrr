@@ -5,7 +5,9 @@ package impl
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/ant"
 	"github.com/autobrr/upbrr/internal/trackers/impl/ar"
@@ -35,94 +37,127 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/impl/tl"
 	"github.com/autobrr/upbrr/internal/trackers/impl/tvc"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/a4k"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/acm"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/aither"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/blu"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/cbr"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/dp"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/emuw"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/friki"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/hhd"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/ihd"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/itt"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/lcd"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/ldu"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/lst"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/lt"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/lume"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/mns"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/oe"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/otw"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/pt"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/ptt"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/r4e"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/ras"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/rf"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/rhd"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/sam"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/shri"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/sp"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/stc"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/tik"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/tlz"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/tos"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/ttr"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/ulcx"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/utp"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/yus"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/znth"
 )
 
 func NewRegistry() (*trackers.Registry, error) {
 	registry := trackers.NewRegistry()
-	if err := unit3d.Register(registry, unit3d.DefaultTrackers()); err != nil {
+	profiles := []unit3d.Profile{
+		a4k.Profile(),
+		acm.Profile(),
+		aither.Profile(),
+		blu.Profile(),
+		cbr.Profile(),
+		dp.Profile(),
+		emuw.Profile(),
+		friki.Profile(),
+		hhd.Profile(),
+		ihd.Profile(),
+		itt.Profile(),
+		lcd.Profile(),
+		ldu.Profile(),
+		lt.Profile(),
+		lume.Profile(),
+		lst.Profile(),
+		mns.Profile(),
+		pt.Profile(),
+		ptt.Profile(),
+		r4e.Profile(),
+		ras.Profile(),
+		rf.Profile(),
+		rhd.Profile(),
+		sam.Profile(),
+		oe.Profile(),
+		otw.Profile(),
+		shri.Profile(),
+		sp.Profile(),
+		stc.Profile(),
+		tik.Profile(),
+		tlz.Profile(),
+		tos.Profile(),
+		ttr.Profile(),
+		ulcx.Profile(),
+		znth.Profile(),
+		utp.Profile(),
+		yus.Profile(),
+	}
+	if err := unit3d.RegisterProfiles(registry, profiles); err != nil {
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
-	if err := registry.Register(hdb.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
+	definitions := []trackers.Definition{
+		hdb.New(), mtv.New(), ant.New(), ar.New(), asc.New(), bhd.New(), bhdtv.New(), bjs.New(), btn.New(), bt.New(), czt.New(), dc.New(), ff.New(),
+		fl.New(), gpw.New(), hds.New(), hdt.New(), is.New(), nbl.New(), ptp.New(), pts.New(), rtf.New(), spd.New(), thr.New(), tl.New(), tvc.New(),
 	}
-	if err := registry.Register(mtv.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(ant.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(ar.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(asc.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(bhd.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(bhdtv.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(bjs.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(btn.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(bt.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(czt.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(dc.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(ff.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(fl.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(gpw.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(hds.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(hdt.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(is.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(nbl.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(ptp.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(pts.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(rtf.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(spd.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(thr.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(tl.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
-	if err := registry.Register(tvc.New()); err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
+	for _, definition := range definitions {
+		if err := registry.Register(definition); err != nil {
+			return nil, fmt.Errorf("trackers: %w", err)
+		}
 	}
 	for _, name := range []string{"AZ", "CZ", "PHD"} {
 		if err := registry.Register(azfamily.New(name)); err != nil {
 			return nil, fmt.Errorf("trackers: %w", err)
+		}
+	}
+	registry.SetPriorityOrder([]string{"aither", "ulcx", "lst", "blu", "oe", "btn", "bhd", "hdb", "ant", "rf", "otw", "yus", "dp", "sp", "ptp"})
+	return registry, nil
+}
+
+// NewRegistryWithConfig composes built-in definitions and configured custom
+// Unit3D trackers. Runtime config URLs remain authoritative in the Unit3D client.
+func NewRegistryWithConfig(cfg config.Config) (*trackers.Registry, error) {
+	registry, err := NewRegistry()
+	if err != nil {
+		return nil, err
+	}
+	for name := range cfg.Trackers.Trackers {
+		normalized := strings.ToUpper(strings.TrimSpace(name))
+		if normalized == "" {
+			continue
+		}
+		if _, exists := registry.LookupDescriptor(normalized); exists {
+			continue
+		}
+		if !unit3d.IsConfiguredTrackerWithRegistry(cfg, normalized, registry) {
+			continue
+		}
+		if err := registry.Register(unit3d.New(normalized)); err != nil {
+			return nil, fmt.Errorf("trackers: register custom unit3d %s: %w", normalized, err)
 		}
 	}
 	return registry, nil
