@@ -54,7 +54,6 @@ func duplicateCheckInputFromRequest(request api.Request, ref api.ReleaseRef) api
 			Client: cloneStringPointer(request.ClientOverrides.Client),
 		},
 		ForceRecheck: cloneBoolPointer(request.ClientOverrides.ForceRecheck),
-		Debug:        request.Options.Debug,
 	}
 }
 
@@ -74,26 +73,6 @@ func cloneBoolPointer(value *bool) *bool {
 	}
 	cloned := *value
 	return &cloned
-}
-
-func trackerDryRunInputFromRequest(request api.Request, ref api.ReleaseRef) api.TrackerDryRunInput {
-	ignoreRules := append([]string(nil), request.IgnoreTrackerRuleFailuresFor...)
-	if request.IgnoreTrackerRuleFailures {
-		ignoreRules = append([]string(nil), request.Trackers...)
-	}
-	return api.TrackerDryRunInput{
-		Release:                ref,
-		Trackers:               append([]string(nil), request.Trackers...),
-		IgnoreDupesFor:         append([]string(nil), request.IgnoreDupesFor...),
-		IgnoreRuleFailuresFor:  ignoreRules,
-		QuestionnaireAnswers:   cloneOperationQuestionnaireAnswers(request.TrackerQuestionnaireAnswers),
-		DescriptionGroups:      api.CloneDescriptionBuilderGroups(request.DescriptionGroups),
-		TrackerConfigOverrides: request.TrackerConfigOverrides,
-		TrackerSiteOverrides:   request.TrackerSiteOverrides,
-		ImageHostOverrides:     request.ImageHostOverrides,
-		TorrentOverrides:       request.TorrentOverrides,
-		Options:                request.Options,
-	}
 }
 
 func (c *Core) canonicalPreparationEnabled() bool {

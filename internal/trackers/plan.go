@@ -23,6 +23,9 @@ const (
 	PreparationIntentDescriptionPreview PreparationIntent = "description_preview"
 	// PreparationIntentDryRun resolves upload artifacts and payload preview without tracker mutation.
 	PreparationIntentDryRun PreparationIntent = "dry_run"
+	// PreparationIntentUploadReview resolves the upload payload needed for
+	// authorization without explicit dry-run diagnostic artifacts.
+	PreparationIntentUploadReview PreparationIntent = "upload_review"
 	// PreparationIntentUpload prepares a single-use plan that may submit to the tracker.
 	PreparationIntentUpload PreparationIntent = "upload"
 )
@@ -179,6 +182,12 @@ func PrepareAdapter(
 		preview, err := dryRun(ctx, input)
 		if err != nil {
 			return TrackerPlan{}, NewPreparationFailure(input.Tracker, "dry_run", err.Error(), err)
+		}
+		return NewDryRunPlan(input.Tracker, preview, nil), nil
+	case PreparationIntentUploadReview:
+		preview, err := dryRun(ctx, input)
+		if err != nil {
+			return TrackerPlan{}, NewPreparationFailure(input.Tracker, "upload_review", err.Error(), err)
 		}
 		return NewDryRunPlan(input.Tracker, preview, nil), nil
 	case PreparationIntentUpload:

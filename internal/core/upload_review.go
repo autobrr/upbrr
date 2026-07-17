@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/clientdiscovery"
+	"github.com/autobrr/upbrr/internal/logging"
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	dupechecking "github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -34,23 +36,52 @@ func (c *Core) ReviewAcceptedUpload(ctx context.Context, input api.UploadReviewI
 // reviewAccepted refreshes operation-local evidence and produces the complete
 // outcome required to execute one accepted upload review.
 func (m *uploadModule) reviewAccepted(ctx context.Context, input api.UploadReviewInput) (api.ReviewedUpload, error) {
-	if m == nil || m.preparedFacts == nil {
-		return api.ReviewedUpload{}, errors.New("core: canonical preparation is not configured")
-	}
-	if m.dupes == nil || m.torrents == nil || m.trackers == nil {
-		return api.ReviewedUpload{}, errors.New("core: upload review services are not configured")
-	}
-	subject, err := m.preparedFacts.ResolveUploadSubject(ctx, input)
+	evidence, err := m.refreshUploadReviewAuthority(ctx, input)
 	if err != nil {
-		return api.ReviewedUpload{}, fmt.Errorf("core: resolve upload review subject: %w", err)
+		return api.ReviewedUpload{}, err
 	}
-	resolvedTrackers := trackerspkg.ResolveExplicitTrackersWithRegistry(input.Trackers, m.logger, m.registry)
-	if len(resolvedTrackers) == 0 {
+	preview, err := m.buildTrackerPayloadPreview(ctx, input, trackerspkg.PreparationIntentUploadReview, evidence)
+	if err != nil {
+		return api.ReviewedUpload{}, err
+	}
+	if len(preview.outcome.Eligibility.EligibleTrackers) == 0 {
 		return api.ReviewedUpload{}, noEligibleTrackersError(api.OperationKindUploadReview)
 	}
-	subject.Trackers = append([]string(nil), resolvedTrackers...)
-	if err := m.hydrateCanonicalTrackerState(ctx, &subject); err != nil {
-		return api.ReviewedUpload{}, err
+	return api.ReviewedUpload{Review: preview.review, Outcome: preview.outcome}, nil
+}
+
+// trackerPayloadPreview contains the payload projection shared by upload review
+// and explicit dry-run execution. It retains the base torrent only long enough
+// for optional dry-run client injection.
+type trackerPayloadPreview struct {
+	subject api.UploadSubject
+	review  api.UploadReview
+	outcome api.UploadReviewOutcome
+	torrent api.TorrentResult
+}
+
+// trackerPayloadEvidence contains accepted authority results consumed by
+// payload construction. Building payloads never refreshes client or duplicate
+// evidence.
+type trackerPayloadEvidence struct {
+	subject          api.UploadSubject
+	resolvedTrackers []string
+	outcome          api.UploadReviewOutcome
+	duplicateResults []api.DupeCheckResult
+}
+
+// refreshUploadReviewAuthority refreshes client, policy, and duplicate state
+// immediately before final upload review.
+func (m *uploadModule) refreshUploadReviewAuthority(
+	ctx context.Context,
+	input api.UploadReviewInput,
+) (trackerPayloadEvidence, error) {
+	if m == nil || m.dupes == nil {
+		return trackerPayloadEvidence{}, errors.New("core: upload review duplicate service is not configured")
+	}
+	subject, resolvedTrackers, err := m.resolveTrackerPayloadSubject(ctx, input, api.OperationKindUploadReview)
+	if err != nil {
+		return trackerPayloadEvidence{}, err
 	}
 	if m.discovery != nil {
 		evidence, discoveryErr := m.discovery.Discover(ctx, clientdiscovery.SearchInput{
@@ -62,51 +93,33 @@ func (m *uploadModule) reviewAccepted(ctx context.Context, input api.UploadRevie
 				Client: input.ClientOverrides.Client,
 			},
 			ForceRecheck: input.ClientOverrides.ForceRecheck,
-			Debug:        input.Options.Debug,
 		})
 		if discoveryErr != nil {
-			return api.ReviewedUpload{}, fmt.Errorf("core: discover upload-review client state: %w", discoveryErr)
+			return trackerPayloadEvidence{}, fmt.Errorf("core: discover upload-review client state: %w", discoveryErr)
 		}
 		applyClientSearchToUploadSubject(&subject, evidence)
 	}
-	if len(input.TrackerIDOverrides) > 0 {
-		if subject.TrackerIDs == nil {
-			subject.TrackerIDs = make(map[string]string)
-		}
-		for key, value := range input.TrackerIDOverrides {
-			key = strings.ToLower(strings.TrimSpace(key))
-			value = strings.TrimSpace(value)
-			if key != "" && value != "" {
-				subject.TrackerIDs[key] = value
-			}
-		}
-	}
+	applyTrackerIDOverrides(&subject, input.TrackerIDOverrides)
 
-	policy := api.UploadReviewOutcome{ResolvedTrackers: append([]string(nil), resolvedTrackers...)}
-	if m.policy != nil {
-		policy, err = m.policy.EvaluateUploadPolicy(ctx, subject, resolvedTrackers)
-		if err != nil {
-			return api.ReviewedUpload{}, fmt.Errorf("core: upload policy: %w", err)
-		}
-	} else {
-		policy.TrackerRuleFailures = evaluateSubjectRules(ctx, m.registry, subject, resolvedTrackers, m.logger)
+	policy, err := m.evaluateTrackerPayloadPolicy(ctx, subject, resolvedTrackers)
+	if err != nil {
+		return trackerPayloadEvidence{}, err
 	}
-	policy.TrackerRuleFailures = filterTrackerRuleFailures(policy.TrackerRuleFailures, input.IgnoreRuleFailuresFor)
 
 	duplicate := duplicateSubjectFromUpload(subject)
 	duplicate.MatchedTrackers = append([]string(nil), subject.MatchedTrackers...)
 	duplicate.BlockedTrackers = cloneBlockedTrackers(policy.BlockedTrackers)
-	duplicate.TrackerRuleFailures = cloneTrackerRuleFailures(policy.TrackerRuleFailures)
+	duplicate.TrackerRuleFailures = filterTrackerRuleFailures(policy.TrackerRuleFailures, input.IgnoreRuleFailuresFor)
 	summary, assessment, err := checkDuplicateAssessment(ctx, m.dupes, duplicate, resolvedTrackers, dupechecking.CheckOptions{
 		SkipRemote: input.SkipDuplicateCheck,
 	})
 	if err != nil {
-		return api.ReviewedUpload{}, fmt.Errorf("core: %w", err)
+		return trackerPayloadEvidence{}, fmt.Errorf("core: %w", err)
 	}
 	if len(input.IgnoreDupesFor) > 0 {
 		assessment, err = assessment.Authorize(duplicate, m.cfg, input.IgnoreDupesFor)
 		if err != nil {
-			return api.ReviewedUpload{}, fmt.Errorf("core: duplicate authorization: %w", err)
+			return trackerPayloadEvidence{}, fmt.Errorf("core: duplicate authorization: %w", err)
 		}
 	}
 	assessment.Apply(&duplicate)
@@ -118,25 +131,231 @@ func (m *uploadModule) reviewAccepted(ctx context.Context, input api.UploadRevie
 		TrackerRuleFailures: cloneTrackerRuleFailures(policy.TrackerRuleFailures),
 		CrossSeedTorrents:   append([]api.UploadedTorrent(nil), duplicate.CrossSeedTorrents...),
 	}
+	return trackerPayloadEvidence{
+		subject:          subject,
+		resolvedTrackers: append([]string(nil), resolvedTrackers...),
+		outcome:          outcome,
+		duplicateResults: api.CloneDupeCheckResults(summary.Results),
+	}, nil
+}
+
+// acceptedDryRunEvidence resolves exact prepared facts and combines them with
+// caller-accepted duplicate results without client discovery or another remote
+// duplicate check.
+func (m *uploadModule) acceptedDryRunEvidence(ctx context.Context, plan api.TrackerDryRunPlan) (trackerPayloadEvidence, error) {
+	input := trackerDryRunReviewInput(plan.Input)
+	subject, resolvedTrackers, err := m.resolveTrackerPayloadSubject(ctx, input, api.OperationKindDryRun)
+	if err != nil {
+		return trackerPayloadEvidence{}, err
+	}
+	results, err := validateAcceptedDuplicateEvidence(plan.Duplicate, plan.Input.Release, resolvedTrackers)
+	if err != nil {
+		return trackerPayloadEvidence{}, err
+	}
+	applyTrackerIDOverrides(&subject, input.TrackerIDOverrides)
+	policy, err := m.evaluateTrackerPayloadPolicy(ctx, subject, resolvedTrackers)
+	if err != nil {
+		return trackerPayloadEvidence{}, err
+	}
+	outcome := api.UploadReviewOutcome{
+		ResolvedTrackers:    append([]string(nil), resolvedTrackers...),
+		MatchedTrackers:     append([]string(nil), subject.MatchedTrackers...),
+		BlockedTrackers:     cloneBlockedTrackers(policy.BlockedTrackers),
+		TrackerRuleFailures: cloneTrackerRuleFailures(policy.TrackerRuleFailures),
+	}
+	return trackerPayloadEvidence{
+		subject:          subject,
+		resolvedTrackers: append([]string(nil), resolvedTrackers...),
+		outcome:          outcome,
+		duplicateResults: results,
+	}, nil
+}
+
+func (m *uploadModule) resolveTrackerPayloadSubject(
+	ctx context.Context,
+	input api.UploadReviewInput,
+	operation api.OperationKind,
+) (api.UploadSubject, []string, error) {
+	if m == nil || m.preparedFacts == nil {
+		return api.UploadSubject{}, nil, errors.New("core: canonical preparation is not configured")
+	}
+	if m.torrents == nil || m.trackers == nil {
+		return api.UploadSubject{}, nil, errors.New("core: tracker payload services are not configured")
+	}
+	subject, err := m.preparedFacts.ResolveUploadSubject(ctx, input)
+	if err != nil {
+		return api.UploadSubject{}, nil, fmt.Errorf("core: resolve tracker payload subject: %w", err)
+	}
+	logger := logging.FromContext(ctx, m.logger)
+	resolvedTrackers := trackerspkg.ResolveExplicitTrackersWithRegistry(input.Trackers, logger, m.registry)
+	if len(resolvedTrackers) == 0 {
+		return api.UploadSubject{}, nil, noEligibleTrackersError(operation)
+	}
+	subject.Trackers = append([]string(nil), resolvedTrackers...)
+	if err := m.hydrateCanonicalTrackerState(ctx, &subject); err != nil {
+		return api.UploadSubject{}, nil, err
+	}
+	return subject, resolvedTrackers, nil
+}
+
+func (m *uploadModule) evaluateTrackerPayloadPolicy(
+	ctx context.Context,
+	subject api.UploadSubject,
+	resolvedTrackers []string,
+) (api.UploadReviewOutcome, error) {
+	policy := api.UploadReviewOutcome{ResolvedTrackers: append([]string(nil), resolvedTrackers...)}
+	var err error
+	if m.policy != nil {
+		policy, err = m.policy.EvaluateUploadPolicy(ctx, subject, resolvedTrackers)
+		if err != nil {
+			return api.UploadReviewOutcome{}, fmt.Errorf("core: upload policy: %w", err)
+		}
+	} else {
+		policy.TrackerRuleFailures = evaluateSubjectRules(ctx, m.registry, subject, resolvedTrackers, logging.FromContext(ctx, m.logger))
+	}
+	return policy, nil
+}
+
+func applyTrackerIDOverrides(subject *api.UploadSubject, overrides map[string]string) {
+	if subject == nil || len(overrides) == 0 {
+		return
+	}
+	if subject.TrackerIDs == nil {
+		subject.TrackerIDs = make(map[string]string)
+	}
+	for key, value := range overrides {
+		key = strings.ToLower(strings.TrimSpace(key))
+		value = strings.TrimSpace(value)
+		if key != "" && value != "" {
+			subject.TrackerIDs[key] = value
+		}
+	}
+}
+
+func validateAcceptedDuplicateEvidence(
+	evidence api.AcceptedDuplicateEvidence,
+	release api.ReleaseRef,
+	resolvedTrackers []string,
+) ([]api.DupeCheckResult, error) {
+	if evidence.Release != release {
+		return nil, dryRunEvidenceError(
+			api.OperationFailureStaleGeneration,
+			"Duplicate-check results are stale. Run duplicate checking again.",
+			errors.New("duplicate evidence release does not match dry-run release"),
+		)
+	}
+	evidenceTrackers := normalizeReviewedTrackers(evidence.Trackers)
+	if !slices.Equal(evidenceTrackers, resolvedTrackers) {
+		return nil, dryRunEvidenceError(
+			api.OperationFailureMissingPrerequisite,
+			"Duplicate-check results do not match the selected trackers. Run duplicate checking again.",
+			errors.New("duplicate evidence tracker selection does not match dry-run selection"),
+		)
+	}
+	selected := reviewedTrackerSet(resolvedTrackers)
+	results := make(map[string]api.DupeCheckResult, len(evidence.Results))
+	for _, raw := range api.CloneDupeCheckResults(evidence.Results) {
+		name := normalizeEligibilityTracker(raw.Tracker)
+		if name == "" {
+			return nil, dryRunEvidenceError(
+				api.OperationFailureMissingPrerequisite,
+				"Duplicate-check results are incomplete. Run duplicate checking again.",
+				errors.New("duplicate evidence contains an unnamed tracker result"),
+			)
+		}
+		if _, ok := selected[name]; !ok {
+			return nil, dryRunEvidenceError(
+				api.OperationFailureMissingPrerequisite,
+				"Duplicate-check results do not match the selected trackers. Run duplicate checking again.",
+				fmt.Errorf("duplicate evidence contains unselected tracker %s", name),
+			)
+		}
+		if _, exists := results[name]; exists || !terminalDuplicateResult(raw) {
+			return nil, dryRunEvidenceError(
+				api.OperationFailureMissingPrerequisite,
+				"Duplicate-check results are incomplete. Run duplicate checking again.",
+				fmt.Errorf("duplicate evidence result is duplicate or incomplete for tracker %s", name),
+			)
+		}
+		raw.Tracker = name
+		results[name] = raw
+	}
+	ordered := make([]api.DupeCheckResult, 0, len(resolvedTrackers))
+	for _, tracker := range resolvedTrackers {
+		result, ok := results[tracker]
+		if !ok {
+			return nil, dryRunEvidenceError(
+				api.OperationFailureMissingPrerequisite,
+				"Duplicate-check results are incomplete. Run duplicate checking again.",
+				fmt.Errorf("duplicate evidence is missing tracker %s", tracker),
+			)
+		}
+		ordered = append(ordered, result)
+	}
+	return ordered, nil
+}
+
+func terminalDuplicateResult(result api.DupeCheckResult) bool {
+	if result.Skipped || strings.TrimSpace(result.Error) != "" {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(result.Status)) {
+	case "completed", "skipped", "failed":
+		return true
+	default:
+		return false
+	}
+}
+
+func dryRunEvidenceError(code api.OperationFailureCode, message string, cause error) error {
+	return api.NewOperationError(api.OperationFailure{
+		Code:      code,
+		Operation: api.OperationKindDryRun,
+		Message:   message,
+		Recovery:  api.OperationRecoveryCompletePrerequisite,
+	}, cause)
+}
+
+// buildTrackerPayloadPreview constructs tracker payloads and eligibility from
+// accepted evidence. It never performs client discovery or remote duplicate
+// checking.
+func (m *uploadModule) buildTrackerPayloadPreview(
+	ctx context.Context,
+	input api.UploadReviewInput,
+	previewIntent trackerspkg.PreparationIntent,
+	evidence trackerPayloadEvidence,
+) (trackerPayloadPreview, error) {
+	subject := evidence.subject
+	resolvedTrackers := evidence.resolvedTrackers
+	outcome := evidence.outcome
+	var err error
 	subject.MatchedTrackers = append([]string(nil), outcome.MatchedTrackers...)
 	subject.BlockedTrackers = cloneBlockedTrackers(outcome.BlockedTrackers)
 	subject.TrackerRuleFailures = cloneTrackerRuleFailures(outcome.TrackerRuleFailures)
 	subject.CrossSeedTorrents = append([]api.UploadedTorrent(nil), outcome.CrossSeedTorrents...)
 	if m.resolveSubjectGroups == nil {
-		return api.ReviewedUpload{}, errors.New("core: subject description resolver not configured")
+		return trackerPayloadPreview{}, errors.New("core: subject description resolver not configured")
 	}
 	subject.DescriptionGroups, err = m.resolveSubjectGroups(ctx, subject, input)
 	if err != nil {
-		return api.ReviewedUpload{}, err
+		return trackerPayloadPreview{}, err
 	}
 	torrent, err := m.torrents.Create(ctx, torrentSubjectFromUpload(subject, input))
 	if err != nil {
-		return api.ReviewedUpload{}, fmt.Errorf("core: %w", err)
+		return trackerPayloadPreview{}, fmt.Errorf("core: %w", err)
 	}
 	subject.TorrentPath = torrent.Path
-	dryRuns, err := m.trackers.BuildUploadDryRun(ctx, subject, resolvedTrackers)
+	var dryRuns []api.TrackerDryRunEntry
+	switch previewIntent {
+	case trackerspkg.PreparationIntentDryRun:
+		dryRuns, err = m.trackers.BuildUploadDryRun(ctx, subject, resolvedTrackers)
+	case trackerspkg.PreparationIntentUploadReview:
+		dryRuns, err = m.trackers.BuildUploadReview(ctx, subject, resolvedTrackers)
+	case trackerspkg.PreparationIntentDescriptionPreview, trackerspkg.PreparationIntentUpload:
+		return trackerPayloadPreview{}, fmt.Errorf("core: unsupported tracker payload intent %q", previewIntent)
+	}
 	if err != nil {
-		return api.ReviewedUpload{}, fmt.Errorf("core: %w", err)
+		return trackerPayloadPreview{}, fmt.Errorf("core: %w", err)
 	}
 	annotateDryRunSubjectReleaseNames(subject, dryRuns)
 	dryRunByTracker := make(map[string]api.TrackerDryRunEntry, len(dryRuns))
@@ -145,7 +364,7 @@ func (m *uploadModule) reviewAccepted(ctx context.Context, input api.UploadRevie
 			dryRunByTracker[name] = entry
 		}
 	}
-	dupeResults := mapDupeResults(summary.Results)
+	dupeResults := mapDupeResults(evidence.duplicateResults)
 	reviews := make([]api.TrackerReview, 0, len(resolvedTrackers))
 	eligibilityAssessments := make([]api.TrackerEligibilityAssessment, 0, len(resolvedTrackers))
 	for _, tracker := range resolvedTrackers {
@@ -189,17 +408,16 @@ func (m *uploadModule) reviewAccepted(ctx context.Context, input api.UploadRevie
 		SelectedTrackers: resolvedTrackers,
 		Assessments:      eligibilityAssessments,
 	})
-	if len(eligibility.EligibleTrackers) == 0 {
-		return api.ReviewedUpload{}, noEligibleTrackersError(api.OperationKindUploadReview)
-	}
 	outcome.Eligibility = eligibility
-	return api.ReviewedUpload{
-		Review: api.UploadReview{
+	return trackerPayloadPreview{
+		subject: subject,
+		review: api.UploadReview{
 			SourcePath:  subject.SourcePath,
 			Trackers:    reviews,
 			Eligibility: eligibility,
 		},
-		Outcome: outcome,
+		outcome: outcome,
+		torrent: torrent,
 	}, nil
 }
 
@@ -307,25 +525,6 @@ func (m *uploadModule) buildCanonicalRequestReview(ctx context.Context, req api.
 	return reviewed.Review, nil
 }
 
-// resolveUploadReviewTrackers applies WebUI replacement semantics while allowing
-// non-debug, non-WebUI review flows to include or fall back to configured defaults
-// unless site upload pins one tracker.
-
-// resolveUploadReviewPTBRMetadata refreshes localized TMDB metadata after review
-// tracker resolution when selected or default tracker targets require pt-BR data.
-
-// uploadReviewNeedsPTBRMetadata reports whether a review dry-run needs a pt-BR refresh.
-
-// hasPTBRTracker reports whether any tracker consumes localized pt-BR TMDB data.
-
-// hasLocalizedPTBR reports whether TMDB metadata already contains complete pt-BR localized data.
-
-// hasKnownTMDBID reports whether metadata has a source-current TMDB ID available for refresh.
-
-// localizedPTBRComplete reports whether review metadata has the pt-BR title,
-// genre, and overview fields needed to avoid another localized refresh for
-// selected upload trackers.
-
 func formatBlockedReasons(reasons []api.TrackerBlockReason) string {
 	if len(reasons) == 0 {
 		return "blocked"
@@ -348,10 +547,6 @@ func formatBlockedReasons(reasons []api.TrackerBlockReason) string {
 	}
 	return strings.Join(labels, ", ")
 }
-
-// duplicateTrackerStateForRequest returns cached duplicate removal state after
-// applying the request's dupe bypass semantics. Ignored or skipped matched
-// trackers are removed from suppression state before later tracker resolution.
 
 func filterTrackerRuleFailures(failures map[string][]api.RuleFailure, allowTrackers []string) map[string][]api.RuleFailure {
 	if len(failures) == 0 {
@@ -443,19 +638,3 @@ func cloneBlockedTrackers(input map[string][]api.TrackerBlockReason) map[string]
 	}
 	return cloned
 }
-
-// mergeUploadReviewCacheMeta preserves unreviewed WebUI cache state while
-// replacing refreshed tracker-scoped review state for the trackers reviewed by
-// this request, including matched-tracker and removal state.
-
-// mergeReviewedTrackerBlocks keeps base tracker blocks for unreviewed trackers
-// and replaces only reviewed trackers with refreshed block results.
-
-// mergeReviewedTrackerCrossSeeds keeps base cross-seed torrents for unreviewed
-// trackers and replaces only reviewed trackers with updated cross-seed results.
-
-// mergeReviewedTrackerRuleFailures keeps base rule failures for unreviewed
-// trackers and replaces only reviewed trackers with refreshed failures.
-
-// removeReviewedTrackerMapEntries deletes reviewed tracker entries using
-// case-insensitive tracker names so stale mixed-case cache keys cannot survive.

@@ -31,7 +31,6 @@ type cliOptions struct {
 	TrackersRemove        string
 	Debug                 bool
 	LogLevel              string
-	DryRun                bool
 	Screens               int
 	NoSeed                bool
 	SkipAutoTorrent       bool
@@ -165,7 +164,6 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.StringVar(&opts.TrackersRemove, "rtk", "", "Remove these trackers (comma-separated)")
 	fs.BoolVar(&opts.Debug, "debug", false, "Enable debug mode")
 	fs.StringVar(&opts.LogLevel, "log-level", "", "Set run log level (error, warn, info, debug, trace)")
-	fs.BoolVar(&opts.DryRun, "dry-run", false, "Run without uploading")
 	fs.IntVar(&opts.Screens, "screens", -1, "Number of screenshots to take")
 	fs.IntVar(&opts.Screens, "s", -1, "Number of screenshots to take")
 	fs.BoolVar(&opts.NoSeed, "no-seed", false, "Do not inject torrent into clients")
@@ -608,7 +606,7 @@ func cliHelpSections(name string) []helpSection {
 		{title: "Config", names: []string{"config", "export-config", "export-config-plaintext", "import-config", "create-auth"}},
 		{title: "Application", names: []string{"version", "cleanup"}},
 		{title: "Execution", names: []string{
-			"queue", "limit-queue", "site-check", "site-upload", "dry-run", "debug", "log-level", "upload-only",
+			"queue", "limit-queue", "site-check", "site-upload", "debug", "log-level", "upload-only",
 			"delete-tmp", "unattended", "unattended_confirm",
 		}},
 		{title: "Tracker Selection", names: []string{"trackers", "trackers-remove"}},
@@ -729,8 +727,6 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, s
 		Trackers:       splitCSV(opts.Trackers),
 		TrackersRemove: splitCSV(opts.TrackersRemove),
 		Options: api.UploadOptions{
-			Debug:           opts.Debug,
-			DryRun:          opts.DryRun || opts.Debug || opts.SiteCheck,
 			RunLogLevel:     runLogLevel,
 			Screens:         screens,
 			NoSeed:          opts.NoSeed,

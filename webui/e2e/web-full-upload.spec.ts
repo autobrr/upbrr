@@ -53,7 +53,9 @@ test("embedded web runs image upload, tracker dry run, tracker upload, and histo
 
     await page.getByRole("button", { name: "Upload", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Review & Upload" })).toBeVisible();
+    await page.getByLabel("Log level").selectOption("debug");
     await page.getByRole("button", { name: "Run dry run" }).click();
+    await expect.poll(() => workspace.fake.counters.clientSearches).toBe(2);
     const reviewButton = page.getByRole("button", { name: "Review upload" });
     await expect(reviewButton).toBeEnabled();
     await expect(page.getByRole("heading", { name: "BTN" })).toBeVisible();

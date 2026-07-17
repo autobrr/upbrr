@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/logging"
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -32,6 +33,7 @@ func (s *Service) EvaluateUploadPolicy(
 	subject api.UploadSubject,
 	trackerNames []string,
 ) (api.UploadReviewOutcome, error) {
+	logger := logging.FromContext(ctx, s.logger)
 	resolved := uniqueUpperTrackers(trackerNames)
 	outcome := api.UploadReviewOutcome{ResolvedTrackers: append([]string(nil), resolved...)}
 	if len(resolved) == 0 {
@@ -57,7 +59,7 @@ func (s *Service) EvaluateUploadPolicy(
 			return api.UploadReviewOutcome{}, fmt.Errorf("metadata: evaluate upload policy: %w", err)
 		}
 		name := strings.ToUpper(strings.TrimSpace(tracker))
-		failures := trackers.EvaluateRulesWithRegistry(ctx, s.registry, name, api.NewRuleSubject(subject), s.logger)
+		failures := trackers.EvaluateRulesWithRegistry(ctx, s.registry, name, api.NewRuleSubject(subject), logger)
 		if len(failures) > 0 {
 			if outcome.TrackerRuleFailures == nil {
 				outcome.TrackerRuleFailures = make(map[string][]api.RuleFailure)

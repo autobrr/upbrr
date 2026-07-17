@@ -14,6 +14,7 @@ import (
 	"github.com/autobrr/upbrr/internal/clientdiscovery"
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -222,22 +223,6 @@ func (m *uploadModule) executeAcceptedUpload(
 		}
 	}
 
-	if input.Options.DryRun || input.Options.Debug {
-		if !input.Options.NoSeed {
-			entries, err := m.trackers.BuildUploadDryRun(ctx, subject, subject.Trackers)
-			if err != nil {
-				return 0, fmt.Errorf("core: %w", err)
-			}
-			annotateDryRunSubjectReleaseNames(subject, entries)
-			if err := m.injectTrackerDryRunSubjects(ctx, req, subject, input, entries, torrent); err != nil {
-				return 0, err
-			}
-		}
-		m.logger.Infof("core: dry-run or debug enabled, skipping tracker upload source=%s", subject.SourcePath)
-		emitPreparedUploadProgress(ctx, req, subject.SourcePath, "", "upload", "completed", "Dry run complete")
-		return 0, nil
-	}
-
 	emitPreparedUploadProgress(ctx, req, subject.SourcePath, "", "tracker_upload", "running", "Uploading to tracker")
 	summary, uploadErr := m.trackers.Upload(ctx, subject)
 	if summary.Uploaded < 0 {
@@ -305,7 +290,6 @@ func clientSubjectFromUpload(subject api.UploadSubject, input api.UploadReviewIn
 		FileList:        append([]string(nil), subject.FileList...),
 		DiscType:        subject.DiscType,
 		ClientOverrides: input.ClientOverrides,
-		Debug:           input.Options.Debug,
 	}
 }
 
@@ -349,14 +333,24 @@ func (m *uploadModule) injectTrackerDryRunSubjects(
 	subject api.UploadSubject,
 	input api.UploadReviewInput,
 	entries []api.TrackerDryRunEntry,
+	eligibleTrackers []string,
 	fallback api.TorrentResult,
-) error {
+) (int, error) {
+	logger := logging.FromContext(ctx, m.logger)
+	eligible := reviewedTrackerSet(eligibleTrackers)
 	ready := make([]api.TrackerDryRunEntry, 0, len(entries))
 	for _, entry := range entries {
-		if strings.EqualFold(strings.TrimSpace(entry.Status), "ready") {
+		trackerName := strings.ToUpper(strings.TrimSpace(entry.Tracker))
+		if _, ok := eligible[trackerName]; ok && strings.EqualFold(strings.TrimSpace(entry.Status), "ready") {
 			ready = append(ready, entry)
+		} else {
+			logger.Debugf("core: tracker dry-run injection skipped tracker=%s status=%s eligible=%t", trackerName, entry.Status, ok)
 		}
 	}
+	if len(ready) > 0 && m.clients == nil {
+		return 0, errors.New("core: client service not configured")
+	}
+	injected := 0
 	for _, entry := range ready {
 		trackerName := strings.ToUpper(strings.TrimSpace(entry.Tracker))
 		injectSubject := subject
@@ -371,7 +365,7 @@ func (m *uploadModule) injectTrackerDryRunSubjects(
 		}
 		prepared, err := trackers.PrepareDryRunInjectionTorrentWithRegistry(injectSubject, m.cfg.MainSettings.DBPath, trackerName, trackerCfg, m.registry)
 		if err != nil {
-			return fmt.Errorf("core: tracker dry-run injection torrent artifact tracker=%s: %w", trackerName, err)
+			return 0, fmt.Errorf("core: tracker dry-run injection torrent artifact tracker=%s: %w", trackerName, err)
 		}
 		injectTorrent := api.TorrentResult{
 			Path:     strings.TrimSpace(prepared.TorrentPath),
@@ -387,69 +381,112 @@ func (m *uploadModule) injectTrackerDryRunSubjects(
 		emitPreparedUploadProgress(ctx, req, subject.SourcePath, trackerName, "client_injection", "running", "Injecting torrent into client")
 		if err := m.clients.Inject(ctx, clientSubjectFromUpload(injectSubject, input), injectTorrent); err != nil {
 			emitPreparedUploadProgress(ctx, req, subject.SourcePath, trackerName, "client_injection", "failed", "Client injection failed")
-			return fmt.Errorf("core: %w", err)
+			return 0, fmt.Errorf("core: %w", err)
 		}
+		injected++
 		emitPreparedUploadProgress(ctx, req, subject.SourcePath, trackerName, "client_injection", "completed", "Client injection complete")
 	}
-	return nil
+	return injected, nil
 }
 
-func (m *uploadModule) fetchAcceptedTrackerDryRun(ctx context.Context, input api.TrackerDryRunInput) (api.TrackerDryRunPreview, error) {
+func (m *uploadModule) runAcceptedTrackerDryRun(ctx context.Context, plan api.TrackerDryRunPlan) (api.TrackerDryRunPreview, error) {
 	if m.preparedFacts == nil {
 		return api.TrackerDryRunPreview{}, errors.New("core: canonical preparation is not configured")
 	}
-	reviewInput := api.UploadReviewInput{
+	input := plan.Input
+	logger := logging.FromContext(ctx, m.logger)
+	reviewInput := trackerDryRunReviewInput(input)
+	req := uploadRequestFromPlan(api.UploadExecutionPlan{Input: reviewInput}, normalizeReviewedTrackers(input.Trackers))
+	sourcePath := strings.TrimSpace(input.Release.SourcePath)
+	logger.Infof("core: tracker dry-run started source=%s trackers=%d", sourcePath, len(req.Trackers))
+	emitPreparedUploadProgress(ctx, req, sourcePath, "", "dry_run", "running", "Building tracker dry run")
+	evidence, err := m.acceptedDryRunEvidence(ctx, plan)
+	if err != nil {
+		emitPreparedUploadProgress(ctx, req, sourcePath, "", "dry_run", "failed", "Tracker dry run failed")
+		return api.TrackerDryRunPreview{}, err
+	}
+	preview, err := m.buildTrackerPayloadPreview(ctx, reviewInput, trackers.PreparationIntentDryRun, evidence)
+	if err != nil {
+		emitPreparedUploadProgress(ctx, req, sourcePath, "", "dry_run", "failed", "Tracker dry run failed")
+		return api.TrackerDryRunPreview{}, err
+	}
+	entries := trackerDryRunEntriesFromAssessment(preview.review)
+	req = uploadRequestFromPlan(api.UploadExecutionPlan{Input: reviewInput}, preview.outcome.ResolvedTrackers)
+	injected := 0
+	if !preview.subject.Options.NoSeed {
+		injected, err = m.injectTrackerDryRunSubjects(
+			ctx,
+			req,
+			preview.subject,
+			reviewInput,
+			entries,
+			preview.outcome.Eligibility.EligibleTrackers,
+			preview.torrent,
+		)
+		if err != nil {
+			emitPreparedUploadProgress(ctx, req, preview.subject.SourcePath, "", "dry_run", "failed", "Tracker dry run failed")
+			return api.TrackerDryRunPreview{}, err
+		}
+	}
+	emitPreparedUploadProgress(ctx, req, preview.subject.SourcePath, "", "dry_run", "completed", "Tracker dry run complete")
+	logger.Infof(
+		"core: tracker dry-run completed source=%s trackers=%d eligible=%d injected=%d",
+		preview.subject.SourcePath,
+		len(entries),
+		len(preview.outcome.Eligibility.EligibleTrackers),
+		injected,
+	)
+	return api.TrackerDryRunPreview{SourcePath: preview.subject.SourcePath, Trackers: sanitizeTrackerDryRunEntries(entries)}, nil
+}
+
+func trackerDryRunReviewInput(input api.TrackerDryRunInput) api.UploadReviewInput {
+	return api.UploadReviewInput{
 		Release:                input.Release,
 		Trackers:               append([]string(nil), input.Trackers...),
 		IgnoreDupesFor:         append([]string(nil), input.IgnoreDupesFor...),
 		IgnoreRuleFailuresFor:  append([]string(nil), input.IgnoreRuleFailuresFor...),
 		QuestionnaireAnswers:   cloneOperationQuestionnaireAnswers(input.QuestionnaireAnswers),
+		TrackerIDOverrides:     cloneStringMap(input.TrackerIDOverrides),
 		DescriptionGroups:      api.CloneDescriptionBuilderGroups(input.DescriptionGroups),
 		TrackerConfigOverrides: input.TrackerConfigOverrides,
 		TrackerSiteOverrides:   input.TrackerSiteOverrides,
+		ClientOverrides:        input.ClientOverrides,
 		ImageHostOverrides:     input.ImageHostOverrides,
+		ScreenshotOverrides:    input.ScreenshotOverrides,
 		TorrentOverrides:       input.TorrentOverrides,
 		Options:                input.Options,
 	}
-	reviewInput.Options.DryRun = true
-	subject, err := m.preparedFacts.ResolveUploadSubject(ctx, reviewInput)
-	if err != nil {
-		return api.TrackerDryRunPreview{}, fmt.Errorf("core: resolve tracker dry-run subject: %w", err)
+}
+
+// trackerDryRunEntriesFromAssessment projects review payloads into explicit
+// dry-run entries while retaining every selected tracker's eligibility result.
+func trackerDryRunEntriesFromAssessment(review api.UploadReview) []api.TrackerDryRunEntry {
+	eligibility := make(map[string]api.TrackerEligibilityState, len(review.Eligibility.Trackers))
+	for _, state := range review.Eligibility.Trackers {
+		eligibility[strings.ToUpper(strings.TrimSpace(state.Tracker))] = state
 	}
-	resolvedTrackers := trackers.ResolveExplicitTrackersWithRegistry(input.Trackers, m.logger, m.registry)
-	if len(resolvedTrackers) == 0 {
-		return api.TrackerDryRunPreview{}, noEligibleTrackersError(api.OperationKindDryRun)
-	}
-	subject.Trackers = resolvedTrackers
-	subject.Options.DryRun = true
-	if err := m.hydrateCanonicalTrackerState(ctx, &subject); err != nil {
-		return api.TrackerDryRunPreview{}, err
-	}
-	req := uploadRequestFromPlan(api.UploadExecutionPlan{Input: reviewInput}, resolvedTrackers)
-	if m.resolveSubjectGroups == nil {
-		return api.TrackerDryRunPreview{}, errors.New("core: subject description resolver not configured")
-	}
-	descriptionGroups, err := m.resolveSubjectGroups(ctx, subject, reviewInput)
-	if err != nil {
-		return api.TrackerDryRunPreview{}, err
-	}
-	subject.DescriptionGroups = api.CloneDescriptionBuilderGroups(descriptionGroups)
-	torrent, err := m.torrents.Create(ctx, torrentSubjectFromUpload(subject, reviewInput))
-	if err != nil {
-		return api.TrackerDryRunPreview{}, fmt.Errorf("core: %w", err)
-	}
-	subject.TorrentPath = torrent.Path
-	entries, err := m.trackers.BuildUploadDryRun(ctx, subject, resolvedTrackers)
-	if err != nil {
-		return api.TrackerDryRunPreview{}, fmt.Errorf("core: %w", err)
-	}
-	annotateDryRunSubjectReleaseNames(subject, entries)
-	if !subject.Options.NoSeed {
-		if err := m.injectTrackerDryRunSubjects(ctx, req, subject, reviewInput, entries, torrent); err != nil {
-			return api.TrackerDryRunPreview{}, err
+	entries := make([]api.TrackerDryRunEntry, 0, len(review.Trackers))
+	for _, tracker := range review.Trackers {
+		entry := tracker.DryRun
+		if strings.TrimSpace(entry.Tracker) == "" {
+			entry.Tracker = strings.ToUpper(strings.TrimSpace(tracker.Tracker))
 		}
+		state, ok := eligibility[strings.ToUpper(strings.TrimSpace(entry.Tracker))]
+		if ok && !state.Eligible {
+			entry.Status = "blocked"
+			messages := make([]string, 0, len(state.Reasons))
+			for _, reason := range state.Reasons {
+				if message := strings.TrimSpace(reason.Message); message != "" {
+					messages = append(messages, message)
+				}
+			}
+			if len(messages) > 0 {
+				entry.Message = strings.Join(messages, " ")
+			}
+		}
+		entries = append(entries, entry)
 	}
-	return api.TrackerDryRunPreview{SourcePath: subject.SourcePath, Trackers: sanitizeTrackerDryRunEntries(entries)}, nil
+	return entries
 }
 
 func normalizeReviewedTrackers(trackers []string) []string {
@@ -605,12 +642,6 @@ func (m *uploadModule) hydrateCanonicalTrackerState(ctx context.Context, subject
 	return nil
 }
 
-// executePreparedUpload returns the number of tracker uploads accepted before any
-// later upload, injection, validation, or cancellation error.
-
-// Cross-seed torrents come from dupe matches and should be injected even when
-// the tracker upload summary later reports no successful uploads.
-
 // persistPreparedInfoHash stores the prepared torrent hash without replacing
 // existing release metadata used by history views.
 func (m *uploadModule) persistPreparedInfoHash(ctx context.Context, sourcePath string, infoHash string) error {
@@ -640,10 +671,3 @@ func (m *uploadModule) persistPreparedInfoHash(ctx context.Context, sourcePath s
 	}
 	return nil
 }
-
-// injectTrackerDryRunTorrents injects only ready dry-run tracker torrents into
-// configured clients so debug runs can exercise client handling without upload.
-
-// prepareDryRunInjectionMeta returns metadata pointing at the tracker-specific
-// dry-run torrent artifact when one exists, preserving the base torrent as a
-// fallback for client injection.

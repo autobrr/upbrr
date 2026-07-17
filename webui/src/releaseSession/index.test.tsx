@@ -551,17 +551,19 @@ describe("useReleaseSession", () => {
     const { result } = renderHook(useReleaseSession, { wrapper: wrapperFor(portsFor()) });
     await selectAndPrepare(result, "C:\\media\\Example");
     act(() => result.current.upload.chooseTrackers(["AITHER", "BLU"]));
-    act(() => result.current.upload.changeOptions({ debug: true }));
+    act(() => result.current.upload.changeOptions({ noSeed: true, runLogLevel: "debug" }));
     act(() => result.current.upload.answerQuestionnaire("AITHER", "season", "1"));
 
     await act(() => result.current.input.prepare());
     expect(result.current.upload.view.selectedTrackers).toEqual(["AITHER", "BLU"]);
-    expect(result.current.upload.view.options.debug).toBe(true);
+    expect(result.current.upload.view.options.noSeed).toBe(true);
+    expect(result.current.upload.view.options.runLogLevel).toBe("debug");
     expect(result.current.upload.view.questionnaireAnswers.AITHER).toEqual({ season: "1" });
 
     act(() => result.current.input.selectSource("C:\\media\\Other"));
     expect(result.current.upload.view.selectedTrackers).toEqual([]);
-    expect(result.current.upload.view.options.debug).toBe(false);
+    expect(result.current.upload.view.options.noSeed).toBe(false);
+    expect(result.current.upload.view.options.runLogLevel).toBe("info");
     expect(result.current.upload.view.questionnaireAnswers).toEqual({});
   });
 
@@ -766,10 +768,18 @@ describe("useReleaseSession", () => {
 
     await act(() => result.current.upload.runDryRun());
     expect(result.current.upload.view.dryRunStatus).toBe("ready");
+    expect(dryRun).toHaveBeenCalledOnce();
+    expect(dryRun.mock.calls[0]?.[0].dupeJobID).toBe("dupe-job");
+    expect(dryRun.mock.calls[0]?.[0]).not.toHaveProperty("summary");
+    expect(dryRun.mock.calls[0]?.[0]).not.toHaveProperty("results");
     act(() => result.current.upload.answerQuestionnaire("AITHER", "season", "2"));
     expect(result.current.upload.view.dryRun).not.toBeNull();
     expect(result.current.upload.view.dryRunStaleReason).toBe("Questionnaire answers changed.");
     expect(await result.current.upload.review()).toBe(false);
+
+    act(() => result.current.upload.chooseTrackers(["AITHER", "BLU"]));
+    expect(await result.current.upload.runDryRun()).toBe(false);
+    expect(dryRun).toHaveBeenCalledOnce();
   });
 
   it("preserves an accepted Job start when the source session is replaced", async () => {

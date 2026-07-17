@@ -42,11 +42,7 @@ func (preparedDupeStub) CheckAcceptedDupes(context.Context, api.DuplicateCheckIn
 
 type preparedDryRunStub struct{}
 
-func (preparedDryRunStub) FetchTrackerDryRunPreview(context.Context, api.Request) (api.TrackerDryRunPreview, error) {
-	return api.TrackerDryRunPreview{}, nil
-}
-
-func (preparedDryRunStub) FetchAcceptedTrackerDryRun(context.Context, api.TrackerDryRunInput) (api.TrackerDryRunPreview, error) {
+func (preparedDryRunStub) RunAcceptedTrackerDryRun(context.Context, api.TrackerDryRunPlan) (api.TrackerDryRunPreview, error) {
 	return api.TrackerDryRunPreview{}, nil
 }
 
@@ -84,8 +80,11 @@ func TestCoreCapabilitiesPreparedOperationReadinessRejectsPartialBundles(t *test
 	if !withoutGeneration.Available() {
 		t.Fatal("expected workflow-only test bundle to remain available")
 	}
-	if withoutGeneration.PreparedUploadReady() || withoutGeneration.PreparedDupeReady() || withoutGeneration.PreparedDVDReady() || withoutGeneration.PreparedDryRunReady() {
-		t.Fatal("expected workflows without generation support to reject prepared operations")
+	if withoutGeneration.PreparedUploadReady() || withoutGeneration.PreparedDupeReady() || withoutGeneration.PreparedDVDReady() {
+		t.Fatal("expected background workflows without generation support to reject prepared operations")
+	}
+	if !withoutGeneration.PreparedDryRunReady() {
+		t.Fatal("expected active-runtime dry run to remain available without generation transfer")
 	}
 
 	complete := withoutGeneration

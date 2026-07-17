@@ -152,7 +152,7 @@ func TestRunInteractiveCLIPathDVDMenuCaptureFailureStopsBeforeReview(t *testing.
 	}
 }
 
-func TestRunInteractiveCLIPathExplicitDryRunCapturesDVDMenus(t *testing.T) {
+func TestRunInteractiveCLIPathDebugCapturesDVDMenus(t *testing.T) {
 	t.Parallel()
 
 	discRoot := t.TempDir()
@@ -167,7 +167,7 @@ func TestRunInteractiveCLIPathExplicitDryRunCapturesDVDMenus(t *testing.T) {
 	}
 	err := runInteractiveCLIPath(context.Background(), coreSvc, cliOptions{
 		Unattended:  true,
-		DryRun:      true,
+		Debug:       true,
 		GetDVDMenus: true,
 	}, map[string]bool{}, discRoot, config.Config{
 		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
@@ -175,8 +175,8 @@ func TestRunInteractiveCLIPathExplicitDryRunCapturesDVDMenus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runInteractiveCLIPath: %v", err)
 	}
-	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,capture-dvd-menus,review" {
-		t.Fatalf("dry-run capture order = %s", got)
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,screenshot-plan,capture-dvd-menus,debug,debug" {
+		t.Fatalf("debug capture order = %s", got)
 	}
 }
 
@@ -247,7 +247,7 @@ func TestRunInteractiveCLIPathDoubleDupeBeforeScreenshotAndReview(t *testing.T) 
 	}
 }
 
-func TestRunInteractiveCLIPathDryRunSkipsScreenshotSideEffects(t *testing.T) {
+func TestRunInteractiveCLIPathDebugRunsScreenshotSideEffects(t *testing.T) {
 	t.Parallel()
 
 	coreSvc := &cliCoreForTest{
@@ -263,28 +263,28 @@ func TestRunInteractiveCLIPathDryRunSkipsScreenshotSideEffects(t *testing.T) {
 		},
 		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
 	}
-	err := runInteractiveCLIPath(context.Background(), coreSvc, cliOptions{Unattended: true, DryRun: true}, map[string]bool{}, "movie.mkv", config.Config{
+	err := runInteractiveCLIPath(context.Background(), coreSvc, cliOptions{Unattended: true, Debug: true}, map[string]bool{}, "movie.mkv", config.Config{
 		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
 	})
 	if err != nil {
 		t.Fatalf("runInteractiveCLIPath: %v", err)
 	}
-	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,review" {
-		t.Fatalf("expected dry-run to skip screenshot side effects, got %s", got)
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,screenshot-plan,generate-screenshots,save-screenshots,debug,debug" {
+		t.Fatalf("expected debug to prepare screenshots before the dry-run module, got %s", got)
 	}
-	if len(coreSvc.savedFinalImages) != 0 {
-		t.Fatalf("expected dry-run to skip saved screenshots, got %#v", coreSvc.savedFinalImages)
+	if len(coreSvc.savedFinalImages) != 1 {
+		t.Fatalf("expected debug to retain generated screenshots, got %#v", coreSvc.savedFinalImages)
 	}
-	if coreSvc.runUploadPreparedCalls != 1 {
-		t.Fatalf("expected dry-run to run prepared injection path, got %d", coreSvc.runUploadPreparedCalls)
+	if coreSvc.runUploadPreparedCalls != 0 || coreSvc.runTrackerDryRunCalls != 2 {
+		t.Fatalf("expected debug dry-run only, upload=%d debug=%d", coreSvc.runUploadPreparedCalls, coreSvc.runTrackerDryRunCalls)
 	}
 	uploadReq := coreSvc.requests[len(coreSvc.requests)-1].req
 	if uploadReq.Options.NoSeed {
-		t.Fatalf("expected dry-run prepared upload to preserve no-seed=false, got %#v", uploadReq.Options)
+		t.Fatalf("expected debug request to preserve no-seed=false, got %#v", uploadReq.Options)
 	}
 }
 
-func TestRunInteractiveCLIPathDryRunPreservesExplicitNoSeed(t *testing.T) {
+func TestRunInteractiveCLIPathDebugPreservesExplicitNoSeed(t *testing.T) {
 	t.Parallel()
 
 	coreSvc := &cliCoreForTest{
@@ -292,7 +292,7 @@ func TestRunInteractiveCLIPathDryRunPreservesExplicitNoSeed(t *testing.T) {
 	}
 	err := runInteractiveCLIPath(context.Background(), coreSvc, cliOptions{
 		Unattended: true,
-		DryRun:     true,
+		Debug:      true,
 		NoSeed:     true,
 	}, map[string]bool{}, "movie.mkv", config.Config{
 		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"BLU"}},
@@ -303,7 +303,7 @@ func TestRunInteractiveCLIPathDryRunPreservesExplicitNoSeed(t *testing.T) {
 
 	uploadReq := coreSvc.requests[len(coreSvc.requests)-1].req
 	if !uploadReq.Options.NoSeed {
-		t.Fatalf("expected explicit dry-run no-seed to be preserved, got %#v", uploadReq.Options)
+		t.Fatalf("expected explicit debug no-seed to be preserved, got %#v", uploadReq.Options)
 	}
 }
 
@@ -329,14 +329,14 @@ func TestRunInteractiveCLIPathDebugHandlesScreenshotsBeforeReview(t *testing.T) 
 	if err != nil {
 		t.Fatalf("runInteractiveCLIPath: %v", err)
 	}
-	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,screenshot-plan,generate-screenshots,save-screenshots,review" {
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,screenshot-plan,generate-screenshots,save-screenshots,debug,debug" {
 		t.Fatalf("expected debug to prepare screenshots before review, got %s", got)
 	}
 	if len(coreSvc.savedFinalImages) != 1 || coreSvc.savedFinalImages[0].Path != "screen1.png" {
 		t.Fatalf("expected debug to save generated final screenshot, got %#v", coreSvc.savedFinalImages)
 	}
-	if coreSvc.runUploadPreparedCalls != 1 {
-		t.Fatalf("expected debug to run prepared injection path, got %d", coreSvc.runUploadPreparedCalls)
+	if coreSvc.runUploadPreparedCalls != 0 || coreSvc.runTrackerDryRunCalls != 2 {
+		t.Fatalf("expected debug dry-run only, upload=%d debug=%d", coreSvc.runUploadPreparedCalls, coreSvc.runTrackerDryRunCalls)
 	}
 	uploadReq := coreSvc.requests[len(coreSvc.requests)-1].req
 	if uploadReq.Options.NoSeed {
@@ -383,8 +383,8 @@ func TestRunInteractiveCLIPathDebugProcessesNonRuleCheckedTrackers(t *testing.T)
 	if err != nil {
 		t.Fatalf("runInteractiveCLIPath: %v", err)
 	}
-	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,screenshot-plan,review" {
-		t.Fatalf("expected debug to run checks and continue to review, got %s", got)
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,screenshot-plan,debug,debug" {
+		t.Fatalf("expected debug to reuse dupe evidence without upload review, got %s", got)
 	}
 	uploadReq := coreSvc.requests[len(coreSvc.requests)-1].req
 	if got := strings.Join(uploadReq.Trackers, ","); got != "AITHER,BLU,DP" {
@@ -396,59 +396,17 @@ func TestRunInteractiveCLIPathDebugProcessesNonRuleCheckedTrackers(t *testing.T)
 	if got := strings.Join(uploadReq.IgnoreTrackerRuleFailuresFor, ","); got != "" {
 		t.Fatalf("expected debug upload not to ignore rule blocks, got %s", got)
 	}
-}
-
-func TestRunInteractiveCLIPathDryRunProcessesNonRuleCheckedTrackers(t *testing.T) {
-	t.Parallel()
-
-	coreSvc := &cliCoreForTest{
-		previewResponses: []api.MetadataPreview{{
-			SourcePath: "Example.Release.2026.1080p-GRP",
-			TrackerData: []api.TrackerPreview{{
-				Tracker: "AITHER",
-				Matched: true,
-			}},
-		}},
-		dupeSummary: api.DupeCheckSummary{
-			Results: []api.DupeCheckResult{
-				{
-					Tracker:  "AITHER",
-					Status:   "completed",
-					HasDupes: true,
-				},
-				{
-					Tracker:   "BLU",
-					Status:    "skipped",
-					Skipped:   true,
-					SkipRules: []string{"require_movie_only"},
-				},
-				{Tracker: "DP", Status: "completed"},
-			},
-		},
-		review: api.UploadReview{Trackers: []api.TrackerReview{
-			{Tracker: "AITHER"},
-			{Tracker: "BLU"},
-			{Tracker: "DP"},
-		}},
+	if len(coreSvc.dryRunPlans) != 2 {
+		t.Fatalf("accepted dry-run plans = %d, want 2", len(coreSvc.dryRunPlans))
 	}
-	err := runInteractiveCLIPath(context.Background(), coreSvc, cliOptions{Unattended: true, DryRun: true}, map[string]bool{}, "Example.Release.2026.1080p-GRP", config.Config{
-		Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU", "DP"}},
-	})
-	if err != nil {
-		t.Fatalf("runInteractiveCLIPath: %v", err)
-	}
-	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,dupes,review" {
-		t.Fatalf("expected dry-run to run dupe check and continue to review, got %s", got)
-	}
-	uploadReq := coreSvc.requests[len(coreSvc.requests)-1].req
-	if got := strings.Join(uploadReq.Trackers, ","); got != "AITHER,BLU,DP" {
-		t.Fatalf("expected dry-run upload to keep all trackers, got %s", got)
-	}
-	if got := strings.Join(uploadReq.IgnoreDupesFor, ","); got != "" {
-		t.Fatalf("expected dry-run upload not to infer duplicate authorization, got %s", got)
-	}
-	if got := strings.Join(uploadReq.IgnoreTrackerRuleFailuresFor, ","); got != "" {
-		t.Fatalf("expected dry-run upload not to ignore rule blocks, got %s", got)
+	for _, plan := range coreSvc.dryRunPlans {
+		if plan.Duplicate.Release != plan.Input.Release || plan.Duplicate.Release.Generation != 1 {
+			t.Fatalf("accepted duplicate release = %#v input=%#v", plan.Duplicate.Release, plan.Input.Release)
+		}
+		if len(plan.Duplicate.Results) != len(coreSvc.dupeSummary.Results) ||
+			!slices.Equal(plan.Duplicate.Results[1].SkipRules, coreSvc.dupeSummary.Results[1].SkipRules) {
+			t.Fatalf("accepted duplicate results = %#v", plan.Duplicate.Results)
+		}
 	}
 }
 
@@ -480,7 +438,7 @@ func TestIsRuleSkippedDupeResultUsesSkipRules(t *testing.T) {
 	}
 }
 
-func TestRunInteractiveCLIPathQuestionnaireAnswerRebuildsDryRunReview(t *testing.T) {
+func TestRunInteractiveCLIPathQuestionnaireAnswerRebuildsReviewBeforeDebug(t *testing.T) {
 	coreSvc := &cliCoreForTest{
 		previewResponses: []api.MetadataPreview{{SourcePath: "Example.Release.2026.1080p-GRP"}},
 		dupeSummary: api.DupeCheckSummary{
@@ -505,9 +463,23 @@ func TestRunInteractiveCLIPathQuestionnaireAnswerRebuildsDryRunReview(t *testing
 				},
 			}}},
 		},
+		dryRunPreview: api.TrackerDryRunPreview{
+			SourcePath: "Example.Release.2026.1080p-GRP",
+			Trackers: []api.TrackerDryRunEntry{{
+				Tracker:     "ANT",
+				Status:      "ready",
+				ReleaseName: "Example.Release.2026.S01E01.1080p-GRP",
+				Questionnaire: &api.TrackerQuestionnaire{Fields: []api.TrackerQuestionnaireField{{
+					Key:      "type",
+					Label:    "Type",
+					Value:    "Feature",
+					Required: true,
+				}}},
+			}},
+		},
 	}
 	output := captureStdout(t, func() {
-		err := runInteractiveCLIPathWithInput(context.Background(), coreSvc, cliOptions{DryRun: true, OnlyID: true}, map[string]bool{}, "Example.Release.2026.1080p-GRP", 1, config.Config{
+		err := runInteractiveCLIPathWithInput(context.Background(), coreSvc, cliOptions{Debug: true, OnlyID: true}, map[string]bool{}, "Example.Release.2026.1080p-GRP", 1, config.Config{
 			Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"ANT"}},
 		}, strings.NewReader("y\nEpisode\n"))
 		if err != nil {
@@ -515,16 +487,20 @@ func TestRunInteractiveCLIPathQuestionnaireAnswerRebuildsDryRunReview(t *testing
 		}
 	})
 	reviewCalls := 0
+	dryRunCalls := 0
 	for _, call := range coreSvc.callOrder {
 		if call == "review" {
 			reviewCalls++
 		}
+		if call == "debug" {
+			dryRunCalls++
+		}
 	}
-	if reviewCalls != 2 {
-		t.Fatalf("expected questionnaire answer to rebuild review, got %d review call(s): %#v", reviewCalls, coreSvc.callOrder)
+	if reviewCalls != 0 || dryRunCalls != 3 {
+		t.Fatalf("expected questionnaire answer to rebuild dry-run payloads from retained evidence, review=%d dry_run=%d calls=%#v", reviewCalls, dryRunCalls, coreSvc.callOrder)
 	}
 	if !strings.Contains(output, "Tracker release name: Example.Release.2026.S01E01.1080p-GRP") {
-		t.Fatalf("expected dry-run output to use rebuilt questionnaire-aware review, got %q", output)
+		t.Fatalf("expected debug output to use questionnaire-aware dry run, got %q", output)
 	}
 	uploadReq := coreSvc.requests[len(coreSvc.requests)-1].req
 	if got := uploadReq.TrackerQuestionnaireAnswers["ANT"]["type"]; got != "Episode" {
@@ -724,6 +700,7 @@ func TestResolveCLIUploadTrackersExplicitTrackersSuppressDefaults(t *testing.T) 
 		api.MetadataPreview{},
 		config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}}},
 		newCLITrackerRegistryForTest(t),
+		false,
 	)
 	if len(selected) != 1 || selected[0] != "BLU" {
 		t.Fatalf("expected explicit BLU selection, got %#v", selected)
@@ -845,7 +822,7 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckLogsRuleFailureSkipOnlyForManagedAut
 	}
 }
 
-func TestEnsureCLITrackerAuthBeforeDupeCheckDryRunSkipsRuleFailedManagedAuth(t *testing.T) {
+func TestEnsureCLITrackerAuthBeforeDupeCheckSkipsRuleFailedManagedAuth(t *testing.T) {
 	t.Parallel()
 
 	authSvc := &cliTrackerAuthForTest{
@@ -873,7 +850,7 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckDryRunSkipsRuleFailedManagedAuth(t *
 		context.Background(),
 		bufio.NewReader(strings.NewReader("")),
 		authSvc,
-		api.Request{Options: api.UploadOptions{DryRun: true, InteractionMode: api.InteractionModeInteractive}},
+		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
 		[]string{"MTV", "PTP"},
 		api.MetadataPreview{TrackerRuleFailures: map[string][]api.RuleFailure{
 			"MTV": {{Rule: "extra_check", Reason: "managed auth rule failure"}},
@@ -884,15 +861,15 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckDryRunSkipsRuleFailedManagedAuth(t *
 		t.Fatalf("ensureCLITrackerAuthBeforeDupeCheck: %v", err)
 	}
 	if strings.Join(got, ",") != "PTP" {
-		t.Fatalf("expected dry-run to skip rule-failed managed auth tracker, got %#v", got)
+		t.Fatalf("expected rule-failed managed auth tracker to be skipped, got %#v", got)
 	}
 	if strings.Join(authSvc.validated, ",") != "PTP" {
-		t.Fatalf("expected dry-run to validate only rule-eligible managed auth trackers, got %#v", authSvc.validated)
+		t.Fatalf("expected only rule-eligible managed auth trackers to be validated, got %#v", authSvc.validated)
 	}
 
 	logs := strings.Join(append(append(append([]string{}, logger.debug...), logger.info...), logger.warn...), "\n")
 	if !strings.Contains(logs, "tracker=MTV skipped before auth due to rule failure") {
-		t.Fatal("dry-run should skip managed auth due to rule failure")
+		t.Fatal("rule-failed managed auth should be skipped")
 	}
 }
 
@@ -1665,34 +1642,6 @@ func TestPrepareCLIUploadMetadataReturnsResolvedPreviewPaths(t *testing.T) {
 	}
 }
 
-func TestBuildCLIUploadDebugReviewUsesPreparedResolvedPath(t *testing.T) {
-	t.Parallel()
-
-	coreSvc := &cliCoreForTest{
-		previewSourcePath: filepath.Join("folder", "movie.mkv"),
-		review:            api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
-	}
-	req := api.Request{SourcePath: "folder"}
-	resolvedReq, err := prepareCLIUploadMetadata(context.Background(), coreSvc, req)
-	if err != nil {
-		t.Fatalf("prepareCLIUploadMetadata: %v", err)
-	}
-
-	review, err := buildCLIUploadDebugReview(context.Background(), coreSvc, req.SourcePath, resolvedReq)
-	if err != nil {
-		t.Fatalf("buildCLIUploadDebugReviews: %v", err)
-	}
-	if review.SourcePath != "folder" {
-		t.Fatalf("expected debug review to retain original source label, got %q", review.SourcePath)
-	}
-	if len(coreSvc.requests) != 2 {
-		t.Fatalf("expected preview and review requests, got %#v", coreSvc.requests)
-	}
-	if got := coreSvc.requests[1]; got.name != "review" || got.req.SourcePath != filepath.Join("folder", "movie.mkv") {
-		t.Fatalf("expected debug review to use prepared resolved path, got %#v", got)
-	}
-}
-
 func TestPromptTrackerQuestionnairesRejectsBlankRequiredUnattendedDefault(t *testing.T) {
 	t.Parallel()
 
@@ -2042,7 +1991,7 @@ func TestMaybeEditCLIDescriptionsSavesEditedGroupOnRequest(t *testing.T) {
 
 	req := api.Request{SourcePath: "movie.mkv", Trackers: []string{"AITHER"}}
 	review := coreSvc.review
-	updatedReq, _, err := maybeEditCLIDescriptions(context.Background(), coreSvc, bufio.NewReader(strings.NewReader("y\n")), req, review, cliOptions{})
+	updatedReq, err := maybeEditCLIDescriptions(context.Background(), coreSvc, bufio.NewReader(strings.NewReader("y\n")), req, review, cliOptions{})
 	if err != nil {
 		t.Fatalf("maybeEditCLIDescriptions: %v", err)
 	}
@@ -2055,9 +2004,10 @@ func TestMaybeEditCLIDescriptionsSavesEditedGroupOnRequest(t *testing.T) {
 	if len(updatedReq.DescriptionGroups) != 1 || updatedReq.DescriptionGroups[0].RawDescription != "edited description" {
 		t.Fatalf("expected edited request description group, got %#v", updatedReq.DescriptionGroups)
 	}
-	last := coreSvc.requests[len(coreSvc.requests)-1]
-	if last.name != "review" || len(last.req.DescriptionGroups) != 1 || last.req.DescriptionGroups[0].RawDescription != "edited description" {
-		t.Fatalf("expected rebuilt review with edited description group, got %#v", last)
+	for _, recorded := range coreSvc.requests {
+		if recorded.name == "review" {
+			t.Fatalf("expected final operation assessment to consume edited request without an intermediate review rebuild, got %#v", recorded)
+		}
 	}
 }
 
@@ -2095,7 +2045,7 @@ func TestMaybeEditCLIDescriptionsPromptsEachDescriptionGroup(t *testing.T) {
 	defer func() { editCLIDescriptionFile = oldEditor }()
 
 	req := api.Request{SourcePath: "movie.mkv", Trackers: []string{"HDB", "HHD"}}
-	updatedReq, _, err := maybeEditCLIDescriptions(context.Background(), coreSvc, bufio.NewReader(strings.NewReader("n\ny\n")), req, coreSvc.review, cliOptions{})
+	updatedReq, err := maybeEditCLIDescriptions(context.Background(), coreSvc, bufio.NewReader(strings.NewReader("n\ny\n")), req, coreSvc.review, cliOptions{})
 	if err != nil {
 		t.Fatalf("maybeEditCLIDescriptions: %v", err)
 	}
@@ -2121,9 +2071,10 @@ func TestMaybeEditCLIDescriptionsPromptsEachDescriptionGroup(t *testing.T) {
 	if updatedReq.DescriptionGroups[1].RawDescription != "unit3d generated description edited" {
 		t.Fatalf("expected Unit3D group to be edited, got %#v", updatedReq.DescriptionGroups[1])
 	}
-	last := coreSvc.requests[len(coreSvc.requests)-1]
-	if last.name != "review" || len(last.req.DescriptionGroups) != 2 || last.req.DescriptionGroups[1].RawDescription != "unit3d generated description edited" {
-		t.Fatalf("expected rebuilt review with edited unit3d group, got %#v", last)
+	for _, recorded := range coreSvc.requests {
+		if recorded.name == "review" {
+			t.Fatalf("expected final operation assessment to consume edited groups without an intermediate review rebuild, got %#v", recorded)
+		}
 	}
 }
 
@@ -2142,7 +2093,7 @@ func TestMaybeEditCLIDescriptionsSkipsOnlyID(t *testing.T) {
 		Trackers:   []string{"AITHER"},
 		Options:    api.UploadOptions{OnlyID: true},
 	}
-	updatedReq, _, err := maybeEditCLIDescriptions(context.Background(), coreSvc, bufio.NewReader(strings.NewReader("y\n")), req, api.UploadReview{}, cliOptions{})
+	updatedReq, err := maybeEditCLIDescriptions(context.Background(), coreSvc, bufio.NewReader(strings.NewReader("y\n")), req, api.UploadReview{}, cliOptions{})
 	if err != nil {
 		t.Fatalf("maybeEditCLIDescriptions: %v", err)
 	}
@@ -2163,6 +2114,9 @@ type cliCoreForTest struct {
 	previewSourcePath      string
 	previewResponses       []api.MetadataPreview
 	runUploadPreparedCalls int
+	runTrackerDryRunCalls  int
+	dryRunPlans            []api.TrackerDryRunPlan
+	dryRunPreview          api.TrackerDryRunPreview
 	dupeSummary            api.DupeCheckSummary
 	screenshotPlan         api.ScreenshotPlan
 	screenshotResult       api.ScreenshotResult
@@ -2273,6 +2227,40 @@ func (c *cliCoreForTest) RunUploadPrepared(ctx context.Context, req api.Request)
 	return api.Result{UploadedCount: 1}, nil
 }
 
+func (c *cliCoreForTest) RunAcceptedTrackerDryRun(_ context.Context, plan api.TrackerDryRunPlan) (api.TrackerDryRunPreview, error) {
+	c.dryRunPlans = append(c.dryRunPlans, plan)
+	input := plan.Input
+	req := api.Request{
+		SourcePath:                       input.Release.SourcePath,
+		Trackers:                         append([]string(nil), input.Trackers...),
+		IgnoreDupesFor:                   append([]string(nil), input.IgnoreDupesFor...),
+		IgnoreTrackerRuleFailuresFor:     append([]string(nil), input.IgnoreRuleFailuresFor...),
+		TrackerQuestionnaireAnswers:      cloneCLIQuestionnaireAnswersForTest(input.QuestionnaireAnswers),
+		DescriptionGroups:                 api.CloneDescriptionBuilderGroups(input.DescriptionGroups),
+		TrackerIDOverrides:               maps.Clone(input.TrackerIDOverrides),
+		TrackerConfigOverrides:           input.TrackerConfigOverrides,
+		TrackerSiteOverrides:             input.TrackerSiteOverrides,
+		ClientOverrides:                  input.ClientOverrides,
+		ImageHostOverrides:               input.ImageHostOverrides,
+		ScreenshotOverrides:              input.ScreenshotOverrides,
+		TorrentOverrides:                 input.TorrentOverrides,
+		Options:                          input.Options,
+	}
+	c.callOrder = append(c.callOrder, "debug")
+	c.recordRequest("debug", req)
+	c.runTrackerDryRunCalls++
+	preview := c.dryRunPreview
+	if strings.TrimSpace(preview.SourcePath) == "" {
+		preview.SourcePath = input.Release.SourcePath
+	}
+	if len(preview.Trackers) == 0 {
+		for _, tracker := range c.review.Trackers {
+			preview.Trackers = append(preview.Trackers, tracker.DryRun)
+		}
+	}
+	return preview, nil
+}
+
 func (c *cliCoreForTest) FetchMetadataPreview(ctx context.Context, req api.Request) (api.MetadataPreview, error) {
 	c.callOrder = append(c.callOrder, "preview")
 	c.recordRequest("preview", req)
@@ -2287,9 +2275,19 @@ func (c *cliCoreForTest) FetchMetadataPreview(ctx context.Context, req api.Reque
 	if len(c.previewResponses) > 0 {
 		preview := c.previewResponses[0]
 		c.previewResponses = c.previewResponses[1:]
+		if strings.TrimSpace(preview.SourcePath) == "" {
+			preview.SourcePath = req.SourcePath
+		}
+		if preview.Release.Generation == 0 {
+			preview.Release = api.ReleaseRef{SourcePath: preview.SourcePath, Generation: 1}
+		}
 		return preview, nil
 	}
-	return api.MetadataPreview{SourcePath: c.previewSourcePath}, nil
+	path := c.previewSourcePath
+	if strings.TrimSpace(path) == "" {
+		path = req.SourcePath
+	}
+	return api.MetadataPreview{SourcePath: path, Release: api.ReleaseRef{SourcePath: path, Generation: 1}}, nil
 }
 
 func (c *cliCoreForTest) FetchDescriptionBuilderPreview(_ context.Context, req api.Request) (api.DescriptionBuilderPreview, error) {

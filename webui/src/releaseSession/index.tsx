@@ -970,8 +970,12 @@ export function ReleaseSessionProvider({
     if (!command) return false;
     const inputRevision = state.uploadInputRevision;
     try {
+      const dupeJobID = releaseJobs.dupe?.dupe?.jobID?.trim() || "";
+      if (!duplicatesReady || !dupeJobID) {
+        throw new Error("Complete duplicate checking before running a dry run.");
+      }
       const preview = await activePorts.upload.dryRun(
-        buildUploadCommand(command.release),
+        { ...buildUploadCommand(command.release), dupeJobID },
         command.controller.signal,
       );
       dispatch({

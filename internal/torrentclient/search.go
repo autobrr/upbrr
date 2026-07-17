@@ -144,9 +144,7 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 		s.logger.Debugf("clients: no default search client set; searching all qBittorrent clients (%d)", len(clients))
 	}
 	s.logger.Tracef("clients: pathed search clients=%s", strings.Join(clients, ","))
-	if meta.Debug {
-		s.logger.Debugf("clients: pathed search for %s (clients=%d constraints=%q)", meta.SourcePath, len(clients), constraints.label)
-	}
+	s.logger.Debugf("clients: pathed search for %s (clients=%d constraints=%q)", meta.SourcePath, len(clients), constraints.label)
 
 	allMatches := make([]api.TorrentMatch, 0)
 	seenHashes := make(map[string]struct{})
@@ -184,9 +182,7 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 			clientResult.FoundPreferredPiece,
 		)
 		if len(matches) == 0 {
-			if meta.Debug {
-				s.logger.Debugf("clients: no torrent matches found in %s", name)
-			}
+			s.logger.Debugf("clients: no torrent matches found in %s", name)
 			continue
 		}
 
@@ -217,18 +213,14 @@ func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubje
 	}
 
 	if len(allMatches) == 0 {
-		if meta.Debug {
-			s.logger.Debugf("clients: pathed search yielded no matches")
-		}
+		s.logger.Debugf("clients: pathed search yielded no matches")
 		return result, nil
 	}
 
 	result.TorrentComments = allMatches
 	result.MatchedTrackers = dedupeStrings(result.MatchedTrackers)
-	if meta.Debug {
-		s.logger.Debugf("clients: pathed search found %d matches", len(allMatches))
-		logPathedSearchMatches(s.logger, allMatches)
-	}
+	s.logger.Debugf("clients: pathed search found %d matches", len(allMatches))
+	logPathedSearchMatches(s.logger, allMatches)
 
 	return result, nil
 }

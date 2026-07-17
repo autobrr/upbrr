@@ -226,8 +226,18 @@ func (l *Logger) logf(level Level, label string, format string, args ...any) {
 	if l == nil || level > l.level {
 		return
 	}
-
 	formatted := SanitizeMessage(fmt.Sprintf(format, args...))
+	l.writeSanitized(level, label, formatted)
+}
+
+func (l *Logger) writef(level Level, label string, format string, args ...any) {
+	if l == nil {
+		return
+	}
+	l.writeSanitized(level, label, SanitizeMessage(fmt.Sprintf(format, args...)))
+}
+
+func (l *Logger) writeSanitized(level Level, label string, formatted string) {
 	prefix := label + ": "
 	if level <= LevelWarn {
 		l.consoleErr.Print(prefix + formatted)

@@ -402,7 +402,7 @@ func TestResolveTrackerClaimProviderSupportsKnownTrackers(t *testing.T) {
 	t.Parallel()
 	service := &Service{registry: newClaimTestRegistry(t)}
 
-	btnProvider, ok := service.resolveTrackerClaimProvider("btn")
+	btnProvider, ok := service.resolveTrackerClaimProvider("btn", api.NopLogger{})
 	if !ok {
 		t.Fatalf("expected BTN provider")
 	}
@@ -410,7 +410,7 @@ func TestResolveTrackerClaimProviderSupportsKnownTrackers(t *testing.T) {
 		t.Fatalf("expected BTN provider type, got %T", btnProvider)
 	}
 
-	aitherProvider, ok := service.resolveTrackerClaimProvider("AITHER")
+	aitherProvider, ok := service.resolveTrackerClaimProvider("AITHER", api.NopLogger{})
 	if !ok {
 		t.Fatalf("expected AITHER provider")
 	}
@@ -418,7 +418,7 @@ func TestResolveTrackerClaimProviderSupportsKnownTrackers(t *testing.T) {
 		t.Fatalf("expected API provider type, got %T", aitherProvider)
 	}
 
-	if _, ok := service.resolveTrackerClaimProvider("PTP"); ok {
+	if _, ok := service.resolveTrackerClaimProvider("PTP", api.NopLogger{}); ok {
 		t.Fatalf("did not expect provider for unsupported tracker")
 	}
 }

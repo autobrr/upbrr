@@ -253,6 +253,7 @@ type stubDryRunDefinition struct {
 	name         string
 	dryRunErr    error
 	bannedGroups []string
+	intents      *[]PreparationIntent
 }
 
 func (s stubDryRunDefinition) BannedGroups() []string { return s.bannedGroups }
@@ -648,6 +649,9 @@ func (s stubDryRunDefinition) Name() string {
 }
 
 func (s stubDryRunDefinition) Prepare(ctx context.Context, input PreparationInput) (TrackerPlan, *PreparationFailure) {
+	if s.intents != nil {
+		*s.intents = append(*s.intents, input.Intent)
+	}
 	return prepareTestDefinition(ctx, input, s)
 }
 
@@ -688,6 +692,27 @@ func TestBuildUploadDryRunUsesBuilder(t *testing.T) {
 	}
 	if entries[0].Payload["category"] != "movie" {
 		t.Fatalf("expected payload category movie, got %q", entries[0].Payload["category"])
+	}
+}
+
+func TestBuildUploadPreviewUsesTypedReviewAndDryRunIntents(t *testing.T) {
+	t.Parallel()
+
+	intents := make([]PreparationIntent, 0, 2)
+	registry := NewRegistry()
+	if err := registry.Register(stubDryRunDefinition{name: "BLU", intents: &intents}); err != nil {
+		t.Fatalf("register stub: %v", err)
+	}
+	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	subject := api.UploadSubject{SourcePath: "/tmp/file"}
+	if _, err := svc.BuildUploadReview(context.Background(), subject, []string{"BLU"}); err != nil {
+		t.Fatalf("build upload review: %v", err)
+	}
+	if _, err := svc.BuildUploadDryRun(context.Background(), subject, []string{"BLU"}); err != nil {
+		t.Fatalf("build explicit dry run: %v", err)
+	}
+	if !slices.Equal(intents, []PreparationIntent{PreparationIntentUploadReview, PreparationIntentDryRun}) {
+		t.Fatalf("preparation intents = %#v", intents)
 	}
 }
 

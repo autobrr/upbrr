@@ -317,7 +317,6 @@ func (b *Backend) StartDupeCheck(
 				ClientSearch: api.ClientSearchPolicy{
 					Skip: baseOptions.SkipAutoTorrent,
 				},
-				Debug:       baseOptions.Debug,
 				Interaction: api.InteractionModeInteractive,
 			},
 		},
@@ -365,11 +364,10 @@ func (b *Backend) ReviewTrackerUpload(
 	ignoreDupesFor []string,
 	questionnaireAnswers map[string]map[string]string,
 	descriptionGroups []api.DescriptionBuilderGroup,
-	debug bool,
 	noSeed bool,
 	runLogLevel string,
 ) (api.UploadReviewResult, error) {
-	runOpts, err := b.buildRunOptions(debug, noSeed, runLogLevel)
+	runOpts, err := b.buildRunOptions(noSeed, runLogLevel)
 	if err != nil {
 		return api.UploadReviewResult{}, err
 	}
@@ -472,7 +470,6 @@ func (b *Backend) StartReviewedTrackerUpload(sessionID string, token string, cor
 		}, errors.New("runtime generation changed"))
 	}
 	runOpts := runOptions{
-		Debug:       reviewed.Execution.Input.Options.Debug,
 		NoSeed:      reviewed.Execution.Input.Options.NoSeed,
 		RunLogLevel: reviewed.Execution.Input.Options.RunLogLevel,
 	}
@@ -595,7 +592,6 @@ func (b *Backend) RetryFailedTrackerUpload(sessionID string, jobID string, corre
 		return "", fmt.Errorf("%w", err)
 	}
 	runOpts := runOptions{
-		Debug:       retry.Snapshot.Input.Options.Debug,
 		NoSeed:      retry.Snapshot.Input.Options.NoSeed,
 		RunLogLevel: retry.Snapshot.Input.Options.RunLogLevel,
 	}

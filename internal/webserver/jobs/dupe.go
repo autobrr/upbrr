@@ -252,6 +252,7 @@ func (j *dupeJob) snapshot() DupeCheckSnapshot {
 		CorrelationID:     j.correlationID,
 		Release:           j.release,
 		RuntimeGeneration: j.spec.Snapshot.RuntimeGeneration,
+		RequestedTrackers: append([]string(nil), j.spec.Snapshot.Input.Trackers...),
 		Status:            j.status,
 		Trackers:          trackers,
 		CompletedCount:    j.completedCount,

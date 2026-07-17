@@ -447,6 +447,10 @@ func (s e2eTrackerService) BuildUploadDryRun(_ context.Context, meta api.UploadS
 	return entries, nil
 }
 
+func (s e2eTrackerService) BuildUploadReview(ctx context.Context, meta api.UploadSubject, trackers []string) ([]api.TrackerDryRunEntry, error) {
+	return s.BuildUploadDryRun(ctx, meta, trackers)
+}
+
 func postE2ETrackerUpload(ctx context.Context, endpoint string, tracker string, meta api.UploadSubject) error {
 	if strings.TrimSpace(endpoint) == "" {
 		return errors.New("e2e tracker: endpoint is required")

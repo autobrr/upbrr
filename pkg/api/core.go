@@ -44,10 +44,9 @@ type ExecutionOptions struct {
 	SiteUploadTracker string
 }
 
-// UploadOptions contains per-run upload and preview behavior flags.
+// UploadOptions contains per-run preparation and upload choices. The invoked
+// operation, rather than a mode flag, determines whether trackers are submitted.
 type UploadOptions struct {
-	Debug           bool
-	DryRun          bool
 	RunLogLevel     string
 	Screens         int
 	NoSeed          bool

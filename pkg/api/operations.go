@@ -20,8 +20,6 @@ type DuplicateCheckInput struct {
 	ClientSearch ClientSearchPolicy
 	// ForceRecheck forwards an explicit torrent-client hash recheck choice.
 	ForceRecheck *bool
-	// Debug enables client-search diagnostics for this operation.
-	Debug bool
 }
 
 // UploadReviewInput contains review-time workflow choices for one exact
@@ -86,11 +84,30 @@ type TrackerDryRunInput struct {
 	IgnoreRuleFailuresFor  []string
 	QuestionnaireAnswers   map[string]map[string]string
 	DescriptionGroups      []DescriptionBuilderGroup
+	TrackerIDOverrides     map[string]string
 	TrackerConfigOverrides TrackerConfigOverrides
 	TrackerSiteOverrides   TrackerSiteOverrides
+	ClientOverrides        ClientOverrides
 	ImageHostOverrides     ImageHostOverrides
+	ScreenshotOverrides    ScreenshotOverrides
 	TorrentOverrides       TorrentOverrides
 	Options                UploadOptions
+}
+
+// AcceptedDuplicateEvidence contains one completed duplicate-check outcome for
+// the exact release and tracker selection consumed by a tracker dry run.
+type AcceptedDuplicateEvidence struct {
+	Release  ReleaseRef
+	Trackers []string
+	Results  []DupeCheckResult
+}
+
+// TrackerDryRunPlan combines dry-run choices with the completed duplicate
+// evidence accepted by the caller. Core validates both parts before building
+// tracker payloads or injecting any torrent.
+type TrackerDryRunPlan struct {
+	Input     TrackerDryRunInput
+	Duplicate AcceptedDuplicateEvidence
 }
 
 // MediaPlanInput contains media planning choices for one exact prepared

@@ -40,9 +40,9 @@ type UploadReviewCapability interface {
 	ReviewAcceptedUpload(context.Context, api.UploadReviewInput) (api.ReviewedUpload, error)
 }
 
-// DryRunCapability builds tracker payload previews without uploading.
+// DryRunCapability runs tracker payload previews without tracker submission.
 type DryRunCapability interface {
-	FetchAcceptedTrackerDryRun(context.Context, api.TrackerDryRunInput) (api.TrackerDryRunPreview, error)
+	RunAcceptedTrackerDryRun(context.Context, api.TrackerDryRunPlan) (api.TrackerDryRunPreview, error)
 }
 
 // DuplicateExecutionCapability runs one accepted duplicate-check snapshot.
@@ -185,9 +185,11 @@ func (c CoreCapabilities) PreparedDVDReady() bool {
 	return c.PreparedGenerationReady() && CapabilityAvailable(c.DVD)
 }
 
-// PreparedDryRunReady reports whether this bundle can receive state and execute a dry run.
+// PreparedDryRunReady reports whether the active runtime can execute a dry run.
+// Unlike background Jobs, synchronous dry runs already own the prepared
+// generation and do not require generation transfer.
 func (c CoreCapabilities) PreparedDryRunReady() bool {
-	return c.PreparedGenerationReady() && CapabilityAvailable(c.DryRun)
+	return CapabilityAvailable(c.DryRun)
 }
 
 // BindCoreCapabilities exposes svc through every production capability and

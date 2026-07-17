@@ -173,10 +173,6 @@ func BuildDescription(
 		return "", nil
 	}
 
-	if meta.Options.Debug {
-		SaveDescriptionDebug(meta, "unit3d", appConfig.MainSettings.DBPath, description, logger)
-	}
-
 	return description, nil
 }
 

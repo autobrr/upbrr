@@ -32,6 +32,7 @@ type ServiceSet struct {
 type TrackerService interface {
 	Upload(ctx context.Context, subject UploadSubject) (UploadSummary, error)
 	BuildPreparation(ctx context.Context, subject DescriptionSubject, trackers []string) (PreparationPreview, error)
+	BuildUploadReview(ctx context.Context, subject UploadSubject, trackers []string) ([]TrackerDryRunEntry, error)
 	BuildUploadDryRun(ctx context.Context, subject UploadSubject, trackers []string) ([]TrackerDryRunEntry, error)
 }
 
@@ -422,7 +423,6 @@ type ClientSubject struct {
 	FileList        []string
 	DiscType        string
 	ClientOverrides ClientOverrides
-	Debug           bool
 }
 
 // RuleFailureSeverity classifies whether a tracker rule result blocks work.

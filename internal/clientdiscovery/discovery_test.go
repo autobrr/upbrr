@@ -57,12 +57,11 @@ func TestDiscoverNormalizesAndDetachesCurrentEvidence(t *testing.T) {
 		DiscType:     " BDMV ",
 		Policy:       api.ClientSearchPolicy{Client: &clientName},
 		ForceRecheck: &force,
-		Debug:        true,
 	})
 	if err != nil {
 		t.Fatalf("discover: %v", err)
 	}
-	if client.calls != 1 || client.input.SourcePath != "Example.Release.2026" || client.input.DiscType != "BDMV" || !client.input.Debug {
+	if client.calls != 1 || client.input.SourcePath != "Example.Release.2026" || client.input.DiscType != "BDMV" {
 		t.Fatalf("client input = %#v calls=%d", client.input, client.calls)
 	}
 	if client.input.ClientOverrides.Client == nil || *client.input.ClientOverrides.Client != "qbit" {

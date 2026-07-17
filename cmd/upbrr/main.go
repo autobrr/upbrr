@@ -125,15 +125,19 @@ const cliQueueGatherTimeout = 10 * time.Minute
 const cliDiscDiscoveryTimeout = 5 * time.Minute
 
 // cliUploadOnlyTimeoutCap bounds how many per-item allowances the non-queue
-// upload-only deadline may sum to. RunUploadPrepared processes every path in a
-// single core call (its abort-on-first-error semantics are shared/immutable), so
-// the deadline is budgeted by item count but capped so a huge --paths list cannot
-// produce an effectively unbounded run-wide timeout.
+// upload-only deadline may sum to. The deadline is budgeted by item count but
+// capped so a huge path list cannot produce an effectively unbounded run.
 const cliUploadOnlyTimeoutCap = 50
 
 // cliPreparedUploadRunner executes requests whose preparation state is already cached.
 type cliPreparedUploadRunner interface {
 	RunUploadPrepared(context.Context, api.Request) (api.Result, error)
+}
+
+// cliAcceptedTrackerDryRunRunner builds payloads from one retained explicit
+// duplicate-check outcome without repeating discovery or duplicate checks.
+type cliAcceptedTrackerDryRunRunner interface {
+	RunAcceptedTrackerDryRun(context.Context, api.TrackerDryRunPlan) (api.TrackerDryRunPreview, error)
 }
 
 // cliMetadataPreviewer prepares metadata and resolves the upload source path.
@@ -173,9 +177,10 @@ type cliPlaylistSelectionCore interface {
 // cliUploadOnlyCore is the complete capability set for non-interactive upload-only runs.
 type cliUploadOnlyCore interface {
 	cliPreparedUploadRunner
+	cliAcceptedTrackerDryRunRunner
 	cliMetadataPreviewer
-	cliUploadReviewer
 	cliDVDMenuCore
+	cliDupeChecker
 }
 
 // run dispatches serve mode or the CLI workflow and converts parse/runtime
@@ -398,18 +403,16 @@ func run() error {
 	})
 }
 
-// runCLIUploadOnlyBatch runs upload-only over all paths in a single
-// RunUploadPrepared call (preserving its shared abort-on-first-error
-// semantics) under a deadline budgeted by item count but capped at
-// cliUploadOnlyTimeoutCap items so a large path list cannot create an
-// effectively unbounded run-wide timeout.
+// runCLIUploadOnlyBatch processes upload-only paths sequentially under one
+// capped deadline. Debug runs call only the shared tracker dry-run operation;
+// live runs call upload execution and stop on the first error.
 func runCLIUploadOnlyBatch(ctx context.Context, coreSvc cliUploadOnlyCore, batch cliPreparationBatch, debug bool, logger api.Logger) error {
 	budgetItems := min(max(1, len(batch.items)), cliUploadOnlyTimeoutCap)
 	uploadCtx, uploadCancel := context.WithTimeout(ctx, time.Duration(budgetItems)*cliItemTimeout)
 	defer uploadCancel()
 	for index := range batch.items {
 		itemReq := batch.request(index)
-		preparedReq, err := prepareCLIUploadMetadata(uploadCtx, coreSvc, itemReq)
+		preparedReq, release, err := prepareCLIUploadMetadataWithRelease(uploadCtx, coreSvc, itemReq)
 		if err != nil {
 			return exitError(1, err)
 		}
@@ -418,11 +421,19 @@ func runCLIUploadOnlyBatch(ctx context.Context, coreSvc cliUploadOnlyCore, batch
 			return exitError(1, err)
 		}
 		if debug {
-			review, err := buildCLIUploadDebugReview(uploadCtx, coreSvc, batch.items[index].originalPath, preparedReq)
+			dupeSummary, err := coreSvc.CheckDupes(uploadCtx, preparedReq)
 			if err != nil {
 				return exitError(1, err)
 			}
-			printDebugUploadReview(review)
+			preview, err := runAcceptedCLIDebugDryRun(uploadCtx, coreSvc, preparedReq, release, dupeSummary, false)
+			if err != nil {
+				return exitError(1, err)
+			}
+			if strings.TrimSpace(batch.items[index].originalPath) != "" {
+				preview.SourcePath = batch.items[index].originalPath
+			}
+			printDebugTrackerDryRun(preview)
+			continue
 		}
 		if _, err := coreSvc.RunUploadPrepared(uploadCtx, preparedReq); err != nil {
 			return exitError(1, err)
@@ -434,9 +445,9 @@ func runCLIUploadOnlyBatch(ctx context.Context, coreSvc cliUploadOnlyCore, batch
 // runCLIUploadOnlyQueue runs upload-only in queue mode: each gathered path is
 // processed independently under its own cliItemTimeout via processCLIPaths, so a
 // single failing item is logged and skipped (continue-on-error) instead of
-// aborting the whole queue. Per item it prepares metadata, optionally prints the
-// debug review, and runs RunUploadPrepared for that one path, summing uploaded
-// counts across items.
+// aborting the whole queue. Per item it prepares metadata, then either runs and
+// prints the shared debug payload preview or executes a live upload. Live runs
+// sum accepted tracker uploads across items.
 func runCLIUploadOnlyQueue(ctx context.Context, coreSvc cliUploadOnlyCore, batch cliPreparationBatch, debug bool, logger api.Logger) error {
 	var uploaded int
 	err := processCLIPreparationItems(ctx, batch, true, cliItemTimeout, logger, func(itemCtx context.Context, item cliPreparationItem) error {
@@ -444,7 +455,7 @@ func runCLIUploadOnlyQueue(ctx context.Context, coreSvc cliUploadOnlyCore, batch
 		itemReq.SourcePath = item.resolvedPath
 		itemReq.ExternalIDOverrides = item.externalIDs
 		itemReq.PlaylistInstruction = item.playlistInstruction
-		preparedReq, err := prepareCLIUploadMetadata(itemCtx, coreSvc, itemReq)
+		preparedReq, release, err := prepareCLIUploadMetadataWithRelease(itemCtx, coreSvc, itemReq)
 		if err != nil {
 			return err
 		}
@@ -452,20 +463,19 @@ func runCLIUploadOnlyQueue(ctx context.Context, coreSvc cliUploadOnlyCore, batch
 			return err
 		}
 		if debug {
-			// Single-path review: mirror the inline debug-review build rather than
-			// buildCLIUploadDebugReviews, whose Paths[idx] indexing is fragile when
-			// the request is already a single path.
-			resolvedPath := preparedReq.SourcePath
-			reviewReq := preparedReq
-			reviewReq.SourcePath = resolvedPath
-			review, err := coreSvc.BuildUploadReview(itemCtx, reviewReq)
+			dupeSummary, err := coreSvc.CheckDupes(itemCtx, preparedReq)
 			if err != nil {
-				return fmt.Errorf("build upload review for %q: %w", resolvedPath, err)
+				return fmt.Errorf("check duplicates for tracker debug %q: %w", preparedReq.SourcePath, err)
+			}
+			preview, err := runAcceptedCLIDebugDryRun(itemCtx, coreSvc, preparedReq, release, dupeSummary, false)
+			if err != nil {
+				return fmt.Errorf("run tracker debug for %q: %w", preparedReq.SourcePath, err)
 			}
 			if strings.TrimSpace(item.originalPath) != "" {
-				review.SourcePath = item.originalPath
+				preview.SourcePath = item.originalPath
 			}
-			printDebugUploadReview(review)
+			printDebugTrackerDryRun(preview)
+			return nil
 		}
 		result, err := coreSvc.RunUploadPrepared(itemCtx, preparedReq)
 		// RunUploadPrepared can accept some tracker uploads and then fail on a
@@ -478,6 +488,10 @@ func runCLIUploadOnlyQueue(ctx context.Context, coreSvc cliUploadOnlyCore, batch
 		return nil
 	})
 	if logger != nil {
+		if debug {
+			logger.Infof("queue: upload-only debug completed, no tracker uploads submitted")
+			return err
+		}
 		// UploadedCount counts accepted tracker uploads, not queue items (one item
 		// may upload to several trackers), so report it as tracker uploads.
 		logger.Infof("queue: upload-only completed, %d tracker upload(s) accepted", uploaded)
@@ -629,8 +643,8 @@ func processCLIPaths(
 // each queue item receives a full timeout budget rather than sharing one
 // run-wide deadline. The deadline is enforced cooperatively: itemCtx is threaded
 // into every core call (FetchMetadataPreview, CheckDupes, screenshot handling,
-// BuildUploadReview, RunUploadPrepared, etc.) and honored only when those calls
-// check ctx. A core operation that ignores ctx will run past itemTimeout; the
+// BuildUploadReview, RunAcceptedTrackerDryRun, RunUploadPrepared, etc.) and honored only
+// when those calls check ctx. A core operation that ignores ctx will run past itemTimeout; the
 // timeout cannot forcibly kill in-flight work.
 func runCLIPathWithTimeout(
 	ctx context.Context,
@@ -1436,10 +1450,19 @@ func processCLIPreparationItems(
 }
 
 func prepareCLIUploadMetadata(ctx context.Context, coreSvc cliMetadataPreviewer, req api.Request) (api.Request, error) {
+	resolvedReq, _, err := prepareCLIUploadMetadataWithRelease(ctx, coreSvc, req)
+	return resolvedReq, err
+}
+
+func prepareCLIUploadMetadataWithRelease(
+	ctx context.Context,
+	coreSvc cliMetadataPreviewer,
+	req api.Request,
+) (api.Request, api.ReleaseRef, error) {
 	sourcePath := req.SourcePath
 	preview, err := coreSvc.FetchMetadataPreview(ctx, req)
 	if err != nil {
-		return api.Request{}, fmt.Errorf("upbrr: %w", err)
+		return api.Request{}, api.ReleaseRef{}, fmt.Errorf("upbrr: %w", err)
 	}
 	resolvedPath := resolvedCLIMetadataSourcePath(sourcePath, preview)
 	if shouldRefreshCLIResolvedMetadataPreview(req, sourcePath, resolvedPath) {
@@ -1447,13 +1470,13 @@ func prepareCLIUploadMetadata(ctx context.Context, coreSvc cliMetadataPreviewer,
 		resolvedReq.SourcePath = resolvedPath
 		preview, err = coreSvc.FetchMetadataPreview(ctx, resolvedReq)
 		if err != nil {
-			return api.Request{}, fmt.Errorf("upbrr: %w", err)
+			return api.Request{}, api.ReleaseRef{}, fmt.Errorf("upbrr: %w", err)
 		}
 		resolvedPath = resolvedCLIMetadataSourcePath(resolvedPath, preview)
 	}
 	resolvedReq := req
 	resolvedReq.SourcePath = resolvedPath
-	return resolvedReq, nil
+	return resolvedReq, preview.Release, nil
 }
 
 func shouldRefreshCLIResolvedMetadataPreview(req api.Request, sourcePath string, resolvedPath string) bool {
@@ -1474,19 +1497,6 @@ func cliHasExternalIDOverrides(overrides api.ExternalIDOverrides) bool {
 		overrides.TVDBID != nil ||
 		overrides.TVmazeID != nil ||
 		overrides.MALID != nil
-}
-
-// buildCLIUploadDebugReviews builds one review per original CLI source path,
-// preserving the original display path while using any prepared resolved path.
-func buildCLIUploadDebugReview(ctx context.Context, coreSvc cliUploadReviewer, originalPath string, uploadReq api.Request) (api.UploadReview, error) {
-	review, err := coreSvc.BuildUploadReview(ctx, uploadReq)
-	if err != nil {
-		return api.UploadReview{}, fmt.Errorf("build upload review for %q: %w", uploadReq.SourcePath, err)
-	}
-	if strings.TrimSpace(originalPath) != "" {
-		review.SourcePath = originalPath
-	}
-	return review, nil
 }
 
 // isCtxErr reports whether err is a context cancellation/deadline error,

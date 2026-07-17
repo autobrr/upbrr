@@ -54,6 +54,9 @@ type DupeCheckSnapshot struct {
 	Release api.ReleaseRef `json:"release"`
 	// RuntimeGeneration identifies the exact config/resource generation accepted for this job.
 	RuntimeGeneration uint64 `json:"runtimeGeneration"`
+	// RequestedTrackers retains the exact accepted selection for server-side
+	// prerequisite validation and is never serialized to the browser.
+	RequestedTrackers []string `json:"-"`
 	// Status is the job lifecycle state.
 	Status string `json:"status"`
 	// Trackers lists requested trackers first, followed by any dynamically discovered trackers.

@@ -14,6 +14,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/description"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -363,7 +364,7 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 			assets = DescriptionAssets{}
 		}
 		applyResolvedDescriptionScreenshots(ctx, meta, s.repo, preloaded, &assets, resolution.screenshots)
-		plan, failure := definition.Prepare(ctx, s.preparationInput(PreparationIntentDescriptionPreview, tracker, meta, trackerCfg, &assets))
+		plan, failure := definition.Prepare(ctx, s.preparationInput(ctx, PreparationIntentDescriptionPreview, tracker, meta, trackerCfg, &assets))
 		if failure != nil {
 			s.logger.Errorf("trackers: preparation failed for %s: %v", tracker, failure)
 			placeholder("", tracker, "build error", api.ImageHostFeedback{})
@@ -515,12 +516,27 @@ func preparationBlockedImageHostGroupKey(tracker string) string {
 	return name + "|blocked|image-host"
 }
 
-// BuildUploadDryRun builds tracker upload payload previews without performing
-// tracker uploads. Dry-run processing still evaluates all resolved tracker
-// builders and banned-group state. It does not apply rule-failure or blocked
-// tracker suppression itself; callers that want suppression must pass an already
-// filtered tracker list.
+// BuildUploadReview builds tracker payloads needed for upload authorization
+// without enabling explicit dry-run diagnostic artifacts.
+func (s *Service) BuildUploadReview(ctx context.Context, meta api.UploadSubject, trackersList []string) ([]api.TrackerDryRunEntry, error) {
+	return s.buildUploadPreview(ctx, meta, trackersList, PreparationIntentUploadReview)
+}
+
+// BuildUploadDryRun builds explicit tracker dry-run payload previews without
+// performing tracker uploads.
 func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.UploadSubject, trackersList []string) ([]api.TrackerDryRunEntry, error) {
+	return s.buildUploadPreview(ctx, meta, trackersList, PreparationIntentDryRun)
+}
+
+// buildUploadPreview evaluates every resolved tracker builder and banned-group
+// state. Core owns cross-tracker rule, duplicate, and eligibility decisions.
+func (s *Service) buildUploadPreview(
+	ctx context.Context,
+	meta api.UploadSubject,
+	trackersList []string,
+	intent PreparationIntent,
+) ([]api.TrackerDryRunEntry, error) {
+	logger := logging.FromContext(ctx, s.logger)
 	select {
 	case <-ctx.Done():
 		return nil, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -529,9 +545,9 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.UploadSubject,
 
 	resolved := trackersList
 	if len(resolved) == 0 {
-		resolved = ResolveTrackersWithDefaultsAndRegistry(s.cfg, meta.Trackers, meta.TrackersRemove, s.logger, s.registry)
+		resolved = ResolveTrackersWithDefaultsAndRegistry(s.cfg, meta.Trackers, meta.TrackersRemove, logger, s.registry)
 	}
-	resolved = filterKnownTrackersWithRegistry(resolved, s.logger, s.registry)
+	resolved = filterKnownTrackersWithRegistry(resolved, logger, s.registry)
 	if len(resolved) == 0 {
 		return nil, errors.New("trackers: no trackers configured")
 	}
@@ -539,12 +555,12 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.UploadSubject,
 		return nil, errors.New("trackers: registry not configured")
 	}
 
-	s.logger.Debugf("trackers: dry-run decision=build trackers=%d", len(resolved))
+	logger.Debugf("trackers: payload preview decision=build intent=%s trackers=%d", intent, len(resolved))
 	bannedResults := s.dryRunBannedGroupResults(ctx, meta, resolved)
 
 	preloaded, err := preloadDescriptionAssetData(ctx, meta, s.repo, s.registry)
 	if err != nil {
-		s.logger.Warnf("trackers: dry-run preload failed source=%s err=%s", meta.SourcePath, redaction.RedactValue(err.Error(), nil))
+		logger.Warnf("trackers: payload preview preload failed intent=%s source=%s err=%s", intent, meta.SourcePath, redaction.RedactValue(err.Error(), nil))
 		preloaded = nil
 	}
 
@@ -583,12 +599,12 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.UploadSubject,
 			trackerCfg,
 			s.repo,
 			s.images,
-			s.logger,
+			logger,
 			s.registry,
 			preloaded,
 		)
 		if err != nil {
-			s.logger.Warnf("trackers: dry-run image host resolution failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
+			logger.Warnf("trackers: dry-run image host resolution failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
 			entry.Status = "error"
 			entry.Message = safeTrackerMessage(err)
 			applyDryRunBannedGroupResult(&entry, bannedResults)
@@ -603,7 +619,7 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.UploadSubject,
 			results = append(results, entry)
 			continue
 		}
-		assets, err := resolveDescriptionAssets(ctx, tracker, trackerMeta, s.repo, s.logger, preloaded)
+		assets, err := resolveDescriptionAssets(ctx, tracker, trackerMeta, s.repo, logger, preloaded)
 		if err != nil {
 			entry.Status = "error"
 			entry.Message = safeTrackerMessage(err)
@@ -612,7 +628,7 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.UploadSubject,
 			continue
 		}
 		applyResolvedDescriptionScreenshots(ctx, trackerMeta, s.repo, preloaded, &assets, resolution.screenshots)
-		plan, failure := definition.Prepare(ctx, s.preparationInput(PreparationIntentDryRun, tracker, trackerMeta, trackerCfg, &assets))
+		plan, failure := definition.Prepare(ctx, s.preparationInput(ctx, intent, tracker, trackerMeta, trackerCfg, &assets))
 		if failure != nil {
 			entry.Status = "error"
 			entry.Message = failure.Message()
@@ -622,7 +638,7 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.UploadSubject,
 		}
 		preview := plan.DryRun()
 		if err := plan.Release(); err != nil {
-			s.logger.Warnf("trackers: plan release failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
+			logger.Warnf("trackers: plan release failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
 		}
 		if strings.TrimSpace(preview.Tracker) == "" {
 			preview.Tracker = tracker
@@ -648,6 +664,7 @@ type dryRunBannedGroupResult struct {
 // annotations. A banned group marks the entry but does not suppress payload
 // generation; refresh or cache errors are reported per tracker for diagnostics.
 func (s *Service) dryRunBannedGroupResults(ctx context.Context, meta api.UploadSubject, trackers []string) map[string]dryRunBannedGroupResult {
+	logger := logging.FromContext(ctx, s.logger)
 	group := NormalizeBannedReleaseGroup(meta.Tag)
 	if group == "" || len(trackers) == 0 || s.banned == nil {
 		return nil
@@ -659,7 +676,7 @@ func (s *Service) dryRunBannedGroupResults(ctx context.Context, meta api.UploadS
 		if name == "" {
 			continue
 		}
-		if err := s.banned.RefreshDynamic(ctx, s.cfg, []string{name}, s.logger); err != nil {
+		if err := s.banned.RefreshDynamic(ctx, s.cfg, []string{name}, logger); err != nil {
 			results[name] = dryRunBannedGroupResult{err: "banned group check failed: " + redaction.RedactValue(err.Error(), nil)}
 			continue
 		}

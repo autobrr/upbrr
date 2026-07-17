@@ -224,11 +224,11 @@ Useful CLI checks:
 
 ```powershell
 .\upbrr.exe --site-check --trackers BLU,OE "D:\releases\Some.Release"
-.\upbrr.exe --dry-run --trackers PTP,HDB "D:\releases\Some.Release"
+.\upbrr.exe --debug --trackers PTP,HDB "D:\releases\Example.Release.2026"
 .\upbrr.exe --queue "D:\upload-queue" --limit-queue 5
 ```
 
-NOTE: with cli `--debug` works as expected. Additionally, the printed feedback (even with debug) can be adjusted with `--log-level`. See `upbrr.exe --help`
+CLI `--debug` builds and prints the same non-submitting tracker payload preview as the WebUI dry run. It never submits to trackers. `--log-level debug` changes log verbosity only and does not select debug/dry-run behavior. See `upbrr.exe --help`.
 
 ### Automatic DVD Menu Screenshots
 

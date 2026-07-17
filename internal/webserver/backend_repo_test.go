@@ -827,7 +827,7 @@ func TestBackendRequestsUseSingleRuntimeSnapshot(t *testing.T) {
 		if err := backend.DeleteDVDMenuScreenshot(release, "image.png"); err != nil {
 			t.Fatalf("delete DVD menu screenshot: %v", err)
 		}
-		_, _ = backend.FetchTrackerDryRun(context.Background(), "session", release, nil, nil, nil, nil, false, false, "")
+		_, _ = backend.FetchTrackerDryRun(context.Background(), "session", "", release, nil, nil, nil, nil, false, "")
 		select {
 		case err := <-errs:
 			t.Fatal(err)

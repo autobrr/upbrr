@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
@@ -73,16 +74,13 @@ type trackerClaimsAttributes struct {
 }
 
 func (s *Service) evaluateTrackerClaims(ctx context.Context, meta api.UploadSubject) (api.UploadSubject, error) {
+	logger := logging.FromContext(ctx, s.logger)
 	resolved := uniqueUpperTrackers(s.trackersWithClaimChecks(meta))
 	if len(resolved) == 0 {
-		if s.logger != nil {
-			s.logger.Debugf("metadata: tracker claims skipped (no eligible trackers)")
-		}
+		logger.Debugf("metadata: tracker claims skipped (no eligible trackers)")
 		return meta, nil
 	}
-	if s.logger != nil {
-		s.logger.Debugf("metadata: tracker claims evaluating trackers=%v", resolved)
-	}
+	logger.Debugf("metadata: tracker claims evaluating trackers=%v", resolved)
 
 	for _, tracker := range resolved {
 		select {
@@ -91,7 +89,7 @@ func (s *Service) evaluateTrackerClaims(ctx context.Context, meta api.UploadSubj
 		default:
 		}
 
-		match, err := s.hasTrackerClaim(ctx, tracker, meta)
+		match, err := s.hasTrackerClaim(ctx, tracker, meta, logger)
 		if err != nil {
 			return api.UploadSubject{}, err
 		}
@@ -102,14 +100,12 @@ func (s *Service) evaluateTrackerClaims(ctx context.Context, meta api.UploadSubj
 		meta.BlockedTrackers = addMetadataTrackerBlockReason(meta.BlockedTrackers, tracker, api.TrackerBlockReasonClaim)
 		meta.TrackerRuleFailures = addMetadataTrackerRuleFailure(meta.TrackerRuleFailures, tracker, api.RuleFailure{
 			Rule:   trackerClaimRuleActive,
-			Reason: trackerClaimFailureReason(tracker, meta, s),
+			Reason: trackerClaimFailureReason(tracker, meta, s, logger),
 		})
-		if s.logger != nil {
-			if _, ok := s.registry.LookupClaimCheckerFactory(tracker); ok {
-				s.logger.Debugf("metadata: tracker claim match found tracker=%s", tracker)
-			} else {
-				s.logger.Warnf("metadata: tracker claim match found tracker=%s decision=blocked reason=%s", tracker, trackerClaimRuleActive)
-			}
+		if _, ok := s.registry.LookupClaimCheckerFactory(tracker); ok {
+			logger.Debugf("metadata: tracker claim match found tracker=%s", tracker)
+		} else {
+			logger.Warnf("metadata: tracker claim match found tracker=%s decision=blocked reason=%s", tracker, trackerClaimRuleActive)
 		}
 	}
 
@@ -122,17 +118,17 @@ func (s *Service) EvaluateTrackerClaims(ctx context.Context, subject api.UploadS
 	return s.evaluateTrackerClaims(ctx, subject)
 }
 
-func (s *Service) hasTrackerClaim(ctx context.Context, tracker string, meta api.UploadSubject) (bool, error) {
-	provider, ok := s.resolveTrackerClaimProvider(tracker)
+func (s *Service) hasTrackerClaim(ctx context.Context, tracker string, meta api.UploadSubject, logger api.Logger) (bool, error) {
+	provider, ok := s.resolveTrackerClaimProvider(tracker, logger)
 	if !ok {
 		return false, nil
 	}
 	return provider.hasClaim(ctx, s, tracker, meta)
 }
 
-func (s *Service) resolveTrackerClaimProvider(tracker string) (trackerClaimProvider, bool) {
+func (s *Service) resolveTrackerClaimProvider(tracker string, logger api.Logger) (trackerClaimProvider, bool) {
 	if factory, ok := s.registry.LookupClaimCheckerFactory(tracker); ok {
-		return registryTrackerClaimProvider{checker: factory.NewClaimChecker(s.cfg, s.logger)}, true
+		return registryTrackerClaimProvider{checker: factory.NewClaimChecker(s.cfg, logger)}, true
 	}
 	if policy, ok := s.registry.LookupClaimPolicy(tracker); ok && policy.APIBacked {
 		return apiTrackerClaimProvider{}, true
@@ -524,9 +520,9 @@ func addMetadataTrackerRuleFailure(failures map[string][]api.RuleFailure, tracke
 	return failures
 }
 
-func trackerClaimFailureReason(tracker string, meta api.UploadSubject, s *Service) string {
+func trackerClaimFailureReason(tracker string, meta api.UploadSubject, s *Service, logger api.Logger) string {
 	name := strings.ToUpper(strings.TrimSpace(tracker))
-	if provider, ok := s.resolveTrackerClaimProvider(name); ok {
+	if provider, ok := s.resolveTrackerClaimProvider(name, logger); ok {
 		if reason := strings.TrimSpace(provider.failureReason(meta)); reason != "" {
 			return reason
 		}

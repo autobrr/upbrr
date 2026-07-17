@@ -655,7 +655,7 @@ func TestBTNDryRunBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
 	}
 }
 
-func TestBTNDryRunDebugRunsBTNAutofillAndReportsBothPayloads(t *testing.T) {
+func TestBTNExplicitDryRunRunsAutofillAndReportsBothPayloads(t *testing.T) {
 	t.Parallel()
 
 	dbPath := newBTNAuthDB(t)
@@ -712,7 +712,7 @@ func TestBTNDryRunDebugRunsBTNAutofillAndReportsBothPayloads(t *testing.T) {
 
 	req := newBTNDryRunTestRequest(t, dbPath)
 	req.Meta.MediaInfoTextPath = writeBTNTestMediaInfo(t, filepath.Dir(req.Meta.SourcePath), "General\nFormat: Matroska")
-	req.Meta.Options.Debug = true
+	req.Intent = trackers.PreparationIntentDryRun
 	req.Meta.TVPack = true
 	req.Meta.EpisodeInt = 0
 	req.Meta.ReleaseName = "Example.Show.S05.1080p.WEB-DL.x265-GRP"

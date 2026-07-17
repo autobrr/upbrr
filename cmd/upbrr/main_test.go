@@ -1065,7 +1065,7 @@ func TestRunCLIUploadOnlyBatchSinglePathTimeout(t *testing.T) {
 	}
 }
 
-func TestRunCLIUploadOnlyBatchCapturesBeforeDebugReviews(t *testing.T) {
+func TestRunCLIUploadOnlyBatchCapturesBeforeTrackerDebugRun(t *testing.T) {
 	t.Parallel()
 
 	dvdRoot := t.TempDir()
@@ -1076,16 +1076,88 @@ func TestRunCLIUploadOnlyBatchCapturesBeforeDebugReviews(t *testing.T) {
 		dvdMenuResult: api.DVDMenuCaptureResult{
 			Images: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{Path: "dvd-menu.png", Purpose: api.ScreenshotPurposeMenu}}},
 		},
-		review: api.UploadReview{Trackers: []api.TrackerReview{{Tracker: "BLU"}}},
+		dupeSummary: api.DupeCheckSummary{Results: []api.DupeCheckResult{{
+Tracker: "BLU",
+ Status: "completed",
+ Notes: []string{"retained"},
+}}},
 	}
 	paths := []string{dvdRoot}
 	if err := runCLIUploadOnlyBatchForPaths(context.Background(), coreSvc, api.Request{
-		Options: api.UploadOptions{CaptureDVDMenus: true},
+		Trackers: []string{"BLU"},
+		Options:  api.UploadOptions{CaptureDVDMenus: true},
 	}, paths, true, api.NopLogger{}); err != nil {
 		t.Fatalf("upload-only batch: %v", err)
 	}
-	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,capture-dvd-menus,review" {
+	if got := strings.Join(coreSvc.callOrder, ","); got != "preview,capture-dvd-menus,dupes,debug" {
 		t.Fatalf("batch call order = %s", got)
+	}
+	if coreSvc.runUploadPreparedCalls != 0 || coreSvc.runTrackerDryRunCalls != 1 {
+		t.Fatalf("debug batch selected wrong operation: upload=%d debug=%d", coreSvc.runUploadPreparedCalls, coreSvc.runTrackerDryRunCalls)
+	}
+	if len(coreSvc.dryRunPlans) != 1 {
+		t.Fatalf("accepted dry-run plans = %d, want 1", len(coreSvc.dryRunPlans))
+	}
+	plan := coreSvc.dryRunPlans[0]
+	if plan.Duplicate.Release != plan.Input.Release || plan.Duplicate.Release.Generation != 1 {
+		t.Fatalf("accepted duplicate release = %#v input=%#v", plan.Duplicate.Release, plan.Input.Release)
+	}
+	if len(plan.Duplicate.Results) != 1 || plan.Duplicate.Results[0].Notes[0] != "retained" {
+		t.Fatalf("accepted duplicate results = %#v", plan.Duplicate.Results)
+	}
+}
+
+func TestRunCLIUploadOnlyBatchDebugLogLevelStillUploads(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &cliCoreForTest{}
+	request := api.Request{Options: api.UploadOptions{RunLogLevel: "debug"}}
+	if err := runCLIUploadOnlyBatchForPaths(context.Background(), coreSvc, request, []string{t.TempDir()}, false, api.NopLogger{}); err != nil {
+		t.Fatalf("upload-only batch: %v", err)
+	}
+	if coreSvc.runUploadPreparedCalls != 1 || coreSvc.runTrackerDryRunCalls != 0 {
+		t.Fatalf("debug log level changed operation: upload=%d debug=%d", coreSvc.runUploadPreparedCalls, coreSvc.runTrackerDryRunCalls)
+	}
+	var uploadRequest api.Request
+	for _, recorded := range coreSvc.requests {
+		if recorded.name == "upload" {
+			uploadRequest = recorded.req
+		}
+	}
+	if uploadRequest.Options.RunLogLevel != "debug" {
+		t.Fatalf("run log level = %q, want debug", uploadRequest.Options.RunLogLevel)
+	}
+}
+
+func TestRunCLIUploadOnlyQueueDebugUsesTrackerDryRun(t *testing.T) {
+	t.Parallel()
+
+	coreSvc := &cliCoreForTest{dupeSummary: api.DupeCheckSummary{Results: []api.DupeCheckResult{{Tracker: "BLU", Status: "completed"}}}}
+	paths := []string{t.TempDir(), t.TempDir()}
+	err := runCLIUploadOnlyQueue(
+		context.Background(),
+		coreSvc,
+		newCLIPreparationBatch(api.Request{Trackers: []string{"BLU"}}, paths),
+		true,
+		api.NopLogger{},
+	)
+	if err != nil {
+		t.Fatalf("upload-only queue: %v", err)
+	}
+	if coreSvc.runUploadPreparedCalls != 0 || coreSvc.runTrackerDryRunCalls != len(paths) {
+		t.Fatalf("debug queue selected wrong operation: upload=%d debug=%d", coreSvc.runUploadPreparedCalls, coreSvc.runTrackerDryRunCalls)
+	}
+	if len(coreSvc.dryRunPlans) != len(paths) {
+		t.Fatalf("debug queue accepted plans = %d, want %d", len(coreSvc.dryRunPlans), len(paths))
+	}
+	dupeCalls := 0
+	for _, call := range coreSvc.callOrder {
+		if call == "dupes" {
+			dupeCalls++
+		}
+	}
+	if dupeCalls != len(paths) {
+		t.Fatalf("debug queue duplicate checks = %d, want %d", dupeCalls, len(paths))
 	}
 }
 

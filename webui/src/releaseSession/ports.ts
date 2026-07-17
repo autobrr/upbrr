@@ -125,8 +125,11 @@ export type UploadCommand = Readonly<{
   options: UploadRunOptions;
 }>;
 
+/** Dry-run command bound to one completed owner-scoped duplicate-check Job. */
+export type DryRunCommand = UploadCommand & Readonly<{ dupeJobID: string }>;
+
 export type UploadPorts = Readonly<{
-  dryRun(command: UploadCommand, signal: AbortSignal): Promise<TrackerDryRunPreview>;
+  dryRun(command: DryRunCommand, signal: AbortSignal): Promise<TrackerDryRunPreview>;
   review(command: UploadCommand, signal: AbortSignal): Promise<UploadReviewResult>;
 }>;
 

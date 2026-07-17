@@ -13,6 +13,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -256,7 +257,7 @@ func (s *Service) prepareUploadPlans(
 				continue
 			}
 			applyResolvedDescriptionScreenshots(ctx, trackerMeta, s.repo, nil, &assets, resolution.screenshots)
-			plan, failure := definition.Prepare(ctx, s.preparationInput(PreparationIntentUpload, tracker, trackerMeta, trackerCfg, &assets))
+			plan, failure := definition.Prepare(ctx, s.preparationInput(ctx, PreparationIntentUpload, tracker, trackerMeta, trackerCfg, &assets))
 			if failure != nil {
 				slot.failure = &TrackerFailure{
 					Tracker: tracker,
@@ -298,12 +299,14 @@ enqueue:
 }
 
 func (s *Service) preparationInput(
+	ctx context.Context,
 	intent PreparationIntent,
 	tracker string,
 	meta api.UploadSubject,
 	trackerCfg config.TrackerConfig,
 	assets *DescriptionAssets,
 ) PreparationInput {
+	logger := logging.FromContext(ctx, s.logger)
 	input := PreparationInput{
 		Intent:        intent,
 		Tracker:       tracker,
@@ -315,12 +318,12 @@ func (s *Service) preparationInput(
 			Internal:    IsInternalGroup(s.cfg, tracker, meta),
 			BTNAPIToken: config.ResolveBTNAPIToken(s.cfg),
 		},
-		Logger: s.logger,
+		Logger: logger,
 		Assets: assets,
 	}
 	selectedHost, err := PreferredImageUploadHostWithRegistry(s.registry, tracker, trackerCfg, meta.ImageHostOverrides)
 	if err != nil {
-		s.logger.Warnf("trackers: image upload target failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
+		logger.Warnf("trackers: image upload target failed tracker=%s err=%s", tracker, redaction.RedactValue(err.Error(), nil))
 		return input
 	}
 	input.SelectedImageHost = strings.ToLower(strings.TrimSpace(selectedHost))

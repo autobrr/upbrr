@@ -289,12 +289,12 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("/api/app/FetchTrackerDryRun", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
 		var req struct {
+			DupeJobID            string
 			Release              api.ReleaseRef
 			Trackers             []string
 			IgnoreDupesFor       []string
 			QuestionnaireAnswers map[string]map[string]string
 			DescriptionGroups    []api.DescriptionBuilderGroup
-			Debug                bool
 			NoSeed               bool
 			RunLogLevel          string
 		}
@@ -305,12 +305,12 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		value, err := s.backend.FetchTrackerDryRun(
 			r.Context(),
 			current.ID,
+			req.DupeJobID,
 			req.Release,
 			req.Trackers,
 			req.IgnoreDupesFor,
 			req.QuestionnaireAnswers,
 			req.DescriptionGroups,
-			req.Debug,
 			req.NoSeed,
 			req.RunLogLevel,
 		)
@@ -936,7 +936,6 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			IgnoreDupesFor       []string
 			QuestionnaireAnswers map[string]map[string]string
 			DescriptionGroups    []api.DescriptionBuilderGroup
-			Debug                bool
 			NoSeed               bool
 			RunLogLevel          string
 		}
@@ -952,7 +951,6 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			req.IgnoreDupesFor,
 			req.QuestionnaireAnswers,
 			req.DescriptionGroups,
-			req.Debug,
 			req.NoSeed,
 			req.RunLogLevel,
 		)

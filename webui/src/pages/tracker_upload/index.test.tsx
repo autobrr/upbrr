@@ -18,7 +18,7 @@ describe("TrackerUploadPage", () => {
         eligibility: null,
         ignoredDupesFor: [],
         questionnaireAnswers: {},
-        options: { debug: false, noSeed: false, runLogLevel: "info" },
+        options: { noSeed: false, runLogLevel: "info" },
         dryRunStatus: "idle",
         dryRun: null,
         dryRunStaleReason: "Run dry run.",
@@ -45,6 +45,9 @@ describe("TrackerUploadPage", () => {
         trackerIconSrcByName={{}}
       />,
     );
+    expect(screen.queryByText("Debug logging")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Log level")).toHaveValue("info");
+    expect(screen.getByRole("option", { name: "debug" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Run dry run" }));
     expect(runDryRun).toHaveBeenCalledOnce();
   });
@@ -57,7 +60,7 @@ describe("TrackerUploadPage", () => {
         eligibility: null,
         ignoredDupesFor: [],
         questionnaireAnswers: {},
-        options: { debug: false, noSeed: false, runLogLevel: "info" },
+        options: { noSeed: false, runLogLevel: "info" },
         dryRunStatus: "ready",
         dryRun: {
           SourcePath: "C:\\media\\Example",

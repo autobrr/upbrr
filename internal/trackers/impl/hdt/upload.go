@@ -366,8 +366,8 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 	// finalize description
 	finalDescription := finalizeDescription(strings.TrimSpace(strings.Join(parts, "\n\n")))
 
-	// save debug description
-	if meta.Options.Debug {
+	// Explicit dry runs retain the local diagnostic description artifact.
+	if req.Intent == trackers.PreparationIntentDryRun {
 		descriptionunit3d.SaveDescriptionDebug(api.NewDescriptionSubject(meta), "HDT", req.Runtime.DBPath, finalDescription, req.Logger)
 	}
 

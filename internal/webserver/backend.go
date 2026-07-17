@@ -107,7 +107,6 @@ type backendLogStream struct {
 }
 
 type runOptions struct {
-	Debug       bool
 	NoSeed      bool
 	RunLogLevel string
 }
@@ -556,16 +555,16 @@ func (b *Backend) FetchPreparation(
 	}))
 }
 
-// FetchTrackerDryRun returns non-mutating prepared payload previews for selected trackers.
+// FetchTrackerDryRun runs prepared payload previews for selected trackers.
 func (b *Backend) FetchTrackerDryRun(
 	ctx context.Context,
 	sessionID string,
+	dupeJobID string,
 	release api.ReleaseRef,
 	trackersList []string,
 	ignoreDupesFor []string,
 	questionnaireAnswers map[string]map[string]string,
 	descriptionGroups []api.DescriptionBuilderGroup,
-	debug bool,
 	noSeed bool,
 	runLogLevel string,
 ) (api.TrackerDryRunPreview, error) {
@@ -573,10 +572,10 @@ func (b *Backend) FetchTrackerDryRun(
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
-	if !rt.capabilities.PreparedGenerationReady() {
-		return api.TrackerDryRunPreview{}, ErrPreparedGenerationUnavailable
+	if !rt.capabilities.PreparedDryRunReady() {
+		return api.TrackerDryRunPreview{}, ErrPreparedDryRunUnavailable
 	}
-	runOpts, err := b.buildRunOptions(debug, noSeed, runLogLevel)
+	runOpts, err := b.buildRunOptions(noSeed, runLogLevel)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
@@ -584,65 +583,108 @@ func (b *Backend) FetchTrackerDryRun(
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
 	}
-	b.logDebugf("web: tracker dry-run request path=%s debug=%t no_seed=%t run_log_level=%s", release.SourcePath, debug, noSeed, runOpts.RunLogLevel)
-	runCapabilities, runOwner, runLogger, err := b.buildRunCoreFromSnapshot(ctx, rt, runOpts)
+	b.logDebugf("web: tracker dry-run request path=%s no_seed=%t run_log_level=%s", release.SourcePath, noSeed, runOpts.RunLogLevel)
+	resolvedTrackers := normalizeTrackerList(trackersList)
+	duplicateEvidence, err := b.acceptedDryRunDuplicateEvidence(sessionID, dupeJobID, release, rt.generationID, resolvedTrackers)
 	if err != nil {
 		return api.TrackerDryRunPreview{}, err
-	}
-	defer func() {
-		_ = runOwner.Close()
-		_ = runLogger.Close()
-	}()
-	if !runCapabilities.PreparedDryRunReady() {
-		return api.TrackerDryRunPreview{}, ErrPreparedDryRunUnavailable
 	}
 	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
 	defer cancel()
 	req := api.Request{
 		DescriptionGroups:           api.CloneDescriptionBuilderGroups(descriptionGroups),
-		Trackers:                    append([]string{}, trackersList...),
+		Trackers:                    append([]string{}, resolvedTrackers...),
 		IgnoreDupesFor:              normalizeTrackerList(ignoreDupesFor),
 		IgnoreTrackerRuleFailures:   false,
 		Options:                     buildRunUploadOptions(rt.cfg, runOpts),
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(questionnaireAnswers),
 	}
-	req.Options.DryRun = true
-	seed, err := rt.capabilities.PreparedGenerationTransfer.ExportReleaseSeed(ctx, release)
-	if err != nil {
-		return api.TrackerDryRunPreview{}, fmt.Errorf("web: dry run exact generation: %w", err)
-	}
-	ref, err := runCapabilities.PreparedGenerationTransfer.ImportReleaseSeed(ctx, seed)
-	if err != nil {
-		return api.TrackerDryRunPreview{}, fmt.Errorf("web: import canonical generation: %w", err)
-	}
-	expectedRef := release
-	if ref != expectedRef {
-		return api.TrackerDryRunPreview{}, errors.New("web: import canonical generation: unexpected release reference")
-	}
 	progressCtx := api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
 		b.hub.Emit(sessionID, trackerUploadProgressEvent, update)
 	})
+	if rt.logger != nil {
+		operationLogger, scopeErr := logging.NewOperationLogger(rt.logger, runOpts.RunLogLevel)
+		if scopeErr != nil {
+			return api.TrackerDryRunPreview{}, fmt.Errorf("web: scoped dry-run logger: %w", scopeErr)
+		}
+		progressCtx = logging.WithOperationLogger(progressCtx, operationLogger)
+	}
 	progressCtx = bdinfo.WithProgressReporter(progressCtx, func(line string) {
 		if strings.TrimSpace(line) == "" {
 			return
 		}
 		b.hub.Emit(sessionID, "bdinfo:progress", map[string]string{
-			"path": expectedRef.SourcePath,
+			"path": release.SourcePath,
 			"line": line,
 		})
 	})
-	return wrapWebResult(runCapabilities.DryRun.FetchAcceptedTrackerDryRun(progressCtx, api.TrackerDryRunInput{
-		Release:                expectedRef,
-		Trackers:               append([]string(nil), req.Trackers...),
-		IgnoreDupesFor:         append([]string(nil), req.IgnoreDupesFor...),
-		QuestionnaireAnswers:   cloneQuestionnaireAnswers(req.TrackerQuestionnaireAnswers),
-		DescriptionGroups:      api.CloneDescriptionBuilderGroups(req.DescriptionGroups),
-		TrackerConfigOverrides: req.TrackerConfigOverrides,
-		TrackerSiteOverrides:   req.TrackerSiteOverrides,
-		ImageHostOverrides:     req.ImageHostOverrides,
-		TorrentOverrides:       req.TorrentOverrides,
-		Options:                req.Options,
+	return wrapWebResult(rt.capabilities.DryRun.RunAcceptedTrackerDryRun(progressCtx, api.TrackerDryRunPlan{
+		Input: api.TrackerDryRunInput{
+			Release:                release,
+			Trackers:               append([]string(nil), req.Trackers...),
+			IgnoreDupesFor:         append([]string(nil), req.IgnoreDupesFor...),
+			QuestionnaireAnswers:   cloneQuestionnaireAnswers(req.TrackerQuestionnaireAnswers),
+			DescriptionGroups:      api.CloneDescriptionBuilderGroups(req.DescriptionGroups),
+			TrackerConfigOverrides: req.TrackerConfigOverrides,
+			TrackerSiteOverrides:   req.TrackerSiteOverrides,
+			ImageHostOverrides:     req.ImageHostOverrides,
+			TorrentOverrides:       req.TorrentOverrides,
+			Options:                req.Options,
+		},
+		Duplicate: duplicateEvidence,
 	}))
+}
+
+func (b *Backend) acceptedDryRunDuplicateEvidence(
+	sessionID string,
+	jobID string,
+	release api.ReleaseRef,
+	runtimeGeneration uint64,
+	trackers []string,
+) (api.AcceptedDuplicateEvidence, error) {
+	missing := func(message string, cause error) (api.AcceptedDuplicateEvidence, error) {
+		return api.AcceptedDuplicateEvidence{}, api.NewOperationError(api.OperationFailure{
+			Code:      api.OperationFailureMissingPrerequisite,
+			Operation: api.OperationKindDryRun,
+			Message:   message,
+			Recovery:  api.OperationRecoveryCompletePrerequisite,
+		}, cause)
+	}
+	if strings.TrimSpace(jobID) == "" || b == nil || b.jobEngine == nil {
+		return missing("Run duplicate checking before starting a dry run.", errors.New("duplicate job is required"))
+	}
+	snapshot, err := b.jobEngine.DupeSnapshot(b.lookupJobOwner(sessionID), strings.TrimSpace(jobID))
+	if err != nil {
+		return missing("Duplicate-check results are unavailable. Run duplicate checking again.", err)
+	}
+	status := strings.ToLower(strings.TrimSpace(snapshot.Status))
+	if status != sharedjobs.StatusCompleted && status != sharedjobs.StatusCompletedWithErrors {
+		return missing("Duplicate checking must finish before starting a dry run.", fmt.Errorf("duplicate job status is %s", status))
+	}
+	if snapshot.Release != release {
+		return api.AcceptedDuplicateEvidence{}, api.NewOperationError(api.OperationFailure{
+			Code:      api.OperationFailureStaleGeneration,
+			Operation: api.OperationKindDryRun,
+			Message:   "Duplicate-check results are stale. Run duplicate checking again.",
+			Recovery:  api.OperationRecoveryCompletePrerequisite,
+		}, errors.New("duplicate job release does not match dry-run release"))
+	}
+	if snapshot.RuntimeGeneration != runtimeGeneration {
+		return api.AcceptedDuplicateEvidence{}, api.NewOperationError(api.OperationFailure{
+			Code:      api.OperationFailureStaleGeneration,
+			Operation: api.OperationKindDryRun,
+			Message:   "Runtime settings changed. Run duplicate checking again.",
+			Recovery:  api.OperationRecoveryCompletePrerequisite,
+		}, errors.New("duplicate job runtime generation is stale"))
+	}
+	requested := normalizeTrackerList(snapshot.RequestedTrackers)
+	if !slices.Equal(requested, trackers) {
+		return missing(
+			"Duplicate-check results do not match the selected trackers. Run duplicate checking again.",
+			errors.New("duplicate job tracker selection does not match dry-run selection"),
+		)
+	}
+	return api.NewAcceptedDuplicateEvidence(release, requested, snapshot.Summary), nil
 }
 
 // FetchDescriptionBuilder returns editable tracker description groups for the prepared release.
@@ -1645,16 +1687,15 @@ func (b *Backend) StopSessionLogStreams(sessionID string) {
 	}
 }
 
-func (b *Backend) buildRunOptions(debug bool, noSeed bool, runLogLevel string) (runOptions, error) {
+func (b *Backend) buildRunOptions(noSeed bool, runLogLevel string) (runOptions, error) {
 	if strings.TrimSpace(runLogLevel) == "" {
-		return runOptions{Debug: debug, NoSeed: noSeed}, nil
+		return runOptions{NoSeed: noSeed}, nil
 	}
 	normalized, err := api.ParseLogLevel(runLogLevel)
 	if err != nil {
 		return runOptions{}, fmt.Errorf("web: %w", err)
 	}
 	return runOptions{
-		Debug:       debug,
 		NoSeed:      noSeed,
 		RunLogLevel: normalized,
 	}, nil
@@ -1673,7 +1714,7 @@ func (b *Backend) buildRunCoreFromSnapshot(
 	if err := ctx.Err(); err != nil {
 		return CoreCapabilities{}, nil, nil, fmt.Errorf("web: build run core canceled: %w", err)
 	}
-	effectiveLogLevel := logging.ResolveEffectiveLevel(rt.cfg.Logging.Level, opts.RunLogLevel, opts.Debug)
+	effectiveLogLevel := logging.ResolveEffectiveLevel(rt.cfg.Logging.Level, opts.RunLogLevel, false)
 	logger, err := logging.NewWithLevel(rt.cfg.Logging, rt.cfg.MainSettings.DBPath, effectiveLogLevel)
 	if err != nil {
 		return CoreCapabilities{}, nil, nil, fmt.Errorf("web: %w", err)
@@ -1702,8 +1743,6 @@ func (b *Backend) buildRunCoreFromSnapshot(
 
 func buildRunUploadOptions(cfg config.Config, opts runOptions) api.UploadOptions {
 	options := buildBaseMetadataOptions(cfg)
-	options.Debug = opts.Debug
-	options.DryRun = opts.Debug
 	options.NoSeed = opts.NoSeed
 	options.RunLogLevel = opts.RunLogLevel
 	return options

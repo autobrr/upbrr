@@ -74,7 +74,6 @@ export type PreparationIntent = Readonly<{
 }>;
 
 export type UploadRunOptions = Readonly<{
-  debug: boolean;
   noSeed: boolean;
   runLogLevel: string;
 }>;

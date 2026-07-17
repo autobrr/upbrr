@@ -402,7 +402,7 @@ func buildUploadDryRunAt(ctx context.Context, req trackers.PreparationInput, bas
 
 	autofillPayload, uploadType := buildBTNAutofillPayload(req.Meta)
 	debugSections := make([]api.TrackerDryRunDebugSection, 0, 2)
-	if req.Meta.Options.Debug {
+	if req.Intent == trackers.PreparationIntentDryRun {
 		debugSections = append(debugSections, api.TrackerDryRunDebugSection{
 			Title:    "BTN autofill request",
 			Endpoint: uploadCtx.uploadURL,
@@ -433,7 +433,7 @@ func buildUploadDryRunAt(ctx context.Context, req trackers.PreparationInput, bas
 		message += "; " + metadataMessage
 		status = "blocked"
 	}
-	if req.Meta.Options.Debug && status == "ready" {
+	if req.Intent == trackers.PreparationIntentDryRun && status == "ready" {
 		client, err := ensureBTNUploadSession(ctx, req.TrackerConfig, req.Runtime.DBPath, uploadCtx)
 		if err != nil {
 			return api.TrackerDryRunEntry{}, err

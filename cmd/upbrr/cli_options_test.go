@@ -620,7 +620,7 @@ func TestParseCLIOptionsPythonAliases(t *testing.T) {
 	}
 }
 
-func TestBuildCLIRequestDebugImpliesDryRunAndOnlyID(t *testing.T) {
+func TestBuildCLIRequestKeepsDebugAdapterLocalAndPropagatesOnlyID(t *testing.T) {
 	opts, visited, paths, err := parseCLIOptions([]string{"--debug", "--onlyID", "movie.mkv"})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -629,11 +629,8 @@ func TestBuildCLIRequestDebugImpliesDryRunAndOnlyID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
-	if !req.Options.Debug {
-		t.Fatalf("expected debug enabled, got %#v", req.Options)
-	}
-	if !req.Options.DryRun {
-		t.Fatalf("expected debug to imply dry run, got %#v", req.Options)
+	if !opts.Debug {
+		t.Fatal("expected CLI debug mode enabled")
 	}
 	if !req.Options.OnlyID {
 		t.Fatalf("expected onlyID to propagate, got %#v", req.Options)
@@ -657,12 +654,11 @@ func TestParseCLIOptionsFlagsAfterPath(t *testing.T) {
 	if !visited["debug"] || !visited["delete-tmp"] {
 		t.Fatalf("expected trailing flags visited, got %#v", visited)
 	}
-	req, err := buildCLIRequest(opts, visited, paths, 4)
-	if err != nil {
+	if _, err := buildCLIRequest(opts, visited, paths, 4); err != nil {
 		t.Fatalf("build request: %v", err)
 	}
-	if !req.Options.Debug || !req.Options.DryRun {
-		t.Fatalf("expected trailing debug to force dry run, got %#v", req.Options)
+	if !opts.Debug {
+		t.Fatal("expected trailing debug to remain adapter-local")
 	}
 }
 
@@ -703,8 +699,28 @@ func TestBuildCLIRequestPropagatesRunLogLevel(t *testing.T) {
 	if req.Options.RunLogLevel != "trace" {
 		t.Fatalf("expected run log level trace, got %q", req.Options.RunLogLevel)
 	}
-	if !req.Options.Debug {
-		t.Fatalf("expected debug enabled, got %#v", req.Options)
+	if !opts.Debug {
+		t.Fatal("expected CLI debug mode enabled")
+	}
+}
+
+func TestBuildCLIRequestPreservesCombinedDebugModifiers(t *testing.T) {
+	opts, visited, paths, err := parseCLIOptions([]string{"--debug", "-ns", "-siu", "-s", "0", "movie.mkv"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	req, err := buildCLIRequest(opts, visited, paths, opts.Screens)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if !opts.Debug {
+		t.Fatal("expected debug to remain an adapter-local operation choice")
+	}
+	if !req.Options.NoSeed || req.Options.Screens != 0 {
+		t.Fatalf("combined debug modifiers lost from upload options: %#v", req.Options)
+	}
+	if req.ImageHostOverrides.SkipUpload == nil || !*req.ImageHostOverrides.SkipUpload {
+		t.Fatalf("combined debug image-host override lost: %#v", req.ImageHostOverrides)
 	}
 }
 
@@ -783,11 +799,16 @@ func TestBuildCLIRequestExecutionOptions(t *testing.T) {
 	if req.Execution.SiteUploadTracker != "BLU" {
 		t.Fatalf("expected site upload tracker BLU, got %q", req.Execution.SiteUploadTracker)
 	}
-	if !req.Options.DryRun {
-		t.Fatalf("expected site-check to imply dry run, got %#v", req.Options)
-	}
 	if len(req.Trackers) != 1 || req.Trackers[0] != "BLU" {
 		t.Fatalf("expected site-upload tracker to override request trackers, got %#v", req.Trackers)
+	}
+}
+
+func TestParseCLIOptionsRejectsRemovedDryRunFlag(t *testing.T) {
+	t.Parallel()
+
+	if _, _, _, err := parseCLIOptions([]string{"--dry-run", "movie.mkv"}); err == nil {
+		t.Fatal("expected removed --dry-run flag to be rejected")
 	}
 }
 

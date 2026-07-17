@@ -124,6 +124,7 @@ export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
   upload: {
     dryRun: (command, signal) =>
       preparationClient.fetchTrackerDryRun(
+        command.dupeJobID,
         command.release,
         [...command.trackers],
         [...command.ignoreDupesFor],
@@ -134,7 +135,6 @@ export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
           ]),
         ),
         [...command.descriptionGroups],
-        command.options.debug,
         command.options.noSeed,
         command.options.runLogLevel,
         signal,
@@ -151,7 +151,6 @@ export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
           ]),
         ),
         [...command.descriptionGroups],
-        command.options.debug,
         command.options.noSeed,
         command.options.runLogLevel,
         signal,

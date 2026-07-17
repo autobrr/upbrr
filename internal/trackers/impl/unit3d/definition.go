@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -236,6 +237,9 @@ func (d *Definition) prepareDescription(ctx context.Context, req trackers.Prepar
 		if err != nil {
 			return trackers.DescriptionResult{}, err
 		}
+	}
+	if req.Intent == trackers.PreparationIntentDryRun && description != "" {
+		descriptionunit3d.SaveDescriptionDebug(api.NewDescriptionSubject(req.Meta), "unit3d", req.Runtime.DBPath, description, req.Logger)
 	}
 	return trackers.DescriptionResult{
 		Group:       "unit3d",

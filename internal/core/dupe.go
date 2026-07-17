@@ -101,7 +101,6 @@ func (m *dupeModule) checkAccepted(ctx context.Context, input api.DuplicateCheck
 			DiscType:     subject.DiscType,
 			Policy:       input.ClientSearch,
 			ForceRecheck: input.ForceRecheck,
-			Debug:        input.Debug,
 		})
 		if discoveryErr != nil {
 			return api.DupeCheckSummary{}, fmt.Errorf("core: discover duplicate-check client state: %w", discoveryErr)

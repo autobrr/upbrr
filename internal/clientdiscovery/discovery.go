@@ -29,8 +29,6 @@ type SearchInput struct {
 	Policy api.ClientSearchPolicy
 	// ForceRecheck forwards an explicit hash-recheck choice to the selected client.
 	ForceRecheck *bool
-	// Debug enables client-search diagnostics.
-	Debug bool
 }
 
 // Evidence is a detached normalized client snapshot. Callers decide which
@@ -103,7 +101,6 @@ func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, err
 			Client:       cloneString(input.Policy.Client),
 			ForceRecheck: cloneBool(input.ForceRecheck),
 		},
-		Debug: input.Debug,
 	})
 	if err != nil {
 		return Evidence{}, fmt.Errorf("client discovery: search pathed torrents: %w", err)

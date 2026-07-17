@@ -22,6 +22,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/logging"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -111,9 +112,10 @@ func NewServiceWithRegistry(cfg config.Config, logger api.Logger, registry *trac
 // successful no-op.
 // Inject adds torrent to the configured client and applies post-upload linking policy.
 func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent api.TorrentResult) (err error) {
+	logger := logging.FromContext(ctx, s.logger)
 	defer func() {
 		if err != nil {
-			s.logger.Warnf("clients: injection blocked err=%s", redaction.RedactValue(err.Error(), nil))
+			logger.Warnf("clients: injection blocked err=%s", redaction.RedactValue(err.Error(), nil))
 		}
 	}()
 
@@ -123,15 +125,15 @@ func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent ap
 	default:
 	}
 
-	s.logger.Debugf("clients: injecting torrent for %s", meta.SourcePath)
+	logger.Debugf("clients: injecting torrent for %s", meta.SourcePath)
 
 	torrentPath := strings.TrimSpace(torrent.Path)
 	torrentURL := strings.TrimSpace(torrent.URL)
 	if torrentPath == "" && torrentURL == "" {
-		s.logger.Debugf("clients: skipping injection for %s: no torrent file or URL", meta.SourcePath)
+		logger.Debugf("clients: skipping injection for %s: no torrent file or URL", meta.SourcePath)
 		return internalerrors.ErrInvalidInput
 	}
-	s.logger.Tracef(
+	logger.Tracef(
 		"clients: injection input source=%s tracker=%s has_file=%t has_url=%t configured_clients=%d",
 		meta.SourcePath,
 		strings.TrimSpace(torrent.Tracker),
@@ -141,7 +143,7 @@ func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent ap
 	)
 
 	if len(s.cfg.TorrentClients) == 0 {
-		s.logger.Debugf("clients: no torrent clients configured, skipping injection")
+		logger.Debugf("clients: no torrent clients configured, skipping injection")
 		return nil
 	}
 
@@ -154,10 +156,10 @@ func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent ap
 		clients = withURLCapableInjectFallback(clients, s.cfg.TorrentClients)
 	}
 	if len(clients) == 0 {
-		s.logger.Debugf("clients: no matching torrent clients selected, skipping injection")
+		logger.Debugf("clients: no matching torrent clients selected, skipping injection")
 		return nil
 	}
-	s.logger.Debugf("clients: selected %d torrent client(s) for injection", len(clients))
+	logger.Debugf("clients: selected %d torrent client(s) for injection", len(clients))
 
 	clientNames := make([]string, 0, len(clients))
 	for name := range clients {
@@ -170,12 +172,12 @@ func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent ap
 	for _, name := range clientNames {
 		client := applyClientOverrides(clients[name], clientOverrides)
 		clientType := strings.ToLower(strings.TrimSpace(client.ClientType()))
-		s.logger.Debugf("clients: processing client name=%s type=%s", name, clientType)
+		logger.Debugf("clients: processing client name=%s type=%s", name, clientType)
 		// Watch folders can still consume a local torrent file when URL metadata
 		// is also present. Skip only URL-only input before any injection delay so
 		// a skipped client cannot fail a successful URL add.
 		if clientType == "watch" && torrentPath == "" && torrentURL != "" {
-			s.logger.Debugf("clients: skipping watch folder client %s for URL injection", name)
+			logger.Debugf("clients: skipping watch folder client %s for URL injection", name)
 			skippedURLOnlyClients++
 			continue
 		}
@@ -184,7 +186,7 @@ func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent ap
 		}
 		switch clientType {
 		case "none", "disabled":
-			s.logger.Debugf("clients: skipping disabled client %s", name)
+			logger.Debugf("clients: skipping disabled client %s", name)
 			continue
 		case "watch":
 			if err := s.injectWatchFolder(ctx, name, client.WatchFolder, torrent.Path); err != nil {
@@ -207,7 +209,7 @@ func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent ap
 		return fmt.Errorf("clients: no selected torrent client supports URL injection: %w", internalerrors.ErrInvalidInput)
 	}
 
-	s.logger.Debugf("clients: injection dispatch complete for %s", meta.SourcePath)
+	logger.Debugf("clients: injection dispatch complete for %s", meta.SourcePath)
 	return nil
 }
 
@@ -245,6 +247,7 @@ func (s *Service) trackerConfig(tracker string) (config.TrackerConfig, bool) {
 }
 
 func (s *Service) waitInjectDelay(ctx context.Context, tracker string) error {
+	logger := logging.FromContext(ctx, s.logger)
 	delay := s.cfg.PostUpload.InjectDelay
 	if trackerCfg, ok := s.trackerConfig(tracker); ok && trackerCfg.InjectDelay != nil {
 		delay = *trackerCfg.InjectDelay
@@ -253,7 +256,7 @@ func (s *Service) waitInjectDelay(ctx context.Context, tracker string) error {
 		return nil
 	}
 
-	s.logger.Debugf("clients: waiting %ds before injection for tracker %s", delay, strings.TrimSpace(tracker))
+	logger.Debugf("clients: waiting %ds before injection for tracker %s", delay, strings.TrimSpace(tracker))
 	timer := time.NewTimer(time.Duration(delay) * time.Second)
 	defer timer.Stop()
 
@@ -266,10 +269,11 @@ func (s *Service) waitInjectDelay(ctx context.Context, tracker string) error {
 }
 
 func (s *Service) injectWatchFolder(ctx context.Context, name, folder, torrentPath string) error {
+	logger := logging.FromContext(ctx, s.logger)
 	if strings.TrimSpace(folder) == "" {
 		return fmt.Errorf("clients: %s watch_folder is required", name)
 	}
-	s.logger.Debugf("clients: writing torrent to watch folder for %s", name)
+	logger.Debugf("clients: writing torrent to watch folder for %s", name)
 
 	absTorrent, err := filepath.Abs(torrentPath)
 	if err != nil {
@@ -320,11 +324,12 @@ func (s *Service) injectWatchFolder(ctx context.Context, name, folder, torrentPa
 	default:
 	}
 
-	s.logger.Infof("clients: copied torrent to watch folder path=%s", destPath)
+	logger.Infof("clients: copied torrent to watch folder path=%s", destPath)
 	return nil
 }
 
 func (s *Service) injectQbit(ctx context.Context, name string, client config.TorrentClientConfig, meta api.ClientSubject, torrent api.TorrentResult) error {
+	logger := logging.FromContext(ctx, s.logger)
 	host := strings.TrimSpace(client.QbitHost())
 	if host == "" {
 		return fmt.Errorf("clients: %s qbit host is required", name)
@@ -355,7 +360,7 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	qbitHTTP.Transport = qbitLoginValidatingTransport{base: baseTransport}
 
 	options := qbittorrent.TorrentAddOptions{}
-	s.logger.Debugf("clients: preparing qbit add options client=%s tracker=%s cross_seed=%t", name, strings.TrimSpace(torrent.Tracker), torrent.CrossSeed)
+	logger.Debugf("clients: preparing qbit add options client=%s tracker=%s cross_seed=%t", name, strings.TrimSpace(torrent.Tracker), torrent.CrossSeed)
 	optionsStart := time.Now()
 	staging, err := s.prepareLinkStaging(ctx, name, client, meta, torrent)
 	if err != nil {
@@ -364,7 +369,7 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	options.SkipHashCheck = true
 	if staging.Linked {
 		options.SavePath = staging.SavePath
-		s.logger.Debugf(
+		logger.Debugf(
 			"clients: qbit link staging selected client=%s tracker=%s files=%d layout_validated=%t save_path=%s",
 			name,
 			strings.TrimSpace(torrent.Tracker),
@@ -381,7 +386,7 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 		}
 		if mapped {
 			options.SavePath = savePath
-			s.logger.Debugf("clients: qbit path mapping ready client=%s save_path=%s", name, savePath)
+			logger.Debugf("clients: qbit path mapping ready client=%s save_path=%s", name, savePath)
 		}
 	}
 	if category := strings.TrimSpace(client.QbitCrossCategory); torrent.CrossSeed && category != "" {
@@ -399,7 +404,7 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	autoManagement := !staging.Linked && qbitAutomaticManagementEnabled(meta, client.AutomaticManagementPaths)
 	addOptions := options.Prepare()
 	addOptions["autoTMM"] = strconv.FormatBool(autoManagement)
-	s.logger.Debugf(
+	logger.Debugf(
 		"clients: qbit add options ready client=%s auto_tmm=%t skip_hash_check=%t elapsed=%s",
 		name,
 		autoManagement,
@@ -410,7 +415,7 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	qbitCtx, cancel := context.WithTimeout(ctx, qbitInjectHTTPTimeout)
 	defer cancel()
 
-	s.logger.Debugf(
+	logger.Debugf(
 		"clients: connecting to qbit %s timeout=%s retries=%d",
 		redaction.RedactValue(host, nil),
 		qbitInjectHTTPTimeout,
@@ -418,22 +423,22 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	)
 	if !client.UsesQuiProxy() {
 		if err := qbit.LoginCtx(qbitCtx); err != nil {
-			s.cleanupFailedLinkStaging(name, torrent.Tracker, staging)
+			s.cleanupFailedLinkStaging(ctx, name, torrent.Tracker, staging)
 			return fmt.Errorf("clients: %s qbit login: %w", name, err)
 		}
-		s.logger.Debugf("clients: connected to qbit client %s", name)
+		logger.Debugf("clients: connected to qbit client %s", name)
 	} else {
-		s.logger.Debugf("clients: using qbit proxy for client %s", name)
+		logger.Debugf("clients: using qbit proxy for client %s", name)
 	}
 
 	if torrentPath := strings.TrimSpace(torrent.Path); torrentPath != "" {
-		s.logger.Debugf("clients: adding torrent file to qbit client %s for %s", name, meta.SourcePath)
+		logger.Debugf("clients: adding torrent file to qbit client %s for %s", name, meta.SourcePath)
 		if _, err := qbit.AddTorrentFromFileCtx(qbitCtx, torrentPath, addOptions); err != nil {
-			s.cleanupFailedLinkStaging(name, torrent.Tracker, staging)
+			s.cleanupFailedLinkStaging(ctx, name, torrent.Tracker, staging)
 			return fmt.Errorf("clients: %s qbit add torrent file: %w", name, err)
 		}
 
-		s.logger.Infof(
+		logger.Infof(
 			"clients: added torrent file to qbit client=%s tracker=%s linked=%t qbit_hash_check=%t source=%s",
 			name,
 			logTracker(torrent.Tracker),
@@ -445,12 +450,12 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 	}
 
 	if torrentURL := strings.TrimSpace(torrent.URL); torrentURL != "" {
-		s.logger.Debugf("clients: adding tracker torrent URL to qbit client %s for %s", name, meta.SourcePath)
+		logger.Debugf("clients: adding tracker torrent URL to qbit client %s for %s", name, meta.SourcePath)
 		if _, err := qbit.AddTorrentFromUrlCtx(qbitCtx, torrentURL, addOptions); err != nil {
-			s.cleanupFailedLinkStaging(name, torrent.Tracker, staging)
+			s.cleanupFailedLinkStaging(ctx, name, torrent.Tracker, staging)
 			return fmt.Errorf("clients: %s qbit add torrent URL: %w", name, err)
 		}
-		s.logger.Infof(
+		logger.Infof(
 			"clients: added tracker torrent URL to qbit client=%s tracker=%s linked=%t qbit_hash_check=%t source=%s",
 			name,
 			logTracker(torrent.Tracker),
@@ -513,15 +518,16 @@ func qbitInjectClientConfig(host, username, password string, client config.Torre
 	}
 }
 
-func (s *Service) cleanupFailedLinkStaging(clientName string, tracker string, staging linkStagingResult) {
+func (s *Service) cleanupFailedLinkStaging(ctx context.Context, clientName string, tracker string, staging linkStagingResult) {
+	logger := logging.FromContext(ctx, s.logger)
 	if staging.Cleanup == nil {
 		return
 	}
 	if err := staging.Cleanup.Run(); err != nil {
-		s.logger.Warnf("clients: %s cleanup failed after qbit injection error tracker=%s: %v", clientName, strings.TrimSpace(tracker), err)
+		logger.Warnf("clients: %s cleanup failed after qbit injection error tracker=%s: %v", clientName, strings.TrimSpace(tracker), err)
 		return
 	}
-	s.logger.Debugf("clients: %s cleaned staged links after qbit injection error tracker=%s", clientName, strings.TrimSpace(tracker))
+	logger.Debugf("clients: %s cleaned staged links after qbit injection error tracker=%s", clientName, strings.TrimSpace(tracker))
 }
 
 // resolveInjectClients selects the configured torrent clients that should receive

@@ -374,8 +374,8 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 
 	finalized = strings.TrimSpace(antEmptyURLPattern.ReplaceAllString(finalized, ""))
 
-	// Debug saving
-	if meta.Options.Debug {
+	// Explicit dry runs retain the local diagnostic description artifact.
+	if req.Intent == trackers.PreparationIntentDryRun {
 		unit3d.SaveDescriptionDebug(api.NewDescriptionSubject(meta), "ANT", req.Runtime.DBPath, finalized, req.Logger)
 	}
 

@@ -56,6 +56,7 @@ type cliDupeChecker interface {
 // cliInteractiveCore composes only capabilities used by the interactive path.
 type cliInteractiveCore interface {
 	cliPreparedUploadRunner
+	cliAcceptedTrackerDryRunRunner
 	cliMetadataPreviewer
 	cliUploadReviewer
 	cliScreenshotCore
@@ -251,7 +252,7 @@ func runInteractiveCLIPathWithInputLoggerAndPlaylist(
 	if err != nil {
 		return fmt.Errorf("upbrr: compose tracker registry: %w", err)
 	}
-	candidateTrackers, removalBase := resolveCLIUploadTrackers(currentVisited, req, metadataPreview, cfg, registry)
+	candidateTrackers, removalBase := resolveCLIUploadTrackers(currentVisited, req, metadataPreview, cfg, registry, currentOpts.Debug)
 	if len(candidateTrackers) == 0 {
 		fmt.Printf("No trackers configured for %s\n", formatPathLabel(sourcePath))
 		return nil
@@ -276,10 +277,10 @@ func runInteractiveCLIPathWithInputLoggerAndPlaylist(
 		return err
 	}
 	var approved, ignoreDupesFor, ruleOverrides []string
-	if req.Options.Debug || req.Options.DryRun {
+	if currentOpts.Debug {
 		resultByTracker := mapDupeResultsByTracker(dupeSummary)
 		printUnattendedDupeReviewSummary(resultByTracker, candidateTrackers)
-		approved = debugDryRunApprovedTrackers(resultByTracker, candidateTrackers)
+		approved = debugApprovedTrackers(resultByTracker, candidateTrackers)
 	} else {
 		approved, ignoreDupesFor, ruleOverrides, err = promptTrackerDupeReview(reader, dupeSummary, req, candidateTrackers, nil)
 		if err != nil {
@@ -297,10 +298,12 @@ func runInteractiveCLIPathWithInputLoggerAndPlaylist(
 	req.IgnoreTrackerRuleFailuresFor = ruleOverrides
 
 	if req.DoubleDupeCheck && len(approved) > 0 {
-		approved, err = runDoubleDupeCheck(ctx, reader, coreSvc, req, approved)
+		var recheckSummary api.DupeCheckSummary
+		approved, recheckSummary, err = runDoubleDupeCheck(ctx, reader, coreSvc, req, approved, currentOpts.Debug)
 		if err != nil {
 			return err
 		}
+		dupeSummary = recheckSummary
 		req.IgnoreDupesFor = appendTrackerRemovals(req.IgnoreDupesFor, approved...)
 		req.Trackers = approved
 		req.TrackersRemove = appendTrackerRemovals(req.TrackersRemove, unselectedTrackers(candidateTrackers, approved)...)
@@ -310,13 +313,43 @@ func runInteractiveCLIPathWithInputLoggerAndPlaylist(
 		return nil
 	}
 
-	if req.Options.Debug || !req.Options.DryRun {
-		if err := runCLIScreenshotHandling(ctx, coreSvc, req); err != nil {
-			return err
-		}
+	if err := runCLIScreenshotHandling(ctx, coreSvc, req); err != nil {
+		return err
 	}
 	if err := prepareCLIImages(ctx, coreSvc, req, logger, false); err != nil {
 		return err
+	}
+
+	if currentOpts.Debug {
+		preview, err := runAcceptedCLIDebugDryRun(ctx, coreSvc, req, metadataPreview.Release, dupeSummary, true)
+		if err != nil {
+			return wrapUpbrrError(err)
+		}
+		review := cliReviewFromDryRunPreview(preview)
+		questionnaireAnswers, questionnaireChanged, err := promptTrackerQuestionnaires(reader, review, currentOpts)
+		if err != nil {
+			return err
+		}
+		if questionnaireChanged || len(questionnaireAnswers) > 0 {
+			req.TrackerQuestionnaireAnswers = questionnaireAnswers
+		}
+		if questionnaireChanged {
+			preview, err = runAcceptedCLIDebugDryRun(ctx, coreSvc, req, metadataPreview.Release, dupeSummary, true)
+			if err != nil {
+				return wrapUpbrrError(err)
+			}
+			review = cliReviewFromDryRunPreview(preview)
+		}
+		req, err = maybeEditCLIDescriptions(ctx, coreSvc, reader, req, review, currentOpts)
+		if err != nil {
+			return err
+		}
+		preview, err = runAcceptedCLIDebugDryRun(ctx, coreSvc, req, metadataPreview.Release, dupeSummary, false)
+		if err != nil {
+			return wrapUpbrrError(err)
+		}
+		printDebugTrackerDryRun(preview)
+		return nil
 	}
 
 	review, err := coreSvc.BuildUploadReview(ctx, req)
@@ -325,7 +358,7 @@ func runInteractiveCLIPathWithInputLoggerAndPlaylist(
 	}
 
 	// Apply questionnaire answers before description editing and upload. When
-	// answers change, rebuild the review so printed dry-run/debug state matches
+	// answers change, rebuild the review so printed tracker-preview state matches
 	// the request that will be uploaded.
 	questionnaireAnswers, questionnaireChanged, err := promptTrackerQuestionnaires(reader, review, currentOpts)
 	if err != nil {
@@ -341,7 +374,7 @@ func runInteractiveCLIPathWithInputLoggerAndPlaylist(
 		}
 	}
 
-	req, review, err = maybeEditCLIDescriptions(ctx, coreSvc, reader, req, review, currentOpts)
+	req, err = maybeEditCLIDescriptions(ctx, coreSvc, reader, req, review, currentOpts)
 	if err != nil {
 		return err
 	}
@@ -351,19 +384,73 @@ func runInteractiveCLIPathWithInputLoggerAndPlaylist(
 		req.TrackerQuestionnaireAnswers = questionnaireAnswers
 	}
 
-	if req.Options.Debug {
-		printDebugUploadReview(review)
-		_, err = coreSvc.RunUploadPrepared(ctx, req)
-		return wrapUpbrrError(err)
-	}
-	if req.Options.DryRun {
-		printDryRunUploadReview(review, req)
-		_, err = coreSvc.RunUploadPrepared(ctx, req)
-		return wrapUpbrrError(err)
-	}
-
 	_, err = coreSvc.RunUploadPrepared(ctx, req)
 	return wrapUpbrrError(err)
+}
+
+func runAcceptedCLIDebugDryRun(
+	ctx context.Context,
+	coreSvc cliAcceptedTrackerDryRunRunner,
+	req api.Request,
+	release api.ReleaseRef,
+	dupeSummary api.DupeCheckSummary,
+	previewOnly bool,
+) (api.TrackerDryRunPreview, error) {
+	input := api.TrackerDryRunInput{
+		Release:                release,
+		Trackers:               append([]string(nil), req.Trackers...),
+		IgnoreDupesFor:         append([]string(nil), req.IgnoreDupesFor...),
+		IgnoreRuleFailuresFor:  append([]string(nil), req.IgnoreTrackerRuleFailuresFor...),
+		QuestionnaireAnswers:   cloneCLIQuestionnaireAnswers(req.TrackerQuestionnaireAnswers),
+		DescriptionGroups:      api.CloneDescriptionBuilderGroups(req.DescriptionGroups),
+		TrackerIDOverrides:     maps.Clone(req.TrackerIDOverrides),
+		TrackerConfigOverrides: req.TrackerConfigOverrides,
+		TrackerSiteOverrides:   req.TrackerSiteOverrides,
+		ClientOverrides:        req.ClientOverrides,
+		ImageHostOverrides:     req.ImageHostOverrides,
+		ScreenshotOverrides:    req.ScreenshotOverrides,
+		TorrentOverrides:       req.TorrentOverrides,
+		Options:                req.Options,
+	}
+	if req.IgnoreTrackerRuleFailures {
+		input.IgnoreRuleFailuresFor = append([]string(nil), req.Trackers...)
+	}
+	if previewOnly {
+		input.Options.NoSeed = true
+	}
+	preview, err := coreSvc.RunAcceptedTrackerDryRun(ctx, api.TrackerDryRunPlan{
+		Input:     input,
+		Duplicate: api.NewAcceptedDuplicateEvidence(release, input.Trackers, dupeSummary),
+	})
+	if err != nil {
+		return api.TrackerDryRunPreview{}, fmt.Errorf("run accepted tracker debug: %w", err)
+	}
+	return preview, nil
+}
+
+func cloneCLIQuestionnaireAnswers(source map[string]map[string]string) map[string]map[string]string {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[string]map[string]string, len(source))
+	for tracker, answers := range source {
+		cloned[tracker] = maps.Clone(answers)
+	}
+	return cloned
+}
+
+func cliReviewFromDryRunPreview(preview api.TrackerDryRunPreview) api.UploadReview {
+	review := api.UploadReview{SourcePath: preview.SourcePath, Trackers: make([]api.TrackerReview, 0, len(preview.Trackers))}
+	for _, entry := range preview.Trackers {
+		review.Trackers = append(review.Trackers, api.TrackerReview{
+			Tracker:       entry.Tracker,
+			Banned:        entry.Banned,
+			BannedReason:  entry.BannedReason,
+			DryRun:        entry,
+			Questionnaire: entry.Questionnaire,
+		})
+	}
+	return review
 }
 
 func resolvedCLIMetadataSourcePath(input string, preview api.MetadataPreview) string {
@@ -379,9 +466,10 @@ func resolveCLIUploadTrackers(
 	preview api.MetadataPreview,
 	cfg config.Config,
 	registry *trackers.Registry,
+	debug bool,
 ) ([]string, []string) {
 	remove := append([]string{}, req.TrackersRemove...)
-	if !req.Options.Debug && !req.Options.DryRun {
+	if !debug {
 		remove = append(remove, matchedPreviewTrackers(preview)...)
 	}
 	removalBase := trackers.ResolveTrackersWithDefaultsAndRegistry(cfg, req.Trackers, remove, api.NopLogger{}, registry)
@@ -957,9 +1045,9 @@ func printUnattendedDupeReviewSummary(resultByTracker map[string]api.DupeCheckRe
 	return approved
 }
 
-// debugDryRunApprovedTrackers keeps every selected tracker eligible for payload
+// debugApprovedTrackers keeps every selected tracker eligible for payload
 // inspection without creating a duplicate override or waiver.
-func debugDryRunApprovedTrackers(_ map[string]api.DupeCheckResult, trackers []string) []string {
+func debugApprovedTrackers(_ map[string]api.DupeCheckResult, trackers []string) []string {
 	approved := make([]string, 0, len(trackers))
 	for _, tracker := range trackers {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
@@ -972,7 +1060,7 @@ func debugDryRunApprovedTrackers(_ map[string]api.DupeCheckResult, trackers []st
 }
 
 // isRuleSkippedDupeResult reports whether a skipped dupe result came from
-// tracker rule validation. These skips remain terminal even in debug/dry-run.
+// tracker rule validation. These skips remain terminal in CLI debug.
 func isRuleSkippedDupeResult(result api.DupeCheckResult) bool {
 	if !result.Skipped {
 		return false
@@ -1320,12 +1408,19 @@ func questionnaireFieldLabel(field api.TrackerQuestionnaireField) string {
 	return strings.TrimSpace(field.Key)
 }
 
-func runDoubleDupeCheck(ctx context.Context, reader *bufio.Reader, coreSvc cliDupeChecker, req api.Request, trackers []string) ([]string, error) {
+func runDoubleDupeCheck(
+	ctx context.Context,
+	reader *bufio.Reader,
+	coreSvc cliDupeChecker,
+	req api.Request,
+	trackers []string,
+	debug bool,
+) ([]string, api.DupeCheckSummary, error) {
 	recheckReq := req
 	recheckReq.Trackers = trackers
 	summary, err := coreSvc.CheckDupes(ctx, recheckReq)
 	if err != nil {
-		return nil, fmt.Errorf("upbrr: %w", err)
+		return nil, api.DupeCheckSummary{}, fmt.Errorf("upbrr: %w", err)
 	}
 
 	resultByTracker := make(map[string]api.DupeCheckResult, len(summary.Results))
@@ -1346,7 +1441,7 @@ func runDoubleDupeCheck(ctx context.Context, reader *bufio.Reader, coreSvc cliDu
 		}
 		fmt.Printf("\nDouble dupe check flagged %s:\n", tracker)
 		printDupeResult(result)
-		if req.Options.Debug {
+		if debug {
 			fmt.Printf("Debug mode: keeping %s despite second dupe check.\n", tracker)
 			filtered = append(filtered, tracker)
 			continue
@@ -1357,13 +1452,13 @@ func runDoubleDupeCheck(ctx context.Context, reader *bufio.Reader, coreSvc cliDu
 		}
 		upload, err := promptYesNo(reader, fmt.Sprintf("Upload to %s anyway after second dupe check? [y/N]: ", tracker), false)
 		if err != nil {
-			return nil, err
+			return nil, api.DupeCheckSummary{}, err
 		}
 		if upload {
 			filtered = append(filtered, tracker)
 		}
 	}
-	return filtered, nil
+	return filtered, summary, nil
 }
 
 func buildQuestionnairePrompt(field api.TrackerQuestionnaireField) string {
@@ -1598,6 +1693,15 @@ func printDebugUploadReview(review api.UploadReview) {
 	}
 }
 
+// printDebugTrackerDryRun renders the shared dry-run result with CLI debug labels.
+func printDebugTrackerDryRun(preview api.TrackerDryRunPreview) {
+	review := api.UploadReview{SourcePath: preview.SourcePath, Trackers: make([]api.TrackerReview, 0, len(preview.Trackers))}
+	for _, entry := range preview.Trackers {
+		review.Trackers = append(review.Trackers, api.TrackerReview{Tracker: entry.Tracker, DryRun: entry})
+	}
+	printDebugUploadReview(review)
+}
+
 // debugPayloadGroup represents one rendered debug payload body and the trackers
 // that share it.
 type debugPayloadGroup struct {
@@ -1646,21 +1750,6 @@ func debugPayloadTrackerLabel(tracker api.TrackerReview) string {
 		return "(unknown)"
 	}
 	return label
-}
-
-func printDryRunUploadReview(review api.UploadReview, req api.Request) {
-	fmt.Printf("\n[Dry Run] %s\n", formatPathLabel(review.SourcePath))
-	for _, tracker := range review.Trackers {
-		fmt.Printf("\n[%s]\n", tracker.Tracker)
-		if tracker.Banned && !tracker.DryRun.Banned {
-			fmt.Printf("Banned group: %s\n", tracker.BannedReason)
-		}
-		printRuleFailures(tracker.RuleFailures)
-		if !req.SkipDupeCheck && tracker.DupeCheck.HasDupes {
-			printDupeResult(tracker.DupeCheck)
-		}
-		printDryRunSummary(tracker.DryRun)
-	}
 }
 
 // printRuleFailures groups blocking results and advisory warnings for CLI output.

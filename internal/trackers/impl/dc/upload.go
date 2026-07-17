@@ -261,8 +261,8 @@ func buildDescription(req trackers.PreparationInput, assets trackers.Description
 	description := strings.Join(parts, "\n\n")
 	finalized := finalizeDescription(description)
 
-	// Debug saving
-	if meta.Options.Debug {
+	// Explicit dry runs retain the local diagnostic description artifact.
+	if req.Intent == trackers.PreparationIntentDryRun {
 		descriptionunit3d.SaveDescriptionDebug(api.NewDescriptionSubject(meta), "DC", req.Runtime.DBPath, finalized, req.Logger)
 	}
 

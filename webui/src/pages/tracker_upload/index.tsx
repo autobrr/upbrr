@@ -96,14 +96,6 @@ export default function TrackerUploadPage({
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
-              checked={view.options.debug}
-              onChange={(event) => facet.changeOptions({ debug: event.target.checked })}
-            />
-            Debug logging
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
               checked={view.options.noSeed}
               onChange={(event) => facet.changeOptions({ noSeed: event.target.checked })}
             />

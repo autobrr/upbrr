@@ -648,35 +648,10 @@ func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (pr
 	})
 }
 
-// FetchTrackerDryRunPreview builds per-tracker dry-run upload entries from cached
-// prepared metadata, creating torrents and cache state only after selected trackers
-// resolve. Dry-run/debug processing still evaluates tracker prerequisites such
-// as banned-group matches, rule failures, and block state, but reports them
-// without suppressing payload generation or performing the tracker upload.
-func (c *Core) FetchTrackerDryRunPreview(ctx context.Context, req api.Request) (api.TrackerDryRunPreview, error) {
-	req = c.upload.expandEntrypointTrackerDefaults(req)
-	resolvedReq, err := c.description.resolveOverrideRequest(ctx, req)
-	if err != nil {
-		return api.TrackerDryRunPreview{}, err
-	}
-	input, err := api.MapPreparationRequest(resolvedReq, api.PreparationIntentDryRun)
-	if err != nil {
-		return api.TrackerDryRunPreview{}, fmt.Errorf("core: map dry-run preparation request: %w", err)
-	}
-	prepared, err := c.preparedFacts.Prepare(ctx, input)
-	if err != nil {
-		return api.TrackerDryRunPreview{}, fmt.Errorf("core: prepare tracker dry run: %w", err)
-	}
-	return c.FetchAcceptedTrackerDryRun(ctx, trackerDryRunInputFromRequest(resolvedReq, api.ReleaseRef{
-		SourcePath: prepared.Release.Source.SourcePath,
-		Generation: prepared.Release.Generation,
-	}))
-}
-
-// FetchAcceptedTrackerDryRun builds a dry-run preview from one exact prepared
-// generation and typed operation input.
-func (c *Core) FetchAcceptedTrackerDryRun(ctx context.Context, input api.TrackerDryRunInput) (api.TrackerDryRunPreview, error) {
-	preview, err := c.upload.fetchAcceptedTrackerDryRun(ctx, input)
+// RunAcceptedTrackerDryRun executes a non-submitting tracker dry run for one
+// exact prepared generation using one completed duplicate-check outcome.
+func (c *Core) RunAcceptedTrackerDryRun(ctx context.Context, plan api.TrackerDryRunPlan) (api.TrackerDryRunPreview, error) {
+	preview, err := c.upload.runAcceptedTrackerDryRun(ctx, plan)
 	return preview, classifyOperationError(api.OperationKindDryRun, err)
 }
 
@@ -756,9 +731,6 @@ func trackerDryRunTorrentPath(entry api.TrackerDryRunEntry) string {
 	}
 	return ""
 }
-
-// annotateDryRunReleaseNames records whether each tracker-specific dry-run
-// upload name differs from the prepared release name.
 
 func annotateDryRunSubjectReleaseNames(subject api.UploadSubject, entries []api.TrackerDryRunEntry) {
 	annotateDryRunNames(subject.ReleaseName, subject.ReleaseNameNoTag, subject.Filename, entries)
@@ -1198,20 +1170,7 @@ func baseFromAnnounce(announce string) string {
 	return parsed.String()
 }
 
-// dupeCheckDryRunProcessingMeta clears previous duplicate-match suppression
-// before the dupe service runs for dry-run/debug. Tracker rule failures stay in
-// place so rule-failed trackers remain skipped by the dupe check.
-
-// trackerDryRunProcessingMeta clears suppressive duplicate/block state for
-// dry-run/debug artifact generation while leaving normal upload processing
-// unchanged. Rule failures stay terminal in every mode; dry-run/debug should
-// only bypass duplicate-hit state so operators can inspect what would have been
-// built for trackers that passed rules.
-
 func normalizeExecutionRequest(req api.Request) api.Request {
-	if req.Execution.SiteCheck {
-		req.Options.DryRun = true
-	}
 	if strings.TrimSpace(req.Execution.SiteUploadTracker) != "" {
 		req.Trackers = []string{strings.ToUpper(strings.TrimSpace(req.Execution.SiteUploadTracker))}
 	}

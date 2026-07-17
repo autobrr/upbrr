@@ -7,12 +7,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/autobrr/upbrr/internal/preparedrelease"
-	sharedjobs "github.com/autobrr/upbrr/internal/webserver/jobs"
-	"github.com/autobrr/upbrr/pkg/api"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/preparedrelease"
+	sharedjobs "github.com/autobrr/upbrr/internal/webserver/jobs"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type adapterTestCore struct {
@@ -137,11 +139,7 @@ func (*adapterTestCore) FetchPreparationPreview(context.Context, api.Request) (a
 	return api.PreparationPreview{}, nil
 }
 
-func (*adapterTestCore) FetchTrackerDryRunPreview(context.Context, api.Request) (api.TrackerDryRunPreview, error) {
-	return api.TrackerDryRunPreview{}, nil
-}
-
-func (*adapterTestCore) FetchAcceptedTrackerDryRun(context.Context, api.TrackerDryRunInput) (api.TrackerDryRunPreview, error) {
+func (*adapterTestCore) RunAcceptedTrackerDryRun(context.Context, api.TrackerDryRunPlan) (api.TrackerDryRunPreview, error) {
 	return api.TrackerDryRunPreview{}, nil
 }
 
@@ -240,7 +238,6 @@ func TestStartTrackerUploadRejectsPartialCapabilityBundle(t *testing.T) {
 		nil,
 		nil,
 		false,
-		false,
 		"",
 	)
 	if !errors.Is(err, ErrPreparedGenerationUnavailable) {
@@ -268,7 +265,6 @@ func TestWebStartTrackerUploadExportsBeforePerRunSetup(t *testing.T) {
 		nil,
 		nil,
 		false,
-		false,
 		"",
 	)
 	if !errors.Is(err, exportErr) {
@@ -286,6 +282,20 @@ func TestWebDupeRunnerPreservesCoreErrorText(t *testing.T) {
 	)
 	if err == nil || err.Error() != want {
 		t.Fatalf("error = %v, want exact %q", err, want)
+	}
+}
+
+func TestBuildRunOptionsKeepsDebugAsLogLevelOnly(t *testing.T) {
+	t.Parallel()
+
+	backend := &Backend{}
+	runOpts, err := backend.buildRunOptions(false, "debug")
+	if err != nil {
+		t.Fatalf("build run options: %v", err)
+	}
+	options := buildRunUploadOptions(config.Config{}, runOpts)
+	if options.RunLogLevel != "debug" || options.NoSeed {
+		t.Fatalf("upload options = %#v", options)
 	}
 }
 
@@ -314,16 +324,16 @@ func TestWebJobFacadesPreserveLegacyOwnershipErrors(t *testing.T) {
 	sourcePath := "Example.Release.2026.1080p-GRP"
 	dupeID, err := backend.jobEngine.StartDupe(context.Background(), owner, sharedjobs.DupeSpec{
 		CorrelationID: "owner-dupe",
-		Snapshot: webTestDupeSnapshot(sourcePath),
-		Runner:   successfulDupeRunner{},
+		Snapshot:      webTestDupeSnapshot(sourcePath),
+		Runner:        successfulDupeRunner{},
 	})
 	if err != nil {
 		t.Fatalf("start dupe: %v", err)
 	}
 	uploadID, err := backend.jobEngine.StartUpload(context.Background(), owner, sharedjobs.UploadSpec{
 		CorrelationID: "owner-upload",
-		Snapshot: webTestUploadSnapshot(sourcePath),
-		Runner:   successfulUploadRunner{},
+		Snapshot:      webTestUploadSnapshot(sourcePath),
+		Runner:        successfulUploadRunner{},
 	})
 	if err != nil {
 		t.Fatalf("start upload: %v", err)
@@ -480,8 +490,8 @@ func installBlockingUploadJob(
 	}
 	jobID, err := backend.jobEngine.StartUpload(context.Background(), owner, sharedjobs.UploadSpec{
 		CorrelationID: "blocking-upload",
-		Snapshot: webTestUploadSnapshot("Example.Release.2026.1080p-GRP"),
-		Runner:   blockingUploadRunner{canceled: canceled, release: release},
+		Snapshot:      webTestUploadSnapshot("Example.Release.2026.1080p-GRP"),
+		Runner:        blockingUploadRunner{canceled: canceled, release: release},
 	})
 	if err != nil {
 		t.Fatalf("start blocking upload: %v", err)
@@ -506,8 +516,8 @@ func installBlockingDupeJob(
 	}
 	jobID, err := backend.jobEngine.StartDupe(context.Background(), owner, sharedjobs.DupeSpec{
 		CorrelationID: "blocking-dupe",
-		Snapshot: webTestDupeSnapshot("Example.Release.2026.1080p-GRP"),
-		Runner:   blockingDupeRunner{canceled: canceled, release: release},
+		Snapshot:      webTestDupeSnapshot("Example.Release.2026.1080p-GRP"),
+		Runner:        blockingDupeRunner{canceled: canceled, release: release},
 	})
 	if err != nil {
 		t.Fatalf("start blocking dupe: %v", err)
