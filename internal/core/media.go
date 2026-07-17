@@ -579,7 +579,7 @@ func (m *mediaModule) resolveImageUploadTargets(trackerNames []string, subject a
 }
 
 // filterImageUploadTrackers returns canonical tracker names that can receive
-// tracker-scoped image uploads, excluding blocked, rule-failed, or already matched trackers.
+// tracker-scoped image uploads, excluding unconditional policy blocks and existing matches.
 func (m *mediaModule) filterImageUploadTrackers(trackerNames []string, meta api.UploadSubject) []string {
 	filtered := make([]string, 0, len(trackerNames))
 	for _, tracker := range trackerNames {
@@ -588,15 +588,14 @@ func (m *mediaModule) filterImageUploadTrackers(trackerNames []string, meta api.
 			continue
 		}
 		blockedReasons := blockedReasonsForTracker(meta.BlockedTrackers, name)
-		ruleFailures := ruleFailuresForTracker(meta.TrackerRuleFailures, name)
 		existingMatch := matchedTrackerForUpload(meta.MatchedTrackers, name)
-		if len(blockedReasons) > 0 || (!meta.IgnoreTrackerRuleFailures && api.HasBlockingRuleFailures(ruleFailures)) || existingMatch {
+		if len(blockedReasons) > 0 || existingMatch {
 			if m.logger != nil {
 				m.logger.Debugf(
 					"core: excluding blocked image upload tracker tracker=%s blocked_reasons=%v rule_failures=%d existing_match=%t",
 					name,
 					blockedReasons,
-					len(ruleFailures),
+					len(ruleFailuresForTracker(meta.TrackerRuleFailures, name)),
 					existingMatch,
 				)
 			}

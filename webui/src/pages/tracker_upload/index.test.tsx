@@ -17,6 +17,7 @@ describe("TrackerUploadPage", () => {
         selectedTrackers: ["EXAMPLE"],
         eligibility: null,
         ignoredDupesFor: [],
+        authorizedRulesByTracker: {},
         questionnaireAnswers: {},
         options: { noSeed: false, runLogLevel: "info" },
         dryRunStatus: "idle",
@@ -32,6 +33,7 @@ describe("TrackerUploadPage", () => {
       chooseTrackers: vi.fn(),
       answerQuestionnaire: vi.fn(),
       changeOptions: vi.fn(),
+      setRuleAuthorized: vi.fn(),
       runDryRun,
       review: vi.fn(async () => true),
       start: vi.fn(async () => true),
@@ -59,6 +61,7 @@ describe("TrackerUploadPage", () => {
         selectedTrackers: ["EXAMPLE"],
         eligibility: null,
         ignoredDupesFor: [],
+        authorizedRulesByTracker: {},
         questionnaireAnswers: {},
         options: { noSeed: false, runLogLevel: "info" },
         dryRunStatus: "ready",
@@ -85,6 +88,7 @@ describe("TrackerUploadPage", () => {
       chooseTrackers: vi.fn(),
       answerQuestionnaire: vi.fn(),
       changeOptions: vi.fn(),
+      setRuleAuthorized: vi.fn(),
       runDryRun: vi.fn(async () => true),
       review: vi.fn(async () => true),
       start: vi.fn(async () => true),
@@ -103,5 +107,91 @@ describe("TrackerUploadPage", () => {
     expect(screen.getByRole("heading", { name: "EXAMPLE" })).toBeInTheDocument();
     expect(screen.getByText("0/0")).toBeInTheDocument();
     expect(screen.getByText("Preview unavailable.")).toBeInTheDocument();
+  });
+
+  it("offers authorization only for waivable rule diagnostics", () => {
+    const setRuleAuthorized = vi.fn();
+    const facet: UploadFacet = {
+      view: {
+        revision: 1,
+        selectedTrackers: ["EXAMPLE"],
+        eligibility: null,
+        ignoredDupesFor: [],
+        authorizedRulesByTracker: {},
+        questionnaireAnswers: {},
+        options: { noSeed: false, runLogLevel: "info" },
+        dryRunStatus: "ready",
+        dryRun: {
+          SourcePath: "C:\\media\\Example",
+          Trackers: [
+            {
+              Tracker: "EXAMPLE",
+              Status: "ready",
+              Files: [],
+              Diagnostics: {
+                Duplicate: {
+                  Tracker: "EXAMPLE",
+                  Status: "completed",
+                  HasDupes: true,
+                  Filtered: [{ ID: "1", Name: "Example.Release.2026.1080p-GRP" }],
+                },
+                LiveEligibilityReasons: [],
+                RuleDecisions: [
+                  {
+                    Rule: "resolution_required",
+                    Reason: "missing resolution",
+                    Disposition: "strict",
+                    Authorized: false,
+                  },
+                  {
+                    Rule: "container",
+                    Reason: "container is not accepted",
+                    Disposition: "waivable",
+                    Authorized: false,
+                  },
+                  {
+                    Rule: "recommended_id",
+                    Reason: "IMDb ID recommended",
+                    Disposition: "advisory",
+                    Authorized: false,
+                  },
+                ],
+              },
+            },
+          ],
+        } as unknown as NonNullable<UploadFacet["view"]["dryRun"]>,
+        dryRunStaleReason: "",
+        reviewStatus: "idle",
+        review: null,
+        reviewStaleReason: "Review required.",
+        snapshot: null,
+        error: "",
+        transientError: "",
+      },
+      chooseTrackers: vi.fn(),
+      answerQuestionnaire: vi.fn(),
+      changeOptions: vi.fn(),
+      setRuleAuthorized,
+      runDryRun: vi.fn(async () => true),
+      review: vi.fn(async () => true),
+      start: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      retry: vi.fn(async () => true),
+    };
+
+    render(
+      <TrackerUploadPage
+        facet={facet}
+        trackerUploadItems={[{ name: "EXAMPLE", config: {} }]}
+        trackerIconSrcByName={{}}
+      />,
+    );
+
+    expect(screen.queryByLabelText("Authorize resolution_required for EXAMPLE")).toBeNull();
+    expect(screen.queryByLabelText("Authorize recommended_id for EXAMPLE")).toBeNull();
+    expect(screen.getByText("Duplicate diagnostics")).toBeInTheDocument();
+    expect(screen.getByText("Example.Release.2026.1080p-GRP")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Authorize container for EXAMPLE"));
+    expect(setRuleAuthorized).toHaveBeenCalledWith("EXAMPLE", "container", true);
   });
 });

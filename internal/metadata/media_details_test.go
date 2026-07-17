@@ -1131,22 +1131,6 @@ func TestAudioFromMediaKeepsGenericFormatWhenCodecIDUnknown(t *testing.T) {
 	}
 }
 
-func TestRemoveTrackerBlockReasonDoesNotMutateInput(t *testing.T) {
-	original := []api.TrackerBlockReason{api.TrackerBlockReasonAudio, api.TrackerBlockReasonClaim}
-	blocked := map[string][]api.TrackerBlockReason{
-		"AITHER": append([]api.TrackerBlockReason{}, original...),
-	}
-
-	filtered := removeTrackerBlockReason(blocked, api.TrackerBlockReasonAudio)
-
-	if got := blocked["AITHER"]; len(got) != len(original) || got[0] != original[0] || got[1] != original[1] {
-		t.Fatalf("expected input blocked map to remain unchanged, got %#v", blocked)
-	}
-	if got := filtered["AITHER"]; len(got) != 1 || got[0] != api.TrackerBlockReasonClaim {
-		t.Fatalf("expected filtered map to keep only claim block, got %#v", filtered)
-	}
-}
-
 func TestAudioFromMediaUsesChannelsOriginalWhenPresent(t *testing.T) {
 	doc := mustParseMediaInfoDoc(`{"media":{"track":[{"@type":"General"},{"@type":"Audio","Format":"AC-3","Channels":"8 / 6","Channels_Original":"6","ChannelLayout":"L R C LFE Ls Rs","StreamOrder":"1"}]}}`)
 	audio, channels, _ := audioFromMedia(preparationstate.State{}, doc, nil)

@@ -548,7 +548,7 @@ func TestSQLiteRepositoryListHistoryEntriesSkipsInfoHashOnlyPlaceholders(t *test
 	}
 }
 
-func TestSQLiteRepositoryHistoryCountsRuleSeverities(t *testing.T) {
+func TestSQLiteRepositoryHistoryCountsRuleDispositions(t *testing.T) {
 	t.Parallel()
 	repo, err := Open(":memory:")
 	if err != nil {
@@ -570,7 +570,7 @@ func TestSQLiteRepositoryHistoryCountsRuleSeverities(t *testing.T) {
 	}
 	if err := repo.SaveTrackerRuleFailures(ctx, sourcePath, "PTP", []TrackerRuleFailure{
 		{Rule: "blocking"},
-		{Rule: "warning", Severity: api.RuleFailureSeverityWarning},
+		{Rule: "advisory", Disposition: api.RuleDispositionAdvisory},
 	}); err != nil {
 		t.Fatalf("save rule results: %v", err)
 	}
@@ -578,7 +578,7 @@ func TestSQLiteRepositoryHistoryCountsRuleSeverities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list history: %v", err)
 	}
-	if len(entries) != 1 || entries[0].RuleFailureCount != 1 || entries[0].RuleWarningCount != 1 {
+	if len(entries) != 1 || entries[0].RuleFailureCount != 1 || entries[0].RuleAdvisoryCount != 1 {
 		t.Fatalf("unexpected history counts: %#v", entries)
 	}
 }
@@ -1014,7 +1014,8 @@ func TestTrackerRuleFailuresCRUD(t *testing.T) {
 			Tracker:    tracker,
 			Rule:       "recommended_id",
 			Reason:     "missing recommended ID",
-			Severity:   api.RuleFailureSeverityWarning,
+			Disposition: api.RuleDispositionAdvisory,
+			Authorized:  true,
 		},
 	}
 	if err := repo.SaveTrackerRuleFailures(ctx, path, tracker, failures); err != nil {
@@ -1028,11 +1029,11 @@ func TestTrackerRuleFailuresCRUD(t *testing.T) {
 	if len(stored) != 2 {
 		t.Fatalf("expected 2 tracker rule results, got %d", len(stored))
 	}
-	if stored[0].Rule != "require_unique_id" || stored[0].Tracker != tracker || stored[0].Severity != api.RuleFailureSeverityBlocking {
+	if stored[0].Rule != "require_unique_id" || stored[0].Tracker != tracker || stored[0].Disposition != api.RuleDispositionWaivable || stored[0].Authorized {
 		t.Fatalf("unexpected rule failure: %#v", stored[0])
 	}
-	if stored[1].Severity != api.RuleFailureSeverityWarning {
-		t.Fatalf("unexpected rule warning: %#v", stored[1])
+	if stored[1].Disposition != api.RuleDispositionAdvisory || !stored[1].Authorized {
+		t.Fatalf("unexpected rule advisory: %#v", stored[1])
 	}
 
 	if err := repo.SaveTrackerRuleFailures(ctx, path, tracker, nil); err != nil {

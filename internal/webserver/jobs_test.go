@@ -237,6 +237,7 @@ func TestStartTrackerUploadRejectsPartialCapabilityBundle(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 		false,
 		"",
 	)
@@ -261,6 +262,7 @@ func TestWebStartTrackerUploadExportsBeforePerRunSetup(t *testing.T) {
 		"session-1",
 		api.ReleaseRef{SourcePath: "Example.Release.2026.1080p-GRP.mkv", Generation: 1},
 		[]string{"EXAMPLE"},
+		nil,
 		nil,
 		nil,
 		nil,

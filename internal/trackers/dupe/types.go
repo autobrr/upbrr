@@ -31,7 +31,6 @@ const (
 // Stable not-run codes.
 const (
 	NotRunUserRequested       = "user_requested"
-	NotRunRuleFailed          = "rule_failed"
 	NotRunBannedGroup         = "banned_group"
 	NotRunAuthNotReady        = "auth_not_ready"
 	NotRunMissingCredentials  = "missing_credentials"
@@ -52,7 +51,6 @@ const (
 
 var validNotRunCodes = map[string]struct{}{
 	NotRunUserRequested:       {},
-	NotRunRuleFailed:          {},
 	NotRunBannedGroup:         {},
 	NotRunAuthNotReady:        {},
 	NotRunMissingCredentials:  {},

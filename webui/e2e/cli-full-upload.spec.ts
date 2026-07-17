@@ -23,7 +23,7 @@ test("CLI full upload uses local fake services and records an upload", async () 
     expect(result.code, result.output).toBe(0);
     expect(result.output).toMatch(/uploaded|complete|Upload/i);
     expect(workspace.fake.counters.trackerUploads).toBe(1);
-    expect(workspace.fake.counters.clientSearches).toBe(4);
+    expect(workspace.fake.counters.clientSearches).toBe(1);
   } finally {
     await workspace.cleanup();
   }

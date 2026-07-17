@@ -264,15 +264,39 @@ Other reusable `RuleSet` fields cover:
 - single-file folders
 - structured language requirements
 
-Use `ExtraCheck` for one additional pass/fail decision and `FailureCheck` when one evaluation can
-produce multiple named failures. Site-local checks should consume `api.RuleSubject` and Unit3D
-helpers such as `RuleType`, `RuleResolution`, `RuleGroup`, `RuleGenres`, `RuleKeywords`, `Anime`,
-`Animation`, and `AdultContent`. Provider metadata must belong to the exact prepared source; do not
-introduce fallbacks to stale parser or provider state.
+Use `RuleSet.Check` when site-local policy cannot be expressed by the common fields. It returns
+one or more keyed `api.RuleFailure` values plus an operational error:
+
+```go
+Check: func(ctx context.Context, subject api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if blocked(subject) {
+		return []api.RuleFailure{trackers.NewRuleFailure(
+			"stable_rule_key",
+			"Operator-facing reason.",
+			api.RuleDispositionWaivable,
+		)}, nil
+	}
+	return nil, nil
+},
+```
+
+Choose the disposition deliberately: `advisory` never blocks, `waivable` requires exact user
+authorization, and `strict` cannot be bypassed. Every predicate whose result depends on resolution,
+including a required but missing resolution, must be `strict`. Keep rule keys stable and unique
+within the tracker. Cancellation, malformed runtime state, and external failures return `error`;
+they are not rule failures.
+
+Site-local checks should consume `api.RuleSubject` and Unit3D helpers such as `RuleType`,
+`RuleResolution`, `RuleGroup`, `RuleGenres`, `RuleKeywords`, `Anime`, `Animation`, and
+`AdultContent`. Provider metadata must belong to the exact prepared source; do not introduce
+fallbacks to stale parser or provider state.
 
 Add behavior cases to the combined `internal/trackers/rules_test.go`. Use
 `EvaluateRulesWithRegistry` so tests include Unit3D-wide requirements. Add focused site tests only
-for site-local mapping or complex `ExtraCheck` behavior.
+for site-local mapping or complex custom-check behavior.
 
 ### 5. Add banned groups
 

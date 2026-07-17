@@ -20,23 +20,26 @@ func TestBuildTrackerEligibilityCanonicalOrderingAndReasons(t *testing.T) {
 	t.Parallel()
 
 	ref := api.ReleaseRef{SourcePath: "C:\\media\\Example.Release.2026.mkv", Generation: 7}
-	actual := buildTrackerEligibility(api.TrackerEligibilityInput{
+	actual, err := buildTrackerEligibility(api.TrackerEligibilityInput{
 		Release:          ref,
 		SelectedTrackers: []string{" mtv ", "AITHER", "mtv", "BLU", "WARN", "AUTH"},
 		Assessments: []api.TrackerEligibilityAssessment{
 			{Tracker: "MTV", Duplicate: api.DupeCheckResult{Tracker: "MTV", HasDupes: true}},
 			{
 				Tracker:      "AITHER",
-				RuleFailures: []api.RuleFailure{{Rule: "source", Severity: api.RuleFailureSeverityBlocking}},
+				RuleFailures: []api.RuleFailure{{Rule: "source", Disposition: api.RuleDispositionWaivable}},
 			},
 			{Tracker: "BLU", Duplicate: api.DupeCheckResult{Tracker: "BLU", Status: "completed"}},
 			{
 				Tracker:      "WARN",
-				RuleFailures: []api.RuleFailure{{Rule: "advice", Severity: api.RuleFailureSeverityWarning}},
+				RuleFailures: []api.RuleFailure{{Rule: "advice", Disposition: api.RuleDispositionAdvisory}},
 			},
 			{Tracker: "AUTH", AuthRequired: true},
 		},
 	})
+	if err != nil {
+		t.Fatalf("build eligibility: %v", err)
+	}
 	if actual.Release != ref {
 		t.Fatalf("release = %#v", actual.Release)
 	}
@@ -60,13 +63,16 @@ func TestBuildTrackerEligibilityCanonicalOrderingAndReasons(t *testing.T) {
 func TestBuildTrackerEligibilityExplicitEmptyStaysEmpty(t *testing.T) {
 	t.Parallel()
 
-	actual := buildTrackerEligibility(api.TrackerEligibilityInput{
+	actual, err := buildTrackerEligibility(api.TrackerEligibilityInput{
 		Release:          api.ReleaseRef{SourcePath: "C:\\media\\Example.mkv", Generation: 1},
 		SelectedTrackers: []string{},
 		Assessments: []api.TrackerEligibilityAssessment{
 			{Tracker: "MTV", Duplicate: api.DupeCheckResult{Status: "completed"}},
 		},
 	})
+	if err != nil {
+		t.Fatalf("build eligibility: %v", err)
+	}
 	if len(actual.Trackers) != 0 || len(actual.EligibleTrackers) != 0 {
 		t.Fatalf("explicit empty eligibility = %#v", actual)
 	}
@@ -75,7 +81,7 @@ func TestBuildTrackerEligibilityExplicitEmptyStaysEmpty(t *testing.T) {
 func TestBuildTrackerEligibilityUsesOnlyStructuredContentFailure(t *testing.T) {
 	t.Parallel()
 
-	actual := buildTrackerEligibility(api.TrackerEligibilityInput{
+	actual, err := buildTrackerEligibility(api.TrackerEligibilityInput{
 		SelectedTrackers: []string{"ANT", "AITHER"},
 		Assessments: []api.TrackerEligibilityAssessment{
 			{Tracker: "ANT", Duplicate: api.DupeCheckResult{Status: "completed"}},
@@ -90,11 +96,107 @@ func TestBuildTrackerEligibilityUsesOnlyStructuredContentFailure(t *testing.T) {
 			},
 		},
 	})
+	if err != nil {
+		t.Fatalf("build eligibility: %v", err)
+	}
 	if !actual.Trackers[0].Eligible {
 		t.Fatalf("ready-empty tracker should remain eligible: %#v", actual.Trackers[0])
 	}
 	if got := actual.Trackers[1].Reasons; len(got) != 1 || got[0].Code != api.TrackerEligibilityDescriptionPreparationFailed {
 		t.Fatalf("structured content failure reasons = %#v", got)
+	}
+}
+
+func TestBuildTrackerEligibilityAppliesExactRuleAuthorization(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		failures    []api.RuleFailure
+		authorized  []string
+		duplicate   bool
+		ignoreDupe  bool
+		wantEligible bool
+		wantErr     bool
+	}{
+		{
+			name: "waivable requires exact authorization",
+			failures: []api.RuleFailure{{Rule: "container", Disposition: api.RuleDispositionWaivable}},
+		},
+		{
+			name: "waivable exact authorization",
+			failures: []api.RuleFailure{{Rule: "container", Disposition: api.RuleDispositionWaivable}},
+			authorized: []string{"container"},
+			wantEligible: true,
+		},
+		{
+			name: "strict remains blocked with waivable authorization",
+			failures: []api.RuleFailure{
+				{Rule: "container", Disposition: api.RuleDispositionWaivable},
+				{Rule: "resolution", Disposition: api.RuleDispositionStrict},
+			},
+			authorized: []string{"container"},
+		},
+		{
+			name: "new rule is not covered by prior authorization",
+			failures: []api.RuleFailure{
+				{Rule: "container", Disposition: api.RuleDispositionWaivable},
+				{Rule: "language", Disposition: api.RuleDispositionWaivable},
+			},
+			authorized: []string{"container"},
+		},
+		{
+			name: "unknown authorization rejected",
+			failures: []api.RuleFailure{{Rule: "container", Disposition: api.RuleDispositionWaivable}},
+			authorized: []string{"language"},
+			wantErr: true,
+		},
+		{
+			name: "duplicate and rule authorization independent",
+			failures: []api.RuleFailure{{Rule: "container", Disposition: api.RuleDispositionWaivable}},
+			authorized: []string{"container"},
+			duplicate: true,
+		},
+		{
+			name: "duplicate ignore plus rule authorization",
+			failures: []api.RuleFailure{{Rule: "container", Disposition: api.RuleDispositionWaivable}},
+			authorized: []string{"container"},
+			duplicate: true,
+			ignoreDupe: true,
+			wantEligible: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			eligibility, err := buildTrackerEligibility(api.TrackerEligibilityInput{
+				SelectedTrackers: []string{"EXAMPLE"},
+				Assessments: []api.TrackerEligibilityAssessment{{
+					Tracker:      "EXAMPLE",
+					RuleFailures: test.failures,
+					Duplicate:    api.DupeCheckResult{
+Tracker: "EXAMPLE",
+ Status: "completed",
+ HasDupes: test.duplicate,
+},
+					Choices: api.TrackerReviewChoices{
+						IgnoreDuplicate:        test.ignoreDupe,
+						AuthorizedRuleFailures: test.authorized,
+					},
+				}},
+			})
+			if (err != nil) != test.wantErr {
+				t.Fatalf("error=%v, wantErr=%t", err, test.wantErr)
+			}
+			if test.wantErr {
+				return
+			}
+			if len(eligibility.Trackers) != 1 || eligibility.Trackers[0].Eligible != test.wantEligible {
+				t.Fatalf("eligibility = %#v", eligibility)
+			}
+			if len(test.failures) > 0 && len(eligibility.Trackers[0].RuleDecisions) != len(test.failures) {
+				t.Fatalf("rule evidence was dropped: %#v", eligibility.Trackers[0].RuleDecisions)
+			}
+		})
 	}
 }
 
@@ -149,6 +251,74 @@ func TestLogTrackerEligibilityUsesCanonicalReasonsAndContextLogger(t *testing.T)
 	if len(trace) != 1 || !strings.Contains(trace[0], "tracker=BTN eligible=true") {
 		t.Fatalf("eligible trace = %#v", trace)
 	}
+}
+
+func TestPersistTrackerRuleDecisionsStoresAuthorizationAndClearsResolvedTrackers(t *testing.T) {
+	t.Parallel()
+
+	repo := &recordingRuleDecisionRepo{}
+	err := persistTrackerRuleDecisions(context.Background(), repo, `C:\media\Example.Release.2026.mkv`, api.TrackerEligibility{
+		Trackers: []api.TrackerEligibilityState{
+			{
+				Tracker: "HDS",
+				RuleDecisions: []api.RuleDecision{
+					{
+Rule: "min_resolution",
+ Reason: "requires 720p",
+ Disposition: api.RuleDispositionStrict,
+},
+					{
+Rule: "imdb_required",
+ Reason: "requires IMDb",
+ Disposition: api.RuleDispositionWaivable,
+ Authorized: true,
+},
+				},
+			},
+			{Tracker: "BLU"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("persist rule decisions: %v", err)
+	}
+	if len(repo.calls) != 2 {
+		t.Fatalf("save calls = %#v", repo.calls)
+	}
+	if repo.calls[1].tracker != "BLU" || len(repo.calls[1].failures) != 0 {
+		t.Fatalf("resolved tracker was not cleared: %#v", repo.calls[1])
+	}
+	stored := repo.calls[0].failures
+	if len(stored) != 2 || stored[0].Disposition != api.RuleDispositionStrict || stored[0].Authorized {
+		t.Fatalf("strict decision = %#v", stored)
+	}
+	if stored[1].Disposition != api.RuleDispositionWaivable || !stored[1].Authorized {
+		t.Fatalf("authorized decision = %#v", stored[1])
+	}
+}
+
+type ruleDecisionSaveCall struct {
+	path     string
+	tracker  string
+	failures []api.TrackerRuleFailure
+}
+
+type recordingRuleDecisionRepo struct {
+	api.TrackerStateRepository
+	calls []ruleDecisionSaveCall
+}
+
+func (r *recordingRuleDecisionRepo) SaveTrackerRuleFailures(
+	_ context.Context,
+	path string,
+	tracker string,
+	failures []api.TrackerRuleFailure,
+) error {
+	r.calls = append(r.calls, ruleDecisionSaveCall{
+		path:     path,
+		tracker:  tracker,
+		failures: append([]api.TrackerRuleFailure(nil), failures...),
+	})
+	return nil
 }
 
 type eligibilityLogEntry struct {

@@ -106,6 +106,7 @@ type dryRunTrackerService struct {
 	uploadCalls int
 	buildCalls  int
 	reviewCalls int
+	status      string
 }
 
 func (s *dryRunTrackerService) Upload(context.Context, api.UploadSubject) (api.UploadSummary, error) {
@@ -124,9 +125,13 @@ func (s *dryRunTrackerService) BuildUploadReview(context.Context, api.UploadSubj
 
 func (s *dryRunTrackerService) BuildUploadDryRun(context.Context, api.UploadSubject, []string) ([]api.TrackerDryRunEntry, error) {
 	s.buildCalls++
+	status := s.status
+	if status == "" {
+		status = "ready"
+	}
 	return []api.TrackerDryRunEntry{{
 		Tracker:  "BLU",
-		Status:   "ready",
+		Status:   status,
 		Endpoint: "https://user:super-secret@example.invalid/upload?api_key=super-secret",
 		Payload:  map[string]string{"api_key": "super-secret", "name": "Example.Release.2026.1080p-GRP"},
 		Files: []api.TrackerDryRunFile{{
@@ -206,7 +211,7 @@ func (p dryRunPolicy) EvaluateUploadPolicy(context.Context, api.UploadSubject, [
 				{
 					Rule:     "source",
 					Reason:   "source is not permitted",
-					Severity: api.RuleFailureSeverityBlocking,
+					Disposition: api.RuleDispositionStrict,
 				},
 			},
 		}
@@ -263,7 +268,7 @@ func TestRunAcceptedTrackerDryRunOwnsSubmissionAndInjectionPolicy(t *testing.T) 
 		blocked     bool
 		ruleFailure bool
 		ignoreDupes bool
-		ignoreRules bool
+		payloadStatus string
 		wantInject  int
 		wantStatus  string
 	}{
@@ -278,9 +283,10 @@ func TestRunAcceptedTrackerDryRunOwnsSubmissionAndInjectionPolicy(t *testing.T) 
 			wantStatus: "ready",
 		},
 		{
-			name:       "duplicate remains visible and blocks injection",
+			name:       "duplicate remains visible and permits injection",
 			duplicate:  true,
-			wantStatus: "blocked",
+			wantInject: 1,
+			wantStatus: "ready",
 		},
 		{
 			name:        "explicit duplicate override permits injection",
@@ -290,34 +296,31 @@ func TestRunAcceptedTrackerDryRunOwnsSubmissionAndInjectionPolicy(t *testing.T) 
 			wantStatus:  "ready",
 		},
 		{
-			name:        "blocking rule prevents injection",
+			name:        "strict rule remains diagnostic and permits injection",
 			ruleFailure: true,
-			wantStatus:  "blocked",
-		},
-		{
-			name:        "explicit rule override permits injection",
-			ruleFailure: true,
-			ignoreRules: true,
 			wantInject:  1,
 			wantStatus:  "ready",
 		},
 		{
-			name:       "policy block prevents injection",
+			name:       "policy block remains diagnostic and permits injection",
 			blocked:    true,
-			wantStatus: "blocked",
+			wantInject: 1,
+			wantStatus: "ready",
+		},
+		{
+			name:          "operationally failed payload does not inject",
+			payloadStatus: "error",
+			wantStatus:    "error",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			coreSvc, release, trackerService, clientService, module := prepareDryRunCore(t)
+			trackerService.status = test.payloadStatus
 			module.policy = dryRunPolicy{blocked: test.blocked, ruleFailure: test.ruleFailure}
 			var ignoreDupesFor []string
 			if test.ignoreDupes {
 				ignoreDupesFor = []string{"BLU"}
-			}
-			var ignoreRuleFailuresFor []string
-			if test.ignoreRules {
-				ignoreRuleFailuresFor = []string{"BLU"}
 			}
 			var progress []api.UploadProgressUpdate
 			ctx := api.WithUploadProgressReporter(context.Background(), func(update api.UploadProgressUpdate) {
@@ -327,8 +330,7 @@ func TestRunAcceptedTrackerDryRunOwnsSubmissionAndInjectionPolicy(t *testing.T) 
 				Input: api.TrackerDryRunInput{
 					Release:               release,
 					Trackers:              []string{"blu", "BLU"},
-					IgnoreDupesFor:        ignoreDupesFor,
-					IgnoreRuleFailuresFor: ignoreRuleFailuresFor,
+					IgnoreDupesFor: ignoreDupesFor,
 					Options:               api.UploadOptions{NoSeed: test.noSeed},
 				},
 				Duplicate: api.AcceptedDuplicateEvidence{

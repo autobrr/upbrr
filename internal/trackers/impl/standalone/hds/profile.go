@@ -21,6 +21,7 @@ func Profile() standalone.Profile {
 		PrepareDescription:  prepareDescription,
 		PrepareUpload:       prepareUpload,
 		NewDuplicateAdapter: newDuplicateAdapter,
+		Rules:               rules(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{
 			Source: sourceFlag,
 		},

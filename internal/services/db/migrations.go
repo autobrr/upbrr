@@ -129,6 +129,68 @@ var migrationRegistry = []migrationStep{
 		dependsOn: []string{"2026_07_add_tracker_rule_failure_severity"},
 		apply:     migrateAddCanonicalReleaseGenerations,
 	},
+	{
+		id:        "2026_07_add_tracker_rule_disposition",
+		dependsOn: []string{"2026_07_add_canonical_release_generations"},
+		apply:     migrateAddTrackerRuleDisposition,
+	},
+}
+
+// migrateAddTrackerRuleDisposition adds exact enforcement and authorization
+// state while preserving readable legacy severity rows.
+func migrateAddTrackerRuleDisposition(ctx context.Context, exec migrationExecutor) error {
+	exists, err := tableExists(ctx, exec, "tracker_rule_failures")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		statements := []string{`CREATE TABLE tracker_rule_failures (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_path TEXT NOT NULL,
+			tracker TEXT NOT NULL,
+			rule TEXT NOT NULL,
+			reason TEXT NOT NULL DEFAULT "",
+			severity TEXT NOT NULL DEFAULT "blocking",
+			disposition TEXT NOT NULL DEFAULT "waivable",
+			authorized INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL
+		)`,
+			`CREATE INDEX IF NOT EXISTS idx_tracker_rule_failures_source_path ON tracker_rule_failures (source_path)`,
+			`CREATE INDEX IF NOT EXISTS idx_tracker_rule_failures_tracker ON tracker_rule_failures (tracker)`,
+		}
+		for _, statement := range statements {
+			if _, err := exec.ExecContext(ctx, statement); err != nil {
+				return fmt.Errorf("db: add tracker rule disposition table: %w", err)
+			}
+		}
+		return nil
+	}
+	hasDisposition, err := tableColumnExists(ctx, exec, "tracker_rule_failures", "disposition")
+	if err != nil {
+		return err
+	}
+	if !hasDisposition {
+		if _, err := exec.ExecContext(ctx, `ALTER TABLE tracker_rule_failures ADD COLUMN disposition TEXT NOT NULL DEFAULT "waivable"`); err != nil {
+			return fmt.Errorf("db: add tracker rule disposition: %w", err)
+		}
+	}
+	hasAuthorized, err := tableColumnExists(ctx, exec, "tracker_rule_failures", "authorized")
+	if err != nil {
+		return err
+	}
+	if !hasAuthorized {
+		if _, err := exec.ExecContext(ctx, `ALTER TABLE tracker_rule_failures ADD COLUMN authorized INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("db: add tracker rule authorization: %w", err)
+		}
+	}
+	if _, err := exec.ExecContext(ctx, `UPDATE tracker_rule_failures SET disposition = CASE
+		WHEN severity = "warning" THEN "advisory"
+		WHEN severity = "blocking" OR severity = "" THEN "waivable"
+		ELSE "strict"
+	END`); err != nil {
+		return fmt.Errorf("db: backfill tracker rule disposition: %w", err)
+	}
+	return nil
 }
 
 // migrateAddCanonicalReleaseGenerations is the branch's single first-time
@@ -1298,6 +1360,8 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 			rule TEXT NOT NULL,
 			reason TEXT NOT NULL DEFAULT "",
 			severity TEXT NOT NULL DEFAULT "blocking",
+			disposition TEXT NOT NULL DEFAULT "waivable",
+			authorized INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL
 		)
 		`,

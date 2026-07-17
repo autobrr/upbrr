@@ -124,11 +124,14 @@ func (m *dupeModule) checkAccepted(ctx context.Context, input api.DuplicateCheck
 			},
 		})
 	}
-	summary.Eligibility = buildTrackerEligibility(api.TrackerEligibilityInput{
+	summary.Eligibility, err = buildTrackerEligibility(api.TrackerEligibilityInput{
 		Release:          input.Release,
 		SelectedTrackers: resolvedTrackers,
 		Assessments:      assessments,
 	})
+	if err != nil {
+		return api.DupeCheckSummary{}, err
+	}
 	logTrackerEligibility(ctx, m.logger, "duplicate_check", summary.Eligibility)
 	return summary, nil
 }

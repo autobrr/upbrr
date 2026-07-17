@@ -329,18 +329,16 @@ func (m *uploadModule) injectTrackerDryRunSubjects(
 	subject api.UploadSubject,
 	input api.UploadReviewInput,
 	entries []api.TrackerDryRunEntry,
-	eligibleTrackers []string,
 	fallback api.TorrentResult,
 ) (int, error) {
 	logger := logging.FromContext(ctx, m.logger)
-	eligible := reviewedTrackerSet(eligibleTrackers)
 	ready := make([]api.TrackerDryRunEntry, 0, len(entries))
 	for _, entry := range entries {
 		trackerName := strings.ToUpper(strings.TrimSpace(entry.Tracker))
-		if _, ok := eligible[trackerName]; ok && strings.EqualFold(strings.TrimSpace(entry.Status), "ready") {
+		if strings.EqualFold(strings.TrimSpace(entry.Status), "ready") {
 			ready = append(ready, entry)
 		} else {
-			logger.Debugf("core: tracker dry-run injection skipped tracker=%s status=%s eligible=%t", trackerName, entry.Status, ok)
+			logger.Debugf("core: tracker dry-run injection skipped tracker=%s status=%s reason=payload_not_ready", trackerName, entry.Status)
 		}
 	}
 	if len(ready) > 0 && m.clients == nil {
@@ -407,6 +405,16 @@ func (m *uploadModule) runAcceptedTrackerDryRun(ctx context.Context, plan api.Tr
 		return api.TrackerDryRunPreview{}, err
 	}
 	entries := trackerDryRunEntriesFromAssessment(preview.review)
+	for _, entry := range entries {
+		logger.Tracef(
+			"core: operation=dry_run tracker=%s payload=%s live_eligible=%t rule_failures=%d dupes=%t",
+			strings.ToUpper(strings.TrimSpace(entry.Tracker)),
+			strings.TrimSpace(entry.Status),
+			len(entry.Diagnostics.LiveEligibilityReasons) == 0,
+			len(entry.Diagnostics.RuleDecisions),
+			entry.Diagnostics.Duplicate.HasDupes,
+		)
+	}
 	req = uploadRequestFromPlan(api.UploadExecutionPlan{Input: reviewInput}, preview.outcome.ResolvedTrackers)
 	injected := 0
 	if !preview.subject.Options.NoSeed {
@@ -416,17 +424,18 @@ func (m *uploadModule) runAcceptedTrackerDryRun(ctx context.Context, plan api.Tr
 			preview.subject,
 			reviewInput,
 			entries,
-			preview.outcome.Eligibility.EligibleTrackers,
 			preview.torrent,
 		)
 		if err != nil {
 			emitPreparedUploadProgress(ctx, req, preview.subject.SourcePath, "", "dry_run", "failed", "Tracker dry run failed")
 			return api.TrackerDryRunPreview{}, err
 		}
+	} else {
+		logger.Infof("core: tracker dry-run injection skipped source=%s reason=no_seed", preview.subject.SourcePath)
 	}
 	emitPreparedUploadProgress(ctx, req, preview.subject.SourcePath, "", "dry_run", "completed", "Tracker dry run complete")
 	logger.Infof(
-		"core: tracker dry-run completed source=%s trackers=%d eligible=%d injected=%d",
+		"core: tracker dry-run completed source=%s trackers=%d live_eligible=%d injected=%d",
 		preview.subject.SourcePath,
 		len(entries),
 		len(preview.outcome.Eligibility.EligibleTrackers),
@@ -440,7 +449,6 @@ func trackerDryRunReviewInput(input api.TrackerDryRunInput) api.UploadReviewInpu
 		Release:                input.Release,
 		Trackers:               append([]string(nil), input.Trackers...),
 		IgnoreDupesFor:         append([]string(nil), input.IgnoreDupesFor...),
-		IgnoreRuleFailuresFor:  append([]string(nil), input.IgnoreRuleFailuresFor...),
 		QuestionnaireAnswers:   cloneOperationQuestionnaireAnswers(input.QuestionnaireAnswers),
 		TrackerIDOverrides:     cloneStringMap(input.TrackerIDOverrides),
 		DescriptionGroups:      api.CloneDescriptionBuilderGroups(input.DescriptionGroups),
@@ -468,17 +476,10 @@ func trackerDryRunEntriesFromAssessment(review api.UploadReview) []api.TrackerDr
 			entry.Tracker = strings.ToUpper(strings.TrimSpace(tracker.Tracker))
 		}
 		state, ok := eligibility[strings.ToUpper(strings.TrimSpace(entry.Tracker))]
-		if ok && !state.Eligible {
-			entry.Status = "blocked"
-			messages := make([]string, 0, len(state.Reasons))
-			for _, reason := range state.Reasons {
-				if message := strings.TrimSpace(reason.Message); message != "" {
-					messages = append(messages, message)
-				}
-			}
-			if len(messages) > 0 {
-				entry.Message = strings.Join(messages, " ")
-			}
+		entry.Diagnostics.Duplicate = tracker.DupeCheck
+		if ok {
+			entry.Diagnostics.RuleDecisions = append([]api.RuleDecision(nil), state.RuleDecisions...)
+			entry.Diagnostics.LiveEligibilityReasons = append([]api.TrackerEligibilityReason(nil), state.Reasons...)
 		}
 		entries = append(entries, entry)
 	}
@@ -505,20 +506,31 @@ func normalizeReviewedTrackers(trackers []string) []string {
 func uploadRequestFromPlan(plan api.UploadExecutionPlan, trackers []string) api.Request {
 	input := plan.Input
 	return api.Request{
-		SourcePath:                   input.Release.SourcePath,
-		Options:                      input.Options,
-		DescriptionGroups:            api.CloneDescriptionBuilderGroups(input.DescriptionGroups),
-		Trackers:                     append([]string(nil), trackers...),
-		IgnoreTrackerRuleFailuresFor: append([]string(nil), input.IgnoreRuleFailuresFor...),
-		IgnoreDupesFor:               append([]string(nil), input.IgnoreDupesFor...),
-		TrackerQuestionnaireAnswers:  cloneOperationQuestionnaireAnswers(input.QuestionnaireAnswers),
-		TrackerConfigOverrides:       input.TrackerConfigOverrides,
-		TrackerSiteOverrides:         input.TrackerSiteOverrides,
-		ClientOverrides:              input.ClientOverrides,
-		ImageHostOverrides:           input.ImageHostOverrides,
-		ScreenshotOverrides:          input.ScreenshotOverrides,
-		TorrentOverrides:             input.TorrentOverrides,
+		SourcePath:                  input.Release.SourcePath,
+		Options:                     input.Options,
+		DescriptionGroups:           api.CloneDescriptionBuilderGroups(input.DescriptionGroups),
+		Trackers:                    append([]string(nil), trackers...),
+		RuleAuthorizations:          cloneRuleAuthorizations(input.RuleAuthorizations),
+		IgnoreDupesFor:              append([]string(nil), input.IgnoreDupesFor...),
+		TrackerQuestionnaireAnswers: cloneOperationQuestionnaireAnswers(input.QuestionnaireAnswers),
+		TrackerConfigOverrides:      input.TrackerConfigOverrides,
+		TrackerSiteOverrides:        input.TrackerSiteOverrides,
+		ClientOverrides:             input.ClientOverrides,
+		ImageHostOverrides:          input.ImageHostOverrides,
+		ScreenshotOverrides:         input.ScreenshotOverrides,
+		TorrentOverrides:            input.TorrentOverrides,
 	}
+}
+
+func cloneRuleAuthorizations(values []api.RuleAuthorization) []api.RuleAuthorization {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make([]api.RuleAuthorization, len(values))
+	for idx, value := range values {
+		cloned[idx] = api.RuleAuthorization{Tracker: value.Tracker, Rules: append([]string(nil), value.Rules...)}
+	}
+	return cloned
 }
 
 func intersectReviewedTrackers(selected []string, reviewed []string) []string {

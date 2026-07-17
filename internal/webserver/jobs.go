@@ -357,6 +357,7 @@ func (b *Backend) ReviewTrackerUpload(
 	release api.ReleaseRef,
 	trackers []string,
 	ignoreDupesFor []string,
+	ruleAuthorizations []api.RuleAuthorization,
 	questionnaireAnswers map[string]map[string]string,
 	descriptionGroups []api.DescriptionBuilderGroup,
 	noSeed bool,
@@ -408,13 +409,13 @@ func (b *Backend) ReviewTrackerUpload(
 		return api.UploadReviewResult{}, fmt.Errorf("web: exact upload generation: %w", err)
 	}
 	reviewInput := api.UploadReviewInput{
-		Release:               release,
-		Trackers:              append([]string(nil), resolvedTrackers...),
-		IgnoreDupesFor:        append([]string(nil), ignore...),
-		IgnoreRuleFailuresFor: append([]string(nil), ignore...),
-		QuestionnaireAnswers:  cloneQuestionnaireAnswers(questionnaireAnswers),
-		DescriptionGroups:     api.CloneDescriptionBuilderGroups(descriptionGroups),
-		Options:               options,
+		Release:              release,
+		Trackers:             append([]string(nil), resolvedTrackers...),
+		IgnoreDupesFor:       append([]string(nil), ignore...),
+		RuleAuthorizations:   cloneWebRuleAuthorizations(ruleAuthorizations),
+		QuestionnaireAnswers: cloneQuestionnaireAnswers(questionnaireAnswers),
+		DescriptionGroups:    api.CloneDescriptionBuilderGroups(descriptionGroups),
+		Options:              options,
 	}
 	reviewed, err := reviewCore.ReviewAcceptedUpload(ctx, reviewInput)
 	if err != nil {
@@ -434,6 +435,17 @@ func (b *Backend) ReviewTrackerUpload(
 		return api.UploadReviewResult{}, fmt.Errorf("web: issue upload review token: %w", err)
 	}
 	return api.UploadReviewResult{Review: reviewed.Review, Token: token}, nil
+}
+
+func cloneWebRuleAuthorizations(values []api.RuleAuthorization) []api.RuleAuthorization {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make([]api.RuleAuthorization, len(values))
+	for idx, value := range values {
+		cloned[idx] = api.RuleAuthorization{Tracker: value.Tracker, Rules: append([]string(nil), value.Rules...)}
+	}
+	return cloned
 }
 
 // StartReviewedTrackerUpload consumes one session-owned reviewed snapshot and

@@ -68,6 +68,9 @@ func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers
 	if req.Intent != trackers.PreparationIntentUpload {
 		return trackers.NewPreparedOperation(preview, nil, nil), nil
 	}
+	if strings.EqualFold(trackers.ResolveRuleResolution(api.NewRuleSubject(req.Meta)), "2160p") {
+		return trackers.PreparedOperation{}, errors.New("trackers: TVC disallows UHD uploads")
+	}
 	if state.blockedReason != "" {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: TVC %s", state.blockedReason)
 	}
@@ -225,7 +228,7 @@ func prepareUploadState(_ context.Context, req trackers.PreparationInput) (uploa
 		releaseName:   releaseName,
 		fields:        fields,
 		questionnaire: buildQuestionnaire(req.Meta),
-		blockedReason: validateUpload(req.Meta, req.TrackerConfig, assets),
+		blockedReason: validateUpload(req.TrackerConfig, assets),
 	}, nil
 }
 
@@ -265,10 +268,7 @@ func buildQuestionnaire(meta api.UploadSubject) *api.TrackerQuestionnaire {
 	}
 }
 
-func validateUpload(meta api.UploadSubject, cfg config.TrackerConfig, assets trackers.DescriptionAssets) string {
-	if meta.Release.Resolution == "2160p" || strings.EqualFold(meta.DiscType, "BDMV") || strings.EqualFold(meta.Type, "REMUX") {
-		return "TVC disallows UHD, disc, and remux uploads"
-	}
+func validateUpload(cfg config.TrackerConfig, assets trackers.DescriptionAssets) string {
 	required := maxInt(cfg.ImageCount, 2)
 	if len(assets.Screenshots) < required {
 		return fmt.Sprintf("TVC requires at least %d screenshots", required)

@@ -29,29 +29,38 @@ var ruleResolutionOrder = map[string]int{
 }
 
 // EvaluateRules returns metadata and upload-policy failures for tracker.
-func EvaluateRules(ctx context.Context, tracker string, meta api.RuleSubject, logger api.Logger) []api.RuleFailure {
+func EvaluateRules(ctx context.Context, tracker string, meta api.RuleSubject, logger api.Logger) ([]api.RuleFailure, error) {
 	return evaluateRules(ctx, nil, tracker, meta, logger)
 }
 
 // EvaluateRulesWithRegistry evaluates tracker rules using composed capabilities.
-func EvaluateRulesWithRegistry(ctx context.Context, registry *Registry, tracker string, meta api.RuleSubject, logger api.Logger) []api.RuleFailure {
+func EvaluateRulesWithRegistry(ctx context.Context, registry *Registry, tracker string, meta api.RuleSubject, logger api.Logger) ([]api.RuleFailure, error) {
 	return evaluateRules(ctx, registry, tracker, meta, logger)
 }
 
-func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta api.RuleSubject, logger api.Logger) []api.RuleFailure {
+func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta api.RuleSubject, logger api.Logger) ([]api.RuleFailure, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("trackers: evaluate rules: %w", err)
+	}
 	name := strings.ToUpper(strings.TrimSpace(tracker))
 
 	failures := make([]api.RuleFailure, 0)
-	addFailure := func(rule, reason string) {
+	addFailure := func(rule, reason string, disposition api.RuleDisposition) {
 		trimmed := strings.TrimSpace(reason)
 		if trimmed == "" {
 			trimmed = "rule requirement not met"
 		}
-		failures = append(failures, api.RuleFailure{Rule: rule, Reason: trimmed})
+		failures = append(failures, api.RuleFailure{
+			Rule:        strings.TrimSpace(rule),
+			Reason:      trimmed,
+			Disposition: api.NormalizeRuleDisposition(disposition),
+		})
 	}
+	addWaivable := func(rule, reason string) { addFailure(rule, reason, api.RuleDispositionWaivable) }
 
-	// Renamed/modified releases are rejected by every supported tracker and are
-	// overridable via IgnoreTrackerRuleFailuresFor like any other rule failure.
+	// Renamed/modified releases are rejected by every supported tracker. Scene
+	// renames are authoritative and remain strict; heuristic rename detections
+	// may be explicitly authorized as a non-resolution policy exception.
 	if renamed, reason := releasepolicy.DetectModifiedRelease(releasepolicy.ModifiedReleaseSubject{
 		SourcePath:         meta.SourcePath,
 		VideoPath:          meta.VideoPath,
@@ -61,7 +70,11 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 		SceneRenamedReason: meta.SceneRenamedReason,
 		Release:            meta.Release,
 	}); renamed {
-		addFailure("modified_release", reason)
+		disposition := api.RuleDispositionWaivable
+		if meta.SceneRenamed {
+			disposition = api.RuleDispositionStrict
+		}
+		addFailure("modified_release", reason, disposition)
 	}
 	metadataFailures, metadataEvaluated := evaluateMetadataRequirementsWithRegistry(registry, name, meta)
 	failures = append(failures, metadataFailures...)
@@ -73,35 +86,35 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 		// pre-existing failures" but an empty slice as "evaluated, clear failures".
 		// Only return a slice when this rule actually produced a failure.
 		if len(failures) > 0 {
-			return failures
+			return failures, nil
 		}
-		return nil
+		return nil, nil
 	}
 
 	if rules.RequireUniqueID && !meta.Assessments.UniqueIDRequirementSatisfied() {
-		addFailure("require_unique_id", "missing MediaInfo Unique ID")
+		addWaivable("require_unique_id", "missing MediaInfo Unique ID")
 	}
 	if rules.RequireValidMISetting && !meta.Assessments.EncodeSettingsRequirementSatisfied() {
-		addFailure("require_valid_mi_setting", "missing MediaInfo encode settings")
+		addWaivable("require_valid_mi_setting", "missing MediaInfo encode settings")
 	}
 
 	if rules.RequireDiscOnly && !isDiscType(meta.DiscType) {
-		addFailure("require_disc_only", "requires disc upload")
+		addWaivable("require_disc_only", "requires disc upload")
 	}
 	if rules.RequireMovieUnlessTVPack && !meta.TVPack {
 		category := resolveCategory(meta)
 		if category != "" && category != "movie" {
-			addFailure("require_movie_only", fmt.Sprintf("category %s is not movie", category))
+			addWaivable("require_movie_only", fmt.Sprintf("category %s is not movie", category))
 		}
 	}
 	if rules.RequireMovieOnly || rules.RequireTVOnly {
 		category := resolveCategory(meta)
 		if category != "" {
 			if rules.RequireMovieOnly && category != "movie" {
-				addFailure("require_movie_only", fmt.Sprintf("category %s is not movie", category))
+				addWaivable("require_movie_only", fmt.Sprintf("category %s is not movie", category))
 			}
 			if rules.RequireTVOnly && category != "tv" {
-				addFailure("require_tv_only", fmt.Sprintf("category %s is not tv", category))
+				addWaivable("require_tv_only", fmt.Sprintf("category %s is not tv", category))
 			}
 		} else if logger != nil {
 			logger.Debugf("trackers: %s rule category check skipped (missing category)", name)
@@ -111,7 +124,7 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 	typeValue := resolveType(meta)
 	if len(rules.RequireHEVCForTypes) > 0 {
 		if hasTypeRequirement(typeValue, rules.RequireHEVCForTypes) && !isHEVC(meta) {
-			addFailure("require_hevc", fmt.Sprintf("%s requires HEVC for %s", name, typeValue))
+			addWaivable("require_hevc", fmt.Sprintf("%s requires HEVC for %s", name, typeValue))
 		}
 	}
 
@@ -119,9 +132,9 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 		minResolution := strings.ToLower(strings.TrimSpace(rules.MinResolution))
 		value := resolveResolution(meta)
 		if value == "" {
-			addFailure("min_resolution", "resolution required for "+name)
+			addFailure("min_resolution", "resolution required for "+name, api.RuleDispositionStrict)
 		} else if ruleResolutionOrder[value] < ruleResolutionOrder[minResolution] {
-			addFailure("min_resolution", fmt.Sprintf("resolution %s below %s", value, minResolution))
+			addFailure("min_resolution", fmt.Sprintf("resolution %s below %s", value, minResolution), api.RuleDispositionStrict)
 		}
 	}
 
@@ -130,27 +143,27 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 		if message == "" {
 			message = "adult content not allowed at " + name
 		}
-		addFailure("block_adult", message)
+		addWaivable("block_adult", message)
 	}
 
 	if rules.BlockDVDRip && strings.EqualFold(typeValue, "DVDRIP") {
-		addFailure("block_dvdrip", "DVDRip not allowed")
+		addWaivable("block_dvdrip", "DVDRip not allowed")
 	}
 	if rules.BlockExternalSubs && hasReleaseToken(meta, []string{"extsub", "ext-sub", "external subs", "external subtitles"}) {
-		addFailure("block_external_subs", "external subtitles not allowed")
+		addWaivable("block_external_subs", "external subtitles not allowed")
 	}
 	if rules.BlockHardcodedSubs && hasReleaseToken(meta, []string{"hardsub", "hard-sub", "hardcoded"}) {
-		addFailure("block_hardcoded_subs", "hardcoded subtitles not allowed")
+		addWaivable("block_hardcoded_subs", "hardcoded subtitles not allowed")
 	}
 
 	if rules.BlockSingleFileFolder && hasSingleFileFolder(meta) {
-		addFailure("block_single_file_folder", "single-file folders are not allowed")
+		addWaivable("block_single_file_folder", "single-file folders are not allowed")
 	}
 
 	if len(rules.BlockGroups) > 0 {
 		group := strings.ToUpper(strings.TrimSpace(resolveGroup(meta)))
 		if group != "" && containsAny([]string{group}, rules.BlockGroups) {
-			addFailure("block_group", fmt.Sprintf("group %s not allowed", group))
+			addWaivable("block_group", fmt.Sprintf("group %s not allowed", group))
 		}
 	}
 
@@ -159,37 +172,37 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 		if group != "" {
 			if allowedTypes, ok := rules.BlockGroupUnlessType[group]; ok {
 				if !hasTypeRequirement(typeValue, allowedTypes) {
-					addFailure("block_group_unless_type", fmt.Sprintf("group %s only allowed for %s", group, strings.Join(allowedTypes, ", ")))
+					addWaivable("block_group_unless_type", fmt.Sprintf("group %s only allowed for %s", group, strings.Join(allowedTypes, ", ")))
 				}
 			}
 		}
 	}
 
 	if rules.RequireSceneNFO && meta.Scene && strings.TrimSpace(meta.SceneNFOPath) == "" {
-		addFailure("require_scene_nfo", "scene release missing NFO")
+		addWaivable("require_scene_nfo", "scene release missing NFO")
 	}
 
 	if rules.RequireAudioLanguages && len(meta.AudioLanguages) == 0 {
-		addFailure("require_audio_languages", "missing audio language data")
+		addWaivable("require_audio_languages", "missing audio language data")
 	}
 
 	if rules.Language != nil {
 		if ok, reason := evaluateLanguageRule(meta, rules.Language); !ok {
-			addFailure("language_rule", reason)
+			addWaivable("language_rule", reason)
 		}
 	}
 
-	if rules.ExtraCheck != nil {
-		result := rules.ExtraCheck(ctx, meta, logger)
-		if !result.Allowed {
-			addFailure("extra_check", result.Reason)
+	if rules.Check != nil {
+		customFailures, err := rules.Check(ctx, meta, logger)
+		if err != nil {
+			return nil, fmt.Errorf("trackers: %s rule check: %w", name, err)
+		}
+		for _, failure := range customFailures {
+			addFailure(failure.Rule, failure.Reason, failure.Disposition)
 		}
 	}
-	if rules.FailureCheck != nil {
-		failures = append(failures, rules.FailureCheck(ctx, meta, logger)...)
-	}
 
-	return failures
+	return failures, nil
 }
 
 // ResolveRuleCategory returns the common category used by tracker rules.

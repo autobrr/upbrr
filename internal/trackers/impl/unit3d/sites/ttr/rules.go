@@ -17,15 +17,19 @@ func Rules() *trackers.RuleSet {
 		Languages:    []string{"spanish", "es", "spa"},
 		RequireAudio: true,
 		RequireSubs:  true,
-	}, ExtraCheck: checkSubtitleOnly}
+	}, Check: checkSubtitleOnly}
 }
 
-func checkSubtitleOnly(ctx context.Context, meta api.RuleSubject, _ api.Logger) trackers.RuleResult {
+func checkSubtitleOnly(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
-		return trackers.RuleFail(fmt.Errorf("context canceled: %w", err).Error())
+		return nil, fmt.Errorf("context canceled: %w", err)
 	}
 	if !unit3d.ContainsRuleValue(unit3d.NormalizeRuleValues(meta.Release.Language), []string{"spanish", "es", "spa"}) {
-		return trackers.RuleFail("TTR requires at least one Spanish audio or subtitle track.")
+		return []api.RuleFailure{trackers.NewRuleFailure(
+			"spanish_track_required",
+			"TTR requires at least one Spanish audio or subtitle track.",
+			api.RuleDispositionWaivable,
+		)}, nil
 	}
-	return trackers.RulePass()
+	return nil, nil
 }

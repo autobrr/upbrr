@@ -25,26 +25,32 @@ func Rules() *trackers.RuleSet {
 			AllowOriginal:  true,
 			ApplyIfNonDisc: true,
 		},
-		ExtraCheck: checkRequirements,
+		Check: checkRequirements,
 	}
 }
 
-func checkRequirements(ctx context.Context, meta api.RuleSubject, _ api.Logger) trackers.RuleResult {
+func checkRequirements(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
-		return trackers.RuleFail(fmt.Errorf("context canceled: %w", err).Error())
+		return nil, fmt.Errorf("context canceled: %w", err)
 	}
+	failures := make([]api.RuleFailure, 0, 2)
 	if !unit3d.IsDiscType(meta.DiscType) && !strings.EqualFold(strings.TrimSpace(meta.Container), "mkv") {
-		return trackers.RuleFail("LUME only allows MKV containers for non-disc uploads.")
+		failures = append(failures, trackers.NewRuleFailure("container", "LUME only allows MKV containers for non-disc uploads.", api.RuleDispositionWaivable))
 	}
 	if unit3d.IsDiscType(meta.DiscType) {
-		return trackers.RulePass()
+		return failures, nil
 	}
 	resolution := unit3d.RuleResolution(meta)
 	if resolution == "" {
-		return trackers.RuleFail("LUME requires a known resolution")
+		failures = append(failures, trackers.NewRuleFailure("resolution_required", "LUME requires a known resolution", api.RuleDispositionStrict))
+		return failures, nil
 	}
 	if unit3d.ResolutionBelow(resolution, "720p") {
-		return trackers.RuleFail("LUME only allows SD releases when the content does not have a higher resolution release.")
+		failures = append(failures, trackers.NewRuleFailure(
+			"min_resolution",
+			"LUME only allows SD releases when the content does not have a higher resolution release.",
+			api.RuleDispositionStrict,
+		))
 	}
-	return trackers.RulePass()
+	return failures, nil
 }

@@ -72,6 +72,7 @@ export type TrackerEligibilityState = {
   Tracker: string;
   Eligible: boolean;
   Reasons: TrackerEligibilityReason[];
+  RuleDecisions: RuleDecision[];
 };
 
 export type TrackerEligibility = {
@@ -746,8 +747,17 @@ export type TrackerPreview = {
 export type RuleFailure = {
   Rule: string;
   Reason: string;
-  /** Empty and unrecognized values are treated as blocking by backend APIs. */
-  Severity?: "blocking" | "warning" | string;
+  /** Empty legacy values are waivable; unknown non-empty values fail closed. */
+  Disposition?: "advisory" | "waivable" | "strict" | string;
+};
+
+export type RuleDecision = RuleFailure & {
+  Authorized: boolean;
+};
+
+export type RuleAuthorization = {
+  Tracker: string;
+  Rules: string[];
 };
 
 export type DupeEntry = {
@@ -798,7 +808,7 @@ export type DupeMatch = {
 /**
  * Duplicate-search outcome for one tracker. Raw contains tracker results before
  * filtering, Filtered contains blocking matches, and skipped or failed checks
- * carry Status plus SkipReason or Error. SkipCode and SkipRules expose stable
+ * carry Status plus SkipReason or Error. SkipCode exposes a stable
  * backend skip metadata for typed UI callers.
  */
 export type DupeCheckResult = {
@@ -814,7 +824,6 @@ export type DupeCheckResult = {
   /** Stable machine-readable skip reason emitted by the backend. */
   SkipCode: string;
   /** Upload rule keys that produced a rule-failure skip. */
-  SkipRules: string[];
   Status: string;
   Error: string;
   CheckedAt: string;
@@ -1129,7 +1138,7 @@ export type HistoryEntry = {
   LatestUploadAt: string;
   RuleFailureCount: number;
   /** Number of explicitly advisory rule results; absent on older API responses. */
-  RuleWarningCount?: number;
+  RuleAdvisoryCount?: number;
 };
 
 export type HistoryUploadRecord = {
@@ -1161,8 +1170,8 @@ export type HistoryRuleFailure = {
   Tracker: string;
   Rule: string;
   Reason: string;
-  /** Empty and unrecognized values represent blocking legacy results. */
-  Severity?: "blocking" | "warning" | string;
+  Disposition?: "advisory" | "waivable" | "strict" | string;
+  Authorized: boolean;
   CreatedAt: string;
 };
 
@@ -1344,6 +1353,13 @@ export type TrackerDryRunEntry = {
   Questionnaire?: TrackerQuestionnaire | null;
   ImageHost: ImageHostFeedback;
   ContentFailure?: TrackerContentFailure | null;
+  Diagnostics: TrackerDryRunDiagnostics;
+};
+
+export type TrackerDryRunDiagnostics = {
+  RuleDecisions: RuleDecision[];
+  Duplicate: DupeCheckResult;
+  LiveEligibilityReasons: TrackerEligibilityReason[];
 };
 
 export type TrackerContentFailure = {

@@ -11,7 +11,7 @@ import type { DupeCheckResult, DupeCheckTrackerState, TrackerUploadItem } from "
 import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
 import { trackerIconFor } from "../../hooks/useTrackerIcons";
 import { cn } from "../../utils/cn";
-import { dupeSkipReason, isRuleSkippedResult } from "../../utils/dupeCheck";
+import { dupeSkipReason } from "../../utils/dupeCheck";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
 
 type Props = {
@@ -109,8 +109,6 @@ export default function DupeCheckPage(props: Readonly<Props>) {
     const rightCount = right.Filtered?.length ?? 0;
     const leftInClient = left.Match?.MatchedReason === "in_client";
     const rightInClient = right.Match?.MatchedReason === "in_client";
-    const leftRuleSkip = isRuleSkippedResult(left);
-    const rightRuleSkip = isRuleSkippedResult(right);
     const leftHasDupes = leftCount > 0;
     const rightHasDupes = rightCount > 0;
 
@@ -122,9 +120,6 @@ export default function DupeCheckPage(props: Readonly<Props>) {
     }
     if (leftInClient !== rightInClient) {
       return leftInClient ? -1 : 1;
-    }
-    if (leftRuleSkip !== rightRuleSkip) {
-      return leftRuleSkip ? -1 : 1;
     }
     return left.Tracker.localeCompare(right.Tracker);
   });
@@ -303,14 +298,10 @@ export default function DupeCheckPage(props: Readonly<Props>) {
                 .trim();
               const hasFailure = status === "failed";
               const skipReason = dupeSkipReason(result);
-              const ruleSkipReason = isRuleSkippedResult(result)
-                ? skipReason || "rule check failed"
-                : "";
               const authRequired =
                 result.SkipCode === "tracker_auth_not_ready" ||
                 result.SkipCode === "auth_not_ready";
-              const skippedReason =
-                result.Skipped && !ruleSkipReason && !authRequired ? skipReason : "";
+              const skippedReason = result.Skipped && !authRequired ? skipReason : "";
               const visibleNotes = result.Notes || [];
               const showIgnoreToggle =
                 !inClient && (hasDupes || Boolean(result.Skipped) || hasFailure);
@@ -348,20 +339,12 @@ export default function DupeCheckPage(props: Readonly<Props>) {
 
                   <div className="min-w-0">
                     {inClient ||
-                    ruleSkipReason ||
                     authRequired ||
                     skippedReason ||
                     hasFailure ||
                     visibleNotes.length ? (
                       <p className="mb-1 flex flex-wrap items-center gap-1 text-sm leading-5">
                         {inClient ? <Badge tone="info">In client</Badge> : null}
-
-                        {ruleSkipReason ? (
-                          <>
-                            <Badge tone="danger">Rule failed</Badge>
-                            <span className="text-[var(--muted)]">{ruleSkipReason}</span>
-                          </>
-                        ) : null}
 
                         {authRequired ? (
                           <>

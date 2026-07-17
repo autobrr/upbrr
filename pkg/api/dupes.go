@@ -62,8 +62,7 @@ type DupeMatch struct {
 // DupeCheckResult is the duplicate-search outcome for one tracker. Raw contains
 // tracker results before filtering, Filtered contains blocking matches, and
 // skipped or failed checks carry Status plus SkipReason or Error. SkipCode is a
-// stable machine-readable reason, while SkipRules names upload rules that caused
-// rule-failure skips.
+// stable machine-readable reason.
 type DupeCheckResult struct {
 	Tracker     string
 	Raw         []DupeEntry
@@ -75,9 +74,7 @@ type DupeCheckResult struct {
 	Skipped     bool
 	SkipReason  string
 	// SkipCode is a stable machine-readable skip reason.
-	SkipCode string
-	// SkipRules are upload rule keys that produced a rule-failure skip.
-	SkipRules []string
+	SkipCode  string
 	Status    string
 	Error     string
 	CheckedAt time.Time `ts_type:"string"`
@@ -133,7 +130,6 @@ func CloneDupeCheckResults(results []DupeCheckResult) []DupeCheckResult {
 		result.Filtered = cloneDupeEntries(result.Filtered)
 		result.Match.MatchedEpisodeIDs = append([]DupeEpisodeMatch(nil), result.Match.MatchedEpisodeIDs...)
 		result.Notes = append([]string(nil), result.Notes...)
-		result.SkipRules = append([]string(nil), result.SkipRules...)
 		cloned[index] = result
 	}
 	return cloned

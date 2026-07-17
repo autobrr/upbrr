@@ -6,6 +6,7 @@ package hds
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -34,12 +35,11 @@ const (
 var idPattern = regexp.MustCompile(`download\.php\?id=([a-zA-Z0-9]+)`)
 
 type uploadState struct {
-	torrentPath   string
-	description   string
-	releaseName   string
-	fields        map[string]string
-	nfo           *commonhttp.FileField
-	blockedReason string
+	torrentPath string
+	description string
+	releaseName string
+	fields      map[string]string
+	nfo         *commonhttp.FileField
 }
 
 func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
@@ -51,8 +51,8 @@ func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers
 	if req.Intent != trackers.PreparationIntentUpload {
 		return trackers.NewPreparedOperation(preview, nil, nil), nil
 	}
-	if state.blockedReason != "" {
-		return trackers.PreparedOperation{}, fmt.Errorf("trackers: HDS %s", state.blockedReason)
+	if !supportsHDSResolution(trackers.ResolveRuleResolution(api.NewRuleSubject(req.Meta))) {
+		return trackers.PreparedOperation{}, errors.New("trackers: HDS resolution must be at least 720p")
 	}
 	files := []commonhttp.FileField{{
 		FieldName: "torrent",
@@ -133,7 +133,6 @@ func submitPreparedUpload(
 func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {
 	return standalone.BuildPreview(standalone.PreviewSpec{
 		Tracker:          "HDS",
-		BlockedReason:    state.blockedReason,
 		ReleaseName:      state.releaseName,
 		DescriptionGroup: "hds",
 		Description:      state.description,
@@ -182,12 +181,6 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 		description: description,
 		releaseName: fields["filename"],
 		fields:      fields,
-	}
-	if !supportsHDSResolution(req.Meta.Release.Resolution) {
-		state.blockedReason = "resolution must be at least 720p"
-	}
-	if id := resolveIMDbURL(req.Meta); strings.TrimSpace(id) == "" {
-		state.blockedReason = "missing IMDb ID"
 	}
 	if file, ok := resolveNFO(req.Meta); ok {
 		state.nfo = &file

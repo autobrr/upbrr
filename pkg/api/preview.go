@@ -100,6 +100,15 @@ type TrackerDryRunEntry struct {
 	Questionnaire  *TrackerQuestionnaire
 	ImageHost      ImageHostFeedback
 	ContentFailure *TrackerContentFailure
+	Diagnostics    TrackerDryRunDiagnostics
+}
+
+// TrackerDryRunDiagnostics describes live-upload findings without changing
+// dry-run payload readiness.
+type TrackerDryRunDiagnostics struct {
+	RuleDecisions          []RuleDecision
+	Duplicate              DupeCheckResult
+	LiveEligibilityReasons []TrackerEligibilityReason
 }
 
 // TrackerDryRunDebugSection describes one named diagnostic payload inside a

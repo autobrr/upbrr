@@ -36,6 +36,8 @@ const (
 	e2eImageURLEnv   = "UPBRR_E2E_IMAGE_URL"
 	e2eClientURLEnv  = "UPBRR_E2E_CLIENT_URL"
 	e2eShotPathEnv   = "UPBRR_E2E_SCREENSHOT_PATH"
+	e2eResolutionEnv = "UPBRR_E2E_RESOLUTION"
+	e2eDuplicateEnv  = "UPBRR_E2E_DUPLICATE_TRACKERS"
 )
 
 // maybeApplyE2EServices replaces only missing runtime capabilities when both
@@ -123,6 +125,10 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 			api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, api.PreparationProgressRunning, "Scanning selected Blu-ray playlist."),
 		)
 	}
+	resolution := strings.TrimSpace(os.Getenv(e2eResolutionEnv))
+	if resolution == "" {
+		resolution = "1080p"
+	}
 	meta := preparationstate.State{
 		SourcePath: sourcePath,
 		Paths:      []string{sourcePath},
@@ -153,7 +159,7 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 			Title:      "E2E Movie",
 			Year:       2026,
 			Source:     "WEB-DL",
-			Resolution: "1080p",
+			Resolution: resolution,
 			Ext:        ".mkv",
 			Group:      "UPBRR",
 		},
@@ -268,7 +274,23 @@ type e2eClientService struct {
 	endpoint string
 }
 
-func (e2eClientService) Inject(context.Context, api.ClientSubject, api.TorrentResult) error {
+func (s e2eClientService) Inject(ctx context.Context, _ api.ClientSubject, _ api.TorrentResult) error {
+	endpoint := strings.TrimRight(strings.TrimSpace(s.endpoint), "/")
+	if endpoint == "" {
+		return errors.New("e2e client: endpoint is required")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/client-inject", http.NoBody)
+	if err != nil {
+		return fmt.Errorf("e2e client: injection request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("e2e client: inject: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("e2e client: injection status %d", resp.StatusCode)
+	}
 	return nil
 }
 
@@ -301,9 +323,24 @@ type e2eDupeService struct {
 }
 
 func (e2eDupeService) Check(_ context.Context, meta api.DuplicateSubject, trackers []string) (api.DupeCheckSummary, error) {
+	duplicateTrackers := make(map[string]struct{})
+	for _, tracker := range strings.Split(os.Getenv(e2eDuplicateEnv), ",") {
+		if name := strings.ToUpper(strings.TrimSpace(tracker)); name != "" {
+			duplicateTrackers[name] = struct{}{}
+		}
+	}
 	results := make([]api.DupeCheckResult, 0, len(trackers))
 	for _, tracker := range trackers {
-		results = append(results, api.DupeCheckResult{Tracker: strings.ToUpper(strings.TrimSpace(tracker)), Status: "completed"})
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		result := api.DupeCheckResult{Tracker: name, Status: "completed"}
+		if _, ok := duplicateTrackers[name]; ok {
+			result.HasDupes = true
+			result.Filtered = []api.DupeEntry{{
+				ID:   "e2e-dupe-1",
+				Name: "Example.Release.2026.1080p-GRP",
+			}}
+		}
+		results = append(results, result)
 	}
 	return api.DupeCheckSummary{SourcePath: meta.SourcePath, Results: results}, nil
 }

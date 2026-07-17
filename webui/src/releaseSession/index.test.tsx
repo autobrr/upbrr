@@ -101,7 +101,12 @@ const completedDupeJob = (
       Notes: [],
       Eligibility: {
         Release: { SourcePath: sourcePath, Generation: generation },
-        Trackers: trackers.map((tracker) => ({ Tracker: tracker, Eligible: true, Reasons: [] })),
+        Trackers: trackers.map((tracker) => ({
+          Tracker: tracker,
+          Eligible: true,
+          Reasons: [],
+          RuleDecisions: [],
+        })),
         EligibleTrackers: [...trackers],
       },
     },

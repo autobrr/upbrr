@@ -1879,31 +1879,6 @@ func TestBuildPreparationPreflightsMultipleConfiguredImageHostsConcurrently(t *t
 	}
 }
 
-func TestUploadIncludesRuleFailedTrackersWhenOverrideEnabled(t *testing.T) {
-	t.Parallel()
-
-	registry := NewRegistry()
-	if err := registry.Register(stubUploadArtifactDefinition{name: "AITHER"}); err != nil {
-		t.Fatalf("register stub: %v", err)
-	}
-
-	cfg := config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER"}}}
-	svc := NewServiceWithRegistry(cfg, nil, nil, registry)
-	summary, err := svc.Upload(context.Background(), api.UploadSubject{
-		SourcePath:                "/tmp/file",
-		IgnoreTrackerRuleFailures: true,
-		TrackerRuleFailures: map[string][]api.RuleFailure{
-			"AITHER": {{Rule: "require_movie_only", Reason: "movie only"}},
-		},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if summary.Uploaded != 1 {
-		t.Fatalf("expected 1 upload, got %d", summary.Uploaded)
-	}
-}
-
 func TestUploadRunsTrackersConcurrentlyWithLimit(t *testing.T) {
 	t.Parallel()
 
@@ -3014,33 +2989,5 @@ func assertTrackerArtifact(t *testing.T, torrentPath string, wantAnnounce string
 	}
 	if info.Source != wantSource {
 		t.Fatalf("expected source %q, got %q", wantSource, info.Source)
-	}
-}
-
-func TestFilterTrackersByRuleFailuresExcludesModifiedReleaseAcrossFamilies(t *testing.T) {
-	t.Parallel()
-
-	failures := map[string][]api.RuleFailure{
-		"PTP": {{Rule: "modified_release", Reason: "source renamed from original release name"}},
-		"LST": {{Rule: "modified_release", Reason: "source renamed from original release name"}},
-		"HDB": {{
-			Rule:     "recommended_id",
-			Reason:   "recommended ID missing",
-			Severity: api.RuleFailureSeverityWarning,
-		}},
-	}
-	trackers := []string{"PTP", "LST", "HDB"}
-
-	got := filterTrackersByRuleFailures(trackers, failures, false, nil)
-	if slices.Contains(got, "PTP") || slices.Contains(got, "LST") {
-		t.Fatalf("expected PTP and LST skipped for modified_release, got %v", got)
-	}
-	if !slices.Contains(got, "HDB") {
-		t.Fatalf("expected warning-only HDB retained, got %v", got)
-	}
-
-	// The override flag must let the user force-upload past the failure.
-	if got := filterTrackersByRuleFailures(trackers, failures, true, nil); !slices.Contains(got, "PTP") || !slices.Contains(got, "LST") {
-		t.Fatalf("expected ignore=true to retain all trackers, got %v", got)
 	}
 }

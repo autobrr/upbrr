@@ -144,6 +144,10 @@ export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
         command.release,
         [...command.trackers],
         [...command.ignoreDupesFor],
+        command.ruleAuthorizations.map((authorization) => ({
+          Tracker: authorization.Tracker,
+          Rules: [...authorization.Rules],
+        })),
         Object.fromEntries(
           Object.entries(command.questionnaireAnswers).map(([tracker, values]) => [
             tracker,

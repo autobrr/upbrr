@@ -5,6 +5,7 @@ package azfamily
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -14,12 +15,20 @@ import (
 )
 
 func (d *Definition) Rules() *trackers.RuleSet {
-	return &trackers.RuleSet{FailureCheck: d.evaluateRules}
+	return &trackers.RuleSet{Check: d.evaluateRules}
 }
 
-func (d *Definition) evaluateRules(_ context.Context, meta api.RuleSubject, _ api.Logger) []api.RuleFailure {
+func (d *Definition) evaluateRules(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("context canceled: %w", err)
+	}
 	failures := make([]api.RuleFailure, 0)
-	add := func(rule, reason string) { failures = append(failures, api.RuleFailure{Rule: rule, Reason: reason}) }
+	add := func(rule, reason string) {
+		failures = append(failures, trackers.NewRuleFailure(rule, reason, api.RuleDispositionWaivable))
+	}
+	addStrict := func(rule, reason string) {
+		failures = append(failures, trackers.NewRuleFailure(rule, reason, api.RuleDispositionStrict))
+	}
 	category := strings.ToUpper(strings.TrimSpace(trackers.ResolveRuleCategory(meta)))
 	if category != "MOVIE" && category != "TV" {
 		add("content_type", "only movies and TV shows are allowed")
@@ -56,15 +65,15 @@ func (d *Definition) evaluateRules(_ context.Context, meta api.RuleSubject, _ ap
 		case len(origin) > 0 && !intersects(origin, phdCountries()):
 			add("country_block", "PrivateHD only allows major English-language territories")
 		}
-		evaluatePHDTechnicalRules(meta, add)
+		evaluatePHDTechnicalRules(meta, add, addStrict)
 	}
-	return failures
+	return failures, nil
 }
 
-func evaluatePHDTechnicalRules(meta api.RuleSubject, add func(string, string)) {
+func evaluatePHDTechnicalRules(meta api.RuleSubject, add func(string, string), addStrict func(string, string)) {
 	resolution := strings.ToLower(strings.TrimSpace(meta.Release.Resolution))
 	if resolution == "480p" || resolution == "576p" || resolution == "480i" || resolution == "576i" {
-		add("sd_forbidden", "SD content is forbidden")
+		addStrict("sd_forbidden", "SD content is forbidden")
 	}
 	if !trackers.IsDiscType(meta.DiscType) {
 		container := strings.ToLower(strings.TrimSpace(meta.Container))
@@ -102,7 +111,7 @@ func evaluatePHDTechnicalRules(meta api.RuleSubject, add func(string, string)) {
 	}
 	if res := trackers.ResolveRuleResolution(meta); strings.HasSuffix(res, "p") {
 		if height, err := strconv.Atoi(strings.TrimSuffix(res, "p")); err == nil && height > 1080 && (encode == "h.264" || encode == "x264") {
-			add("video_encode", "H.264/x264 is only allowed for 1080p and below")
+			addStrict("h264_resolution_limit", "H.264/x264 is only allowed for 1080p and below")
 		}
 	}
 }

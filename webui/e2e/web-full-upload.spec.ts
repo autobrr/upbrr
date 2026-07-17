@@ -124,6 +124,8 @@ test("embedded web runs image upload, tracker dry run, tracker upload, and histo
     await page.getByLabel("Log level").selectOption("debug");
     await page.getByRole("button", { name: "Run dry run" }).click();
     await expect.poll(() => workspace.fake.counters.clientSearches).toBe(1);
+    await expect.poll(() => workspace.fake.counters.clientInjections).toBe(1);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
     const reviewButton = page.getByRole("button", { name: "Review upload" });
     await expect(reviewButton).toBeEnabled();
     await expect(page.getByRole("heading", { name: "FF" })).toBeVisible();
@@ -140,6 +142,54 @@ test("embedded web runs image upload, tracker dry run, tracker upload, and histo
     await page.getByRole("button", { name: "History" }).click();
     await expect(page.getByText("E2E.Movie.2026.1080p.WEB-DL").first()).toBeVisible();
     await expect(page.getByText("FF").first()).toBeVisible();
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("embedded web keeps strict rules and dupes diagnostic during dry run", async ({ page }) => {
+  const workspace = await createE2EWorkspace();
+  workspace.env.UPBRR_E2E_RESOLUTION = "576p";
+  workspace.env.UPBRR_E2E_DUPLICATE_TRACKERS = "HDS";
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await fetchMetadata(page, app.url, workspace.sourcePath);
+    await page.getByRole("button", { name: "Dupe Check" }).click();
+    await page.getByRole("checkbox", { name: "HDS" }).check();
+    await page.getByRole("button", { name: "Run dupe check" }).click();
+    await expect(page.getByText("Example.Release.2026.1080p-GRP")).toBeVisible();
+    await page.getByLabel("Ignore dupes for HDS").check();
+
+    await page.getByRole("button", { name: "Screenshots" }).click();
+    await page.getByRole("button", { name: "Generate screenshots" }).click();
+    await expect(page.getByRole("button", { name: "Screenshot 1" })).toBeVisible();
+    await page.getByRole("button", { name: "Upload Images" }).click();
+    await expect(page.getByText("1 found")).toBeVisible();
+    await page.getByRole("combobox", { name: "Image host" }).selectOption("imgbb");
+    await page.getByRole("button", { name: "Upload selected (1)" }).click();
+    await page.getByRole("button", { name: "Descriptions" }).click();
+    await page.getByRole("button", { name: "Refresh descriptions" }).click();
+
+    await page.getByRole("button", { name: "Upload", exact: true }).click();
+    await page.getByRole("button", { name: "Run dry run" }).click();
+    await expect(page.getByText(/min_resolution.*strict|strict.*min_resolution/)).toBeVisible();
+    await expect(page.getByText("Duplicate diagnostics")).toBeVisible();
+    await expect(page.getByText("Example.Release.2026.1080p-GRP")).toBeVisible();
+    await expect(page.getByLabel("Authorize min_resolution for HDS")).toHaveCount(0);
+    await expect.poll(() => workspace.fake.counters.clientInjections).toBe(1);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+
+    await page.getByLabel("Skip client injection").check();
+    await page.getByRole("button", { name: "Run dry run" }).click();
+    await expect.poll(() => workspace.fake.counters.clientInjections).toBe(1);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+
+    await page.getByRole("button", { name: "Review upload" }).click();
+    await expect(page.getByRole("alert")).toContainText(/eligible|rule/i);
+    await expect(page.getByRole("button", { name: "Start upload" })).toBeDisabled();
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
   } finally {
     await app?.stop();
     await workspace.cleanup();

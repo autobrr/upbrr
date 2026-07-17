@@ -13,21 +13,22 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func Rules() *trackers.RuleSet { return &trackers.RuleSet{ExtraCheck: checkGenres} }
+func Rules() *trackers.RuleSet { return &trackers.RuleSet{Check: checkGenres} }
 
-func checkGenres(ctx context.Context, meta api.RuleSubject, _ api.Logger) trackers.RuleResult {
+func checkGenres(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
-		return trackers.RuleFail(fmt.Errorf("context canceled: %w", err).Error())
+		return nil, fmt.Errorf("context canceled: %w", err)
 	}
+	failures := make([]api.RuleFailure, 0, 3)
 	genres := unit3d.RuleGenres(meta)
 	if !unit3d.ContainsRuleValue(genres, []string{"animation", "family"}) {
-		return trackers.RuleFail("Genre does not match Animation or Family for OTW.")
+		failures = append(failures, trackers.NewRuleFailure("genre", "Genre does not match Animation or Family for OTW.", api.RuleDispositionWaivable))
 	}
 	if unit3d.AdultContent(meta) {
-		return trackers.RuleFail("Adult animation not allowed at OTW.")
+		failures = append(failures, trackers.NewRuleFailure("block_adult", "Adult animation not allowed at OTW.", api.RuleDispositionWaivable))
 	}
 	if unit3d.ContainsRuleValue(genres, []string{"reality", "game show", "game-show", "reality tv", "reality television"}) {
-		return trackers.RuleFail("Reality / Game Show content not allowed at OTW.")
+		failures = append(failures, trackers.NewRuleFailure("block_reality", "Reality / Game Show content not allowed at OTW.", api.RuleDispositionWaivable))
 	}
 	typeValue := unit3d.RuleType(meta)
 	group := unit3d.RuleGroup(meta)
@@ -39,8 +40,12 @@ func checkGenres(ctx context.Context, meta api.RuleSubject, _ api.Logger) tracke
 			"VISION":   true,
 		}
 		if restricted[strings.ToUpper(group)] {
-			return trackers.RuleFail(fmt.Sprintf("Group %s is only allowed for raw type content at OTW", group))
+			failures = append(failures, trackers.NewRuleFailure(
+				"group_type",
+				fmt.Sprintf("Group %s is only allowed for raw type content at OTW", group),
+				api.RuleDispositionWaivable,
+			))
 		}
 	}
-	return trackers.RulePass()
+	return failures, nil
 }

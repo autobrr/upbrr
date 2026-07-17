@@ -12,7 +12,11 @@ import (
 
 func evaluateSiteRules(t *testing.T, tracker string, meta api.RuleSubject) []api.RuleFailure {
 	t.Helper()
-	return New(tracker).evaluateRules(context.Background(), meta, api.NopLogger{})
+	failures, err := New(tracker).evaluateRules(context.Background(), meta, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("evaluate %s rules: %v", tracker, err)
+	}
+	return failures
 }
 
 func TestEvaluateRulesAZRedirectsEnglishTerritories(t *testing.T) {

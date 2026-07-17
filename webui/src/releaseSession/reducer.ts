@@ -103,6 +103,7 @@ export type SessionState = Readonly<{
   preview: MetadataPreview | null;
   selectedTrackers: readonly string[];
   ignoredDupesFor: readonly string[];
+  authorizedRulesByTracker: Readonly<Record<string, readonly string[]>>;
   questionnaireAnswers: Readonly<Record<string, Readonly<Record<string, string>>>>;
   uploadOptions: UploadRunOptions;
   uploadInputRevision: number;
@@ -179,6 +180,12 @@ export type SessionAction =
     }>
   | Readonly<{ type: "trackers_chosen"; trackers: readonly string[] }>
   | Readonly<{ type: "dupe_ignore_changed"; tracker: string; ignored: boolean }>
+  | Readonly<{
+      type: "rule_authorization_changed";
+      tracker: string;
+      rule: string;
+      authorized: boolean;
+    }>
   | Readonly<{ type: "questionnaire_answered"; tracker: string; key: string; value: string }>
   | Readonly<{ type: "upload_options_changed"; value: Partial<UploadRunOptions> }>
   | Readonly<{
@@ -351,6 +358,7 @@ export const initialSessionState = (): SessionState => ({
   preview: null,
   selectedTrackers: [],
   ignoredDupesFor: [],
+  authorizedRulesByTracker: {},
   questionnaireAnswers: {},
   uploadOptions: emptyOptions(),
   uploadInputRevision: 0,
@@ -576,6 +584,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         preview: null,
         selectedTrackers: [],
         ignoredDupesFor: [],
+        authorizedRulesByTracker: {},
         questionnaireAnswers: {},
         uploadOptions: emptyOptions(),
         uploadInputRevision: state.uploadInputRevision + 1,
@@ -808,6 +817,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           notice: "",
         },
         selectedTrackers: trackers,
+        authorizedRulesByTracker: {},
         uploadInputRevision: state.uploadInputRevision + 1,
       };
     }
@@ -821,6 +831,23 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         ...state,
         ...invalidateAuthority(state, "Duplicate override changed.", false),
         ignoredDupesFor: [...ignored],
+        uploadInputRevision: state.uploadInputRevision + 1,
+      };
+    }
+    case "rule_authorization_changed": {
+      const tracker = action.tracker.trim().toUpperCase();
+      const rule = action.rule.trim();
+      if (!tracker || !rule) return state;
+      const rules = new Set(state.authorizedRulesByTracker[tracker] || []);
+      if (action.authorized) rules.add(rule);
+      else rules.delete(rule);
+      const authorizedRulesByTracker = { ...state.authorizedRulesByTracker };
+      if (rules.size > 0) authorizedRulesByTracker[tracker] = [...rules];
+      else delete authorizedRulesByTracker[tracker];
+      return {
+        ...state,
+        review: invalidate(state.review, "Rule authorization changed.", true),
+        authorizedRulesByTracker,
         uploadInputRevision: state.uploadInputRevision + 1,
       };
     }

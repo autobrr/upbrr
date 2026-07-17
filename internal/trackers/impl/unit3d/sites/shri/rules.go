@@ -12,17 +12,17 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func Rules() *trackers.RuleSet { return &trackers.RuleSet{ExtraCheck: checkRegion} }
+func Rules() *trackers.RuleSet { return &trackers.RuleSet{Check: checkRegion} }
 
-func checkRegion(ctx context.Context, meta api.RuleSubject, _ api.Logger) trackers.RuleResult {
+func checkRegion(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
-		return trackers.RuleFail(fmt.Errorf("context canceled: %w", err).Error())
+		return nil, fmt.Errorf("context canceled: %w", err)
 	}
 	if !strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") && !strings.EqualFold(strings.TrimSpace(meta.DiscType), "HDDVD") {
-		return trackers.RulePass()
+		return nil, nil
 	}
 	if strings.TrimSpace(meta.Region) == "" {
-		return trackers.RuleFail("Region required; skipping SHRI.")
+		return []api.RuleFailure{trackers.NewRuleFailure("region_required", "Region required; skipping SHRI.", api.RuleDispositionWaivable)}, nil
 	}
-	return trackers.RulePass()
+	return nil, nil
 }

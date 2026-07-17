@@ -34,20 +34,20 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 	}
 }
 
-func TestRuleFailureSeverityFailClosed(t *testing.T) {
+func TestRuleFailureDispositionFailClosed(t *testing.T) {
 	t.Parallel()
 	failures := []RuleFailure{
 		{Rule: "legacy"},
-		{Rule: "warning", Severity: RuleFailureSeverityWarning},
-		{Rule: "unknown", Severity: "unexpected"},
+		{Rule: "advisory", Disposition: RuleDispositionAdvisory},
+		{Rule: "unknown", Disposition: "unexpected"},
 	}
 	if !HasBlockingRuleFailures(failures) {
-		t.Fatal("expected legacy and unknown severities to block")
+		t.Fatal("expected legacy and unknown dispositions to block")
 	}
 	storedFailures := []TrackerRuleFailure{
 		{Rule: "legacy"},
-		{Rule: "warning", Severity: RuleFailureSeverityWarning},
-		{Rule: "unknown", Severity: "unexpected"},
+		{Rule: "advisory", Disposition: RuleDispositionAdvisory},
+		{Rule: "unknown", Disposition: "unexpected"},
 	}
 	if got := CountBlockingRuleFailures(storedFailures); got != 2 {
 		t.Fatalf("blocking count = %d, want 2", got)
@@ -55,8 +55,13 @@ func TestRuleFailureSeverityFailClosed(t *testing.T) {
 	if got := BlockingRuleFailures(failures); len(got) != 2 || got[0].Rule != "legacy" || got[1].Rule != "unknown" {
 		t.Fatalf("unexpected blocking subset: %#v", got)
 	}
-	if got := WarningRuleFailures(failures); len(got) != 1 || got[0].Rule != "warning" {
-		t.Fatalf("unexpected warning subset: %#v", got)
+	if got := AdvisoryRuleFailures(failures); len(got) != 1 || got[0].Rule != "advisory" {
+		t.Fatalf("unexpected advisory subset: %#v", got)
+	}
+	if NormalizeRuleDisposition("warning") != RuleDispositionAdvisory ||
+		NormalizeRuleDisposition("blocking") != RuleDispositionWaivable ||
+		NormalizeRuleDisposition("unexpected") != RuleDispositionStrict {
+		t.Fatal("legacy or unknown disposition normalization changed")
 	}
 }
 

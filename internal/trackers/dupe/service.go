@@ -291,17 +291,13 @@ func (s *Service) checkTracker(
 		return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionResolved, "", true, match, nil), false
 	}
 	if options.SkipRemote {
-		result = notRunPublicResult(tracker, NotRunUserRequested, "duplicate search skipped by user request", nil, checkedAt)
+		result = notRunPublicResult(tracker, NotRunUserRequested, "duplicate search skipped by user request", checkedAt)
 		entry = newAssessmentEntry(meta, s.cfg, tracker, DispositionNotRun, NotRunUserRequested, false, api.DupeMatch{}, nil)
 		entry.authorization = AuthorizationWaiver
 		entry.verdict = VerdictWaived
 		return result, entry, false
 	}
 
-	if reason, rules := skipReason(meta, tracker); reason != "" {
-		result = notRunPublicResult(tracker, NotRunRuleFailed, reason, rules, checkedAt)
-		return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionNotRun, NotRunRuleFailed, false, api.DupeMatch{}, nil), false
-	}
 	if trackerspkg.NormalizeBannedReleaseGroup(meta.Tag) != "" {
 		if err := s.banned.RefreshDynamic(ctx, s.cfg, []string{tracker}, s.logger); err != nil {
 			if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
@@ -330,7 +326,7 @@ func (s *Service) checkTracker(
 			result = failedPublicResult(tracker, FailureInternal, message, checkedAt)
 			return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionFailed, FailureInternal, false, api.DupeMatch{}, nil), false
 		}
-		result = notRunPublicResult(tracker, NotRunBannedGroup, reason, nil, checkedAt)
+		result = notRunPublicResult(tracker, NotRunBannedGroup, reason, checkedAt)
 		return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionNotRun, NotRunBannedGroup, false, api.DupeMatch{}, nil), false
 	}
 
@@ -433,7 +429,7 @@ func containsTracker(trackers []string, tracker string) bool {
 	return false
 }
 
-func notRunPublicResult(tracker string, code string, message string, rules []string, checkedAt time.Time) api.DupeCheckResult {
+func notRunPublicResult(tracker string, code string, message string, checkedAt time.Time) api.DupeCheckResult {
 	message = sanitizeSafeMessage(message, "duplicate search not run")
 	return api.DupeCheckResult{
 		Tracker:    tracker,
@@ -441,7 +437,6 @@ func notRunPublicResult(tracker string, code string, message string, rules []str
 		Skipped:    true,
 		SkipReason: message,
 		SkipCode:   code,
-		SkipRules:  append([]string(nil), rules...),
 		Status:     "skipped",
 		CheckedAt:  checkedAt,
 	}

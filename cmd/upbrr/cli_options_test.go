@@ -705,22 +705,37 @@ func TestBuildCLIRequestPropagatesRunLogLevel(t *testing.T) {
 }
 
 func TestBuildCLIRequestPreservesCombinedDebugModifiers(t *testing.T) {
-	opts, visited, paths, err := parseCLIOptions([]string{"--debug", "-ns", "-siu", "-s", "0", "movie.mkv"})
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	req, err := buildCLIRequest(opts, visited, paths, opts.Screens)
-	if err != nil {
-		t.Fatalf("build request: %v", err)
-	}
-	if !opts.Debug {
-		t.Fatal("expected debug to remain an adapter-local operation choice")
-	}
-	if !req.Options.NoSeed || req.Options.Screens != 0 {
-		t.Fatalf("combined debug modifiers lost from upload options: %#v", req.Options)
-	}
-	if req.ImageHostOverrides.SkipUpload == nil || !*req.ImageHostOverrides.SkipUpload {
-		t.Fatalf("combined debug image-host override lost: %#v", req.ImageHostOverrides)
+	for _, test := range []struct {
+		name       string
+		args       []string
+		wantNoSeed bool
+	}{
+		{name: "default injection", args: []string{"--debug", "-siu", "-s", "0", "movie.mkv"}},
+		{
+name: "no seed",
+ args: []string{"--debug", "-ns", "-siu", "-s", "0", "movie.mkv"},
+ wantNoSeed: true,
+},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			opts, visited, paths, err := parseCLIOptions(test.args)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			req, err := buildCLIRequest(opts, visited, paths, opts.Screens)
+			if err != nil {
+				t.Fatalf("build request: %v", err)
+			}
+			if !opts.Debug {
+				t.Fatal("expected debug to remain an adapter-local operation choice")
+			}
+			if req.Options.NoSeed != test.wantNoSeed || req.Options.Screens != 0 {
+				t.Fatalf("combined debug modifiers lost from upload options: %#v", req.Options)
+			}
+			if req.ImageHostOverrides.SkipUpload == nil || !*req.ImageHostOverrides.SkipUpload {
+				t.Fatalf("combined debug image-host override lost: %#v", req.ImageHostOverrides)
+			}
+		})
 	}
 }
 

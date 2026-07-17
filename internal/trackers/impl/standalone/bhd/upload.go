@@ -184,10 +184,6 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 	if req.Meta.Identity.TMDBID == 0 {
 		return uploadState{}, errors.New("trackers: BHD missing tmdb id; refresh metadata or set a TMDB id before uploading")
 	}
-	if err := validateBHDContainer(req.Meta); err != nil {
-		return uploadState{}, err
-	}
-
 	var err error
 	var assets trackers.DescriptionAssets
 	if req.Assets != nil {
@@ -467,17 +463,6 @@ func resolveTMDBID(meta api.UploadSubject) string {
 		return ""
 	}
 	return strconv.Itoa(meta.Identity.TMDBID)
-}
-
-func validateBHDContainer(meta api.UploadSubject) error {
-	switch strings.ToUpper(strings.TrimSpace(meta.Type)) {
-	case "REMUX", "ENCODE", "WEBDL", "WEBRIP":
-		container := strings.ToLower(strings.TrimSpace(meta.Container))
-		if container != "" && container != "mkv" && container != "mp4" {
-			return fmt.Errorf("trackers: BHD container %q is not allowed for %s: only MKV and MP4 are permitted", meta.Container, meta.Type)
-		}
-	}
-	return nil
 }
 
 func resolveSource(meta api.UploadSubject) (string, bool) {

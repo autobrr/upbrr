@@ -10,27 +10,18 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// RuleResult reports whether one rule allowed the release and, when denied, why.
-type RuleResult struct {
-	// Allowed is true when the evaluated rule permits the release.
-	Allowed bool
-	// Reason explains a denied result and is empty for a passing result.
-	Reason string
+// RuleCheck returns keyed tracker-specific failures or an operational error.
+// It may return multiple independent failures from one evaluation pass.
+type RuleCheck func(ctx context.Context, meta api.RuleSubject, logger api.Logger) ([]api.RuleFailure, error)
+
+// NewRuleFailure constructs a normalized keyed tracker-rule result.
+func NewRuleFailure(rule string, reason string, disposition api.RuleDisposition) api.RuleFailure {
+	return api.RuleFailure{
+		Rule:        strings.TrimSpace(rule),
+		Reason:      strings.TrimSpace(reason),
+		Disposition: api.NormalizeRuleDisposition(disposition),
+	}
 }
-
-// RulePass returns an allowed rule result.
-func RulePass() RuleResult { return RuleResult{Allowed: true} }
-
-// RuleFail returns a denied rule result with surrounding whitespace removed from reason.
-func RuleFail(reason string) RuleResult {
-	return RuleResult{Allowed: false, Reason: strings.TrimSpace(reason)}
-}
-
-// ExtraCheck evaluates one tracker-specific rule after generic rule processing.
-type ExtraCheck func(ctx context.Context, meta api.RuleSubject, logger api.Logger) RuleResult
-
-// FailureCheck returns tracker-specific rule failures after generic rule processing.
-type FailureCheck func(ctx context.Context, meta api.RuleSubject, logger api.Logger) []api.RuleFailure
 
 // LanguageRule configures language requirements and the release types to which they apply.
 type LanguageRule struct {
@@ -91,8 +82,6 @@ type RuleSet struct {
 	BlockGroupUnlessType map[string][]string
 	// RequireSceneNFO requires an NFO for scene releases.
 	RequireSceneNFO bool
-	// ExtraCheck evaluates one additional pass/fail rule.
-	ExtraCheck ExtraCheck
-	// FailureCheck returns additional structured failures.
-	FailureCheck FailureCheck
+	// Check evaluates additional tracker-specific rules.
+	Check RuleCheck
 }

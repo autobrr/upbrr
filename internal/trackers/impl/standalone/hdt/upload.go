@@ -49,6 +49,9 @@ func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers
 	if req.Intent != trackers.PreparationIntentUpload {
 		return trackers.NewPreparedOperation(preview, nil, nil), nil
 	}
+	if trackers.ResolveRuleResolution(api.NewRuleSubject(req.Meta)) == "" {
+		return trackers.PreparedOperation{}, errors.New("trackers: HDT missing resolution")
+	}
 	if state.blockedReason != "" {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: HDT %s", state.blockedReason)
 	}
@@ -202,9 +205,6 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryR
 		description: description,
 		releaseName: fields["filename"],
 		fields:      fields,
-	}
-	if strings.TrimSpace(req.Meta.Release.Resolution) == "" {
-		state.blockedReason = "missing resolution"
 	}
 	if file, ok := resolveNFO(req.Meta); ok {
 		state.nfo = &file

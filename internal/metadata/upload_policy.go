@@ -47,10 +47,10 @@ func (s *Service) EvaluateUploadPolicy(
 	}
 	blockedAudio, _ := resolveAudioBloatPolicyWithRegistry(audioEvidence, resolved, s.registry)
 	for tracker, languages := range blockedAudio {
-		outcome.BlockedTrackers = addMetadataTrackerBlockReason(outcome.BlockedTrackers, tracker, api.TrackerBlockReasonAudio)
 		outcome.TrackerRuleFailures = addMetadataTrackerRuleFailure(outcome.TrackerRuleFailures, tracker, api.RuleFailure{
-			Rule:   "audio_bloat",
-			Reason: audioBloatReason(languages, true),
+			Rule:        "audio_bloat",
+			Reason:      audioBloatReason(languages, true),
+			Disposition: api.RuleDispositionWaivable,
 		})
 	}
 
@@ -59,7 +59,10 @@ func (s *Service) EvaluateUploadPolicy(
 			return api.UploadReviewOutcome{}, fmt.Errorf("metadata: evaluate upload policy: %w", err)
 		}
 		name := strings.ToUpper(strings.TrimSpace(tracker))
-		failures := trackers.EvaluateRulesWithRegistry(ctx, s.registry, name, api.NewRuleSubject(subject), logger)
+		failures, err := trackers.EvaluateRulesWithRegistry(ctx, s.registry, name, api.NewRuleSubject(subject), logger)
+		if err != nil {
+			return api.UploadReviewOutcome{}, fmt.Errorf("metadata: evaluate tracker rules: %w", err)
+		}
 		if len(failures) > 0 {
 			if outcome.TrackerRuleFailures == nil {
 				outcome.TrackerRuleFailures = make(map[string][]api.RuleFailure)

@@ -22,6 +22,7 @@ func Profile() standalone.Profile {
 		PrepareDescription:   prepareDescription,
 		PrepareUpload:        prepareUpload,
 		NewDuplicateAdapter:  newDuplicateAdapter,
+		Rules:                rules(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: sourceFlag},
 		DupePolicy:           &trackers.DupePolicy{ContainsFilenameMatch: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{

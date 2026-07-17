@@ -1455,12 +1455,12 @@ func (r *SQLiteRepository) ListHistoryEntries(ctx context.Context) ([]HistoryEnt
 			(
 				SELECT COUNT(1)
 				FROM tracker_rule_failures trf
-				WHERE trf.source_path = fm.path AND trf.severity <> "warning"
+				WHERE trf.source_path = fm.path AND trf.disposition <> "advisory"
 			),
 			(
 				SELECT COUNT(1)
 				FROM tracker_rule_failures trf
-				WHERE trf.source_path = fm.path AND trf.severity = "warning"
+				WHERE trf.source_path = fm.path AND trf.disposition = "advisory"
 			)
 		FROM file_metadata fm
 		LEFT JOIN upload_records ur ON ur.id = (
@@ -1516,7 +1516,7 @@ func (r *SQLiteRepository) ListHistoryEntries(ctx context.Context) ([]HistoryEnt
 			&entry.LatestUploadStatus,
 			&uploadCreatedAt,
 			&entry.RuleFailureCount,
-			&entry.RuleWarningCount,
+			&entry.RuleAdvisoryCount,
 		); err != nil {
 			return nil, fmt.Errorf("db list history entries: %w", err)
 		}
@@ -1705,8 +1705,8 @@ func (r *SQLiteRepository) SaveTrackerRuleFailures(ctx context.Context, sourcePa
 
 		if len(failures) > 0 {
 			stmt, err := tx.PrepareContext(ctx, `
-				INSERT INTO tracker_rule_failures (source_path, tracker, rule, reason, severity, created_at)
-				VALUES (?, ?, ?, ?, ?, ?)
+				INSERT INTO tracker_rule_failures (source_path, tracker, rule, reason, disposition, authorized, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?)
 			`)
 			if err != nil {
 				return fmt.Errorf("db save tracker rule failures: prepare: %w", err)
@@ -1727,7 +1727,8 @@ func (r *SQLiteRepository) SaveTrackerRuleFailures(ctx context.Context, sourcePa
 					strings.ToUpper(trimmedTracker),
 					rule,
 					strings.TrimSpace(failure.Reason),
-					api.NormalizeRuleFailureSeverity(failure.Severity),
+					api.NormalizeRuleDisposition(failure.Disposition),
+					failure.Authorized,
 					createdAt.Format(time.RFC3339Nano),
 				); err != nil {
 					return fmt.Errorf("db save tracker rule failures: insert: %w", err)
@@ -1751,7 +1752,7 @@ func (r *SQLiteRepository) ListTrackerRuleFailuresByPath(ctx context.Context, pa
 	}
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT source_path, tracker, rule, reason, severity, created_at
+		SELECT source_path, tracker, rule, reason, disposition, authorized, created_at
 		FROM tracker_rule_failures
 		WHERE source_path = ?
 		ORDER BY id ASC
@@ -1765,7 +1766,15 @@ func (r *SQLiteRepository) ListTrackerRuleFailuresByPath(ctx context.Context, pa
 	for rows.Next() {
 		var record TrackerRuleFailure
 		var createdAt string
-		if err := rows.Scan(&record.SourcePath, &record.Tracker, &record.Rule, &record.Reason, &record.Severity, &createdAt); err != nil {
+		if err := rows.Scan(
+			&record.SourcePath,
+			&record.Tracker,
+			&record.Rule,
+			&record.Reason,
+			&record.Disposition,
+			&record.Authorized,
+			&createdAt,
+		); err != nil {
 			return nil, fmt.Errorf("db list tracker rule failures: %w", err)
 		}
 		if createdAt != "" {

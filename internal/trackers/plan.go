@@ -310,6 +310,8 @@ func cloneTrackerDryRunEntry(entry api.TrackerDryRunEntry) api.TrackerDryRunEntr
 	entry.Payload = maps.Clone(entry.Payload)
 	entry.Files = append([]api.TrackerDryRunFile(nil), entry.Files...)
 	entry.DebugSections = append([]api.TrackerDryRunDebugSection(nil), entry.DebugSections...)
+	entry.Diagnostics.RuleDecisions = append([]api.RuleDecision(nil), entry.Diagnostics.RuleDecisions...)
+	entry.Diagnostics.LiveEligibilityReasons = append([]api.TrackerEligibilityReason(nil), entry.Diagnostics.LiveEligibilityReasons...)
 	for idx := range entry.DebugSections {
 		entry.DebugSections[idx].Payload = maps.Clone(entry.DebugSections[idx].Payload)
 		entry.DebugSections[idx].Files = append([]api.TrackerDryRunFile(nil), entry.DebugSections[idx].Files...)

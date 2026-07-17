@@ -50,10 +50,6 @@ func (m *dupeModule) preflightGUITrackerAuth(ctx context.Context, meta api.Dupli
 			readySet[name] = struct{}{}
 			continue
 		}
-		if len(api.BlockingRuleFailures(ruleFailuresForTracker(meta.TrackerRuleFailures, name))) > 0 {
-			readySet[name] = struct{}{}
-			continue
-		}
 		managed = append(managed, name)
 	}
 	if len(managed) == 0 {

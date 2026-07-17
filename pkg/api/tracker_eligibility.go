@@ -34,8 +34,8 @@ type TrackerContentFailure struct {
 
 // TrackerReviewChoices records explicit review authorizations for one tracker.
 type TrackerReviewChoices struct {
-	IgnoreDuplicate    bool
-	IgnoreRuleFailures bool
+	IgnoreDuplicate        bool
+	AuthorizedRuleFailures []string
 }
 
 // TrackerEligibilityAssessment is Core input gathered from current exact-
@@ -61,9 +61,18 @@ type TrackerEligibilityInput struct {
 
 // TrackerEligibilityState is one selected tracker's canonical decision.
 type TrackerEligibilityState struct {
-	Tracker  string
-	Eligible bool
-	Reasons  []TrackerEligibilityReason
+	Tracker       string
+	Eligible      bool
+	Reasons       []TrackerEligibilityReason
+	RuleDecisions []RuleDecision
+}
+
+// RuleDecision retains one failed rule and whether exact user authorization applies.
+type RuleDecision struct {
+	Rule        string
+	Reason      string
+	Disposition RuleDisposition
+	Authorized  bool
 }
 
 // TrackerEligibility is the ordered canonical decision for one exact release.

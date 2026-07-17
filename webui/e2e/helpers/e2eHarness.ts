@@ -29,6 +29,7 @@ type FakeCounters = {
   trackerUploads: number;
   imageUploads: number;
   clientSearches: number;
+  clientInjections: number;
 };
 
 type FakeServer = {
@@ -262,6 +263,9 @@ trackers:
   FF:
     username: "e2e"
     password: "e2e"
+  HDS:
+    announce_url: "http://tracker.invalid/announce"
+    image_host: "imgbb"
   BTN:
     api_key: "e2e"
     username: "e2e"
@@ -276,10 +280,20 @@ torrent_clients: {}
 }
 
 async function startFakeServer(): Promise<FakeServer> {
-  const counters: FakeCounters = { trackerUploads: 0, imageUploads: 0, clientSearches: 0 };
+  const counters: FakeCounters = {
+    trackerUploads: 0,
+    imageUploads: 0,
+    clientSearches: 0,
+    clientInjections: 0,
+  };
   const server = createServer(async (req, res) => {
     if (req.method === "POST" && req.url === "/client-search") {
       counters.clientSearches++;
+      writeJSON(res, 200, { ok: true });
+      return;
+    }
+    if (req.method === "POST" && req.url === "/client-inject") {
+      counters.clientInjections++;
       writeJSON(res, 200, { ok: true });
       return;
     }

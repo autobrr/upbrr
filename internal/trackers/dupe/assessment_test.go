@@ -36,7 +36,7 @@ func TestAssessmentSeparatesDispositionFromUploadVerdict(t *testing.T) {
 		{
 			Tracker:     "NOTRUN",
 			Disposition: DispositionNotRun,
-			Code:        NotRunRuleFailed,
+			Code:        NotRunMissingCredentials,
 		},
 		{
 			Tracker:     "FAILED",
@@ -76,7 +76,7 @@ func TestAssessmentAuthorizationIsOutcomeBoundAndInClientCannotBeOverridden(t *t
 		{
 			Tracker:     "NOTRUN",
 			Disposition: DispositionNotRun,
-			Code:        NotRunRuleFailed,
+			Code:        NotRunMissingCredentials,
 		},
 		{
 			Tracker:     "CLIENT",

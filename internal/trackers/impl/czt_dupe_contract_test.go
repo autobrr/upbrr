@@ -30,7 +30,7 @@ func TestCZTServiceIgnoresAPIKeyOnlyConfig(t *testing.T) {
 		t.Fatalf("expected 1 result, got %d", len(summary.Results))
 	}
 	result := summary.Results[0]
-	if result.Status != "skipped" || !result.Skipped || result.Error != "" || result.SkipCode != dupe.NotRunMissingCredentials || len(result.SkipRules) != 0 {
+	if result.Status != "skipped" || !result.Skipped || result.Error != "" || result.SkipCode != dupe.NotRunMissingCredentials {
 		t.Fatalf("unexpected skipped result: %#v", result)
 	}
 	if !strings.Contains(result.SkipReason, "missing passkey") {

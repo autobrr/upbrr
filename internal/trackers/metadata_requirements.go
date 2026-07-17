@@ -55,8 +55,8 @@ type MetadataRequirement struct {
 	Scope MetadataScope
 	// AnyOf is satisfied when at least one listed field is present and current.
 	AnyOf []MetadataField
-	// Severity defaults to blocking when empty or unrecognized.
-	Severity api.RuleFailureSeverity
+	// Disposition defaults to waivable for legacy empty values.
+	Disposition api.RuleDisposition
 }
 
 // TrackerMetadataPolicy defines declarative metadata requirements for a tracker.
@@ -84,9 +84,9 @@ func evaluateMetadataRequirementsWithRegistry(registry *Registry, tracker string
 	category := MetadataScope(strings.ToLower(strings.TrimSpace(resolveCategory(meta))))
 	if policy.RequireKnownCategory && category != MetadataScopeMovie && category != MetadataScopeTV {
 		return []api.RuleFailure{{
-			Rule:     "require_metadata_category",
-			Reason:   "missing category required to select tracker metadata requirements",
-			Severity: api.RuleFailureSeverityBlocking,
+			Rule:        "require_metadata_category",
+			Reason:      "missing category required to select tracker metadata requirements",
+			Disposition: api.RuleDispositionWaivable,
 		}}, true
 	}
 
@@ -98,7 +98,7 @@ func evaluateMetadataRequirementsWithRegistry(registry *Registry, tracker string
 		if metadataRequirementPresent(requirement.AnyOf, meta) {
 			continue
 		}
-		severity := api.NormalizeRuleFailureSeverity(requirement.Severity)
+		disposition := api.NormalizeRuleDisposition(requirement.Disposition)
 		rule := "require_metadata_id"
 		reason := "missing required " + metadataFieldList(requirement.AnyOf)
 		switch {
@@ -108,13 +108,13 @@ func evaluateMetadataRequirementsWithRegistry(registry *Registry, tracker string
 		case slices.Contains(requirement.AnyOf, MetadataFieldPoster):
 			rule = "require_metadata_poster"
 			reason = "missing required metadata poster"
-		case severity == api.RuleFailureSeverityWarning:
+		case disposition == api.RuleDispositionAdvisory:
 			reason = "missing recommended IMDb ID; PTP upload remains allowed"
 		}
 		failures = append(failures, api.RuleFailure{
-			Rule:     rule,
-			Reason:   reason,
-			Severity: severity,
+			Rule:        rule,
+			Reason:      reason,
+			Disposition: disposition,
 		})
 	}
 	return failures, true

@@ -595,7 +595,6 @@ func (b *Backend) FetchTrackerDryRun(
 		DescriptionGroups:           api.CloneDescriptionBuilderGroups(descriptionGroups),
 		Trackers:                    append([]string{}, resolvedTrackers...),
 		IgnoreDupesFor:              normalizeTrackerList(ignoreDupesFor),
-		IgnoreTrackerRuleFailures:   false,
 		Options:                     buildRunUploadOptions(rt.cfg, runOpts),
 		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(questionnaireAnswers),
 	}

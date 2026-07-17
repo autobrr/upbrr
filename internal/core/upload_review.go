@@ -89,10 +89,12 @@ func (m *uploadModule) refreshUploadReviewAuthority(
 		return trackerPayloadEvidence{}, err
 	}
 
+	if err := trackerspkg.ValidateRuleAuthorizations(resolvedTrackers, policy.TrackerRuleFailures, input.RuleAuthorizations); err != nil {
+		return trackerPayloadEvidence{}, fmt.Errorf("core: rule authorization: %w", err)
+	}
 	duplicate := duplicateSubjectFromUpload(subject)
 	duplicate.MatchedTrackers = append([]string(nil), subject.MatchedTrackers...)
 	duplicate.BlockedTrackers = cloneBlockedTrackers(policy.BlockedTrackers)
-	duplicate.TrackerRuleFailures = filterTrackerRuleFailures(policy.TrackerRuleFailures, input.IgnoreRuleFailuresFor)
 	summary, assessment, err := checkDuplicateAssessment(ctx, m.dupes, duplicate, resolvedTrackers, dupechecking.CheckOptions{
 		SkipRemote: input.SkipDuplicateCheck,
 	})
@@ -194,7 +196,10 @@ func (m *uploadModule) evaluateTrackerPayloadPolicy(
 			return api.UploadReviewOutcome{}, fmt.Errorf("core: upload policy: %w", err)
 		}
 	} else {
-		policy.TrackerRuleFailures = evaluateSubjectRules(ctx, m.registry, subject, resolvedTrackers, logging.FromContext(ctx, m.logger))
+		policy.TrackerRuleFailures, err = evaluateSubjectRules(ctx, m.registry, subject, resolvedTrackers, logging.FromContext(ctx, m.logger))
+		if err != nil {
+			return api.UploadReviewOutcome{}, err
+		}
 	}
 	return policy, nil
 }
@@ -363,15 +368,12 @@ func (m *uploadModule) buildTrackerPayloadPreview(
 		}
 		review.Banned = review.DryRun.Banned
 		review.BannedReason = review.DryRun.BannedReason
-		if reasons := outcome.BlockedTrackers[name]; len(reasons) > 0 {
-			review.DryRun.Status = "blocked"
-			review.DryRun.Message = "tracker blocked: " + formatBlockedReasons(reasons)
-		} else if checkError := strings.TrimSpace(review.DryRun.BannedCheckError); checkError != "" {
-			review.DryRun.Status = "blocked"
-			review.DryRun.Message = checkError
-		}
 		review.Questionnaire = review.DryRun.Questionnaire
 		reviews = append(reviews, review)
+		authorizedRules, authorizationErr := trackerspkg.AuthorizedRulesForTracker(input.RuleAuthorizations, name)
+		if authorizationErr != nil {
+			return trackerPayloadPreview{}, fmt.Errorf("core: rule authorization: %w", authorizationErr)
+		}
 		eligibilityAssessments = append(eligibilityAssessments, api.TrackerEligibilityAssessment{
 			Tracker:        name,
 			Duplicate:      review.DupeCheck,
@@ -382,16 +384,22 @@ func (m *uploadModule) buildTrackerPayloadPreview(
 			BannedReason:   review.BannedReason,
 			ContentFailure: cloneTrackerContentFailure(review.DryRun.ContentFailure),
 			Choices: api.TrackerReviewChoices{
-				IgnoreDuplicate:    containsNormalizedTracker(input.IgnoreDupesFor, name),
-				IgnoreRuleFailures: containsNormalizedTracker(input.IgnoreRuleFailuresFor, name),
+				IgnoreDuplicate:        containsNormalizedTracker(input.IgnoreDupesFor, name),
+				AuthorizedRuleFailures: authorizedRules,
 			},
 		})
 	}
-	eligibility := buildTrackerEligibility(api.TrackerEligibilityInput{
+	eligibility, err := buildTrackerEligibility(api.TrackerEligibilityInput{
 		Release:          input.Release,
 		SelectedTrackers: resolvedTrackers,
 		Assessments:      eligibilityAssessments,
 	})
+	if err != nil {
+		return trackerPayloadPreview{}, err
+	}
+	if err := persistTrackerRuleDecisions(ctx, m.trackerRepo, subject.SourcePath, eligibility); err != nil {
+		return trackerPayloadPreview{}, err
+	}
 	logTrackerEligibility(ctx, m.logger, string(previewIntent), eligibility)
 	outcome.Eligibility = eligibility
 	return trackerPayloadPreview{
@@ -404,6 +412,36 @@ func (m *uploadModule) buildTrackerPayloadPreview(
 		outcome: outcome,
 		torrent: torrent,
 	}, nil
+}
+
+// persistTrackerRuleDecisions atomically replaces each selected tracker's
+// stored rule evidence with Core's canonical authorization decisions.
+func persistTrackerRuleDecisions(
+	ctx context.Context,
+	repo api.TrackerStateRepository,
+	sourcePath string,
+	eligibility api.TrackerEligibility,
+) error {
+	if repo == nil {
+		return nil
+	}
+	for _, state := range eligibility.Trackers {
+		failures := make([]api.TrackerRuleFailure, 0, len(state.RuleDecisions))
+		for _, decision := range state.RuleDecisions {
+			failures = append(failures, api.TrackerRuleFailure{
+				SourcePath:  sourcePath,
+				Tracker:     state.Tracker,
+				Rule:        decision.Rule,
+				Reason:      decision.Reason,
+				Disposition: decision.Disposition,
+				Authorized:  decision.Authorized,
+			})
+		}
+		if err := repo.SaveTrackerRuleFailures(ctx, sourcePath, state.Tracker, failures); err != nil {
+			return fmt.Errorf("core: persist tracker rule decisions tracker=%s: %w", state.Tracker, err)
+		}
+	}
+	return nil
 }
 
 func cloneTrackerContentFailure(value *api.TrackerContentFailure) *api.TrackerContentFailure {
@@ -453,18 +491,22 @@ func evaluateSubjectRules(
 	subject api.UploadSubject,
 	trackerNames []string,
 	logger api.Logger,
-) map[string][]api.RuleFailure {
+) (map[string][]api.RuleFailure, error) {
 	result := make(map[string][]api.RuleFailure)
 	for _, tracker := range trackerNames {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
-		if failures := trackerspkg.EvaluateRulesWithRegistry(ctx, registry, name, api.NewRuleSubject(subject), logger); len(failures) > 0 {
+		failures, err := trackerspkg.EvaluateRulesWithRegistry(ctx, registry, name, api.NewRuleSubject(subject), logger)
+		if err != nil {
+			return nil, fmt.Errorf("core: evaluate tracker rules: %w", err)
+		}
+		if len(failures) > 0 {
 			result[name] = append([]api.RuleFailure(nil), failures...)
 		}
 	}
 	if len(result) == 0 {
-		return nil
+		return nil, nil
 	}
-	return result
+	return result, nil
 }
 
 func (m *uploadModule) buildReview(ctx context.Context, req api.Request) (api.UploadReview, error) {
@@ -495,66 +537,6 @@ func (m *uploadModule) buildCanonicalRequestReview(ctx context.Context, req api.
 		return api.UploadReview{}, err
 	}
 	return reviewed.Review, nil
-}
-
-func formatBlockedReasons(reasons []api.TrackerBlockReason) string {
-	if len(reasons) == 0 {
-		return "blocked"
-	}
-
-	labels := make([]string, 0, len(reasons))
-	seen := make(map[api.TrackerBlockReason]struct{}, len(reasons))
-	for _, reason := range reasons {
-		if _, ok := seen[reason]; ok {
-			continue
-		}
-		seen[reason] = struct{}{}
-		label := strings.TrimSpace(string(reason))
-		if label != "" {
-			labels = append(labels, label)
-		}
-	}
-	if len(labels) == 0 {
-		return "blocked"
-	}
-	return strings.Join(labels, ", ")
-}
-
-func filterTrackerRuleFailures(failures map[string][]api.RuleFailure, allowTrackers []string) map[string][]api.RuleFailure {
-	if len(failures) == 0 {
-		return nil
-	}
-	if len(allowTrackers) == 0 {
-		cloned := make(map[string][]api.RuleFailure, len(failures))
-		for tracker, trackerFailures := range failures {
-			cloned[tracker] = cloneRuleFailures(trackerFailures)
-		}
-		return cloned
-	}
-
-	allowed := make(map[string]struct{}, len(allowTrackers))
-	for _, tracker := range allowTrackers {
-		name := strings.ToUpper(strings.TrimSpace(tracker))
-		if name != "" {
-			allowed[name] = struct{}{}
-		}
-	}
-
-	filtered := make(map[string][]api.RuleFailure, len(failures))
-	for tracker, trackerFailures := range failures {
-		if _, ok := allowed[strings.ToUpper(strings.TrimSpace(tracker))]; ok {
-			warnings := api.WarningRuleFailures(trackerFailures)
-			if len(warnings) > 0 {
-				filtered[tracker] = warnings
-			}
-			continue
-		}
-		filtered[tracker] = cloneRuleFailures(trackerFailures)
-	}
-	if len(filtered) == 0 {
-		return nil
-	}
-	return filtered
 }
 
 func cloneRuleFailures(failures []api.RuleFailure) []api.RuleFailure {

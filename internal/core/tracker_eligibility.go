@@ -4,15 +4,17 @@
 package core
 
 import (
+	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // buildTrackerEligibility is the only tracker eligibility decision mapper.
 // Callers provide current exact-generation assessments; presentation layers
 // consume the ordered projection without reconstructing policy.
-func buildTrackerEligibility(input api.TrackerEligibilityInput) api.TrackerEligibility {
+func buildTrackerEligibility(input api.TrackerEligibilityInput) (api.TrackerEligibility, error) {
 	selected := normalizeEligibilityTrackers(input.SelectedTrackers)
 	assessments := make(map[string]api.TrackerEligibilityAssessment, len(input.Assessments))
 	for _, assessment := range input.Assessments {
@@ -35,7 +37,11 @@ func buildTrackerEligibility(input api.TrackerEligibilityInput) api.TrackerEligi
 				Message: "Tracker assessment is unavailable.",
 			})
 		} else {
-			state.Reasons = trackerEligibilityReasons(assessment)
+			var err error
+			state.Reasons, state.RuleDecisions, err = trackerEligibilityReasons(assessment)
+			if err != nil {
+				return api.TrackerEligibility{}, fmt.Errorf("core: tracker eligibility %s: %w", tracker, err)
+			}
 		}
 		state.Eligible = len(state.Reasons) == 0
 		result.Trackers = append(result.Trackers, state)
@@ -43,10 +49,10 @@ func buildTrackerEligibility(input api.TrackerEligibilityInput) api.TrackerEligi
 			result.EligibleTrackers = append(result.EligibleTrackers, tracker)
 		}
 	}
-	return result
+	return result, nil
 }
 
-func trackerEligibilityReasons(assessment api.TrackerEligibilityAssessment) []api.TrackerEligibilityReason {
+func trackerEligibilityReasons(assessment api.TrackerEligibilityAssessment) ([]api.TrackerEligibilityReason, []api.RuleDecision, error) {
 	reasons := make([]api.TrackerEligibilityReason, 0, 4)
 	appendReason := func(code api.TrackerEligibilityReasonCode, message string) {
 		for _, existing := range reasons {
@@ -80,7 +86,11 @@ func trackerEligibilityReasons(assessment api.TrackerEligibilityAssessment) []ap
 	if len(assessment.PolicyBlocks) > 0 {
 		appendReason(api.TrackerEligibilityPolicy, "Tracker policy blocks this release.")
 	}
-	if api.HasBlockingRuleFailures(assessment.RuleFailures) && !assessment.Choices.IgnoreRuleFailures {
+	ruleAssessment, err := trackers.AssessRuleFailures(assessment.Tracker, assessment.RuleFailures, assessment.Choices.AuthorizedRuleFailures)
+	if err != nil {
+		return nil, nil, fmt.Errorf("assess %s tracker rules: %w", assessment.Tracker, err)
+	}
+	if !ruleAssessment.Eligible {
 		appendReason(api.TrackerEligibilityBlockingRule, "Blocking tracker rules must be resolved or explicitly authorized.")
 	}
 	duplicate := assessment.Duplicate
@@ -93,7 +103,7 @@ func trackerEligibilityReasons(assessment api.TrackerEligibilityAssessment) []ap
 	} else if duplicate.Skipped && duplicate.SkipCode != dupeSkipCodeTrackerAuthNotReady {
 		appendReason(api.TrackerEligibilityAssessmentSkipped, "Duplicate assessment was skipped.")
 	}
-	return reasons
+	return reasons, ruleAssessment.Decisions, nil
 }
 
 func normalizeEligibilityTrackers(values []string) []string {

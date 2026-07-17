@@ -281,7 +281,6 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 	if len(resolved) == 0 {
 		resolved = ResolveTrackersWithDefaultsAndRegistry(s.cfg, meta.Trackers, meta.TrackersRemove, s.logger, s.registry)
 	}
-	resolved = filterTrackersByRuleFailures(resolved, meta.TrackerRuleFailures, meta.IgnoreTrackerRuleFailures, s.logger)
 	resolved = filterTrackersByBlocks(resolved, meta.BlockedTrackers, s.logger)
 	if len(resolved) == 0 {
 		return api.PreparationPreview{}, errors.New("trackers: no trackers configured")
@@ -756,32 +755,6 @@ func applyDryRunBannedGroupResult(entry *api.TrackerDryRunEntry, results map[str
 	entry.Banned = result.banned
 	entry.BannedReason = result.reason
 	entry.BannedCheckError = result.err
-}
-
-func filterTrackersByRuleFailures(trackers []string, failures map[string][]api.RuleFailure, ignore bool, logger api.Logger) []string {
-	if ignore || len(trackers) == 0 || len(failures) == 0 {
-		return trackers
-	}
-
-	filtered := make([]string, 0, len(trackers))
-	for _, tracker := range trackers {
-		name := strings.ToUpper(strings.TrimSpace(tracker))
-		trackerFailures, ok := failures[name]
-		if ok && api.HasBlockingRuleFailures(trackerFailures) {
-			if logger != nil {
-				for _, failure := range trackerFailures {
-					if !api.IsBlockingRuleFailure(failure) {
-						continue
-					}
-					logger.Warnf("trackers: skipping %s due to rule failure %s (%s)", name, failure.Rule, failure.Reason)
-				}
-			}
-			continue
-		}
-		filtered = append(filtered, tracker)
-	}
-
-	return filtered
 }
 
 func filterTrackersByBlocks(trackers []string, blocked map[string][]api.TrackerBlockReason, logger api.Logger) []string {

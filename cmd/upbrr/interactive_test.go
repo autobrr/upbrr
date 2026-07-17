@@ -363,10 +363,11 @@ func TestRunInteractiveCLIPathDebugProcessesNonRuleCheckedTrackers(t *testing.T)
 					HasDupes: true,
 				},
 				{
-					Tracker:   "BLU",
-					Status:    "skipped",
-					Skipped:   true,
-					SkipRules: []string{"require_movie_only"},
+					Tracker:    "BLU",
+					Status:     "skipped",
+					Skipped:    true,
+					SkipCode:   "missing_metadata",
+					SkipReason: "missing metadata",
 				},
 				{Tracker: "DP", Status: "completed"},
 			},
@@ -393,8 +394,8 @@ func TestRunInteractiveCLIPathDebugProcessesNonRuleCheckedTrackers(t *testing.T)
 	if got := strings.Join(uploadReq.IgnoreDupesFor, ","); got != "" {
 		t.Fatalf("expected debug upload not to infer duplicate authorization, got %s", got)
 	}
-	if got := strings.Join(uploadReq.IgnoreTrackerRuleFailuresFor, ","); got != "" {
-		t.Fatalf("expected debug upload not to ignore rule blocks, got %s", got)
+	if len(uploadReq.RuleAuthorizations) != 0 {
+		t.Fatalf("expected debug upload not to authorize rule blocks, got %#v", uploadReq.RuleAuthorizations)
 	}
 	if len(coreSvc.dryRunPlans) != 2 {
 		t.Fatalf("accepted dry-run plans = %d, want 2", len(coreSvc.dryRunPlans))
@@ -403,38 +404,9 @@ func TestRunInteractiveCLIPathDebugProcessesNonRuleCheckedTrackers(t *testing.T)
 		if plan.Duplicate.Release != plan.Input.Release || plan.Duplicate.Release.Generation != 1 {
 			t.Fatalf("accepted duplicate release = %#v input=%#v", plan.Duplicate.Release, plan.Input.Release)
 		}
-		if len(plan.Duplicate.Results) != len(coreSvc.dupeSummary.Results) ||
-			!slices.Equal(plan.Duplicate.Results[1].SkipRules, coreSvc.dupeSummary.Results[1].SkipRules) {
+		if len(plan.Duplicate.Results) != len(coreSvc.dupeSummary.Results) {
 			t.Fatalf("accepted duplicate results = %#v", plan.Duplicate.Results)
 		}
-	}
-}
-
-func TestIsRuleSkippedDupeResultUsesSkipRules(t *testing.T) {
-	t.Parallel()
-
-	if !isRuleSkippedDupeResult(api.DupeCheckResult{
-		Tracker:   "BLU",
-		Status:    "skipped",
-		Skipped:   true,
-		SkipRules: []string{"require_movie_only"},
-	}) {
-		t.Fatal("expected structured rule skip to remain terminal")
-	}
-	if isRuleSkippedDupeResult(api.DupeCheckResult{
-		Tracker:    "BLU",
-		Status:     "skipped",
-		Skipped:    true,
-		SkipReason: "rule check failed: category movie is not tv",
-	}) {
-		t.Fatal("expected text-only skip reason not to drive rule classification")
-	}
-	if isRuleSkippedDupeResult(api.DupeCheckResult{
-		Tracker:   "BLU",
-		Status:    "completed",
-		SkipRules: []string{"require_movie_only"},
-	}) {
-		t.Fatal("expected non-skipped result not to be terminal")
 	}
 }
 
@@ -759,7 +731,7 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckValidatesApplicableTrackers(t *testi
 	}
 }
 
-func TestEnsureCLITrackerAuthBeforeDupeCheckLogsRuleFailureSkipOnlyForManagedAuth(t *testing.T) {
+func TestEnsureCLITrackerAuthBeforeDupeCheckDoesNotCoupleRuleDiagnostics(t *testing.T) {
 	t.Parallel()
 
 	authSvc := &cliTrackerAuthForTest{
@@ -798,7 +770,7 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckLogsRuleFailureSkipOnlyForManagedAut
 		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
 		[]string{"MTV", "NBL", "PTP"},
 		api.MetadataPreview{TrackerRuleFailures: map[string][]api.RuleFailure{
-			"MTV": {{Rule: "extra_check", Reason: "managed auth rule failure"}},
+			"MTV": {{Rule: "source_rule", Reason: "managed auth rule failure"}},
 			"NBL": {{Rule: "require_tv_only", Reason: "static api key rule failure"}},
 		}},
 		logger,
@@ -806,23 +778,20 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckLogsRuleFailureSkipOnlyForManagedAut
 	if err != nil {
 		t.Fatalf("ensureCLITrackerAuthBeforeDupeCheck: %v", err)
 	}
-	if strings.Join(got, ",") != "NBL,PTP" {
-		t.Fatalf("expected managed rule-failed tracker removed while static tracker remains eligible, got %#v", got)
+	if strings.Join(got, ",") != "MTV,NBL,PTP" {
+		t.Fatalf("expected rule diagnostics not to remove auth candidates, got %#v", got)
 	}
-	if strings.Join(authSvc.validated, ",") != "PTP" {
-		t.Fatalf("expected only rule-eligible managed auth tracker to validate, got %#v", authSvc.validated)
+	if strings.Join(authSvc.validated, ",") != "MTV,PTP" {
+		t.Fatalf("expected both managed auth trackers to validate, got %#v", authSvc.validated)
 	}
 
 	logs := strings.Join(append(append(append([]string{}, logger.debug...), logger.info...), logger.warn...), "\n")
-	if !strings.Contains(logs, "cli auth: tracker=MTV skipped before auth due to rule failure") {
-		t.Fatal("expected managed auth rule-failure skip log")
-	}
-	if strings.Contains(logs, "tracker=NBL skipped before auth due to rule failure") {
-		t.Fatal("static api-key tracker should not log auth rule-failure skip")
+	if strings.Contains(logs, "skipped before auth due to rule failure") {
+		t.Fatal("rule diagnostics must not suppress or relabel auth validation")
 	}
 }
 
-func TestEnsureCLITrackerAuthBeforeDupeCheckSkipsRuleFailedManagedAuth(t *testing.T) {
+func TestEnsureCLITrackerAuthBeforeDupeCheckValidatesRuleFailedManagedAuth(t *testing.T) {
 	t.Parallel()
 
 	authSvc := &cliTrackerAuthForTest{
@@ -853,23 +822,23 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckSkipsRuleFailedManagedAuth(t *testin
 		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
 		[]string{"MTV", "PTP"},
 		api.MetadataPreview{TrackerRuleFailures: map[string][]api.RuleFailure{
-			"MTV": {{Rule: "extra_check", Reason: "managed auth rule failure"}},
+			"MTV": {{Rule: "source_rule", Reason: "managed auth rule failure"}},
 		}},
 		logger,
 	)
 	if err != nil {
 		t.Fatalf("ensureCLITrackerAuthBeforeDupeCheck: %v", err)
 	}
-	if strings.Join(got, ",") != "PTP" {
-		t.Fatalf("expected rule-failed managed auth tracker to be skipped, got %#v", got)
+	if strings.Join(got, ",") != "MTV,PTP" {
+		t.Fatalf("expected rule diagnostics not to remove managed auth tracker, got %#v", got)
 	}
-	if strings.Join(authSvc.validated, ",") != "PTP" {
-		t.Fatalf("expected only rule-eligible managed auth trackers to be validated, got %#v", authSvc.validated)
+	if strings.Join(authSvc.validated, ",") != "MTV,PTP" {
+		t.Fatalf("expected all managed auth trackers to be validated, got %#v", authSvc.validated)
 	}
 
 	logs := strings.Join(append(append(append([]string{}, logger.debug...), logger.info...), logger.warn...), "\n")
-	if !strings.Contains(logs, "tracker=MTV skipped before auth due to rule failure") {
-		t.Fatal("rule-failed managed auth should be skipped")
+	if strings.Contains(logs, "skipped before auth due to rule failure") {
+		t.Fatal("rule diagnostics must not suppress auth validation")
 	}
 }
 
@@ -900,13 +869,10 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckHonorsPerTrackerRuleFailureOverride(
 		context.Background(),
 		bufio.NewReader(strings.NewReader("")),
 		authSvc,
-		api.Request{
-			Options:                      api.UploadOptions{InteractionMode: api.InteractionModeInteractive},
-			IgnoreTrackerRuleFailuresFor: []string{" mtv "},
-		},
+		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
 		[]string{"MTV", "PTP"},
 		api.MetadataPreview{TrackerRuleFailures: map[string][]api.RuleFailure{
-			"mTv": {{Rule: "extra_check", Reason: "managed auth rule failure"}},
+			"mTv": {{Rule: "source_rule", Reason: "managed auth rule failure"}},
 		}},
 		logger,
 	)
@@ -914,7 +880,7 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckHonorsPerTrackerRuleFailureOverride(
 		t.Fatalf("ensureCLITrackerAuthBeforeDupeCheck: %v", err)
 	}
 	if strings.Join(got, ",") != "MTV,PTP" {
-		t.Fatalf("expected per-tracker rule-failure override to keep MTV eligible, got %#v", got)
+		t.Fatalf("expected rule diagnostics not to suppress auth, got %#v", got)
 	}
 	if strings.Join(authSvc.validated, ",") != "MTV,PTP" {
 		t.Fatalf("expected overridden managed tracker to validate, got %#v", authSvc.validated)
@@ -922,7 +888,7 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckHonorsPerTrackerRuleFailureOverride(
 
 	logs := strings.Join(append(append(append([]string{}, logger.debug...), logger.info...), logger.warn...), "\n")
 	if strings.Contains(logs, "tracker=MTV skipped before auth due to rule failure") {
-		t.Fatal("overridden tracker should not log auth rule-failure skip")
+		t.Fatal("rule diagnostics should not log an auth skip")
 	}
 }
 
@@ -1275,7 +1241,7 @@ func TestEnsureCLITrackerAuthBeforeDupeCheckFailsUnattendedBTN2FA(t *testing.T) 
 func TestPromptTrackerDupeReviewBuildsConfirmedTrackerList(t *testing.T) {
 	t.Parallel()
 
-	approved, ignoreDupes, ruleOverrides, err := promptTrackerDupeReview(
+	approved, ignoreDupes, err := promptTrackerDupeReview(
 		bufio.NewReader(strings.NewReader("y\nn\nn\n")),
 		api.DupeCheckSummary{Results: []api.DupeCheckResult{
 			{
@@ -1288,9 +1254,8 @@ func TestPromptTrackerDupeReviewBuildsConfirmedTrackerList(t *testing.T) {
 				Tracker:    "NBL",
 				Status:     "skipped",
 				Skipped:    true,
-				SkipReason: "rule check failed: category movie is not tv",
-				SkipCode:   "rule_failed",
-				SkipRules:  []string{"category"},
+				SkipReason: "missing metadata",
+				SkipCode:   "missing_metadata",
 			},
 		}},
 		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
@@ -1306,15 +1271,120 @@ func TestPromptTrackerDupeReviewBuildsConfirmedTrackerList(t *testing.T) {
 	if strings.Join(ignoreDupes, ",") != "ANT" {
 		t.Fatalf("expected dupe ignores for approved blocked trackers, got %#v", ignoreDupes)
 	}
-	if len(ruleOverrides) != 0 {
-		t.Fatalf("expected no rule overrides for skipped rule result, got %#v", ruleOverrides)
+}
+
+func TestPromptTrackerRuleReviewEnforcesStrictAndExactWaivableRules(t *testing.T) {
+	t.Parallel()
+	preview := api.MetadataPreview{TrackerRuleFailures: map[string][]api.RuleFailure{
+		"STRICT": {
+			{
+Rule: "container",
+ Reason: "container rejected",
+ Disposition: api.RuleDispositionWaivable,
+},
+			{
+Rule: "resolution",
+ Reason: "resolution rejected",
+ Disposition: api.RuleDispositionStrict,
+},
+		},
+		"WAIVE": {{
+Rule: "language",
+ Reason: "language rejected",
+ Disposition: api.RuleDispositionWaivable,
+}},
+		"ADVICE": {{
+Rule: "recommended_id",
+ Reason: "ID recommended",
+ Disposition: api.RuleDispositionAdvisory,
+}},
+	}}
+	var approved []string
+	var authorizations []api.RuleAuthorization
+	var err error
+	approved, authorizations, err = promptTrackerRuleReview(
+		bufio.NewReader(strings.NewReader("y\n")),
+		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
+		[]string{"STRICT", "WAIVE", "ADVICE"},
+		preview,
+	)
+	if err != nil {
+		t.Fatalf("prompt rule review: %v", err)
+	}
+	if !slices.Equal(approved, []string{"WAIVE", "ADVICE"}) {
+		t.Fatalf("approved = %#v", approved)
+	}
+	if len(authorizations) != 1 || authorizations[0].Tracker != "WAIVE" || !slices.Equal(authorizations[0].Rules, []string{"language"}) {
+		t.Fatalf("authorizations = %#v", authorizations)
+	}
+}
+
+func TestPromptTrackerRuleReviewUnattendedNeverPromptsForWaiver(t *testing.T) {
+	t.Parallel()
+	approved, authorizations, err := promptTrackerRuleReview(
+		bufio.NewReader(strings.NewReader("y\n")),
+		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeUnattended}},
+		[]string{"WAIVE"},
+		api.MetadataPreview{TrackerRuleFailures: map[string][]api.RuleFailure{
+			"WAIVE": {{Rule: "language", Disposition: api.RuleDispositionWaivable}},
+		}},
+	)
+	if err != nil {
+		t.Fatalf("prompt rule review: %v", err)
+	}
+	if len(approved) != 0 || len(authorizations) != 0 {
+		t.Fatalf("unattended review approved=%#v authorizations=%#v", approved, authorizations)
+	}
+}
+
+func TestDebugPayloadRendersRuleAndDuplicateDiagnostics(t *testing.T) {
+	t.Parallel()
+	body := renderDebugPayloadBody(api.TrackerReview{Tracker: "EXAMPLE", DryRun: api.TrackerDryRunEntry{
+		Tracker: "EXAMPLE",
+		Status:  "ready",
+		Diagnostics: api.TrackerDryRunDiagnostics{
+			RuleDecisions: []api.RuleDecision{
+				{
+Rule: "resolution",
+ Reason: "resolution rejected",
+ Disposition: api.RuleDispositionStrict,
+},
+				{
+Rule: "container",
+ Reason: "container rejected",
+ Disposition: api.RuleDispositionWaivable,
+},
+				{
+Rule: "recommended_id",
+ Reason: "ID recommended",
+ Disposition: api.RuleDispositionAdvisory,
+},
+			},
+			Duplicate: api.DupeCheckResult{
+				Tracker:  "EXAMPLE",
+				Status:   "completed",
+				HasDupes: true,
+				Filtered: []api.DupeEntry{{Name: "Example.Release.2026.1080p-GRP"}},
+			},
+		},
+	}})
+	for _, want := range []string{
+		"Rule [strict] resolution: resolution rejected",
+		"Rule [waivable] container: container rejected",
+		"Rule [advisory] recommended_id: ID recommended",
+		"Dupe check status: completed",
+		"Example.Release.2026.1080p-GRP",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("debug body missing %q:\n%s", want, body)
+		}
 	}
 }
 
 func TestPromptTrackerDupeReviewNeverOffersInClientOverride(t *testing.T) {
 	t.Parallel()
 
-	approved, ignoreDupes, ruleOverrides, err := promptTrackerDupeReview(
+	approved, ignoreDupes, err := promptTrackerDupeReview(
 		bufio.NewReader(strings.NewReader("y\n")),
 		api.DupeCheckSummary{Results: []api.DupeCheckResult{
 			{
@@ -1343,51 +1413,6 @@ func TestPromptTrackerDupeReviewNeverOffersInClientOverride(t *testing.T) {
 	}
 	if len(ignoreDupes) != 0 {
 		t.Fatalf("expected no dupe ignores for in-client matches, got %#v", ignoreDupes)
-	}
-	if len(ruleOverrides) != 0 {
-		t.Fatalf("expected no rule overrides for in-client matches, got %#v", ruleOverrides)
-	}
-}
-
-func TestPromptTrackerDupeReviewAllowsRuleCheckOverrides(t *testing.T) {
-	t.Parallel()
-
-	approved, ignoreDupes, ruleOverrides, err := promptTrackerDupeReview(
-		bufio.NewReader(strings.NewReader("y\ny\ny\n")),
-		api.DupeCheckSummary{Results: []api.DupeCheckResult{
-			{
-				Tracker:    "NBL",
-				Status:     "skipped",
-				Skipped:    true,
-				SkipReason: "rule check failed: category movie is not tv",
-				SkipCode:   "rule_failed",
-				SkipRules:  []string{"category"},
-			},
-			{
-				Tracker:    "OTW",
-				Status:     "skipped",
-				Skipped:    true,
-				SkipReason: "Genre does not match Animation or Family for OTW.",
-				SkipCode:   "rule_failed",
-				SkipRules:  []string{"genre"},
-			},
-			{Tracker: "ANT", Status: "completed"},
-		}},
-		api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
-		[]string{"NBL", "OTW", "ANT"},
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("promptTrackerDupeReview: %v", err)
-	}
-	if strings.Join(approved, ",") != "NBL,OTW,ANT" {
-		t.Fatalf("expected overridden rule-failed trackers approved, got %#v", approved)
-	}
-	if strings.Join(ignoreDupes, ",") != "NBL,OTW" {
-		t.Fatalf("expected dupe ignores for approved blocked rule violations, got %#v", ignoreDupes)
-	}
-	if strings.Join(ruleOverrides, ",") != "NBL,OTW" {
-		t.Fatalf("expected rule overrides for approved rule violations, got %#v", ruleOverrides)
 	}
 }
 
@@ -1423,7 +1448,7 @@ func TestPromptTrackerDupeReviewApprovesUserSkippedDupeChecksInUnattendedMode(t 
 		t.Fatalf("expected SkipDupeCheck to be handled by Core, got %#v", coreSvc.requests)
 	}
 
-	approved, ignoreDupes, ruleOverrides, err := promptTrackerDupeReview(
+	approved, ignoreDupes, err := promptTrackerDupeReview(
 		bufio.NewReader(strings.NewReader("")),
 		summary,
 		req,
@@ -1438,9 +1463,6 @@ func TestPromptTrackerDupeReviewApprovesUserSkippedDupeChecksInUnattendedMode(t 
 	}
 	if len(ignoreDupes) != 0 {
 		t.Fatalf("expected no dupe ignores for user-requested skip, got %#v", ignoreDupes)
-	}
-	if len(ruleOverrides) != 0 {
-		t.Fatalf("expected no rule overrides for user-requested skip, got %#v", ruleOverrides)
 	}
 }
 
@@ -1464,9 +1486,8 @@ func TestPromptTrackerDupeReviewGroupsUnattendedOutput(t *testing.T) {
 				Tracker:    "ANT",
 				Status:     "skipped",
 				Skipped:    true,
-				SkipReason: "rule check failed: category tv is not movie",
-				SkipCode:   "rule_failed",
-				SkipRules:  []string{"category"},
+				SkipReason: "missing metadata",
+				SkipCode:   "missing_metadata",
 			},
 			{
 				Tracker:    "NBL",
@@ -1498,7 +1519,7 @@ func TestPromptTrackerDupeReviewGroupsUnattendedOutput(t *testing.T) {
 	var approved []string
 	var err error
 	output := captureStdout(t, func() {
-		approved, _, _, err = promptTrackerDupeReview(
+		approved, _, err = promptTrackerDupeReview(
 			bufio.NewReader(strings.NewReader("")),
 			summary,
 			req,
@@ -1514,7 +1535,7 @@ func TestPromptTrackerDupeReviewGroupsUnattendedOutput(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"Dupe check summary:",
-		"Skipped: ANT (rule check failed: category tv is not movie)",
+		"Skipped: ANT (missing metadata)",
 		"Skipped: NBL (missing api_key for tracker)",
 		"Found potential dupes on: AITHER, MTV",
 		"Trackers passed all checks: DP, OTW",
@@ -1537,11 +1558,10 @@ func TestPromptTrackerDupeReviewGroupsUnattendedOutput(t *testing.T) {
 	}
 }
 
-func TestPromptTrackerDupeReviewSkipsAllRuleBlockedTrackersUnattended(t *testing.T) {
+func TestPromptTrackerDupeReviewSkipsAllUnavailableTrackersUnattended(t *testing.T) {
 	t.Parallel()
 
-	// When every selected tracker is rule-blocked (e.g. encodes missing
-	// MediaInfo encode settings), unattended review approves none. The caller
+	// When every selected tracker could not run, unattended review approves none. The caller
 	// relies on an empty approval list to skip the release before
 	// screenshots/torrent/upload, so this guards that early-skip path.
 	req := api.Request{
@@ -1554,22 +1574,20 @@ func TestPromptTrackerDupeReviewSkipsAllRuleBlockedTrackersUnattended(t *testing
 				Tracker:    "LST",
 				Status:     "skipped",
 				Skipped:    true,
-				SkipReason: "rule check failed: missing MediaInfo encode settings",
-				SkipCode:   "rule_failed",
-				SkipRules:  []string{"mediainfo"},
+				SkipReason: "missing metadata",
+				SkipCode:   "missing_metadata",
 			},
 			{
 				Tracker:    "RF",
 				Status:     "skipped",
 				Skipped:    true,
-				SkipReason: "rule check failed: missing MediaInfo encode settings",
-				SkipCode:   "rule_failed",
-				SkipRules:  []string{"mediainfo"},
+				SkipReason: "missing metadata",
+				SkipCode:   "missing_metadata",
 			},
 		},
 	}
 
-	approved, ignoreDupes, ruleOverrides, err := promptTrackerDupeReview(
+	approved, ignoreDupes, err := promptTrackerDupeReview(
 		bufio.NewReader(strings.NewReader("")),
 		summary,
 		req,
@@ -1580,16 +1598,16 @@ func TestPromptTrackerDupeReviewSkipsAllRuleBlockedTrackersUnattended(t *testing
 		t.Fatalf("promptTrackerDupeReview: %v", err)
 	}
 	if len(approved) != 0 {
-		t.Fatalf("expected no approved trackers when all are rule-blocked, got %#v", approved)
+		t.Fatalf("expected no approved trackers when all checks are unavailable, got %#v", approved)
 	}
-	if len(ignoreDupes) != 0 || len(ruleOverrides) != 0 {
-		t.Fatalf("expected no overrides in unattended mode, got ignoreDupes=%#v ruleOverrides=%#v", ignoreDupes, ruleOverrides)
+	if len(ignoreDupes) != 0 {
+		t.Fatalf("expected no duplicate overrides in unattended mode, got %#v", ignoreDupes)
 	}
 }
 
 func TestPromptTrackerDupeReviewShowsTrackerNamingChange(t *testing.T) {
 	output := captureStdout(t, func() {
-		approved, _, _, err := promptTrackerDupeReview(
+		approved, _, err := promptTrackerDupeReview(
 			bufio.NewReader(strings.NewReader("y\n")),
 			api.DupeCheckSummary{Results: []api.DupeCheckResult{{Tracker: "AITHER", Status: "completed"}}},
 			api.Request{Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive}},
@@ -2200,7 +2218,13 @@ func (c *cliCoreForTest) recordRequest(name string, req api.Request) {
 	copyReq.Trackers = append([]string(nil), req.Trackers...)
 	copyReq.TrackersRemove = append([]string(nil), req.TrackersRemove...)
 	copyReq.IgnoreDupesFor = append([]string(nil), req.IgnoreDupesFor...)
-	copyReq.IgnoreTrackerRuleFailuresFor = append([]string(nil), req.IgnoreTrackerRuleFailuresFor...)
+	copyReq.RuleAuthorizations = make([]api.RuleAuthorization, len(req.RuleAuthorizations))
+	for idx, authorization := range req.RuleAuthorizations {
+		copyReq.RuleAuthorizations[idx] = api.RuleAuthorization{
+			Tracker: authorization.Tracker,
+			Rules:   append([]string(nil), authorization.Rules...),
+		}
+	}
 	copyReq.DescriptionGroups = api.CloneDescriptionBuilderGroups(req.DescriptionGroups)
 	copyReq.TrackerQuestionnaireAnswers = cloneCLIQuestionnaireAnswersForTest(req.TrackerQuestionnaireAnswers)
 	copyReq.PlaylistInstruction.Selected = append([]string(nil), req.PlaylistInstruction.Selected...)
@@ -2231,20 +2255,19 @@ func (c *cliCoreForTest) RunAcceptedTrackerDryRun(_ context.Context, plan api.Tr
 	c.dryRunPlans = append(c.dryRunPlans, plan)
 	input := plan.Input
 	req := api.Request{
-		SourcePath:                       input.Release.SourcePath,
-		Trackers:                         append([]string(nil), input.Trackers...),
-		IgnoreDupesFor:                   append([]string(nil), input.IgnoreDupesFor...),
-		IgnoreTrackerRuleFailuresFor:     append([]string(nil), input.IgnoreRuleFailuresFor...),
-		TrackerQuestionnaireAnswers:      cloneCLIQuestionnaireAnswersForTest(input.QuestionnaireAnswers),
-		DescriptionGroups:                 api.CloneDescriptionBuilderGroups(input.DescriptionGroups),
-		TrackerIDOverrides:               maps.Clone(input.TrackerIDOverrides),
-		TrackerConfigOverrides:           input.TrackerConfigOverrides,
-		TrackerSiteOverrides:             input.TrackerSiteOverrides,
-		ClientOverrides:                  input.ClientOverrides,
-		ImageHostOverrides:               input.ImageHostOverrides,
-		ScreenshotOverrides:              input.ScreenshotOverrides,
-		TorrentOverrides:                 input.TorrentOverrides,
-		Options:                          input.Options,
+		SourcePath:                  input.Release.SourcePath,
+		Trackers:                    append([]string(nil), input.Trackers...),
+		IgnoreDupesFor:              append([]string(nil), input.IgnoreDupesFor...),
+		TrackerQuestionnaireAnswers: cloneCLIQuestionnaireAnswersForTest(input.QuestionnaireAnswers),
+		DescriptionGroups:           api.CloneDescriptionBuilderGroups(input.DescriptionGroups),
+		TrackerIDOverrides:          maps.Clone(input.TrackerIDOverrides),
+		TrackerConfigOverrides:      input.TrackerConfigOverrides,
+		TrackerSiteOverrides:        input.TrackerSiteOverrides,
+		ClientOverrides:             input.ClientOverrides,
+		ImageHostOverrides:          input.ImageHostOverrides,
+		ScreenshotOverrides:         input.ScreenshotOverrides,
+		TorrentOverrides:            input.TorrentOverrides,
+		Options:                     input.Options,
 	}
 	c.callOrder = append(c.callOrder, "debug")
 	c.recordRequest("debug", req)

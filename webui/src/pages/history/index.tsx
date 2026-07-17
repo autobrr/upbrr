@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { historyClient } from "../../api/app";
-import type { HistoryEntry, HistoryOverview } from "../../types";
+import type { HistoryEntry, HistoryOverview, HistoryRuleFailure } from "../../types";
 import { cn } from "../../utils/cn";
 
 const formatDate = (value: string) => {
@@ -50,6 +50,14 @@ const releaseLabelFromOverview = (overview: HistoryOverview) => {
   const resolution = overview.ReleaseResolution?.trim();
   const extras = [source, resolution].filter(Boolean).join(" • ");
   return extras ? `${title} (${extras})` : title;
+};
+
+const ruleResultState = (failure: HistoryRuleFailure) => {
+  const disposition = String(failure.Disposition || "strict");
+  if (disposition === "advisory" || disposition === "strict") {
+    return disposition;
+  }
+  return failure.Authorized ? "waived" : "unwaived";
 };
 
 type Props = {
@@ -314,15 +322,27 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
                   <h3>Counts</h3>
                   <p>Tracker metadata: {overview.TrackerMetadata?.length || 0}</p>
                   <p>
-                    Rule failures:{" "}
+                    Strict rules:{" "}
                     {overview.TrackerRuleFailures?.filter(
-                      (failure) => String(failure.Severity || "blocking") !== "warning",
+                      (failure) => ruleResultState(failure) === "strict",
                     ).length || 0}
                   </p>
                   <p>
-                    Rule warnings:{" "}
+                    Unwaived rules:{" "}
                     {overview.TrackerRuleFailures?.filter(
-                      (failure) => String(failure.Severity || "blocking") === "warning",
+                      (failure) => ruleResultState(failure) === "unwaived",
+                    ).length || 0}
+                  </p>
+                  <p>
+                    Waived rules:{" "}
+                    {overview.TrackerRuleFailures?.filter(
+                      (failure) => ruleResultState(failure) === "waived",
+                    ).length || 0}
+                  </p>
+                  <p>
+                    Rule advisories:{" "}
+                    {overview.TrackerRuleFailures?.filter(
+                      (failure) => ruleResultState(failure) === "advisory",
                     ).length || 0}
                   </p>
                   <p>Screenshots: {overview.Screenshots?.length || 0}</p>
@@ -375,8 +395,10 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
                       {overview.TrackerRuleFailures.map((failure, index) => (
                         <li key={`${failure.Tracker}-${failure.Rule}-${index}`}>
                           <strong>{failure.Tracker || "UNKNOWN"}</strong> [
-                          {failure.Severity || "blocking"}]: {failure.Rule}{" "}
-                          {failure.Reason ? `— ${failure.Reason}` : ""}
+                          {failure.Disposition || "strict"}
+                          {ruleResultState(failure) === "waived" ? ", waived" : ""}
+                          {ruleResultState(failure) === "unwaived" ? ", unwaived" : ""}]:{" "}
+                          {failure.Rule} {failure.Reason ? `— ${failure.Reason}` : ""}
                         </li>
                       ))}
                     </ul>

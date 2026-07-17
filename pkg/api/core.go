@@ -5,35 +5,34 @@ package api
 
 // Request carries one core operation across CLI and WebUI.
 type Request struct {
-	SourcePath                   string
-	Options                      UploadOptions
-	Execution                    ExecutionOptions
-	DescriptionGroups            []DescriptionBuilderGroup
-	Trackers                     []string
-	TrackersRemove               []string
-	IgnoreTrackerRuleFailures    bool
-	IgnoreTrackerRuleFailuresFor []string
-	IgnoreDupesFor               []string
-	SkipDupeCheck                bool
-	SkipDupeAsActual             bool
-	DoubleDupeCheck              bool
-	SourceLookupURL              string
-	DescriptionOverrideRaw       string
-	DescriptionOverrideURL       string
-	DescriptionOverrideGroup     string
-	MetadataOverrides            MetadataOverrides
-	TrackerConfigOverrides       TrackerConfigOverrides
-	TrackerSiteOverrides         TrackerSiteOverrides
-	ClientOverrides              ClientOverrides
-	ImageHostOverrides           ImageHostOverrides
-	ScreenshotOverrides          ScreenshotOverrides
-	TorrentOverrides             TorrentOverrides
-	TrackerIDOverrides           map[string]string
-	ExternalIDOverrides          ExternalIDOverrides
-	ReleaseNameOverrides         ReleaseNameOverrides
-	TrackerQuestionnaireAnswers  map[string]map[string]string // keyed by tracker, then questionnaire field key
-	PlaylistInstruction          PlaylistInstruction
-	ConfirmBDMVRescan            bool
+	SourcePath                  string
+	Options                     UploadOptions
+	Execution                   ExecutionOptions
+	DescriptionGroups           []DescriptionBuilderGroup
+	Trackers                    []string
+	TrackersRemove              []string
+	RuleAuthorizations          []RuleAuthorization
+	IgnoreDupesFor              []string
+	SkipDupeCheck               bool
+	SkipDupeAsActual            bool
+	DoubleDupeCheck             bool
+	SourceLookupURL             string
+	DescriptionOverrideRaw      string
+	DescriptionOverrideURL      string
+	DescriptionOverrideGroup    string
+	MetadataOverrides           MetadataOverrides
+	TrackerConfigOverrides      TrackerConfigOverrides
+	TrackerSiteOverrides        TrackerSiteOverrides
+	ClientOverrides             ClientOverrides
+	ImageHostOverrides          ImageHostOverrides
+	ScreenshotOverrides         ScreenshotOverrides
+	TorrentOverrides            TorrentOverrides
+	TrackerIDOverrides          map[string]string
+	ExternalIDOverrides         ExternalIDOverrides
+	ReleaseNameOverrides        ReleaseNameOverrides
+	TrackerQuestionnaireAnswers map[string]map[string]string // keyed by tracker, then questionnaire field key
+	PlaylistInstruction         PlaylistInstruction
+	ConfirmBDMVRescan           bool
 }
 
 // ExecutionOptions controls queued and site-check execution behavior.

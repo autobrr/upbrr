@@ -144,7 +144,7 @@ func normalizeUploadSpec(spec UploadSpec) (UploadSpec, error) {
 		return UploadSpec{}, errors.New("at least one tracker must be selected")
 	}
 	spec.Snapshot.Input.IgnoreDupesFor = normalizeTrackers(spec.Snapshot.Input.IgnoreDupesFor, false)
-	spec.Snapshot.Input.IgnoreRuleFailuresFor = normalizeTrackers(spec.Snapshot.Input.IgnoreRuleFailuresFor, false)
+	spec.Snapshot.Input.RuleAuthorizations = normalizeRuleAuthorizations(spec.Snapshot.Input.RuleAuthorizations)
 	return spec, nil
 }
 
@@ -208,7 +208,7 @@ func cloneDuplicateExecutionSnapshot(value DuplicateExecutionSnapshot) Duplicate
 func cloneUploadExecutionSnapshot(value UploadExecutionSnapshot) UploadExecutionSnapshot {
 	value.Input.Trackers = append([]string(nil), value.Input.Trackers...)
 	value.Input.IgnoreDupesFor = append([]string(nil), value.Input.IgnoreDupesFor...)
-	value.Input.IgnoreRuleFailuresFor = append([]string(nil), value.Input.IgnoreRuleFailuresFor...)
+	value.Input.RuleAuthorizations = cloneRuleAuthorizations(value.Input.RuleAuthorizations)
 	value.Input.QuestionnaireAnswers = cloneAnswers(value.Input.QuestionnaireAnswers)
 	value.Input.DescriptionGroups = api.CloneDescriptionBuilderGroups(value.Input.DescriptionGroups)
 	value.Input.TrackerConfigOverrides = clonePointerStruct(value.Input.TrackerConfigOverrides)
@@ -231,8 +231,31 @@ func cloneTrackerEligibility(value api.TrackerEligibility) api.TrackerEligibilit
 	value.Trackers = append([]api.TrackerEligibilityState(nil), value.Trackers...)
 	for index := range value.Trackers {
 		value.Trackers[index].Reasons = append([]api.TrackerEligibilityReason(nil), value.Trackers[index].Reasons...)
+		value.Trackers[index].RuleDecisions = append([]api.RuleDecision(nil), value.Trackers[index].RuleDecisions...)
 	}
 	return value
+}
+
+func cloneRuleAuthorizations(values []api.RuleAuthorization) []api.RuleAuthorization {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make([]api.RuleAuthorization, len(values))
+	for idx, value := range values {
+		cloned[idx] = api.RuleAuthorization{Tracker: value.Tracker, Rules: append([]string(nil), value.Rules...)}
+	}
+	return cloned
+}
+
+func normalizeRuleAuthorizations(values []api.RuleAuthorization) []api.RuleAuthorization {
+	cloned := cloneRuleAuthorizations(values)
+	for idx := range cloned {
+		cloned[idx].Tracker = strings.ToUpper(strings.TrimSpace(cloned[idx].Tracker))
+		for ruleIdx := range cloned[idx].Rules {
+			cloned[idx].Rules[ruleIdx] = strings.TrimSpace(cloned[idx].Rules[ruleIdx])
+		}
+	}
+	return cloned
 }
 
 func cloneBlockedTrackers(input map[string][]api.TrackerBlockReason) map[string][]api.TrackerBlockReason {

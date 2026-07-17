@@ -411,8 +411,8 @@ func TestMetadataRequirementMatrix(t *testing.T) {
 				t.Fatal("expected metadata policy evaluation")
 			}
 			if tc.warning {
-				if len(failures) != 1 || failures[0].Severity != api.RuleFailureSeverityWarning {
-					t.Fatalf("expected one warning, got %#v", failures)
+				if len(failures) != 1 || failures[0].Disposition != api.RuleDispositionAdvisory {
+					t.Fatalf("expected one advisory, got %#v", failures)
 				}
 				return
 			}
@@ -505,7 +505,7 @@ func newMetadataRegistry(t *testing.T) *Registry {
 	register("PTP", TrackerMetadataPolicy{Requirements: []MetadataRequirement{{
 		Scope:    MetadataScopeAny,
 		AnyOf:    []MetadataField{MetadataFieldIMDBIDOnly},
-		Severity: api.RuleFailureSeverityWarning,
+		Disposition: api.RuleDispositionAdvisory,
 	}}})
 	register("NBL", TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldTVmaze}}}})
 	register("MTV", TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []MetadataRequirement{
@@ -593,11 +593,14 @@ func TestTVDBTitleRequirementRejectsStaleProviderMetadata(t *testing.T) {
 	}
 }
 
-func TestPTPMetadataWarningDoesNotBlock(t *testing.T) {
+func TestPTPMetadataAdvisoryDoesNotBlock(t *testing.T) {
 	t.Parallel()
-	failures := EvaluateRulesWithRegistry(context.Background(), newMetadataRegistry(t), "PTP", api.RuleSubject{Identity: api.ExternalIdentity{Category: "movie"}}, nil)
-	if len(failures) != 1 || failures[0].Severity != api.RuleFailureSeverityWarning || api.HasBlockingRuleFailures(failures) {
-		t.Fatalf("expected non-blocking PTP warning, got %#v", failures)
+	failures, err := EvaluateRulesWithRegistry(context.Background(), newMetadataRegistry(t), "PTP", api.RuleSubject{Identity: api.ExternalIdentity{Category: "movie"}}, nil)
+	if err != nil {
+		t.Fatalf("evaluate PTP rules: %v", err)
+	}
+	if len(failures) != 1 || failures[0].Disposition != api.RuleDispositionAdvisory || api.HasBlockingRuleFailures(failures) {
+		t.Fatalf("expected non-blocking PTP advisory, got %#v", failures)
 	}
 }
 
@@ -677,7 +680,7 @@ func TestARMetadataPosterRejectsStaleSnapshots(t *testing.T) {
 	}
 	failures, _ := evaluateMetadataRequirementsWithRegistry(newMetadataRegistry(t), "AR", meta)
 	for _, failure := range failures {
-		if failure.Rule == "require_metadata_poster" && failure.Severity == api.RuleFailureSeverityBlocking {
+		if failure.Rule == "require_metadata_poster" && api.IsWaivableRuleFailure(failure) {
 			return
 		}
 	}

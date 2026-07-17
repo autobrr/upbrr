@@ -168,6 +168,12 @@ export default function TrackerUploadPage({
       {(view.dryRun?.Trackers || []).map((entry) => {
         const files = entry.Files || [];
         const questionnaireFields = entry.Questionnaire?.Fields || [];
+        const ruleDecisions = entry.Diagnostics?.RuleDecisions || [];
+        const duplicate = entry.Diagnostics?.Duplicate;
+        const duplicateMatches = duplicate?.Filtered?.length
+          ? duplicate.Filtered
+          : duplicate?.Raw || [];
+        const liveReasons = entry.Diagnostics?.LiveEligibilityReasons || [];
         return (
           <section className="panel grid gap-3" key={entry.Tracker}>
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -175,6 +181,70 @@ export default function TrackerUploadPage({
               <span className="muted">{entry.Status || "pending"}</span>
             </div>
             {entry.Message ? <p className="muted">{entry.Message}</p> : null}
+            {ruleDecisions.length ? (
+              <div className="grid gap-2">
+                <h3 className="text-sm font-semibold">Rule diagnostics</h3>
+                {ruleDecisions.map((decision) => {
+                  const disposition = String(decision.Disposition || "waivable");
+                  const waivable = disposition === "waivable";
+                  const authorized = Boolean(
+                    view.authorizedRulesByTracker[entry.Tracker]?.includes(decision.Rule),
+                  );
+                  return (
+                    <div
+                      className="flex flex-wrap items-center justify-between gap-2 rounded border border-white/10 bg-white/5 p-2"
+                      key={`${entry.Tracker}-${decision.Rule}`}
+                    >
+                      <span>
+                        <strong>{decision.Rule}</strong> [{disposition}]
+                        {decision.Reason ? ` — ${decision.Reason}` : ""}
+                      </span>
+                      {waivable ? (
+                        <label className="flex items-center gap-2 text-xs font-semibold">
+                          <span>Authorize</span>
+                          <input
+                            aria-label={`Authorize ${decision.Rule} for ${entry.Tracker}`}
+                            type="checkbox"
+                            checked={authorized}
+                            onChange={(event) =>
+                              facet.setRuleAuthorized(
+                                entry.Tracker,
+                                decision.Rule,
+                                event.target.checked,
+                              )
+                            }
+                          />
+                        </label>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+            {duplicate &&
+            (duplicate.HasDupes || duplicate.Skipped || duplicate.Error || duplicate.Status) ? (
+              <div className="grid gap-1">
+                <h3 className="text-sm font-semibold">Duplicate diagnostics</h3>
+                <p className="muted">
+                  Status: {duplicate.Status || "unknown"} · Potential matches:{" "}
+                  {duplicateMatches.length}
+                </p>
+                {duplicate.SkipReason ? <p className="muted">{duplicate.SkipReason}</p> : null}
+                {duplicate.Error ? <p className="error">{duplicate.Error}</p> : null}
+                {duplicateMatches.length ? (
+                  <ul className="m-0 grid gap-1 pl-4">
+                    {duplicateMatches.map((match, index) => (
+                      <li key={`${match.ID || match.Name}-${index}`}>{match.Name || match.ID}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
+            {liveReasons.length ? (
+              <p className="muted">
+                Live upload: {liveReasons.map((reason) => reason.Message).join(" ")}
+              </p>
+            ) : null}
             <dl className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-2">
               <div>
                 <dt className="label">Release name</dt>

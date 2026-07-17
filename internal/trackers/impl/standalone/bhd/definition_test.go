@@ -189,7 +189,7 @@ func TestDefinitionBuildUploadDryRunPrerequisiteMessagesIncludeAction(t *testing
 	}
 }
 
-func TestDefinitionBuildUploadDryRunRejectsInvalidContainer(t *testing.T) {
+func TestDefinitionBuildUploadDryRunKeepsWaivableContainerDiagnosticOutOfPayloadReadiness(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
@@ -202,7 +202,7 @@ func TestDefinitionBuildUploadDryRunRejectsInvalidContainer(t *testing.T) {
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	_, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
+	preview, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
 		Meta: api.UploadSubject{
 			SourcePath:        filepath.Join(tmp, "Movie.avi"),
@@ -210,13 +210,18 @@ func TestDefinitionBuildUploadDryRunRejectsInvalidContainer(t *testing.T) {
 			MediaInfoTextPath: mediaInfoPath,
 			Identity:          api.ExternalIdentity{TMDBID: 123, Category: "MOVIE"},
 			Type:              "REMUX",
+			Source:            "BLURAY",
 			Container:         "avi",
+			Release:           api.ReleaseInfo{Resolution: "1080p"},
 		},
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
 		Logger:        api.NopLogger{},
 	})
-	if err == nil || !strings.Contains(err.Error(), "container") {
-		t.Fatalf("expected container validation error, got %v", err)
+	if err != nil {
+		t.Fatalf("prepare dry run: %v", err)
+	}
+	if preview.Status != "ready" {
+		t.Fatalf("dry-run status = %q, want ready", preview.Status)
 	}
 }
 

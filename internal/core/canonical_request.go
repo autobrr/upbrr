@@ -12,15 +12,11 @@ import (
 )
 
 func uploadReviewInputFromRequest(request api.Request, ref api.ReleaseRef) api.UploadReviewInput {
-	ignoreRules := append([]string(nil), request.IgnoreTrackerRuleFailuresFor...)
-	if request.IgnoreTrackerRuleFailures {
-		ignoreRules = append([]string(nil), request.Trackers...)
-	}
 	return api.UploadReviewInput{
 		Release:                ref,
 		Trackers:               append([]string(nil), request.Trackers...),
 		IgnoreDupesFor:         append([]string(nil), request.IgnoreDupesFor...),
-		IgnoreRuleFailuresFor:  ignoreRules,
+		RuleAuthorizations:     cloneRuleAuthorizations(request.RuleAuthorizations),
 		SkipDuplicateCheck:     request.SkipDupeCheck,
 		SkipDuplicateAsActual:  request.SkipDupeAsActual,
 		DoubleDuplicateCheck:   request.DoubleDupeCheck,

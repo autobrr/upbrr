@@ -440,46 +440,10 @@ func validateEligibility(meta api.UploadSubject) string {
 			return "adult content is not allowed"
 		}
 	}
-	limit := time.Now().UTC().AddDate(-10, 0, 3)
-	if t := releaseDate(meta); !t.IsZero() {
-		if t.After(limit) {
-			return "content must be at least 10 years old"
-		}
-		return ""
-	}
-	if year := resolveYear(meta); year > limit.Year() {
-		return "content must be at least 10 years old"
+	if minimumContentAgeViolation(api.NewRuleSubject(meta), time.Now().UTC()) {
+		return minimumContentAgeReason
 	}
 	return ""
-}
-
-func releaseDate(meta api.UploadSubject) time.Time {
-	if meta.ProviderMetadata.TMDB == nil {
-		return time.Time{}
-	}
-	for _, value := range []string{
-		strings.TrimSpace(meta.ProviderMetadata.TMDB.ReleaseDate),
-		strings.TrimSpace(meta.ProviderMetadata.TMDB.LastAirDate),
-		strings.TrimSpace(meta.ProviderMetadata.TMDB.FirstAirDate),
-	} {
-		if value == "" {
-			continue
-		}
-		if t, err := time.Parse("2006-01-02", value); err == nil {
-			return t
-		}
-	}
-	return time.Time{}
-}
-
-func resolveYear(meta api.UploadSubject) int {
-	if meta.Release.Year > 0 {
-		return meta.Release.Year
-	}
-	if meta.ProviderMetadata.TMDB == nil {
-		return 0
-	}
-	return meta.ProviderMetadata.TMDB.Year
 }
 
 func resolveType(meta api.UploadSubject) string {

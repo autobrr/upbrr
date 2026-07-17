@@ -31,12 +31,13 @@ func TestUploadPartialFailureContinuesAndBuildsClonedRetry(t *testing.T) {
 	})
 	answers := map[string]map[string]string{"A": {"edition": "Example"}}
 	ignore := []string{"C"}
+	authorizations := []api.RuleAuthorization{{Tracker: "C", Rules: []string{"source_rule"}}}
 	engine := New(nil, Config{})
 	t.Cleanup(engine.Close)
 	spec := uploadSpec(runner, "A", "B")
 	spec.Snapshot.Input.QuestionnaireAnswers = answers
 	spec.Snapshot.Input.IgnoreDupesFor = ignore
-	spec.Snapshot.Input.IgnoreRuleFailuresFor = ignore
+	spec.Snapshot.Input.RuleAuthorizations = authorizations
 	owner := mustRegisterOwner(t, engine, "owner")
 	id, err := engine.StartUpload(context.Background(), owner, spec)
 	if err != nil {
@@ -44,6 +45,7 @@ func TestUploadPartialFailureContinuesAndBuildsClonedRetry(t *testing.T) {
 	}
 	answers["A"]["edition"] = "mutated"
 	ignore[0] = "mutated"
+	authorizations[0].Rules[0] = "mutated"
 	snapshot := waitUpload(t, engine, id)
 	if snapshot.Status != StatusCompletedWithErrors || snapshot.UploadedCount != 2 {
 		t.Fatalf("terminal snapshot = %#v", snapshot)
@@ -58,7 +60,7 @@ func TestUploadPartialFailureContinuesAndBuildsClonedRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UploadRetry: %v", err)
 	}
-	if len(retry.Snapshot.Input.Trackers) != 1 || retry.Snapshot.Input.Trackers[0] != "A" || retry.Snapshot.Input.QuestionnaireAnswers["A"]["edition"] != "Example" || retry.Snapshot.Input.IgnoreDupesFor[0] != "C" {
+	if len(retry.Snapshot.Input.Trackers) != 1 || retry.Snapshot.Input.Trackers[0] != "A" || retry.Snapshot.Input.QuestionnaireAnswers["A"]["edition"] != "Example" || retry.Snapshot.Input.IgnoreDupesFor[0] != "C" || retry.Snapshot.Input.RuleAuthorizations[0].Rules[0] != "source_rule" {
 		t.Fatalf("retry = %#v", retry)
 	}
 	retry.Snapshot.Input.Trackers[0] = "mutated"
@@ -72,7 +74,7 @@ func TestUploadPartialFailureContinuesAndBuildsClonedRetry(t *testing.T) {
 		!slices.Equal(requests[0].Input.Trackers, []string{"A", "B"}) ||
 		requests[0].Input.QuestionnaireAnswers["A"]["edition"] != "Example" ||
 		requests[0].Input.IgnoreDupesFor[0] != "C" ||
-		requests[0].Input.IgnoreRuleFailuresFor[0] != "C" {
+		requests[0].Input.RuleAuthorizations[0].Rules[0] != "source_rule" {
 		t.Fatalf("requests = %#v", requests)
 	}
 }

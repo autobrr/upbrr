@@ -259,6 +259,7 @@ export type UploadFacet = Readonly<{
     selectedTrackers: readonly string[];
     eligibility: TrackerEligibility | null;
     ignoredDupesFor: readonly string[];
+    authorizedRulesByTracker: Readonly<Record<string, readonly string[]>>;
     questionnaireAnswers: Readonly<Record<string, Readonly<Record<string, string>>>>;
     options: UploadRunOptions;
     dryRunStatus: FacetStatus;
@@ -274,6 +275,7 @@ export type UploadFacet = Readonly<{
   chooseTrackers(trackers: readonly string[]): void;
   answerQuestionnaire(tracker: string, key: string, value: string): void;
   changeOptions(options: Partial<UploadRunOptions>): void;
+  setRuleAuthorized(tracker: string, rule: string, authorized: boolean): void;
   runDryRun(): Promise<boolean>;
   review(): Promise<boolean>;
   start(): Promise<boolean>;

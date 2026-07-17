@@ -665,6 +665,14 @@ func sanitizeTrackerDryRunEntries(entries []api.TrackerDryRunEntry) []api.Tracke
 		entry.Files = sanitizeTrackerDryRunFiles(entry.Files)
 		entry.DebugSections = sanitizeTrackerDryRunDebugSections(entry.DebugSections)
 		entry.ImageHost = sanitizeDryRunImageHostFeedback(entry.ImageHost)
+		for idx := range entry.Diagnostics.RuleDecisions {
+			entry.Diagnostics.RuleDecisions[idx].Reason = logging.SanitizeMessage(entry.Diagnostics.RuleDecisions[idx].Reason)
+		}
+		for idx := range entry.Diagnostics.LiveEligibilityReasons {
+			entry.Diagnostics.LiveEligibilityReasons[idx].Message = logging.SanitizeMessage(entry.Diagnostics.LiveEligibilityReasons[idx].Message)
+		}
+		entry.Diagnostics.Duplicate.Error = logging.SanitizeMessage(entry.Diagnostics.Duplicate.Error)
+		entry.Diagnostics.Duplicate.SkipReason = logging.SanitizeMessage(entry.Diagnostics.Duplicate.SkipReason)
 		sanitized[index] = entry
 	}
 	return sanitized

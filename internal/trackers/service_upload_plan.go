@@ -108,7 +108,6 @@ func (s *Service) Upload(ctx context.Context, meta api.UploadSubject) (api.Uploa
 		return api.UploadSummary{}, errors.New("trackers: registry not configured")
 	}
 	resolved = filterKnownTrackersWithRegistry(resolved, s.logger, s.registry)
-	resolved = filterTrackersByRuleFailures(resolved, meta.TrackerRuleFailures, meta.IgnoreTrackerRuleFailures, s.logger)
 	resolved = filterTrackersByBlocks(resolved, meta.BlockedTrackers, s.logger)
 	if len(resolved) == 0 {
 		s.logger.Infof("trackers: no trackers configured, skipping upload")

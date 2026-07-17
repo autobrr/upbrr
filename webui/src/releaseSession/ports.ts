@@ -3,6 +3,7 @@
 
 import type {
   DescriptionBuilderGroup,
+  RuleAuthorization,
   DescriptionBuilderPreview,
   DVDMenuCaptureResult,
   ImageUploadProgressUpdate,
@@ -120,13 +121,15 @@ export type UploadCommand = Readonly<{
   release: ReleaseRef;
   trackers: readonly string[];
   ignoreDupesFor: readonly string[];
+  ruleAuthorizations: readonly RuleAuthorization[];
   questionnaireAnswers: Readonly<Record<string, Readonly<Record<string, string>>>>;
   descriptionGroups: readonly DescriptionBuilderGroup[];
   options: UploadRunOptions;
 }>;
 
-/** Dry-run command bound to one completed owner-scoped duplicate-check Job. */
-export type DryRunCommand = UploadCommand & Readonly<{ dupeJobID: string }>;
+/** Dry-run command bound to duplicate evidence; live rule authorizations are intentionally absent. */
+export type DryRunCommand = Omit<UploadCommand, "ruleAuthorizations"> &
+  Readonly<{ dupeJobID: string }>;
 
 export type UploadPorts = Readonly<{
   dryRun(command: DryRunCommand, signal: AbortSignal): Promise<TrackerDryRunPreview>;

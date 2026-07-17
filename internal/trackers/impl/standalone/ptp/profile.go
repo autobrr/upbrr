@@ -30,9 +30,9 @@ func Profile() standalone.Profile {
 		BannedGroups:        bannedGroups(),
 		DataPolicy:          &trackers.DataLookupPolicy{Cooldown: time.Minute},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{Requirements: []trackers.MetadataRequirement{{
-			Scope:    trackers.MetadataScopeAny,
-			AnyOf:    []trackers.MetadataField{trackers.MetadataFieldIMDBIDOnly},
-			Severity: api.RuleFailureSeverityWarning,
+			Scope:       trackers.MetadataScopeAny,
+			AnyOf:       []trackers.MetadataField{trackers.MetadataFieldIMDBIDOnly},
+			Disposition: api.RuleDispositionAdvisory,
 		}}},
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "PTP"},
 		ImageHostPolicy: &trackers.ImageHostPolicy{

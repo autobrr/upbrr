@@ -171,9 +171,11 @@ type TrackerRuleFailure struct {
 	Tracker    string
 	Rule       string
 	Reason     string
-	// Severity defaults to blocking for records created before severity was stored.
-	Severity  RuleFailureSeverity
-	CreatedAt time.Time `ts_type:"string"`
+	// Disposition is normalized from legacy severity values during migration/readback.
+	Disposition RuleDisposition
+	// Authorized records whether the exact waivable result was accepted for the stored operation.
+	Authorized bool
+	CreatedAt  time.Time `ts_type:"string"`
 }
 
 type DescriptionOverride struct {

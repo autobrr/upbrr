@@ -105,4 +105,44 @@ describe("productionReleaseSessionPorts", () => {
       }),
     ]);
   });
+
+  it("transports duplicate ignores and live rule authorizations independently", async () => {
+    const requests: Array<{ method: string; body: unknown }> = [];
+    setAppRequestHandlerForTests(async (method, body) => {
+      requests.push({ method, body });
+      return {};
+    });
+    const ports = productionReleaseSessionPorts();
+    const signal = new AbortController().signal;
+    const common = {
+      release: { SourcePath: "C:\\media\\Example", Generation: 1 },
+      trackers: ["AITHER"],
+      ignoreDupesFor: ["AITHER"],
+      questionnaireAnswers: {},
+      descriptionGroups: [],
+      options: { noSeed: false, runLogLevel: "info" },
+    } as const;
+
+    await ports.upload.dryRun({ ...common, dupeJobID: "dupe-job" }, signal);
+    await ports.upload.review(
+      {
+        ...common,
+        ruleAuthorizations: [{ Tracker: "AITHER", Rules: ["container"] }],
+      },
+      signal,
+    );
+
+    expect(requests[0]).toMatchObject({
+      method: "FetchTrackerDryRun",
+      body: { IgnoreDupesFor: ["AITHER"], NoSeed: false },
+    });
+    expect(requests[0].body).not.toHaveProperty("RuleAuthorizations");
+    expect(requests[1]).toMatchObject({
+      method: "ReviewTrackerUpload",
+      body: {
+        IgnoreDupesFor: ["AITHER"],
+        RuleAuthorizations: [{ Tracker: "AITHER", Rules: ["container"] }],
+      },
+    });
+  });
 });

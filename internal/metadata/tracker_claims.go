@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -97,10 +96,10 @@ func (s *Service) evaluateTrackerClaims(ctx context.Context, meta api.UploadSubj
 			continue
 		}
 
-		meta.BlockedTrackers = addMetadataTrackerBlockReason(meta.BlockedTrackers, tracker, api.TrackerBlockReasonClaim)
 		meta.TrackerRuleFailures = addMetadataTrackerRuleFailure(meta.TrackerRuleFailures, tracker, api.RuleFailure{
-			Rule:   trackerClaimRuleActive,
-			Reason: trackerClaimFailureReason(tracker, meta, s, logger),
+			Rule:        trackerClaimRuleActive,
+			Reason:      trackerClaimFailureReason(tracker, meta, s, logger),
+			Disposition: api.RuleDispositionWaivable,
 		})
 		if _, ok := s.registry.LookupClaimCheckerFactory(tracker); ok {
 			logger.Debugf("metadata: tracker claim match found tracker=%s", tracker)
@@ -482,25 +481,6 @@ func uniqueUpperTrackers(values []string) []string {
 	return out
 }
 
-func addMetadataTrackerBlockReason(
-	blocked map[string][]api.TrackerBlockReason,
-	tracker string,
-	reason api.TrackerBlockReason,
-) map[string][]api.TrackerBlockReason {
-	name := strings.ToUpper(strings.TrimSpace(tracker))
-	if name == "" || strings.TrimSpace(string(reason)) == "" {
-		return blocked
-	}
-	if blocked == nil {
-		blocked = make(map[string][]api.TrackerBlockReason)
-	}
-	if slices.Contains(blocked[name], reason) {
-		return blocked
-	}
-	blocked[name] = append(blocked[name], reason)
-	return blocked
-}
-
 func addMetadataTrackerRuleFailure(failures map[string][]api.RuleFailure, tracker string, failure api.RuleFailure) map[string][]api.RuleFailure {
 	name := strings.ToUpper(strings.TrimSpace(tracker))
 	rule := strings.TrimSpace(failure.Rule)
@@ -516,7 +496,11 @@ func addMetadataTrackerRuleFailure(failures map[string][]api.RuleFailure, tracke
 			return failures
 		}
 	}
-	failures[name] = append(failures[name], api.RuleFailure{Rule: rule, Reason: reason})
+	failures[name] = append(failures[name], api.RuleFailure{
+		Rule:        rule,
+		Reason:      reason,
+		Disposition: api.NormalizeRuleDisposition(failure.Disposition),
+	})
 	return failures
 }
 

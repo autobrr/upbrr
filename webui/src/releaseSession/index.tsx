@@ -19,7 +19,7 @@ import type {
   TrackerContentFailure,
   UploadImageHostFailure,
 } from "../types";
-import type { ReleaseSessionPorts, UploadCommand } from "./ports";
+import type { DryRunCommand, ReleaseSessionPorts, UploadCommand } from "./ports";
 import { productionReleaseSessionPorts } from "./production";
 import { initialSessionState, sessionReducer } from "./reducer";
 import type {
@@ -1017,6 +1017,10 @@ export function ReleaseSessionProvider({
     release,
     trackers: [...state.selectedTrackers],
     ignoreDupesFor: [...state.ignoredDupesFor],
+    ruleAuthorizations: Object.entries(state.authorizedRulesByTracker).map(([tracker, rules]) => ({
+      Tracker: tracker,
+      Rules: [...rules],
+    })),
     questionnaireAnswers: Object.fromEntries(
       Object.entries(state.questionnaireAnswers).map(([tracker, answers]) => [
         tracker,
@@ -1030,6 +1034,19 @@ export function ReleaseSessionProvider({
     options: { ...state.uploadOptions },
   });
 
+  const buildDryRunCommand = (release: ReleaseRef, dupeJobID: string): DryRunCommand => {
+    const command = buildUploadCommand(release);
+    return {
+      dupeJobID,
+      release: command.release,
+      trackers: command.trackers,
+      ignoreDupesFor: command.ignoreDupesFor,
+      questionnaireAnswers: command.questionnaireAnswers,
+      descriptionGroups: command.descriptionGroups,
+      options: command.options,
+    };
+  };
+
   const runDryRun = async (): Promise<boolean> => {
     const command = beginWorkflow("dryRun", access.upload.reason);
     if (!command) return false;
@@ -1040,7 +1057,7 @@ export function ReleaseSessionProvider({
         throw new Error("Complete duplicate checking before running a dry run.");
       }
       const preview = await activePorts.upload.dryRun(
-        { ...buildUploadCommand(command.release), dupeJobID },
+        buildDryRunCommand(command.release, dupeJobID),
         command.controller.signal,
       );
       dispatch({
@@ -1519,6 +1536,7 @@ export function ReleaseSessionProvider({
           ? currentDupeSnapshot?.summary?.Eligibility || null
           : null,
         ignoredDupesFor: state.ignoredDupesFor,
+        authorizedRulesByTracker: state.authorizedRulesByTracker,
         questionnaireAnswers: state.questionnaireAnswers,
         options: state.uploadOptions,
         dryRunStatus: state.dryRun.status,
@@ -1528,7 +1546,12 @@ export function ReleaseSessionProvider({
         review: state.review.value,
         reviewStaleReason: state.review.staleReason,
         snapshot: uploadSnapshot,
-        error: state.uploadError || uploadSnapshot?.failure?.Message || "",
+        error:
+          state.uploadError ||
+          state.review.error ||
+          state.dryRun.error ||
+          uploadSnapshot?.failure?.Message ||
+          "",
         transientError: releaseJobs.transientError,
       },
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),
@@ -1536,6 +1559,8 @@ export function ReleaseSessionProvider({
         dispatch({ type: "questionnaire_answered", tracker, key, value }),
       changeOptions: (options: Partial<UploadRunOptions>) =>
         dispatch({ type: "upload_options_changed", value: options }),
+      setRuleAuthorized: (tracker, rule, authorized) =>
+        dispatch({ type: "rule_authorization_changed", tracker, rule, authorized }),
       runDryRun,
       review: reviewUpload,
       start: async () => {

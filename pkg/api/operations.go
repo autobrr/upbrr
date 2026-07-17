@@ -24,7 +24,7 @@ type UploadReviewInput struct {
 	Release                ReleaseRef
 	Trackers               []string
 	IgnoreDupesFor         []string
-	IgnoreRuleFailuresFor  []string
+	RuleAuthorizations     []RuleAuthorization
 	SkipDuplicateCheck     bool
 	SkipDuplicateAsActual  bool
 	DoubleDuplicateCheck   bool
@@ -77,7 +77,6 @@ type TrackerDryRunInput struct {
 	Release                ReleaseRef
 	Trackers               []string
 	IgnoreDupesFor         []string
-	IgnoreRuleFailuresFor  []string
 	QuestionnaireAnswers   map[string]map[string]string
 	DescriptionGroups      []DescriptionBuilderGroup
 	TrackerIDOverrides     map[string]string

@@ -225,7 +225,6 @@ type UploadSubject struct {
 	ReleaseNameNoTag            string
 	ReleaseNameClean            string
 	BlockedTrackers             map[string][]TrackerBlockReason
-	IgnoreTrackerRuleFailures   bool
 	TrackerRuleFailures         map[string][]RuleFailure
 }
 
@@ -425,49 +424,70 @@ type ClientSubject struct {
 	ClientOverrides ClientOverrides
 }
 
-// RuleFailureSeverity classifies whether a tracker rule result blocks work.
-// The zero value and unrecognized values are treated as blocking for backward
-// compatibility and fail-closed behavior.
-type RuleFailureSeverity string
+// RuleDisposition identifies how a failed tracker rule affects live upload.
+type RuleDisposition string
 
 const (
-	// RuleFailureSeverityBlocking prevents the affected tracker operation.
-	RuleFailureSeverityBlocking RuleFailureSeverity = "blocking"
-	// RuleFailureSeverityWarning reports advice without preventing the operation.
-	RuleFailureSeverityWarning RuleFailureSeverity = "warning"
+	// RuleDispositionAdvisory reports guidance without blocking live upload.
+	RuleDispositionAdvisory RuleDisposition = "advisory"
+	// RuleDispositionWaivable requires exact user authorization before live upload.
+	RuleDispositionWaivable RuleDisposition = "waivable"
+	// RuleDispositionStrict blocks live upload and cannot be authorized.
+	RuleDispositionStrict RuleDisposition = "strict"
 )
 
-// RuleFailure describes a failed or advisory tracker rule result.
+// RuleFailure describes one stable tracker-rule result.
 type RuleFailure struct {
-	Rule   string
-	Reason string
-	// Severity defaults to blocking when empty or unrecognized.
-	Severity RuleFailureSeverity
+	Rule        string
+	Reason      string
+	Disposition RuleDisposition
 }
 
-// NormalizeRuleFailureSeverity maps the warning value to itself and all other
-// values, including legacy empty values, to blocking.
-func NormalizeRuleFailureSeverity(severity RuleFailureSeverity) RuleFailureSeverity {
-	if severity == RuleFailureSeverityWarning {
-		return RuleFailureSeverityWarning
+// RuleAuthorization binds user consent to exact current rule keys for one tracker.
+type RuleAuthorization struct {
+	Tracker string
+	Rules   []string
+}
+
+// NormalizeRuleDisposition maps legacy persisted values and fails closed for
+// unknown values. Empty and legacy blocking results remain user-waivable;
+// unknown non-empty values become strict.
+func NormalizeRuleDisposition(disposition RuleDisposition) RuleDisposition {
+	switch disposition {
+	case RuleDispositionAdvisory, RuleDispositionWaivable, RuleDispositionStrict:
+		return disposition
+	case "warning":
+		return RuleDispositionAdvisory
+	case "", "blocking":
+		return RuleDispositionWaivable
+	default:
+		return RuleDispositionStrict
 	}
-	return RuleFailureSeverityBlocking
 }
 
 // IsBlockingRuleFailure reports whether a rule result blocks tracker work.
 func IsBlockingRuleFailure(failure RuleFailure) bool {
-	return NormalizeRuleFailureSeverity(failure.Severity) == RuleFailureSeverityBlocking
+	return NormalizeRuleDisposition(failure.Disposition) != RuleDispositionAdvisory
+}
+
+// IsStrictRuleFailure reports whether a rule result can never be authorized.
+func IsStrictRuleFailure(failure RuleFailure) bool {
+	return NormalizeRuleDisposition(failure.Disposition) == RuleDispositionStrict
+}
+
+// IsWaivableRuleFailure reports whether exact authorization may unblock a result.
+func IsWaivableRuleFailure(failure RuleFailure) bool {
+	return NormalizeRuleDisposition(failure.Disposition) == RuleDispositionWaivable
 }
 
 // BlockingRuleFailures returns an independent slice containing only blocking
-// results. Legacy and unrecognized severities are included.
+// results. Legacy and unrecognized dispositions are included.
 func BlockingRuleFailures(failures []RuleFailure) []RuleFailure {
 	return filterRuleFailures(failures, true)
 }
 
-// WarningRuleFailures returns an independent slice containing only results with
-// the explicit warning severity.
-func WarningRuleFailures(failures []RuleFailure) []RuleFailure {
+// AdvisoryRuleFailures returns an independent slice containing only advisory results.
+func AdvisoryRuleFailures(failures []RuleFailure) []RuleFailure {
 	return filterRuleFailures(failures, false)
 }
 
@@ -477,11 +497,11 @@ func HasBlockingRuleFailures(failures []RuleFailure) bool {
 }
 
 // CountBlockingRuleFailures returns the number of rule results that block
-// tracker work. Legacy and unrecognized severities are counted as blocking.
+// tracker work. Legacy and unrecognized dispositions are counted as blocking.
 func CountBlockingRuleFailures(failures []TrackerRuleFailure) int {
 	count := 0
 	for _, failure := range failures {
-		if NormalizeRuleFailureSeverity(failure.Severity) == RuleFailureSeverityBlocking {
+		if NormalizeRuleDisposition(failure.Disposition) != RuleDispositionAdvisory {
 			count++
 		}
 	}

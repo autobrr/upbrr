@@ -187,11 +187,12 @@ func TestCheckGUIDupesWithAuthPreservesReadyTrackerOrder(t *testing.T) {
 	}
 }
 
-func TestCheckGUIDupesWithAuthAvoidsAuthForBlockingRuleFailedTracker(t *testing.T) {
+func TestCheckGUIDupesWithAuthStillValidatesRuleFailedTracker(t *testing.T) {
 	t.Parallel()
 
 	auth := &trackerAuthPreflightTestService{
 		capabilities: []api.TrackerAuthCapability{{TrackerID: "PTP", SupportsLogin: true}},
+		statuses:     []api.TrackerAuthStatus{{TrackerID: "PTP", State: trackerauth.StateConfigured}},
 	}
 	dupes := &trackerAuthPreflightDupeService{}
 	coreSvc := newTestCore(testCoreOptions{logger: api.NopLogger{}, services: api.ServiceSet{Dupes: dupes, TrackerAuth: auth}})
@@ -201,7 +202,7 @@ func TestCheckGUIDupesWithAuthAvoidsAuthForBlockingRuleFailedTracker(t *testing.
 			"PTP": {{
 				Rule:     "example_rule",
 				Reason:   "example rule failed",
-				Severity: api.RuleFailureSeverityBlocking,
+				Disposition: api.RuleDispositionWaivable,
 			}},
 		},
 	}
@@ -210,8 +211,8 @@ func TestCheckGUIDupesWithAuthAvoidsAuthForBlockingRuleFailedTracker(t *testing.
 	if err != nil {
 		t.Fatalf("check WebUI dupes with auth: %v", err)
 	}
-	if len(auth.validated) != 0 {
-		t.Fatalf("expected terminal rule failure to skip auth validation, got %v", auth.validated)
+	if !slices.Equal(auth.validated, []string{"PTP"}) {
+		t.Fatalf("expected rule diagnostics not to suppress auth validation, got %v", auth.validated)
 	}
 	if !slices.Equal(dupes.trackers, []string{"PTP"}) {
 		t.Fatalf("expected dupe service to retain rule-failed tracker for its skip result, got %v", dupes.trackers)
@@ -233,7 +234,7 @@ func TestCheckGUIDupesWithAuthStillValidatesWarningOnlyTracker(t *testing.T) {
 			"PTP": {{
 				Rule:     "example_advice",
 				Reason:   "example advisory",
-				Severity: api.RuleFailureSeverityWarning,
+				Disposition: api.RuleDispositionAdvisory,
 			}},
 		},
 	}

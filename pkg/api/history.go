@@ -17,8 +17,8 @@ type HistoryEntry struct {
 	LatestUploadStatus string
 	LatestUploadAt     time.Time `ts_type:"string"`
 	RuleFailureCount   int
-	// RuleWarningCount excludes blocking, legacy, and unrecognized rule results.
-	RuleWarningCount int
+	// RuleAdvisoryCount contains non-blocking advisory rule results.
+	RuleAdvisoryCount int
 }
 
 // HistoryRecord is the persistence-facing history aggregate. Prepared facts

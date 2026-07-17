@@ -934,6 +934,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			Release              api.ReleaseRef
 			Trackers             []string
 			IgnoreDupesFor       []string
+			RuleAuthorizations   []api.RuleAuthorization
 			QuestionnaireAnswers map[string]map[string]string
 			DescriptionGroups    []api.DescriptionBuilderGroup
 			NoSeed               bool
@@ -949,6 +950,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			req.Release,
 			req.Trackers,
 			req.IgnoreDupesFor,
+			req.RuleAuthorizations,
 			req.QuestionnaireAnswers,
 			req.DescriptionGroups,
 			req.NoSeed,

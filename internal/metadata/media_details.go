@@ -720,31 +720,6 @@ func appendUniqueString(values []string, value string) []string {
 	return append(values, trimmed)
 }
 
-func removeTrackerBlockReason(blocked map[string][]api.TrackerBlockReason, reason api.TrackerBlockReason) map[string][]api.TrackerBlockReason {
-	if len(blocked) == 0 {
-		return blocked
-	}
-
-	filtered := make(map[string][]api.TrackerBlockReason, len(blocked))
-	for tracker, reasons := range blocked {
-		kept := make([]api.TrackerBlockReason, 0, len(reasons))
-		for _, existing := range reasons {
-			if existing == reason {
-				continue
-			}
-			kept = append(kept, existing)
-		}
-		if len(kept) == 0 {
-			continue
-		}
-		filtered[tracker] = append([]api.TrackerBlockReason{}, kept...)
-	}
-	if len(filtered) == 0 {
-		return nil
-	}
-	return filtered
-}
-
 func containsCanonicalLanguage(values []string, target string) bool {
 	for _, value := range values {
 		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(target)) {

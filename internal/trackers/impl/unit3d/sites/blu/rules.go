@@ -13,18 +13,18 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func Rules() *trackers.RuleSet { return &trackers.RuleSet{ExtraCheck: checkContainer} }
+func Rules() *trackers.RuleSet { return &trackers.RuleSet{Check: checkContainer} }
 
-func checkContainer(ctx context.Context, meta api.RuleSubject, _ api.Logger) trackers.RuleResult {
+func checkContainer(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
-		return trackers.RuleFail(fmt.Errorf("context canceled: %w", err).Error())
+		return nil, fmt.Errorf("context canceled: %w", err)
 	}
 	if unit3d.IsDiscType(meta.DiscType) {
-		return trackers.RulePass()
+		return nil, nil
 	}
 	container := strings.ToLower(strings.TrimSpace(meta.Container))
 	if container == "" {
-		return trackers.RulePass()
+		return nil, nil
 	}
 	allowed := []string{"mkv"}
 	typeValue := unit3d.RuleType(meta)
@@ -35,7 +35,11 @@ func checkContainer(ctx context.Context, meta api.RuleSubject, _ api.Logger) tra
 		allowed = append(allowed, "mp4")
 	}
 	if unit3d.ContainsRuleValue([]string{container}, allowed) {
-		return trackers.RulePass()
+		return nil, nil
 	}
-	return trackers.RuleFail("BLU requires one of the following containers for this release: " + strings.ToUpper(strings.Join(allowed, ", ")))
+	return []api.RuleFailure{trackers.NewRuleFailure(
+		"container",
+		"BLU requires one of the following containers for this release: "+strings.ToUpper(strings.Join(allowed, ", ")),
+		api.RuleDispositionWaivable,
+	)}, nil
 }

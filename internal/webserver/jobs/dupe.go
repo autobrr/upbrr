@@ -372,7 +372,6 @@ func cloneResult(result api.DupeCheckResult) api.DupeCheckResult {
 	result.Raw = append([]api.DupeEntry(nil), result.Raw...)
 	result.Filtered = append([]api.DupeEntry(nil), result.Filtered...)
 	result.Notes = append([]string(nil), result.Notes...)
-	result.SkipRules = append([]string(nil), result.SkipRules...)
 	if result.Error != "" {
 		result.Error = sanitizeMessage(result.Error)
 	}
