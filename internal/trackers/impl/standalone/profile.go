@@ -9,7 +9,6 @@ import (
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
-	"github.com/autobrr/upbrr/internal/trackers/ruletypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -38,7 +37,7 @@ type Profile struct {
 	PrepareDescription      DescriptionPreparer
 	PrepareUpload           trackers.UploadPreparer
 	NewDuplicateAdapter     func(dupe.Dependencies) dupe.Adapter
-	Rules                   *ruletypes.RuleSet
+	Rules                   *trackers.RuleSet
 	ClaimPolicy             *trackers.ClaimPolicy
 	DataPolicy              *trackers.DataLookupPolicy
 	ArtifactPolicy          *trackers.ArtifactPolicy

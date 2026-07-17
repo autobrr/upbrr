@@ -5,19 +5,18 @@ package aither
 
 import (
 	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/internal/trackers/ruletypes"
 )
 
-func Rules() *ruletypes.RuleSet {
-	return &ruletypes.RuleSet{RequireUniqueID: true, Language: englishNonDisc()}
+func Rules() *trackers.RuleSet {
+	return &trackers.RuleSet{RequireUniqueID: true, Language: englishNonDisc()}
 }
 
 // AudioPolicy allows English as an additional audio language.
 func AudioPolicy() *trackers.AudioPolicy {
 	return &trackers.AudioPolicy{AllowedLanguages: []string{"english"}}
 }
-func englishNonDisc() *ruletypes.LanguageRule {
-	return &ruletypes.LanguageRule{
+func englishNonDisc() *trackers.LanguageRule {
+	return &trackers.LanguageRule{
 		Languages:      []string{"english", "en", "eng"},
 		RequireAudio:   true,
 		RequireSubs:    true,

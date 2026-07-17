@@ -3,6 +3,6 @@
 
 package hhd
 
-import "github.com/autobrr/upbrr/internal/trackers/ruletypes"
+import "github.com/autobrr/upbrr/internal/trackers"
 
-func Rules() *ruletypes.RuleSet { return &ruletypes.RuleSet{BlockDVDRip: true} }
+func Rules() *trackers.RuleSet { return &trackers.RuleSet{BlockDVDRip: true} }

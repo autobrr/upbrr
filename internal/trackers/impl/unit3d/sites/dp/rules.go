@@ -3,16 +3,16 @@
 
 package dp
 
-import "github.com/autobrr/upbrr/internal/trackers/ruletypes"
+import "github.com/autobrr/upbrr/internal/trackers"
 
 var nordic = []string{"english", "norwegian", "norsk", "no", "nb", "nn", "swedish", "sv", "danish", "da", "finnish", "fi", "icelandic", "is"}
 
-func Rules() *ruletypes.RuleSet {
-	return &ruletypes.RuleSet{
+func Rules() *trackers.RuleSet {
+	return &trackers.RuleSet{
 		BlockSingleFileFolder: true,
 		BlockHardcodedSubs:    true,
 		BlockGroupUnlessType:  map[string][]string{"EVO": {"WEBDL"}},
-		Language: &ruletypes.LanguageRule{
+		Language: &trackers.LanguageRule{
 			Languages:    nordic,
 			RequireAudio: true,
 			RequireSubs:  true,

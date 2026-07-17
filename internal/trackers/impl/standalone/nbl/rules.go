@@ -3,13 +3,13 @@
 
 package nbl
 
-import "github.com/autobrr/upbrr/internal/trackers/ruletypes"
+import "github.com/autobrr/upbrr/internal/trackers"
 
 // Rules declares NBL's TV-only and English-language requirements.
-func rules() *ruletypes.RuleSet {
-	return &ruletypes.RuleSet{
+func rules() *trackers.RuleSet {
+	return &trackers.RuleSet{
 		RequireTVOnly: true,
-		Language: &ruletypes.LanguageRule{
+		Language: &trackers.LanguageRule{
 			Languages:      []string{"english", "en", "eng"},
 			RequireAudio:   true,
 			RequireSubs:    true,

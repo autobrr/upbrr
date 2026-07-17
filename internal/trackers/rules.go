@@ -11,7 +11,6 @@ import (
 	"github.com/autobrr/upbrr/internal/languageutil"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/releasepolicy"
-	"github.com/autobrr/upbrr/internal/trackers/ruletypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -385,7 +384,7 @@ func containsAny(values []string, targets []string) bool {
 	return false
 }
 
-func evaluateLanguageRule(meta api.RuleSubject, rule *ruletypes.LanguageRule) (bool, string) {
+func evaluateLanguageRule(meta api.RuleSubject, rule *LanguageRule) (bool, string) {
 	if rule == nil {
 		return true, ""
 	}

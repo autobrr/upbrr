@@ -3,6 +3,6 @@
 
 package tik
 
-import "github.com/autobrr/upbrr/internal/trackers/ruletypes"
+import "github.com/autobrr/upbrr/internal/trackers"
 
-func Rules() *ruletypes.RuleSet { return &ruletypes.RuleSet{RequireDiscOnly: true} }
+func Rules() *trackers.RuleSet { return &trackers.RuleSet{RequireDiscOnly: true} }

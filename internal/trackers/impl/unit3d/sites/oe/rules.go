@@ -3,13 +3,13 @@
 
 package oe
 
-import "github.com/autobrr/upbrr/internal/trackers/ruletypes"
+import "github.com/autobrr/upbrr/internal/trackers"
 
-func Rules() *ruletypes.RuleSet {
-	return &ruletypes.RuleSet{
+func Rules() *trackers.RuleSet {
+	return &trackers.RuleSet{
 		BlockAdult:   true,
 		AdultMessage: "Porn is not allowed",
-		Language: &ruletypes.LanguageRule{
+		Language: &trackers.LanguageRule{
 			Languages:      []string{"english", "en", "eng"},
 			RequireAudio:   true,
 			RequireSubs:    true,

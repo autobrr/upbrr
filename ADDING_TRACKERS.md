@@ -229,7 +229,7 @@ legacy site-name exceptions as the pattern for new trackers.
 
 ### 4. Add tracker rules
 
-Declare standard rules through `ruletypes.RuleSet`. Unit3D automatically enables
+Declare standard rules through `trackers.RuleSet`. Unit3D automatically enables
 `RequireValidMISetting`, so the site does not need to repeat it.
 
 An adult rule plus Aither-style language rule looks like:
@@ -237,14 +237,14 @@ An adult rule plus Aither-style language rule looks like:
 ```go
 package example
 
-import "github.com/autobrr/upbrr/internal/trackers/ruletypes"
+import "github.com/autobrr/upbrr/internal/trackers"
 
 // Rules returns EXAMPLE's release eligibility requirements.
-func Rules() *ruletypes.RuleSet {
-	return &ruletypes.RuleSet{
+func Rules() *trackers.RuleSet {
+	return &trackers.RuleSet{
 		BlockAdult:  true,
 		AdultMessage: "Adult content is not allowed at EXAMPLE.",
-		Language: &ruletypes.LanguageRule{
+		Language: &trackers.LanguageRule{
 			Languages:      []string{"english", "en", "eng"},
 			RequireAudio:   true,
 			RequireSubs:    true,
@@ -532,7 +532,7 @@ Bound response bodies, sanitize remote diagnostics, and normalize entries into `
 Standalone profiles use the same typed capabilities as Unit3D:
 
 ```go
-func rules() *ruletypes.RuleSet { ... }
+func rules() *trackers.RuleSet { ... }
 func bannedGroups() []string { ... }
 
 // profile.go

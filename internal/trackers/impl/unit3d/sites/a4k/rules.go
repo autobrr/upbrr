@@ -3,10 +3,10 @@
 
 package a4k
 
-import "github.com/autobrr/upbrr/internal/trackers/ruletypes"
+import "github.com/autobrr/upbrr/internal/trackers"
 
-func Rules() *ruletypes.RuleSet {
-	return &ruletypes.RuleSet{Language: &ruletypes.LanguageRule{
+func Rules() *trackers.RuleSet {
+	return &trackers.RuleSet{Language: &trackers.LanguageRule{
 		Languages:      []string{"english", "en", "eng"},
 		RequireAudio:   true,
 		RequireSubs:    true,

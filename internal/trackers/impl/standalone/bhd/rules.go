@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/trackers/ruletypes"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func rules() *ruletypes.RuleSet {
-	return &ruletypes.RuleSet{
+func rules() *trackers.RuleSet {
+	return &trackers.RuleSet{
 		RequireValidMISetting: true,
 		BlockAdult:            true,
 		AdultMessage:          "Porn/xxx is not allowed at BHD.",
@@ -21,15 +21,15 @@ func rules() *ruletypes.RuleSet {
 	}
 }
 
-func checkRequirements(ctx context.Context, meta api.RuleSubject, _ api.Logger) ruletypes.Result {
+func checkRequirements(ctx context.Context, meta api.RuleSubject, _ api.Logger) trackers.RuleResult {
 	if err := ctx.Err(); err != nil {
-		return ruletypes.Fail(fmt.Errorf("context canceled: %w", err).Error())
+		return trackers.RuleFail(fmt.Errorf("context canceled: %w", err).Error())
 	}
 	switch strings.ToUpper(strings.TrimSpace(meta.Type)) {
 	case "REMUX", "ENCODE", "WEBDL", "WEBRIP":
 		container := strings.ToLower(strings.TrimSpace(meta.Container))
 		if container != "" && container != "mkv" && container != "mp4" {
-			return ruletypes.Fail(
+			return trackers.RuleFail(
 				fmt.Sprintf(
 					"Container %q is not allowed for %s. Only MKV and MP4 are permitted.",
 					meta.Container,
@@ -38,5 +38,5 @@ func checkRequirements(ctx context.Context, meta api.RuleSubject, _ api.Logger) 
 			)
 		}
 	}
-	return ruletypes.Pass()
+	return trackers.RulePass()
 }

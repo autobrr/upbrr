@@ -13,7 +13,6 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/internal/trackers/ruletypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -31,7 +30,7 @@ type Profile struct {
 	// Site contains optional site-specific payload callbacks.
 	Site SiteProfile
 	// Rules contains site-specific release validation requirements.
-	Rules *ruletypes.RuleSet
+	Rules *trackers.RuleSet
 	// AudioPolicy contains site-specific multi-language constraints.
 	AudioPolicy *trackers.AudioPolicy
 	// DupePolicy contains site-specific duplicate comparison settings.
@@ -99,9 +98,9 @@ func (d *Definition) MetadataPolicy() *trackers.TrackerMetadataPolicy {
 }
 
 // Rules declares validation required by every Unit3D upload.
-func (d *Definition) Rules() *ruletypes.RuleSet {
+func (d *Definition) Rules() *trackers.RuleSet {
 	if d.profile.Rules == nil {
-		return &ruletypes.RuleSet{RequireValidMISetting: true}
+		return &trackers.RuleSet{RequireValidMISetting: true}
 	}
 	rules := *d.profile.Rules
 	rules.RequireValidMISetting = true

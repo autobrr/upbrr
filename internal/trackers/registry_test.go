@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/trackers/ruletypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -143,7 +142,7 @@ func TestRegistryDiscoversCapabilitiesAndSortsNames(t *testing.T) {
 
 func TestRegistryRuleCapability(t *testing.T) {
 	registry := NewRegistry()
-	rules := ruletypes.RuleSet{RequireMovieOnly: true}
+	rules := RuleSet{RequireMovieOnly: true}
 	if err := registry.RegisterDescriptor(Descriptor{
 		Name:       "BLU",
 		Definition: stubDefinition{name: "BLU"},

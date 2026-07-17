@@ -10,12 +10,11 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/internal/trackers/ruletypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func (d *Definition) Rules() *ruletypes.RuleSet {
-	return &ruletypes.RuleSet{FailureCheck: d.evaluateRules}
+func (d *Definition) Rules() *trackers.RuleSet {
+	return &trackers.RuleSet{FailureCheck: d.evaluateRules}
 }
 
 func (d *Definition) evaluateRules(_ context.Context, meta api.RuleSubject, _ api.Logger) []api.RuleFailure {

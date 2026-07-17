@@ -11,7 +11,6 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers/datatypes"
-	"github.com/autobrr/upbrr/internal/trackers/ruletypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -208,7 +207,7 @@ type AuthStateManagerProvider interface {
 // RuleProvider declares tracker-owned validation rules.
 type RuleProvider interface {
 	// Rules returns tracker-owned release validation rules.
-	Rules() *ruletypes.RuleSet
+	Rules() *RuleSet
 }
 
 // ArtifactPolicy declares tracker-owned torrent artifact constraints.
@@ -467,7 +466,7 @@ type Descriptor struct {
 	// UploadContentMode identifies the shared content object consumed before preparation.
 	UploadContentMode UploadContentMode
 	// Rules contains optional tracker-owned validation rules.
-	Rules *ruletypes.RuleSet
+	Rules *RuleSet
 	// Artifact contains optional generic torrent limits.
 	Artifact *ArtifactPolicy
 	// DataFactory constructs optional tracker metadata lookup support.

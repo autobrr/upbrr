@@ -3,10 +3,10 @@
 
 package lst
 
-import "github.com/autobrr/upbrr/internal/trackers/ruletypes"
+import "github.com/autobrr/upbrr/internal/trackers"
 
-func Rules() *ruletypes.RuleSet {
-	return &ruletypes.RuleSet{RequireValidMISetting: true, Language: &ruletypes.LanguageRule{
+func Rules() *trackers.RuleSet {
+	return &trackers.RuleSet{RequireValidMISetting: true, Language: &trackers.LanguageRule{
 		Languages:      []string{"english", "en", "eng"},
 		RequireAudio:   true,
 		RequireSubs:    true,

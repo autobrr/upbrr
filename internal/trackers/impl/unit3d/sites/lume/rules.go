@@ -8,17 +8,17 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
-	"github.com/autobrr/upbrr/internal/trackers/ruletypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func Rules() *ruletypes.RuleSet {
-	return &ruletypes.RuleSet{
+func Rules() *trackers.RuleSet {
+	return &trackers.RuleSet{
 		RequireValidMISetting: true,
 		BlockAdult:            true,
 		AdultMessage:          "Porn is not allowed on LUME.",
-		Language: &ruletypes.LanguageRule{
+		Language: &trackers.LanguageRule{
 			Languages:      []string{"english", "en", "eng"},
 			RequireAudio:   true,
 			RequireSubs:    true,
@@ -29,22 +29,22 @@ func Rules() *ruletypes.RuleSet {
 	}
 }
 
-func checkRequirements(ctx context.Context, meta api.RuleSubject, _ api.Logger) ruletypes.Result {
+func checkRequirements(ctx context.Context, meta api.RuleSubject, _ api.Logger) trackers.RuleResult {
 	if err := ctx.Err(); err != nil {
-		return ruletypes.Fail(fmt.Errorf("context canceled: %w", err).Error())
+		return trackers.RuleFail(fmt.Errorf("context canceled: %w", err).Error())
 	}
 	if !unit3d.IsDiscType(meta.DiscType) && !strings.EqualFold(strings.TrimSpace(meta.Container), "mkv") {
-		return ruletypes.Fail("LUME only allows MKV containers for non-disc uploads.")
+		return trackers.RuleFail("LUME only allows MKV containers for non-disc uploads.")
 	}
 	if unit3d.IsDiscType(meta.DiscType) {
-		return ruletypes.Pass()
+		return trackers.RulePass()
 	}
 	resolution := unit3d.RuleResolution(meta)
 	if resolution == "" {
-		return ruletypes.Fail("LUME requires a known resolution")
+		return trackers.RuleFail("LUME requires a known resolution")
 	}
 	if unit3d.ResolutionBelow(resolution, "720p") {
-		return ruletypes.Fail("LUME only allows SD releases when the content does not have a higher resolution release.")
+		return trackers.RuleFail("LUME only allows SD releases when the content does not have a higher resolution release.")
 	}
-	return ruletypes.Pass()
+	return trackers.RulePass()
 }

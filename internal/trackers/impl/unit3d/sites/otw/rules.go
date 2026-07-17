@@ -8,26 +8,26 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
-	"github.com/autobrr/upbrr/internal/trackers/ruletypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func Rules() *ruletypes.RuleSet { return &ruletypes.RuleSet{ExtraCheck: checkGenres} }
+func Rules() *trackers.RuleSet { return &trackers.RuleSet{ExtraCheck: checkGenres} }
 
-func checkGenres(ctx context.Context, meta api.RuleSubject, _ api.Logger) ruletypes.Result {
+func checkGenres(ctx context.Context, meta api.RuleSubject, _ api.Logger) trackers.RuleResult {
 	if err := ctx.Err(); err != nil {
-		return ruletypes.Fail(fmt.Errorf("context canceled: %w", err).Error())
+		return trackers.RuleFail(fmt.Errorf("context canceled: %w", err).Error())
 	}
 	genres := unit3d.RuleGenres(meta)
 	if !unit3d.ContainsRuleValue(genres, []string{"animation", "family"}) {
-		return ruletypes.Fail("Genre does not match Animation or Family for OTW.")
+		return trackers.RuleFail("Genre does not match Animation or Family for OTW.")
 	}
 	if unit3d.AdultContent(meta) {
-		return ruletypes.Fail("Adult animation not allowed at OTW.")
+		return trackers.RuleFail("Adult animation not allowed at OTW.")
 	}
 	if unit3d.ContainsRuleValue(genres, []string{"reality", "game show", "game-show", "reality tv", "reality television"}) {
-		return ruletypes.Fail("Reality / Game Show content not allowed at OTW.")
+		return trackers.RuleFail("Reality / Game Show content not allowed at OTW.")
 	}
 	typeValue := unit3d.RuleType(meta)
 	group := unit3d.RuleGroup(meta)
@@ -39,8 +39,8 @@ func checkGenres(ctx context.Context, meta api.RuleSubject, _ api.Logger) rulety
 			"VISION":   true,
 		}
 		if restricted[strings.ToUpper(group)] {
-			return ruletypes.Fail(fmt.Sprintf("Group %s is only allowed for raw type content at OTW", group))
+			return trackers.RuleFail(fmt.Sprintf("Group %s is only allowed for raw type content at OTW", group))
 		}
 	}
-	return ruletypes.Pass()
+	return trackers.RulePass()
 }

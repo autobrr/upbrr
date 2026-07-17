@@ -9,7 +9,6 @@ import (
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
-	"github.com/autobrr/upbrr/internal/trackers/ruletypes"
 )
 
 // Profile returns ANT identity, preparation, dupe, rules, bans, and policies.
@@ -24,7 +23,7 @@ func Profile() standalone.Profile {
 		PrepareDescription:   prepareDescription,
 		PrepareUpload:        prepareUpload,
 		NewDuplicateAdapter:  newDuplicateAdapter,
-		Rules:                &ruletypes.RuleSet{RequireMovieOnly: true},
+		Rules:                &trackers.RuleSet{RequireMovieOnly: true},
 		ArtifactPolicy:       &trackers.ArtifactPolicy{MaxPieceSizeMiB: 128, MaxTorrentBytes: 250 << 10},
 		BannedGroups:         groups,
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "ANT"},

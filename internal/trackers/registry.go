@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/trackers/ruletypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -522,10 +521,10 @@ func (r *Registry) LookupDescriptor(tracker string) (Descriptor, bool) {
 }
 
 // LookupRules returns tracker's registered rule capability.
-func (r *Registry) LookupRules(tracker string) (ruletypes.RuleSet, bool) {
+func (r *Registry) LookupRules(tracker string) (RuleSet, bool) {
 	descriptor, ok := r.LookupDescriptor(tracker)
 	if !ok || descriptor.Rules == nil {
-		return ruletypes.RuleSet{}, false
+		return RuleSet{}, false
 	}
 	return *descriptor.Rules, true
 }

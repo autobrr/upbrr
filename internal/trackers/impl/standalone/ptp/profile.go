@@ -11,7 +11,6 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
-	"github.com/autobrr/upbrr/internal/trackers/ruletypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -27,7 +26,7 @@ func Profile() standalone.Profile {
 			return prepareUploadAt(ctx, req, ptpBaseURL)
 		},
 		NewDuplicateAdapter: func(deps dupe.Dependencies) dupe.Adapter { return newDuplicateAdapterAt(deps, ptpBaseURL) },
-		Rules:               &ruletypes.RuleSet{RequireMovieUnlessTVPack: true},
+		Rules:               &trackers.RuleSet{RequireMovieUnlessTVPack: true},
 		BannedGroups:        bannedGroups(),
 		DataPolicy:          &trackers.DataLookupPolicy{Cooldown: time.Minute},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{Requirements: []trackers.MetadataRequirement{{

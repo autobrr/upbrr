@@ -3,8 +3,8 @@
 
 package mns
 
-import "github.com/autobrr/upbrr/internal/trackers/ruletypes"
+import "github.com/autobrr/upbrr/internal/trackers"
 
-func Rules() *ruletypes.RuleSet {
-	return &ruletypes.RuleSet{BlockAdult: true, AdultMessage: "Adult content is not allowed"}
+func Rules() *trackers.RuleSet {
+	return &trackers.RuleSet{BlockAdult: true, AdultMessage: "Adult content is not allowed"}
 }

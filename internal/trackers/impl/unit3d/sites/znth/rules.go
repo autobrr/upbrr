@@ -3,8 +3,8 @@
 
 package znth
 
-import "github.com/autobrr/upbrr/internal/trackers/ruletypes"
+import "github.com/autobrr/upbrr/internal/trackers"
 
-func Rules() *ruletypes.RuleSet {
-	return &ruletypes.RuleSet{BlockAdult: true, AdultMessage: "Porn/xxx is not allowed at ZNTH."}
+func Rules() *trackers.RuleSet {
+	return &trackers.RuleSet{BlockAdult: true, AdultMessage: "Porn/xxx is not allowed at ZNTH."}
 }

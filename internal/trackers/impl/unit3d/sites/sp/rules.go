@@ -3,10 +3,10 @@
 
 package sp
 
-import "github.com/autobrr/upbrr/internal/trackers/ruletypes"
+import "github.com/autobrr/upbrr/internal/trackers"
 
-func Rules() *ruletypes.RuleSet {
-	return &ruletypes.RuleSet{
+func Rules() *trackers.RuleSet {
+	return &trackers.RuleSet{
 		BlockAdult:    true,
 		AdultMessage:  "Porn is not allowed",
 		MinResolution: "1080p",

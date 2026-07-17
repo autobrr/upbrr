@@ -3,13 +3,13 @@
 
 package rhd
 
-import "github.com/autobrr/upbrr/internal/trackers/ruletypes"
+import "github.com/autobrr/upbrr/internal/trackers"
 
-func Rules() *ruletypes.RuleSet {
-	return &ruletypes.RuleSet{
+func Rules() *trackers.RuleSet {
+	return &trackers.RuleSet{
 		BlockAdult:      true,
 		MinResolution:   "720p",
-		Language:        &ruletypes.LanguageRule{Languages: []string{"german", "ger", "de", "deu", "gsw"}, RequireAudio: true},
+		Language:        &trackers.LanguageRule{Languages: []string{"german", "ger", "de", "deu", "gsw"}, RequireAudio: true},
 		RequireSceneNFO: true,
 	}
 }

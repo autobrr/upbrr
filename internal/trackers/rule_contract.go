@@ -1,8 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-// Package ruletypes defines tracker-owned validation rule contracts.
-package ruletypes
+package trackers
 
 import (
 	"context"
@@ -11,22 +10,24 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// Result reports whether one rule allowed the release and, when denied, why.
-type Result struct {
+// RuleResult reports whether one rule allowed the release and, when denied, why.
+type RuleResult struct {
 	// Allowed is true when the evaluated rule permits the release.
 	Allowed bool
 	// Reason explains a denied result and is empty for a passing result.
 	Reason string
 }
 
-// Pass returns an allowed rule result.
-func Pass() Result { return Result{Allowed: true} }
+// RulePass returns an allowed rule result.
+func RulePass() RuleResult { return RuleResult{Allowed: true} }
 
-// Fail returns a denied rule result with surrounding whitespace removed from reason.
-func Fail(reason string) Result { return Result{Allowed: false, Reason: strings.TrimSpace(reason)} }
+// RuleFail returns a denied rule result with surrounding whitespace removed from reason.
+func RuleFail(reason string) RuleResult {
+	return RuleResult{Allowed: false, Reason: strings.TrimSpace(reason)}
+}
 
 // ExtraCheck evaluates one tracker-specific rule after generic rule processing.
-type ExtraCheck func(ctx context.Context, meta api.RuleSubject, logger api.Logger) Result
+type ExtraCheck func(ctx context.Context, meta api.RuleSubject, logger api.Logger) RuleResult
 
 // FailureCheck returns tracker-specific rule failures after generic rule processing.
 type FailureCheck func(ctx context.Context, meta api.RuleSubject, logger api.Logger) []api.RuleFailure

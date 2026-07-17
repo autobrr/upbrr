@@ -12,7 +12,6 @@ import (
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
-	"github.com/autobrr/upbrr/internal/trackers/ruletypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -104,7 +103,7 @@ func (d *Definition) NewDuplicateAdapter(dependencies dupe.Dependencies) dupe.Ad
 }
 
 // Rules returns a defensive copy of tracker-owned validation rules.
-func (d *Definition) Rules() *ruletypes.RuleSet { return cloneRules(d.profile.Rules) }
+func (d *Definition) Rules() *trackers.RuleSet { return cloneRules(d.profile.Rules) }
 
 // ClaimPolicy returns tracker-owned claim orchestration policy.
 func (d *Definition) ClaimPolicy() *trackers.ClaimPolicy { return cloneValue(d.profile.ClaimPolicy) }
@@ -189,7 +188,7 @@ func cloneProfile(profile Profile) Profile {
 	return profile
 }
 
-func cloneRules(rules *ruletypes.RuleSet) *ruletypes.RuleSet {
+func cloneRules(rules *trackers.RuleSet) *trackers.RuleSet {
 	if rules == nil {
 		return nil
 	}
