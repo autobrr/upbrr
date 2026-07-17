@@ -21,7 +21,7 @@ import (
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/internal/trackers/impl/ant"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/ant"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 

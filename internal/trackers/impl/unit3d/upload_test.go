@@ -443,12 +443,13 @@ func TestUploadUnit3DBlocksMissingCanonicalTVSeasonEpisode(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	logger := &captureUnit3DLogger{}
-	_, err := uploadUnit3D(context.Background(), trackers.PreparationInput{
+	_, err := prepareUnit3DUpload(context.Background(), trackers.PreparationInput{
+		Intent:        trackers.PreparationIntentUpload,
 		Tracker:       "AITHER",
 		TrackerConfig: config.TrackerConfig{APIKey: "test-key"},
 		Logger:        logger,
 		Meta: api.UploadSubject{
-			ReleaseName:       "Daily.Show.2025.07.01.1080p.WEB-DL-GRP",
+			ReleaseName:       "Example.Show.2026.S01E01.1080p.WEB-DL-GRP",
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
 			Assessments:       api.ReleaseAssessments{MediaInfoEncodeSettings: api.EncodeSettingsStatusPresent},

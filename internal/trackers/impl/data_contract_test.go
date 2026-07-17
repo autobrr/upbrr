@@ -18,7 +18,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
-	ptpimpl "github.com/autobrr/upbrr/internal/trackers/impl/ptp"
+	ptpimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/ptp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 

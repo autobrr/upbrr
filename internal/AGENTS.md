@@ -43,7 +43,7 @@ go test -race -v -timeout 20m ./internal/webserver/... ./pkg/api
 4. `internal/clientdiscovery` owns normalized source-scoped torrent-client search.
 5. `internal/webserver` owns browser transport, retained background jobs, and runtime activation through `RuntimeActivator`.
 6. Generic tracker orchestration under `internal/trackers` consumes typed registry capabilities; auth, dupe, and data coordinators live in dedicated subpackages.
-7. Tracker implementations under `internal/trackers/impl/<tracker>` own tracker-specific endpoints, payloads, auth, lookup, rules, descriptions, and policy. Unit3D sites live under `internal/trackers/impl/unit3d/sites/<tracker>`.
+7. Tracker implementations are grouped by registry family: Unit3D sites under `internal/trackers/impl/unit3d/sites/<tracker>`, AvistaZ-family profiles under `internal/trackers/impl/azfamily`, and all other trackers under `internal/trackers/impl/standalone/<tracker>`. Tracker-local packages own endpoints, payloads, auth, lookup, rules, descriptions, and policy.
 8. DB/repository layers persist config, prepared generations, history, images, upload records, and status.
 
 Preserve behavior across CLI and WebUI unless intentionally changing an entrypoint.
@@ -116,8 +116,9 @@ Current expected local/generated ignores: `dist/`, `webui/dist/`, `internal/webs
 
 ## Domain Guardrails
 
-- Tracker behavior belongs in `internal/trackers/impl/<tracker>`; Unit3D site exceptions belong in `internal/trackers/impl/unit3d/sites/<tracker>`. Register capabilities explicitly in `internal/trackers/impl/registry.go`; generic packages must not import individual implementations.
+- Standalone tracker behavior belongs in `internal/trackers/impl/standalone/<tracker>`; Unit3D site exceptions belong in `internal/trackers/impl/unit3d/sites/<tracker>`. Each standalone package composes identity and static capabilities in `profile.go`; dynamic data/claim factories may use a small local wrapper around `standalone.Definition`. Register definitions explicitly in `internal/trackers/impl/registry.go`; generic packages must not import individual implementations.
 - `internal/trackers/impl/registry.go` is the only complete supported-tracker composition list and groups definitions by family. Tracker profiles/definitions own endpoints and typed policy; `internal/config/defaults/example.yaml` owns ordered config surfaces/defaults. Generic metadata, auth, image-hosting, torrent-client, and frontend code must consume registry/catalog capabilities without tracker-name dispatch.
+- Upload preparation returns one immutable `trackers.PreparedOperation`: preview and submission must use the same captured canonical state. Submission may defer short-lived remote tokens, but must not rebuild payloads, reread mutable prepared inputs, or rerun image uploads. Dry-run and upload-review never receive a submittable plan.
 - Standard Unit3D additions require the site profile/rules, one Unit3D registry entry, one example-config stanza without `url`, and combined rule cases. Do not infer configured custom trackers; unsupported saved entries stay inert and preserve non-URL unknown fields.
 - DB schema changes use stable, additive, forward-only, idempotent SQLite migrations where practical; preserve `schema_migrations` and the legacy `user_version` bridge.
 - WebUI client changes need matching `/api/app/*` routes, typed request shapes, and unit/embedded browser verification.

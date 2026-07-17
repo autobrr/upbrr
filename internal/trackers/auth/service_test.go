@@ -19,12 +19,12 @@ import (
 	"github.com/autobrr/upbrr/internal/cookies"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/internal/trackers/impl/btn"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
-	"github.com/autobrr/upbrr/internal/trackers/impl/mtv"
-	"github.com/autobrr/upbrr/internal/trackers/impl/ptp"
-	"github.com/autobrr/upbrr/internal/trackers/impl/rtf"
-	"github.com/autobrr/upbrr/internal/trackers/impl/thr"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/btn"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/mtv"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/ptp"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/rtf"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/thr"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -41,42 +41,42 @@ func newTestServiceWithLogger(cfg config.Config, logger api.Logger) *Service {
 	}
 	for _, capability := range []api.TrackerAuthCapability{
 		{
-TrackerID: "AR",
- DisplayName: "AR",
- AuthKind: "cookies_login",
- SupportsCookieFile: true,
- SupportsLogin: true,
- SupportsAutoLogin: true,
-},
+			TrackerID:          "AR",
+			DisplayName:        "AR",
+			AuthKind:           "cookies_login",
+			SupportsCookieFile: true,
+			SupportsLogin:      true,
+			SupportsAutoLogin:  true,
+		},
 		{
-TrackerID: "ASC",
- DisplayName: "ASC",
- AuthKind: "cookies",
- SupportsCookieFile: true,
-},
+			TrackerID:          "ASC",
+			DisplayName:        "ASC",
+			AuthKind:           "cookies",
+			SupportsCookieFile: true,
+		},
 		{
-TrackerID: "FF",
- DisplayName: "FF",
- AuthKind: "cookies_login",
- SupportsCookieFile: true,
- SupportsLogin: true,
- SupportsAutoLogin: true,
-},
+			TrackerID:          "FF",
+			DisplayName:        "FF",
+			AuthKind:           "cookies_login",
+			SupportsCookieFile: true,
+			SupportsLogin:      true,
+			SupportsAutoLogin:  true,
+		},
 		{
-TrackerID: "FL",
- DisplayName: "FL",
- AuthKind: "cookies_login",
- SupportsCookieFile: true,
- SupportsLogin: true,
- SupportsAutoLogin: true,
-},
+			TrackerID:          "FL",
+			DisplayName:        "FL",
+			AuthKind:           "cookies_login",
+			SupportsCookieFile: true,
+			SupportsLogin:      true,
+			SupportsAutoLogin:  true,
+		},
 		{
-TrackerID: "HDB",
- DisplayName: "HDB",
- AuthKind: "passkey_cookies",
- SupportsCookieFile: true,
- RequiresPasskey: true,
-},
+			TrackerID:          "HDB",
+			DisplayName:        "HDB",
+			AuthKind:           "passkey_cookies",
+			SupportsCookieFile: true,
+			RequiresPasskey:    true,
+		},
 	} {
 		definition := authRegistryDefinition{capability: capability}
 		switch capability.TrackerID {

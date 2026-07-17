@@ -36,11 +36,12 @@ func preparePolicyDefinition(ctx context.Context, input trackers.PreparationInpu
 		func(context.Context, trackers.PreparationInput) (trackers.DescriptionResult, error) {
 			return trackers.DescriptionResult{}, nil
 		},
-		func(context.Context, trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
-			return api.TrackerDryRunEntry{Tracker: input.Tracker, Status: "ready"}, nil
-		},
-		func(context.Context, trackers.PreparationInput) (api.UploadSummary, error) {
-			return api.UploadSummary{}, nil
+		func(context.Context, trackers.PreparationInput) (trackers.PreparedOperation, error) {
+			return trackers.NewPreparedOperation(
+				api.TrackerDryRunEntry{Tracker: input.Tracker, Status: "ready"},
+				func(context.Context) (api.UploadSummary, error) { return api.UploadSummary{}, nil },
+				nil,
+			), nil
 		},
 	)
 }

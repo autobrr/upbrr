@@ -90,6 +90,95 @@ func TestNonUploadPlansCannotSubmit(t *testing.T) {
 	}
 }
 
+func TestPrepareAdapterBuildsUploadOperationOnce(t *testing.T) {
+	t.Parallel()
+
+	var builds atomic.Int32
+	preparedName := ""
+	input := PreparationInput{
+		Intent:  PreparationIntentUpload,
+		Tracker: "AITHER",
+		Meta:    api.UploadSubject{ReleaseName: "Example.Release.2026.1080p-GRP"},
+	}
+	plan, failure := PrepareAdapter(
+		context.Background(),
+		input,
+		func(context.Context, PreparationInput) (DescriptionResult, error) {
+			return DescriptionResult{}, nil
+		},
+		func(_ context.Context, preparedInput PreparationInput) (PreparedOperation, error) {
+			builds.Add(1)
+			preparedName = preparedInput.Meta.ReleaseName
+			preview := api.TrackerDryRunEntry{Tracker: preparedInput.Tracker, Payload: map[string]string{"name": preparedName}}
+			return NewPreparedOperation(preview, func(context.Context) (api.UploadSummary, error) {
+				if preparedName != "Example.Release.2026.1080p-GRP" {
+					t.Fatalf("captured release name = %q", preparedName)
+				}
+				return api.UploadSummary{Uploaded: 1}, nil
+			}, nil), nil
+		},
+	)
+	if failure != nil {
+		t.Fatalf("prepare upload: %v", failure)
+	}
+	input.Meta.ReleaseName = "mutated"
+	if got := plan.DryRun().Payload["name"]; got != "Example.Release.2026.1080p-GRP" {
+		t.Fatalf("preview name = %q", got)
+	}
+	if _, err := plan.Submit(context.Background()); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if builds.Load() != 1 {
+		t.Fatalf("upload preparation builds = %d", builds.Load())
+	}
+}
+
+func TestPrepareAdapterKeepsPreviewIntentsNonSubmittable(t *testing.T) {
+	t.Parallel()
+
+	for _, intent := range []PreparationIntent{PreparationIntentDryRun, PreparationIntentUploadReview} {
+		t.Run(string(intent), func(t *testing.T) {
+			t.Parallel()
+			var releases atomic.Int32
+			plan, failure := PrepareAdapter(
+				context.Background(),
+				PreparationInput{Intent: intent, Tracker: "BLU"},
+				func(context.Context, PreparationInput) (DescriptionResult, error) {
+					return DescriptionResult{}, nil
+				},
+				func(context.Context, PreparationInput) (PreparedOperation, error) {
+					return NewPreparedOperation(
+						api.TrackerDryRunEntry{Tracker: "BLU"},
+						func(context.Context) (api.UploadSummary, error) {
+							t.Fatal("preview intent reached submission")
+							return api.UploadSummary{}, nil
+						},
+						func() error {
+							releases.Add(1)
+							return nil
+						},
+					), nil
+				},
+			)
+			if failure != nil {
+				t.Fatalf("prepare %s: %v", intent, failure)
+			}
+			if plan.Intent() != intent {
+				t.Fatalf("plan intent = %q, want %q", plan.Intent(), intent)
+			}
+			if _, err := plan.Submit(context.Background()); !errors.Is(err, ErrPlanNotSubmittable) {
+				t.Fatalf("submit error = %v", err)
+			}
+			if err := plan.Release(); err != nil {
+				t.Fatalf("release: %v", err)
+			}
+			if releases.Load() != 1 {
+				t.Fatalf("releases = %d", releases.Load())
+			}
+		})
+	}
+}
+
 func TestPreparationInputExcludesBroadRuntimeDependencies(t *testing.T) {
 	t.Parallel()
 	typeOf := reflect.TypeFor[PreparationInput]()

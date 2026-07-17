@@ -44,16 +44,18 @@ func TestBuildUploadDryRunBlockedWhenMediaMissing(t *testing.T) {
 	parsedServerURL, _ := url.Parse(server.URL)
 	writeAZCookieFile(t, tmp, "AZ", parsedServerURL.Hostname())
 
-	entry, err := testDefinitionAt(server.URL).prepareDryRun(context.Background(), trackers.PreparationInput{
+	plan, failure := testDefinitionAt(server.URL).Prepare(context.Background(), trackers.PreparationInput{
+		Intent:        trackers.PreparationIntentDryRun,
 		Tracker:       "AZ",
 		Meta:          api.UploadSubject{Identity: api.ExternalIdentity{Category: "MOVIE", IMDBID: 123}},
 		TrackerConfig: config.TrackerConfig{},
 		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
 		Logger:        api.NopLogger{},
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if failure != nil {
+		t.Fatalf("unexpected error: %v", failure)
 	}
+	entry := plan.DryRun()
 	if entry.Status != "blocked" {
 		t.Fatalf("expected blocked status, got %q", entry.Status)
 	}
@@ -100,17 +102,18 @@ func TestUploadSuccess(t *testing.T) {
 	parsedServerURL, _ := url.Parse(server.URL)
 	writeAZCookieFile(t, tmp, "AZ", parsedServerURL.Hostname())
 
-	result, err := testDefinitionAt(server.URL).submit(context.Background(), trackers.PreparationInput{
+	plan, failure := testDefinitionAt(server.URL).Prepare(context.Background(), trackers.PreparationInput{
+		Intent:  trackers.PreparationIntentUpload,
 		Tracker: "AZ",
 		Meta: api.UploadSubject{
-			SourcePath:        filepath.Join(tmp, "Movie.mkv"),
+			SourcePath:        filepath.Join(tmp, "Example.Release.2026.mkv"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
 			Identity:          api.ExternalIdentity{Category: "MOVIE", IMDBID: 123},
-			ReleaseName:       "Movie.2024.1080p.WEB-DL.x265-GRP",
+			ReleaseName:       "Example.Release.2026.1080p.WEB-DL.x265-GRP",
 			Release: api.ReleaseInfo{
-				Title:      "Movie",
-				Year:       2024,
+				Title:      "Example Release",
+				Year:       2026,
 				Resolution: "1080p",
 			},
 			Type:              "WEBDL",
@@ -128,6 +131,10 @@ func TestUploadSuccess(t *testing.T) {
 			{RawURL: server.URL + imagePaths[2]},
 		}},
 	})
+	if failure != nil {
+		t.Fatalf("unexpected upload preparation error: %v", failure)
+	}
+	result, err := plan.Submit(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected upload error: %v", err)
 	}
@@ -169,17 +176,18 @@ func TestBuildUploadDryRunAllowsTVWebDLRipType(t *testing.T) {
 	parsedServerURL, _ := url.Parse(server.URL)
 	writeAZCookieFile(t, tmp, "AZ", parsedServerURL.Hostname())
 
-	entry, err := testDefinitionAt(server.URL).prepareDryRun(context.Background(), trackers.PreparationInput{
+	plan, failure := testDefinitionAt(server.URL).Prepare(context.Background(), trackers.PreparationInput{
+		Intent:  trackers.PreparationIntentDryRun,
 		Tracker: "AZ",
 		Meta: api.UploadSubject{
-			SourcePath:        filepath.Join(tmp, "Show.S01E02.1080p.WEB-DL.mkv"),
+			SourcePath:        filepath.Join(tmp, "Example.Show.S01E02.1080p.WEB-DL.mkv"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
 			Identity:          api.ExternalIdentity{Category: "TV", IMDBID: 123},
-			ReleaseName:       "Show.S01E02.1080p.WEB-DL-GRP",
+			ReleaseName:       "Example.Show.S01E02.1080p.WEB-DL-GRP",
 			Release: api.ReleaseInfo{
 				Category:   "TV",
-				Title:      "Show",
+				Title:      "Example Show",
 				Resolution: "1080p",
 				Source:     "WEB-DL",
 				Type:       "WEB-DL",
@@ -197,9 +205,10 @@ func TestBuildUploadDryRunAllowsTVWebDLRipType(t *testing.T) {
 		Logger:        api.NopLogger{},
 		Assets:        &trackers.DescriptionAssets{},
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if failure != nil {
+		t.Fatalf("unexpected error: %v", failure)
 	}
+	entry := plan.DryRun()
 	if entry.Status == "blocked" && strings.Contains(entry.Message, "rip type") {
 		t.Fatalf("expected WEB-DL TV release not to be blocked by rip type, got %q", entry.Message)
 	}

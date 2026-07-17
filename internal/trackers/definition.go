@@ -147,6 +147,13 @@ type AuthCapabilityProvider interface {
 	AuthCapability() api.TrackerAuthCapability
 }
 
+// AuthCapabilityDescriptorProvider declares optional tracker auth metadata
+// without using a zero-valued capability as an absence sentinel.
+type AuthCapabilityDescriptorProvider interface {
+	// AuthCapabilityDescriptor returns nil when the tracker has no configurable auth capability.
+	AuthCapabilityDescriptor() *api.TrackerAuthCapability
+}
+
 // AuthPolicy declares coordinator behavior that cannot be inferred from the
 // user-facing auth capability alone.
 type AuthPolicy struct {

@@ -124,6 +124,31 @@ type TrackerPlan struct {
 	state       *planState
 }
 
+// PreparedOperation contains one immutable payload preview and the behavior
+// captured from the same preparation pass.
+type PreparedOperation struct {
+	preview api.TrackerDryRunEntry
+	submit  func(context.Context) (api.UploadSummary, error)
+	release func() error
+}
+
+// UploadPreparer builds canonical upload state once for the requested intent.
+type UploadPreparer func(context.Context, PreparationInput) (PreparedOperation, error)
+
+// NewPreparedOperation captures an upload preview and its optional submission
+// and cleanup behavior. A nil submission creates a preview-only operation.
+func NewPreparedOperation(
+	preview api.TrackerDryRunEntry,
+	submit func(context.Context) (api.UploadSummary, error),
+	release func() error,
+) PreparedOperation {
+	return PreparedOperation{
+		preview: cloneTrackerDryRunEntry(preview),
+		submit:  submit,
+		release: release,
+	}
+}
+
 // NewDescriptionPlan constructs a shallow, non-submittable description plan.
 func NewDescriptionPlan(tracker string, result DescriptionResult) TrackerPlan {
 	return TrackerPlan{
@@ -136,9 +161,13 @@ func NewDescriptionPlan(tracker string, result DescriptionResult) TrackerPlan {
 
 // NewDryRunPlan constructs a non-submittable dry-run plan.
 func NewDryRunPlan(tracker string, preview api.TrackerDryRunEntry, release func() error) TrackerPlan {
+	return newPreviewPlan(tracker, PreparationIntentDryRun, preview, release)
+}
+
+func newPreviewPlan(tracker string, intent PreparationIntent, preview api.TrackerDryRunEntry, release func() error) TrackerPlan {
 	return TrackerPlan{
 		tracker: strings.ToUpper(strings.TrimSpace(tracker)),
-		intent:  PreparationIntentDryRun,
+		intent:  intent,
 		dryRun:  cloneTrackerDryRunEntry(preview),
 		state:   &planState{release: release},
 	}
@@ -159,13 +188,13 @@ func NewUploadPlan(
 	}
 }
 
-// PrepareAdapter implements the common intent dispatch while keeping tracker-specific builders local.
+// PrepareAdapter dispatches preparation intent through one tracker-owned upload
+// preparer so preview and submission share one canonical state build.
 func PrepareAdapter(
 	ctx context.Context,
 	input PreparationInput,
 	description func(context.Context, PreparationInput) (DescriptionResult, error),
-	dryRun func(context.Context, PreparationInput) (api.TrackerDryRunEntry, error),
-	submit func(context.Context, PreparationInput) (api.UploadSummary, error),
+	prepareUpload UploadPreparer,
 ) (TrackerPlan, *PreparationFailure) {
 	input = clonePreparationInput(input)
 	if err := ctx.Err(); err != nil {
@@ -179,25 +208,34 @@ func PrepareAdapter(
 		}
 		return NewDescriptionPlan(input.Tracker, result), nil
 	case PreparationIntentDryRun:
-		preview, err := dryRun(ctx, input)
+		operation, err := prepareUpload(ctx, input)
 		if err != nil {
 			return TrackerPlan{}, NewPreparationFailure(input.Tracker, "dry_run", err.Error(), err)
 		}
-		return NewDryRunPlan(input.Tracker, preview, nil), nil
+		return newPreviewPlan(input.Tracker, input.Intent, operation.preview, operation.release), nil
 	case PreparationIntentUploadReview:
-		preview, err := dryRun(ctx, input)
+		operation, err := prepareUpload(ctx, input)
 		if err != nil {
 			return TrackerPlan{}, NewPreparationFailure(input.Tracker, "upload_review", err.Error(), err)
 		}
-		return NewDryRunPlan(input.Tracker, preview, nil), nil
+		return newPreviewPlan(input.Tracker, input.Intent, operation.preview, operation.release), nil
 	case PreparationIntentUpload:
-		preview, err := dryRun(ctx, input)
+		operation, err := prepareUpload(ctx, input)
 		if err != nil {
 			return TrackerPlan{}, NewPreparationFailure(input.Tracker, "upload", err.Error(), err)
 		}
-		return NewUploadPlan(input.Tracker, preview, func(submitCtx context.Context) (api.UploadSummary, error) {
-			return submit(submitCtx, input)
-		}, nil), nil
+		if operation.submit == nil {
+			cleanupErr := error(nil)
+			if operation.release != nil {
+				cleanupErr = operation.release()
+			}
+			cause := errors.New("prepared operation has no submission")
+			if cleanupErr != nil {
+				cause = errors.Join(cause, cleanupErr)
+			}
+			return TrackerPlan{}, NewPreparationFailure(input.Tracker, "upload", "tracker upload preparation is not submittable", cause)
+		}
+		return NewUploadPlan(input.Tracker, operation.preview, operation.submit, operation.release), nil
 	default:
 		return TrackerPlan{}, NewPreparationFailure(input.Tracker, "intent", "unsupported preparation intent", nil)
 	}

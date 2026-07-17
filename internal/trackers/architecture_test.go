@@ -94,6 +94,13 @@ func implementationImportAllowed(relative string, importPath string) bool {
 	if strings.HasPrefix(relative, implRoot) && importPath == trackerImplImportPrefix+"commonhttp" {
 		return true
 	}
+	standaloneRoot := filepath.Join("internal", "trackers", "impl", "standalone") + string(filepath.Separator)
+	if strings.HasPrefix(relative, standaloneRoot) && importPath == trackerImplImportPrefix+"standalone" {
+		return true
+	}
+	if strings.HasPrefix(relative, standaloneRoot) && strings.HasPrefix(importPath, trackerImplImportPrefix+"standalone/internal/") {
+		return true
+	}
 	unit3DSitesRoot := filepath.Join("internal", "trackers", "impl", "unit3d", "sites") + string(filepath.Separator)
 	return strings.HasPrefix(relative, unit3DSitesRoot) && strings.HasPrefix(importPath, trackerImplImportPrefix+"unit3d")
 }

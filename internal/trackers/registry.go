@@ -140,7 +140,9 @@ func (r *Registry) Register(def Definition) error {
 		if provider, ok := def.(AuthSessionProvider); ok {
 			descriptor.AuthResolver = provider.AuthSessionResolver()
 		}
-		if provider, ok := def.(AuthCapabilityProvider); ok {
+		if provider, ok := def.(AuthCapabilityDescriptorProvider); ok {
+			descriptor.AuthCapability = provider.AuthCapabilityDescriptor()
+		} else if provider, ok := def.(AuthCapabilityProvider); ok {
 			capability := provider.AuthCapability()
 			descriptor.AuthCapability = &capability
 		}

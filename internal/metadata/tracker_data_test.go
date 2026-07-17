@@ -30,7 +30,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
-	btnimpl "github.com/autobrr/upbrr/internal/trackers/impl/btn"
+	btnimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/btn"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 

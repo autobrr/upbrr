@@ -23,17 +23,25 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func upload(ctx context.Context, site siteDefinition, req trackers.PreparationInput) (api.UploadSummary, error) {
+func prepareUpload(ctx context.Context, site siteDefinition, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+	if req.Intent != trackers.PreparationIntentUpload {
+		preview, err := buildUploadDryRun(ctx, site, req)
+		if err != nil {
+			return trackers.PreparedOperation{}, err
+		}
+		return trackers.NewPreparedOperation(preview, nil, nil), nil
+	}
+
 	state, err := newSession(ctx, site, req.Runtime.DBPath, req.Logger)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return trackers.PreparedOperation{}, err
 	}
 	media, err := lookupMediaCode(ctx, site, state, req.Meta)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return trackers.PreparedOperation{}, err
 	}
 	if media.Missing || strings.TrimSpace(media.MediaCode) == "" {
-		return api.UploadSummary{}, fmt.Errorf(
+		return trackers.PreparedOperation{}, fmt.Errorf(
 			"trackers: %s media missing from tracker database; add it on-site at %s/add/%s then retry",
 			site.Name,
 			site.BaseURL,
@@ -46,29 +54,61 @@ func upload(ctx context.Context, site siteDefinition, req trackers.PreparationIn
 
 	torrentPath, err := resolveTorrentPath(req.Meta, req.Runtime.DBPath)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return trackers.PreparedOperation{}, err
 	}
 	fileInfo, err := resolveMediaInfoText(req.Meta)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return trackers.PreparedOperation{}, err
 	}
 	task, err := createTask(ctx, site, state, req, media.MediaCode, fileInfo, torrentPath)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return trackers.PreparedOperation{}, err
 	}
 	screenshots, err := uploadScreenshots(ctx, site, state, req)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return trackers.PreparedOperation{}, err
 	}
 	if len(screenshots) < 3 {
-		return api.UploadSummary{}, fmt.Errorf("trackers: %s image host returned fewer than 3 screenshots", site.Name)
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s image host returned fewer than 3 screenshots", site.Name)
 	}
 	payload, err := buildFinalPayload(ctx, site, state, req, media.MediaCode, task, fileInfo, screenshots)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return trackers.PreparedOperation{}, err
 	}
-	resp, err := postForm(ctx, noRedirectClient(state.client), task.RedirectURL, payload, map[string]string{
-		"Referer":    task.RedirectURL,
+	trackerTorrentPath, err := resolveTrackerTorrentPath(req.Meta, req.Runtime.DBPath, site.Name)
+	if err != nil {
+		return trackers.PreparedOperation{}, err
+	}
+	preview := api.TrackerDryRunEntry{
+		Tracker:          site.Name,
+		Status:           "ready",
+		Message:          "upload payload prepared",
+		ReleaseName:      editName(site, req.Meta),
+		DescriptionGroup: "azfamily",
+		Description:      payload.Get("description"),
+		Endpoint:         site.BaseURL + "/upload/" + categorySlug(req.Meta),
+		Payload:          valuesToMap(payload),
+		Files: []api.TrackerDryRunFile{{
+			Field:   "torrent_file",
+			Path:    torrentPath,
+			Present: true,
+		}},
+	}
+	return trackers.NewPreparedOperation(preview, func(submitCtx context.Context) (api.UploadSummary, error) {
+		return submitPreparedUpload(submitCtx, site, state.client, task.RedirectURL, payload, trackerTorrentPath)
+	}, nil), nil
+}
+
+func submitPreparedUpload(
+	ctx context.Context,
+	site siteDefinition,
+	client *http.Client,
+	redirectURL string,
+	payload url.Values,
+	trackerTorrentPath string,
+) (api.UploadSummary, error) {
+	resp, err := postForm(ctx, noRedirectClient(client), redirectURL, payload, map[string]string{
+		"Referer":    redirectURL,
 		"User-Agent": azCookieUserAgent,
 	})
 	if err != nil {
@@ -87,11 +127,7 @@ func upload(ctx context.Context, site siteDefinition, req trackers.PreparationIn
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s upload failed: missing torrent id", site.Name)
 	}
 	downloadURL := strings.Replace(torrentURL, "/torrent/", "/download/torrent/", 1)
-	trackerTorrentPath, err := resolveTrackerTorrentPath(req.Meta, req.Runtime.DBPath, site.Name)
-	if err != nil {
-		return api.UploadSummary{}, err
-	}
-	if err := downloadTrackerTorrent(ctx, state.client, downloadURL, trackerTorrentPath); err != nil {
+	if err := downloadTrackerTorrent(ctx, client, downloadURL, trackerTorrentPath); err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s personalized torrent download: %w", site.Name, err)
 	}
 	return api.UploadSummary{

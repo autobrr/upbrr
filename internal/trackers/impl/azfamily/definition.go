@@ -9,7 +9,6 @@ import (
 	"fmt"
 
 	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // Definition provides one AZ-family tracker profile through the shared contracts.
@@ -99,15 +98,11 @@ func (d *Definition) BannedGroups() []string {
 
 // Prepare builds a fresh intent-scoped tracker plan for this AZ-family profile.
 func (d *Definition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
-	return trackers.PrepareAdapter(ctx, input, d.prepareDescription, d.prepareDryRun, d.submit)
+	return trackers.PrepareAdapter(ctx, input, d.prepareDescription, d.prepareUpload)
 }
 
-func (d *Definition) submit(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
-	return upload(ctx, applyTrackerConfig(d.site, req.TrackerConfig), req)
-}
-
-func (d *Definition) prepareDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
-	return buildUploadDryRun(ctx, applyTrackerConfig(d.site, req.TrackerConfig), req)
+func (d *Definition) prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+	return prepareUpload(ctx, applyTrackerConfig(d.site, req.TrackerConfig), req)
 }
 
 func (d *Definition) prepareDescription(ctx context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {

@@ -13,7 +13,7 @@ import (
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	"github.com/autobrr/upbrr/internal/services/db"
-	btnimpl "github.com/autobrr/upbrr/internal/trackers/impl/btn"
+	btnimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/btn"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -49,9 +49,9 @@ func mirrorBTNCookiesForClaimedThread(client *http.Client) {
 }
 func btnClaimWindowExpired(meta preparationstate.State, graceHours int) (bool, int, float64) {
 	return btnimpl.ClaimWindowExpired(api.UploadSubject{
-		TVDBAiredDate: meta.TVDBAiredDate,
- TVDBAirsTime: meta.TVDBAirsTime,
- TVDBAirsTimezone: meta.TVDBAirsTimezone,
+		TVDBAiredDate:    meta.TVDBAiredDate,
+		TVDBAirsTime:     meta.TVDBAirsTime,
+		TVDBAirsTimezone: meta.TVDBAirsTimezone,
 	}, graceHours)
 }
 

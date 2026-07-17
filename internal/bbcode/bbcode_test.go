@@ -8,9 +8,9 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/bbcode"
-	"github.com/autobrr/upbrr/internal/trackers/impl/bhd"
-	"github.com/autobrr/upbrr/internal/trackers/impl/hdb"
-	"github.com/autobrr/upbrr/internal/trackers/impl/ptp"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/bhd"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/hdb"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/ptp"
 )
 
 func TestCleanUnit3DDescription(t *testing.T) {

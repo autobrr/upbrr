@@ -28,17 +28,28 @@ func prepareTestDefinition(ctx context.Context, input PreparationInput, definiti
 	if builder, ok := definition.(testDescriptionPreparer); ok {
 		description = builder.prepareDescription
 	}
-	dryRun := func(context.Context, PreparationInput) (api.TrackerDryRunEntry, error) {
-		return api.TrackerDryRunEntry{Tracker: input.Tracker, Status: "ready"}, nil
-	}
-	if builder, ok := definition.(testDryRunPreparer); ok {
-		dryRun = builder.prepareDryRun
-	}
 	submit := func(context.Context, PreparationInput) (api.UploadSummary, error) {
 		return api.UploadSummary{}, nil
 	}
 	if uploader, ok := definition.(testSubmitter); ok {
 		submit = uploader.submit
 	}
-	return PrepareAdapter(ctx, input, description, dryRun, submit)
+	prepareUpload := func(ctx context.Context, preparedInput PreparationInput) (PreparedOperation, error) {
+		preview := api.TrackerDryRunEntry{Tracker: input.Tracker, Status: "ready"}
+		if builder, ok := definition.(testDryRunPreparer); ok {
+			var err error
+			preview, err = builder.prepareDryRun(ctx, preparedInput)
+			if err != nil {
+				return PreparedOperation{}, err
+			}
+		}
+		var submitPrepared func(context.Context) (api.UploadSummary, error)
+		if preparedInput.Intent == PreparationIntentUpload {
+			submitPrepared = func(submitCtx context.Context) (api.UploadSummary, error) {
+				return submit(submitCtx, preparedInput)
+			}
+		}
+		return NewPreparedOperation(preview, submitPrepared, nil), nil
+	}
+	return PrepareAdapter(ctx, input, description, prepareUpload)
 }

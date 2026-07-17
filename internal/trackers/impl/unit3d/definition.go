@@ -162,37 +162,22 @@ func (d *Definition) AuthCapability() api.TrackerAuthCapability {
 
 // Prepare builds a fresh intent-scoped tracker plan for this Unit3D profile.
 func (d *Definition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
-	return trackers.PrepareAdapter(ctx, input, d.prepareDescription, d.prepareDryRun, d.submit)
+	return trackers.PrepareAdapter(ctx, input, d.prepareDescription, d.prepareUpload)
 }
 
-func (d *Definition) submit(ctx context.Context, req trackers.PreparationInput) (api.UploadSummary, error) {
+func (d *Definition) prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 	if d.profile.BaseURL != "" {
-		return uploadUnit3D(ctx, req, d.profile.BaseURL, d.profile.Site)
+		return prepareUnit3DUpload(ctx, req, d.profile.BaseURL, d.profile.Site)
 	}
 	select {
 	case <-ctx.Done():
-		return api.UploadSummary{}, fmt.Errorf("context canceled: %w", ctx.Err())
+		return trackers.PreparedOperation{}, fmt.Errorf("context canceled: %w", ctx.Err())
 	default:
 	}
 	if req.Logger != nil {
-		req.Logger.Infof("trackers: %s upload not implemented (unit3d scaffold)", d.profile.Name)
+		req.Logger.Infof("trackers: preparation decision=not_implemented tracker=%s", d.profile.Name)
 	}
-	return api.UploadSummary{}, internalerrors.ErrNotImplemented
-}
-
-func (d *Definition) prepareDryRun(ctx context.Context, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
-	if d.profile.BaseURL != "" {
-		return buildUploadDryRunUnit3D(ctx, req, d.profile.BaseURL, d.profile.Site)
-	}
-	select {
-	case <-ctx.Done():
-		return api.TrackerDryRunEntry{}, fmt.Errorf("context canceled: %w", ctx.Err())
-	default:
-	}
-	if req.Logger != nil {
-		req.Logger.Infof("trackers: dry-run decision=not_implemented tracker=%s", d.profile.Name)
-	}
-	return api.TrackerDryRunEntry{}, internalerrors.ErrNotImplemented
+	return trackers.PreparedOperation{}, internalerrors.ErrNotImplemented
 }
 
 func (d *Definition) prepareDescription(ctx context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {

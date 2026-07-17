@@ -18,7 +18,67 @@ import (
 	"testing"
 
 	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
+	"github.com/autobrr/upbrr/internal/trackers"
 )
+
+func TestTrackerImplementationsUseFamilyRoots(t *testing.T) {
+	t.Parallel()
+
+	allowed := map[string]struct{}{
+		"azfamily":   {},
+		"commonhttp": {},
+		"standalone": {},
+		"unit3d":     {},
+	}
+	root := filepath.Join(trackerManifestRepoRoot(t), "internal", "trackers", "impl")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read tracker implementation root: %v", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if _, ok := allowed[entry.Name()]; !ok {
+			t.Errorf("tracker implementation directory must be under a family root: %s", entry.Name())
+		}
+	}
+}
+
+func TestStandaloneRegistryMatchesPackageDirectories(t *testing.T) {
+	t.Parallel()
+
+	registry := MustNewRegistry()
+	want := make(map[string]struct{})
+	for _, name := range registry.NamesByFamily(trackers.FamilyStandalone) {
+		want[strings.ToLower(name)] = struct{}{}
+	}
+
+	root := filepath.Join(trackerManifestRepoRoot(t), "internal", "trackers", "impl", "standalone")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read standalone implementation root: %v", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if entry.Name() == "internal" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, entry.Name(), "profile.go")); err != nil {
+			t.Errorf("standalone tracker package must own profile.go: tracker=%s error=%v", entry.Name(), err)
+		}
+		if _, ok := want[entry.Name()]; !ok {
+			t.Errorf("unregistered standalone tracker directory: %s", entry.Name())
+			continue
+		}
+		delete(want, entry.Name())
+	}
+	for name := range want {
+		t.Errorf("standalone registry entry has no package directory: %s", name)
+	}
+}
 
 func TestGenericTrackerPolicyFilesContainNoSupportedTrackerDispatch(t *testing.T) {
 	t.Parallel()

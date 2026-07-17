@@ -47,7 +47,7 @@ Before commit, also run `git diff --check`, changed-package `make gofix-check-ch
 
 - CLI `cmd/upbrr`; workflow orchestration `internal/core`; config `internal/config`; remaining domain services `internal/services`.
 - Canonical prepared generations/display `internal/preparedrelease`; external identity `internal/externalidentity`; source resources `internal/sourcelayout`; torrent-client discovery `internal/clientdiscovery`.
-- Tracker contracts/orchestration `internal/trackers`; implementations `internal/trackers/impl`; Unit3D sites `internal/trackers/impl/unit3d/sites`.
+- Tracker contracts/orchestration `internal/trackers`; implementation families `internal/trackers/impl/{unit3d,azfamily,standalone}`; standalone trackers `internal/trackers/impl/standalone/<tracker>`; Unit3D sites `internal/trackers/impl/unit3d/sites/<tracker>`.
 - Tracker auth/dupe/data coordinators `internal/trackers/{auth,dupe,data}`; generic BBCode/description/image hosting `internal/{bbcode,description,imagehosting}`.
 - Paths `internal/pathing` with `layout` and checker-only `policy`; torrent clients `internal/torrentclient`; metainfo `internal/torrent/metainfo`; release policy `internal/releasepolicy`.
 - WebUI server/API and retained jobs `internal/webserver`; API contracts `pkg/api`; frontend release ownership `webui/src/releaseSession`; shared job coordination `webui/src/jobRegistry`.

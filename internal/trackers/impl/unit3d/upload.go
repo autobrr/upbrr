@@ -36,136 +36,24 @@ type unit3dUploadResponse struct {
 	Data    string `json:"data"`
 }
 
-func uploadUnit3D(ctx context.Context, req trackers.PreparationInput, configuredBaseURL string, profiles ...SiteProfile) (api.UploadSummary, error) {
-	profile := firstSiteProfile(profiles)
-	trackerName := strings.ToUpper(strings.TrimSpace(req.Tracker))
-	logger := req.Logger
-	if logger == nil {
-		logger = api.NopLogger{}
-	}
-
-	logger.Infof("trackers: starting upload to %s for release: %s", trackerName, req.Meta.ReleaseName)
-
-	apiKey := strings.TrimSpace(req.TrackerConfig.APIKey)
-	if apiKey == "" {
-		err := fmt.Errorf("trackers: %s missing api_key", trackerName)
-		logger.Errorf("trackers: %s upload aborted: %v", trackerName, err)
-		return api.UploadSummary{}, err
-	}
-	if !req.Meta.Assessments.EncodeSettingsRequirementSatisfied() {
-		err := fmt.Errorf("trackers: %s mediainfo missing required fields", trackerName)
-		logger.Errorf("trackers: %s upload aborted: %v", trackerName, err)
-		return api.UploadSummary{}, err
-	}
-
-	baseURL, uploadURL := resolveUnit3DURLs(configuredBaseURL)
+func submitUnit3DUpload(
+	ctx context.Context,
+	trackerName string,
+	releaseName string,
+	apiKey string,
+	baseURL string,
+	uploadURL string,
+	contentType string,
+	payload string,
+	logger api.Logger,
+) (api.UploadSummary, error) {
+	logger.Infof("trackers: starting upload to %s for release: %s", trackerName, releaseName)
 	logger.Debugf("trackers: %s upload URL: %s", trackerName, uploadURL)
-
-	originalName := strings.TrimSpace(req.Meta.ReleaseName)
-	if originalName == "" {
-		originalName = strings.TrimSpace(req.Meta.ReleaseNameNoTag)
-	}
-	name := buildUnit3DName(trackerName, req.Meta, req.TrackerConfig, profile)
-	if name != originalName {
-		logger.Infof("trackers: %s name formatting applied", trackerName)
-		logger.Infof("  Original: %s", originalName)
-		logger.Infof("  Formatted: %s", name)
-	} else {
-		logger.Debugf("trackers: %s using original name: %s", trackerName, name)
-	}
-
-	var err error
-	assets := trackers.DescriptionAssets{}
-	if req.Assets != nil {
-		assets = *req.Assets
-	} else {
-		assets, err = trackers.PreparedDescriptionAssets(req.Assets)
-		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-			}
-			logger.Warnf("trackers: %s description assets failed: %v", trackerName, err)
-			assets = trackers.DescriptionAssets{}
-		}
-	}
-	description := strings.TrimSpace(assets.Description)
-	if !assets.Final {
-		description, err = buildUnit3DDescription(
-			ctx,
-			trackerName,
-			req.Meta,
-			req.Runtime.DescriptionConfig(),
-			req.TrackerConfig,
-			logger,
-			assets.Description,
-			assets.MenuImages,
-			assets.Screenshots,
-			profile,
-		)
-		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return api.UploadSummary{}, err
-			}
-			logger.Warnf("trackers: %s description build failed: %v", trackerName, err)
-			description = ""
-		}
-	}
-	description = ensureUnit3DDVDVOBDescription(description, req.Meta)
-	mediainfo, bdinfo, err := loadUnit3DMedia(req.Meta, req.Runtime.DBPath, logger)
-	if err != nil {
-		logger.Errorf("trackers: %s failed to load media info: %v", trackerName, err)
-		return api.UploadSummary{}, err
-	}
-
-	data, err := buildUnit3DData(req, name, description, mediainfo, bdinfo, profile)
-	if err != nil {
-		logger.Errorf("trackers: %s failed to build upload data: %v", trackerName, err)
-		return api.UploadSummary{}, err
-	}
-	if message, err := validateUnit3DTVPayloadMetadata(trackerName, req.Meta, data); err != nil {
-		logger.Warnf("trackers: %s %s", trackerName, message)
-		return api.UploadSummary{}, err
-	}
-	category := resolveUnit3DCategory(req.Meta)
-	_, hasTVDB := data["tvdb"]
-	_, hasSeason := data["season_number"]
-	_, hasEpisode := data["episode_number"]
-	logger.Debugf(
-		"trackers: %s payload mapping category=%s category_id=%s type_id=%s meta_type=%q release_type=%q tvdb=%t season_number=%t episode_number=%t",
-		trackerName,
-		category,
-		data["category_id"],
-		data["type_id"],
-		strings.TrimSpace(req.Meta.Type),
-		strings.TrimSpace(req.Meta.Release.Type),
-		hasTVDB,
-		hasSeason,
-		hasEpisode,
-	)
-	data["mod_queue_opt_in"] = boolFlag(req.TrackerConfig.ModQ)
-
-	if req.TrackerConfig.Exclusive {
-		data["exclusive"] = "1"
-		logger.Debugf("trackers: %s marking as exclusive release", trackerName)
-	}
-	if req.TrackerConfig.Anon {
-		logger.Debugf("trackers: %s uploading anonymously", trackerName)
-	}
-	if req.TrackerConfig.ModQ {
-		logger.Debugf("trackers: %s opted into moderation queue", trackerName)
-	}
-
-	logger.Tracef("trackers: %s building multipart form payload", trackerName)
-	payload, contentType, err := buildMultipartPayload(req, data, logger)
-	if err != nil {
-		logger.Errorf("trackers: %s failed to build payload: %v", trackerName, err)
-		return api.UploadSummary{}, err
-	}
 
 	reqCtx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
 
-	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, uploadURL, payload)
+	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, uploadURL, strings.NewReader(payload))
 	if err != nil {
 		logger.Errorf("trackers: %s failed to create HTTP request: %v", trackerName, err)
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s build upload request: %w", trackerName, err)
@@ -242,6 +130,51 @@ func uploadUnit3D(ctx context.Context, req trackers.PreparationInput, configured
 	}
 
 	return summary, nil
+}
+
+func prepareUnit3DUpload(
+	ctx context.Context,
+	req trackers.PreparationInput,
+	configuredBaseURL string,
+	profiles ...SiteProfile,
+) (trackers.PreparedOperation, error) {
+	preview, err := buildUploadDryRunUnit3D(ctx, req, configuredBaseURL, profiles...)
+	if err != nil {
+		return trackers.PreparedOperation{}, err
+	}
+	if req.Intent != trackers.PreparationIntentUpload {
+		return trackers.NewPreparedOperation(preview, nil, nil), nil
+	}
+	if !strings.EqualFold(preview.Status, "ready") {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s upload blocked: %s", preview.Tracker, preview.Message)
+	}
+
+	logger := req.Logger
+	if logger == nil {
+		logger = api.NopLogger{}
+	}
+	torrentPath := preparedFilePath(preview.Files, "torrent")
+	nfoPath := preparedFilePath(preview.Files, "nfo")
+	payload, contentType, err := buildMultipartPayload(preview.Payload, torrentPath, nfoPath, logger)
+	if err != nil {
+		return trackers.PreparedOperation{}, err
+	}
+	baseURL, uploadURL := resolveUnit3DURLs(configuredBaseURL)
+	trackerName := preview.Tracker
+	releaseName := preview.ReleaseName
+	apiKey := strings.TrimSpace(req.TrackerConfig.APIKey)
+	return trackers.NewPreparedOperation(preview, func(submitCtx context.Context) (api.UploadSummary, error) {
+		return submitUnit3DUpload(submitCtx, trackerName, releaseName, apiKey, baseURL, uploadURL, contentType, payload, logger)
+	}, nil), nil
+}
+
+func preparedFilePath(files []api.TrackerDryRunFile, field string) string {
+	for _, file := range files {
+		if file.Field == field && file.Present {
+			return file.Path
+		}
+	}
+	return ""
 }
 
 func resolveUnit3DURLs(configuredBaseURL string) (string, string) {
@@ -457,6 +390,9 @@ func buildUploadDryRunUnit3D(
 	if metadataMessage, err := validateUnit3DTVPayloadMetadata(trackerName, req.Meta, data); err != nil {
 		message += "; " + metadataMessage
 		status = "blocked"
+		if req.Intent == trackers.PreparationIntentUpload {
+			logger.Warnf("trackers: %s %s", trackerName, metadataMessage)
+		}
 	}
 
 	return api.TrackerDryRunEntry{
@@ -472,7 +408,7 @@ func buildUploadDryRunUnit3D(
 	}, nil
 }
 
-func buildMultipartPayload(req trackers.PreparationInput, data map[string]string, logger api.Logger) (*strings.Reader, string, error) {
+func buildMultipartPayload(data map[string]string, torrentPath string, nfoPath string, logger api.Logger) (string, string, error) {
 	var builder strings.Builder
 	writer := multipart.NewWriter(&builder)
 
@@ -480,38 +416,31 @@ func buildMultipartPayload(req trackers.PreparationInput, data map[string]string
 	for key, value := range data {
 		if err := writer.WriteField(key, value); err != nil {
 			_ = writer.Close()
-			return nil, "", fmt.Errorf("trackers: UNIT3D write multipart field %q: %w", key, err)
+			return "", "", fmt.Errorf("trackers: UNIT3D write multipart field %q: %w", key, err)
 		}
-	}
-
-	torrentPath, err := resolveTorrentPath(req.Meta, req.Runtime.DBPath, logger)
-	if err != nil {
-		_ = writer.Close()
-		logger.Errorf("trackers: failed to resolve torrent path: %v", err)
-		return nil, "", err
 	}
 
 	logger.Debugf("trackers: attaching torrent file: %s", filepath.Base(torrentPath))
 	if err := addFile(writer, "torrent", torrentPath); err != nil {
 		_ = writer.Close()
-		return nil, "", err
+		return "", "", err
 	}
 
-	if nfoPath := resolveNFOPath(req.Meta, req.Runtime.DBPath); nfoPath != "" {
+	if nfoPath != "" {
 		logger.Debugf("trackers: attaching NFO file: %s", filepath.Base(nfoPath))
 		if err := addFile(writer, "nfo", nfoPath); err != nil {
 			_ = writer.Close()
-			return nil, "", err
+			return "", "", err
 		}
 	} else {
 		logger.Tracef("trackers: no NFO file found")
 	}
 
 	if err := writer.Close(); err != nil {
-		return nil, "", fmt.Errorf("trackers: UNIT3D close multipart writer: %w", err)
+		return "", "", fmt.Errorf("trackers: UNIT3D close multipart writer: %w", err)
 	}
 
-	return strings.NewReader(builder.String()), writer.FormDataContentType(), nil
+	return builder.String(), writer.FormDataContentType(), nil
 }
 
 func addFile(writer *multipart.Writer, field, path string) error {
