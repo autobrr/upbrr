@@ -66,6 +66,17 @@ func trackerEligibilityReasons(assessment api.TrackerEligibilityAssessment) []ap
 		}
 		appendReason(api.TrackerEligibilityBannedGroup, message)
 	}
+	if assessment.ContentFailure != nil {
+		failure := assessment.ContentFailure
+		if failure.Code == api.TrackerEligibilityScreenshotPreparationFailed ||
+			failure.Code == api.TrackerEligibilityDescriptionPreparationFailed {
+			message := strings.TrimSpace(failure.Message)
+			if message == "" {
+				message = "Required tracker upload content could not be prepared."
+			}
+			appendReason(failure.Code, message)
+		}
+	}
 	if len(assessment.PolicyBlocks) > 0 {
 		appendReason(api.TrackerEligibilityPolicy, "Tracker policy blocks this release.")
 	}

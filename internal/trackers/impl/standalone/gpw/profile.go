@@ -14,6 +14,7 @@ func Profile() standalone.Profile {
 		Name:                 "GPW",
 		BaseURL:              baseURL,
 		DescriptionGroup:     "gpw",
+		UploadContentMode:    trackers.UploadContentModeDescription,
 		PrepareDescription:   prepareDescription,
 		PrepareUpload:        prepareUpload,
 		NewDuplicateAdapter:  newDuplicateAdapter,

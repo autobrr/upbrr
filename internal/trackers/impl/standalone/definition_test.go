@@ -20,8 +20,9 @@ func (profileDupeAdapter) Search(context.Context, api.DuplicateSubject) dupe.Ada
 
 func validProfile() Profile {
 	return Profile{
-		Name:    " dc ",
-		BaseURL: "https://tracker.invalid/",
+		Name:              " dc ",
+		BaseURL:           "https://tracker.invalid/",
+		UploadContentMode: trackers.UploadContentModeDescription,
 		PrepareDescription: func(context.Context, trackers.PreparationInput) (trackers.DescriptionResult, error) {
 			return trackers.DescriptionResult{Group: "dc"}, nil
 		},

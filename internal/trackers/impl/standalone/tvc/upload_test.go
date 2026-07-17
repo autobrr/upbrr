@@ -102,11 +102,11 @@ func TestPrepareUploadStateIncludesTVDBForMediaInfoTV(t *testing.T) {
 		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "Show.mkv"),
 			TorrentPath: torrentPath,
-			Identity:    api.ExternalIdentity{
-Category: "TV",
- TMDBID: 123,
- TVDBID: 456,
-},
+			Identity: api.ExternalIdentity{
+				Category: "TV",
+				TMDBID:   123,
+				TVDBID:   456,
+			},
 			ProviderMetadata: api.SourceScopedMetadata{
 				TMDB: &api.TMDBMetadata{Title: "Show", Year: 2025},
 			},

@@ -20,10 +20,10 @@ func TestCookieLoginResolverLifecycle(t *testing.T) {
 	t.Parallel()
 
 	transientErr := &trackerauth.ValidationError{
-TrackerID: "FF",
- Transient: true,
- Reason: "unavailable",
-}
+		TrackerID: "FF",
+		Transient: true,
+		Reason:    "unavailable",
+	}
 	tests := []struct {
 		name              string
 		load              func(context.Context, string) ([]*http.Cookie, error)
@@ -45,11 +45,11 @@ TrackerID: "FF",
 			load: func(context.Context, string) ([]*http.Cookie, error) {
 				return []*http.Cookie{{Name: "session", Value: "invalid"}}, nil
 			},
-			validationErr:  &trackerauth.ValidationError{
-TrackerID: "FF",
- ConfirmedInvalid: true,
- Reason: "invalid",
-},
+			validationErr: &trackerauth.ValidationError{
+				TrackerID:        "FF",
+				ConfirmedInvalid: true,
+				Reason:           "invalid",
+			},
 			hasCredentials: true,
 			wantLoginCalls: 1,
 		},

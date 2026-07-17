@@ -15,6 +15,7 @@ func Profile() standalone.Profile {
 		Name:                 "BHDTV",
 		BaseURL:              "https://www.bit-hdtv.com",
 		DescriptionGroup:     "bhdtv",
+		UploadContentMode:    trackers.UploadContentModeDescription,
 		PrepareDescription:   prepareDescription,
 		PrepareUpload:        prepareUpload,
 		NewDuplicateAdapter:  func(dupe.Dependencies) dupe.Adapter { return bhdtvDuplicateAdapter{} },

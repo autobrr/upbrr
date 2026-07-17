@@ -49,30 +49,7 @@ func duplicateCheckInputFromRequest(request api.Request, ref api.ReleaseRef) api
 		SkipAsActual: request.SkipDupeAsActual,
 		DoubleCheck:  request.DoubleDupeCheck,
 		TrackerIDs:   cloneStringMap(request.TrackerIDOverrides),
-		ClientSearch: api.ClientSearchPolicy{
-			Skip:   request.Options.SkipAutoTorrent,
-			Client: cloneStringPointer(request.ClientOverrides.Client),
-		},
-		ForceRecheck: cloneBoolPointer(request.ClientOverrides.ForceRecheck),
 	}
-}
-
-// cloneStringPointer detaches an optional string without normalization.
-func cloneStringPointer(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	cloned := *value
-	return &cloned
-}
-
-// cloneBoolPointer detaches an optional boolean.
-func cloneBoolPointer(value *bool) *bool {
-	if value == nil {
-		return nil
-	}
-	cloned := *value
-	return &cloned
 }
 
 func (c *Core) canonicalPreparationEnabled() bool {

@@ -150,6 +150,11 @@ func (d *Definition) Name() string {
 // TrackerFamily identifies the definition as Unit3D-backed.
 func (d *Definition) TrackerFamily() trackers.Family { return trackers.FamilyUnit3D }
 
+// UploadContentMode declares the aggregate description workflow shared by Unit3D sites.
+func (d *Definition) UploadContentMode() trackers.UploadContentMode {
+	return trackers.UploadContentModeDescription
+}
+
 // AuthCapability declares the API key required by standard Unit3D APIs.
 func (d *Definition) AuthCapability() api.TrackerAuthCapability {
 	return api.TrackerAuthCapability{

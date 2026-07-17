@@ -28,6 +28,8 @@ func (s stubDefinition) Name() string {
 	return s.name
 }
 
+func (stubDefinition) UploadContentMode() UploadContentMode { return UploadContentModeDescription }
+
 func (stubDefinition) DefaultBaseURL() string { return "https://tracker.example.invalid" }
 
 func testTrackerFamily(name string) Family {
@@ -45,16 +47,16 @@ func testImageHostPolicyForTracker(name string) *ImageHostPolicy {
 		return &ImageHostPolicy{AllowedHosts: []string{"kshare", "pixhost", "pterclub", "ilikeshots", "imgbox"}}
 	case "HDB":
 		return &ImageHostPolicy{
-AllowedHosts: []string{"hdb"},
- OwnedHosts: []string{"hdb"},
- DisableWithoutRehost: true,
-}
+			AllowedHosts:         []string{"hdb"},
+			OwnedHosts:           []string{"hdb"},
+			DisableWithoutRehost: true,
+		}
 	case "LST":
 		return &ImageHostPolicy{
-ConditionalHost: "lostimg",
- OwnedHosts: []string{"lostimg"},
- EnableWithLostimg: true,
-}
+			ConditionalHost:   "lostimg",
+			OwnedHosts:        []string{"lostimg"},
+			EnableWithLostimg: true,
+		}
 	case "MTV":
 		return &ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb"}}
 	case "OE":
@@ -63,10 +65,10 @@ ConditionalHost: "lostimg",
 		return &ImageHostPolicy{AllowedHosts: []string{"pixhost", "imgbb", "onlyimage", "ptscreens", "passtheimage"}}
 	case "RF":
 		return &ImageHostPolicy{
-ConditionalHost: "reelflix",
- OwnedHosts: []string{"reelflix"},
- EnableWhenConfigured: true,
-}
+			ConditionalHost:      "reelflix",
+			OwnedHosts:           []string{"reelflix"},
+			EnableWhenConfigured: true,
+		}
 	case "STC":
 		return &ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb"}}
 	default:

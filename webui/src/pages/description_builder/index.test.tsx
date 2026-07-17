@@ -14,6 +14,7 @@ const facet = (): DescriptionsFacet => ({
     status: "ready",
     preview: {
       SourcePath: "C:\\media\\Example",
+      ContentFailures: [],
       Groups: [
         {
           GroupKey: "unit3d",

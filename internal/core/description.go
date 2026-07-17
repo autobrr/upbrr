@@ -86,7 +86,10 @@ func (m *descriptionModule) fetchAcceptedPreview(ctx context.Context, input api.
 	if err != nil {
 		return api.DescriptionBuilderPreview{}, err
 	}
-	preview := api.DescriptionBuilderPreview{SourcePath: subject.SourcePath}
+	preview := api.DescriptionBuilderPreview{
+		SourcePath:      subject.SourcePath,
+		ContentFailures: append([]api.TrackerContentFailure(nil), prepared.ContentFailures...),
+	}
 	for _, entry := range prepared.Descriptions {
 		preview.Groups = append(preview.Groups, buildDescriptionBuilderGroup(entry, overrideByGroup))
 	}

@@ -58,35 +58,35 @@ test("embedded tracker settings use the catalog for entries, reset, and unsuppor
     const entryControls = page.locator(".settings-map__header .settings-map__controls");
     const trackerSelector = entryControls.locator("select");
     await expect(trackerSelector.locator('option[value="OLD"]')).toHaveCount(0);
-    await trackerSelector.selectOption("AITHER");
+    await trackerSelector.selectOption("BLU");
     await entryControls.getByRole("button", { name: "Add entry" }).click();
 
-    let aitherCard = page
+    let bluCard = page
       .locator("details.settings-card")
-      .filter({ has: page.locator("summary", { hasText: "AITHER" }) });
-    await expect(aitherCard).toBeVisible();
+      .filter({ has: page.locator("summary", { hasText: "BLU" }) });
+    await expect(bluCard).toBeVisible();
     await expect(
-      aitherCard.locator("label.settings-field > span, .settings-switch-row > span"),
-    ).toHaveText(["API key", "Anonymous", "Mod queue", "Image host"]);
-    await aitherCard.getByLabel("API key").fill("e2e-aither-activation");
+      bluCard.locator("label.settings-field > span, .settings-switch-row > span"),
+    ).toHaveText(["API key", "Anonymous", "Image host"]);
+    await bluCard.getByLabel("API key").fill("e2e-blu-activation");
 
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByText("Settings saved and applied.")).toBeVisible();
     await page.getByRole("button", { name: "Reload", exact: true }).click();
 
-    aitherCard = page
+    bluCard = page
       .locator("details.settings-card")
-      .filter({ has: page.locator("summary", { hasText: "AITHER" }) });
-    await expect(aitherCard).toBeVisible();
-    await aitherCard.getByRole("button", { name: "Remove" }).click();
-    await expect(aitherCard).toHaveCount(0);
-    await expect(trackerSelector.locator('option[value="AITHER"]')).toHaveCount(1);
+      .filter({ has: page.locator("summary", { hasText: "BLU" }) });
+    await expect(bluCard).toBeVisible();
+    await bluCard.getByRole("button", { name: "Remove" }).click();
+    await expect(bluCard).toHaveCount(0);
+    await expect(trackerSelector.locator('option[value="BLU"]')).toHaveCount(1);
 
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await page.getByRole("button", { name: "Reload", exact: true }).click();
     await expect(
       page.locator("details.settings-card").filter({
-        has: page.locator("summary", { hasText: "AITHER" }),
+        has: page.locator("summary", { hasText: "BLU" }),
       }),
     ).toHaveCount(0);
 

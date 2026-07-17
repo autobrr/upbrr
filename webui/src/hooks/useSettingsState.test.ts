@@ -241,6 +241,7 @@ function trackerCatalogEntry(
     name,
     family,
     baseURL: `https://${name.toLowerCase()}.example.invalid`,
+    uploadContentMode: "description",
     configured,
     fields: fields.map(([key, defaultValue, activation = false]) => ({
       key,

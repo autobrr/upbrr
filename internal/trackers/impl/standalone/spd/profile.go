@@ -16,6 +16,7 @@ func Profile() standalone.Profile {
 		Name:                "SPD",
 		BaseURL:             baseURL,
 		DescriptionGroup:    "spd",
+		UploadContentMode:   trackers.UploadContentModeDescription,
 		PrepareDescription:  prepareDescription,
 		PrepareUpload:       prepareUpload,
 		NewDuplicateAdapter: newDuplicateAdapter,

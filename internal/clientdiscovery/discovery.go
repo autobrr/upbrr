@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 // Package clientdiscovery owns normalized, source-scoped torrent-client
-// discovery for preparation and current workflow operations.
+// discovery for canonical preparation.
 package clientdiscovery
 
 import (
@@ -31,9 +31,21 @@ type SearchInput struct {
 	ForceRecheck *bool
 }
 
+// Disposition identifies whether a discovery request searched, was explicitly
+// skipped, or could not search because no client adapter exists.
+type Disposition string
+
+const (
+	DispositionSearched    Disposition = "searched"
+	DispositionSkipped     Disposition = "skipped"
+	DispositionUnavailable Disposition = "unavailable"
+)
+
 // Evidence is a detached normalized client snapshot. Callers decide which
 // fields become private preparation evidence or operation-local state.
 type Evidence struct {
+	// Disposition distinguishes an empty search result from no search.
+	Disposition Disposition
 	// InfoHash is the normalized hash of the matched local torrent.
 	InfoHash string
 	// TorrentPath is the reusable local metainfo path returned by the client search.
@@ -60,7 +72,7 @@ type Module struct {
 }
 
 // New constructs a client-discovery module. A nil client adapter represents a
-// runtime without local client discovery and produces empty evidence.
+// runtime without local client discovery and produces unavailable evidence.
 func New(clients api.ClientService, logger api.Logger) *Module {
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -68,8 +80,8 @@ func New(clients api.ClientService, logger api.Logger) *Module {
 	return &Module{clients: clients, logger: logger}
 }
 
-// Discover obtains one current client snapshot or returns empty evidence when
-// search is explicitly skipped or no client adapter is available.
+// Discover obtains one current client snapshot and always reports why a search
+// did or did not execute.
 func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, error) {
 	if m == nil {
 		return Evidence{}, errors.New("client discovery: module is not initialized")
@@ -85,11 +97,11 @@ func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, err
 	}
 	if input.Policy.Skip {
 		m.logger.Debugf("client discovery: decision=skip reason=requested")
-		return Evidence{}, nil
+		return Evidence{Disposition: DispositionSkipped}, nil
 	}
 	if m.clients == nil {
 		m.logger.Debugf("client discovery: decision=skip reason=client_unavailable")
-		return Evidence{}, nil
+		return Evidence{Disposition: DispositionUnavailable}, nil
 	}
 
 	m.logger.Debugf("client discovery: decision=start files=%d disc=%t", len(input.FileList), strings.TrimSpace(input.DiscType) != "")
@@ -106,6 +118,7 @@ func (m *Module) Discover(ctx context.Context, input SearchInput) (Evidence, err
 		return Evidence{}, fmt.Errorf("client discovery: search pathed torrents: %w", err)
 	}
 	evidence := normalizeEvidence(result)
+	evidence.Disposition = DispositionSearched
 	m.logger.Debugf(
 		"client discovery: decision=complete matched=%t trackers=%d ids=%d reusable_torrent=%t",
 		evidence.FoundTrackerMatch,

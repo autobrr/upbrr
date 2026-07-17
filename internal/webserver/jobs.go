@@ -303,8 +303,6 @@ func (b *Backend) StartDupeCheck(
 		closeJobResources(runOwner, runLogger)
 		return "", ErrPreparedDupeUnavailable
 	}
-	baseOptions := rt.baseUploadOptions()
-
 	jobID, err := b.jobEngine.StartDupe(context.WithoutCancel(ctx), owner, jobs.DupeSpec{
 		CorrelationID: correlationID,
 		Snapshot: jobs.DuplicateExecutionSnapshot{
@@ -312,11 +310,8 @@ func (b *Backend) StartDupeCheck(
 			PreparedGeneration: release.Generation,
 			RuntimeGeneration:  rt.generationID,
 			Input: api.DuplicateCheckInput{
-				Release:  release,
-				Trackers: append([]string(nil), resolvedTrackers...),
-				ClientSearch: api.ClientSearchPolicy{
-					Skip: baseOptions.SkipAutoTorrent,
-				},
+				Release:     release,
+				Trackers:    append([]string(nil), resolvedTrackers...),
 				Interaction: api.InteractionModeInteractive,
 			},
 		},

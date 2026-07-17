@@ -27,6 +27,10 @@ type localizedMetadataTestDefinition struct{}
 
 func (localizedMetadataTestDefinition) Name() string { return "BJS" }
 
+func (localizedMetadataTestDefinition) UploadContentMode() trackers.UploadContentMode {
+	return trackers.UploadContentModeDescription
+}
+
 func (localizedMetadataTestDefinition) DefaultBaseURL() string {
 	return "https://tracker.example.invalid"
 }

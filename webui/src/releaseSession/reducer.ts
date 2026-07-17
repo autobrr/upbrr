@@ -530,7 +530,11 @@ const upsertDescriptionGroup = (
   const index = groups.findIndex((current) => current.GroupKey === group.GroupKey);
   if (index >= 0) groups[index] = group;
   else groups.push(group);
-  return { SourcePath: preview?.SourcePath || "", Groups: groups };
+  return {
+    SourcePath: preview?.SourcePath || "",
+    Groups: groups,
+    ContentFailures: [...(preview?.ContentFailures || [])],
+  };
 };
 
 /** Applies one transition, ignoring stale revision- or correlation-scoped completions. */
@@ -787,6 +791,22 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       return {
         ...state,
         ...invalidateAuthority(state, "Tracker selection changed.", false),
+        screenshots:
+          state.screenshots.status === "error"
+            ? {
+                ...state.screenshots,
+                status: "idle",
+                error: "",
+              }
+            : state.screenshots,
+        descriptions: {
+          ...invalidate(state.descriptions, "Tracker selection changed.", true),
+          inputRevision: state.descriptions.inputRevision + 1,
+          rawByGroup: {},
+          renderedByGroup: {},
+          dirtyGroups: [],
+          notice: "",
+        },
         selectedTrackers: trackers,
         uploadInputRevision: state.uploadInputRevision + 1,
       };

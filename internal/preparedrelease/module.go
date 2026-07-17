@@ -23,7 +23,7 @@ import (
 
 // ContractVersion changes whenever prepared fact semantics or the private seed
 // contract become incompatible with an earlier generation.
-const ContractVersion = "prepared-release-v1"
+const ContractVersion = "prepared-release-v2"
 
 // Store is the prepared-release persistence port. Implementations must commit
 // facts, identity, and provider metadata as one generation transaction.
@@ -74,6 +74,11 @@ type CollectedResources struct {
 	SceneNFOPath          string
 	DescriptionTemplate   string
 	SelectedBDMVPlaylists []api.PlaylistInfo
+	ClientEvidence        preparationstate.ClientEvidenceSnapshot
+}
+
+type clientEvidenceHydrator interface {
+	HydrateClientEvidence(context.Context, preparationstate.Request) (preparationstate.ClientEvidenceSnapshot, error)
 }
 
 // Module owns one current immutable generation and private envelope per
@@ -183,8 +188,27 @@ func (m *Module) Prepare(ctx context.Context, input api.PrepareInput) (api.Prepa
 	// remembered selection cannot silently reuse an older generation. Normal CLI
 	// and WebUI calls carry their resolved selection directly and remain reusable.
 	reuseAllowed := layout.DiscType != "BDMV" || input.Instructions.Playlist.Set
-	if hasCurrent && reuseAllowed && !input.Force && current.Compatibility == compatibility {
-		m.publishPersistedIfAbsent(envelopeFromPersisted(current, input))
+	forceClientRefresh := input.Controls.ForceRecheck != nil && *input.Controls.ForceRecheck
+	if hasCurrent && reuseAllowed && !input.Force && !forceClientRefresh && current.Compatibility == compatibility {
+		if !m.hasPublishedGeneration(current.Source.SourcePath, current.Generation) {
+			hydrator, ok := m.collector.(clientEvidenceHydrator)
+			if !ok {
+				return api.PrepareResult{}, errors.New("prepared release: collector cannot hydrate private client evidence")
+			}
+			finish := api.BeginPreparationProgress(ctx, api.PreparationPhaseClientDiscovery, "Hydrating private client evidence.")
+			snapshot, hydrateErr := hydrator.HydrateClientEvidence(ctx, preparationstate.Request{
+				Input:    input,
+				Manifest: current.Source,
+				Layout:   layout,
+			})
+			finish(hydrateErr)
+			if hydrateErr != nil {
+				return api.PrepareResult{}, fmt.Errorf("prepared release: hydrate persisted client evidence: %w", hydrateErr)
+			}
+			owned := envelopeFromPersisted(current, input)
+			owned.resources.clientEvidence = preparationstate.CloneClientEvidenceSnapshot(snapshot)
+			m.publish(owned)
+		}
 		api.EmitPreparationProgress(
 			ctx,
 			api.NewPreparationProgressUpdate(api.PreparationPhasePreparedCache, api.PreparationProgressCompleted, "Reused the compatible prepared generation."),
@@ -432,15 +456,12 @@ func (m *Module) publish(owned envelope) {
 	m.mu.Unlock()
 }
 
-func (m *Module) publishPersistedIfAbsent(owned envelope) {
-	key := canonicalSourceKey(owned.result.Release.Source.SourcePath)
+func (m *Module) hasPublishedGeneration(sourcePath string, generation api.PreparedGeneration) bool {
+	key := canonicalSourceKey(sourcePath)
 	m.mu.RLock()
 	current, ok := m.envelopes[key]
 	m.mu.RUnlock()
-	if ok && current.result.Release.Generation == owned.result.Release.Generation {
-		return
-	}
-	m.publish(owned)
+	return ok && current.result.Release.Generation == generation
 }
 
 func mergeFactInstructions(intent *externalidentity.ResolutionIntent, instructions api.ReleaseFactInstructions) {
@@ -616,6 +637,7 @@ type preparationResources struct {
 	sceneNFOPath          string
 	descriptionTemplate   string
 	selectedBDMVPlaylists []api.PlaylistInfo
+	clientEvidence        preparationstate.ClientEvidenceSnapshot
 }
 
 func resourcesFromManifest(manifest api.SourceManifest, input api.PrepareInput) preparationResources {
@@ -649,6 +671,7 @@ func mergePreparationResources(base preparationResources, collected preparationR
 	base.sceneNFOPath = collected.sceneNFOPath
 	base.descriptionTemplate = collected.descriptionTemplate
 	base.selectedBDMVPlaylists = collected.selectedBDMVPlaylists
+	base.clientEvidence = preparationstate.CloneClientEvidenceSnapshot(collected.clientEvidence)
 	return base
 }
 
@@ -666,6 +689,7 @@ func resourcesFromCollected(collected CollectedResources) preparationResources {
 		sceneNFOPath:          collected.SceneNFOPath,
 		descriptionTemplate:   collected.DescriptionTemplate,
 		selectedBDMVPlaylists: clonePreparedPlaylists(collected.SelectedBDMVPlaylists),
+		clientEvidence:        preparationstate.CloneClientEvidenceSnapshot(collected.ClientEvidence),
 	}
 }
 
@@ -694,6 +718,7 @@ func cloneEnvelope(value envelope) (envelope, error) {
 				UseAll:   value.resources.playlist.UseAll,
 			},
 			selectedBDMVPlaylists: clonePreparedPlaylists(value.resources.selectedBDMVPlaylists),
+			clientEvidence:        preparationstate.CloneClientEvidenceSnapshot(value.resources.clientEvidence),
 		},
 	}
 	return cloned, nil

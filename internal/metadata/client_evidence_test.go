@@ -12,9 +12,10 @@ import (
 
 	"github.com/autobrr/upbrr/internal/clientdiscovery"
 	"github.com/autobrr/upbrr/internal/config"
-	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
-	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+	"github.com/autobrr/upbrr/internal/sourcelayout"
+	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -73,6 +74,39 @@ func TestCollectClientEvidencePrecedesTrackerCandidatesAndPreservesExplicitIDs(t
 	candidates := normalizeTrackers(resolveTrackerCandidates(state))
 	if !slices.Equal(candidates, []string{"AITHER", "BTN"}) {
 		t.Fatalf("tracker candidates = %#v", candidates)
+	}
+}
+
+func TestHydrateClientEvidenceSearchesManifestFilesOnce(t *testing.T) {
+	t.Parallel()
+
+	client := &metadataClientRecorder{}
+	service := &Service{clients: clientdiscovery.New(client, api.NopLogger{})}
+	force := true
+	snapshot, err := service.HydrateClientEvidence(context.Background(), preparationstate.Request{
+		Input: api.PrepareInput{
+			Search:   api.ClientSearchPolicy{},
+			Controls: api.PreparationControls{ForceRecheck: &force},
+		},
+		Manifest: api.SourceManifest{
+			SourcePath: "C:\\media\\Example.Release.2026",
+			Entries: []api.SourceManifestEntry{
+				{Path: "video.mkv", Type: api.SourceEntryTypeFile},
+				{Path: "playlist.mpls", Type: api.SourceEntryTypePlaylist},
+				{Path: "BDMV", Type: api.SourceEntryTypeDirectory},
+			},
+		},
+		Layout: sourcelayout.Layout{DiscType: "BDMV"},
+	})
+	if err != nil {
+		t.Fatalf("hydrate client evidence: %v", err)
+	}
+	if client.calls != 1 || !slices.Equal(client.input.FileList, []string{"video.mkv", "playlist.mpls"}) || client.input.DiscType != "BDMV" {
+		t.Fatalf("hydration search calls=%d input=%#v", client.calls, client.input)
+	}
+	if snapshot.Disposition != preparationstate.ClientEvidenceDispositionSearched || !snapshot.ForcedRecheck ||
+		snapshot.Result.InfoHash != "client-hash" {
+		t.Fatalf("hydrated snapshot = %#v", snapshot)
 	}
 }
 

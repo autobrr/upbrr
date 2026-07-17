@@ -101,6 +101,10 @@ func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadRevie
 		ReleaseNameNoTag:            release.Naming.NameWithoutTag,
 		ReleaseNameClean:            release.Naming.CleanName,
 		ArrReleaseGroup:             release.Naming.Group,
+		InfoHash:                    resources.clientEvidence.Result.InfoHash,
+		ClientTorrentPath:           resources.clientEvidence.Result.TorrentPath,
+		TrackerIDs:                  maps.Clone(resources.clientEvidence.Result.TrackerIDs),
+		MatchedTrackers:             append([]string(nil), resources.clientEvidence.Result.MatchedTrackers...),
 	}
 	cloned, err := cloneWithJSON(subject)
 	if err != nil {
@@ -149,6 +153,8 @@ func (m *Module) ResolveDuplicateSubject(ctx context.Context, input api.Duplicat
 		DailyEpisodeDate:  release.Episode.DailyDate,
 		TVPack:            release.Episode.Pack,
 		Anime:             release.Media.Anime,
+		TrackerIDs:        maps.Clone(resources.clientEvidence.Result.TrackerIDs),
+		MatchedTrackers:   append([]string(nil), resources.clientEvidence.Result.MatchedTrackers...),
 	}
 	cloned, err := cloneWithJSON(subject)
 	if err != nil {

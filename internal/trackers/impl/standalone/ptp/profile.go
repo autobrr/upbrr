@@ -21,6 +21,7 @@ func Profile() standalone.Profile {
 		Name:               "PTP",
 		BaseURL:            ptpBaseURL,
 		DescriptionGroup:   "ptp",
+		UploadContentMode:  trackers.UploadContentModeDescription,
 		PrepareDescription: prepareDescription,
 		PrepareUpload: func(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 			return prepareUploadAt(ctx, req, ptpBaseURL)

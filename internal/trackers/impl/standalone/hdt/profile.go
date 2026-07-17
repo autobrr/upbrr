@@ -17,6 +17,7 @@ func Profile() standalone.Profile {
 		Name:                "HDT",
 		BaseURL:             resolveBaseURL(),
 		DescriptionGroup:    "hdt",
+		UploadContentMode:   trackers.UploadContentModeDescription,
 		PrepareDescription:  prepareDescription,
 		PrepareUpload:       prepareUpload,
 		NewDuplicateAdapter: newDuplicateAdapter,

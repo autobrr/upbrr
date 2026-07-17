@@ -4,9 +4,7 @@
 package btn
 
 import (
-	"context"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -26,32 +24,6 @@ func bannedGroups() []string {
 		"mSD", "NhaNc3", "NOIVTC", "PHOENiX", "PlaySD", "playXD", "Pr1M371M3", "RAPiDCOWS", "REsuRRecTioN", "RMTeam",
 		"ROBOTS", "RUBiK", "SPASM", "Telly", "TM", "URANiME", "ViSiON", "W45Ps", "xRed", "XS", "ZKBL", "ZmN", "ZMNT", "[Oj]",
 	}
-}
-
-func prepareDescription(ctx context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {
-	select {
-	case <-ctx.Done():
-		return trackers.DescriptionResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
-	default:
-	}
-
-	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
-	if err != nil {
-		assets = trackers.DescriptionAssets{}
-	}
-
-	description := strings.TrimSpace(assets.Description)
-	if description == "" {
-		description = strings.TrimSpace(req.Meta.DescriptionOverride)
-	}
-	if description == "" {
-		description = "No description provided."
-	}
-
-	return trackers.DescriptionResult{
-		Group:       "btn",
-		Description: description,
-	}, nil
 }
 
 func validateBTNRequest(req trackers.PreparationInput) error {

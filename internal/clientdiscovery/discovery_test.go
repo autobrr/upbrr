@@ -6,7 +6,6 @@ package clientdiscovery
 import (
 	"context"
 	"errors"
-	"reflect"
 	"slices"
 	"testing"
 
@@ -94,11 +93,11 @@ func TestDiscoverSkipAndUnavailableAreSuccessfulEmptySnapshots(t *testing.T) {
 		SourcePath: "Example.Release.2026.mkv",
 		Policy:     api.ClientSearchPolicy{Skip: true},
 	})
-	if err != nil || !reflect.DeepEqual(evidence, Evidence{}) || client.calls != 0 {
+	if err != nil || evidence.Disposition != DispositionSkipped || client.calls != 0 {
 		t.Fatalf("skip evidence=%#v err=%v calls=%d", evidence, err, client.calls)
 	}
 	evidence, err = New(nil, api.NopLogger{}).Discover(context.Background(), SearchInput{SourcePath: "Example.Release.2026.mkv"})
-	if err != nil || !reflect.DeepEqual(evidence, Evidence{}) {
+	if err != nil || evidence.Disposition != DispositionUnavailable {
 		t.Fatalf("unavailable evidence=%#v err=%v", evidence, err)
 	}
 }

@@ -14,6 +14,7 @@ func Profile() standalone.Profile {
 		Name:                    "ASC",
 		BaseURL:                 baseURL,
 		DescriptionGroup:        "asc",
+		UploadContentMode:       trackers.UploadContentModeDescription,
 		LocalizedMetadataLocale: "pt-BR",
 		PrepareDescription:      prepareDescription,
 		PrepareUpload:           prepareUpload,

@@ -13,11 +13,12 @@ type TrackerCatalogField struct {
 
 // TrackerCatalogEntry combines tracker implementation identity with its config schema.
 type TrackerCatalogEntry struct {
-	Name       string                `json:"name"`
-	Family     string                `json:"family"`
-	BaseURL    string                `json:"baseURL"`
-	Fields     []TrackerCatalogField `json:"fields"`
-	Configured bool                  `json:"configured"`
+	Name              string                `json:"name"`
+	Family            string                `json:"family"`
+	BaseURL           string                `json:"baseURL"`
+	UploadContentMode string                `json:"uploadContentMode"`
+	Fields            []TrackerCatalogField `json:"fields"`
+	Configured        bool                  `json:"configured"`
 }
 
 // TrackerCatalog is the complete settings manifest for supported trackers and

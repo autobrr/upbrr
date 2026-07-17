@@ -901,6 +901,7 @@ export type PreparationDescription = {
 export type PreparationPreview = {
   SourcePath: string;
   Descriptions: PreparationDescription[];
+  ContentFailures: TrackerContentFailure[];
 };
 
 export type ImageHostFeedback = {
@@ -931,6 +932,7 @@ export type DescriptionBuilderGroup = {
 export type DescriptionBuilderPreview = {
   SourcePath: string;
   Groups: DescriptionBuilderGroup[];
+  ContentFailures: TrackerContentFailure[];
 };
 
 /** Image category shared by capture, selection, upload, and menu workflows. */
@@ -1341,6 +1343,13 @@ export type TrackerDryRunEntry = {
   DebugSections?: TrackerDryRunDebugSection[] | null;
   Questionnaire?: TrackerQuestionnaire | null;
   ImageHost: ImageHostFeedback;
+  ContentFailure?: TrackerContentFailure | null;
+};
+
+export type TrackerContentFailure = {
+  tracker: string;
+  code: "screenshot_preparation_failed" | "description_preparation_failed";
+  message: string;
 };
 
 /** One named diagnostic payload rendered inside a tracker dry-run preview. */
@@ -1368,6 +1377,7 @@ export type TrackerCatalogEntry = {
   name: string;
   family: "unit3d" | "azfamily" | "standalone" | string;
   baseURL: string;
+  uploadContentMode: "none" | "screenshots" | "description";
   fields: TrackerCatalogField[];
   configured: boolean;
 };

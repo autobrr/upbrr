@@ -31,8 +31,15 @@ func TestListTrackerCatalogComposesIdentitySchemaAndConfiguredState(t *testing.T
 	}
 
 	rhd := catalogEntryByName(t, catalog.Entries, "RHD")
-	if !rhd.Configured || rhd.Family != string(trackers.FamilyUnit3D) || rhd.BaseURL == "" {
+	if !rhd.Configured || rhd.Family != string(trackers.FamilyUnit3D) || rhd.BaseURL == "" ||
+		rhd.UploadContentMode != string(trackers.UploadContentModeDescription) {
 		t.Fatalf("RHD catalog entry = %#v", rhd)
+	}
+	if mode := catalogEntryByName(t, catalog.Entries, "BTN").UploadContentMode; mode != string(trackers.UploadContentModeNone) {
+		t.Fatalf("BTN upload content mode = %q", mode)
+	}
+	if mode := catalogEntryByName(t, catalog.Entries, "ANT").UploadContentMode; mode != string(trackers.UploadContentModeScreenshots) {
+		t.Fatalf("ANT upload content mode = %q", mode)
 	}
 	if !catalogEntryByName(t, catalog.Entries, "BTN").Configured {
 		t.Fatal("partial BTN credentials should count as configured")

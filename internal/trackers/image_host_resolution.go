@@ -60,10 +60,9 @@ func ensureDescriptionImageHostWithRegistry(
 	trackerCfg config.TrackerConfig,
 	repo UploadPersistence,
 	images api.ImageHostingService,
-	logger api.Logger,
 	registry *Registry,
 ) (descriptionImageHostResolution, error) {
-	return ensureDescriptionImageHostWithDataAndRegistry(ctx, tracker, meta, appCfg, trackerCfg, repo, images, logger, registry, nil)
+	return ensureDescriptionImageHostWithDataAndRegistry(ctx, tracker, meta, appCfg, trackerCfg, repo, images, api.NopLogger{}, registry, nil)
 }
 
 func ensureDescriptionImageHostWithDataAndRegistry(

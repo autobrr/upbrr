@@ -16,6 +16,7 @@ import type {
   TrackerCatalog,
   TrackerCatalogEntry,
 } from "../types";
+import { useTrackerCatalog } from "../trackerCatalog";
 import { formatLabel, normalizeDefaultTrackerList } from "../utils/settings";
 
 type SettingsSection = { key: string; jsonKey: string; label: string };
@@ -575,11 +576,14 @@ const normalizeTrackersForSave = (input: ConfigMap, catalog: TrackerCatalog | nu
 export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsStateResult => {
   const { activeTab } = options;
   const [configData, setConfigData] = useState<ConfigMap | null>(null);
-  const [trackerCatalog, setTrackerCatalog] = useState<TrackerCatalog | null>(null);
+  const {
+    catalog: trackerCatalog,
+    loading: knownTrackersLoading,
+    error: trackerCatalogError,
+    removeUnsupported,
+  } = useTrackerCatalog();
   const [imageHostPolicyMetadata, setImageHostPolicyMetadata] =
     useState<ImageHostPolicyMetadata | null>(null);
-  const [knownTrackersLoading, setKnownTrackersLoading] = useState(false);
-  const [trackerCatalogLoaded, setTrackerCatalogLoaded] = useState(false);
   const [trackerAddSelection, setTrackerAddSelection] = useState("");
   const [draftTrackerEntries, setDraftTrackerEntries] = useState<Record<string, boolean>>({});
   const [settingsTrackerPanels, setSettingsTrackerPanels] = useState<Record<string, boolean>>({});
@@ -893,25 +897,6 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     }
   }, [clearSettingsStatus]);
 
-  const loadTrackerCatalog = useCallback(async () => {
-    if (knownTrackersLoading || trackerCatalogLoaded) return;
-    setKnownTrackersLoading(true);
-    try {
-      const result = await trackerCatalogClient.list();
-      if (result && Array.isArray(result.entries) && Array.isArray(result.unsupported)) {
-        result.entries.forEach((entry) => {
-          entry.fields.forEach((field) => trackerFieldPresentation(field.key));
-        });
-        setTrackerCatalog(result);
-      }
-    } catch (err) {
-      setSettingsError(String(err));
-    } finally {
-      setKnownTrackersLoading(false);
-      setTrackerCatalogLoaded(true);
-    }
-  }, [knownTrackersLoading, trackerCatalogLoaded]);
-
   const loadImageHostPolicyMetadata = useCallback(async () => {
     const getMetadata = trackerCatalogClient.getImageHostPolicyMetadata;
     try {
@@ -959,10 +944,18 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   }, [activeTab, configData, loadSettings]);
 
   useEffect(() => {
-    if (!trackerCatalogLoaded && !knownTrackersLoading) {
-      loadTrackerCatalog();
+    try {
+      trackerCatalog?.entries.forEach((entry) => {
+        entry.fields.forEach((field) => trackerFieldPresentation(field.key));
+      });
+    } catch (error) {
+      setSettingsError(String(error));
     }
-  }, [trackerCatalogLoaded, knownTrackersLoading, loadTrackerCatalog]);
+  }, [trackerCatalog]);
+
+  useEffect(() => {
+    if (trackerCatalogError) setSettingsError(trackerCatalogError);
+  }, [trackerCatalogError]);
 
   useEffect(() => {
     if (activeTab === "settings" && !imageHostPolicyMetadata) {
@@ -1826,16 +1819,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
                         type="button"
                         onClick={() => {
                           removeConfigKey(["Trackers", "Trackers"], name);
-                          setTrackerCatalog((current) =>
-                            current
-                              ? {
-                                  ...current,
-                                  unsupported: current.unsupported.filter(
-                                    (entry) => entry !== name,
-                                  ),
-                                }
-                              : current,
-                          );
+                          removeUnsupported(name);
                         }}
                       >
                         Delete

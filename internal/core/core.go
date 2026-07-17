@@ -298,9 +298,8 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		core.description.resolveOverrideRequest,
 		core.description.resolveSubjectGroups,
 		core.ImportAcceptedMenuImages,
-		clientDiscovery,
 	)
-	core.dupe = newDupeModule(cfg, logger, services, registry, core.preparedFacts, clientDiscovery)
+	core.dupe = newDupeModule(cfg, logger, services, registry, core.preparedFacts)
 	constructionSucceeded = true
 	return core, nil
 }

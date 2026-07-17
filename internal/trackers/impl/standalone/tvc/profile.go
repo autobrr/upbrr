@@ -14,6 +14,7 @@ func Profile() standalone.Profile {
 		Name:                "TVC",
 		BaseURL:             "https://tvchaosuk.com",
 		DescriptionGroup:    "tvc",
+		UploadContentMode:   trackers.UploadContentModeDescription,
 		PrepareDescription:  prepareDescription,
 		PrepareUpload:       prepareUpload,
 		NewDuplicateAdapter: newDuplicateAdapter,

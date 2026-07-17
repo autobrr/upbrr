@@ -18,11 +18,11 @@ func TestBuildPreviewNormalizesStatusAndDefensivelyCopies(t *testing.T) {
 		ReleaseName:      " Example.Release.2026.1080p-GRP ",
 		DescriptionGroup: " DC ",
 		Payload:          map[string]string{"name": "prepared"},
-		Files:            []api.TrackerDryRunFile{{
-Field: "file",
- Path: "example.torrent",
- Present: true,
-}},
+		Files: []api.TrackerDryRunFile{{
+			Field:   "file",
+			Path:    "example.torrent",
+			Present: true,
+		}},
 	}
 	entry := BuildPreview(spec)
 	spec.Payload["name"] = "mutated"

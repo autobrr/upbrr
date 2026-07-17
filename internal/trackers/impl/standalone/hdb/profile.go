@@ -20,6 +20,7 @@ func Profile() standalone.Profile {
 		Name:               "HDB",
 		BaseURL:            hdbBaseURL,
 		DescriptionGroup:   "hdb",
+		UploadContentMode:  trackers.UploadContentModeDescription,
 		PrepareDescription: prepareDescription,
 		PrepareUpload: func(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 			return prepareUploadAt(ctx, req, hdbBaseURL, nil)

@@ -225,39 +225,18 @@ func (s *Service) prepareUploadPlans(
 				emitTrackerPlanProgress(ctx, meta.SourcePath, tracker, "tracker_preparation", "failed", slot.failure.Message)
 				continue
 			}
-			resolution, ok := preflight[normalizeTrackerName(tracker)]
-			if !ok {
-				resolution, err = ensureDescriptionImageHostWithRegistry(ctx, tracker, trackerMeta, s.cfg, trackerCfg, s.repo, s.images, s.logger, s.registry)
-			}
-			if err != nil {
-				slot.failure = trackerFailure(tracker, "image_host", err)
-				slots[idx] = slot
-				emitTrackerPlanProgress(ctx, meta.SourcePath, tracker, "tracker_preparation", "failed", slot.failure.Message)
-				continue
-			}
-			if resolution.blocking {
-				message := strings.TrimSpace(resolution.feedback.Message)
-				if message == "" {
-					message = "image-host requirements could not be met"
-				}
+			content := s.prepareUploadContent(ctx, tracker, trackerMeta, trackerCfg, nil, preflight)
+			if content.State == preparedUploadContentFailed {
 				slot.failure = &TrackerFailure{
 					Tracker: tracker,
-					Code:    "image_host",
-					Message: message,
+					Code:    string(content.Failure.Code),
+					Message: content.Failure.Message,
 				}
-				slots[idx] = slot
-				emitTrackerPlanProgress(ctx, meta.SourcePath, tracker, "tracker_preparation", "failed", message)
-				continue
-			}
-			assets, err := ResolveDescriptionAssets(ctx, tracker, trackerMeta, s.repo, s.logger, s.registry)
-			if err != nil {
-				slot.failure = trackerFailure(tracker, "description_assets", err)
 				slots[idx] = slot
 				emitTrackerPlanProgress(ctx, meta.SourcePath, tracker, "tracker_preparation", "failed", slot.failure.Message)
 				continue
 			}
-			applyResolvedDescriptionScreenshots(ctx, trackerMeta, s.repo, nil, &assets, resolution.screenshots)
-			plan, failure := definition.Prepare(ctx, s.preparationInput(ctx, PreparationIntentUpload, tracker, trackerMeta, trackerCfg, &assets))
+			plan, failure := definition.Prepare(ctx, s.preparationInput(ctx, PreparationIntentUpload, tracker, trackerMeta, trackerCfg, content.Assets))
 			if failure != nil {
 				slot.failure = &TrackerFailure{
 					Tracker: tracker,

@@ -464,6 +464,8 @@ type Descriptor struct {
 	BaseURL string
 	// Definition is the required preparation adapter.
 	Definition Definition
+	// UploadContentMode identifies the shared content object consumed before preparation.
+	UploadContentMode UploadContentMode
 	// Rules contains optional tracker-owned validation rules.
 	Rules *ruletypes.RuleSet
 	// Artifact contains optional generic torrent limits.

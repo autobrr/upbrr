@@ -18,6 +18,7 @@ func Profile() standalone.Profile {
 		Name:                 "RTF",
 		BaseURL:              defaultBaseURL,
 		DescriptionGroup:     "rtf",
+		UploadContentMode:    trackers.UploadContentModeScreenshots,
 		PrepareDescription:   prepareDescription,
 		PrepareUpload:        prepareUpload,
 		NewDuplicateAdapter:  newDuplicateAdapter,

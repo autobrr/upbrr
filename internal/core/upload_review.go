@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/clientdiscovery"
 	"github.com/autobrr/upbrr/internal/logging"
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	dupechecking "github.com/autobrr/upbrr/internal/trackers/dupe"
@@ -33,7 +32,7 @@ func (c *Core) ReviewAcceptedUpload(ctx context.Context, input api.UploadReviewI
 	return reviewed, classifyOperationError(api.OperationKindUploadReview, err)
 }
 
-// reviewAccepted refreshes operation-local evidence and produces the complete
+// reviewAccepted refreshes operation authority and produces the complete
 // outcome required to execute one accepted upload review.
 func (m *uploadModule) reviewAccepted(ctx context.Context, input api.UploadReviewInput) (api.ReviewedUpload, error) {
 	evidence, err := m.refreshUploadReviewAuthority(ctx, input)
@@ -70,8 +69,8 @@ type trackerPayloadEvidence struct {
 	duplicateResults []api.DupeCheckResult
 }
 
-// refreshUploadReviewAuthority refreshes client, policy, and duplicate state
-// immediately before final upload review.
+// refreshUploadReviewAuthority refreshes policy and remote duplicate state
+// immediately before final upload review. Client evidence is generation-owned.
 func (m *uploadModule) refreshUploadReviewAuthority(
 	ctx context.Context,
 	input api.UploadReviewInput,
@@ -82,22 +81,6 @@ func (m *uploadModule) refreshUploadReviewAuthority(
 	subject, resolvedTrackers, err := m.resolveTrackerPayloadSubject(ctx, input, api.OperationKindUploadReview)
 	if err != nil {
 		return trackerPayloadEvidence{}, err
-	}
-	if m.discovery != nil {
-		evidence, discoveryErr := m.discovery.Discover(ctx, clientdiscovery.SearchInput{
-			SourcePath: subject.SourcePath,
-			FileList:   subject.FileList,
-			DiscType:   subject.DiscType,
-			Policy: api.ClientSearchPolicy{
-				Skip:   input.Options.SkipAutoTorrent,
-				Client: input.ClientOverrides.Client,
-			},
-			ForceRecheck: input.ClientOverrides.ForceRecheck,
-		})
-		if discoveryErr != nil {
-			return trackerPayloadEvidence{}, fmt.Errorf("core: discover upload-review client state: %w", discoveryErr)
-		}
-		applyClientSearchToUploadSubject(&subject, evidence)
 	}
 	applyTrackerIDOverrides(&subject, input.TrackerIDOverrides)
 
@@ -390,13 +373,14 @@ func (m *uploadModule) buildTrackerPayloadPreview(
 		review.Questionnaire = review.DryRun.Questionnaire
 		reviews = append(reviews, review)
 		eligibilityAssessments = append(eligibilityAssessments, api.TrackerEligibilityAssessment{
-			Tracker:      name,
-			Duplicate:    review.DupeCheck,
-			RuleFailures: cloneRuleFailures(review.RuleFailures),
-			PolicyBlocks: append([]api.TrackerBlockReason(nil), outcome.BlockedTrackers[name]...),
-			AuthRequired: review.DupeCheck.SkipCode == dupeSkipCodeTrackerAuthNotReady,
-			Banned:       review.Banned,
-			BannedReason: review.BannedReason,
+			Tracker:        name,
+			Duplicate:      review.DupeCheck,
+			RuleFailures:   cloneRuleFailures(review.RuleFailures),
+			PolicyBlocks:   append([]api.TrackerBlockReason(nil), outcome.BlockedTrackers[name]...),
+			AuthRequired:   review.DupeCheck.SkipCode == dupeSkipCodeTrackerAuthNotReady,
+			Banned:         review.Banned,
+			BannedReason:   review.BannedReason,
+			ContentFailure: cloneTrackerContentFailure(review.DryRun.ContentFailure),
 			Choices: api.TrackerReviewChoices{
 				IgnoreDuplicate:    containsNormalizedTracker(input.IgnoreDupesFor, name),
 				IgnoreRuleFailures: containsNormalizedTracker(input.IgnoreRuleFailuresFor, name),
@@ -408,6 +392,7 @@ func (m *uploadModule) buildTrackerPayloadPreview(
 		SelectedTrackers: resolvedTrackers,
 		Assessments:      eligibilityAssessments,
 	})
+	logTrackerEligibility(ctx, m.logger, string(previewIntent), eligibility)
 	outcome.Eligibility = eligibility
 	return trackerPayloadPreview{
 		subject: subject,
@@ -419,6 +404,14 @@ func (m *uploadModule) buildTrackerPayloadPreview(
 		outcome: outcome,
 		torrent: torrent,
 	}, nil
+}
+
+func cloneTrackerContentFailure(value *api.TrackerContentFailure) *api.TrackerContentFailure {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func duplicateSubjectFromUpload(subject api.UploadSubject) api.DuplicateSubject {
@@ -452,27 +445,6 @@ func duplicateSubjectFromUpload(subject api.UploadSubject) api.DuplicateSubject 
 		TVPack:               subject.TVPack,
 		Anime:                subject.Anime,
 	}
-}
-
-// applyClientSearchToUploadSubject refreshes reusable torrent and tracker state
-// from one current client snapshot before explicit review overrides are applied.
-func applyClientSearchToUploadSubject(subject *api.UploadSubject, search clientdiscovery.Evidence) {
-	if subject == nil {
-		return
-	}
-	if value := strings.TrimSpace(search.InfoHash); value != "" {
-		subject.InfoHash = value
-	}
-	if value := strings.TrimSpace(search.TorrentPath); value != "" {
-		subject.ClientTorrentPath = value
-	}
-	if len(search.TrackerIDs) > 0 {
-		if subject.TrackerIDs == nil {
-			subject.TrackerIDs = make(map[string]string)
-		}
-		maps.Copy(subject.TrackerIDs, search.TrackerIDs)
-	}
-	subject.MatchedTrackers = normalizeReviewedTrackers(search.MatchedTrackers)
 }
 
 func evaluateSubjectRules(

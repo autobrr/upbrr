@@ -126,6 +126,25 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 	if slices.Contains(names, "MANUAL") {
 		t.Fatal("MANUAL must not be registered")
 	}
+	specialModes := map[string]trackers.UploadContentMode{
+		"ANT": trackers.UploadContentModeScreenshots,
+		"BTN": trackers.UploadContentModeNone,
+		"NBL": trackers.UploadContentModeNone,
+		"RTF": trackers.UploadContentModeScreenshots,
+	}
+	for _, name := range names {
+		mode, ok := registry.LookupUploadContentMode(name)
+		if !ok || !mode.Valid() {
+			t.Fatalf("%s upload content mode = %q, %t", name, mode, ok)
+		}
+		want := trackers.UploadContentModeDescription
+		if special, exists := specialModes[name]; exists {
+			want = special
+		}
+		if mode != want {
+			t.Fatalf("%s upload content mode = %q, want %q", name, mode, want)
+		}
+	}
 	if definition, ok := registry.Lookup("BHDTV"); !ok {
 		t.Fatal("expected BHDTV definition")
 	} else if _, ok := definition.(dupe.Factory); !ok {

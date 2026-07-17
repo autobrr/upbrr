@@ -109,6 +109,8 @@ type State struct {
 	MetadataOverrides       api.MetadataOverrides
 	PersonalRelease         bool
 	InfoHash                string
+	// ClientEvidence retains the complete detached preparation-owned client snapshot.
+	ClientEvidence ClientEvidenceSnapshot
 	// DiscoveredTorrentPath is a reusable local metainfo path found during client discovery.
 	DiscoveredTorrentPath          string
 	TrackerIDs                     map[string]string

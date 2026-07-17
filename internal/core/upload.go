@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/autobrr/upbrr/internal/clientdiscovery"
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/logging"
@@ -35,7 +34,6 @@ type uploadModule struct {
 	trackerRepo   api.TrackerStateRepository
 	registry      *trackers.Registry
 	preparedFacts *preparedrelease.Module
-	discovery     *clientdiscovery.Module
 
 	resolveDescriptionOverride func(context.Context, api.Request) (api.Request, error)
 	resolveSubjectGroups       func(context.Context, api.UploadSubject, api.UploadReviewInput) ([]api.DescriptionBuilderGroup, error)
@@ -47,7 +45,7 @@ type uploadPolicyEvaluator interface {
 }
 
 // newUploadModule composes upload review and execution around exact prepared
-// generations, current client discovery, and borrowed runtime services.
+// generations and borrowed runtime services.
 func newUploadModule(
 	cfg config.Config,
 	logger api.Logger,
@@ -59,7 +57,6 @@ func newUploadModule(
 	resolveDescriptionOverride func(context.Context, api.Request) (api.Request, error),
 	resolveSubjectGroups func(context.Context, api.UploadSubject, api.UploadReviewInput) ([]api.DescriptionBuilderGroup, error),
 	importAcceptedMenuImages func(context.Context, api.MediaPlanInput, []string) error,
-	discovery *clientdiscovery.Module,
 ) *uploadModule {
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -77,7 +74,6 @@ func newUploadModule(
 		trackerRepo:                trackerRepo,
 		registry:                   registry,
 		preparedFacts:              preparedFacts,
-		discovery:                  discovery,
 		resolveDescriptionOverride: resolveDescriptionOverride,
 		resolveSubjectGroups:       resolveSubjectGroups,
 		importAcceptedMenuImages:   importAcceptedMenuImages,

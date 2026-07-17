@@ -253,6 +253,15 @@ logging:
 trackers:
   default_trackers: ["BTN"]
   preferred_tracker: "BTN"
+  AITHER:
+    api_key: "e2e"
+    image_host: "imgbb"
+  ANT:
+    api_key: "e2e"
+    image_host: "imgbb"
+  FF:
+    username: "e2e"
+    password: "e2e"
   BTN:
     api_key: "e2e"
     username: "e2e"

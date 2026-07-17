@@ -100,6 +100,10 @@ type authRegistryDefinition struct {
 
 func (d authRegistryDefinition) Name() string { return d.capability.TrackerID }
 
+func (authRegistryDefinition) UploadContentMode() trackers.UploadContentMode {
+	return trackers.UploadContentModeDescription
+}
+
 func (authRegistryDefinition) DefaultBaseURL() string { return "https://tracker.example.invalid" }
 
 func (authRegistryDefinition) Prepare(context.Context, trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {

@@ -14,7 +14,7 @@ func Profile() standalone.Profile {
 		Name:                "NBL",
 		BaseURL:             "https://nebulance.io",
 		DescriptionGroup:    "nbl",
-		PrepareDescription:  prepareDescription,
+		UploadContentMode:   trackers.UploadContentModeNone,
 		PrepareUpload:       prepareUpload,
 		NewDuplicateAdapter: newDuplicateAdapter,
 		Rules:               rules(),

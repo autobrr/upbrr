@@ -36,7 +36,9 @@ func New(profile Profile) (*Definition, error) {
 		return nil, errors.New("standalone tracker profile has empty name")
 	case profile.BaseURL == "":
 		return nil, fmt.Errorf("standalone tracker profile %s has empty base URL", profile.Name)
-	case profile.PrepareDescription == nil:
+	case !profile.UploadContentMode.Valid():
+		return nil, fmt.Errorf("standalone tracker profile %s has invalid upload content mode %q", profile.Name, profile.UploadContentMode)
+	case profile.UploadContentMode.UsesDescription() && profile.PrepareDescription == nil:
 		return nil, fmt.Errorf("standalone tracker profile %s has no description preparer", profile.Name)
 	case profile.PrepareUpload == nil:
 		return nil, fmt.Errorf("standalone tracker profile %s has no upload preparer", profile.Name)
@@ -78,8 +80,21 @@ func (d *Definition) DescriptionGroup() string { return d.profile.DescriptionGro
 // LocalizedMetadataLocale returns the optional tracker-owned metadata locale.
 func (d *Definition) LocalizedMetadataLocale() string { return d.profile.LocalizedMetadataLocale }
 
+// UploadContentMode returns the profile-owned shared content workflow.
+func (d *Definition) UploadContentMode() trackers.UploadContentMode {
+	return d.profile.UploadContentMode
+}
+
 // Prepare dispatches intent through the tracker-local profile callbacks.
 func (d *Definition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
+	if input.Intent == trackers.PreparationIntentDescriptionPreview && !d.profile.UploadContentMode.UsesDescription() {
+		return trackers.TrackerPlan{}, trackers.NewPreparationFailure(
+			input.Tracker,
+			"capability",
+			"tracker does not support shared description preparation",
+			nil,
+		)
+	}
 	return trackers.PrepareAdapter(ctx, input, d.profile.PrepareDescription, d.profile.PrepareUpload)
 }
 

@@ -28,8 +28,9 @@ type MetadataPreview struct {
 }
 
 type DescriptionBuilderPreview struct {
-	SourcePath string
-	Groups     []DescriptionBuilderGroup
+	SourcePath      string
+	Groups          []DescriptionBuilderGroup
+	ContentFailures []TrackerContentFailure
 }
 
 type DescriptionBuilderGroup struct {
@@ -44,8 +45,9 @@ type DescriptionBuilderGroup struct {
 }
 
 type PreparationPreview struct {
-	SourcePath   string
-	Descriptions []PreparationDescription
+	SourcePath      string
+	Descriptions    []PreparationDescription
+	ContentFailures []TrackerContentFailure
 }
 
 type TrackerDryRunPreview struct {
@@ -94,9 +96,10 @@ type TrackerDryRunEntry struct {
 	Files                   []TrackerDryRunFile
 	// DebugSections carries optional staged diagnostics for trackers whose dry-run
 	// preview needs to show more than one request or derived payload.
-	DebugSections []TrackerDryRunDebugSection
-	Questionnaire *TrackerQuestionnaire
-	ImageHost     ImageHostFeedback
+	DebugSections  []TrackerDryRunDebugSection
+	Questionnaire  *TrackerQuestionnaire
+	ImageHost      ImageHostFeedback
+	ContentFailure *TrackerContentFailure
 }
 
 // TrackerDryRunDebugSection describes one named diagnostic payload inside a

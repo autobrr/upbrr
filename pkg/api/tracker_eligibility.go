@@ -7,19 +7,29 @@ package api
 type TrackerEligibilityReasonCode string
 
 const (
-	TrackerEligibilityDuplicate         TrackerEligibilityReasonCode = "duplicate"
-	TrackerEligibilityBlockingRule      TrackerEligibilityReasonCode = "blocking_rule"
-	TrackerEligibilityPolicy            TrackerEligibilityReasonCode = "policy"
-	TrackerEligibilityAuthRequired      TrackerEligibilityReasonCode = "auth_required"
-	TrackerEligibilityAssessmentSkipped TrackerEligibilityReasonCode = "assessment_skipped"
-	TrackerEligibilityAssessmentFailed  TrackerEligibilityReasonCode = "assessment_failed"
-	TrackerEligibilityBannedGroup       TrackerEligibilityReasonCode = "banned_group"
+	TrackerEligibilityDuplicate                    TrackerEligibilityReasonCode = "duplicate"
+	TrackerEligibilityBlockingRule                 TrackerEligibilityReasonCode = "blocking_rule"
+	TrackerEligibilityPolicy                       TrackerEligibilityReasonCode = "policy"
+	TrackerEligibilityAuthRequired                 TrackerEligibilityReasonCode = "auth_required"
+	TrackerEligibilityAssessmentSkipped            TrackerEligibilityReasonCode = "assessment_skipped"
+	TrackerEligibilityAssessmentFailed             TrackerEligibilityReasonCode = "assessment_failed"
+	TrackerEligibilityBannedGroup                  TrackerEligibilityReasonCode = "banned_group"
+	TrackerEligibilityScreenshotPreparationFailed  TrackerEligibilityReasonCode = "screenshot_preparation_failed"
+	TrackerEligibilityDescriptionPreparationFailed TrackerEligibilityReasonCode = "description_preparation_failed"
 )
 
 // TrackerEligibilityReason is safe presentation data for one blocker.
 type TrackerEligibilityReason struct {
 	Code    TrackerEligibilityReasonCode
 	Message string
+}
+
+// TrackerContentFailure is sanitized tracker-scoped evidence that a required
+// shared upload-content object failed before its adapter could run.
+type TrackerContentFailure struct {
+	Tracker string                       `json:"tracker"`
+	Code    TrackerEligibilityReasonCode `json:"code"`
+	Message string                       `json:"message"`
 }
 
 // TrackerReviewChoices records explicit review authorizations for one tracker.
@@ -31,14 +41,15 @@ type TrackerReviewChoices struct {
 // TrackerEligibilityAssessment is Core input gathered from current exact-
 // generation policy, duplicate, auth, and dry-run assessment.
 type TrackerEligibilityAssessment struct {
-	Tracker      string
-	Duplicate    DupeCheckResult
-	RuleFailures []RuleFailure
-	PolicyBlocks []TrackerBlockReason
-	AuthRequired bool
-	Banned       bool
-	BannedReason string
-	Choices      TrackerReviewChoices
+	Tracker        string
+	Duplicate      DupeCheckResult
+	RuleFailures   []RuleFailure
+	PolicyBlocks   []TrackerBlockReason
+	AuthRequired   bool
+	Banned         bool
+	BannedReason   string
+	ContentFailure *TrackerContentFailure
+	Choices        TrackerReviewChoices
 }
 
 // TrackerEligibilityInput requests ordered eligibility for an exact release.

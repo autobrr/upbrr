@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/clientdiscovery"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	dupechecking "github.com/autobrr/upbrr/internal/trackers/dupe"
@@ -24,7 +23,6 @@ type dupeModule struct {
 	services      api.ServiceSet
 	registry      *trackers.Registry
 	preparedFacts duplicatePreparedFacts
-	discovery     *clientdiscovery.Module
 }
 
 // duplicatePreparedFacts exposes only preparation operations required by dupe checks.
@@ -37,14 +35,13 @@ type duplicateAssessmentChecker interface {
 	CheckWithAssessment(context.Context, api.DuplicateSubject, []string, dupechecking.CheckOptions) (api.DupeCheckSummary, dupechecking.Assessment, error)
 }
 
-// newDupeModule composes duplicate policy with canonical facts and current client discovery.
+// newDupeModule composes duplicate policy with canonical prepared facts.
 func newDupeModule(
 	cfg config.Config,
 	logger api.Logger,
 	services api.ServiceSet,
 	registry *trackers.Registry,
 	preparedFacts duplicatePreparedFacts,
-	discovery *clientdiscovery.Module,
 ) *dupeModule {
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -55,7 +52,6 @@ func newDupeModule(
 		services:      services,
 		registry:      registry,
 		preparedFacts: preparedFacts,
-		discovery:     discovery,
 	}
 }
 
@@ -80,8 +76,8 @@ func (m *dupeModule) check(ctx context.Context, req api.Request) (api.DupeCheckS
 	return m.checkAccepted(ctx, input)
 }
 
-// checkAccepted refreshes operation-local client evidence, applies explicit ID
-// overrides, performs auth preflight, and assesses the exact prepared generation.
+// checkAccepted overlays explicit tracker IDs, performs auth preflight, and
+// assesses the exact prepared generation.
 func (m *dupeModule) checkAccepted(ctx context.Context, input api.DuplicateCheckInput) (api.DupeCheckSummary, error) {
 	if m.preparedFacts == nil {
 		return api.DupeCheckSummary{}, errors.New("core: canonical preparation is not configured")
@@ -93,21 +89,7 @@ func (m *dupeModule) checkAccepted(ctx context.Context, input api.DuplicateCheck
 	if err != nil {
 		return api.DupeCheckSummary{}, fmt.Errorf("core: resolve duplicate-check subject: %w", err)
 	}
-	var clientEvidence clientdiscovery.Evidence
-	if m.discovery != nil {
-		evidence, discoveryErr := m.discovery.Discover(ctx, clientdiscovery.SearchInput{
-			SourcePath:   subject.SourcePath,
-			FileList:     subject.FileList,
-			DiscType:     subject.DiscType,
-			Policy:       input.ClientSearch,
-			ForceRecheck: input.ForceRecheck,
-		})
-		if discoveryErr != nil {
-			return api.DupeCheckSummary{}, fmt.Errorf("core: discover duplicate-check client state: %w", discoveryErr)
-		}
-		clientEvidence = evidence
-	}
-	applyClientEvidenceToDuplicateSubject(&subject, clientEvidence, input.TrackerIDs)
+	applyTrackerIDOverridesToDuplicateSubject(&subject, input.TrackerIDs)
 	resolvedTrackers := trackers.ResolveExplicitTrackersWithRegistry(input.Trackers, m.logger, m.registry)
 	if len(resolvedTrackers) == 0 {
 		return api.DupeCheckSummary{}, noEligibleTrackersError(api.OperationKindDuplicateCheck)
@@ -147,20 +129,19 @@ func (m *dupeModule) checkAccepted(ctx context.Context, input api.DuplicateCheck
 		SelectedTrackers: resolvedTrackers,
 		Assessments:      assessments,
 	})
+	logTrackerEligibility(ctx, m.logger, "duplicate_check", summary.Eligibility)
 	return summary, nil
 }
 
-// applyClientEvidenceToDuplicateSubject replaces stale client-derived state with
-// the current snapshot, then overlays explicit tracker-ID overrides.
-func applyClientEvidenceToDuplicateSubject(
+// applyTrackerIDOverridesToDuplicateSubject overlays explicit IDs after the
+// prepared generation's private client snapshot has been projected.
+func applyTrackerIDOverridesToDuplicateSubject(
 	subject *api.DuplicateSubject,
-	evidence clientdiscovery.Evidence,
 	overrides map[string]string,
 ) {
 	if subject == nil {
 		return
 	}
-	subject.TrackerIDs = cloneStringMap(evidence.TrackerIDs)
 	if subject.TrackerIDs == nil && len(overrides) > 0 {
 		subject.TrackerIDs = make(map[string]string, len(overrides))
 	}
@@ -171,7 +152,6 @@ func applyClientEvidenceToDuplicateSubject(
 			subject.TrackerIDs[key] = value
 		}
 	}
-	subject.MatchedTrackers = normalizeReviewedTrackers(evidence.MatchedTrackers)
 }
 
 func containsNormalizedTracker(values []string, target string) bool {

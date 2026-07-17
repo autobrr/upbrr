@@ -202,6 +202,9 @@ func PrepareAdapter(
 	}
 	switch input.Intent {
 	case PreparationIntentDescriptionPreview:
+		if description == nil {
+			return TrackerPlan{}, NewPreparationFailure(input.Tracker, "capability", "tracker does not support shared description preparation", nil)
+		}
 		result, err := description(ctx, input)
 		if err != nil {
 			return TrackerPlan{}, NewPreparationFailure(input.Tracker, "description", err.Error(), err)
@@ -321,5 +324,9 @@ func cloneTrackerDryRunEntry(entry api.TrackerDryRunEntry) api.TrackerDryRunEntr
 	}
 	entry.ImageHost.AllowedHosts = append([]string(nil), entry.ImageHost.AllowedHosts...)
 	entry.ImageHost.Warnings = append([]api.ImageHostWarning(nil), entry.ImageHost.Warnings...)
+	if entry.ContentFailure != nil {
+		failure := *entry.ContentFailure
+		entry.ContentFailure = &failure
+	}
 	return entry
 }

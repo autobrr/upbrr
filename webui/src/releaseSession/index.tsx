@@ -4,6 +4,7 @@
 import type { ReactNode } from "react";
 import { createContext, useContext, useEffect, useMemo, useReducer, useRef } from "react";
 import { useReleaseJobs } from "../jobRegistry";
+import { useTrackerCatalogSnapshot } from "../trackerCatalog";
 import type {
   DVDMenuCaptureResult,
   OperationFailure,
@@ -14,6 +15,8 @@ import type {
   ScreenshotPurpose,
   ScreenshotResult,
   ScreenshotSelection,
+  TrackerCatalog,
+  TrackerContentFailure,
   UploadImageHostFailure,
 } from "../types";
 import type { ReleaseSessionPorts, UploadCommand } from "./ports";
@@ -128,14 +131,75 @@ const mergeFinalScreenshotImages = (
 const isCompleted = (status: string) =>
   ["completed", "completed_with_errors"].includes(status.toLowerCase().trim());
 
-const routeAccess = (
+export type TrackerWorkflowRequirements = Readonly<{
+  needsImages: boolean;
+  needsDescriptions: boolean;
+}>;
+
+/** Derives the strictest content workflow required by the selected tracker set. */
+export const trackerWorkflowRequirements = (
+  selectedTrackers: readonly string[],
+  catalog: TrackerCatalog | null,
+): TrackerWorkflowRequirements => {
+  const modes = new Map(
+    (catalog?.entries ?? []).map((entry) => [
+      entry.name.trim().toUpperCase(),
+      entry.uploadContentMode,
+    ]),
+  );
+  let needsImages = false;
+  let needsDescriptions = false;
+  selectedTrackers.forEach((tracker) => {
+    const mode = modes.get(tracker.trim().toUpperCase()) ?? "description";
+    needsImages ||= mode === "screenshots" || mode === "description";
+    needsDescriptions ||= mode === "description";
+  });
+  return { needsImages, needsDescriptions };
+};
+
+const selectedContentFailure = (
+  failures: readonly TrackerContentFailure[] | undefined,
+  selectedTrackers: readonly string[],
+  code: TrackerContentFailure["code"],
+) => {
+  const selected = new Set(normalizedNames(selectedTrackers));
+  return Boolean(
+    failures?.some(
+      (failure) =>
+        failure.code === code &&
+        selected.has(
+          String(failure.tracker || "")
+            .trim()
+            .toUpperCase(),
+        ),
+    ),
+  );
+};
+
+export const routeAccess = (
   bound: boolean,
   hasTrackerData: boolean,
   duplicatesReady: boolean,
+  requirements: TrackerWorkflowRequirements,
   descriptionsReady: boolean,
+  screenshotFailed: boolean,
+  descriptionFailed: boolean,
 ): Readonly<Record<ReleaseRoute, RouteAccess>> => {
   const preparationReason = "Prepare the selected source first.";
   const duplicateReason = duplicatesReady ? "" : "Complete duplicate checking first.";
+  const screenshotReason = requirements.needsImages
+    ? duplicateReason
+    : "Selected trackers do not use shared screenshots.";
+  const descriptionReason = requirements.needsDescriptions
+    ? duplicateReason
+    : "Selected trackers do not use shared descriptions.";
+  const uploadBlockedReason = screenshotFailed
+    ? "Retry failed screenshot preparation first."
+    : descriptionFailed
+      ? "Retry failed description preparation first."
+      : requirements.needsDescriptions && !descriptionsReady
+        ? "Prepare descriptions first."
+        : "";
   return {
     input: { available: true, reason: "" },
     trackerData: {
@@ -147,24 +211,24 @@ const routeAccess = (
       reason: bound ? "" : preparationReason,
     },
     screenshots: {
-      available: bound && duplicatesReady,
-      reason: bound ? duplicateReason : preparationReason,
+      available: bound && duplicatesReady && requirements.needsImages,
+      reason: bound ? screenshotReason : preparationReason,
     },
     menuImages: {
       available: bound && duplicatesReady,
       reason: bound ? duplicateReason : preparationReason,
     },
     uploadedImages: {
-      available: bound && duplicatesReady,
-      reason: bound ? duplicateReason : preparationReason,
+      available: bound && duplicatesReady && requirements.needsImages,
+      reason: bound ? screenshotReason : preparationReason,
     },
     descriptions: {
-      available: bound && duplicatesReady,
-      reason: bound ? duplicateReason : preparationReason,
+      available: bound && duplicatesReady && requirements.needsDescriptions,
+      reason: bound ? descriptionReason : preparationReason,
     },
     upload: {
-      available: bound && descriptionsReady,
-      reason: bound ? (descriptionsReady ? "" : "Prepare descriptions first.") : preparationReason,
+      available: bound && duplicatesReady && uploadBlockedReason === "",
+      reason: bound ? duplicateReason || uploadBlockedReason : preparationReason,
     },
   };
 };
@@ -213,6 +277,7 @@ export function ReleaseSessionProvider({
   ports,
   children,
 }: Readonly<{ ports?: ReleaseSessionPorts; children: ReactNode }>) {
+  const trackerCatalog = useTrackerCatalogSnapshot();
   const [state, dispatch] = useReducer(sessionReducer, undefined, initialSessionState);
   const controllers = useRef<Partial<Record<ControllerKey, AbortController>>>({});
   const preparationRevision = useRef(0);
@@ -1039,11 +1104,49 @@ export function ReleaseSessionProvider({
     isCompleted(String(currentDupeSnapshot?.status || ""));
   const uploadSnapshot = releaseJobs.upload?.upload ?? null;
   const bound = Boolean(state.release) && !state.preparationDirty;
+  const requirements = trackerWorkflowRequirements(
+    state.selectedTrackers,
+    trackerCatalog?.catalog ?? null,
+  );
+  const currentDryRunFailures =
+    state.dryRun.status === "ready" && !state.dryRun.staleReason
+      ? (state.dryRun.value?.Trackers ?? [])
+          .map((entry) => entry.ContentFailure)
+          .filter((failure): failure is TrackerContentFailure => Boolean(failure))
+      : [];
+  const screenshotFailed =
+    (requirements.needsImages &&
+      state.screenshots.status === "error" &&
+      !state.screenshots.staleReason) ||
+    selectedContentFailure(
+      currentDryRunFailures,
+      state.selectedTrackers,
+      "screenshot_preparation_failed",
+    );
+  const descriptionFailed =
+    selectedContentFailure(
+      state.descriptions.value?.ContentFailures,
+      state.selectedTrackers,
+      "description_preparation_failed",
+    ) ||
+    selectedContentFailure(
+      currentDryRunFailures,
+      state.selectedTrackers,
+      "description_preparation_failed",
+    );
+  const descriptionsReady =
+    !requirements.needsDescriptions ||
+    (state.descriptions.status === "ready" &&
+      !state.descriptions.staleReason &&
+      !descriptionFailed);
   const access = routeAccess(
     bound,
     Boolean(state.preview?.TrackerData?.length),
     duplicatesReady,
-    state.descriptions.status === "ready" && !state.descriptions.staleReason,
+    requirements,
+    descriptionsReady,
+    screenshotFailed,
+    descriptionFailed,
   );
 
   const session: ReleaseSession = {

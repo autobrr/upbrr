@@ -1377,11 +1377,12 @@ func (b *Backend) ListTrackerCatalog() (api.TrackerCatalog, error) {
 		}
 		trackerCfg, _ := trackerConfigByName(cfg.Trackers.Trackers, schema.Name)
 		entries = append(entries, api.TrackerCatalogEntry{
-			Name:       schema.Name,
-			Family:     string(descriptor.Family),
-			BaseURL:    descriptor.BaseURL,
-			Fields:     fields,
-			Configured: config.TrackerConfigured(trackerCfg, schema),
+			Name:              schema.Name,
+			Family:            string(descriptor.Family),
+			BaseURL:           descriptor.BaseURL,
+			UploadContentMode: string(descriptor.UploadContentMode),
+			Fields:            fields,
+			Configured:        config.TrackerConfigured(trackerCfg, schema),
 		})
 		seen[schema.Name] = struct{}{}
 	}

@@ -308,9 +308,10 @@ func TestUploadImagesSuccess(t *testing.T) {
 		WebURL: "https://web",
 	}}
 	repo := &recordingRepo{}
+	logger := &recordingImageHostLogger{}
 	service := &Service{
 		cfg:       config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{MaxConcurrentUploads: 2}},
-		logger:    api.NopLogger{},
+		logger:    logger,
 		repo:      repo,
 		uploaders: map[string]uploader{"test": uploaderStub},
 	}
@@ -341,6 +342,25 @@ func TestUploadImagesSuccess(t *testing.T) {
 	}
 	if repo.savedImages[0].UsageScope != "tracker:HDB" {
 		t.Fatalf("expected repo usage scope tracker:HDB, got %q", repo.savedImages[0].UsageScope)
+	}
+	if !logger.contains("wall_duration=") || !logger.contains("mean_attempt_duration=") ||
+		!logger.contains("attempts=1 succeeded=1 unsuccessful=0") {
+		t.Fatalf("expected actual uploader-call timing fields, got %#v", logger.messages)
+	}
+	if logger.contains(" avg=") {
+		t.Fatalf("unexpected throughput-derived average field: %#v", logger.messages)
+	}
+}
+
+func TestSummarizeUploadTimingIncludesFailedUploaderCalls(t *testing.T) {
+	t.Parallel()
+
+	summary := summarizeUploadTiming([]time.Duration{time.Second, 3 * time.Second, 8 * time.Second}, 1, 2)
+	if summary.Attempts != 3 || summary.Succeeded != 1 || summary.Failed != 2 {
+		t.Fatalf("timing counts = %#v", summary)
+	}
+	if summary.MeanAttemptDuration != 4*time.Second {
+		t.Fatalf("mean attempt duration = %v", summary.MeanAttemptDuration)
 	}
 }
 
@@ -586,6 +606,12 @@ func TestUploadImagesSeparatesHDBMenuGalleryWithoutDuplicates(t *testing.T) {
 	}
 	if !logger.contains("host=hdb tracker=HDB") {
 		t.Fatal("expected HDB tracker identity in image-host logs")
+	}
+	if !logger.contains("batches=2 images=3 wall_duration=") {
+		t.Fatalf("expected batch wall timing and counts, got %#v", logger.messages)
+	}
+	if logger.contains("mean_attempt_duration") {
+		t.Fatalf("batch logs must not claim per-image timing: %#v", logger.messages)
 	}
 }
 

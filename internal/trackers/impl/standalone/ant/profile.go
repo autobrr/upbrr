@@ -20,6 +20,7 @@ func Profile() standalone.Profile {
 		Name:                 "ANT",
 		BaseURL:              "https://anthelion.me",
 		DescriptionGroup:     "ant",
+		UploadContentMode:    trackers.UploadContentModeScreenshots,
 		PrepareDescription:   prepareDescription,
 		PrepareUpload:        prepareUpload,
 		NewDuplicateAdapter:  newDuplicateAdapter,

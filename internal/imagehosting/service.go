@@ -355,14 +355,32 @@ func (s *Service) Upload(
 	s.logger.Tracef("image hosting: prepared unique images count=%d host=%s tracker=%s", len(unique), normalizedHost, logTracker)
 
 	if batch, ok := uploader.(batchUploader); ok {
+		batchCount := 1
 		if normalizedHost == "hdb" {
 			normalCount, menuCount := imagePurposeCounts(unique)
+			batchCount = 0
+			if normalCount > 0 {
+				batchCount++
+			}
+			if menuCount > 0 {
+				batchCount++
+			}
 			s.logger.Infof("image hosting: HDB gallery upload plan host=%s tracker=%s normal=%d menu=%d", normalizedHost, logTracker, normalCount, menuCount)
 		}
 		s.logger.Debugf("image hosting: starting batch upload host=%s tracker=%s", normalizedHost, logTracker)
+		batchStart := time.Now()
 		uploadedResults, err := uploadBatch(ctx, batch, meta, normalizedHost, unique)
+		batchWallDuration := time.Since(batchStart)
 		if err != nil {
-			s.logger.Errorf("image hosting: batch upload failed host=%s tracker=%s err=%s", normalizedHost, logTracker, redaction.RedactValue(err.Error(), nil))
+			s.logger.Errorf(
+				"image hosting: batch upload failed host=%s tracker=%s batches=%d images=%d wall_duration=%v err=%s",
+				normalizedHost,
+				logTracker,
+				batchCount,
+				len(unique),
+				batchWallDuration,
+				redaction.RedactValue(err.Error(), nil),
+			)
 			emitUploadProgress(
 				ctx,
 				progressTarget,
@@ -457,7 +475,14 @@ func (s *Service) Upload(
 				)
 			}
 		}
-		s.logger.Infof("image hosting: completed batch upload count=%d host=%s tracker=%s", len(results), normalizedHost, logTracker)
+		s.logger.Infof(
+			"image hosting: completed batch upload host=%s tracker=%s batches=%d images=%d wall_duration=%v",
+			normalizedHost,
+			logTracker,
+			batchCount,
+			len(results),
+			batchWallDuration,
+		)
 		emitUploadProgress(
 			ctx,
 			progressTarget,
@@ -479,14 +504,15 @@ func (s *Service) Upload(
 	uploadStart := time.Now()
 
 	var (
-		wg         sync.WaitGroup
-		mu         sync.Mutex
-		progressMu sync.Mutex
-		results    = make([]indexedUploadResult, 0, len(unique))
-		failures   = make([]string, 0)
-		completed  = progressTarget.Reused
-		succeeded  int
-		failed     int
+		wg               sync.WaitGroup
+		mu               sync.Mutex
+		progressMu       sync.Mutex
+		results          = make([]indexedUploadResult, 0, len(unique))
+		failures         = make([]string, 0)
+		completed        = progressTarget.Reused
+		succeeded        int
+		failed           int
+		attemptDurations = make([]time.Duration, 0, len(unique))
 	)
 	sem := make(chan struct{}, limit)
 	recordProgress := func(success bool) {
@@ -545,6 +571,9 @@ dispatchLoop:
 			uploadStartTime := time.Now()
 			uploaded, err := uploader.Upload(ctx, candidate.Path)
 			uploadDuration := time.Since(uploadStartTime)
+			mu.Lock()
+			attemptDurations = append(attemptDurations, uploadDuration)
+			mu.Unlock()
 
 			if normalizedHost == "imgbox" {
 				if err != nil {
@@ -609,16 +638,17 @@ dispatchLoop:
 
 	totalDuration := time.Since(uploadStart)
 	orderedResults := orderedUploadResults(results)
-	if len(orderedResults) > 0 {
-		s.logger.Infof(
-			"image hosting: completed uploads count=%d host=%s tracker=%s duration=%v avg=%v",
-			len(orderedResults),
-			normalizedHost,
-			logTracker,
-			totalDuration,
-			totalDuration/time.Duration(len(orderedResults)),
-		)
-	}
+	timing := summarizeUploadTiming(attemptDurations, len(orderedResults), len(failures))
+	s.logger.Infof(
+		"image hosting: completed uploads host=%s tracker=%s wall_duration=%v mean_attempt_duration=%v attempts=%d succeeded=%d unsuccessful=%d",
+		normalizedHost,
+		logTracker,
+		totalDuration,
+		timing.MeanAttemptDuration,
+		timing.Attempts,
+		timing.Succeeded,
+		timing.Failed,
+	)
 
 	if s.repo != nil && len(orderedResults) > 0 {
 		s.logger.Tracef("image hosting: persisting upload records count=%d host=%s tracker=%s", len(orderedResults), normalizedHost, logTracker)
@@ -689,6 +719,32 @@ dispatchLoop:
 		"Host upload complete.",
 	)
 	return orderedResults, nil
+}
+
+type uploadTimingSummary struct {
+	Attempts            int
+	Succeeded           int
+	Failed              int
+	MeanAttemptDuration time.Duration
+}
+
+// summarizeUploadTiming reports actual completed uploader-call timing rather
+// than deriving request latency from concurrent wall time.
+func summarizeUploadTiming(durations []time.Duration, succeeded int, failed int) uploadTimingSummary {
+	summary := uploadTimingSummary{
+		Attempts:  len(durations),
+		Succeeded: max(0, succeeded),
+		Failed:    max(0, failed),
+	}
+	if len(durations) == 0 {
+		return summary
+	}
+	var total time.Duration
+	for _, duration := range durations {
+		total += duration
+	}
+	summary.MeanAttemptDuration = total / time.Duration(len(durations))
+	return summary
 }
 
 func emitUploadProgress(

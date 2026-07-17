@@ -123,6 +123,95 @@ func TestPrepareReportsCanonicalOwnerStagesAndReuse(t *testing.T) {
 	}
 }
 
+func TestPrepareHydratesPersistedClientEvidenceOnceAfterRestart(t *testing.T) {
+	t.Parallel()
+
+	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+	store := newMemoryStore()
+	initialCollector := newClientEvidenceTestCollector(clientEvidenceTestSnapshot("initial-hash"))
+	initial := newTestModule(t, store, initialCollector)
+	prepared, err := initial.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
+	if err != nil {
+		t.Fatalf("initial prepare: %v", err)
+	}
+
+	restartedCollector := newClientEvidenceTestCollector(clientEvidenceTestSnapshot("hydrated-hash"))
+	restarted := newTestModule(t, store, restartedCollector)
+	reused, err := restarted.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
+	if err != nil {
+		t.Fatalf("restart reuse: %v", err)
+	}
+	if reused.Release.Generation != prepared.Release.Generation {
+		t.Fatalf("restart generation = %d, want %d", reused.Release.Generation, prepared.Release.Generation)
+	}
+	if restartedCollector.collectCount() != 0 || restartedCollector.hydrateCount() != 1 {
+		t.Fatalf(
+			"restart collector calls collect=%d hydrate=%d, want 0/1",
+			restartedCollector.collectCount(),
+			restartedCollector.hydrateCount(),
+		)
+	}
+	if _, err := restarted.Prepare(context.Background(), api.PrepareInput{SourcePath: path}); err != nil {
+		t.Fatalf("second restart reuse: %v", err)
+	}
+	if restartedCollector.hydrateCount() != 1 {
+		t.Fatalf("private evidence hydrated %d times, want 1", restartedCollector.hydrateCount())
+	}
+
+	ref := api.ReleaseRef{SourcePath: path, Generation: reused.Release.Generation}
+	upload, err := restarted.ResolveUploadSubject(context.Background(), api.UploadReviewInput{Release: ref})
+	if err != nil {
+		t.Fatalf("resolve hydrated upload subject: %v", err)
+	}
+	if upload.InfoHash != "hydrated-hash" || upload.TrackerIDs["ant"] != "hydrated-id" ||
+		len(upload.MatchedTrackers) != 1 || upload.MatchedTrackers[0] != "ANT" {
+		t.Fatalf("hydrated upload evidence = %#v", upload)
+	}
+	upload.TrackerIDs["ant"] = "mutated"
+	upload.MatchedTrackers[0] = "MUTATED"
+	duplicate, err := restarted.ResolveDuplicateSubject(context.Background(), api.DuplicateCheckInput{Release: ref})
+	if err != nil {
+		t.Fatalf("resolve detached duplicate subject: %v", err)
+	}
+	if duplicate.TrackerIDs["ant"] != "hydrated-id" || duplicate.MatchedTrackers[0] != "ANT" {
+		t.Fatalf("private snapshot was aliased: %#v", duplicate)
+	}
+}
+
+func TestPrepareForceRecheckBuildsOneFreshGeneration(t *testing.T) {
+	t.Parallel()
+
+	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
+	collector := newClientEvidenceTestCollector(clientEvidenceTestSnapshot("client-hash"))
+	module := newTestModule(t, newMemoryStore(), collector)
+	first, err := module.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
+	if err != nil {
+		t.Fatalf("initial prepare: %v", err)
+	}
+	force := true
+	second, err := module.Prepare(context.Background(), api.PrepareInput{
+		SourcePath: path,
+		Controls:   api.PreparationControls{ForceRecheck: &force},
+	})
+	if err != nil {
+		t.Fatalf("forced prepare: %v", err)
+	}
+	if second.Release.Generation != first.Release.Generation+1 {
+		t.Fatalf("forced generation = %d, want %d", second.Release.Generation, first.Release.Generation+1)
+	}
+	if collector.collectCount() != 2 || collector.hydrateCount() != 0 {
+		t.Fatalf("forced preparation calls collect=%d hydrate=%d, want 2/0", collector.collectCount(), collector.hydrateCount())
+	}
+	ref := api.ReleaseRef{SourcePath: path, Generation: second.Release.Generation}
+	upload, err := module.ResolveUploadSubject(context.Background(), api.UploadReviewInput{Release: ref})
+	if err != nil {
+		t.Fatalf("resolve forced upload subject: %v", err)
+	}
+	if upload.InfoHash != "client-hash" {
+		t.Fatalf("forced client evidence = %#v", upload)
+	}
+}
+
 func hasPreparationProgress(
 	updates []api.PreparationProgressUpdate,
 	phase api.PreparationProgressPhase,
@@ -519,6 +608,56 @@ func (c *recordingCollector) callCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.calls)
+}
+
+type clientEvidenceTestCollector struct {
+	base     recordingCollector
+	mu       sync.Mutex
+	hydrates int
+	snapshot preparationstate.ClientEvidenceSnapshot
+}
+
+func newClientEvidenceTestCollector(snapshot preparationstate.ClientEvidenceSnapshot) *clientEvidenceTestCollector {
+	return &clientEvidenceTestCollector{snapshot: snapshot}
+}
+
+func (c *clientEvidenceTestCollector) Collect(ctx context.Context, request preparationstate.Request) (CollectedFacts, error) {
+	facts, err := c.base.Collect(ctx, request)
+	if err != nil {
+		return CollectedFacts{}, err
+	}
+	facts.Resources.ClientEvidence = preparationstate.CloneClientEvidenceSnapshot(c.snapshot)
+	return facts, nil
+}
+
+func (c *clientEvidenceTestCollector) HydrateClientEvidence(
+	context.Context,
+	preparationstate.Request,
+) (preparationstate.ClientEvidenceSnapshot, error) {
+	c.mu.Lock()
+	c.hydrates++
+	c.mu.Unlock()
+	return preparationstate.CloneClientEvidenceSnapshot(c.snapshot), nil
+}
+
+func (c *clientEvidenceTestCollector) collectCount() int { return c.base.callCount() }
+
+func (c *clientEvidenceTestCollector) hydrateCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.hydrates
+}
+
+func clientEvidenceTestSnapshot(infoHash string) preparationstate.ClientEvidenceSnapshot {
+	return preparationstate.ClientEvidenceSnapshot{
+		Disposition: preparationstate.ClientEvidenceDispositionSearched,
+		Result: api.ClientSearchResult{
+			InfoHash:        infoHash,
+			TorrentPath:     "Example.Release.2026.torrent",
+			TrackerIDs:      map[string]string{"ant": "hydrated-id"},
+			MatchedTrackers: []string{"ANT"},
+		},
+	}
 }
 
 type blockingCollector struct {

@@ -58,7 +58,10 @@ func (c *Core) FetchAcceptedPreparationPreview(ctx context.Context, input api.De
 	if err != nil {
 		return api.PreparationPreview{}, classifyOperationError(api.OperationKindDescription, err)
 	}
-	result := api.PreparationPreview{SourcePath: preview.SourcePath}
+	result := api.PreparationPreview{
+		SourcePath:      preview.SourcePath,
+		ContentFailures: append([]api.TrackerContentFailure(nil), preview.ContentFailures...),
+	}
 	for _, group := range preview.Groups {
 		result.Descriptions = append(result.Descriptions, api.PreparationDescription{
 			GroupKey:           group.GroupKey,

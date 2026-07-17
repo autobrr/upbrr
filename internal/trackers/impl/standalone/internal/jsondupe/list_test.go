@@ -33,10 +33,10 @@ func TestSearchProjectsAuthenticatedJSONList(t *testing.T) {
 			"imdb": {"1234567"},
 		},
 		Headers:        http.Header{"Authorization": {"secret"}},
-		IDField:       "id",
-		NameField:     "name",
-		SizeField:     "size",
-		Link:          func(id string) string { return server.URL + "/" + id },
+		IDField:        "id",
+		NameField:      "name",
+		SizeField:      "size",
+		Link:           func(id string) string { return server.URL + "/" + id },
 		FailureMessage: "search failed",
 	})
 	select {
@@ -64,17 +64,17 @@ func TestSearchClassifiesStatusAndParseFailures(t *testing.T) {
 		want string
 	}{
 		{
-name: "status",
- code: http.StatusUnauthorized,
- body: `{}`,
- want: dupe.FailureResponseStatus,
-},
+			name: "status",
+			code: http.StatusUnauthorized,
+			body: `{}`,
+			want: dupe.FailureResponseStatus,
+		},
 		{
-name: "parse",
- code: http.StatusOK,
- body: `{}`,
- want: dupe.FailureResponseParse,
-},
+			name: "parse",
+			code: http.StatusOK,
+			body: `{}`,
+			want: dupe.FailureResponseParse,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

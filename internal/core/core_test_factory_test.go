@@ -7,7 +7,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/clientdiscovery"
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -51,9 +50,8 @@ func newTestCore(opts testCoreOptions) *Core {
 		core.description.resolveOverrideRequest,
 		core.description.resolveSubjectGroups,
 		core.ImportAcceptedMenuImages,
-		clientdiscovery.New(opts.services.Clients, logger),
 	)
-	core.dupe = newDupeModule(opts.cfg, logger, opts.services, opts.registry, core.preparedFacts, clientdiscovery.New(opts.services.Clients, logger))
+	core.dupe = newDupeModule(opts.cfg, logger, opts.services, opts.registry, core.preparedFacts)
 	return core
 }
 

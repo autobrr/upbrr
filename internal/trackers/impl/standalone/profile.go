@@ -34,6 +34,7 @@ type Profile struct {
 	BaseURL                 string
 	DescriptionGroup        string
 	LocalizedMetadataLocale string
+	UploadContentMode       trackers.UploadContentMode
 	PrepareDescription      DescriptionPreparer
 	PrepareUpload           trackers.UploadPreparer
 	NewDuplicateAdapter     func(dupe.Dependencies) dupe.Adapter

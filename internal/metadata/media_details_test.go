@@ -23,6 +23,9 @@ type aitherRuleDefinition struct{}
 
 func (aitherRuleDefinition) Name() string           { return "AITHER" }
 func (aitherRuleDefinition) DefaultBaseURL() string { return "https://aither.cc" }
+func (aitherRuleDefinition) UploadContentMode() trackers.UploadContentMode {
+	return trackers.UploadContentModeDescription
+}
 func (aitherRuleDefinition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
 	return preparePolicyDefinition(ctx, input)
 }

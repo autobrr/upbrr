@@ -15,10 +15,10 @@ import (
 // Profile returns BTN identity, preparation, dupe, auth, bans, and policies.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		Name:               "BTN",
-		BaseURL:            btnDefaultBaseURL,
-		DescriptionGroup:   "btn",
-		PrepareDescription: prepareDescription,
+		Name:              "BTN",
+		BaseURL:           btnDefaultBaseURL,
+		DescriptionGroup:  "btn",
+		UploadContentMode: trackers.UploadContentModeNone,
 		PrepareUpload: func(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 			return prepareUploadAt(ctx, req, btnDefaultBaseURL)
 		},

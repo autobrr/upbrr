@@ -7,7 +7,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/clientdiscovery"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	dupechecking "github.com/autobrr/upbrr/internal/trackers/dupe"
@@ -36,20 +35,6 @@ func (s *duplicateFactsStub) ResolveDuplicateSubject(context.Context, api.Duplic
 	return s.subject, nil
 }
 
-type duplicateClientStub struct {
-	calls  int
-	result api.ClientSearchResult
-}
-
-func (*duplicateClientStub) Inject(context.Context, api.ClientSubject, api.TorrentResult) error {
-	return nil
-}
-
-func (s *duplicateClientStub) SearchPathedTorrents(context.Context, api.ClientSubject) (api.ClientSearchResult, error) {
-	s.calls++
-	return s.result, nil
-}
-
 type duplicateAssessmentStub struct {
 	calls   int
 	subject api.DuplicateSubject
@@ -76,13 +61,9 @@ func (s *duplicateAssessmentStub) CheckWithAssessment(
 	return api.DupeCheckSummary{Results: results}, dupechecking.EmptyAssessment(), nil
 }
 
-func TestAcceptedDuplicateCheckRefreshesCurrentClientEvidenceOnce(t *testing.T) {
+func TestAcceptedDuplicateCheckConsumesPreparedClientEvidenceAndOverlaysExplicitIDs(t *testing.T) {
 	t.Parallel()
 
-	client := &duplicateClientStub{result: api.ClientSearchResult{
-		TrackerIDs:      map[string]string{"btn": "client-id", "aither": "aither-id"},
-		MatchedTrackers: []string{"btn", "AITHER", "BTN"},
-	}}
 	checker := &duplicateAssessmentStub{}
 	module := newDupeModule(
 		config.Config{},
@@ -90,10 +71,11 @@ func TestAcceptedDuplicateCheckRefreshesCurrentClientEvidenceOnce(t *testing.T) 
 		api.ServiceSet{Dupes: checker},
 		duplicateTestRegistry(t),
 		&duplicateFactsStub{subject: api.DuplicateSubject{
-			SourcePath: "Example.Release.2026.mkv",
-			FileList:   []string{"Example.Release.2026.mkv"},
+			SourcePath:      "Example.Release.2026.mkv",
+			FileList:        []string{"Example.Release.2026.mkv"},
+			TrackerIDs:      map[string]string{"btn": "client-id", "aither": "aither-id"},
+			MatchedTrackers: []string{"AITHER", "BTN"},
 		}},
-		clientdiscovery.New(client, api.NopLogger{}),
 	)
 	_, err := module.checkAccepted(context.Background(), api.DuplicateCheckInput{
 		Release:    api.ReleaseRef{SourcePath: "Example.Release.2026.mkv", Generation: 1},
@@ -103,8 +85,8 @@ func TestAcceptedDuplicateCheckRefreshesCurrentClientEvidenceOnce(t *testing.T) 
 	if err != nil {
 		t.Fatalf("check accepted: %v", err)
 	}
-	if client.calls != 1 || checker.calls != 1 {
-		t.Fatalf("client/checker calls = %d/%d", client.calls, checker.calls)
+	if checker.calls != 1 {
+		t.Fatalf("checker calls = %d", checker.calls)
 	}
 	if checker.subject.TrackerIDs["btn"] != "explicit-id" || checker.subject.TrackerIDs["aither"] != "aither-id" {
 		t.Fatalf("tracker IDs = %#v", checker.subject.TrackerIDs)
@@ -114,10 +96,9 @@ func TestAcceptedDuplicateCheckRefreshesCurrentClientEvidenceOnce(t *testing.T) 
 	}
 }
 
-func TestAcceptedDuplicateCheckContinuesRemoteAssessmentWithoutLocalMatch(t *testing.T) {
+func TestAcceptedDuplicateCheckContinuesRemoteAssessmentWithoutPreparedLocalMatch(t *testing.T) {
 	t.Parallel()
 
-	client := &duplicateClientStub{}
 	checker := &duplicateAssessmentStub{}
 	module := newDupeModule(
 		config.Config{},
@@ -125,7 +106,6 @@ func TestAcceptedDuplicateCheckContinuesRemoteAssessmentWithoutLocalMatch(t *tes
 		api.ServiceSet{Dupes: checker},
 		duplicateTestRegistry(t),
 		&duplicateFactsStub{subject: api.DuplicateSubject{SourcePath: "Example.Release.2026.mkv"}},
-		clientdiscovery.New(client, api.NopLogger{}),
 	)
 	_, err := module.checkAccepted(context.Background(), api.DuplicateCheckInput{
 		Release:  api.ReleaseRef{SourcePath: "Example.Release.2026.mkv", Generation: 1},
@@ -134,7 +114,7 @@ func TestAcceptedDuplicateCheckContinuesRemoteAssessmentWithoutLocalMatch(t *tes
 	if err != nil {
 		t.Fatalf("check accepted: %v", err)
 	}
-	if client.calls != 1 || checker.calls != 1 || checker.options.SkipRemote {
-		t.Fatalf("client/checker/skip = %d/%d/%t", client.calls, checker.calls, checker.options.SkipRemote)
+	if checker.calls != 1 || checker.options.SkipRemote {
+		t.Fatalf("checker/skip = %d/%t", checker.calls, checker.options.SkipRemote)
 	}
 }

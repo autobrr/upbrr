@@ -26,6 +26,10 @@ type barrierPlanDefinition struct {
 
 func (d barrierPlanDefinition) Name() string { return d.name }
 
+func (barrierPlanDefinition) UploadContentMode() UploadContentMode {
+	return UploadContentModeDescription
+}
+
 func (barrierPlanDefinition) DefaultBaseURL() string { return "https://tracker.example.invalid" }
 
 func (d barrierPlanDefinition) Prepare(ctx context.Context, _ PreparationInput) (TrackerPlan, *PreparationFailure) {
@@ -104,6 +108,10 @@ type readyReleasePlanDefinition struct {
 
 func (d readyReleasePlanDefinition) Name() string { return d.name }
 
+func (readyReleasePlanDefinition) UploadContentMode() UploadContentMode {
+	return UploadContentModeDescription
+}
+
 func (readyReleasePlanDefinition) DefaultBaseURL() string { return "https://tracker.example.invalid" }
 
 func (d readyReleasePlanDefinition) Prepare(context.Context, PreparationInput) (TrackerPlan, *PreparationFailure) {
@@ -126,6 +134,10 @@ type canceledPreparationDefinition struct {
 }
 
 func (d canceledPreparationDefinition) Name() string { return d.name }
+
+func (canceledPreparationDefinition) UploadContentMode() UploadContentMode {
+	return UploadContentModeDescription
+}
 
 func (canceledPreparationDefinition) DefaultBaseURL() string {
 	return "https://tracker.example.invalid"
@@ -156,10 +168,10 @@ func TestUploadCancellationBeforeBarrierSubmitsNoneAndReleasesReadyPlans(t *test
 		t.Fatalf("register ready: %v", err)
 	}
 	if err := registry.Register(canceledPreparationDefinition{
-name: "BLU",
- started: started,
- wait: ready,
-}); err != nil {
+		name:    "BLU",
+		started: started,
+		wait:    ready,
+	}); err != nil {
 		t.Fatalf("register blocking: %v", err)
 	}
 	svc := NewServiceWithRegistry(config.Config{Trackers: config.TrackersConfig{DefaultTrackers: config.CSVList{"AITHER", "BLU"}}}, nil, nil, registry)

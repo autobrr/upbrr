@@ -15,7 +15,12 @@ import type {
   ScreenshotPlan,
 } from "../types";
 import { emptyExternalIdentity } from "../utils/canonicalIdentity";
-import { ReleaseSessionProvider, useReleaseSession } from ".";
+import {
+  ReleaseSessionProvider,
+  routeAccess,
+  trackerWorkflowRequirements,
+  useReleaseSession,
+} from ".";
 import type { PreparationCommand, ReleaseSessionPorts } from "./ports";
 
 const preview = (sourcePath: string, generation: number): MetadataPreview => ({
@@ -220,6 +225,7 @@ const portsFor = (overrides: PortOverrides = {}): ReleaseSessionPorts => {
         (async (release): Promise<DescriptionBuilderPreview> => ({
           SourcePath: release.SourcePath,
           Groups: [],
+          ContentFailures: [],
         })),
       render: async (raw) => raw,
       save: async (_release, groupKey, raw, trackers) => ({
@@ -283,6 +289,100 @@ const selectAndPrepare = async (
   act(() => result.current.upload.chooseTrackers(["AITHER"]));
   await act(() => result.current.input.prepare());
 };
+
+describe("tracker workflow capabilities", () => {
+  const catalog = {
+    entries: [
+      {
+        name: "BTN",
+        family: "standalone",
+        baseURL: "https://btn.example.invalid",
+        uploadContentMode: "none" as const,
+        fields: [],
+        configured: true,
+      },
+      {
+        name: "ANT",
+        family: "standalone",
+        baseURL: "https://ant.example.invalid",
+        uploadContentMode: "screenshots" as const,
+        fields: [],
+        configured: true,
+      },
+      {
+        name: "AITHER",
+        family: "unit3d",
+        baseURL: "https://aither.example.invalid",
+        uploadContentMode: "description" as const,
+        fields: [],
+        configured: true,
+      },
+    ],
+    unsupported: [],
+  };
+
+  it("derives none, screenshot, mixed, and conservative unknown requirements", () => {
+    expect(trackerWorkflowRequirements(["BTN"], catalog)).toEqual({
+      needsImages: false,
+      needsDescriptions: false,
+    });
+    expect(trackerWorkflowRequirements(["ANT"], catalog)).toEqual({
+      needsImages: true,
+      needsDescriptions: false,
+    });
+    expect(trackerWorkflowRequirements(["BTN", "AITHER"], catalog)).toEqual({
+      needsImages: true,
+      needsDescriptions: true,
+    });
+    expect(trackerWorkflowRequirements(["UNKNOWN"], catalog)).toEqual({
+      needsImages: true,
+      needsDescriptions: true,
+    });
+  });
+
+  it("opens only applicable pages and blocks retained content failures", () => {
+    const none = routeAccess(
+      true,
+      false,
+      true,
+      trackerWorkflowRequirements(["BTN"], catalog),
+      true,
+      false,
+      false,
+    );
+    expect(none.screenshots.available).toBe(false);
+    expect(none.descriptions.available).toBe(false);
+    expect(none.upload.available).toBe(true);
+
+    const screenshots = routeAccess(
+      true,
+      false,
+      true,
+      trackerWorkflowRequirements(["ANT"], catalog),
+      true,
+      true,
+      false,
+    );
+    expect(screenshots.screenshots.available).toBe(true);
+    expect(screenshots.descriptions.available).toBe(false);
+    expect(screenshots.upload.available).toBe(false);
+    expect(screenshots.upload.reason).toContain("screenshot preparation");
+
+    const description = routeAccess(
+      true,
+      false,
+      true,
+      trackerWorkflowRequirements(["AITHER"], catalog),
+      false,
+      false,
+      true,
+    );
+    expect(description.screenshots.available).toBe(true);
+    expect(description.descriptions.available).toBe(true);
+    expect(description.upload.available).toBe(false);
+    expect(description.upload.reason).toContain("description preparation");
+  });
+});
 
 describe("useReleaseSession", () => {
   it("keeps manual path typing as an unselected draft", () => {
@@ -572,6 +672,7 @@ describe("useReleaseSession", () => {
     const descriptionsLoad = vi.fn(async (release) => ({
       SourcePath: release.SourcePath,
       Groups: [],
+      ContentFailures: [],
     }));
     const jobTransport: JobRegistryTransport = {
       ...defaultJobTransport(),
@@ -728,6 +829,7 @@ describe("useReleaseSession", () => {
     }));
     const descriptionPreview: DescriptionBuilderPreview = {
       SourcePath: "C:\\media\\Example",
+      ContentFailures: [],
       Groups: [
         {
           GroupKey: "unit3d",

@@ -93,6 +93,9 @@ func (r *Registry) Register(def Definition) error {
 		if provider, ok := def.(DescriptionGroupProvider); ok {
 			descriptor.DescriptionGroup = strings.ToLower(strings.TrimSpace(provider.DescriptionGroup()))
 		}
+		if provider, ok := def.(UploadContentModeProvider); ok {
+			descriptor.UploadContentMode = provider.UploadContentMode()
+		}
 		descriptor.DataFactory, _ = def.(DataLookupFactory)
 		descriptor.ClaimFactory, _ = def.(ClaimCheckerFactory)
 		if provider, ok := def.(ClaimPolicyProvider); ok {
@@ -233,6 +236,12 @@ func (r *Registry) LookupImageHostPolicy(tracker string) (ImageHostPolicy, bool)
 	policy.AllowedHosts = append([]string(nil), policy.AllowedHosts...)
 	policy.OwnedHosts = append([]string(nil), policy.OwnedHosts...)
 	return policy, true
+}
+
+// LookupUploadContentMode returns the tracker-owned shared content workflow.
+func (r *Registry) LookupUploadContentMode(tracker string) (UploadContentMode, bool) {
+	descriptor, ok := r.LookupDescriptor(tracker)
+	return descriptor.UploadContentMode, ok && descriptor.UploadContentMode.Valid()
 }
 
 // OwnerForImageHost returns the tracker that owns a private image host.
@@ -422,6 +431,14 @@ func (r *Registry) RegisterDescriptor(descriptor Descriptor) error {
 	}
 	if descriptor.Family != FamilyUnit3D && descriptor.Family != FamilyAZFamily && descriptor.Family != FamilyStandalone {
 		return fmt.Errorf("trackers: definition %s has invalid family %q", name, descriptor.Family)
+	}
+	if !descriptor.UploadContentMode.Valid() {
+		if provider, ok := def.(UploadContentModeProvider); ok {
+			descriptor.UploadContentMode = provider.UploadContentMode()
+		}
+	}
+	if !descriptor.UploadContentMode.Valid() {
+		return fmt.Errorf("trackers: definition %s has invalid upload content mode %q", name, descriptor.UploadContentMode)
 	}
 	if descriptor.TorrentIdentity != nil {
 		policy := *descriptor.TorrentIdentity

@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/autobrr/upbrr/internal/clientdiscovery"
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/externalidentity"
@@ -245,7 +244,6 @@ func prepareDryRunCore(t *testing.T) (*Core, api.ReleaseRef, *dryRunTrackerServi
 		torrents:      dryRunTorrentService{},
 		clients:       clientService,
 		dupes:         dupeService,
-		discovery:     clientdiscovery.New(clientService, api.NopLogger{}),
 		registry:      trackerimpl.MustNewRegistry(),
 		preparedFacts: preparedFacts,
 		resolveSubjectGroups: func(context.Context, api.UploadSubject, api.UploadReviewInput) ([]api.DescriptionBuilderGroup, error) {
@@ -395,8 +393,8 @@ func TestReviewAcceptedUploadRefreshesClientAndDuplicateAuthorityOnce(t *testing
 	if len(reviewed.Outcome.Eligibility.EligibleTrackers) != 1 || reviewed.Outcome.Eligibility.EligibleTrackers[0] != "BLU" {
 		t.Fatalf("review eligibility = %#v", reviewed.Outcome.Eligibility)
 	}
-	if clientService.searches != 1 {
-		t.Fatalf("review client searches = %d, want 1", clientService.searches)
+	if clientService.searches != 0 {
+		t.Fatalf("review client searches = %d, want 0", clientService.searches)
 	}
 	dupeService, ok := module.dupes.(*dryRunDupeService)
 	if !ok {
@@ -439,7 +437,7 @@ func TestRunAcceptedTrackerDryRunRequiresExactGenerationAndTrackers(t *testing.T
 	release.Generation--
 
 	tests := []struct {
-		name      string
+		name     string
 		evidence api.AcceptedDuplicateEvidence
 	}{
 		{

@@ -29,6 +29,11 @@ func (d *Definition) Name() string {
 // TrackerFamily identifies the definition as AZ-family-backed.
 func (d *Definition) TrackerFamily() trackers.Family { return trackers.FamilyAZFamily }
 
+// UploadContentMode declares the aggregate description workflow shared by AZ-family sites.
+func (d *Definition) UploadContentMode() trackers.UploadContentMode {
+	return trackers.UploadContentModeDescription
+}
+
 // DefaultBaseURL returns the profile-owned tracker endpoint.
 func (d *Definition) DefaultBaseURL() string { return d.site.BaseURL }
 

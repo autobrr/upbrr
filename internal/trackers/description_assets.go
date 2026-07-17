@@ -231,11 +231,7 @@ func resolveDescriptionAssets(
 	description, overridden, final := resolveTrackerDescription(ctx, tracker, meta, repo, logger, preloaded, registry)
 	slots, screenshots, err := resolveDescriptionScreenshots(ctx, tracker, meta, repo, logger, preloaded, registry)
 	if err != nil {
-		if logger != nil {
-			logger.Warnf("trackers: description assets screenshots degraded for %s: %v", strings.TrimSpace(tracker), err)
-		}
-		slots = nil
-		screenshots = nil
+		return DescriptionAssets{}, fmt.Errorf("trackers: resolve required description screenshots: %w", err)
 	}
 	if logger != nil {
 		logger.Tracef("trackers: description assets resolved desc_len=%d screenshots=%d", len(strings.TrimSpace(description)), len(screenshots))
@@ -698,17 +694,11 @@ func resolveDescriptionScreenshots(
 	}
 	slots, err := screenshotSlotsFromSource(ctx, tracker, meta, repo, logger, preloaded, registry)
 	if err != nil {
-		if logger != nil {
-			logger.Debugf("trackers: description assets failed to load screenshot slots: %v", err)
-		}
-		slots = nil
+		return nil, nil, fmt.Errorf("trackers: load screenshot slots: %w", err)
 	}
 	images, _, _, err := selectScreenshotsFromSlots(tracker, slots, imageHostPolicy{})
 	if err != nil {
-		if logger != nil {
-			logger.Warnf("trackers: description assets slot screenshot resolution failed tracker=%s: %v", strings.TrimSpace(tracker), err)
-		}
-		images = nil
+		return nil, nil, fmt.Errorf("trackers: resolve screenshot slots for %s: %w", strings.TrimSpace(tracker), err)
 	}
 	if len(images) > 0 {
 		if logger != nil {
@@ -730,33 +720,39 @@ func preloadDescriptionAssetData(
 	repo UploadPersistence,
 	registry *Registry,
 ) (*preloadedDescriptionAssetData, error) {
+	preloaded, err := preloadUploadAssetData(ctx, meta, repo, registry)
+	if err != nil {
+		return nil, err
+	}
+	if err := preloadDescriptionFields(ctx, meta, repo, preloaded); err != nil {
+		return nil, err
+	}
+	return preloaded, nil
+}
+
+func preloadScreenshotAssetData(
+	ctx context.Context,
+	meta api.UploadSubject,
+	repo UploadPersistence,
+	registry *Registry,
+) (*preloadedDescriptionAssetData, error) {
+	return preloadUploadAssetData(ctx, meta, repo, registry)
+}
+
+func preloadUploadAssetData(
+	ctx context.Context,
+	meta api.UploadSubject,
+	repo UploadPersistence,
+	registry *Registry,
+) (*preloadedDescriptionAssetData, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("trackers: preload description assets canceled: %w", err)
+		return nil, fmt.Errorf("trackers: preload upload assets canceled: %w", err)
 	}
 	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
 		return nil, nil
 	}
 
-	preloaded := &preloadedDescriptionAssetData{
-		descriptionOverrides: make(map[string]api.DescriptionOverride),
-		registry:             registry,
-	}
-	preloaded.groupDescriptions, preloaded.trackerDescriptions, preloaded.ambiguousTrackers = preparedDescriptionGroupLookups(meta.DescriptionGroups, nil)
-
-	overrides, err := repo.ListDescriptionOverridesByPath(ctx, meta.SourcePath)
-	switch {
-	case err == nil:
-		for _, override := range overrides {
-			normalizedGroupKey := normalizeDescriptionOverrideGroupKey(override.GroupKey)
-			if normalizedGroupKey == "" {
-				continue
-			}
-			preloaded.descriptionOverrides[normalizedGroupKey] = override
-		}
-	case errors.Is(err, internalerrors.ErrNotFound):
-	default:
-		return nil, fmt.Errorf("trackers: %w", err)
-	}
+	preloaded := &preloadedDescriptionAssetData{registry: registry}
 
 	trackerRecords, err := repo.ListTrackerMetadataByPath(ctx, meta.SourcePath)
 	if err != nil {
@@ -784,6 +780,38 @@ func preloadDescriptionAssetData(
 	preloaded.screenshotSlotsLoaded = true
 
 	return preloaded, nil
+}
+
+func preloadDescriptionFields(
+	ctx context.Context,
+	meta api.UploadSubject,
+	repo UploadPersistence,
+	preloaded *preloadedDescriptionAssetData,
+) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("trackers: preload description fields canceled: %w", err)
+	}
+	if preloaded == nil || repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
+		return nil
+	}
+
+	preloaded.descriptionOverrides = make(map[string]api.DescriptionOverride)
+	preloaded.groupDescriptions, preloaded.trackerDescriptions, preloaded.ambiguousTrackers = preparedDescriptionGroupLookups(meta.DescriptionGroups, nil)
+	overrides, err := repo.ListDescriptionOverridesByPath(ctx, meta.SourcePath)
+	switch {
+	case err == nil:
+		for _, override := range overrides {
+			normalizedGroupKey := normalizeDescriptionOverrideGroupKey(override.GroupKey)
+			if normalizedGroupKey == "" {
+				continue
+			}
+			preloaded.descriptionOverrides[normalizedGroupKey] = override
+		}
+	case errors.Is(err, internalerrors.ErrNotFound):
+	default:
+		return fmt.Errorf("trackers: list description overrides: %w", err)
+	}
+	return nil
 }
 
 func descriptionOverrideFromSource(

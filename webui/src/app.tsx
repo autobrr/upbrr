@@ -21,6 +21,7 @@ import { useSettingsState } from "./hooks/useSettingsState";
 import { useTrackerIcons } from "./hooks/useTrackerIcons";
 import { JobRegistryProvider, useJobNotifications } from "./jobRegistry";
 import { ReleaseSessionProvider, useReleaseSession } from "./releaseSession";
+import { TrackerCatalogProvider } from "./trackerCatalog";
 import type { ReleaseRoute } from "./releaseSession/types";
 import type { BrowseDirectoryResponse, ConfigMap } from "./types";
 import { cn } from "./utils/cn";
@@ -700,9 +701,11 @@ function AppShell() {
 export default function App({ jobOwnerKey = "standalone" }: Readonly<{ jobOwnerKey?: string }>) {
   return (
     <JobRegistryProvider ownerKey={jobOwnerKey}>
-      <ReleaseSessionProvider>
-        <AppShell />
-      </ReleaseSessionProvider>
+      <TrackerCatalogProvider>
+        <ReleaseSessionProvider>
+          <AppShell />
+        </ReleaseSessionProvider>
+      </TrackerCatalogProvider>
     </JobRegistryProvider>
   );
 }

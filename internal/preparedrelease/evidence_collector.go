@@ -24,6 +24,10 @@ type EvidencePipeline interface {
 	CollectPreparationEvidence(context.Context, preparationstate.Request) (preparationstate.State, error)
 }
 
+type clientEvidencePipeline interface {
+	HydrateClientEvidence(context.Context, preparationstate.Request) (preparationstate.ClientEvidenceSnapshot, error)
+}
+
 // EvidenceCollector adapts the existing evidence pipeline to canonical grouped
 // facts while canonical identity/persistence ownership moves out of metadata.
 // It also supplies the resulting provider candidate to externalidentity.
@@ -77,6 +81,26 @@ func (c *EvidenceCollector) Collect(
 	c.mu.Unlock()
 
 	return mapCollectedFacts(meta), nil
+}
+
+// HydrateClientEvidence delegates the restart-only private evidence operation
+// without running the full metadata or canonical-identity pipeline.
+func (c *EvidenceCollector) HydrateClientEvidence(
+	ctx context.Context,
+	request preparationstate.Request,
+) (preparationstate.ClientEvidenceSnapshot, error) {
+	if c == nil || c.pipeline == nil {
+		return preparationstate.ClientEvidenceSnapshot{}, errors.New("prepared release: evidence collector is not initialized")
+	}
+	pipeline, ok := c.pipeline.(clientEvidencePipeline)
+	if !ok {
+		return preparationstate.ClientEvidenceSnapshot{}, errors.New("prepared release: metadata pipeline cannot hydrate client evidence")
+	}
+	snapshot, err := pipeline.HydrateClientEvidence(ctx, request)
+	if err != nil {
+		return preparationstate.ClientEvidenceSnapshot{}, fmt.Errorf("prepared release: hydrate client evidence: %w", err)
+	}
+	return preparationstate.CloneClientEvidenceSnapshot(snapshot), nil
 }
 
 func applyBlurayFactInstruction(meta *preparationstate.State, releaseID string) error {
@@ -254,6 +278,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			SceneNFOPath:          meta.SceneNFOPath,
 			DescriptionTemplate:   meta.DescriptionTemplate,
 			SelectedBDMVPlaylists: clonePlaylists(meta.SelectedBDMVPlaylists),
+			ClientEvidence:        preparationstate.CloneClientEvidenceSnapshot(meta.ClientEvidence),
 		},
 	}
 }

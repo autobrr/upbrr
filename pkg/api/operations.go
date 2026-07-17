@@ -16,10 +16,6 @@ type DuplicateCheckInput struct {
 	Authorizations []string
 	// TrackerIDs contains explicit tracker IDs that override discovered client evidence.
 	TrackerIDs map[string]string
-	// ClientSearch controls the operation-time refresh of local client evidence.
-	ClientSearch ClientSearchPolicy
-	// ForceRecheck forwards an explicit torrent-client hash recheck choice.
-	ForceRecheck *bool
 }
 
 // UploadReviewInput contains review-time workflow choices for one exact

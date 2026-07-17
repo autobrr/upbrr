@@ -38,6 +38,10 @@ type testDefinition struct{ name string }
 
 func (d testDefinition) Name() string { return d.name }
 
+func (testDefinition) UploadContentMode() trackers.UploadContentMode {
+	return trackers.UploadContentModeDescription
+}
+
 func (testDefinition) Prepare(context.Context, trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
 	return trackers.TrackerPlan{}, nil
 }

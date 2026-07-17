@@ -859,6 +859,13 @@ func (m *mediaModule) uploadImagesToTargets(
 	images []api.ScreenshotImage,
 	fallback bool,
 ) api.UploadImagesResult {
+	m.logger.Infof(
+		"core: image upload round started hosts=%d host_names=%s fallback=%t images=%d",
+		len(targets),
+		strings.Join(uploadTargetHosts(targets), ","),
+		fallback,
+		len(images),
+	)
 	type uploadResult struct {
 		index  int
 		target trackers.ImageUploadTarget

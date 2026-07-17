@@ -12,6 +12,8 @@ AvistaZ-family (`azfamily`) trackers are intentionally out of scope.
 - `internal/trackers/impl/registry.go` is the only complete supported-tracker manifest.
 - A Unit3D or standalone profile owns the tracker's default endpoint and typed
   policies.
+- Every tracker declares one semantic shared upload-content mode. Unit3D inherits
+  `description` from its family definition; standalone profiles choose explicitly.
 - `internal/config/defaults/example.yaml` owns the ordered config/settings surface. It must not
   contain tracker `url` fields.
 - A tracker is configured when at least one activation credential in its config stanza is
@@ -47,6 +49,26 @@ A standalone addition normally changes:
 3. `internal/config/defaults/example.yaml`
 4. `internal/trackers/rules_test.go`, when rules exist
 5. shared config/frontend field contracts only when no existing `config.TrackerConfig` field fits
+
+## Choose the shared upload-content mode
+
+`trackers.UploadContentMode` tells generic preparation which tracker-scoped content object the
+adapter consumes. Choose by protocol behavior, not tracker identity:
+
+| Mode | Use when | Adapter input | Failure scope |
+| --- | --- | --- | --- |
+| `none` | The adapter builds its payload without shared descriptions or selected images | `PreparationInput.Assets` is `nil` | Shared content cannot block the tracker |
+| `screenshots` | The adapter consumes selected screenshots/menu images but no shared description | Ready screenshot assets, which may be empty | A failed screenshot object blocks only that tracker |
+| `description` | The adapter consumes the full shared description plus its image assets | Ready aggregate description assets, which may contain empty text | A failed description object or required image substep blocks only that tracker |
+
+Ready-empty content is valid and differs from failed content. Generic coordinators never infer a
+failure from empty text or zero selected images.
+
+All Unit3D and AvistaZ-family definitions currently declare `description` once at family level.
+Standalone profiles must set `UploadContentMode` explicitly. Current protocol examples are BTN/NBL
+for `none`, ANT/RTF for `screenshots`, and most other standalone trackers for `description`.
+Changing a standalone tracker's workflow later should require only its profile and tracker-local
+adapter implementation; do not add tracker-name branches to core or tracker orchestration.
 
 ## Add a Unit3D tracker
 
@@ -400,14 +422,15 @@ preparation callbacks, duplicate-search factory, auth descriptor, and static typ
 // Profile returns EXAMPLE's standalone tracker composition.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		Name:                "EXAMPLE",
-		BaseURL:             "https://tracker.example.invalid",
-		DescriptionGroup:    "example",
-		PrepareDescription:  prepareDescription,
-		PrepareUpload:       prepareUpload,
-		NewDuplicateAdapter: newDuplicateAdapter,
-		Rules:               rules(),
-		BannedGroups:        bannedGroups(),
+		Name:                 "EXAMPLE",
+		BaseURL:              "https://tracker.example.invalid",
+		UploadContentMode:    trackers.UploadContentModeDescription,
+		DescriptionGroup:     "example",
+		PrepareDescription:   prepareDescription,
+		PrepareUpload:        prepareUpload,
+		NewDuplicateAdapter:  newDuplicateAdapter,
+		Rules:                rules(),
+		BannedGroups:         bannedGroups(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{
 			Source: "EXAMPLE",
 		},
@@ -420,7 +443,8 @@ func New() *standalone.Definition { return standalone.MustNew(Profile()) }
 
 `standalone.Definition` normalizes and defensively copies the profile, reports
 `trackers.FamilyStandalone`, and exposes declared capabilities. Required fields are name, base URL,
-description preparer, upload preparer, and duplicate factory.
+upload-content mode, upload preparer, and duplicate factory. `PrepareDescription` is required only
+for `description`; omit it for `none` and `screenshots`.
 
 Keep rules and banned groups in tracker-local files and pass their package functions into the
 profile. Fold one-method static policy files into `profile.go`. Keep complex auth/session, parser,
@@ -428,12 +452,16 @@ description, data, and claim behavior in focused tracker-local files.
 
 ### 3. Prepare one immutable upload operation
 
-Implement two preparation callbacks:
+For `description`, implement two preparation callbacks:
 
 - `prepareDescription`: build or pass through the description and return its group.
 - `prepareUpload`: build canonical payload/artifact state once and return a
   `trackers.PreparedOperation` containing its sanitized preview and a submit closure over the
   captured state.
+
+For `none` or `screenshots`, implement only `prepareUpload`. A screenshot-mode adapter reads
+`req.Assets.Screenshots`, `req.Assets.MenuImages`, and `req.Assets.Slots`; it must tolerate a ready
+empty object when its protocol allows zero images.
 
 ```go
 func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
