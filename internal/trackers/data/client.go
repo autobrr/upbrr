@@ -13,12 +13,11 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/internal/trackers/datatypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // Result is the normalized metadata returned by a tracker lookup.
-type Result = datatypes.Result
+type Result = trackers.DataLookupResult
 
 // Client dispatches metadata lookups through tracker registry capabilities.
 type Client struct {

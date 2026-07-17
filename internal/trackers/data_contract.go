@@ -1,8 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-// Package datatypes defines normalized metadata returned by tracker-owned lookups.
-package datatypes
+package trackers
 
 import (
 	"strings"
@@ -10,8 +9,8 @@ import (
 	"github.com/autobrr/upbrr/internal/bbcode"
 )
 
-// Result contains tracker-derived metadata for one release.
-type Result struct {
+// DataLookupResult contains tracker-derived metadata for one release.
+type DataLookupResult struct {
 	// TrackerID is the tracker-side torrent or release identifier.
 	TrackerID string
 	// InfoHash is the normalized BitTorrent info hash when supplied by the tracker.
@@ -37,12 +36,12 @@ type Result struct {
 }
 
 // HasIDs reports whether the result contains any supported external metadata ID.
-func (r Result) HasIDs() bool {
+func (r DataLookupResult) HasIDs() bool {
 	return r.TMDBID != 0 || r.IMDBID != 0 || r.TVDBID != 0 || r.MALID != 0
 }
 
 // HasData reports whether the result contains any usable metadata or release identity.
-func (r Result) HasData() bool {
+func (r DataLookupResult) HasData() bool {
 	return r.HasIDs() || strings.TrimSpace(r.Description) != "" || len(r.Images) > 0 || len(r.Validated) > 0 || strings.TrimSpace(r.InfoHash) != "" ||
 		strings.TrimSpace(r.FileName) != "" ||
 		strings.TrimSpace(r.Category) != ""

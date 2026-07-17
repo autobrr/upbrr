@@ -15,7 +15,6 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/internal/trackers/datatypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -39,10 +38,10 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _
 	}
 }
 
-func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (datatypes.Result, error) {
+func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (trackers.DataLookupResult, error) {
 	apiUser, apiKey := ptpAPIKeys(l.cfg)
 	if apiUser == "" || apiKey == "" {
-		return datatypes.Result{}, nil
+		return trackers.DataLookupResult{}, nil
 	}
 	headers := map[string]string{"ApiUser": apiUser, "ApiKey": apiKey}
 	foundID := strings.TrimSpace(req.TrackerID)
@@ -55,12 +54,12 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 		foundID = found.trackerID
 	}
 	if err != nil {
-		return datatypes.Result{}, err
+		return trackers.DataLookupResult{}, err
 	}
 	if found.imdbID == 0 && foundID == "" {
-		return datatypes.Result{}, nil
+		return trackers.DataLookupResult{}, nil
 	}
-	result := datatypes.Result{
+	result := trackers.DataLookupResult{
 		TrackerID: foundID,
 		IMDBID:    found.imdbID,
 		InfoHash:  found.infoHash,

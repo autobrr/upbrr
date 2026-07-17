@@ -13,7 +13,6 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/internal/trackers/datatypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -31,11 +30,11 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _
 	}
 }
 
-func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (datatypes.Result, error) {
+func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (trackers.DataLookupResult, error) {
 	token := strings.TrimSpace(config.ResolveBTNAPIToken(l.cfg))
 	trackerID := strings.TrimSpace(req.TrackerID)
 	if len(token) < 25 || trackerID == "" {
-		return datatypes.Result{}, nil
+		return trackers.DataLookupResult{}, nil
 	}
 	payload := map[string]any{
 		"jsonrpc": "2.0",
@@ -45,20 +44,20 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return datatypes.Result{}, fmt.Errorf("trackerdata: btn encode request: %w", err)
+		return trackers.DataLookupResult{}, fmt.Errorf("trackerdata: btn encode request: %w", err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, l.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return datatypes.Result{}, fmt.Errorf("trackerdata: btn request: %w", err)
+		return trackers.DataLookupResult{}, fmt.Errorf("trackerdata: btn request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	resp, err := l.http.Do(httpReq)
 	if err != nil {
-		return datatypes.Result{}, fmt.Errorf("trackerdata: btn request: %w", err)
+		return trackers.DataLookupResult{}, fmt.Errorf("trackerdata: btn request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return datatypes.Result{}, nil
+		return trackers.DataLookupResult{}, nil
 	}
 	var decoded struct {
 		Error  map[string]any `json:"error"`
@@ -67,19 +66,19 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 		} `json:"result"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return datatypes.Result{}, fmt.Errorf("trackerdata: btn decode: %w", err)
+		return trackers.DataLookupResult{}, fmt.Errorf("trackerdata: btn decode: %w", err)
 	}
 	if len(decoded.Error) > 0 {
-		return datatypes.Result{}, nil
+		return trackers.DataLookupResult{}, nil
 	}
 	for _, value := range decoded.Result.Torrents {
-		return datatypes.Result{
+		return trackers.DataLookupResult{
 			TrackerID: trackerID,
 			IMDBID:    int(btnInt(value["ImdbID"])),
 			TVDBID:    int(btnInt(value["TvdbID"])),
 		}, nil
 	}
-	return datatypes.Result{}, nil
+	return trackers.DataLookupResult{}, nil
 }
 
 func btnInt(value any) int64 {

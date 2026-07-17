@@ -14,7 +14,6 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/internal/trackers/datatypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -32,10 +31,10 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _
 	}
 }
 
-func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (datatypes.Result, error) {
+func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (trackers.DataLookupResult, error) {
 	username, passkey := hdbCredentials(l.cfg)
 	if username == "" || passkey == "" {
-		return datatypes.Result{}, nil
+		return trackers.DataLookupResult{}, nil
 	}
 	payload := map[string]any{"username": username, "passkey": passkey}
 	if id := strings.TrimSpace(req.TrackerID); id != "" {
@@ -49,14 +48,14 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 			payload["file_in_torrent"], hasFilter = name, true
 		}
 		if !hasFilter {
-			return datatypes.Result{}, nil
+			return trackers.DataLookupResult{}, nil
 		}
 	}
 	first, err := l.requestFirst(ctx, payload)
 	if err != nil || len(first) == 0 {
-		return datatypes.Result{}, err
+		return trackers.DataLookupResult{}, err
 	}
-	result := datatypes.Result{
+	result := trackers.DataLookupResult{
 		TrackerID: hdbString(first["id"]),
 		IMDBID:    hdbNestedInt(first, "imdb", "id"),
 		TVDBID:    hdbNestedInt(first, "tvdb", "id"),

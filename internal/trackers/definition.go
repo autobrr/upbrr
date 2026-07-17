@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/trackers/datatypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -241,7 +240,7 @@ type DataLookupRequest struct {
 // DataLookup resolves tracker-owned metadata for a release.
 type DataLookup interface {
 	// Lookup resolves tracker-owned metadata for one prepared release.
-	Lookup(ctx context.Context, req DataLookupRequest) (datatypes.Result, error)
+	Lookup(ctx context.Context, req DataLookupRequest) (DataLookupResult, error)
 }
 
 // DataLookupFactory constructs a tracker-owned lookup from runtime deps.

@@ -15,7 +15,6 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/internal/trackers/datatypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -33,14 +32,14 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _
 	}
 }
 
-func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (datatypes.Result, error) {
+func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (trackers.DataLookupResult, error) {
 	if strings.TrimSpace(req.Meta.DiscType) != "" {
-		return datatypes.Result{}, nil
+		return trackers.DataLookupResult{}, nil
 	}
 	apiKey := antAPIKey(l.cfg)
 	fileName := strings.TrimSpace(req.SearchName)
 	if apiKey == "" || fileName == "" {
-		return datatypes.Result{}, nil
+		return trackers.DataLookupResult{}, nil
 	}
 	params := url.Values{
 		"t":        {"search"},
@@ -49,30 +48,30 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, l.endpoint, nil)
 	if err != nil {
-		return datatypes.Result{}, fmt.Errorf("trackerdata: ant request: %w", err)
+		return trackers.DataLookupResult{}, fmt.Errorf("trackerdata: ant request: %w", err)
 	}
 	httpReq.URL.RawQuery = params.Encode()
 	httpReq.Header.Set("User-Agent", "upbrr")
 	httpReq.Header.Set("X-Api-Key", apiKey)
 	resp, err := l.http.Do(httpReq)
 	if err != nil {
-		return datatypes.Result{}, fmt.Errorf("trackerdata: ant request: %w", err)
+		return trackers.DataLookupResult{}, fmt.Errorf("trackerdata: ant request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return datatypes.Result{}, nil
+		return trackers.DataLookupResult{}, nil
 	}
 	var decoded struct {
 		Items []map[string]any `json:"item"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return datatypes.Result{}, fmt.Errorf("trackerdata: ant decode: %w", err)
+		return trackers.DataLookupResult{}, fmt.Errorf("trackerdata: ant decode: %w", err)
 	}
 	item := matchDataItem(decoded.Items, fileName)
 	if len(item) == 0 {
-		return datatypes.Result{}, nil
+		return trackers.DataLookupResult{}, nil
 	}
-	return datatypes.Result{
+	return trackers.DataLookupResult{
 		TrackerID: "1",
 		IMDBID:    antIMDB(item["imdb"]),
 		TMDBID:    int(antInt(item["tmdb"])),

@@ -14,7 +14,6 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/internal/trackers/datatypes"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -34,11 +33,11 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _
 	}
 }
 
-func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (datatypes.Result, error) {
+func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (trackers.DataLookupResult, error) {
 	cfg, apiKey := bhdConfig(l.cfg)
 	rssKey := strings.TrimSpace(cfg.BhdRSSKey)
 	if len(apiKey) < minDataTokenLength || len(rssKey) < minDataTokenLength {
-		return datatypes.Result{}, nil
+		return trackers.DataLookupResult{}, nil
 	}
 	endpoint := strings.TrimRight(l.baseURL, "/") + "/" + apiKey
 	payload := map[string]any{}
@@ -53,14 +52,14 @@ func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest)
 			payload["file_name"], hasFilter = name, true
 		}
 		if !hasFilter {
-			return datatypes.Result{}, nil
+			return trackers.DataLookupResult{}, nil
 		}
 	}
 	first, err := l.requestFirst(ctx, endpoint, payload)
 	if err != nil || len(first) == 0 {
-		return datatypes.Result{}, err
+		return trackers.DataLookupResult{}, err
 	}
-	result := datatypes.Result{TrackerID: req.TrackerID, IMDBID: bhdIMDBInt(first["imdb_id"])}
+	result := trackers.DataLookupResult{TrackerID: req.TrackerID, IMDBID: bhdIMDBInt(first["imdb_id"])}
 	result.Category, result.TMDBID = parseTMDB(first["tmdb_id"])
 	description := ""
 	if bhdString(first["description"]) == "1" {
