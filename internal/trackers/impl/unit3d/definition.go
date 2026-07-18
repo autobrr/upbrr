@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
@@ -31,6 +32,8 @@ type Profile struct {
 	Site SiteProfile
 	// Rules contains site-specific release validation requirements.
 	Rules *trackers.RuleSet
+	// MetadataPolicy overrides the Unit3D metadata requirements for this site.
+	MetadataPolicy *trackers.TrackerMetadataPolicy
 	// AudioPolicy contains site-specific multi-language constraints.
 	AudioPolicy *trackers.AudioPolicy
 	// DupePolicy contains site-specific duplicate comparison settings.
@@ -63,6 +66,7 @@ func NewWithProfile(profile Profile) *Definition {
 	profile.BaseURL = strings.TrimSpace(profile.BaseURL)
 	profile.DescriptionGroup = strings.ToLower(strings.TrimSpace(profile.DescriptionGroup))
 	profile.BannedGroups = append([]string(nil), profile.BannedGroups...)
+	profile.MetadataPolicy = cloneMetadataPolicy(profile.MetadataPolicy)
 	return &Definition{profile: profile}
 }
 
@@ -90,11 +94,30 @@ func (d *Definition) UploadArtifactPolicy() *trackers.UploadArtifactPolicy {
 	return &policy
 }
 
-// MetadataPolicy returns the metadata requirements shared by Unit3D sites.
+// MetadataPolicy returns an independent copy of this site's metadata requirements.
 func (d *Definition) MetadataPolicy() *trackers.TrackerMetadataPolicy {
-	return &trackers.TrackerMetadataPolicy{
-		Requirements: []trackers.MetadataRequirement{{Scope: trackers.MetadataScopeAny, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDB}}},
+	if d.profile.MetadataPolicy != nil {
+		return cloneMetadataPolicy(d.profile.MetadataPolicy)
 	}
+	return &trackers.TrackerMetadataPolicy{
+		Requirements: []trackers.MetadataRequirement{{
+			Scope:       trackers.MetadataScopeAny,
+			AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDB},
+			Disposition: api.RuleDispositionStrict,
+		}},
+	}
+}
+
+func cloneMetadataPolicy(policy *trackers.TrackerMetadataPolicy) *trackers.TrackerMetadataPolicy {
+	if policy == nil {
+		return nil
+	}
+	cloned := *policy
+	cloned.Requirements = slices.Clone(policy.Requirements)
+	for i := range cloned.Requirements {
+		cloned.Requirements[i].AnyOf = slices.Clone(cloned.Requirements[i].AnyOf)
+	}
+	return &cloned
 }
 
 // Rules declares validation required by every Unit3D upload.

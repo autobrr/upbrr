@@ -6,6 +6,7 @@ package czt
 import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // Profile returns CZT identity, preparation, dupe, and policy behavior.
@@ -20,8 +21,9 @@ func Profile() standalone.Profile {
 		NewDuplicateAdapter: newDuplicateAdapter,
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			Requirements: []trackers.MetadataRequirement{{
-				Scope: trackers.MetadataScopeAny,
-				AnyOf: []trackers.MetadataField{trackers.MetadataFieldIMDBIDOnly},
+				Scope:       trackers.MetadataScopeAny,
+				AnyOf:       []trackers.MetadataField{trackers.MetadataFieldIMDBIDOnly},
+				Disposition: api.RuleDispositionStrict,
 			}},
 		},
 		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: "CzT"},

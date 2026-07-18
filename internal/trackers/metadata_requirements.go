@@ -86,7 +86,7 @@ func evaluateMetadataRequirementsWithRegistry(registry *Registry, tracker string
 		return []api.RuleFailure{{
 			Rule:        "require_metadata_category",
 			Reason:      "missing category required to select tracker metadata requirements",
-			Disposition: api.RuleDispositionWaivable,
+			Disposition: metadataCategoryDisposition(policy),
 		}}, true
 	}
 
@@ -118,6 +118,25 @@ func evaluateMetadataRequirementsWithRegistry(registry *Registry, tracker string
 		})
 	}
 	return failures, true
+}
+
+// metadataCategoryDisposition prevents a waivable missing-category result from
+// bypassing a category-scoped strict metadata requirement.
+func metadataCategoryDisposition(policy TrackerMetadataPolicy) api.RuleDisposition {
+	if len(policy.Requirements) == 0 {
+		return api.RuleDispositionWaivable
+	}
+	disposition := api.RuleDispositionAdvisory
+	for _, requirement := range policy.Requirements {
+		requirementDisposition := api.NormalizeRuleDisposition(requirement.Disposition)
+		if requirementDisposition == api.RuleDispositionStrict {
+			return api.RuleDispositionStrict
+		}
+		if requirementDisposition == api.RuleDispositionWaivable {
+			disposition = api.RuleDispositionWaivable
+		}
+	}
+	return disposition
 }
 
 // metadataRequirementPresent reports whether any alternative field satisfies

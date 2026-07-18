@@ -22,7 +22,7 @@ func checkRegion(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api
 		return nil, nil
 	}
 	if strings.TrimSpace(meta.Region) == "" {
-		return []api.RuleFailure{trackers.NewRuleFailure("region_required", "Region required; skipping SHRI.", api.RuleDispositionWaivable)}, nil
+		return []api.RuleFailure{trackers.NewRuleFailure("region_required", "Region required; skipping SHRI.", api.RuleDispositionStrict)}, nil
 	}
 	return nil, nil
 }

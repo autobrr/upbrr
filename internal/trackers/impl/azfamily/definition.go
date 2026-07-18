@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // Definition provides one AZ-family tracker profile through the shared contracts.
@@ -53,10 +54,15 @@ func (d *Definition) UploadArtifactPolicy() *trackers.UploadArtifactPolicy {
 // MetadataPolicy returns metadata requirements for this AZ-family profile.
 func (d *Definition) MetadataPolicy() *trackers.TrackerMetadataPolicy {
 	return &trackers.TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []trackers.MetadataRequirement{
-		{Scope: trackers.MetadataScopeMovie, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDBIDOnly, trackers.MetadataFieldIMDBIDOnly}},
 		{
-			Scope: trackers.MetadataScopeTV,
-			AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDBIDOnly, trackers.MetadataFieldIMDBIDOnly, trackers.MetadataFieldTVDBIDOnly},
+			Scope:       trackers.MetadataScopeMovie,
+			AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDBIDOnly, trackers.MetadataFieldIMDBIDOnly},
+			Disposition: api.RuleDispositionStrict,
+		},
+		{
+			Scope:       trackers.MetadataScopeTV,
+			AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDBIDOnly, trackers.MetadataFieldIMDBIDOnly, trackers.MetadataFieldTVDBIDOnly},
+			Disposition: api.RuleDispositionStrict,
 		},
 	}}
 }

@@ -209,8 +209,8 @@ func TestEvaluateRulesLUMERequiresMKVForNonDisc(t *testing.T) {
 	if failures[0].Rule != "container" {
 		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
 	}
-	if failures[0].Disposition != api.RuleDispositionWaivable {
-		t.Fatalf("container disposition = %q, want waivable", failures[0].Disposition)
+	if failures[0].Disposition != api.RuleDispositionStrict {
+		t.Fatalf("container disposition = %q, want strict", failures[0].Disposition)
 	}
 	if failures[0].Reason != "LUME only allows MKV containers for non-disc uploads." {
 		t.Fatalf("unexpected failure reason: %s", failures[0].Reason)
@@ -418,6 +418,9 @@ func TestEvaluateRulesBHDRejectsInvalidContainerForUploadTypes(t *testing.T) {
 	if failures[0].Rule != "container" {
 		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
 	}
+	if failures[0].Disposition != api.RuleDispositionStrict {
+		t.Fatalf("container disposition = %q, want strict", failures[0].Disposition)
+	}
 
 	meta.Container = "mkv"
 	failures = evaluateNonMetadataRulesForTest(context.Background(), "BHD", meta)
@@ -481,6 +484,9 @@ func TestEvaluateRulesBLUContainerRules(t *testing.T) {
 			failures := evaluateNonMetadataRulesForTest(context.Background(), "BLU", tc.meta)
 			if tc.wantBlock && len(failures) == 0 {
 				t.Fatalf("expected BLU container failure")
+			}
+			if tc.wantBlock && failures[0].Disposition != api.RuleDispositionStrict {
+				t.Fatalf("container disposition = %q, want strict", failures[0].Disposition)
 			}
 			if !tc.wantBlock && len(failures) != 0 {
 				t.Fatalf("expected no BLU container failures, got %#v", failures)
@@ -1002,7 +1008,7 @@ func TestCustomRulesReturnMultipleKeyedDispositions(t *testing.T) {
 	}
 }
 
-func TestTVCKeepsNonResolutionUploadRestrictionsWaivable(t *testing.T) {
+func TestTVCNonResolutionUploadRestrictionsAreStrict(t *testing.T) {
 	t.Parallel()
 
 	meta := api.RuleSubject{
@@ -1014,7 +1020,7 @@ func TestTVCKeepsNonResolutionUploadRestrictionsWaivable(t *testing.T) {
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "TVC", meta)
 	for _, rule := range []string{"disc_forbidden", "remux_forbidden"} {
 		failure, found := findRuleFailure(failures, rule)
-		if !found || failure.Disposition != api.RuleDispositionWaivable {
+		if !found || failure.Disposition != api.RuleDispositionStrict {
 			t.Fatalf("%s = %#v, failures=%#v", rule, failure, failures)
 		}
 	}

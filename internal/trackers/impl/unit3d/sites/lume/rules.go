@@ -35,7 +35,7 @@ func checkRequirements(ctx context.Context, meta api.RuleSubject, _ api.Logger) 
 	}
 	failures := make([]api.RuleFailure, 0, 2)
 	if !unit3d.IsDiscType(meta.DiscType) && !strings.EqualFold(strings.TrimSpace(meta.Container), "mkv") {
-		failures = append(failures, trackers.NewRuleFailure("container", "LUME only allows MKV containers for non-disc uploads.", api.RuleDispositionWaivable))
+		failures = append(failures, trackers.NewRuleFailure("container", "LUME only allows MKV containers for non-disc uploads.", api.RuleDispositionStrict))
 	}
 	if unit3d.IsDiscType(meta.DiscType) {
 		return failures, nil

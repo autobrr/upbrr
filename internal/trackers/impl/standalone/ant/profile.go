@@ -9,6 +9,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // Profile returns ANT identity, preparation, dupe, rules, bans, and policies.
@@ -34,7 +35,9 @@ func Profile() standalone.Profile {
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{
-				Scope: trackers.MetadataScopeMovie, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDB},
+				Scope:       trackers.MetadataScopeMovie,
+				AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDB},
+				Disposition: api.RuleDispositionStrict,
 			}},
 		},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{

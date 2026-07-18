@@ -29,8 +29,16 @@ func Profile() standalone.Profile {
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{
-				{Scope: trackers.MetadataScopeMovie, AnyOf: []trackers.MetadataField{trackers.MetadataFieldIMDBIDOnly}},
-				{Scope: trackers.MetadataScopeTV, AnyOf: []trackers.MetadataField{trackers.MetadataFieldIMDBIDOnly, trackers.MetadataFieldTVDBIDOnly}},
+				{
+					Scope:       trackers.MetadataScopeMovie,
+					AnyOf:       []trackers.MetadataField{trackers.MetadataFieldIMDBIDOnly},
+					Disposition: api.RuleDispositionStrict,
+				},
+				{
+					Scope:       trackers.MetadataScopeTV,
+					AnyOf:       []trackers.MetadataField{trackers.MetadataFieldIMDBIDOnly, trackers.MetadataFieldTVDBIDOnly},
+					Disposition: api.RuleDispositionStrict,
+				},
 			},
 		},
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "HDBits"},

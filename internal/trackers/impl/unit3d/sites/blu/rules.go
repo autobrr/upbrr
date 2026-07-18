@@ -40,6 +40,6 @@ func checkContainer(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]
 	return []api.RuleFailure{trackers.NewRuleFailure(
 		"container",
 		"BLU requires one of the following containers for this release: "+strings.ToUpper(strings.Join(allowed, ", ")),
-		api.RuleDispositionWaivable,
+		api.RuleDispositionStrict,
 	)}, nil
 }

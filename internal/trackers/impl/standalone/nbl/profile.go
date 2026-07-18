@@ -6,6 +6,7 @@ package nbl
 import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // Profile returns NBL identity, preparation, dupe, rules, bans, and policies.
@@ -22,8 +23,9 @@ func Profile() standalone.Profile {
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{
-				Scope: trackers.MetadataScopeTV,
-				AnyOf: []trackers.MetadataField{trackers.MetadataFieldTVmaze},
+				Scope:       trackers.MetadataScopeTV,
+				AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTVmaze},
+				Disposition: api.RuleDispositionStrict,
 			}},
 		},
 		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: "NBL"},

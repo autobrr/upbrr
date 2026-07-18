@@ -36,7 +36,7 @@ func checkRequirements(ctx context.Context, meta api.RuleSubject, _ api.Logger) 
 					meta.Container,
 					strings.ToUpper(strings.TrimSpace(meta.Type)),
 				),
-				api.RuleDispositionWaivable,
+				api.RuleDispositionStrict,
 			)}, nil
 		}
 	}

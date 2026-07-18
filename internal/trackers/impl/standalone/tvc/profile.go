@@ -6,6 +6,7 @@ package tvc
 import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // Profile returns TVC identity, preparation, dupe, and policy behavior.
@@ -22,8 +23,9 @@ func Profile() standalone.Profile {
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{
-				Scope: trackers.MetadataScopeAny,
-				AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB},
+				Scope:       trackers.MetadataScopeAny,
+				AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB},
+				Disposition: api.RuleDispositionStrict,
 			}},
 		},
 		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: "TVCHAOS"},

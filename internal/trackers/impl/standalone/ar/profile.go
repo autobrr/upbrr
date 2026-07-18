@@ -26,10 +26,18 @@ func Profile() standalone.Profile {
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{
-				{Scope: trackers.MetadataScopeMovie, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB}},
-				{Scope: trackers.MetadataScopeTV, AnyOf: []trackers.MetadataField{
-					trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB, trackers.MetadataFieldTVDB,
-				}},
+				{
+					Scope:       trackers.MetadataScopeMovie,
+					AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB},
+					Disposition: api.RuleDispositionStrict,
+				},
+				{
+					Scope: trackers.MetadataScopeTV,
+					AnyOf: []trackers.MetadataField{
+						trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB, trackers.MetadataFieldTVDB,
+					},
+					Disposition: api.RuleDispositionStrict,
+				},
 				{Scope: trackers.MetadataScopeAny, AnyOf: []trackers.MetadataField{trackers.MetadataFieldPoster}},
 			},
 		},

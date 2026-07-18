@@ -96,11 +96,11 @@ func (s *Service) evaluateTrackerClaims(ctx context.Context, meta api.UploadSubj
 			continue
 		}
 
-		meta.TrackerRuleFailures = addMetadataTrackerRuleFailure(meta.TrackerRuleFailures, tracker, api.RuleFailure{
-			Rule:        trackerClaimRuleActive,
-			Reason:      trackerClaimFailureReason(tracker, meta, s, logger),
-			Disposition: api.RuleDispositionWaivable,
-		})
+		meta.TrackerRuleFailures = addMetadataTrackerRuleFailure(
+			meta.TrackerRuleFailures,
+			tracker,
+			trackerClaimRuleFailure(trackerClaimFailureReason(tracker, meta, s, logger)),
+		)
 		if _, ok := s.registry.LookupClaimCheckerFactory(tracker); ok {
 			logger.Debugf("metadata: tracker claim match found tracker=%s", tracker)
 		} else {
@@ -109,6 +109,14 @@ func (s *Service) evaluateTrackerClaims(ctx context.Context, meta api.UploadSubj
 	}
 
 	return meta, nil
+}
+
+func trackerClaimRuleFailure(reason string) api.RuleFailure {
+	return api.RuleFailure{
+		Rule:        trackerClaimRuleActive,
+		Reason:      reason,
+		Disposition: api.RuleDispositionStrict,
+	}
 }
 
 // EvaluateTrackerClaims applies claim policy to one operation-owned subject.

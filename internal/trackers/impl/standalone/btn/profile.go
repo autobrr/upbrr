@@ -28,7 +28,9 @@ func Profile() standalone.Profile {
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{
-				Scope: trackers.MetadataScopeTV, AnyOf: []trackers.MetadataField{trackers.MetadataFieldIMDB, trackers.MetadataFieldTVDB},
+				Scope:       trackers.MetadataScopeTV,
+				AnyOf:       []trackers.MetadataField{trackers.MetadataFieldIMDB, trackers.MetadataFieldTVDB},
+				Disposition: api.RuleDispositionStrict,
 			}},
 		},
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "BTN", RequireAnnounce: true},

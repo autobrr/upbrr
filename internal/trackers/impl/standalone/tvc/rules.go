@@ -30,14 +30,14 @@ func checkRules(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.
 		failures = append(failures, trackers.NewRuleFailure(
 			"disc_forbidden",
 			"TVC disallows disc uploads",
-			api.RuleDispositionWaivable,
+			api.RuleDispositionStrict,
 		))
 	}
 	if strings.EqualFold(strings.TrimSpace(meta.Type), "REMUX") {
 		failures = append(failures, trackers.NewRuleFailure(
 			"remux_forbidden",
 			"TVC disallows remux uploads",
-			api.RuleDispositionWaivable,
+			api.RuleDispositionStrict,
 		))
 	}
 	return failures, nil

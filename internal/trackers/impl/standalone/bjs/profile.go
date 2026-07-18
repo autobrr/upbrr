@@ -6,6 +6,7 @@ package bjs
 import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // Profile returns BJS identity, preparation, dupe, auth, and policy behavior.
@@ -22,7 +23,9 @@ func Profile() standalone.Profile {
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{
-				Scope: trackers.MetadataScopeAny, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTMDB},
+				Scope:       trackers.MetadataScopeAny,
+				AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDB},
+				Disposition: api.RuleDispositionStrict,
 			}},
 		},
 		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag},

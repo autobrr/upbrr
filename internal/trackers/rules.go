@@ -56,6 +56,7 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 			Disposition: api.NormalizeRuleDisposition(disposition),
 		})
 	}
+	addStrict := func(rule, reason string) { addFailure(rule, reason, api.RuleDispositionStrict) }
 	addWaivable := func(rule, reason string) { addFailure(rule, reason, api.RuleDispositionWaivable) }
 
 	// Renamed/modified releases are rejected by every supported tracker. Scene
@@ -92,29 +93,29 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 	}
 
 	if rules.RequireUniqueID && !meta.Assessments.UniqueIDRequirementSatisfied() {
-		addWaivable("require_unique_id", "missing MediaInfo Unique ID")
+		addStrict("require_unique_id", "missing MediaInfo Unique ID")
 	}
 	if rules.RequireValidMISetting && !meta.Assessments.EncodeSettingsRequirementSatisfied() {
-		addWaivable("require_valid_mi_setting", "missing MediaInfo encode settings")
+		addStrict("require_valid_mi_setting", "missing MediaInfo encode settings")
 	}
 
 	if rules.RequireDiscOnly && !isDiscType(meta.DiscType) {
-		addWaivable("require_disc_only", "requires disc upload")
+		addStrict("require_disc_only", "requires disc upload")
 	}
 	if rules.RequireMovieUnlessTVPack && !meta.TVPack {
 		category := resolveCategory(meta)
 		if category != "" && category != "movie" {
-			addWaivable("require_movie_only", fmt.Sprintf("category %s is not movie", category))
+			addStrict("require_movie_only", fmt.Sprintf("category %s is not movie", category))
 		}
 	}
 	if rules.RequireMovieOnly || rules.RequireTVOnly {
 		category := resolveCategory(meta)
 		if category != "" {
 			if rules.RequireMovieOnly && category != "movie" {
-				addWaivable("require_movie_only", fmt.Sprintf("category %s is not movie", category))
+				addStrict("require_movie_only", fmt.Sprintf("category %s is not movie", category))
 			}
 			if rules.RequireTVOnly && category != "tv" {
-				addWaivable("require_tv_only", fmt.Sprintf("category %s is not tv", category))
+				addStrict("require_tv_only", fmt.Sprintf("category %s is not tv", category))
 			}
 		} else if logger != nil {
 			logger.Debugf("trackers: %s rule category check skipped (missing category)", name)
@@ -124,7 +125,7 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 	typeValue := resolveType(meta)
 	if len(rules.RequireHEVCForTypes) > 0 {
 		if hasTypeRequirement(typeValue, rules.RequireHEVCForTypes) && !isHEVC(meta) {
-			addWaivable("require_hevc", fmt.Sprintf("%s requires HEVC for %s", name, typeValue))
+			addStrict("require_hevc", fmt.Sprintf("%s requires HEVC for %s", name, typeValue))
 		}
 	}
 
@@ -147,17 +148,17 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 	}
 
 	if rules.BlockDVDRip && strings.EqualFold(typeValue, "DVDRIP") {
-		addWaivable("block_dvdrip", "DVDRip not allowed")
+		addStrict("block_dvdrip", "DVDRip not allowed")
 	}
 	if rules.BlockExternalSubs && hasReleaseToken(meta, []string{"extsub", "ext-sub", "external subs", "external subtitles"}) {
 		addWaivable("block_external_subs", "external subtitles not allowed")
 	}
 	if rules.BlockHardcodedSubs && hasReleaseToken(meta, []string{"hardsub", "hard-sub", "hardcoded"}) {
-		addWaivable("block_hardcoded_subs", "hardcoded subtitles not allowed")
+		addStrict("block_hardcoded_subs", "hardcoded subtitles not allowed")
 	}
 
 	if rules.BlockSingleFileFolder && hasSingleFileFolder(meta) {
-		addWaivable("block_single_file_folder", "single-file folders are not allowed")
+		addStrict("block_single_file_folder", "single-file folders are not allowed")
 	}
 
 	if len(rules.BlockGroups) > 0 {
@@ -179,7 +180,7 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 	}
 
 	if rules.RequireSceneNFO && meta.Scene && strings.TrimSpace(meta.SceneNFOPath) == "" {
-		addWaivable("require_scene_nfo", "scene release missing NFO")
+		addStrict("require_scene_nfo", "scene release missing NFO")
 	}
 
 	if rules.RequireAudioLanguages && len(meta.AudioLanguages) == 0 {
