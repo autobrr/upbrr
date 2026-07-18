@@ -4,6 +4,14 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InputFacet } from "../../releaseSession/types";
+import type {
+  IMDBMetadata,
+  MetadataPreview,
+  ProviderDisplay,
+  ProviderDisplaySummary,
+  TMDBMetadata,
+} from "../../types";
+import { emptyExternalIdentity } from "../../utils/canonicalIdentity";
 import InputPage from "./index";
 
 afterEach(cleanup);
@@ -51,6 +59,96 @@ const inputFacet = (): InputFacet => ({
   confirmBDMVRescan: vi.fn(async () => true),
   selectCandidate: vi.fn(async () => true),
 });
+
+const providerSummary = (title: string): ProviderDisplaySummary => ({
+  Title: title,
+  OriginalTitle: "",
+  Year: 2026,
+  Overview: `${title} overview`,
+  PosterURL: "",
+  BackdropURL: "",
+  Category: "movie",
+  Date: "",
+  EndDate: "",
+  OriginalLanguage: "en",
+  MediaType: "movie",
+  RuntimeMinutes: 0,
+  Genres: "",
+  Keywords: "",
+  TrailerURL: "",
+  Rating: 0,
+  RatingCount: 0,
+  Country: "",
+});
+
+const providerDisplays = (generation: number): ProviderDisplay[] => [
+  {
+    Provider: "imdb",
+    ID: 1_234_567,
+    DisplayID: "tt1234567",
+    URL: "",
+    Provenance: "resolver",
+    SummaryAvailable: true,
+    Summary: providerSummary(`IMDB generation ${generation}`),
+    Details: { IMDB: {} as IMDBMetadata },
+  },
+  {
+    Provider: "tmdb",
+    ID: 101,
+    DisplayID: "101",
+    URL: "",
+    Provenance: "resolver",
+    SummaryAvailable: true,
+    Summary: providerSummary(`TMDB generation ${generation}`),
+    Details: { TMDB: {} as TMDBMetadata },
+  },
+];
+
+const metadataPreview = (generation: number): MetadataPreview => {
+  const sourcePath = "C:\\media\\Example.mkv";
+  return {
+    SourcePath: sourcePath,
+    TrackerName: "",
+    ReleaseName: "Example.Release.2026.1080p-GRP",
+    ReleaseNameOverrides: {},
+    Release: { SourcePath: sourcePath, Generation: generation },
+    Identity: {
+      ...emptyExternalIdentity(sourcePath),
+      Generation: generation,
+      TMDBID: 101,
+      IMDBID: 1_234_567,
+      Category: "movie",
+      Provenance: { TMDB: "resolver", IMDB: "resolver" },
+    },
+    Display: {
+      ReleaseName: "Example.Release.2026.1080p-GRP",
+      Providers: providerDisplays(generation),
+    },
+    Bluray: null,
+    Diagnostics: [],
+    TrackerData: [],
+    TrackerRuleFailures: {},
+  };
+};
+
+const readyInputFacet = (generation: number): InputFacet => {
+  const base = inputFacet();
+  return {
+    ...base,
+    view: {
+      ...base.view,
+      selectedSource: "C:\\media\\Example.mkv",
+      status: "ready",
+      progress: {
+        correlationID: `attempt-${generation}`,
+        status: "ready",
+        message: "Metadata preparation complete.",
+        steps: [],
+      },
+      preview: metadataPreview(generation),
+    },
+  };
+};
 
 describe("InputPage", () => {
   it("keeps typing as a draft and uses explicit preparation intent", () => {
@@ -213,5 +311,31 @@ describe("InputPage", () => {
 
     expect(screen.queryByText("Preparation progress")).not.toBeInTheDocument();
     expect(screen.queryByText("Inspect source")).not.toBeInTheDocument();
+  });
+
+  it("selects the highest-priority metadata source for each prepared generation", () => {
+    const firstFacet = readyInputFacet(1);
+    const pageProps = {
+      sourcePathHistory: [],
+      handleBrowseFile: vi.fn(),
+      handleBrowseFolder: vi.fn(),
+      trackerUploadItems: [],
+      showExternalIDInputUI: false,
+      setLightboxImage: vi.fn(),
+      setLightboxAlt: vi.fn(),
+      trackerIconSrcByName: {},
+    };
+    const { rerender } = render(<InputPage facet={firstFacet} {...pageProps} />);
+
+    expect(screen.getByRole("button", { name: /^TMDB/ })).toHaveClass("active");
+    expect(screen.getByText("TMDB generation 1")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: /^IMDB/ }));
+    expect(screen.getByRole("button", { name: /^IMDB/ })).toHaveClass("active");
+    expect(screen.getByText("IMDB generation 1")).toBeVisible();
+
+    rerender(<InputPage facet={readyInputFacet(2)} {...pageProps} />);
+    expect(screen.getByRole("button", { name: /^TMDB/ })).toHaveClass("active");
+    expect(screen.getByText("TMDB generation 2")).toBeVisible();
   });
 });

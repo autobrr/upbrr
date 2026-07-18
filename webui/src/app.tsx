@@ -36,6 +36,7 @@ import {
   type SourcePathHistoryEntry,
   type SourcePathMode,
 } from "./utils/inputHistory";
+import { normalizeDefaultTrackerList } from "./utils/settings";
 
 const appLayoutClass =
   "relative z-[1] block min-h-screen ml-[204px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
@@ -102,7 +103,7 @@ function AppShell() {
       return [];
     }
   });
-  const sourceDraftRestored = useRef(false);
+  const defaultTrackerSelectionSession = useRef<number | null>(null);
   const [hostBrowserMode, setHostBrowserMode] = useState<SourcePathMode | null>(null);
   const [hostBrowser, setHostBrowser] = useState<BrowseDirectoryResponse | null>(null);
   const [hostBrowserLoading, setHostBrowserLoading] = useState(false);
@@ -167,6 +168,23 @@ function AppShell() {
       .map(([name, config]) => ({ name, config: config as ConfigMap }))
       .sort((left, right) => left.name.localeCompare(right.name));
   }, [configData, trackerSelectionNames]);
+  const defaultTrackerNames = useMemo(() => {
+    const root = configData?.Trackers;
+    if (!root || typeof root !== "object" || Array.isArray(root)) return [];
+    return normalizeDefaultTrackerList((root as ConfigMap).DefaultTrackers ?? []);
+  }, [configData]);
+  const configuredDefaultTrackers = useMemo(() => {
+    const configuredNames = new Map(
+      trackerUploadItems.map((item) => [item.name.trim().toUpperCase(), item.name]),
+    );
+    return Array.from(
+      new Set(
+        defaultTrackerNames
+          .map((name) => configuredNames.get(name.trim().toUpperCase()) || "")
+          .filter(Boolean),
+      ),
+    );
+  }, [defaultTrackerNames, trackerUploadItems]);
   const trackerIconSrcByName = useTrackerIcons(trackerUploadItems, useFavicons);
   const maxMenuItems = useMemo(() => {
     const value = screenshotConfig?.MaxMenuItems;
@@ -234,13 +252,30 @@ function AppShell() {
       rememberSource(release.SourcePath, inferSourcePathMode(release.SourcePath));
   }, [releaseSession.identity.view.release, rememberSource]);
   useEffect(() => {
-    if (sourceDraftRestored.current) return;
-    sourceDraftRestored.current = true;
-    const recentPath = sourcePathHistory[0]?.path.trim() || "";
-    if (!releaseSession.input.view.sourceDraft.trim() && recentPath) {
-      releaseSession.input.updateSourceDraft(recentPath);
+    const sessionRevision = releaseSession.identity.view.sessionRevision;
+    if (
+      defaultTrackerSelectionSession.current === sessionRevision ||
+      !configData ||
+      (defaultTrackerNames.length > 0 && trackerUploadItems.length === 0)
+    ) {
+      return;
     }
-  }, [releaseSession.input, sourcePathHistory]);
+    defaultTrackerSelectionSession.current = sessionRevision;
+    const current = new Set(releaseSession.input.view.selectedTrackers);
+    if (
+      current.size !== configuredDefaultTrackers.length ||
+      configuredDefaultTrackers.some((tracker) => !current.has(tracker.trim().toUpperCase()))
+    ) {
+      releaseSession.input.chooseTrackers(configuredDefaultTrackers);
+    }
+  }, [
+    configData,
+    configuredDefaultTrackers,
+    defaultTrackerNames.length,
+    releaseSession.identity.view.sessionRevision,
+    releaseSession.input,
+    trackerUploadItems.length,
+  ]);
   useEffect(() => {
     persistHistory(
       normalizeSourcePathHistory(sourcePathHistory, inputHistoryLimit, isHostPathCaseInsensitive()),

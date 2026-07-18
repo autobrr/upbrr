@@ -748,6 +748,12 @@ type IDEdits = {
   mal: string;
 };
 
+type ProviderSelection = {
+  sourcePath: string;
+  generation: number;
+  provider: string;
+};
+
 const emptyMetadataPreview: MetadataPreview = {
   SourcePath: "",
   TrackerName: "",
@@ -799,7 +805,11 @@ export default function InputPage(props: Props) {
   const metadataResetting = loading;
   const error = view.error;
   const preview = view.preview || emptyMetadataPreview;
-  const [selectedProvider, setSelectedProvider] = useState("");
+  const [providerSelection, setProviderSelection] = useState<ProviderSelection>({
+    sourcePath: "",
+    generation: 0,
+    provider: "",
+  });
   const [idEdits, setIDEditsState] = useState<IDEdits>({
     tmdb: "",
     imdb: "",
@@ -1154,6 +1164,21 @@ export default function InputPage(props: Props) {
       fetchedProviders.has(item.Provider),
     );
   }, [externalIDInfo, providerDisplays]);
+
+  const selectedProvider =
+    providerSelection.sourcePath === preview.Release.SourcePath &&
+    providerSelection.generation === preview.Release.Generation &&
+    orderedIdentityProviders.some((item) => item.Provider === providerSelection.provider)
+      ? providerSelection.provider
+      : (orderedIdentityProviders[0]?.Provider ?? "");
+
+  const selectProvider = (provider: string) => {
+    setProviderSelection({
+      sourcePath: preview.Release.SourcePath,
+      generation: preview.Release.Generation,
+      provider,
+    });
+  };
 
   const tmdbCandidates = useMemo(
     () => candidatesFromDiagnostics(preview.Diagnostics, "tmdb"),
@@ -2142,7 +2167,7 @@ export default function InputPage(props: Props) {
                   key={item.Provider}
                   className={`id-card ${selectedProvider === item.Provider ? "active" : ""}`}
                   type="button"
-                  onClick={() => setSelectedProvider(item.Provider)}
+                  onClick={() => selectProvider(item.Provider)}
                 >
                   <span className="id-label">{formatProvider(item.Provider)}</span>
                   <span className="id-value">{formatID(item.Provider, item.ID)}</span>
