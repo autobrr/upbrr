@@ -228,6 +228,16 @@ func TestNewRegistryOwnsMetadataPolicies(t *testing.T) {
 			t.Errorf("expected %s tracker-owned metadata policy", name)
 		}
 	}
+
+	mtvPolicy, ok := registry.LookupMetadataPolicy("MTV")
+	if !ok || len(mtvPolicy.Requirements) != 1 {
+		t.Fatalf("MTV metadata policy = %#v, %t; want one requirement", mtvPolicy, ok)
+	}
+	mtvRequirement := mtvPolicy.Requirements[0]
+	wantFields := []trackers.MetadataField{trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB, trackers.MetadataFieldTVDB}
+	if mtvRequirement.Scope != trackers.MetadataScopeAny || !slices.Equal(mtvRequirement.AnyOf, wantFields) {
+		t.Errorf("MTV metadata requirement = %#v; want any of %#v", mtvRequirement, wantFields)
+	}
 }
 
 func TestNewRegistryIncludesUnit3DRuleCapabilities(t *testing.T) {

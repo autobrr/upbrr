@@ -160,34 +160,39 @@ func TestMetadataRequirementMatrix(t *testing.T) {
 			fail:     true,
 		},
 		{
-			name:     "mtv tv complete",
+			name:     "mtv movie tvdb",
 			tracker:  "MTV",
-			category: "tv",
-			ids:      api.ExternalIdentity{TMDBID: 1, TVDBID: 2},
-			metadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{TMDBID: 1, Title: "Example Series"}, TVDB: &api.TVDBMetadata{TVDBID: 2, NameEnglish: "Example Series"}},
+			category: "movie",
+			ids:      api.ExternalIdentity{TVDBID: 2},
+			metadata: api.SourceScopedMetadata{TVDB: &api.TVDBMetadata{TVDBID: 2, Name: "Example Release"}},
 		},
 		{
-			name:     "mtv tv blank title",
+			name:     "mtv tv tmdb",
 			tracker:  "MTV",
 			category: "tv",
-			ids:      api.ExternalIdentity{TMDBID: 1, TVDBID: 2},
-			metadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{TMDBID: 1, Title: "Example Series"}, TVDB: &api.TVDBMetadata{TVDBID: 2}},
-			fail:     true,
+			ids:      api.ExternalIdentity{TMDBID: 1},
+			metadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{TMDBID: 1, Title: "Example Series"}},
 		},
 		{
-			name:     "mtv tv mismatched title metadata",
+			name:     "mtv tv imdb",
 			tracker:  "MTV",
 			category: "tv",
-			ids:      api.ExternalIdentity{TMDBID: 1, TVDBID: 2},
-			metadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{TMDBID: 1, Title: "Example Series"}, TVDB: &api.TVDBMetadata{TVDBID: 3, Name: "Example Series"}},
-			fail:     true,
+			ids:      api.ExternalIdentity{IMDBID: 1234567},
+			metadata: api.SourceScopedMetadata{IMDB: &api.IMDBMetadata{IMDBID: 1234567, Title: "Example Series"}},
 		},
 		{
-			name:     "mtv tv tvdb identity rejected",
+			name:     "mtv tv tvdb",
 			tracker:  "MTV",
 			category: "tv",
 			ids:      api.ExternalIdentity{TVDBID: 2},
 			metadata: api.SourceScopedMetadata{TVDB: &api.TVDBMetadata{TVDBID: 2, Name: "Example Series"}},
+		},
+		{
+			name:     "mtv tv mismatched tvdb metadata",
+			tracker:  "MTV",
+			category: "tv",
+			ids:      api.ExternalIdentity{TVDBID: 2},
+			metadata: api.SourceScopedMetadata{TVDB: &api.TVDBMetadata{TVDBID: 3, Name: "Example Series"}},
 			fail:     true,
 		},
 		{
@@ -503,15 +508,16 @@ func newMetadataRegistry(t *testing.T) *Registry {
 	}
 	register("AITHER", TrackerMetadataPolicy{Requirements: []MetadataRequirement{{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldTMDB}}}})
 	register("PTP", TrackerMetadataPolicy{Requirements: []MetadataRequirement{{
-		Scope:    MetadataScopeAny,
-		AnyOf:    []MetadataField{MetadataFieldIMDBIDOnly},
+		Scope:       MetadataScopeAny,
+		AnyOf:       []MetadataField{MetadataFieldIMDBIDOnly},
 		Disposition: api.RuleDispositionAdvisory,
 	}}})
 	register("NBL", TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldTVmaze}}}})
-	register("MTV", TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []MetadataRequirement{
-		{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB}},
-		{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldTVDBTitle}},
-	}})
+	register("MTV", TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []MetadataRequirement{{
+		Scope:       MetadataScopeAny,
+		AnyOf:       []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB, MetadataFieldTVDB},
+		Disposition: api.RuleDispositionStrict,
+	}}})
 	register("AR", TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []MetadataRequirement{
 		{Scope: MetadataScopeMovie, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB}},
 		{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB, MetadataFieldTVDB}},
@@ -565,14 +571,13 @@ func TestMetadataRequirementNeedsKnownCategory(t *testing.T) {
 	}
 }
 
-func TestTVDBTitleRequirementRejectsStaleProviderMetadata(t *testing.T) {
+func TestMTVMetadataRequirementRejectsStaleTVDBMetadata(t *testing.T) {
 	t.Parallel()
 	meta := api.RuleSubject{
 		SourcePath: "current",
 		Identity: api.ExternalIdentity{
 			SourcePath: "current",
 			Category:   "tv",
-			TMDBID:     1,
 			TVDBID:     2,
 		},
 		ProviderMetadata: api.SourceScopedMetadata{
@@ -581,15 +586,8 @@ func TestTVDBTitleRequirementRejectsStaleProviderMetadata(t *testing.T) {
 		},
 	}
 	failures, _ := evaluateMetadataRequirementsWithRegistry(newMetadataRegistry(t), "MTV", meta)
-	found := false
-	for _, failure := range failures {
-		if failure.Rule == "require_tvdb_title" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected stale TVDB metadata failure, got %#v", failures)
+	if len(failures) != 1 || failures[0].Rule != "require_metadata_id" || failures[0].Disposition != api.RuleDispositionStrict {
+		t.Fatalf("expected strict stale TVDB metadata failure, got %#v", failures)
 	}
 }
 

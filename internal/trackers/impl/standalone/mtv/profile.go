@@ -30,10 +30,9 @@ func Profile() standalone.Profile {
 			Requirements: []trackers.MetadataRequirement{
 				{
 					Scope:       trackers.MetadataScopeAny,
-					AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB},
+					AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB, trackers.MetadataFieldTVDB},
 					Disposition: api.RuleDispositionStrict,
 				},
-				{Scope: trackers.MetadataScopeTV, AnyOf: []trackers.MetadataField{trackers.MetadataFieldTVDBTitle}},
 			},
 		},
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "MTV"},
