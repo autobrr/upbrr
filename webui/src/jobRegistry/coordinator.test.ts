@@ -178,6 +178,36 @@ describe("JobRegistryCoordinator", () => {
     registry.dispose();
   });
 
+  it("does not restore pending state when SSE accepts a start before its response", async () => {
+    const harness = transportHarness();
+    let resolveStart: (jobID: string) => void = () => undefined;
+    const startResponse = new Promise<string>((resolve) => {
+      resolveStart = resolve;
+    });
+    harness.transport.startDupe = vi.fn(() => startResponse);
+    const registry = new JobRegistryCoordinator(
+      "owner-a",
+      harness.transport,
+      new FakeClock(),
+      10,
+      () => "sse-first-correlation",
+    );
+    registry.start();
+    await vi.waitFor(() => expect(registry.snapshot().bootstrapped).toBe(true));
+
+    const starting = registry.startDupe({ release, trackers: ["AITHER"] });
+    expect(registry.snapshot().pending).toHaveLength(1);
+    const accepted = dupeJob("sse-first-correlation");
+    harness.setJobs([accepted]);
+    harness.emit(accepted);
+    expect(registry.snapshot().pending).toEqual([]);
+
+    resolveStart("dupe-1");
+    await expect(starting).resolves.toBe("dupe-1");
+    expect(registry.snapshot().pending).toEqual([]);
+    registry.dispose();
+  });
+
   it("recovers an accepted start after its response is lost", async () => {
     const harness = transportHarness();
     const registry = new JobRegistryCoordinator(

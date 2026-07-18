@@ -1706,6 +1706,43 @@ func TestPromptTrackerQuestionnairesSkipsRuleFailedTrackers(t *testing.T) {
 	}
 }
 
+func TestPromptTrackerQuestionnairesDebugStillSkipsIneligibleTrackers(t *testing.T) {
+	t.Parallel()
+
+	questionnaire := &api.TrackerQuestionnaire{Fields: []api.TrackerQuestionnaireField{{
+		Key:      "type",
+		Label:    "Type",
+		Required: true,
+	}}}
+	answers, changed, err := promptTrackerQuestionnaires(bufio.NewReader(strings.NewReader("eligible\n")), api.UploadReview{
+		Trackers: []api.TrackerReview{
+			{
+				Tracker:       "BANNED",
+				Banned:        true,
+				Questionnaire: questionnaire,
+			},
+			{
+				Tracker:      "BLOCKED",
+				RuleFailures: []api.RuleFailure{{Rule: "require_movie_only", Reason: "category tv is not movie"}},
+				Questionnaire: questionnaire,
+			},
+			{
+				Tracker:       "ELIGIBLE",
+				Questionnaire: questionnaire,
+			},
+		},
+	}, cliOptions{Debug: true})
+	if err != nil {
+		t.Fatalf("promptTrackerQuestionnaires: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected eligible questionnaire answer to change")
+	}
+	if len(answers) != 1 || answers["ELIGIBLE"]["type"] != "eligible" {
+		t.Fatalf("expected only eligible questionnaire answers, got %#v", answers)
+	}
+}
+
 func TestPromptTrackerQuestionnairesDebugUnattendedAllowsBlankRequiredDefault(t *testing.T) {
 	t.Parallel()
 

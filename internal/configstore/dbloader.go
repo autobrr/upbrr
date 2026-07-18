@@ -147,6 +147,19 @@ func SaveToDBPath(ctx context.Context, cfg *config.Config, dbPath string) error 
 // SaveToRepository persists cfg and cookie encryption auth metadata through one
 // repository transaction.
 func SaveToRepository(ctx context.Context, cfg *config.Config, repo *db.SQLiteRepository, dbPath string) error {
+	return SaveToRepositoryWithPreSave(ctx, cfg, repo, dbPath, nil)
+}
+
+// SaveToRepositoryWithPreSave persists cfg, cookie encryption auth metadata,
+// and preSave writes through one repository transaction. preSave receives the
+// current cookie encryption key, or nil when web auth material is unavailable.
+func SaveToRepositoryWithPreSave(
+	ctx context.Context,
+	cfg *config.Config,
+	repo *db.SQLiteRepository,
+	dbPath string,
+	preSave func(context.Context, *sql.Tx, []byte) error,
+) error {
 	if cfg == nil {
 		return internalerrors.ErrInvalidInput
 	}
@@ -160,8 +173,14 @@ func SaveToRepository(ctx context.Context, cfg *config.Config, repo *db.SQLiteRe
 	}
 
 	if err := repo.SaveFullConfigWithPreSave(ctx, encryptedCfg, func(ctx context.Context, tx *sql.Tx) error {
-		if err := syncCookieEncryptionBeforeConfigSaveTx(ctx, tx, dbPath); err != nil {
+		key, err := syncCookieEncryptionBeforeConfigSaveTx(ctx, tx, dbPath)
+		if err != nil {
 			return fmt.Errorf("cookie encryption sync before config save: %w", err)
+		}
+		if preSave != nil {
+			if err := preSave(ctx, tx, key); err != nil {
+				return fmt.Errorf("config pre-save: %w", err)
+			}
 		}
 		return nil
 	}); err != nil {
@@ -174,14 +193,15 @@ func SaveToRepository(ctx context.Context, cfg *config.Config, repo *db.SQLiteRe
 // syncCookieEncryptionBeforeConfigSaveTx updates cookie encryption metadata in
 // the caller's config-save transaction, treating missing auth material as a
 // plaintext-cookie install rather than a save failure.
-func syncCookieEncryptionBeforeConfigSaveTx(ctx context.Context, tx *sql.Tx, dbPath string) error {
-	if err := cookies.SyncCookieEncryptionWithAuthTx(ctx, tx, dbPath); err != nil {
+func syncCookieEncryptionBeforeConfigSaveTx(ctx context.Context, tx *sql.Tx, dbPath string) ([]byte, error) {
+	key, err := cookies.InitializeEncryptionKeyTx(ctx, tx, dbPath)
+	if err != nil {
 		if errors.Is(err, cookies.ErrAuthHelperUnavailable) {
-			return nil
+			return nil, nil
 		}
-		return fmt.Errorf("sync cookie encryption with auth: %w", err)
+		return nil, fmt.Errorf("sync cookie encryption with auth: %w", err)
 	}
-	return nil
+	return key, nil
 }
 
 // Bootstrap resolves the effective config and database path at process

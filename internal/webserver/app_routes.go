@@ -17,9 +17,12 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// cookieImportRequestEnvelopeMaxBytes leaves JSON envelope headroom while the
-// tracker auth importer enforces the shared raw cookie content limit.
-const cookieImportRequestEnvelopeMaxBytes = trackerauth.MaxCookieImportContentBytes*6 + 64*1024
+const (
+	// JSON can encode one raw byte as a six-byte escape. These route caps leave
+	// fixed field headroom while downstream importers enforce decoded limits.
+	cookieImportRequestEnvelopeMaxBytes = trackerauth.MaxCookieImportContentBytes*6 + 64*1024
+	configImportRequestEnvelopeMaxBytes = configImportMaxBytes*6 + 64*1024
+)
 
 func nonNilAppList[T any](values []T) []T {
 	if values == nil {
@@ -738,9 +741,7 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
-		// Allow extra headroom for JSON wrapping (FileName, escaping)
-		// beyond the raw file-content limit enforced by the importer.
-		r.Body = http.MaxBytesReader(w, r.Body, configImportMaxBytes+1024*1024)
+		r.Body = http.MaxBytesReader(w, r.Body, configImportRequestEnvelopeMaxBytes)
 		var req struct {
 			FileName    string
 			FileContent string

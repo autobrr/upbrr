@@ -5,6 +5,7 @@ package cookies
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -17,15 +18,56 @@ import (
 )
 
 // FailedCookie identifies a tracker/cookie pair that could not be migrated.
+// CookieName is empty when the source file could not be parsed.
 type FailedCookie struct {
 	TrackerID  string
 	CookieName string
 }
 
 // MigrateFromFilesToDB imports top-level .txt and .json cookie files into the
-// encrypted database. It returns the stored-cookie count and storage failures;
-// file parse failures are logged and omitted from both results.
+// encrypted database. It returns the stored-cookie count and all parse/storage
+// failures so callers can retain source files after any partial migration.
 func MigrateFromFilesToDB(ctx context.Context, cookiesDir string, store *CookieStore, key []byte, logger api.Logger) (int, []FailedCookie, error) {
+	if store == nil {
+		return 0, nil, errors.New("cookies: cookie store is required")
+	}
+	return migrateFromFilesToDB(ctx, cookiesDir, key, logger, store.SaveCookie)
+}
+
+// MigrateFromFilesToDBTx imports legacy cookie files through tx so callers can
+// commit or roll back the cookie writes with a surrounding database operation.
+func MigrateFromFilesToDBTx(
+	ctx context.Context,
+	cookiesDir string,
+	store *CookieStore,
+	tx *sql.Tx,
+	key []byte,
+	logger api.Logger,
+) (int, []FailedCookie, error) {
+	if store == nil {
+		return 0, nil, errors.New("cookies: cookie store is required")
+	}
+	if tx == nil {
+		return 0, nil, errors.New("cookies: transaction is required")
+	}
+	return migrateFromFilesToDB(ctx, cookiesDir, key, logger, func(
+		ctx context.Context,
+		trackerID, cookieName, cookieValue string,
+		key []byte,
+	) error {
+		return store.SaveCookieTx(ctx, tx, trackerID, cookieName, cookieValue, key)
+	})
+}
+
+type saveCookieFunc func(context.Context, string, string, string, []byte) error
+
+func migrateFromFilesToDB(
+	ctx context.Context,
+	cookiesDir string,
+	key []byte,
+	logger api.Logger,
+	saveCookie saveCookieFunc,
+) (int, []FailedCookie, error) {
 	if ctx == nil {
 		return 0, nil, errors.New("cookies: context is required")
 	}
@@ -104,6 +146,7 @@ func MigrateFromFilesToDB(ctx context.Context, cookiesDir string, store *CookieS
 		}
 
 		if parseErr != nil {
+			failedCookies = append(failedCookies, FailedCookie{TrackerID: trackerID})
 			logger.Warnf("cookies: failed to parse cookie file tracker=%s file=%s: %v", trackerID, filename, parseErr)
 			continue
 		}
@@ -114,7 +157,7 @@ func MigrateFromFilesToDB(ctx context.Context, cookiesDir string, store *CookieS
 
 		// Store each cookie in the database
 		for cookieName, cookieValue := range cookies {
-			if err := store.SaveCookie(ctx, trackerID, cookieName, cookieValue, key); err != nil {
+			if err := saveCookie(ctx, trackerID, cookieName, cookieValue, key); err != nil {
 				failedCookies = append(failedCookies, FailedCookie{TrackerID: trackerID, CookieName: cookieName})
 				redactedValue := redaction.RedactValue(cookieValue, nil)
 				logger.Warnf("cookies: failed to migrate cookie tracker=%s cookie=%s value=%v: %v", trackerID, cookieName, redactedValue, err)

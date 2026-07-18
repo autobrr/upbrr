@@ -145,14 +145,16 @@ export class JobRegistryCoordinator {
     try {
       const jobID = await start(correlationID);
       if (this.disposed) return jobID;
-      this.pending.set(correlationID, {
-        kind,
-        correlationID,
-        release: clone(release),
-        retryOf,
-        acceptedJobID: jobID,
-      });
-      this.emit();
+      if (this.pending.has(correlationID)) {
+        this.pending.set(correlationID, {
+          kind,
+          correlationID,
+          release: clone(release),
+          retryOf,
+          acceptedJobID: jobID,
+        });
+        this.emit();
+      }
       void this.refresh();
       return jobID;
     } catch (error) {

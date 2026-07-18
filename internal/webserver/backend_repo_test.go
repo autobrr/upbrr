@@ -1449,13 +1449,14 @@ func TestBackendSaveConfigSyncsUsableWebAuthBeforeSave(t *testing.T) {
 	assertCookieAuthStatePresent(t, repo)
 }
 
-func TestBackendSaveConfigLeavesConfigUnchangedWhenRepositorySaveFailsAfterCookieSync(t *testing.T) {
+func TestBackendSaveConfigRollsBackCookieMaintenanceWhenRepositorySaveFails(t *testing.T) {
 	t.Parallel()
 
 	repo, repoPath := openBackendConfigTestRepo(t, "backend-save-cookie-rollback.db")
 	if err := BootstrapAuthFile(repoPath, "tester", "very-secure-password"); err != nil {
 		t.Fatalf("BootstrapAuthFile: %v", err)
 	}
+	legacyPath := writeBackendLegacyCookieFile(t, repoPath, "EXAMPLE", `{"session":"cookie-value"}`)
 	installBackendFailMainSettingsTrigger(t, repo)
 	initial := backendConfigTestConfig(repoPath)
 	backend := &Backend{
@@ -1476,8 +1477,17 @@ func TestBackendSaveConfigLeavesConfigUnchangedWhenRepositorySaveFailsAfterCooki
 		t.Fatal("expected save config to fail")
 	}
 
-	assertConfigRowsAbsent(t, repo)
-	assertCookieAuthStatePresent(t, repo)
+	assertFailedConfigSaveRowsAbsent(t, repo)
+	if _, err := os.Stat(legacyPath); err != nil {
+		t.Fatalf("expected legacy cookie file to remain after failed activation: %v", err)
+	}
+	var cookieCount int
+	if err := repo.RawDB().QueryRowContext(context.Background(), `SELECT COUNT(*) FROM tracker_cookies`).Scan(&cookieCount); err != nil {
+		t.Fatalf("count cookies after failed activation: %v", err)
+	}
+	if cookieCount != 0 {
+		t.Fatalf("expected cookie writes to roll back, got count=%d", cookieCount)
+	}
 	if got := backend.currentConfig().Metadata.SkipAutoTorrent; got {
 		t.Fatal("expected runtime config not to be applied after failed config save")
 	}
@@ -1551,19 +1561,6 @@ func assertFailedConfigSaveRowsAbsent(t *testing.T, repo *db.SQLiteRepository) {
 		if !errors.Is(err, sql.ErrNoRows) {
 			t.Fatalf("expected %s to be absent after failed sync, got row=%q err=%v", section, data, err)
 		}
-	}
-}
-
-func assertConfigRowsAbsent(t *testing.T, repo *db.SQLiteRepository) {
-	t.Helper()
-
-	var data string
-	err := repo.RawDB().QueryRowContext(context.Background(),
-		`SELECT data FROM config_settings WHERE section = ?`,
-		"MainSettings",
-	).Scan(&data)
-	if !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("expected MainSettings to be absent after failed save, got row=%q err=%v", data, err)
 	}
 }
 

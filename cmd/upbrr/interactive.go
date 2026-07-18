@@ -1365,7 +1365,7 @@ func promptTrackerQuestionnaires(reader *bufio.Reader, review api.UploadReview, 
 	answers := make(map[string]map[string]string)
 	changed := false
 	for _, tracker := range review.Trackers {
-		if (!opts.Debug && (tracker.Banned || api.HasBlockingRuleFailures(tracker.RuleFailures))) ||
+		if tracker.Banned || api.HasBlockingRuleFailures(tracker.RuleFailures) ||
 			tracker.Questionnaire == nil || len(tracker.Questionnaire.Fields) == 0 {
 			continue
 		}

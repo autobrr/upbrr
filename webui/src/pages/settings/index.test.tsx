@@ -191,6 +191,49 @@ describe("SettingsPage", () => {
     expect(setSettingsSection).toHaveBeenCalledWith("tracker_auth");
   });
 
+  it("reports encrypted cookie storage ready only when every tracker is ready", async () => {
+    installAppOperationMocks({
+      ListTrackerAuthCapabilities: vi.fn().mockResolvedValue([trackerAuthCapability]),
+      GetTrackerAuthStatus: vi.fn().mockResolvedValue(trackerAuthStatus("MTV ready")),
+    });
+
+    render(
+      <SettingsPage {...baseProps} settingsSection="tracker_auth" setSettingsSection={vi.fn()} />,
+    );
+
+    const badge = await screen.findByText("Encrypted cookie storage ready");
+    expect(badge).toHaveClass("is-ready");
+  });
+
+  it("reports mixed encrypted cookie storage without global ready copy", async () => {
+    const unavailableCapability = {
+      ...trackerAuthCapability,
+      trackerID: "SLOW",
+      displayName: "SLOW",
+    };
+    installAppOperationMocks({
+      ListTrackerAuthCapabilities: vi
+        .fn()
+        .mockResolvedValue([trackerAuthCapability, unavailableCapability]),
+      GetTrackerAuthStatus: vi.fn().mockImplementation((trackerID: string) =>
+        Promise.resolve({
+          ...trackerAuthStatus(`${trackerID} status`),
+          trackerID,
+          displayName: trackerID,
+          encryptedStorage: trackerID === "MTV",
+        }),
+      ),
+    });
+
+    render(
+      <SettingsPage {...baseProps} settingsSection="tracker_auth" setSettingsSection={vi.fn()} />,
+    );
+
+    const badge = await screen.findByText("Encrypted cookie storage partially ready");
+    expect(badge).toHaveClass("is-warning");
+    expect(screen.queryByText("Encrypted cookie storage ready")).not.toBeInTheDocument();
+  });
+
   it("shows Check Auth only for remote-validation tracker auth", async () => {
     installAppOperationMocks({
       ListTrackerAuthCapabilities: vi.fn().mockResolvedValue([

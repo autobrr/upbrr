@@ -35,21 +35,28 @@ func SyncCookieEncryptionWithAuth(ctx context.Context, db *sql.DB, dbPath string
 // existing transaction so callers can commit or roll back cookie metadata with
 // the surrounding database write.
 func SyncCookieEncryptionWithAuthTx(ctx context.Context, tx *sql.Tx, dbPath string) error {
+	_, err := InitializeEncryptionKeyTx(ctx, tx, dbPath)
+	return err
+}
+
+// InitializeEncryptionKeyTx derives the current cookie key and synchronizes
+// encrypted cookie state inside tx. The caller owns commit or rollback.
+func InitializeEncryptionKeyTx(ctx context.Context, tx *sql.Tx, dbPath string) ([]byte, error) {
 	if ctx == nil {
-		return errors.New("cookies: context is required")
+		return nil, errors.New("cookies: context is required")
 	}
 	if tx == nil {
-		return errors.New("cookies: transaction is required")
+		return nil, errors.New("cookies: transaction is required")
 	}
 
-	_, err := initializeEncryptionKey(ctx, tx, dbPath, func(ctx context.Context, oldKey, newKey []byte) error {
+	key, err := initializeEncryptionKey(ctx, tx, dbPath, func(ctx context.Context, oldKey, newKey []byte) error {
 		return reencryptCookiesTx(ctx, tx, oldKey, newKey)
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return key, nil
 }
 
 // EnsureCookieMigration imports top-level .txt and .json cookie files into the
@@ -67,7 +74,7 @@ func EnsureCookieMigration(ctx context.Context, db *sql.DB, dbPath string, cooki
 	}
 
 	// Check if cookies directory exists and has any .txt or .json files
-	if !hasLegacyCookieFiles(cookiesDir) {
+	if !HasLegacyCookieFiles(cookiesDir) {
 		return nil
 	}
 
@@ -105,8 +112,9 @@ func EnsureCookieMigration(ctx context.Context, db *sql.DB, dbPath string, cooki
 	return nil
 }
 
-// hasLegacyCookieFiles checks if there are any .txt or .json cookie files in the directory.
-func hasLegacyCookieFiles(cookiesDir string) bool {
+// HasLegacyCookieFiles reports whether cookiesDir contains top-level .txt or
+// .json files eligible for legacy migration.
+func HasLegacyCookieFiles(cookiesDir string) bool {
 	info, err := os.Stat(cookiesDir)
 	if err != nil {
 		return false // Directory doesn't exist or can't be read

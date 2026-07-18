@@ -387,18 +387,29 @@ export default function SettingsPage(props: Props) {
         capability.authKind.toLowerCase().includes(filter)
       );
     });
-    const storageReady = Object.values(trackerAuthStatuses).some(
-      (status) => status.encryptedStorage,
-    );
+    const storageStatuses = trackerAuthCapabilities
+      .map((capability) => trackerAuthStatuses[capability.trackerID])
+      .filter((status): status is TrackerAuthStatus => status !== undefined);
+    const storageReady =
+      !trackerAuthLoading &&
+      trackerAuthCapabilities.length > 0 &&
+      storageStatuses.length === trackerAuthCapabilities.length &&
+      storageStatuses.every((status) => status.encryptedStorage);
+    const storagePartiallyReady = storageStatuses.some((status) => status.encryptedStorage);
+    const storageStatusLabel = trackerAuthLoading
+      ? "Checking encrypted cookie storage"
+      : storageReady
+        ? "Encrypted cookie storage ready"
+        : storagePartiallyReady
+          ? "Encrypted cookie storage partially ready"
+          : "Encrypted cookie storage unavailable";
     return (
       <div className="settings-form gap-4">
         <div className="settings-subgroup">
           <div className="settings-subgroup__title">Tracker Auth</div>
           <div className="settings-auth-status">
             <span className={`settings-auth-badge ${storageReady ? "is-ready" : "is-warning"}`}>
-              {storageReady
-                ? "Encrypted cookie storage ready"
-                : "Encrypted cookie storage unavailable"}
+              {storageStatusLabel}
             </span>
             <p className="helper">
               Import Netscape or JSON cookies, check local auth state, and confirm which trackers

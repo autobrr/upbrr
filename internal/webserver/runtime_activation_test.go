@@ -78,7 +78,7 @@ func TestRuntimeActivatorOwnsOrderedTransition(t *testing.T) {
 			}
 			return nil
 		},
-		persist: func(_ context.Context, cfg *config.Config, gotRepo *db.SQLiteRepository, dbPath string) error {
+		persist: func(_ context.Context, cfg *config.Config, gotRepo *db.SQLiteRepository, dbPath string, _ api.Logger) error {
 			rows = append(rows, "persist")
 			stored = *cfg
 			if gotRepo != repo || dbPath != repo.DBPath() {
@@ -155,7 +155,7 @@ func TestRuntimeActivatorFailureStagesDoNotInstall(t *testing.T) {
 			configure: func(activator *RuntimeActivator, owner *activationTestOwner) {
 				activator.deps.build = activationTestBuild(owner)
 				activator.deps.cookies = activationTestCookies
-				activator.deps.persist = func(context.Context, *config.Config, *db.SQLiteRepository, string) error {
+				activator.deps.persist = func(context.Context, *config.Config, *db.SQLiteRepository, string, api.Logger) error {
 					return errors.New("persist failed")
 				}
 			},
@@ -227,7 +227,7 @@ func TestRuntimeActivatorSerializesCompleteTransition(t *testing.T) {
 			return RuntimeGeneration{Config: cfg}, nil
 		},
 		cookies: activationTestCookies,
-		persist: func(context.Context, *config.Config, *db.SQLiteRepository, string) error { return nil },
+		persist: func(context.Context, *config.Config, *db.SQLiteRepository, string, api.Logger) error { return nil },
 	}
 
 	errs := make(chan error, 2)

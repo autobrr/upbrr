@@ -5,6 +5,7 @@ package webserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -80,7 +81,19 @@ type RuntimeInstaller interface {
 type runtimeActivationDeps struct {
 	build   func(context.Context, config.Config, *db.SQLiteRepository) (RuntimeGeneration, error)
 	cookies func(context.Context, *db.SQLiteRepository, string, api.Logger) error
-	persist func(context.Context, *config.Config, *db.SQLiteRepository, string) error
+	persist func(context.Context, *config.Config, *db.SQLiteRepository, string, api.Logger) error
+}
+
+type runtimeCookiePersistenceError struct {
+	err error
+}
+
+func (e *runtimeCookiePersistenceError) Error() string {
+	return fmt.Sprintf("runtime cookie persistence: %v", e.err)
+}
+
+func (e *runtimeCookiePersistenceError) Unwrap() error {
+	return e.err
 }
 
 // RuntimeActivator serializes and owns the complete config-candidate to active
@@ -112,8 +125,8 @@ func NewRuntimeActivator(repo *db.SQLiteRepository, fixedDBPath string, installe
 		installer:   installer,
 		deps: runtimeActivationDeps{
 			build:   buildRuntimeGeneration,
-			cookies: maintainRuntimeCookies,
-			persist: configstore.SaveToRepository,
+			cookies: validateRuntimeCookies,
+			persist: persistRuntimeConfigAndCookies,
 		},
 	}, nil
 }
@@ -167,7 +180,11 @@ func (a *RuntimeActivator) Activate(ctx context.Context, candidate config.Config
 	if err := a.deps.cookies(ctx, a.repo, a.fixedDBPath, generation.Logger); err != nil {
 		return activationError(ActivationStageCookies, err)
 	}
-	if err := a.deps.persist(ctx, stored, a.repo, a.fixedDBPath); err != nil {
+	if err := a.deps.persist(ctx, stored, a.repo, a.fixedDBPath, generation.Logger); err != nil {
+		var cookieErr *runtimeCookiePersistenceError
+		if errors.As(err, &cookieErr) {
+			return activationError(ActivationStageCookies, err)
+		}
 		return activationError(ActivationStagePersist, err)
 	}
 
@@ -194,31 +211,65 @@ func cloneConfig(source config.Config) (*config.Config, error) {
 	return &cloned, nil
 }
 
-func maintainRuntimeCookies(ctx context.Context, repo *db.SQLiteRepository, dbPath string, logger api.Logger) error {
-	if logger == nil {
-		logger = api.NopLogger{}
-	}
+func validateRuntimeCookies(_ context.Context, _ *db.SQLiteRepository, dbPath string, _ api.Logger) error {
 	if err := validateRuntimeCookieAuth(dbPath); err != nil && !errors.Is(err, cookies.ErrAuthHelperUnavailable) {
 		return fmt.Errorf("validate cookie auth: %w", err)
 	}
-	if err := cookies.SyncCookieEncryptionWithAuth(ctx, repo.RawDB(), dbPath); err != nil {
-		if errors.Is(err, cookies.ErrAuthHelperUnavailable) {
-			logger.Debugf("runtime activation: cookie encryption sync skipped: web auth helper unavailable")
-		} else {
-			return fmt.Errorf("sync cookie encryption: %w", err)
-		}
+	return nil
+}
+
+func persistRuntimeConfigAndCookies(
+	ctx context.Context,
+	cfg *config.Config,
+	repo *db.SQLiteRepository,
+	dbPath string,
+	logger api.Logger,
+) error {
+	if logger == nil {
+		logger = api.NopLogger{}
 	}
 	cookiesDir, err := db.CookiePath(dbPath, "")
 	if err != nil {
 		logger.Debugf("runtime activation: cookie directory unavailable: %v", err)
+		if err := configstore.SaveToRepository(ctx, cfg, repo, dbPath); err != nil {
+			return fmt.Errorf("persist runtime config without cookie directory: %w", err)
+		}
 		return nil
 	}
-	if err := cookies.EnsureCookieMigration(ctx, repo.RawDB(), dbPath, cookiesDir, logger); err != nil {
-		if errors.Is(err, cookies.ErrAuthHelperUnavailable) {
+	if !cookies.HasLegacyCookieFiles(cookiesDir) {
+		if err := configstore.SaveToRepository(ctx, cfg, repo, dbPath); err != nil {
+			return fmt.Errorf("persist runtime config without legacy cookies: %w", err)
+		}
+		return nil
+	}
+
+	store, err := cookies.NewCookieStore(repo.RawDB())
+	if err != nil {
+		return &runtimeCookiePersistenceError{err: fmt.Errorf("create cookie store: %w", err)}
+	}
+
+	migratedCount := 0
+	failedCookies := make([]cookies.FailedCookie, 0)
+	err = configstore.SaveToRepositoryWithPreSave(ctx, cfg, repo, dbPath, func(ctx context.Context, tx *sql.Tx, key []byte) error {
+		if len(key) == 0 {
 			logger.Debugf("runtime activation: cookie migration skipped: web auth helper unavailable")
 			return nil
 		}
-		return fmt.Errorf("migrate cookies: %w", err)
+		var migrateErr error
+		migratedCount, failedCookies, migrateErr = cookies.MigrateFromFilesToDBTx(ctx, cookiesDir, store, tx, key, logger)
+		if migrateErr != nil {
+			return &runtimeCookiePersistenceError{err: fmt.Errorf("migrate cookies: %w", migrateErr)}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("persist runtime config with cookie migration: %w", err)
+	}
+	if migratedCount == 0 || len(failedCookies) > 0 {
+		return nil
+	}
+	if err := cookies.DeleteMigratedCookieFiles(cookiesDir, logger); err != nil {
+		logger.Warnf("cookies: migration cleanup failed dir=%s migrated=%d: %v", cookiesDir, migratedCount, err)
 	}
 	return nil
 }
