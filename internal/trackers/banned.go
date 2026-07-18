@@ -83,7 +83,9 @@ func NewBannedGroupChecker(dbPath string) *BannedGroupChecker {
 	return NewBannedGroupCheckerWithRegistry(dbPath, nil)
 }
 
-// NewBannedGroupCheckerWithRegistry returns a checker using registry-owned blacklist policies.
+// NewBannedGroupCheckerWithRegistry resolves the banned-group cache path,
+// creating its mode-0700 cache parent, and uses registry-owned static and
+// dynamic policies. It returns nil when the cache path cannot be resolved.
 func NewBannedGroupCheckerWithRegistry(dbPath string, registry *Registry) *BannedGroupChecker {
 	basePath, err := db.Subdir(dbPath, "cache")
 	if err != nil {
@@ -887,6 +889,3 @@ func bannedGroupsEndpoint(cfg config.Config, tracker string, registry *Registry,
 func bannedGroupAPIKey(cfg config.Config, tracker string) string {
 	return strings.TrimSpace(trackerConfigFor(cfg, tracker).APIKey)
 }
-
-// webBaseURL strips a configured URL to scheme and host for API endpoint
-// construction.

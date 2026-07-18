@@ -23,6 +23,10 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// prepareUpload performs authenticated lookup for every intent. Upload intent
+// also creates the remote task and uploads screenshots during preparation, then
+// captures the finalized form, client session, redirect, and local torrent
+// target for one later submission.
 func prepareUpload(ctx context.Context, site siteDefinition, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 	if req.Intent != trackers.PreparationIntentUpload {
 		preview, err := buildUploadDryRun(ctx, site, req)

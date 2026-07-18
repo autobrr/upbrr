@@ -25,12 +25,16 @@ import (
 
 const defaultBaseURL = "https://api.graphql.imdb.com/"
 
+// Client queries IMDb's public GraphQL endpoint for title, search, and episode
+// metadata.
 type Client struct {
 	baseURL string
 	http    *http.Client
 	logger  api.Logger
 }
 
+// NewClient substitutes a 15-second HTTP client and no-op logger for nil
+// dependencies.
 func NewClient(httpClient *http.Client, logger api.Logger) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 15 * time.Second}
@@ -45,6 +49,10 @@ func NewClient(httpClient *http.Client, logger api.Logger) *Client {
 	}
 }
 
+// GetInfo returns normalized title metadata for imdbID. Empty or zero IDs and
+// missing titles return an empty result without error; request or decode failures
+// return no partial result. Missing runtime and plot values default to 60 minutes
+// and "No plot available", and episode data is limited to the first 500 entries.
 func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage string, debug bool) (Info, error) {
 	info := Info{}
 	id := metautil.NormalizeIMDbID(imdbID)
@@ -278,6 +286,11 @@ func (c *Client) GetInfo(ctx context.Context, imdbID string, manualLanguage stri
 	return info, nil
 }
 
+// Search tries increasingly broad title variants in order, pausing one second
+// between remote attempts. Individual request failures are treated as no results.
+// A single result or a sufficiently separated similarity winner is selected;
+// Unattended selects the top ambiguous candidate, while interactive mode returns
+// candidates with a zero IMDbID. Quickie validates only the first result.
 func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, error) {
 	results := []map[string]any{}
 	imdbID := 0
@@ -451,6 +464,9 @@ func applyReleaseHints(input SearchInput) SearchInput {
 	return input
 }
 
+// GetEpisodeInfo returns episode numbering, parent-series identity, and adjacent
+// episode references. Empty IDs and missing titles return an empty result without
+// error; request and decode failures return no partial result.
 func (c *Client) GetEpisodeInfo(ctx context.Context, imdbID string, debug bool) (EpisodeLookup, error) {
 	id := metautil.NormalizeIMDbID(imdbID)
 	if id == "" {

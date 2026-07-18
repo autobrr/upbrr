@@ -5,6 +5,7 @@ package znth
 
 import "github.com/autobrr/upbrr/internal/trackers"
 
+// Rules returns ZNTH's waivable adult-content prohibition.
 func Rules() *trackers.RuleSet {
 	return &trackers.RuleSet{BlockAdult: true, AdultMessage: "Porn/xxx is not allowed at ZNTH."}
 }

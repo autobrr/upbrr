@@ -11,12 +11,18 @@ import (
 	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 )
 
+// BBCodeOptions controls tracker-specific description cleanup and artifact
+// extraction. BaseDir and UUID are retained inputs but are not currently read.
 type BBCodeOptions struct {
+	// Framestor preserves the original description as a bhd.nfo artifact.
 	Framestor bool
-	Flux      bool
-	BaseDir   string
-	UUID      string
-	OnNFO     func(text string) error
+	// Flux wraps non-empty cleaned text in a code block.
+	Flux    bool
+	BaseDir string
+	UUID    string
+	// OnNFO receives the original description before cleanup when Framestor is set.
+	// Callback failures are recorded as report notes rather than returned.
+	OnNFO func(text string) error
 }
 
 var (
@@ -34,6 +40,9 @@ var (
 	)
 )
 
+// CleanDescription removes unsupported BHD formatting and uploader signatures,
+// extracts unique image URLs, and applies the requested Framestor and Flux
+// behavior. Image extraction preserves the first occurrence of each raw URL.
 func CleanDescription(description string, options BBCodeOptions) bbcode.Report {
 	desc := bbcode.NormalizeNewlines(description)
 	report := bbcode.Report{}

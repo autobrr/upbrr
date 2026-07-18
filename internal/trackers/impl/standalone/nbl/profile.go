@@ -9,7 +9,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// Profile returns NBL identity, preparation, dupe, rules, bans, and policies.
+// Profile returns NBL identity, preparation, dupe, rules, bans, and policies,
+// including the strict TVmaze metadata requirement for TV uploads.
 func Profile() standalone.Profile {
 	return standalone.Profile{
 		Name:                "NBL",

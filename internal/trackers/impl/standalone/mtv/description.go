@@ -30,6 +30,9 @@ var mtvSignaturePattern = regexp.MustCompile(
 )
 var mtvEmptyAlignPattern = regexp.MustCompile(`(?is)\[(?:center|right|left|align=(?:center|right|left))\]\s*\[/(?:center|right|left|align)\]`)
 
+// BuildDescription assembles MTV's media details, eligible tone-mapping header,
+// screenshots, and sanitized kept notes. Missing media files are ignored, while
+// other read failures and context cancellation are returned.
 func BuildDescription(
 	ctx context.Context,
 	meta api.UploadSubject,

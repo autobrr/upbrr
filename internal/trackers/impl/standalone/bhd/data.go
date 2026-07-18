@@ -25,6 +25,7 @@ type dataLookup struct {
 	baseURL string
 }
 
+// NewDataLookup returns a BHD lookup bound to cfg and httpClient.
 func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _ api.Logger) trackers.DataLookup {
 	return &dataLookup{
 		cfg:     cfg,
@@ -33,6 +34,10 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _
 	}
 }
 
+// Lookup resolves a BHD torrent by tracker ID or by folder/file name. Missing
+// API or RSS credentials, an unusable search filter, non-success responses, and
+// empty API results produce an empty result without an error. Description and
+// image fields honor OnlyID and KeepImages independently.
 func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (trackers.DataLookupResult, error) {
 	cfg, apiKey := bhdConfig(l.cfg)
 	rssKey := strings.TrimSpace(cfg.BhdRSSKey)

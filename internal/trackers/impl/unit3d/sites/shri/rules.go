@@ -12,6 +12,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Rules strictly requires a region for DVD and HDDVD uploads.
 func Rules() *trackers.RuleSet { return &trackers.RuleSet{Check: checkRegion} }
 
 func checkRegion(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {

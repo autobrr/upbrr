@@ -10,7 +10,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// Profile returns TIK's Unit3D site manifest.
+// Profile returns TIK's disc-type and category mappings, honoring explicit
+// tracker-site overrides before metadata-derived classification.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:    "TIK",

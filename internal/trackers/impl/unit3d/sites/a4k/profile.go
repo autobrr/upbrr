@@ -6,6 +6,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Profile returns A4K's restricted type and resolution mappings together with
+// its tracker-owned rules, banned groups, and image-host policy.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:         "A4K",

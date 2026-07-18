@@ -5,6 +5,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Profile returns ZNTH's tracker-specific name policy and type mapping,
+// including its dedicated DVDRip type ID.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:    "ZNTH",

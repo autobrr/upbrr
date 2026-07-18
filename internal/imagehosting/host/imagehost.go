@@ -8,7 +8,9 @@ import (
 	"strings"
 )
 
-// HostMapping maps URL domain patterns to normalized host names
+// HostMapping is the process-wide URL-host normalization table used by
+// [ExtractHost]. Treat it as read-only after startup; ExtractHost reads it
+// without synchronization.
 var HostMapping = map[string]string{
 	"ibb.co":               "imgbb",
 	"pixhost.cc":           "pixhost",
@@ -33,8 +35,10 @@ var HostMapping = map[string]string{
 	"i.ibb.co": "imgbb",
 }
 
-// ExtractHost extracts the normalized host name from a URL.
-// Returns the mapped host name if found, otherwise returns the domain name.
+// ExtractHost returns the mapped image-host name for a URL, checking the exact
+// lowercased host, a removed "www." prefix, and the final two labels in that
+// order. Invalid or hostless URLs return empty; unmatched hosts are returned as
+// lowercased URL hosts.
 func ExtractHost(rawURL string) string {
 	if strings.TrimSpace(rawURL) == "" {
 		return ""

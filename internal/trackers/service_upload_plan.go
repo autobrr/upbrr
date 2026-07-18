@@ -95,7 +95,10 @@ type trackerPlanSlot struct {
 }
 
 // Upload prepares every selected tracker, reaches a full barrier, then submits
-// all ready plans concurrently. Tracker-local failures do not stop unrelated work.
+// ready plans concurrently. Tracker-local failures do not stop unrelated work
+// and return a partial summary with [PartialUploadError]; cancellation returns
+// completed uploads with the context error. Pending record finalization uses a
+// bounded context detached from caller cancellation.
 func (s *Service) Upload(ctx context.Context, meta api.UploadSubject) (api.UploadSummary, error) {
 	if err := ctx.Err(); err != nil {
 		return api.UploadSummary{}, fmt.Errorf("context canceled: %w", err)

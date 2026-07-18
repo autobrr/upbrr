@@ -24,6 +24,9 @@ const flAuthResponseMaxBytes = 1 << 20
 
 var flAuthValidatorPattern = regexp.MustCompile(`name="validator"\s+value="([^"]+)"`)
 
+// validateAuthCookies checks bounded FL home-page evidence. Explicit login
+// evidence and a missing logout marker are confirmed-invalid; transport, read,
+// and other HTTP failures remain transient.
 func validateAuthCookies(ctx context.Context, baseURL string, values []*http.Cookie) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/index.php", nil)
 	if err != nil {
@@ -86,6 +89,8 @@ func validateAuthCookies(ctx context.Context, baseURL string, values []*http.Coo
 	return nil
 }
 
+// loginAuthSession fetches FL's validator token, submits configured
+// credentials, and persists only non-empty cookies that pass remote validation.
 func loginAuthSession(ctx context.Context, cfg config.TrackerConfig, dbPath string, baseURL string) error {
 	jar, err := cookiejar.New(nil)
 	if err != nil {

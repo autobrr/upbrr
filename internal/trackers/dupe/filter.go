@@ -20,7 +20,8 @@ var episodePattern = regexp.MustCompile(`(?i)[e](\d{1,3})`)
 var dailyEpisodePattern = regexp.MustCompile(`(?i)\b((?:19|20)\d{2})[.\-_/\s](\d{1,2})[.\-_/\s](\d{1,2})\b`)
 var otwEpisodePattern = regexp.MustCompile(`(?i)e\d{2}`)
 
-// FilterDupes applies tracker matching policy and returns remaining candidates plus the strongest match.
+// FilterDupes applies tracker matching policy and returns candidates that remain
+// blocking plus accumulated first-match evidence.
 func FilterDupes(dupes []api.DupeEntry, meta api.DuplicateSubject, tracker string, _ config.Config, _ api.Logger) ([]api.DupeEntry, api.DupeMatch) {
 	return filterDupes(dupes, meta, tracker, nil)
 }

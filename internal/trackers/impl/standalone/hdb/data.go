@@ -23,6 +23,8 @@ type dataLookup struct {
 	endpoint string
 }
 
+// NewDataLookup returns an HDB lookup bound to the definition's base URL, cfg,
+// and httpClient.
 func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _ api.Logger) trackers.DataLookup {
 	return &dataLookup{
 		cfg:      cfg,
@@ -31,6 +33,10 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _
 	}
 }
 
+// Lookup resolves the first HDB torrent by tracker ID or folder/file search.
+// Missing credentials or filters, non-success responses, API rejection, and
+// empty data produce an empty result without an error. OnlyID and KeepImages
+// independently control description and image projection.
 func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (trackers.DataLookupResult, error) {
 	username, passkey := hdbCredentials(l.cfg)
 	if username == "" || passkey == "" {

@@ -15,14 +15,17 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// Registry stores tracker definitions and their optional typed capabilities.
-// Tracker names are normalized for case-insensitive lookup.
+// Registry stores construction-time tracker definitions and typed capabilities.
+// Names are normalized for case-insensitive lookup; pointer-valued capabilities
+// exposed through [Registry.LookupDescriptor] remain registry-owned and must be
+// treated as read-only.
 type Registry struct {
 	descriptors map[string]Descriptor
 	priority    []string
 }
 
-// SetPriorityOrder configures the curated tracker preference order.
+// SetPriorityOrder replaces the curated preference order with a lower-case,
+// stable, deduplicated copy.
 func (r *Registry) SetPriorityOrder(names []string) {
 	if r == nil {
 		return
@@ -383,7 +386,9 @@ func (r *Registry) LookupArtifactPolicy(tracker string) (ArtifactPolicy, bool) {
 	return *descriptor.Artifact, true
 }
 
-// RegisterDescriptor validates and registers a tracker and its capabilities.
+// RegisterDescriptor validates and normalizes one construction-time descriptor.
+// It rejects duplicate names, non-HTTPS endpoints, invalid families/content
+// modes, malformed ID patterns, and conflicting private image-host ownership.
 func (r *Registry) RegisterDescriptor(descriptor Descriptor) error {
 	def := descriptor.Definition
 	if def == nil {
@@ -511,7 +516,9 @@ func (r *Registry) Lookup(tracker string) (Definition, bool) {
 	return descriptor.Definition, ok
 }
 
-// LookupDescriptor returns all registered capabilities for tracker.
+// LookupDescriptor returns a shallow registry-owned capability snapshot. Callers
+// needing mutable policy data must use the typed lookup methods, which copy
+// mutable slices where required.
 func (r *Registry) LookupDescriptor(tracker string) (Descriptor, bool) {
 	if r == nil {
 		return Descriptor{}, false

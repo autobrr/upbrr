@@ -55,7 +55,8 @@ func CheckRepository(root string) ([]Violation, error) {
 	return violations, err
 }
 
-// FixRepository makes substantial keyed composite literals consistently multiline.
+// FixRepository makes substantial keyed composite literals consistently multiline
+// and returns the number of source files rewritten.
 func FixRepository(root string) (int, error) {
 	fixed := 0
 	err := walkGoFiles(root, func(path string, source []byte) error {

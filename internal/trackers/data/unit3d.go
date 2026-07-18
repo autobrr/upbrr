@@ -237,7 +237,9 @@ func TrackerAPIKey(cfg config.Config, tracker string) string {
 	return ""
 }
 
-// TorrentInfo fetches and normalizes one Unit3D torrent record.
+// TorrentInfo fetches by tracker ID or, when absent, filename. Non-success and
+// no-match responses return an empty result without error. onlyID skips cleaned
+// description text; keepImages enables bounded public-image validation.
 func (c *Client) TorrentInfo(ctx context.Context, tracker string, id string, fileName string, onlyID bool, keepImages bool) (Result, error) {
 	return c.lookupUnit3D(ctx, tracker, id, fileName, onlyID, keepImages)
 }
@@ -369,7 +371,9 @@ func convertCleanedUnit3DImages(images []descriptionunit3d.Image) []bbcode.Image
 	return converted
 }
 
-// SearchTorrents queries a Unit3D tracker and returns normalized duplicate candidates and a skip reason.
+// SearchTorrents returns normalized duplicate candidates in provider order.
+// Non-success responses become a caller-visible warning rather than an error;
+// CBR also appends matching pending uploads.
 func (c *Client) SearchTorrents(ctx context.Context, tracker string, params url.Values, isDisc bool) ([]api.DupeEntry, string, error) {
 	baseURL, ok := baseURLForTrackerWithConfig(c.cfg, c.registry, tracker)
 	if !ok {

@@ -343,8 +343,10 @@ func (e *Engine) start(jobCtx context.Context, record *jobRecord, run func(conte
 	}()
 }
 
-// StartUpload validates/clones spec, enrolls it for owner, then runs asynchronously.
-// The caller transfers ownership of spec resources only when this method succeeds.
+// StartUpload validates and clones spec, then enrolls it for asynchronous work.
+// Once accepted, the job is detached from caller cancellation and runs until
+// explicit cancellation, owner removal, or engine shutdown. Resource ownership
+// transfers to the engine only when this method succeeds.
 func (e *Engine) StartUpload(ctx context.Context, owner *OwnerHandle, raw UploadSpec) (string, error) {
 	if ctx == nil {
 		return "", errors.New("context is required")
@@ -375,7 +377,10 @@ func (e *Engine) StartUpload(ctx context.Context, owner *OwnerHandle, raw Upload
 	return record.id, nil
 }
 
-// StartDupe validates/clones spec, enrolls it for owner, then runs asynchronously.
+// StartDupe validates and clones spec, then enrolls it for asynchronous work.
+// Once accepted, the job is detached from caller cancellation and runs until
+// explicit cancellation, owner removal, or engine shutdown. Resource ownership
+// transfers to the engine only when this method succeeds.
 func (e *Engine) StartDupe(ctx context.Context, owner *OwnerHandle, raw DupeSpec) (string, error) {
 	if ctx == nil {
 		return "", errors.New("context is required")

@@ -147,14 +147,24 @@ type TrackerUploadSnapshot struct {
 
 // OwnerJobSnapshot is the discriminated owner-listing representation of one retained Job.
 type OwnerJobSnapshot struct {
-	Kind          string                 `json:"kind"`
-	JobID         string                 `json:"jobID"`
-	CorrelationID string                 `json:"correlationID"`
-	RetryOf       string                 `json:"retryOf,omitempty"`
-	Release       api.ReleaseRef         `json:"release"`
-	Status        string                 `json:"status"`
-	StartedAt     string                 `json:"startedAt"`
-	FinishedAt    string                 `json:"finishedAt"`
-	Dupe          *DupeCheckSnapshot     `json:"dupe,omitempty"`
-	Upload        *TrackerUploadSnapshot `json:"upload,omitempty"`
+	// Kind selects which kind-specific snapshot is present.
+	Kind string `json:"kind"`
+	// JobID identifies the retained job within its owner scope.
+	JobID string `json:"jobID"`
+	// CorrelationID reconciles an accepted job with its browser start command.
+	CorrelationID string `json:"correlationID"`
+	// RetryOf identifies the prior upload job when this is a linked retry.
+	RetryOf string `json:"retryOf,omitempty"`
+	// Release identifies the exact prepared generation accepted for the job.
+	Release api.ReleaseRef `json:"release"`
+	// Status is the job lifecycle state.
+	Status string `json:"status"`
+	// StartedAt is the acceptance time in RFC3339 format.
+	StartedAt string `json:"startedAt"`
+	// FinishedAt is an RFC3339 timestamp, or empty while the job is active.
+	FinishedAt string `json:"finishedAt"`
+	// Dupe is present only when Kind is KindDuplicateCheck.
+	Dupe *DupeCheckSnapshot `json:"dupe,omitempty"`
+	// Upload is present only when Kind is KindTrackerUpload.
+	Upload *TrackerUploadSnapshot `json:"upload,omitempty"`
 }

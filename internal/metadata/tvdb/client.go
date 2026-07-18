@@ -83,6 +83,8 @@ var locationTimezoneMap = map[string]string{
 	"usa":            "America/New_York",
 }
 
+// Client owns TVDB authentication, bounded response decoding, and optional
+// episode-cache persistence. Its bearer token is shared across calls.
 type Client struct {
 	baseURL  string
 	apiKey   string
@@ -94,6 +96,7 @@ type Client struct {
 	authToken string
 }
 
+// Option configures a Client during construction and runs in caller order.
 type Option func(*Client)
 
 type paintChip struct {
@@ -102,6 +105,9 @@ type paintChip struct {
 	shade string
 }
 
+// NewClient substitutes a 15-second HTTP client, no-op logger, and bundled
+// application credential when their corresponding inputs are empty. Non-nil
+// options run after defaults are installed.
 func NewClient(httpClient *http.Client, logger api.Logger, apiKey, cacheDir string, opts ...Option) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 15 * time.Second}
@@ -181,6 +187,9 @@ func wash64(value string) (string, bool) {
 	return string(decoded), true
 }
 
+// SearchSeries parses release hints before querying and returns the provider
+// order unchanged. Selection prefers an exact result year, then an English alias
+// carrying that year, and otherwise the first result; no matches return zero.
 func (c *Client) SearchSeries(ctx context.Context, filename, year string) ([]SeriesSearchResult, int, error) {
 	filename, year = applyReleaseHints(filename, year)
 	results, err := c.searchSeries(ctx, filename, year)
@@ -198,10 +207,15 @@ func (c *Client) SearchSeries(ctx context.Context, filename, year string) ([]Ser
 	return results, selected, nil
 }
 
+// GetEpisodes is the English-language form of [Client.GetEpisodesWithLanguage].
 func (c *Client) GetEpisodes(ctx context.Context, seriesID int, query EpisodeQuery) (EpisodesData, string, error) {
 	return c.GetEpisodesWithLanguage(ctx, seriesID, query, "eng")
 }
 
+// GetEpisodesWithLanguage returns up to 20 pages of episodes and a naming-safe
+// series alias. Its JSON cache has no expiry and is reused only when it contains
+// the requested episode evidence. Series-detail refreshes and cache writes are
+// best-effort; episode fetch failures return no partial result.
 func (c *Client) GetEpisodesWithLanguage(ctx context.Context, seriesID int, query EpisodeQuery, language string) (EpisodesData, string, error) {
 	if seriesID == 0 {
 		return EpisodesData{}, "", errNotFound
@@ -290,6 +304,9 @@ func normalizeIMDbRemote(value string) string {
 	return fmt.Sprintf("tt%07d", id)
 }
 
+// GetByExternalID tries IMDb before TMDB and returns the first series match. When
+// tvMovie is true, episode-parent and movie matches are additional fallbacks.
+// Missing remote IDs return zero without error.
 func (c *Client) GetByExternalID(ctx context.Context, imdbID, tmdbID string, tvMovie bool) (int, string, error) {
 	imdbRemote := normalizeIMDbRemote(imdbID)
 	if imdbRemote != "" {
@@ -335,10 +352,15 @@ func readTVDBResponseBody(body io.Reader) ([]byte, error) {
 	return payload, nil
 }
 
+// GetSeriesMetadata is the English-language form of
+// [Client.GetSeriesMetadataWithLanguage].
 func (c *Client) GetSeriesMetadata(ctx context.Context, seriesID int) (SeriesMetadata, error) {
 	return c.GetSeriesMetadataWithLanguage(ctx, seriesID, "eng")
 }
 
+// GetSeriesMetadataWithLanguage loads extended series data and best-effort
+// English translation metadata. Translation failure does not fail the primary
+// result; naming years are exposed only with recorded provenance.
 func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int, language string) (SeriesMetadata, error) {
 	if seriesID == 0 {
 		return SeriesMetadata{}, errNotFound
@@ -439,6 +461,8 @@ func (c *Client) GetIMDBFromEpisodeID(ctx context.Context, episodeID int) (strin
 	return "", nil
 }
 
+// GetEpisodeTranslation returns empty without error for an empty language or a
+// missing translation. Other provider failures are returned.
 func (c *Client) GetEpisodeTranslation(ctx context.Context, episodeID int, language string) (EpisodeTranslation, error) {
 	if episodeID == 0 {
 		return EpisodeTranslation{}, errNotFound
@@ -1509,6 +1533,8 @@ func findEpisodeMatch(episodes []Episode, query EpisodeQuery) (EpisodeMatch, boo
 	return EpisodeMatch{}, false
 }
 
+// GetSpecificEpisodeData matches by air date, season-only first episode,
+// season/episode, explicit absolute number, then Episode as an absolute fallback.
 func GetSpecificEpisodeData(data EpisodesData, query EpisodeQuery) (EpisodeMatch, bool) {
 	match, ok := findEpisodeMatch(data.Episodes, query)
 	return match, ok

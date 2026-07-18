@@ -11,7 +11,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// Profile returns SPD identity, preparation, dupe, and policy behavior.
+// Profile returns SPD identity, preparation, dupe, and policy behavior,
+// including the strict requirement for matching TMDB or IMDb metadata.
 func Profile() standalone.Profile {
 	return standalone.Profile{
 		Name:                "SPD",

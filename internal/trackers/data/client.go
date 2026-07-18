@@ -29,7 +29,9 @@ type Client struct {
 	registry *trackers.Registry
 }
 
-// NewClientWithRegistry returns a lookup client backed by registry.
+// NewClientWithRegistry snapshots registry data-lookup factories at construction.
+// It substitutes a 30-second HTTP client and no-op logger and panics when
+// registry is nil.
 func NewClientWithRegistry(cfg config.Config, logger api.Logger, httpClient *http.Client, registry *trackers.Registry) *Client {
 	if registry == nil {
 		panic("tracker data: registry is required")
@@ -55,7 +57,10 @@ func NewClientWithRegistry(cfg config.Config, logger api.Logger, httpClient *htt
 	return client
 }
 
-// Lookup resolves tracker-derived metadata for one release.
+// Lookup dispatches to a registered tracker lookup, then falls back to generic
+// Unit3D lookup for Unit3D-family trackers. Unknown or unsupported trackers
+// return an empty result without error; tracker lookup errors are wrapped with
+// the normalized tracker name.
 func (c *Client) Lookup(
 	ctx context.Context,
 	tracker string,

@@ -37,7 +37,8 @@ type EvidenceCollector struct {
 	pending  map[string]externalidentity.CandidateEvidence
 }
 
-// NewEvidenceCollector constructs the metadata evidence adapter.
+// NewEvidenceCollector requires a collection pipeline and owns the one-use,
+// per-source candidate handoff consumed during canonical identity resolution.
 func NewEvidenceCollector(pipeline EvidencePipeline) (*EvidenceCollector, error) {
 	if pipeline == nil {
 		return nil, errors.New("prepared release: metadata evidence pipeline is required")

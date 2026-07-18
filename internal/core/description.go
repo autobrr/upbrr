@@ -178,11 +178,8 @@ func (m *descriptionModule) descriptionOverrides(ctx context.Context, sourcePath
 	return result, nil
 }
 
-// FetchDescriptionBuilderPreview builds editable description groups from cached
-// or freshly prepared metadata. When request trackers are provided, only that
-// selected set contributes groups; selections that resolve empty return an empty
-// preview instead of falling back to configured defaults.
-
+// buildDescriptionBuilderGroup normalizes prepared description text and HTML,
+// using a persisted override only when prepared content is blank.
 func buildDescriptionBuilderGroup(
 	entry api.PreparationDescription,
 	overrideByGroup map[string]api.DescriptionOverride,
@@ -231,22 +228,6 @@ func buildDescriptionBuilderGroup(
 	}
 }
 
-// ensureDescriptionBuilderMetadata refreshes missing external metadata before
-// tracker description preparation, using the resolved tracker set for localized
-// pt-BR refreshes while preserving the original tracker list on returned
-// metadata. Cacheable WebUI refreshes are stored as request-refreshed entries.
-
-// descriptionBuilderNeedsExternalMetadata reports whether tracker description
-// preparation needs metadata not present on the current prepared metadata.
-
-// descriptionBuilderNeedsPTBRMetadata reports whether localized tracker
-// descriptions need a missing pt-BR TMDB metadata entry.
-
-// descriptionBuilderTrackersNeedPTBR reports whether any tracker consumes pt-BR localized metadata.
-
-// descriptionBuilderEpisodeLike reports whether description generation should
-// require episode-scoped metadata when episode overview support is enabled.
-
 func normalizeDescriptionBuilderGroupKey(groupKey string, trackersList []string) string {
 	normalized := strings.ToLower(strings.TrimSpace(groupKey))
 	if normalized == "" && len(trackersList) > 0 {
@@ -254,10 +235,6 @@ func normalizeDescriptionBuilderGroupKey(groupKey string, trackersList []string)
 	}
 	return normalized
 }
-
-// FetchDescriptionBuilderGroupPreview rebuilds one description group from cached
-// or freshly prepared metadata. Request trackers limit the rebuild to the
-// selected set while tracker removals still suppress removed selections.
 
 func (m *descriptionModule) render(ctx context.Context, raw string) (string, error) {
 	if err := ctx.Err(); err != nil {
@@ -296,11 +273,6 @@ func (m *descriptionModule) resolveOverrideRequest(ctx context.Context, req api.
 	req.DescriptionOverrideRaw = string(body)
 	return req, nil
 }
-
-// resolveCanonicalDescriptionGroups returns request or cached description groups
-// before rebuilding groups from tracker preparation for the selected tracker set.
-// Explicit tracker selections constrain the rebuild and do not fall back to
-// configured defaults when they resolve empty.
 
 // resolveSubjectGroups builds description groups directly from an exact
 // operation subject. It never imports mutable preparation state.

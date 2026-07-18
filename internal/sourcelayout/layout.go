@@ -49,11 +49,14 @@ type Layout struct {
 }
 
 // ErrSourceNotFound identifies a requested preparation source that does not
-// exist without exposing its local path through public failures.
+// exist without exposing its local path through public failures. Test it with
+// [errors.Is].
 var ErrSourceNotFound = errors.New("source layout: source not found")
 
 // Resolve normalizes and validates sourcePath and derives any disc resource
-// root without changing the source's canonical identity.
+// root without changing the source's canonical identity. Disc markers are
+// matched case-insensitively at the source root or among its immediate children;
+// deeper descendants are not scanned.
 func Resolve(ctx context.Context, sourcePath string) (Layout, error) {
 	if ctx == nil {
 		return Layout{}, errors.New("source layout: context is required")

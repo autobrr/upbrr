@@ -19,7 +19,8 @@ import (
 
 var sizePattern = regexp.MustCompile(`(?i)([0-9]+(?:\.[0-9]+)?)\s*(KB|MB|GB|TB|KiB|MiB|GiB|TiB|B)\b`)
 
-// GetText performs a tracker GET request and returns its response body.
+// GetText performs a tracker GET request and reads the full response body for
+// every HTTP status. Non-success status codes are returned as data, not errors.
 func GetText(ctx context.Context, client *http.Client, endpoint string, params url.Values, cookies []*http.Cookie) (int, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -42,7 +43,8 @@ func GetText(ctx context.Context, client *http.Client, endpoint string, params u
 	return resp.StatusCode, string(body), nil
 }
 
-// GetHTML performs a tracker GET request and parses its HTML response.
+// GetHTML performs a tracker GET request and parses successful responses.
+// Non-2xx responses return their status with a nil document and nil error.
 func GetHTML(ctx context.Context, client *http.Client, endpoint string, params url.Values, cookies []*http.Cookie) (int, *xhtml.Node, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {

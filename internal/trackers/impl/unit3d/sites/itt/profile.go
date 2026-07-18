@@ -7,6 +7,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Profile returns ITT's type mapping, preferring recognized release-name type
+// markers before falling back to the inferred Unit3D type.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:    "ITT",

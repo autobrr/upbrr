@@ -74,6 +74,8 @@ type claimChecker struct {
 	logger api.Logger
 }
 
+// NewClaimChecker returns a BTN claim checker backed by the configured claim
+// cache and tracker credentials. A nil logger is replaced with a no-op logger.
 func (d *Definition) NewClaimChecker(cfg config.Config, logger api.Logger) trackers.ClaimChecker {
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -81,6 +83,10 @@ func (d *Definition) NewClaimChecker(cfg config.Config, logger api.Logger) track
 	return &claimChecker{cfg: cfg, logger: logger}
 }
 
+// HasClaim reports whether a TV title appears in BTN's claimed-show list and
+// remains inside its claim window. Non-TV content and unavailable claim data
+// fail open as unclaimed; malformed or missing air dates keep a matched claim
+// active because expiry cannot be established.
 func (s *claimChecker) HasClaim(ctx context.Context, meta api.UploadSubject) (bool, error) {
 	if !btnIsTVCategory(meta) {
 		if s.logger != nil {
@@ -968,6 +974,8 @@ func mirrorBTNCookiesForClaimedThread(client *http.Client) {
 	client.Jar.SetCookies(broadcastURL, mirrored)
 }
 
+// FailureReason describes an active BTN claim using the configured grace
+// period and the remaining or expired claim-window state.
 func (s *claimChecker) FailureReason(meta api.UploadSubject) string {
 	return btnClaimFailureReason(meta, s.btnClaimWindowGraceHours())
 }

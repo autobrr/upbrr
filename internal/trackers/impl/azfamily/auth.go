@@ -5,6 +5,8 @@ package azfamily
 
 import "github.com/autobrr/upbrr/pkg/api"
 
+// AuthCapability returns the stored-cookie authentication contract for this
+// AZ-family profile.
 func (d *Definition) AuthCapability() api.TrackerAuthCapability {
 	return api.TrackerAuthCapability{
 		TrackerID:          d.Name(),

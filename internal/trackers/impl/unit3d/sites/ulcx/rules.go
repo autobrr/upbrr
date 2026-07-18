@@ -13,6 +13,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Rules strictly enforces valid MediaInfo settings, the DVDRip prohibition,
+// HEVC eligibility, and encode/HDTV resolution. Language and concert failures
+// remain waivable.
 func Rules() *trackers.RuleSet {
 	return &trackers.RuleSet{
 		RequireValidMISetting: true,

@@ -26,6 +26,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// SQLiteRepository owns one SQLite handle constrained to a single connection
+// so connection-local PRAGMAs remain consistent. Callers must close the
+// repository when finished; opening does not run schema migrations.
 type SQLiteRepository struct {
 	db     *sql.DB
 	logger Logger
@@ -44,18 +47,25 @@ const (
 	pragmaBusyTimeoutPrefix = "PRAGMA busy_timeout = "
 )
 
+// Open opens path with a background context and no-op logger.
 func Open(path string) (*SQLiteRepository, error) {
 	return OpenWithLogger(path, nopLogger{})
 }
 
+// OpenContext opens path with ctx and a no-op logger.
 func OpenContext(ctx context.Context, path string) (*SQLiteRepository, error) {
 	return OpenWithLoggerContext(ctx, path, nopLogger{})
 }
 
+// OpenWithLogger opens path with a background context and logger.
 func OpenWithLogger(path string, logger Logger) (*SQLiteRepository, error) {
 	return OpenWithLoggerContext(context.Background(), path, logger)
 }
 
+// OpenWithLoggerContext resolves and opens path, enables foreign keys and a
+// five-second busy timeout, and requires WAL mode for on-disk databases.
+// In-memory databases retain their supported journal mode. A nil context is
+// rejected and a nil logger is replaced with a no-op logger.
 func OpenWithLoggerContext(ctx context.Context, path string, logger Logger) (*SQLiteRepository, error) {
 	if ctx == nil {
 		return nil, errors.New("db: context is required")
@@ -131,6 +141,8 @@ func (r *SQLiteRepository) DBPath() string {
 	return r.path
 }
 
+// Close releases the owned SQLite handle. A nil or uninitialized repository is
+// a no-op.
 func (r *SQLiteRepository) Close() error {
 	if r == nil || r.db == nil {
 		return nil
@@ -158,10 +170,14 @@ func (r *SQLiteRepository) RawDB() *sql.DB {
 	return r.db
 }
 
+// Migrate applies pending repository migrations using a background context and
+// the busy-lock retry policy.
 func (r *SQLiteRepository) Migrate() error {
 	return r.MigrateContext(context.Background())
 }
 
+// MigrateContext applies pending repository migrations under ctx and retries
+// the complete migration operation for transient SQLite busy or locked errors.
 func (r *SQLiteRepository) MigrateContext(ctx context.Context) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -174,6 +190,7 @@ func (r *SQLiteRepository) MigrateContext(ctx context.Context) error {
 	})
 }
 
+// IsBusyError reports whether err wraps a modernc SQLite BUSY or LOCKED result.
 func IsBusyError(err error) bool {
 	if err == nil {
 		return false
@@ -299,6 +316,9 @@ func isMemorySQLitePath(path string) bool {
 	return strings.HasPrefix(normalized, "file:") && strings.Contains(normalized, "mode=memory")
 }
 
+// GetByPath loads release metadata for path. Malformed legacy list or timestamp
+// fields are left at their zero values; a missing row returns
+// [internalerrors.ErrNotFound].
 func (r *SQLiteRepository) GetByPath(ctx context.Context, path string) (FileMetadata, error) {
 	if r == nil || r.db == nil {
 		return FileMetadata{}, errors.New("db: repository not initialized")
@@ -418,6 +438,8 @@ func (r *SQLiteRepository) GetByPath(ctx context.Context, path string) (FileMeta
 	return metadata, nil
 }
 
+// Save upserts release metadata by path, canonicalizing invalid categories to
+// unknown and assigning the current UTC time when UpdatedAt is zero.
 func (r *SQLiteRepository) Save(ctx context.Context, metadata FileMetadata) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -1438,6 +1460,9 @@ func decodeOptionalJSON[T any](value string) (*T, error) {
 	return &result, nil
 }
 
+// ListHistoryEntries returns non-placeholder release rows in descending
+// metadata-update order, with each row's latest upload and separate advisory
+// versus non-advisory rule counts.
 func (r *SQLiteRepository) ListHistoryEntries(ctx context.Context) ([]HistoryEntry, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("db: repository not initialized")
@@ -1685,6 +1710,9 @@ func (r *SQLiteRepository) UpdateLatestUploadRecordStatus(ctx context.Context, s
 	return nil
 }
 
+// SaveTrackerRuleFailures atomically replaces one source/tracker result set.
+// Tracker names are stored uppercase, blank rule names are skipped, missing
+// timestamps default to now, and dispositions are normalized before storage.
 func (r *SQLiteRepository) SaveTrackerRuleFailures(ctx context.Context, sourcePath string, tracker string, failures []TrackerRuleFailure) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -2040,6 +2068,8 @@ func (r *SQLiteRepository) ListScreenshotsByPath(ctx context.Context, path strin
 	return screenshots, nil
 }
 
+// DeleteScreenshot atomically removes the screenshot record and every local
+// uploaded-image record keyed by imagePath. Final selections are not removed.
 func (r *SQLiteRepository) DeleteScreenshot(ctx context.Context, imagePath string) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -2061,6 +2091,9 @@ func (r *SQLiteRepository) DeleteScreenshot(ctx context.Context, imagePath strin
 	return nil
 }
 
+// SaveFinalSelections atomically replaces every final selection for path.
+// Callers that must preserve menu selections should use
+// [SQLiteRepository.ReplaceNormalFinalSelections].
 func (r *SQLiteRepository) SaveFinalSelections(ctx context.Context, path string, selections []ScreenshotFinalSelection) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -2873,6 +2906,8 @@ func deleteScreenshotReferencesTx(ctx context.Context, tx *sql.Tx, path string, 
 	return nil
 }
 
+// ReplaceScreenshotSlots atomically replaces all slots and variants for path;
+// variants absent from slots are deleted.
 func (r *SQLiteRepository) ReplaceScreenshotSlots(ctx context.Context, path string, slots []ScreenshotSlot) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -3113,6 +3148,9 @@ func (r *SQLiteRepository) UpsertScreenshotSlotVariants(ctx context.Context, pat
 	return nil
 }
 
+// SaveUploadedImages upserts upload records without deleting omitted images.
+// path and host override their per-image fields; empty usage scopes default to
+// "global" and zero upload times default to the current UTC time.
 func (r *SQLiteRepository) SaveUploadedImages(ctx context.Context, path string, host string, images []UploadedImageLink) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -3249,6 +3287,8 @@ func (r *SQLiteRepository) ListUploadedImagesByPath(ctx context.Context, path st
 	return images, nil
 }
 
+// DeleteUploadedImage deletes every usage-scope record matching path,
+// imagePath, and host. It returns an error when no record matched.
 func (r *SQLiteRepository) DeleteUploadedImage(ctx context.Context, path string, imagePath string, host string) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -3340,6 +3380,9 @@ func (r *SQLiteRepository) ListStoredReleasePaths(ctx context.Context) ([]string
 	return paths, nil
 }
 
+// PurgeContentData atomically deletes persisted release, metadata, upload, and
+// media rows for path, including matching retired UI-state rows. It does not
+// remove local files or remote uploads.
 func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")

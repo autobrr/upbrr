@@ -9,7 +9,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// Profile returns TVC identity, preparation, dupe, and policy behavior.
+// Profile returns TVC identity, preparation, dupe, and policy behavior,
+// including strict metadata, UHD, BDMV-disc, and remux restrictions.
 func Profile() standalone.Profile {
 	return standalone.Profile{
 		Name:                "TVC",

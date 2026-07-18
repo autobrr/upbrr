@@ -11,8 +11,9 @@ import (
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 )
 
-// LoadCookies loads ASC cookies from shared storage.
-// Callers must pass a valid non-nil context.
+// LoadCookies loads ASC cookies from shared storage for the ASC web domain.
+// The legacy source-label return value is always empty. Callers must pass a
+// valid non-nil context.
 func LoadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, string, error) {
 	loaded, err := cookiepkg.LoadTrackerHTTPCookies(ctx, dbPath, sourceFlag, "cliente.amigos-share.club")
 	if err != nil {

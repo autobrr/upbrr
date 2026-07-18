@@ -26,8 +26,10 @@ func CookieAuthCapability(name string) *api.TrackerAuthCapability {
 // DescriptionPreparer builds tracker-local description content for one intent.
 type DescriptionPreparer func(context.Context, trackers.PreparationInput) (trackers.DescriptionResult, error)
 
-// Profile composes one standalone tracker's identity, preparation callbacks,
-// duplicate adapter, and declarative capabilities.
+// Profile is the construction input for one standalone tracker's identity,
+// preparation callbacks, duplicate adapter, and declarative capabilities.
+// [New] normalizes identity fields and copies mutable policy data before the
+// definition is published.
 type Profile struct {
 	Name                    string
 	BaseURL                 string

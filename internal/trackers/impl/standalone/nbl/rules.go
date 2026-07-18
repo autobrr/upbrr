@@ -5,7 +5,7 @@ package nbl
 
 import "github.com/autobrr/upbrr/internal/trackers"
 
-// Rules declares NBL's TV-only and English-language requirements.
+// rules declares NBL's TV-only and English-language requirements.
 func rules() *trackers.RuleSet {
 	return &trackers.RuleSet{
 		RequireTVOnly: true,

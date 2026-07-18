@@ -36,6 +36,9 @@ type unit3dUploadResponse struct {
 	Data    string `json:"data"`
 }
 
+// submitUnit3DUpload sends an already serialized multipart payload and maps a
+// successful Unit3D response to one upload, with an artifact only when the
+// response identifies a download URL.
 func submitUnit3DUpload(
 	ctx context.Context,
 	trackerName string,
@@ -132,6 +135,9 @@ func submitUnit3DUpload(
 	return summary, nil
 }
 
+// prepareUnit3DUpload builds one preview for every intent. Upload intent
+// serializes its files during preparation and captures the payload, endpoint,
+// API key, and logger so submission does not reread mutable prepared inputs.
 func prepareUnit3DUpload(
 	ctx context.Context,
 	req trackers.PreparationInput,

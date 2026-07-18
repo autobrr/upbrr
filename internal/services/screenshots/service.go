@@ -33,6 +33,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Service plans, captures, previews, persists, and removes release screenshots
+// beneath a managed temporary root.
 type Service struct {
 	cfg     config.Config
 	logger  api.Logger
@@ -52,6 +54,8 @@ type repository interface {
 	SaveTrackerMetadata(context.Context, api.TrackerMetadata) error
 }
 
+// NewService returns a screenshot service without persistence. Nil logger and
+// runner values select [api.NopLogger] and the process-backed FFmpeg runner.
 func NewService(cfg config.Config, logger api.Logger, tmpRoot string, runner Runner) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -67,6 +71,8 @@ func NewService(cfg config.Config, logger api.Logger, tmpRoot string, runner Run
 	}
 }
 
+// NewServiceWithRepo returns a screenshot service that can reuse and persist
+// screenshot, final-selection, and tracker-image records through repo.
 func NewServiceWithRepo(cfg config.Config, logger api.Logger, tmpRoot string, runner Runner, repo repository) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -83,6 +89,11 @@ func NewServiceWithRepo(cfg config.Config, logger api.Logger, tmpRoot string, ru
 	}
 }
 
+// Plan derives frame suggestions from prepared timing data and excludes
+// matching managed screenshots already present on disk and in the repository.
+// A non-positive count falls back to the subject default and then config. When
+// timing is unavailable, the returned plan requests manual frames instead of
+// failing; stored tracker images are merged into final selections.
 func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count int) (plan api.ScreenshotPlan, err error) {
 	defer func() {
 		if err != nil {
@@ -528,6 +539,9 @@ func (s *Service) Capture(
 	return result, nil
 }
 
+// PreviewFrame captures one decodable, non-black PNG into memory without
+// persisting it. DVD inputs try the selected VOB segment followed by later
+// segments when a candidate yields no usable frame.
 func (s *Service) PreviewFrame(ctx context.Context, meta api.ScreenshotSubject, timestampSeconds float64) (preview api.ScreenshotPreview, err error) {
 	defer func() {
 		if err != nil {
@@ -609,6 +623,10 @@ func (s *Service) PreviewFrame(ctx context.Context, meta api.ScreenshotSubject, 
 	return preview, nil
 }
 
+// Delete removes an allowed image beneath the release's managed temp directory.
+// Repository screenshot, upload, final-selection, and tracker-image references
+// are then cleaned up best-effort; those cleanup failures are logged and do not
+// restore the local file or fail the call.
 func (s *Service) Delete(ctx context.Context, meta api.ScreenshotSubject, imagePath string) error {
 	select {
 	case <-ctx.Done():

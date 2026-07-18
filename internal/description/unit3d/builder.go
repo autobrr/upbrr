@@ -43,7 +43,12 @@ var unit3DNFOBlockTag = regexp.MustCompile(
 	`(?is)\[(?:center|align=center)\]\s*\[spoiler=(?:Scene|FraMeSToR) NFO:\]\[code\].*?\[/code\]\[/spoiler\]\s*\[/(?:center|align)\]`,
 )
 
-// BuildDescription renders the shared Unit3D upload description from prepared metadata and selected images.
+// BuildDescription composes the shared Unit3D upload description from prepared
+// metadata and selected images. Existing NFO and known uploader signature
+// blocks are removed; when screenshots are supplied, prior screenshot blocks
+// are replaced. Case-insensitive duplicate top-level parts are skipped. The
+// general MediaInfo payload intended for the upload API is not embedded, though
+// DVD VOB MediaInfo may be rendered as a dedicated block.
 func BuildDescription(
 	ctx context.Context,
 	meta api.DescriptionSubject,
@@ -471,7 +476,8 @@ func escapeBBCode(value string) string {
 	return strings.NewReplacer("[", "%5B", "]", "%5D").Replace(value)
 }
 
-// UppbrrSignatureLink returns the signature label and project URL used in descriptions.
+// UppbrrSignatureLink returns the project URL followed by the signature label
+// used in descriptions.
 func UppbrrSignatureLink() (string, string) {
 	return uaSignatureLink, uaSignatureText
 }
@@ -541,7 +547,11 @@ func finalizeUnit3DDescription(value string) string {
 	return normalizeDescription(value)
 }
 
-// SaveDescriptionDebug writes a tracker description diagnostic when debug output is enabled.
+// SaveDescriptionDebug best-effort writes a tracker description diagnostic
+// beneath the database's managed temp directory; newly created files use mode
+// 0600. A blank dbPath is a no-op. Directory-resolution failures are silently
+// ignored; write failures are logged when logger is non-nil, and no error is
+// returned.
 func SaveDescriptionDebug(meta api.DescriptionSubject, tracker string, dbPath string, description string, logger api.Logger) {
 	if strings.TrimSpace(dbPath) == "" {
 		return

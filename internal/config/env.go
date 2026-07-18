@@ -11,6 +11,9 @@ import (
 
 const envPrefix = "UA_"
 
+// ApplyEnvOverrides mutates cfg with supported non-blank UA_ environment
+// values. Invalid boolean and integer values are ignored, leaving the current
+// field unchanged.
 func ApplyEnvOverrides(cfg *Config) {
 	if cfg == nil {
 		return

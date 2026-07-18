@@ -45,6 +45,9 @@ var videoExtensions = map[string]struct{}{
 	".mpeg": {},
 }
 
+// Result contains normalized episodic signals. DailyDate uses YYYY-MM-DD;
+// MultiEpisode includes the first episode; AbsoluteEpisode is retained even
+// when it also supplies Episode.
 type Result struct {
 	Season          int
 	Episode         int
@@ -54,6 +57,11 @@ type Result struct {
 	MultiEpisode    []int
 }
 
+// Extract parses the source basename before the selected video basename, then
+// fills missing values from parsed release metadata. Season-only or multi-video
+// sources become TV packs unless the primary basename names one explicit
+// episode. Directory inspection is best-effort and filesystem errors are
+// treated as no multi-video evidence.
 func Extract(path string, meta preparationstate.State) Result {
 	candidates := buildCandidates(path, meta)
 	primaryCandidate := ""

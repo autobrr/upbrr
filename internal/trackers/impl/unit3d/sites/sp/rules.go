@@ -5,6 +5,8 @@ package sp
 
 import "github.com/autobrr/upbrr/internal/trackers"
 
+// Rules strictly requires a known resolution of at least 1080p; its
+// adult-content failure remains waivable.
 func Rules() *trackers.RuleSet {
 	return &trackers.RuleSet{
 		BlockAdult:    true,

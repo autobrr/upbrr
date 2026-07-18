@@ -11,7 +11,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// Profile returns PT's Unit3D site manifest.
+// Profile returns PT's type and resolution mappings and adds European
+// Portuguese audio and subtitle flags to the upload payload.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:    "PT",

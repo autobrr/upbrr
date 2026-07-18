@@ -5,4 +5,5 @@ package tik
 
 import "github.com/autobrr/upbrr/internal/trackers"
 
+// Rules strictly permits disc uploads only.
 func Rules() *trackers.RuleSet { return &trackers.RuleSet{RequireDiscOnly: true} }

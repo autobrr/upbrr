@@ -37,6 +37,11 @@ var newUnit3DArtifactImageHTTPClient = func() *http.Client {
 	return trackerdata.Unit3DImageHTTPClient(&http.Client{Timeout: unit3dImageTimeout})
 }
 
+// persistUnit3DArtifacts best-effort persists a tracker description and bounded,
+// validated images beneath the release's private temporary directory. Existing
+// non-empty files are reused, image downloads run concurrently, and the returned
+// URL slice preserves input indexes with empty entries for failed downloads.
+// Cancellation returns URLs completed before workers stop.
 func (s *Service) persistUnit3DArtifacts(
 	ctx context.Context,
 	meta preparationstate.State,

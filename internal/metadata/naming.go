@@ -25,6 +25,10 @@ var (
 	namingWebDLFilenamePattern  = regexp.MustCompile(`(?i)(^|[ ._-])web([ ._-]|$)|web-?dl`)
 )
 
+// BuildReleaseName normalizes category and format signals, applies the request's
+// manual omission controls, and builds tracker-style name variants. Unsupported
+// category/format combinations return an empty name while preserving the
+// applicable missing-field hints; a nil logger is accepted.
 func BuildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.ReleaseNameResult {
 	if logger == nil {
 		logger = api.NopLogger{}

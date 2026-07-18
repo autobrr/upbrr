@@ -17,10 +17,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// BuildUploadReview returns dupe, rule, dry-run, and banned-group review data
-// for one prepared source path, committing WebUI cache updates only after review work succeeds.
-// Partial WebUI reviews preserve unreviewed tracker cache state and can commit from
-// a request-refreshed cache entry only when that entry matches the current request.
+// BuildUploadReview prepares req.SourcePath, refreshes tracker policy and remote
+// duplicate evidence, builds non-submitting tracker payloads, and persists the
+// resulting rule decisions. It does not upload to trackers.
 func (c *Core) BuildUploadReview(ctx context.Context, req api.Request) (api.UploadReview, error) {
 	return c.upload.buildReview(ctx, req)
 }

@@ -79,7 +79,9 @@ type trackerSpec struct {
 	policy           trackerscatalog.AuthPolicy
 }
 
-// NewServiceWithRegistryAndLogger builds a tracker auth service using tracker-owned auth capabilities.
+// NewServiceWithRegistryAndLogger snapshots tracker-owned auth capabilities at
+// construction, substitutes a no-op logger, and uses the process-wide manual
+// challenge manager. It panics when registry is nil.
 func NewServiceWithRegistryAndLogger(cfg config.Config, registry *trackerscatalog.Registry, logger api.Logger) *Service {
 	if registry == nil {
 		panic("tracker auth: registry is required")

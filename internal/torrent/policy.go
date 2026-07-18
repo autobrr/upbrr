@@ -18,6 +18,8 @@ type pieceSizeRange struct {
 	pieceExp uint
 }
 
+// trackerTorrentPolicy contains the metainfo limits enforced during both
+// candidate reuse and torrent creation for one tracker.
 type trackerTorrentPolicy struct {
 	name            string
 	maxPieceExp     uint
@@ -25,6 +27,9 @@ type trackerTorrentPolicy struct {
 	maxTorrentBytes int64
 }
 
+// resolveTrackerPolicy uses the first registered artifact policy in subject
+// tracker order. When none match, the legacy PTP size chart applies if PTP is
+// present anywhere in the subject tracker list.
 func resolveTrackerPolicy(meta api.TorrentSubject, registry *trackers.Registry) *trackerTorrentPolicy {
 	for _, name := range meta.Trackers {
 		artifact, ok := registry.LookupArtifactPolicy(name)

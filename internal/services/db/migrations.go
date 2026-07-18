@@ -873,10 +873,15 @@ func tableExists(ctx context.Context, exec migrationExecutor, tableName string) 
 	return count > 0, nil
 }
 
+// Migrate applies the registered migration graph using a background context.
 func Migrate(db *sql.DB) error {
 	return MigrateContext(context.Background(), db)
 }
 
+// MigrateContext validates and applies the registered forward-only migration
+// graph in one BEGIN IMMEDIATE transaction. It bridges a recognized legacy
+// user_version only when no migration IDs are recorded, then leaves the legacy
+// compatibility version at 8 after all pending steps succeed.
 func MigrateContext(ctx context.Context, db *sql.DB) error {
 	return migrateContextWithRegistry(ctx, db, migrationRegistry)
 }

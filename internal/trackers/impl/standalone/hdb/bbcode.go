@@ -25,6 +25,9 @@ var (
 	hdbBBCodeURLImgPattern      = regexp.MustCompile(`(?i)\[url=(https?://[^\]]+)\]\[img\](https?://[^\]]+)\[/img\]\[/url\]`)
 )
 
+// CleanDescription removes HDB-hosted images, links, and comparison sections
+// while extracting non-HDB linked images into the report. Empty or tag-only
+// cleaned text is omitted without discarding extracted images.
 func CleanDescription(description string) bbcode.Report {
 	desc := bbcode.NormalizeNewlines(description)
 	imagelist := make([]bbcode.Image, 0)

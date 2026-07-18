@@ -22,10 +22,9 @@ type FailedCookie struct {
 	CookieName string
 }
 
-// MigrateFromFilesToDB imports cookies from file-based storage into the encrypted database.
-// It scans the cookiesDir for .txt and .json files, parses them, encrypts the values,
-// and stores them in the database. It returns the number of successfully migrated
-// cookies plus any tracker/cookie pairs that failed during storage.
+// MigrateFromFilesToDB imports top-level .txt and .json cookie files into the
+// encrypted database. It returns the stored-cookie count and storage failures;
+// file parse failures are logged and omitted from both results.
 func MigrateFromFilesToDB(ctx context.Context, cookiesDir string, store *CookieStore, key []byte, logger api.Logger) (int, []FailedCookie, error) {
 	if ctx == nil {
 		return 0, nil, errors.New("cookies: context is required")
@@ -129,8 +128,8 @@ func MigrateFromFilesToDB(ctx context.Context, cookiesDir string, store *CookieS
 	return migratedCount, failedCookies, nil
 }
 
-// DeleteMigratedCookieFiles removes all .txt and .json files from the cookies directory
-// after successful migration.
+// DeleteMigratedCookieFiles removes every top-level .txt and .json file from
+// cookiesDir. It does not verify that an individual file was migrated.
 func DeleteMigratedCookieFiles(cookiesDir string, logger api.Logger) error {
 	return deleteMigratedCookieFiles(cookiesDir, logger)
 }

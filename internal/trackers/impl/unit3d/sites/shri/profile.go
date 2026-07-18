@@ -11,7 +11,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// Profile returns SHRI's Unit3D site manifest.
+// Profile returns SHRI's type mapping, numeric region/distributor payload
+// fields, and idempotent Island-group description footer.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:    "SHRI",

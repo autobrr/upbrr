@@ -3,7 +3,7 @@
 
 package nbl
 
-// BannedGroups returns NBL's static release-group blacklist.
+// bannedGroups returns NBL's static release-group blacklist.
 func bannedGroups() []string {
 	return []string{
 		"0neshot",

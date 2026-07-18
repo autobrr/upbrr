@@ -12,7 +12,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TrackerFieldSchema describes one ordered tracker configuration field.
+// TrackerFieldSchema maps one ordered field between JSON and YAML, records its
+// embedded default, and marks whether a non-empty value activates configured state.
 type TrackerFieldSchema struct {
 	JSONKey    string
 	YAMLKey    string

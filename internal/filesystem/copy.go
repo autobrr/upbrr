@@ -9,8 +9,9 @@ import (
 	"os"
 )
 
-// CopyFile copies a file from src to dst. If dst does not exist, it will be created.
-// If dst exists, it will be overwritten.
+// CopyFile copies src to dst, creating or truncating dst without creating its
+// parent directory. It applies the source mode when available; copy failures
+// may leave a partial destination.
 func CopyFile(src, dst string) error {
 	sourceFile, err := os.Open(src)
 	if err != nil {

@@ -52,16 +52,12 @@ func SyncCookieEncryptionWithAuthTx(ctx context.Context, tx *sql.Tx, dbPath stri
 	return nil
 }
 
-// EnsureCookieMigration handles the automatic migration of cookies from file-based storage
-// to the encrypted database. It should be called early during app initialization.
-//
-// If old cookie files (.txt or .json) are found in the cookies directory, the function will:
-// 1. Initialize or retrieve the encryption key from existing web auth details
-// 2. Create a CookieStore instance
-// 3. Migrate all cookies from files to the encrypted database
-// 4. Delete the old cookie files
-//
-// If no old files are found, it returns immediately with no action.
+// EnsureCookieMigration imports top-level .txt and .json cookie files into the
+// encrypted database. Missing or unreadable legacy directories are treated as
+// having no files. Storage failures retain every legacy file but are logged
+// rather than returned. When at least one cookie is stored and no storage
+// failure occurs, all top-level .txt and .json files are removed; parse and
+// cleanup failures are logged rather than returned.
 func EnsureCookieMigration(ctx context.Context, db *sql.DB, dbPath string, cookiesDir string, logger api.Logger) error {
 	if ctx == nil {
 		return errors.New("cookies: context is required")

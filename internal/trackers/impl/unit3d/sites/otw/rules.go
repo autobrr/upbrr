@@ -13,6 +13,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Rules returns OTW's waivable genre, adult-content, reality-content, and
+// release-group restrictions.
 func Rules() *trackers.RuleSet { return &trackers.RuleSet{Check: checkGenres} }
 
 func checkGenres(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {

@@ -30,6 +30,11 @@ const (
 	trackerLookupWorkers   = 4
 )
 
+// collectTrackerEvidence skips fresh stored snapshots and cooling-down trackers,
+// then persists accepted lookup records and timestamps. Explicit IDs or a
+// preferred tracker force configured priority order; otherwise at most four
+// lookups race and the first result with IDs wins. Lookup failures are soft,
+// while cancellation and persistence failures discard the result.
 func (s *Service) collectTrackerEvidence(ctx context.Context, meta preparationstate.State) (preparationstate.State, error) {
 	select {
 	case <-ctx.Done():

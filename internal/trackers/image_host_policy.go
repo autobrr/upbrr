@@ -155,7 +155,9 @@ func PreferredImageUploadHostWithRegistry(
 	return preferredHost(policy), nil
 }
 
-// RequiredImageUploadTargets returns mandatory upload targets for trackerNames.
+// RequiredImageUploadTargets returns policy-preferred upload targets in tracker
+// order, deduplicated by host and usage scope while retaining every dependent
+// tracker.
 func RequiredImageUploadTargets(
 	registry *Registry,
 	appCfg config.Config,
@@ -196,7 +198,8 @@ func RequiredImageUploadTargets(
 	return targets, nil
 }
 
-// ConfiguredImageUploadTargets returns enabled upload targets accepted by trackerNames.
+// ConfiguredImageUploadTargets returns only explicitly configured tracker image
+// hosts, deduplicated by host and usage scope in tracker order.
 func ConfiguredImageUploadTargets(registry *Registry, appCfg config.Config, trackerNames []string) ([]ImageUploadTarget, error) {
 	targets := make([]ImageUploadTarget, 0, len(trackerNames))
 	seen := make(map[string]int, len(trackerNames))
@@ -235,7 +238,9 @@ func ConfiguredImageUploadTargets(registry *Registry, appCfg config.Config, trac
 	return targets, nil
 }
 
-// NeededImageUploadTargetsWithRegistry returns targets not satisfied by selectedHost.
+// NeededImageUploadTargetsWithRegistry chooses the smallest policy-compatible
+// host set not already satisfied by selectedHost, preserving deterministic
+// tracker and host preference order.
 func NeededImageUploadTargetsWithRegistry(registry *Registry, appCfg config.Config, trackerNames []string, selectedHost string) ([]ImageUploadTarget, error) {
 	return neededImageUploadTargets(registry, appCfg, trackerNames, selectedHost, nil, nil)
 }

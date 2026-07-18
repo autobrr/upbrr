@@ -11,6 +11,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// rules strictly blocks uploads whose resolution is unknown.
 func rules() *trackers.RuleSet { return &trackers.RuleSet{Check: checkRules} }
 
 func checkRules(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {

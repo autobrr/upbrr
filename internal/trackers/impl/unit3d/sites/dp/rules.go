@@ -7,6 +7,8 @@ import "github.com/autobrr/upbrr/internal/trackers"
 
 var nordic = []string{"english", "norwegian", "norsk", "no", "nb", "nn", "swedish", "sv", "danish", "da", "finnish", "fi", "icelandic", "is"}
 
+// Rules strictly blocks single-file folders and hardcoded subtitles. Its
+// release-group exception and Nordic language requirement remain waivable.
 func Rules() *trackers.RuleSet {
 	return &trackers.RuleSet{
 		BlockSingleFileFolder: true,

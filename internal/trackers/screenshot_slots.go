@@ -731,7 +731,10 @@ type SlotUploadAttachmentResult struct {
 	UnmatchedUploads int
 }
 
-// ApplyUploadedVariantsToSlots attaches uploaded variants to their matching screenshot slots.
+// ApplyUploadedVariantsToSlots mutates slots by upserting host/scope variants.
+// Uploads match by local path, then known URL; unmatched uploads use ordered
+// fallback only when their count exactly matches remaining renderable pathless
+// slots. The result reports upload counts, not variant insertions.
 func ApplyUploadedVariantsToSlots(slots []api.ScreenshotSlot, uploads []api.UploadedImageLink) SlotUploadAttachmentResult {
 	if len(slots) == 0 || len(uploads) == 0 {
 		return SlotUploadAttachmentResult{}

@@ -3,7 +3,7 @@
 
 package mtv
 
-// BannedGroups returns MTV's static release-group blacklist.
+// bannedGroups returns MTV's static release-group blacklist.
 func bannedGroups() []string {
 	return []string{
 		"3LTON",

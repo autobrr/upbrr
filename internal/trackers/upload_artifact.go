@@ -25,7 +25,10 @@ func PrepareTrackerUploadTorrent(meta api.UploadSubject, dbPath string, tracker 
 	return PrepareTrackerUploadTorrentWithRegistry(meta, dbPath, tracker, trackerConfig, nil)
 }
 
-// PrepareTrackerUploadTorrentWithRegistry prepares tracker-specific torrent metainfo using registry policy.
+// PrepareTrackerUploadTorrentWithRegistry writes a release-scoped personalized
+// torrent and returns a copied subject pointing at it. Missing policy, base
+// torrent, or insufficient path context leaves the input unchanged; other
+// artifact failures are returned.
 func PrepareTrackerUploadTorrentWithRegistry(
 	meta api.UploadSubject,
 	dbPath string,
@@ -163,7 +166,10 @@ func ResolveTrackerTorrentArtifactPath(meta api.UploadSubject, dbPath string, tr
 	return filepath.Join(tmpDir, "["+name+"]."+base+".torrent"), nil
 }
 
-// ResolveUploadTorrentPath returns the local torrent artifact used for upload.
+// ResolveUploadTorrentPath selects TorrentPath, ClientTorrentPath, SourcePath,
+// then the release-scoped default. A non-default candidate is copied to the
+// release-scoped path with tracker fields removed when it can be decoded; an
+// existing candidate already at that path is returned as-is.
 func ResolveUploadTorrentPath(meta api.UploadSubject, dbPath string) (string, error) {
 	cleanPath, cleanPathOK := uploadTorrentCleanPath(meta, dbPath)
 	candidates := []string{
@@ -237,7 +243,9 @@ func isUploadTorrentNotFound(err error) bool {
 	return errors.Is(err, errUploadTorrentNotFound)
 }
 
-// WriteUploadTorrent copies a validated torrent artifact to outputPath atomically.
+// WriteUploadTorrent validates sourcePath, removes announce, node, URL-list, and
+// source fields, applies canonical creator/comment values, and atomically writes
+// outputPath with mode 0600.
 func WriteUploadTorrent(sourcePath string, outputPath string) error {
 	torrentMeta, err := metainfo.LoadFromFile(sourcePath)
 	if err != nil {
@@ -250,7 +258,9 @@ func WriteUploadTorrent(sourcePath string, outputPath string) error {
 	return writeTorrentMeta(*torrentMeta, outputPath, "upload torrent")
 }
 
-// WritePersonalizedTorrent writes a torrent with tracker announce, comment, and source fields.
+// WritePersonalizedTorrent strips inherited tracker fields, applies the supplied
+// announce, comment, and source values plus the canonical creator, and atomically
+// writes outputPath with mode 0600.
 func WritePersonalizedTorrent(sourcePath string, outputPath string, announceURL string, comment string, source string) error {
 	torrentMeta, err := metainfo.LoadFromFile(sourcePath)
 	if err != nil {

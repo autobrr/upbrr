@@ -14,7 +14,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// Profile returns THR identity, preparation, dupe, auth, and policy behavior.
+// Profile returns THR identity, preparation, dupe, auth, and policy behavior,
+// including the strict requirement for matching TMDB or IMDb metadata.
 func Profile() standalone.Profile {
 	return standalone.Profile{
 		Name:                "THR",

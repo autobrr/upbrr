@@ -12,6 +12,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// rules strictly blocks UHD, BDMV-disc, and remux uploads.
 func rules() *trackers.RuleSet { return &trackers.RuleSet{Check: checkRules} }
 
 func checkRules(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {

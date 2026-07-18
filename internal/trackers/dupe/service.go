@@ -55,7 +55,9 @@ type Service struct {
 	cancelWarningThreshold time.Duration
 }
 
-// NewServiceWithRegistry constructs and validates one adapter for every registered tracker.
+// NewServiceWithRegistry constructs one tracker-bound adapter for every
+// registered definition using a shared 20-second HTTP client. Construction
+// failures are retained and returned by later checks rather than panicking.
 func NewServiceWithRegistry(cfg config.Config, logger api.Logger, registry *trackerspkg.Registry) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -108,7 +110,10 @@ func (s *Service) Check(ctx context.Context, meta api.DuplicateSubject, trackerN
 	return summary, err
 }
 
-// CheckWithAssessment returns full operation evidence plus reusable decision state.
+// CheckWithAssessment runs at most four tracker adapters concurrently, returns
+// public-safe results in requested order, and binds private evidence into an
+// immutable assessment. Cancellation stops enqueueing, waits for started
+// adapters, returns completed public evidence, and discards reusable assessment.
 func (s *Service) CheckWithAssessment(
 	ctx context.Context,
 	meta api.DuplicateSubject,

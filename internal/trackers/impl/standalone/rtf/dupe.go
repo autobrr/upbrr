@@ -33,7 +33,7 @@ type dupeSearcher struct {
 	logger api.Logger
 }
 
-// NewDuplicateAdapter returns a duplicate-search adapter bound to one immutable dependency set.
+// newDuplicateAdapter returns a duplicate-search adapter bound to one immutable dependency set.
 func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	cfg := deps.BoundConfig()
 	httpClient := deps.HTTPClient()

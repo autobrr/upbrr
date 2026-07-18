@@ -20,6 +20,10 @@ import (
 
 const hdbAuthResponseMaxBytes = 1 << 20
 
+// resolveAuthSessionAt validates required HDB credentials and stored cookies
+// without attempting login. Missing auth material requires operator action;
+// explicit login evidence is confirmed-invalid, while ambiguous remote or read
+// failures remain transient.
 func resolveAuthSessionAt(
 	ctx context.Context,
 	cfg config.TrackerConfig,

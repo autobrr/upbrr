@@ -9,6 +9,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Profile returns RF's no-group naming, site-specific type and resolution
+// mappings, required release-group dupe policy, and conditional owned image host.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:    "RF",

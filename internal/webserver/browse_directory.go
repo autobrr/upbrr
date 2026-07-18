@@ -18,14 +18,22 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// BrowseDirectory lists an unrestricted host filesystem location. Folder mode
+// returns directories only; file mode also returns recognized video files.
 func BrowseDirectory(req api.BrowseDirectoryRequest, fallbackPath string) (api.BrowseDirectoryResponse, error) {
 	return browseDirectory(req, fallbackPath, "")
 }
 
+// BrowseDirectoryWithinRoot lists a host filesystem location constrained to
+// rootPath after absolute-path and symlink resolution. An empty root disables
+// the constraint.
 func BrowseDirectoryWithinRoot(req api.BrowseDirectoryRequest, fallbackPath string, rootPath string) (api.BrowseDirectoryResponse, error) {
 	return browseDirectory(req, fallbackPath, rootPath)
 }
 
+// BrowseDirectoryWithinRoots lists a host filesystem location constrained to
+// one of rootPaths. An empty request under multiple roots returns a virtual
+// directory containing those roots; an empty root list disables constraints.
 func BrowseDirectoryWithinRoots(req api.BrowseDirectoryRequest, fallbackPath string, rootPaths []string) (api.BrowseDirectoryResponse, error) {
 	return browseDirectoryWithinRoots(req, fallbackPath, rootPaths)
 }
@@ -288,6 +296,9 @@ func browseWindowsRoots(mode string) api.BrowseDirectoryResponse {
 	}
 }
 
+// BrowseDirectoryFallback returns dbPath when it names an existing directory,
+// otherwise its existing parent directory, or an empty string when neither is
+// usable.
 func BrowseDirectoryFallback(dbPath string) string {
 	trimmed := strings.TrimSpace(dbPath)
 	if trimmed == "" {
@@ -306,6 +317,8 @@ func BrowseDirectoryFallback(dbPath string) string {
 	return ""
 }
 
+// ValidateBrowseSelection requires an existing host path of the requested file
+// or directory kind.
 func ValidateBrowseSelection(path string, wantDir bool) error {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {

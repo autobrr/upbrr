@@ -3,7 +3,7 @@
 
 package gpw
 
-// BannedGroups returns GPW's static release-group blacklist.
+// bannedGroups returns GPW's static release-group blacklist.
 func bannedGroups() []string {
 	return []string{
 		"ALT",

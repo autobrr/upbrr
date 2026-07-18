@@ -22,6 +22,7 @@ type dataLookup struct {
 	endpoint string
 }
 
+// NewDataLookup returns a BTN JSON-RPC lookup bound to cfg and httpClient.
 func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _ api.Logger) trackers.DataLookup {
 	return &dataLookup{
 		cfg:      cfg,
@@ -30,6 +31,9 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _
 	}
 }
 
+// Lookup resolves IMDb and TVDB identifiers for a BTN torrent ID. Missing or
+// short API tokens, missing tracker IDs, non-success responses, API errors, and
+// empty torrent results produce an empty result without an error.
 func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (trackers.DataLookupResult, error) {
 	token := strings.TrimSpace(config.ResolveBTNAPIToken(l.cfg))
 	trackerID := strings.TrimSpace(req.TrackerID)

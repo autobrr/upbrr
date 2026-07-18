@@ -25,7 +25,8 @@ var (
 	dubbedRegex     = tokenRegex(`dubbed`, `synced`, `ac3d`, `ld`, `line`, `mic`, `md`)
 )
 
-// Profile returns RHD's Unit3D site manifest.
+// Profile returns RHD's German-oriented release-name construction, resolution
+// mapping, tracker-owned rules, and banned groups.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:         "RHD",

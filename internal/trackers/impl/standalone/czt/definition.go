@@ -9,8 +9,8 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 )
 
-// BuildDescription renders the CZTeam user description, preferring caller
-// supplied description assets and resolving assets only as a fallback.
+// prepareDescription renders the CZTeam user description from caller-supplied
+// prepared assets, using an empty asset set when none are available.
 func prepareDescription(_ context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {
 	assets := trackers.DescriptionAssets{}
 	if req.Assets != nil {

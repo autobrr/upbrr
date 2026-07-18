@@ -13,6 +13,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Rules strictly limits non-disc uploads to MKV, with TS allowed for HDTV and
+// MP4 allowed for Dolby Vision-only WEBDL or HDTV releases.
 func Rules() *trackers.RuleSet { return &trackers.RuleSet{Check: checkContainer} }
 
 func checkContainer(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {

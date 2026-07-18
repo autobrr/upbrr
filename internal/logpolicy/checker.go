@@ -176,6 +176,7 @@ var infoVerboseSignals = []string{
 
 var rawErrorLogFieldRe = regexp.MustCompile(`(?:^|[\s,;])(?:err|error)=%`)
 
+// Violation identifies one source-positioned logging-policy diagnostic.
 type Violation struct {
 	File    string
 	Line    int
@@ -183,8 +184,9 @@ type Violation struct {
 	Message string
 }
 
-// CheckRepository scans repo-owned Go and frontend test sources for logging and
-// shareable-output patterns that can expose secrets or unsafe diagnostics.
+// CheckRepository scans internal Go, cmd/upbrr Go, and WebUI test sources for
+// logging and shareable-output patterns that can expose secrets or unsafe
+// diagnostics. It returns violations sorted by file, line, then column.
 func CheckRepository(root string) ([]Violation, error) {
 	internalRoot := filepath.Join(root, "internal")
 	if _, err := os.Stat(internalRoot); err != nil {

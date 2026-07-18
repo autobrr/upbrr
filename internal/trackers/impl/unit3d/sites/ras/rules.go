@@ -5,6 +5,7 @@ package ras
 
 import "github.com/autobrr/upbrr/internal/trackers"
 
+// Rules returns RAS's waivable Nordic-or-English audio-or-subtitle requirement.
 func Rules() *trackers.RuleSet {
 	return &trackers.RuleSet{Language: &trackers.LanguageRule{
 		Languages:    []string{"english", "norwegian", "norsk", "no", "nb", "nn", "swedish", "sv", "danish", "da", "finnish", "fi", "icelandic", "is"},

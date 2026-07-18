@@ -105,6 +105,9 @@ var (
 	}
 )
 
+// TrackerDataLookup provides optional remote enrichment for one tracker
+// candidate. Implementations receive the operation's ID-only and image-retention
+// policy; persistence and cross-tracker selection remain owned by [Service].
 type TrackerDataLookup interface {
 	Lookup(
 		ctx context.Context,
@@ -117,42 +120,56 @@ type TrackerDataLookup interface {
 	) (trackerdata.Result, error)
 }
 
+// ArrLookupClient returns non-authoritative source-path evidence from an Arr
+// service. An empty result means the source was not matched.
 type ArrLookupClient interface {
 	Lookup(ctx context.Context, meta preparationstate.State) (ArrLookupResult, error)
 }
 
+// Option configures a Service during construction. Options run in caller order;
+// later options may replace earlier dependencies.
 type Option func(*Service)
 
+// WithTagsPathFromDB derives the optional tag-override file from dbPath.
 func WithTagsPathFromDB(dbPath string) Option {
 	return func(s *Service) {
 		s.tagsPath = resolveTagsPath(dbPath)
 	}
 }
 
+// WithSceneDetector installs an explicit detector. A non-nil detector is used
+// even when configured scene detection is disabled; nil permits the
+// config-gated default.
 func WithSceneDetector(detector SceneDetector) Option {
 	return func(s *Service) {
 		s.scene = detector
 	}
 }
 
+// WithLogger installs the service logger; nil is normalized to [api.NopLogger].
 func WithLogger(logger api.Logger) Option {
 	return func(s *Service) {
 		s.logger = logger
 	}
 }
 
+// WithMediaInfoExporter installs the MediaInfo exporter; nil permits the
+// construction-time default.
 func WithMediaInfoExporter(exporter mediainfo.Exporter) Option {
 	return func(s *Service) {
 		s.mi = exporter
 	}
 }
 
+// WithConfig copies cfg for provider, path, and policy decisions.
 func WithConfig(cfg config.Config) Option {
 	return func(s *Service) {
 		s.cfg = cfg
 	}
 }
 
+// WithTrackerRegistry supplies tracker policies and factories and enables the
+// default tracker-data client when no explicit lookup is installed.
 func WithTrackerRegistry(registry *trackers.Registry) Option {
 	return func(s *Service) { s.registry = registry }
 }
@@ -162,6 +179,8 @@ func WithClientDiscovery(discovery *clientdiscovery.Module) Option {
 	return func(s *Service) { s.clients = discovery }
 }
 
+// WithTMDBClient also installs client as the AniList provider when it implements
+// [AniListClient] and no earlier option supplied one.
 func WithTMDBClient(client TMDBClient) Option {
 	return func(s *Service) {
 		s.tmdb = client
@@ -171,6 +190,8 @@ func WithTMDBClient(client TMDBClient) Option {
 	}
 }
 
+// WithAniListClient explicitly replaces the current AniList provider, including
+// one inferred by an earlier [WithTMDBClient] option.
 func WithAniListClient(client AniListClient) Option {
 	return func(s *Service) {
 		s.anilist = client
@@ -225,6 +246,8 @@ func WithBlurayClient(client *bluraycom.Client) Option {
 	}
 }
 
+// WithSRRDBPaths derives the scene cache and NFO directories from dbPath and may
+// create the private cache directory during construction.
 func WithSRRDBPaths(dbPath string) Option {
 	return func(s *Service) {
 		cacheDir, nfoDir := resolveSRRDBPaths(dbPath)
@@ -233,6 +256,9 @@ func WithSRRDBPaths(dbPath string) Option {
 	}
 }
 
+// NewService applies non-nil options in order, then installs default logging,
+// MediaInfo, configured scene detection, tracker lookup, and Blu-ray providers.
+// Resolving default scene paths may create private cache directories.
 func NewService(repo repository, opts ...Option) *Service {
 	service := &Service{repo: repo, logger: api.NopLogger{}}
 	for _, opt := range opts {

@@ -28,12 +28,18 @@ var ruleResolutionOrder = map[string]int{
 	"8640p": 11,
 }
 
-// EvaluateRules returns metadata and upload-policy failures for tracker.
+// EvaluateRules evaluates repository-wide release-modification policy without a
+// tracker registry. Use [EvaluateRulesWithRegistry] for tracker and metadata
+// policy.
 func EvaluateRules(ctx context.Context, tracker string, meta api.RuleSubject, logger api.Logger) ([]api.RuleFailure, error) {
 	return evaluateRules(ctx, nil, tracker, meta, logger)
 }
 
-// EvaluateRulesWithRegistry evaluates tracker rules using composed capabilities.
+// EvaluateRulesWithRegistry returns all applicable failures with their
+// tracker-owned dispositions. Scene renames and structural requirements are
+// strict; non-scene rename heuristics and explicitly waivable rules require
+// authorization, while metadata requirements retain their site-specific
+// disposition.
 func EvaluateRulesWithRegistry(ctx context.Context, registry *Registry, tracker string, meta api.RuleSubject, logger api.Logger) ([]api.RuleFailure, error) {
 	return evaluateRules(ctx, registry, tracker, meta, logger)
 }

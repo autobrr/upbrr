@@ -35,8 +35,11 @@ type Request struct {
 	Intent            ResolutionIntent
 }
 
-// ResolutionIntent contains caller instructions that affect canonical
-// identity resolution.
+// ResolutionIntent contains caller instructions that affect canonical identity
+// resolution and its lineage fingerprint. Provider override pointers use nil
+// to preserve evidence, non-positive values to clear an ID, and positive values
+// to set one. CategoryOverride similarly preserves on nil, clears on empty or
+// unknown, and accepts movie or TV as explicit values.
 type ResolutionIntent struct {
 	Title                   string
 	Year                    int
@@ -50,7 +53,7 @@ type ResolutionIntent struct {
 }
 
 // EvidenceFingerprint identifies one non-secret evidence snapshot considered
-// during resolution.
+// during resolution. Digest is a lowercase hexadecimal SHA-256 hash.
 type EvidenceFingerprint struct {
 	Kind   string
 	Digest string
@@ -166,8 +169,11 @@ func isNilRepository(repo api.ReleaseStateRepository) bool {
 	return value.Kind() == reflect.Pointer && value.IsNil()
 }
 
-// Resolve gathers private evidence, applies resolution intent, and returns an
-// unpersisted canonical identity result.
+// Resolve serializes work per normalized source, applies stored evidence then
+// provider candidates then explicit overrides, and returns a detached,
+// unpersisted result. Provider metadata whose ID no longer matches the final
+// identity is removed; absent IDs and category are reported through
+// Result.MissingRequirements rather than as an error.
 func (r *Resolver) Resolve(ctx context.Context, request Request) (Result, error) {
 	if r == nil || r.evidence == nil {
 		return Result{}, errors.New("external identity: resolver is not initialized")

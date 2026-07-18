@@ -9,6 +9,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Profile returns OE's no-group naming, codec-specific encode types, and
+// tracker-owned dupe, image-host, rule, and banned-group policies.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:         "OE",

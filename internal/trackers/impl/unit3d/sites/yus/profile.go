@@ -5,6 +5,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Profile returns YUS's site-specific type mapping and banned groups.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:         "YUS",

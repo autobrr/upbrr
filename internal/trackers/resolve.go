@@ -10,7 +10,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// ResolveTrackersWithRegistry resolves trackers against composed descriptors.
+// ResolveTrackersWithRegistry uses explicit trackers when supplied, otherwise
+// configured defaults, then applies removals and drops unregistered names while
+// preserving normalized input order.
 func ResolveTrackersWithRegistry(cfg config.Config, override []string, remove []string, logger api.Logger, registry *Registry) []string {
 	resolved := resolveTrackers(cfg, override, remove)
 	resolved = filterKnownTrackersWithRegistry(resolved, logger, registry)
@@ -41,7 +43,9 @@ func ResolveExplicitTrackersWithRegistry(override []string, logger api.Logger, r
 	return result
 }
 
-// ResolveTrackersWithDefaultsAndRegistry resolves default and explicit trackers against composed descriptors.
+// ResolveTrackersWithDefaultsAndRegistry appends explicit trackers to configured
+// defaults, applies removals, and drops unregistered names while preserving the
+// first occurrence.
 func ResolveTrackersWithDefaultsAndRegistry(cfg config.Config, override []string, remove []string, logger api.Logger, registry *Registry) []string {
 	resolved := resolveTrackersWithDefaults(cfg, override, remove)
 	resolved = filterKnownTrackersWithRegistry(resolved, logger, registry)

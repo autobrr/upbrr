@@ -1,6 +1,8 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// Package torrent validates reusable torrent metadata or creates private
+// torrent artifacts for prepared source layouts.
 package torrent
 
 import (
@@ -28,16 +30,24 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Service selects or creates torrent artifacts under a configured temporary
+// root. Callers must not mutate its registry concurrently with use.
 type Service struct {
 	logger   api.Logger
 	tmpRoot  string
 	registry *trackers.Registry
 }
 
+// NewService returns a service with legacy built-in PTP policy fallback.
+// A nil logger is replaced with [api.NopLogger].
 func NewService(logger api.Logger, tmpRoot string) *Service {
 	return NewServiceWithRegistry(logger, tmpRoot, nil)
 }
 
+// NewServiceWithRegistry returns a service that prefers the first registered
+// tracker artifact policy in request order. A nil registry leaves only legacy
+// policy fallback available; tmpRoot is trimmed and may be empty until an
+// operation needs a release-specific temporary path.
 func NewServiceWithRegistry(logger api.Logger, tmpRoot string, registry *trackers.Registry) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -49,6 +59,16 @@ func NewServiceWithRegistry(logger api.Logger, tmpRoot string, registry *tracker
 	}
 }
 
+// Create returns the first reusable torrent in client, source, temporary, then
+// adjacent-path order, unless Rehash requests a new artifact. Reused candidates
+// are checked against tracker policy and source names, paths, and lengths; their
+// pieces are not rehashed against source bytes. NoHash fails when none qualify,
+// while Rehash takes precedence when both overrides are enabled.
+//
+// New artifacts are private, written below the configured temporary root, and
+// may use a temporary hardlink-or-copy staging tree for selected files. Staging
+// cleanup is attempted before return. Cancellation is checked before selection
+// and creation but does not interrupt mkbrr after hashing starts.
 func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.TorrentResult, error) {
 	select {
 	case <-ctx.Done():
@@ -839,6 +859,8 @@ func sortContentFiles(files []contentFile) {
 	})
 }
 
+// TempTorrentPath creates the release-specific directory below tmpRoot with
+// mode 0700 when missing and returns its deterministic .torrent path.
 func TempTorrentPath(tmpRoot string, source string) (string, error) {
 	contentDir, base, err := paths.ReleaseTempDirFor(tmpRoot, source, api.ReleaseInfo{})
 	if err != nil {

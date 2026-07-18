@@ -59,8 +59,9 @@ func New(name string) *Definition {
 	return NewWithProfile(Profile{Name: name})
 }
 
-// NewWithProfile constructs a Unit3D definition from an explicitly composed
-// site profile.
+// NewWithProfile normalizes profile identity, copies static banned groups and
+// metadata requirements, and retains the remaining site callbacks and policy
+// pointers as immutable compiled configuration.
 func NewWithProfile(profile Profile) *Definition {
 	profile.Name = strings.ToUpper(strings.TrimSpace(profile.Name))
 	profile.BaseURL = strings.TrimSpace(profile.BaseURL)
@@ -94,7 +95,9 @@ func (d *Definition) UploadArtifactPolicy() *trackers.UploadArtifactPolicy {
 	return &policy
 }
 
-// MetadataPolicy returns an independent copy of this site's metadata requirements.
+// MetadataPolicy returns an independent copy of this site's metadata
+// requirements. Profiles without an override require TMDB metadata as a strict
+// failure for every category.
 func (d *Definition) MetadataPolicy() *trackers.TrackerMetadataPolicy {
 	if d.profile.MetadataPolicy != nil {
 		return cloneMetadataPolicy(d.profile.MetadataPolicy)
@@ -120,7 +123,8 @@ func cloneMetadataPolicy(policy *trackers.TrackerMetadataPolicy) *trackers.Track
 	return &cloned
 }
 
-// Rules declares validation required by every Unit3D upload.
+// Rules returns a shallow copy of the site rules with valid MediaInfo settings
+// required for every Unit3D upload.
 func (d *Definition) Rules() *trackers.RuleSet {
 	if d.profile.Rules == nil {
 		return &trackers.RuleSet{RequireValidMISetting: true}
@@ -259,7 +263,8 @@ func (d *Definition) prepareDescription(ctx context.Context, req trackers.Prepar
 	}, nil
 }
 
-// Register adds scaffolded Unit3D definitions for the supplied tracker names.
+// Register adds scaffolded Unit3D definitions for the supplied tracker names,
+// stops at the first registry error, and treats a nil registry as a no-op.
 func Register(registry *trackers.Registry, trackersList []string) error {
 	if registry == nil {
 		return nil
@@ -272,7 +277,9 @@ func Register(registry *trackers.Registry, trackersList []string) error {
 	return nil
 }
 
-// RegisterProfiles explicitly registers composed Unit3D site profiles.
+// RegisterProfiles registers composed Unit3D site profiles, rejects an empty
+// profile name, stops at the first registry error, and treats a nil registry as
+// a no-op.
 func RegisterProfiles(registry *trackers.Registry, profiles []Profile) error {
 	if registry == nil {
 		return nil

@@ -10,6 +10,9 @@ import (
 
 var htmlTagPattern = regexp.MustCompile(`(?i)<[a-z][^>]*>`)
 
+// Render converts BBCode, MediaInfo blocks, or existing HTML into HTML that has
+// passed the package's element, attribute, class, style, and URL allowlists.
+// Blank input returns an empty string.
 func Render(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {

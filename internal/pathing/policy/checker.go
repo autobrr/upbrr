@@ -83,7 +83,9 @@ type checker struct {
 	violations []Violation
 }
 
-// CheckRepository scans Go source beneath root and returns path-policy violations.
+// CheckRepository scans Go source beneath root, excluding repository metadata,
+// vendored dependencies, node modules, and build output. Findings are returned
+// in file, line, column, then message order.
 func CheckRepository(root string) ([]Violation, error) {
 	if _, err := os.Stat(root); err != nil {
 		return nil, fmt.Errorf("pathpolicy: stat repository root: %w", err)

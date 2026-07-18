@@ -40,11 +40,15 @@ var (
 	appendImagePattern     = regexp.MustCompile(`(?is)append\(\s*['"](<img\b.*?>)['"]\s*\)`)
 )
 
+// Client queries and parses Blu-ray.com search, release, and product pages.
 type Client struct {
 	httpClient *http.Client
 	logger     api.Logger
 }
 
+// LookupInput supplies the local disc evidence used to filter and score release
+// candidates. Score thresholds use the candidate's 0-100 scale; non-positive
+// values default to 100.
 type LookupInput struct {
 	SourcePath        string
 	IMDBID            int
@@ -64,6 +68,8 @@ type movieLink struct {
 	ProductID   string
 }
 
+// NewClient uses a 30-second HTTP client when client is nil. Only the first
+// optional logger is used, and a nil logger becomes [api.NopLogger].
 func NewClient(client *http.Client, loggers ...api.Logger) *Client {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
@@ -75,6 +81,11 @@ func NewClient(client *http.Client, loggers ...api.Logger) *Client {
 	return &Client{httpClient: client, logger: logger}
 }
 
+// Lookup returns score-sorted release candidates for input.IMDBID and selects an
+// explicit release before applying the score threshold. A non-positive IMDb ID
+// returns no result. Search-page failures abort the lookup; failures for an
+// individual release are skipped or retained as candidate warnings. A nil
+// receiver uses default client settings.
 func (c *Client) Lookup(ctx context.Context, input LookupInput) (*api.BlurayMetadata, error) {
 	if c == nil {
 		c = NewClient(nil)

@@ -634,6 +634,9 @@ func (b *Backend) FetchTrackerDryRun(
 	}))
 }
 
+// acceptedDryRunDuplicateEvidence returns duplicate evidence only when the
+// retained job belongs to the session and matches the exact release, runtime
+// generation, and ordered tracker selection used by the dry run.
 func (b *Backend) acceptedDryRunDuplicateEvidence(
 	sessionID string,
 	jobID string,
@@ -1069,6 +1072,8 @@ func (b *Backend) DeleteUploadedImage(release api.ReleaseRef, imagePath string, 
 	return wrapWebError(hostedImageCore.DeleteAcceptedUploadedImage(ctx, api.ImageHostingInput{Release: ref}, imagePath, host))
 }
 
+// normalizeExactRelease trims and validates the source path while preserving
+// the caller's exact prepared generation.
 func normalizeExactRelease(release api.ReleaseRef, operation api.OperationKind) (api.ReleaseRef, error) {
 	release.SourcePath = strings.TrimSpace(release.SourcePath)
 	if release.SourcePath == "" || release.Generation == 0 {
@@ -1082,6 +1087,8 @@ func normalizeExactRelease(release api.ReleaseRef, operation api.OperationKind) 
 	return release, nil
 }
 
+// prepareWebReleaseRef creates or reuses canonical preparation and returns only
+// the exact reference needed by the requested browser operation.
 func prepareWebReleaseRef(
 	ctx context.Context,
 	rt backendRuntimeSnapshot,

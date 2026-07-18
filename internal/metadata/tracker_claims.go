@@ -119,8 +119,12 @@ func trackerClaimRuleFailure(reason string) api.RuleFailure {
 	}
 }
 
-// EvaluateTrackerClaims applies claim policy to one operation-owned subject.
-// It does not read or publish prepared-release state.
+// EvaluateTrackerClaims evaluates every eligible tracker from the subject and
+// appends strict claim_active failures for matches. Registry claim checkers run
+// directly; API-backed policies may refresh a private 24-hour filesystem cache.
+// The subject and its maps must be operation-owned because failures are appended
+// in place. Any cancellation, checker, fetch, or cache error discards the partial
+// result. Prepared-release state is neither read nor published.
 func (s *Service) EvaluateTrackerClaims(ctx context.Context, subject api.UploadSubject) (api.UploadSubject, error) {
 	return s.evaluateTrackerClaims(ctx, subject)
 }

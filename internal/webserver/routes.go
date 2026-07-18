@@ -939,6 +939,7 @@ func (s *Server) allowGeneralRequest(r *http.Request) bool {
 	return s.generalLimiter.Allow(s.clientIP(r))
 }
 
+// verifyCSRF requires the request header token to match the cookie-bound session.
 func (s *Server) verifyCSRF(r *http.Request, current session) bool {
 	token := strings.TrimSpace(r.Header.Get("X-Csrf-Token"))
 	if token == "" {
@@ -947,6 +948,8 @@ func (s *Server) verifyCSRF(r *http.Request, current session) bool {
 	return token == current.CSRFToken
 }
 
+// verifySameOrigin accepts an exact Origin or Referer host match. Development
+// no-auth sessions additionally permit requests between loopback hosts.
 func (s *Server) verifySameOrigin(r *http.Request, current session) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
@@ -976,6 +979,8 @@ func isLoopbackHostPort(host string) bool {
 	return isLoopbackHostname(strings.Trim(trimmed, "[]"))
 }
 
+// clientIP trusts the first X-Forwarded-For value only when RemoteAddr belongs
+// to a configured trusted proxy.
 func (s *Server) clientIP(r *http.Request) string {
 	ip := ipFromAddr(r.RemoteAddr)
 	if !s.isTrustedProxy(net.ParseIP(ip)) {
@@ -1020,6 +1025,8 @@ func isLoopbackHostname(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// requestScheme honors an explicit HTTPS request URL, trusts
+// X-Forwarded-Proto only from a configured proxy, then falls back to TLS state.
 func (s *Server) requestScheme(r *http.Request) string {
 	if strings.EqualFold(r.URL.Scheme, "https") {
 		return "https"

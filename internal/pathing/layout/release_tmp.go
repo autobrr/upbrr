@@ -23,8 +23,8 @@ func ReleaseTempDir(tmpRoot string, meta preparationstate.State, source string) 
 	return ReleaseTempDirFor(tmpRoot, source, meta.Release)
 }
 
-// ReleaseTempDirFor returns the release-specific temporary directory without
-// coupling callers to the legacy universal prepared-metadata shape.
+// ReleaseTempDirFor creates missing release-specific directories below tmpRoot
+// with mode 0700 and returns the full path and stable base name.
 func ReleaseTempDirFor(tmpRoot string, source string, release api.ReleaseInfo) (string, string, error) {
 	trimmed := strings.TrimSpace(tmpRoot)
 	if trimmed == "" {
@@ -43,8 +43,9 @@ func ReleaseTempBase(meta preparationstate.State, source string) string {
 	return ReleaseTempBaseFor(source, meta.Release)
 }
 
-// ReleaseTempBaseFor returns the stable temporary-directory name from the
-// source path and optional parsed release identity.
+// ReleaseTempBaseFor derives a stable temporary-directory name from the source
+// basename, then the release identity, and finally "content". Characters
+// outside letters, digits, dot, dash, and underscore are replaced with '_'.
 func ReleaseTempBaseFor(source string, release api.ReleaseInfo) string {
 	base := pathutil.Base(source)
 	if base != "" && base != string(filepath.Separator) && base != "." {

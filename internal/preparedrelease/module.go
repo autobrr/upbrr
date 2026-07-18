@@ -60,7 +60,8 @@ type CollectedFacts struct {
 
 // CollectedResources is the collector-to-owner handoff for local artifacts
 // required by later operations. Resources remain inside the prepared-release
-// module and are never included in PreparedRelease.
+// module and are never included in PreparedRelease. Path fields are host
+// filesystem paths.
 type CollectedResources struct {
 	SourcePath            string
 	VideoPath             string
@@ -82,7 +83,8 @@ type clientEvidenceHydrator interface {
 }
 
 // Module owns one current immutable generation and private envelope per
-// normalized source.
+// normalized source. It serializes mutation for the same source while allowing
+// different sources to prepare concurrently.
 type Module struct {
 	store     Store
 	identity  IdentityResolver
@@ -94,7 +96,7 @@ type Module struct {
 	gates     sourceGates
 }
 
-// New constructs a prepared-release owner.
+// New requires and borrows all persistence, identity, and collection ports.
 func New(store Store, identity IdentityResolver, collector Collector) (*Module, error) {
 	if store == nil {
 		return nil, errors.New("prepared release: store is required")
@@ -114,8 +116,10 @@ func New(store Store, identity IdentityResolver, collector Collector) (*Module, 
 	}, nil
 }
 
-// Prepare returns the exact compatible current generation or atomically
-// commits and publishes a new one.
+// Prepare serializes same-source work and returns a detached copy of the exact
+// compatible generation when reuse is allowed. Otherwise it commits a new
+// generation before publishing it; failed collection or commit leaves the
+// prior published generation intact.
 func (m *Module) Prepare(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
 	if m == nil || m.store == nil || m.identity == nil || m.collector == nil {
 		return api.PrepareResult{}, errors.New("prepared release: module is not initialized")

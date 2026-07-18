@@ -176,6 +176,8 @@ func syncDir(path string) error {
 	return nil
 }
 
+// sessionManager owns active browser sessions, persists only retained sessions,
+// and reports permanent removals after releasing its state lock.
 type sessionManager struct {
 	ttl          time.Duration
 	cleanupEvery time.Duration

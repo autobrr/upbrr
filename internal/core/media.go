@@ -313,10 +313,9 @@ func (m *mediaModule) saveAcceptedFinalScreenshotSelections(ctx context.Context,
 	return wrapCoreError(m.screenshots.SaveFinalSelections(ctx, subject, images))
 }
 
-// ImportMenuImages copies supported image files from host filesystem paths into
-// one prepared release's managed temp directory. Content-addressed names dedupe
-// repeated imports, and DB records/selections are appended atomically.
-
+// importAcceptedMenuImages copies supported host-filesystem images into one
+// exact prepared release's managed temp directory. Content-addressed names
+// deduplicate imports, and DB records/selections are appended atomically.
 func (m *mediaModule) importAcceptedMenuImages(ctx context.Context, input api.MediaPlanInput, importPaths []string) error {
 	if len(importPaths) == 0 {
 		return nil
@@ -480,9 +479,8 @@ func removeMenuImportFiles(paths []string) {
 	}
 }
 
-// ListUploadCandidates returns persisted normal and disc-menu images eligible
-// for image-host upload for one prepared release.
-
+// listAcceptedUploadCandidates returns persisted normal and disc-menu images
+// eligible for image-host upload for one exact prepared generation.
 func (m *mediaModule) listAcceptedUploadCandidates(ctx context.Context, input api.ImageHostingInput) ([]api.ScreenshotImage, error) {
 	if m.images == nil {
 		return nil, errors.New("core: image hosting service not configured")
@@ -511,11 +509,10 @@ func (m *mediaModule) listAcceptedUploadedImages(ctx context.Context, input api.
 	return wrapCoreResult(m.repo.ListUploadedImagesByPath(ctx, subject.SourcePath))
 }
 
-// UploadImages uploads one source's selected images to the requested global
-// host and any additional hosts required by its eligible trackers. Host uploads
-// run concurrently, tracker-owned hosts use tracker-scoped records, and
-// recoverable host failures are returned in [api.UploadImagesResult].
-
+// uploadAcceptedImages uploads selected images to the requested global host
+// and additional hosts required by eligible trackers. Host uploads run
+// concurrently, tracker-owned hosts use tracker-scoped records, and recoverable
+// host failures are returned in [api.UploadImagesResult].
 func (m *mediaModule) uploadAcceptedImages(
 	ctx context.Context,
 	input api.ImageHostingInput,

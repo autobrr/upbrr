@@ -22,10 +22,14 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Runner executes FFmpeg-compatible commands for capture services. Run must
+// honor ctx and use dir as the working directory when it is non-empty.
 type Runner interface {
 	Run(ctx context.Context, name string, args []string, dir string) (CommandResult, error)
 }
 
+// CommandResult preserves command output and the observed process exit code
+// for fallback decisions and bounded diagnostics.
 type CommandResult struct {
 	Stdout   []byte
 	Stderr   []byte

@@ -9,11 +9,14 @@ import (
 	"time"
 )
 
+// serverEvent is one encoded server-sent event awaiting session delivery.
 type serverEvent struct {
 	Name string
 	Data []byte
 }
 
+// eventHub routes non-blocking, session-scoped events to active subscribers.
+// Slow subscribers lose events instead of blocking producers.
 type eventHub struct {
 	mu          sync.Mutex
 	subscribers map[string]map[chan serverEvent]struct{}
@@ -37,6 +40,8 @@ func (h *eventHub) SetLogger(logger interface {
 	h.mu.Unlock()
 }
 
+// Subscribe creates a buffered event stream for sessionID. The returned cleanup
+// removes the subscriber and closes its channel, and must be called exactly once.
 func (h *eventHub) Subscribe(sessionID string) (<-chan serverEvent, func()) {
 	ch := make(chan serverEvent, 64)
 
@@ -60,6 +65,8 @@ func (h *eventHub) Subscribe(sessionID string) (<-chan serverEvent, func()) {
 	}
 }
 
+// Emit JSON-encodes payload and attempts delivery to every subscriber for
+// sessionID. Invalid payloads and full subscriber buffers are dropped.
 func (h *eventHub) Emit(sessionID string, name string, payload any) {
 	if h == nil || sessionID == "" || name == "" {
 		return
@@ -84,6 +91,7 @@ func (h *eventHub) Emit(sessionID string, name string, payload any) {
 	}
 }
 
+// EmitKeepAlive sends a UTC RFC3339 timestamp on the session's keepalive event.
 func (h *eventHub) EmitKeepAlive(sessionID string) {
 	h.Emit(sessionID, "keepalive", map[string]string{
 		"timestamp": time.Now().UTC().Format(time.RFC3339),

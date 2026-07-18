@@ -34,6 +34,8 @@ type ListSpec struct {
 }
 
 // Search executes a JSON-list duplicate search with number-preserving decoding.
+// It rejects non-2xx responses and bodies above 4 MiB through typed adapter
+// failure results rather than returning Go errors directly.
 func Search(ctx context.Context, client *http.Client, spec ListSpec) dupe.AdapterResult {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, spec.Endpoint, nil)
 	if err != nil {

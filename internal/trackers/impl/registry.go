@@ -74,6 +74,9 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d/sites/znth"
 )
 
+// NewRegistry composes the complete built-in Unit3D, AZ-family, and standalone
+// manifest, then installs the metadata-source priority order. It returns an
+// error if any compiled definition violates registry invariants.
 func NewRegistry() (*trackers.Registry, error) {
 	registry := trackers.NewRegistry()
 	for _, definition := range builtInDefinitions() {

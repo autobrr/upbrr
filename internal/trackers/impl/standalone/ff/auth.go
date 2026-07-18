@@ -20,6 +20,9 @@ import (
 
 const ffAuthResponseMaxBytes = 1 << 20
 
+// validateAuthCookies checks bounded FF upload-page evidence. Explicit login
+// evidence and a missing authenticated-page marker are confirmed-invalid;
+// transport, read, and other HTTP failures remain transient.
 func validateAuthCookies(ctx context.Context, baseURL string, values []*http.Cookie) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/upload.php", nil)
 	if err != nil {
@@ -82,6 +85,8 @@ func validateAuthCookies(ctx context.Context, baseURL string, values []*http.Coo
 	return nil
 }
 
+// loginAuthSession logs in with configured credentials and persists only
+// non-empty cookies that pass the same remote session validation.
 func loginAuthSession(ctx context.Context, cfg config.TrackerConfig, dbPath string, baseURL string) error {
 	data := url.Values{
 		"returnto": {"/index.php"},

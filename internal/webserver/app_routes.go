@@ -1177,6 +1177,8 @@ func pathWithinBrowseRoots(candidate string, roots []string) bool {
 	return false
 }
 
+// writeAppError exposes structured operation failures with their safe message
+// and hides all unstructured error detail behind a generic internal failure.
 func writeAppError(w http.ResponseWriter, err error) {
 	if failure, ok := api.AsOperationFailure(err); ok {
 		status := http.StatusConflict

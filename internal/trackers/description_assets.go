@@ -33,7 +33,8 @@ type DescriptionAssets struct {
 	Final bool
 }
 
-// PreparedDescriptionAssets returns a defensive copy of module-resolved assets.
+// PreparedDescriptionAssets returns a defensive copy of module-resolved image
+// and slot slices. Nil input returns zero assets; it currently returns no error.
 func PreparedDescriptionAssets(prepared *DescriptionAssets) (DescriptionAssets, error) {
 	if prepared == nil {
 		return DescriptionAssets{}, nil
@@ -150,7 +151,9 @@ func cloneTrackerMetadata(records []api.TrackerMetadata) []api.TrackerMetadata {
 	return cloned
 }
 
-// DescriptionOverrideGroupForTrackerWithRegistry resolves tracker-owned description grouping.
+// DescriptionOverrideGroupForTrackerWithRegistry returns the registered group,
+// falls back to "unit3d" for Unit3D definitions, and otherwise uses the
+// lower-case tracker name. Unregistered trackers return empty.
 func DescriptionOverrideGroupForTrackerWithRegistry(tracker string, registry *Registry) string {
 	normalized := strings.ToUpper(strings.TrimSpace(tracker))
 	if descriptor, ok := registry.LookupDescriptor(normalized); ok {
@@ -169,7 +172,10 @@ func normalizeDescriptionOverrideGroupKey(groupKey string) string {
 	return strings.ToLower(strings.TrimSpace(groupKey))
 }
 
-// ResolveDescriptionAssets loads the description override and selected images for tracker.
+// ResolveDescriptionAssets returns sanitized tracker description text and
+// ordered persisted screenshot assets. With no repository or source path it
+// resolves prepared/request description text only; required screenshot-slot
+// failures abort the result while optional description lookups fall back.
 func ResolveDescriptionAssets(
 	ctx context.Context,
 	tracker string,

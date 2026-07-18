@@ -14,6 +14,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Rules returns the profile's country, age, and technical eligibility checks.
+// Routing and most technical failures are waivable; PHD SD content and H.264
+// above 1080p are strict failures.
 func (d *Definition) Rules() *trackers.RuleSet {
 	return &trackers.RuleSet{Check: d.evaluateRules}
 }

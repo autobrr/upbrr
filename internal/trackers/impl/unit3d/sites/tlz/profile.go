@@ -7,6 +7,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Profile returns TLZ's distinct type IDs for movies, packs, and remaining
+// content.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:    "TLZ",

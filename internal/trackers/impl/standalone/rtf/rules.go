@@ -15,6 +15,7 @@ import (
 
 const minimumContentAgeReason = "content must be at least 10 years old"
 
+// rules strictly blocks content newer than RTF's ten-year eligibility cutoff.
 func rules() *trackers.RuleSet { return &trackers.RuleSet{Check: checkRules} }
 
 func checkRules(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {

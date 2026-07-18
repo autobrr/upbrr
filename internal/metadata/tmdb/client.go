@@ -26,6 +26,7 @@ const defaultBaseURL = "https://api.themoviedb.org/3"
 
 var errNotFound = errors.New("tmdb: not found")
 
+// Client queries TMDB and shares its HTTP transport with AniList enrichment.
 type Client struct {
 	apiKey  string
 	baseURL string
@@ -33,6 +34,8 @@ type Client struct {
 	logger  api.Logger
 }
 
+// NewClient trims apiKey and substitutes a 15-second HTTP client and no-op
+// logger for nil dependencies.
 func NewClient(httpClient *http.Client, logger api.Logger, apiKey string) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 15 * time.Second}
@@ -48,6 +51,8 @@ func NewClient(httpClient *http.Client, logger api.Logger, apiKey string) *Clien
 	}
 }
 
+// NormalizeTitle lowercases and trims a title and normalizes ampersands to
+// "and" for provider similarity comparisons.
 func NormalizeTitle(title string) string {
 	value := strings.ToLower(title)
 	value = strings.ReplaceAll(value, "&", "and")
@@ -55,6 +60,10 @@ func NormalizeTitle(title string) string {
 	return strings.TrimSpace(value)
 }
 
+// FindByExternalID tries IMDb, then TVDB, then filename search. External-ID
+// lookup errors are treated as misses. When an IMDb ID maps to movie and TV,
+// CategoryPreference chooses; otherwise movie wins. FilenameSearch reports that
+// identifier lookup did not resolve the result.
 func (c *Client) FindByExternalID(ctx context.Context, input FindInput) (FindResult, error) {
 	imdbID := metautil.NormalizeIMDbID(input.IMDbID)
 	filenameSearch := false
@@ -182,6 +191,11 @@ func (c *Client) FindByExternalID(ctx context.Context, input FindInput) (FindRes
 	}, nil
 }
 
+// SearchID tries the parsed title, Roman-numeral and alternate titles, next year,
+// optional opposite category, and progressively reduced titles in order.
+// Provider failures are treated as misses. One candidate or a winner scoring at
+// least 0.75 with a 0.10 lead is auto-selected; Unattended selects the top
+// ambiguous candidate.
 func (c *Client) SearchID(ctx context.Context, input SearchInput) (SearchOutcome, error) {
 	input = applySearchHints(input)
 	category := strings.ToUpper(strings.TrimSpace(input.Category))
@@ -526,6 +540,8 @@ func (c *Client) searchTitle(ctx context.Context, filename string, year int, cat
 	return resp.Results, nil
 }
 
+// GetTranslations returns the title or name from the first exact TMDB language
+// match, or empty when no translation exists.
 func (c *Client) GetTranslations(ctx context.Context, tmdbID int, category, targetLanguage string) (string, error) {
 	endpoint := "movie"
 	if strings.EqualFold(category, "TV") {

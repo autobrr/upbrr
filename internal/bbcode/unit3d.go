@@ -5,7 +5,9 @@ package bbcode
 
 import descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 
-// CleanUnit3DDescription normalizes a Unit3D description for site and converts its cleanup report.
+// CleanUnit3DDescription removes site-local links and image markup from a
+// Unit3D description, returning the first non-poster image set separately from
+// the cleaned body.
 func CleanUnit3DDescription(description string, site string) Report {
 	report := descriptionunit3d.CleanDescription(description, site)
 	return Report{

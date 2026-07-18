@@ -21,7 +21,8 @@ type OperationLogger struct {
 }
 
 // NewOperationLogger creates a non-owning logger view. An empty override uses
-// the root logger's configured level.
+// the root logger's configured level. A nil root or invalid override returns an
+// error.
 func NewOperationLogger(root *Logger, override string) (*OperationLogger, error) {
 	if root == nil {
 		return nil, errors.New("logging: root logger is required")
@@ -37,7 +38,8 @@ func NewOperationLogger(root *Logger, override string) (*OperationLogger, error)
 	return &OperationLogger{root: root, level: level}, nil
 }
 
-// WithOperationLogger attaches one operation-local logger view to ctx.
+// WithOperationLogger attaches one operation-local logger view to ctx. It
+// returns ctx unchanged when ctx or logger is nil.
 func WithOperationLogger(ctx context.Context, logger api.Logger) context.Context {
 	if ctx == nil || logger == nil {
 		return ctx
@@ -45,7 +47,8 @@ func WithOperationLogger(ctx context.Context, logger api.Logger) context.Context
 	return context.WithValue(ctx, operationLoggerKey{}, logger)
 }
 
-// FromContext returns the operation logger attached to ctx or fallback.
+// FromContext returns the operation logger attached to ctx or fallback. A nil
+// fallback becomes an [api.NopLogger].
 func FromContext(ctx context.Context, fallback api.Logger) api.Logger {
 	if ctx != nil {
 		if logger, ok := ctx.Value(operationLoggerKey{}).(api.Logger); ok && logger != nil {

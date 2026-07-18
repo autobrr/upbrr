@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 )
 
+// resolveAssets returns an explicit override unchanged. Without one, it selects
+// the first embedded or repo-local filesystem containing index.html.
 func resolveAssets(override fs.FS) (fs.FS, error) {
 	if override != nil {
 		return override, nil

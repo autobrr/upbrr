@@ -13,6 +13,8 @@ import (
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 )
 
+// ParsedRelease is the subset of basename parser output used by metadata
+// provider searches.
 type ParsedRelease struct {
 	Title    string
 	Alt      string
@@ -21,6 +23,8 @@ type ParsedRelease struct {
 	Year     int
 }
 
+// ParseRelease parses the host-path basename and normalizes its category to
+// MOVIE, TV, or empty.
 func ParseRelease(filename string) ParsedRelease {
 	base := strings.TrimSpace(filename)
 	if base == "" {
@@ -37,6 +41,9 @@ func ParseRelease(filename string) ParsedRelease {
 	}
 }
 
+// NormalizeIMDbID adds the tt prefix and seven-digit padding to numeric IDs.
+// Empty and zero values become empty; non-numeric input is preserved verbatim
+// after trimming.
 func NormalizeIMDbID(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" || trimmed == "0" {
@@ -52,6 +59,8 @@ func NormalizeIMDbID(value string) string {
 	return fmt.Sprintf("tt%07d", id)
 }
 
+// ParseIMDbNumeric accepts a trimmed numeric or tt-prefixed ID and returns zero
+// for malformed input.
 func ParseIMDbNumeric(value string) int {
 	value = strings.TrimSpace(value)
 	value = strings.TrimPrefix(value, "tt")
@@ -75,6 +84,8 @@ func FirstInt(values ...int) int {
 	return 0
 }
 
+// FirstNonEmpty returns the first value containing non-whitespace text without
+// trimming the returned value.
 func FirstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -84,6 +95,7 @@ func FirstNonEmpty(values ...string) string {
 	return ""
 }
 
+// FirstNonEmptyTrimmed returns the first non-empty value after trimming it.
 func FirstNonEmptyTrimmed(values ...string) string {
 	for _, value := range values {
 		trimmed := strings.TrimSpace(value)
@@ -94,6 +106,9 @@ func FirstNonEmptyTrimmed(values ...string) string {
 	return ""
 }
 
+// ReduceTitle splits on whitespace, removes standalone common video-extension
+// tokens, and drops the requested number of trailing tokens. It returns empty
+// when too few tokens remain.
 func ReduceTitle(filename string, drop int) string {
 	words := strings.Fields(filename)
 	if len(words) <= drop {
@@ -120,6 +135,8 @@ func ReduceTitle(filename string, drop int) string {
 	return strings.Join(filtered[:len(filtered)-drop], " ")
 }
 
+// SimilarityRatio returns a case-sensitive, rune-aware recursive
+// longest-common-substring score in the range 0 to 1.
 func SimilarityRatio(a, b string) float64 {
 	if a == "" || b == "" {
 		return 0
@@ -139,6 +156,8 @@ func AbsInt(value int) int {
 	return value
 }
 
+// ReleaseCategoryFromRLS collapses supported parser categories to MOVIE or TV
+// and returns empty for unknown categories.
 func ReleaseCategoryFromRLS(value string) string {
 	upper := strings.ToUpper(strings.TrimSpace(value))
 	switch upper {

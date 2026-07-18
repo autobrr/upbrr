@@ -575,11 +575,9 @@ func isCommentaryOrCompatibilityAudioValue(value string) bool {
 	return strings.Contains(lower, "commentary") || strings.Contains(lower, "compatibility")
 }
 
-// ApplyRequestScopedAudioPolicy updates audio labels and tracker audio blocks
-// for the request's active tracker set.
-
 // RebuildReleaseName regenerates the prepared release-name fields from the
-// current metadata and release-name overrides.
+// current metadata and release-name overrides. It is a no-op for nil input and
+// replaces all name variants and missing-field hints in place.
 func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 	if meta == nil {
 		return

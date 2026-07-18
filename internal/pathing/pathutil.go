@@ -14,7 +14,6 @@ import (
 // Clean normalizes path-like strings for cross-platform parsing by treating
 // both slash styles as separators. Use this for metadata/source-path parsing,
 // not filesystem operations.
-// Clean normalizes a host-filesystem path while preserving an empty input.
 func Clean(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -26,7 +25,6 @@ func Clean(value string) string {
 // Base returns the last path element while treating both slash styles as
 // separators. Use this for parsing stored path strings that may originate from
 // another OS.
-// Base returns the final element of a normalized host-filesystem path.
 func Base(value string) string {
 	cleaned := Clean(value)
 	if cleaned == "" {
@@ -39,7 +37,6 @@ func Base(value string) string {
 // It first checks lexical paths, then repeats the check with symlinks resolved
 // through the nearest existing path prefix so missing child paths under a
 // symlink cannot escape the root.
-// IsWithinRoot reports whether target resolves to root or one of its descendants.
 func IsWithinRoot(root string, target string) bool {
 	rootAbs, ok := cleanAbs(root)
 	if !ok {
@@ -62,7 +59,6 @@ func IsWithinRoot(root string, target string) bool {
 }
 
 // SamePath compares local filesystem paths with the host OS path semantics.
-// SamePath reports whether two paths identify the same filesystem location.
 func SamePath(left string, right string) bool {
 	leftAbs, leftOK := cleanAbs(left)
 	rightAbs, rightOK := cleanAbs(right)

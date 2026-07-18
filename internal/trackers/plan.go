@@ -264,7 +264,9 @@ func (p TrackerPlan) Description() DescriptionResult { return p.description }
 // DryRun returns a defensive copy of the prepared payload preview.
 func (p TrackerPlan) DryRun() api.TrackerDryRunEntry { return cloneTrackerDryRunEntry(p.dryRun) }
 
-// Submit invokes the upload action at most once.
+// Submit invokes the upload action at most once. The first accepted call consumes
+// the submission attempt before invoking the callback, even when it returns an
+// error.
 func (p TrackerPlan) Submit(ctx context.Context) (api.UploadSummary, error) {
 	if p.state == nil || p.intent != PreparationIntentUpload {
 		return api.UploadSummary{}, ErrPlanNotSubmittable
@@ -287,7 +289,8 @@ func (p TrackerPlan) Submit(ctx context.Context) (api.UploadSummary, error) {
 	return submit(ctx)
 }
 
-// Release releases plan-owned resources exactly once. Repeated calls are no-ops.
+// Release invokes plan cleanup at most once and prevents later submission.
+// Repeated calls are no-ops and return nil.
 func (p TrackerPlan) Release() error {
 	if p.state == nil {
 		return nil

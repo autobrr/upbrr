@@ -29,6 +29,8 @@ func NewValidatorWithLogger(logger api.Logger) *Validator {
 	return &Validator{logger: logger}
 }
 
+// ValidatePaths validates paths in input order and returns their absolute host
+// forms without deduplication. It stops at the first invalid path or cancellation.
 func (v *Validator) ValidatePaths(ctx context.Context, paths []string) ([]string, error) {
 	if len(paths) == 0 {
 		return nil, internalerrors.ErrInvalidInput

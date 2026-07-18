@@ -78,7 +78,8 @@ var hostActivationFunctions = map[string]struct{}{
 }
 
 // CheckRepository scans architecture-sensitive source without following generated,
-// dependency, build-output, or VCS directories.
+// dependency, build-output, or VCS directories. It returns violations sorted by
+// file, line, then column.
 func CheckRepository(root string) ([]Violation, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {

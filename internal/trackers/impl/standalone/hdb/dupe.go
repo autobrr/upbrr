@@ -25,7 +25,8 @@ type dupeSearcher struct {
 	endpoint string
 }
 
-// NewDuplicateAdapter returns a duplicate-search adapter bound to one immutable dependency set.
+// newDuplicateAdapterAt returns a duplicate-search adapter bound to one
+// immutable dependency set and tracker base URL.
 func newDuplicateAdapterAt(deps dupe.Dependencies, baseURL string) dupe.Adapter {
 	cfg := deps.BoundConfig()
 	httpClient := deps.HTTPClient()

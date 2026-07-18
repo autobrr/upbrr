@@ -6,6 +6,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Profile returns STC's type mapping, including dedicated TV-pack IDs split by
+// web source and SD status, plus its image-host and rule policies.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:    "STC",

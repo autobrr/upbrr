@@ -16,6 +16,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// ParseReleaseInfo parses the host-path basename into detached release fields.
+// It derives the release format separately from the movie/TV category and fills
+// missing season or episode values from the basename fallback parser.
 func ParseReleaseInfo(path string) api.ReleaseInfo {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {

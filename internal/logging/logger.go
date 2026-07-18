@@ -21,6 +21,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Level is a maximum verbosity threshold: larger values admit progressively
+// more detailed entries, while [LevelError] admits errors only.
 type Level int
 
 const (
@@ -47,6 +49,8 @@ func (l Level) String() string {
 	}
 }
 
+// ParseLevel normalizes a configured level. Invalid input returns [LevelInfo]
+// together with an error.
 func ParseLevel(value string) (Level, error) {
 	normalized, err := api.ParseLogLevel(value)
 	if err != nil {
@@ -69,6 +73,9 @@ func ParseLevel(value string) (Level, error) {
 	}
 }
 
+// Logger writes sanitized, threshold-filtered entries to console and optional
+// file outputs while retaining the same entries for snapshots and subscribers.
+// Close releases the optional file output.
 type Logger struct {
 	level      Level
 	consoleOut *log.Logger
@@ -83,6 +90,8 @@ type Logger struct {
 	subID      int
 }
 
+// Entry is one sanitized retained log entry. IDs increase within a Logger, and
+// Level contains the lowercase level name.
 type Entry struct {
 	ID      int64     `json:"id"`
 	Time    time.Time `json:"time" ts_type:"string"`
@@ -99,10 +108,15 @@ var (
 const defaultBufferCap = 1000
 const defaultSubscriberBuffer = 200
 
+// New constructs a logger using cfg.Level. When file output is enabled, it
+// creates or opens the app log below the database directory; callers must close
+// the returned logger.
 func New(cfg config.LoggingConfig, dbPath string) (*Logger, error) {
 	return NewWithLevel(cfg, dbPath, "")
 }
 
+// NewWithLevel constructs a logger after replacing cfg.Level with a non-blank
+// override. It has the same file ownership and side effects as [New].
 func NewWithLevel(cfg config.LoggingConfig, dbPath string, override string) (*Logger, error) {
 	if trimmed := strings.TrimSpace(override); trimmed != "" {
 		cfg.Level = trimmed
@@ -145,6 +159,8 @@ func defaultConsoleWriters() (io.Writer, io.Writer) {
 	return defaultConsoleOut, defaultConsoleErr
 }
 
+// ResolveEffectiveLevel applies runOverride first, then the debug fallback,
+// then the configured level.
 func ResolveEffectiveLevel(configured string, runOverride string, debug bool) string {
 	if trimmed := strings.TrimSpace(runOverride); trimmed != "" {
 		return trimmed
@@ -155,6 +171,8 @@ func ResolveEffectiveLevel(configured string, runOverride string, debug bool) st
 	return strings.TrimSpace(configured)
 }
 
+// Close releases file logging resources. It is safe on a nil logger and is a
+// no-op when file logging is disabled.
 func (l *Logger) Close() error {
 	if l == nil || l.closer == nil {
 		return nil
@@ -446,6 +464,8 @@ func (l *Logger) record(label string, message string) {
 	l.mu.Unlock()
 }
 
+// Recent returns a copied, oldest-to-newest snapshot of the most recent entries.
+// A non-positive or oversized limit returns the complete retained buffer.
 func (l *Logger) Recent(limit int) []Entry {
 	if l == nil {
 		return nil
@@ -463,6 +483,9 @@ func (l *Logger) Recent(limit int) []Entry {
 	return entries
 }
 
+// Subscribe registers a future-entry stream and returns its unsubscribe ID.
+// A non-positive buffer uses the package default. Delivery is non-blocking, so
+// entries are dropped for a subscriber whose channel is full.
 func (l *Logger) Subscribe(buffer int) (int, <-chan Entry) {
 	if l == nil {
 		return 0, nil
@@ -481,6 +504,8 @@ func (l *Logger) Subscribe(buffer int) (int, <-chan Entry) {
 	return id, ch
 }
 
+// Unsubscribe removes a subscription and closes its channel. Unknown IDs and a
+// nil logger are ignored.
 func (l *Logger) Unsubscribe(id int) {
 	if l == nil {
 		return
@@ -514,6 +539,8 @@ func resolveLogPath(dbPath string) (string, error) {
 	return filepath.Join(logDir, "upbrr.log"), nil
 }
 
+// LogPath returns the app log path, creating the database's logs subdirectory
+// when necessary.
 func LogPath(dbPath string) (string, error) {
 	return resolveLogPath(dbPath)
 }

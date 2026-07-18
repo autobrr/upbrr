@@ -24,6 +24,7 @@ type dataLookup struct {
 	endpoint string
 }
 
+// NewDataLookup returns an ANT lookup bound to cfg and httpClient.
 func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _ api.Logger) trackers.DataLookup {
 	return &dataLookup{
 		cfg:      cfg,
@@ -32,6 +33,10 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _
 	}
 }
 
+// Lookup searches ANT by filename and returns IMDb and TMDB identifiers from
+// the sole result or the result containing the requested file. Disc uploads,
+// missing credentials or names, non-success responses, and no match produce an
+// empty result without an error.
 func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (trackers.DataLookupResult, error) {
 	if strings.TrimSpace(req.Meta.DiscType) != "" {
 		return trackers.DataLookupResult{}, nil

@@ -94,7 +94,8 @@ func emitDetailedProgressEvent(reporter ProgressReporter, event bdrunner.Progres
 	reporter(stage)
 }
 
-// Service handles BDInfo execution and parsing for BDMV discs
+// Service runs the in-process BDInfo scanner and parses its persisted text
+// reports.
 type Service struct {
 	logger api.Logger
 }
@@ -107,10 +108,12 @@ type ScanResult struct {
 
 type progressReporterKey struct{}
 
-// ProgressReporter receives raw BDInfo progress lines.
+// ProgressReporter receives user-facing progress messages derived from BDInfo
+// scanner stages.
 type ProgressReporter func(line string)
 
-// WithProgressReporter attaches a progress reporter to context.
+// WithProgressReporter attaches a progress reporter to ctx. A nil reporter
+// leaves ctx unchanged.
 func WithProgressReporter(ctx context.Context, reporter ProgressReporter) context.Context {
 	if reporter == nil {
 		return ctx
@@ -139,7 +142,7 @@ func normalizePlaylistSelector(playlistFile string) string {
 	return strings.ToUpper(playlistName)
 }
 
-// New creates a new BDInfo service
+// New returns a BDInfo service, replacing a nil logger with [api.NopLogger].
 func New(logger api.Logger) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -147,7 +150,10 @@ func New(logger api.Logger) *Service {
 	return &Service{logger: logger}
 }
 
-// ExecuteForPlaylist runs the embedded Go BDInfo scanner for a specific playlist and writes to the caller-provided path.
+// ExecuteForPlaylist scans one playlist and writes its report to outputPath;
+// newly created report files use mode 0600. playlistFile is reduced to an
+// uppercased basename and gains an .MPLS suffix when absent; the returned path
+// may be replaced by the scanner's reported output path.
 func (s *Service) ExecuteForPlaylist(ctx context.Context, bdmvPath string, playlistFile string, outputPath string, summaryOnly bool) (string, error) {
 	result, err := s.execute(ctx, bdmvPath, normalizePlaylistSelector(playlistFile), outputPath, summaryOnly)
 	if err != nil {
@@ -156,7 +162,9 @@ func (s *Service) ExecuteForPlaylist(ctx context.Context, bdmvPath string, playl
 	return result.ReportPath, nil
 }
 
-// ExecuteFullScan runs the embedded Go BDInfo scanner for the full disc and returns the raw report.
+// ExecuteFullScan scans the full disc, writes BD_FULL.txt beneath outputDir,
+// and returns both the persisted path and report text. A newly created report
+// file uses mode 0600.
 func (s *Service) ExecuteFullScan(ctx context.Context, bdmvPath string, outputDir string) (ScanResult, error) {
 	return s.execute(ctx, bdmvPath, "", filepath.Join(outputDir, "BD_FULL.txt"), false)
 }
@@ -220,7 +228,9 @@ func (s *Service) execute(ctx context.Context, bdmvPath string, playlistName str
 	}, nil
 }
 
-// ParseOutput parses BDInfo output and returns structured data
+// ParseOutput extracts the title, label, size, length, and quick-summary fields
+// present in a persisted BDInfo report. Missing fields are omitted without an
+// error.
 func (s *Service) ParseOutput(filePath string) (map[string]any, error) {
 	content, err := os.ReadFile(filePath)
 	if err != nil {

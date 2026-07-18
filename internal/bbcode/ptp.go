@@ -63,7 +63,10 @@ var (
 	)
 )
 
-// CleanPTPDescription normalizes a PTP-style description and returns extracted images and artifacts.
+// CleanPTPDescription removes tracker links, embedded MediaInfo, unsupported
+// blocks, and known uploader signatures from a PTP-style description. It
+// returns extracted images separately and omits a cleaned body that is blank or
+// contains only BBCode tags.
 func CleanPTPDescription(description string, discType string) Report {
 	desc := strings.ReplaceAll(description, "&bull;", "-")
 	desc = NormalizeNewlines(desc)

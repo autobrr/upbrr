@@ -5,6 +5,8 @@ package stc
 
 import "github.com/autobrr/upbrr/internal/trackers"
 
+// Rules strictly rejects known non-TV categories; its adult-content failure
+// remains waivable.
 func Rules() *trackers.RuleSet {
 	return &trackers.RuleSet{
 		BlockAdult:    true,

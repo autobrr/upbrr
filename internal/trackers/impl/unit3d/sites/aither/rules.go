@@ -7,6 +7,9 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 )
 
+// Rules returns AITHER's strict unique-ID requirement and waivable non-disc
+// English audio-or-subtitle requirement, accepting original-language audio
+// when English subtitles are present.
 func Rules() *trackers.RuleSet {
 	return &trackers.RuleSet{RequireUniqueID: true, Language: englishNonDisc()}
 }

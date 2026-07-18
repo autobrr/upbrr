@@ -22,6 +22,8 @@ import (
 	"github.com/autobrr/upbrr/internal/redaction"
 )
 
+// Config is the complete runtime and persistence configuration. Secret-aware
+// export and database APIs clone it before transforming secret fields.
 type Config struct {
 	MainSettings       MainSettingsConfig             `yaml:"main_settings"`
 	ImageHosting       ImageHostingConfig             `yaml:"image_hosting"`
@@ -262,12 +264,17 @@ type LoggingConfig struct {
 	MaxFiles       int    `yaml:"max_files"`
 }
 
+// TrackersConfig preserves ordered default selections, one preferred tracker,
+// and tracker settings keyed by configured tracker name.
 type TrackersConfig struct {
 	DefaultTrackers  CSVList                  `yaml:"default_trackers" json:"DefaultTrackers"`
 	PreferredTracker string                   `yaml:"preferred_tracker" json:"PreferredTracker"`
 	Trackers         map[string]TrackerConfig `yaml:"-" json:"Trackers"`
 }
 
+// TrackerConfig stores one tracker's supported settings. Unknown preserves
+// unsupported extension fields across load/save, excluding deprecated URL
+// fields and schema-known fields belonging to another tracker.
 type TrackerConfig struct {
 	LinkDirName         string         `yaml:"link_dir_name" json:"LinkDirName"`
 	APIKey              string         `yaml:"api_key" json:"APIKey"`
@@ -752,6 +759,9 @@ func (t *TrackersConfig) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
+// TorrentClientConfig supports current qBittorrent/watch/qui fields plus
+// legacy aliases. Its resolver methods define field precedence, and marshaling
+// emits the resolved canonical values rather than duplicate aliases.
 type TorrentClientConfig struct {
 	Type          string     `yaml:"type"`
 	TorrentClient string     `yaml:"torrent_client"`
@@ -1251,6 +1261,9 @@ func asciiEqualFold(value string, target string) bool {
 	return true
 }
 
+// QbitHost returns QuiProxyURL when set; otherwise it resolves QbitURL before
+// legacy URL, adds an http scheme when absent, and applies QbitPort when the
+// URL has no explicit port.
 func (c TorrentClientConfig) QbitHost() string {
 	if strings.TrimSpace(c.QuiProxyURL) != "" {
 		host := strings.TrimSpace(c.QuiProxyURL)
@@ -1279,6 +1292,7 @@ func (c TorrentClientConfig) QbitHost() string {
 	return parsed.String()
 }
 
+// ClientType resolves Type before legacy TorrentClient and defaults to "qbit".
 func (c TorrentClientConfig) ClientType() string {
 	if strings.TrimSpace(c.Type) != "" {
 		return strings.TrimSpace(c.Type)
@@ -1289,6 +1303,7 @@ func (c TorrentClientConfig) ClientType() string {
 	return "qbit"
 }
 
+// QbitUsername resolves QbitUser before legacy Username.
 func (c TorrentClientConfig) QbitUsername() string {
 	if strings.TrimSpace(c.QbitUser) != "" {
 		return strings.TrimSpace(c.QbitUser)
@@ -1296,6 +1311,7 @@ func (c TorrentClientConfig) QbitUsername() string {
 	return strings.TrimSpace(c.Username)
 }
 
+// QbitPassword resolves QbitPass before legacy Password.
 func (c TorrentClientConfig) QbitPassword() string {
 	if strings.TrimSpace(c.QbitPass) != "" {
 		return strings.TrimSpace(c.QbitPass)
@@ -1303,6 +1319,7 @@ func (c TorrentClientConfig) QbitPassword() string {
 	return strings.TrimSpace(c.Password)
 }
 
+// QbitCategory resolves QbitCategoryValue before legacy Category.
 func (c TorrentClientConfig) QbitCategory() string {
 	if strings.TrimSpace(c.QbitCategoryValue) != "" {
 		return strings.TrimSpace(c.QbitCategoryValue)
@@ -1310,6 +1327,8 @@ func (c TorrentClientConfig) QbitCategory() string {
 	return strings.TrimSpace(c.Category)
 }
 
+// QbitTags resolves QbitTag, then QbitTagsValue, then legacy Tags, removing
+// blank slice entries and joining multiple tags with commas.
 func (c TorrentClientConfig) QbitTags() string {
 	if strings.TrimSpace(c.QbitTag) != "" {
 		return strings.TrimSpace(c.QbitTag)
@@ -1339,6 +1358,7 @@ func (c TorrentClientConfig) QbitTags() string {
 	return ""
 }
 
+// LinkingMode returns a lowercase mode and normalizes "none" or "disabled" to empty.
 func (c TorrentClientConfig) LinkingMode() string {
 	mode := strings.ToLower(strings.TrimSpace(c.Linking))
 	switch mode {
@@ -1349,10 +1369,13 @@ func (c TorrentClientConfig) LinkingMode() string {
 	}
 }
 
+// FallbackAllowed defaults to true when AllowFallback is unset.
 func (c TorrentClientConfig) FallbackAllowed() bool {
 	return c.AllowFallback == nil || *c.AllowFallback
 }
 
+// QbitTLSSkipVerify resolves TLSSkipVerify first, then inverts the legacy
+// VerifyWebUICertificate value, and otherwise defaults to false.
 func (c TorrentClientConfig) QbitTLSSkipVerify() bool {
 	if c.TLSSkipVerify != nil {
 		return *c.TLSSkipVerify
@@ -1363,11 +1386,13 @@ func (c TorrentClientConfig) QbitTLSSkipVerify() bool {
 	return false
 }
 
+// UsesQuiProxy reports whether a non-blank QuiProxyURL is configured.
 func (c TorrentClientConfig) UsesQuiProxy() bool {
 	return strings.TrimSpace(c.QuiProxyURL) != ""
 }
 
-// ResolveTrackerDomain normalizes a raw tracker domain.
+// ResolveTrackerDomain preserves the trimmed tracker identifier in its first
+// result. Domain resolution is no longer performed, so the second result is empty.
 func ResolveTrackerDomain(_ *Config, trackerNameOrDomain string) (string, string) {
 	name := strings.TrimSpace(trackerNameOrDomain)
 	if name == "" {

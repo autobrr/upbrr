@@ -35,7 +35,9 @@ type UploadExecutionOptions struct {
 	PreviewLimit     int64
 }
 
-// UploadExecution contains one closed HTTP response projected for tracker-local parsing.
+// UploadExecution contains one closed HTTP response projected for tracker-local
+// parsing. Failure Body and Preview are bounded and redacted; successful Body
+// retains parser input while Preview remains bounded and redacted.
 type UploadExecution struct {
 	StatusCode int
 	Header     http.Header
@@ -45,8 +47,9 @@ type UploadExecution struct {
 	Success    bool
 }
 
-// ExecuteUpload performs one prepared request, closes its response, bounds all
-// diagnostic data, and returns tracker-local parsing facts.
+// ExecuteUpload performs one prepared request and closes its response. It
+// rejects oversized success bodies unless full reads are explicitly selected,
+// clones response headers, and redacts the final URL and diagnostic previews.
 func ExecuteUpload(client *http.Client, req *http.Request, options UploadExecutionOptions) (UploadExecution, error) {
 	if client == nil {
 		return UploadExecution{}, errors.New("tracker upload client is nil")

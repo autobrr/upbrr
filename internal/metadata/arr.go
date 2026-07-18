@@ -22,6 +22,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// ArrLookupResult carries non-authoritative identity, genre, and release-group
+// evidence from an Arr path match. Source identifies the provider family.
 type ArrLookupResult struct {
 	Source       string
 	TMDBID       int

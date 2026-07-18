@@ -15,9 +15,8 @@ func (c *Core) DVDMenuCapability(ctx context.Context) (api.DVDMenuEngineInfo, er
 	return c.media.dvdMenuCapability(ctx)
 }
 
-// CaptureDVDMenus captures and persists bounded menu screenshots for one DVD.
-// WebUI requests require a prepared metadata cache; CLI requests prepare metadata
-// directly. Existing automatic captures are replaced only after rendering.
+// CaptureDVDMenus prepares one DVD source, then captures and persists bounded
+// menu screenshots. Existing automatic captures are replaced only after rendering.
 func (c *Core) CaptureDVDMenus(ctx context.Context, req api.Request) (api.DVDMenuCaptureResult, error) {
 	ref, err := c.prepareRequestRef(ctx, req, api.PreparationIntentMedia)
 	if err != nil {

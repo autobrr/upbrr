@@ -17,7 +17,8 @@ type Definition struct {
 	site siteDefinition
 }
 
-// New returns an AZ-family definition for the requested registered profile name.
+// New returns the CZ or PHD profile for those normalized names and the AZ
+// profile for every other value.
 func New(name string) *Definition {
 	return &Definition{site: siteFor(name)}
 }

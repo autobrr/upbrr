@@ -89,6 +89,8 @@ func NewService(cfg config.Config, logger api.Logger) *Service {
 }
 
 // NewServiceWithRegistry returns a torrent-client service backed by registry.
+// A nil registry selects an empty registry, and a nil logger selects
+// [api.NopLogger]. Registry-derived policy is copied during construction.
 func NewServiceWithRegistry(cfg config.Config, logger api.Logger, registry *trackers.Registry) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -105,12 +107,16 @@ func NewServiceWithRegistry(cfg config.Config, logger api.Logger, registry *trac
 	}
 }
 
-// Inject dispatches a prepared torrent to the configured injection clients.
-// URL-only torrents require a URL-capable client unless global/default fallback
-// can select one; explicit tracker or caller selections that resolve only to
-// watch-folder clients return [internalerrors.ErrInvalidInput] instead of a
-// successful no-op.
-// Inject adds torrent to the configured client and applies post-upload linking policy.
+// Inject dispatches a prepared torrent to selected clients in sorted name order
+// and applies per-client delay, path mapping, link staging, category, and tag
+// policy. URL-only torrents require a URL-capable client unless global/default
+// fallback can select one; explicit tracker or caller selections that resolve
+// only to watch-folder clients return [internalerrors.ErrInvalidInput].
+//
+// qBittorrent adds set skip_checking=true for both linked and original-path
+// injection. The first client error stops dispatch; prior watch-folder copies or
+// client adds are not rolled back, while staging created for the failed
+// qBittorrent add is removed when owned by that attempt.
 func (s *Service) Inject(ctx context.Context, meta api.ClientSubject, torrent api.TorrentResult) (err error) {
 	logger := logging.FromContext(ctx, s.logger)
 	defer func() {

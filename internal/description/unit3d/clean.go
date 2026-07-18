@@ -29,7 +29,10 @@ var (
 	unit3dSiteLinkCache   sync.Map
 )
 
-// CleanDescription normalizes a Unit3D description and extracts its image blocks.
+// CleanDescription normalizes entities and site-local references, removes all
+// image markup from the body, and returns the first non-poster image set. A
+// leading poster-only set does not prevent a later screenshot set from being
+// selected.
 func CleanDescription(description string, site string) Report {
 	desc, report, ok := normalizeUnit3DDescriptionInput(description, site)
 	if !ok {
@@ -41,7 +44,9 @@ func CleanDescription(description string, site string) Report {
 	return report
 }
 
-// CleanDescriptionBody normalizes description text without extracting standalone images.
+// CleanDescriptionBody applies the same entity and site-reference
+// normalization as [CleanDescription] and removes all image markup without
+// returning extracted images.
 func CleanDescriptionBody(description string, site string) Report {
 	desc, report, ok := normalizeUnit3DDescriptionInput(description, site)
 	if !ok {
@@ -52,7 +57,8 @@ func CleanDescriptionBody(description string, site string) Report {
 	return report
 }
 
-// CleanDescriptionImages extracts and normalizes images without cleaning the surrounding body.
+// CleanDescriptionImages returns the first non-poster image set after entity
+// and site-reference normalization without producing a cleaned body.
 func CleanDescriptionImages(description string, site string) Report {
 	desc, report, ok := normalizeUnit3DDescriptionInput(description, site)
 	if !ok {

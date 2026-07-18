@@ -5,6 +5,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Profile returns UTP's type and resolution mappings, including fallback IDs
+// for unknown values.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:    "UTP",

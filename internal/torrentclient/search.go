@@ -118,8 +118,18 @@ type torrentDataValidation struct {
 	reason      string
 }
 
-// SearchPathedTorrents finds client torrents whose content maps to meta and
-// returns validated matches plus any torrent artifact safe to reuse.
+// SearchPathedTorrents searches selected qBittorrent or Qui clients in
+// configured order, validates exported metainfo against meta, and stops once
+// the active piece-size preference is satisfied. Match lists are deduplicated
+// across clients; per-client scalar results are replaced as later matching
+// clients are evaluated.
+//
+// A reusable export is stripped of announce, comment, and web-seed metadata and
+// written with mode 0600 below the configured DB temporary directory. A requested
+// force recheck also mutates direct qBittorrent state and waits for checking to
+// finish. Client-level failures abort the search; individual property or tracker
+// lookup failures degrade that candidate, while export failures reject only the
+// affected candidate.
 func (s *Service) SearchPathedTorrents(ctx context.Context, meta api.ClientSubject) (result api.ClientSearchResult, err error) {
 	defer func() {
 		if err != nil {

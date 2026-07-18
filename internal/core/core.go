@@ -304,18 +304,18 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 	return core, nil
 }
 
-// RunUploadPrepared uploads from cached prepared metadata for each requested path.
-// Explicit tracker selections that resolve empty return without tracker upload
-// side effects, while omitted tracker selections retain configured default behavior.
-// If a later path fails or the context is canceled after earlier uploads complete,
-// the returned result preserves the uploaded count accumulated before the error.
+// RunUploadPrepared validates and prepares req.SourcePath, refreshes upload
+// review authority, and uploads only eligible trackers. Omitted tracker
+// selections expand configured defaults. If tracker upload or later client
+// injection fails after some uploads complete, Result.UploadedCount preserves
+// the completed count.
 func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (result api.Result, err error) {
 	result, err = c.upload.runPrepared(ctx, req)
 	return result, classifyOperationError(api.OperationKindUploadExecute, err)
 }
 
-// RunAcceptedUpload executes one reviewed upload input against state imported
-// and validated for its exact prepared generation.
+// RunAcceptedUpload executes the eligible trackers from a reviewed outcome
+// against its exact prepared generation without rerunning upload review.
 func (c *Core) RunAcceptedUpload(ctx context.Context, plan api.UploadExecutionPlan) (api.Result, error) {
 	result, err := c.upload.runAccepted(ctx, plan)
 	return classifyOperationResult(api.OperationKindUploadExecute, result, err)
@@ -346,9 +346,9 @@ func firstRequestedTracker(trackers []string) string {
 	return ""
 }
 
-// CheckDupes checks one validated source against the resolved tracker set and
-// stores the resulting duplicate state with its prepared release. WebUI requests
-// require a compatible metadata-preview cache entry.
+// CheckDupes prepares one source and checks its resolved tracker set. The
+// result includes eligibility derived from duplicate, auth, rule, and policy
+// evidence; it does not persist duplicate results into the prepared generation.
 func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSummary, error) {
 	summary, err := c.dupe.check(ctx, req)
 	return summary, classifyOperationError(api.OperationKindDuplicateCheck, err)
@@ -361,8 +361,7 @@ func (c *Core) CheckAcceptedDupes(ctx context.Context, input api.DuplicateCheckI
 	return summary, classifyOperationError(api.OperationKindDuplicateCheck, err)
 }
 
-// FetchScreenshotPlan builds a capture plan for one validated source. WebUI
-// requests require a compatible metadata-preview cache entry.
+// FetchScreenshotPlan prepares one source and builds its screenshot capture plan.
 func (c *Core) FetchScreenshotPlan(ctx context.Context, req api.Request) (api.ScreenshotPlan, error) {
 	ref, err := c.prepareRequestRef(ctx, req, api.PreparationIntentMedia)
 	if err != nil {
@@ -381,8 +380,7 @@ func (c *Core) FetchAcceptedScreenshotPlan(ctx context.Context, input api.MediaP
 	return classifyOperationResult(api.OperationKindMedia, result, err)
 }
 
-// GenerateScreenshots captures the selected frames for one validated source.
-// WebUI requests require a compatible metadata-preview cache entry.
+// GenerateScreenshots prepares one source and captures the selected frames.
 func (c *Core) GenerateScreenshots(
 	ctx context.Context,
 	req api.Request,
@@ -628,8 +626,8 @@ func (c *Core) ImportReleaseSeed(ctx context.Context, seed preparedrelease.Seed)
 	return ref, nil
 }
 
-// FetchPreparationPreview builds tracker preparation data for one validated
-// source. WebUI requests reuse a compatible prepared-release cache entry.
+// FetchPreparationPreview builds tracker preparation data for one source,
+// reusing an exact compatible prepared generation when available.
 func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (preview api.PreparationPreview, err error) {
 	defer func() { err = classifyOperationError(api.OperationKindDescription, err) }()
 	input, err := api.MapPreparationRequest(req, api.PreparationIntentDescription)
@@ -647,8 +645,9 @@ func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (pr
 	})
 }
 
-// RunAcceptedTrackerDryRun executes a non-submitting tracker dry run for one
-// exact prepared generation using one completed duplicate-check outcome.
+// RunAcceptedTrackerDryRun builds non-submitting tracker payloads for one exact
+// generation using completed duplicate evidence. Unless NoSeed is set, ready
+// payloads may produce tracker-specific torrents and inject them into the client.
 func (c *Core) RunAcceptedTrackerDryRun(ctx context.Context, plan api.TrackerDryRunPlan) (api.TrackerDryRunPreview, error) {
 	preview, err := c.upload.runAcceptedTrackerDryRun(ctx, plan)
 	return preview, classifyOperationError(api.OperationKindDryRun, err)
@@ -872,9 +871,6 @@ func resolveTrackersPreservingExplicitEmpty(
 	return resolved, false
 }
 
-// deepCopyAniListMetadata clones rich anime metadata for prepared-metadata
-// snapshots so cached WebUI/core state cannot alias mutable slice fields.
-
 // DetectDiscType classifies one preparation source through the canonical source-layout resolver.
 func (c *Core) DetectDiscType(ctx context.Context, sourcePath string) (string, error) {
 	if ctx == nil {
@@ -887,8 +883,8 @@ func (c *Core) DetectDiscType(ctx context.Context, sourcePath string) (string, e
 	return layout.DiscType, nil
 }
 
-// DiscoverPlaylists scans the local source path for Blu-ray playlists and
-// returns their ordered items, durations, and selection scores.
+// DiscoverPlaylists scans the local source for Blu-ray playlists and returns
+// them by descending score. Durations are seconds and item sizes are bytes.
 func (c *Core) DiscoverPlaylists(ctx context.Context, sourcePath string) ([]api.PlaylistInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("core: discover playlists canceled: %w", err)

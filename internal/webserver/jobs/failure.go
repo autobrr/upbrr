@@ -5,6 +5,8 @@ package jobs
 
 import "github.com/autobrr/upbrr/pkg/api"
 
+// failureForError preserves a structured operation failure as a defensive copy
+// and otherwise creates a frontend-safe generic failure.
 func failureForError(err error, operation api.OperationKind, message string, recovery api.OperationRecovery) *api.OperationFailure {
 	if failure, ok := api.AsOperationFailure(err); ok {
 		cloned := failure

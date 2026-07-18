@@ -12,7 +12,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// Profile returns ULCX's Unit3D site manifest.
+// Profile returns ULCX's WEB-DL hybrid-name normalization, size-variance dupe
+// policy, tracker-owned rules, and banned groups.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:         "ULCX",

@@ -11,7 +11,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// Profile returns TOS's Unit3D site manifest.
+// Profile returns TOS's DVD/3D type mapping and French-subtitle-aware movie,
+// episode, and TV-pack category mapping.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:         "TOS",

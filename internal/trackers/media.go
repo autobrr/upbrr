@@ -14,7 +14,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// ReadBDInfo reads the BDInfo from the given path.
+// ReadBDInfo reads the selected BDMV playlist summary from the release-scoped
+// temporary directory. Missing selections and missing or unstatable artifacts
+// return empty without error; directory-resolution and read failures are returned.
 func ReadBDInfo(dbPath string, meta api.UploadSubject) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
@@ -34,7 +36,9 @@ func ReadBDInfo(dbPath string, meta api.UploadSubject) (string, error) {
 	return readTextFile(path)
 }
 
-// ReadBDinfoOrMediaInfo reads the BDInfo if the disc type is BDMV, otherwise it reads the MediaInfoTextPath.
+// ReadBDinfoOrMediaInfo returns BDMV summary text or the first available general
+// or DVD-VOB MediaInfo report. Artifact resolution and read errors are treated
+// as missing text.
 func ReadBDinfoOrMediaInfo(dbPath string, meta api.UploadSubject) string {
 	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
 		bdinfo, _ := ReadBDInfo(dbPath, meta)

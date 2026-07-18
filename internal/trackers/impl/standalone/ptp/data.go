@@ -30,6 +30,8 @@ type ptpLookup struct {
 	infoHash  string
 }
 
+// NewDataLookup returns a PTP lookup using the definition's endpoint and the
+// supplied immutable config and HTTP client.
 func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _ api.Logger) trackers.DataLookup {
 	return &dataLookup{
 		cfg:      cfg,
@@ -38,6 +40,10 @@ func (d *Definition) NewDataLookup(cfg config.Config, httpClient *http.Client, _
 	}
 }
 
+// Lookup resolves a torrent by tracker ID or release-name search, then
+// independently projects its identifiers, cleaned description, and images.
+// Missing credentials, non-success responses, and misses return an empty or
+// partial result without error.
 func (l *dataLookup) Lookup(ctx context.Context, req trackers.DataLookupRequest) (trackers.DataLookupResult, error) {
 	apiUser, apiKey := ptpAPIKeys(l.cfg)
 	if apiUser == "" || apiKey == "" {

@@ -8,6 +8,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Profile returns OTW's disc and DVDRip type mapping together with duplicate
+// resolution-mismatch rejection, rules, and banned groups.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:         "OTW",

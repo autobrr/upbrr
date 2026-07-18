@@ -15,6 +15,7 @@ import (
 )
 
 // Profile returns PTP identity, preparation, dupe, auth, bans, and policies.
+// Its missing-IMDb metadata result is advisory and does not block upload.
 func Profile() standalone.Profile {
 	return standalone.Profile{
 		Name:               "PTP",

@@ -12,6 +12,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// rules requires a supported HD resolution as a strict block and reports a
+// missing IMDb identifier as waivable.
 func rules() *trackers.RuleSet { return &trackers.RuleSet{Check: checkRules} }
 
 func checkRules(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {

@@ -90,10 +90,9 @@ var createReflink = reflinkFile
 // prepareLinkStaging creates a client-visible staging tree for the final local
 // torrent artifact. It uses the torrent's metainfo layout, validates staged
 // files before returning, and maps the containing directory to the qBittorrent
-// host path. URL-only or invalid layouts fall back only when the client permits
-// it; every original-path fallback requires qBittorrent to verify content.
-// Cancellation during metainfo planning returns a wrapped context error instead
-// of falling back.
+// host path. URL-only or invalid layouts return an unlinked original-path
+// fallback only when the client permits it. Cancellation during metainfo
+// planning returns a wrapped context error instead of falling back.
 func (s *Service) prepareLinkStaging(
 	ctx context.Context,
 	clientName string,

@@ -13,6 +13,8 @@ import (
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 )
 
+// resolveTrackerIconTarget accepts only registered trackers and falls back to
+// the registry-owned base URL when no explicit favicon URL is supplied.
 func resolveTrackerIconTarget(trackerName string, faviconURL string) (string, string, error) {
 	registry, err := trackerimpl.NewRegistry()
 	if err != nil {
@@ -29,6 +31,8 @@ func resolveTrackerIconTarget(trackerName string, faviconURL string) (string, st
 	return descriptor.Name, urlToUse, nil
 }
 
+// handleTrackerIcon serves decoded tracker icon bytes only for an allowlisted
+// image MIME type and disables browser content sniffing.
 func (s *Server) handleTrackerIcon(w http.ResponseWriter, r *http.Request, _ session) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

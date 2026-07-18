@@ -41,7 +41,9 @@ func NewServiceWithRegistry(cfg config.Config, logger api.Logger, repo UploadPer
 	return NewServiceWithRegistryAndImages(cfg, logger, repo, registry, nil)
 }
 
-// NewServiceWithRegistryAndImages returns a tracker service with explicit registry and image-hosting dependencies.
+// NewServiceWithRegistryAndImages substitutes a no-op logger and binds the
+// registry to tracker, banned-group, and image-host preparation. A nil registry
+// is retained so public operations can return their explicit configuration error.
 func NewServiceWithRegistryAndImages(
 	cfg config.Config,
 	logger api.Logger,
@@ -62,12 +64,6 @@ func NewServiceWithRegistryAndImages(
 	}
 }
 
-// Upload submits prepared metadata to the resolved tracker set.
-// The returned summary includes tracker uploads that completed before a later
-// failure or cancellation, and pending upload records are finalized with a
-// cleanup context when the caller's context has already been canceled.
-// Successful tracker results are treated as terminal for finalization even when
-// persisting that terminal status logs a warning.
 func (s *Service) maxConcurrentTrackerUploads(total int) int {
 	if total <= 0 {
 		return 0
@@ -268,7 +264,10 @@ func (s *Service) preloadUploadContentData(
 	return preloaded, nil, nil
 }
 
-// BuildPreparation resolves tracker-specific descriptions, image requirements, and upload blocks without uploading.
+// BuildPreparation resolves tracker descriptions and image requirements without
+// tracker submission. It may rehost screenshots and persist reusable slot
+// variants; tracker-local content failures are returned in the preview while
+// cancellation and invalid top-level selection return errors.
 func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionSubject, trackersList []string) (api.PreparationPreview, error) {
 	meta := uploadSubjectForDescription(subject)
 	select {
@@ -549,13 +548,16 @@ func blockedPreparationImageHostFeedback(feedback api.ImageHostFeedback) api.Ima
 }
 
 // BuildUploadReview builds tracker payloads needed for upload authorization
-// without enabling explicit dry-run diagnostic artifacts.
+// without enabling explicit dry-run diagnostic artifacts or tracker submission.
+// Shared preparation may still write local torrent artifacts, rehost images,
+// and persist reusable image-slot state.
 func (s *Service) BuildUploadReview(ctx context.Context, meta api.UploadSubject, trackersList []string) ([]api.TrackerDryRunEntry, error) {
 	return s.buildUploadPreview(ctx, meta, trackersList, PreparationIntentUploadReview)
 }
 
-// BuildUploadDryRun builds explicit tracker dry-run payload previews without
-// performing tracker uploads.
+// BuildUploadDryRun builds explicit payload previews without tracker submission.
+// Shared preparation may still write local torrent artifacts, rehost images,
+// and persist reusable image-slot state.
 func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.UploadSubject, trackersList []string) ([]api.TrackerDryRunEntry, error) {
 	return s.buildUploadPreview(ctx, meta, trackersList, PreparationIntentDryRun)
 }
