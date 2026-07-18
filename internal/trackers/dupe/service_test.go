@@ -55,20 +55,34 @@ func TestAdapterResultDefensiveCopies(t *testing.T) {
 }
 
 func TestCheckReturnsResolvedOrderAndActualCompletionProgress(t *testing.T) {
+	startedA := make(chan struct{})
+	startedB := make(chan struct{})
 	releaseA := make(chan struct{})
 	releaseB := make(chan struct{})
 	service := testService(map[string]Adapter{
-		"A": AdapterFunc(func(context.Context, api.DuplicateSubject) AdapterResult { <-releaseA; return Resolved(nil, nil) }),
-		"B": AdapterFunc(func(context.Context, api.DuplicateSubject) AdapterResult { <-releaseB; return Resolved(nil, nil) }),
+		"A": AdapterFunc(func(context.Context, api.DuplicateSubject) AdapterResult {
+			close(startedA)
+			<-releaseA
+			return Resolved(nil, nil)
+		}),
+		"B": AdapterFunc(func(context.Context, api.DuplicateSubject) AdapterResult {
+			close(startedB)
+			<-releaseB
+			return Resolved(nil, nil)
+		}),
 	})
 
 	var mu sync.Mutex
 	completed := make([]string, 0, 2)
+	completedB := make(chan struct{})
 	ctx := api.WithDupeProgressReporter(context.Background(), func(update api.DupeProgressUpdate) {
 		if update.Status == "completed" {
 			mu.Lock()
 			completed = append(completed, update.Tracker)
 			mu.Unlock()
+			if update.Tracker == "B" {
+				close(completedB)
+			}
 		}
 	})
 	done := make(chan api.DupeCheckSummary, 1)
@@ -76,10 +90,25 @@ func TestCheckReturnsResolvedOrderAndActualCompletionProgress(t *testing.T) {
 		summary, _ := service.Check(ctx, api.DuplicateSubject{SourcePath: "C:/media/example.mkv"}, []string{"A", "B"})
 		done <- summary
 	}()
+	waitForSignal := func(label string, signal <-chan struct{}) {
+		t.Helper()
+		select {
+		case <-signal:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("timeout waiting for %s", label)
+		}
+	}
+	waitForSignal("adapter A to start", startedA)
+	waitForSignal("adapter B to start", startedB)
 	close(releaseB)
-	time.Sleep(10 * time.Millisecond)
+	waitForSignal("adapter B completion progress", completedB)
 	close(releaseA)
-	summary := <-done
+	var summary api.DupeCheckSummary
+	select {
+	case summary = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for duplicate check summary")
+	}
 	if len(summary.Results) != 2 || summary.Results[0].Tracker != "A" || summary.Results[1].Tracker != "B" {
 		t.Fatalf("resolved order not preserved: %#v", summary.Results)
 	}
