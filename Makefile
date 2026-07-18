@@ -18,9 +18,6 @@ CLI_OUT := dist/upbrr$(EXE)
 E2E_CLI_OUT := dist/upbrr-e2e$(EXE)
 GO_TEST_FLAGS := -race -v -timeout 20m
 GOLANGCI_FLAGS := --timeout=5m
-GO_CHANGED_FILES := $(shell git diff --name-only --diff-filter=ACMR HEAD -- '*.go')
-GO_CHANGED_PKGS := $(addprefix ./,$(sort $(patsubst %/,%,$(dir $(GO_CHANGED_FILES)))))
-
 help:
 	@echo Build
 	@echo   make build              Full build: WebUI, embedded assets, CLI
@@ -160,18 +157,10 @@ gofix-check:
 	go fix -diff -omitzero=false ./...
 
 gofix-changed:
-ifeq ($(strip $(GO_CHANGED_PKGS)),)
-	@echo No changed Go files
-else
-	go fix -omitzero=false $(GO_CHANGED_PKGS)
-endif
+	go run ./cmd/gofixchanged -write
 
 gofix-check-changed:
-ifeq ($(strip $(GO_CHANGED_PKGS)),)
-	@echo No changed Go files
-else
-	go fix -diff -omitzero=false $(GO_CHANGED_PKGS)
-endif
+	go run ./cmd/gofixchanged
 
 commitmsg-check:
 	go run ./cmd/commitmsgcheck $(MSG)
