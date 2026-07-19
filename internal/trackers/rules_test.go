@@ -175,6 +175,9 @@ func TestEvaluateRulesLanguageRuleMissingData(t *testing.T) {
 	if failures[0].Rule != "language_rule" {
 		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
 	}
+	if failures[0].Disposition != api.RuleDispositionStrict {
+		t.Fatalf("language disposition = %q, want strict", failures[0].Disposition)
+	}
 }
 
 func TestEvaluateRulesLanguageRuleOriginalFallback(t *testing.T) {
@@ -718,6 +721,23 @@ func TestEvaluateRulesA4KSkipsLanguageRuleForDisc(t *testing.T) {
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "A4K", meta)
 	if len(failures) != 0 {
 		t.Fatalf("expected no failures for disc upload, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesTTRLanguageFailuresAreStrict(t *testing.T) {
+	t.Parallel()
+
+	meta := api.RuleSubject{
+		AudioLanguages:    []string{"English"},
+		SubtitleLanguages: []string{"English"},
+		Release:           api.ReleaseInfo{Language: []string{"English"}},
+	}
+	failures := evaluateNonMetadataRulesForTest(context.Background(), "TTR", meta)
+	for _, rule := range []string{"language_rule", "spanish_track_required"} {
+		failure, found := findRuleFailure(failures, rule)
+		if !found || failure.Disposition != api.RuleDispositionStrict {
+			t.Fatalf("%s = %#v, failures=%#v", rule, failure, failures)
+		}
 	}
 }
 

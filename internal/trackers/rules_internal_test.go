@@ -128,6 +128,21 @@ func TestConfiguredStrictRuleDispositions(t *testing.T) {
 				Scene: true,
 			},
 		},
+		{
+			name:    "audio language metadata",
+			rule:    "require_audio_languages",
+			rules:   RuleSet{RequireAudioLanguages: true},
+			subject: api.RuleSubject{},
+		},
+		{
+			name: "language requirement",
+			rule: "language_rule",
+			rules: RuleSet{Language: &LanguageRule{
+				Languages:    []string{"english"},
+				RequireAudio: true,
+			}},
+			subject: api.RuleSubject{AudioLanguages: []string{"french"}},
+		},
 	}
 
 	for _, test := range tests {

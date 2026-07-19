@@ -5,8 +5,8 @@ package oe
 
 import "github.com/autobrr/upbrr/internal/trackers"
 
-// Rules returns OE's waivable adult-content and non-disc English-language
-// restrictions.
+// Rules returns OE's waivable adult-content restriction and strict non-disc
+// English-language restriction.
 func Rules() *trackers.RuleSet {
 	return &trackers.RuleSet{
 		BlockAdult:   true,

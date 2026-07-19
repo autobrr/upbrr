@@ -5,7 +5,7 @@ package tos
 
 import "github.com/autobrr/upbrr/internal/trackers"
 
-// Rules strictly requires an NFO for scene releases and applies a waivable
+// Rules strictly requires an NFO for scene releases and applies a strict
 // French audio-or-subtitle requirement that accepts original-language audio
 // when French subtitles are present.
 func Rules() *trackers.RuleSet {

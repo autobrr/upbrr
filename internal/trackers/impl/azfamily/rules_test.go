@@ -47,6 +47,56 @@ func TestEvaluateRulesCZRejectsAsianContent(t *testing.T) {
 	}
 }
 
+func TestEvaluateRulesCountryRestrictionsAreStrict(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		tracker string
+		country string
+		rule    string
+	}{
+		{
+name: "AZ redirect",
+ tracker: "AZ",
+ country: "US",
+ rule: "country_redirect",
+},
+		{
+name: "CZ block",
+ tracker: "CZ",
+ country: "AQ",
+ rule: "country_block",
+},
+		{
+name: "PHD block",
+ tracker: "PHD",
+ country: "AQ",
+ rule: "country_block",
+},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			failures := evaluateSiteRules(t, test.tracker, api.RuleSubject{
+				Identity: api.ExternalIdentity{Category: "MOVIE"},
+				ProviderMetadata: api.SourceScopedMetadata{
+					TMDB: &api.TMDBMetadata{OriginCountry: []string{test.country}},
+				},
+			})
+			for _, failure := range failures {
+				if failure.Rule == test.rule {
+					if failure.Disposition != api.RuleDispositionStrict {
+						t.Fatalf("%s disposition = %q, want strict", test.rule, failure.Disposition)
+					}
+					return
+				}
+			}
+			t.Fatalf("missing %s failure: %#v", test.rule, failures)
+		})
+	}
+}
+
 func TestEvaluateRulesPHDRejectsSDAndBlockedGroup(t *testing.T) {
 	t.Parallel()
 

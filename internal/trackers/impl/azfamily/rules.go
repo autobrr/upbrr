@@ -15,8 +15,8 @@ import (
 )
 
 // Rules returns the profile's country, age, and technical eligibility checks.
-// Routing and most technical failures are waivable; PHD SD content and H.264
-// above 1080p are strict failures.
+// Country routing and blocking, PHD SD content, and H.264 above 1080p are
+// strict failures; remaining failures are waivable.
 func (d *Definition) Rules() *trackers.RuleSet {
 	return &trackers.RuleSet{Check: d.evaluateRules}
 }
@@ -43,18 +43,18 @@ func (d *Definition) evaluateRules(ctx context.Context, meta api.RuleSubject, _ 
 	switch d.site.Name {
 	case "AZ":
 		if intersects(origin, phdCountries()) {
-			add("country_redirect", "major English-language content belongs on PrivateHD")
+			addStrict("country_redirect", "major English-language content belongs on PrivateHD")
 		} else if intersects(origin, cinemaZCountries()) {
-			add("country_redirect", "non-Asian western content belongs on CinemaZ")
+			addStrict("country_redirect", "non-Asian western content belongs on CinemaZ")
 		}
 	case "CZ":
 		switch {
 		case intersects(origin, phdCountries()) && !isOlderThan50Years(meta):
-			add("country_redirect", "recent mainstream English content belongs on PrivateHD")
+			addStrict("country_redirect", "recent mainstream English content belongs on PrivateHD")
 		case intersects(origin, azCountries()):
-			add("country_redirect", "Asian content belongs on AvistaZ")
+			addStrict("country_redirect", "Asian content belongs on AvistaZ")
 		case len(origin) > 0 && !intersects(origin, czAllowedCountries()):
-			add("country_block", "content origin is outside CinemaZ allowed regions")
+			addStrict("country_block", "content origin is outside CinemaZ allowed regions")
 		}
 	case "PHD":
 		if isOlderThan50Years(meta) {
@@ -62,11 +62,11 @@ func (d *Definition) evaluateRules(ctx context.Context, meta api.RuleSubject, _ 
 		}
 		switch {
 		case intersects(origin, cinemaZCountries()):
-			add("country_redirect", "European, South American, and African content belongs on CinemaZ")
+			addStrict("country_redirect", "European, South American, and African content belongs on CinemaZ")
 		case intersects(origin, azCountries()):
-			add("country_redirect", "Asian content belongs on AvistaZ")
+			addStrict("country_redirect", "Asian content belongs on AvistaZ")
 		case len(origin) > 0 && !intersects(origin, phdCountries()):
-			add("country_block", "PrivateHD only allows major English-language territories")
+			addStrict("country_block", "PrivateHD only allows major English-language territories")
 		}
 		evaluatePHDTechnicalRules(meta, add, addStrict)
 	}

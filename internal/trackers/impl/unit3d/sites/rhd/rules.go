@@ -6,7 +6,8 @@ package rhd
 import "github.com/autobrr/upbrr/internal/trackers"
 
 // Rules strictly requires a known resolution of at least 720p and an NFO for
-// scene releases. Adult-content and German-audio failures remain waivable.
+// scene releases. Adult-content failures remain waivable; German-audio failures
+// are strict.
 func Rules() *trackers.RuleSet {
 	return &trackers.RuleSet{
 		BlockAdult:      true,

@@ -14,8 +14,8 @@ import (
 )
 
 // Rules strictly enforces valid MediaInfo settings, the DVDRip prohibition,
-// HEVC eligibility, and encode/HDTV resolution. Language and concert failures
-// remain waivable.
+// HEVC eligibility, encode/HDTV resolution, and language requirements. Concert
+// failures remain waivable.
 func Rules() *trackers.RuleSet {
 	return &trackers.RuleSet{
 		RequireValidMISetting: true,

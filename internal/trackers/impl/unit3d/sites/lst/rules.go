@@ -6,7 +6,7 @@ package lst
 import "github.com/autobrr/upbrr/internal/trackers"
 
 // Rules strictly requires valid MediaInfo encode settings and applies a
-// waivable non-disc English audio-or-subtitle requirement.
+// strict non-disc English audio-or-subtitle requirement.
 func Rules() *trackers.RuleSet {
 	return &trackers.RuleSet{RequireValidMISetting: true, Language: &trackers.LanguageRule{
 		Languages:      []string{"english", "en", "eng"},
