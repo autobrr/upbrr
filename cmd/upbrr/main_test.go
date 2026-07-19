@@ -136,9 +136,11 @@ func TestProcessCLIPathsAppliesPerItemTimeout(t *testing.T) {
 	t.Parallel()
 
 	paths := []string{"slow", "fast"}
-	fastSawFreshDeadline := false
+	var slowDeadline time.Time
+	var fastDeadline time.Time
 	err := processCLIPaths(context.Background(), paths, true, 20*time.Millisecond, api.NopLogger{}, func(itemCtx context.Context, sourcePath string) error {
 		if sourcePath == "slow" {
+			slowDeadline, _ = itemCtx.Deadline()
 			// Exceed the per-item timeout; this item should be cancelled at
 			// ~20ms rather than running to completion.
 			select {
@@ -150,16 +152,14 @@ func TestProcessCLIPathsAppliesPerItemTimeout(t *testing.T) {
 		}
 		// The next item must receive a fresh per-item deadline, proving the
 		// timeout is not shared across the queue.
-		if deadline, ok := itemCtx.Deadline(); ok && time.Until(deadline) > 5*time.Millisecond {
-			fastSawFreshDeadline = true
-		}
+		fastDeadline, _ = itemCtx.Deadline()
 		return nil
 	})
 	if err == nil {
 		t.Fatal("expected a summary error because the slow item timed out")
 	}
-	if !fastSawFreshDeadline {
-		t.Fatal("expected the second item to get a fresh per-item deadline")
+	if slowDeadline.IsZero() || fastDeadline.IsZero() || !fastDeadline.After(slowDeadline) {
+		t.Fatalf("expected the second item to get a later per-item deadline: slow=%v fast=%v", slowDeadline, fastDeadline)
 	}
 }
 
