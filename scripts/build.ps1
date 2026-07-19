@@ -18,16 +18,5 @@ if (-not (Test-Path $distPath)) {
 }
 $cliOut = Join-Path $distPath "upbrr.exe"
 go build -o $cliOut ./cmd/upbrr
-$sourceBin = Join-Path $root "bin"
-if (Test-Path $sourceBin) {
-  Write-Host "Syncing optional bundled tools to CLI output..."
-  $distBin = Join-Path $distPath "bin"
-  if (Test-Path $distBin) {
-    Remove-Item $distBin -Recurse -Force
-  }
-  Copy-Item $sourceBin $distBin -Recurse -Force
-} else {
-  Write-Host "Skipping optional bundled tools: no top-level bin directory found."
-}
 
 Write-Host "Done. Binary: dist/upbrr.exe"
