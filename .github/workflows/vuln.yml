@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GOVULNCHECK_VERSION: v1.3.0
-  OSV_SCANNER_VERSION: v2.3.8
+  GOVULNCHECK_VERSION: v1.6.0
+  OSV_SCANNER_VERSION: v2.4.0
 
 jobs:
   vuln:
@@ -36,4 +36,5 @@ jobs:
         run: go run golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION} ./...
 
       - name: Run OSV dependency scan
+        if: ${{ !cancelled() }}
         run: go run github.com/google/osv-scanner/v2/cmd/osv-scanner@${OSV_SCANNER_VERSION} scan source --lockfile go.mod --lockfile webui/pnpm-lock.yaml

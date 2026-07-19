@@ -44,8 +44,8 @@ github.com/anacrolix/torrent v1.61.0/go.mod h1:yKUKuZSSDdyOsCbuH+rDOpswl/g546gIC
 github.com/apache/thrift v0.12.0/go.mod h1:cp2SuWMxlEZw2r+iP2GNCdIi4C1qmUzdZFSVb+bacwQ=
 github.com/autobrr/go-bdinfo v0.3.2-0.20260630110520-88d4a8ab6880 h1:p55pQampC+aNv9krb63Yw4WnhOf2KTIFt2SgbR2QDpk=
 github.com/autobrr/go-bdinfo v0.3.2-0.20260630110520-88d4a8ab6880/go.mod h1:LvWQ9miDSoeSvJ2vyttB1pYicDl5+eTZ5snvqH7OmZA=
-github.com/autobrr/go-mediainfo v0.4.1-0.20260703020348-60874d03a2d9 h1:Wd/2ADGa7jhiVGuv11ZdCETDocwXdkcTgE9/cOBVB78=
-github.com/autobrr/go-mediainfo v0.4.1-0.20260703020348-60874d03a2d9/go.mod h1:xVXgHDAYYpIeGQCQCdTBpoiY/O3tojJfflK+rrbzclQ=
+github.com/autobrr/go-mediainfo v0.4.1-0.20260713062236-a80a455cd7e0 h1:ddJeUxX8QHw1+g7x4yCzNCohF/R4mrZerun0uN83Cyw=
+github.com/autobrr/go-mediainfo v0.4.1-0.20260713062236-a80a455cd7e0/go.mod h1:xVXgHDAYYpIeGQCQCdTBpoiY/O3tojJfflK+rrbzclQ=
 github.com/autobrr/go-qbittorrent v1.16.0 h1:H0zwzLOaCxvJTxJ3xe4+hV3rFSuxucsgKQxsGHydXCU=
 github.com/autobrr/go-qbittorrent v1.16.0/go.mod h1:s36a75VlatWPpHI+pNg4Ta6eB3fRxQvTZPfgMtOsQfY=
 github.com/autobrr/mkbrr v1.23.0 h1:g9RhZqT78u9726ifDt+KP8VhPNNm1pxmL8Y4L9wa2yk=
