@@ -43,3 +43,17 @@ func TestFinalizeTrackerDescriptionTL(t *testing.T) {
 		t.Fatalf("expected comparison converted for TL, got %q", got)
 	}
 }
+
+func TestFinalizeTrackerDescriptionFLD(t *testing.T) {
+	input := "[user]John[/user]\n[img]https://img.example/a.png[/img]\n[img width=350]https://img.example/b.png[/img]"
+	got := FinalizeTrackerDescription("FLD", input)
+	if strings.Contains(got, "[user]") || strings.Contains(got, "[/user]") {
+		t.Fatalf("expected user tags removed for FLD, got %q", got)
+	}
+	if !strings.Contains(got, "[img width=300]https://img.example/a.png[/img]") {
+		t.Fatalf("expected img tags resized to 300 for FLD, got %q", got)
+	}
+	if !strings.Contains(got, "[img width=350]https://img.example/b.png[/img]") {
+		t.Fatalf("expected pre-sized img tags preserved for FLD, got %q", got)
+	}
+}

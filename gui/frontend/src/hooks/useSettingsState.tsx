@@ -371,6 +371,13 @@ const trackerSchemas: Record<string, FieldMeta[]> = {
     trackerFieldMeta.UploaderName,
     trackerFieldMeta.Anon,
   ],
+  FLD: [
+    trackerFieldMeta.FaviconURL,
+    trackerFieldMeta.LinkDirName,
+    trackerFieldMeta.APIKey,
+    trackerFieldMeta.AnnounceURL,
+    trackerFieldMeta.Anon,
+  ],
   FRIKI: [trackerFieldMeta.FaviconURL, trackerFieldMeta.LinkDirName, trackerFieldMeta.APIKey],
   GPW: [
     trackerFieldMeta.FaviconURL,

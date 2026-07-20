@@ -32,6 +32,7 @@ func buildHandlers(deps handlerDeps) map[string]searchHandler {
 	handlers["SPD"] = spdHandler{cfg: deps.cfg, http: deps.http}
 	handlers["TL"] = tlHandler{cfg: deps.cfg, http: deps.http}
 	handlers["TVC"] = tvcHandler{}
+	handlers["FLD"] = fldHandler{cfg: deps.cfg, http: deps.http}
 
 	// Explicit per-tracker stubs
 	handlers["ASC"] = ascHandler{cfg: deps.cfg, http: deps.http, logger: deps.logger}

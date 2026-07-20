@@ -20,6 +20,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers/impl/dc"
 	"github.com/autobrr/upbrr/internal/trackers/impl/ff"
 	"github.com/autobrr/upbrr/internal/trackers/impl/fl"
+	"github.com/autobrr/upbrr/internal/trackers/impl/fld"
 	"github.com/autobrr/upbrr/internal/trackers/impl/gpw"
 	"github.com/autobrr/upbrr/internal/trackers/impl/hdb"
 	"github.com/autobrr/upbrr/internal/trackers/impl/hds"
@@ -118,6 +119,9 @@ func NewRegistry() (*trackers.Registry, error) {
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	if err := registry.Register(tvc.New()); err != nil {
+		return nil, fmt.Errorf("trackers: %w", err)
+	}
+	if err := registry.Register(fld.New()); err != nil {
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	for _, name := range []string{"AZ", "CZ", "PHD"} {

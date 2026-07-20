@@ -263,6 +263,12 @@ trackers:
     uploader_name: ""
     url: "https://filelist.io"
     anon: false
+  FLD:
+    link_dir_name: ""
+    api_key: ""
+    announce_url: ""
+    url: "https://flood.st"
+    anon: false
   FRIKI:
     link_dir_name: ""
     api_key: ""
