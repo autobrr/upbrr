@@ -17,8 +17,8 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
-	"github.com/autobrr/upbrr/internal/paths"
-	"github.com/autobrr/upbrr/internal/pathutil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -63,7 +63,7 @@ var durationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(millisecon
 // resolveVideoInfo selects timing metadata and the ffmpeg inputs used for
 // screenshot planning/capture. DVD releases keep ordered title-set segments so
 // global screenshot times can be captured from the matching VOB part.
-func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot string, logger api.Logger) (videoInfo, error) {
+func resolveVideoInfo(ctx context.Context, meta api.ScreenshotSubject, tmpRoot string, logger api.Logger) (videoInfo, error) {
 	logger = screenshotLogger(logger)
 	info := videoInfo{}
 
@@ -113,7 +113,11 @@ func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot st
 			logger.Tracef("screenshots: BDMV source selected method=metadata path=%s", filePath)
 		}
 
-		logger.Tracef("screenshots: BDMV summary lookup tmp_root_present=%t playlist=%s", strings.TrimSpace(tmpRoot) != "", paths.PrimaryBDMVPlaylist(meta))
+		logger.Tracef(
+			"screenshots: BDMV summary lookup tmp_root_present=%t playlist=%s",
+			strings.TrimSpace(tmpRoot) != "",
+			paths.PrimaryBDMVPlaylistFor(meta.SelectedBDMVPlaylists),
+		)
 		bdinfo, err := loadBDInfo(tmpRoot, meta)
 		if err != nil {
 			return info, err
@@ -134,7 +138,12 @@ func resolveVideoInfo(ctx context.Context, meta api.PreparedMetadata, tmpRoot st
 					logger.Debugf("screenshots: BDMV source selection unavailable err=%s", redaction.RedactValue(err.Error(), nil))
 				}
 			}
-			logger.Tracef("screenshots: BDMV summary applied duration_seconds=%.3f frame_rate=%.3f files=%d", info.DurationSeconds, info.FrameRate, len(bdinfo.Files))
+			logger.Tracef(
+				"screenshots: BDMV summary applied duration_seconds=%.3f frame_rate=%.3f files=%d",
+				info.DurationSeconds,
+				info.FrameRate,
+				len(bdinfo.Files),
+			)
 		} else {
 			logger.Tracef("screenshots: BDMV summary not available")
 		}
@@ -182,7 +191,11 @@ func resolveSegmentTimestamp(info videoInfo, timestamp float64) (string, float64
 // frame from the primary segment.
 func resolveSegmentCandidates(info videoInfo, timestamp float64) []segmentCandidate {
 	if len(info.Segments) == 0 {
-		return []segmentCandidate{{SourcePath: info.SourcePath, Timestamp: timestamp, SegmentIndex: -1}}
+		return []segmentCandidate{{
+			SourcePath:   info.SourcePath,
+			Timestamp:    timestamp,
+			SegmentIndex: -1,
+		}}
 	}
 
 	primaryIndex := 0
@@ -236,7 +249,11 @@ func resolveSegmentCandidates(info videoInfo, timestamp float64) []segmentCandid
 		})
 	}
 	if len(candidates) == 0 {
-		return []segmentCandidate{{SourcePath: info.SourcePath, Timestamp: timestamp, SegmentIndex: -1}}
+		return []segmentCandidate{{
+			SourcePath:   info.SourcePath,
+			Timestamp:    timestamp,
+			SegmentIndex: -1,
+		}}
 	}
 	return candidates
 }
@@ -254,7 +271,7 @@ func segmentFallbackTimestamp(segment videoSegment) float64 {
 
 // resolveVideoSource applies the same input-file preference as resolveVideoInfo
 // when callers only need the ffmpeg source path, such as preview generation.
-func resolveVideoSource(ctx context.Context, meta api.PreparedMetadata, tmpRoot string, logger api.Logger) (string, error) {
+func resolveVideoSource(ctx context.Context, meta api.ScreenshotSubject, tmpRoot string, logger api.Logger) (string, error) {
 	logger = screenshotLogger(logger)
 	basePath := strings.TrimSpace(meta.VideoPath)
 	if basePath == "" {
@@ -280,7 +297,11 @@ func resolveVideoSource(ctx context.Context, meta api.PreparedMetadata, tmpRoot 
 			return filePath, nil
 		}
 
-		logger.Tracef("screenshots: video source BDMV summary lookup tmp_root_present=%t playlist=%s", strings.TrimSpace(tmpRoot) != "", paths.PrimaryBDMVPlaylist(meta))
+		logger.Tracef(
+			"screenshots: video source BDMV summary lookup tmp_root_present=%t playlist=%s",
+			strings.TrimSpace(tmpRoot) != "",
+			paths.PrimaryBDMVPlaylistFor(meta.SelectedBDMVPlaylists),
+		)
 		bdinfo, err := loadBDInfo(tmpRoot, meta)
 		if err != nil {
 			return "", err
@@ -311,7 +332,7 @@ func resolveVideoSource(ctx context.Context, meta api.PreparedMetadata, tmpRoot 
 
 // selectBDMVFileFromMetadata returns a concrete stream path when the prepared
 // metadata already identifies the selected BDMV item or resolved video file.
-func selectBDMVFileFromMetadata(ctx context.Context, meta api.PreparedMetadata) (string, bool, error) {
+func selectBDMVFileFromMetadata(ctx context.Context, meta api.ScreenshotSubject) (string, bool, error) {
 	if fileName := largestSelectedBDMVPlaylistItem(meta.SelectedBDMVPlaylists); fileName != "" {
 		if videoPath := strings.TrimSpace(meta.VideoPath); videoPath != "" && strings.EqualFold(filepath.Base(videoPath), fileName) {
 			return videoPath, true, nil
@@ -611,18 +632,18 @@ func trackString(track map[string]any, keys ...string) string {
 	return ""
 }
 
-func loadBDInfo(tmpRoot string, meta api.PreparedMetadata) (*discparse.BDInfo, error) {
+func loadBDInfo(tmpRoot string, meta api.ScreenshotSubject) (*discparse.BDInfo, error) {
 	if !strings.EqualFold(meta.DiscType, "BDMV") && !strings.EqualFold(meta.DiscType, "DVD") {
 		return nil, nil
 	}
 	if strings.TrimSpace(tmpRoot) == "" {
 		return nil, nil
 	}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return nil, fmt.Errorf("screenshots: %w", err)
 	}
-	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylist(meta))
+	path := paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylistFor(meta.SelectedBDMVPlaylists))
 	if strings.TrimSpace(path) == "" {
 		return nil, nil
 	}
@@ -862,13 +883,13 @@ func findVideoTS(ctx context.Context, root string) (string, error) {
 
 var errFound = errors.New("found")
 
-func buildScreenshotSelections(count int, durationSeconds float64, frameRate float64, meta api.PreparedMetadata) []api.ScreenshotSelection {
+func buildScreenshotSelections(count int, durationSeconds float64, frameRate float64, meta api.ScreenshotSubject) []api.ScreenshotSelection {
 	if count <= 0 || durationSeconds <= 0 || frameRate <= 0 {
 		return nil
 	}
 	totalFrames := int(durationSeconds * frameRate)
 	startFrame := int(float64(totalFrames) * 0.05)
-	if strings.EqualFold(meta.MediaInfoCategory, "TV") {
+	if strings.EqualFold(meta.MediaCategory, "TV") {
 		startFrame = int(float64(totalFrames) * 0.10)
 	}
 	endFrame := int(float64(totalFrames) * 0.90)
@@ -936,14 +957,14 @@ func sanitizeFilename(value string) string {
 	}, trimmed)
 }
 
-func shouldTonemap(meta api.PreparedMetadata, cfg config.Config) bool {
+func shouldTonemap(meta api.ScreenshotSubject, cfg config.Config) bool {
 	if !cfg.ScreenshotHandling.ToneMap {
 		return false
 	}
 	return strings.Contains(strings.ToUpper(meta.HDR), "HDR") || strings.Contains(strings.ToUpper(meta.HDR), "DV")
 }
 
-func shouldUseLibplacebo(meta api.PreparedMetadata, cfg config.Config) bool {
+func shouldUseLibplacebo(meta api.ScreenshotSubject, cfg config.Config) bool {
 	if !cfg.ScreenshotHandling.UseLibplacebo {
 		return false
 	}
@@ -962,7 +983,7 @@ func screenshotLogger(logger api.Logger) api.Logger {
 
 // screenshotSourceKind classifies the prepared metadata for diagnostic logs
 // without changing screenshot selection behavior.
-func screenshotSourceKind(meta api.PreparedMetadata) string {
+func screenshotSourceKind(meta api.ScreenshotSubject) string {
 	discType := strings.TrimSpace(meta.DiscType)
 	if discType != "" {
 		return "disc_" + strings.ToLower(sanitizeFilename(discType))
@@ -970,8 +991,8 @@ func screenshotSourceKind(meta api.PreparedMetadata) string {
 	if meta.TVPack {
 		return "season_pack"
 	}
-	if strings.EqualFold(strings.TrimSpace(meta.MediaInfoCategory), "TV") {
-		if meta.EpisodeInt <= 0 && meta.Release.Episode <= 0 {
+	if strings.EqualFold(strings.TrimSpace(meta.MediaCategory), "TV") {
+		if meta.Episode <= 0 && meta.Release.Episode <= 0 {
 			return "season_pack"
 		}
 		return "episode"

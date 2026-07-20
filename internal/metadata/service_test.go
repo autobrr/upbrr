@@ -15,17 +15,27 @@ import (
 	"testing"
 	"time"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/metadata/mediainfo"
-	"github.com/autobrr/upbrr/internal/paths"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/sourcelayout"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestPrepare(t *testing.T) {
+func testCollectionRequest(t *testing.T, request api.Request) preparationstate.Request {
+	t.Helper()
+	input, _ := api.MapPreparationRequest(request, api.PreparationIntentPreview)
+	layout, _ := sourcelayout.Resolve(context.Background(), request.SourcePath)
+	return preparationstate.Request{Input: input, Layout: layout}
+}
+
+func TestCollectSourceEvidenceKeepsCanonicalSource(t *testing.T) {
 	t.Parallel()
 
 	base := t.TempDir()
@@ -42,51 +52,39 @@ func TestPrepare(t *testing.T) {
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
 	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
 
-	meta, err := service.Prepare(context.Background(), api.Request{
-		Paths:          []string{path},
-		Mode:           api.ModeCLI,
+	meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
+		SourcePath:     path,
 		Trackers:       []string{"blu", "bhd"},
-		Options:        api.UploadOptions{Debug: true, Screens: 3},
+		Options:        api.UploadOptions{
+OnlyID: true,
+ KeepImages: true,
+ InteractionMode: api.InteractionModeUnattended,
+},
 		TrackersRemove: []string{"bhd"},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if meta.SourcePath != videoPath {
+	if meta.SourcePath != path {
 		t.Fatalf("unexpected source path: %s", meta.SourcePath)
 	}
 	if len(meta.Paths) != 1 {
 		t.Fatalf("unexpected paths length: %d", len(meta.Paths))
 	}
-	if meta.Mode != api.ModeCLI {
-		t.Fatalf("unexpected mode: %s", meta.Mode)
+	if len(meta.EvidenceTrackers) != 0 {
+		t.Fatalf("workflow trackers leaked into preparation evidence: %v", meta.EvidenceTrackers)
 	}
-	if len(meta.Trackers) != 2 {
-		t.Fatalf("unexpected trackers length: %d", len(meta.Trackers))
+	if !meta.Policy.OnlyID || !meta.Policy.KeepImages || meta.Policy.InteractionMode != api.InteractionModeUnattended {
+		t.Fatalf("unexpected collection policy: %+v", meta.Policy)
 	}
-	if !meta.Options.Debug || meta.Options.Screens != 3 {
-		t.Fatalf("unexpected options: %+v", meta.Options)
-	}
-	if len(meta.TrackersRemove) != 1 {
-		t.Fatalf("unexpected trackers-remove length: %d", len(meta.TrackersRemove))
-	}
-	if len(meta.Paths) != 1 || meta.Paths[0] != videoPath {
+	if len(meta.Paths) != 1 || meta.Paths[0] != path {
 		t.Fatalf("unexpected paths: %v", meta.Paths)
 	}
-	if meta.StoredInfoHash != "hash" {
-		t.Fatalf("unexpected stored info hash: %s", meta.StoredInfoHash)
-	}
-	if !meta.StoredDataFresh {
-		t.Fatalf("expected stored metadata marked fresh")
-	}
-	if repo.saved.InfoHash != "hash" {
-		t.Fatalf("expected persisted info hash, got %s", repo.saved.InfoHash)
-	}
-	if repo.saved.Path != videoPath {
+	if repo.saved.Path != path {
 		t.Fatalf("expected repo save path, got %q", repo.saved.Path)
 	}
 
-	_, err = service.Prepare(context.Background(), api.Request{})
+	_, err = service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{}))
 	if !errors.Is(err, internalerrors.ErrInvalidInput) {
 		t.Fatalf("expected invalid input error, got: %v", err)
 	}
@@ -95,7 +93,7 @@ func TestPrepare(t *testing.T) {
 func TestApplySceneDetectionCopiesResultAfterRecoverableNFOFailure(t *testing.T) {
 	t.Parallel()
 
-	// Scene detection runs in ApplyMediaDetails now; applySceneDetection is the
+	// Scene detection runs during fact derivation; applySceneDetection is the
 	// plumbing that copies the result and surfaces a recoverable NFO side effect.
 	logger := &recordingLogger{}
 	service := NewService(&stubRepo{},
@@ -112,7 +110,7 @@ func TestApplySceneDetectionCopiesResultAfterRecoverableNFOFailure(t *testing.T)
 		WithLogger(logger),
 	)
 
-	meta, err := service.applySceneDetection(context.Background(), api.PreparedMetadata{})
+	meta, err := service.applySceneDetection(context.Background(), preparationstate.State{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -133,21 +131,21 @@ func TestApplySceneDetectionBackfillsIMDbID(t *testing.T) {
 	service := NewService(&stubRepo{},
 		WithSceneDetector(staticSceneDetector{result: SceneResult{IsScene: true, IMDBID: 132245}}),
 	)
-	// No externally-resolved id: the scene-discovered id backfills ExternalIDs.
-	meta, err := service.applySceneDetection(context.Background(), api.PreparedMetadata{})
+	// No externally resolved ID: scene evidence backfills canonical identity.
+	meta, err := service.applySceneDetection(context.Background(), preparationstate.State{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if meta.ExternalIDs.IMDBID != 132245 {
-		t.Fatalf("expected scene imdb backfilled, got %d", meta.ExternalIDs.IMDBID)
+	if meta.Identity.IMDBID != 132245 {
+		t.Fatalf("expected scene imdb backfilled, got %d", meta.Identity.IMDBID)
 	}
 	// An already-resolved id is not overwritten.
-	meta, err = service.applySceneDetection(context.Background(), api.PreparedMetadata{ExternalIDs: api.ExternalIDs{IMDBID: 999}})
+	meta, err = service.applySceneDetection(context.Background(), preparationstate.State{Identity: api.ExternalIdentity{IMDBID: 999}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if meta.ExternalIDs.IMDBID != 999 {
-		t.Fatalf("expected resolved imdb preserved, got %d", meta.ExternalIDs.IMDBID)
+	if meta.Identity.IMDBID != 999 {
+		t.Fatalf("expected resolved imdb preserved, got %d", meta.Identity.IMDBID)
 	}
 }
 
@@ -159,7 +157,7 @@ func TestApplySceneDetectionPropagatesCancellation(t *testing.T) {
 	service := NewService(&stubRepo{},
 		WithSceneDetector(staticSceneDetector{err: context.Canceled}),
 	)
-	if _, err := service.applySceneDetection(context.Background(), api.PreparedMetadata{}); !errors.Is(err, context.Canceled) {
+	if _, err := service.applySceneDetection(context.Background(), preparationstate.State{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected cancellation propagated, got %v", err)
 	}
 }
@@ -181,11 +179,10 @@ func TestPrepareCLIKeepFolderPreservesSingleFileDirectory(t *testing.T) {
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
 	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
 
-	meta, err := service.Prepare(context.Background(), api.Request{
-		Paths:   []string{path},
-		Mode:    api.ModeCLI,
+	meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
+		SourcePath: path,
 		Options: api.UploadOptions{KeepFolder: true},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -221,10 +218,9 @@ func TestPrepareCLITVPackPreservesDirectory(t *testing.T) {
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
 	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
 
-	meta, err := service.Prepare(context.Background(), api.Request{
-		Paths: []string{path},
-		Mode:  api.ModeCLI,
-	})
+	meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
+		SourcePath: path,
+	}))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -242,85 +238,10 @@ func TestPrepareCLITVPackPreservesDirectory(t *testing.T) {
 	}
 }
 
-func TestPrepareCLISingleEpisodeFolderPrefersEpisodeVideoOverLargerExtra(t *testing.T) {
-	t.Parallel()
-
-	base := t.TempDir()
-	path := filepath.Join(base, "Example.Show.S01E01.1080p.WEB-DL-GRP")
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-	small := filepath.Join(path, "Example.Show.S01E01.1080p.WEB-DL-GRP.mkv")
-	large := filepath.Join(path, "Featurette.mp4")
-	if err := os.WriteFile(small, []byte("video"), 0o600); err != nil {
-		t.Fatalf("write small video failed: %v", err)
-	}
-	if err := os.WriteFile(large, []byte("larger video"), 0o600); err != nil {
-		t.Fatalf("write large video failed: %v", err)
-	}
-
-	repo := &stubRepo{}
-	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
-	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
-
-	meta, err := service.Prepare(context.Background(), api.Request{
-		Paths: []string{path},
-		Mode:  api.ModeCLI,
-	})
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if meta.SourcePath != small {
-		t.Fatalf("expected episode video source path %q, got %q", small, meta.SourcePath)
-	}
-	if meta.TVPack {
-		t.Fatalf("did not expect TV pack metadata")
-	}
-	if len(meta.FileList) != 1 || meta.FileList[0] != small {
-		t.Fatalf("expected only selected episode video in file list, got %#v", meta.FileList)
-	}
-	if repo.saved.Path != small {
-		t.Fatalf("expected repo save path to be episode video, got %q", repo.saved.Path)
-	}
-}
-
-func TestPrepareAppliesTorrentOverrides(t *testing.T) {
-	t.Parallel()
-
-	base := t.TempDir()
-	path := filepath.Join(base, "example")
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-	videoPath := filepath.Join(path, "example.mkv")
-	if err := os.WriteFile(videoPath, []byte("video"), 0o644); err != nil {
-		t.Fatalf("write video failed: %v", err)
-	}
-
-	repo := &stubRepo{}
-	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
-	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
-	infoHash := "abcdef0123456789abcdef0123456789abcdef01"
-
-	meta, err := service.Prepare(context.Background(), api.Request{
-		Paths: []string{path},
-		Mode:  api.ModeCLI,
-		TorrentOverrides: api.TorrentOverrides{
-			InfoHash: &infoHash,
-		},
-	})
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if meta.InfoHash != infoHash {
-		t.Fatalf("expected infohash override, got %q", meta.InfoHash)
-	}
-}
-
 func TestResolveServiceDarkroom(t *testing.T) {
 	t.Parallel()
 
-	service, longName, filename := resolveService(api.PreparedMetadata{
+	service, longName, filename := resolveService(preparationstate.State{
 		SourcePath: `/releases/Example.Movie.2025.DARKROOM.WEB-DL.mkv`,
 	})
 	if service != "DARKROOM" {
@@ -337,7 +258,7 @@ func TestResolveServiceDarkroom(t *testing.T) {
 func TestResolveServiceMGMPlus(t *testing.T) {
 	t.Parallel()
 
-	service, longName, filename := resolveService(api.PreparedMetadata{
+	service, longName, filename := resolveService(preparationstate.State{
 		SourcePath: `D:\TV\Example.Spy.Show.S01.2160p.MGMP.WEB-DL.DDP5.1.H.265-GRP`,
 	})
 	if service != "MGMP" {
@@ -354,7 +275,7 @@ func TestResolveServiceMGMPlus(t *testing.T) {
 func TestResolveServiceIgnoresTitleServiceTokens(t *testing.T) {
 	t.Parallel()
 
-	service, longName, filename := resolveService(api.PreparedMetadata{
+	service, longName, filename := resolveService(preparationstate.State{
 		SourcePath: `/releases/Example.Show.S01E01.Netflix.and.Chill.1080p.WEB-DL.DDP5.1.H.264-GRP.mkv`,
 	})
 	if service != "" {
@@ -409,7 +330,7 @@ func TestResolveServicePrefersLongestAdjacentAlias(t *testing.T) {
 func assertResolvedService(t *testing.T, sourcePath, wantService, wantLongName string) {
 	t.Helper()
 
-	service, longName, filename := resolveService(api.PreparedMetadata{
+	service, longName, filename := resolveService(preparationstate.State{
 		SourcePath: sourcePath,
 	})
 	if service != wantService {
@@ -449,10 +370,14 @@ func TestApplySceneDetectionAppliesServiceFromNFO(t *testing.T) {
 	t.Parallel()
 
 	service := NewService(&stubRepo{},
-		WithSceneDetector(staticSceneDetector{result: SceneResult{IsScene: true, Service: "iT", ServiceLongName: "iTunes"}}),
+		WithSceneDetector(staticSceneDetector{result: SceneResult{
+			IsScene:         true,
+			Service:         "iT",
+			ServiceLongName: "iTunes",
+		}}),
 	)
 
-	meta, err := service.applySceneDetection(context.Background(), api.PreparedMetadata{})
+	meta, err := service.applySceneDetection(context.Background(), preparationstate.State{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -479,7 +404,7 @@ func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 		playlistSelection: db.PlaylistSelection{
 			SelectedPlaylists: []string{"00002.MPLS", "00001.MPLS"},
 		},
-		playlistSelectionPath: filepath.ToSlash(filepath.Clean(filepath.Join(sourcePath, "BDMV"))),
+		playlistSelectionPath: filepath.ToSlash(filepath.Clean(sourcePath)),
 	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
 	mediaInfo := &recordingMediaInfo{}
@@ -586,10 +511,9 @@ func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 		return map[string]any{"summary": string(payload)}, nil
 	}
 
-	meta, err := service.Prepare(context.Background(), api.Request{
-		Paths: []string{sourcePath},
-		Mode:  api.ModeCLI,
-	})
+	meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
+		SourcePath: sourcePath,
+	}))
 	if err != nil {
 		t.Fatalf("prepare failed: %v", err)
 	}
@@ -635,7 +559,7 @@ func TestPrepareBDMVMultiPlaylistUsesFullScanAndDerivesSummaries(t *testing.T) {
 	assertFileContains(t, filepath.Join(tmpDir, "BD_FULL.txt"), "PLAYLIST: 00002.MPLS")
 }
 
-func TestLoadSelectedBDMVPlaylistsErrorsWhenRequestedPlaylistMissing(t *testing.T) {
+func TestResolveBDMVPlaylistSelectionRejectsUnknownDirectPlaylist(t *testing.T) {
 	originalDiscover := discoverBDMVPlaylists
 	t.Cleanup(func() {
 		discoverBDMVPlaylists = originalDiscover
@@ -647,9 +571,16 @@ func TestLoadSelectedBDMVPlaylistsErrorsWhenRequestedPlaylistMissing(t *testing.
 		}, nil
 	}
 
-	_, err := loadSelectedBDMVPlaylists(context.Background(), `D:\Disc\BDMV`, []string{"00001.MPLS", "00002.MPLS"})
-	if err == nil || !strings.Contains(err.Error(), "00002.MPLS") {
-		t.Fatalf("expected missing playlist error for 00002.MPLS, got %v", err)
+	_, err := (&Service{}).resolveBDMVPlaylistSelection(context.Background(), preparationstate.Request{
+		Input: api.PrepareInput{Instructions: api.ReleaseFactInstructions{Playlist: api.PlaylistInstruction{
+			Set:      true,
+			Selected: []string{"00001.MPLS", "00002.MPLS"},
+		}}},
+		Layout: sourcelayout.Layout{SourcePath: `D:\Disc`, BDMVRoot: `D:\Disc\BDMV`},
+	})
+	var invalid *api.InvalidPlaylistSelectionError
+	if !errors.As(err, &invalid) || invalid.Playlist != "00002.MPLS" {
+		t.Fatalf("expected typed missing playlist error for 00002.MPLS, got %v", err)
 	}
 }
 
@@ -721,7 +652,7 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 		playlistSelection: db.PlaylistSelection{
 			SelectedPlaylists: []string{"00002.MPLS", "00001.MPLS"},
 		},
-		playlistSelectionPath: filepath.ToSlash(filepath.Clean(filepath.Join(sourcePath, "BDMV"))),
+		playlistSelectionPath: filepath.ToSlash(filepath.Clean(sourcePath)),
 	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
 	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg), WithBDInfoService(bdinfo.New(api.NopLogger{})))
@@ -783,7 +714,7 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tmp root: %v", err)
 	}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, api.PreparedMetadata{}, sourcePath)
+	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, preparationstate.State{}, sourcePath)
 	if err != nil {
 		t.Fatalf("tmp dir: %v", err)
 	}
@@ -793,10 +724,9 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 	writeBDMVSummaryFixture(t, tmpDir, "00001.MPLS", "extended summary one")
 	writeBDMVSummaryFixture(t, tmpDir, "00002.MPLS", "extended summary two")
 
-	meta, err := service.Prepare(context.Background(), api.Request{
-		Paths: []string{sourcePath},
-		Mode:  api.ModeCLI,
-	})
+	meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
+		SourcePath: sourcePath,
+	}))
 	if err != nil {
 		t.Fatalf("prepare failed: %v", err)
 	}
@@ -819,7 +749,7 @@ func TestPrepareBDMVUsesCachedSummariesWithoutRescan(t *testing.T) {
 	}
 }
 
-func TestPrepareBDMVSinglePlaylistFullScan(t *testing.T) {
+func TestPrepareBDMVDirectPlaylistInvokesBDInfoForParentAndRoot(t *testing.T) {
 	base := t.TempDir()
 	sourcePath := filepath.Join(base, "disc")
 	bdmvPath := filepath.Join(sourcePath, "BDMV")
@@ -830,12 +760,7 @@ func TestPrepareBDMVSinglePlaylistFullScan(t *testing.T) {
 		t.Fatalf("mkdir stream failed: %v", err)
 	}
 
-	repo := &stubRepo{
-		playlistSelection: db.PlaylistSelection{
-			SelectedPlaylists: []string{"00001.MPLS"},
-		},
-		playlistSelectionPath: filepath.ToSlash(filepath.Clean(filepath.Join(sourcePath, "BDMV"))),
-	}
+	repo := &stubRepo{}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
 	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg), WithBDInfoService(bdinfo.New(api.NopLogger{})))
 
@@ -865,6 +790,8 @@ func TestPrepareBDMVSinglePlaylistFullScan(t *testing.T) {
 
 	fullScans := 0
 	playlistScans := 0
+	var scannedRoots []string
+	var scannedPlaylists []string
 	dummyFullReport := strings.Join([]string{
 		"DISC INFO:",
 		"DISC LABEL: DISC-ONE",
@@ -888,8 +815,10 @@ func TestPrepareBDMVSinglePlaylistFullScan(t *testing.T) {
 		fullScans++
 		return bdinfo.ScanResult{}, errors.New("unexpected full scan")
 	}
-	executePlaylistBDInfo = func(_ *bdinfo.Service, _ context.Context, _ string, _ string, outputPath string, summaryOnly bool) (string, error) {
+	executePlaylistBDInfo = func(_ *bdinfo.Service, _ context.Context, root string, playlist string, outputPath string, summaryOnly bool) (string, error) {
 		playlistScans++
+		scannedRoots = append(scannedRoots, root)
+		scannedPlaylists = append(scannedPlaylists, playlist)
 		if summaryOnly {
 			return "", errors.New("expected full scan, got summaryOnly = true")
 		}
@@ -907,41 +836,51 @@ func TestPrepareBDMVSinglePlaylistFullScan(t *testing.T) {
 		return map[string]any{"summary": string(payload)}, nil
 	}
 
-	tmpRoot, err := db.Subdir(cfg.MainSettings.DBPath, "tmp")
-	if err != nil {
-		t.Fatalf("tmp root: %v", err)
-	}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, api.PreparedMetadata{}, sourcePath)
-	if err != nil {
-		t.Fatalf("tmp dir: %v", err)
-	}
+	for _, requestedSource := range []string{sourcePath, bdmvPath} {
+		meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
+			SourcePath: requestedSource,
+			PlaylistInstruction: api.PlaylistInstruction{
+				Set:      true,
+				Selected: []string{"00001.MPLS"},
+			},
+		}))
+		if err != nil {
+			t.Fatalf("prepare %q: %v", requestedSource, err)
+		}
+		if !sameFilesystemPath(meta.SourcePath, requestedSource) {
+			t.Fatalf("prepared source = %q, want %q", meta.SourcePath, requestedSource)
+		}
+		tmpRoot, err := db.Subdir(cfg.MainSettings.DBPath, "tmp")
+		if err != nil {
+			t.Fatalf("tmp root: %v", err)
+		}
+		tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, requestedSource)
+		if err != nil {
+			t.Fatalf("tmp dir: %v", err)
+		}
+		assertFileContains(t, paths.BDMVSummaryPath(tmpDir, "00001.MPLS"), "Playlist: 00001.MPLS")
+		assertFileContains(t, paths.BDMVExtSummaryPath(tmpDir, "00001.MPLS"), "extended summary one")
+		assertFileContains(t, paths.BDMVFullSummaryPath(tmpDir, "00001.MPLS"), "QUICK SUMMARY:")
 
-	meta, err := service.Prepare(context.Background(), api.Request{
-		Paths: []string{sourcePath},
-		Mode:  api.ModeCLI,
-	})
-	if err != nil {
-		t.Fatalf("prepare failed: %v", err)
+		got, ok := meta.BDInfo["summary"].(string)
+		if !ok {
+			t.Fatalf("expected BDInfo summary string, got %T", meta.BDInfo["summary"])
+		}
+		if !strings.Contains(got, "Playlist: 00001.MPLS") {
+			t.Fatalf("unexpected summary in BDInfo: %v", got)
+		}
 	}
 
 	if fullScans != 0 {
 		t.Fatalf("expected no full scan, got %d", fullScans)
 	}
-	if playlistScans != 1 {
-		t.Fatalf("expected exactly 1 playlist scan, got %d", playlistScans)
+	if playlistScans != 2 {
+		t.Fatalf("expected exactly 2 playlist scans, got %d", playlistScans)
 	}
-
-	// Verify all three versions of the report are saved in tmpDir
-	assertFileContains(t, paths.BDMVSummaryPath(tmpDir, "00001.MPLS"), "Playlist: 00001.MPLS")
-	assertFileContains(t, paths.BDMVExtSummaryPath(tmpDir, "00001.MPLS"), "extended summary one")
-	assertFileContains(t, paths.BDMVFullSummaryPath(tmpDir, "00001.MPLS"), "QUICK SUMMARY:")
-
-	got, ok := meta.BDInfo["summary"].(string)
-	if !ok {
-		t.Fatalf("expected BDInfo summary string, got %T", meta.BDInfo["summary"])
-	}
-	if !strings.Contains(got, "Playlist: 00001.MPLS") {
-		t.Fatalf("unexpected summary in BDInfo: %v", got)
+	for index := range scannedRoots {
+		if !sameFilesystemPath(scannedRoots[index], bdmvPath) || scannedPlaylists[index] != "00001.MPLS" {
+			t.Fatalf("BDInfo call %d root=%q playlist=%q", index, scannedRoots[index], scannedPlaylists[index])
+		}
 	}
 }
 
@@ -960,7 +899,7 @@ func TestPrepareBDMVPartialCacheRequiresConfirmation(t *testing.T) {
 		playlistSelection: db.PlaylistSelection{
 			SelectedPlaylists: []string{"00002.MPLS", "00001.MPLS"},
 		},
-		playlistSelectionPath: filepath.ToSlash(filepath.Clean(filepath.Join(sourcePath, "BDMV"))),
+		playlistSelectionPath: filepath.ToSlash(filepath.Clean(sourcePath)),
 	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
 	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg), WithBDInfoService(bdinfo.New(api.NopLogger{})))
@@ -980,7 +919,7 @@ func TestPrepareBDMVPartialCacheRequiresConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tmp root: %v", err)
 	}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, api.PreparedMetadata{}, sourcePath)
+	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, preparationstate.State{}, sourcePath)
 	if err != nil {
 		t.Fatalf("tmp dir: %v", err)
 	}
@@ -989,11 +928,10 @@ func TestPrepareBDMVPartialCacheRequiresConfirmation(t *testing.T) {
 	}
 	writeBDMVSummaryFixture(t, tmpDir, "00001.MPLS", "extended summary one")
 
-	_, err = service.Prepare(context.Background(), api.Request{
-		Paths:   []string{sourcePath},
-		Mode:    api.ModeCLI,
+	_, err = service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
+		SourcePath: sourcePath,
 		Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive},
-	})
+	}))
 	var rescanErr *api.BDMVRescanRequiredError
 	if !errors.As(err, &rescanErr) {
 		t.Fatalf("expected rescan confirmation error, got %v", err)
@@ -1018,7 +956,7 @@ func TestPrepareBDMVPartialCacheRescansWhenConfirmed(t *testing.T) {
 		playlistSelection: db.PlaylistSelection{
 			SelectedPlaylists: []string{"00002.MPLS", "00001.MPLS"},
 		},
-		playlistSelectionPath: filepath.ToSlash(filepath.Clean(filepath.Join(sourcePath, "BDMV"))),
+		playlistSelectionPath: filepath.ToSlash(filepath.Clean(sourcePath)),
 	}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
 	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg), WithBDInfoService(bdinfo.New(api.NopLogger{})))
@@ -1102,7 +1040,7 @@ func TestPrepareBDMVPartialCacheRescansWhenConfirmed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tmp root: %v", err)
 	}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, api.PreparedMetadata{}, sourcePath)
+	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, preparationstate.State{}, sourcePath)
 	if err != nil {
 		t.Fatalf("tmp dir: %v", err)
 	}
@@ -1111,12 +1049,11 @@ func TestPrepareBDMVPartialCacheRescansWhenConfirmed(t *testing.T) {
 	}
 	writeBDMVSummaryFixture(t, tmpDir, "00001.MPLS", "extended summary one")
 
-	_, err = service.Prepare(context.Background(), api.Request{
-		Paths:             []string{sourcePath},
-		Mode:              api.ModeCLI,
+	_, err = service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
+		SourcePath:        sourcePath,
 		ConfirmBDMVRescan: true,
 		Options:           api.UploadOptions{InteractionMode: api.InteractionModeInteractive},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("prepare failed: %v", err)
 	}
@@ -1159,7 +1096,7 @@ func (r *recordingLogger) Warnf(format string, args ...any) {
 
 type stubSceneDetector struct{}
 
-func (stubSceneDetector) Detect(context.Context, api.PreparedMetadata) (SceneResult, error) {
+func (stubSceneDetector) Detect(context.Context, preparationstate.State) (SceneResult, error) {
 	return SceneResult{}, nil
 }
 
@@ -1168,7 +1105,7 @@ type staticSceneDetector struct {
 	err    error
 }
 
-func (s staticSceneDetector) Detect(context.Context, api.PreparedMetadata) (SceneResult, error) {
+func (s staticSceneDetector) Detect(context.Context, preparationstate.State) (SceneResult, error) {
 	return s.result, s.err
 }
 
@@ -1185,19 +1122,19 @@ func (s *stubRepo) Save(_ context.Context, metadata db.FileMetadata) error {
 	return nil
 }
 
-func (s *stubRepo) GetExternalIDs(context.Context, string) (db.ExternalIDs, error) {
-	return db.ExternalIDs{}, internalerrors.ErrNotFound
+func (s *stubRepo) GetExternalIdentity(context.Context, string) (db.Identity, error) {
+	return db.Identity{}, internalerrors.ErrNotFound
 }
 
-func (s *stubRepo) SaveExternalIDs(context.Context, db.ExternalIDs) error {
+func (s *stubRepo) SaveExternalIdentity(context.Context, db.Identity) error {
 	return internalerrors.ErrNotImplemented
 }
 
-func (s *stubRepo) GetExternalMetadata(context.Context, string) (db.ExternalMetadata, error) {
-	return db.ExternalMetadata{}, internalerrors.ErrNotFound
+func (s *stubRepo) GetExternalMetadata(context.Context, string) (db.ProviderMetadata, error) {
+	return db.ProviderMetadata{}, internalerrors.ErrNotFound
 }
 
-func (s *stubRepo) SaveExternalMetadata(context.Context, db.ExternalMetadata) error {
+func (s *stubRepo) SaveExternalMetadata(context.Context, db.ProviderMetadata) error {
 	return internalerrors.ErrNotImplemented
 }
 
@@ -1352,6 +1289,10 @@ func sortedStrings(values []string) []string {
 	cloned := append([]string(nil), values...)
 	slices.Sort(cloned)
 	return cloned
+}
+
+func sameFilesystemPath(left string, right string) bool {
+	return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
 }
 
 func assertFileContains(t *testing.T, path string, want string) {

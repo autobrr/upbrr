@@ -54,10 +54,6 @@ func siteFor(name string) siteDefinition {
 	}
 }
 
-func applyTrackerConfig(site siteDefinition, trackerCfg config.TrackerConfig) siteDefinition {
-	if value := strings.TrimSpace(trackerCfg.URL); value != "" {
-		site.BaseURL = strings.TrimRight(value, "/")
-		site.RequestsURL = site.BaseURL + "/requests"
-	}
+func applyTrackerConfig(site siteDefinition, _ config.TrackerConfig) siteDefinition {
 	return site
 }

@@ -92,7 +92,11 @@ func TestRouteSPUFragmentsRejectsTruncatedPESHeader(t *testing.T) {
 func TestScanCellParsesNAVAndSPU(t *testing.T) {
 	sector := syntheticNAVSector()
 	reader := bytes.NewReader(sector)
-	result, err := ScanCell(reader, int64(len(sector)), 0, 0, CellScanOptions{MaxSectors: 1, MaxSPUPackets: 1, MaxSPUBytes: 3})
+	result, err := ScanCell(reader, int64(len(sector)), 0, 0, CellScanOptions{
+		MaxSectors:    1,
+		MaxSPUPackets: 1,
+		MaxSPUBytes:   3,
+	})
 	if err != nil {
 		t.Fatalf("ScanCell: %v", err)
 	}

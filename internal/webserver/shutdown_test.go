@@ -11,26 +11,32 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	sharedjobs "github.com/autobrr/upbrr/internal/webserver/jobs"
 )
 
 func TestStopAllDupeJobsWaitsForWorkers(t *testing.T) {
-	backend := &Backend{
-		dupes: make(map[string]*dupeCheckJob),
-	}
-
+	backend := &Backend{jobEngine: sharedjobs.New(nil, sharedjobs.Config{})}
 	released := make(chan struct{})
-	finished := make(chan struct{})
-	backend.dupeWG.Add(1)
-	backend.dupes["job-1"] = &dupeCheckJob{
-		id: "job-1",
-		cancel: func() {
-			go func() {
-				<-released
-				backend.dupeWG.Done()
-				close(finished)
-			}()
-		},
+	canceled := make(chan struct{}, 1)
+	started := make(chan struct{}, 1)
+	owner, err := backend.ensureJobOwner("session-a")
+	if err != nil {
+		t.Fatalf("ensure owner: %v", err)
 	}
+	_, err = backend.jobEngine.StartDupe(context.Background(), owner, sharedjobs.DupeSpec{
+		CorrelationID: "shutdown-dupe",
+		Snapshot: webTestDupeSnapshot("Example.Release.2026.1080p-GRP"),
+		Runner: blockingDupeRunner{
+			started:  started,
+			canceled: canceled,
+			release:  released,
+		},
+	})
+	if err != nil {
+		t.Fatalf("start dupe: %v", err)
+	}
+	<-started
 
 	done := make(chan struct{})
 	go func() {
@@ -43,6 +49,11 @@ func TestStopAllDupeJobsWaitsForWorkers(t *testing.T) {
 		t.Fatal("expected stopAllDupeJobs to wait for active workers")
 	case <-time.After(50 * time.Millisecond):
 	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("expected shutdown to cancel dupe worker")
+	}
 
 	close(released)
 
@@ -51,28 +62,30 @@ func TestStopAllDupeJobsWaitsForWorkers(t *testing.T) {
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("expected stopAllDupeJobs to return after workers finish")
 	}
-
-	<-finished
 }
 
 func TestStopAllUploadJobsWaitsForWorkers(t *testing.T) {
-	backend := &Backend{
-		uploads: make(map[string]*trackerUploadJob),
-	}
-
+	backend := &Backend{jobEngine: sharedjobs.New(nil, sharedjobs.Config{})}
 	released := make(chan struct{})
-	finished := make(chan struct{})
-	backend.uploadWG.Add(1)
-	backend.uploads["job-1"] = &trackerUploadJob{
-		id: "job-1",
-		cancel: func() {
-			go func() {
-				<-released
-				backend.uploadWG.Done()
-				close(finished)
-			}()
-		},
+	canceled := make(chan struct{}, 1)
+	started := make(chan struct{}, 1)
+	owner, err := backend.ensureJobOwner("session-a")
+	if err != nil {
+		t.Fatalf("ensure owner: %v", err)
 	}
+	_, err = backend.jobEngine.StartUpload(context.Background(), owner, sharedjobs.UploadSpec{
+		CorrelationID: "shutdown-upload",
+		Snapshot: webTestUploadSnapshot("Example.Release.2026.1080p-GRP"),
+		Runner: blockingUploadRunner{
+			started:  started,
+			canceled: canceled,
+			release:  released,
+		},
+	})
+	if err != nil {
+		t.Fatalf("start upload: %v", err)
+	}
+	<-started
 
 	done := make(chan struct{})
 	go func() {
@@ -85,6 +98,11 @@ func TestStopAllUploadJobsWaitsForWorkers(t *testing.T) {
 		t.Fatal("expected stopAllUploadJobs to wait for active workers")
 	case <-time.After(50 * time.Millisecond):
 	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("expected shutdown to cancel upload worker")
+	}
 
 	close(released)
 
@@ -93,8 +111,6 @@ func TestStopAllUploadJobsWaitsForWorkers(t *testing.T) {
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("expected stopAllUploadJobs to return after workers finish")
 	}
-
-	<-finished
 }
 
 func TestStopAllLogStreamsWaitsForWorkers(t *testing.T) {

@@ -21,7 +21,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
-	"github.com/autobrr/upbrr/internal/paths"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -365,7 +365,7 @@ func ResponseBodyPreview(body []byte, previewLimit int64) []byte {
 // WriteFailureArtifact stores a tracker failure response under the release temp
 // directory and returns the written path. It returns an empty path when dbPath or
 // the source path is unavailable.
-func WriteFailureArtifact(meta api.PreparedMetadata, dbPath string, tracker string, name string, body []byte, ext string) (string, error) {
+func WriteFailureArtifact(meta api.UploadSubject, dbPath string, tracker string, name string, body []byte, ext string) (string, error) {
 	if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
 		return "", nil
 	}
@@ -373,7 +373,7 @@ func WriteFailureArtifact(meta api.PreparedMetadata, dbPath string, tracker stri
 	if err != nil {
 		return "", fmt.Errorf("trackers: %w", err)
 	}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return "", fmt.Errorf("trackers: %w", err)
 	}

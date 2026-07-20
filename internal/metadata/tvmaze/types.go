@@ -3,6 +3,9 @@
 
 package tvmaze
 
+// SearchInput controls identifier precedence and name fallback. StrictIDOnly
+// disables name searches unless AllowNameFallback explicitly restores them;
+// ManualDate prevents ordinary candidate auto-selection.
 type SearchInput struct {
 	Filename          string
 	Year              string
@@ -15,6 +18,8 @@ type SearchInput struct {
 	Debug             bool
 }
 
+// SearchResult contains the selected TVmaze identity plus deduplicated provider
+// candidates. AutoSelected excludes manual-ID and manual-date results.
 type SearchResult struct {
 	SelectedID   int
 	IMDBID       int
@@ -63,6 +68,8 @@ type Externals struct {
 	Other map[string]any
 }
 
+// EpisodeLookupContext supplies date fallback evidence when number lookup returns
+// not found. ManualDate takes precedence over TVDBEpisodeData.
 type EpisodeLookupContext struct {
 	ManualDate      string
 	TVDBEpisodeID   int

@@ -13,7 +13,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/trackerauth"
+	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
 )
 
 func TestBackendImportTrackerAuthCookieContentRejectsOverCap(t *testing.T) {

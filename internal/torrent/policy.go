@@ -9,6 +9,7 @@ import (
 
 	"github.com/anacrolix/torrent/metainfo"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -17,6 +18,8 @@ type pieceSizeRange struct {
 	pieceExp uint
 }
 
+// trackerTorrentPolicy contains the metainfo limits enforced during both
+// candidate reuse and torrent creation for one tracker.
 type trackerTorrentPolicy struct {
 	name            string
 	maxPieceExp     uint
@@ -24,9 +27,21 @@ type trackerTorrentPolicy struct {
 	maxTorrentBytes int64
 }
 
-func resolveTrackerPolicy(meta api.PreparedMetadata) *trackerTorrentPolicy {
-	if hasTracker(meta.Trackers, []string{"ANT"}) {
-		return antTorrentPolicy()
+// resolveTrackerPolicy uses the first registered artifact policy in subject
+// tracker order. When none match, the legacy PTP size chart applies if PTP is
+// present anywhere in the subject tracker list.
+func resolveTrackerPolicy(meta api.TorrentSubject, registry *trackers.Registry) *trackerTorrentPolicy {
+	for _, name := range meta.Trackers {
+		artifact, ok := registry.LookupArtifactPolicy(name)
+		if !ok {
+			continue
+		}
+		maxPieceExp, _ := pieceExpForMiB(artifact.MaxPieceSizeMiB)
+		return &trackerTorrentPolicy{
+			name:            strings.ToUpper(strings.TrimSpace(name)),
+			maxPieceExp:     maxPieceExp,
+			maxTorrentBytes: artifact.MaxTorrentBytes,
+		}
 	}
 	if hasTracker(meta.Trackers, []string{"PTP"}) {
 		return &trackerTorrentPolicy{
@@ -45,16 +60,10 @@ func resolveTrackerPolicy(meta api.PreparedMetadata) *trackerTorrentPolicy {
 			},
 		}
 	}
-	if hasTracker(meta.Trackers, []string{"HDB"}) {
-		return &trackerTorrentPolicy{
-			name:        "HDB",
-			maxPieceExp: 24,
-		}
-	}
 	return nil
 }
 
-func (p *trackerTorrentPolicy) createOptions(meta api.PreparedMetadata) mkbrrPieceOptions {
+func (p *trackerTorrentPolicy) createOptions(meta api.TorrentSubject) mkbrrPieceOptions {
 	if p == nil {
 		return applyTorrentOverridePieceOptions(meta, mkbrrPieceOptions{maxPieceExp: 27})
 	}
@@ -68,7 +77,7 @@ func (p *trackerTorrentPolicy) createOptions(meta api.PreparedMetadata) mkbrrPie
 	return applyTorrentOverridePieceOptions(meta, options)
 }
 
-func (p *trackerTorrentPolicy) requiredPieceExp(meta api.PreparedMetadata) (uint, bool) {
+func (p *trackerTorrentPolicy) requiredPieceExp(meta api.TorrentSubject) (uint, bool) {
 	if p == nil || len(p.pieceSizeChart) == 0 {
 		return 0, false
 	}
@@ -84,7 +93,7 @@ func (p *trackerTorrentPolicy) requiredPieceExp(meta api.PreparedMetadata) (uint
 	return 0, false
 }
 
-func (p *trackerTorrentPolicy) validateTorrent(path string, meta api.PreparedMetadata) error {
+func (p *trackerTorrentPolicy) validateTorrent(path string, meta api.TorrentSubject) error {
 	if p == nil || strings.TrimSpace(path) == "" {
 		return nil
 	}
@@ -121,7 +130,7 @@ type mkbrrPieceOptions struct {
 	pieceExp    *uint
 }
 
-func applyTorrentOverridePieceOptions(meta api.PreparedMetadata, options mkbrrPieceOptions) mkbrrPieceOptions {
+func applyTorrentOverridePieceOptions(meta api.TorrentSubject, options mkbrrPieceOptions) mkbrrPieceOptions {
 	if meta.TorrentOverrides.MaxPieceSizeMiB == nil {
 		return options
 	}

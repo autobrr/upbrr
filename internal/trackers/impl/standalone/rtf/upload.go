@@ -1,0 +1,496 @@
+// Copyright (c) 2025-2026, Audionut and the autobrr contributors.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+package rtf
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	servicedb "github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
+	"github.com/autobrr/upbrr/pkg/api"
+)
+
+const (
+	defaultBaseURL = "https://retroflix.club"
+	sourceFlag     = "sunshine"
+)
+
+var newHTTPClient = func() *http.Client { return &http.Client{Timeout: 40 * time.Second} }
+
+type uploadResponse struct {
+	Error   bool   `json:"error"`
+	Message string `json:"message"`
+	Torrent struct {
+		ID any `json:"id"`
+	} `json:"torrent"`
+}
+
+type uploadState struct {
+	torrentPath   string
+	releaseName   string
+	description   string
+	payload       map[string]any
+	blockedReason string
+}
+
+func uploadAt(ctx context.Context, req trackers.PreparationInput, baseURL string) (api.UploadSummary, error) {
+	req.Intent = trackers.PreparationIntentUpload
+	plan, failure := trackers.PrepareAdapter(ctx, req, nil, func(ctx context.Context, input trackers.PreparationInput) (trackers.PreparedOperation, error) {
+		return prepareUploadAt(ctx, input, baseURL)
+	})
+	if failure != nil {
+		return api.UploadSummary{}, failure
+	}
+	summary, err := plan.Submit(ctx)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: RTF submit prepared upload: %w", err)
+	}
+	return summary, nil
+}
+
+func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+	return prepareUploadAt(ctx, req, defaultBaseURL)
+}
+
+func prepareUploadAt(ctx context.Context, req trackers.PreparationInput, baseURL string) (trackers.PreparedOperation, error) {
+	uploadURL, err := joinURL(baseURL, "/api/upload")
+	if err != nil {
+		return trackers.PreparedOperation{}, err
+	}
+
+	state, err := prepareUploadState(ctx, req)
+	if err != nil {
+		return trackers.PreparedOperation{}, err
+	}
+	preview, err := buildUploadPreview(state, baseURL)
+	if err != nil {
+		return trackers.PreparedOperation{}, err
+	}
+	if req.Intent != trackers.PreparationIntentUpload {
+		return trackers.NewPreparedOperation(preview, nil, nil), nil
+	}
+	if state.blockedReason != "" {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: RTF %s", state.blockedReason)
+	}
+
+	apiKey, err := resolveAPIKey(ctx, req, baseURL)
+	if err != nil {
+		return trackers.PreparedOperation{}, err
+	}
+
+	body, err := json.Marshal(state.payload)
+	if err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: RTF marshal upload payload: %w", err)
+	}
+	torrentURL, err := joinURL(baseURL, "/browse/t/")
+	if err != nil {
+		return trackers.PreparedOperation{}, err
+	}
+	downloadURL, err := joinURL(baseURL, "/api/torrent/")
+	if err != nil {
+		return trackers.PreparedOperation{}, err
+	}
+	announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL)
+	artifactPath := ""
+	if announceURL != "" {
+		artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "RTF")
+		if err != nil {
+			return trackers.PreparedOperation{}, fmt.Errorf("trackers: %w", err)
+		}
+	}
+	return trackers.NewPreparedOperation(preview, func(submitCtx context.Context) (api.UploadSummary, error) {
+		return submitPreparedUpload(
+			submitCtx, req, state, uploadURL, body, apiKey, torrentURL, downloadURL, announceURL, artifactPath,
+		)
+	}, nil), nil
+}
+
+func submitPreparedUpload(
+	ctx context.Context,
+	req trackers.PreparationInput,
+	state uploadState,
+	uploadURL string,
+	body []byte,
+	apiKey string,
+	torrentURL string,
+	downloadURL string,
+	announceURL string,
+	artifactPath string,
+) (api.UploadSummary, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, strings.NewReader(string(body)))
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: RTF create upload request: %w", err)
+	}
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", apiKey)
+
+	resp, err := newHTTPClient().Do(httpReq)
+	if err != nil {
+		return api.UploadSummary{}, fmt.Errorf("trackers: RTF upload request: %w", err)
+	}
+	defer resp.Body.Close()
+	responseBody, _ := io.ReadAll(resp.Body)
+
+	var decoded uploadResponse
+	_ = json.Unmarshal(responseBody, &decoded)
+	if resp.StatusCode == http.StatusCreated && !decoded.Error {
+		id := strings.TrimSpace(fmt.Sprint(decoded.Torrent.ID))
+		if id == "" {
+			return api.UploadSummary{}, errors.New("trackers: RTF upload succeeded but torrent id missing")
+		}
+		tURL := torrentURL + id
+		if announceURL != "" {
+			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, tURL, sourceFlag); err != nil {
+				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
+			}
+		}
+		return api.UploadSummary{
+			Uploaded: 1,
+			UploadedTorrents: []api.UploadedTorrent{{
+				Tracker:     "RTF",
+				TorrentID:   id,
+				TorrentURL:  tURL,
+				DownloadURL: downloadURL + id + "/download",
+				TorrentPath: artifactPath,
+			}},
+		}, nil
+	}
+
+	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "RTF", "upload_failure", responseBody, ".json")
+	return api.UploadSummary{}, fmt.Errorf(
+		"trackers: RTF %s",
+		metautil.FirstNonEmptyTrimmed(
+			commonhttp.ExtractHTTPErrorDetail(responseBody),
+			commonhttp.RedactErrorDetail(decoded.Message),
+			fmt.Sprintf("upload failed with status %d", resp.StatusCode),
+		),
+	)
+}
+
+func buildUploadPreview(state uploadState, baseURL string) (api.TrackerDryRunEntry, error) {
+	payload := make(map[string]string, len(state.payload))
+	for key, value := range state.payload {
+		payload[key] = strings.TrimSpace(fmt.Sprint(value))
+	}
+	endpoint, err := joinURL(baseURL, "/api/upload")
+	if err != nil {
+		return api.TrackerDryRunEntry{}, err
+	}
+	return standalone.BuildPreview(standalone.PreviewSpec{
+		Tracker:          "RTF",
+		BlockedReason:    state.blockedReason,
+		ReleaseName:      state.releaseName,
+		DescriptionGroup: "rtf",
+		Description:      state.description,
+		Endpoint:         endpoint,
+		Payload:          payload,
+		Files: []api.TrackerDryRunFile{{
+			Field:   "file",
+			Path:    state.torrentPath,
+			Present: strings.TrimSpace(state.torrentPath) != "",
+		}},
+	}), nil
+}
+
+func prepareUploadState(_ context.Context, req trackers.PreparationInput) (uploadState, error) {
+	if strings.TrimSpace(req.TrackerConfig.APIKey) == "" &&
+		(strings.TrimSpace(req.TrackerConfig.Username) == "" || strings.TrimSpace(req.TrackerConfig.Password) == "") {
+		return uploadState{}, errors.New("trackers: RTF missing api_key or username/password")
+	}
+	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
+	if err != nil {
+		return uploadState{}, fmt.Errorf("trackers: %w", err)
+	}
+	var assets trackers.DescriptionAssets
+	if req.Assets != nil {
+		assets = *req.Assets
+	} else {
+		assets, err = trackers.PreparedDescriptionAssets(req.Assets)
+		if err != nil {
+			trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
+			assets = trackers.DescriptionAssets{}
+		}
+	}
+	description := buildDescription(assets)
+	torrentBytes, err := os.ReadFile(torrentPath)
+	if err != nil {
+		return uploadState{}, fmt.Errorf("trackers: RTF read torrent file: %w", err)
+	}
+	releaseName := metautil.FirstNonEmptyTrimmed(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename)
+	payload := map[string]any{
+		"name":        releaseName,
+		"description": description,
+		"mediaInfo":   commonhttp.ReadOptionalFile(strings.TrimSpace(req.Meta.MediaInfoTextPath)),
+		"nfo":         "",
+		"url":         imdbURL(req.Meta),
+		"descr":       description,
+		"poster":      resolvePoster(req.Meta),
+		"type":        resolveType(req.Meta),
+		"screenshots": screenshots(assets.Screenshots),
+		"isAnonymous": req.TrackerConfig.Anon,
+		"file":        base64.StdEncoding.EncodeToString(torrentBytes),
+	}
+	return uploadState{
+		torrentPath:   torrentPath,
+		releaseName:   releaseName,
+		description:   description,
+		payload:       payload,
+		blockedReason: validateEligibility(req.Meta),
+	}, nil
+}
+
+// resolveAPIKey validates configured RTF API auth and persists a refreshed token when credentials are used.
+// Callers must complete no-upload eligibility gates before invoking it.
+func resolveAPIKey(ctx context.Context, req trackers.PreparationInput, baseURL string) (string, error) {
+	apiKey := strings.TrimSpace(req.TrackerConfig.APIKey)
+	if apiKey != "" {
+		valid, err := testAPIKey(ctx, baseURL, apiKey)
+		if err == nil && valid {
+			return apiKey, nil
+		}
+		if strings.TrimSpace(req.TrackerConfig.Username) == "" || strings.TrimSpace(req.TrackerConfig.Password) == "" {
+			if err != nil {
+				return "", fmt.Errorf("trackers: RTF API key validation failed and username/password not configured: %w", err)
+			}
+			return "", errors.New("trackers: RTF API key invalid and username/password not configured")
+		}
+	}
+	if strings.TrimSpace(req.TrackerConfig.Username) == "" || strings.TrimSpace(req.TrackerConfig.Password) == "" {
+		return "", errors.New("trackers: RTF missing api_key or username/password")
+	}
+	refreshed, err := refreshAPIKey(ctx, baseURL, req.TrackerConfig)
+	if err != nil {
+		return "", err
+	}
+	if err := persistRefreshedAPIKey(ctx, req.Runtime.DBPath, refreshed); err != nil && req.Logger != nil {
+		req.Logger.Warnf("trackers: RTF failed to persist refreshed API key: %v", err)
+	}
+	return refreshed, nil
+}
+
+// ResolveSessionForTrackerAuthLogin validates RTF API auth or refreshes and
+// persists the API key with configured credentials for tracker-auth checks.
+func ResolveSessionForTrackerAuthLogin(ctx context.Context, cfg config.TrackerConfig, dbPath string, _ api.TrackerAuthLoginRequest) error {
+	return resolveSessionForTrackerAuthLoginAt(ctx, cfg, dbPath, api.TrackerAuthLoginRequest{}, defaultBaseURL)
+}
+
+func resolveSessionForTrackerAuthLoginAt(
+	ctx context.Context,
+	cfg config.TrackerConfig,
+	dbPath string,
+	_ api.TrackerAuthLoginRequest,
+	baseURL string,
+) error {
+	apiKey := strings.TrimSpace(cfg.APIKey)
+	if apiKey != "" {
+		valid, err := testAPIKey(ctx, baseURL, apiKey)
+		if err == nil && valid {
+			return nil
+		}
+		if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
+			if err != nil {
+				return fmt.Errorf("trackers: RTF API key validation failed and username/password not configured: %w", err)
+			}
+			return errors.New("trackers: RTF API key invalid and username/password not configured")
+		}
+	}
+	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
+		return errors.New("trackers: RTF missing api_key or username/password")
+	}
+	refreshed, err := refreshAPIKey(ctx, baseURL, cfg)
+	if err != nil {
+		return err
+	}
+	if err := persistRefreshedAPIKey(ctx, dbPath, refreshed); err != nil {
+		return err
+	}
+	return nil
+}
+
+func testAPIKey(ctx context.Context, baseURL string, apiKey string) (bool, error) {
+	testURL, err := joinURL(baseURL, "/api/test")
+	if err != nil {
+		return false, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL, nil)
+	if err != nil {
+		return false, fmt.Errorf("trackers: RTF create API test request: %w", err)
+	}
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("Authorization", strings.TrimSpace(apiKey))
+	resp, err := newHTTPClient().Do(httpReq)
+	if err != nil {
+		return false, fmt.Errorf("trackers: RTF API test request: %w", err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK, nil
+}
+
+func refreshAPIKey(ctx context.Context, baseURL string, cfg config.TrackerConfig) (string, error) {
+	payload := map[string]string{
+		"username": strings.TrimSpace(cfg.Username),
+		"password": strings.TrimSpace(cfg.Password),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("trackers: RTF marshal API login payload: %w", err)
+	}
+	loginURL, err := joinURL(baseURL, "/api/login")
+	if err != nil {
+		return "", err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(string(body)))
+	if err != nil {
+		return "", fmt.Errorf("trackers: RTF create API login request: %w", err)
+	}
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := newHTTPClient().Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("trackers: RTF API login request: %w", err)
+	}
+	defer resp.Body.Close()
+	responseBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("trackers: RTF API login failed status=%d", resp.StatusCode)
+	}
+	var decoded struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(responseBody, &decoded); err != nil {
+		return "", fmt.Errorf("trackers: RTF decode API login response: %w", err)
+	}
+	token := strings.TrimSpace(decoded.Token)
+	if token == "" {
+		return "", errors.New("trackers: RTF API login response missing token")
+	}
+	return token, nil
+}
+
+func persistRefreshedAPIKey(ctx context.Context, dbPath string, token string) error {
+	dbPath = strings.TrimSpace(dbPath)
+	if dbPath == "" {
+		return errors.New("trackers: RTF persist refreshed API key: db path not configured")
+	}
+	repo, err := servicedb.OpenContext(ctx, dbPath)
+	if err != nil {
+		return fmt.Errorf("trackers: RTF persist refreshed API key open db: %w", err)
+	}
+	defer repo.Close()
+	cfg, err := config.LoadFromDatabase(ctx, repo)
+	if err != nil {
+		return fmt.Errorf("trackers: RTF persist refreshed API key load config: %w", err)
+	}
+	if cfg.Trackers.Trackers == nil {
+		cfg.Trackers.Trackers = map[string]config.TrackerConfig{}
+	}
+	trackerKey := "RTF"
+	for key := range cfg.Trackers.Trackers {
+		if strings.EqualFold(strings.TrimSpace(key), "RTF") {
+			trackerKey = key
+			break
+		}
+	}
+	trackerCfg := cfg.Trackers.Trackers[trackerKey]
+	trackerCfg.APIKey = strings.TrimSpace(token)
+	cfg.Trackers.Trackers[trackerKey] = trackerCfg
+	if err := config.SaveToDatabase(ctx, cfg, repo); err != nil {
+		return fmt.Errorf("trackers: RTF persist refreshed API key: %w", err)
+	}
+	return nil
+}
+
+// joinURL resolves path against a profile-owned base URL.
+func joinURL(baseURL string, path string) (string, error) {
+	parsed, err := url.Parse(strings.TrimRight(baseURL, "/") + "/")
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("trackers: RTF invalid base URL %q", baseURL)
+	}
+	ref, err := url.Parse(strings.TrimLeft(path, "/"))
+	if err != nil {
+		return "", fmt.Errorf("trackers: RTF invalid URL path %q: %w", path, err)
+	}
+	return parsed.ResolveReference(ref).String(), nil
+}
+
+func buildDescription(assets trackers.DescriptionAssets) string {
+	return strings.TrimSpace(assets.Description)
+}
+
+func validateEligibility(meta api.UploadSubject) string {
+	genres := strings.ToLower(genresText(meta) + "," + keywordsText(meta))
+	for _, value := range []string{"xxx", "erotic", "porn", "adult", "orgy"} {
+		if strings.Contains(genres, value) {
+			return "adult content is not allowed"
+		}
+	}
+	if minimumContentAgeViolation(api.NewRuleSubject(meta), time.Now().UTC()) {
+		return minimumContentAgeReason
+	}
+	return ""
+}
+
+func resolveType(meta api.UploadSubject) string {
+	category, err := meta.Identity.RequireCategory()
+	if err != nil {
+		return ""
+	}
+	if category == api.CanonicalCategoryMovie {
+		return "401"
+	}
+	return "402"
+}
+
+func screenshots(images []api.ScreenshotImage) []string {
+	out := make([]string, 0, len(images))
+	for _, image := range images {
+		if raw := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.RawURL, image.ImgURL)); raw != "" {
+			out = append(out, raw)
+		}
+	}
+	return out
+}
+
+func imdbURL(meta api.UploadSubject) string {
+	if meta.Identity.IMDBID <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("https://www.imdb.com/title/tt%07d/", meta.Identity.IMDBID)
+}
+
+func resolvePoster(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.TMDB == nil {
+		return ""
+	}
+	return metautil.FirstNonEmptyTrimmed(meta.ProviderMetadata.TMDB.Poster)
+}
+
+func genresText(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.TMDB != nil {
+		return metautil.FirstNonEmptyTrimmed(meta.ProviderMetadata.TMDB.Genres, meta.Release.Genre)
+	}
+	return metautil.FirstNonEmptyTrimmed(meta.Release.Genre)
+}
+
+func keywordsText(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.TMDB == nil {
+		return ""
+	}
+	return strings.TrimSpace(meta.ProviderMetadata.TMDB.Keywords)
+}

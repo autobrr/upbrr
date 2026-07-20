@@ -307,7 +307,6 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request, _ sess
 			"needsSetup":              false,
 			"username":                current.Username,
 			"csrfToken":               current.CSRFToken,
-			"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
 			"caseInsensitivePaths":    runtime.GOOS == "windows",
 			"browseRoot":              "",
 			"allowUnrestrictedBrowse": true,
@@ -322,13 +321,11 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request, _ sess
 		return
 	}
 	current, ok := s.currentSession(r)
-	browseAvailable := s.nativeBrowseAvailable(r)
 	payload := map[string]any{
 		"authenticated":           ok,
 		"needsSetup":              !exists,
 		"username":                "",
 		"csrfToken":               "",
-		"nativeBrowseEnabled":     browseAvailable,
 		"caseInsensitivePaths":    runtime.GOOS == "windows",
 		"browseRoot":              "",
 		"allowUnrestrictedBrowse": false,
@@ -391,7 +388,6 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request, _ sessi
 		"needsSetup":              false,
 		"username":                current.Username,
 		"csrfToken":               current.CSRFToken,
-		"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
 		"caseInsensitivePaths":    runtime.GOOS == "windows",
 		"browseRoot":              "",
 		"allowUnrestrictedBrowse": false,
@@ -502,7 +498,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, _ session) 
 		"needsSetup":              false,
 		"username":                current.Username,
 		"csrfToken":               current.CSRFToken,
-		"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
 		"caseInsensitivePaths":    runtime.GOOS == "windows",
 		"browseRoot":              joinBrowsePolicyRoots(browseRoots),
 		"allowUnrestrictedBrowse": record.AllowUnrestrictedBrowse,
@@ -522,6 +517,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, current se
 	}
 	if s.backend != nil {
 		s.backend.StopSessionLogStreams(current.ID)
+		s.backend.removeJobOwner(current.ID)
 	}
 	if cookie, err := r.Cookie(sessionCookieName); err == nil && cookie.Value == current.ID {
 		//nolint:gosec // Session clear cookie sets HttpOnly, SameSite, and Secure for HTTPS requests.
@@ -558,7 +554,11 @@ func (s *Server) handleBrowsePolicy(w http.ResponseWriter, r *http.Request, curr
 		return
 	}
 	if !req.AllowUnrestrictedBrowse && len(roots) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "at least one browse root is required unless unrestricted browsing is explicitly allowed"})
+		writeJSON(
+			w,
+			http.StatusBadRequest,
+			map[string]string{"error": "at least one browse root is required unless unrestricted browsing is explicitly allowed"},
+		)
 		return
 	}
 
@@ -583,7 +583,6 @@ func (s *Server) handleBrowsePolicy(w http.ResponseWriter, r *http.Request, curr
 		"needsSetup":              false,
 		"username":                current.Username,
 		"csrfToken":               current.CSRFToken,
-		"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
 		"caseInsensitivePaths":    runtime.GOOS == "windows",
 		"browseRoot":              joinBrowsePolicyRoots(roots),
 		"allowUnrestrictedBrowse": req.AllowUnrestrictedBrowse,
@@ -827,6 +826,12 @@ func (s *Server) requireSession(next func(http.ResponseWriter, *http.Request, se
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 			return
 		}
+		if s.backend != nil {
+			if _, err := s.backend.ensureJobOwner(current.ID); err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "job runtime unavailable"})
+				return
+			}
+		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
 			if !s.verifySameOrigin(r, current) || !s.verifyCSRF(r, current) {
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": "csrf validation failed"})
@@ -934,6 +939,7 @@ func (s *Server) allowGeneralRequest(r *http.Request) bool {
 	return s.generalLimiter.Allow(s.clientIP(r))
 }
 
+// verifyCSRF requires the request header token to match the cookie-bound session.
 func (s *Server) verifyCSRF(r *http.Request, current session) bool {
 	token := strings.TrimSpace(r.Header.Get("X-Csrf-Token"))
 	if token == "" {
@@ -942,6 +948,8 @@ func (s *Server) verifyCSRF(r *http.Request, current session) bool {
 	return token == current.CSRFToken
 }
 
+// verifySameOrigin accepts an exact Origin or Referer host match. Development
+// no-auth sessions additionally permit requests between loopback hosts.
 func (s *Server) verifySameOrigin(r *http.Request, current session) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
@@ -971,6 +979,8 @@ func isLoopbackHostPort(host string) bool {
 	return isLoopbackHostname(strings.Trim(trimmed, "[]"))
 }
 
+// clientIP trusts the first X-Forwarded-For value only when RemoteAddr belongs
+// to a configured trusted proxy.
 func (s *Server) clientIP(r *http.Request) string {
 	ip := ipFromAddr(r.RemoteAddr)
 	if !s.isTrustedProxy(net.ParseIP(ip)) {
@@ -981,13 +991,6 @@ func (s *Server) clientIP(r *http.Request) string {
 		return ip
 	}
 	return forwarded
-}
-
-func (s *Server) nativeBrowseAvailable(r *http.Request) bool {
-	if s == nil || s.picker == nil || r == nil {
-		return false
-	}
-	return s.isLocalWebUIRequest(r)
 }
 
 func (s *Server) isLocalWebUIRequest(r *http.Request) bool {
@@ -1022,6 +1025,8 @@ func isLoopbackHostname(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// requestScheme honors an explicit HTTPS request URL, trusts
+// X-Forwarded-Proto only from a configured proxy, then falls back to TLS state.
 func (s *Server) requestScheme(r *http.Request) string {
 	if strings.EqualFold(r.URL.Scheme, "https") {
 		return "https"

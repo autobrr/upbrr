@@ -94,12 +94,10 @@ func TestPlanUsesManualFrameOverridesWithoutDuration(t *testing.T) {
 	}
 
 	service := NewService(config.Config{}, api.NopLogger{}, tmpDir, nil)
-	meta := api.PreparedMetadata{
+	meta := api.ScreenshotSubject{
 		SourcePath:        filepath.Join(tmpDir, "movie.mkv"),
 		MediaInfoJSONPath: mediaInfoPath,
-		ScreenshotOverrides: api.ScreenshotOverrides{
-			ManualFrames: []int{120, 360, 600},
-		},
+		ManualFrames:      []int{120, 360, 600},
 	}
 
 	plan, err := service.Plan(context.Background(), meta, 4)
@@ -142,11 +140,16 @@ func TestPreviewFrameExcludesDVDMenuVOB(t *testing.T) {
 	t.Chdir(ffmpegRoot)
 
 	runner := &scriptedRunner{results: []CommandResult{{
-		Stdout:   testPNGBytes(t, color.RGBA{R: 16, G: 16, B: 16, A: 255}),
+		Stdout: testPNGBytes(t, color.RGBA{
+			R: 16,
+			G: 16,
+			B: 16,
+			A: 255,
+		}),
 		ExitCode: 0,
 	}}}
 	service := NewService(config.Config{}, api.NopLogger{}, root, runner)
-	preview, err := service.PreviewFrame(context.Background(), api.PreparedMetadata{
+	preview, err := service.PreviewFrame(context.Background(), api.ScreenshotSubject{
 		SourcePath:        root,
 		DiscType:          "DVD",
 		MediaInfoJSONPath: mediaInfoPath,

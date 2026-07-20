@@ -12,8 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  pathpolicy:
-    name: pathpolicy (${{ matrix.os }})
+  policies:
+    name: repository policies (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     strategy:
@@ -34,14 +34,20 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Run architecture ownership policy
+        run: go run ./cmd/architecturepolicy
+
       - name: Run path portability policy
         run: go run ./cmd/pathpolicy
+
+      - name: Run composite literal layout policy
+        run: go run ./cmd/literalpolicy
 
   golangci:
     name: golangci-lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: pathpolicy
+    needs: policies
 
     steps:
       - name: Checkout

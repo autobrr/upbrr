@@ -13,9 +13,11 @@ import (
 	"testing"
 	"time"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
+	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/services/bbcode"
-	"github.com/autobrr/upbrr/internal/trackerdata"
+	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -93,7 +95,7 @@ func TestPersistUnit3DArtifactsMaxConcurrentImageDownloads(t *testing.T) {
 		logger: api.NopLogger{},
 	}
 
-	meta := api.PreparedMetadata{SourcePath: filepath.Join(tempDir, "source")}
+	meta := preparationstate.State{SourcePath: filepath.Join(tempDir, "source")}
 	result := trackerdata.Result{Validated: validated}
 
 	successful := svc.persistUnit3DArtifacts(context.Background(), meta, "BHD", result, true)
@@ -133,7 +135,7 @@ func TestPersistUnit3DArtifactsRejectsPrivateImageURLBeforeDownload(t *testing.T
 		logger: api.NopLogger{},
 	}
 
-	meta := api.PreparedMetadata{SourcePath: filepath.Join(tempDir, "source")}
+	meta := preparationstate.State{SourcePath: filepath.Join(tempDir, "source")}
 	result := trackerdata.Result{Validated: []bbcode.Image{{RawURL: "http://127.0.0.1/private.png"}}}
 
 	successful := svc.persistUnit3DArtifacts(context.Background(), meta, "BHD", result, true)

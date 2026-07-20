@@ -24,8 +24,9 @@ const imageBaseURL = "https://image.tmdb.org/t/p/original"
 
 var yearPattern = regexp.MustCompile(`(18|19|20)\d{2}`)
 
-// FetchMetadata loads the primary TMDB record plus optional external IDs,
-// translations, media assets, credits, keywords, and anime enrichment.
+// FetchMetadata loads the primary TMDB record plus best-effort external IDs,
+// translations, media assets, credits, and keywords. A primary-record failure
+// returns no result; optional TMDB lookup failures are logged and omitted.
 func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (MetadataResult, error) {
 	if input.TMDBID == 0 {
 		return MetadataResult{}, errNotFound
@@ -325,7 +326,11 @@ func addRegionalGenericCandidate(candidates map[string]localizedTitleCandidate, 
 	if currentOK && current.priority < priority {
 		return
 	}
-	candidates[language] = localizedTitleCandidate{title: title, regionalKey: regionalKey, priority: priority}
+	candidates[language] = localizedTitleCandidate{
+		title:       title,
+		regionalKey: regionalKey,
+		priority:    priority,
+	}
 }
 
 // defaultRegionalTitleKey returns the language's conventional same-region tag
@@ -409,7 +414,7 @@ func (c *Client) GetEpisodeDetails(ctx context.Context, tmdbID, season, episode 
 		EpisodeNumber: resp.EpisodeNumber,
 		SeasonNumber:  resp.SeasonNumber,
 		Runtime:       resp.Runtime,
-		IMDbID:        resp.ExternalIDs.IMDbID,
+		IMDbID:        resp.Identity.IMDbID,
 	}
 	if resp.StillPath != "" {
 		details.StillURL = imageBaseURL + resp.StillPath
@@ -462,6 +467,9 @@ func (c *Client) GetSeasonDetails(ctx context.Context, tmdbID, season int) (Seas
 	return result, nil
 }
 
+// DailyToSeasonEpisode selects the highest numbered season whose air date is not
+// after date, then returns the episode with the same YYYY-MM-DD air date. Missing
+// IDs, seasons, or exact episode dates return the package not-found error.
 func (c *Client) DailyToSeasonEpisode(ctx context.Context, tmdbID int, date time.Time) (int, int, error) {
 	if tmdbID == 0 {
 		return 0, 0, errNotFound
@@ -500,6 +508,10 @@ func (c *Client) DailyToSeasonEpisode(ctx context.Context, tmdbID int, date time
 	return 0, 0, errNotFound
 }
 
+// GetLocalizedData fetches one main, season, or episode response in the requested
+// language. With CachePath, entries are serialized per process and keyed by
+// language and DataType; malformed cache contents and cache-write failures are
+// treated as misses while provider failures are returned.
 func (c *Client) GetLocalizedData(ctx context.Context, input LocalizedDataInput) (map[string]any, error) {
 	endpoint, err := localizedEndpoint(input)
 	if err != nil {
@@ -760,6 +772,8 @@ func findTrailer(items []videoItem) string {
 	return ""
 }
 
+// ExtractIMDbID accepts a numeric ID, tt-prefixed ID, or an IMDb /title/<id>/
+// URL without a trailing subpath. Malformed input returns zero.
 func ExtractIMDbID(value string) int {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -985,7 +999,7 @@ type episodeDetailsResponse struct {
 	EpisodeNumber int     `json:"episode_number"`
 	SeasonNumber  int     `json:"season_number"`
 	Runtime       int     `json:"runtime"`
-	ExternalIDs   struct {
+	Identity      struct {
 		IMDbID string `json:"imdb_id"`
 	} `json:"external_ids"`
 	Crew       []creditMember `json:"crew"`

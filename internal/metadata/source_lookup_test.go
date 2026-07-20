@@ -6,11 +6,27 @@ package metadata
 import (
 	"testing"
 
-	"github.com/autobrr/upbrr/pkg/api"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
+	"github.com/autobrr/upbrr/internal/trackers"
 )
 
+func sourceLookupRegistry(t *testing.T) *trackers.Registry {
+	t.Helper()
+	registry := trackers.NewRegistry()
+	if err := registry.RegisterDescriptor(trackers.Descriptor{
+		Name:       "AITHER",
+		Family:     trackers.FamilyUnit3D,
+		BaseURL:    "https://aither.cc",
+		Definition: aitherRuleDefinition{},
+	}); err != nil {
+		t.Fatalf("register source tracker: %v", err)
+	}
+	return registry
+}
+
 func TestResolveSourceLookupURLTracker(t *testing.T) {
-	result, err := resolveSourceLookupURL("https://aither.cc/torrents/12345")
+	result, err := resolveSourceLookupURLWithRegistry("https://aither.cc/torrents/12345", sourceLookupRegistry(t))
 	if err != nil {
 		t.Fatalf("resolve tracker url: %v", err)
 	}
@@ -32,12 +48,42 @@ func TestResolveSourceLookupURLMedia(t *testing.T) {
 		provider string
 		id       int
 	}{
-		{name: "imdb", url: "https://www.imdb.com/title/tt1234567/", provider: "imdb", id: 1234567},
-		{name: "tmdb", url: "https://www.themoviedb.org/movie/765432-example-movie", provider: "tmdb", id: 765432},
-		{name: "tvmaze", url: "https://www.tvmaze.com/shows/12345/example-show", provider: "tvmaze", id: 12345},
-		{name: "tvdb", url: "https://thetvdb.com/series/456789", provider: "tvdb", id: 456789},
-		{name: "tvdb query", url: "https://www.thetvdb.com/?tab=series&id=456790", provider: "tvdb", id: 456790},
-		{name: "mal anime", url: "https://myanimelist.net/anime/54321/example-anime", provider: "mal", id: 54321},
+		{
+			name:     "imdb",
+			url:      "https://www.imdb.com/title/tt1234567/",
+			provider: "imdb",
+			id:       1234567,
+		},
+		{
+			name:     "tmdb",
+			url:      "https://www.themoviedb.org/movie/765432-example-movie",
+			provider: "tmdb",
+			id:       765432,
+		},
+		{
+			name:     "tvmaze",
+			url:      "https://www.tvmaze.com/shows/12345/example-show",
+			provider: "tvmaze",
+			id:       12345,
+		},
+		{
+			name:     "tvdb",
+			url:      "https://thetvdb.com/series/456789",
+			provider: "tvdb",
+			id:       456789,
+		},
+		{
+			name:     "tvdb query",
+			url:      "https://www.thetvdb.com/?tab=series&id=456790",
+			provider: "tvdb",
+			id:       456790,
+		},
+		{
+			name:     "mal anime",
+			url:      "https://myanimelist.net/anime/54321/example-anime",
+			provider: "mal",
+			id:       54321,
+		},
 	}
 
 	for _, tc := range cases {
@@ -74,12 +120,12 @@ func TestResolveSourceLookupURLMedia(t *testing.T) {
 }
 
 func TestApplySourceLookupOverrideTracker(t *testing.T) {
-	meta := api.PreparedMetadata{
-		SourceLookupURL: "https://aither.cc/torrents/778899",
-		Trackers:        []string{"ANT", "AITHER"},
+	meta := preparationstate.State{
+		SourceLookupURL:  "https://aither.cc/torrents/778899",
+		EvidenceTrackers: []string{"ANT", "AITHER"},
 	}
 
-	applySourceLookupOverride(&meta)
+	applySourceLookupOverrideWithRegistry(&meta, sourceLookupRegistry(t))
 
 	if !meta.SourceLookupActive {
 		t.Fatalf("expected source lookup to be active")
@@ -90,16 +136,16 @@ func TestApplySourceLookupOverrideTracker(t *testing.T) {
 	if got := meta.TrackerIDs["aither"]; got != "778899" {
 		t.Fatalf("expected aither tracker id 778899, got %q", got)
 	}
-	if len(meta.Trackers) != 1 || meta.Trackers[0] != "AITHER" {
-		t.Fatalf("expected tracker list to be narrowed to AITHER, got %v", meta.Trackers)
+	if len(meta.EvidenceTrackers) != 1 || meta.EvidenceTrackers[0] != "AITHER" {
+		t.Fatalf("expected tracker list to be narrowed to AITHER, got %v", meta.EvidenceTrackers)
 	}
 }
 
 func TestApplySourceLookupOverrideMedia(t *testing.T) {
-	meta := api.PreparedMetadata{
-		SourceLookupURL: "https://www.imdb.com/title/tt7654321/",
-		Trackers:        []string{"AITHER"},
-		TrackerIDs:      map[string]string{"aither": "101"},
+	meta := preparationstate.State{
+		SourceLookupURL:  "https://www.imdb.com/title/tt7654321/",
+		EvidenceTrackers: []string{"AITHER"},
+		TrackerIDs:       map[string]string{"aither": "101"},
 	}
 
 	applySourceLookupOverride(&meta)
@@ -113,16 +159,16 @@ func TestApplySourceLookupOverrideMedia(t *testing.T) {
 	if meta.ExternalIDOverrides.IMDBID == nil || *meta.ExternalIDOverrides.IMDBID != 7654321 {
 		t.Fatalf("expected imdb override 7654321, got %#v", meta.ExternalIDOverrides.IMDBID)
 	}
-	if len(meta.Trackers) != 0 {
-		t.Fatalf("expected trackers cleared for media url, got %v", meta.Trackers)
+	if len(meta.EvidenceTrackers) != 0 {
+		t.Fatalf("expected trackers cleared for media url, got %v", meta.EvidenceTrackers)
 	}
-	if len(meta.TrackerIDs) != 0 {
-		t.Fatalf("expected tracker ids cleared for media url, got %v", meta.TrackerIDs)
+	if got := meta.TrackerIDs["aither"]; got != "101" {
+		t.Fatalf("explicit tracker id was not preserved, got %q", got)
 	}
 }
 
 func TestApplySourceLookupOverrideFallbackWarning(t *testing.T) {
-	meta := api.PreparedMetadata{SourceLookupURL: "notaurl"}
+	meta := preparationstate.State{SourceLookupURL: "notaurl"}
 	applySourceLookupOverride(&meta)
 
 	if meta.SourceLookupActive {

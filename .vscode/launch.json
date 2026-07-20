@@ -11,17 +11,7 @@
       "cwd": "${workspaceFolder}"
     },
     {
-      "name": "CLI: Run with --gui",
-      "type": "go",
-      "request": "launch",
-      "mode": "debug",
-      "program": "${workspaceFolder}/cmd/upbrr",
-      "buildFlags": "-tags dev",
-      "args": ["--gui"],
-      "cwd": "${workspaceFolder}"
-    },
-    {
-      "name": "CLI: Serve (Web Mode)",
+      "name": "CLI: Serve WebUI",
       "type": "go",
       "request": "launch",
       "mode": "debug",
@@ -46,27 +36,6 @@
       "mode": "auto",
       "program": "${workspaceFolder}/cmd/upbrr",
       "args": ["--dry-run", "${input:sourcePath}"],
-      "cwd": "${workspaceFolder}"
-    },
-    {
-      "name": "GUI: Run (Wails Entrypoint)",
-      "type": "go",
-      "request": "launch",
-      "mode": "auto",
-      "program": "${workspaceFolder}/gui",
-      "buildFlags": "-tags dev",
-      "cwd": "${workspaceFolder}"
-    },
-    {
-      "name": "GUI: Debug (Wails Build)",
-      "type": "go",
-      "request": "launch",
-      "mode": "exec",
-      "program": "${workspaceFolder}/gui/build/bin/upbrr-gui",
-      "windows": {
-        "program": "${workspaceFolder}/gui/build/bin/upbrr-gui.exe"
-      },
-      "preLaunchTask": "build-gui",
       "cwd": "${workspaceFolder}"
     },
     {

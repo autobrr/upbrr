@@ -6,113 +6,42 @@ package webserver
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
-	"time"
 
+	"github.com/autobrr/upbrr/internal/preparedrelease"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestRunDVDMenuCaptureJobPublishesProgressAndResult(t *testing.T) {
-	t.Parallel()
+type acceptedDVDCaptureFunc func(context.Context, api.MediaPlanInput) (api.DVDMenuCaptureResult, error)
 
-	coreSvc := &preparedMetaTestCore{
-		dvdMenuCapture: func(ctx context.Context, _ api.Request) (api.DVDMenuCaptureResult, error) {
-			api.ReportDVDMenuProgress(ctx, api.DVDMenuProgressUpdate{
-				Phase:           "capturing",
-				DiscoveredMenus: 2,
-				VisitedStates:   4,
-				VisitedButtons:  3,
-				CapturedCount:   1,
-			})
-			return api.DVDMenuCaptureResult{
-				SourcePath:      "Example.Release.2026.1080p-GRP",
-				DiscoveredMenus: 2,
-				VisitedStates:   4,
-				VisitedButtons:  3,
-				Complete:        true,
-				Images: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{
-					Path:    "menu-1.png",
-					Purpose: api.ScreenshotPurposeMenu,
-				}}},
-			}, nil
-		},
-	}
-	job := &dvdMenuCaptureJob{
-		sessionID: "session-a",
-		id:        "dvd-job-1",
-		core:      coreSvc,
-		status:    "queued",
-		startedAt: time.Now().UTC(),
-	}
-	backend := &Backend{dvdMenus: map[string]*dvdMenuCaptureJob{job.id: job}}
-	backend.dvdMenuWG.Add(1)
-
-	backend.runDVDMenuCaptureJob(context.Background(), job)
-	snapshot := buildWebDVDMenuCaptureSnapshot(job)
-	if snapshot.Status != "completed" || snapshot.CapturedCount != 1 || !snapshot.Result.Complete {
-		t.Fatalf("unexpected terminal snapshot: %#v", snapshot)
-	}
-	if coreSvc.dvdMenuCalls != 1 {
-		t.Fatalf("expected one capture call, got %d", coreSvc.dvdMenuCalls)
-	}
-	if coreSvc.closeCalls != 1 {
-		t.Fatalf("expected one core close, got %d", coreSvc.closeCalls)
-	}
+func (fn acceptedDVDCaptureFunc) CaptureAcceptedDVDMenus(ctx context.Context, input api.MediaPlanInput) (api.DVDMenuCaptureResult, error) {
+	return fn(ctx, input)
 }
 
-func TestRunDVDMenuCaptureJobRedactsFailureMessage(t *testing.T) {
-	t.Parallel()
+type dvdGenerationTransfer struct{ release api.ReleaseRef }
 
-	coreSvc := &preparedMetaTestCore{
-		dvdMenuCapture: func(context.Context, api.Request) (api.DVDMenuCaptureResult, error) {
-			return api.DVDMenuCaptureResult{}, errors.New("provider rejected api_key=secret-value")
-		},
-	}
-	job := &dvdMenuCaptureJob{
-		sessionID: "session-a",
-		id:        "dvd-job-1",
-		core:      coreSvc,
-		status:    "queued",
-		startedAt: time.Now().UTC(),
-	}
-	backend := &Backend{dvdMenus: map[string]*dvdMenuCaptureJob{job.id: job}}
-	backend.dvdMenuWG.Add(1)
-
-	backend.runDVDMenuCaptureJob(context.Background(), job)
-	snapshot := buildWebDVDMenuCaptureSnapshot(job)
-	if snapshot.Status != "failed" {
-		t.Fatal("expected failed snapshot")
-	}
-	if strings.Contains(snapshot.Error, "secret-value") || !strings.Contains(snapshot.Error, "[REDACTED]") {
-		t.Fatal("expected redacted DVD menu capture error")
-	}
+func (transfer dvdGenerationTransfer) ExportReleaseSeed(context.Context, api.ReleaseRef) (preparedrelease.Seed, error) {
+	return preparedrelease.Seed{}, nil
 }
 
-func TestDVDMenuCaptureJobAccessRequiresOwningSession(t *testing.T) {
+func (transfer dvdGenerationTransfer) ImportReleaseSeed(context.Context, preparedrelease.Seed) (api.ReleaseRef, error) {
+	return transfer.release, nil
+}
+
+func TestWebDVDMenuRunnerPropagatesRequestCancellation(t *testing.T) {
 	t.Parallel()
-
-	job := &dvdMenuCaptureJob{
-		sessionID: "session-a",
-		id:        "dvd-job-1",
-		status:    "running",
-		startedAt: time.Now().UTC(),
+	release := api.ReleaseRef{SourcePath: `C:\Example\Example.Release.2026.1080p-GRP`, Generation: 1}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	runner := webDVDRunner{
+		core: acceptedDVDCaptureFunc(func(ctx context.Context, _ api.MediaPlanInput) (api.DVDMenuCaptureResult, error) {
+			return api.DVDMenuCaptureResult{}, ctx.Err()
+		}),
+		target: dvdGenerationTransfer{release: release},
+		expected: release,
 	}
-	backend := &Backend{dvdMenus: map[string]*dvdMenuCaptureJob{job.id: job}}
-
-	if _, err := backend.GetDVDMenuCaptureSnapshot("session-b", job.id); err == nil || err.Error() != "DVD menu capture job not found" {
-		t.Fatal("expected foreign session snapshot read to use the not-found privacy response")
-	}
-	if err := backend.CancelDVDMenuCapture("session-b", job.id); err == nil || err.Error() != "DVD menu capture job not found" {
-		t.Fatal("expected foreign session cancellation to use the not-found privacy response")
-	}
-	if _, err := backend.GetDVDMenuCaptureSnapshot("session-b", "missing-job"); err == nil || err.Error() != "DVD menu capture job not found" {
-		t.Fatal("expected unknown snapshot read to use the same not-found privacy response")
-	}
-	if err := backend.CancelDVDMenuCapture("session-b", "missing-job"); err == nil || err.Error() != "DVD menu capture job not found" {
-		t.Fatal("expected unknown cancellation to use the same not-found privacy response")
-	}
-	if _, err := backend.GetDVDMenuCaptureSnapshot("session-a", job.id); err != nil {
-		t.Fatalf("expected owning session snapshot read: %v", err)
+	_, err := runner.CaptureAcceptedDVDMenus(ctx, api.MediaPlanInput{Release: release})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("capture error = %v", err)
 	}
 }

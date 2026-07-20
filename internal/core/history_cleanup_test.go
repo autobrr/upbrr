@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -28,6 +27,8 @@ type cleanupRepo struct {
 	purgedPaths  []string
 	purgeCalls   int
 	purgeErr     error
+	purgeErrAt   int
+	cancel       context.CancelFunc
 }
 
 func (r *cleanupRepo) GetByPath(context.Context, string) (api.FileMetadata, error) {
@@ -63,10 +64,44 @@ func (r *cleanupRepo) ListStoredReleasePaths(context.Context) ([]string, error) 
 func (r *cleanupRepo) PurgeContentData(_ context.Context, path string) error {
 	r.purgeCalls++
 	r.purgedPaths = append(r.purgedPaths, path)
+	if r.cancel != nil {
+		r.cancel()
+	}
+	if r.purgeErrAt > 0 && r.purgeCalls == r.purgeErrAt {
+		return r.purgeErr
+	}
+	if r.purgeErrAt > 0 {
+		return nil
+	}
 	return r.purgeErr
 }
 
-func TestCoreDeleteHistoryReleaseRemovesStoredArtifacts(t *testing.T) {
+func (r *cleanupRepo) LoadHistoryCleanupSnapshot(context.Context, string) (api.HistoryCleanupSnapshot, error) {
+	artifactPaths := make([]string, 0, len(r.screenshots)+len(r.uploaded)+len(r.finals)+len(r.slots))
+	for _, shot := range r.screenshots {
+		artifactPaths = append(artifactPaths, shot.ImagePath)
+	}
+	for _, image := range r.uploaded {
+		artifactPaths = append(artifactPaths, image.ImagePath)
+	}
+	for _, image := range r.finals {
+		artifactPaths = append(artifactPaths, image.ImagePath)
+	}
+	for _, slot := range r.slots {
+		artifactPaths = append(artifactPaths, slot.ImagePath)
+		for _, variant := range slot.Variants {
+			artifactPaths = append(artifactPaths, variant.ImagePath)
+		}
+	}
+	snapshot := api.HistoryCleanupSnapshot{ArtifactPaths: artifactPaths}
+	if r.getByPathErr == nil && r.stored.Path != "" {
+		stored := r.stored
+		snapshot.Metadata = &stored
+	}
+	return snapshot, nil
+}
+
+func TestHistoryDeleteRemovesStoredArtifacts(t *testing.T) {
 	t.Parallel()
 
 	baseDir := t.TempDir()
@@ -94,28 +129,28 @@ func TestCoreDeleteHistoryReleaseRemovesStoredArtifacts(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", target, err)
 		}
-		if err := os.WriteFile(target, []byte("test"), 0o644); err != nil {
+		if err := os.WriteFile(target, []byte("test"), 0o600); err != nil {
 			t.Fatalf("write %s: %v", target, err)
 		}
 	}
 
 	repo := &cleanupRepo{
 		screenshots: []api.Screenshot{{SourcePath: sourcePath, ImagePath: tmpFile}},
-		uploaded:    []api.UploadedImageLink{{SourcePath: sourcePath, ImagePath: cacheFile, Host: "imgbox"}},
-		finals:      []api.ScreenshotFinalSelection{{ImagePath: nfoFile}},
+		uploaded: []api.UploadedImageLink{{
+			SourcePath: sourcePath,
+			ImagePath:  cacheFile,
+			Host:       "imgbox",
+		}},
+		finals: []api.ScreenshotFinalSelection{{ImagePath: nfoFile}},
 		slots: []api.ScreenshotSlot{{
 			SourcePath: sourcePath,
 			ImagePath:  slotFile,
 			Variants:   []api.ScreenshotSlotVariant{{ImagePath: slotVariantFile}},
 		}},
 	}
-	coreSvc := &Core{
-		cfg:    config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
-		logger: api.NopLogger{},
-		repo:   repo,
-	}
+	history := newHistoryModule(repo, dbPath, api.NopLogger{})
 
-	if err := coreSvc.DeleteHistoryRelease(context.Background(), sourcePath); err != nil {
+	if err := history.Delete(context.Background(), sourcePath); err != nil {
 		t.Fatalf("delete history release: %v", err)
 	}
 	if repo.purgeCalls != 1 || len(repo.purgedPaths) != 1 || repo.purgedPaths[0] != sourcePath {
@@ -131,7 +166,7 @@ func TestCoreDeleteHistoryReleaseRemovesStoredArtifacts(t *testing.T) {
 	}
 }
 
-func TestCoreDeleteHistoryReleaseRemovesDirectoryChildArtifacts(t *testing.T) {
+func TestHistoryDeleteRemovesDirectoryChildArtifacts(t *testing.T) {
 	t.Parallel()
 
 	baseDir := t.TempDir()
@@ -165,13 +200,9 @@ func TestCoreDeleteHistoryReleaseRemovesDirectoryChildArtifacts(t *testing.T) {
 		storedPaths:  []string{childPath},
 		getByPathErr: internalerrors.ErrNotFound,
 	}
-	coreSvc := &Core{
-		cfg:    config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
-		logger: api.NopLogger{},
-		repo:   repo,
-	}
+	history := newHistoryModule(repo, dbPath, api.NopLogger{})
 
-	if err := coreSvc.DeleteHistoryRelease(context.Background(), sourceDir); err != nil {
+	if err := history.Delete(context.Background(), sourceDir); err != nil {
 		t.Fatalf("delete history release: %v", err)
 	}
 	if len(repo.purgedPaths) != 2 || repo.purgedPaths[0] != sourceDir || repo.purgedPaths[1] != childPath {
@@ -184,7 +215,7 @@ func TestCoreDeleteHistoryReleaseRemovesDirectoryChildArtifacts(t *testing.T) {
 	}
 }
 
-func TestCoreDeleteHistoryReleaseKeepsDBRowsWhenArtifactRemovalFails(t *testing.T) {
+func TestHistoryDeleteKeepsDBRowsWhenArtifactRemovalFails(t *testing.T) {
 	t.Parallel()
 
 	baseDir := t.TempDir()
@@ -206,13 +237,9 @@ func TestCoreDeleteHistoryReleaseKeepsDBRowsWhenArtifactRemovalFails(t *testing.
 	repo := &cleanupRepo{
 		screenshots: []api.Screenshot{{SourcePath: sourcePath, ImagePath: blockedPath}},
 	}
-	coreSvc := &Core{
-		cfg:    config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}},
-		logger: api.NopLogger{},
-		repo:   repo,
-	}
+	history := newHistoryModule(repo, dbPath, api.NopLogger{})
 
-	if err := coreSvc.DeleteHistoryRelease(context.Background(), sourcePath); err == nil {
+	if err := history.Delete(context.Background(), sourcePath); err == nil {
 		t.Fatal("expected artifact removal failure")
 	}
 	if repo.purgeCalls != 0 {
@@ -223,7 +250,7 @@ func TestCoreDeleteHistoryReleaseKeepsDBRowsWhenArtifactRemovalFails(t *testing.
 	}
 }
 
-func TestCoreDeleteAllHistoryReleasesPurgesEveryStoredPath(t *testing.T) {
+func TestHistoryDeleteAllPurgesEveryStoredPath(t *testing.T) {
 	t.Parallel()
 
 	baseDir := t.TempDir()
@@ -234,13 +261,9 @@ func TestCoreDeleteAllHistoryReleasesPurgesEveryStoredPath(t *testing.T) {
 		},
 		getByPathErr: internalerrors.ErrNotFound,
 	}
-	coreSvc := &Core{
-		cfg:    config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(baseDir, "ua.db")}},
-		logger: api.NopLogger{},
-		repo:   repo,
-	}
+	history := newHistoryModule(repo, filepath.Join(baseDir, "ua.db"), api.NopLogger{})
 
-	deleted, err := coreSvc.DeleteAllHistoryReleases(context.Background())
+	deleted, err := history.DeleteAll(context.Background())
 	if err != nil {
 		t.Fatalf("delete all history releases: %v", err)
 	}
@@ -252,6 +275,79 @@ func TestCoreDeleteAllHistoryReleasesPurgesEveryStoredPath(t *testing.T) {
 	}
 	if repo.purgedPaths[0] != repo.storedPaths[0] || repo.purgedPaths[1] != repo.storedPaths[1] {
 		t.Fatalf("unexpected purged paths: %#v", repo.purgedPaths)
+	}
+}
+
+func TestHistoryDeleteDoesNotRemoveOutsideManagedRoots(t *testing.T) {
+	t.Parallel()
+
+	baseDir := t.TempDir()
+	dbPath := filepath.Join(baseDir, "ua.db")
+	sourcePath := filepath.Join(baseDir, "Example.Release.2026.mkv")
+	outsidePath := filepath.Join(t.TempDir(), "outside.png")
+	if err := os.WriteFile(outsidePath, []byte("keep"), 0o600); err != nil {
+		t.Fatalf("write outside artifact: %v", err)
+	}
+	repo := &cleanupRepo{screenshots: []api.Screenshot{{SourcePath: sourcePath, ImagePath: outsidePath}}}
+	history := newHistoryModule(repo, dbPath, api.NopLogger{})
+
+	if err := history.Delete(context.Background(), sourcePath); err != nil {
+		t.Fatalf("delete history release: %v", err)
+	}
+	if _, err := os.Stat(outsidePath); err != nil {
+		t.Fatalf("outside artifact changed: %v", err)
+	}
+	if repo.purgeCalls != 1 {
+		t.Fatalf("expected history row purge, got %d calls", repo.purgeCalls)
+	}
+}
+
+func TestHistoryDeleteAllReturnsPartialCountOnPurgeError(t *testing.T) {
+	t.Parallel()
+
+	baseDir := t.TempDir()
+	wantErr := errors.New("purge failed")
+	repo := &cleanupRepo{
+		storedPaths:  []string{filepath.Join(baseDir, "one.mkv"), filepath.Join(baseDir, "two.mkv")},
+		getByPathErr: internalerrors.ErrNotFound,
+		purgeErr:     wantErr,
+		purgeErrAt:   2,
+	}
+	history := newHistoryModule(repo, filepath.Join(baseDir, "ua.db"), api.NopLogger{})
+
+	deleted, err := history.DeleteAll(context.Background())
+	if deleted != 1 {
+		t.Fatalf("expected partial delete count 1, got %d", deleted)
+	}
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected purge error, got %v", err)
+	}
+	if repo.purgeCalls != 2 {
+		t.Fatalf("expected stop at second purge, got %d calls", repo.purgeCalls)
+	}
+}
+
+func TestHistoryDeleteAllHonorsCancellationBetweenReleases(t *testing.T) {
+	t.Parallel()
+
+	baseDir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	repo := &cleanupRepo{
+		storedPaths:  []string{filepath.Join(baseDir, "one.mkv"), filepath.Join(baseDir, "two.mkv")},
+		getByPathErr: internalerrors.ErrNotFound,
+		cancel:       cancel,
+	}
+	history := newHistoryModule(repo, filepath.Join(baseDir, "ua.db"), api.NopLogger{})
+
+	deleted, err := history.DeleteAll(ctx)
+	if deleted != 1 {
+		t.Fatalf("expected one completed delete before cancellation, got %d", deleted)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation, got %v", err)
+	}
+	if repo.purgeCalls != 1 {
+		t.Fatalf("expected no second purge after cancellation, got %d calls", repo.purgeCalls)
 	}
 }
 
@@ -268,7 +364,7 @@ func TestRemoveIfWithinRootKeepsAliasedRoot(t *testing.T) {
 		t.Skipf("symlink unavailable on this host: %v", err)
 	}
 
-	removed, err := removeIfWithinRoot(root, alias, true)
+	removed, err := removeIfWithinRootFS(osHistoryFilesystem{}, root, alias, true)
 	if err != nil {
 		t.Fatalf("remove aliased root: %v", err)
 	}

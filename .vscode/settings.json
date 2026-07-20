@@ -17,17 +17,17 @@
   },
   "npm.packageManager": "pnpm",
   "files.exclude": {
-    "gui/frontend/node_modules": true,
-    "gui/frontend/dist": true,
-    "gui/build/bin": true,
-    "internal/guiapp/assets": true,
+    "webui/node_modules": true,
+    "webui/dist": true,
+    "webui/playwright-report": true,
+    "internal/webserver/assets": true,
     "dist": true
   },
   "search.exclude": {
-    "gui/frontend/node_modules": true,
-    "gui/frontend/dist": true,
-    "gui/build/bin": true,
-    "internal/guiapp/assets": true,
+    "webui/node_modules": true,
+    "webui/dist": true,
+    "webui/playwright-report": true,
+    "internal/webserver/assets": true,
     "dist": true
   },
 
@@ -53,7 +53,7 @@
       "text": "Hard limit: the subject line (type + scope + subject) must be 115 characters or fewer. Aim for under 72 when the change is simple; use the extra headroom only when it genuinely helps."
     },
     {
-      "text": "Scope is optional. If used, keep it short (one word, an area like `config`, `ci`, `gui`, `cli`, or a tracker acronym like `bt`, `asc`). Uppercase tracker acronyms are acceptable."
+      "text": "Scope is optional. If used, keep it short (one word, an area like `config`, `ci`, `webui`, `cli`, or a tracker acronym like `bt`, `asc`). Uppercase tracker acronyms are acceptable."
     },
     {
       "text": "Body (optional, separated from subject by a blank line): explain *why* the change was made and any non-obvious context. Wrap body lines at ~115 characters. Do not restate what the diff already shows."

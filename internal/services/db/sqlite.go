@@ -22,10 +22,13 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
-	"github.com/autobrr/upbrr/internal/pathutil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// SQLiteRepository owns one SQLite handle constrained to a single connection
+// so connection-local PRAGMAs remain consistent. Callers must close the
+// repository when finished; opening does not run schema migrations.
 type SQLiteRepository struct {
 	db     *sql.DB
 	logger Logger
@@ -44,18 +47,25 @@ const (
 	pragmaBusyTimeoutPrefix = "PRAGMA busy_timeout = "
 )
 
+// Open opens path with a background context and no-op logger.
 func Open(path string) (*SQLiteRepository, error) {
 	return OpenWithLogger(path, nopLogger{})
 }
 
+// OpenContext opens path with ctx and a no-op logger.
 func OpenContext(ctx context.Context, path string) (*SQLiteRepository, error) {
 	return OpenWithLoggerContext(ctx, path, nopLogger{})
 }
 
+// OpenWithLogger opens path with a background context and logger.
 func OpenWithLogger(path string, logger Logger) (*SQLiteRepository, error) {
 	return OpenWithLoggerContext(context.Background(), path, logger)
 }
 
+// OpenWithLoggerContext resolves and opens path, enables foreign keys and a
+// five-second busy timeout, and requires WAL mode for on-disk databases.
+// In-memory databases retain their supported journal mode. A nil context is
+// rejected and a nil logger is replaced with a no-op logger.
 func OpenWithLoggerContext(ctx context.Context, path string, logger Logger) (*SQLiteRepository, error) {
 	if ctx == nil {
 		return nil, errors.New("db: context is required")
@@ -113,7 +123,11 @@ func OpenWithLoggerContext(ctx context.Context, path string, logger Logger) (*SQ
 		}
 	}
 
-	return &SQLiteRepository{db: db, logger: logger, path: repositoryDBPath(path, resolved)}, nil
+	return &SQLiteRepository{
+		db:     db,
+		logger: logger,
+		path:   repositoryDBPath(path, resolved),
+	}, nil
 }
 
 // DBPath returns the resolved on-disk database path when the repository was
@@ -127,6 +141,8 @@ func (r *SQLiteRepository) DBPath() string {
 	return r.path
 }
 
+// Close releases the owned SQLite handle. A nil or uninitialized repository is
+// a no-op.
 func (r *SQLiteRepository) Close() error {
 	if r == nil || r.db == nil {
 		return nil
@@ -154,10 +170,14 @@ func (r *SQLiteRepository) RawDB() *sql.DB {
 	return r.db
 }
 
+// Migrate applies pending repository migrations using a background context and
+// the busy-lock retry policy.
 func (r *SQLiteRepository) Migrate() error {
 	return r.MigrateContext(context.Background())
 }
 
+// MigrateContext applies pending repository migrations under ctx and retries
+// the complete migration operation for transient SQLite busy or locked errors.
 func (r *SQLiteRepository) MigrateContext(ctx context.Context) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -170,6 +190,7 @@ func (r *SQLiteRepository) MigrateContext(ctx context.Context) error {
 	})
 }
 
+// IsBusyError reports whether err wraps a modernc SQLite BUSY or LOCKED result.
 func IsBusyError(err error) bool {
 	if err == nil {
 		return false
@@ -295,6 +316,9 @@ func isMemorySQLitePath(path string) bool {
 	return strings.HasPrefix(normalized, "file:") && strings.Contains(normalized, "mode=memory")
 }
 
+// GetByPath loads release metadata for path. Malformed legacy list or timestamp
+// fields are left at their zero values; a missing row returns
+// [internalerrors.ErrNotFound].
 func (r *SQLiteRepository) GetByPath(ctx context.Context, path string) (FileMetadata, error) {
 	if r == nil || r.db == nil {
 		return FileMetadata{}, errors.New("db: repository not initialized")
@@ -414,6 +438,8 @@ func (r *SQLiteRepository) GetByPath(ctx context.Context, path string) (FileMeta
 	return metadata, nil
 }
 
+// Save upserts release metadata by path, canonicalizing invalid categories to
+// unknown and assigning the current UTC time when UpdatedAt is zero.
 func (r *SQLiteRepository) Save(ctx context.Context, metadata FileMetadata) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -534,12 +560,12 @@ func (r *SQLiteRepository) Save(ctx context.Context, metadata FileMetadata) erro
 	return nil
 }
 
-func (r *SQLiteRepository) GetExternalIDs(ctx context.Context, path string) (ExternalIDs, error) {
+func (r *SQLiteRepository) GetExternalIdentity(ctx context.Context, path string) (Identity, error) {
 	if r == nil || r.db == nil {
-		return ExternalIDs{}, errors.New("db: repository not initialized")
+		return Identity{}, errors.New("db: repository not initialized")
 	}
 	if strings.TrimSpace(path) == "" {
-		return ExternalIDs{}, internalerrors.ErrInvalidInput
+		return Identity{}, internalerrors.ErrInvalidInput
 	}
 
 	row := r.db.QueryRowContext(ctx, `
@@ -549,8 +575,14 @@ func (r *SQLiteRepository) GetExternalIDs(ctx context.Context, path string) (Ext
 		WHERE source_path = ?
 	`, path)
 
-	var ids ExternalIDs
+	var ids Identity
 	var updatedAt string
+	var category string
+	var sourceTMDB string
+	var sourceIMDB string
+	var sourceTVDB string
+	var sourceTVmaze string
+	var sourceMAL string
 	if err := row.Scan(
 		&ids.SourcePath,
 		&ids.TMDBID,
@@ -558,29 +590,37 @@ func (r *SQLiteRepository) GetExternalIDs(ctx context.Context, path string) (Ext
 		&ids.TVDBID,
 		&ids.TVmazeID,
 		&ids.MALID,
-		&ids.Category,
-		&ids.SourceTMDB,
-		&ids.SourceIMDB,
-		&ids.SourceTVDB,
-		&ids.SourceTVmaze,
-		&ids.SourceMAL,
+		&category,
+		&sourceTMDB,
+		&sourceIMDB,
+		&sourceTVDB,
+		&sourceTVmaze,
+		&sourceMAL,
 		&updatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return ExternalIDs{}, internalerrors.ErrNotFound
+			return Identity{}, internalerrors.ErrNotFound
 		}
-		return ExternalIDs{}, fmt.Errorf("db get external ids: %w", err)
+		return Identity{}, fmt.Errorf("db get external ids: %w", err)
 	}
 	if updatedAt != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, updatedAt); err == nil {
-			ids.UpdatedAt = parsed
+			ids.ResolvedAt = parsed
 		}
+	}
+	ids.Category, _ = api.NormalizeCanonicalCategory(category)
+	ids.Provenance = api.IdentityProvenanceSet{
+		TMDB:   api.IdentityProvenance(sourceTMDB),
+		IMDB:   api.IdentityProvenance(sourceIMDB),
+		TVDB:   api.IdentityProvenance(sourceTVDB),
+		TVmaze: api.IdentityProvenance(sourceTVmaze),
+		MAL:    api.IdentityProvenance(sourceMAL),
 	}
 
 	return ids, nil
 }
 
-func (r *SQLiteRepository) SaveExternalIDs(ctx context.Context, ids ExternalIDs) error {
+func (r *SQLiteRepository) SaveExternalIdentity(ctx context.Context, ids Identity) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
 	}
@@ -588,7 +628,7 @@ func (r *SQLiteRepository) SaveExternalIDs(ctx context.Context, ids ExternalIDs)
 		return internalerrors.ErrInvalidInput
 	}
 
-	timestamp := ids.UpdatedAt
+	timestamp := ids.ResolvedAt
 	if timestamp.IsZero() {
 		timestamp = time.Now().UTC()
 	}
@@ -620,11 +660,11 @@ func (r *SQLiteRepository) SaveExternalIDs(ctx context.Context, ids ExternalIDs)
 		ids.TVmazeID,
 		ids.MALID,
 		ids.Category,
-		ids.SourceTMDB,
-		ids.SourceIMDB,
-		ids.SourceTVDB,
-		ids.SourceTVmaze,
-		ids.SourceMAL,
+		ids.Provenance.TMDB,
+		ids.Provenance.IMDB,
+		ids.Provenance.TVDB,
+		ids.Provenance.TVmaze,
+		ids.Provenance.MAL,
 		timestamp.Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -633,6 +673,8 @@ func (r *SQLiteRepository) SaveExternalIDs(ctx context.Context, ids ExternalIDs)
 	return nil
 }
 
+// GetDVDMediaInfo reads the SQLite-only DVD diagnostic record. It is not part
+// of the release-state capability because no production workflow reads it.
 func (r *SQLiteRepository) GetDVDMediaInfo(ctx context.Context, path string) (DVDMediaInfo, error) {
 	if r == nil || r.db == nil {
 		return DVDMediaInfo{}, errors.New("db: repository not initialized")
@@ -742,12 +784,12 @@ func (r *SQLiteRepository) SaveDVDMediaInfo(ctx context.Context, info DVDMediaIn
 	return nil
 }
 
-func (r *SQLiteRepository) GetExternalMetadata(ctx context.Context, path string) (ExternalMetadata, error) {
+func (r *SQLiteRepository) GetExternalMetadata(ctx context.Context, path string) (ProviderMetadata, error) {
 	if r == nil || r.db == nil {
-		return ExternalMetadata{}, errors.New("db: repository not initialized")
+		return ProviderMetadata{}, errors.New("db: repository not initialized")
 	}
 	if strings.TrimSpace(path) == "" {
-		return ExternalMetadata{}, internalerrors.ErrInvalidInput
+		return ProviderMetadata{}, internalerrors.ErrInvalidInput
 	}
 
 	row := r.db.QueryRowContext(ctx, `
@@ -756,7 +798,7 @@ func (r *SQLiteRepository) GetExternalMetadata(ctx context.Context, path string)
 		WHERE source_path = ?
 	`, path)
 
-	var metadata ExternalMetadata
+	var metadata ProviderMetadata
 	var tmdbJSON string
 	var imdbJSON string
 	var tvdbJSON string
@@ -775,29 +817,29 @@ func (r *SQLiteRepository) GetExternalMetadata(ctx context.Context, path string)
 		&updatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return ExternalMetadata{}, internalerrors.ErrNotFound
+			return ProviderMetadata{}, internalerrors.ErrNotFound
 		}
-		return ExternalMetadata{}, fmt.Errorf("db get external metadata: %w", err)
+		return ProviderMetadata{}, fmt.Errorf("db get external metadata: %w", err)
 	}
 
 	var err error
 	if metadata.TMDB, err = decodeOptionalJSON[TMDBMetadata](tmdbJSON); err != nil {
-		return ExternalMetadata{}, fmt.Errorf("db decode tmdb metadata: %w", err)
+		return ProviderMetadata{}, fmt.Errorf("db decode tmdb metadata: %w", err)
 	}
 	if metadata.IMDB, err = decodeOptionalJSON[IMDBMetadata](imdbJSON); err != nil {
-		return ExternalMetadata{}, fmt.Errorf("db decode imdb metadata: %w", err)
+		return ProviderMetadata{}, fmt.Errorf("db decode imdb metadata: %w", err)
 	}
 	if metadata.TVDB, err = decodeOptionalJSON[TVDBMetadata](tvdbJSON); err != nil {
-		return ExternalMetadata{}, fmt.Errorf("db decode tvdb metadata: %w", err)
+		return ProviderMetadata{}, fmt.Errorf("db decode tvdb metadata: %w", err)
 	}
 	if metadata.TVmaze, err = decodeOptionalJSON[TVmazeMetadata](tvmazeJSON); err != nil {
-		return ExternalMetadata{}, fmt.Errorf("db decode tvmaze metadata: %w", err)
+		return ProviderMetadata{}, fmt.Errorf("db decode tvmaze metadata: %w", err)
 	}
 	if metadata.AniList, err = decodeOptionalJSON[api.AniListMetadata](anilistJSON); err != nil {
-		return ExternalMetadata{}, fmt.Errorf("db decode anilist metadata: %w", err)
+		return ProviderMetadata{}, fmt.Errorf("db decode anilist metadata: %w", err)
 	}
 	if metadata.Bluray, err = decodeOptionalJSON[api.BlurayMetadata](blurayJSON); err != nil {
-		return ExternalMetadata{}, fmt.Errorf("db decode bluray metadata: %w", err)
+		return ProviderMetadata{}, fmt.Errorf("db decode bluray metadata: %w", err)
 	}
 	if updatedAt != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, updatedAt); err == nil {
@@ -808,7 +850,7 @@ func (r *SQLiteRepository) GetExternalMetadata(ctx context.Context, path string)
 	return metadata, nil
 }
 
-func (r *SQLiteRepository) SaveExternalMetadata(ctx context.Context, metadata ExternalMetadata) error {
+func (r *SQLiteRepository) SaveExternalMetadata(ctx context.Context, metadata ProviderMetadata) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
 	}
@@ -1048,6 +1090,8 @@ func (r *SQLiteRepository) SaveReleaseNameOverrides(ctx context.Context, path st
 	return nil
 }
 
+// DeleteReleaseNameOverrides is retained for SQLite maintenance and migration
+// tests; current workflows replace overrides instead of deleting them.
 func (r *SQLiteRepository) DeleteReleaseNameOverrides(ctx context.Context, path string) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -1134,6 +1178,8 @@ func (r *SQLiteRepository) SavePlaylistSelection(ctx context.Context, sourcePath
 	return nil
 }
 
+// DeletePlaylistSelection is retained for SQLite maintenance and migration
+// tests; current workflows persist explicit empty selections.
 func (r *SQLiteRepository) DeletePlaylistSelection(ctx context.Context, sourcePath string) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -1174,7 +1220,11 @@ func (r *SQLiteRepository) GetDescriptionOverride(ctx context.Context, path stri
 		return DescriptionOverride{}, fmt.Errorf("db get description override: %w", err)
 	}
 
-	override := DescriptionOverride{SourcePath: trimmed, GroupKey: normalizeDescriptionOverrideGroupKey(storedGroupKey), Description: description}
+	override := DescriptionOverride{
+		SourcePath:  trimmed,
+		GroupKey:    normalizeDescriptionOverrideGroupKey(storedGroupKey),
+		Description: description,
+	}
 	if updatedAt != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, updatedAt); err == nil {
 			override.UpdatedAt = parsed
@@ -1267,7 +1317,13 @@ func (r *SQLiteRepository) DeleteDescriptionOverride(ctx context.Context, path s
 		return internalerrors.ErrInvalidInput
 	}
 	trimmedGroup := normalizeDescriptionOverrideGroupKey(groupKey)
-	if _, err := r.execWrite(ctx, "delete description override", `DELETE FROM description_overrides WHERE source_path = ? AND group_key = ?`, trimmed, trimmedGroup); err != nil {
+	if _, err := r.execWrite(
+		ctx,
+		"delete description override",
+		`DELETE FROM description_overrides WHERE source_path = ? AND group_key = ?`,
+		trimmed,
+		trimmedGroup,
+	); err != nil {
 		return fmt.Errorf("db delete description override: %w", err)
 	}
 	return nil
@@ -1404,6 +1460,9 @@ func decodeOptionalJSON[T any](value string) (*T, error) {
 	return &result, nil
 }
 
+// ListHistoryEntries returns non-placeholder release rows in descending
+// metadata-update order, with each row's latest upload and separate advisory
+// versus non-advisory rule counts.
 func (r *SQLiteRepository) ListHistoryEntries(ctx context.Context) ([]HistoryEntry, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("db: repository not initialized")
@@ -1421,12 +1480,12 @@ func (r *SQLiteRepository) ListHistoryEntries(ctx context.Context) ([]HistoryEnt
 			(
 				SELECT COUNT(1)
 				FROM tracker_rule_failures trf
-				WHERE trf.source_path = fm.path AND trf.severity <> "warning"
+				WHERE trf.source_path = fm.path AND trf.disposition <> "advisory"
 			),
 			(
 				SELECT COUNT(1)
 				FROM tracker_rule_failures trf
-				WHERE trf.source_path = fm.path AND trf.severity = "warning"
+				WHERE trf.source_path = fm.path AND trf.disposition = "advisory"
 			)
 		FROM file_metadata fm
 		LEFT JOIN upload_records ur ON ur.id = (
@@ -1482,7 +1541,7 @@ func (r *SQLiteRepository) ListHistoryEntries(ctx context.Context) ([]HistoryEnt
 			&entry.LatestUploadStatus,
 			&uploadCreatedAt,
 			&entry.RuleFailureCount,
-			&entry.RuleWarningCount,
+			&entry.RuleAdvisoryCount,
 		); err != nil {
 			return nil, fmt.Errorf("db list history entries: %w", err)
 		}
@@ -1546,6 +1605,8 @@ func (r *SQLiteRepository) ListUploadHistoryByPath(ctx context.Context, sourcePa
 	return records, nil
 }
 
+// ListPendingUploads is retained as a SQLite diagnostic query and intentionally
+// excluded from the upload-ledger capability until a production caller exists.
 func (r *SQLiteRepository) ListPendingUploads(ctx context.Context) ([]UploadRecord, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("db: repository not initialized")
@@ -1649,6 +1710,9 @@ func (r *SQLiteRepository) UpdateLatestUploadRecordStatus(ctx context.Context, s
 	return nil
 }
 
+// SaveTrackerRuleFailures atomically replaces one source/tracker result set.
+// Tracker names are stored uppercase, blank rule names are skipped, missing
+// timestamps default to now, and dispositions are normalized before storage.
 func (r *SQLiteRepository) SaveTrackerRuleFailures(ctx context.Context, sourcePath string, tracker string, failures []TrackerRuleFailure) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -1669,8 +1733,8 @@ func (r *SQLiteRepository) SaveTrackerRuleFailures(ctx context.Context, sourcePa
 
 		if len(failures) > 0 {
 			stmt, err := tx.PrepareContext(ctx, `
-				INSERT INTO tracker_rule_failures (source_path, tracker, rule, reason, severity, created_at)
-				VALUES (?, ?, ?, ?, ?, ?)
+				INSERT INTO tracker_rule_failures (source_path, tracker, rule, reason, disposition, authorized, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?)
 			`)
 			if err != nil {
 				return fmt.Errorf("db save tracker rule failures: prepare: %w", err)
@@ -1691,7 +1755,8 @@ func (r *SQLiteRepository) SaveTrackerRuleFailures(ctx context.Context, sourcePa
 					strings.ToUpper(trimmedTracker),
 					rule,
 					strings.TrimSpace(failure.Reason),
-					api.NormalizeRuleFailureSeverity(failure.Severity),
+					api.NormalizeRuleDisposition(failure.Disposition),
+					failure.Authorized,
 					createdAt.Format(time.RFC3339Nano),
 				); err != nil {
 					return fmt.Errorf("db save tracker rule failures: insert: %w", err)
@@ -1715,7 +1780,7 @@ func (r *SQLiteRepository) ListTrackerRuleFailuresByPath(ctx context.Context, pa
 	}
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT source_path, tracker, rule, reason, severity, created_at
+		SELECT source_path, tracker, rule, reason, disposition, authorized, created_at
 		FROM tracker_rule_failures
 		WHERE source_path = ?
 		ORDER BY id ASC
@@ -1729,7 +1794,15 @@ func (r *SQLiteRepository) ListTrackerRuleFailuresByPath(ctx context.Context, pa
 	for rows.Next() {
 		var record TrackerRuleFailure
 		var createdAt string
-		if err := rows.Scan(&record.SourcePath, &record.Tracker, &record.Rule, &record.Reason, &record.Severity, &createdAt); err != nil {
+		if err := rows.Scan(
+			&record.SourcePath,
+			&record.Tracker,
+			&record.Rule,
+			&record.Reason,
+			&record.Disposition,
+			&record.Authorized,
+			&createdAt,
+		); err != nil {
 			return nil, fmt.Errorf("db list tracker rule failures: %w", err)
 		}
 		if createdAt != "" {
@@ -1995,6 +2068,8 @@ func (r *SQLiteRepository) ListScreenshotsByPath(ctx context.Context, path strin
 	return screenshots, nil
 }
 
+// DeleteScreenshot atomically removes the screenshot record and every local
+// uploaded-image record keyed by imagePath. Final selections are not removed.
 func (r *SQLiteRepository) DeleteScreenshot(ctx context.Context, imagePath string) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -2016,6 +2091,9 @@ func (r *SQLiteRepository) DeleteScreenshot(ctx context.Context, imagePath strin
 	return nil
 }
 
+// SaveFinalSelections atomically replaces every final selection for path.
+// Callers that must preserve menu selections should use
+// [SQLiteRepository.ReplaceNormalFinalSelections].
 func (r *SQLiteRepository) SaveFinalSelections(ctx context.Context, path string, selections []ScreenshotFinalSelection) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -2138,7 +2216,8 @@ func (r *SQLiteRepository) ReplaceNormalFinalSelections(ctx context.Context, pat
 		return internalerrors.ErrInvalidInput
 	}
 	for _, selection := range selections {
-		if strings.TrimSpace(selection.SourcePath) != trimmed || strings.TrimSpace(selection.ImagePath) == "" || api.IsDiscMenuSelectionSource(strings.TrimSpace(selection.Source)) {
+		if strings.TrimSpace(selection.SourcePath) != trimmed || strings.TrimSpace(selection.ImagePath) == "" ||
+			api.IsDiscMenuSelectionSource(strings.TrimSpace(selection.Source)) {
 			return internalerrors.ErrInvalidInput
 		}
 	}
@@ -2161,7 +2240,12 @@ func (r *SQLiteRepository) ReplaceNormalFinalSelections(ctx context.Context, pat
 
 // AppendManualMenuScreenshots atomically upserts manual menu screenshot records
 // and appends their selections after existing manual-menu order values.
-func (r *SQLiteRepository) AppendManualMenuScreenshots(ctx context.Context, path string, screenshots []Screenshot, selections []ScreenshotFinalSelection) error {
+func (r *SQLiteRepository) AppendManualMenuScreenshots(
+	ctx context.Context,
+	path string,
+	screenshots []Screenshot,
+	selections []ScreenshotFinalSelection,
+) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
 	}
@@ -2194,7 +2278,12 @@ func (r *SQLiteRepository) AppendManualMenuScreenshots(ctx context.Context, path
 // ReplaceDVDMenuScreenshots atomically replaces automatic DVD-menu records and
 // selections while preserving manual menus and normal screenshots. It returns
 // replaced local image paths for caller-owned filesystem cleanup.
-func (r *SQLiteRepository) ReplaceDVDMenuScreenshots(ctx context.Context, path string, screenshots []Screenshot, selections []ScreenshotFinalSelection) ([]string, error) {
+func (r *SQLiteRepository) ReplaceDVDMenuScreenshots(
+	ctx context.Context,
+	path string,
+	screenshots []Screenshot,
+	selections []ScreenshotFinalSelection,
+) ([]string, error) {
 	if r == nil || r.db == nil {
 		return nil, errors.New("db: repository not initialized")
 	}
@@ -2341,16 +2430,19 @@ func (r *SQLiteRepository) RestoreDiscMenuScreenshot(ctx context.Context, path s
 	selection := deleted.Selection
 	selection.SourcePath = strings.TrimSpace(selection.SourcePath)
 	selection.ImagePath = strings.TrimSpace(selection.ImagePath)
-	if trimmedPath == "" || selection.SourcePath != trimmedPath || selection.ImagePath == "" || !api.IsDiscMenuSelectionSource(strings.TrimSpace(selection.Source)) {
+	if trimmedPath == "" || selection.SourcePath != trimmedPath || selection.ImagePath == "" ||
+		!api.IsDiscMenuSelectionSource(strings.TrimSpace(selection.Source)) {
 		return internalerrors.ErrInvalidInput
 	}
 	if deleted.Screenshot != nil {
-		if strings.TrimSpace(deleted.Screenshot.SourcePath) != trimmedPath || strings.TrimSpace(deleted.Screenshot.ImagePath) != selection.ImagePath || deleted.Screenshot.Purpose != api.ScreenshotPurposeMenu {
+		if strings.TrimSpace(deleted.Screenshot.SourcePath) != trimmedPath || strings.TrimSpace(deleted.Screenshot.ImagePath) != selection.ImagePath ||
+			deleted.Screenshot.Purpose != api.ScreenshotPurposeMenu {
 			return internalerrors.ErrInvalidInput
 		}
 	}
 	for _, uploaded := range deleted.UploadedImages {
-		if strings.TrimSpace(uploaded.SourcePath) != trimmedPath || strings.TrimSpace(uploaded.ImagePath) != selection.ImagePath || strings.TrimSpace(uploaded.Host) == "" {
+		if strings.TrimSpace(uploaded.SourcePath) != trimmedPath || strings.TrimSpace(uploaded.ImagePath) != selection.ImagePath ||
+			strings.TrimSpace(uploaded.Host) == "" {
 			return internalerrors.ErrInvalidInput
 		}
 	}
@@ -2606,7 +2698,8 @@ func validMenuScreenshotBatch(path string, screenshots []Screenshot, selections 
 	}
 	paths := make(map[string]struct{}, len(screenshots))
 	for _, screenshot := range screenshots {
-		if strings.TrimSpace(screenshot.SourcePath) != path || strings.TrimSpace(screenshot.ImagePath) == "" || screenshot.Purpose != api.ScreenshotPurposeMenu {
+		if strings.TrimSpace(screenshot.SourcePath) != path || strings.TrimSpace(screenshot.ImagePath) == "" ||
+			screenshot.Purpose != api.ScreenshotPurposeMenu {
 			return false
 		}
 		imagePath := strings.TrimSpace(screenshot.ImagePath)
@@ -2813,6 +2906,8 @@ func deleteScreenshotReferencesTx(ctx context.Context, tx *sql.Tx, path string, 
 	return nil
 }
 
+// ReplaceScreenshotSlots atomically replaces all slots and variants for path;
+// variants absent from slots are deleted.
 func (r *SQLiteRepository) ReplaceScreenshotSlots(ctx context.Context, path string, slots []ScreenshotSlot) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -3053,6 +3148,9 @@ func (r *SQLiteRepository) UpsertScreenshotSlotVariants(ctx context.Context, pat
 	return nil
 }
 
+// SaveUploadedImages upserts upload records without deleting omitted images.
+// path and host override their per-image fields; empty usage scopes default to
+// "global" and zero upload times default to the current UTC time.
 func (r *SQLiteRepository) SaveUploadedImages(ctx context.Context, path string, host string, images []UploadedImageLink) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -3189,6 +3287,8 @@ func (r *SQLiteRepository) ListUploadedImagesByPath(ctx context.Context, path st
 	return images, nil
 }
 
+// DeleteUploadedImage deletes every usage-scope record matching path,
+// imagePath, and host. It returns an error when no record matched.
 func (r *SQLiteRepository) DeleteUploadedImage(ctx context.Context, path string, imagePath string, host string) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -3280,6 +3380,9 @@ func (r *SQLiteRepository) ListStoredReleasePaths(ctx context.Context) ([]string
 	return paths, nil
 }
 
+// PurgeContentData atomically deletes persisted release, metadata, upload, and
+// media rows for path, including matching retired UI-state rows. It does not
+// remove local files or remote uploads.
 func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -3300,6 +3403,7 @@ func (r *SQLiteRepository) PurgeContentData(ctx context.Context, path string) er
 		args []any
 	}{
 		{sql: `DELETE FROM dvd_mediainfo WHERE source_path = ?`, args: []any{trimmedPath}},
+		{sql: `DELETE FROM prepared_release_current WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM external_metadata WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM external_ids WHERE source_path = ?`, args: []any{trimmedPath}},
 		{sql: `DELETE FROM release_overrides WHERE source_path = ?`, args: []any{trimmedPath}},

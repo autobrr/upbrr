@@ -9,11 +9,16 @@ import (
 	"strings"
 )
 
+// Block identifies a candidate JSON object's or array's half-open byte range
+// within the source string.
 type Block struct {
 	Start int
 	End   int
 }
 
+// DefaultSensitiveKeys is the JSON-key set used when a redaction call receives
+// nil keys. Key matching ignores case and common separators and treats a key as
+// sensitive when its normalized form contains a normalized entry.
 var DefaultSensitiveKeys = map[string]struct{}{
 	"token":         {},
 	"passkey":       {},
@@ -37,15 +42,23 @@ var (
 	apiPathTokenRe      = regexp.MustCompile(`(?i)(/api/torrents/)([A-Za-z0-9]{10,})($|[/?#"])`)
 	proxyPathRe         = regexp.MustCompile(`(?i)(/proxy/)([^/\s?#"]+)`) // /proxy/<secret>
 	urlUserinfoRe       = regexp.MustCompile(`(?i)(\b[a-z][a-z0-9+.-]*://|//)([^/@\s]+)@`)
-	queryParamRe        = regexp.MustCompile(`(?i)([?&](anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|auth|auth[_-]?key|csrf|info[_-]?hash|key|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass|uid|user|user[_-]?id|userid)=)[^&]+`)
-	keyValueQuotedRe    = regexp.MustCompile(`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass)\b(\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`)
-	keyValuePlainRe     = regexp.MustCompile(`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass)\b(\s*[:=]\s*)(bearer\s+)?([^"'\s,;)\]}]+)`)
-	cookieTailRe        = regexp.MustCompile(`(?i)(\bcookie\b\s*[:=]\s*\[REDACTED\])(?:[;]\s*[^,\r\n]+)+`)
-	authTailRe          = regexp.MustCompile(`(?i)(\bauthorization\b\s*[:=]\s*bearer\s+\[REDACTED\])(?:,\s*[^,\s]+)+`)
-	longHexTokenRe      = regexp.MustCompile(`\b[a-fA-F0-9]{32,}\b`)
+	queryParamRe        = regexp.MustCompile(
+		`(?i)([?&](anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|auth|auth[_-]?key|csrf|info[_-]?hash|key|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass|uid|user|user[_-]?id|userid)=)[^&]+`,
+	)
+	keyValueQuotedRe = regexp.MustCompile(
+		`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass)\b(\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')`,
+	)
+	keyValuePlainRe = regexp.MustCompile(
+		`(?i)\b(anti[_-]?csrf[_-]?token|api[_-]?key|api[_-]?token|authorization|auth|auth[_-]?key|cookie|csrf|passkey|password|rss[_-]?key|secret|token|torrent[_-]?pass)\b(\s*[:=]\s*)(bearer\s+)?([^"'\s,;)\]}]+)`,
+	)
+	cookieTailRe   = regexp.MustCompile(`(?i)(\bcookie\b\s*[:=]\s*\[REDACTED\])(?:[;]\s*[^,\r\n]+)+`)
+	authTailRe     = regexp.MustCompile(`(?i)(\bauthorization\b\s*[:=]\s*bearer\s+\[REDACTED\])(?:,\s*[^,\s]+)+`)
+	longHexTokenRe = regexp.MustCompile(`\b[a-fA-F0-9]{32,}\b`)
 )
 
-// ExtractJSONBlocks returns candidate JSON substrings based on bracket counting.
+// ExtractJSONBlocks returns balanced top-level object and array candidates in
+// source order. Brackets inside quoted strings are ignored, and unterminated
+// candidates are omitted.
 func ExtractJSONBlocks(text string) []Block {
 	blocks := make([]Block, 0)
 	stack := make([]rune, 0)
@@ -100,7 +113,10 @@ func ExtractJSONBlocks(text string) []Block {
 	return blocks
 }
 
-// RedactValue redacts sensitive content in a string.
+// RedactValue redacts valid embedded JSON plus known secret-bearing URL, path,
+// query, key/value, cookie, authorization, and long-hex patterns. Nil keys use
+// [DefaultSensitiveKeys] for embedded JSON; textual patterns use the package's
+// fixed secret vocabulary.
 func RedactValue(value string, sensitiveKeys map[string]struct{}) string {
 	keys := sensitiveKeys
 	if keys == nil {
@@ -171,7 +187,8 @@ func redactPlainKeyValue(value string) string {
 	return matches[1] + matches[2] + matches[3] + "[REDACTED]"
 }
 
-// RedactPrivateInfo recursively redacts sensitive values in JSON-like data.
+// RedactPrivateInfo recursively redacts JSON-like maps, slices, and strings
+// without mutating input maps or slices. Nil keys use [DefaultSensitiveKeys].
 func RedactPrivateInfo(data any, sensitiveKeys map[string]struct{}) any {
 	keys := sensitiveKeys
 	if keys == nil {

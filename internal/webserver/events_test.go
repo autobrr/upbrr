@@ -29,7 +29,7 @@ func TestEventHubLogsDroppedEvents(t *testing.T) {
 	hub.subscribers[sessionID] = map[chan serverEvent]struct{}{ch: {}}
 	hub.mu.Unlock()
 
-	hub.Emit(sessionID, "metadata:progress", map[string]string{"status": "running"})
+	hub.Emit(sessionID, "preparation:progress", map[string]string{"status": "running"})
 
 	if len(logger.messages) != 1 {
 		t.Fatalf("expected one dropped-event log message, got %d", len(logger.messages))

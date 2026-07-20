@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,6 +23,99 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+type bannedRewriteTransport struct {
+	base *url.URL
+	rt   http.RoundTripper
+}
+
+func (t bannedRewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.URL.Scheme = t.base.Scheme
+	clone.URL.Host = t.base.Host
+	clone.Host = t.base.Host
+	resp, err := t.rt.RoundTrip(clone)
+	if err != nil {
+		return nil, fmt.Errorf("round trip rewritten banned-group request: %w", err)
+	}
+	return resp, nil
+}
+
+func bannedRewriteClient(t *testing.T, server *httptest.Server) *http.Client {
+	t.Helper()
+	base, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse banned-group test server URL: %v", err)
+	}
+	client := server.Client()
+	client.Transport = bannedRewriteTransport{base: base, rt: client.Transport}
+	return client
+}
+
+func newTestBannedGroupChecker(t *testing.T, dbPath string) *BannedGroupChecker {
+	t.Helper()
+	return NewBannedGroupCheckerWithRegistry(dbPath, newTestBannedPolicyRegistry(t))
+}
+
+func newTestBannedPolicyRegistry(t *testing.T) *Registry {
+	t.Helper()
+	registry := NewRegistry()
+	policies := map[string]struct {
+		baseURL string
+		policy  BannedGroupPolicy
+	}{
+		"AITHER": {baseURL: "https://aither.cc", policy: BannedGroupPolicy{EndpointPath: "/api/blacklists/releasegroups", RequireAPIKey: true}},
+		"LST":    {baseURL: "https://lst.gg", policy: BannedGroupPolicy{EndpointPath: "/api/bannedReleaseGroups", RequireAPIKey: true}},
+		"LUME":   {baseURL: "https://luminarr.me", policy: BannedGroupPolicy{TRaSHGuideURL: trashGuideBannedGroupsURL}},
+		"SPD": {baseURL: "https://speedapp.io", policy: BannedGroupPolicy{
+			DefaultEndpoint: "https://speedapp.io/api/torrent/release-group/blacklist",
+			EndpointPath:    "/api/torrent/release-group/blacklist",
+			RequireAPIKey:   true,
+		}},
+	}
+	for name, item := range policies {
+		policy := item.policy
+		if err := registry.RegisterDescriptor(Descriptor{
+			Name:         name,
+			BaseURL:      item.baseURL,
+			Definition:   stubDefinition{name: name},
+			BannedPolicy: &policy,
+		}); err != nil {
+			t.Fatalf("register %s banned policy: %v", name, err)
+		}
+	}
+	static := map[string][]string{
+		"A4K":  {"TEKNO3D"},
+		"BLU":  {"TheFarm"},
+		"CBR":  {"YTS.MX"},
+		"DP":   {"FGT", "PSA", "HorribleSubs", "Subsplease", "SyncUp", "Trix"},
+		"GPW":  {"MOMOWEB"},
+		"HHD":  {"EVO"},
+		"LT":   {"EVO"},
+		"MTV":  {"PandaRG"},
+		"NBL":  {"YakuboEncodes"},
+		"OE":   {"VipapkSudios"},
+		"OTW":  {"Sync0rdi"},
+		"PHD":  {"VisionXpert"},
+		"PTP":  {"WORLD"},
+		"PTT":  {"M@RTiNU$"},
+		"RAS":  {"INFINITY"},
+		"RHD":  {"MagicX"},
+		"TOS":  {"FL3ER"},
+		"ULCX": {"EDGE2020", "NuBz", "Ralphy"},
+		"YUS":  {"YOLAND"},
+	}
+	for name, groups := range static {
+		if err := registry.RegisterDescriptor(Descriptor{
+			Name:         name,
+			Definition:   stubDefinition{name: name},
+			BannedGroups: groups,
+		}); err != nil {
+			t.Fatalf("register %s static banned groups: %v", name, err)
+		}
+	}
+	return registry
+}
 
 type bannedRefreshTestLogger struct {
 	debugMessages []string
@@ -43,7 +137,7 @@ func TestNewBannedGroupCheckerFromDBPath(t *testing.T) {
 	t.Parallel()
 
 	tempDir := t.TempDir()
-	checker := NewBannedGroupChecker(filepath.Join(tempDir, "db.sqlite"))
+	checker := newTestBannedGroupChecker(t, filepath.Join(tempDir, "db.sqlite"))
 	if checker == nil {
 		t.Fatalf("expected checker, got nil")
 	}
@@ -58,7 +152,7 @@ func TestNewBannedGroupCheckerNoPathUsesDefaultRoot(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", "")
 
-	checker := NewBannedGroupChecker(" ")
+	checker := newTestBannedGroupChecker(t, " ")
 	if checker == nil {
 		t.Fatalf("expected checker")
 	}
@@ -71,11 +165,9 @@ func TestNewBannedGroupCheckerNoPathUsesDefaultRoot(t *testing.T) {
 func TestBannedGroupCheckerStaticBuiltins(t *testing.T) {
 	t.Parallel()
 
-	checker := NewBannedGroupChecker(filepath.Join(t.TempDir(), "db.sqlite"))
+	checker := newTestBannedGroupChecker(t, filepath.Join(t.TempDir(), "db.sqlite"))
 	cases := map[string][]string{
 		"A4K":  {"TEKNO3D"},
-		"ANT":  {"ZMNT"},
-		"BHD":  {"ProRes", "MezRips", "Flights", "BiTOR", "iVy", "QxR", "SyncUP", "OFT", "TGS"},
 		"BLU":  {"TheFarm"},
 		"CBR":  {"YTS.MX"},
 		"DP":   {"FGT", "PSA", "HorribleSubs", "Subsplease", "SyncUp", "Trix"},
@@ -109,7 +201,7 @@ func TestBannedGroupCheckerStaticBuiltins(t *testing.T) {
 func TestBannedGroupCheckerMergesBuiltinsWithCacheFile(t *testing.T) {
 	t.Parallel()
 
-	checker := NewBannedGroupChecker(filepath.Join(t.TempDir(), "db.sqlite"))
+	checker := newTestBannedGroupChecker(t, filepath.Join(t.TempDir(), "db.sqlite"))
 	if checker == nil {
 		t.Fatalf("expected checker")
 	}
@@ -135,7 +227,7 @@ func TestBannedGroupCheckerMergesBuiltinsWithCacheFile(t *testing.T) {
 func TestBannedGroupCheckerUnreadableCacheFallsBackToRhdBuiltins(t *testing.T) {
 	t.Parallel()
 
-	checker := NewBannedGroupChecker(filepath.Join(t.TempDir(), "db.sqlite"))
+	checker := newTestBannedGroupChecker(t, filepath.Join(t.TempDir(), "db.sqlite"))
 	if checker == nil {
 		t.Fatalf("expected checker")
 	}
@@ -184,7 +276,7 @@ func TestBannedGroupCheckerUnreadableCacheFallsBackToRhdBuiltins(t *testing.T) {
 func TestBannedGroupCheckerDPDoesNotIncludeRemovedHDT(t *testing.T) {
 	t.Parallel()
 
-	checker := NewBannedGroupChecker(filepath.Join(t.TempDir(), "db.sqlite"))
+	checker := newTestBannedGroupChecker(t, filepath.Join(t.TempDir(), "db.sqlite"))
 	banned, err := checker.IsBanned("DP", "HDT")
 	if err != nil {
 		t.Fatalf("check HDT: %v", err)
@@ -232,11 +324,12 @@ func TestRefreshDynamicBannedGroupsCachesAither(t *testing.T) {
 		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "upbrr.db")},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
-				"AITHER": {APIKey: "aither-key", URL: server.URL},
+				"AITHER": {APIKey: "aither-key"},
 			},
 		},
 	}
-	checker := NewBannedGroupChecker(cfg.MainSettings.DBPath)
+	checker := newTestBannedGroupChecker(t, cfg.MainSettings.DBPath)
+	checker.client = bannedRewriteClient(t, server)
 
 	if err := checker.RefreshDynamic(context.Background(), cfg, []string{"AITHER"}, api.NopLogger{}); err != nil {
 		t.Fatalf("refresh banned groups: %v", err)
@@ -290,12 +383,14 @@ func TestRefreshDynamicBannedGroupsRejectsTrailingJSON(t *testing.T) {
 		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "upbrr.db")},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
-				"AITHER": {APIKey: "aither-key", URL: server.URL},
+				"AITHER": {APIKey: "aither-key"},
 			},
 		},
 	}
 
-	_, _, err := fetchDynamicBannedGroups(context.Background(), cfg, "AITHER")
+	_, _, err := fetchDynamicBannedGroupsWithClient(
+		context.Background(), cfg, "AITHER", newTestBannedPolicyRegistry(t), bannedRewriteClient(t, server),
+	)
 	if err == nil {
 		t.Fatalf("expected trailing JSON error")
 	}
@@ -303,7 +398,8 @@ func TestRefreshDynamicBannedGroupsRejectsTrailingJSON(t *testing.T) {
 		t.Fatalf("expected trailing JSON error, got %v", err)
 	}
 
-	checker := NewBannedGroupChecker(cfg.MainSettings.DBPath)
+	checker := newTestBannedGroupChecker(t, cfg.MainSettings.DBPath)
+	checker.client = bannedRewriteClient(t, server)
 	if err := checker.RefreshDynamic(context.Background(), cfg, []string{"AITHER"}, api.NopLogger{}); err != nil {
 		t.Fatalf("refresh banned groups with malformed response: %v", err)
 	}
@@ -316,7 +412,7 @@ func TestRefreshDynamicBannedGroupsRejectsTrailingJSON(t *testing.T) {
 func TestRefreshDynamicDoesNotLogUnsupportedTrackers(t *testing.T) {
 	t.Parallel()
 
-	checker := NewBannedGroupChecker(filepath.Join(t.TempDir(), "db.sqlite"))
+	checker := newTestBannedGroupChecker(t, filepath.Join(t.TempDir(), "db.sqlite"))
 	logger := &bannedRefreshTestLogger{}
 
 	if err := checker.RefreshDynamic(context.Background(), config.Config{}, []string{"DP", "BHD", "MTV"}, logger); err != nil {
@@ -351,11 +447,13 @@ func TestFetchDynamicBannedGroupsRejectsRepeatedCursor(t *testing.T) {
 	cfg := config.Config{
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
-				"AITHER": {APIKey: "aither-key", URL: server.URL},
+				"AITHER": {APIKey: "aither-key"},
 			},
 		},
 	}
-	_, _, err := fetchDynamicBannedGroups(context.Background(), cfg, "AITHER")
+	_, _, err := fetchDynamicBannedGroupsWithClient(
+		context.Background(), cfg, "AITHER", newTestBannedPolicyRegistry(t), bannedRewriteClient(t, server),
+	)
 	if err == nil {
 		t.Fatalf("expected repeated cursor error")
 	}
@@ -383,7 +481,7 @@ func TestFetchDynamicBannedGroupsPageRetriesSPDRawKeyOnBearerAuthFailure(t *test
 			}))
 			defer server.Close()
 
-			groups, _, nextCursor, err := fetchDynamicBannedGroupsPage(context.Background(), server.Client(), server.URL, "SPD", "spd-key", "")
+			groups, _, nextCursor, err := fetchDynamicBannedGroupsPage(context.Background(), server.Client(), server.URL, "SPD", "spd-key", "", true)
 			if err != nil {
 				t.Fatalf("fetch SPD banned groups: %v", err)
 			}
@@ -416,7 +514,7 @@ func TestFetchDynamicBannedGroupsPageDoesNotRetrySPDRawKeyOnNonAuthFailure(t *te
 	}))
 	defer server.Close()
 
-	_, _, _, err := fetchDynamicBannedGroupsPage(context.Background(), server.Client(), server.URL, "SPD", "spd-key", "")
+	_, _, _, err := fetchDynamicBannedGroupsPage(context.Background(), server.Client(), server.URL, "SPD", "spd-key", "", true)
 	if err == nil {
 		t.Fatalf("expected non-auth status error")
 	}
@@ -437,11 +535,13 @@ func TestFetchDynamicBannedGroupsRejectsOversizedSuccessBody(t *testing.T) {
 	cfg := config.Config{
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
-				"AITHER": {APIKey: "aither-key", URL: server.URL},
+				"AITHER": {APIKey: "aither-key"},
 			},
 		},
 	}
-	_, _, err := fetchDynamicBannedGroups(context.Background(), cfg, "AITHER")
+	_, _, err := fetchDynamicBannedGroupsWithClient(
+		context.Background(), cfg, "AITHER", newTestBannedPolicyRegistry(t), bannedRewriteClient(t, server),
+	)
 	if err == nil {
 		t.Fatalf("expected oversized response error")
 	}
@@ -497,7 +597,7 @@ func TestRefreshDynamicFreshCacheInvalidatesLoadedGroups(t *testing.T) {
 	cfg := config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "upbrr.db")},
 	}
-	checker := NewBannedGroupChecker(cfg.MainSettings.DBPath)
+	checker := newTestBannedGroupChecker(t, cfg.MainSettings.DBPath)
 	cachePath := filepath.Join(tempDir, "cache", "banned", "AITHER_banned_groups.json")
 	if err := writeBannedGroupsCache(cachePath, []string{"OldGRP"}, nil); err != nil {
 		t.Fatalf("write old banned groups cache: %v", err)
@@ -539,7 +639,7 @@ func TestRefreshDynamicCanceledAfterFetchDoesNotWriteOrInvalidate(t *testing.T) 
 	cfg := config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "upbrr.db")},
 	}
-	checker := NewBannedGroupChecker(cfg.MainSettings.DBPath)
+	checker := newTestBannedGroupChecker(t, cfg.MainSettings.DBPath)
 	cachePath := filepath.Join(tempDir, "cache", "banned", "AITHER_banned_groups.json")
 	if err := writeBannedGroupsCache(cachePath, []string{"OldGRP"}, nil); err != nil {
 		t.Fatalf("write old banned groups cache: %v", err)
@@ -710,7 +810,7 @@ func TestRefreshDynamicBannedGroupsCachesLUMEFromTRaSHGuide(t *testing.T) {
 	cfg := config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "upbrr.db")},
 	}
-	checker := NewBannedGroupChecker(cfg.MainSettings.DBPath)
+	checker := newTestBannedGroupChecker(t, cfg.MainSettings.DBPath)
 
 	if err := checker.RefreshDynamic(context.Background(), cfg, []string{"LUME"}, api.NopLogger{}); err != nil {
 		t.Fatalf("refresh banned groups: %v", err)
@@ -759,11 +859,11 @@ func TestRefreshDynamicBannedGroupsMissingAPIKeyDoesNotWriteEmptyCache(t *testin
 		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "upbrr.db")},
 		Trackers: config.TrackersConfig{
 			Trackers: map[string]config.TrackerConfig{
-				"AITHER": {URL: "https://aither.example.invalid"},
+				"AITHER": {},
 			},
 		},
 	}
-	checker := NewBannedGroupChecker(cfg.MainSettings.DBPath)
+	checker := newTestBannedGroupChecker(t, cfg.MainSettings.DBPath)
 
 	if err := checker.RefreshDynamic(context.Background(), cfg, []string{"AITHER"}, api.NopLogger{}); err != nil {
 		t.Fatalf("refresh banned groups: %v", err)

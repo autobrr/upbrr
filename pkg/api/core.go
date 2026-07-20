@@ -3,55 +3,36 @@
 
 package api
 
-import (
-	"context"
-)
-
-// Mode identifies the entrypoint building a core request.
-type Mode string
-
-const (
-	// ModeCLI marks requests started from the command-line entrypoint.
-	ModeCLI Mode = "cli"
-	// ModeGUI marks requests started from GUI or embedded web entrypoints.
-	ModeGUI Mode = "gui"
-)
-
-// Request carries one core operation across CLI, Wails, and embedded web.
-// Paths and path-keyed maps use host filesystem source paths as keys.
+// Request carries one core operation across CLI and WebUI.
 type Request struct {
-	Paths                        []string
-	Mode                         Mode
-	Options                      UploadOptions
-	Execution                    ExecutionOptions
-	DescriptionGroups            []DescriptionBuilderGroup
-	Trackers                     []string
-	TrackersRemove               []string
-	IgnoreTrackerRuleFailures    bool
-	IgnoreTrackerRuleFailuresFor []string
-	IgnoreDupesFor               []string
-	SkipDupeCheck                bool
-	SkipDupeAsActual             bool
-	DoubleDupeCheck              bool
-	SourceLookupURL              string
-	DescriptionOverrideRaw       string
-	DescriptionOverrideURL       string
-	DescriptionOverrideGroup     string
-	MetadataOverrides            MetadataOverrides
-	TrackerConfigOverrides       TrackerConfigOverrides
-	TrackerSiteOverrides         TrackerSiteOverrides
-	ClientOverrides              ClientOverrides
-	ImageHostOverrides           ImageHostOverrides
-	ScreenshotOverrides          ScreenshotOverrides
-	TorrentOverrides             TorrentOverrides
-	TrackerIDOverrides           map[string]string
-	ExternalIDOverrides          ExternalIDOverrides
-	ExternalIDSelections         map[string]ExternalIDSelection // keyed by source path, value is selected external IDs for that path
-	ReleaseNameOverrides         ReleaseNameOverrides
-	TrackerQuestionnaireAnswers  map[string]map[string]string // keyed by tracker, then questionnaire field key
-	PlaylistSelections           map[string][]string          // keyed by source path, value is selected playlist files
-	PlaylistSelectionsUseAll     map[string]bool              // keyed by source path, value is use-all flag
-	ConfirmBDMVRescan            bool
+	SourcePath                  string
+	Options                     UploadOptions
+	Execution                   ExecutionOptions
+	DescriptionGroups           []DescriptionBuilderGroup
+	Trackers                    []string
+	TrackersRemove              []string
+	RuleAuthorizations          []RuleAuthorization
+	IgnoreDupesFor              []string
+	SkipDupeCheck               bool
+	SkipDupeAsActual            bool
+	DoubleDupeCheck             bool
+	SourceLookupURL             string
+	DescriptionOverrideRaw      string
+	DescriptionOverrideURL      string
+	DescriptionOverrideGroup    string
+	MetadataOverrides           MetadataOverrides
+	TrackerConfigOverrides      TrackerConfigOverrides
+	TrackerSiteOverrides        TrackerSiteOverrides
+	ClientOverrides             ClientOverrides
+	ImageHostOverrides          ImageHostOverrides
+	ScreenshotOverrides         ScreenshotOverrides
+	TorrentOverrides            TorrentOverrides
+	TrackerIDOverrides          map[string]string
+	ExternalIDOverrides         ExternalIDOverrides
+	ReleaseNameOverrides        ReleaseNameOverrides
+	TrackerQuestionnaireAnswers map[string]map[string]string // keyed by tracker, then questionnaire field key
+	PlaylistInstruction         PlaylistInstruction
+	ConfirmBDMVRescan           bool
 }
 
 // ExecutionOptions controls queued and site-check execution behavior.
@@ -62,23 +43,9 @@ type ExecutionOptions struct {
 	SiteUploadTracker string
 }
 
-// ExternalIDSelection records per-source-path user ID choices copied across
-// resolved CLI/UI paths. Nil provider fields mean no user choice; non-nil
-// fields follow [ExternalIDOverrides] positive-value and zero-clear semantics.
-type ExternalIDSelection struct {
-	TMDBID   *int
-	IMDBID   *int
-	TVDBID   *int
-	TVmazeID *int
-	// MALID stores user selection for the canonical MAL/AniList-compatible
-	// anime identifier for this source path.
-	MALID *int
-}
-
-// UploadOptions contains per-run upload and preview behavior flags.
+// UploadOptions contains per-run preparation and upload choices. The invoked
+// operation, rather than a mode flag, determines whether trackers are submitted.
 type UploadOptions struct {
-	Debug           bool
-	DryRun          bool
 	RunLogLevel     string
 	Screens         int
 	NoSeed          bool
@@ -117,60 +84,19 @@ type Result struct {
 	UploadedCount int
 }
 
-// Core defines the shared upload, preview, history, screenshot, and description
-// operations used by CLI, Wails, and embedded web entrypoints.
-type Core interface {
-	RunUpload(ctx context.Context, req Request) (Result, error)
-	RunUploadPrepared(ctx context.Context, req Request) (Result, error)
-	FetchMetadataPreview(ctx context.Context, req Request) (MetadataPreview, error)
-	// FetchDescriptionBuilderPreview returns editable description groups for one
-	// source path. Non-empty request trackers limit group generation to that set.
-	FetchDescriptionBuilderPreview(ctx context.Context, req Request) (DescriptionBuilderPreview, error)
-	// FetchDescriptionBuilderGroupPreview rebuilds one editable description group
-	// for the requested source path and selected tracker set.
-	FetchDescriptionBuilderGroupPreview(ctx context.Context, req Request) (DescriptionBuilderGroup, error)
-	// FetchPreparationPreview returns tracker preparation details for one source
-	// path. Non-empty request trackers limit preparation to that set.
-	FetchPreparationPreview(ctx context.Context, req Request) (PreparationPreview, error)
-	FetchTrackerDryRunPreview(ctx context.Context, req Request) (TrackerDryRunPreview, error)
-	CheckDupes(ctx context.Context, req Request) (DupeCheckSummary, error)
-	BuildUploadReview(ctx context.Context, req Request) (UploadReview, error)
-	FetchScreenshotPlan(ctx context.Context, req Request) (ScreenshotPlan, error)
-	GenerateScreenshots(ctx context.Context, req Request, selections []ScreenshotSelection, purpose ScreenshotPurpose) (ScreenshotResult, error)
-	PreviewScreenshotFrame(ctx context.Context, req Request, timestampSeconds float64) (ScreenshotPreview, error)
-	DeleteScreenshot(ctx context.Context, req Request, imagePath string) error
-	DeleteTrackerImageURL(ctx context.Context, req Request, url string) error
-	SaveFinalScreenshotSelections(ctx context.Context, req Request, images []ScreenshotImage) error
-	// CaptureDVDMenus captures and persists bounded automatic menu images for one prepared DVD.
-	CaptureDVDMenus(ctx context.Context, req Request) (DVDMenuCaptureResult, error)
-	// ListDVDMenuScreenshots lists persisted manual and automatic menu images for one prepared source.
-	ListDVDMenuScreenshots(ctx context.Context, req Request) ([]ScreenshotImage, error)
-	// DeleteDVDMenuScreenshot removes one managed menu image and its local references.
-	DeleteDVDMenuScreenshot(ctx context.Context, req Request, imagePath string) error
-	ListUploadCandidates(ctx context.Context, req Request) ([]ScreenshotImage, error)
-	ListUploadedImages(ctx context.Context, req Request) ([]UploadedImageLink, error)
-	UploadImages(ctx context.Context, req Request, host string, images []ScreenshotImage) (UploadImagesResult, error)
-	DeleteUploadedImage(ctx context.Context, req Request, imagePath string, host string) error
-	ImportMenuImages(ctx context.Context, req Request, paths []string) error
-	DiscoverPlaylists(ctx context.Context, sourcePath string) ([]PlaylistInfo, error)
-	SavePlaylistSelection(ctx context.Context, sourcePath string, playlists []string, useAll bool) error
-	LoadPlaylistSelection(ctx context.Context, sourcePath string) (PlaylistSelection, error)
-	ListHistory(ctx context.Context) ([]HistoryEntry, error)
-	GetHistoryOverview(ctx context.Context, sourcePath string) (HistoryOverview, error)
-	DeleteHistoryRelease(ctx context.Context, sourcePath string) error
-	DeleteAllHistoryReleases(ctx context.Context) (int, error)
-	RenderDescription(ctx context.Context, raw string) (string, error)
-	SaveDescriptionOverride(ctx context.Context, req Request, raw string) (DescriptionBuilderGroup, error)
-	Close() error
-}
-
 // Config defines the minimum application configuration contract required by core wiring.
 // Keeping this in pkg/api avoids leaking internal package types into exported APIs.
 type Config interface {
 	Validate() error
 }
 
-// CoreDependencies supplies the externally owned services used to construct a Core.
+// RepositoryOwner owns repository lifecycle separately from borrowed
+// capabilities. Core never closes an externally supplied owner.
+type RepositoryOwner interface {
+	Close() error
+}
+
+// CoreDependencies supplies the externally owned services used to construct the core runtime.
 type CoreDependencies struct {
 	// Config is validated before the core is created.
 	Config Config
@@ -178,15 +104,13 @@ type CoreDependencies struct {
 	Logger Logger
 	// Services supplies optional service overrides; zero values use the core defaults.
 	Services ServiceSet
-	// Repository stores metadata and history. Nil opens and owns a SQLite repository from Config.
-	Repository MetadataRepository
+	// Repository supplies immutable borrowed persistence capabilities. Its zero
+	// value opens and owns a SQLite repository from Config.
+	Repository RepositoryCapabilities
+	// RepositoryOwner identifies the externally owned adapter used to build
+	// Repository. It remains borrowed and is used only for owner-specific setup.
+	RepositoryOwner RepositoryOwner
 	// SkipCookieMigration skips legacy cookie migration for callers that already
 	// synchronize cookie encryption state with the shared repository.
 	SkipCookieMigration bool
-}
-
-// CoreImpl is the exported concrete-core contract used by packages that accept
-// any current core implementation.
-type CoreImpl interface {
-	Core
 }

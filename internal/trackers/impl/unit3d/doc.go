@@ -10,52 +10,46 @@
 //
 // # Architecture
 //
-// The implementation is split into:
-//   - definition.go: Tracker registry and routing to specific implementations
-//   - upload.go: Core Unit3D upload logic (multipart form, API calls)
-//   - <tracker>_name.go: Tracker-specific name formatting rules
+// Shared protocol behavior lives in this package. Site-owned profiles, rules,
+// banned groups, and payload hooks live under sites/<tracker>.
 //
-// # Adding a New Unit3D Tracker
+// # Adding a Standard Unit3D Tracker
 //
 // To add support for a new Unit3D tracker (e.g., "EXAMPLE"):
 //
-// 1. Add the tracker to the known list in definition.go:
+// 1. Create sites/example/profile.go. Profile owns the tracker identity,
+// endpoint, and composed site policies:
 //
-//	knownUnit3DTrackers = []string{"AITHER", "BLU", "LST", "LUME", "EXAMPLE"}
-//
-// 2. Create a name formatter in example_name.go:
-//
-//	func buildExampleName(meta api.PreparedMetadata) string {
-//	    name := meta.ReleaseName
-//	    // Apply EXAMPLE-specific name formatting rules
-//	    return name
+//	func Profile() unit3d.Profile {
+//	    return unit3d.Profile{
+//	        Name:    "EXAMPLE",
+//	        BaseURL: "https://example.invalid",
+//	        Rules:   Rules(),
+//	    }
 //	}
 //
-// 3. Add the name formatter to the routing in definition.go Upload():
+// 2. Create sites/example/rules.go for release eligibility and typed policies
+// such as language and audio handling. Optional site-owned behavior stays beside
+// these files, for example banned_groups.go, auth.go, or custom payload hooks.
 //
-//	case "EXAMPLE":
-//	    name = buildExampleName(meta)
+// 3. Add one import and one Profile() entry to unit3DDefinitions in
+// internal/trackers/impl/registry.go.
 //
-// 4. Add configuration in config.yaml:
+// 4. Add one credential/config stanza to internal/config/defaults/example.yaml.
+// Do not add a tracker URL; Profile.BaseURL is authoritative.
 //
-//	EXAMPLE:
-//	  api_key: "your-api-key"
-//	  announce_url: "https://example.tracker/announce/PASSKEY"
-//	  anon: false
-//	  modq: false
+// 5. Add cross-tracker rule cases to internal/trackers/rules_test.go. Add
+// focused site tests only for behavior that differs from shared Unit3D handling.
 //
-// 5. Register in impl/registry.go if not auto-registered:
-//
-//	registry.Register(unit3d.New())
-//
-// That's it! The core upload logic in upload.go is tracker-agnostic and will
-// handle the API interaction, torrent/NFO attachments, and response parsing.
+// No generic metadata, auth, image-hosting, torrent-client, or frontend
+// tracker-name edit is required. Unsupported saved entries remain inert; the
+// runtime does not infer or register custom Unit3D trackers.
 //
 // # Testing
 //
-// Unit tests live in upload_test.go and cover:
+// Shared unit tests live in upload_test.go and cover:
 //   - Category/type/resolution mapping
-//   - Name formatting per tracker
+//   - Site profile callbacks
 //   - Form payload construction
 //   - Response parsing
 //

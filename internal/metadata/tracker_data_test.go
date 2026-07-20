@@ -21,14 +21,20 @@ import (
 	"testing"
 	"time"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
+	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/paths"
-	"github.com/autobrr/upbrr/internal/services/bbcode"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	dbsvc "github.com/autobrr/upbrr/internal/services/db"
-	"github.com/autobrr/upbrr/internal/trackerdata"
 	"github.com/autobrr/upbrr/internal/trackers"
+	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
+	btnimpl "github.com/autobrr/upbrr/internal/trackers/impl/standalone/btn"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+const minTrackerTokenLen = 25
 
 type stubTrackerLookup struct {
 	results map[string]trackerdata.Result
@@ -41,7 +47,7 @@ func (s *stubTrackerLookup) Lookup(
 	ctx context.Context,
 	tracker string,
 	_ string,
-	_ api.PreparedMetadata,
+	_ api.UploadSubject,
 	_ string,
 	_ bool,
 	_ bool,
@@ -82,8 +88,17 @@ func trackerRecordFor(trackerData []api.TrackerMetadata, tracker string) (api.Tr
 	return api.TrackerMetadata{}, false
 }
 
+func trackerDataTestRegistry(t *testing.T) *trackers.Registry {
+	t.Helper()
+	registry, err := trackerimpl.NewRegistry()
+	if err != nil {
+		t.Fatalf("create tracker registry: %v", err)
+	}
+	return registry
+}
+
 func TestTrackerLookupFileNameHonorsSkipWithoutTrackerID(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Show.S04E01.2160p.WEB.h265-GRP.mkv`,
 	}
 
@@ -93,7 +108,7 @@ func TestTrackerLookupFileNameHonorsSkipWithoutTrackerID(t *testing.T) {
 }
 
 func TestTrackerLookupFileNameKeepsFilenameWhenDefaultEnabled(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Show.S04E01.2160p.WEB.h265-GRP.mkv`,
 	}
 
@@ -103,7 +118,7 @@ func TestTrackerLookupFileNameKeepsFilenameWhenDefaultEnabled(t *testing.T) {
 }
 
 func TestTrackerLookupFileNameKeepsFilenameWithTrackerID(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Show.S04E01.2160p.WEB.h265-GRP.mkv`,
 	}
 
@@ -116,7 +131,11 @@ func TestEnrichTrackerDataStopsAfterFirstPriorityIDWinner(t *testing.T) {
 	repo := &fakeRepo{}
 	lookup := &stubTrackerLookup{
 		results: map[string]trackerdata.Result{
-			"ANT": {TMDBID: 123, IMDBID: 456, TrackerID: "101"},
+			"ANT": {
+				TMDBID:    123,
+				IMDBID:    456,
+				TrackerID: "101",
+			},
 			"HDB": {TMDBID: 999, TrackerID: "202"},
 		},
 		delays: map[string]time.Duration{
@@ -132,9 +151,9 @@ func TestEnrichTrackerDataStopsAfterFirstPriorityIDWinner(t *testing.T) {
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
 		TrackerIDs: map[string]string{
 			"ant": "101",
@@ -142,7 +161,7 @@ func TestEnrichTrackerDataStopsAfterFirstPriorityIDWinner(t *testing.T) {
 		},
 	}
 
-	result, err := svc.EnrichTrackerData(context.Background(), meta)
+	result, err := svc.collectTrackerEvidence(context.Background(), meta)
 	if err != nil {
 		t.Fatalf("enrich: %v", err)
 	}
@@ -187,9 +206,9 @@ func TestEnrichTrackerDataPreferredTrackerOverridesStaticPriority(t *testing.T) 
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
 		TrackerIDs: map[string]string{
 			"ant": "101",
@@ -197,7 +216,7 @@ func TestEnrichTrackerDataPreferredTrackerOverridesStaticPriority(t *testing.T) 
 		},
 	}
 
-	result, err := svc.EnrichTrackerData(context.Background(), meta)
+	result, err := svc.collectTrackerEvidence(context.Background(), meta)
 	if err != nil {
 		t.Fatalf("enrich: %v", err)
 	}
@@ -216,7 +235,11 @@ func TestEnrichTrackerDataUsesConcurrentWinnerWithoutClientTrackerIDs(t *testing
 	repo := &fakeRepo{}
 	lookup := &stubTrackerLookup{
 		results: map[string]trackerdata.Result{
-			"ANT": {TMDBID: 123, IMDBID: 456, TrackerID: "101"},
+			"ANT": {
+				TMDBID:    123,
+				IMDBID:    456,
+				TrackerID: "101",
+			},
 			"HDB": {TMDBID: 999, TrackerID: "202"},
 		},
 		delays: map[string]time.Duration{
@@ -232,14 +255,14 @@ func TestEnrichTrackerDataUsesConcurrentWinnerWithoutClientTrackerIDs(t *testing
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
-	meta := api.PreparedMetadata{
-		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
-		Trackers:   []string{"ANT", "HDB"},
+	meta := preparationstate.State{
+		SourcePath:       `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
+		EvidenceTrackers: []string{"ANT", "HDB"},
 	}
 
-	result, err := svc.EnrichTrackerData(context.Background(), meta)
+	result, err := svc.collectTrackerEvidence(context.Background(), meta)
 	if err != nil {
 		t.Fatalf("enrich: %v", err)
 	}
@@ -288,15 +311,15 @@ func TestEnrichTrackerDataPreferredTrackerIsSourceOfTruthWithoutClientTrackerIDs
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
-	meta := api.PreparedMetadata{
-		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
-		Trackers:   []string{"ANT", "HDB"},
-		Options:    api.UploadOptions{KeepImages: true},
+	meta := preparationstate.State{
+		SourcePath:       `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
+		EvidenceTrackers: []string{"ANT", "HDB"},
+		Policy:           preparationstate.CollectionPolicy{KeepImages: true},
 	}
 
-	result, err := svc.EnrichTrackerData(context.Background(), meta)
+	result, err := svc.collectTrackerEvidence(context.Background(), meta)
 	if err != nil {
 		t.Fatalf("enrich: %v", err)
 	}
@@ -346,9 +369,9 @@ func TestEnrichTrackerDataContinuesUntilIDsFound(t *testing.T) {
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
 		TrackerIDs: map[string]string{
 			"ant": "101",
@@ -357,7 +380,7 @@ func TestEnrichTrackerDataContinuesUntilIDsFound(t *testing.T) {
 		},
 	}
 
-	result, err := svc.EnrichTrackerData(context.Background(), meta)
+	result, err := svc.collectTrackerEvidence(context.Background(), meta)
 	if err != nil {
 		t.Fatalf("enrich: %v", err)
 	}
@@ -375,269 +398,19 @@ func TestEnrichTrackerDataContinuesUntilIDsFound(t *testing.T) {
 	}
 }
 
-func TestApplyTrackerClaimsBlocksAitherAndCachesClaims(t *testing.T) {
-	t.Parallel()
-
-	var requests int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		if got := r.URL.Path; got != "/api/internals/claim" {
-			t.Errorf("unexpected path %q", got)
-			return
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer aither-key" {
-			t.Error("unexpected auth header")
-			return
-		}
-		_, _ = w.Write([]byte(`{
-			"data":[
-				{"attributes":{"title":"Example Show","season":2,"tmdb_id":4242,"categories":["2"],"resolutions":["3"],"types":["4"]}}
-			],
-			"meta":{"next_cursor":""}
-		}`))
-	}))
-	defer server.Close()
-
-	tempDir := t.TempDir()
-	cfg := config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "db.sqlite")},
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{
-				"AITHER": {
-					APIKey:      "aither-key",
-					AnnounceURL: server.URL + "/announce",
-				},
-			},
-		},
-	}
-
-	logger := &recordingLogger{}
-	svc := NewService(&fakeRepo{}, WithConfig(cfg), WithLogger(logger))
-	meta := api.PreparedMetadata{
-		SourcePath: "/media/Example.Show.S02E03.mkv",
-		Trackers:   []string{"AITHER"},
-		Type:       "WEBDL",
-		Release:    api.ReleaseInfo{Resolution: "1080p", Season: 2},
-		SeasonInt:  2,
-		ExternalIDs: api.ExternalIDs{
-			TMDBID: 4242,
-		},
-	}
-
-	result, err := svc.applyTrackerClaims(context.Background(), meta)
-	if err != nil {
-		t.Fatalf("apply tracker claims: %v", err)
-	}
-	if requests != 1 {
-		t.Fatalf("expected one claim fetch, got %d", requests)
-	}
-	if got := result.BlockedTrackers["AITHER"]; len(got) != 1 || got[0] != api.TrackerBlockReasonClaim {
-		t.Fatalf("expected AITHER claim block, got %#v", result.BlockedTrackers)
-	}
-	if len(logger.warnings) != 1 {
-		t.Fatalf("expected one AITHER claim warning, got %#v", logger.warnings)
-	}
-	if !strings.Contains(logger.warnings[0], "metadata: tracker claim match found tracker=AITHER") ||
-		!strings.Contains(logger.warnings[0], "decision=blocked") ||
-		!strings.Contains(logger.warnings[0], "reason=claim_active") {
-		t.Fatalf("unexpected AITHER claim warning: %#v", logger.warnings)
-	}
-
-	cachePath := filepath.Join(tempDir, "cache", "banned", "AITHER_claimed_releases.json")
-	if _, err := os.Stat(cachePath); err != nil {
-		t.Fatalf("expected claims cache file at %s: %v", cachePath, err)
-	}
-
-	cacheData, err := os.ReadFile(cachePath)
-	if err != nil {
-		t.Fatalf("read claims cache: %v", err)
-	}
-	if !strings.Contains(string(cacheData), `"resolutions": [`) || !strings.Contains(string(cacheData), `"1080P"`) {
-		t.Fatalf("expected semantic resolutions in cache, got %s", string(cacheData))
-	}
-	if !strings.Contains(string(cacheData), `"types": [`) || !strings.Contains(string(cacheData), `"WEBDL"`) {
-		t.Fatalf("expected semantic types in cache, got %s", string(cacheData))
-	}
-
-	result, err = svc.applyTrackerClaims(context.Background(), meta)
-	if err != nil {
-		t.Fatalf("apply tracker claims from cache: %v", err)
-	}
-	if requests != 1 {
-		t.Fatalf("expected cached claims to avoid refetch, got %d requests", requests)
-	}
-	if got := result.BlockedTrackers["AITHER"]; len(got) != 1 || got[0] != api.TrackerBlockReasonClaim {
-		t.Fatalf("expected cached AITHER claim block, got %#v", result.BlockedTrackers)
-	}
-}
-
-func TestApplyTrackerClaimsDoesNotBlockOnSemanticMismatch(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{
-			"data":[
-				{"attributes":{"title":"Example Show","season":2,"tmdb_id":4242,"resolutions":["2"],"types":["4"]}}
-			],
-			"meta":{"next_cursor":""}
-		}`))
-	}))
-	defer server.Close()
-
-	tempDir := t.TempDir()
-	cfg := config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "db.sqlite")},
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{
-				"AITHER": {
-					APIKey:      "aither-key",
-					AnnounceURL: server.URL + "/announce",
-				},
-			},
-		},
-	}
-
-	svc := NewService(&fakeRepo{}, WithConfig(cfg))
-	meta := api.PreparedMetadata{
-		SourcePath: "/media/Example.Show.S02E03.mkv",
-		Trackers:   []string{"AITHER"},
-		Type:       "WEBDL",
-		Release:    api.ReleaseInfo{Resolution: "1080p", Season: 2},
-		SeasonInt:  2,
-		ExternalIDs: api.ExternalIDs{
-			TMDBID: 4242,
-		},
-	}
-
-	result, err := svc.applyTrackerClaims(context.Background(), meta)
-	if err != nil {
-		t.Fatalf("apply tracker claims: %v", err)
-	}
-	if len(result.BlockedTrackers["AITHER"]) != 0 {
-		t.Fatalf("expected no claim block for mismatched semantic resolution, got %#v", result.BlockedTrackers)
-	}
-}
-
-func TestApplyTrackerClaimsDoesNotUseParsedSeasonFallbackForUploadIdentity(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{
-			"data":[
-				{"attributes":{"title":"Example Show","season":2,"tmdb_id":4242,"categories":["2"],"resolutions":["3"],"types":["4"]}}
-			],
-			"meta":{"next_cursor":""}
-		}`))
-	}))
-	defer server.Close()
-
-	tempDir := t.TempDir()
-	cfg := config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "db.sqlite")},
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{
-				"AITHER": {
-					APIKey:      "aither-key",
-					AnnounceURL: server.URL + "/announce",
-				},
-			},
-		},
-	}
-
-	svc := NewService(&fakeRepo{}, WithConfig(cfg))
-	meta := api.PreparedMetadata{
-		SourcePath: "/media/Example.Show.S02E03.mkv",
-		Trackers:   []string{"AITHER"},
-		Type:       "WEBDL",
-		Release:    api.ReleaseInfo{Resolution: "1080p", Season: 2, Episode: 3},
-		ExternalIDs: api.ExternalIDs{
-			TMDBID:   4242,
-			Category: "TV",
-		},
-	}
-
-	result, err := svc.applyTrackerClaims(context.Background(), meta)
-	if err != nil {
-		t.Fatalf("apply tracker claims: %v", err)
-	}
-	if len(result.BlockedTrackers["AITHER"]) != 0 {
-		t.Fatalf("expected parsed-only season not to create claim block, got %#v", result.BlockedTrackers)
-	}
-}
-
-func TestApplyTrackerClaimsUsesRequestedBTNWhenTrackerIDsContainDifferentTracker(t *testing.T) {
-	t.Parallel()
-
-	tempDir := t.TempDir()
-	cfg := config.Config{
-		MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tempDir, "db.sqlite")},
-	}
-	logger := &recordingLogger{}
-
-	svc := NewService(&fakeRepo{}, WithConfig(cfg), WithLogger(logger))
-
-	cachePath := filepath.Join(tempDir, "cache", "banned", "BTN_claimed_releases.json")
-	if err := writeBTNClaimedCacheFixture(cachePath, time.Now().Unix(), map[string]struct{}{
-		normalizeBTNTitle("Australian Survivor"): {},
-	}); err != nil {
-		t.Fatalf("write btn claims cache: %v", err)
-	}
-
-	meta := api.PreparedMetadata{
-		SourcePath:       `D:\TV\Australian.Survivor.S14E19.1080p.WEB-DL.AAC2.0.H.264-WH.mkv`,
-		Trackers:         []string{"BTN"},
-		TrackerIDs:       map[string]string{"tvv": "12345"},
-		TVDBAiredDate:    time.Now().Add(-12 * time.Hour).UTC().Format("2006-01-02"),
-		TVDBAirsTime:     "20:00",
-		TVDBAirsTimezone: "UTC",
-		SeasonInt:        14,
-		EpisodeInt:       19,
-		ReleaseName:      "Australian Survivor S14E19 Sold the Dream 1080p WEB-DL AAC 2.0-WH",
-		Filename:         "Australian.Survivor.S14E19.1080p.WEB-DL.AAC2.0.H.264-WH.mkv",
-		ExternalMetadata: api.ExternalMetadata{
-			TVDB: &api.TVDBMetadata{Name: "Australian Survivor"},
-		},
-	}
-
-	result, err := svc.applyTrackerClaims(context.Background(), meta)
-	if err != nil {
-		t.Fatalf("apply tracker claims: %v", err)
-	}
-	if got := result.BlockedTrackers["BTN"]; len(got) != 1 || got[0] != api.TrackerBlockReasonClaim {
-		t.Fatalf("expected BTN claim block, got %#v", result.BlockedTrackers)
-	}
-	failures := result.TrackerRuleFailures["BTN"]
-	if len(failures) != 1 {
-		t.Fatalf("expected BTN claim rule failure, got %#v", result.TrackerRuleFailures)
-	}
-	if failures[0].Rule != trackerClaimRuleActive {
-		t.Fatalf("expected BTN claim rule %q, got %#v", trackerClaimRuleActive, failures)
-	}
-	if !strings.Contains(strings.ToLower(failures[0].Reason), "hours remain") {
-		t.Fatalf("expected BTN claim failure reason to include hours remaining, got %#v", failures)
-	}
-	if len(logger.warnings) != 1 {
-		t.Fatalf("expected one BTN claim warning, got %#v", logger.warnings)
-	}
-	if !strings.Contains(logger.warnings[0], "metadata: BTN claim match found") ||
-		!strings.Contains(logger.warnings[0], "cache_ttl=48h0m0s") ||
-		strings.Contains(logger.warnings[0], "tracker claim match found") {
-		t.Fatalf("unexpected BTN claim warning: %#v", logger.warnings)
-	}
-}
-
 func TestResolveTrackerClaimProviderSupportsKnownTrackers(t *testing.T) {
 	t.Parallel()
+	service := &Service{registry: newClaimTestRegistry(t)}
 
-	btnProvider, ok := resolveTrackerClaimProvider("btn")
+	btnProvider, ok := service.resolveTrackerClaimProvider("btn", api.NopLogger{})
 	if !ok {
 		t.Fatalf("expected BTN provider")
 	}
-	if _, ok := btnProvider.(btnTrackerClaimProvider); !ok {
+	if _, ok := btnProvider.(registryTrackerClaimProvider); !ok {
 		t.Fatalf("expected BTN provider type, got %T", btnProvider)
 	}
 
-	aitherProvider, ok := resolveTrackerClaimProvider("AITHER")
+	aitherProvider, ok := service.resolveTrackerClaimProvider("AITHER", api.NopLogger{})
 	if !ok {
 		t.Fatalf("expected AITHER provider")
 	}
@@ -645,9 +418,21 @@ func TestResolveTrackerClaimProviderSupportsKnownTrackers(t *testing.T) {
 		t.Fatalf("expected API provider type, got %T", aitherProvider)
 	}
 
-	if _, ok := resolveTrackerClaimProvider("PTP"); ok {
+	if _, ok := service.resolveTrackerClaimProvider("PTP", api.NopLogger{}); ok {
 		t.Fatalf("did not expect provider for unsupported tracker")
 	}
+}
+
+func newClaimTestRegistry(t *testing.T) *trackers.Registry {
+	t.Helper()
+	registry := trackers.NewRegistry()
+	if err := registry.Register(btnimpl.New()); err != nil {
+		t.Fatalf("register claim provider: %v", err)
+	}
+	if err := registry.Register(aitherRuleDefinition{}); err != nil {
+		t.Fatalf("register AITHER claim policy: %v", err)
+	}
+	return registry
 }
 
 func TestBTNTrackerClaimProviderUsesSharedCachePathAnd48HourTTL(t *testing.T) {
@@ -813,15 +598,15 @@ func TestEnrichTrackerDataSkipsLookupWhenStoredFresh(t *testing.T) {
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
-	meta := api.PreparedMetadata{
-		SourcePath:      `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
-		StoredDataFresh: true,
-		Trackers:        []string{"ANT"},
+	meta := preparationstate.State{
+		SourcePath:       `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
+		StoredDataFresh:  true,
+		EvidenceTrackers: []string{"ANT"},
 	}
 
-	result, err := svc.EnrichTrackerData(context.Background(), meta)
+	result, err := svc.collectTrackerEvidence(context.Background(), meta)
 	if err != nil {
 		t.Fatalf("enrich: %v", err)
 	}
@@ -837,7 +622,12 @@ func TestEnrichTrackerDataDeprioritizesBTNWhenKeepingImages(t *testing.T) {
 	repo := &fakeRepo{}
 	lookup := &stubTrackerLookup{
 		results: map[string]trackerdata.Result{
-			"BHD": {TMDBID: 513053, TrackerID: "513053", Description: "desc", Images: []bbcode.Image{{RawURL: "https://img.example/a.jpg"}}},
+			"BHD": {
+				TMDBID:      513053,
+				TrackerID:   "513053",
+				Description: "desc",
+				Images:      []bbcode.Image{{RawURL: "https://img.example/a.jpg"}},
+			},
 			"BTN": {IMDBID: 39050141, TrackerID: "2167358"},
 		},
 		delays: map[string]time.Duration{
@@ -854,18 +644,18 @@ func TestEnrichTrackerDataDeprioritizesBTNWhenKeepingImages(t *testing.T) {
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(newClaimTestRegistry(t)))
 
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026.S01.1080p.WEB-DL-GRP"),
 		TrackerIDs: map[string]string{
 			"btn": "2167358",
 			"bhd": "513053",
 		},
-		Options: api.UploadOptions{KeepImages: true},
+		Policy: preparationstate.CollectionPolicy{KeepImages: true},
 	}
 
-	result, err := svc.EnrichTrackerData(context.Background(), meta)
+	result, err := svc.collectTrackerEvidence(context.Background(), meta)
 	if err != nil {
 		t.Fatalf("enrich: %v", err)
 	}
@@ -900,18 +690,18 @@ func TestEnrichTrackerDataKeepsBTNAsFallbackWhenKeepingImages(t *testing.T) {
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(newClaimTestRegistry(t)))
 
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026.S01.1080p.WEB-DL-GRP"),
 		TrackerIDs: map[string]string{
 			"btn": "2167358",
 			"bhd": "513053",
 		},
-		Options: api.UploadOptions{KeepImages: true},
+		Policy: preparationstate.CollectionPolicy{KeepImages: true},
 	}
 
-	result, err := svc.EnrichTrackerData(context.Background(), meta)
+	result, err := svc.collectTrackerEvidence(context.Background(), meta)
 	if err != nil {
 		t.Fatalf("enrich: %v", err)
 	}
@@ -930,7 +720,11 @@ func TestEnrichTrackerDataKeepsDescriptionFromSingleTracker(t *testing.T) {
 	lookup := &stubTrackerLookup{
 		results: map[string]trackerdata.Result{
 			"ANT": {Description: "ant description", TrackerID: "101"},
-			"HDB": {Description: "hdb description", IMDBID: 1554091, TrackerID: "202"},
+			"HDB": {
+				Description: "hdb description",
+				IMDBID:      1554091,
+				TrackerID:   "202",
+			},
 		},
 		delays: map[string]time.Duration{
 			"ANT": 5 * time.Millisecond,
@@ -945,9 +739,9 @@ func TestEnrichTrackerDataKeepsDescriptionFromSingleTracker(t *testing.T) {
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		SourcePath: `D:\Movies\Example.Movie.2026.BluRay.1080p.DTS.x264-GRP`,
 		TrackerIDs: map[string]string{
 			"ant": "101",
@@ -955,7 +749,7 @@ func TestEnrichTrackerDataKeepsDescriptionFromSingleTracker(t *testing.T) {
 		},
 	}
 
-	result, err := svc.EnrichTrackerData(context.Background(), meta)
+	result, err := svc.collectTrackerEvidence(context.Background(), meta)
 	if err != nil {
 		t.Fatalf("enrich: %v", err)
 	}
@@ -1013,16 +807,16 @@ func TestEnrichTrackerDataDropsImageURLsWhenArtifactDownloadRejected(t *testing.
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		SourcePath: filepath.Join(t.TempDir(), "Movie.2026.2160p.mkv"),
 		Release:    api.ReleaseInfo{Resolution: "2160p"},
 		TrackerIDs: map[string]string{"bhd": "513053"},
-		Options:    api.UploadOptions{KeepImages: true},
+		Policy:     preparationstate.CollectionPolicy{KeepImages: true},
 	}
 
-	result, err := svc.EnrichTrackerData(context.Background(), meta)
+	result, err := svc.collectTrackerEvidence(context.Background(), meta)
 	if err != nil {
 		t.Fatalf("enrich: %v", err)
 	}
@@ -1077,13 +871,13 @@ func TestEnrichTrackerDataRejectedImageURLsDoNotChooseAssetSource(t *testing.T) 
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
-	result, err := svc.EnrichTrackerData(context.Background(), api.PreparedMetadata{
-		SourcePath: filepath.Join(t.TempDir(), "Movie.2026.2160p.mkv"),
-		Release:    api.ReleaseInfo{Resolution: "2160p"},
-		Trackers:   []string{"BHD", "HDB"},
-		Options:    api.UploadOptions{KeepImages: true},
+	result, err := svc.collectTrackerEvidence(context.Background(), preparationstate.State{
+		SourcePath:       filepath.Join(t.TempDir(), "Movie.2026.2160p.mkv"),
+		Release:          api.ReleaseInfo{Resolution: "2160p"},
+		EvidenceTrackers: []string{"BHD", "HDB"},
+		Policy:           preparationstate.CollectionPolicy{KeepImages: true},
 	})
 	if err != nil {
 		t.Fatalf("enrich: %v", err)
@@ -1123,12 +917,12 @@ func TestEnrichTrackerDataPreservesDuplicateImageURLPositionsForArtifactLinks(t 
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
-	result, err := svc.EnrichTrackerData(context.Background(), api.PreparedMetadata{
+	result, err := svc.collectTrackerEvidence(context.Background(), preparationstate.State{
 		SourcePath: sourcePath,
 		TrackerIDs: map[string]string{"bhd": "513053"},
-		Options:    api.UploadOptions{KeepImages: true},
+		Policy:     preparationstate.CollectionPolicy{KeepImages: true},
 	})
 	if err != nil {
 		t.Fatalf("enrich: %v", err)
@@ -1163,12 +957,12 @@ func TestEnrichTrackerDataPreservesDuplicateImageURLPositionsForLocalScreenshots
 			},
 		},
 	}
-	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup))
+	svc := NewService(repo, WithConfig(cfg), WithTrackerDataLookup(lookup), WithTrackerRegistry(trackerDataTestRegistry(t)))
 
-	result, err := svc.EnrichTrackerData(context.Background(), api.PreparedMetadata{
+	result, err := svc.collectTrackerEvidence(context.Background(), preparationstate.State{
 		SourcePath: sourcePath,
 		TrackerIDs: map[string]string{"bhd": "513053"},
-		Options:    api.UploadOptions{KeepImages: true},
+		Policy:     preparationstate.CollectionPolicy{KeepImages: true},
 	})
 	if err != nil {
 		t.Fatalf("enrich: %v", err)
@@ -1185,7 +979,11 @@ func TestEnrichTrackerDataPreservesDuplicateImageURLPositionsForLocalScreenshots
 }
 
 func TestMetadataTrackerPriorityPlacesPreferredTrackersBeforeRemainingUnit3D(t *testing.T) {
-	result := trackers.TrackerPriority()
+	registry, err := trackerimpl.NewRegistry()
+	if err != nil {
+		t.Fatalf("create tracker registry: %v", err)
+	}
+	result := registry.Priority()
 	expectedPrefix := []string{"aither", "ulcx", "lst", "blu", "oe", "btn", "bhd", "hdb", "ant", "rf", "otw", "yus", "dp", "sp", "ptp"}
 
 	prevIdx := -1
@@ -1201,7 +999,7 @@ func TestMetadataTrackerPriorityPlacesPreferredTrackersBeforeRemainingUnit3D(t *
 	}
 
 	remaining := make([]string, 0)
-	for _, tracker := range trackers.Unit3DTrackers() {
+	for _, tracker := range registry.NamesByFamily(trackers.FamilyUnit3D) {
 		lower := strings.ToLower(tracker)
 		if hasTracker(expectedPrefix, lower) {
 			continue
@@ -1322,7 +1120,7 @@ func assertTrackerArtifactExists(t *testing.T, cfg config.Config, sourcePath str
 	if err != nil {
 		t.Fatalf("tmp dir: %v", err)
 	}
-	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, api.PreparedMetadata{SourcePath: sourcePath}, sourcePath)
+	tmpDir, _, err := paths.ReleaseTempDir(tmpRoot, preparationstate.State{SourcePath: sourcePath}, sourcePath)
 	if err != nil {
 		t.Fatalf("release temp dir: %v", err)
 	}
@@ -1525,7 +1323,7 @@ func TestMirrorBTNCookiesForClaimedThreadKeepsDistinctCookies(t *testing.T) {
 func TestBTNClaimWindowExpiredUsesAiredDateAndTimezone(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		TVDBAiredDate:    time.Now().Add(-96 * time.Hour).UTC().Format("2006-01-02"),
 		TVDBAirsTime:     "20:00",
 		TVDBAirsTimezone: "UTC",

@@ -10,6 +10,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// CSVList accepts either a YAML sequence or a comma-separated scalar. Scalar
+// items are trimmed and blanks removed; sequence values are preserved as read.
 type CSVList []string
 
 func (c *CSVList) UnmarshalYAML(value *yaml.Node) error {
@@ -38,6 +40,8 @@ func (c *CSVList) UnmarshalYAML(value *yaml.Node) error {
 	}
 }
 
+// StringList accepts one string or a string sequence in JSON and YAML. Unlike
+// [CSVList], a scalar is one item and is not split on commas.
 type StringList []string
 
 func (l *StringList) UnmarshalJSON(data []byte) error {

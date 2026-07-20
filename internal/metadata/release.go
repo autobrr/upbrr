@@ -6,14 +6,19 @@ package metadata
 import (
 	"strings"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	"github.com/moistari/rls"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/seasonep"
-	"github.com/autobrr/upbrr/internal/pathutil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// ParseReleaseInfo parses the host-path basename into detached release fields.
+// It derives the release format separately from the movie/TV category and fills
+// missing season or episode values from the basename fallback parser.
 func ParseReleaseInfo(path string) api.ReleaseInfo {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {
@@ -32,7 +37,7 @@ func ParseReleaseInfo(path string) api.ReleaseInfo {
 	season := release.Series
 	episode := release.Episode
 	if season == 0 || episode == 0 {
-		extracted := seasonep.Extract(base, api.PreparedMetadata{})
+		extracted := seasonep.Extract(base, preparationstate.State{})
 		if season == 0 {
 			season = extracted.Season
 		}

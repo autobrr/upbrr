@@ -19,10 +19,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/clientdiscovery"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
-	"github.com/autobrr/upbrr/internal/trackerauth"
+	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
+	dupechecking "github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -30,10 +34,15 @@ const (
 	e2eEnabledEnv    = "UPBRR_E2E_FAKE_SERVICES"
 	e2eTrackerURLEnv = "UPBRR_E2E_TRACKER_URL"
 	e2eImageURLEnv   = "UPBRR_E2E_IMAGE_URL"
+	e2eClientURLEnv  = "UPBRR_E2E_CLIENT_URL"
 	e2eShotPathEnv   = "UPBRR_E2E_SCREENSHOT_PATH"
+	e2eResolutionEnv = "UPBRR_E2E_RESOLUTION"
+	e2eDuplicateEnv  = "UPBRR_E2E_DUPLICATE_TRACKERS"
 )
 
-func maybeApplyE2EServices(_ context.Context, services *api.ServiceSet, cfg config.Config, repo db.MetadataRepository, logger api.Logger) error {
+// maybeApplyE2EServices replaces only missing runtime capabilities when both
+// the e2e build tag and fake-services environment gate are active.
+func maybeApplyE2EServices(_ context.Context, services *api.ServiceSet, cfg config.Config, repositories api.RepositoryCapabilities, logger api.Logger) error {
 	if !isE2EEnabled() {
 		return nil
 	}
@@ -45,26 +54,38 @@ func maybeApplyE2EServices(_ context.Context, services *api.ServiceSet, cfg conf
 		return fmt.Errorf("core: e2e tmp root: %w", err)
 	}
 	logger.Infof("core: using e2e fake services")
+	if services.Clients == nil {
+		services.Clients = e2eClientService{endpoint: os.Getenv(e2eClientURLEnv)}
+	}
 	if services.Metadata == nil {
-		services.Metadata = e2eMetadataService{repo: repo}
+		services.Metadata = e2eMetadataService{
+			repo:    repositories.ReleaseState(),
+			clients: clientdiscovery.New(services.Clients, logger),
+		}
 	}
 	if services.Torrents == nil {
 		services.Torrents = e2eTorrentService{dbPath: cfg.MainSettings.DBPath}
 	}
 	if services.Trackers == nil {
-		services.Trackers = e2eTrackerService{endpoint: os.Getenv(e2eTrackerURLEnv), repo: repo}
+		services.Trackers = e2eTrackerService{endpoint: os.Getenv(e2eTrackerURLEnv), repo: repositories.Uploads()}
 	}
 	if services.Images == nil {
-		services.Images = e2eImageService{endpoint: os.Getenv(e2eImageURLEnv), shotPath: os.Getenv(e2eShotPathEnv), tmpRoot: tmpRoot, repo: repo}
+		services.Images = e2eImageService{
+			endpoint: os.Getenv(e2eImageURLEnv),
+			shotPath: os.Getenv(e2eShotPathEnv),
+			tmpRoot:  tmpRoot,
+			repo:     repositories.Media(),
+		}
 	}
 	if services.Screenshots == nil {
-		services.Screenshots = e2eScreenshotService{shotPath: os.Getenv(e2eShotPathEnv), tmpRoot: tmpRoot, repo: repo}
-	}
-	if services.Clients == nil {
-		services.Clients = e2eClientService{}
+		services.Screenshots = e2eScreenshotService{
+			shotPath: os.Getenv(e2eShotPathEnv),
+			tmpRoot:  tmpRoot,
+			repo:     repositories.Media(),
+		}
 	}
 	if services.Dupes == nil {
-		services.Dupes = e2eDupeService{}
+		services.Dupes = e2eDupeService{cfg: cfg}
 	}
 	if services.TrackerAuth == nil {
 		services.TrackerAuth = e2eTrackerAuthService{}
@@ -77,25 +98,47 @@ func isE2EEnabled() bool {
 	return value == "1" || strings.EqualFold(value, "true")
 }
 
+// e2eMetadataService supplies deterministic preparation evidence under the
+// e2e-only fake-services gate.
 type e2eMetadataService struct {
-	repo db.MetadataRepository
+	repo interface {
+		Save(context.Context, api.FileMetadata) error
+	}
+	clients *clientdiscovery.Module
 }
 
-func (s e2eMetadataService) Prepare(ctx context.Context, req api.Request) (api.PreparedMetadata, error) {
-	if len(req.Paths) == 0 || strings.TrimSpace(req.Paths[0]) == "" {
-		return api.PreparedMetadata{}, errors.New("e2e metadata: path is required")
+// CollectPreparationEvidence emits deterministic progress and metadata while
+// exercising the same client-discovery boundary as production preparation.
+func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, request preparationstate.Request) (preparationstate.State, error) {
+	input := request.Input
+	if strings.TrimSpace(input.SourcePath) == "" {
+		return preparationstate.State{}, errors.New("e2e metadata: path is required")
 	}
-	sourcePath := strings.TrimSpace(req.Paths[0])
-	trackers := append([]string{}, req.Trackers...)
-	if len(trackers) == 0 {
-		trackers = []string{"BTN"}
+	sourcePath := strings.TrimSpace(input.SourcePath)
+	api.EmitPreparationProgress(
+		ctx,
+		api.NewPreparationProgressUpdate(api.PreparationPhaseSourceEvidence, api.PreparationProgressRunning, "Collecting synthetic source evidence."),
+	)
+	if request.Layout.DiscType == "BDMV" {
+		api.EmitPreparationProgress(
+			ctx,
+			api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, api.PreparationProgressRunning, "Scanning selected Blu-ray playlist."),
+		)
 	}
-	meta := api.PreparedMetadata{
-		SourcePath:        sourcePath,
-		Paths:             []string{sourcePath},
-		Mode:              req.Mode,
-		Options:           req.Options,
-		Trackers:          trackers,
+	resolution := strings.TrimSpace(os.Getenv(e2eResolutionEnv))
+	if resolution == "" {
+		resolution = "1080p"
+	}
+	meta := preparationstate.State{
+		SourcePath: sourcePath,
+		Paths:      []string{sourcePath},
+		FileList:   []string{sourcePath},
+		Policy: preparationstate.CollectionPolicy{
+			OnlyID:          input.Policy.OnlyID,
+			KeepFolder:      input.Policy.KeepFolder,
+			KeepImages:      input.Policy.KeepImages,
+			InteractionMode: input.Controls.Interaction,
+		},
 		ReleaseName:       "E2E.Movie.2026.1080p.WEB-DL.DD5.1.H264-UPBRR",
 		ReleaseNameNoTag:  "E2E.Movie.2026.1080p.WEB-DL.DD5.1.H264",
 		ReleaseNameClean:  "E2E Movie 2026 1080p WEB-DL DD5.1 H264",
@@ -110,45 +153,67 @@ func (s e2eMetadataService) Prepare(ctx context.Context, req api.Request) (api.P
 		Channels:          "5.1",
 		AudioLanguages:    []string{"English"},
 		SubtitleLanguages: []string{"English"},
-		ExternalIDs: api.ExternalIDs{
-			SourcePath: sourcePath,
-			TMDBID:     1001,
-			IMDBID:     1234567,
-			Category:   string(api.CategoryMovie),
-		},
-		ExternalMetadata: api.ExternalMetadata{
-			SourcePath: sourcePath,
-			TMDB: &api.TMDBMetadata{
-				TMDBID:           1001,
-				IMDBID:           1234567,
-				Category:         string(api.CategoryMovie),
-				Title:            "E2E Movie",
-				OriginalTitle:    "E2E Movie",
-				Year:             2026,
-				ReleaseDate:      "2026-01-02",
-				OriginalLanguage: "en",
-				Overview:         "Deterministic E2E metadata fixture.",
-			},
-		},
 		Release: api.ReleaseInfo{
 			Category:   string(api.CategoryMovie),
 			Type:       "WEBDL",
 			Title:      "E2E Movie",
 			Year:       2026,
 			Source:     "WEB-DL",
-			Resolution: "1080p",
+			Resolution: resolution,
 			Ext:        ".mkv",
 			Group:      "UPBRR",
 		},
 		DescriptionTemplate: "E2E description fixture.",
-		DescriptionGroups: []api.DescriptionBuilderGroup{{
-			GroupKey:           "unit3d",
-			Trackers:           trackers,
-			RawDescription:     "E2E description fixture.",
-			RawDescriptionHTML: "<p>E2E description fixture.</p>",
-			Description:        "E2E description fixture.",
-			DescriptionHTML:    "<p>E2E description fixture.</p>",
-		}},
+	}
+	if s.clients != nil {
+		api.EmitPreparationProgress(
+			ctx,
+			api.NewPreparationProgressUpdate(api.PreparationPhaseClientDiscovery, api.PreparationProgressRunning, "Searching the synthetic torrent client."),
+		)
+		evidence, err := s.clients.Discover(ctx, clientdiscovery.SearchInput{
+			SourcePath:   sourcePath,
+			FileList:     meta.FileList,
+			DiscType:     request.Layout.DiscType,
+			Policy:       input.Search,
+			ForceRecheck: input.Controls.ForceRecheck,
+		})
+		if err != nil {
+			return preparationstate.State{}, fmt.Errorf("e2e metadata: discover client evidence: %w", err)
+		}
+		meta.InfoHash = evidence.InfoHash
+		meta.DiscoveredTorrentPath = evidence.TorrentPath
+		meta.TrackerIDs = evidence.TrackerIDs
+		meta.FoundTrackerMatch = evidence.FoundTrackerMatch
+		meta.EvidenceTrackers = append([]string(nil), evidence.MatchedTrackers...)
+		meta.MatchedEvidenceTrackers = append([]string(nil), evidence.MatchedTrackers...)
+		api.EmitPreparationProgress(
+			ctx,
+			api.NewPreparationProgressUpdate(
+				api.PreparationPhaseClientDiscovery,
+				api.PreparationProgressCompleted,
+				"Synthetic torrent client search complete.",
+			),
+		)
+	}
+	meta.Identity = api.ExternalIdentity{
+		SourcePath: sourcePath,
+		TMDBID:     1001,
+		IMDBID:     1234567,
+		Category:   api.CanonicalCategoryMovie,
+	}
+	meta.ProviderMetadata = api.SourceScopedMetadata{
+		SourcePath: sourcePath,
+		TMDB: &api.TMDBMetadata{
+			TMDBID:           1001,
+			IMDBID:           1234567,
+			Category:         string(api.CategoryMovie),
+			Title:            "E2E Movie",
+			OriginalTitle:    "E2E Movie",
+			Year:             2026,
+			ReleaseDate:      "2026-01-02",
+			OriginalLanguage: "en",
+			Overview:         "Deterministic E2E metadata fixture.",
+		},
 	}
 	if s.repo != nil {
 		if info, err := os.Stat(sourcePath); err == nil {
@@ -167,44 +232,19 @@ func (s e2eMetadataService) Prepare(ctx context.Context, req api.Request) (api.P
 			Ext:        meta.Release.Ext,
 			Group:      meta.Release.Group,
 		}); err != nil {
-			return api.PreparedMetadata{}, fmt.Errorf("e2e metadata: save: %w", err)
+			return preparationstate.State{}, fmt.Errorf("e2e metadata: save: %w", err)
 		}
 	}
-	return meta, nil
-}
-
-func (e e2eMetadataService) RefreshPreparedMetadata(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
-	if strings.TrimSpace(meta.ReleaseName) == "" {
-		prepared, err := e.Prepare(context.Background(), api.Request{Paths: []string{meta.SourcePath}, Mode: meta.Mode, Trackers: meta.Trackers, Options: meta.Options})
-		if err != nil {
-			return api.PreparedMetadata{}, err
-		}
-		return prepared, nil
+	if request.Layout.DiscType == "BDMV" {
+		api.EmitPreparationProgress(
+			ctx,
+			api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, api.PreparationProgressCompleted, "Blu-ray analysis complete."),
+		)
 	}
-	return meta, nil
-}
-
-func (e2eMetadataService) EnrichTrackerData(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
-	return meta, nil
-}
-
-func (e2eMetadataService) ApplyMediaInfoIDs(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
-	return meta, nil
-}
-
-func (e2eMetadataService) ApplyArrData(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
-	return meta, nil
-}
-
-func (e2eMetadataService) ResolveExternalIDs(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
-	return meta, nil
-}
-
-func (e2eMetadataService) ApplyMediaDetails(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
-	return meta, nil
-}
-
-func (e2eMetadataService) ApplyTrackerClaims(_ context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
+	api.EmitPreparationProgress(
+		ctx,
+		api.NewPreparationProgressUpdate(api.PreparationPhaseSourceEvidence, api.PreparationProgressCompleted, "Synthetic source evidence complete."),
+	)
 	return meta, nil
 }
 
@@ -212,7 +252,7 @@ type e2eTorrentService struct {
 	dbPath string
 }
 
-func (s e2eTorrentService) Create(_ context.Context, meta api.PreparedMetadata) (api.TorrentResult, error) {
+func (s e2eTorrentService) Create(_ context.Context, meta api.TorrentSubject) (api.TorrentResult, error) {
 	root := filepath.Dir(strings.TrimSpace(s.dbPath))
 	if root == "." || root == "" {
 		root = os.TempDir()
@@ -229,24 +269,100 @@ func (s e2eTorrentService) Create(_ context.Context, meta api.PreparedMetadata) 
 	return api.TorrentResult{Path: path, InfoHash: "0123456789abcdef0123456789abcdef01234567"}, nil
 }
 
-type e2eClientService struct{}
+// e2eClientService obtains deterministic pathed-torrent evidence from the fake E2E server.
+type e2eClientService struct {
+	endpoint string
+}
 
-func (e2eClientService) Inject(context.Context, api.PreparedMetadata, api.TorrentResult) error {
+func (s e2eClientService) Inject(ctx context.Context, _ api.ClientSubject, _ api.TorrentResult) error {
+	endpoint := strings.TrimRight(strings.TrimSpace(s.endpoint), "/")
+	if endpoint == "" {
+		return errors.New("e2e client: endpoint is required")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/client-inject", http.NoBody)
+	if err != nil {
+		return fmt.Errorf("e2e client: injection request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("e2e client: inject: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("e2e client: injection status %d", resp.StatusCode)
+	}
 	return nil
 }
 
-func (e2eClientService) SearchPathedTorrents(context.Context, api.PreparedMetadata) (api.ClientSearchResult, error) {
-	return api.ClientSearchResult{}, nil
+// SearchPathedTorrents verifies the fake client endpoint and returns stable evidence.
+func (s e2eClientService) SearchPathedTorrents(ctx context.Context, _ api.ClientSubject) (api.ClientSearchResult, error) {
+	endpoint := strings.TrimRight(strings.TrimSpace(s.endpoint), "/")
+	if endpoint == "" {
+		return api.ClientSearchResult{}, errors.New("e2e client: endpoint is required")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/client-search", http.NoBody)
+	if err != nil {
+		return api.ClientSearchResult{}, fmt.Errorf("e2e client: request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return api.ClientSearchResult{}, fmt.Errorf("e2e client: search: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return api.ClientSearchResult{}, fmt.Errorf("e2e client: status %d", resp.StatusCode)
+	}
+	return api.ClientSearchResult{
+		InfoHash:   "0123456789abcdef0123456789abcdef01234567",
+		TrackerIDs: map[string]string{"btn": "e2e-pathed-id"},
+	}, nil
 }
 
-type e2eDupeService struct{}
+type e2eDupeService struct {
+	cfg config.Config
+}
 
-func (e2eDupeService) Check(_ context.Context, meta api.PreparedMetadata, trackers []string) (api.DupeCheckSummary, error) {
+func (e2eDupeService) Check(_ context.Context, meta api.DuplicateSubject, trackers []string) (api.DupeCheckSummary, error) {
+	duplicateTrackers := make(map[string]struct{})
+	for _, tracker := range strings.Split(os.Getenv(e2eDuplicateEnv), ",") {
+		if name := strings.ToUpper(strings.TrimSpace(tracker)); name != "" {
+			duplicateTrackers[name] = struct{}{}
+		}
+	}
 	results := make([]api.DupeCheckResult, 0, len(trackers))
 	for _, tracker := range trackers {
-		results = append(results, api.DupeCheckResult{Tracker: strings.ToUpper(strings.TrimSpace(tracker)), Status: "completed"})
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		result := api.DupeCheckResult{Tracker: name, Status: "completed"}
+		if _, ok := duplicateTrackers[name]; ok {
+			result.HasDupes = true
+			result.Filtered = []api.DupeEntry{{
+				ID:   "e2e-dupe-1",
+				Name: "Example.Release.2026.1080p-GRP",
+			}}
+		}
+		results = append(results, result)
 	}
 	return api.DupeCheckSummary{SourcePath: meta.SourcePath, Results: results}, nil
+}
+
+func (s e2eDupeService) CheckWithAssessment(
+	ctx context.Context,
+	meta api.DuplicateSubject,
+	trackers []string,
+	_ dupechecking.CheckOptions,
+) (api.DupeCheckSummary, dupechecking.Assessment, error) {
+	summary, err := s.Check(ctx, meta, trackers)
+	evidence := make([]dupechecking.AssessmentEvidence, 0, len(summary.Results))
+	for _, result := range summary.Results {
+		evidence = append(evidence, dupechecking.AssessmentEvidence{
+			Tracker:     result.Tracker,
+			Disposition: dupechecking.DispositionResolved,
+			HasDupes:    result.HasDupes,
+			Match:       result.Match,
+			Raw:         result.Raw,
+		})
+	}
+	return summary, dupechecking.NewAssessment(meta, s.cfg, evidence), err
 }
 
 // e2eTrackerAuthService keeps fake-services runs isolated from tracker auth IO.
@@ -268,10 +384,10 @@ func (e2eTrackerAuthService) ValidateMany(_ context.Context, trackerIDs []string
 
 type e2eTrackerService struct {
 	endpoint string
-	repo     db.MetadataRepository
+	repo     api.UploadLedgerRepository
 }
 
-func (s e2eTrackerService) Upload(ctx context.Context, meta api.PreparedMetadata) (api.UploadSummary, error) {
+func (s e2eTrackerService) Upload(ctx context.Context, meta api.UploadSubject) (api.UploadSummary, error) {
 	trackers := meta.Trackers
 	if len(trackers) == 0 {
 		trackers = []string{"BTN"}
@@ -283,7 +399,12 @@ func (s e2eTrackerService) Upload(ctx context.Context, meta api.PreparedMetadata
 			continue
 		}
 		if s.repo != nil {
-			if err := s.repo.CreateUploadRecord(ctx, db.UploadRecord{Tracker: name, Status: "pending", SourcePath: meta.SourcePath, CreatedAt: time.Now().UTC()}); err != nil {
+			if err := s.repo.CreateUploadRecord(ctx, db.UploadRecord{
+				Tracker:    name,
+				Status:     "pending",
+				SourcePath: meta.SourcePath,
+				CreatedAt:  time.Now().UTC(),
+			}); err != nil {
 				return api.UploadSummary{}, fmt.Errorf("e2e tracker: create record: %w", err)
 			}
 		}
@@ -311,7 +432,7 @@ func (s e2eTrackerService) Upload(ctx context.Context, meta api.PreparedMetadata
 	return summary, nil
 }
 
-func (s e2eTrackerService) BuildPreparation(_ context.Context, meta api.PreparedMetadata, trackers []string) (api.PreparationPreview, error) {
+func (s e2eTrackerService) BuildPreparation(_ context.Context, meta api.DescriptionSubject, trackers []string) (api.PreparationPreview, error) {
 	if len(trackers) == 0 {
 		trackers = meta.Trackers
 	}
@@ -325,7 +446,7 @@ func (s e2eTrackerService) BuildPreparation(_ context.Context, meta api.Prepared
 	}}}, nil
 }
 
-func (s e2eTrackerService) BuildUploadDryRun(_ context.Context, meta api.PreparedMetadata, trackers []string) ([]api.TrackerDryRunEntry, error) {
+func (s e2eTrackerService) BuildUploadDryRun(_ context.Context, meta api.UploadSubject, trackers []string) ([]api.TrackerDryRunEntry, error) {
 	if len(trackers) == 0 {
 		trackers = meta.Trackers
 	}
@@ -348,7 +469,11 @@ func (s e2eTrackerService) BuildUploadDryRun(_ context.Context, meta api.Prepare
 				"name":     meta.ReleaseName,
 				"category": string(api.CategoryMovie),
 			},
-			Files: []api.TrackerDryRunFile{{Field: "torrent", Path: meta.TorrentPath, Present: strings.TrimSpace(meta.TorrentPath) != ""}},
+			Files: []api.TrackerDryRunFile{{
+				Field:   "torrent",
+				Path:    meta.TorrentPath,
+				Present: strings.TrimSpace(meta.TorrentPath) != "",
+			}},
 			ImageHost: api.ImageHostFeedback{
 				Status:       "ready",
 				SelectedHost: "imgbb",
@@ -359,7 +484,11 @@ func (s e2eTrackerService) BuildUploadDryRun(_ context.Context, meta api.Prepare
 	return entries, nil
 }
 
-func postE2ETrackerUpload(ctx context.Context, endpoint string, tracker string, meta api.PreparedMetadata) error {
+func (s e2eTrackerService) BuildUploadReview(ctx context.Context, meta api.UploadSubject, trackers []string) ([]api.TrackerDryRunEntry, error) {
+	return s.BuildUploadDryRun(ctx, meta, trackers)
+}
+
+func postE2ETrackerUpload(ctx context.Context, endpoint string, tracker string, meta api.UploadSubject) error {
 	if strings.TrimSpace(endpoint) == "" {
 		return errors.New("e2e tracker: endpoint is required")
 	}
@@ -409,18 +538,26 @@ type e2eImageService struct {
 	endpoint string
 	shotPath string
 	tmpRoot  string
-	repo     db.MetadataRepository
+	repo     interface {
+		SaveUploadedImages(context.Context, string, string, []api.UploadedImageLink) error
+	}
 }
 
-func (s e2eImageService) ListCandidates(_ context.Context, meta api.PreparedMetadata) ([]api.ScreenshotImage, error) {
-	shot, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, meta)
+func (s e2eImageService) ListCandidates(_ context.Context, meta api.ImageHostingSubject) ([]api.ScreenshotImage, error) {
+	shot, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(meta.SourcePath))
 	if err != nil {
 		return nil, err
 	}
 	return []api.ScreenshotImage{shot}, nil
 }
 
-func (s e2eImageService) Upload(ctx context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+func (s e2eImageService) Upload(
+	ctx context.Context,
+	meta api.ImageHostingSubject,
+	host string,
+	usageScope string,
+	images []api.ScreenshotImage,
+) ([]api.UploadedImageLink, error) {
 	if strings.TrimSpace(s.endpoint) == "" {
 		return nil, errors.New("e2e image: endpoint is required")
 	}
@@ -491,34 +628,41 @@ func postE2EImageUpload(ctx context.Context, endpoint string, host string, image
 type e2eScreenshotService struct {
 	shotPath string
 	tmpRoot  string
-	repo     db.MetadataRepository
+	repo     api.ScreenshotLifecycleRepository
 }
 
-func (s e2eScreenshotService) Plan(_ context.Context, meta api.PreparedMetadata, _ int) (api.ScreenshotPlan, error) {
-	shot, err := s.image(meta)
-	if err != nil {
-		return api.ScreenshotPlan{}, err
-	}
+func (s e2eScreenshotService) Plan(_ context.Context, meta api.ScreenshotSubject, _ int) (api.ScreenshotPlan, error) {
 	return api.ScreenshotPlan{
-		SourcePath:          meta.SourcePath,
-		DurationSeconds:     120,
-		FrameRate:           24,
-		SuggestedSelections: []api.ScreenshotSelection{{Index: 1, TimestampSeconds: shot.TimestampSeconds, Frame: 240}},
-		ExistingScreenshots: []api.ScreenshotImage{shot},
-		FinalSelections:     []api.ScreenshotImage{shot},
+		SourcePath:      meta.SourcePath,
+		DurationSeconds: 120,
+		FrameRate:       24,
+		SuggestedSelections: []api.ScreenshotSelection{{
+			Index:            1,
+			TimestampSeconds: 10,
+			Frame:            240,
+		}},
 	}, nil
 }
 
-func (s e2eScreenshotService) Capture(_ context.Context, meta api.PreparedMetadata, _ []api.ScreenshotSelection, purpose api.ScreenshotPurpose) (api.ScreenshotResult, error) {
+func (s e2eScreenshotService) Capture(
+	_ context.Context,
+	meta api.ScreenshotSubject,
+	_ []api.ScreenshotSelection,
+	purpose api.ScreenshotPurpose,
+) (api.ScreenshotResult, error) {
 	shot, err := s.image(meta)
 	if err != nil {
 		return api.ScreenshotResult{}, err
 	}
 	shot.Purpose = purpose
-	return api.ScreenshotResult{SourcePath: meta.SourcePath, Purpose: purpose, Images: []api.ScreenshotImage{shot}}, nil
+	return api.ScreenshotResult{
+		SourcePath: meta.SourcePath,
+		Purpose:    purpose,
+		Images:     []api.ScreenshotImage{shot},
+	}, nil
 }
 
-func (s e2eScreenshotService) PreviewFrame(_ context.Context, meta api.PreparedMetadata, timestampSeconds float64) (api.ScreenshotPreview, error) {
+func (s e2eScreenshotService) PreviewFrame(_ context.Context, meta api.ScreenshotSubject, timestampSeconds float64) (api.ScreenshotPreview, error) {
 	shot, err := s.image(meta)
 	if err != nil {
 		return api.ScreenshotPreview{}, err
@@ -527,14 +671,20 @@ func (s e2eScreenshotService) PreviewFrame(_ context.Context, meta api.PreparedM
 	if err != nil {
 		return api.ScreenshotPreview{}, fmt.Errorf("e2e screenshots: read preview: %w", err)
 	}
-	return api.ScreenshotPreview{TimestampSeconds: timestampSeconds, ImageBytes: payload, Width: shot.Width, Height: shot.Height, SizeBytes: shot.SizeBytes}, nil
+	return api.ScreenshotPreview{
+		TimestampSeconds: timestampSeconds,
+		ImageBytes:       payload,
+		Width:            shot.Width,
+		Height:           shot.Height,
+		SizeBytes:        shot.SizeBytes,
+	}, nil
 }
 
-func (s e2eScreenshotService) Delete(_ context.Context, _ api.PreparedMetadata, _ string) error {
+func (s e2eScreenshotService) Delete(_ context.Context, _ api.ScreenshotSubject, _ string) error {
 	return nil
 }
 
-func (s e2eScreenshotService) SaveFinalSelections(ctx context.Context, meta api.PreparedMetadata, images []api.ScreenshotImage) error {
+func (s e2eScreenshotService) SaveFinalSelections(ctx context.Context, meta api.ScreenshotSubject, images []api.ScreenshotImage) error {
 	if s.repo == nil {
 		return nil
 	}
@@ -548,17 +698,14 @@ func (s e2eScreenshotService) SaveFinalSelections(ctx context.Context, meta api.
 			SelectedAt: time.Now().UTC(),
 		})
 	}
-	if lifecycle, ok := s.repo.(api.ScreenshotLifecycleRepository); ok {
-		return lifecycle.ReplaceNormalFinalSelections(ctx, meta.SourcePath, selections)
-	}
-	return s.repo.SaveFinalSelections(ctx, meta.SourcePath, selections)
+	return s.repo.ReplaceNormalFinalSelections(ctx, meta.SourcePath, selections)
 }
 
-func (s e2eScreenshotService) image(meta api.PreparedMetadata) (api.ScreenshotImage, error) {
-	return e2eManagedScreenshot(s.shotPath, s.tmpRoot, meta)
+func (s e2eScreenshotService) image(meta api.ScreenshotSubject) (api.ScreenshotImage, error) {
+	return e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(meta.SourcePath))
 }
 
-func e2eManagedScreenshot(shotPath string, tmpRoot string, meta api.PreparedMetadata) (api.ScreenshotImage, error) {
+func e2eManagedScreenshot(shotPath string, tmpRoot string, releaseName string) (api.ScreenshotImage, error) {
 	path := strings.TrimSpace(shotPath)
 	if path == "" {
 		return api.ScreenshotImage{}, errors.New("e2e screenshots: screenshot path is required")
@@ -571,7 +718,7 @@ func e2eManagedScreenshot(shotPath string, tmpRoot string, meta api.PreparedMeta
 	if err != nil {
 		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: read fixture: %w", err)
 	}
-	release := strings.TrimSpace(meta.ReleaseName)
+	release := strings.TrimSpace(releaseName)
 	if release == "" {
 		release = "e2e-release"
 	}
@@ -595,7 +742,15 @@ func e2eManagedScreenshot(shotPath string, tmpRoot string, meta api.PreparedMeta
 	if err != nil {
 		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: stat managed screenshot: %w", err)
 	}
-	return api.ScreenshotImage{Index: 1, TimestampSeconds: 10, Path: managedPath, Purpose: api.ScreenshotPurposeFinal, Width: 320, Height: 180, SizeBytes: info.Size()}, nil
+	return api.ScreenshotImage{
+		Index:            1,
+		TimestampSeconds: 10,
+		Path:             managedPath,
+		Purpose:          api.ScreenshotPurposeFinal,
+		Width:            320,
+		Height:           180,
+		SizeBytes:        info.Size(),
+	}, nil
 }
 
 func writeJSONE2E(w io.Writer, value any) error {

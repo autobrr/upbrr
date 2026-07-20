@@ -24,7 +24,16 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func buildFinalPayload(ctx context.Context, site siteDefinition, state sessionState, req trackers.UploadRequest, mediaCode string, task taskInfo, fileInfo string, screenshotIDs []string) (url.Values, error) {
+func buildFinalPayload(
+	ctx context.Context,
+	site siteDefinition,
+	state sessionState,
+	req trackers.PreparationInput,
+	mediaCode string,
+	task taskInfo,
+	fileInfo string,
+	screenshotIDs []string,
+) (url.Values, error) {
 	langs := languageValues(req.Meta)
 	tags, err := resolveTags(ctx, site, state, req)
 	if err != nil {
@@ -75,7 +84,7 @@ func buildFinalPayload(ctx context.Context, site siteDefinition, state sessionSt
 	return values, nil
 }
 
-func resolveTags(ctx context.Context, site siteDefinition, state sessionState, req trackers.UploadRequest) ([]string, error) {
+func resolveTags(ctx context.Context, site siteDefinition, state sessionState, req trackers.PreparationInput) ([]string, error) {
 	seen := make(map[string]struct{})
 	add := func(value string) {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
@@ -85,7 +94,7 @@ func resolveTags(ctx context.Context, site siteDefinition, state sessionState, r
 	if req.Meta.PersonalRelease {
 		add(site.PersonalReleaseTag)
 	}
-	if trackers.IsInternalGroup(req.AppConfig, site.Name, req.Meta) {
+	if req.Runtime.Internal {
 		add(site.InternalTagID)
 	}
 	for _, keyword := range splitKeywords(keywordsFor(req.Meta)) {
@@ -131,8 +140,8 @@ func fetchTagID(ctx context.Context, site siteDefinition, state sessionState, wo
 	return "", nil
 }
 
-func uploadScreenshots(ctx context.Context, site siteDefinition, state sessionState, req trackers.UploadRequest) ([]string, error) {
-	assets, err := trackers.ResolveDescriptionAssets(ctx, req.Tracker, req.Meta, req.Repo, req.Logger)
+func uploadScreenshots(ctx context.Context, site siteDefinition, state sessionState, req trackers.PreparationInput) ([]string, error) {
+	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
 	if err != nil {
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
@@ -245,9 +254,9 @@ func screenshotBytes(ctx context.Context, client *http.Client, shot api.Screensh
 	return data, filename, nil
 }
 
-func keywordsFor(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB != nil {
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Keywords)
+func keywordsFor(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.TMDB != nil {
+		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Keywords)
 	}
 	return ""
 }

@@ -94,3 +94,37 @@ func TestEnsureCookieMigrationKeepsLegacyFilesOnPartialFailure(t *testing.T) {
 		t.Fatalf("expected legacy cookie file to be preserved after partial failure: %v", err)
 	}
 }
+
+func TestEnsureCookieMigrationKeepsAllLegacyFilesOnMixedParseResult(t *testing.T) {
+	t.Parallel()
+
+	db := newTestCookieDB(t)
+	dbPath := writeWebAuthFile(t, "admin", "password-hash")
+	cookiesDir := t.TempDir()
+	validPath := filepath.Join(cookiesDir, "valid.json")
+	invalidPath := filepath.Join(cookiesDir, "invalid.json")
+	if err := os.WriteFile(validPath, []byte(`{"session":"cookie-value"}`), 0o600); err != nil {
+		t.Fatalf("write valid cookie file: %v", err)
+	}
+	if err := os.WriteFile(invalidPath, []byte(`{`), 0o600); err != nil {
+		t.Fatalf("write invalid cookie file: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := EnsureCookieMigration(ctx, db, dbPath, cookiesDir, api.NopLogger{}); err != nil {
+		t.Fatalf("ensure cookie migration: %v", err)
+	}
+	for _, legacyPath := range []string{validPath, invalidPath} {
+		if _, err := os.Stat(legacyPath); err != nil {
+			t.Fatalf("expected every legacy file to remain after mixed parse result: %v", err)
+		}
+	}
+
+	var storedCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tracker_cookies WHERE tracker_id = ?`, "valid").Scan(&storedCount); err != nil {
+		t.Fatalf("count migrated cookies: %v", err)
+	}
+	if storedCount != 1 {
+		t.Fatalf("expected valid cookie to migrate, got count=%d", storedCount)
+	}
+}

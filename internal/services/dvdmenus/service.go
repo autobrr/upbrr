@@ -22,8 +22,8 @@ import (
 	"github.com/autobrr/upbrr/internal/dvdvideo/graph"
 	"github.com/autobrr/upbrr/internal/dvdvideo/render"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
-	"github.com/autobrr/upbrr/internal/paths"
-	"github.com/autobrr/upbrr/internal/pathutil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/screenshots"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -61,8 +61,7 @@ type capabilityCache struct {
 type Service struct {
 	logger            api.Logger
 	tmpRoot           string
-	repo              api.MetadataRepository
-	lifecycle         api.ScreenshotLifecycleRepository
+	repo              repository
 	runner            render.Runner
 	resolveExecutable executableResolverFunc
 	captureDirectory  captureDirectoryFunc
@@ -71,17 +70,22 @@ type Service struct {
 	capabilityCache   capabilityCache
 }
 
+type repository interface {
+	api.ScreenshotLifecycleRepository
+	LoadMediaAssetSnapshot(context.Context, string) (api.MediaAssetSnapshot, error)
+}
+
 // NewService returns a DVD menu service that shares the screenshot FFmpeg
 // resolver and stores managed images beneath tmpRoot. A nil logger is replaced
 // with [api.NopLogger].
-func NewService(logger api.Logger, tmpRoot string, repo api.MetadataRepository) *Service {
+func NewService(logger api.Logger, tmpRoot string, repo repository) *Service {
 	return newService(logger, tmpRoot, repo, render.ExecRunner{}, screenshots.ResolveFFmpegExecutable, engine.CaptureDirectory)
 }
 
 func newService(
 	logger api.Logger,
 	tmpRoot string,
-	repo api.MetadataRepository,
+	repo repository,
 	runner render.Runner,
 	resolveExecutable executableResolverFunc,
 	captureDirectory captureDirectoryFunc,
@@ -98,12 +102,10 @@ func newService(
 	if captureDirectory == nil {
 		captureDirectory = engine.CaptureDirectory
 	}
-	lifecycle, _ := repo.(api.ScreenshotLifecycleRepository)
 	return &Service{
 		logger:            logger,
 		tmpRoot:           tmpRoot,
 		repo:              repo,
-		lifecycle:         lifecycle,
 		runner:            runner,
 		resolveExecutable: resolveExecutable,
 		captureDirectory:  captureDirectory,
@@ -114,7 +116,7 @@ func newService(
 // Capture renders and persists up to maxItems automatic menu images for one
 // prepared DVD. It atomically replaces earlier automatic captures, preserves
 // manual menus and normal screenshots, and reports partial coverage in result.
-func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, maxItems int) (api.DVDMenuCaptureResult, error) {
+func (s *Service) Capture(ctx context.Context, meta api.DVDMenuSubject, maxItems int) (api.DVDMenuCaptureResult, error) {
 	result := api.DVDMenuCaptureResult{SourcePath: meta.SourcePath, MaxItems: maxItems}
 	if s != nil && s.logger != nil {
 		s.logger.Debugf("DVD menus: capture requested disc_type=%s max_items=%d", strings.ToUpper(strings.TrimSpace(meta.DiscType)), maxItems)
@@ -123,7 +125,7 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, maxIte
 	if err := ctx.Err(); err != nil {
 		return result, fmt.Errorf("DVD menus: capture canceled: %w", err)
 	}
-	if s == nil || s.repo == nil || s.lifecycle == nil {
+	if s == nil || s.repo == nil {
 		return result, errors.New("DVD menus: screenshot lifecycle repository not configured")
 	}
 	if !strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") {
@@ -145,7 +147,14 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, maxIte
 		return result, err
 	}
 
-	s.logger.Infof("DVD menus: capture started language=%s region=%d max_items=%d engine_version=%s ffmpeg_dvdvideo=%t", defaultLanguage, 0, maxItems, info.EngineVersion, info.FFmpegDVDVideo)
+	s.logger.Infof(
+		"DVD menus: capture started language=%s region=%d max_items=%d engine_version=%s ffmpeg_dvdvideo=%t",
+		defaultLanguage,
+		0,
+		maxItems,
+		info.EngineVersion,
+		info.FFmpegDVDVideo,
+	)
 	lastProgress := engine.Progress{}
 	hasProgress := false
 	engineResult, err := s.captureDirectory(ctx, videoTS, s.runner, executable, engine.Options{
@@ -156,7 +165,15 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, maxIte
 		Logger:         s.logger,
 		Progress: func(update engine.Progress) {
 			if !hasProgress || update != lastProgress {
-				s.logger.Debugf("DVD menus: progress phase=%s inventoried=%d states=%d buttons=%d captured=%d warnings=%d", update.Phase, update.Inventoried, update.VisitedStates, update.VisitedButtons, update.Captured, update.Warnings)
+				s.logger.Debugf(
+					"DVD menus: progress phase=%s inventoried=%d states=%d buttons=%d captured=%d warnings=%d",
+					update.Phase,
+					update.Inventoried,
+					update.VisitedStates,
+					update.VisitedButtons,
+					update.Captured,
+					update.Warnings,
+				)
 				lastProgress = update
 				hasProgress = true
 			}
@@ -173,14 +190,29 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, maxIte
 	})
 	result = mapEngineResult(meta.SourcePath, maxItems, engineResult, info)
 	if err != nil {
-		s.logger.Warnf("DVD menus: capture failed stage=engine captured=%d discovered=%d warnings=%d", len(engineResult.Captures), engineResult.Inventoried, len(engineResult.Warnings))
+		s.logger.Warnf(
+			"DVD menus: capture failed stage=engine captured=%d discovered=%d warnings=%d",
+			len(engineResult.Captures),
+			engineResult.Inventoried,
+			len(engineResult.Warnings),
+		)
 		return result, fmt.Errorf("DVD menus: %w", err)
 	}
 	if len(engineResult.Captures) == 0 {
 		s.logger.Warnf("DVD menus: capture failed stage=render reason=no_frames")
 		return result, errors.New("DVD menus: no menu images captured")
 	}
-	s.logger.Debugf("DVD menus: engine complete discovered=%d states=%d buttons=%d selected=%d captured=%d partial=%t truncated=%t warnings=%d", result.DiscoveredMenus, result.VisitedStates, result.VisitedButtons, engineResult.Selected, len(engineResult.Captures), result.Partial, result.Truncated, len(result.Warnings))
+	s.logger.Debugf(
+		"DVD menus: engine complete discovered=%d states=%d buttons=%d selected=%d captured=%d partial=%t truncated=%t warnings=%d",
+		result.DiscoveredMenus,
+		result.VisitedStates,
+		result.VisitedButtons,
+		engineResult.Selected,
+		len(engineResult.Captures),
+		result.Partial,
+		result.Truncated,
+		len(result.Warnings),
+	)
 	for _, warning := range result.Warnings {
 		s.logger.Debugf("DVD menus: warning recorded code=%s detail=%q", warning.Code, dvdMenuWarningDetail(warning.Code))
 	}
@@ -195,7 +227,7 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, maxIte
 		WarningCount:    len(result.Warnings),
 	})
 
-	tmpDir, base, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
+	tmpDir, base, err := paths.ReleaseTempDirFor(s.tmpRoot, meta.SourcePath, api.ReleaseInfo{})
 	if err != nil {
 		return result, fmt.Errorf("DVD menus: %w", err)
 	}
@@ -206,7 +238,7 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, maxIte
 		return result, err
 	}
 	s.logger.Debugf("DVD menus: persistence files ready created=%d", len(created))
-	replaced, err := s.lifecycle.ReplaceDVDMenuScreenshots(ctx, meta.SourcePath, records, selections)
+	replaced, err := s.repo.ReplaceDVDMenuScreenshots(ctx, meta.SourcePath, records, selections)
 	if err != nil {
 		removeCreatedFiles(created)
 		s.logger.Warnf("DVD menus: persistence failed stage=database created=%d", len(created))
@@ -235,7 +267,16 @@ func (s *Service) Capture(ctx context.Context, meta api.PreparedMetadata, maxIte
 		s.logger.Warnf("DVD menus: replaced file cleanup incomplete count=%d", cleanupFailed)
 	}
 	if result.Partial || result.Truncated {
-		s.logger.Warnf("DVD menus: capture incomplete captured=%d discovered=%d states=%d buttons=%d partial=%t truncated=%t warnings=%d", len(result.Images), result.DiscoveredMenus, result.VisitedStates, result.VisitedButtons, result.Partial, result.Truncated, len(result.Warnings))
+		s.logger.Warnf(
+			"DVD menus: capture incomplete captured=%d discovered=%d states=%d buttons=%d partial=%t truncated=%t warnings=%d",
+			len(result.Images),
+			result.DiscoveredMenus,
+			result.VisitedStates,
+			result.VisitedButtons,
+			result.Partial,
+			result.Truncated,
+			len(result.Warnings),
+		)
 	}
 	s.logger.Infof(
 		"DVD menus: capture complete captured=%d discovered=%d states=%d buttons=%d complete=%t partial=%t truncated=%t warnings=%d",
@@ -275,7 +316,7 @@ func dvdMenuProgressMessage(phase string) string {
 
 // List returns persisted manual and automatic menu images in final-selection
 // order. Missing or directory-valued local image paths are omitted.
-func (s *Service) List(ctx context.Context, meta api.PreparedMetadata) ([]api.ScreenshotImage, error) {
+func (s *Service) List(ctx context.Context, meta api.DVDMenuSubject) ([]api.ScreenshotImage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("DVD menus: list canceled: %w", err)
 	}
@@ -286,32 +327,24 @@ func (s *Service) List(ctx context.Context, meta api.PreparedMetadata) ([]api.Sc
 		return nil, internalerrors.ErrInvalidInput
 	}
 
-	selections, err := s.repo.ListFinalSelections(ctx, meta.SourcePath)
+	snapshot, err := s.repo.LoadMediaAssetSnapshot(ctx, meta.SourcePath)
 	if err != nil {
-		return nil, fmt.Errorf("DVD menus: list selections: %w", err)
-	}
-	records, err := s.repo.ListScreenshotsByPath(ctx, meta.SourcePath)
-	if err != nil {
-		return nil, fmt.Errorf("DVD menus: list screenshots: %w", err)
-	}
-	uploaded, err := s.repo.ListUploadedImagesByPath(ctx, meta.SourcePath)
-	if err != nil {
-		return nil, fmt.Errorf("DVD menus: list uploaded images: %w", err)
+		return nil, fmt.Errorf("DVD menus: load media assets: %w", err)
 	}
 
-	recordByPath := make(map[string]api.Screenshot, len(records))
-	for _, record := range records {
+	recordByPath := make(map[string]api.Screenshot, len(snapshot.Screenshots))
+	for _, record := range snapshot.Screenshots {
 		if record.Purpose == api.ScreenshotPurposeMenu {
 			recordByPath[strings.TrimSpace(record.ImagePath)] = record
 		}
 	}
-	uploadByPath := make(map[string]api.UploadedImageLink, len(uploaded))
-	for _, link := range uploaded {
+	uploadByPath := make(map[string]api.UploadedImageLink, len(snapshot.UploadedImages))
+	for _, link := range snapshot.UploadedImages {
 		uploadByPath[strings.TrimSpace(link.ImagePath)] = link
 	}
 
 	images := make([]api.ScreenshotImage, 0)
-	for _, selection := range selections {
+	for _, selection := range snapshot.FinalSelections {
 		if !api.IsDiscMenuSelectionSource(selection.Source) {
 			continue
 		}
@@ -332,18 +365,18 @@ func (s *Service) List(ctx context.Context, meta api.PreparedMetadata) ([]api.Sc
 // assets are not deleted. If final removal of the staged file fails, Delete
 // attempts to restore the original file and its local records before returning;
 // compensation failures are joined with the removal error.
-func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePath string) error {
+func (s *Service) Delete(ctx context.Context, meta api.DVDMenuSubject, imagePath string) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("DVD menus: delete canceled: %w", err)
 	}
-	if s == nil || s.lifecycle == nil {
+	if s == nil || s.repo == nil {
 		return errors.New("DVD menus: screenshot lifecycle repository not configured")
 	}
 	trimmedPath := strings.TrimSpace(imagePath)
 	if strings.TrimSpace(meta.SourcePath) == "" || trimmedPath == "" {
 		return internalerrors.ErrInvalidInput
 	}
-	tmpDir, _, err := paths.ReleaseTempDir(s.tmpRoot, meta, meta.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, meta.SourcePath, api.ReleaseInfo{})
 	if err != nil {
 		return fmt.Errorf("DVD menus: %w", err)
 	}
@@ -366,7 +399,7 @@ func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePa
 		return fmt.Errorf("DVD menus: inspect local image: %w", statErr)
 	}
 
-	deleted, err := s.lifecycle.DeleteDiscMenuScreenshot(ctx, meta.SourcePath, trimmedPath)
+	deleted, err := s.repo.DeleteDiscMenuScreenshot(ctx, meta.SourcePath, trimmedPath)
 	if err != nil {
 		if renamed {
 			if restoreErr := os.Rename(pendingPath, trimmedPath); restoreErr != nil {
@@ -384,7 +417,7 @@ func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePa
 			if restoreErr := os.Rename(pendingPath, trimmedPath); restoreErr != nil {
 				return fmt.Errorf("DVD menus: remove staged local image and restore file: %w", errors.Join(removeErr, restoreErr))
 			}
-			if restoreErr := s.lifecycle.RestoreDiscMenuScreenshot(context.WithoutCancel(ctx), meta.SourcePath, deleted); restoreErr != nil {
+			if restoreErr := s.repo.RestoreDiscMenuScreenshot(context.WithoutCancel(ctx), meta.SourcePath, deleted); restoreErr != nil {
 				return fmt.Errorf("DVD menus: remove staged local image and restore records: %w", errors.Join(removeErr, restoreErr))
 			}
 			return fmt.Errorf("DVD menus: remove staged local image; deletion rolled back: %w", removeErr)
@@ -445,7 +478,11 @@ func (s *Service) resolveCapability(ctx context.Context) (string, render.Capabil
 		return "", render.Capability{}, info, fmt.Errorf("DVD menus: FFmpeg capability: %w", err)
 	}
 	s.capabilityMu.Lock()
-	s.capabilityCache = capabilityCache{identity: identity, capability: capability, valid: true}
+	s.capabilityCache = capabilityCache{
+		identity:   identity,
+		capability: capability,
+		valid:      true,
+	}
 	s.capabilityMu.Unlock()
 	s.logger.Debugf("DVD menus: FFmpeg capability probe complete dvdvideo=%t options=%d", capability.Available, len(capability.Options))
 	return executable, capability, engineInfo(capability), nil
@@ -507,7 +544,11 @@ func inspectExecutable(executable string) (executableIdentity, error) {
 	if info.IsDir() {
 		return executableIdentity{}, errors.New("DVD menus: FFmpeg executable is a directory")
 	}
-	return executableIdentity{path: absPath, size: info.Size(), modTime: info.ModTime().UnixNano()}, nil
+	return executableIdentity{
+		path:    absPath,
+		size:    info.Size(),
+		modTime: info.ModTime().UnixNano(),
+	}, nil
 }
 
 func baseEngineInfo() api.DVDMenuEngineInfo {

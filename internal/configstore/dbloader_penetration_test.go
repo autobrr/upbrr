@@ -18,7 +18,7 @@ import (
 	"github.com/autobrr/upbrr/internal/services/db"
 )
 
-// The configstore is the single entry point every surface (CLI, GUI, web)
+// The configstore is the single entry point every surface (CLI and WebUI)
 // uses to materialize config at startup. These tests drive the Bootstrap,
 // ResolveYAMLPath, LoadFromPathOrEmbedded, and SaveToDBPath contracts through
 // edge cases each surface relies on.
@@ -74,7 +74,7 @@ func TestResolveYAMLPathDefault(t *testing.T) {
 }
 
 // LoadFromPathOrEmbedded must return the embedded config when the path is
-// missing, not an error — this is how the GUI handles fresh installs.
+// missing, not an error — this is how the WebUI handles fresh installs.
 func TestLoadFromPathOrEmbeddedMissingFallsBack(t *testing.T) {
 	t.Parallel()
 

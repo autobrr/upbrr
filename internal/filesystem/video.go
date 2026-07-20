@@ -20,6 +20,7 @@ var videoExts = map[string]struct{}{
 	".ts":  {},
 }
 
+// SupportedVideoExtensions returns a sorted copy of recognized lowercase extensions.
 func SupportedVideoExtensions() []string {
 	exts := make([]string, 0, len(videoExts))
 	for ext := range videoExts {
@@ -29,14 +30,18 @@ func SupportedVideoExtensions() []string {
 	return exts
 }
 
+// IsVideoFile reports whether name has a recognized extension, ignoring case.
 func IsVideoFile(name string) bool {
 	ext := strings.ToLower(filepath.Ext(strings.ToLower(name)))
 	_, ok := videoExts[ext]
 	return ok
 }
 
-// CollectVideoFiles returns the selected video path and file list for a non-disc source.
-// When preferLargest is true, the selected video is the largest file by size.
+// CollectVideoFiles returns a selected video and candidate list for a non-disc
+// source. A file source is returned regardless of extension. A directory scan
+// is non-recursive, includes recognized video extensions, excludes sample-like
+// names except !sample, and sorts candidates by path. Selection uses the first
+// candidate unless preferLargest is set.
 func CollectVideoFiles(ctx context.Context, source string, preferLargest bool) (string, []string, error) {
 	trimmed := strings.TrimSpace(source)
 	if trimmed == "" {

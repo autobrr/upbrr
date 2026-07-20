@@ -8,8 +8,9 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/autobrr/upbrr/internal/pathutil"
-	"github.com/autobrr/upbrr/pkg/api"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 )
 
 // serviceAlias carries a configured service alias and its normalized token span
@@ -23,7 +24,7 @@ type serviceAlias struct {
 // resolveService returns the normalized service token, display name, and source
 // filename for metadata naming. Existing metadata service values win over
 // filename-derived matches.
-func resolveService(meta api.PreparedMetadata) (string, string, string) {
+func resolveService(meta preparationstate.State) (string, string, string) {
 	services := serviceCodeMap()
 	filename := strings.TrimSpace(meta.Filename)
 	if filename == "" {
@@ -118,7 +119,11 @@ func orderedServiceAliases(services map[string]string) []serviceAlias {
 		if len(tokens) == 0 {
 			continue
 		}
-		aliases = append(aliases, serviceAlias{name: name, service: service, tokens: tokens})
+		aliases = append(aliases, serviceAlias{
+			name:    name,
+			service: service,
+			tokens:  tokens,
+		})
 	}
 	sort.Slice(aliases, func(i, j int) bool {
 		iWeight := serviceAliasTokenWeight(aliases[i])
