@@ -1430,9 +1430,6 @@ func printDupeResult(result api.DupeCheckResult) {
 		fmt.Printf("- %s\n", note)
 	}
 	entries := result.Filtered
-	if len(entries) == 0 {
-		entries = result.Raw
-	}
 	for _, entry := range entries {
 		if entry.Name == "" {
 			continue
