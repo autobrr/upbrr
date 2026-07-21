@@ -5,7 +5,7 @@ go 1.26.5
 require (
 	github.com/anacrolix/torrent v1.61.0
 	github.com/autobrr/go-bdinfo v0.3.2-0.20260630110520-88d4a8ab6880
-	github.com/autobrr/go-mediainfo v0.4.1-0.20260713062236-a80a455cd7e0
+	github.com/autobrr/go-mediainfo v0.4.1-0.20260719223324-57c6f92129f4
 	github.com/autobrr/go-qbittorrent v1.16.0
 	github.com/autobrr/mkbrr v1.23.0
 	github.com/frustra/bbcode v0.0.0-20201127003707-6ef347fbe1c8
