@@ -4,6 +4,7 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
 import {
   EventsOn,
@@ -33,7 +34,6 @@ import { cn } from "./utils/cn";
 import logoUrl from "./assets/logo.png";
 import type {
   ConfigMap,
-  ApplicationInfo,
   BrowseDirectoryResponse,
   DescriptionBuilderPreview,
   DVDMenuCaptureSnapshot,
@@ -130,6 +130,46 @@ const themeGlyphPaths: Record<string, string> = {
   auto: "M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0V12",
 };
 
+// More heroicons outline paths for the header (user menu, external link).
+const headerGlyphPaths = {
+  user: [
+    "M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z",
+  ],
+  cog: [
+    "M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z",
+    "M15 12a3 3 0 11-6 0 3 3 0 016 0z",
+  ],
+  logout: [
+    "M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9",
+  ],
+  external: [
+    "M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25",
+  ],
+};
+
+function HeaderGlyph({
+  name,
+  className,
+}: {
+  name: keyof typeof headerGlyphPaths;
+  className: string;
+}) {
+  return (
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={1.5}
+      stroke="currentColor"
+      aria-hidden="true"
+    >
+      {headerGlyphPaths[name].map((d) => (
+        <path key={d.slice(0, 24)} strokeLinecap="round" strokeLinejoin="round" d={d} />
+      ))}
+    </svg>
+  );
+}
+
 function ThemeGlyph({ theme }: { theme: string }) {
   return (
     <svg
@@ -148,10 +188,6 @@ function ThemeGlyph({ theme }: { theme: string }) {
     </svg>
   );
 }
-
-type AppBridgeWithApplicationInfo = {
-  GetApplicationInfo?: () => Promise<ApplicationInfo>;
-};
 
 const emptyDupeSummary: DupeCheckSummary = {
   SourcePath: "",
@@ -922,7 +958,6 @@ export default function App({ webUsername, onWebLogout }: AppProps = {}) {
   const [webAuthPassword, setWebAuthPassword] = useState("");
   const [webAuthConfirm, setWebAuthConfirm] = useState("");
   const [webAuthError, setWebAuthError] = useState("");
-  const [applicationInfo, setApplicationInfo] = useState<ApplicationInfo | null>(null);
   const configOpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sourcePathDropHandlerRef = useRef<(paths: string[]) => void>(() => undefined);
   const [hostBrowserMode, setHostBrowserMode] = useState<"file" | "folder" | null>(null);
@@ -1089,29 +1124,6 @@ export default function App({ webUsername, onWebLogout }: AppProps = {}) {
     localStorage.setItem("theme", nextTheme);
     applyTheme(nextTheme);
   };
-
-  useEffect(() => {
-    let cancelled = false;
-    const getter = (globalThis.go?.guiapp?.App as AppBridgeWithApplicationInfo | undefined)
-      ?.GetApplicationInfo;
-    if (!getter) {
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    void getter()
-      .then((info) => {
-        if (!cancelled) {
-          setApplicationInfo(info);
-        }
-      })
-      .catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!lightboxImage) return;
@@ -4211,7 +4223,6 @@ export default function App({ webUsername, onWebLogout }: AppProps = {}) {
   const dupeTotalCount = Number(dupeCheckSnapshot?.totalCount || 0);
 
   const workflowTabs = [
-    { id: "input", label: "Input", visible: true },
     { id: "tracker", label: "Tracker Data", visible: Boolean(hasTrackerData) },
     { id: "bluray", label: "Blu-ray.com", visible: hasBlurayData },
     { id: "dupes", label: "Dupe Checking", visible: hasPreview },
@@ -4227,6 +4238,7 @@ export default function App({ webUsername, onWebLogout }: AppProps = {}) {
   ].filter((tab) => tab.visible);
 
   const headerNavItems = [
+    { id: "input", label: "Input" },
     { id: "settings", label: "Settings" },
     { id: "logging", label: "Logging" },
     { id: "history", label: "History" },
@@ -4265,16 +4277,25 @@ export default function App({ webUsername, onWebLogout }: AppProps = {}) {
                           {item.label}
                         </button>
                       ))}
+                      <a
+                        className={cn(
+                          headerNavItemClass(false),
+                          "flex items-center justify-center no-underline",
+                        )}
+                        href="https://github.com/autobrr/upbrr"
+                        target="_blank"
+                        rel="noreferrer"
+                        onAuxClick={handleExternalLinkClick}
+                        onClick={handleExternalLinkClick}
+                      >
+                        GitHub
+                        <HeaderGlyph name="external" className="ml-1 inline h-5 w-5" />
+                      </a>
                     </div>
                   </div>
                 </div>
                 <div className="hidden sm:block">
-                  <div className="flex items-center gap-1">
-                    {applicationInfo?.version ? (
-                      <span className="mr-1 hidden text-xs text-gray-500 lg:block">
-                        {applicationInfo.version}
-                      </span>
-                    ) : null}
+                  <div className="ml-4 flex items-center sm:ml-6">
                     <button
                       className={headerIconButtonClass}
                       type="button"
@@ -4284,32 +4305,59 @@ export default function App({ webUsername, onWebLogout }: AppProps = {}) {
                       <ThemeGlyph theme={theme} />
                       <span className="sr-only">Toggle theme ({getThemeLabel()})</span>
                     </button>
-                    <a
-                      className={cn(headerIconButtonClass, "inline-flex")}
-                      href="https://github.com/autobrr/upbrr"
-                      target="_blank"
-                      rel="noreferrer"
-                      onAuxClick={handleExternalLinkClick}
-                      onClick={handleExternalLinkClick}
-                      aria-label="Open autobrr/upbrr on GitHub"
-                      title="autobrr/upbrr"
-                    >
-                      <svg
-                        aria-hidden="true"
-                        viewBox="0 0 16 16"
-                        className="h-4 w-4"
-                        fill="currentColor"
-                      >
-                        <path d="M8 0C3.58 0 0 3.67 0 8.2c0 3.62 2.29 6.69 5.47 7.78.4.08.55-.18.55-.4l-.01-1.4c-2.22.5-2.69-1.1-2.69-1.1-.36-.95-.89-1.2-.89-1.2-.73-.51.05-.5.05-.5.81.06 1.24.85 1.24.85.72 1.27 1.89.9 2.35.69.07-.53.28-.9.51-1.1-1.78-.21-3.64-.91-3.64-4.04 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .68-.22 2.2.84A7.37 7.37 0 0 1 8 3.99c.68 0 1.36.09 2 .28 1.52-1.06 2.19-.84 2.19-.84.44 1.12.16 1.95.08 2.16.52.57.82 1.3.82 2.19 0 3.14-1.87 3.83-3.65 4.04.29.25.54.76.54 1.54l-.01 2.22c0 .22.14.48.55.4A8.13 8.13 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z" />
-                      </svg>
-                    </a>
                     {webUsername ? (
-                      <>
-                        <span className="auth-username">{webUsername}</span>
-                        <button className="auth-logout" type="button" onClick={onWebLogout}>
-                          Logout
-                        </button>
-                      </>
+                      <DropdownMenu.Root>
+                        <DropdownMenu.Trigger asChild>
+                          <button
+                            className={cn(
+                              "ml-2 flex max-w-xs items-center rounded-full border-0 bg-transparent px-3 py-2 text-sm font-medium shadow-none",
+                              "text-gray-600 transition duration-200 hover:bg-gray-200 hover:text-gray-900",
+                              "dark:text-gray-500 dark:hover:bg-gray-800 dark:hover:text-white",
+                              "data-[state=open]:bg-gray-200 data-[state=open]:text-gray-900",
+                              "dark:data-[state=open]:bg-gray-800 dark:data-[state=open]:text-white",
+                            )}
+                            type="button"
+                          >
+                            <span className="sr-only">Open user menu for </span>
+                            {webUsername}
+                            <HeaderGlyph name="user" className="ml-1 inline h-5 w-5" />
+                          </button>
+                        </DropdownMenu.Trigger>
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.Content
+                            align="end"
+                            sideOffset={8}
+                            className="z-10 w-48 divide-y divide-gray-100 rounded-md border border-gray-250 bg-white shadow-lg dark:divide-gray-750 dark:border-gray-775 dark:bg-gray-800"
+                          >
+                            <DropdownMenu.Item asChild>
+                              <button
+                                className="flex w-full items-center rounded-none rounded-t-md border-0 bg-transparent px-2 py-2 text-left text-sm text-gray-900 shadow-none outline-none transition data-[highlighted]:bg-gray-100 dark:text-gray-200 dark:data-[highlighted]:bg-gray-600"
+                                type="button"
+                                onClick={() => selectTab("settings")}
+                              >
+                                <HeaderGlyph
+                                  name="cog"
+                                  className="mr-1 h-5 w-5 text-gray-700 dark:text-gray-400"
+                                />
+                                Settings
+                              </button>
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item asChild>
+                              <button
+                                className="flex w-full items-center rounded-none rounded-b-md border-0 bg-transparent px-2 py-2 text-left text-sm text-gray-900 shadow-none outline-none transition data-[highlighted]:bg-gray-100 dark:text-gray-200 dark:data-[highlighted]:bg-gray-600"
+                                type="button"
+                                onClick={onWebLogout}
+                              >
+                                <HeaderGlyph
+                                  name="logout"
+                                  className="mr-1 h-5 w-5 text-gray-700 dark:text-gray-400"
+                                />
+                                Log out
+                              </button>
+                            </DropdownMenu.Item>
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu.Root>
                     ) : null}
                   </div>
                 </div>
@@ -4346,16 +4394,6 @@ export default function App({ webUsername, onWebLogout }: AppProps = {}) {
           </div>
           {mobileNavOpen ? (
             <div className="space-y-1 border-b border-gray-300 px-2 pb-3 pt-2 dark:border-gray-775 sm:hidden">
-              {workflowTabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  className={mobileNavItemClass(activeTab === tab.id)}
-                  type="button"
-                  onClick={() => selectTab(tab.id)}
-                >
-                  {tab.label}
-                </button>
-              ))}
               {headerNavItems.map((item) => (
                 <button
                   key={item.id}
@@ -4364,6 +4402,16 @@ export default function App({ webUsername, onWebLogout }: AppProps = {}) {
                   onClick={() => selectTab(item.id)}
                 >
                   {item.label}
+                </button>
+              ))}
+              {workflowTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  className={mobileNavItemClass(activeTab === tab.id)}
+                  type="button"
+                  onClick={() => selectTab(tab.id)}
+                >
+                  {tab.label}
                 </button>
               ))}
               <button
@@ -4378,7 +4426,7 @@ export default function App({ webUsername, onWebLogout }: AppProps = {}) {
               </button>
               {webUsername && onWebLogout ? (
                 <button className={mobileNavItemClass(false)} type="button" onClick={onWebLogout}>
-                  Logout ({webUsername})
+                  Log out ({webUsername})
                 </button>
               ) : null}
             </div>
