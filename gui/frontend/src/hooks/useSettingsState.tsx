@@ -12,7 +12,7 @@ import { formatLabel, normalizeDefaultTrackerList } from "../utils/settings";
 type SettingsSection = { key: string; jsonKey: string; label: string };
 
 const settingsInputClass =
-  "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
+  "h-8 rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-blue-500/25";
 
 const settingsSelectClass = `${settingsInputClass} cursor-pointer`;
 type FieldOption = NonNullable<FieldMeta["options"]>[number];

@@ -343,7 +343,7 @@ export default function LogSettingsPanel({
             return renderField(key, loggingConfig[key], ["Logging", key], meta);
           })}
         </div>
-        <div className="grid gap-1 rounded-md border border-white/10 bg-[var(--panel-light)] px-3 py-2 break-all">
+        <div className="grid gap-1 rounded-md border border-[var(--border)] bg-[var(--panel-light)] px-3 py-2 break-all">
           <span className="label">Log path</span>
           <span className="value">{logPath || "Unavailable"}</span>
         </div>
@@ -366,7 +366,7 @@ export default function LogSettingsPanel({
             <button className="ghost" type="button" onClick={handleClearLogs}>
               Clear
             </button>
-            <div className="inline-flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-sm font-semibold text-[var(--text)]">
+            <div className="inline-flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--panel-light)] px-2 py-1 text-sm font-semibold text-[var(--text)]">
               <span>Auto-scroll</span>
               <Switch
                 aria-label="Auto-scroll logs"
@@ -382,7 +382,7 @@ export default function LogSettingsPanel({
             {levelOrder.map((level) => (
               <div
                 key={level}
-                className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-xs font-semibold uppercase"
+                className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--panel-light)] px-2 py-1 text-xs font-semibold uppercase"
               >
                 <Checkbox
                   id={`log-level-${level}`}
@@ -396,7 +396,7 @@ export default function LogSettingsPanel({
             ))}
           </div>
           <input
-            className="min-w-[200px] flex-1 rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-sm text-[var(--text)]"
+            className="min-w-[200px] flex-1 rounded-md border border-[var(--border)] bg-[var(--panel-light)] px-2 py-1.5 text-sm text-[var(--text)]"
             placeholder="Search logs"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
@@ -406,7 +406,7 @@ export default function LogSettingsPanel({
         {bufferWarning ? <p className="warning">{bufferWarning}</p> : null}
 
         <div
-          className="grid max-h-[328px] gap-1.5 overflow-y-auto rounded-lg border border-white/10 bg-black/20 p-2 font-mono text-[0.82rem]"
+          className="grid max-h-[328px] gap-1.5 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--input-bg)] p-2 font-mono text-[0.82rem]"
           aria-live="polite"
           ref={logStreamRef}
         >
@@ -444,7 +444,7 @@ export default function LogSettingsPanel({
           </div>
           <div className="flex flex-wrap gap-2">
             <input
-              className="min-w-[220px] flex-1 rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-sm text-[var(--text)]"
+              className="min-w-[220px] flex-1 rounded-md border border-[var(--border)] bg-[var(--panel-light)] px-2 py-1.5 text-sm text-[var(--text)]"
               placeholder="Message to mute"
               value={pendingMute}
               onChange={(event) => setPendingMute(event.target.value)}
@@ -463,7 +463,7 @@ export default function LogSettingsPanel({
               {mutedPatterns.map((pattern) => (
                 <div
                   key={pattern}
-                  className="flex items-center justify-between gap-2 rounded-md border border-white/10 bg-white/5 px-2 py-1.5"
+                  className="flex items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-[var(--panel-light)] px-2 py-1.5"
                 >
                   <span>{pattern}</span>
                   <button className="ghost" type="button" onClick={() => handleRemoveMute(pattern)}>

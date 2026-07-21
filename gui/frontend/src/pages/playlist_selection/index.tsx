@@ -166,7 +166,7 @@ const PlaylistSelectionPage = ({
           </div>
         ) : null}
 
-        <div className="my-3 overflow-hidden rounded-md border border-white/10">
+        <div className="my-3 overflow-hidden rounded-md border border-[var(--border)]">
           {playlists.slice(0, displayCount).map((playlist, index) => {
             const totalSize = playlist.items?.reduce((sum, item) => sum + item.size, 0) || 0;
             const fileCount = playlist.items?.length || 0;
@@ -174,7 +174,7 @@ const PlaylistSelectionPage = ({
             return (
               <div
                 key={playlist.file}
-                className="grid gap-1 border-b border-white/10 px-3 py-2 last:border-b-0 hover:bg-white/5"
+                className="grid gap-1 border-b border-[var(--border)] px-3 py-2 last:border-b-0 hover:bg-[var(--hover)]"
               >
                 <div className="flex select-none items-center gap-2">
                   <Checkbox
@@ -226,7 +226,7 @@ const PlaylistSelectionPage = ({
 
         {preparing ? (
           <div
-            className="mt-3 rounded-md border border-white/10 bg-white/5 p-2"
+            className="mt-3 rounded-md border border-[var(--border)] bg-[var(--panel-light)] p-2"
             role="status"
             aria-live="polite"
           >

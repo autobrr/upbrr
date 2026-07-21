@@ -12,10 +12,10 @@ export function Button({ className, variant = "secondary", ...props }: Readonly<
   return (
     <button
       className={cn(
-        "inline-flex h-8 shrink-0 items-center justify-center rounded-md border px-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex h-8 shrink-0 items-center justify-center rounded-md border px-3 text-sm font-medium shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50",
         variant === "primary"
-          ? "border-transparent bg-[var(--accent)] text-slate-950 shadow-[0_8px_24px_rgba(245,185,66,0.22)] hover:brightness-110"
-          : "border-white/10 bg-white/5 text-[var(--text)] hover:bg-white/10",
+          ? "border-transparent bg-blue-600 text-white hover:bg-blue-700"
+          : "border-[var(--input-border)] bg-[var(--panel)] text-[var(--text)] hover:bg-[var(--hover)]",
         className,
       )}
       {...props}

@@ -225,7 +225,7 @@ export default function UploadImagesPage(props: Props) {
         </div>
         {uploadImagesLoading && uploadProgress.total > 0 ? (
           <div className="grid gap-1.5">
-            <div className="h-4 w-full overflow-hidden rounded-full border border-white/10 bg-white/10">
+            <div className="h-4 w-full overflow-hidden rounded-full border border-[var(--border)] bg-[var(--hover)]">
               <div
                 className="h-full rounded-full bg-[var(--accent-2)] transition-[width]"
                 style={{
@@ -283,7 +283,7 @@ export default function UploadImagesPage(props: Props) {
                     className={cn(
                       "screens-thumb",
                       selected &&
-                        "border-[var(--accent-2)] shadow-[0_0_0_2px_rgba(53,194,193,0.2)]",
+                        "border-[var(--accent-2)] shadow-[0_0_0_2px_rgba(59,130,246,0.35)]",
                       isUploaded && "border-emerald-500/60 opacity-85",
                     )}
                     type="button"
@@ -310,7 +310,7 @@ export default function UploadImagesPage(props: Props) {
                   <Button
                     className={cn(
                       "h-7 text-xs",
-                      selected && "border-[var(--accent-2)] bg-[rgba(53,194,193,0.18)]",
+                      selected && "border-[var(--accent-2)] bg-blue-500/15",
                     )}
                     type="button"
                     onClick={() => pathValue && toggleUploadSelection(pathValue)}
@@ -320,7 +320,7 @@ export default function UploadImagesPage(props: Props) {
                   {isUploaded && imgLink ? (
                     <div className="flex justify-center gap-1.5">
                       <a
-                        className="inline-flex h-7 items-center justify-center rounded-md border border-white/10 bg-white/5 px-2 text-xs no-underline hover:bg-white/10"
+                        className="inline-flex h-7 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--panel-light)] px-2 text-xs no-underline hover:bg-[var(--hover)]"
                         href={imgLink}
                         target="_blank"
                         rel="noreferrer"
@@ -357,7 +357,7 @@ export default function UploadImagesPage(props: Props) {
                 <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-2">
                   {group.items.map((img, index) => (
                     <div
-                      className="grid min-w-0 gap-1 rounded-lg border border-white/10 bg-[rgba(12,16,26,0.78)] p-2 [&_.tracker-link]:[overflow-wrap:anywhere] [&_.value]:[overflow-wrap:anywhere]"
+                      className="grid min-w-0 gap-1 rounded-lg border border-[var(--border)] bg-[var(--panel-light)] p-2 [&_.tracker-link]:[overflow-wrap:anywhere] [&_.value]:[overflow-wrap:anywhere]"
                       key={`prev-uploaded-${img.ImagePath}-${img.Host}-${index}`}
                     >
                       <p className="label">Image</p>
@@ -433,7 +433,7 @@ export default function UploadImagesPage(props: Props) {
           <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-2">
             {uploadedImages.map((image, index) => (
               <div
-                className="grid min-w-0 gap-1 rounded-lg border border-white/10 bg-[rgba(12,16,26,0.78)] p-2 [&_.tracker-link]:[overflow-wrap:anywhere] [&_.value]:[overflow-wrap:anywhere]"
+                className="grid min-w-0 gap-1 rounded-lg border border-[var(--border)] bg-[var(--panel-light)] p-2 [&_.tracker-link]:[overflow-wrap:anywhere] [&_.value]:[overflow-wrap:anywhere]"
                 key={`uploaded-${image.ImagePath}-${index}`}
               >
                 <p className="label">Image</p>

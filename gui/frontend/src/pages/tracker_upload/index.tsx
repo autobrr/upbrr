@@ -64,10 +64,10 @@ const statusClass = (status: string) => {
   if (["failed", "completed-with-errors", "canceled", "blocked"].includes(normalized)) {
     return "border-red-400/45 text-red-100";
   }
-  return "border-white/15 text-[var(--muted)]";
+  return "border-[var(--border)] text-[var(--muted)]";
 };
 
-const subtleBox = "rounded-md border border-white/10 bg-white/5 px-2 py-1.5";
+const subtleBox = "rounded-md border border-[var(--border)] bg-[var(--panel-light)] px-2 py-1.5";
 const blockReasonClass =
   "inline-flex h-5 items-center rounded border border-red-400/30 bg-red-500/10 px-1.5 text-[11px] font-semibold leading-none text-red-700 dark:text-red-100";
 const formatStatusText = (value: string) => value.replaceAll("_", " ");
@@ -525,7 +525,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
         </div>
         {currentTask || currentMessage ? (
           <div
-            className="mt-2 grid gap-1.5 rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs"
+            className="mt-2 grid gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel-light)] px-2.5 py-1.5 text-xs"
             role="status"
           >
             <div className="flex flex-wrap items-center gap-2">
@@ -547,7 +547,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
               ) : null}
             </div>
             {currentTotalPieces > 0 ? (
-              <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+              <div className="h-1.5 overflow-hidden rounded-full bg-[var(--hover)]">
                 <div
                   className="h-full rounded-full bg-[var(--accent)] transition-[width]"
                   style={{ width: `${Math.max(0, Math.min(100, currentPercent))}%` }}
@@ -565,7 +565,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
       ) : (
         <div className="grid gap-1.5">
           {blockedTrackers.length > 0 ? (
-            <details className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-2">
+            <details className="rounded-lg border border-[var(--border)] bg-[var(--panel-light)] px-2.5 py-2">
               <summary className="cursor-pointer list-none text-sm font-semibold marker:content-[''] [&::-webkit-details-marker]:hidden">
                 Blocked trackers ({blockedTrackers.length})
               </summary>
@@ -575,7 +575,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                   const iconSrc = trackerIconFor(trackerIconSrcByName, tracker.name);
                   return (
                     <div
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/10 bg-white/5 px-2 py-1.5"
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-[var(--panel-light)] px-2 py-1.5"
                       key={tracker.name}
                     >
                       <span className="value text-sm leading-5 flex items-center gap-1.5">
@@ -633,7 +633,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
 
             return (
               <article
-                className="grid gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-2"
+                className="grid gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--panel-light)] px-2.5 py-2"
                 key={tracker.name}
               >
                 <div className="flex items-center justify-between gap-2">
@@ -685,7 +685,7 @@ export default function TrackerUploadPage(props: Readonly<Props>) {
                       ) : null}
                     </p>
                     {trackerStatus.totalPieces > 0 ? (
-                      <div className="h-1 overflow-hidden rounded-full bg-white/10">
+                      <div className="h-1 overflow-hidden rounded-full bg-[var(--hover)]">
                         <div
                           className="h-full rounded-full bg-[var(--accent)] transition-[width]"
                           style={{

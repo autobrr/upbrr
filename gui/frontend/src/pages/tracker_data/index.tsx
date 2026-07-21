@@ -82,7 +82,7 @@ export default function TrackerDataPage(props: Props) {
             const hideTrackerName = faviconOnly && useFavicons;
             return (
               <details
-                className="overflow-hidden rounded-lg border border-white/10 bg-[rgba(12,16,26,0.78)]"
+                className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--panel-light)]"
                 key={trackerKey}
                 open={isPrimary}
               >
@@ -102,7 +102,7 @@ export default function TrackerDataPage(props: Props) {
                     Torrent ID: {item.TrackerID || "-"}
                   </span>
                 </summary>
-                <div className="grid gap-3 border-t border-white/10 px-3 pb-3 pt-2">
+                <div className="grid gap-3 border-t border-[var(--border)] px-3 pb-3 pt-2">
                   <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-2">
                     <div>
                       <p className="label">Tracker</p>
@@ -225,7 +225,7 @@ export default function TrackerDataPage(props: Props) {
                             }}
                           >
                             <img
-                              className="w-full rounded-lg border border-white/10"
+                              className="w-full rounded-lg border border-[var(--border)]"
                               src={url}
                               alt="Tracker"
                               loading="lazy"

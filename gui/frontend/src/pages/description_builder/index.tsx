@@ -229,7 +229,7 @@ export default function DescriptionBuilderPage(props: Props) {
                       </p>
                     </div>
                     <textarea
-                      className="min-h-[170px] w-full resize-y rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-[0.95rem] leading-6 text-[var(--text)]"
+                      className="min-h-[170px] w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2 text-[0.95rem] leading-6 text-[var(--text)]"
                       value={raw}
                       onChange={(event) => {
                         const nextValue = event.target.value;

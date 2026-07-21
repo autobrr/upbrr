@@ -47,7 +47,7 @@ export const TrackerIconImage: React.FC<TrackerIconImageProps> = ({
 
   return (
     <div
-      className={`relative flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[4px] border border-white/10 bg-slate-900/60 px-0.5 text-[8px] font-extrabold uppercase leading-none text-white shadow-[0_1px_2px_rgba(0,0,0,0.4)] ${className}`}
+      className={`relative flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[4px] border border-[var(--border)] bg-slate-900/60 px-0.5 text-[8px] font-extrabold uppercase leading-none text-white shadow-[0_1px_2px_rgba(0,0,0,0.4)] ${className}`}
       style={{
         background: validIconSrc ? undefined : getGradient(abbr),
       }}

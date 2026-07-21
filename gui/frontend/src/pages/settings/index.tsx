@@ -31,7 +31,7 @@ const trackerAuthSection = {
 };
 
 const settingsInputClass =
-  "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
+  "h-8 rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-blue-500/25";
 // Tracker-supplied auth kinds can be long adapter descriptors; keep chips
 // wrapped inside the auth card on narrow screens.
 const trackerAuthChipClass =
@@ -862,10 +862,10 @@ export default function SettingsPage(props: Props) {
                 key={section.key}
                 type="button"
                 className={cn(
-                  "flex h-8 w-full items-center rounded-md px-3 text-left text-sm font-medium transition",
+                  "flex w-full items-center rounded-none border-0 border-l-4 bg-transparent px-3 py-2 text-left text-sm font-medium shadow-none transition",
                   settingsSection === section.key
-                    ? "bg-[var(--accent)] text-slate-950 shadow-[0_8px_24px_rgba(245,185,66,0.16)]"
-                    : "text-[var(--muted)] hover:bg-white/10 hover:text-[var(--text)]",
+                    ? "border-[var(--sidebar-active-border)] bg-[var(--sidebar-active-bg)] font-bold text-[var(--sidebar-active-text)]"
+                    : "border-transparent text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]",
                 )}
                 onClick={() => setSettingsSection(section.key)}
               >
@@ -876,10 +876,10 @@ export default function SettingsPage(props: Props) {
               key={applicationDetailsSection.key}
               type="button"
               className={cn(
-                "flex h-8 w-full items-center rounded-md px-3 text-left text-sm font-medium transition",
+                "flex w-full items-center rounded-none border-0 border-l-4 bg-transparent px-3 py-2 text-left text-sm font-medium shadow-none transition",
                 settingsSection === applicationDetailsSection.key
-                  ? "bg-[var(--accent)] text-slate-950 shadow-[0_8px_24px_rgba(245,185,66,0.16)]"
-                  : "text-[var(--muted)] hover:bg-white/10 hover:text-[var(--text)]",
+                  ? "border-[var(--sidebar-active-border)] bg-[var(--sidebar-active-bg)] font-bold text-[var(--sidebar-active-text)]"
+                  : "border-transparent text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]",
               )}
               onClick={() => setSettingsSection(applicationDetailsSection.key)}
             >
@@ -889,10 +889,10 @@ export default function SettingsPage(props: Props) {
               key={trackerAuthSection.key}
               type="button"
               className={cn(
-                "flex h-8 w-full items-center rounded-md px-3 text-left text-sm font-medium transition",
+                "flex w-full items-center rounded-none border-0 border-l-4 bg-transparent px-3 py-2 text-left text-sm font-medium shadow-none transition",
                 settingsSection === trackerAuthSection.key
-                  ? "bg-[var(--accent)] text-slate-950 shadow-[0_8px_24px_rgba(245,185,66,0.16)]"
-                  : "text-[var(--muted)] hover:bg-white/10 hover:text-[var(--text)]",
+                  ? "border-[var(--sidebar-active-border)] bg-[var(--sidebar-active-bg)] font-bold text-[var(--sidebar-active-text)]"
+                  : "border-transparent text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]",
               )}
               onClick={() => setSettingsSection(trackerAuthSection.key)}
             >
