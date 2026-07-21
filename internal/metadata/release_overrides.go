@@ -4,8 +4,10 @@
 package metadata
 
 import (
+	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/metadata/seasonep"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -103,6 +105,104 @@ func hasReleaseNameOverrides(overrides api.ReleaseNameOverrides) bool {
 		overrides.NoDual != nil ||
 		overrides.DualAudio != nil ||
 		overrides.Region != nil
+}
+
+// applyReleaseNameValueOverrides folds the naming value overrides into the
+// metadata itself. They otherwise reach only the release-name string, so every
+// consumer that reads the component field keeps the parsed value the user just
+// corrected: the UNIT3D payload ids (category_id, type_id, resolution_id,
+// season_number, episode_number), the tracker rules, the dupe checks, and the
+// trackers that rebuild the name from components instead of ReleaseName (UTP,
+// RHD, TVC, ASC).
+//
+// Only value overrides belong here. The name-suppression toggles (NoSeason,
+// NoYear, NoAKA) stay naming-only — dropping season_number from the payload
+// because the user hid the season in the name would be a different change.
+func applyReleaseNameValueOverrides(meta *api.PreparedMetadata) {
+	if meta == nil {
+		return
+	}
+	overrides := meta.ReleaseNameOverrides
+
+	if overrides.Category != nil {
+		if category := normalizeNamingCategory(*overrides.Category); category != "" {
+			meta.ExternalIDs.Category = category
+		}
+	}
+	if overrides.Type != nil {
+		meta.Type = strings.TrimSpace(*overrides.Type)
+	}
+	if overrides.Source != nil {
+		meta.Source = strings.TrimSpace(*overrides.Source)
+	}
+	if overrides.Resolution != nil {
+		meta.Release.Resolution = strings.TrimSpace(*overrides.Resolution)
+	}
+	if overrides.Service != nil {
+		meta.Service = strings.TrimSpace(*overrides.Service)
+	}
+	if overrides.Region != nil {
+		meta.Region = strings.TrimSpace(*overrides.Region)
+	}
+	if overrides.EpisodeTitle != nil {
+		meta.EpisodeTitle = strings.TrimSpace(*overrides.EpisodeTitle)
+	}
+	if overrides.ManualYear != nil && *overrides.ManualYear > 0 {
+		meta.Release.Year = *overrides.ManualYear
+	}
+
+	if overrides.Edition != nil {
+		meta.Edition = strings.TrimSpace(*overrides.Edition)
+	}
+	if overrides.NoEdition != nil && *overrides.NoEdition {
+		meta.Edition = ""
+	}
+
+	if overrides.Season != nil {
+		meta.SeasonInt = parseSeasonEpisodeNumber(*overrides.Season)
+		meta.SeasonStr = seasonep.FormatSeason(meta.SeasonInt)
+	}
+	if overrides.Episode != nil {
+		meta.EpisodeInt = parseSeasonEpisodeNumber(*overrides.Episode)
+		meta.EpisodeStr = seasonep.FormatEpisode(meta.EpisodeInt)
+	}
+
+	meta.Audio = applyAudioOverrides(meta.Audio, overrides)
+
+	// Release.Group moves with the tag: resolveGroup (trackers/rules.go,
+	// unit3d/additional) prefers it over meta.Tag, so leaving it behind keeps the
+	// parsed group in the banned-group and internal-group checks.
+	if overrides.Tag != nil {
+		tag := strings.TrimSpace(*overrides.Tag)
+		if tag != "" && !strings.HasPrefix(tag, "-") {
+			tag = "-" + tag
+		}
+		meta.Tag = tag
+		meta.Release.Group = strings.TrimPrefix(tag, "-")
+	}
+	if overrides.NoTag != nil && *overrides.NoTag {
+		meta.Tag = ""
+		meta.Release.Group = ""
+	}
+}
+
+// parseSeasonEpisodeNumber reads the number out of a manual season/episode entry,
+// accepting both the "S01"/"E05" tokens the GUI shows and a bare number.
+func parseSeasonEpisodeNumber(value string) int {
+	digits := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, strings.TrimSpace(value))
+	if digits == "" {
+		return 0
+	}
+	number, err := strconv.Atoi(digits)
+	if err != nil {
+		return 0
+	}
+	return number
 }
 
 func applyReleaseNameOverrides(req api.ReleaseNameRequest, overrides api.ReleaseNameOverrides, logger api.Logger) api.ReleaseNameRequest {

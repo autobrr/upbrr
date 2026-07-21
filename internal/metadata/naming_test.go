@@ -782,3 +782,114 @@ func (l *captureLogger) contains(value string) bool {
 	}
 	return false
 }
+
+func TestRebuildReleaseNameFoldsTagOverrideIntoMeta(t *testing.T) {
+	tag := "GRP"
+	noTag := true
+
+	meta := api.PreparedMetadata{
+		Type:        "REMUX",
+		Source:      "BluRay",
+		VideoCodec:  "AVC",
+		SeasonStr:   "S01",
+		Tag:         "",
+		Release:     api.ReleaseInfo{Title: "The Show", Year: 2021, Resolution: "1080p"},
+		ExternalIDs: api.ExternalIDs{Category: "TV"},
+	}
+	meta.ReleaseNameOverrides = api.ReleaseNameOverrides{Tag: &tag}
+
+	RebuildReleaseName(&meta, nil)
+	if meta.Tag != "-GRP" {
+		t.Fatalf("expected tag override folded into meta.Tag, got %q", meta.Tag)
+	}
+	if meta.Release.Group != "GRP" {
+		t.Fatalf("expected tag override folded into meta.Release.Group (resolveGroup prefers it), got %q", meta.Release.Group)
+	}
+	if !strings.HasSuffix(meta.ReleaseName, "-GRP") {
+		t.Fatalf("expected release name to carry the tag, got %q", meta.ReleaseName)
+	}
+
+	meta.ReleaseNameOverrides.NoTag = &noTag
+	RebuildReleaseName(&meta, nil)
+	if meta.Tag != "" {
+		t.Fatalf("expected NoTag to clear meta.Tag, got %q", meta.Tag)
+	}
+}
+
+func TestRebuildReleaseNameFoldsValueOverridesIntoMeta(t *testing.T) {
+	category := "TV"
+	releaseType := "REMUX"
+	source := "BluRay"
+	resolution := "1080p"
+	service := "NF"
+	edition := "Extended"
+	region := "EUR"
+	season := "S02"
+	episode := "E07"
+	episodeTitle := "The Finale"
+	year := 2019
+	dualAudio := true
+
+	meta := api.PreparedMetadata{
+		Type:        "ENCODE",
+		Source:      "WEB",
+		Service:     "AMZN",
+		Edition:     "Theatrical",
+		Region:      "USA",
+		SeasonStr:   "S01",
+		SeasonInt:   1,
+		EpisodeStr:  "E01",
+		EpisodeInt:  1,
+		Audio:       "FLAC 2.0",
+		VideoCodec:  "AVC",
+		Release:     api.ReleaseInfo{Title: "The Show", Year: 2021, Resolution: "2160p"},
+		ExternalIDs: api.ExternalIDs{Category: "MOVIE"},
+	}
+	meta.ReleaseNameOverrides = api.ReleaseNameOverrides{
+		Category:     &category,
+		Type:         &releaseType,
+		Source:       &source,
+		Resolution:   &resolution,
+		Service:      &service,
+		Edition:      &edition,
+		Region:       &region,
+		Season:       &season,
+		Episode:      &episode,
+		EpisodeTitle: &episodeTitle,
+		ManualYear:   &year,
+		DualAudio:    &dualAudio,
+	}
+
+	RebuildReleaseName(&meta, nil)
+
+	checks := []struct {
+		field string
+		got   string
+		want  string
+	}{
+		{"ExternalIDs.Category", meta.ExternalIDs.Category, "TV"},
+		{"Type", meta.Type, "REMUX"},
+		{"Source", meta.Source, "BluRay"},
+		{"Release.Resolution", meta.Release.Resolution, "1080p"},
+		{"Service", meta.Service, "NF"},
+		{"Edition", meta.Edition, "Extended"},
+		{"Region", meta.Region, "EUR"},
+		{"SeasonStr", meta.SeasonStr, "S02"},
+		{"EpisodeStr", meta.EpisodeStr, "E07"},
+		{"EpisodeTitle", meta.EpisodeTitle, "The Finale"},
+	}
+	for _, check := range checks {
+		if check.got != check.want {
+			t.Errorf("%s: got %q, want %q", check.field, check.got, check.want)
+		}
+	}
+	if meta.SeasonInt != 2 || meta.EpisodeInt != 7 {
+		t.Errorf("season/episode numbers: got S%d E%d, want S2 E7", meta.SeasonInt, meta.EpisodeInt)
+	}
+	if meta.Release.Year != 2019 {
+		t.Errorf("Release.Year: got %d, want 2019", meta.Release.Year)
+	}
+	if !strings.Contains(meta.Audio, "Dual-Audio") {
+		t.Errorf("Audio: expected Dual-Audio marker, got %q", meta.Audio)
+	}
+}
