@@ -48,8 +48,11 @@ func EvaluateRules(ctx context.Context, tracker string, meta api.PreparedMetadat
 	// trackers by default (skipsModifiedReleaseCheck exempts special cases) and is
 	// overridable via IgnoreTrackerRuleFailuresFor like any other rule failure.
 	if !skipsModifiedReleaseCheck(name) {
-		if renamed, reason := isRenamedRelease(meta); renamed {
+		if renamed, reason, signal := isRenamedRelease(meta); renamed {
 			addFailure("modified_release", reason)
+			if logger != nil {
+				logger.Debugf("trackers: %s modified_release fired signal=%s source=%q video=%q group=%q", name, signal, meta.SourcePath, meta.VideoPath, meta.Release.Group)
+			}
 		}
 	}
 	metadataFailures, metadataEvaluated := evaluateMetadataRequirements(name, meta)
