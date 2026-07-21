@@ -135,6 +135,20 @@ func (s *Server) logErrorf(format string, args ...any) {
 	s.backend.logErrorf(format, args...)
 }
 
+func (s *Server) logInfof(format string, args ...any) {
+	if s == nil || s.backend == nil {
+		return
+	}
+	s.backend.logInfof(format, args...)
+}
+
+func (s *Server) logWarnf(format string, args ...any) {
+	if s == nil || s.backend == nil {
+		return
+	}
+	s.backend.logWarnf(format, args...)
+}
+
 // baseUploadOptions returns upload options from the current runtime config.
 func (b *Backend) baseUploadOptions() api.UploadOptions {
 	return buildBaseMetadataOptions(b.currentConfig())

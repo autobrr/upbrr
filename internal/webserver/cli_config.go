@@ -5,7 +5,9 @@ package webserver
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,13 +20,38 @@ const cliConfigFileName = "web-config.json"
 // CLIConfig stores the serve settings that can come from persisted web config,
 // environment variables, or CLI flags.
 type CLIConfig struct {
-	Host           string   `json:"host"`
-	Port           int      `json:"port"`
-	OpenBrowser    bool     `json:"open_browser"`
-	TrustedProxies []string `json:"trusted_proxies"`
-	BaseURL        string   `json:"base_url"`
-	SessionTTL     int      `json:"session_ttl"`
+	Host           string     `json:"host"`
+	Port           int        `json:"port"`
+	OpenBrowser    bool       `json:"open_browser"`
+	TrustedProxies []string   `json:"trusted_proxies"`
+	BaseURL        string     `json:"base_url"`
+	SessionTTL     int        `json:"session_ttl"`
+	OIDC           OIDCConfig `json:"oidc"`
 }
+
+// OIDCConfig stores the OpenID Connect settings for the embedded web UI.
+// Field names mirror autobrr so operators configuring both projects meet the
+// same vocabulary.
+type OIDCConfig struct {
+	Enabled bool `json:"enabled"`
+	// Issuer is the OIDC issuer URL used for discovery, for example
+	// https://auth.example.test/application/o/upbrr/.
+	Issuer       string `json:"issuer"`
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+	// RedirectURL must exactly match a redirect URI registered with the
+	// provider and point at the callback route, for example
+	// https://upbrr.example.test/api/auth/oidc/callback.
+	RedirectURL string `json:"redirect_url"`
+	// Scopes is a space-separated scope list. "openid" is always requested.
+	Scopes string `json:"scopes"`
+	// DisableBuiltInLogin removes the username/password form and rejects
+	// password logins, leaving OIDC as the only way in.
+	DisableBuiltInLogin bool `json:"disable_built_in_login"`
+}
+
+// DefaultOIDCScopes is requested when no scope list is configured.
+const DefaultOIDCScopes = "openid profile email"
 
 // DefaultCLIConfig returns the serve settings used when no persisted web config
 // exists or persisted fields are omitted.
@@ -36,6 +63,7 @@ func DefaultCLIConfig() CLIConfig {
 		TrustedProxies: nil,
 		BaseURL:        "",
 		SessionTTL:     1440,
+		OIDC:           OIDCConfig{Scopes: DefaultOIDCScopes},
 	}
 }
 
@@ -78,6 +106,7 @@ func SaveCLIConfig(dbPath string, cfg CLIConfig) error {
 	return nil
 }
 
+// cliConfigPath returns the web config path colocated with dbPath.
 func cliConfigPath(dbPath string) string {
 	return filepath.Join(filepath.Dir(strings.TrimSpace(dbPath)), cliConfigFileName)
 }
@@ -91,7 +120,79 @@ func normalizeCLIConfig(cfg CLIConfig) (CLIConfig, error) {
 		return CLIConfig{}, err
 	}
 	cfg.BaseURL = baseURL
+	oidcCfg, err := normalizeOIDCConfig(cfg.OIDC)
+	if err != nil {
+		return CLIConfig{}, err
+	}
+	cfg.OIDC = oidcCfg
 	return cfg, nil
+}
+
+// normalizeOIDCConfig trims fields, applies the default scope list, and
+// validates the settings needed to complete an authorization code flow.
+//
+// Disabling the built-in login while OIDC is off is rejected rather than
+// silently ignored: that combination would leave no usable way to sign in.
+func normalizeOIDCConfig(cfg OIDCConfig) (OIDCConfig, error) {
+	cfg.Issuer = strings.TrimSpace(cfg.Issuer)
+	cfg.ClientID = strings.TrimSpace(cfg.ClientID)
+	cfg.ClientSecret = strings.TrimSpace(cfg.ClientSecret)
+	cfg.RedirectURL = strings.TrimSpace(cfg.RedirectURL)
+	cfg.Scopes = strings.TrimSpace(cfg.Scopes)
+
+	if !cfg.Enabled {
+		if cfg.DisableBuiltInLogin {
+			return OIDCConfig{}, errors.New("web config: oidc disable_built_in_login requires oidc enabled")
+		}
+		return cfg, nil
+	}
+
+	if cfg.Scopes == "" {
+		cfg.Scopes = DefaultOIDCScopes
+	}
+
+	var missing []string
+	if cfg.Issuer == "" {
+		missing = append(missing, "issuer")
+	}
+	if cfg.ClientID == "" {
+		missing = append(missing, "client_id")
+	}
+	if cfg.ClientSecret == "" {
+		missing = append(missing, "client_secret")
+	}
+	if cfg.RedirectURL == "" {
+		missing = append(missing, "redirect_url")
+	}
+	if len(missing) > 0 {
+		return OIDCConfig{}, fmt.Errorf("web config: oidc enabled but missing: %s", strings.Join(missing, ", "))
+	}
+
+	if err := validateOIDCAbsoluteURL("issuer", cfg.Issuer); err != nil {
+		return OIDCConfig{}, err
+	}
+	if err := validateOIDCAbsoluteURL("redirect_url", cfg.RedirectURL); err != nil {
+		return OIDCConfig{}, err
+	}
+
+	return cfg, nil
+}
+
+// validateOIDCAbsoluteURL requires an absolute http(s) URL. The redirect URL is
+// sent to the provider and the issuer is fetched over the network, so a
+// relative or scheme-less value can only fail later and less clearly.
+func validateOIDCAbsoluteURL(field string, value string) error {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return fmt.Errorf("web config: oidc %s: %s", field, redaction.RedactValue(err.Error(), nil))
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("web config: oidc %s must be an absolute http(s) URL", field)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("web config: oidc %s must include a host", field)
+	}
+	return nil
 }
 
 // normalizeCLIConfigLoaded applies defaults that are safe before env and CLI

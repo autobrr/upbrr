@@ -1979,5 +1979,36 @@ h2 {
   color: #fca5a5;
 }
 
+/* Anchor, not button: the SSO link performs a top-level navigation to the
+   identity provider. It is styled to match the primary submit button. */
+.web-auth-shell .web-auth-card__sso {
+  display: block;
+  border-radius: 1rem;
+  padding: 0.9rem 1rem;
+  background: linear-gradient(135deg, #f97316, #fb7185);
+  color: white;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.web-auth-card__divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0;
+  color: rgb(148 163 184);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+}
+
+.web-auth-card__divider::before,
+.web-auth-card__divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid rgb(148 163 184 / 30%);
+}
+
 /* Tailwind utilities stay enabled for incremental migration; see README "Frontend Styling Strategy" before adding broad custom CSS. */
 @tailwind utilities;

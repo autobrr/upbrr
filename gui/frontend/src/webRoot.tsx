@@ -10,6 +10,7 @@ import {
   initializeBrowserBridge,
   isBrowserMode,
   updateBrowserCSRFToken,
+  withBrowserBasePath,
 } from "./utils/runtime";
 
 type AuthStatus = {
@@ -22,6 +23,8 @@ type AuthStatus = {
   browseRoot: string;
   allowUnrestrictedBrowse: boolean;
   needsBrowsePolicy: boolean;
+  oidcEnabled: boolean;
+  oidcDisableBuiltInLogin: boolean;
 };
 
 const initialStatus: AuthStatus = {
@@ -34,6 +37,35 @@ const initialStatus: AuthStatus = {
   browseRoot: "",
   allowUnrestrictedBrowse: false,
   needsBrowsePolicy: false,
+  oidcEnabled: false,
+  oidcDisableBuiltInLogin: false,
+};
+
+/** Reason codes the OIDC callback appends when it sends the browser back. */
+const oidcErrorMessages: Record<string, string> = {
+  oidc_denied: "The identity provider denied the sign-in request.",
+  oidc_failed: "Single sign-on failed. Check the server log for details.",
+  oidc_unavailable: "The identity provider is unreachable. Try again shortly.",
+};
+
+/**
+ * readOIDCError consumes the ?oidc_error= code left by a failed callback and
+ * strips it from the URL, so a refresh does not redisplay a stale failure.
+ */
+const readOIDCError = (): string => {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get("oidc_error");
+  if (!code) {
+    return "";
+  }
+  params.delete("oidc_error");
+  const query = params.toString();
+  window.history.replaceState(
+    null,
+    "",
+    `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+  );
+  return oidcErrorMessages[code] || oidcErrorMessages.oidc_failed;
 };
 
 export default function WebRoot() {
@@ -44,7 +76,9 @@ export default function WebRoot() {
   const [retainLogin, setRetainLogin] = useState(false);
   const [browseRoot, setBrowseRoot] = useState("");
   const [allowUnrestrictedBrowse, setAllowUnrestrictedBrowse] = useState(false);
-  const [error, setError] = useState("");
+  // Read once on mount: a failed OIDC callback returns here with a reason code
+  // in the query string.
+  const [error, setError] = useState<string>(() => (browserMode ? readOIDCError() : ""));
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -201,43 +235,67 @@ export default function WebRoot() {
     }
   };
 
+  const ssoOnly = status.oidcEnabled && status.oidcDisableBuiltInLogin;
+  const heading = ssoOnly ? "Sign In" : status.needsSetup ? "Create Admin Account" : "Sign In";
+  const copy = ssoOnly
+    ? "Sign in with your identity provider to access the web workflow."
+    : status.needsSetup
+      ? "Set up the single-user web account for this instance."
+      : "Authenticate to access the local web workflow.";
+
   return (
     <div className="web-auth-shell">
       <div className="web-auth-card">
         <p className="web-auth-card__eyebrow">upbrr Web</p>
-        <h1>{status.needsSetup ? "Create Admin Account" : "Sign In"}</h1>
-        <p className="web-auth-card__copy">
-          {status.needsSetup
-            ? "Set up the single-user web account for this instance."
-            : "Authenticate to access the local web workflow."}
-        </p>
-        <form onSubmit={submit}>
-          <label>
-            <span>Username</span>
-            <input
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              autoComplete="username"
-            />
-          </label>
-          <label>
-            <span>Password</span>
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              autoComplete={status.needsSetup ? "new-password" : "current-password"}
-            />
-          </label>
-          <div className="web-auth-card__checkbox">
-            <Checkbox id="retain-login" checked={retainLogin} onCheckedChange={setRetainLogin} />
-            <label htmlFor="retain-login">Keep me signed in on this device</label>
-          </div>
-          {error ? <p className="web-auth-card__error">{error}</p> : null}
-          <button type="submit" disabled={submitting || !username.trim() || !password.trim()}>
-            {submitting ? "Working..." : status.needsSetup ? "Create Account" : "Sign In"}
-          </button>
-        </form>
+        <h1>{heading}</h1>
+        <p className="web-auth-card__copy">{copy}</p>
+        {status.oidcEnabled ? (
+          <>
+            {/* A link, not a fetch: the provider redirect must navigate the
+                top-level browsing context, and XHR cannot follow it. */}
+            <a
+              className="web-auth-card__sso"
+              href={withBrowserBasePath("/api/auth/oidc/login")}
+              rel="nofollow"
+            >
+              Sign in with SSO
+            </a>
+            {ssoOnly ? null : <p className="web-auth-card__divider">or</p>}
+          </>
+        ) : null}
+        {ssoOnly ? (
+          error ? (
+            <p className="web-auth-card__error">{error}</p>
+          ) : null
+        ) : (
+          <form onSubmit={submit}>
+            <label>
+              <span>Username</span>
+              <input
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                autoComplete="username"
+              />
+            </label>
+            <label>
+              <span>Password</span>
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete={status.needsSetup ? "new-password" : "current-password"}
+              />
+            </label>
+            <div className="web-auth-card__checkbox">
+              <Checkbox id="retain-login" checked={retainLogin} onCheckedChange={setRetainLogin} />
+              <label htmlFor="retain-login">Keep me signed in on this device</label>
+            </div>
+            {error ? <p className="web-auth-card__error">{error}</p> : null}
+            <button type="submit" disabled={submitting || !username.trim() || !password.trim()}>
+              {submitting ? "Working..." : status.needsSetup ? "Create Account" : "Sign In"}
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );
