@@ -429,7 +429,7 @@ export default function MenuImagesPage(props: Props) {
           <ul className="m-0 grid list-none gap-1 p-0">
             {menuPaths.map((selectedPath) => (
               <li
-                className="flex items-center justify-between gap-2 rounded border border-white/10 bg-white/5 p-2"
+                className="flex items-center justify-between gap-2 rounded border border-[var(--border)] bg-[var(--panel-light)] p-2"
                 key={selectedPath}
               >
                 <span className="min-w-0 break-all">{selectedPath}</span>

@@ -30,7 +30,7 @@ export function Checkbox({
   return (
     <CheckboxPrimitive.Root
       className={cn(
-        "inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded border border-white/20 bg-white/10 text-[var(--accent-2)] transition data-[state=checked]:border-[var(--accent-2)] data-[state=checked]:bg-[rgba(53,194,193,0.22)] disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded border border-[var(--input-border)] bg-[var(--input-bg)] text-white transition data-[state=checked]:border-blue-600 data-[state=checked]:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50",
         className,
       )}
       checked={checked}
@@ -75,7 +75,7 @@ export function PillCheckbox({
   return (
     <CheckboxPrimitive.Root
       className={cn(
-        "tracker-pill inline-flex min-h-6 cursor-pointer select-none items-center justify-center rounded-full border border-white/15 bg-[rgba(12,16,26,0.58)] px-2.5 py-1 text-[0.78rem] font-semibold leading-none text-[var(--muted)] transition data-[state=checked]:border-[var(--accent-2)] data-[state=checked]:bg-[rgba(53,194,193,0.16)] data-[state=checked]:text-[var(--text)] data-[state=checked]:shadow-[0_0_12px_rgba(53,194,193,0.16)]",
+        "tracker-pill inline-flex min-h-6 cursor-pointer select-none items-center justify-center rounded-full border border-[var(--border)] bg-[var(--panel-light)] px-2.5 py-1 text-[0.78rem] font-semibold leading-none text-[var(--muted)] transition data-[state=checked]:border-[var(--accent-2)] data-[state=checked]:bg-blue-500/15 data-[state=checked]:text-[var(--text)]",
         className,
       )}
       checked={checked}

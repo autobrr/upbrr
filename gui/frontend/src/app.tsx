@@ -4,6 +4,7 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
 import {
   EventsOn,
@@ -30,9 +31,9 @@ import { useScreenshots } from "./hooks/useScreenshots";
 import { useUploadImages } from "./hooks/useUploadImages";
 import { useTrackerIcons } from "./hooks/useTrackerIcons";
 import { cn } from "./utils/cn";
+import logoUrl from "./assets/logo.png";
 import type {
   ConfigMap,
-  ApplicationInfo,
   BrowseDirectoryResponse,
   DescriptionBuilderPreview,
   DVDMenuCaptureSnapshot,
@@ -95,38 +96,98 @@ import {
   resolveSelectedUploadTrackers,
 } from "./utils/trackerSelection";
 
-const appLayoutClass =
-  "relative z-[1] block min-h-screen ml-[204px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
-
-const sidebarClass =
-  "fixed left-0 top-0 z-[1000] flex h-screen w-[204px] flex-col gap-2.5 border-r border-white/10 bg-[var(--panel)]/95 p-2.5 backdrop-blur max-[960px]:bottom-0 max-[960px]:top-auto max-[960px]:h-auto max-[960px]:w-full max-[960px]:flex-row max-[960px]:items-center max-[960px]:gap-2 max-[960px]:border-r-0 max-[960px]:border-t max-[960px]:p-2";
-
-const sidebarGroupClass =
-  "grid gap-1 rounded-lg border border-[rgba(148,163,184,0.18)] bg-[rgba(148,163,184,0.08)] p-1.5 max-[960px]:flex max-[960px]:flex-wrap max-[960px]:gap-1 max-[960px]:p-1";
-
-const sidebarFooterClass = `${sidebarGroupClass} mt-auto max-[960px]:mt-0`;
-
-const navButtonClass = (active: boolean, nested = false) =>
+// Header/nav styling mirrors autobrr's Header, LeftNav and filter-details tabs.
+const headerNavItemClass = (active: boolean) =>
   cn(
-    "w-full rounded-md border border-transparent bg-transparent px-2 py-1.5 text-left text-[0.84rem] font-semibold leading-tight text-[var(--muted)] transition hover:bg-white/10 hover:text-[var(--text)] max-[960px]:w-auto max-[960px]:py-1.5",
-    nested && "pl-4 text-[0.8rem] font-medium max-[960px]:pl-2",
-    active &&
-      "border-[var(--sidebar-active-border)] bg-[var(--sidebar-active-bg)] text-[var(--sidebar-active-text)] shadow-[0_8px_22px_rgba(245,185,66,0.18)] hover:bg-[var(--sidebar-active-bg)] hover:text-[var(--sidebar-active-text)]",
+    "rounded-2xl border-0 bg-transparent px-3 py-2 text-sm font-medium shadow-none transition-colors duration-200",
+    "hover:bg-gray-200 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-white",
+    active ? "font-bold text-black dark:text-gray-50" : "text-gray-600 dark:text-gray-500",
   );
 
-const sidebarButtonClass = (active = false) =>
+const headerIconButtonClass =
+  "rounded-full border-0 bg-transparent p-1.5 text-gray-600 shadow-none transition-colors duration-200 hover:bg-gray-200 dark:text-gray-500 dark:hover:bg-gray-800";
+
+const mobileNavItemClass = (active: boolean) =>
   cn(
-    "flex min-h-[30px] w-full items-center justify-start gap-1.5 rounded-md border border-transparent bg-transparent px-2 py-1.5 text-[0.84rem] font-semibold leading-tight text-[var(--muted)] transition hover:bg-white/10 hover:text-[var(--text)] max-[960px]:w-auto max-[960px]:min-h-7 max-[960px]:py-1",
-    active &&
-      "border-[var(--sidebar-active-border)] bg-[var(--sidebar-active-bg)] text-[var(--sidebar-active-text)] shadow-[0_8px_22px_rgba(245,185,66,0.18)] hover:bg-[var(--sidebar-active-bg)] hover:text-[var(--sidebar-active-text)]",
+    "block w-full rounded-md border px-3 py-2 text-left text-base font-medium shadow-sm",
+    "border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-900",
+    active ? "text-black dark:text-white" : "text-gray-700 dark:text-gray-200",
   );
 
-const sidebarAppDetailsClass =
-  "mt-1 grid grid-cols-[1fr_auto] items-center gap-1.5 px-2 py-1.5 text-[0.72rem] leading-tight text-[var(--muted)] max-[960px]:hidden";
+const workflowTabClass = (active: boolean) =>
+  cn(
+    "whitespace-nowrap rounded-none border-0 border-b-2 bg-transparent px-1 py-3 text-sm font-medium shadow-none transition-colors",
+    active
+      ? "border-blue-600 text-blue-600 dark:border-blue-500 dark:text-white"
+      : "border-transparent text-gray-550 hover:text-blue-500 dark:hover:text-white",
+  );
 
-type AppBridgeWithApplicationInfo = {
-  GetApplicationInfo?: () => Promise<ApplicationInfo>;
+// Heroicons outline paths, matching the icons autobrr uses in its header.
+const themeGlyphPaths: Record<string, string> = {
+  light:
+    "M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z",
+  dark: "M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z",
+  auto: "M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0V12",
 };
+
+// More heroicons outline paths for the header (user menu, external link).
+const headerGlyphPaths = {
+  user: [
+    "M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z",
+  ],
+  cog: [
+    "M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z",
+    "M15 12a3 3 0 11-6 0 3 3 0 016 0z",
+  ],
+  logout: [
+    "M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9",
+  ],
+  external: [
+    "M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25",
+  ],
+};
+
+function HeaderGlyph({
+  name,
+  className,
+}: {
+  name: keyof typeof headerGlyphPaths;
+  className: string;
+}) {
+  return (
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={1.5}
+      stroke="currentColor"
+      aria-hidden="true"
+    >
+      {headerGlyphPaths[name].map((d) => (
+        <path key={d.slice(0, 24)} strokeLinecap="round" strokeLinejoin="round" d={d} />
+      ))}
+    </svg>
+  );
+}
+
+function ThemeGlyph({ theme }: { theme: string }) {
+  return (
+    <svg
+      className="h-4 w-4"
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={1.5}
+      stroke="currentColor"
+      aria-hidden="true"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d={themeGlyphPaths[theme] ?? themeGlyphPaths.auto}
+      />
+    </svg>
+  );
+}
 
 const emptyDupeSummary: DupeCheckSummary = {
   SourcePath: "",
@@ -755,7 +816,12 @@ const emptyWebAuthStatus: WebAuthStatus = {
   message: "",
 };
 
-export default function App() {
+type AppProps = {
+  webUsername?: string;
+  onWebLogout?: () => void;
+};
+
+export default function App({ webUsername, onWebLogout }: AppProps = {}) {
   const browserMode = isBrowserMode();
   const browserNativeBrowseAvailable = useSyncExternalStore(
     subscribeBrowserNativeBrowseAvailability,
@@ -795,6 +861,7 @@ export default function App() {
   const [showExternalIDInputUI, setShowExternalIDInputUI] = useState(true);
   const [selectedProvider, setSelectedProvider] = useState<string>("");
   const [activeTab, setActiveTab] = useState("input");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [theme, setTheme] = useState<ThemeMode>("auto");
   const [renderedDescriptions, setRenderedDescriptions] = useState<Record<string, boolean>>({});
   const [bluraySelecting, setBluraySelecting] = useState(false);
@@ -891,7 +958,6 @@ export default function App() {
   const [webAuthPassword, setWebAuthPassword] = useState("");
   const [webAuthConfirm, setWebAuthConfirm] = useState("");
   const [webAuthError, setWebAuthError] = useState("");
-  const [applicationInfo, setApplicationInfo] = useState<ApplicationInfo | null>(null);
   const configOpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sourcePathDropHandlerRef = useRef<(paths: string[]) => void>(() => undefined);
   const [hostBrowserMode, setHostBrowserMode] = useState<"file" | "folder" | null>(null);
@@ -1060,29 +1126,6 @@ export default function App() {
   };
 
   useEffect(() => {
-    let cancelled = false;
-    const getter = (globalThis.go?.guiapp?.App as AppBridgeWithApplicationInfo | undefined)
-      ?.GetApplicationInfo;
-    if (!getter) {
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    void getter()
-      .then((info) => {
-        if (!cancelled) {
-          setApplicationInfo(info);
-        }
-      })
-      .catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
     if (!lightboxImage) return;
     setLightboxFit(true);
   }, [lightboxImage]);
@@ -1154,12 +1197,6 @@ export default function App() {
       }
     };
   }, []);
-
-  const getThemeIcon = () => {
-    if (theme === "auto") return "🔄";
-    if (theme === "light") return "☀️";
-    return "🌙";
-  };
 
   const getThemeLabel = () => {
     if (theme === "auto") return "Auto";
@@ -4185,153 +4222,249 @@ export default function App() {
   const dupeCompletedCount = Number(dupeCheckSnapshot?.completedCount || 0);
   const dupeTotalCount = Number(dupeCheckSnapshot?.totalCount || 0);
 
+  const workflowTabs = [
+    { id: "tracker", label: "Tracker Data", visible: Boolean(hasTrackerData) },
+    { id: "bluray", label: "Blu-ray.com", visible: hasBlurayData },
+    { id: "dupes", label: "Dupe Checking", visible: hasPreview },
+    { id: "screenshots", label: "Screenshots", visible: dupeChecked },
+    {
+      id: "menu_images",
+      label: "Menu Images",
+      visible: dupeChecked && ["BDMV", "DVD", "HDDVD"].includes(currentDiscType),
+    },
+    { id: "upload_images", label: "Upload Images", visible: dupeChecked },
+    { id: "description_builder", label: "Description Builder", visible: dupeChecked },
+    { id: "upload", label: "Tracker Upload", visible: builderReady },
+  ].filter((tab) => tab.visible);
+
+  const headerNavItems = [
+    { id: "input", label: "Upload" },
+    { id: "logging", label: "Logging" },
+    { id: "history", label: "History" },
+  ];
+
+  // Settings lives in the user menu (web) or the gear button (desktop),
+  // but stays a first-class destination in the mobile menu.
+  const mobileNavExtras = [{ id: "settings", label: "Settings" }];
+
+  const selectTab = (tab: string) => {
+    setActiveTab(tab);
+    setMobileNavOpen(false);
+  };
+
   return (
     <div className="app-shell">
-      <div className="gradient-orb orb-a" />
-      <div className="gradient-orb orb-b" />
-      <div className={appLayoutClass}>
-        <aside className={sidebarClass}>
-          <div className={sidebarGroupClass}>
-            <button
-              className={navButtonClass(activeTab === "input")}
-              type="button"
-              onClick={() => setActiveTab("input")}
-            >
-              Input
-            </button>
-            {hasTrackerData ? (
-              <button
-                className={navButtonClass(activeTab === "tracker", true)}
-                type="button"
-                onClick={() => setActiveTab("tracker")}
-              >
-                Tracker Data
-              </button>
-            ) : null}
-            {hasBlurayData ? (
-              <button
-                className={navButtonClass(activeTab === "bluray", true)}
-                type="button"
-                onClick={() => setActiveTab("bluray")}
-              >
-                Blu-ray.com
-              </button>
-            ) : null}
-            {hasPreview ? (
-              <button
-                className={navButtonClass(activeTab === "dupes", true)}
-                type="button"
-                onClick={() => setActiveTab("dupes")}
-              >
-                Dupe Checking
-              </button>
-            ) : null}
-            {dupeChecked ? (
-              <button
-                className={navButtonClass(activeTab === "screenshots", true)}
-                type="button"
-                onClick={() => setActiveTab("screenshots")}
-              >
-                Screenshots
-              </button>
-            ) : null}
-            {dupeChecked && ["BDMV", "DVD", "HDDVD"].includes(currentDiscType) ? (
-              <button
-                className={`subtab-button ${activeTab === "menu_images" ? "active" : ""}`}
-                type="button"
-                onClick={() => setActiveTab("menu_images")}
-              >
-                Menu Images
-              </button>
-            ) : null}
-            {dupeChecked ? (
-              <button
-                className={navButtonClass(activeTab === "upload_images", true)}
-                type="button"
-                onClick={() => setActiveTab("upload_images")}
-              >
-                Upload Images
-              </button>
-            ) : null}
-            {dupeChecked ? (
-              <button
-                className={navButtonClass(activeTab === "description_builder", true)}
-                type="button"
-                onClick={() => setActiveTab("description_builder")}
-              >
-                Description Builder
-              </button>
-            ) : null}
-            {builderReady ? (
-              <button
-                className={navButtonClass(activeTab === "upload", true)}
-                type="button"
-                onClick={() => setActiveTab("upload")}
-              >
-                Tracker Upload
-              </button>
-            ) : null}
-          </div>
-          <div className={sidebarFooterClass}>
-            <button
-              className={sidebarButtonClass(activeTab === "settings")}
-              type="button"
-              onClick={() => setActiveTab("settings")}
-            >
-              <span>Settings</span>
-            </button>
-            <button
-              className={sidebarButtonClass(activeTab === "logging")}
-              type="button"
-              onClick={() => setActiveTab("logging")}
-            >
-              <span>Logging</span>
-            </button>
-            <button
-              className={sidebarButtonClass(activeTab === "history")}
-              type="button"
-              onClick={() => setActiveTab("history")}
-            >
-              <span>History</span>
-            </button>
-            <button
-              className={cn(sidebarButtonClass(), "mt-0")}
-              type="button"
-              onClick={handleThemeToggle}
-            >
-              <span className="mr-0.5 text-base">{getThemeIcon()}</span>
-              <span>{getThemeLabel()}</span>
-            </button>
-            <div className={sidebarAppDetailsClass}>
-              <div className="grid min-w-0 gap-0.5">
-                {applicationInfo?.version ? (
-                  <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-semibold text-[var(--text)]">
-                    {applicationInfo.version}
-                  </span>
-                ) : null}
-                <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-                  © 2026 autobrr
-                </span>
+      <div className="flex min-h-screen flex-col">
+        <nav className="bg-gradient-to-b from-gray-100 dark:from-gray-925">
+          <div className="mx-auto w-full max-w-screen-xl sm:px-6 lg:px-8">
+            <div className="border-b border-gray-300 dark:border-gray-775">
+              <div className="flex h-16 items-center justify-between px-4 sm:px-0">
+                <div className="flex items-center">
+                  <button
+                    className="flex shrink-0 items-center rounded-full border-0 bg-transparent p-0 shadow-none"
+                    type="button"
+                    onClick={() => selectTab("input")}
+                    aria-label="upbrr — go to Input"
+                  >
+                    <img src={logoUrl} alt="upbrr" className="h-10 w-10" />
+                  </button>
+                  <div className="hidden sm:ml-3 sm:block">
+                    <div className="flex items-baseline space-x-4">
+                      {headerNavItems.map((item) => (
+                        <button
+                          key={item.id}
+                          className={headerNavItemClass(activeTab === item.id)}
+                          type="button"
+                          onClick={() => selectTab(item.id)}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                      <a
+                        className={cn(
+                          headerNavItemClass(false),
+                          "flex items-center justify-center no-underline",
+                        )}
+                        href="https://github.com/autobrr/upbrr"
+                        target="_blank"
+                        rel="noreferrer"
+                        onAuxClick={handleExternalLinkClick}
+                        onClick={handleExternalLinkClick}
+                      >
+                        GitHub
+                        <HeaderGlyph name="external" className="ml-1 inline h-5 w-5" />
+                      </a>
+                    </div>
+                  </div>
+                </div>
+                <div className="hidden sm:block">
+                  <div className="ml-4 flex items-center sm:ml-6">
+                    <button
+                      className={headerIconButtonClass}
+                      type="button"
+                      onClick={handleThemeToggle}
+                      title={`Theme: ${getThemeLabel()}`}
+                    >
+                      <ThemeGlyph theme={theme} />
+                      <span className="sr-only">Toggle theme ({getThemeLabel()})</span>
+                    </button>
+                    {!webUsername ? (
+                      <button
+                        className={cn(headerIconButtonClass, "ml-1")}
+                        type="button"
+                        onClick={() => selectTab("settings")}
+                        title="Settings"
+                      >
+                        <HeaderGlyph name="cog" className="h-4 w-4" />
+                        <span className="sr-only">Settings</span>
+                      </button>
+                    ) : null}
+                    {webUsername ? (
+                      <DropdownMenu.Root>
+                        <DropdownMenu.Trigger asChild>
+                          <button
+                            className={cn(
+                              "ml-2 flex max-w-xs items-center rounded-full border-0 bg-transparent px-3 py-2 text-sm font-medium shadow-none",
+                              "text-gray-600 transition duration-200 hover:bg-gray-200 hover:text-gray-900",
+                              "dark:text-gray-500 dark:hover:bg-gray-800 dark:hover:text-white",
+                              "data-[state=open]:bg-gray-200 data-[state=open]:text-gray-900",
+                              "dark:data-[state=open]:bg-gray-800 dark:data-[state=open]:text-white",
+                            )}
+                            type="button"
+                          >
+                            <span className="sr-only">Open user menu for </span>
+                            {webUsername}
+                            <HeaderGlyph name="user" className="ml-1 inline h-5 w-5" />
+                          </button>
+                        </DropdownMenu.Trigger>
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.Content
+                            align="end"
+                            sideOffset={8}
+                            className="z-10 w-48 divide-y divide-gray-100 rounded-md border border-gray-250 bg-white shadow-lg dark:divide-gray-750 dark:border-gray-775 dark:bg-gray-800"
+                          >
+                            <DropdownMenu.Item asChild>
+                              <button
+                                className="flex w-full items-center rounded-none rounded-t-md border-0 bg-transparent px-2 py-2 text-left text-sm text-gray-900 shadow-none outline-none transition data-[highlighted]:bg-gray-100 dark:text-gray-200 dark:data-[highlighted]:bg-gray-600"
+                                type="button"
+                                onClick={() => selectTab("settings")}
+                              >
+                                <HeaderGlyph
+                                  name="cog"
+                                  className="mr-1 h-5 w-5 text-gray-700 dark:text-gray-400"
+                                />
+                                Settings
+                              </button>
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item asChild>
+                              <button
+                                className="flex w-full items-center rounded-none rounded-b-md border-0 bg-transparent px-2 py-2 text-left text-sm text-gray-900 shadow-none outline-none transition data-[highlighted]:bg-gray-100 dark:text-gray-200 dark:data-[highlighted]:bg-gray-600"
+                                type="button"
+                                onClick={onWebLogout}
+                              >
+                                <HeaderGlyph
+                                  name="logout"
+                                  className="mr-1 h-5 w-5 text-gray-700 dark:text-gray-400"
+                                />
+                                Log out
+                              </button>
+                            </DropdownMenu.Item>
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu.Root>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="-mr-2 flex sm:hidden">
+                  <button
+                    className="inline-flex items-center justify-center rounded-md border-0 bg-gray-200 p-2 text-gray-600 shadow-none hover:bg-gray-700 hover:text-white dark:bg-gray-800 dark:text-gray-400"
+                    type="button"
+                    onClick={() => setMobileNavOpen((open) => !open)}
+                    aria-expanded={mobileNavOpen}
+                  >
+                    <span className="sr-only">Open main menu</span>
+                    <svg
+                      className="block h-6 w-6"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      strokeWidth={1.5}
+                      stroke="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d={
+                          mobileNavOpen
+                            ? "M6 18L18 6M6 6l12 12"
+                            : "M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"
+                        }
+                      />
+                    </svg>
+                  </button>
+                </div>
               </div>
-              <a
-                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-white/10 text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
-                href="https://github.com/autobrr/upbrr"
-                target="_blank"
-                rel="noreferrer"
-                onAuxClick={handleExternalLinkClick}
-                onClick={handleExternalLinkClick}
-                aria-label="Open autobrr/upbrr on GitHub"
-                title="autobrr/upbrr"
-              >
-                <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor">
-                  <path d="M8 0C3.58 0 0 3.67 0 8.2c0 3.62 2.29 6.69 5.47 7.78.4.08.55-.18.55-.4l-.01-1.4c-2.22.5-2.69-1.1-2.69-1.1-.36-.95-.89-1.2-.89-1.2-.73-.51.05-.5.05-.5.81.06 1.24.85 1.24.85.72 1.27 1.89.9 2.35.69.07-.53.28-.9.51-1.1-1.78-.21-3.64-.91-3.64-4.04 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .68-.22 2.2.84A7.37 7.37 0 0 1 8 3.99c.68 0 1.36.09 2 .28 1.52-1.06 2.19-.84 2.19-.84.44 1.12.16 1.95.08 2.16.52.57.82 1.3.82 2.19 0 3.14-1.87 3.83-3.65 4.04.29.25.54.76.54 1.54l-.01 2.22c0 .22.14.48.55.4A8.13 8.13 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z" />
-                </svg>
-              </a>
             </div>
           </div>
-        </aside>
+          {mobileNavOpen ? (
+            <div className="space-y-1 border-b border-gray-300 px-2 pb-3 pt-2 dark:border-gray-775 sm:hidden">
+              {[...headerNavItems, ...mobileNavExtras].map((item) => (
+                <button
+                  key={item.id}
+                  className={mobileNavItemClass(activeTab === item.id)}
+                  type="button"
+                  onClick={() => selectTab(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
+              {workflowTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  className={mobileNavItemClass(activeTab === tab.id)}
+                  type="button"
+                  onClick={() => selectTab(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+              <button
+                className={mobileNavItemClass(false)}
+                type="button"
+                onClick={handleThemeToggle}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <ThemeGlyph theme={theme} />
+                  Theme: {getThemeLabel()}
+                </span>
+              </button>
+              {webUsername && onWebLogout ? (
+                <button className={mobileNavItemClass(false)} type="button" onClick={onWebLogout}>
+                  Log out ({webUsername})
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </nav>
 
         <main className="content">
+          {!showPlaylistSelection && workflowTabs.length > 0 ? (
+            <nav
+              className="-mb-2 flex gap-4 overflow-x-auto border-b border-gray-250 dark:border-gray-775"
+              aria-label="Workflow"
+            >
+              {workflowTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  className={workflowTabClass(activeTab === tab.id)}
+                  type="button"
+                  onClick={() => selectTab(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
+          ) : null}
           {showPlaylistSelection ? (
             <PlaylistSelectionPage
               path={playlistSelectionPath}

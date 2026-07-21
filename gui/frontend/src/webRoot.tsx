@@ -154,21 +154,15 @@ export default function WebRoot() {
 
     return (
       <div className="web-shell">
-        <div className="auth-bar">
-          <span className="auth-username">{status.username}</span>
-          <button
-            type="button"
-            className="auth-logout"
-            onClick={async () => {
-              await browserAuth.logout();
+        <App
+          webUsername={status.username}
+          onWebLogout={() => {
+            void browserAuth.logout().then(() => {
               updateBrowserCSRFToken("");
               window.location.reload();
-            }}
-          >
-            Logout
-          </button>
-        </div>
-        <App />
+            });
+          }}
+        />
       </div>
     );
   }

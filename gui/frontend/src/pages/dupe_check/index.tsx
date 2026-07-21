@@ -259,14 +259,14 @@ export default function DupeCheckPage(props: Readonly<Props>) {
       ) : null}
 
       {hasDupeResults ? (
-        <div className="overflow-hidden rounded-lg border border-white/10 bg-[rgba(12,16,26,0.76)]">
-          <div className="hidden grid-cols-[minmax(90px,140px)_58px_minmax(0,1fr)_116px] gap-3 border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted)] md:grid">
+        <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--panel-light)]">
+          <div className="hidden grid-cols-[minmax(90px,140px)_58px_minmax(0,1fr)_116px] gap-3 border-b border-[var(--border)] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted)] md:grid">
             <span>Tracker</span>
             <span>Dupes</span>
             <span>Matches</span>
             <span>Action</span>
           </div>
-          <div className="divide-y divide-white/10">
+          <div className="divide-y divide-[var(--border)]">
             {sortedResults.map((result) => {
               const dupeCount = result.Filtered?.length ?? 0;
               const hasDupes = result.HasDupes ?? false;

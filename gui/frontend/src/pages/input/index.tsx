@@ -34,7 +34,7 @@ import type { SourcePathHistoryEntry } from "../../utils/inputHistory";
 import { hasFetchedExternalPreviewData } from "../../utils/externalPreview";
 
 const compactInputClass =
-  "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
+  "h-8 rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-blue-500/25";
 
 const formatProvider = (value: string) => value.toUpperCase();
 
@@ -1046,7 +1046,6 @@ export default function InputPage(props: Props) {
   return (
     <div className="content-stack">
       <header className="hero">
-        <p className="eyebrow">upbrr</p>
         <h1>Build Release Name</h1>
         <p className="subtitle">
           Build a release name and preview external metadata before you upload.
@@ -1151,7 +1150,7 @@ export default function InputPage(props: Props) {
             </p>
           ) : null}
 
-          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-white/10 bg-white/[0.035] px-3 py-2">
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--panel-light)] px-3 py-2">
             <span className="text-sm font-semibold text-[var(--text)]">Run options</span>
             <div className="inline-flex items-center gap-2 text-sm text-[var(--text)]">
               <Switch

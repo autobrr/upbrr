@@ -195,7 +195,6 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
   return (
     <div className="content-stack">
       <header className="hero">
-        <p className="eyebrow">upbrr</p>
         <h1>History</h1>
         <p className="subtitle">
           Review previously processed releases stored in SQLite and inspect full stored details.
@@ -203,7 +202,7 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
       </header>
 
       <section className="panel grid min-h-[560px] gap-3 lg:grid-cols-[minmax(260px,320px)_minmax(0,1fr)]">
-        <aside className="rounded-lg border border-white/10 bg-white/5 p-3">
+        <aside className="rounded-lg border border-[var(--border)] bg-[var(--panel-light)] p-3">
           <div className="mb-2">
             <p className="label">Stored releases</p>
             <p className="helper">Most recently updated first</p>
@@ -234,8 +233,8 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
                 className={cn(
                   "grid w-full gap-1 rounded-md border px-3 py-2 text-left transition",
                   entry.SourcePath === selectedPath
-                    ? "border-[var(--accent-2)] bg-[rgba(53,194,193,0.16)] text-[var(--text)] shadow-[inset_3px_0_0_var(--accent-2),0_0_16px_rgba(53,194,193,0.16)]"
-                    : "border-white/10 bg-black/15 text-[var(--muted)] hover:border-white/20 hover:bg-white/5 hover:text-[var(--text)]",
+                    ? "border-[var(--accent-2)] bg-blue-500/15 text-[var(--text)] shadow-[inset_3px_0_0_var(--accent-2)]"
+                    : "border-[var(--border)] bg-[var(--input-bg)] text-[var(--muted)] hover:border-[var(--input-border)] hover:bg-[var(--hover)] hover:text-[var(--text)]",
                 )}
                 onClick={() => setSelectedPath(entry.SourcePath)}
               >
@@ -258,7 +257,7 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
           </div>
         </aside>
 
-        <div className="overflow-y-auto rounded-lg border border-white/10 bg-white/5 p-3">
+        <div className="overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--panel-light)] p-3">
           {detailLoading ? <p className="muted">Loading overview...</p> : null}
 
           {!detailLoading && !overview ? (
@@ -310,12 +309,12 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
               </div>
 
               <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-2 [&_h3]:mb-2 [&_h3]:mt-0 [&_h3]:text-sm">
-                <article className="rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
+                <article className="rounded-lg border border-[var(--border)] bg-[var(--panel-light)] p-2.5">
                   <h3>Path</h3>
                   <p className="mono">{overview.SourcePath}</p>
                 </article>
 
-                <article className="rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5 [&_p]:mb-1 [&_p]:mt-0">
+                <article className="rounded-lg border border-[var(--border)] bg-[var(--panel-light)] p-2.5 [&_p]:mb-1 [&_p]:mt-0">
                   <h3>External IDs</h3>
                   <p>TMDB: {overview.ExternalIDs?.TMDBID || 0}</p>
                   <p>IMDb: {overview.ExternalIDs?.IMDBID || 0}</p>
@@ -323,7 +322,7 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
                   <p>TVmaze: {overview.ExternalIDs?.TVmazeID || 0}</p>
                 </article>
 
-                <article className="rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5 [&_p]:mb-1 [&_p]:mt-0">
+                <article className="rounded-lg border border-[var(--border)] bg-[var(--panel-light)] p-2.5 [&_p]:mb-1 [&_p]:mt-0">
                   <h3>Counts</h3>
                   <p>Tracker metadata: {overview.TrackerMetadata?.length || 0}</p>
                   <p>
@@ -344,7 +343,7 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
                   <p>Upload history: {overview.UploadHistory?.length || 0}</p>
                 </article>
 
-                <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
+                <article className="col-span-full rounded-lg border border-[var(--border)] bg-[var(--panel-light)] p-2.5">
                   <h3>Description Overrides</h3>
                   {descriptionOverrides.length ? (
                     <ul className="m-0 grid gap-1 pl-4">
@@ -365,7 +364,7 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
                   )}
                 </article>
 
-                <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
+                <article className="col-span-full rounded-lg border border-[var(--border)] bg-[var(--panel-light)] p-2.5">
                   <h3>Upload History</h3>
                   {overview.UploadHistory?.length ? (
                     <ul className="m-0 grid gap-1 pl-4">
@@ -381,7 +380,7 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
                   )}
                 </article>
 
-                <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
+                <article className="col-span-full rounded-lg border border-[var(--border)] bg-[var(--panel-light)] p-2.5">
                   <h3>Tracker Rule Results</h3>
                   {overview.TrackerRuleFailures?.length ? (
                     <ul className="m-0 grid gap-1 pl-4">
@@ -398,21 +397,21 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
                   )}
                 </article>
 
-                <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
+                <article className="col-span-full rounded-lg border border-[var(--border)] bg-[var(--panel-light)] p-2.5">
                   <h3>External Metadata (raw)</h3>
                   <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap rounded-md bg-black/10 p-2 text-xs [overflow-wrap:anywhere]">
                     {JSON.stringify(overview.ExternalMetadata || {}, null, 2)}
                   </pre>
                 </article>
 
-                <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
+                <article className="col-span-full rounded-lg border border-[var(--border)] bg-[var(--panel-light)] p-2.5">
                   <h3>Release Overrides (raw)</h3>
                   <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap rounded-md bg-black/10 p-2 text-xs [overflow-wrap:anywhere]">
                     {JSON.stringify(overview.ReleaseNameOverrides || {}, null, 2)}
                   </pre>
                 </article>
 
-                <article className="col-span-full rounded-lg border border-white/10 bg-[var(--panel-light)] p-2.5">
+                <article className="col-span-full rounded-lg border border-[var(--border)] bg-[var(--panel-light)] p-2.5">
                   <h3>Metadata (raw)</h3>
                   <pre className="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap rounded-md bg-black/10 p-2 text-xs [overflow-wrap:anywhere]">
                     {JSON.stringify(overview.Metadata || {}, null, 2)}

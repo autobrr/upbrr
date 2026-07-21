@@ -189,7 +189,7 @@ export default function BlurayCandidatesPage(props: Props) {
                             }}
                           >
                             <img
-                              className="w-full rounded-md border border-white/10"
+                              className="w-full rounded-md border border-[var(--border)]"
                               src={image.URL}
                               alt={image.Kind || "Blu-ray cover"}
                               loading="lazy"

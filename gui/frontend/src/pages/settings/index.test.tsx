@@ -121,7 +121,7 @@ describe("SettingsPage", () => {
     const { container, rerender } = render(
       <SettingsPage {...baseProps} setSettingsSection={setSettingsSection} />,
     );
-    const settingsTags = container.querySelector(".settings-tags");
+    const settingsTags = container.querySelector("aside nav");
 
     expect(settingsTags).not.toBeNull();
     expect(
