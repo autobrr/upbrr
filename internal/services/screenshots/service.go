@@ -129,81 +129,10 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 		baselineSelections = buildScreenshotSelections(total, plan.DurationSeconds, plan.FrameRate, meta)
 	}
 	base := screenshotBaseName(meta)
-	baselineByIndex := screenshotSelectionsByIndex(baselineSelections)
 
-	// Load existing screenshots from database that still exist on disk.
-	var missingIndexTimestamps []float64
-	var existingIndices map[int]struct{}
-	if s.repo != nil {
-		dbScreenshots, err := s.repo.ListScreenshotsByPath(ctx, meta.SourcePath)
-		if err != nil {
-			s.logger.Debugf("screenshots: failed to load existing screenshots: %v", err)
-		} else {
-			existingIndices = make(map[int]struct{}, len(dbScreenshots))
-			kept := 0
-			for _, shot := range dbScreenshots {
-				pathValue := strings.TrimSpace(shot.ImagePath)
-				if pathValue == "" || !isAllowedImageExt(pathValue) || !isPathWithinDir(tmpDir, pathValue) {
-					continue
-				}
-				if info, statErr := os.Stat(pathValue); statErr != nil || info.IsDir() {
-					continue
-				}
-				timestamp := shot.Timestamp
-				if timestamp <= 0 {
-					timestamp = parseScreenshotTimestamp(pathValue, base)
-				}
-				if index, ok := parseScreenshotIndexStrict(pathValue, base); ok {
-					if selection, found := baselineByIndex[index]; found && screenshotTimestampMatchesSelection(timestamp, selection, plan.FrameRate) {
-						existingIndices[index] = struct{}{}
-					}
-				} else {
-					missingIndexTimestamps = append(missingIndexTimestamps, timestamp)
-				}
-				kept++
-			}
-			s.logger.Debugf("screenshots: found existing screenshots db=%d disk=%d", len(dbScreenshots), kept)
-		}
-	}
-
-	if existingIndices == nil {
-		existingIndices = make(map[int]struct{})
-	}
-	if len(missingIndexTimestamps) > 0 && len(baselineSelections) > 0 {
-		slices.Sort(missingIndexTimestamps)
-		for _, existingTs := range missingIndexTimestamps {
-			bestIndex := -1
-			bestDiff := 0.0
-			for _, candidate := range baselineSelections {
-				if _, used := existingIndices[candidate.Index]; used {
-					continue
-				}
-				diff := abs(candidate.TimestampSeconds - existingTs)
-				if bestIndex < 0 || diff < bestDiff {
-					bestIndex = candidate.Index
-					bestDiff = diff
-				}
-			}
-			if bestIndex >= 0 {
-				if selection, found := baselineByIndex[bestIndex]; found && screenshotTimestampMatchesSelection(existingTs, selection, plan.FrameRate) {
-					existingIndices[bestIndex] = struct{}{}
-				}
-			}
-		}
-	}
-
-	var suggestions []api.ScreenshotSelection
-	if len(baselineSelections) > 0 {
-		suggestions = make([]api.ScreenshotSelection, 0, total)
-		for _, candidate := range baselineSelections {
-			if _, used := existingIndices[candidate.Index]; used {
-				continue
-			}
-			suggestions = append(suggestions, candidate)
-		}
-	}
-
-	plan.SuggestedSelections = suggestions
+	// Report the full baseline and let capture paths filter plan.ExistingScreenshots
+	// themselves; pruning here leaves a deleted screenshot's slot unregenerable.
+	plan.SuggestedSelections = baselineSelections
 
 	plan.ExistingScreenshots = filterScreenshotsMatchingSelections(listExistingScreens(tmpDir, base), baselineSelections, plan.FrameRate)
 	plan.TrackerImageLinks = buildTrackerImageLinks(meta, tmpDir)
@@ -211,7 +140,12 @@ func (s *Service) Plan(ctx context.Context, meta api.PreparedMetadata, count int
 		listTrackerScreens(tmpDir, base),
 		plan.TrackerImageLinks,
 	)
-	plan.FinalSelections = filterScreenshotsMatchingSelections(s.loadFinalSelections(ctx, meta, tmpDir), baselineSelections, plan.FrameRate)
+	plan.FinalSelections = filterFinalSelections(
+		s.loadFinalSelections(ctx, meta, tmpDir),
+		baselineSelections,
+		plan.TrackerImageLinks,
+		plan.FrameRate,
+	)
 
 	// Automatically include tracker images in final selections
 	plan.FinalSelections = mergeTrackerImagesIntoFinalSelections(plan.FinalSelections, plan.TrackerImageLinks)
@@ -570,7 +504,7 @@ func (s *Service) Delete(ctx context.Context, meta api.PreparedMetadata, imagePa
 	if err != nil {
 		return fmt.Errorf("screenshots: resolve temp path: %w", err)
 	}
-	if absTarget != absTmp && !strings.HasPrefix(absTarget, absTmp+string(os.PathSeparator)) {
+	if !isPathWithinDir(tmpDir, absTarget) {
 		return internalerrors.ErrInvalidInput
 	}
 	if s.logger != nil {
@@ -825,6 +759,41 @@ func filterScreenshotsMatchingSelections(images []api.ScreenshotImage, selection
 			continue
 		}
 		filtered = append(filtered, image)
+	}
+	return filtered
+}
+
+// filterFinalSelections drops picks whose frame left the baseline - retiming a slot
+// strands its old capture - while keeping the ones that are not baseline frames at
+// all. It must not key on Index: a final selection's Index is its position in the
+// user's ordering, not the slot its file was shot for, so reordering the list would
+// otherwise evict every pick. Menu captures and tracker images carry no timestamp
+// and belong to no slot, so they are held regardless.
+func filterFinalSelections(
+	images []api.ScreenshotImage,
+	selections []api.ScreenshotSelection,
+	trackerLinks []api.ScreenshotLinkedImage,
+	frameRate float64,
+) []api.ScreenshotImage {
+	if len(images) == 0 {
+		return nil
+	}
+	linked := make(map[string]struct{}, len(trackerLinks))
+	for _, link := range trackerLinks {
+		if strings.TrimSpace(link.Path) != "" {
+			linked[link.Path] = struct{}{}
+		}
+	}
+	filtered := make([]api.ScreenshotImage, 0, len(images))
+	for _, image := range images {
+		_, isTracker := linked[image.Path]
+		keep := image.Purpose == api.ScreenshotPurposeMenu || isTracker ||
+			slices.ContainsFunc(selections, func(selection api.ScreenshotSelection) bool {
+				return screenshotTimestampMatchesSelection(image.TimestampSeconds, selection, frameRate)
+			})
+		if keep {
+			filtered = append(filtered, image)
+		}
 	}
 	return filtered
 }
@@ -1144,33 +1113,6 @@ func parseScreenshotIndex(path string, base string) int {
 		return 0
 	}
 	return parsed
-}
-
-func parseScreenshotIndexStrict(path string, base string) (int, bool) {
-	name := filepath.Base(path)
-	name = strings.TrimSuffix(name, filepath.Ext(name))
-	if base != "" {
-		prefix := base + "-"
-		if !strings.HasPrefix(name, prefix) {
-			return 0, false
-		}
-		name = strings.TrimPrefix(name, prefix)
-	}
-	name = strings.TrimPrefix(name, "preview-")
-	parts := strings.SplitN(name, "-", 2)
-	if len(parts) == 0 || parts[0] == "" {
-		return 0, false
-	}
-	for _, ch := range parts[0] {
-		if ch < '0' || ch > '9' {
-			return 0, false
-		}
-	}
-	parsed, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return 0, false
-	}
-	return parsed, true
 }
 
 func buildScreenshotFilename(base string, index int, timestampSeconds float64, purpose api.ScreenshotPurpose) string {

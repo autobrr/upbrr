@@ -151,7 +151,12 @@ export const useScreenshots = ({
 
         setExistingImages([]);
         setExistingTrackerImages([]);
-        setPreviewImages([]);
+        // Keep previews still held by final selections; they carry the slot Index.
+        setPreviewImages((prev) =>
+          prev.filter((entry) =>
+            finalImagesRef.current.some((final) => final.image.Path === entry.image.Path),
+          ),
+        );
         setFinalResult(null);
 
         // Load existing screenshot previews
@@ -439,11 +444,16 @@ export const useScreenshots = ({
     [path, idOverrideState, releaseOverrideState],
   );
 
-  const deleteTrackerImageFile = useCallback(
-    async (imagePath: string) => {
+  // Delete one screenshot file; true only when it is gone from disk.
+  const deleteScreenshotFile = useCallback(
+    async (imagePath: string): Promise<boolean> => {
       const deleter = globalThis.go?.guiapp?.App?.DeleteScreenshot;
-      if (!deleter || !path.trim() || !imagePath) {
-        return;
+      if (!deleter) {
+        setScreenshotsError("Deleting screenshots is unavailable in this build.");
+        return false;
+      }
+      if (!path.trim() || !imagePath) {
+        return false;
       }
       try {
         await deleter(
@@ -452,8 +462,10 @@ export const useScreenshots = ({
           normalizeReleaseOverrides(releaseOverrideState?.overrides || {}),
           imagePath,
         );
+        return true;
       } catch (err) {
         setScreenshotsError(String(err));
+        return false;
       }
     },
     [path, idOverrideState, releaseOverrideState],
@@ -564,7 +576,12 @@ export const useScreenshots = ({
     if (deleted.length === 0) return;
     const deletedPaths = new Set(deleted.map((image) => image.Path));
     setPreviewImages((prev) => prev.filter((entry) => !deletedPaths.has(entry.image.Path)));
-  }, [previewImages, deleteImageSet]);
+    if (finalImagesRef.current.some((entry) => deletedPaths.has(entry.image.Path))) {
+      await saveFinalSelections(
+        finalImagesRef.current.filter((entry) => !deletedPaths.has(entry.image.Path)),
+      );
+    }
+  }, [previewImages, deleteImageSet, saveFinalSelections]);
 
   // Delete all final images
   const handleDeleteAllFinalImages = useCallback(async () => {
@@ -620,7 +637,7 @@ export const useScreenshots = ({
       const linked = trackerLinkByURL.get(url);
       let removedFinal = false;
       if (linked?.Path) {
-        await deleteTrackerImageFile(linked.Path);
+        await deleteScreenshotFile(linked.Path);
       }
       await deleteTrackerImageURL(url);
       removeTrackerImageURLState(url);
@@ -634,7 +651,7 @@ export const useScreenshots = ({
       removeTrackerImageURLState,
       trackerLinkByURL,
       removeFinalSelectionInternal,
-      deleteTrackerImageFile,
+      deleteScreenshotFile,
     ],
   );
 
@@ -799,6 +816,7 @@ export const useScreenshots = ({
     addFinalSelection,
     removeFinalSelection,
     reorderFinalSelections,
+    deleteScreenshotFile,
     handleDeleteAllExistingImages,
     handleDeleteAllTrackerImages,
     handleDeleteAllPreviewImages,
