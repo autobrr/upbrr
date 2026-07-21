@@ -91,7 +91,7 @@ func parsedReleaseType(base string, source string, other []string, codec []strin
 			return "ENCODE"
 		}
 	}
-	return ""
+	return inferReleaseTypeFromName(base)
 }
 
 func parsedReleaseSource(base string, source string, typeValue string) string {

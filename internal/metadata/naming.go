@@ -448,6 +448,8 @@ func inferReleaseTypeFromName(path string) string {
 		return "HDTV"
 	case strings.Contains(compact, "DVDRIP"):
 		return "DVDRIP"
+	case strings.Contains(compact, "BDRIP"):
+		return "ENCODE"
 	}
 	return ""
 }
@@ -458,7 +460,8 @@ func inferReleaseSourceFromName(path string, typeValue string) string {
 	switch {
 	case strings.Contains(compact, "HDDVD"):
 		return "HDDVD"
-	case strings.Contains(compact, "BLURAY") || strings.Contains(compact, "BLU") && strings.Contains(compact, "RAY"):
+	case strings.Contains(compact, "BLURAY") || strings.Contains(compact, "BLU") && strings.Contains(compact, "RAY") ||
+		strings.Contains(compact, "BDREMUX") || strings.Contains(compact, "BDRIP") || strings.Contains(compact, "BDMV"):
 		if strings.EqualFold(typeValue, "DISC") {
 			return "Blu-ray"
 		}
