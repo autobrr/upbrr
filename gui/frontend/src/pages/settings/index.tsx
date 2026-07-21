@@ -30,12 +30,77 @@ const trackerAuthSection = {
   label: "Tracker Auth",
 };
 
+// Heroicons outline paths for the settings sidebar, mirroring autobrr's
+// icon-per-section settings navigation.
+const sectionGlyphPaths: Record<string, string[]> = {
+  Main: [
+    "M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z",
+    "M15 12a3 3 0 11-6 0 3 3 0 016 0z",
+  ],
+  "Image Hosting": [
+    "M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z",
+  ],
+  Metadata: [
+    "M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z",
+    "M6 6h.008v.008H6V6z",
+  ],
+  Screens: [
+    "M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z",
+    "M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zM18.75 10.5h.008v.008h-.008V10.5z",
+  ],
+  Description: [
+    "M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z",
+  ],
+  Arr: [
+    "M12.75 19.5v-.75a7.5 7.5 0 00-7.5-7.5H4.5m0-6.75h.75c7.87 0 14.25 6.38 14.25 14.25v.75M6 18.75a.75.75 0 11-1.5 0 .75.75 0 011.5 0z",
+  ],
+  "Post Upload": [
+    "M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5",
+  ],
+  Trackers: [
+    "M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z",
+  ],
+  "Torrent Clients": [
+    "M9 13.5l3 3m0 0l3-3m-3 3v-6m1.06-4.19l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z",
+  ],
+  "Client Handling": [
+    "M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75",
+  ],
+  "Torrent Specific": [
+    "M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75",
+  ],
+  "Application Details": [
+    "M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z",
+  ],
+  "Tracker Auth": [
+    "M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z",
+  ],
+};
+
+function SectionGlyph({ label, className }: { label: string; className: string }) {
+  const paths = sectionGlyphPaths[label] ?? sectionGlyphPaths.Main;
+  return (
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={1.5}
+      stroke="currentColor"
+      aria-hidden="true"
+    >
+      {paths.map((d) => (
+        <path key={d.slice(0, 24)} strokeLinecap="round" strokeLinejoin="round" d={d} />
+      ))}
+    </svg>
+  );
+}
+
 const settingsInputClass =
   "h-8 rounded-md border border-[var(--border)] bg-[var(--input-bg)] px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-blue-500/25";
 // Tracker-supplied auth kinds can be long adapter descriptors; keep chips
 // wrapped inside the auth card on narrow screens.
 const trackerAuthChipClass =
-  "max-w-full whitespace-normal rounded-full border border-slate-400/20 bg-slate-950/35 px-[0.45rem] py-[0.2rem] text-[0.74rem] leading-none text-[var(--muted)] [overflow-wrap:anywhere]";
+  "max-w-full whitespace-normal rounded-full border border-[var(--border)] bg-[var(--panel-light)] px-[0.45rem] py-[0.2rem] text-[0.74rem] leading-none text-[var(--muted)] [overflow-wrap:anywhere]";
 const trackerAuthMetaClass = "m-0 text-[0.8rem] text-[var(--muted)]";
 
 /** Trackers with backend adapters that can perform a remote auth check. */
@@ -720,346 +785,348 @@ export default function SettingsPage(props: Props) {
     </div>
   );
 
+  const activeSectionLabel =
+    [...settingsSections, applicationDetailsSection, trackerAuthSection].find(
+      (item) => item.key === settingsSection,
+    )?.label ?? "Settings";
+
   return (
     <div className="content-stack">
       <header className="hero">
-        <p className="eyebrow">upbrr</p>
         <h1>Settings</h1>
         <p className="subtitle">
           Edit settings by section. Changes apply immediately and are saved to SQLite.
         </p>
       </header>
 
-      <section className="panel">
-        <div className="settings-header">
-          <div className="settings-meta">
-            <p className="label">Configuration</p>
-            <p className="helper">Invalid changes will be rejected with a validation error.</p>
-          </div>
-          <div className="settings-actions">
-            <Button type="button" onClick={loadSettings} disabled={settingsLoading}>
-              Reload
-            </Button>
-            <Button
-              type="button"
-              onClick={handleExportSettings}
-              disabled={settingsLoading || settingsExporting || settingsImporting}
-            >
-              {settingsExporting ? "Exporting..." : "Export"}
-            </Button>
-            <Button
-              type="button"
-              onClick={handleImportConfig}
-              disabled={settingsLoading || settingsExporting || settingsImporting}
-            >
-              {settingsImporting ? "Importing..." : "Import"}
-            </Button>
-            <Button
-              variant="primary"
-              type="button"
-              onClick={() => {
-                void reloadTrackerAuthAfterConfigChange(handleSaveSettings);
-              }}
-              disabled={settingsLoading || settingsExporting || settingsImporting || !settingsDirty}
-            >
-              Save
-            </Button>
-          </div>
-        </div>
-
-        {configOpStatus ? (
-          <div className={`config-status-banner config-status-banner--${configOpStatus.type}`}>
-            <div className="config-status-banner__icon">
-              {configOpStatus.type === "success" ? (
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                  <path
-                    d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"
-                    fill="currentColor"
-                    opacity=".15"
-                  />
-                  <path
-                    d="M6.5 10.5 8.5 12.5 13.5 7.5"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5" />
-                </svg>
-              ) : configOpStatus.type === "warning" ? (
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                  <path
-                    d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"
-                    fill="currentColor"
-                    opacity=".15"
-                  />
-                  <path d="M10 7v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                  <circle cx="10" cy="13.5" r=".75" fill="currentColor" />
-                  <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5" />
-                </svg>
-              ) : (
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                  <path
-                    d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"
-                    fill="currentColor"
-                    opacity=".15"
-                  />
-                  <path
-                    d="M12.5 7.5 7.5 12.5M7.5 7.5l5 5"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                  />
-                  <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5" />
-                </svg>
-              )}
-            </div>
-            <div className="config-status-banner__body">
-              <p className="config-status-banner__title">{configOpStatus.title}</p>
-              <p className="config-status-banner__message">{configOpStatus.message}</p>
-              {configOpStatus.warnings && configOpStatus.warnings.length > 0 ? (
-                <div className="config-status-banner__warnings">
+      <section className="overflow-hidden rounded-lg border border-gray-250 bg-white shadow-table dark:border-gray-775 dark:bg-gray-800">
+        <div className="lg:grid lg:grid-cols-12">
+          <aside className="border-b border-gray-150 py-2 dark:border-gray-725 lg:col-span-3 lg:border-b-0 lg:border-r">
+            <nav className="space-y-1">
+              {[...settingsSections, applicationDetailsSection, trackerAuthSection].map(
+                (section) => (
                   <button
+                    key={section.key}
                     type="button"
-                    className="config-status-banner__toggle"
-                    onClick={() => setWarningsExpanded((prev) => !prev)}
+                    className={cn(
+                      "group flex w-full items-center rounded-none border-0 border-l-4 bg-transparent px-3 py-2 text-left text-sm font-medium shadow-none transition",
+                      settingsSection === section.key
+                        ? "border-sky-500 bg-blue-100 font-bold text-sky-700 hover:bg-blue-200 hover:text-sky-900 dark:border-blue-500 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600 dark:hover:text-white"
+                        : "border-transparent text-gray-900 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-600 dark:hover:text-gray-300",
+                    )}
+                    onClick={() => setSettingsSection(section.key)}
                   >
-                    {warningsExpanded ? "Hide" : "Show"} {configOpStatus.warnings.length} warning
-                    {configOpStatus.warnings.length !== 1 ? "s" : ""}
+                    <SectionGlyph
+                      label={section.label}
+                      className="-ml-1 mr-3 h-6 w-6 shrink-0 text-gray-500 group-hover:text-gray-600 dark:text-gray-400 dark:group-hover:text-gray-300"
+                    />
+                    <span className="truncate">{section.label}</span>
                   </button>
-                  {warningsExpanded ? (
-                    <ul className="config-status-banner__warning-list">
-                      {configOpStatus.warnings.map((w, i) => (
-                        <li key={i}>{w}</li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </div>
-              ) : null}
+                ),
+              )}
+            </nav>
+          </aside>
+
+          <div className="px-4 py-6 sm:p-6 lg:col-span-9 lg:pb-8">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div className="sm:px-2">
+                <h2 className="text-lg font-bold leading-4 text-gray-900 dark:text-white">
+                  {activeSectionLabel}
+                </h2>
+                <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  Invalid changes will be rejected with a validation error.
+                </p>
+              </div>
+              <div className="settings-actions">
+                <Button type="button" onClick={loadSettings} disabled={settingsLoading}>
+                  Reload
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleExportSettings}
+                  disabled={settingsLoading || settingsExporting || settingsImporting}
+                >
+                  {settingsExporting ? "Exporting..." : "Export"}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleImportConfig}
+                  disabled={settingsLoading || settingsExporting || settingsImporting}
+                >
+                  {settingsImporting ? "Importing..." : "Import"}
+                </Button>
+                <Button
+                  variant="primary"
+                  type="button"
+                  onClick={() => {
+                    void reloadTrackerAuthAfterConfigChange(handleSaveSettings);
+                  }}
+                  disabled={
+                    settingsLoading || settingsExporting || settingsImporting || !settingsDirty
+                  }
+                >
+                  Save
+                </Button>
+              </div>
             </div>
-            <button
-              type="button"
-              className="config-status-banner__dismiss"
-              onClick={dismissConfigOpStatus}
-              aria-label="Dismiss"
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path
-                  d="M10.5 3.5 3.5 10.5M3.5 3.5l7 7"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </button>
-          </div>
-        ) : null}
 
-        <div className="settings-shell">
-          <div className="settings-tags">
-            {settingsSections.map((section) => (
-              <button
-                key={section.key}
-                type="button"
-                className={cn(
-                  "flex w-full items-center rounded-none border-0 border-l-4 bg-transparent px-3 py-2 text-left text-sm font-medium shadow-none transition",
-                  settingsSection === section.key
-                    ? "border-[var(--sidebar-active-border)] bg-[var(--sidebar-active-bg)] font-bold text-[var(--sidebar-active-text)]"
-                    : "border-transparent text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]",
-                )}
-                onClick={() => setSettingsSection(section.key)}
-              >
-                {section.label}
-              </button>
-            ))}
-            <button
-              key={applicationDetailsSection.key}
-              type="button"
-              className={cn(
-                "flex w-full items-center rounded-none border-0 border-l-4 bg-transparent px-3 py-2 text-left text-sm font-medium shadow-none transition",
-                settingsSection === applicationDetailsSection.key
-                  ? "border-[var(--sidebar-active-border)] bg-[var(--sidebar-active-bg)] font-bold text-[var(--sidebar-active-text)]"
-                  : "border-transparent text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]",
-              )}
-              onClick={() => setSettingsSection(applicationDetailsSection.key)}
-            >
-              {applicationDetailsSection.label}
-            </button>
-            <button
-              key={trackerAuthSection.key}
-              type="button"
-              className={cn(
-                "flex w-full items-center rounded-none border-0 border-l-4 bg-transparent px-3 py-2 text-left text-sm font-medium shadow-none transition",
-                settingsSection === trackerAuthSection.key
-                  ? "border-[var(--sidebar-active-border)] bg-[var(--sidebar-active-bg)] font-bold text-[var(--sidebar-active-text)]"
-                  : "border-transparent text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]",
-              )}
-              onClick={() => setSettingsSection(trackerAuthSection.key)}
-            >
-              {trackerAuthSection.label}
-            </button>
-          </div>
-
-          <div className="settings-body">
-            {settingsSection === applicationDetailsSection.key ? applicationDetailsPanel : null}
-            {settingsSection === trackerAuthSection.key ? trackerAuthPanel : null}
-            {settingsSection !== applicationDetailsSection.key &&
-            settingsSection !== trackerAuthSection.key &&
-            webAuthAvailable ? (
-              <details className="settings-subgroup settings-subgroup--collapsible settings-subgroup--auth">
-                <summary>Secret Encryption</summary>
-                <div>
-                  <p className="helper">
-                    Desktop installs can keep using plaintext secrets, or you can create
-                    <code> web-auth.json </code>
-                    to enable encrypted secret storage for future saves and exports.
-                  </p>
-                  <div className="settings-auth-status">
-                    <span
-                      className={`settings-auth-badge ${webAuthStatus?.usable ? "is-ready" : webAuthStatus?.exists ? "is-warning" : "is-idle"}`}
-                    >
-                      {webAuthLoading
-                        ? "Checking..."
-                        : webAuthStatus?.usable
-                          ? "Encryption enabled"
-                          : webAuthStatus?.exists
-                            ? "Auth file invalid"
-                            : "Plaintext fallback active"}
-                    </span>
-                    {webAuthStatus?.path ? (
-                      <p className="muted">Path: {webAuthStatus.path}</p>
-                    ) : null}
-                    {webAuthStatus?.message ? (
-                      <p className="muted">{webAuthStatus.message}</p>
-                    ) : null}
-                    {webAuthStatus?.usable && webAuthStatus.username ? (
-                      <p className="muted">Configured user: {webAuthStatus.username}</p>
-                    ) : null}
-                    {webAuthStatus?.browseRoot ? (
-                      <p className="muted">Web browse root: {webAuthStatus.browseRoot}</p>
-                    ) : null}
-                    {webAuthStatus?.allowUnrestrictedBrowse ? (
-                      <p className="muted">Web browse access: Unrestricted</p>
-                    ) : null}
-                  </div>
-                  {webAuthStatus?.canCreate ? (
-                    <div className="settings-grid">
-                      <label className="settings-field">
-                        <span>Username</span>
-                        <input
-                          className={settingsInputClass}
-                          value={webAuthUsername}
-                          onChange={(event) => setWebAuthUsername(event.target.value)}
-                          autoComplete="username"
-                        />
-                      </label>
-                      <label className="settings-field">
-                        <span>Password</span>
-                        <input
-                          className={settingsInputClass}
-                          type="password"
-                          value={webAuthPassword}
-                          onChange={(event) => setWebAuthPassword(event.target.value)}
-                          autoComplete="new-password"
-                        />
-                      </label>
-                      <label className="settings-field">
-                        <span>Confirm password</span>
-                        <input
-                          className={settingsInputClass}
-                          type="password"
-                          value={webAuthConfirm}
-                          onChange={(event) => setWebAuthConfirm(event.target.value)}
-                          autoComplete="new-password"
-                        />
-                      </label>
+            {configOpStatus ? (
+              <div className={`config-status-banner config-status-banner--${configOpStatus.type}`}>
+                <div className="config-status-banner__icon">
+                  {configOpStatus.type === "success" ? (
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                      <path
+                        d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"
+                        fill="currentColor"
+                        opacity=".15"
+                      />
+                      <path
+                        d="M6.5 10.5 8.5 12.5 13.5 7.5"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5" />
+                    </svg>
+                  ) : configOpStatus.type === "warning" ? (
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                      <path
+                        d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"
+                        fill="currentColor"
+                        opacity=".15"
+                      />
+                      <path
+                        d="M10 7v4"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                      />
+                      <circle cx="10" cy="13.5" r=".75" fill="currentColor" />
+                      <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5" />
+                    </svg>
+                  ) : (
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                      <path
+                        d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"
+                        fill="currentColor"
+                        opacity=".15"
+                      />
+                      <path
+                        d="M12.5 7.5 7.5 12.5M7.5 7.5l5 5"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                      />
+                      <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5" />
+                    </svg>
+                  )}
+                </div>
+                <div className="config-status-banner__body">
+                  <p className="config-status-banner__title">{configOpStatus.title}</p>
+                  <p className="config-status-banner__message">{configOpStatus.message}</p>
+                  {configOpStatus.warnings && configOpStatus.warnings.length > 0 ? (
+                    <div className="config-status-banner__warnings">
+                      <button
+                        type="button"
+                        className="config-status-banner__toggle"
+                        onClick={() => setWarningsExpanded((prev) => !prev)}
+                      >
+                        {warningsExpanded ? "Hide" : "Show"} {configOpStatus.warnings.length}{" "}
+                        warning
+                        {configOpStatus.warnings.length !== 1 ? "s" : ""}
+                      </button>
+                      {warningsExpanded ? (
+                        <ul className="config-status-banner__warning-list">
+                          {configOpStatus.warnings.map((w, i) => (
+                            <li key={i}>{w}</li>
+                          ))}
+                        </ul>
+                      ) : null}
                     </div>
                   ) : null}
-                  <div className="settings-auth-actions">
-                    <Button
-                      variant="primary"
-                      type="button"
-                      onClick={handleCreateWebAuth}
-                      disabled={
-                        webAuthLoading ||
-                        webAuthCreating ||
-                        !webAuthStatus?.canCreate ||
-                        !webAuthUsername.trim() ||
-                        !webAuthPassword.trim() ||
-                        !webAuthConfirm.trim()
-                      }
-                    >
-                      {webAuthCreating ? "Creating..." : "Create web-auth.json"}
-                    </Button>
-                  </div>
-                  {webAuthError ? <p className="error">{webAuthError}</p> : null}
                 </div>
-              </details>
-            ) : null}
-            {settingsSection === applicationDetailsSection.key ||
-            settingsSection === trackerAuthSection.key ? null : configData ? (
-              <div className="settings-form">
-                {showAdvancedToggle ? (
-                  <div className="settings-switch-row">
-                    <span>Show advanced</span>
-                    <Switch
-                      aria-label="Show advanced"
-                      checked={advancedOpen}
-                      onChange={(event) =>
-                        setSettingsAdvanced((prev) => ({
-                          ...prev,
-                          [settingsSection]: event.target.checked,
-                        }))
-                      }
+                <button
+                  type="button"
+                  className="config-status-banner__dismiss"
+                  onClick={dismissConfigOpStatus}
+                  aria-label="Dismiss"
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path
+                      d="M10.5 3.5 3.5 10.5M3.5 3.5l7 7"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
                     />
-                  </div>
-                ) : null}
-                {settingsSection === "image_hosting" ? (
-                  renderImageHostingSection()
-                ) : settingsSection === "trackers" &&
-                  configData.Trackers &&
-                  typeof configData.Trackers === "object" &&
-                  !Array.isArray(configData.Trackers) ? (
-                  renderTrackerSection(advancedOpen)
-                ) : settingsSection === "torrent_clients" &&
-                  configData.TorrentClients &&
-                  typeof configData.TorrentClients === "object" ? (
-                  renderTorrentClientsSection(advancedOpen)
-                ) : (
-                  <div className="settings-grid">
-                    {(() => {
-                      const section = settingsSections.find((item) => item.key === settingsSection);
-                      if (!section) return null;
-                      const sectionData = configData[section.jsonKey];
-                      if (
-                        !sectionData ||
-                        typeof sectionData !== "object" ||
-                        Array.isArray(sectionData)
-                      ) {
-                        return null;
-                      }
-                      const meta = sectionFieldMeta[section.jsonKey] || {};
-                      return Object.entries(sectionData as ConfigMap)
-                        .filter(([key]) => {
-                          const fieldMeta = meta[key];
-                          if (fieldMeta?.advanced && !advancedOpen) return false;
-                          return true;
-                        })
-                        .map(([key, value]) =>
-                          renderField(key, value, [section.jsonKey, key], meta[key]),
-                        );
-                    })()}
-                  </div>
-                )}
+                  </svg>
+                </button>
               </div>
-            ) : (
-              <p className="muted">Loading configuration...</p>
-            )}
+            ) : null}
+
+            <div className="settings-body">
+              {settingsSection === applicationDetailsSection.key ? applicationDetailsPanel : null}
+              {settingsSection === trackerAuthSection.key ? trackerAuthPanel : null}
+              {settingsSection !== applicationDetailsSection.key &&
+              settingsSection !== trackerAuthSection.key &&
+              webAuthAvailable ? (
+                <details className="settings-subgroup settings-subgroup--collapsible settings-subgroup--auth">
+                  <summary>Secret Encryption</summary>
+                  <div>
+                    <p className="helper">
+                      Desktop installs can keep using plaintext secrets, or you can create
+                      <code> web-auth.json </code>
+                      to enable encrypted secret storage for future saves and exports.
+                    </p>
+                    <div className="settings-auth-status">
+                      <span
+                        className={`settings-auth-badge ${webAuthStatus?.usable ? "is-ready" : webAuthStatus?.exists ? "is-warning" : "is-idle"}`}
+                      >
+                        {webAuthLoading
+                          ? "Checking..."
+                          : webAuthStatus?.usable
+                            ? "Encryption enabled"
+                            : webAuthStatus?.exists
+                              ? "Auth file invalid"
+                              : "Plaintext fallback active"}
+                      </span>
+                      {webAuthStatus?.path ? (
+                        <p className="muted">Path: {webAuthStatus.path}</p>
+                      ) : null}
+                      {webAuthStatus?.message ? (
+                        <p className="muted">{webAuthStatus.message}</p>
+                      ) : null}
+                      {webAuthStatus?.usable && webAuthStatus.username ? (
+                        <p className="muted">Configured user: {webAuthStatus.username}</p>
+                      ) : null}
+                      {webAuthStatus?.browseRoot ? (
+                        <p className="muted">Web browse root: {webAuthStatus.browseRoot}</p>
+                      ) : null}
+                      {webAuthStatus?.allowUnrestrictedBrowse ? (
+                        <p className="muted">Web browse access: Unrestricted</p>
+                      ) : null}
+                    </div>
+                    {webAuthStatus?.canCreate ? (
+                      <div className="settings-grid">
+                        <label className="settings-field">
+                          <span>Username</span>
+                          <input
+                            className={settingsInputClass}
+                            value={webAuthUsername}
+                            onChange={(event) => setWebAuthUsername(event.target.value)}
+                            autoComplete="username"
+                          />
+                        </label>
+                        <label className="settings-field">
+                          <span>Password</span>
+                          <input
+                            className={settingsInputClass}
+                            type="password"
+                            value={webAuthPassword}
+                            onChange={(event) => setWebAuthPassword(event.target.value)}
+                            autoComplete="new-password"
+                          />
+                        </label>
+                        <label className="settings-field">
+                          <span>Confirm password</span>
+                          <input
+                            className={settingsInputClass}
+                            type="password"
+                            value={webAuthConfirm}
+                            onChange={(event) => setWebAuthConfirm(event.target.value)}
+                            autoComplete="new-password"
+                          />
+                        </label>
+                      </div>
+                    ) : null}
+                    <div className="settings-auth-actions">
+                      <Button
+                        variant="primary"
+                        type="button"
+                        onClick={handleCreateWebAuth}
+                        disabled={
+                          webAuthLoading ||
+                          webAuthCreating ||
+                          !webAuthStatus?.canCreate ||
+                          !webAuthUsername.trim() ||
+                          !webAuthPassword.trim() ||
+                          !webAuthConfirm.trim()
+                        }
+                      >
+                        {webAuthCreating ? "Creating..." : "Create web-auth.json"}
+                      </Button>
+                    </div>
+                    {webAuthError ? <p className="error">{webAuthError}</p> : null}
+                  </div>
+                </details>
+              ) : null}
+              {settingsSection === applicationDetailsSection.key ||
+              settingsSection === trackerAuthSection.key ? null : configData ? (
+                <div className="settings-form">
+                  {showAdvancedToggle ? (
+                    <div className="settings-switch-row">
+                      <span>Show advanced</span>
+                      <Switch
+                        aria-label="Show advanced"
+                        checked={advancedOpen}
+                        onChange={(event) =>
+                          setSettingsAdvanced((prev) => ({
+                            ...prev,
+                            [settingsSection]: event.target.checked,
+                          }))
+                        }
+                      />
+                    </div>
+                  ) : null}
+                  {settingsSection === "image_hosting" ? (
+                    renderImageHostingSection()
+                  ) : settingsSection === "trackers" &&
+                    configData.Trackers &&
+                    typeof configData.Trackers === "object" &&
+                    !Array.isArray(configData.Trackers) ? (
+                    renderTrackerSection(advancedOpen)
+                  ) : settingsSection === "torrent_clients" &&
+                    configData.TorrentClients &&
+                    typeof configData.TorrentClients === "object" ? (
+                    renderTorrentClientsSection(advancedOpen)
+                  ) : (
+                    <div className="settings-grid">
+                      {(() => {
+                        const section = settingsSections.find(
+                          (item) => item.key === settingsSection,
+                        );
+                        if (!section) return null;
+                        const sectionData = configData[section.jsonKey];
+                        if (
+                          !sectionData ||
+                          typeof sectionData !== "object" ||
+                          Array.isArray(sectionData)
+                        ) {
+                          return null;
+                        }
+                        const meta = sectionFieldMeta[section.jsonKey] || {};
+                        return Object.entries(sectionData as ConfigMap)
+                          .filter(([key]) => {
+                            const fieldMeta = meta[key];
+                            if (fieldMeta?.advanced && !advancedOpen) return false;
+                            return true;
+                          })
+                          .map(([key, value]) =>
+                            renderField(key, value, [section.jsonKey, key], meta[key]),
+                          );
+                      })()}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="muted">Loading configuration...</p>
+              )}
+            </div>
+
+            {settingsSaved ? <p className="settings-saved">{settingsSaved}</p> : null}
+            {settingsError ? <p className="error">{settingsError}</p> : null}
           </div>
         </div>
-
-        {settingsSaved ? <p className="settings-saved">{settingsSaved}</p> : null}
-        {settingsError ? <p className="error">{settingsError}</p> : null}
       </section>
 
       <AlertDialog.Root

@@ -34,7 +34,6 @@ export default function LoggingPage(props: Props) {
   return (
     <div className="content-stack">
       <header className="hero">
-        <p className="eyebrow">upbrr</p>
         <h1>Logging</h1>
         <p className="subtitle">Monitor live logs and adjust logging settings.</p>
       </header>

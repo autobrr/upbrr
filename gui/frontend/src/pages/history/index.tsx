@@ -195,7 +195,6 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
   return (
     <div className="content-stack">
       <header className="hero">
-        <p className="eyebrow">upbrr</p>
         <h1>History</h1>
         <p className="subtitle">
           Review previously processed releases stored in SQLite and inspect full stored details.

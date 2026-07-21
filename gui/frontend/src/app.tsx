@@ -4239,10 +4239,13 @@ export default function App({ webUsername, onWebLogout }: AppProps = {}) {
 
   const headerNavItems = [
     { id: "input", label: "Input" },
-    { id: "settings", label: "Settings" },
     { id: "logging", label: "Logging" },
     { id: "history", label: "History" },
   ];
+
+  // Settings lives in the user menu (web) or the gear button (desktop),
+  // but stays a first-class destination in the mobile menu.
+  const mobileNavExtras = [{ id: "settings", label: "Settings" }];
 
   const selectTab = (tab: string) => {
     setActiveTab(tab);
@@ -4305,6 +4308,17 @@ export default function App({ webUsername, onWebLogout }: AppProps = {}) {
                       <ThemeGlyph theme={theme} />
                       <span className="sr-only">Toggle theme ({getThemeLabel()})</span>
                     </button>
+                    {!webUsername ? (
+                      <button
+                        className={cn(headerIconButtonClass, "ml-1")}
+                        type="button"
+                        onClick={() => selectTab("settings")}
+                        title="Settings"
+                      >
+                        <HeaderGlyph name="cog" className="h-4 w-4" />
+                        <span className="sr-only">Settings</span>
+                      </button>
+                    ) : null}
                     {webUsername ? (
                       <DropdownMenu.Root>
                         <DropdownMenu.Trigger asChild>
@@ -4394,7 +4408,7 @@ export default function App({ webUsername, onWebLogout }: AppProps = {}) {
           </div>
           {mobileNavOpen ? (
             <div className="space-y-1 border-b border-gray-300 px-2 pb-3 pt-2 dark:border-gray-775 sm:hidden">
-              {headerNavItems.map((item) => (
+              {[...headerNavItems, ...mobileNavExtras].map((item) => (
                 <button
                   key={item.id}
                   className={mobileNavItemClass(activeTab === item.id)}

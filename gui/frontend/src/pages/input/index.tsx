@@ -1046,7 +1046,6 @@ export default function InputPage(props: Props) {
   return (
     <div className="content-stack">
       <header className="hero">
-        <p className="eyebrow">upbrr</p>
         <h1>Build Release Name</h1>
         <p className="subtitle">
           Build a release name and preview external metadata before you upload.
