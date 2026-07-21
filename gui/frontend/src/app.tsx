@@ -1942,30 +1942,18 @@ export default function App() {
     return [...manual, ...auto];
   };
 
+  // The overrides in effect, not the ones edited since the last preview: a preview
+  // round-trip echoes them back into preview.ReleaseNameOverrides, so a diff against
+  // that snapshot empties itself as soon as the metadata is refreshed.
   const namingOverrides = useMemo(() => {
-    const stored =
-      preview.ReleaseNameOverrides && typeof preview.ReleaseNameOverrides === "object"
-        ? preview.ReleaseNameOverrides
-        : {};
     const overrides = releaseOverrideState?.dirty
       ? releaseOverrideState.overrides
       : preview.ReleaseNameOverrides || {};
-    return Object.entries(overrides || {}).filter(([key, value]) => {
+    return Object.entries(overrides || {}).filter(([, value]) => {
       if (value === null || value === undefined) return false;
-      const storedValue = (stored as Record<string, unknown>)[key];
-      if (typeof value === "string") {
-        const current = value.trim();
-        const prev = typeof storedValue === "string" ? storedValue.trim() : "";
-        return current !== prev;
-      }
-      if (typeof value === "number") {
-        const prev = typeof storedValue === "number" ? storedValue : 0;
-        return value !== prev;
-      }
-      if (typeof value === "boolean") {
-        const prev = typeof storedValue === "boolean" ? storedValue : false;
-        return value !== prev;
-      }
+      if (typeof value === "string") return value.trim() !== "";
+      if (typeof value === "number") return value !== 0;
+      if (typeof value === "boolean") return value;
       return false;
     });
   }, [preview.ReleaseNameOverrides, releaseOverrideState]);
