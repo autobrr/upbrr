@@ -50,6 +50,9 @@ func (c *Client) ResolveAnime(ctx context.Context, tmdbName string, input Metada
 		}
 		items, err := c.anilistSearch(ctx, term, result.MALID)
 		if err != nil {
+			if c.logger != nil {
+				c.logger.Warnf("tmdb: anilist search failed for %q: %v", term, err)
+			}
 			continue
 		}
 		if len(items) > 0 {
@@ -191,7 +194,7 @@ func (c *Client) anilistSearch(ctx context.Context, term string, malID int) ([]a
 func (c *Client) doAniListSearch(ctx context.Context, body []byte) (anilistResponse, error) {
 	var response anilistResponse
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, anilistURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.anilistURL, bytes.NewReader(body))
 	if err != nil {
 		return response, fmt.Errorf("anilist: build search request: %w", err)
 	}
@@ -217,7 +220,7 @@ func (c *Client) doAniListSearch(ctx context.Context, body []byte) (anilistRespo
 func (c *Client) doAniListMetadata(ctx context.Context, body []byte) (anilistMetadataResponse, error) {
 	var response anilistMetadataResponse
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, anilistURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.anilistURL, bytes.NewReader(body))
 	if err != nil {
 		return response, fmt.Errorf("anilist: build metadata request: %w", err)
 	}
@@ -358,7 +361,7 @@ type anilistMedia struct {
 	ID         int          `json:"id"`
 	IDMal      int          `json:"idMal"`
 	Title      anilistTitle `json:"title"`
-	SeasonYear string       `json:"seasonYear"`
+	SeasonYear int          `json:"seasonYear"`
 	Episodes   int          `json:"episodes"`
 	Tags       []anilistTag `json:"tags"`
 }

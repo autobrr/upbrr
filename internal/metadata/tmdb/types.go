@@ -267,7 +267,7 @@ type AnimeResult struct {
 	Romaji      string
 	MALID       int
 	English     string
-	SeasonYear  string
+	SeasonYear  int
 	Episodes    int
 	Demographic string
 }
