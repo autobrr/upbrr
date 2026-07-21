@@ -691,6 +691,340 @@ func TestEvaluateRulesA4KSkipsLanguageRuleForDisc(t *testing.T) {
 	}
 }
 
+func TestEvaluateRulesA4KBlocksWebRip(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		meta api.PreparedMetadata
+	}{
+		{
+			name: "type field",
+			meta: api.PreparedMetadata{
+				Type:                   "WEBRIP",
+				ValidMediaInfoSettings: true,
+				AudioLanguages:         []string{"English"},
+				SubtitleLanguages:      []string{"English"},
+			},
+		},
+		{
+			name: "source field",
+			meta: api.PreparedMetadata{
+				Source:                 "WEB-Rip",
+				ValidMediaInfoSettings: true,
+				AudioLanguages:         []string{"English"},
+				SubtitleLanguages:      []string{"English"},
+			},
+		},
+		{
+			name: "release name",
+			meta: api.PreparedMetadata{
+				ReleaseName:            "Example.Release.2026.2160p.WEBRip.DDP5.1.x265-GRP",
+				ValidMediaInfoSettings: true,
+				AudioLanguages:         []string{"English"},
+				SubtitleLanguages:      []string{"English"},
+			},
+		},
+		{
+			name: "release source field",
+			meta: api.PreparedMetadata{
+				Release:                api.ReleaseInfo{Source: "WEB-Rip"},
+				ValidMediaInfoSettings: true,
+				AudioLanguages:         []string{"English"},
+				SubtitleLanguages:      []string{"English"},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			failures := EvaluateRules(context.Background(), "A4K", tc.meta, nil)
+			failure, ok := findRuleFailure(failures, "extra_check")
+			if !ok {
+				t.Fatalf("expected extra_check failure for WEBRip, got %#v", failures)
+			}
+			if !strings.Contains(failure.Reason, "WEBRip") {
+				t.Fatalf("expected WEBRip reason, got %q", failure.Reason)
+			}
+		})
+	}
+}
+
+func writeA4KMediaInfoJSON(t *testing.T, overallBitRateBps string) string {
+	t.Helper()
+	return writeA4KMediaInfoJSONWithTracks(t, overallBitRateBps, "", nil)
+}
+
+// writeA4KMediaInfoJSONWithTracks writes a MediaInfo JSON report with an
+// optional direct video-track bitrate and optional audio-track bitrates, so
+// tests can exercise the overall-minus-audio fallback used when MediaInfo
+// didn't report a video track bitrate directly.
+func writeA4KMediaInfoJSONWithTracks(t *testing.T, overallBitRateBps string, videoBitRateBps string, audioBitRatesBps []string) string {
+	t.Helper()
+
+	trackEntries := []string{`{"@type":"General","OverallBitRate":"` + overallBitRateBps + `"}`}
+	if videoBitRateBps != "" {
+		trackEntries = append(trackEntries, `{"@type":"Video","BitRate":"`+videoBitRateBps+`"}`)
+	} else {
+		trackEntries = append(trackEntries, `{"@type":"Video"}`)
+	}
+	for _, audioBps := range audioBitRatesBps {
+		trackEntries = append(trackEntries, `{"@type":"Audio","BitRate":"`+audioBps+`"}`)
+	}
+
+	path := filepath.Join(t.TempDir(), "mediainfo.json")
+	payload := `{"media":{"track":[` + strings.Join(trackEntries, ",") + `]}}`
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("write mediainfo json: %v", err)
+	}
+	return path
+}
+
+func TestEvaluateRulesA4KBlocksLowBitrateMovie(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ExternalIDs:            api.ExternalIDs{Category: "movie"},
+		MediaInfoJSONPath:      writeA4KMediaInfoJSON(t, "9000000"),
+		ValidMediaInfoSettings: true,
+		AudioLanguages:         []string{"English"},
+		SubtitleLanguages:      []string{"English"},
+	}
+	failures := EvaluateRules(context.Background(), "A4K", meta, nil)
+	failure, ok := findRuleFailure(failures, "extra_check")
+	if !ok {
+		t.Fatalf("expected extra_check failure for low movie bitrate, got %#v", failures)
+	}
+	if !strings.Contains(failure.Reason, "Movie") {
+		t.Fatalf("expected movie bitrate reason, got %q", failure.Reason)
+	}
+}
+
+func TestEvaluateRulesA4KAllowsMovieAtOrAboveTenMbps(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ExternalIDs:            api.ExternalIDs{Category: "movie"},
+		MediaInfoJSONPath:      writeA4KMediaInfoJSON(t, "10000000"),
+		ValidMediaInfoSettings: true,
+		AudioLanguages:         []string{"English"},
+		SubtitleLanguages:      []string{"English"},
+	}
+	failures := EvaluateRules(context.Background(), "A4K", meta, nil)
+	if len(failures) != 0 {
+		t.Fatalf("expected no failures at 10 Mbps movie threshold, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesA4KBlocksLowBitrateTVEpisode(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ExternalIDs:            api.ExternalIDs{Category: "tv"},
+		MediaInfoJSONPath:      writeA4KMediaInfoJSON(t, "5000000"),
+		ValidMediaInfoSettings: true,
+		AudioLanguages:         []string{"English"},
+		SubtitleLanguages:      []string{"English"},
+	}
+	failures := EvaluateRules(context.Background(), "A4K", meta, nil)
+	failure, ok := findRuleFailure(failures, "extra_check")
+	if !ok {
+		t.Fatalf("expected extra_check failure for low TV bitrate, got %#v", failures)
+	}
+	if !strings.Contains(failure.Reason, "TV Episode") {
+		t.Fatalf("expected TV episode bitrate reason, got %q", failure.Reason)
+	}
+}
+
+func TestEvaluateRulesA4KAllowsTVEpisodeAtOrAboveSixMbps(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ExternalIDs:            api.ExternalIDs{Category: "tv"},
+		MediaInfoJSONPath:      writeA4KMediaInfoJSON(t, "6000000"),
+		ValidMediaInfoSettings: true,
+		AudioLanguages:         []string{"English"},
+		SubtitleLanguages:      []string{"English"},
+	}
+	failures := EvaluateRules(context.Background(), "A4K", meta, nil)
+	if len(failures) != 0 {
+		t.Fatalf("expected no failures at 6 Mbps TV threshold, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesA4KSkipsBitrateCheckForDiscWithLowJSON(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		DiscType:               "BDMV",
+		ExternalIDs:            api.ExternalIDs{Category: "movie"},
+		MediaInfoJSONPath:      writeA4KMediaInfoJSON(t, "1000000"),
+		ValidMediaInfoSettings: true,
+	}
+	failures := EvaluateRules(context.Background(), "A4K", meta, nil)
+	if len(failures) != 0 {
+		t.Fatalf("expected no failures for disc upload regardless of bitrate, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesA4KPrefersDirectVideoBitrateOverSubtraction(t *testing.T) {
+	t.Parallel()
+
+	// Overall minus audio would compute 8 Mbps (below the 10 Mbps movie
+	// floor), but a direct video-track bitrate of 12 Mbps is present and
+	// must win.
+	meta := api.PreparedMetadata{
+		ExternalIDs:            api.ExternalIDs{Category: "movie"},
+		MediaInfoJSONPath:      writeA4KMediaInfoJSONWithTracks(t, "10000000", "12000000", []string{"2000000"}),
+		ValidMediaInfoSettings: true,
+		AudioLanguages:         []string{"English"},
+		SubtitleLanguages:      []string{"English"},
+	}
+	failures := EvaluateRules(context.Background(), "A4K", meta, nil)
+	if len(failures) != 0 {
+		t.Fatalf("expected no failures when direct video bitrate is above threshold, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesA4KFallsBackToOverallMinusAudioBitrate(t *testing.T) {
+	t.Parallel()
+
+	// No direct video-track bitrate reported. Overall 11 Mbps minus 2 Mbps
+	// of summed audio tracks leaves 9 Mbps, below the 10 Mbps movie floor.
+	meta := api.PreparedMetadata{
+		ExternalIDs:            api.ExternalIDs{Category: "movie"},
+		MediaInfoJSONPath:      writeA4KMediaInfoJSONWithTracks(t, "11000000", "", []string{"1500000", "500000"}),
+		ValidMediaInfoSettings: true,
+		AudioLanguages:         []string{"English"},
+		SubtitleLanguages:      []string{"English"},
+	}
+	failures := EvaluateRules(context.Background(), "A4K", meta, nil)
+	failure, ok := findRuleFailure(failures, "extra_check")
+	if !ok {
+		t.Fatalf("expected extra_check failure for derived low bitrate, got %#v", failures)
+	}
+	if !strings.Contains(failure.Reason, "Movie") {
+		t.Fatalf("expected movie bitrate reason, got %q", failure.Reason)
+	}
+}
+
+// TestEvaluateRulesA4KRealWorldReportMissingVideoAndAudioBitrate reproduces a
+// real MediaInfo report (Shayar.2024.2160p.WEB-DL.AAC2.0.H264.mkv) where
+// neither the Video nor Audio track reports a bit rate, only the General
+// track's "Overall bit rate: 7 937 kb/s". Since the audio track's own
+// bitrate isn't parseable, subtracting it from the overall bitrate can't be
+// trusted (it would understate the subtraction and overstate the derived
+// video bitrate), so the upload is rejected as unverifiable rather than
+// evaluated against the numeric floor.
+func TestEvaluateRulesA4KRealWorldReportMissingVideoAndAudioBitrate(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ExternalIDs:            api.ExternalIDs{Category: "movie"},
+		MediaInfoJSONPath:      writeA4KMediaInfoJSONWithTracks(t, "7937000", "", []string{""}),
+		ValidMediaInfoSettings: true,
+		AudioLanguages:         []string{"English"},
+		SubtitleLanguages:      []string{"English"},
+	}
+	failures := EvaluateRules(context.Background(), "A4K", meta, nil)
+	failure, ok := findRuleFailure(failures, "extra_check")
+	if !ok {
+		t.Fatalf("expected extra_check failure for unverifiable bitrate, got %#v", failures)
+	}
+	if !strings.Contains(failure.Reason, "MediaInfo") {
+		t.Fatalf("expected unverifiable bitrate reason, got %q", failure.Reason)
+	}
+}
+
+func TestEvaluateRulesA4KAllowsOverallMinusAudioBitrateAboveThreshold(t *testing.T) {
+	t.Parallel()
+
+	// No direct video-track bitrate reported. Overall 13 Mbps minus 2 Mbps
+	// of summed audio tracks leaves 11 Mbps, above the 10 Mbps movie floor.
+	meta := api.PreparedMetadata{
+		ExternalIDs:            api.ExternalIDs{Category: "movie"},
+		MediaInfoJSONPath:      writeA4KMediaInfoJSONWithTracks(t, "13000000", "", []string{"1500000", "500000"}),
+		ValidMediaInfoSettings: true,
+		AudioLanguages:         []string{"English"},
+		SubtitleLanguages:      []string{"English"},
+	}
+	failures := EvaluateRules(context.Background(), "A4K", meta, nil)
+	if len(failures) != 0 {
+		t.Fatalf("expected no failures when derived bitrate is above threshold, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesA4KRejectsWhenBitrateUnverifiable(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "empty path", path: ""},
+		{name: "unreadable path", path: filepath.Join(t.TempDir(), "does-not-exist.json")},
+		{name: "malformed json", path: writeA4KMalformedMediaInfoJSON(t)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			meta := api.PreparedMetadata{
+				ExternalIDs:            api.ExternalIDs{Category: "movie"},
+				MediaInfoJSONPath:      tc.path,
+				ValidMediaInfoSettings: true,
+				AudioLanguages:         []string{"English"},
+				SubtitleLanguages:      []string{"English"},
+			}
+			failures := EvaluateRules(context.Background(), "A4K", meta, nil)
+			failure, ok := findRuleFailure(failures, "extra_check")
+			if !ok {
+				t.Fatalf("expected extra_check failure for unverifiable bitrate, got %#v", failures)
+			}
+			if !strings.Contains(failure.Reason, "MediaInfo") {
+				t.Fatalf("expected unverifiable bitrate reason, got %q", failure.Reason)
+			}
+		})
+	}
+}
+
+func writeA4KMalformedMediaInfoJSON(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "mediainfo.json")
+	if err := os.WriteFile(path, []byte(`{"media":{"track":[`), 0o600); err != nil {
+		t.Fatalf("write malformed mediainfo json: %v", err)
+	}
+	return path
+}
+
+func TestEvaluateRulesA4KRejectsWhenOneOfMultipleAudioTracksIsUnparseable(t *testing.T) {
+	t.Parallel()
+
+	// One audio track reports a bitrate, a second doesn't. Summing only the
+	// known track would understate total audio bitrate and overstate the
+	// derived video bitrate, so this must be treated as unverifiable rather
+	// than evaluated with a partial subtraction.
+	meta := api.PreparedMetadata{
+		ExternalIDs:            api.ExternalIDs{Category: "movie"},
+		MediaInfoJSONPath:      writeA4KMediaInfoJSONWithTracks(t, "13000000", "", []string{"1500000", ""}),
+		ValidMediaInfoSettings: true,
+		AudioLanguages:         []string{"English"},
+		SubtitleLanguages:      []string{"English"},
+	}
+	failures := EvaluateRules(context.Background(), "A4K", meta, nil)
+	failure, ok := findRuleFailure(failures, "extra_check")
+	if !ok {
+		t.Fatalf("expected extra_check failure for partially unparseable audio bitrates, got %#v", failures)
+	}
+	if !strings.Contains(failure.Reason, "MediaInfo") {
+		t.Fatalf("expected unverifiable bitrate reason, got %q", failure.Reason)
+	}
+}
+
 func TestEvaluateRulesLSTRequiresValidMIAndLanguage(t *testing.T) {
 	meta := api.PreparedMetadata{
 		DiscType:               "",

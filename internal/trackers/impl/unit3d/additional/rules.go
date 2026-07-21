@@ -86,7 +86,10 @@ func rulesANT() RuleSet {
 }
 
 func rulesA4K() RuleSet {
-	return RuleSet{Language: nonDiscEnglishAudioSubsRule()}
+	return RuleSet{
+		Language:   nonDiscEnglishAudioSubsRule(),
+		ExtraCheck: checkA4KRequirements,
+	}
 }
 
 func rulesBHD() RuleSet {

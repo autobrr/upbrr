@@ -1093,6 +1093,54 @@ func TestResolveUnit3DTypeIDForTrackerA4K(t *testing.T) {
 	}
 }
 
+func TestResolveUnit3DTypeIDForTrackerA4KFanRes(t *testing.T) {
+	meta := api.PreparedMetadata{
+		Type:        "ENCODE",
+		ReleaseName: "Total.Recall.1990.2160p.UHD.35mm.FLAC.2.0.HDR.x265-GRP",
+	}
+	got, err := resolveUnit3DTypeIDForTracker("A4K", meta)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got != "7" {
+		t.Fatalf("expected A4K FanRes type_id=7, got %q", got)
+	}
+}
+
+func TestResolveUnit3DTypeIDForTrackerA4KFanResNoDNROrVersion(t *testing.T) {
+	releaseNames := []string{
+		"Total.Recall.1990.NoDNR.2160p.UHD.FLAC.2.0.x265-GRP",
+		"Total.Recall.1990.2160p.UHD.35mm.FLAC.2.0.x265.V2-GRP",
+	}
+	for _, releaseName := range releaseNames {
+		meta := api.PreparedMetadata{Type: "ENCODE", ReleaseName: releaseName}
+		got, err := resolveUnit3DTypeIDForTracker("A4K", meta)
+		if err != nil {
+			t.Fatalf("expected no error for release %q, got %v", releaseName, err)
+		}
+		if got != "7" {
+			t.Fatalf("expected A4K %q type_id=7, got %q", releaseName, got)
+		}
+	}
+}
+
+func TestResolveUnit3DTypeIDForTrackerA4KAIRemaster(t *testing.T) {
+	releaseNames := []string{
+		"12.12.The.Day.2023.2160p.AI.Upscaled.BluRay.TrueHD.5.1.AV1-GRP",
+		"12.12.The.Day.2023.2160p.AI.Remastered.BluRay.TrueHD.5.1.AV1-GRP",
+	}
+	for _, releaseName := range releaseNames {
+		meta := api.PreparedMetadata{Type: "REMUX", ReleaseName: releaseName}
+		got, err := resolveUnit3DTypeIDForTracker("A4K", meta)
+		if err != nil {
+			t.Fatalf("expected no error for release %q, got %v", releaseName, err)
+		}
+		if got != "8" {
+			t.Fatalf("expected A4K %q type_id=8, got %q", releaseName, got)
+		}
+	}
+}
+
 func TestResolveUnit3DTypeIDForTrackerPT(t *testing.T) {
 	meta := api.PreparedMetadata{Type: "WEBRIP"}
 	got, err := resolveUnit3DTypeIDForTracker("PT", meta)
@@ -1431,6 +1479,122 @@ func TestBuildUnit3DNameULCXRemovesHybridFromWebDV(t *testing.T) {
 	got := buildUnit3DName("ULCX", meta, config.TrackerConfig{})
 	if strings.Contains(got, "Hybrid") {
 		t.Fatalf("expected Hybrid removed for ULCX WEB-DL WebDV, got %q", got)
+	}
+}
+
+func TestBuildUnit3DNameA4KFanRes(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ReleaseName: "Back.to.the.Future.1985.FANRES.2160p.UHD.35mm.FLAC.2.0.x265.V2",
+		Type:        "ENCODE",
+		Audio:       "FLAC",
+		Channels:    "2.0",
+		VideoEncode: "x265",
+		Release: api.ReleaseInfo{
+			Title: "Back to the Future",
+			Year:  1985,
+		},
+	}
+
+	got := buildUnit3DName("A4K", meta, config.TrackerConfig{})
+	want := "Back to the Future 1985 FANRES 2160p UHD 35mm FLAC 2.0 x265 V2"
+	if got != want {
+		t.Fatalf("expected A4K FanRes name %q, got %q", want, got)
+	}
+}
+
+func TestBuildUnit3DNameA4KFanResOpenMatteHDR(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ReleaseName: "Total.Recall.1990.FANRES.Open.Matte.2160p.UHD.35mm.FLAC.2.0.HDR.x265.v1.1",
+		Type:        "ENCODE",
+		Audio:       "FLAC",
+		Channels:    "2.0",
+		HDR:         "HDR",
+		VideoEncode: "x265",
+		Release: api.ReleaseInfo{
+			Title: "Total Recall",
+			Year:  1990,
+		},
+	}
+
+	got := buildUnit3DName("A4K", meta, config.TrackerConfig{})
+	want := "Total Recall 1990 FANRES Open Matte 2160p UHD 35mm FLAC 2.0 HDR x265 v1.1"
+	if got != want {
+		t.Fatalf("expected A4K FanRes name %q, got %q", want, got)
+	}
+}
+
+func TestBuildUnit3DNameA4KAIUpscale(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ReleaseName: "12.12.The.Day.2023.2160p.AI.Upscale.BluRay.TrueHD.5.1.AV1-Group",
+		Type:        "REMUX",
+		Source:      "BluRay",
+		Audio:       "TrueHD",
+		Channels:    "5.1",
+		VideoEncode: "AV1",
+		Tag:         "-Group",
+		Release: api.ReleaseInfo{
+			Title: "12 12: The Day",
+			Year:  2023,
+		},
+	}
+
+	got := buildUnit3DName("A4K", meta, config.TrackerConfig{})
+	want := "12 12: The Day 2023 2160p AI Upscale BluRay TrueHD 5.1 AV1-Group"
+	if got != want {
+		t.Fatalf("expected A4K AI Upscale name %q, got %q", want, got)
+	}
+}
+
+func TestBuildUnit3DNameA4KAITagWithSpaceAfterDash(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ReleaseName: "12.12.The.Day.2023.2160p.AI.Upscale.BluRay.TrueHD.5.1.AV1-Group",
+		Type:        "REMUX",
+		Source:      "BluRay",
+		Audio:       "TrueHD",
+		Channels:    "5.1",
+		VideoEncode: "AV1",
+		Tag:         "- Group",
+		Release: api.ReleaseInfo{
+			Title: "12 12: The Day",
+			Year:  2023,
+		},
+	}
+
+	got := buildUnit3DName("A4K", meta, config.TrackerConfig{})
+	want := "12 12: The Day 2023 2160p AI Upscale BluRay TrueHD 5.1 AV1-Group"
+	if got != want {
+		t.Fatalf("expected A4K name with no stray space after tag dash %q, got %q", want, got)
+	}
+}
+
+func TestBuildUnit3DNameA4KAIRemaster(t *testing.T) {
+	t.Parallel()
+
+	meta := api.PreparedMetadata{
+		ReleaseName: "The.Conjuring.2.2016.2160p.AI.Remastered.DVD.TrueHD.7.1.Atmos.H.265-Group",
+		Type:        "REMUX",
+		Source:      "DVD",
+		Audio:       "TrueHD 7.1 Atmos",
+		VideoEncode: "H.265",
+		Tag:         "-Group",
+		Release: api.ReleaseInfo{
+			Title: "The Conjuring 2",
+			Year:  2016,
+		},
+	}
+
+	got := buildUnit3DName("A4K", meta, config.TrackerConfig{})
+	want := "The Conjuring 2 2016 2160p AI Remaster DVD TrueHD 7.1 Atmos H.265-Group"
+	if got != want {
+		t.Fatalf("expected A4K AI Remaster name %q, got %q", want, got)
 	}
 }
 
