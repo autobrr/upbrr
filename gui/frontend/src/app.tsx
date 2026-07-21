@@ -4238,7 +4238,7 @@ export default function App({ webUsername, onWebLogout }: AppProps = {}) {
   ].filter((tab) => tab.visible);
 
   const headerNavItems = [
-    { id: "input", label: "Input" },
+    { id: "input", label: "Upload" },
     { id: "logging", label: "Logging" },
     { id: "history", label: "History" },
   ];

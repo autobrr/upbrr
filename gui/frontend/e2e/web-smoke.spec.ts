@@ -25,7 +25,7 @@ test("embedded web boots with dev auth, navigates core pages, and reports invali
     await page.getByRole("button", { name: "History" }).click();
     await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
 
-    await page.getByRole("button", { name: "Input" }).click();
+    await page.getByRole("button", { name: "Upload", exact: true }).click();
     await page.getByLabel("Source path").fill("Z:\\missing\\e2e.mkv");
     await page.getByRole("button", { name: "Fetch metadata" }).click();
     await expect(page.locator(".error")).toContainText(/path|file|stat|missing/i);

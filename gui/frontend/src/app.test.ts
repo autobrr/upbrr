@@ -678,7 +678,7 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Dupe Checking" }));
     fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
     await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
-    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Browse folder" }));
     await waitFor(() => expect(detectDiscType).toHaveBeenCalledWith(firstPath));
@@ -750,7 +750,7 @@ describe("metadata tracker payloads", () => {
 
     await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
     fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
 
     await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(3));
@@ -804,7 +804,7 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
     await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
     fireEvent.change(screen.getByLabelText("Source path"), {
       target: { value: "C:\\media\\Other" },
     });
@@ -832,7 +832,7 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
     await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
     fireEvent.change(screen.getByLabelText("Source path"), {
       target: { value: "C:\\media\\Other" },
     });
@@ -855,7 +855,7 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(aitherUploadSwitch);
     await waitFor(() => expect(aitherUploadSwitch).toHaveAttribute("aria-checked", "false"));
 
-    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
     fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
 
     await waitFor(() => expect(fetchMetadata).toHaveBeenCalledTimes(3));
@@ -893,7 +893,7 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Remove from database" }));
     await waitFor(() => expect(deleteHistoryRelease).toHaveBeenCalledWith(deletedPath));
 
-    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
     fireEvent.change(screen.getByLabelText("Source path"), {
       target: { value: "C:\\media\\Other" },
     });
@@ -921,7 +921,7 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
     await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "AITHER" }));
     fireEvent.click(screen.getByRole("button", { name: "Fetch metadata" }));
 
@@ -969,7 +969,7 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
     await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
     fireEvent.click(screen.getByRole("button", { name: "Browse folder" }));
     fireEvent.click(await screen.findByRole("button", { name: "Confirm Selection" }));
 
@@ -997,7 +997,7 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
     await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "AITHER" }));
     fireEvent.click(screen.getByRole("button", { name: "Reset data + refresh" }));
 
@@ -1028,7 +1028,7 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
     await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "AITHER" }));
     fireEvent.click(screen.getByRole("button", { name: "Screenshots" }));
     fireEvent.click(screen.getByText("Screenshot settings"));
@@ -1057,7 +1057,7 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
     await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
     fireEvent.click(screen.getByRole("button", { name: "Browse folder" }));
 
     fireEvent.click(await screen.findByRole("button", { name: "Confirm Selection" }));
@@ -1088,7 +1088,7 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
     await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
     fireEvent.click(screen.getByRole("button", { name: "Browse folder" }));
     fireEvent.click(await screen.findByRole("button", { name: "Confirm Selection" }));
 
@@ -1138,7 +1138,7 @@ describe("metadata tracker payloads", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
     await waitFor(() => expect(screen.getByText("1 blocked.")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: "Input" }));
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
     fireEvent.click(screen.getByRole("button", { name: "Browse folder" }));
     fireEvent.click(await screen.findByRole("button", { name: "Confirm Selection" }));
 
