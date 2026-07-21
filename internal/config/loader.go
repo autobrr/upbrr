@@ -10,6 +10,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Load reads YAML, applies environment overrides, and validates the resulting
+// runtime config. It does not overlay embedded defaults.
 func Load(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

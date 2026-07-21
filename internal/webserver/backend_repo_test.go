@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -23,60 +24,6 @@ import (
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
-
-func TestBackendApplyConfigKeepsSharedRepositoryUsable(t *testing.T) {
-	t.Parallel()
-
-	repoPath := filepath.Join(t.TempDir(), "backend.db")
-	repo, err := db.OpenWithLogger(repoPath, nil)
-	if err != nil {
-		t.Fatalf("open repo: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = repo.Close()
-	})
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate repo: %v", err)
-	}
-
-	cfg := config.Config{
-		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
-		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
-		Logging:            config.LoggingConfig{Level: "error"},
-	}
-
-	backend := &Backend{
-		cfg:  cfg,
-		repo: repo,
-		hub:  newEventHub(),
-	}
-	t.Cleanup(func() {
-		if backend.core != nil {
-			_ = backend.core.Close()
-		}
-		if backend.logger != nil {
-			_ = backend.logger.Close()
-		}
-	})
-
-	if err := backend.applyConfig(cfg); err != nil {
-		t.Fatalf("apply config: %v", err)
-	}
-	if backend.core == nil {
-		t.Fatal("expected core to be initialized")
-	}
-	if err := backend.core.Close(); err != nil {
-		t.Fatalf("close core: %v", err)
-	}
-
-	if err := repo.Save(context.Background(), db.FileMetadata{
-		Path:      filepath.Join(t.TempDir(), "after-apply.mkv"),
-		Title:     "After Apply",
-		UpdatedAt: time.Now().UTC().Truncate(time.Second),
-	}); err != nil {
-		t.Fatalf("expected shared repo to remain usable after core close: %v", err)
-	}
-}
 
 func TestNewBackendKeepsSharedRepositoryUsableAfterCoreClose(t *testing.T) {
 	t.Parallel()
@@ -96,10 +43,10 @@ func TestNewBackendKeepsSharedRepositoryUsableAfterCoreClose(t *testing.T) {
 		_ = backend.Close()
 	})
 
-	if backend.core == nil {
+	if backend.coreOwner == nil {
 		t.Fatal("expected startup core to be initialized")
 	}
-	if err := backend.core.Close(); err != nil {
+	if err := backend.coreOwner.Close(); err != nil {
 		t.Fatalf("close core: %v", err)
 	}
 	if backend.repo == nil {
@@ -288,7 +235,7 @@ func TestBackendGetConfigFallbackUsesSingleRuntimeSnapshot(t *testing.T) {
 	assertExport := func(want config.Config) {
 		t.Helper()
 
-		backend.replaceRuntime(want, nil, nil)
+		backend.replaceRuntime(want, CoreCapabilities{}, nil)
 		payload, err := backend.GetConfig()
 		if err != nil {
 			t.Fatalf("get config: %v", err)
@@ -382,31 +329,280 @@ func TestBackendGetConfigDatabaseConfigUsesSingleRuntimeSnapshotForDBPath(t *tes
 			t.Fatalf("DBPath fallback: got %q want %q", exported.MainSettings.DBPath, wantDBPath)
 		}
 	}
-	backend.replaceRuntime(cfgA, nil, nil)
+	backend.replaceRuntime(cfgA, CoreCapabilities{}, nil)
 	assertExport(pathA)
-	backend.replaceRuntime(cfgB, nil, nil)
+	backend.replaceRuntime(cfgB, CoreCapabilities{}, nil)
 	assertExport(pathB)
 }
 
-func TestBackendFetchMetadataPropagatesSkipAutoTorrentSetting(t *testing.T) {
+func TestBackendFetchMetadataMapsSearchPolicyAndRecoveryControlSeparately(t *testing.T) {
 	t.Parallel()
 
 	coreSvc := &preparedMetaTestCore{}
+	playlist := api.PlaylistInstruction{Set: true, Selected: []string{"00001.mpls"}}
 	backend := &Backend{
 		cfg: config.Config{
 			Metadata:           config.MetadataConfig{SkipAutoTorrent: true},
 			ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 3},
 		},
-		core: coreSvc,
-		hub:  newEventHub(),
+		capabilities: webTestCapabilities(coreSvc),
+		coreOwner:    coreSvc,
+		hub:          newEventHub(),
 	}
 
-	_, err := backend.FetchMetadata("session", "C:\\releases\\Example.mkv", "", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, nil, false)
+	_, err := backend.FetchMetadata(context.Background(), "session", metadataPreparationRequest{
+		CorrelationID:     "attempt-1",
+		Path:              "C:\\releases\\Example.mkv",
+		Playlist:          playlist,
+		ConfirmBDMVRescan: true,
+	})
 	if err != nil {
 		t.Fatalf("fetch metadata: %v", err)
 	}
-	if !coreSvc.fetchReq.Options.SkipAutoTorrent {
-		t.Fatalf("expected skip_auto_torrent request option, got %#v", coreSvc.fetchReq.Options)
+	if coreSvc.prepareInput.SourcePath != `C:\releases\Example.mkv` {
+		t.Fatalf("expected canonical prepare input, got %#v", coreSvc.prepareInput)
+	}
+	if !coreSvc.prepareInput.Instructions.Playlist.Set || !slices.Equal(coreSvc.prepareInput.Instructions.Playlist.Selected, []string{"00001.mpls"}) {
+		t.Fatalf("expected direct playlist instruction, got %#v", coreSvc.prepareInput.Instructions.Playlist)
+	}
+	if !coreSvc.prepareInput.Search.Skip {
+		t.Fatalf("expected client-search skip policy, got %#v", coreSvc.prepareInput.Search)
+	}
+	if !coreSvc.prepareInput.Controls.ConfirmBDMVRescan {
+		t.Fatalf("expected explicit BDMV recovery control, got %#v", coreSvc.prepareInput.Controls)
+	}
+	if coreSvc.fetchReq.SourcePath != "" {
+		t.Fatalf("legacy metadata request was invoked: %#v", coreSvc.fetchReq)
+	}
+}
+
+func TestBackendRequestCapabilitiesRejectPartialRuntimeBundles(t *testing.T) {
+	t.Parallel()
+
+	stub := &backendSnapshotGuardCore{}
+	metadataOnly := CoreCapabilities{Metadata: stub}
+	selectionOnly := CoreCapabilities{Selection: stub}
+	path := "C:\\releases\\Example.mkv"
+	tests := []struct {
+		name         string
+		capabilities CoreCapabilities
+		want         string
+		call         func(*Backend) error
+	}{
+		{
+			name:         "metadata",
+			capabilities: selectionOnly,
+			want:         "metadata capability unavailable",
+			call: func(backend *Backend) error {
+				_, err := backend.FetchMetadata(context.Background(), "session", metadataPreparationRequest{CorrelationID: "attempt-1", Path: path})
+				return err
+			},
+		},
+		{
+			name:         "selection",
+			capabilities: metadataOnly,
+			want:         "blu-ray selection capability unavailable",
+			call: func(backend *Backend) error {
+				_, err := backend.SelectBlurayCandidate(context.Background(), "session", blurayCandidateSelectionRequest{
+					CorrelationID: "attempt-1",
+					Path:          path,
+					ReleaseID:     "candidate",
+				})
+				return err
+			},
+		},
+		{
+			name:         "reset metadata",
+			capabilities: selectionOnly,
+			want:         "metadata capability unavailable",
+			call: func(backend *Backend) error {
+				_, err := backend.ResetMetadata(context.Background(), "session", metadataPreparationRequest{CorrelationID: "attempt-1", Path: path})
+				return err
+			},
+		},
+		{
+			name:         "preparation",
+			capabilities: metadataOnly,
+			want:         "preparation capability unavailable",
+			call: func(backend *Backend) error {
+				_, err := backend.FetchPreparation("session", path, api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, nil, nil)
+				return err
+			},
+		},
+		{
+			name:         "description preview",
+			capabilities: metadataOnly,
+			want:         "description capability unavailable",
+			call: func(backend *Backend) error {
+				_, err := backend.FetchDescriptionBuilder(api.ReleaseRef{SourcePath: path, Generation: 1}, nil)
+				return err
+			},
+		},
+		{
+			name:         "description render",
+			capabilities: metadataOnly,
+			want:         "description capability unavailable",
+			call: func(backend *Backend) error {
+				_, err := backend.RenderDescription("text")
+				return err
+			},
+		},
+		{
+			name:         "description save",
+			capabilities: metadataOnly,
+			want:         "description capability unavailable",
+			call: func(backend *Backend) error {
+				_, err := backend.SaveDescriptionOverride(api.ReleaseRef{SourcePath: path, Generation: 1}, "group", "text", nil)
+				return err
+			},
+		},
+		{
+			name:         "playlist discover",
+			capabilities: metadataOnly,
+			want:         "playlist capability unavailable",
+			call: func(backend *Backend) error {
+				_, err := backend.DiscoverPlaylists(context.Background(), path)
+				return err
+			},
+		},
+		{
+			name:         "screenshot plan",
+			capabilities: metadataOnly,
+			want:         "screenshot capability unavailable",
+			call: func(backend *Backend) error {
+				_, err := backend.FetchScreenshotPlan(api.ReleaseRef{SourcePath: path, Generation: 1})
+				return err
+			},
+		},
+		{
+			name:         "screenshot generation",
+			capabilities: metadataOnly,
+			want:         "screenshot capability unavailable",
+			call: func(backend *Backend) error {
+				_, err := backend.GenerateScreenshots(api.ReleaseRef{SourcePath: path, Generation: 1}, nil, api.ScreenshotPurposeFinal)
+				return err
+			},
+		},
+		{
+			name:         "screenshot preview",
+			capabilities: metadataOnly,
+			want:         "screenshot capability unavailable",
+			call: func(backend *Backend) error {
+				_, err := backend.PreviewScreenshotFrame(api.ReleaseRef{SourcePath: path, Generation: 1}, 1)
+				return err
+			},
+		},
+		{
+			name:         "screenshot delete",
+			capabilities: metadataOnly,
+			want:         "screenshot capability unavailable",
+			call: func(backend *Backend) error {
+				return backend.DeleteScreenshot(api.ReleaseRef{SourcePath: path, Generation: 1}, "image.png")
+			},
+		},
+		{
+			name:         "tracker image delete",
+			capabilities: metadataOnly,
+			want:         "screenshot capability unavailable",
+			call: func(backend *Backend) error {
+				return backend.DeleteTrackerImageURL(api.ReleaseRef{SourcePath: path, Generation: 1}, "https://img.example.com/image.png")
+			},
+		},
+		{
+			name:         "screenshot selection save",
+			capabilities: metadataOnly,
+			want:         "screenshot capability unavailable",
+			call: func(backend *Backend) error {
+				return backend.SaveFinalScreenshotSelections(api.ReleaseRef{SourcePath: path, Generation: 1}, nil)
+			},
+		},
+		{
+			name:         "menu image import",
+			capabilities: metadataOnly,
+			want:         "screenshot capability unavailable",
+			call: func(backend *Backend) error {
+				return backend.ImportMenuImages(api.ReleaseRef{SourcePath: path, Generation: 1}, nil)
+			},
+		},
+		{
+			name:         "upload candidates",
+			capabilities: metadataOnly,
+			want:         "hosted image capability unavailable",
+			call: func(backend *Backend) error {
+				_, err := backend.ListUploadCandidates(api.ReleaseRef{SourcePath: path, Generation: 1})
+				return err
+			},
+		},
+		{
+			name:         "uploaded images",
+			capabilities: metadataOnly,
+			want:         "hosted image capability unavailable",
+			call: func(backend *Backend) error {
+				_, err := backend.ListUploadedImages(api.ReleaseRef{SourcePath: path, Generation: 1})
+				return err
+			},
+		},
+		{
+			name:         "image upload",
+			capabilities: metadataOnly,
+			want:         "hosted image capability unavailable",
+			call: func(backend *Backend) error {
+				_, err := backend.UploadImages(
+					context.Background(),
+					"session-1",
+					"image-upload-1",
+					api.ReleaseRef{SourcePath: path, Generation: 1},
+					nil,
+					"host",
+					[]api.ScreenshotImage{{Path: "image.png"}},
+				)
+				return err
+			},
+		},
+		{
+			name:         "uploaded image delete",
+			capabilities: metadataOnly,
+			want:         "hosted image capability unavailable",
+			call: func(backend *Backend) error {
+				return backend.DeleteUploadedImage(api.ReleaseRef{SourcePath: path, Generation: 1}, "image.png", "host")
+			},
+		},
+		{
+			name:         "DVD image list",
+			capabilities: metadataOnly,
+			want:         "DVD menu capability unavailable",
+			call: func(backend *Backend) error {
+				_, err := backend.ListDVDMenuScreenshots(api.ReleaseRef{SourcePath: path, Generation: 1})
+				return err
+			},
+		},
+		{
+			name:         "DVD image delete",
+			capabilities: metadataOnly,
+			want:         "DVD menu capability unavailable",
+			call: func(backend *Backend) error {
+				return backend.DeleteDVDMenuScreenshot(api.ReleaseRef{SourcePath: path, Generation: 1}, "image.png")
+			},
+		},
+		{
+			name:         "history delete",
+			capabilities: metadataOnly,
+			want:         "history capability unavailable",
+			call: func(backend *Backend) error {
+				return backend.DeleteHistoryRelease(path)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			backend := &Backend{capabilities: tt.capabilities, hub: newEventHub()}
+			err := tt.call(backend)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error: got %v want containing %q", err, tt.want)
+			}
+		})
 	}
 }
 
@@ -430,6 +626,32 @@ func (c *backendSnapshotGuardCore) FetchMetadataPreview(_ context.Context, req a
 	return api.MetadataPreview{}, nil
 }
 
+func (*backendSnapshotGuardCore) FetchAcceptedMetadataPreview(_ context.Context, ref api.ReleaseRef) (api.MetadataPreview, error) {
+	return api.MetadataPreview{SourcePath: ref.SourcePath}, nil
+}
+
+func (*backendSnapshotGuardCore) CheckAcceptedDupes(context.Context, api.DuplicateCheckInput) (api.DupeCheckSummary, error) {
+	return api.DupeCheckSummary{}, nil
+}
+
+func (c *backendSnapshotGuardCore) FetchPreparationPreview(_ context.Context, req api.Request) (api.PreparationPreview, error) {
+	c.check(req, "FetchPreparationPreview")
+	return api.PreparationPreview{}, nil
+}
+
+func (c *backendSnapshotGuardCore) FetchAcceptedPreparationPreview(_ context.Context, input api.DescriptionInput) (api.PreparationPreview, error) {
+	c.check(api.Request{Options: input.Options}, "FetchAcceptedPreparationPreview")
+	return api.PreparationPreview{}, nil
+}
+
+func (*backendSnapshotGuardCore) BuildUploadReview(context.Context, api.Request) (api.UploadReview, error) {
+	return api.UploadReview{}, nil
+}
+
+func (*backendSnapshotGuardCore) ReviewAcceptedUpload(context.Context, api.UploadReviewInput) (api.ReviewedUpload, error) {
+	return api.ReviewedUpload{}, nil
+}
+
 func (c *backendSnapshotGuardCore) ListUploadCandidates(_ context.Context, req api.Request) ([]api.ScreenshotImage, error) {
 	c.check(req, "ListUploadCandidates")
 	return nil, nil
@@ -445,14 +667,90 @@ func (c *backendSnapshotGuardCore) UploadImages(_ context.Context, req api.Reque
 	return api.UploadImagesResult{}, nil
 }
 
+func (*backendSnapshotGuardCore) ListAcceptedUploadCandidates(context.Context, api.ImageHostingInput) ([]api.ScreenshotImage, error) {
+	return nil, nil
+}
+
+func (*backendSnapshotGuardCore) ListAcceptedUploadedImages(context.Context, api.ImageHostingInput) ([]api.UploadedImageLink, error) {
+	return nil, nil
+}
+
+func (*backendSnapshotGuardCore) UploadAcceptedImages(context.Context, api.ImageHostingInput, []api.ScreenshotImage) (api.UploadImagesResult, error) {
+	return api.UploadImagesResult{}, nil
+}
+
+func (*backendSnapshotGuardCore) DeleteAcceptedUploadedImage(context.Context, api.ImageHostingInput, string, string) error {
+	return nil
+}
+
+func (*backendSnapshotGuardCore) DeleteUploadedImage(context.Context, api.Request, string, string) error {
+	return nil
+}
+
+func (*backendSnapshotGuardCore) CaptureDVDMenus(context.Context, api.Request) (api.DVDMenuCaptureResult, error) {
+	return api.DVDMenuCaptureResult{}, nil
+}
+
+func (*backendSnapshotGuardCore) CaptureAcceptedDVDMenus(context.Context, api.MediaPlanInput) (api.DVDMenuCaptureResult, error) {
+	return api.DVDMenuCaptureResult{}, nil
+}
+
+func (c *backendSnapshotGuardCore) ListDVDMenuScreenshots(_ context.Context, req api.Request) ([]api.ScreenshotImage, error) {
+	c.check(req, "ListDVDMenuScreenshots")
+	return nil, nil
+}
+
+func (c *backendSnapshotGuardCore) DeleteDVDMenuScreenshot(_ context.Context, req api.Request, _ string) error {
+	c.check(req, "DeleteDVDMenuScreenshot")
+	return nil
+}
+
+func (*backendSnapshotGuardCore) ListAcceptedDVDMenuScreenshots(context.Context, api.MediaPlanInput) ([]api.ScreenshotImage, error) {
+	return nil, nil
+}
+
+func (*backendSnapshotGuardCore) DeleteAcceptedDVDMenuScreenshot(context.Context, api.MediaPlanInput, string) error {
+	return nil
+}
+
+func (c *backendSnapshotGuardCore) FetchDescriptionBuilderPreview(_ context.Context, req api.Request) (api.DescriptionBuilderPreview, error) {
+	c.check(req, "FetchDescriptionBuilderPreview")
+	return api.DescriptionBuilderPreview{}, nil
+}
+
+func (c *backendSnapshotGuardCore) FetchAcceptedDescriptionBuilderPreview(_ context.Context, input api.DescriptionInput) (api.DescriptionBuilderPreview, error) {
+	c.check(api.Request{Options: input.Options}, "FetchAcceptedDescriptionBuilderPreview")
+	return api.DescriptionBuilderPreview{}, nil
+}
+
+func (*backendSnapshotGuardCore) FetchAcceptedDescriptionBuilderGroupPreview(context.Context, api.DescriptionInput) (api.DescriptionBuilderGroup, error) {
+	return api.DescriptionBuilderGroup{}, nil
+}
+
+func (*backendSnapshotGuardCore) SaveAcceptedDescriptionOverride(context.Context, api.DescriptionInput, string) (api.DescriptionBuilderGroup, error) {
+	return api.DescriptionBuilderGroup{}, nil
+}
+
+func (*backendSnapshotGuardCore) FetchDescriptionBuilderGroupPreview(context.Context, api.Request) (api.DescriptionBuilderGroup, error) {
+	return api.DescriptionBuilderGroup{}, nil
+}
+
+func (*backendSnapshotGuardCore) RenderDescription(context.Context, string) (string, error) {
+	return "", nil
+}
+
+func (*backendSnapshotGuardCore) SaveDescriptionOverride(context.Context, api.Request, string) (api.DescriptionBuilderGroup, error) {
+	return api.DescriptionBuilderGroup{}, nil
+}
+
 func (c *backendSnapshotGuardCore) RunUploadPrepared(_ context.Context, req api.Request) (api.Result, error) {
 	c.check(req, "RunUploadPrepared")
 	return api.Result{}, nil
 }
 
-func (c *backendSnapshotGuardCore) ExportGUICachedPreparedMeta(_ context.Context, req api.Request) (api.PreparedMetadata, bool, error) {
-	c.check(req, "ExportGUICachedPreparedMeta")
-	return api.PreparedMetadata{}, false, nil
+func (c *backendSnapshotGuardCore) RunAcceptedUpload(_ context.Context, plan api.UploadExecutionPlan) (api.Result, error) {
+	c.check(api.Request{Options: plan.Input.Options}, "RunAcceptedUpload")
+	return api.Result{}, nil
 }
 
 func TestBackendRequestsUseSingleRuntimeSnapshot(t *testing.T) {
@@ -465,10 +763,10 @@ func TestBackendRequestsUseSingleRuntimeSnapshot(t *testing.T) {
 	cfgB := cfgA
 	cfgB.ScreenshotHandling.Screens = 2
 	backend := &Backend{
-		cfg:  cfgA,
-		core: &backendSnapshotGuardCore{wantScreens: 1, errs: errs},
-		repo: repo,
-		hub:  newEventHub(),
+		cfg:          cfgA,
+		capabilities: webTestCapabilities(&backendSnapshotGuardCore{wantScreens: 1, errs: errs}),
+		repo:         repo,
+		hub:          newEventHub(),
 	}
 
 	stop := make(chan struct{})
@@ -481,9 +779,9 @@ func TestBackendRequestsUseSingleRuntimeSnapshot(t *testing.T) {
 			default:
 			}
 			if i%2 == 0 {
-				backend.replaceRuntime(cfgB, &backendSnapshotGuardCore{wantScreens: 2, errs: errs}, nil)
+				backend.replaceRuntime(cfgB, webTestCapabilities(&backendSnapshotGuardCore{wantScreens: 2, errs: errs}), nil)
 			} else {
-				backend.replaceRuntime(cfgA, &backendSnapshotGuardCore{wantScreens: 1, errs: errs}, nil)
+				backend.replaceRuntime(cfgA, webTestCapabilities(&backendSnapshotGuardCore{wantScreens: 1, errs: errs}), nil)
 			}
 		}
 	})
@@ -493,19 +791,43 @@ func TestBackendRequestsUseSingleRuntimeSnapshot(t *testing.T) {
 	})
 
 	for range 200 {
-		if _, err := backend.FetchMetadata("session", "C:\\releases\\Example.mkv", "", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, nil, false); err != nil {
+		release := api.ReleaseRef{SourcePath: "C:\\releases\\Example.mkv", Generation: 1}
+		if _, err := backend.FetchMetadata(context.Background(), "session", metadataPreparationRequest{
+			CorrelationID: "attempt-race",
+			Path:          "C:\\releases\\Example.mkv",
+		}); err != nil {
 			t.Fatalf("fetch metadata: %v", err)
 		}
-		if _, err := backend.UploadImages("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, nil, "host", []api.ScreenshotImage{{Path: "image.jpg"}}); err != nil {
+		if _, err := backend.FetchPreparation("session", release.SourcePath, api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, nil, nil); err != nil {
+			t.Fatalf("fetch preparation: %v", err)
+		}
+		if _, err := backend.UploadImages(
+			context.Background(),
+			"session-1",
+			"image-upload-1",
+			release,
+			nil,
+			"host",
+			[]api.ScreenshotImage{{Path: "image.jpg"}},
+		); err != nil {
 			t.Fatalf("upload images: %v", err)
 		}
-		if _, err := backend.ListUploadCandidates("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}); err != nil {
+		if _, err := backend.ListUploadCandidates(release); err != nil {
 			t.Fatalf("list upload candidates: %v", err)
 		}
-		if _, err := backend.ListUploadedImages("C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}); err != nil {
+		if _, err := backend.ListUploadedImages(release); err != nil {
 			t.Fatalf("list uploaded images: %v", err)
 		}
-		_, _ = backend.FetchTrackerDryRun("session", "C:\\releases\\Example.mkv", api.ExternalIDOverrides{}, api.ReleaseNameOverrides{}, nil, nil, nil, nil, false, false, "")
+		if _, err := backend.FetchDescriptionBuilder(release, nil); err != nil {
+			t.Fatalf("fetch description builder: %v", err)
+		}
+		if _, err := backend.ListDVDMenuScreenshots(release); err != nil {
+			t.Fatalf("list DVD menu screenshots: %v", err)
+		}
+		if err := backend.DeleteDVDMenuScreenshot(release, "image.png"); err != nil {
+			t.Fatalf("delete DVD menu screenshot: %v", err)
+		}
+		_, _ = backend.FetchTrackerDryRun(context.Background(), "session", "", release, nil, nil, nil, nil, false, "")
 		select {
 		case err := <-errs:
 			t.Fatal(err)
@@ -514,27 +836,27 @@ func TestBackendRequestsUseSingleRuntimeSnapshot(t *testing.T) {
 	}
 }
 
-func TestBackendRunSingleTrackerUploadUsesJobUploadOptionsSnapshot(t *testing.T) {
+func TestWebUploadRunnerUsesRequestUploadOptionsSnapshot(t *testing.T) {
 	t.Parallel()
 
 	errs := make(chan error, 1)
 	repoPath := filepath.Join(t.TempDir(), "web-upload-job.db")
 	jobCfg := backendConfigTestConfig(repoPath)
 	jobCfg.ScreenshotHandling.Screens = 1
-	currentCfg := jobCfg
-	currentCfg.ScreenshotHandling.Screens = 2
-	backend := &Backend{cfg: currentCfg}
-	job := &trackerUploadJob{
-		sourcePath:           "C:\\releases\\Example.mkv",
-		uploadOptions:        buildRunUploadOptions(jobCfg, runOptions{}),
-		runOptions:           runOptions{},
-		core:                 &backendSnapshotGuardCore{wantScreens: 1, errs: errs},
-		descriptionGroups:    nil,
-		trackers:             []string{"BTN"},
-		questionnaireAnswers: map[string]map[string]string{},
+	coreSvc := &backendSnapshotGuardCore{wantScreens: 1, errs: errs}
+	request := api.Request{
+		SourcePath: "C:\\releases\\Example.mkv",
+		Options:    buildRunUploadOptions(jobCfg, runOptions{}),
+		Trackers:   []string{"BTN"},
 	}
+	runner := webUploadRunner{core: coreSvc, generationTarget: coreSvc}
 
-	if _, err := backend.runSingleTrackerUpload(context.Background(), job, "BTN"); err != nil {
+	if _, err := runner.RunUpload(context.Background(), api.UploadExecutionPlan{Input: api.UploadReviewInput{
+		Release:  api.ReleaseRef{SourcePath: request.SourcePath},
+		Trackers: request.Trackers,
+		Options:  request.Options,
+	},
+	}); err != nil {
 		t.Fatalf("run single tracker upload: %v", err)
 	}
 	select {
@@ -555,7 +877,7 @@ func TestBackendSaveConfigAcceptsSameDatabasePathAlias(t *testing.T) {
 		hub:  newEventHub(),
 	}
 	t.Cleanup(func() {
-		if coreSvc := backend.currentCore(); coreSvc != nil {
+		if coreSvc := backend.coreOwner; coreSvc != nil {
 			_ = coreSvc.Close()
 		}
 		if logger := backend.currentLogger(); logger != nil {
@@ -579,7 +901,7 @@ func TestBackendSaveConfigAcceptsSameDatabasePathAlias(t *testing.T) {
 	}
 }
 
-func TestBackendSaveConfigRejectsDifferentDatabasePath(t *testing.T) {
+func TestBackendSaveConfigForcesOpenDatabasePath(t *testing.T) {
 	t.Parallel()
 
 	repo, repoPath := openBackendConfigTestRepo(t, "backend-save-dbpath-change.db")
@@ -589,20 +911,29 @@ func TestBackendSaveConfigRejectsDifferentDatabasePath(t *testing.T) {
 		repo: repo,
 		hub:  newEventHub(),
 	}
+	t.Cleanup(func() {
+		if coreSvc := backend.coreOwner; coreSvc != nil {
+			_ = coreSvc.Close()
+		}
+		if logger := backend.currentLogger(); logger != nil {
+			_ = logger.Close()
+		}
+	})
 
 	updated := initial
 	updated.MainSettings.DBPath = filepath.Join(t.TempDir(), "different.db")
+	updated.Metadata.SkipAutoTorrent = true
 	payload, err := config.ExportToJSON(&updated)
 	if err != nil {
 		t.Fatalf("export config: %v", err)
 	}
 
-	err = backend.SaveConfig(payload)
-	if err == nil {
-		t.Fatal("expected DBPath change rejection")
+	if err := backend.SaveConfig(payload); err != nil {
+		t.Fatalf("save config: %v", err)
 	}
-	if !strings.Contains(err.Error(), "requires restart") {
-		t.Fatalf("expected restart error, got %v", err)
+	runtimeCfg := backend.currentConfig()
+	if runtimeCfg.MainSettings.DBPath != repoPath || !runtimeCfg.Metadata.SkipAutoTorrent {
+		t.Fatalf("runtime config = %#v", runtimeCfg)
 	}
 }
 
@@ -632,7 +963,7 @@ func TestBackendSaveConfigAppliesRuntimeConfigImmediately(t *testing.T) {
 		hub:  newEventHub(),
 	}
 	t.Cleanup(func() {
-		if coreSvc := backend.currentCore(); coreSvc != nil {
+		if coreSvc := backend.coreOwner; coreSvc != nil {
 			_ = coreSvc.Close()
 		}
 		if logger := backend.currentLogger(); logger != nil {
@@ -660,7 +991,7 @@ func TestBackendSaveConfigAppliesRuntimeConfigImmediately(t *testing.T) {
 	if runtimeCfg.ScreenshotHandling.Screens != 5 {
 		t.Fatalf("expected screenshots=5, got %d", runtimeCfg.ScreenshotHandling.Screens)
 	}
-	if backend.currentCore() == nil {
+	if backend.coreOwner == nil {
 		t.Fatal("expected runtime core to be rebuilt")
 	}
 	options := buildRunUploadOptions(runtimeCfg, runOptions{})
@@ -688,7 +1019,7 @@ func TestBackendSaveConfigAfterInvalidStartupMigratesLegacyCookies(t *testing.T)
 	t.Cleanup(func() {
 		_ = backend.Close()
 	})
-	if backend.currentCore() != nil {
+	if backend.coreOwner != nil {
 		t.Fatal("expected invalid startup to leave core disabled")
 	}
 
@@ -778,7 +1109,7 @@ func TestBackendLogStreamContinuesAcrossSaveConfigRuntimeReplacement(t *testing.
 	}
 	t.Cleanup(func() {
 		backend.stopAllLogStreams()
-		if coreSvc := backend.currentCore(); coreSvc != nil {
+		if coreSvc := backend.coreOwner; coreSvc != nil {
 			_ = coreSvc.Close()
 		}
 		if logger := backend.currentLogger(); logger != nil {
@@ -869,7 +1200,7 @@ func TestBackendLogStreamContinuesAcrossImportConfigRuntimeReplacement(t *testin
 	}
 	t.Cleanup(func() {
 		backend.stopAllLogStreams()
-		if coreSvc := backend.currentCore(); coreSvc != nil {
+		if coreSvc := backend.coreOwner; coreSvc != nil {
 			_ = coreSvc.Close()
 		}
 		if logger := backend.currentLogger(); logger != nil {
@@ -946,7 +1277,7 @@ func TestBackendSaveConfigRejectsInvalidEnvRuntimeConfig(t *testing.T) {
 	if got := backend.currentConfig().ScreenshotHandling.Screens; got != 1 {
 		t.Fatalf("expected runtime config to remain unchanged, got screens=%d", got)
 	}
-	if backend.currentCore() != nil {
+	if backend.coreOwner != nil {
 		t.Fatal("expected runtime core not to be rebuilt")
 	}
 	if _, loadErr := config.LoadFromDatabase(context.Background(), repo); loadErr == nil {
@@ -988,7 +1319,7 @@ func TestBackendSaveConfigBuildRuntimeFailureDoesNotPersist(t *testing.T) {
 	if got := backend.currentConfig().Metadata.SkipAutoTorrent; got {
 		t.Fatal("expected runtime config to remain unchanged")
 	}
-	if backend.currentCore() != nil {
+	if backend.coreOwner != nil {
 		t.Fatal("expected runtime core not to be rebuilt")
 	}
 }
@@ -1024,7 +1355,7 @@ func TestBackendImportConfigBuildRuntimeFailureDoesNotPersist(t *testing.T) {
 	if got := backend.currentConfig().Metadata.SkipAutoTorrent; got {
 		t.Fatal("expected runtime config to remain unchanged")
 	}
-	if backend.currentCore() != nil {
+	if backend.coreOwner != nil {
 		t.Fatal("expected runtime core not to be rebuilt")
 	}
 }
@@ -1118,13 +1449,14 @@ func TestBackendSaveConfigSyncsUsableWebAuthBeforeSave(t *testing.T) {
 	assertCookieAuthStatePresent(t, repo)
 }
 
-func TestBackendSaveConfigLeavesConfigUnchangedWhenRepositorySaveFailsAfterCookieSync(t *testing.T) {
+func TestBackendSaveConfigRollsBackCookieMaintenanceWhenRepositorySaveFails(t *testing.T) {
 	t.Parallel()
 
 	repo, repoPath := openBackendConfigTestRepo(t, "backend-save-cookie-rollback.db")
 	if err := BootstrapAuthFile(repoPath, "tester", "very-secure-password"); err != nil {
 		t.Fatalf("BootstrapAuthFile: %v", err)
 	}
+	legacyPath := writeBackendLegacyCookieFile(t, repoPath, "EXAMPLE", `{"session":"cookie-value"}`)
 	installBackendFailMainSettingsTrigger(t, repo)
 	initial := backendConfigTestConfig(repoPath)
 	backend := &Backend{
@@ -1145,117 +1477,20 @@ func TestBackendSaveConfigLeavesConfigUnchangedWhenRepositorySaveFailsAfterCooki
 		t.Fatal("expected save config to fail")
 	}
 
-	assertConfigRowsAbsent(t, repo)
-	assertCookieAuthStatePresent(t, repo)
+	assertFailedConfigSaveRowsAbsent(t, repo)
+	if _, err := os.Stat(legacyPath); err != nil {
+		t.Fatalf("expected legacy cookie file to remain after failed activation: %v", err)
+	}
+	var cookieCount int
+	if err := repo.RawDB().QueryRowContext(context.Background(), `SELECT COUNT(*) FROM tracker_cookies`).Scan(&cookieCount); err != nil {
+		t.Fatalf("count cookies after failed activation: %v", err)
+	}
+	if cookieCount != 0 {
+		t.Fatalf("expected cookie writes to roll back, got count=%d", cookieCount)
+	}
 	if got := backend.currentConfig().Metadata.SkipAutoTorrent; got {
 		t.Fatal("expected runtime config not to be applied after failed config save")
 	}
-}
-
-func TestBackendSaveConfigHardCookieMigrationErrorDoesNotInstallRuntime(t *testing.T) {
-	t.Parallel()
-
-	repo, repoPath := openBackendConfigTestRepo(t, "backend-save-cookie-migration-hard-error.db")
-	initial := backendConfigTestConfig(repoPath)
-	if err := config.SaveToDatabase(context.Background(), &initial, repo); err != nil {
-		t.Fatalf("save initial config: %v", err)
-	}
-	backend := &Backend{
-		cfg:  initial,
-		repo: repo,
-		hub:  newEventHub(),
-		sharedCookieMigrator: func(context.Context, string, api.Logger) error {
-			return errors.New("forced migration failure")
-		},
-	}
-
-	updated := initial
-	updated.Metadata.SkipAutoTorrent = true
-	payload, err := config.ExportToJSON(&updated)
-	if err != nil {
-		t.Fatalf("export config: %v", err)
-	}
-
-	err = backend.SaveConfig(payload)
-	if err == nil {
-		t.Fatal("expected hard cookie migration error")
-	}
-	if !strings.Contains(err.Error(), "forced migration failure") {
-		t.Fatalf("expected forced migration failure, got %v", err)
-	}
-	assertStoredSkipAutoTorrentUnset(t, repo)
-	if got := backend.currentConfig().Metadata.SkipAutoTorrent; got {
-		t.Fatal("expected runtime config not to be applied after hard migration failure")
-	}
-	if backend.currentCore() != nil {
-		t.Fatal("expected runtime core not to be installed after hard migration failure")
-	}
-}
-
-func TestBackendImportConfigHardCookieMigrationErrorPropagates(t *testing.T) {
-	t.Parallel()
-
-	repo, repoPath := openBackendConfigTestRepo(t, "backend-import-cookie-migration-hard-error.db")
-	initial := backendConfigTestConfig(repoPath)
-	if err := config.SaveToDatabase(context.Background(), &initial, repo); err != nil {
-		t.Fatalf("save initial config: %v", err)
-	}
-	backend := &Backend{
-		cfg:  initial,
-		repo: repo,
-		hub:  newEventHub(),
-		sharedCookieMigrator: func(context.Context, string, api.Logger) error {
-			return errors.New("forced migration failure")
-		},
-	}
-
-	imported := initial
-	imported.Metadata.SkipAutoTorrent = true
-	content := exportConfigYAMLString(t, &imported)
-
-	_, _, err := backend.ImportConfig("config.yaml", content)
-	if err == nil {
-		t.Fatal("expected hard cookie migration error")
-	}
-	if !strings.Contains(err.Error(), "forced migration failure") {
-		t.Fatalf("expected forced migration failure, got %v", err)
-	}
-	assertStoredSkipAutoTorrentUnset(t, repo)
-	if got := backend.currentConfig().Metadata.SkipAutoTorrent; got {
-		t.Fatal("expected runtime config not to be applied after imported hard migration failure")
-	}
-	if backend.currentCore() != nil {
-		t.Fatal("expected runtime core not to be installed after imported hard migration failure")
-	}
-}
-
-func TestBackendSaveConfigRepositoryRejectsAuthChangeAfterValidation(t *testing.T) {
-	t.Parallel()
-
-	repo, repoPath := openBackendConfigTestRepo(t, "backend-save-auth-drift.db")
-	if err := BootstrapAuthFile(repoPath, "tester", "very-secure-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
-	if err := validateCookieAuthMaterial(repoPath); err != nil {
-		t.Fatalf("prevalidate auth material: %v", err)
-	}
-	if err := os.WriteFile(AuthFilePath(repoPath), []byte(`{`), 0o600); err != nil {
-		t.Fatalf("replace auth file: %v", err)
-	}
-	initial := backendConfigTestConfig(repoPath)
-	backend := &Backend{
-		cfg:  initial,
-		repo: repo,
-		hub:  newEventHub(),
-	}
-
-	updated := initial
-	updated.Metadata.SkipAutoTorrent = true
-	err := backend.saveConfigToRepository(context.Background(), &updated, repoPath)
-	if err == nil {
-		t.Fatal("expected auth drift to malformed helper to fail")
-	}
-	assertFailedConfigSaveRowsAbsent(t, repo)
 }
 
 func openBackendConfigTestRepo(t *testing.T, name string) (*db.SQLiteRepository, string) {
@@ -1326,19 +1561,6 @@ func assertFailedConfigSaveRowsAbsent(t *testing.T, repo *db.SQLiteRepository) {
 		if !errors.Is(err, sql.ErrNoRows) {
 			t.Fatalf("expected %s to be absent after failed sync, got row=%q err=%v", section, data, err)
 		}
-	}
-}
-
-func assertConfigRowsAbsent(t *testing.T, repo *db.SQLiteRepository) {
-	t.Helper()
-
-	var data string
-	err := repo.RawDB().QueryRowContext(context.Background(),
-		`SELECT data FROM config_settings WHERE section = ?`,
-		"MainSettings",
-	).Scan(&data)
-	if !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("expected MainSettings to be absent after failed save, got row=%q err=%v", data, err)
 	}
 }
 
@@ -1579,7 +1801,7 @@ func TestBackendExportConfigAuthorizesAgainstExportSnapshotDBPath(t *testing.T) 
 		t.Fatalf("auth DBPath: got %q want %q", authDBPath, pathB)
 	}
 
-	backend.replaceRuntime(cfgA, nil, nil)
+	backend.replaceRuntime(cfgA, CoreCapabilities{}, nil)
 	allowPlaintext, err := backend.allowUnencryptedExport(authDBPath)
 	if err != nil {
 		t.Fatalf("allow unencrypted export: %v", err)

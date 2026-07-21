@@ -383,7 +383,7 @@ func TestImportFromJSONTypeMismatch(t *testing.T) {
 	}
 }
 
-// ExportToJSON must succeed on a fully-zero Config — the GUI calls this on
+// ExportToJSON must succeed on a fully-zero Config — the WebUI calls this on
 // first launch before the user has set anything.
 func TestExportToJSONZeroConfig(t *testing.T) {
 	t.Parallel()

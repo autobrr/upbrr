@@ -13,7 +13,9 @@ import (
 )
 
 type ServiceSet struct {
-	Metadata   MetadataService
+	// Metadata is an internal preparation collector override. Core validates the
+	// private contract before use; no mutable preparation type is exported here.
+	Metadata   any
 	Trackers   TrackerService
 	Torrents   TorrentService
 	Clients    ClientService
@@ -27,32 +29,20 @@ type ServiceSet struct {
 	Images   ImageHostingService
 }
 
-type MetadataService interface {
-	Prepare(ctx context.Context, req Request) (PreparedMetadata, error)
-	RefreshPreparedMetadata(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
-	EnrichTrackerData(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
-	ApplyMediaInfoIDs(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
-	ApplyArrData(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
-	ResolveExternalIDs(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
-	ApplyMediaDetails(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
-	// ApplyTrackerClaims applies claim-based tracker blocks using metadata that
-	// has already been enriched with media details and tracker rule state.
-	ApplyTrackerClaims(ctx context.Context, meta PreparedMetadata) (PreparedMetadata, error)
-}
-
 type TrackerService interface {
-	Upload(ctx context.Context, meta PreparedMetadata) (UploadSummary, error)
-	BuildPreparation(ctx context.Context, meta PreparedMetadata, trackers []string) (PreparationPreview, error)
-	BuildUploadDryRun(ctx context.Context, meta PreparedMetadata, trackers []string) ([]TrackerDryRunEntry, error)
+	Upload(ctx context.Context, subject UploadSubject) (UploadSummary, error)
+	BuildPreparation(ctx context.Context, subject DescriptionSubject, trackers []string) (PreparationPreview, error)
+	BuildUploadReview(ctx context.Context, subject UploadSubject, trackers []string) ([]TrackerDryRunEntry, error)
+	BuildUploadDryRun(ctx context.Context, subject UploadSubject, trackers []string) ([]TrackerDryRunEntry, error)
 }
 
 type TorrentService interface {
-	Create(ctx context.Context, meta PreparedMetadata) (TorrentResult, error)
+	Create(ctx context.Context, subject TorrentSubject) (TorrentResult, error)
 }
 
 type ClientService interface {
-	Inject(ctx context.Context, meta PreparedMetadata, torrent TorrentResult) error
-	SearchPathedTorrents(ctx context.Context, meta PreparedMetadata) (ClientSearchResult, error)
+	Inject(ctx context.Context, subject ClientSubject, torrent TorrentResult) error
+	SearchPathedTorrents(ctx context.Context, subject ClientSubject) (ClientSearchResult, error)
 }
 
 type FilesystemService interface {
@@ -60,10 +50,53 @@ type FilesystemService interface {
 }
 
 type DupeService interface {
-	Check(ctx context.Context, meta PreparedMetadata, trackers []string) (DupeCheckSummary, error)
+	Check(ctx context.Context, subject DuplicateSubject, trackers []string) (DupeCheckSummary, error)
 }
 
-// TrackerAuthService exposes the batch auth operations needed before GUI and
+// DuplicateSubject is the duplicate module's source-scoped read model. It
+// contains only facts, instructions, and prior workflow outcomes that affect
+// duplicate search or authorization.
+type DuplicateSubject struct {
+	SourcePath           string
+	SourceSize           int64
+	VideoPath            string
+	FileList             []string
+	Filename             string
+	SceneName            string
+	ReleaseName          string
+	Release              ReleaseInfo
+	ReleaseNameOverrides ReleaseNameOverrides
+	Identity             ExternalIdentity
+	ProviderMetadata     SourceScopedMetadata
+	TrackerIDs           map[string]string
+	DiscType             string
+	Type                 string
+	Source               string
+	Tag                  string
+	HDR                  string
+	UHD                  string
+	VideoEncode          string
+	VideoCodec           string
+	HasEncodeSettings    bool
+	SeasonInt            int
+	EpisodeInt           int
+	SeasonStr            string
+	EpisodeStr           string
+	DailyEpisodeDate     string
+	TVPack               bool
+	Anime                bool
+	MatchedTrackers      []string
+	TrackerRuleFailures  map[string][]RuleFailure
+	BlockedTrackers      map[string][]TrackerBlockReason
+	CrossSeedTorrents    []UploadedTorrent
+}
+
+// CanonicalSeasonEpisode returns the prepared TV season and episode.
+func (s DuplicateSubject) CanonicalSeasonEpisode() (int, int) {
+	return s.SeasonInt, s.EpisodeInt
+}
+
+// TrackerAuthService exposes the batch auth operations needed before WebUI and
 // embedded-web duplicate checking.
 type TrackerAuthService interface {
 	// Capabilities returns the configured trackers whose auth workflows the
@@ -75,28 +108,28 @@ type TrackerAuthService interface {
 }
 
 type ScreenshotService interface {
-	Plan(ctx context.Context, meta PreparedMetadata, count int) (ScreenshotPlan, error)
-	Capture(ctx context.Context, meta PreparedMetadata, selections []ScreenshotSelection, purpose ScreenshotPurpose) (ScreenshotResult, error)
-	PreviewFrame(ctx context.Context, meta PreparedMetadata, timestampSeconds float64) (ScreenshotPreview, error)
-	Delete(ctx context.Context, meta PreparedMetadata, imagePath string) error
-	SaveFinalSelections(ctx context.Context, meta PreparedMetadata, images []ScreenshotImage) error
+	Plan(ctx context.Context, subject ScreenshotSubject, count int) (ScreenshotPlan, error)
+	Capture(ctx context.Context, subject ScreenshotSubject, selections []ScreenshotSelection, purpose ScreenshotPurpose) (ScreenshotResult, error)
+	PreviewFrame(ctx context.Context, subject ScreenshotSubject, timestampSeconds float64) (ScreenshotPreview, error)
+	Delete(ctx context.Context, subject ScreenshotSubject, imagePath string) error
+	SaveFinalSelections(ctx context.Context, subject ScreenshotSubject, images []ScreenshotImage) error
 }
 
 // DVDMenuService captures and manages persisted menu images for prepared DVD metadata.
 type DVDMenuService interface {
 	// Capture replaces automatic captures up to maxItems while preserving manual menus.
-	Capture(ctx context.Context, meta PreparedMetadata, maxItems int) (DVDMenuCaptureResult, error)
+	Capture(ctx context.Context, subject DVDMenuSubject, maxItems int) (DVDMenuCaptureResult, error)
 	// List returns persisted manual and automatic menu images in selection order.
-	List(ctx context.Context, meta PreparedMetadata) ([]ScreenshotImage, error)
+	List(ctx context.Context, subject DVDMenuSubject) ([]ScreenshotImage, error)
 	// Delete removes one managed menu image and its local repository references.
-	Delete(ctx context.Context, meta PreparedMetadata, imagePath string) error
+	Delete(ctx context.Context, subject DVDMenuSubject, imagePath string) error
 	// Capability reports path-free engine and FFmpeg dvdvideo support.
 	Capability(ctx context.Context) (DVDMenuEngineInfo, error)
 }
 
 type ImageHostingService interface {
-	ListCandidates(ctx context.Context, meta PreparedMetadata) ([]ScreenshotImage, error)
-	Upload(ctx context.Context, meta PreparedMetadata, host string, usageScope string, images []ScreenshotImage) ([]UploadedImageLink, error)
+	ListCandidates(ctx context.Context, subject ImageHostingSubject) ([]ScreenshotImage, error)
+	Upload(ctx context.Context, subject ImageHostingSubject, host string, usageScope string, images []ScreenshotImage) ([]UploadedImageLink, error)
 }
 
 type TrackerBlockReason string
@@ -107,18 +140,11 @@ const (
 	TrackerBlockReasonAudio TrackerBlockReason = "audio"
 )
 
-// PreparedMetadata contains the shared metadata snapshot used across CLI, GUI,
-// embedded web, and tracker upload flows. Release preserves parsed release-name
-// data; SeasonInt and EpisodeInt carry canonical TV identity after metadata
-// parsing and provider/date remapping.
-type PreparedMetadata struct {
+// TrackerSubject is the tracker module's operation-owned source, resource,
+// instruction, and prerequisite view. It excludes preparation diagnostics,
+// resolver evidence, cache freshness, and client-search implementation state.
+type UploadSubject struct {
 	SourcePath                  string
-	SourceLookupURL             string
-	SourceLookupActive          bool
-	SourceLookupMode            string
-	SourceLookupTracker         string
-	SourceLookupTrackerID       string
-	LookupWarnings              []string
 	Paths                       []string
 	DiscType                    string
 	VideoPath                   string
@@ -126,24 +152,12 @@ type PreparedMetadata struct {
 	SourceSize                  int64
 	MediaInfoJSONPath           string
 	MediaInfoTextPath           string
-	DVDIFOPath                  string
-	DVDVOBPath                  string
-	DVDVOBSet                   string
-	DVDVOBMediaInfoJSON         string
 	DVDVOBMediaInfoText         string
-	MediaInfoUniqueID           string
 	Scene                       bool
 	SceneName                   string
-	SceneTMDBID                 int
-	SceneIMDB                   int
-	SceneTVDBID                 int
-	SceneTVmazeID               int
-	SceneMALID                  int
 	SceneNFOPath                string
-	SceneNFONew                 bool
 	SceneRenamed                bool
 	SceneRenamedReason          string
-	Mode                        Mode
 	DescriptionGroups           []DescriptionBuilderGroup
 	Trackers                    []string
 	Options                     UploadOptions
@@ -151,46 +165,19 @@ type PreparedMetadata struct {
 	MatchedTrackers             []string
 	Tag                         string
 	Release                     ReleaseInfo
-	TagOverride                 *TagOverride
 	DescriptionOverride         string
-	MetadataOverrides           MetadataOverrides
 	TrackerConfigOverrides      TrackerConfigOverrides
 	TrackerSiteOverrides        TrackerSiteOverrides
-	ClientOverrides             ClientOverrides
 	ImageHostOverrides          ImageHostOverrides
-	ScreenshotOverrides         ScreenshotOverrides
-	TorrentOverrides            TorrentOverrides
 	DescriptionTemplate         string
 	PersonalRelease             bool
 	InfoHash                    string
 	TrackerIDs                  map[string]string
-	FoundTrackerMatch           bool
-	TorrentComments             []TorrentMatch
-	PieceSizeConstraint         string
-	FoundPreferredPiece         string
-	StoredInfoHash              string
-	StoredUpdatedAt             time.Time `ts_type:"string"`
-	StoredDataFresh             bool
 	TrackerData                 []TrackerMetadata
 	CrossSeedTorrents           []UploadedTorrent
 	ClientTorrentPath           string
 	TorrentPath                 string
-	MediaInfoCategory           string
-	MediaInfoTMDBID             int
-	MediaInfoIMDBID             int
-	MediaInfoTVDBID             int
-	ArrSource                   string
-	ArrTMDBID                   int
-	ArrIMDBID                   int
-	ArrTVDBID                   int
-	ArrTVmazeID                 int
-	ArrYear                     int
-	ArrGenres                   []string
 	ArrReleaseGroup             string
-	MismatchedMediaInfoTMDBID   int
-	MismatchedMediaInfoIMDBID   int
-	MismatchedMediaInfoTVDBID   int
-	ExternalIDOverrides         ExternalIDOverrides
 	ReleaseNameOverrides        ReleaseNameOverrides
 	TrackerQuestionnaireAnswers map[string]map[string]string
 	SeasonInt                   int
@@ -198,22 +185,17 @@ type PreparedMetadata struct {
 	SeasonStr                   string
 	EpisodeStr                  string
 	TVDBAiredDate               string
-	TVDBAirsDays                []string
 	TVDBAirsTime                string
 	TVDBAirsTimezone            string
-	TVDBAirsTimezoneSource      string
 	TVPack                      bool
 	DailyEpisodeDate            string
-	TMDBDateMatch               bool
 	Anime                       bool
-	MALID                       int
 	EpisodeTitle                string
 	EpisodeOverview             string
-	EpisodeYear                 int
 	SelectedBDMVPlaylists       []PlaylistInfo
-	ExternalIDs                 ExternalIDs
-	ExternalIDCandidates        ExternalIDCandidates
-	ExternalMetadata            ExternalMetadata
+	Identity                    ExternalIdentity
+	ProviderMetadata            SourceScopedMetadata
+	Disc                        DiscFacts
 	AudioLanguages              []string
 	SubtitleLanguages           []string
 	Container                   string
@@ -234,8 +216,7 @@ type PreparedMetadata struct {
 	Edition                     string
 	Repack                      string
 	WebDV                       bool
-	ValidMediaInfo              bool
-	ValidMediaInfoSettings      bool
+	Assessments                 ReleaseAssessments
 	StreamOptimized             int
 	Service                     string
 	ServiceLongName             string
@@ -243,40 +224,154 @@ type PreparedMetadata struct {
 	ReleaseName                 string
 	ReleaseNameNoTag            string
 	ReleaseNameClean            string
-	ReleaseNameMissing          []string
 	BlockedTrackers             map[string][]TrackerBlockReason
-	IgnoreTrackerRuleFailures   bool
 	TrackerRuleFailures         map[string][]RuleFailure
-	BDInfo                      map[string]any
+}
+
+// RuleSubject contains only stable facts used by generic and tracker-specific
+// eligibility rules.
+type RuleSubject struct {
+	SourcePath          string
+	VideoPath           string
+	FileList            []string
+	DiscType            string
+	Scene               bool
+	SceneNFOPath        string
+	SceneRenamed        bool
+	SceneRenamedReason  string
+	PersonalRelease     bool
+	Release             ReleaseInfo
+	ReleaseName         string
+	ReleaseNameNoTag    string
+	Tag                 string
+	Identity            ExternalIdentity
+	ProviderMetadata    SourceScopedMetadata
+	AudioLanguages      []string
+	SubtitleLanguages   []string
+	TVPack              bool
+	Type                string
+	Source              string
+	Container           string
+	BitDepth            string
+	VideoCodec          string
+	VideoEncode         string
+	HDR                 string
+	Region              string
+	WebDV               bool
+	Anime               bool
+	Assessments         ReleaseAssessments
+	DescriptionOverride string
+}
+
+// NewRuleSubject projects upload facts into the rule evaluator's read model.
+func NewRuleSubject(subject UploadSubject) RuleSubject {
+	return RuleSubject{
+		SourcePath:          subject.SourcePath,
+		VideoPath:           subject.VideoPath,
+		FileList:            append([]string(nil), subject.FileList...),
+		DiscType:            subject.DiscType,
+		Scene:               subject.Scene,
+		SceneNFOPath:        subject.SceneNFOPath,
+		SceneRenamed:        subject.SceneRenamed,
+		SceneRenamedReason:  subject.SceneRenamedReason,
+		PersonalRelease:     subject.PersonalRelease,
+		Release:             subject.Release,
+		ReleaseName:         subject.ReleaseName,
+		ReleaseNameNoTag:    subject.ReleaseNameNoTag,
+		Tag:                 subject.Tag,
+		Identity:            subject.Identity,
+		ProviderMetadata:    subject.ProviderMetadata,
+		AudioLanguages:      append([]string(nil), subject.AudioLanguages...),
+		SubtitleLanguages:   append([]string(nil), subject.SubtitleLanguages...),
+		TVPack:              subject.TVPack,
+		Type:                subject.Type,
+		Source:              subject.Source,
+		Container:           subject.Container,
+		BitDepth:            subject.BitDepth,
+		VideoCodec:          subject.VideoCodec,
+		VideoEncode:         subject.VideoEncode,
+		HDR:                 subject.HDR,
+		Region:              subject.Region,
+		WebDV:               subject.WebDV,
+		Anime:               subject.Anime,
+		Assessments:         subject.Assessments,
+		DescriptionOverride: subject.DescriptionOverride,
+	}
+}
+
+// DescriptionSubject contains only facts, local resources, and rendering
+// instructions consumed by tracker description builders.
+type DescriptionSubject struct {
+	SourcePath            string
+	DiscType              string
+	MediaInfoTextPath     string
+	DVDVOBMediaInfoText   string
+	DescriptionTemplate   string
+	EpisodeOverview       string
+	Options               UploadOptions
+	Release               ReleaseInfo
+	SelectedBDMVPlaylists []PlaylistInfo
+	Tag                   string
+	Identity              ExternalIdentity
+	ProviderMetadata      SourceScopedMetadata
+	SeasonInt             int
+	EpisodeInt            int
+	Filename              string
+	ReleaseName           string
+	ReleaseNameNoTag      string
+	ServiceLongName       string
+	Type                  string
+	HDR                   string
+	ArrReleaseGroup       string
+	Trackers              []string
+	TrackerConfig         TrackerConfigOverrides
+	TrackerSite           TrackerSiteOverrides
+	ImageHost             ImageHostOverrides
+	TrackerData           []TrackerMetadata
+}
+
+// NewDescriptionSubject projects upload state into the description builder's
+// read model and detaches mutable collections.
+func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
+	projected := DescriptionSubject{
+		SourcePath:            subject.SourcePath,
+		DiscType:              subject.DiscType,
+		MediaInfoTextPath:     subject.MediaInfoTextPath,
+		DVDVOBMediaInfoText:   subject.DVDVOBMediaInfoText,
+		DescriptionTemplate:   subject.DescriptionTemplate,
+		EpisodeOverview:       subject.EpisodeOverview,
+		Options:               subject.Options,
+		Release:               subject.Release,
+		SelectedBDMVPlaylists: append([]PlaylistInfo(nil), subject.SelectedBDMVPlaylists...),
+		Tag:                   subject.Tag,
+		Identity:              subject.Identity,
+		ProviderMetadata:      subject.ProviderMetadata,
+		SeasonInt:             subject.SeasonInt,
+		EpisodeInt:            subject.EpisodeInt,
+		Filename:              subject.Filename,
+		ReleaseName:           subject.ReleaseName,
+		ReleaseNameNoTag:      subject.ReleaseNameNoTag,
+		ServiceLongName:       subject.ServiceLongName,
+		Type:                  subject.Type,
+		HDR:                   subject.HDR,
+		ArrReleaseGroup:       subject.ArrReleaseGroup,
+		Trackers:              append([]string(nil), subject.Trackers...),
+		TrackerConfig:         subject.TrackerConfigOverrides,
+		TrackerSite:           subject.TrackerSiteOverrides,
+		ImageHost:             subject.ImageHostOverrides,
+		TrackerData:           append([]TrackerMetadata(nil), subject.TrackerData...),
+	}
+	cloned, err := clonePreparedValue(projected)
+	if err != nil {
+		panic(fmt.Sprintf("clone description subject: %v", err))
+	}
+	return cloned
 }
 
 // CanonicalSeasonEpisode returns the provider-resolved TV season/episode used
-// for upload identity and naming.
-func (m PreparedMetadata) CanonicalSeasonEpisode() (int, int) {
-	return m.SeasonInt, m.EpisodeInt
-}
-
-// SeasonEpisodeWithParsedFallback returns canonical season/episode values and
-// falls back to release-name parsed values independently for each missing
-// field. The returned season and episode can come from different sources, so
-// callers must not treat the pair as source-consistent. Use this for TV
-// classification and lookup fallbacks, not for canonical upload naming.
-func (m PreparedMetadata) SeasonEpisodeWithParsedFallback() (int, int) {
-	season, episode := m.CanonicalSeasonEpisode()
-	if season <= 0 {
-		season = m.Release.Season
-	}
-	if episode <= 0 {
-		episode = m.Release.Episode
-	}
-	return season, episode
-}
-
-// HasTVSeasonEpisodeSignal reports whether either canonical metadata or the
-// parsed release name carries a season/episode hint.
-func (m PreparedMetadata) HasTVSeasonEpisodeSignal() bool {
-	season, episode := m.SeasonEpisodeWithParsedFallback()
-	return season > 0 || episode > 0
+// by tracker operations.
+func (s UploadSubject) CanonicalSeasonEpisode() (int, int) {
+	return s.SeasonInt, s.EpisodeInt
 }
 
 type MetadataOverrides struct {
@@ -308,69 +403,91 @@ type TorrentOverrides struct {
 	Rehash          *bool
 }
 
-type ExternalIDCandidates struct {
-	TMDB             []ExternalIDCandidate
-	IMDB             []ExternalIDCandidate
-	TMDBAutoSelected bool
-	IMDBAutoSelected bool
+// TorrentSubject contains only facts and instructions required to create or
+// validate a torrent artifact for one prepared source.
+type TorrentSubject struct {
+	SourcePath        string
+	SourceSize        int64
+	FileList          []string
+	DiscType          string
+	ClientTorrentPath string
+	Trackers          []string
+	TorrentOverrides  TorrentOverrides
 }
 
-type ExternalIDCandidate struct {
-	Provider      string
-	ID            int
-	Title         string
-	OriginalTitle string
-	Year          int
-	Category      string
-	MediaType     string
-	Overview      string
-	PosterURL     string
-	Similarity    float64
+// ClientSubject contains only source facts and caller instructions required
+// for torrent-client search, linking, and injection.
+type ClientSubject struct {
+	SourcePath      string
+	FileList        []string
+	DiscType        string
+	ClientOverrides ClientOverrides
 }
 
-// RuleFailureSeverity classifies whether a tracker rule result blocks work.
-// The zero value and unrecognized values are treated as blocking for backward
-// compatibility and fail-closed behavior.
-type RuleFailureSeverity string
+// RuleDisposition identifies how a failed tracker rule affects live upload.
+type RuleDisposition string
 
 const (
-	// RuleFailureSeverityBlocking prevents the affected tracker operation.
-	RuleFailureSeverityBlocking RuleFailureSeverity = "blocking"
-	// RuleFailureSeverityWarning reports advice without preventing the operation.
-	RuleFailureSeverityWarning RuleFailureSeverity = "warning"
+	// RuleDispositionAdvisory reports guidance without blocking live upload.
+	RuleDispositionAdvisory RuleDisposition = "advisory"
+	// RuleDispositionWaivable requires exact user authorization before live upload.
+	RuleDispositionWaivable RuleDisposition = "waivable"
+	// RuleDispositionStrict blocks live upload and cannot be authorized.
+	RuleDispositionStrict RuleDisposition = "strict"
 )
 
-// RuleFailure describes a failed or advisory tracker rule result.
+// RuleFailure describes one stable tracker-rule result.
 type RuleFailure struct {
-	Rule   string
-	Reason string
-	// Severity defaults to blocking when empty or unrecognized.
-	Severity RuleFailureSeverity
+	Rule        string
+	Reason      string
+	Disposition RuleDisposition
 }
 
-// NormalizeRuleFailureSeverity maps the warning value to itself and all other
-// values, including legacy empty values, to blocking.
-func NormalizeRuleFailureSeverity(severity RuleFailureSeverity) RuleFailureSeverity {
-	if severity == RuleFailureSeverityWarning {
-		return RuleFailureSeverityWarning
+// RuleAuthorization binds user consent to exact current rule keys for one tracker.
+type RuleAuthorization struct {
+	Tracker string
+	Rules   []string
+}
+
+// NormalizeRuleDisposition maps legacy persisted values and fails closed for
+// unknown values. Empty and legacy blocking results remain user-waivable;
+// unknown non-empty values become strict.
+func NormalizeRuleDisposition(disposition RuleDisposition) RuleDisposition {
+	switch disposition {
+	case RuleDispositionAdvisory, RuleDispositionWaivable, RuleDispositionStrict:
+		return disposition
+	case "warning":
+		return RuleDispositionAdvisory
+	case "", "blocking":
+		return RuleDispositionWaivable
+	default:
+		return RuleDispositionStrict
 	}
-	return RuleFailureSeverityBlocking
 }
 
 // IsBlockingRuleFailure reports whether a rule result blocks tracker work.
 func IsBlockingRuleFailure(failure RuleFailure) bool {
-	return NormalizeRuleFailureSeverity(failure.Severity) == RuleFailureSeverityBlocking
+	return NormalizeRuleDisposition(failure.Disposition) != RuleDispositionAdvisory
+}
+
+// IsStrictRuleFailure reports whether a rule result can never be authorized.
+func IsStrictRuleFailure(failure RuleFailure) bool {
+	return NormalizeRuleDisposition(failure.Disposition) == RuleDispositionStrict
+}
+
+// IsWaivableRuleFailure reports whether exact authorization may unblock a result.
+func IsWaivableRuleFailure(failure RuleFailure) bool {
+	return NormalizeRuleDisposition(failure.Disposition) == RuleDispositionWaivable
 }
 
 // BlockingRuleFailures returns an independent slice containing only blocking
-// results. Legacy and unrecognized severities are included.
+// results. Legacy and unrecognized dispositions are included.
 func BlockingRuleFailures(failures []RuleFailure) []RuleFailure {
 	return filterRuleFailures(failures, true)
 }
 
-// WarningRuleFailures returns an independent slice containing only results with
-// the explicit warning severity.
-func WarningRuleFailures(failures []RuleFailure) []RuleFailure {
+// AdvisoryRuleFailures returns an independent slice containing only advisory results.
+func AdvisoryRuleFailures(failures []RuleFailure) []RuleFailure {
 	return filterRuleFailures(failures, false)
 }
 
@@ -380,11 +497,11 @@ func HasBlockingRuleFailures(failures []RuleFailure) bool {
 }
 
 // CountBlockingRuleFailures returns the number of rule results that block
-// tracker work. Legacy and unrecognized severities are counted as blocking.
+// tracker work. Legacy and unrecognized dispositions are counted as blocking.
 func CountBlockingRuleFailures(failures []TrackerRuleFailure) int {
 	count := 0
 	for _, failure := range failures {
-		if NormalizeRuleFailureSeverity(failure.Severity) == RuleFailureSeverityBlocking {
+		if NormalizeRuleDisposition(failure.Disposition) != RuleDispositionAdvisory {
 			count++
 		}
 	}
@@ -415,47 +532,6 @@ type ExternalIDOverrides struct {
 	// MALID carries caller intent for the canonical MAL/AniList-compatible
 	// anime identifier. Nil leaves resolution unchanged; zero clears it.
 	MALID *int
-}
-
-// ExternalIDs contains canonical IDs finalized by metadata resolution.
-// Downstream search, rule, preview, history, and upload code should use these
-// fields instead of re-reading raw resolver fallback inputs.
-type ExternalIDs struct {
-	// SourcePath is the content path these resolved IDs belong to. Empty means
-	// the record is not scoped to a specific source path.
-	SourcePath string
-	TMDBID     int
-	IMDBID     int
-	TVDBID     int
-	TVmazeID   int
-	// MALID is the canonical anime identifier used by MAL/AniList-compatible
-	// tracker fields after metadata resolution.
-	MALID    int
-	Category string
-	// Source* fields record the resolver source labels that produced each
-	// provider ID, for example tracker, mediainfo, tmdb, or scene.
-	SourceTMDB   string
-	SourceIMDB   string
-	SourceTVDB   string
-	SourceTVmaze string
-	// SourceMAL records the resolver source label for MALID.
-	SourceMAL string
-	UpdatedAt time.Time `ts_type:"string"`
-}
-
-// ExternalMetadata stores provider-specific metadata snapshots resolved for one
-// source path. Nil provider fields mean that provider has no stored snapshot.
-type ExternalMetadata struct {
-	// SourcePath scopes the metadata to a prepared source path when set.
-	SourcePath string
-	TMDB       *TMDBMetadata
-	IMDB       *IMDBMetadata
-	TVDB       *TVDBMetadata
-	TVmaze     *TVmazeMetadata
-	// AniList stores rich anime metadata resolved from the canonical MALID.
-	AniList   *AniListMetadata
-	Bluray    *BlurayMetadata
-	UpdatedAt time.Time `ts_type:"string"`
 }
 
 // AniListMetadata is the AniList media snapshot used for MAL/AniList preview.
@@ -663,8 +739,8 @@ func (m *BlurayMetadata) SelectCandidate(releaseID string, auto bool, reason str
 	return true
 }
 
-// TMDBMetadata is the shared TMDB metadata snapshot returned to CLI, Wails, and
-// embedded web callers during upload preparation and review.
+// TMDBMetadata is the shared TMDB metadata snapshot returned to CLI and WebUI
+// callers during upload preparation and review.
 type TMDBMetadata struct {
 	TMDBID           int
 	IMDBID           int
@@ -698,7 +774,7 @@ type TMDBMetadata struct {
 	Keywords         string
 	// LocalizedTitles maps lowercase language codes and optional regional tags
 	// such as "de" or "pt-BR" to TMDB translation titles. Nil values marshal as
-	// an empty JSON object for Wails and embedded-web callers.
+	// an empty JSON object for WebUI callers.
 	LocalizedTitles     map[string]string
 	YouTube             string
 	Certification       string
@@ -721,12 +797,12 @@ type TMDBLocalizedData struct {
 	Poster          string
 }
 
-// ExtractLocalizedPTBR returns the pt-BR localized data from the given
-// metadata, or an empty value when none is available.
-func ExtractLocalizedPTBR(meta PreparedMetadata) TMDBLocalizedData {
-	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Localized != nil {
-		if v, ok := meta.ExternalMetadata.TMDB.Localized["pt-BR"]; ok {
-			return v
+// ExtractTrackerLocalizedPTBR returns pt-BR provider data from a tracker-owned
+// operation subject.
+func ExtractTrackerLocalizedPTBR(subject UploadSubject) TMDBLocalizedData {
+	if subject.ProviderMetadata.TMDB != nil && subject.ProviderMetadata.TMDB.Localized != nil {
+		if value, ok := subject.ProviderMetadata.TMDB.Localized["pt-BR"]; ok {
+			return value
 		}
 	}
 	return TMDBLocalizedData{}

@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// The importer is the only interface the GUI and web upload path use to
+// The importer is the only interface the WebUI upload path uses to
 // ingest a user's old config. These tests make sure every bad input is
 // rejected with a clean error instead of crashing or partially-loading.
 
@@ -70,7 +70,7 @@ func TestImportFromContentYAMLWithBOM(t *testing.T) {
 	}
 }
 
-// An empty byte slice must be treated as "use defaults" so the GUI can
+// An empty byte slice must be treated as "use defaults" so the WebUI can
 // import a freshly-created empty file without crashing.
 func TestImportFromContentEmptyBytes(t *testing.T) {
 	t.Parallel()
@@ -176,10 +176,8 @@ func TestImportFromContentOverlayPreservesDefaults(t *testing.T) {
 	}
 }
 
-// A YAML overlay that sets img_rehost=true on a tracker without a policy must
-// be automatically disabled and a warning emitted — that warning is how users
-// find out they lost that setting.
-func TestImportFromContentWarnsOnImgRehostDisable(t *testing.T) {
+// Tracker image-host behavior is preserved for registry-owned runtime policy.
+func TestImportFromContentPreservesImgRehostForRegistryPolicy(t *testing.T) {
 	t.Parallel()
 
 	overlay := []byte("trackers:\n  trackers:\n    TL:\n      img_rehost: true\n")
@@ -187,22 +185,18 @@ func TestImportFromContentWarnsOnImgRehostDisable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
-	if cfg.Trackers.Trackers["TL"].ImgRehost {
-		t.Fatalf("TL img_rehost should have been disabled")
+	if !cfg.Trackers.Trackers["TL"].ImgRehost {
+		t.Fatalf("TL img_rehost should remain enabled until runtime policy evaluation")
 	}
-	found := false
 	for _, w := range warnings {
 		if strings.Contains(w, "TL") {
-			found = true
+			t.Fatalf("unexpected config-layer tracker policy warning: %v", warnings)
 		}
-	}
-	if !found {
-		t.Fatalf("expected warning mentioning TL, got %v", warnings)
 	}
 }
 
 // Files that live under a symlinked parent directory must still be readable,
-// so GUI users working out of a symlinked workspace aren't locked out.
+// so WebUI users working out of a symlinked workspace aren't locked out.
 func TestImportFromFileThroughSymlink(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink privilege on Windows requires elevation")

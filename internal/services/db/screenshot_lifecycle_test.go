@@ -35,22 +35,56 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 	normalNew := filepath.Join(root, "normal-new.png")
 	now := time.Now().UTC()
 
-	if err := repo.SaveScreenshot(ctx, api.Screenshot{SourcePath: sourcePath, ImagePath: autoOld, Purpose: api.ScreenshotPurposeMenu, CapturedAt: now}); err != nil {
+	if err := repo.SaveScreenshot(ctx, api.Screenshot{
+		SourcePath: sourcePath,
+		ImagePath:  autoOld,
+		Purpose:    api.ScreenshotPurposeMenu,
+		CapturedAt: now,
+	}); err != nil {
 		t.Fatalf("save old auto screenshot: %v", err)
 	}
-	if err := repo.SaveScreenshot(ctx, api.Screenshot{SourcePath: sourcePath, ImagePath: manualOld, Purpose: api.ScreenshotPurposeMenu, CapturedAt: now}); err != nil {
+	if err := repo.SaveScreenshot(ctx, api.Screenshot{
+		SourcePath: sourcePath,
+		ImagePath:  manualOld,
+		Purpose:    api.ScreenshotPurposeMenu,
+		CapturedAt: now,
+	}); err != nil {
 		t.Fatalf("save old manual screenshot: %v", err)
 	}
 	if err := repo.SaveFinalSelections(ctx, sourcePath, []api.ScreenshotFinalSelection{
-		{SourcePath: sourcePath, ImagePath: normalOld, Order: 0, Source: "generated", SelectedAt: now},
-		{SourcePath: sourcePath, ImagePath: manualOld, Order: 1, Source: api.ScreenshotSelectionSourceMenu, SelectedAt: now},
-		{SourcePath: sourcePath, ImagePath: autoOld, Order: 2, Source: api.ScreenshotSelectionSourceDVDMenu, SelectedAt: now},
+		{
+			SourcePath: sourcePath,
+			ImagePath:  normalOld,
+			Order:      0,
+			Source:     "generated",
+			SelectedAt: now,
+		},
+		{
+			SourcePath: sourcePath,
+			ImagePath:  manualOld,
+			Order:      1,
+			Source:     api.ScreenshotSelectionSourceMenu,
+			SelectedAt: now,
+		},
+		{
+			SourcePath: sourcePath,
+			ImagePath:  autoOld,
+			Order:      2,
+			Source:     api.ScreenshotSelectionSourceDVDMenu,
+			SelectedAt: now,
+		},
 	}); err != nil {
 		t.Fatalf("seed final selections: %v", err)
 	}
 
 	if err := repo.ReplaceNormalFinalSelections(ctx, sourcePath, []api.ScreenshotFinalSelection{
-		{SourcePath: sourcePath, ImagePath: normalNew, Order: 0, Source: "generated", SelectedAt: now},
+		{
+			SourcePath: sourcePath,
+			ImagePath:  normalNew,
+			Order:      0,
+			Source:     "generated",
+			SelectedAt: now,
+		},
 	}); err != nil {
 		t.Fatalf("replace normal selections: %v", err)
 	}
@@ -58,8 +92,18 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 
 	manualNew := filepath.Join(root, "manual-new.png")
 	if err := repo.AppendManualMenuScreenshots(ctx, sourcePath,
-		[]api.Screenshot{{SourcePath: sourcePath, ImagePath: manualNew, Purpose: api.ScreenshotPurposeMenu, CapturedAt: now}},
-		[]api.ScreenshotFinalSelection{{SourcePath: sourcePath, ImagePath: manualNew, Source: api.ScreenshotSelectionSourceMenu, SelectedAt: now}},
+		[]api.Screenshot{{
+			SourcePath: sourcePath,
+			ImagePath:  manualNew,
+			Purpose:    api.ScreenshotPurposeMenu,
+			CapturedAt: now,
+		}},
+		[]api.ScreenshotFinalSelection{{
+			SourcePath: sourcePath,
+			ImagePath:  manualNew,
+			Source:     api.ScreenshotSelectionSourceMenu,
+			SelectedAt: now,
+		}},
 	); err != nil {
 		t.Fatalf("append manual screenshot: %v", err)
 	}
@@ -92,8 +136,18 @@ func TestScreenshotLifecyclePreservesCategoriesAndCleansReferences(t *testing.T)
 
 	autoNew := filepath.Join(root, "auto-new.png")
 	replaced, err := repo.ReplaceDVDMenuScreenshots(ctx, sourcePath,
-		[]api.Screenshot{{SourcePath: sourcePath, ImagePath: autoNew, Purpose: api.ScreenshotPurposeMenu, CapturedAt: now}},
-		[]api.ScreenshotFinalSelection{{SourcePath: sourcePath, ImagePath: autoNew, Source: api.ScreenshotSelectionSourceDVDMenu, SelectedAt: now}},
+		[]api.Screenshot{{
+			SourcePath: sourcePath,
+			ImagePath:  autoNew,
+			Purpose:    api.ScreenshotPurposeMenu,
+			CapturedAt: now,
+		}},
+		[]api.ScreenshotFinalSelection{{
+			SourcePath: sourcePath,
+			ImagePath:  autoNew,
+			Source:     api.ScreenshotSelectionSourceDVDMenu,
+			SelectedAt: now,
+		}},
 	)
 	if err != nil {
 		t.Fatalf("replace auto screenshots: %v", err)
@@ -208,8 +262,16 @@ func TestAppendManualMenuScreenshotsRollsBackCrossSourceImageConflict(t *testing
 	}
 
 	err = repo.AppendManualMenuScreenshots(ctx, secondSource,
-		[]api.Screenshot{{SourcePath: secondSource, ImagePath: imagePath, Purpose: api.ScreenshotPurposeMenu}},
-		[]api.ScreenshotFinalSelection{{SourcePath: secondSource, ImagePath: imagePath, Source: api.ScreenshotSelectionSourceMenu}},
+		[]api.Screenshot{{
+			SourcePath: secondSource,
+			ImagePath:  imagePath,
+			Purpose:    api.ScreenshotPurposeMenu,
+		}},
+		[]api.ScreenshotFinalSelection{{
+			SourcePath: secondSource,
+			ImagePath:  imagePath,
+			Source:     api.ScreenshotSelectionSourceMenu,
+		}},
 	)
 	if !errors.Is(err, internalerrors.ErrInvalidInput) {
 		t.Fatalf("append error = %v, want invalid input", err)

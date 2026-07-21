@@ -18,10 +18,12 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/autobrr/upbrr/internal/imagehostpolicy"
+	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 	"github.com/autobrr/upbrr/internal/redaction"
 )
 
+// Config is the complete runtime and persistence configuration. Secret-aware
+// export and database APIs clone it before transforming secret fields.
 type Config struct {
 	MainSettings       MainSettingsConfig             `yaml:"main_settings"`
 	ImageHosting       ImageHostingConfig             `yaml:"image_hosting"`
@@ -262,12 +264,17 @@ type LoggingConfig struct {
 	MaxFiles       int    `yaml:"max_files"`
 }
 
+// TrackersConfig preserves ordered default selections, one preferred tracker,
+// and tracker settings keyed by configured tracker name.
 type TrackersConfig struct {
 	DefaultTrackers  CSVList                  `yaml:"default_trackers" json:"DefaultTrackers"`
 	PreferredTracker string                   `yaml:"preferred_tracker" json:"PreferredTracker"`
 	Trackers         map[string]TrackerConfig `yaml:"-" json:"Trackers"`
 }
 
+// TrackerConfig stores one tracker's supported settings. Unknown preserves
+// unsupported extension fields across load/save, excluding deprecated URL
+// fields and schema-known fields belonging to another tracker.
 type TrackerConfig struct {
 	LinkDirName         string         `yaml:"link_dir_name" json:"LinkDirName"`
 	APIKey              string         `yaml:"api_key" json:"APIKey"`
@@ -278,7 +285,6 @@ type TrackerConfig struct {
 	Passkey             string         `yaml:"passkey" json:"Passkey"`
 	AnnounceURL         string         `yaml:"announce_url" json:"AnnounceURL"`
 	MyAnnounceURL       string         `yaml:"my_announce_url" json:"MyAnnounceURL"`
-	URL                 string         `yaml:"url" json:"URL"`
 	FaviconURL          string         `yaml:"favicon_url" json:"FaviconURL"`
 	UploaderStatus      bool           `yaml:"uploader_status" json:"UploaderStatus"`
 	CustomLayout        string         `yaml:"custom_layout" json:"CustomLayout"`
@@ -316,7 +322,6 @@ type TrackerConfig struct {
 	LoginQuestion       string         `yaml:"login_question" json:"LoginQuestion"`
 	LoginAnswer         string         `yaml:"login_answer" json:"LoginAnswer"`
 	UserID              string         `yaml:"user_id" json:"UserID"`
-	Filebrowser         string         `yaml:"filebrowser" json:"Filebrowser"`
 	Internal            bool           `yaml:"internal" json:"Internal"`
 	InternalGroups      []string       `yaml:"internal_groups" json:"InternalGroups"`
 	Unknown             map[string]any `yaml:"-" json:"-"`
@@ -390,6 +395,7 @@ func trackerAllowedYAMLKeys(trackerName string) map[string]struct{} {
 	addGlobal := func(keys map[string]struct{}) map[string]struct{} {
 		keys["favicon_url"] = struct{}{}
 		keys["image_host"] = struct{}{}
+		keys["torrent_client"] = struct{}{}
 		return keys
 	}
 	if len(trackerSchema) == 0 {
@@ -443,6 +449,9 @@ func mergeUnknownKeys(target map[string]any, unknown map[string]any) {
 		return
 	}
 	for key, value := range unknown {
+		if strings.EqualFold(strings.TrimSpace(key), "url") {
+			continue
+		}
 		if _, exists := target[key]; exists {
 			continue
 		}
@@ -530,6 +539,9 @@ func extractTrackerUnknown(raw map[string]any) map[string]any {
 	initTrackerTagMetadata()
 	unknown := make(map[string]any)
 	for key, value := range raw {
+		if strings.EqualFold(strings.TrimSpace(key), "url") {
+			continue
+		}
 		if _, ok := trackerKnownJSONKeys[key]; ok {
 			continue
 		}
@@ -544,7 +556,16 @@ func extractTrackerUnknown(raw map[string]any) map[string]any {
 	return unknown
 }
 
+func stripDeprecatedTrackerURL(raw map[string]any) {
+	for key := range raw {
+		if strings.EqualFold(strings.TrimSpace(key), "url") {
+			delete(raw, key)
+		}
+	}
+}
+
 func decodeTrackerConfigFromJSON(raw map[string]any) (TrackerConfig, error) {
+	stripDeprecatedTrackerURL(raw)
 	payload, err := json.Marshal(raw)
 	if err != nil {
 		return TrackerConfig{}, fmt.Errorf("config: marshal tracker config from json: %w", err)
@@ -558,6 +579,7 @@ func decodeTrackerConfigFromJSON(raw map[string]any) (TrackerConfig, error) {
 }
 
 func decodeTrackerConfigFromYAML(raw map[string]any) (TrackerConfig, error) {
+	stripDeprecatedTrackerURL(raw)
 	payload, err := yaml.Marshal(raw)
 	if err != nil {
 		return TrackerConfig{}, fmt.Errorf("config: marshal tracker config from yaml: %w", err)
@@ -594,7 +616,11 @@ func (t TrackersConfig) MarshalJSON() ([]byte, error) {
 	}
 	preferredTracker := strings.TrimSpace(t.PreferredTracker)
 
-	payload, err := json.Marshal(trackersJSON{DefaultTrackers: defaultTrackers, PreferredTracker: preferredTracker, Trackers: trackers})
+	payload, err := json.Marshal(trackersJSON{
+		DefaultTrackers:  defaultTrackers,
+		PreferredTracker: preferredTracker,
+		Trackers:         trackers,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("config: marshal trackers config: %w", err)
 	}
@@ -733,6 +759,9 @@ func (t *TrackersConfig) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
+// TorrentClientConfig supports current qBittorrent/watch/qui fields plus
+// legacy aliases. Its resolver methods define field precedence, and marshaling
+// emits the resolved canonical values rather than duplicate aliases.
 type TorrentClientConfig struct {
 	Type          string     `yaml:"type"`
 	TorrentClient string     `yaml:"torrent_client"`
@@ -962,20 +991,6 @@ func (c Config) Validate() error {
 			if !imagehostpolicy.IsUploadHost(imageHost) {
 				return fmt.Errorf("config: trackers.%s.image_host %q is not supported", trackerName, trackerCfg.ImageHost)
 			}
-			if owner := imagehostpolicy.OwnerForHost(imageHost); owner != "" && !strings.EqualFold(strings.TrimSpace(trackerName), owner) {
-				return fmt.Errorf("config: trackers.%s.image_host %q is owned by %s", trackerName, trackerCfg.ImageHost, owner)
-			}
-			policy := imagehostpolicy.ForTracker(trackerName, trackerCfg.ImgRehost, trackerCfg.ImgAPI)
-			if len(policy.AllowedHosts) > 0 && !imagehostpolicy.HostAllowed(imageHost, policy.AllowedHosts) {
-				return fmt.Errorf("config: trackers.%s.image_host %q is not allowed for this tracker", trackerName, trackerCfg.ImageHost)
-			}
-		}
-		if !trackerCfg.ImgRehost {
-			continue
-		}
-		policy := imagehostpolicy.ForTracker(trackerName, true, trackerCfg.ImgAPI)
-		if len(policy.AllowedHosts) == 0 {
-			return fmt.Errorf("config: trackers.%s.img_rehost requires a tracker image-host policy, but none is defined", trackerName)
 		}
 	}
 
@@ -1048,29 +1063,6 @@ func lookupTorrentClient(clients map[string]TorrentClientConfig, selected string
 	return len(foldMatches) == 1
 }
 
-// DisableUnsupportedTrackerImageRehosts turns off img_rehost for trackers that
-// have no image-host policy and returns the tracker names that changed.
-func DisableUnsupportedTrackerImageRehosts(cfg *Config) []string {
-	if cfg == nil || len(cfg.Trackers.Trackers) == 0 {
-		return nil
-	}
-
-	disabled := make([]string, 0)
-	for trackerName, trackerCfg := range cfg.Trackers.Trackers {
-		if !trackerCfg.ImgRehost {
-			continue
-		}
-		policy := imagehostpolicy.ForTracker(trackerName, true, trackerCfg.ImgAPI)
-		if len(policy.AllowedHosts) != 0 {
-			continue
-		}
-		trackerCfg.ImgRehost = false
-		cfg.Trackers.Trackers[trackerName] = trackerCfg
-		disabled = append(disabled, trackerName)
-	}
-	return disabled
-}
-
 // ResolveBTNAPIToken returns the BTN tracker API key from ASCII case variants
 // of "BTN" before falling back to the legacy metadata-level token. Fuzzy or
 // Unicode-equivalent tracker names are not treated as aliases.
@@ -1106,7 +1098,7 @@ func trackerAPIKeyForExactName(trackers map[string]TrackerConfig, name string) s
 }
 
 // MergeMissingTrackerDefaults backfills tracker stubs from the embedded example
-// config so older saved configs can discover newly added trackers in the GUI.
+// config so older saved configs can discover newly added trackers in the WebUI.
 // Existing exact tracker names are preserved; ASCII case variants of "BTN" are
 // treated as the BTN entry so default backfill and legacy metadata tokens do not
 // create a duplicate canonical "BTN" entry.
@@ -1167,19 +1159,13 @@ func MergeMissingTrackerDefaultsWithReport(cfg *Config) (TrackerDefaultsMergeRep
 			continue
 		}
 		if asciiEqualFold(trackerName, "CZT") {
-			if strings.TrimSpace(existing.URL) != "" || strings.TrimSpace(existing.APIKey) != "" || strings.TrimSpace(existing.AnnounceURL) != "" {
-				existing.URL = ""
+			if strings.TrimSpace(existing.APIKey) != "" || strings.TrimSpace(existing.AnnounceURL) != "" {
 				existing.APIKey = ""
 				existing.AnnounceURL = ""
 				cfg.Trackers.Trackers[existingName] = existing
 				report.markChanged("Trackers")
 			}
 			continue
-		}
-		if strings.TrimSpace(existing.URL) == "" && strings.TrimSpace(trackerCfg.URL) != "" {
-			existing.URL = trackerCfg.URL
-			cfg.Trackers.Trackers[existingName] = existing
-			report.markChanged("Trackers")
 		}
 	}
 	if token := strings.TrimSpace(cfg.Metadata.BTNAPI); token != "" {
@@ -1201,11 +1187,10 @@ func MergeMissingTrackerDefaultsWithReport(cfg *Config) (TrackerDefaultsMergeRep
 		if !asciiEqualFold(trackerName, "CZT") {
 			continue
 		}
-		if strings.TrimSpace(trackerCfg.APIKey) == "" && strings.TrimSpace(trackerCfg.URL) == "" && strings.TrimSpace(trackerCfg.AnnounceURL) == "" {
+		if strings.TrimSpace(trackerCfg.APIKey) == "" && strings.TrimSpace(trackerCfg.AnnounceURL) == "" {
 			continue
 		}
 		trackerCfg.APIKey = ""
-		trackerCfg.URL = ""
 		trackerCfg.AnnounceURL = ""
 		cfg.Trackers.Trackers[trackerName] = trackerCfg
 		report.markChanged("Trackers")
@@ -1276,6 +1261,9 @@ func asciiEqualFold(value string, target string) bool {
 	return true
 }
 
+// QbitHost returns QuiProxyURL when set; otherwise it resolves QbitURL before
+// legacy URL, adds an http scheme when absent, and applies QbitPort when the
+// URL has no explicit port.
 func (c TorrentClientConfig) QbitHost() string {
 	if strings.TrimSpace(c.QuiProxyURL) != "" {
 		host := strings.TrimSpace(c.QuiProxyURL)
@@ -1304,6 +1292,7 @@ func (c TorrentClientConfig) QbitHost() string {
 	return parsed.String()
 }
 
+// ClientType resolves Type before legacy TorrentClient and defaults to "qbit".
 func (c TorrentClientConfig) ClientType() string {
 	if strings.TrimSpace(c.Type) != "" {
 		return strings.TrimSpace(c.Type)
@@ -1314,6 +1303,7 @@ func (c TorrentClientConfig) ClientType() string {
 	return "qbit"
 }
 
+// QbitUsername resolves QbitUser before legacy Username.
 func (c TorrentClientConfig) QbitUsername() string {
 	if strings.TrimSpace(c.QbitUser) != "" {
 		return strings.TrimSpace(c.QbitUser)
@@ -1321,6 +1311,7 @@ func (c TorrentClientConfig) QbitUsername() string {
 	return strings.TrimSpace(c.Username)
 }
 
+// QbitPassword resolves QbitPass before legacy Password.
 func (c TorrentClientConfig) QbitPassword() string {
 	if strings.TrimSpace(c.QbitPass) != "" {
 		return strings.TrimSpace(c.QbitPass)
@@ -1328,6 +1319,7 @@ func (c TorrentClientConfig) QbitPassword() string {
 	return strings.TrimSpace(c.Password)
 }
 
+// QbitCategory resolves QbitCategoryValue before legacy Category.
 func (c TorrentClientConfig) QbitCategory() string {
 	if strings.TrimSpace(c.QbitCategoryValue) != "" {
 		return strings.TrimSpace(c.QbitCategoryValue)
@@ -1335,6 +1327,8 @@ func (c TorrentClientConfig) QbitCategory() string {
 	return strings.TrimSpace(c.Category)
 }
 
+// QbitTags resolves QbitTag, then QbitTagsValue, then legacy Tags, removing
+// blank slice entries and joining multiple tags with commas.
 func (c TorrentClientConfig) QbitTags() string {
 	if strings.TrimSpace(c.QbitTag) != "" {
 		return strings.TrimSpace(c.QbitTag)
@@ -1364,6 +1358,7 @@ func (c TorrentClientConfig) QbitTags() string {
 	return ""
 }
 
+// LinkingMode returns a lowercase mode and normalizes "none" or "disabled" to empty.
 func (c TorrentClientConfig) LinkingMode() string {
 	mode := strings.ToLower(strings.TrimSpace(c.Linking))
 	switch mode {
@@ -1374,10 +1369,13 @@ func (c TorrentClientConfig) LinkingMode() string {
 	}
 }
 
+// FallbackAllowed defaults to true when AllowFallback is unset.
 func (c TorrentClientConfig) FallbackAllowed() bool {
 	return c.AllowFallback == nil || *c.AllowFallback
 }
 
+// QbitTLSSkipVerify resolves TLSSkipVerify first, then inverts the legacy
+// VerifyWebUICertificate value, and otherwise defaults to false.
 func (c TorrentClientConfig) QbitTLSSkipVerify() bool {
 	if c.TLSSkipVerify != nil {
 		return *c.TLSSkipVerify
@@ -1388,36 +1386,18 @@ func (c TorrentClientConfig) QbitTLSSkipVerify() bool {
 	return false
 }
 
+// UsesQuiProxy reports whether a non-blank QuiProxyURL is configured.
 func (c TorrentClientConfig) UsesQuiProxy() bool {
 	return strings.TrimSpace(c.QuiProxyURL) != ""
 }
 
-// ResolveTrackerDomain resolves a tracker name or raw domain into a domain name and its configured URL.
-func ResolveTrackerDomain(cfg *Config, trackerNameOrDomain string) (string, string) {
+// ResolveTrackerDomain preserves the trimmed tracker identifier in its first
+// result. Domain resolution is no longer performed, so the second result is empty.
+func ResolveTrackerDomain(_ *Config, trackerNameOrDomain string) (string, string) {
 	name := strings.TrimSpace(trackerNameOrDomain)
 	if name == "" {
 		return "", ""
 	}
-
-	if cfg != nil && cfg.Trackers.Trackers != nil {
-		for k, v := range cfg.Trackers.Trackers {
-			if strings.EqualFold(k, name) {
-				u := strings.TrimSpace(v.URL)
-				if u != "" {
-					// Prepend scheme if missing to allow url.Parse to extract hostname
-					urlString := u
-					if !strings.Contains(urlString, "://") {
-						urlString = "http://" + urlString
-					}
-					if parsed, err := url.Parse(urlString); err == nil && parsed.Hostname() != "" {
-						return parsed.Hostname(), u
-					}
-					return "", u
-				}
-			}
-		}
-	}
-
 	return name, ""
 }
 

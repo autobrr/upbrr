@@ -216,7 +216,9 @@ func (cs *CookieStore) deleteAllTrackerCookies(ctx context.Context, execer cooki
 	return nil
 }
 
-// RunInTransaction runs cookie store operations inside a single database transaction.
+// RunInTransaction commits the callback's cookie-store operations as one
+// transaction. Callback and commit failures trigger rollback; a rollback
+// failure is joined with the original error.
 func (cs *CookieStore) RunInTransaction(ctx context.Context, fn func(tx *sql.Tx) error) (err error) {
 	if ctx == nil {
 		return errors.New("RunInTransaction: context is required")
@@ -251,7 +253,7 @@ func (cs *CookieStore) RunInTransaction(ctx context.Context, fn func(tx *sql.Tx)
 	return nil
 }
 
-// HasCookies checks if a tracker has any cookies in the database.
+// HasCookies reports whether trackerID has at least one stored cookie.
 func (cs *CookieStore) HasCookies(ctx context.Context, trackerID string) (bool, error) {
 	if ctx == nil {
 		return false, errors.New("HasCookies: context is required")

@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -262,7 +263,12 @@ func TestScoreCandidateHonorsThresholdShape(t *testing.T) {
 	scoreCandidate(&candidate, &discparse.BDInfo{
 		SizeGB: 70,
 		Video:  []discparse.BDVideo{{Codec: "HEVC", Resolution: "2160p"}},
-		Audio:  []discparse.BDAudio{{Language: "English", Codec: "Dolby TrueHD", Channels: "7.1", Atmos: "Atmos"}},
+		Audio: []discparse.BDAudio{{
+			Language: "English",
+			Codec:    "Dolby TrueHD",
+			Channels: "7.1",
+			Atmos:    "Atmos",
+		}},
 		Subtitles: []string{
 			"English",
 		},
@@ -336,9 +342,14 @@ func TestScoreCandidateEdgeCases(t *testing.T) {
 				candidate.Specs.Subtitles = []string{"SDH English"}
 			},
 			bdinfo: &discparse.BDInfo{
-				SizeGB:    70,
-				Video:     []discparse.BDVideo{{Codec: "HEVC", Resolution: "2160p"}},
-				Audio:     []discparse.BDAudio{{Language: "English", Codec: "Dolby TrueHD", Channels: "7.1", Atmos: "Atmos"}},
+				SizeGB: 70,
+				Video:  []discparse.BDVideo{{Codec: "HEVC", Resolution: "2160p"}},
+				Audio: []discparse.BDAudio{{
+					Language: "English",
+					Codec:    "Dolby TrueHD",
+					Channels: "7.1",
+					Atmos:    "Atmos",
+				}},
 				Subtitles: []string{"English SDH"},
 			},
 			wantScore: 100,
@@ -401,18 +412,18 @@ func matchingSpecs() api.BluraySpecs {
 
 func matchingBDInfo() *discparse.BDInfo {
 	return &discparse.BDInfo{
-		SizeGB:    70,
-		Video:     []discparse.BDVideo{{Codec: "HEVC", Resolution: "2160p"}},
-		Audio:     []discparse.BDAudio{{Language: "English", Codec: "Dolby TrueHD", Channels: "7.1", Atmos: "Atmos"}},
+		SizeGB: 70,
+		Video:  []discparse.BDVideo{{Codec: "HEVC", Resolution: "2160p"}},
+		Audio: []discparse.BDAudio{{
+			Language: "English",
+			Codec:    "Dolby TrueHD",
+			Channels: "7.1",
+			Atmos:    "Atmos",
+		}},
 		Subtitles: []string{"English"},
 	}
 }
 
 func hasNote(notes []string, want string) bool {
-	for _, note := range notes {
-		if note == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(notes, want)
 }

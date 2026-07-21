@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -47,7 +48,7 @@ func ImportFromFile(path string) (*config.Config, []string, error) {
 	}
 
 	cfg, err := parseNative(filepath.Base(path), data)
-	return finalize(cfg, nil, err)
+	return finalize(cfg, deprecatedTrackerURLWarnings(filepath.Base(path), data), err)
 }
 
 // ImportFromContent parses raw file content. The filename is used only to
@@ -64,21 +65,13 @@ func ImportFromContent(filename string, data []byte) (*config.Config, []string, 
 	}
 
 	cfg, err := parseNative(filename, data)
-	return finalize(cfg, nil, err)
+	return finalize(cfg, deprecatedTrackerURLWarnings(filename, data), err)
 }
 
-// finalize applies sanitization that should happen on every import regardless
-// of source format: disabling image rehosts for trackers that do not support
-// them. Disabled trackers are appended to the warning list so users see why
-// their setting changed.
+// finalize returns parser warnings after source-independent migration has run.
 func finalize(cfg *config.Config, warnings []string, err error) (*config.Config, []string, error) {
 	if err != nil {
 		return nil, nil, err
-	}
-	if disabled := config.DisableUnsupportedTrackerImageRehosts(cfg); len(disabled) > 0 {
-		for _, name := range disabled {
-			warnings = append(warnings, "disabled unsupported img_rehost for tracker: "+name)
-		}
 	}
 	return cfg, warnings, nil
 }
@@ -316,4 +309,54 @@ func torrentClientSchemaMap(path string) map[string]any {
 
 func isPythonFile(filename string) bool {
 	return strings.ToLower(filepath.Ext(filename)) == ".py"
+}
+
+func deprecatedTrackerURLWarnings(filename string, data []byte) []string {
+	root := map[string]any{}
+	switch strings.ToLower(filepath.Ext(filename)) {
+	case ".yaml", ".yml":
+		if yaml.Unmarshal(data, &root) != nil {
+			return nil
+		}
+		section := foldedMapValue(root, "trackers")
+		trackersRaw := foldedMapValue(section, "trackers")
+		return trackerURLWarnings(trackersRaw, "trackers.trackers")
+	case ".json":
+		if json.Unmarshal(data, &root) != nil {
+			return nil
+		}
+		section := foldedMapValue(root, "Trackers")
+		trackersRaw := foldedMapValue(section, "Trackers")
+		return trackerURLWarnings(trackersRaw, "Trackers.Trackers")
+	default:
+		return nil
+	}
+}
+
+func foldedMapValue(values map[string]any, key string) map[string]any {
+	for candidate, value := range values {
+		if !strings.EqualFold(strings.TrimSpace(candidate), key) {
+			continue
+		}
+		mapped, _ := value.(map[string]any)
+		return mapped
+	}
+	return nil
+}
+
+func trackerURLWarnings(entries map[string]any, prefix string) []string {
+	warnings := make([]string, 0)
+	for tracker, raw := range entries {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		for key := range entry {
+			if strings.EqualFold(strings.TrimSpace(key), "url") {
+				warnings = append(warnings, fmt.Sprintf("ignored deprecated tracker URL: %s.%s.%s", prefix, tracker, key))
+			}
+		}
+	}
+	slices.Sort(warnings)
+	return warnings
 }

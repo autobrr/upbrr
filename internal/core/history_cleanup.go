@@ -12,28 +12,28 @@ import (
 	"strings"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
-	"github.com/autobrr/upbrr/internal/paths"
-	"github.com/autobrr/upbrr/internal/pathutil"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func (c *Core) DeleteAllHistoryReleases(ctx context.Context) (int, error) {
+func (h *historyModule) DeleteAll(ctx context.Context) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, fmt.Errorf("core: delete all history releases canceled: %w", err)
 	}
-	if c.repo == nil {
+	if h == nil || h.repo == nil {
 		return 0, errors.New("core: repository not initialized")
 	}
 
-	storedPaths, err := c.repo.ListStoredReleasePaths(ctx)
+	storedPaths, err := h.repo.ListStoredReleasePaths(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("core: list stored release paths: %w", err)
 	}
 
 	deleted := 0
 	for _, sourcePath := range storedPaths {
-		if err := c.deleteStoredRelease(ctx, sourcePath); err != nil {
+		if err := h.deleteStoredRelease(ctx, sourcePath); err != nil {
 			return deleted, err
 		}
 		deleted++
@@ -42,7 +42,21 @@ func (c *Core) DeleteAllHistoryReleases(ctx context.Context) (int, error) {
 	return deleted, nil
 }
 
-func (c *Core) deleteStoredRelease(ctx context.Context, sourcePath string) error {
+func (h *historyModule) Delete(ctx context.Context, sourcePath string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("core: delete history release canceled: %w", err)
+	}
+	trimmed := strings.TrimSpace(sourcePath)
+	if trimmed == "" {
+		return internalerrors.ErrInvalidInput
+	}
+	if h == nil || h.repo == nil {
+		return errors.New("core: repository not initialized")
+	}
+	return h.deleteStoredRelease(ctx, trimmed)
+}
+
+func (h *historyModule) deleteStoredRelease(ctx context.Context, sourcePath string) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("core: delete stored release canceled: %w", err)
 	}
@@ -50,24 +64,24 @@ func (c *Core) deleteStoredRelease(ctx context.Context, sourcePath string) error
 	if trimmedPath == "" {
 		return internalerrors.ErrInvalidInput
 	}
-	if c.repo == nil {
+	if h == nil || h.repo == nil {
 		return errors.New("core: repository not initialized")
 	}
 
-	tmpRoot, err := db.Subdir(c.cfg.MainSettings.DBPath, "tmp")
+	tmpRoot, err := db.Subdir(h.dbPath, "tmp")
 	if err != nil {
 		return fmt.Errorf("core: delete history release: resolve tmp dir: %w", err)
 	}
-	cacheRoot, err := db.Subdir(c.cfg.MainSettings.DBPath, "cache")
+	cacheRoot, err := db.Subdir(h.dbPath, "cache")
 	if err != nil {
 		return fmt.Errorf("core: delete history release: resolve cache dir: %w", err)
 	}
-	nfoRoot, err := db.Subdir(c.cfg.MainSettings.DBPath, "nfo")
+	nfoRoot, err := db.Subdir(h.dbPath, "nfo")
 	if err != nil {
 		return fmt.Errorf("core: delete history release: resolve nfo dir: %w", err)
 	}
 
-	cleanupPaths, err := c.releaseCleanupPaths(ctx, trimmedPath)
+	cleanupPaths, err := h.releaseCleanupPaths(ctx, trimmedPath)
 	if err != nil {
 		return err
 	}
@@ -75,7 +89,7 @@ func (c *Core) deleteStoredRelease(ctx context.Context, sourcePath string) error
 	artifactPaths := make([]string, 0)
 	tmpDirs := make(map[string]struct{})
 	for _, cleanupPath := range cleanupPaths {
-		pathArtifacts, pathTmpDirs, err := c.collectReleaseCleanupTargets(ctx, cleanupPath, tmpRoot)
+		pathArtifacts, pathTmpDirs, err := h.collectReleaseCleanupTargets(ctx, cleanupPath, tmpRoot)
 		if err != nil {
 			return err
 		}
@@ -85,60 +99,70 @@ func (c *Core) deleteStoredRelease(ctx context.Context, sourcePath string) error
 		}
 	}
 
-	addDirectoryChildTempDirs(trimmedPath, tmpRoot, tmpDirs)
+	addDirectoryChildTempDirs(h.fs, trimmedPath, tmpRoot, tmpDirs)
 
 	fileRoots := []string{tmpRoot, cacheRoot, nfoRoot}
 	for _, filePath := range artifactPaths {
-		if _, err := ensureRemovableWithinRoots(fileRoots, filePath, false); err != nil {
+		if _, err := ensureRemovableWithinRootsFS(h.fs, fileRoots, filePath, false); err != nil {
 			return fmt.Errorf("core: delete history release validate file %q: %w", filePath, err)
 		}
 	}
 	for dir := range tmpDirs {
-		if _, err := ensureRemovableWithinRoot(tmpRoot, dir, true); err != nil {
+		if _, err := ensureRemovableWithinRootFS(h.fs, tmpRoot, dir, true); err != nil {
 			return fmt.Errorf("core: delete history release validate tmp dir %q: %w", dir, err)
 		}
 	}
-	for _, cleanupPath := range cleanupPaths {
-		if err := c.repo.PurgeContentData(ctx, cleanupPath); err != nil {
-			return fmt.Errorf("core: delete history release: %w", err)
+	deletePrepared := func(workCtx context.Context, invalidate func(string)) error {
+		for _, cleanupPath := range cleanupPaths {
+			if err := h.repo.PurgeContentData(workCtx, cleanupPath); err != nil {
+				return fmt.Errorf("core: delete history release: %w", err)
+			}
+			invalidate(cleanupPath)
+		}
+		for _, filePath := range artifactPaths {
+			removed, err := removeIfWithinRootsFS(h.fs, fileRoots, filePath, false)
+			if err != nil {
+				return fmt.Errorf("core: delete history release remove file %q: %w", filePath, err)
+			}
+			if removed && h.logger != nil {
+				h.logger.Debugf("core: delete history release removed file %s", filePath)
+			}
+		}
+		for dir := range tmpDirs {
+			removed, err := removeIfWithinRootFS(h.fs, tmpRoot, dir, true)
+			if err != nil {
+				return fmt.Errorf("core: delete history release remove tmp dir %q: %w", dir, err)
+			}
+			if removed && h.logger != nil {
+				h.logger.Debugf("core: delete history release removed tmp dir %s", dir)
+			}
+		}
+		if h.logger != nil {
+			h.logger.Infof("core: delete history release completed path=%s", trimmedPath)
+		}
+		return nil
+	}
+	if h.preparedFacts != nil {
+		for _, cleanupPath := range cleanupPaths {
+			if err := h.preparedFacts.Purge(ctx, cleanupPath); err != nil {
+				return fmt.Errorf("core: purge prepared release %q: %w", cleanupPath, err)
+			}
 		}
 	}
-	for _, filePath := range artifactPaths {
-		removed, err := removeIfWithinRoots(fileRoots, filePath, false)
-		if err != nil {
-			return fmt.Errorf("core: delete history release remove file %q: %w", filePath, err)
-		}
-		if removed && c.logger != nil {
-			c.logger.Debugf("core: delete history release removed file %s", filePath)
-		}
-	}
-	for dir := range tmpDirs {
-		removed, err := removeIfWithinRoot(tmpRoot, dir, true)
-		if err != nil {
-			return fmt.Errorf("core: delete history release remove tmp dir %q: %w", dir, err)
-		}
-		if removed && c.logger != nil {
-			c.logger.Debugf("core: delete history release removed tmp dir %s", dir)
-		}
-	}
-	if c.logger != nil {
-		c.logger.Infof("core: delete history release completed path=%s", trimmedPath)
-	}
-
-	return nil
+	return deletePrepared(ctx, func(string) {})
 }
 
-func (c *Core) releaseCleanupPaths(ctx context.Context, sourcePath string) ([]string, error) {
+func (h *historyModule) releaseCleanupPaths(ctx context.Context, sourcePath string) ([]string, error) {
 	cleanupPaths := []string{sourcePath}
-	if c.repo == nil {
+	if h.repo == nil {
 		return cleanupPaths, nil
 	}
-	storedPaths, err := c.repo.ListStoredReleasePaths(ctx)
+	storedPaths, err := h.repo.ListStoredReleasePaths(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("core: delete history release list stored paths: %w", err)
 	}
 	for _, storedPath := range storedPaths {
-		if !releasePathRelated(sourcePath, storedPath) {
+		if !releasePathRelated(h.fs, sourcePath, storedPath) {
 			continue
 		}
 		cleanupPaths = append(cleanupPaths, storedPath)
@@ -146,7 +170,7 @@ func (c *Core) releaseCleanupPaths(ctx context.Context, sourcePath string) ([]st
 	return compactStrings(cleanupPaths), nil
 }
 
-func releasePathRelated(sourcePath string, storedPath string) bool {
+func releasePathRelated(filesystem historyFilesystem, sourcePath string, storedPath string) bool {
 	sourcePath = strings.TrimSpace(sourcePath)
 	storedPath = strings.TrimSpace(storedPath)
 	if sourcePath == "" || storedPath == "" {
@@ -155,7 +179,7 @@ func releasePathRelated(sourcePath string, storedPath string) bool {
 	if pathutil.SamePath(sourcePath, storedPath) {
 		return true
 	}
-	info, err := os.Stat(sourcePath)
+	info, err := filesystem.Stat(sourcePath)
 	if err != nil || !info.IsDir() {
 		return false
 	}
@@ -170,62 +194,31 @@ func releasePathRelated(sourcePath string, storedPath string) bool {
 	return pathutil.IsWithinRoot(absSource, absStored)
 }
 
-func (c *Core) collectReleaseCleanupTargets(ctx context.Context, sourcePath string, tmpRoot string) ([]string, map[string]struct{}, error) {
+func (h *historyModule) collectReleaseCleanupTargets(ctx context.Context, sourcePath string, tmpRoot string) ([]string, map[string]struct{}, error) {
 	artifactPaths := make([]string, 0)
 
-	shots, err := c.repo.ListScreenshotsByPath(ctx, sourcePath)
+	snapshot, err := h.repo.LoadHistoryCleanupSnapshot(ctx, sourcePath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("core: delete history release list screenshots: %w", err)
+		return nil, nil, fmt.Errorf("core: delete history release load cleanup snapshot: %w", err)
 	}
-	for _, shot := range shots {
-		artifactPaths = append(artifactPaths, shot.ImagePath)
-	}
-
-	uploaded, err := c.repo.ListUploadedImagesByPath(ctx, sourcePath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("core: delete history release list uploaded images: %w", err)
-	}
-	for _, image := range uploaded {
-		artifactPaths = append(artifactPaths, image.ImagePath)
-	}
-
-	finals, err := c.repo.ListFinalSelections(ctx, sourcePath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("core: delete history release list final selections: %w", err)
-	}
-	for _, image := range finals {
-		artifactPaths = append(artifactPaths, image.ImagePath)
-	}
-
-	slots, err := c.repo.ListScreenshotSlotsByPath(ctx, sourcePath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("core: delete history release list screenshot slots: %w", err)
-	}
-	for _, slot := range slots {
-		artifactPaths = append(artifactPaths, slot.ImagePath)
-		for _, variant := range slot.Variants {
-			artifactPaths = append(artifactPaths, variant.ImagePath)
-		}
-	}
+	artifactPaths = append(artifactPaths, snapshot.ArtifactPaths...)
 
 	artifactPaths = compactStrings(artifactPaths)
 	tmpDirs := make(map[string]struct{})
-	fallbackBase := paths.ReleaseTempBase(api.PreparedMetadata{}, sourcePath)
+	fallbackBase := paths.ReleaseTempBaseFor(sourcePath, api.ReleaseInfo{})
 	tmpDirs[filepath.Join(tmpRoot, fallbackBase)] = struct{}{}
 
-	stored, err := c.repo.GetByPath(ctx, sourcePath)
-	if err == nil {
-		releaseBase := paths.ReleaseTempBase(api.PreparedMetadata{
-			Release: api.ReleaseInfo{
-				Title:    stored.Title,
-				Alt:      stored.Alt,
-				Year:     stored.Year,
-				Category: string(stored.Category),
-				Source:   stored.Source,
-				Type:     stored.Type,
-				Group:    stored.Group,
-			},
-		}, sourcePath)
+	if snapshot.Metadata != nil {
+		stored := *snapshot.Metadata
+		releaseBase := paths.ReleaseTempBaseFor(sourcePath, api.ReleaseInfo{
+			Title:    stored.Title,
+			Alt:      stored.Alt,
+			Year:     stored.Year,
+			Category: string(stored.Category),
+			Source:   stored.Source,
+			Type:     stored.Type,
+			Group:    stored.Group,
+		})
 		tmpDirs[filepath.Join(tmpRoot, releaseBase)] = struct{}{}
 	}
 	for _, filePath := range artifactPaths {
@@ -239,18 +232,18 @@ func (c *Core) collectReleaseCleanupTargets(ctx context.Context, sourcePath stri
 	return artifactPaths, tmpDirs, nil
 }
 
-func addDirectoryChildTempDirs(sourcePath string, tmpRoot string, tmpDirs map[string]struct{}) {
-	info, err := os.Stat(sourcePath)
+func addDirectoryChildTempDirs(filesystem historyFilesystem, sourcePath string, tmpRoot string, tmpDirs map[string]struct{}) {
+	info, err := filesystem.Stat(sourcePath)
 	if err != nil || !info.IsDir() {
 		return
 	}
-	entries, err := os.ReadDir(sourcePath)
+	entries, err := filesystem.ReadDir(sourcePath)
 	if err != nil {
 		return
 	}
 	for _, entry := range entries {
 		childPath := filepath.Join(sourcePath, entry.Name())
-		base := paths.ReleaseTempBase(api.PreparedMetadata{}, childPath)
+		base := paths.ReleaseTempBaseFor(childPath, api.ReleaseInfo{})
 		if strings.TrimSpace(base) == "" {
 			continue
 		}
@@ -305,8 +298,8 @@ func resolveContentTmpRoot(tmpRoot string, candidate string) (string, bool) {
 	return filepath.Join(absTmpRoot, parts[0]), true
 }
 
-func removeIfWithinRoot(root string, target string, recursive bool) (bool, error) {
-	absTarget, shouldRemove, err := inspectCleanupTarget(root, target, recursive)
+func removeIfWithinRootFS(filesystem historyFilesystem, root string, target string, recursive bool) (bool, error) {
+	absTarget, shouldRemove, err := inspectCleanupTargetFS(filesystem, root, target, recursive)
 	if err != nil {
 		return false, err
 	}
@@ -314,26 +307,26 @@ func removeIfWithinRoot(root string, target string, recursive bool) (bool, error
 		return false, nil
 	}
 	if recursive {
-		if err := os.RemoveAll(absTarget); err != nil {
+		if err := filesystem.RemoveAll(absTarget); err != nil {
 			return false, fmt.Errorf("cleanup history artifact: remove target tree: %w", err)
 		}
 		return true, nil
 	}
-	if err := os.Remove(absTarget); err != nil && !os.IsNotExist(err) {
+	if err := filesystem.Remove(absTarget); err != nil && !os.IsNotExist(err) {
 		return false, fmt.Errorf("cleanup history artifact: remove target: %w", err)
 	}
-	if _, err := os.Stat(absTarget); err == nil {
+	if _, err := filesystem.Stat(absTarget); err == nil {
 		return false, nil
 	}
 	return true, nil
 }
 
-func ensureRemovableWithinRoot(root string, target string, recursive bool) (bool, error) {
-	_, shouldRemove, err := inspectCleanupTarget(root, target, recursive)
+func ensureRemovableWithinRootFS(filesystem historyFilesystem, root string, target string, recursive bool) (bool, error) {
+	_, shouldRemove, err := inspectCleanupTargetFS(filesystem, root, target, recursive)
 	return shouldRemove, err
 }
 
-func inspectCleanupTarget(root string, target string, recursive bool) (string, bool, error) {
+func inspectCleanupTargetFS(filesystem historyFilesystem, root string, target string, recursive bool) (string, bool, error) {
 	trimmed := strings.TrimSpace(target)
 	if trimmed == "" {
 		return "", false, nil
@@ -352,7 +345,7 @@ func inspectCleanupTarget(root string, target string, recursive bool) (string, b
 	if !pathutil.IsWithinRoot(absRoot, absTarget) {
 		return "", false, nil
 	}
-	info, err := os.Stat(absTarget)
+	info, err := filesystem.Stat(absTarget)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return absTarget, false, nil
@@ -365,13 +358,13 @@ func inspectCleanupTarget(root string, target string, recursive bool) (string, b
 	return absTarget, true, nil
 }
 
-func removeIfWithinRoots(roots []string, target string, recursive bool) (bool, error) {
+func removeIfWithinRootsFS(filesystem historyFilesystem, roots []string, target string, recursive bool) (bool, error) {
 	for _, root := range roots {
 		trimmed := strings.TrimSpace(root)
 		if trimmed == "" {
 			continue
 		}
-		removed, err := removeIfWithinRoot(trimmed, target, recursive)
+		removed, err := removeIfWithinRootFS(filesystem, trimmed, target, recursive)
 		if err != nil {
 			return false, err
 		}
@@ -382,13 +375,13 @@ func removeIfWithinRoots(roots []string, target string, recursive bool) (bool, e
 	return false, nil
 }
 
-func ensureRemovableWithinRoots(roots []string, target string, recursive bool) (bool, error) {
+func ensureRemovableWithinRootsFS(filesystem historyFilesystem, roots []string, target string, recursive bool) (bool, error) {
 	for _, root := range roots {
 		trimmed := strings.TrimSpace(root)
 		if trimmed == "" {
 			continue
 		}
-		removable, err := ensureRemovableWithinRoot(trimmed, target, recursive)
+		removable, err := ensureRemovableWithinRootFS(filesystem, trimmed, target, recursive)
 		if err != nil {
 			return false, err
 		}

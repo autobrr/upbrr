@@ -9,16 +9,16 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func resolveTMDBGenres(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.TMDB != nil {
-		return strings.TrimSpace(meta.ExternalMetadata.TMDB.Genres)
+func resolveTMDBGenres(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.TMDB != nil {
+		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres)
 	}
 	return ""
 }
 
-func resolveIMDBGenres(meta api.PreparedMetadata) string {
-	if meta.ExternalMetadata.IMDB != nil {
-		return strings.TrimSpace(meta.ExternalMetadata.IMDB.Genres)
+func resolveIMDBGenres(meta api.UploadSubject) string {
+	if meta.ProviderMetadata.IMDB != nil {
+		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres)
 	}
 	return ""
 }

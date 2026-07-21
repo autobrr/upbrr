@@ -24,7 +24,6 @@ import (
 	"github.com/pkg/browser"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/guiapp"
 	"github.com/autobrr/upbrr/internal/redaction"
 )
 
@@ -45,7 +44,6 @@ type Server struct {
 	cfg                config.Config
 	cliCfg             CLIConfig
 	backend            *Backend
-	picker             nativePicker
 	auth               *authStore
 	sessions           *sessionManager
 	hub                *eventHub
@@ -101,6 +99,7 @@ func New(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	sessions.SetRemovedCallback(backend.removeJobOwner)
 	sessionsClosed := false
 	defer func() {
 		if !sessionsClosed {
@@ -111,7 +110,6 @@ func New(opts Options) (*Server, error) {
 		cfg:            cfg,
 		cliCfg:         cliCfg,
 		backend:        backend,
-		picker:         newNativePicker(),
 		auth:           authStore,
 		sessions:       sessions,
 		hub:            hub,
@@ -387,14 +385,14 @@ func unwrapBrowserIPv6Host(host string) (string, bool) {
 }
 
 func resolveWebAssets() (fs.FS, error) {
-	assets, err := guiapp.ResolveAssets(nil)
+	assets, err := resolveAssets(nil)
 	if err == nil {
 		return assets, nil
 	}
 
-	// Keep the legacy repo-local fallback so local development can still serve
-	// generated assets even if embedding was skipped for some reason.
-	distPath := filepath.Join("gui", "frontend", "dist")
+	// Keep the repo-local fallback so local development can still serve
+	// generated assets when embedding was skipped.
+	distPath := filepath.Join("webui", "dist")
 	if stat, statErr := os.Stat(filepath.Join(distPath, "index.html")); statErr == nil && !stat.IsDir() {
 		return os.DirFS(distPath), nil
 	}

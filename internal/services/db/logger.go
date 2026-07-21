@@ -3,6 +3,9 @@
 
 package db
 
+// Logger receives repository lifecycle, retry, and maintenance diagnostics.
+// Repository operations do not require an error-level method because returned
+// errors remain caller-owned.
 type Logger interface {
 	Debugf(format string, args ...any)
 	Infof(format string, args ...any)

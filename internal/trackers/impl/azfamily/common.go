@@ -39,20 +39,15 @@ type languageBundle struct {
 	Subtitles []string
 }
 
-func category(meta api.PreparedMetadata) string {
-	if value := strings.TrimSpace(meta.ExternalIDs.Category); value != "" {
-		return value
+func category(meta api.UploadSubject) string {
+	value, err := meta.Identity.RequireCategory()
+	if err != nil {
+		return ""
 	}
-	if value := strings.TrimSpace(meta.MediaInfoCategory); value != "" {
-		return value
-	}
-	if meta.ExternalMetadata.TMDB != nil && strings.TrimSpace(meta.ExternalMetadata.TMDB.Category) != "" {
-		return meta.ExternalMetadata.TMDB.Category
-	}
-	return "MOVIE"
+	return string(value)
 }
 
-func categoryID(meta api.PreparedMetadata) string {
+func categoryID(meta api.UploadSubject) string {
 	switch strings.ToUpper(strings.TrimSpace(category(meta))) {
 	case "MOVIE":
 		return "1"
@@ -63,52 +58,56 @@ func categoryID(meta api.PreparedMetadata) string {
 	}
 }
 
-func categorySlug(meta api.PreparedMetadata) string {
-	if strings.EqualFold(category(meta), "TV") {
+func categorySlug(meta api.UploadSubject) string {
+	switch strings.ToUpper(category(meta)) {
+	case "TV":
 		return "tv"
+	case "MOVIE":
+		return "movie"
+	default:
+		return ""
 	}
-	return "movie"
 }
 
-func isTV(meta api.PreparedMetadata) bool {
+func isTV(meta api.UploadSubject) bool {
 	return strings.EqualFold(category(meta), "TV")
 }
 
-func imdbForLookup(meta api.PreparedMetadata) string {
-	if meta.ExternalIDs.IMDBID != 0 {
-		return fmt.Sprintf("tt%07d", meta.ExternalIDs.IMDBID)
+func imdbForLookup(meta api.UploadSubject) string {
+	if meta.Identity.IMDBID != 0 {
+		return fmt.Sprintf("tt%07d", meta.Identity.IMDBID)
 	}
 	return ""
 }
 
-func tmdbForLookup(meta api.PreparedMetadata) string {
-	if meta.ExternalIDs.TMDBID != 0 {
-		return strconv.Itoa(meta.ExternalIDs.TMDBID)
+func tmdbForLookup(meta api.UploadSubject) string {
+	if meta.Identity.TMDBID != 0 {
+		return strconv.Itoa(meta.Identity.TMDBID)
 	}
 	return ""
 }
 
 // tvdbForLookup returns a TVDB search value only for identified TV content.
-func tvdbForLookup(meta api.PreparedMetadata) string {
-	if isTV(meta) && meta.ExternalIDs.TVDBID > 0 {
-		return strconv.Itoa(meta.ExternalIDs.TVDBID)
+func tvdbForLookup(meta api.UploadSubject) string {
+	if isTV(meta) && meta.Identity.TVDBID > 0 {
+		return strconv.Itoa(meta.Identity.TVDBID)
 	}
 	return ""
 }
 
-func lookupTitle(meta api.PreparedMetadata) string {
+func lookupTitle(meta api.UploadSubject) string {
 	if title := strings.TrimSpace(meta.Release.Title); title != "" {
 		return title
 	}
-	if meta.ExternalMetadata.TMDB != nil {
-		if title := strings.TrimSpace(meta.ExternalMetadata.TMDB.Title); title != "" {
+	if meta.ProviderMetadata.TMDB != nil {
+		if title := strings.TrimSpace(meta.ProviderMetadata.TMDB.Title); title != "" {
 			return title
 		}
 	}
 	return strings.TrimSpace(meta.Filename)
 }
 
-func tvCode(meta api.PreparedMetadata) string {
+func tvCode(meta api.UploadSubject) string {
 	if meta.SeasonInt <= 0 || meta.EpisodeInt <= 0 {
 		return ""
 	}
@@ -125,7 +124,7 @@ func detectResolution(value string) string {
 	return ""
 }
 
-func resolutionValue(meta api.PreparedMetadata) string {
+func resolutionValue(meta api.UploadSubject) string {
 	resolution := strings.TrimSpace(meta.Release.Resolution)
 	if resolution == "" {
 		resolution = detectResolution(meta.ReleaseName)
@@ -139,7 +138,7 @@ func resolutionValue(meta api.PreparedMetadata) string {
 	return resolution
 }
 
-func videoQualityID(site siteDefinition, meta api.PreparedMetadata) string {
+func videoQualityID(site siteDefinition, meta api.UploadSubject) string {
 	resolution := strings.ToLower(strings.TrimSpace(meta.Release.Resolution))
 	if resolution == "" {
 		resolution = strings.ToLower(detectResolution(meta.ReleaseName))
@@ -166,7 +165,7 @@ func videoQualityID(site siteDefinition, meta api.PreparedMetadata) string {
 	}
 }
 
-func ripTypeName(meta api.PreparedMetadata) string {
+func ripTypeName(meta api.UploadSubject) string {
 	typeValue := strings.ToLower(strings.TrimSpace(meta.Type))
 	source := strings.ToLower(strings.TrimSpace(meta.Source))
 	discType := strings.ToLower(strings.TrimSpace(meta.DiscType))
@@ -218,7 +217,7 @@ func ripTypeName(meta api.PreparedMetadata) string {
 	}
 }
 
-func ripTypeID(meta api.PreparedMetadata) string {
+func ripTypeID(meta api.UploadSubject) string {
 	switch ripTypeName(meta) {
 	case "BDRip":
 		return "1"
@@ -259,7 +258,7 @@ func ripTypeID(meta api.PreparedMetadata) string {
 	}
 }
 
-func anonEnabled(req trackers.UploadRequest) bool {
+func anonEnabled(req trackers.PreparationInput) bool {
 	return req.TrackerConfig.Anon
 }
 

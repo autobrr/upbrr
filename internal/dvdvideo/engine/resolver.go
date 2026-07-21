@@ -69,7 +69,8 @@ func newDirectoryResolver(root string, scan nav.CellScanOptions) (*directoryReso
 			continue
 		}
 		upper := strings.ToUpper(entry.Name())
-		if entry.Type()&os.ModeSymlink != 0 && (upper == "VIDEO_TS.VOB" || len(upper) == len("VTS_01_0.VOB") && strings.HasPrefix(upper, "VTS_") && strings.HasSuffix(upper, "_0.VOB")) {
+		if entry.Type()&os.ModeSymlink != 0 &&
+			(upper == "VIDEO_TS.VOB" || len(upper) == len("VTS_01_0.VOB") && strings.HasPrefix(upper, "VTS_") && strings.HasSuffix(upper, "_0.VOB")) {
 			return nil, fmt.Errorf("%w: menu VOB symlink", ErrLiveState)
 		}
 		switch {
@@ -112,7 +113,12 @@ func (r *directoryResolver) programChain(coordinate graph.Coordinate) ifo.Progra
 }
 
 func coordinateLookupKey(coordinate graph.Coordinate) coordinateKey {
-	return coordinateKey{kind: coordinate.Kind, vts: coordinate.VTS, language: coordinate.LanguageUnit, pgc: coordinate.PGC}
+	return coordinateKey{
+		kind:     coordinate.Kind,
+		vts:      coordinate.VTS,
+		language: coordinate.LanguageUnit,
+		pgc:      coordinate.PGC,
+	}
 }
 
 // resolve scans one authored cell, selects live NAV/SPU/highlight state, and
@@ -294,7 +300,11 @@ func selectOverlay(fragments []nav.SPUFragment, pgc ifo.ProgramChain, registers 
 			continue
 		}
 		for _, packet := range complete {
-			packets = append(packets, timedSPUPacket{packet: packet, pts: streamPTS[index], hasPTS: streamHasPTS[index]})
+			packets = append(packets, timedSPUPacket{
+				packet: packet,
+				pts:    streamPTS[index],
+				hasPTS: streamHasPTS[index],
+			})
 			streamHasPTS[index] = false
 		}
 	}

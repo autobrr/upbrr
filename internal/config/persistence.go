@@ -26,12 +26,14 @@ const (
 	exportFormatJSON
 )
 
-// ExportToYAML writes the config to a YAML file.
+// ExportToYAML writes YAML with known secret fields encrypted. It creates the
+// parent directory and writes the destination with mode 0600.
 func ExportToYAML(cfg *Config, path string) error {
 	return exportToFile(cfg, path, exportFormatYAML, true)
 }
 
-// ExportToPlaintextYAML writes the config to a YAML file without encrypting secret fields.
+// ExportToPlaintextYAML writes YAML without encrypting secret fields. It still
+// uses mode 0600, but callers must treat the file as secret-bearing.
 func ExportToPlaintextYAML(cfg *Config, path string) error {
 	return exportToFile(cfg, path, exportFormatYAML, false)
 }
@@ -81,7 +83,9 @@ func exportToFile(cfg *Config, path string, format exportFormat, encryptSecrets 
 	return nil
 }
 
-// ImportFromYAML reads the config from a YAML file.
+// ImportFromYAML reads YAML and decrypts recognized secret envelopes. It does
+// not overlay embedded defaults, apply environment overrides, or validate the
+// resulting config.
 func ImportFromYAML(path string) (*Config, error) {
 	if path == "" {
 		return nil, errors.New("config import: empty path")
@@ -108,12 +112,13 @@ func ImportFromYAML(path string) (*Config, error) {
 	return decryptedCfg, nil
 }
 
-// ExportToJSON serializes the config to a JSON string.
+// ExportToJSON returns indented JSON with known secret fields encrypted.
 func ExportToJSON(cfg *Config) (string, error) {
 	return exportToJSON(cfg, true)
 }
 
-// ExportToPlaintextJSON serializes the config to JSON without encrypting secret fields.
+// ExportToPlaintextJSON returns indented JSON without encrypting secret fields;
+// callers must treat the result as secret-bearing.
 func ExportToPlaintextJSON(cfg *Config) (string, error) {
 	return exportToJSON(cfg, false)
 }
@@ -169,8 +174,8 @@ func importFromJSON(payload string, decryptSecrets bool) (*Config, error) {
 	return decryptedCfg, nil
 }
 
-// BackupToYAML creates a timestamped YAML backup of the current config.
-// Returns the path to the backup file.
+// BackupToYAML writes an encrypted backup to backups/config.yaml below baseDir,
+// replacing any prior backup at that path, and returns the path.
 func BackupToYAML(cfg *Config, baseDir string) (string, error) {
 	if cfg == nil {
 		return "", internalerrors.ErrInvalidInput
@@ -248,6 +253,7 @@ type DatabaseRepairReport struct {
 	BackfilledDefaults bool
 	ChangedSections    []string
 	InvalidPaths       []string
+	DeprecatedPaths    []string
 }
 
 // LoadFromDatabaseWithRepairReport loads and decrypts full config from repo,
@@ -314,10 +320,12 @@ func loadFullConfigOverlayingDefaults(ctx context.Context, repo fullConfigLoader
 	if err := json.Unmarshal(merged, &cfg); err != nil {
 		return Config{}, DatabaseRepairReport{}, fmt.Errorf("config load from database: unmarshal merged defaults: %w", err)
 	}
+	sort.Strings(mergeReport.deprecatedPaths)
 	report := DatabaseRepairReport{
-		BackfilledDefaults: len(mergeReport.missingDefaultPaths) > 0 || len(mergeReport.invalidPaths) > 0,
+		BackfilledDefaults: len(mergeReport.missingDefaultPaths) > 0 || len(mergeReport.invalidPaths) > 0 || len(mergeReport.deprecatedPaths) > 0,
 		ChangedSections:    mergeReport.changedRootSections(),
 		InvalidPaths:       append([]string(nil), mergeReport.invalidPaths...),
+		DeprecatedPaths:    append([]string(nil), mergeReport.deprecatedPaths...),
 	}
 	return cfg, report, nil
 }
@@ -344,6 +352,7 @@ func configJSONMap(cfg *Config) (map[string]any, error) {
 type storedConfigMergeReport struct {
 	missingDefaultPaths []string
 	invalidPaths        []string
+	deprecatedPaths     []string
 	changedSections     map[string]struct{}
 	invalidSections     map[string]struct{}
 }
@@ -358,6 +367,7 @@ func newStoredConfigMergeReport() storedConfigMergeReport {
 func (r *storedConfigMergeReport) append(other storedConfigMergeReport) {
 	r.missingDefaultPaths = append(r.missingDefaultPaths, other.missingDefaultPaths...)
 	r.invalidPaths = append(r.invalidPaths, other.invalidPaths...)
+	r.deprecatedPaths = append(r.deprecatedPaths, other.deprecatedPaths...)
 	for section := range other.changedSections {
 		r.changedSections[section] = struct{}{}
 	}
@@ -404,6 +414,12 @@ func mergeStoredConfigMapWithReport(base map[string]any, overlay map[string]any,
 
 	overlayKeys := make([]string, 0, len(overlay))
 	for key := range overlay {
+		if isDeprecatedTrackerURLField(path, key) {
+			deprecatedPath := configMapPath(path, key)
+			report.deprecatedPaths = append(report.deprecatedPaths, deprecatedPath)
+			report.markChanged(deprecatedPath)
+			continue
+		}
 		if shouldDiscardStoredTrackerField(path, key, overlay) {
 			invalidPath := configMapPath(path, key)
 			report.invalidPaths = append(report.invalidPaths, invalidPath)
@@ -497,7 +513,18 @@ func mergeStoredDynamicConfigValue(base map[string]any, key string, overlayValue
 	}
 
 	if allowsStoredDynamicConfigEntry(path) {
-		if _, overlayOK := overlayValue.(map[string]any); !overlayOK {
+		overlayMap, overlayOK := overlayValue.(map[string]any)
+		if !overlayOK {
+			return report, nil
+		}
+		if usesASCIIStoredTrackerKeys(path) {
+			cleaned := map[string]any{}
+			childReport, err := mergeStoredConfigMapWithReport(cleaned, overlayMap, configMapPath(path, key))
+			if err != nil {
+				return report, err
+			}
+			base[key] = cleaned
+			report.append(childReport)
 			return report, nil
 		}
 	}
@@ -586,6 +613,12 @@ func shouldDiscardStoredTrackerField(path string, key string, values map[string]
 		}
 	}
 	return hasKnownFoldPeer
+}
+
+func isDeprecatedTrackerURLField(path string, key string) bool {
+	const trackerPathPrefix = "Trackers.Trackers."
+	trackerName, ok := strings.CutPrefix(path, trackerPathPrefix)
+	return ok && trackerName != "" && !strings.Contains(trackerName, ".") && strings.EqualFold(strings.TrimSpace(key), "URL")
 }
 
 // validateStoredOverlayKeys rejects duplicate stored keys that would fold into
@@ -741,6 +774,9 @@ func mergeStoredUnknownConfigValues(current, stored any, path string) error {
 		return nil
 	}
 	for key, storedValue := range storedMap {
+		if isDeprecatedTrackerURLField(path, key) {
+			continue
+		}
 		if shouldDiscardStoredTrackerField(path, key, storedMap) {
 			continue
 		}
@@ -978,7 +1014,8 @@ func encryptConfigSecretsForSectionsWithDBDir(cfg *Config, sections []string, ru
 	return encrypted, nil
 }
 
-// SaveToDatabase persists the config to the repository.
+// SaveToDatabase encrypts known secrets in a clone, then replaces the
+// repository's full config without mutating cfg.
 func SaveToDatabase(ctx context.Context, cfg *Config, repo interface {
 	SaveFullConfig(ctx context.Context, cfg any) error
 }) error {
@@ -1071,7 +1108,9 @@ func SaveSectionsToDatabase(ctx context.Context, cfg *Config, sections []string,
 	return nil
 }
 
-// SaveSectionToDatabase persists a single config section to the repository.
+// SaveSectionToDatabase writes one caller-supplied section verbatim. It does
+// not canonicalize the section name, encrypt secrets, or preserve unknown
+// stored fields; use [SaveSectionsToDatabase] for Config-owned persistence.
 func SaveSectionToDatabase(ctx context.Context, section string, data any, repo interface {
 	SaveConfigSection(ctx context.Context, section string, data any) error
 }) error {
@@ -1092,7 +1131,8 @@ func SaveSectionToDatabase(ctx context.Context, section string, data any, repo i
 	return nil
 }
 
-// LoadSectionFromDatabase retrieves a single config section from the repository.
+// LoadSectionFromDatabase decodes one raw section into dest without applying
+// defaults, decryption, environment overrides, or validation.
 func LoadSectionFromDatabase(ctx context.Context, section string, dest any, repo interface {
 	LoadConfigSection(ctx context.Context, section string, dest any) error
 }) error {

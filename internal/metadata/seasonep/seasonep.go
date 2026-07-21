@@ -12,8 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/autobrr/upbrr/internal/pathutil"
-	"github.com/autobrr/upbrr/pkg/api"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 )
 
 var (
@@ -31,9 +32,22 @@ var (
 )
 
 var videoExtensions = map[string]struct{}{
-	".mkv": {}, ".mp4": {}, ".avi": {}, ".mov": {}, ".wmv": {}, ".webm": {}, ".ts": {}, ".m2ts": {}, ".m2v": {}, ".mpg": {}, ".mpeg": {},
+	".mkv":  {},
+	".mp4":  {},
+	".avi":  {},
+	".mov":  {},
+	".wmv":  {},
+	".webm": {},
+	".ts":   {},
+	".m2ts": {},
+	".m2v":  {},
+	".mpg":  {},
+	".mpeg": {},
 }
 
+// Result contains normalized episodic signals. DailyDate uses YYYY-MM-DD;
+// MultiEpisode includes the first episode; AbsoluteEpisode is retained even
+// when it also supplies Episode.
 type Result struct {
 	Season          int
 	Episode         int
@@ -43,7 +57,12 @@ type Result struct {
 	MultiEpisode    []int
 }
 
-func Extract(path string, meta api.PreparedMetadata) Result {
+// Extract parses the source basename before the selected video basename, then
+// fills missing values from parsed release metadata. Season-only or multi-video
+// sources become TV packs unless the primary basename names one explicit
+// episode. Directory inspection is best-effort and filesystem errors are
+// treated as no multi-video evidence.
+func Extract(path string, meta preparationstate.State) Result {
 	candidates := buildCandidates(path, meta)
 	primaryCandidate := ""
 	if len(candidates) > 0 {
@@ -129,7 +148,7 @@ func FormatEpisode(value int) string {
 	return fmt.Sprintf("E%02d", value)
 }
 
-func buildCandidates(path string, meta api.PreparedMetadata) []string {
+func buildCandidates(path string, meta preparationstate.State) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, 2)
 	add := func(value string) {

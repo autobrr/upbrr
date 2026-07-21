@@ -340,7 +340,14 @@ func Discover(ctx context.Context, disc ifo.Disc, resolver Resolver, opts Option
 				target, terminal, ok := resolveLink(current.node, preResult.Link, lookup)
 				if ok {
 					if opts.Logger != nil {
-						opts.Logger.Debugf("DVD menus: branch queued action=pre decision=follow link=%d target_domain=%s target_vts=%d target_pgc=%d target_pg=%d", preResult.Link.Command, domainLabel(target.coordinate.Kind), target.coordinate.VTS, target.coordinate.PGC, target.coordinate.Program)
+						opts.Logger.Debugf(
+							"DVD menus: branch queued action=pre decision=follow link=%d target_domain=%s target_vts=%d target_pgc=%d target_pg=%d",
+							preResult.Link.Command,
+							domainLabel(target.coordinate.Kind),
+							target.coordinate.VTS,
+							target.coordinate.PGC,
+							target.coordinate.Program,
+						)
 					}
 					queue = append(queue, transition(current, target, registers))
 					continue
@@ -392,11 +399,25 @@ func Discover(ctx context.Context, disc ifo.Disc, resolver Resolver, opts Option
 			switch {
 			case duplicateScreen:
 				if opts.Logger != nil {
-					opts.Logger.Debugf("DVD menus: screen skipped decision=dedupe reason=semantic_identity domain=%s vts=%d pgc=%d pg=%d screen=%x", domainLabel(current.node.coordinate.Kind), current.node.coordinate.VTS, current.node.coordinate.PGC, current.node.coordinate.Program, screenID[:6])
+					opts.Logger.Debugf(
+						"DVD menus: screen skipped decision=dedupe reason=semantic_identity domain=%s vts=%d pgc=%d pg=%d screen=%x",
+						domainLabel(current.node.coordinate.Kind),
+						current.node.coordinate.VTS,
+						current.node.coordinate.PGC,
+						current.node.coordinate.Program,
+						screenID[:6],
+					)
 				}
 			case hasControls && duplicateControls:
 				if opts.Logger != nil {
-					opts.Logger.Debugf("DVD menus: screen skipped decision=dedupe reason=control_identity domain=%s vts=%d pgc=%d pg=%d controls=%x", domainLabel(current.node.coordinate.Kind), current.node.coordinate.VTS, current.node.coordinate.PGC, current.node.coordinate.Program, controlID[:6])
+					opts.Logger.Debugf(
+						"DVD menus: screen skipped decision=dedupe reason=control_identity domain=%s vts=%d pgc=%d pg=%d controls=%x",
+						domainLabel(current.node.coordinate.Kind),
+						current.node.coordinate.VTS,
+						current.node.coordinate.PGC,
+						current.node.coordinate.Program,
+						controlID[:6],
+					)
 				}
 			default:
 				if opts.MaxItems > 0 && len(result.Screens) >= opts.MaxItems {
@@ -407,9 +428,27 @@ func Discover(ctx context.Context, disc ifo.Disc, resolver Resolver, opts Option
 					if hasControls {
 						rememberControlLayout(controlLayouts, controlID, live.Buttons)
 					}
-					result.Screens = append(result.Screens, Screen{Coordinate: current.node.coordinate, Discovery: DiscoveryReachable, Identity: screenID, Registers: registers.Clone(), Live: live})
+					result.Screens = append(result.Screens, Screen{
+						Coordinate: current.node.coordinate,
+						Discovery:  DiscoveryReachable,
+						Identity:   screenID,
+						Registers:  registers.Clone(),
+						Live:       live,
+					})
 					if opts.Logger != nil {
-						opts.Logger.Debugf("DVD menus: screen selected discovery=reachable domain=%s vts=%d language_unit=%d menu_id=%d pgc=%d pg=%d cell=%d buttons=%d screen=%x stored=%d", domainLabel(current.node.coordinate.Kind), current.node.coordinate.VTS, current.node.coordinate.LanguageUnit, current.node.coordinate.MenuID, current.node.coordinate.PGC, current.node.coordinate.Program, current.node.coordinate.Cell, len(live.Buttons), screenID[:6], len(result.Screens))
+						opts.Logger.Debugf(
+							"DVD menus: screen selected discovery=reachable domain=%s vts=%d language_unit=%d menu_id=%d pgc=%d pg=%d cell=%d buttons=%d screen=%x stored=%d",
+							domainLabel(current.node.coordinate.Kind),
+							current.node.coordinate.VTS,
+							current.node.coordinate.LanguageUnit,
+							current.node.coordinate.MenuID,
+							current.node.coordinate.PGC,
+							current.node.coordinate.Program,
+							current.node.coordinate.Cell,
+							len(live.Buttons),
+							screenID[:6],
+							len(result.Screens),
+						)
 					}
 				}
 			}
@@ -434,14 +473,29 @@ func Discover(ctx context.Context, disc ifo.Disc, resolver Resolver, opts Option
 				continue
 			}
 			if opts.Logger != nil {
-				opts.Logger.Tracef("DVD menus: action evaluated action=button button=%d executed=%d has_link=%t link=%d registers_changed=%t", button.Number, buttonResult.Executed, buttonResult.HasLink, buttonResult.Link.Command, branchRegisters != registers)
+				opts.Logger.Tracef(
+					"DVD menus: action evaluated action=button button=%d executed=%d has_link=%t link=%d registers_changed=%t",
+					button.Number,
+					buttonResult.Executed,
+					buttonResult.HasLink,
+					buttonResult.Link.Command,
+					branchRegisters != registers,
+				)
 			}
 			if buttonResult.HasLink {
 				target, terminal, ok := resolveLink(current.node, buttonResult.Link, lookup)
 				switch {
 				case ok:
 					if opts.Logger != nil {
-						opts.Logger.Debugf("DVD menus: branch queued action=button button=%d decision=follow link=%d target_domain=%s target_vts=%d target_pgc=%d target_pg=%d", button.Number, buttonResult.Link.Command, domainLabel(target.coordinate.Kind), target.coordinate.VTS, target.coordinate.PGC, target.coordinate.Program)
+						opts.Logger.Debugf(
+							"DVD menus: branch queued action=button button=%d decision=follow link=%d target_domain=%s target_vts=%d target_pgc=%d target_pg=%d",
+							button.Number,
+							buttonResult.Link.Command,
+							domainLabel(target.coordinate.Kind),
+							target.coordinate.VTS,
+							target.coordinate.PGC,
+							target.coordinate.Program,
+						)
 					}
 					queue = append(queue, transition(current, target, branchRegisters))
 				case !terminal:
@@ -454,7 +508,12 @@ func Discover(ctx context.Context, disc ifo.Disc, resolver Resolver, opts Option
 				continue
 			}
 			if branchRegisters != registers {
-				queue = append(queue, state{node: current.node, registers: branchRegisters, depth: current.depth + 1, utility: current.utility})
+				queue = append(queue, state{
+					node:      current.node,
+					registers: branchRegisters,
+					depth:     current.depth + 1,
+					utility:   current.utility,
+				})
 			}
 		}
 		reportProgress(opts.Progress, result)
@@ -462,7 +521,13 @@ func Discover(ctx context.Context, disc ifo.Disc, resolver Resolver, opts Option
 		postRegisters := registers.Clone()
 		postResult, postErr := vm.Execute(current.node.pgc.PostCommands, &postRegisters, opts.VM)
 		if postErr == nil && opts.Logger != nil {
-			opts.Logger.Tracef("DVD menus: action evaluated action=post commands=%d executed=%d has_link=%t link=%d", len(current.node.pgc.PostCommands), postResult.Executed, postResult.HasLink, postResult.Link.Command)
+			opts.Logger.Tracef(
+				"DVD menus: action evaluated action=post commands=%d executed=%d has_link=%t link=%d",
+				len(current.node.pgc.PostCommands),
+				postResult.Executed,
+				postResult.HasLink,
+				postResult.Link.Command,
+			)
 		}
 		switch {
 		case postErr != nil:
@@ -474,7 +539,14 @@ func Discover(ctx context.Context, disc ifo.Disc, resolver Resolver, opts Option
 			switch {
 			case ok:
 				if opts.Logger != nil {
-					opts.Logger.Debugf("DVD menus: branch queued action=post decision=follow link=%d target_domain=%s target_vts=%d target_pgc=%d target_pg=%d", postResult.Link.Command, domainLabel(target.coordinate.Kind), target.coordinate.VTS, target.coordinate.PGC, target.coordinate.Program)
+					opts.Logger.Debugf(
+						"DVD menus: branch queued action=post decision=follow link=%d target_domain=%s target_vts=%d target_pgc=%d target_pg=%d",
+						postResult.Link.Command,
+						domainLabel(target.coordinate.Kind),
+						target.coordinate.VTS,
+						target.coordinate.PGC,
+						target.coordinate.Program,
+					)
 				}
 				queue = append(queue, transition(current, target, postRegisters))
 			case !terminal:
@@ -485,11 +557,26 @@ func Discover(ctx context.Context, disc ifo.Disc, resolver Resolver, opts Option
 				opts.Logger.Debugf("DVD menus: branch stopped action=post decision=terminal link=%d", postResult.Link.Command)
 			}
 		case current.node.pgc.Next != 0:
-			if target, ok := lookup[nodeKey{kind: current.node.coordinate.Kind, vts: current.node.coordinate.VTS, language: current.node.coordinate.LanguageUnit, pgc: int(current.node.pgc.Next)}]; ok {
+			if target, ok := lookup[nodeKey{
+				kind:     current.node.coordinate.Kind,
+				vts:      current.node.coordinate.VTS,
+				language: current.node.coordinate.LanguageUnit,
+				pgc:      int(current.node.pgc.Next),
+			}]; ok {
 				if opts.Logger != nil {
-					opts.Logger.Debugf("DVD menus: branch queued action=next_pgc decision=follow target_domain=%s target_vts=%d target_pgc=%d", domainLabel(target.coordinate.Kind), target.coordinate.VTS, target.coordinate.PGC)
+					opts.Logger.Debugf(
+						"DVD menus: branch queued action=next_pgc decision=follow target_domain=%s target_vts=%d target_pgc=%d",
+						domainLabel(target.coordinate.Kind),
+						target.coordinate.VTS,
+						target.coordinate.PGC,
+					)
 				}
-				queue = append(queue, state{node: target, registers: postRegisters, depth: current.depth + 1, runPre: true})
+				queue = append(queue, state{
+					node:      target,
+					registers: postRegisters,
+					depth:     current.depth + 1,
+					runPre:    true,
+				})
 			}
 		}
 	}
@@ -527,7 +614,14 @@ func Discover(ctx context.Context, disc ifo.Disc, resolver Resolver, opts Option
 		if hasControls && hasEquivalentControls(controlLayouts, controlID, live.Buttons) {
 			structuralDuplicates++
 			if opts.Logger != nil {
-				opts.Logger.Debugf("DVD menus: screen skipped decision=dedupe reason=control_identity domain=%s vts=%d pgc=%d pg=%d controls=%x", domainLabel(item.coordinate.Kind), item.coordinate.VTS, item.coordinate.PGC, item.coordinate.Program, controlID[:6])
+				opts.Logger.Debugf(
+					"DVD menus: screen skipped decision=dedupe reason=control_identity domain=%s vts=%d pgc=%d pg=%d controls=%x",
+					domainLabel(item.coordinate.Kind),
+					item.coordinate.VTS,
+					item.coordinate.PGC,
+					item.coordinate.Program,
+					controlID[:6],
+				)
 			}
 			continue
 		}
@@ -544,19 +638,57 @@ func Discover(ctx context.Context, disc ifo.Disc, resolver Resolver, opts Option
 		if hasControls {
 			rememberControlLayout(controlLayouts, controlID, live.Buttons)
 		}
-		result.Screens = append(result.Screens, Screen{Coordinate: item.coordinate, Discovery: DiscoveryStructural, Identity: screenID, Registers: opts.Registers.Clone(), Live: live})
+		result.Screens = append(result.Screens, Screen{
+			Coordinate: item.coordinate,
+			Discovery:  DiscoveryStructural,
+			Identity:   screenID,
+			Registers:  opts.Registers.Clone(),
+			Live:       live,
+		})
 		if opts.Logger != nil {
-			opts.Logger.Debugf("DVD menus: screen selected discovery=structural domain=%s vts=%d language_unit=%d menu_id=%d pgc=%d pg=%d cell=%d buttons=%d screen=%x stored=%d", domainLabel(item.coordinate.Kind), item.coordinate.VTS, item.coordinate.LanguageUnit, item.coordinate.MenuID, item.coordinate.PGC, item.coordinate.Program, item.coordinate.Cell, len(live.Buttons), screenID[:6], len(result.Screens))
+			opts.Logger.Debugf(
+				"DVD menus: screen selected discovery=structural domain=%s vts=%d language_unit=%d menu_id=%d pgc=%d pg=%d cell=%d buttons=%d screen=%x stored=%d",
+				domainLabel(item.coordinate.Kind),
+				item.coordinate.VTS,
+				item.coordinate.LanguageUnit,
+				item.coordinate.MenuID,
+				item.coordinate.PGC,
+				item.coordinate.Program,
+				item.coordinate.Cell,
+				len(live.Buttons),
+				screenID[:6],
+				len(result.Screens),
+			)
 		}
 		reportProgress(opts.Progress, result)
 	}
 	result.Complete = !result.Partial && !result.Truncated && len(classifiedCoordinates) == len(nodes)
 	if opts.Logger != nil {
-		opts.Logger.Debugf("DVD menus: structural reconciliation complete classified=%d transitions=%d noninteractive=%d utility=%d duplicates=%d visible_unreached=%d failures=%d", len(classifiedCoordinates), structuralTransitions, structuralNonInteractive, utilityScreens, structuralDuplicates, structuralVisible, structuralFailures)
+		opts.Logger.Debugf(
+			"DVD menus: structural reconciliation complete classified=%d transitions=%d noninteractive=%d utility=%d duplicates=%d visible_unreached=%d failures=%d",
+			len(classifiedCoordinates),
+			structuralTransitions,
+			structuralNonInteractive,
+			utilityScreens,
+			structuralDuplicates,
+			structuralVisible,
+			structuralFailures,
+		)
 		if limitSkipped > 0 {
 			opts.Logger.Debugf("DVD menus: storage limit applied max_items=%d additional_menu_candidates=%d", opts.MaxItems, limitSkipped)
 		}
-		opts.Logger.Debugf("DVD menus: discovery complete inventoried=%d classified=%d reached=%d states=%d buttons=%d screens=%d partial=%t truncated=%t warnings=%d", result.Inventoried, len(classifiedCoordinates), len(reachedCoordinates), result.VisitedStates, result.VisitedButtons, len(result.Screens), result.Partial, result.Truncated, len(result.Warnings))
+		opts.Logger.Debugf(
+			"DVD menus: discovery complete inventoried=%d classified=%d reached=%d states=%d buttons=%d screens=%d partial=%t truncated=%t warnings=%d",
+			result.Inventoried,
+			len(classifiedCoordinates),
+			len(reachedCoordinates),
+			result.VisitedStates,
+			result.VisitedButtons,
+			len(result.Screens),
+			result.Partial,
+			result.Truncated,
+			len(result.Warnings),
+		)
 	}
 	reportProgress(opts.Progress, result)
 	if len(result.Screens) == 0 {
@@ -607,7 +739,15 @@ func inventory(disc ifo.Disc, language string) ([]node, []node) {
 				continue
 			}
 			for program := 1; program <= int(pgc.Programs); program++ {
-				item := node{coordinate: Coordinate{Kind: file.Kind, VTS: file.VTS, LanguageUnit: languageIndex + 1, PGC: pgc.Number, Program: program, Cell: cellForProgram(pgc, program), MenuID: pgc.MenuID}, pgc: pgc}
+				item := node{coordinate: Coordinate{
+					Kind:         file.Kind,
+					VTS:          file.VTS,
+					LanguageUnit: languageIndex + 1,
+					PGC:          pgc.Number,
+					Program:      program,
+					Cell:         cellForProgram(pgc, program),
+					MenuID:       pgc.MenuID,
+				}, pgc: pgc}
 				nodes = append(nodes, item)
 				if program == 1 && pgc.EntryID&0x80 != 0 {
 					seeds = append(seeds, item)
@@ -675,7 +815,12 @@ type nodeKey struct {
 }
 
 func key(coordinate Coordinate) nodeKey {
-	return nodeKey{kind: coordinate.Kind, vts: coordinate.VTS, language: coordinate.LanguageUnit, pgc: coordinate.PGC}
+	return nodeKey{
+		kind:     coordinate.Kind,
+		vts:      coordinate.VTS,
+		language: coordinate.LanguageUnit,
+		pgc:      coordinate.PGC,
+	}
 }
 
 // resolveLink maps a VM transition to an inventoried node. The second result

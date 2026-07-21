@@ -1,0 +1,56 @@
+// Copyright (c) 2025-2026, Audionut and the autobrr contributors.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+package yus
+
+// BannedGroups returns YUS's static release-group blacklist.
+func BannedGroups() []string {
+	return []string{
+		"ADDICTION",
+		"B3LLUM",
+		"BANDOLEROS",
+		"BigEasy",
+		"CINEMAXIS",
+		"D3US",
+		"d3g",
+		"DUMMESCHWEDEN",
+		"FGT",
+		"GRANiTEN",
+		"KiNGDOM",
+		"Lama",
+		"MeGusta",
+		"MezRips",
+		"mHD",
+		"mRS",
+		"msd",
+		"NeXus",
+		"NhaNc3",
+		"nHD",
+		"NorTekst",
+		"NORViNE",
+		"PANDEMONiUM",
+		"PiTBULL",
+		"RAPiDCOWS",
+		"RARBG",
+		"Radarr",
+		"RCDiVX",
+		"RDN",
+		"ROCKETRACCOON",
+		"SANTi",
+		"SHOWTiME",
+		"SOOSi",
+		"SUXWIC",
+		"TOXVIO",
+		"TWA",
+		"VXT",
+		"Will1869",
+		"x0r",
+		"XS",
+		"YIFY",
+		"YOLAND",
+		"YTS",
+		"ZKBL",
+		"ZmN",
+		"ZMNT",
+	}
+}

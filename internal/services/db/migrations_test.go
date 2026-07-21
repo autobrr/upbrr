@@ -62,11 +62,50 @@ func TestMigrateAddTrackerRuleFailureSeverityHandlesAbsentAndLegacyTables(t *tes
 				if err := db.QueryRowContext(context.Background(), `SELECT severity FROM tracker_rule_failures WHERE rule = "legacy"`).Scan(&severity); err != nil {
 					t.Fatalf("read legacy severity: %v", err)
 				}
-				if severity != string(api.RuleFailureSeverityBlocking) {
+				if severity != "blocking" {
 					t.Fatalf("legacy severity=%q", severity)
 				}
 			}
 		})
+	}
+}
+
+func TestMigrateAddTrackerRuleDispositionNormalizesLegacyRows(t *testing.T) {
+	t.Parallel()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := migrateAddTrackerRuleFailureSeverity(context.Background(), db); err != nil {
+		t.Fatalf("create legacy rule table: %v", err)
+	}
+	for _, row := range []struct{ rule, severity string }{{"legacy", "blocking"}, {"advice", "warning"}, {"unknown", "other"}} {
+		if _, err := db.ExecContext(context.Background(), `INSERT INTO tracker_rule_failures (source_path, tracker, rule, severity, created_at) VALUES ("source", "PTP", ?, ?, "now")`, row.rule, row.severity); err != nil {
+			t.Fatalf("seed %s: %v", row.rule, err)
+		}
+	}
+	if err := migrateAddTrackerRuleDisposition(context.Background(), db); err != nil {
+		t.Fatalf("migrate disposition: %v", err)
+	}
+	rows, err := db.QueryContext(context.Background(), `SELECT rule, disposition, authorized FROM tracker_rule_failures ORDER BY id`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	want := []api.RuleDisposition{api.RuleDispositionWaivable, api.RuleDispositionAdvisory, api.RuleDispositionStrict}
+	for idx := 0; rows.Next(); idx++ {
+		var rule, disposition string
+		var authorized int
+		if err := rows.Scan(&rule, &disposition, &authorized); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if idx >= len(want) || disposition != string(want[idx]) || authorized != 0 {
+			t.Fatalf("row %s disposition=%q authorized=%d", rule, disposition, authorized)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate rows: %v", err)
 	}
 }
 
@@ -309,6 +348,31 @@ func TestMigrateAddAniListExternalMetadataCreatesMissingTable(t *testing.T) {
 		if !exists {
 			t.Fatalf("expected external_metadata.%s to exist", column)
 		}
+	}
+}
+
+func TestCanonicalReleaseGenerationMigrationIsOnlyBranchMigration(t *testing.T) {
+	const (
+		publicBoundary = "2026_07_add_tracker_rule_failure_severity"
+		finalID        = "2026_07_add_canonical_release_generations"
+		removedID      = "2026_07_add_prepared_release_generations"
+	)
+
+	var final *migrationStep
+	for i := range migrationRegistry {
+		step := &migrationRegistry[i]
+		if step.id == removedID {
+			t.Fatalf("removed branch-only migration %q remains registered", removedID)
+		}
+		if step.id == finalID {
+			final = step
+		}
+	}
+	if final == nil {
+		t.Fatalf("final migration %q is not registered", finalID)
+	}
+	if !slices.Equal(final.dependsOn, []string{publicBoundary}) {
+		t.Fatalf("final migration dependencies = %v, want [%s]", final.dependsOn, publicBoundary)
 	}
 }
 

@@ -11,7 +11,8 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/trackerauth"
+	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -24,7 +25,7 @@ func newCLITrackerAuthService(cfg config.Config, logger api.Logger) cliTrackerAu
 	if value == "1" || strings.EqualFold(value, "true") {
 		return e2eCLITrackerAuthService{}
 	}
-	return trackerauth.NewServiceWithLogger(cfg, logger)
+	return trackerauth.NewServiceWithRegistryAndLogger(cfg, trackerimpl.MustNewRegistry(), logger)
 }
 
 // e2eCLITrackerAuthService treats tracker auth as configured without network IO.

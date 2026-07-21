@@ -16,10 +16,12 @@ import (
 	"testing"
 	"time"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	"github.com/autobrr/upbrr/internal/dvdvideo/engine"
 	"github.com/autobrr/upbrr/internal/dvdvideo/graph"
 	"github.com/autobrr/upbrr/internal/dvdvideo/render"
-	"github.com/autobrr/upbrr/internal/paths"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -102,24 +104,51 @@ func TestCaptureRerunListAndDeletePreserveManualMenus(t *testing.T) {
 		t.Fatalf("write FFmpeg identity: %v", err)
 	}
 
-	meta := api.PreparedMetadata{SourcePath: discRoot, DiscType: "DVD"}
-	managedDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	meta := api.DVDMenuSubject{SourcePath: discRoot, DiscType: "DVD"}
+	managedDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, api.ReleaseInfo{})
 	if err != nil {
 		t.Fatalf("managed dir: %v", err)
 	}
 	manualPath := filepath.Join(managedDir, "manual-dvd-menu-example.png")
-	writePNG(t, manualPath, color.NRGBA{R: 20, G: 40, B: 60, A: 255})
+	writePNG(t, manualPath, color.NRGBA{
+		R: 20,
+		G: 40,
+		B: 60,
+		A: 255,
+	})
 	now := time.Now().UTC()
 	if err := repo.AppendManualMenuScreenshots(context.Background(), meta.SourcePath,
-		[]api.Screenshot{{SourcePath: meta.SourcePath, ImagePath: manualPath, Width: 2, Height: 2, Purpose: api.ScreenshotPurposeMenu, CapturedAt: now}},
-		[]api.ScreenshotFinalSelection{{SourcePath: meta.SourcePath, ImagePath: manualPath, Source: api.ScreenshotSelectionSourceMenu, SelectedAt: now}},
+		[]api.Screenshot{{
+			SourcePath: meta.SourcePath,
+			ImagePath:  manualPath,
+			Width:      2,
+			Height:     2,
+			Purpose:    api.ScreenshotPurposeMenu,
+			CapturedAt: now,
+		}},
+		[]api.ScreenshotFinalSelection{{
+			SourcePath: meta.SourcePath,
+			ImagePath:  manualPath,
+			Source:     api.ScreenshotSelectionSourceMenu,
+			SelectedAt: now,
+		}},
 	); err != nil {
 		t.Fatalf("seed manual menu: %v", err)
 	}
 
 	captures := []engine.Capture{
-		{Image: solidImage(color.NRGBA{R: 200, G: 10, B: 10, A: 255}), Discovery: graph.DiscoveryReachable},
-		{Image: solidImage(color.NRGBA{R: 10, G: 200, B: 10, A: 255}), Discovery: graph.DiscoveryStructural},
+		{Image: solidImage(color.NRGBA{
+			R: 200,
+			G: 10,
+			B: 10,
+			A: 255,
+		}), Discovery: graph.DiscoveryReachable},
+		{Image: solidImage(color.NRGBA{
+			R: 10,
+			G: 200,
+			B: 10,
+			A: 255,
+		}), Discovery: graph.DiscoveryStructural},
 	}
 	progressUpdates := make([]api.DVDMenuProgressUpdate, 0)
 	progressCtx := api.WithDVDMenuProgressReporter(context.Background(), func(update api.DVDMenuProgressUpdate) {
@@ -288,11 +317,11 @@ func TestCaptureRollsBackCreatedFilesWhenPersistenceFails(t *testing.T) {
 			return engine.Result{Captures: []engine.Capture{{Image: solidImage(color.NRGBA{R: 50, A: 255}), Discovery: graph.DiscoveryReachable}}}, nil
 		})
 
-	_, err := service.Capture(context.Background(), api.PreparedMetadata{SourcePath: discRoot, DiscType: "DVD"}, 1)
+	_, err := service.Capture(context.Background(), api.DVDMenuSubject{SourcePath: discRoot, DiscType: "DVD"}, 1)
 	if err == nil || !strings.Contains(err.Error(), "persist capture") {
 		t.Fatalf("capture error = %v", err)
 	}
-	managedDir, _, err := paths.ReleaseTempDir(tmpRoot, api.PreparedMetadata{}, discRoot)
+	managedDir, _, err := paths.ReleaseTempDir(tmpRoot, preparationstate.State{}, discRoot)
 	if err != nil {
 		t.Fatalf("managed dir: %v", err)
 	}
@@ -322,7 +351,7 @@ func TestDeleteRejectsOriginalOutsideManagedDirectory(t *testing.T) {
 		t.Fatalf("save original selection: %v", err)
 	}
 	service := NewService(api.NopLogger{}, tmpRoot, repo)
-	err := service.Delete(context.Background(), api.PreparedMetadata{SourcePath: discRoot, DiscType: "DVD"}, original)
+	err := service.Delete(context.Background(), api.DVDMenuSubject{SourcePath: discRoot, DiscType: "DVD"}, original)
 	if err == nil || !strings.Contains(err.Error(), "outside the managed release directory") {
 		t.Fatalf("delete error = %v", err)
 	}
@@ -337,17 +366,34 @@ func TestDeleteRestoresFileAndRecordsWhenFinalRemoveFails(t *testing.T) {
 	repo := openTestRepository(t)
 	tmpRoot := t.TempDir()
 	discRoot := t.TempDir()
-	meta := api.PreparedMetadata{SourcePath: discRoot, DiscType: "DVD"}
-	managedDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	meta := api.DVDMenuSubject{SourcePath: discRoot, DiscType: "DVD"}
+	managedDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, api.ReleaseInfo{})
 	if err != nil {
 		t.Fatal("create managed directory failed")
 	}
 	imagePath := filepath.Join(managedDir, "Example.Release.2026-dvd-menu-01.png")
-	writePNG(t, imagePath, color.NRGBA{R: 20, G: 40, B: 60, A: 255})
+	writePNG(t, imagePath, color.NRGBA{
+		R: 20,
+		G: 40,
+		B: 60,
+		A: 255,
+	})
 	now := time.Now().UTC()
 	if err := repo.AppendManualMenuScreenshots(context.Background(), meta.SourcePath,
-		[]api.Screenshot{{SourcePath: meta.SourcePath, ImagePath: imagePath, Width: 2, Height: 2, Purpose: api.ScreenshotPurposeMenu, CapturedAt: now}},
-		[]api.ScreenshotFinalSelection{{SourcePath: meta.SourcePath, ImagePath: imagePath, Source: api.ScreenshotSelectionSourceMenu, SelectedAt: now}},
+		[]api.Screenshot{{
+			SourcePath: meta.SourcePath,
+			ImagePath:  imagePath,
+			Width:      2,
+			Height:     2,
+			Purpose:    api.ScreenshotPurposeMenu,
+			CapturedAt: now,
+		}},
+		[]api.ScreenshotFinalSelection{{
+			SourcePath: meta.SourcePath,
+			ImagePath:  imagePath,
+			Source:     api.ScreenshotSelectionSourceMenu,
+			SelectedAt: now,
+		}},
 	); err != nil {
 		t.Fatal("seed menu screenshot failed")
 	}

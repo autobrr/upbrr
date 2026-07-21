@@ -9,29 +9,20 @@
       "windows": {
         "args": ["build", "-o", "dist/upbrr.exe", "./cmd/upbrr"]
       },
-      "options": { "cwd": "${workspaceFolder}" },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "group": "build",
       "problemMatcher": ["$go"]
-    },
-    {
-      "label": "build-gui",
-      "type": "shell",
-      "command": "go",
-      "args": [
-        "run",
-        "github.com/wailsapp/wails/v2/cmd/wails@v2.10.1",
-        "build"
-      ],
-      "options": { "cwd": "${workspaceFolder}/gui" },
-      "group": "build",
-      "problemMatcher": []
     },
     {
       "label": "frontend-install",
       "type": "shell",
       "command": "pnpm",
       "args": ["install", "--frozen-lockfile"],
-      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "options": {
+        "cwd": "${workspaceFolder}/webui"
+      },
       "problemMatcher": []
     },
     {
@@ -39,7 +30,9 @@
       "type": "shell",
       "command": "pnpm",
       "args": ["run", "build"],
-      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "options": {
+        "cwd": "${workspaceFolder}/webui"
+      },
       "dependsOn": ["frontend-install"],
       "problemMatcher": []
     },
@@ -48,16 +41,20 @@
       "type": "shell",
       "command": "pnpm",
       "args": ["run", "dev"],
-      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "options": {
+        "cwd": "${workspaceFolder}/webui"
+      },
       "isBackground": true,
       "problemMatcher": []
     },
     {
       "label": "format-go",
       "type": "shell",
-      "command": "golangci-lint",
-      "args": ["fmt", "./..."],
-      "options": { "cwd": "${workspaceFolder}" },
+      "command": "make",
+      "args": ["fmt-go"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": []
     },
     {
@@ -65,7 +62,9 @@
       "type": "shell",
       "command": "golangci-lint",
       "args": ["run", "--timeout=5m"],
-      "options": { "cwd": "${workspaceFolder}" },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "group": "test",
       "problemMatcher": ["$go"]
     },
@@ -74,7 +73,9 @@
       "type": "shell",
       "command": "golangci-lint",
       "args": ["run", "--fix", "--timeout=5m"],
-      "options": { "cwd": "${workspaceFolder}" },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": ["$go"]
     },
     {
@@ -82,7 +83,51 @@
       "type": "shell",
       "command": "go",
       "args": ["run", "./cmd/logpolicy"],
-      "options": { "cwd": "${workspaceFolder}" },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "test",
+      "problemMatcher": {
+        "owner": "go",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": {
+          "regexp": "^(.*):(\\d+):(\\d+):\\s+(.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "message": 4
+        }
+      }
+    },
+    {
+      "label": "pathpolicy",
+      "type": "shell",
+      "command": "go",
+      "args": ["run", "./cmd/pathpolicy"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "test",
+      "problemMatcher": {
+        "owner": "go",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": {
+          "regexp": "^(.*):(\\d+):(\\d+):\\s+(.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "message": 4
+        }
+      }
+    },
+    {
+      "label": "literalpolicy",
+      "type": "shell",
+      "command": "go",
+      "args": ["run", "./cmd/literalpolicy"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "group": "test",
       "problemMatcher": {
         "owner": "go",
@@ -101,7 +146,9 @@
       "type": "shell",
       "command": "pnpm",
       "args": ["run", "format"],
-      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "options": {
+        "cwd": "${workspaceFolder}/webui"
+      },
       "problemMatcher": []
     },
     {
@@ -109,7 +156,9 @@
       "type": "shell",
       "command": "pnpm",
       "args": ["run", "format:check"],
-      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "options": {
+        "cwd": "${workspaceFolder}/webui"
+      },
       "group": "test",
       "problemMatcher": []
     },
@@ -118,7 +167,9 @@
       "type": "shell",
       "command": "pnpm",
       "args": ["run", "lint"],
-      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "options": {
+        "cwd": "${workspaceFolder}/webui"
+      },
       "group": "test",
       "problemMatcher": ["$eslint-stylish"]
     },
@@ -127,7 +178,9 @@
       "type": "shell",
       "command": "pnpm",
       "args": ["run", "lint:fix"],
-      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "options": {
+        "cwd": "${workspaceFolder}/webui"
+      },
       "problemMatcher": ["$eslint-stylish"]
     },
     {
@@ -135,7 +188,9 @@
       "type": "shell",
       "command": "pnpm",
       "args": ["run", "typecheck"],
-      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "options": {
+        "cwd": "${workspaceFolder}/webui"
+      },
       "group": "test",
       "problemMatcher": ["$tsc"]
     },
@@ -144,7 +199,9 @@
       "type": "shell",
       "command": "pnpm",
       "args": ["run", "lint:dead"],
-      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "options": {
+        "cwd": "${workspaceFolder}/webui"
+      },
       "group": "test",
       "problemMatcher": []
     },
@@ -153,7 +210,9 @@
       "type": "shell",
       "command": "pnpm",
       "args": ["run", "lint:style"],
-      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "options": {
+        "cwd": "${workspaceFolder}/webui"
+      },
       "group": "test",
       "problemMatcher": []
     },
@@ -162,7 +221,9 @@
       "type": "shell",
       "command": "pnpm",
       "args": ["run", "lint:style:fix"],
-      "options": { "cwd": "${workspaceFolder}/gui/frontend" },
+      "options": {
+        "cwd": "${workspaceFolder}/webui"
+      },
       "problemMatcher": []
     },
     {
@@ -170,8 +231,13 @@
       "type": "shell",
       "command": "go",
       "args": ["test", "-v", "-timeout", "20m", "./..."],
-      "options": { "cwd": "${workspaceFolder}" },
-      "group": { "kind": "test", "isDefault": true },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
       "problemMatcher": {
         "owner": "go-test",
         "fileLocation": ["relative", "${workspaceFolder}"],
@@ -189,7 +255,9 @@
       "type": "shell",
       "command": "go",
       "args": ["run", "./cmd/upbrr", "serve"],
-      "options": { "cwd": "${workspaceFolder}" },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "isBackground": true,
       "problemMatcher": {
         "owner": "go",
@@ -211,9 +279,14 @@
     },
     {
       "label": "build-all",
-      "dependsOn": ["build-cli", "build-gui"],
       "group": "build",
-      "problemMatcher": []
+      "problemMatcher": [],
+      "type": "shell",
+      "command": "make",
+      "args": ["build"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      }
     },
     {
       "label": "lint-all",
@@ -224,7 +297,9 @@
         "lint-style-frontend",
         "typecheck-frontend",
         "format-check-frontend",
-        "logpolicy"
+        "logpolicy",
+        "pathpolicy",
+        "literalpolicy"
       ],
       "group": "test",
       "problemMatcher": []
@@ -260,7 +335,9 @@
       "type": "shell",
       "command": "lefthook",
       "args": ["install"],
-      "options": { "cwd": "${workspaceFolder}" },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": []
     },
     {
@@ -268,7 +345,9 @@
       "type": "shell",
       "command": "lefthook",
       "args": ["run", "pre-commit", "--all-files"],
-      "options": { "cwd": "${workspaceFolder}" },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "group": "test",
       "problemMatcher": []
     }

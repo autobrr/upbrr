@@ -634,7 +634,6 @@ type trackerConfig struct {
 	Secret string
 	TorrentPass string
 	AnnounceURL string
-	URL string
 }
 type metaInfo struct{ Announce string }
 
@@ -649,7 +648,6 @@ func check(t testingT, cfg config, meta metaInfo) {
 	t.Fatalf("tracker secret mismatch: got %q", cfg.Trackers.Trackers["BTN"].Secret)
 	t.Fatalf("tracker torrent pass mismatch: got %q", cfg.Trackers.Trackers["BTN"].TorrentPass)
 	t.Fatalf("tracker announce mismatch: got %q", cfg.Trackers.Trackers["CZT"].AnnounceURL)
-	t.Fatalf("tracker URL mismatch: got %q", cfg.Trackers.Trackers["BTN"].URL)
 	t.Fatalf("torrent announce mismatch: got %q", meta.Announce)
 }
 
@@ -663,8 +661,8 @@ type testingT interface {
 	if err != nil {
 		t.Fatalf("CheckRepository returned error: %v", err)
 	}
-	if len(violations) != 12 {
-		t.Fatalf("expected 12 violations, got %d: %#v", len(violations), violations)
+	if len(violations) != 11 {
+		t.Fatalf("expected 11 violations, got %d: %#v", len(violations), violations)
 	}
 }
 
@@ -848,7 +846,7 @@ func TestCheckRepositoryFlagsFrontendEncryptedEnvelopeMatcherOutput(t *testing.T
 	if err := os.MkdirAll(filepath.Join(root, "internal", "sample"), 0o755); err != nil {
 		t.Fatalf("mkdir internal sample: %v", err)
 	}
-	testDir := filepath.Join(root, "gui", "frontend", "src", "hooks")
+	testDir := filepath.Join(root, "webui", "src", "hooks")
 	if err := os.MkdirAll(testDir, 0o755); err != nil {
 		t.Fatalf("mkdir frontend test dir: %v", err)
 	}
@@ -1332,10 +1330,6 @@ func TestCheckRepositoryFlagsRawTerminalErrorOutput(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
 		t.Fatalf("mkdir cmd upbrr: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "gui"), 0o755); err != nil {
-		t.Fatalf("mkdir gui: %v", err)
-	}
-
 	cliContent := `package main
 
 import (
@@ -1352,7 +1346,7 @@ func main() {
 
 func run() error { return nil }
 `
-	guiContent := `package main
+	internalContent := `package sample
 
 import (
 	"fmt"
@@ -1372,10 +1366,7 @@ func run() error { return nil }
 	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "main.go"), []byte(cliContent), 0o600); err != nil {
 		t.Fatalf("write CLI sample file: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "gui", "main.go"), []byte(guiContent), 0o600); err != nil {
-		t.Fatalf("write GUI sample file: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(guiContent), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(internalContent), 0o600); err != nil {
 		t.Fatalf("write internal sample file: %v", err)
 	}
 
@@ -1383,8 +1374,8 @@ func run() error { return nil }
 	if err != nil {
 		t.Fatalf("CheckRepository returned error: %v", err)
 	}
-	if len(violations) != 6 {
-		t.Fatalf("expected 6 violations, got %d: %#v", len(violations), violations)
+	if len(violations) != 4 {
+		t.Fatalf("expected 4 violations, got %d: %#v", len(violations), violations)
 	}
 	for _, violation := range violations {
 		if !strings.Contains(violation.Message, "terminal error/warning output") {
@@ -1404,10 +1395,6 @@ func TestCheckRepositoryAllowsSanitizedTerminalOutput(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "cmd", "upbrr"), 0o755); err != nil {
 		t.Fatalf("mkdir cmd upbrr: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "gui"), 0o755); err != nil {
-		t.Fatalf("mkdir gui: %v", err)
-	}
-
 	content := `package main
 
 import (
@@ -1433,9 +1420,6 @@ func warnings() []string { return nil }
 
 	if err := os.WriteFile(filepath.Join(root, "cmd", "upbrr", "main.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write CLI sample file: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "gui", "main.go"), []byte(content), 0o600); err != nil {
-		t.Fatalf("write GUI sample file: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "internal", "sample", "sample.go"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write internal sample file: %v", err)
@@ -3174,8 +3158,16 @@ func TestDiagnosticArtifactWritesRecognizeConvertedSanitizedBindings(t *testing.
 		writeExpr      string
 		wantViolations int
 	}{
-		{name: "slice conversion", writeExpr: "[]byte(payload)", wantViolations: 0},
-		{name: "ordinary call", writeExpr: "cloneBytes(payload)", wantViolations: 1},
+		{
+			name:           "slice conversion",
+			writeExpr:      "[]byte(payload)",
+			wantViolations: 0,
+		},
+		{
+			name:           "ordinary call",
+			writeExpr:      "cloneBytes(payload)",
+			wantViolations: 1,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -3206,7 +3198,7 @@ func writeFailureArtifact(path string, payload []byte) error {
 func TestFrontendVisibleRawErrorsRequireRedaction(t *testing.T) {
 	t.Parallel()
 
-	content := `package guiapp
+	content := `package webserver
 
 import (
 	"github.com/autobrr/upbrr/internal/logging"
@@ -3227,7 +3219,7 @@ func updateSafe(state *trackerState, err error) {
 }
 `
 	fset, file := parsePolicyFixture(t, content)
-	violations := checkFrontendVisibleRawErrors(fset, "internal/guiapp/sample.go", file, importAliases(file), nil)
+	violations := checkFrontendVisibleRawErrors(fset, "internal/webserver/sample.go", file, importAliases(file), nil)
 	if len(violations) != 3 {
 		t.Fatalf("expected 3 violations, got %d: %#v", len(violations), violations)
 	}
@@ -3241,7 +3233,7 @@ func updateSafe(state *trackerState, err error) {
 func TestFrontendVisibleUploadJobFailureMessagesRequireRedaction(t *testing.T) {
 	t.Parallel()
 
-	content := `package guiapp
+	content := `package webserver
 
 import "github.com/autobrr/upbrr/internal/logging"
 
@@ -3258,7 +3250,7 @@ func stable(app *App, eventCtx any, job *trackerUploadJob) {
 }
 `
 	fset, file := parsePolicyFixture(t, content)
-	violations := checkFrontendVisibleRawErrors(fset, "internal/guiapp/sample.go", file, importAliases(file), nil)
+	violations := checkFrontendVisibleRawErrors(fset, "internal/webserver/sample.go", file, importAliases(file), nil)
 	if len(violations) != 1 {
 		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
 	}
@@ -3321,7 +3313,7 @@ func safe(req *http.Request, apiKey string) {
 }
 `
 	fset, file := parsePolicyFixture(t, content)
-	violations := checkUnit3DQueryCredentialAuth(fset, "internal/trackerdata/unit3d.go", file, nil)
+	violations := checkUnit3DQueryCredentialAuth(fset, "internal/trackers/data/unit3d.go", file, nil)
 	if len(violations) != 1 {
 		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
 	}

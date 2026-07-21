@@ -7,11 +7,12 @@ package main
 
 import (
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/trackerauth"
+	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // newCLITrackerAuthService returns the production tracker-auth implementation.
 func newCLITrackerAuthService(cfg config.Config, logger api.Logger) cliTrackerAuthService {
-	return trackerauth.NewServiceWithLogger(cfg, logger)
+	return trackerauth.NewServiceWithRegistryAndLogger(cfg, trackerimpl.MustNewRegistry(), logger)
 }

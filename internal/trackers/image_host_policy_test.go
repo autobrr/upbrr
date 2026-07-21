@@ -10,6 +10,23 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func imageHostPolicyTestRegistry(t *testing.T) *Registry {
+	t.Helper()
+	registry := NewRegistry()
+	for _, name := range []string{"AITHER", "GPW", "HDB", "HHD", "LST", "OE", "PTP", "RF", "STC"} {
+		policy := testImageHostPolicyForTracker(name)
+		if err := registry.RegisterDescriptor(Descriptor{
+			Name:       name,
+			Definition: stubDefinition{name: name},
+			Family:     testTrackerFamily(name),
+			ImageHost:  policy,
+		}); err != nil {
+			t.Fatalf("register %s image host policy: %v", name, err)
+		}
+	}
+	return registry
+}
+
 func TestResolveImageHostPolicy(t *testing.T) {
 	t.Parallel()
 
@@ -74,7 +91,7 @@ func TestResolveImageHostPolicy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			policy, err := resolveImageHostPolicy(tc.tracker, tc.cfg, tc.overrides)
+			policy, err := resolveImageHostPolicyWithRegistry(imageHostPolicyTestRegistry(t), tc.tracker, tc.cfg, tc.overrides)
 			if (err != nil) != tc.wantErr {
 				if tc.wantErr {
 					t.Fatal("expected owned host override to fail for other tracker")
@@ -130,7 +147,7 @@ func TestResolveImageHostPolicy(t *testing.T) {
 func TestNeededImageUploadTargetsFallsBackFromTrackerConfiguredHostForUnrestrictedTracker(t *testing.T) {
 	t.Parallel()
 
-	targets, err := NeededImageUploadTargetsExcluding(config.Config{
+	targets, err := NeededImageUploadTargetsExcludingWithRegistry(imageHostPolicyTestRegistry(t), config.Config{
 		ImageHosting: config.ImageHostingConfig{
 			Host1: "pixhost",
 			Host2: "imgbb",
@@ -152,7 +169,7 @@ func TestNeededImageUploadTargetsFallsBackFromTrackerConfiguredHostForUnrestrict
 func TestNeededImageUploadTargetsDoesNotFallbackToUnsupportedHostForRestrictedTracker(t *testing.T) {
 	t.Parallel()
 
-	targets, err := NeededImageUploadTargetsExcluding(config.Config{
+	targets, err := NeededImageUploadTargetsExcludingWithRegistry(imageHostPolicyTestRegistry(t), config.Config{
 		ImageHosting: config.ImageHostingConfig{
 			Host1: "pixhost",
 			Host2: "imgbox",
@@ -174,7 +191,7 @@ func TestNeededImageUploadTargetsDoesNotFallbackToUnsupportedHostForRestrictedTr
 func TestNeededImageUploadTargetsChoosesSharedApprovedHost(t *testing.T) {
 	t.Parallel()
 
-	targets, err := NeededImageUploadTargets(config.Config{
+	targets, err := NeededImageUploadTargetsWithRegistry(imageHostPolicyTestRegistry(t), config.Config{
 		ImageHosting: config.ImageHostingConfig{
 			Host1: "imgbb",
 			Host2: "imgbox",
@@ -197,7 +214,7 @@ func TestNeededImageUploadTargetsChoosesSharedApprovedHost(t *testing.T) {
 func TestNeededImageUploadTargetsUsesConfiguredHostPriority(t *testing.T) {
 	t.Parallel()
 
-	targets, err := NeededImageUploadTargets(config.Config{
+	targets, err := NeededImageUploadTargetsWithRegistry(imageHostPolicyTestRegistry(t), config.Config{
 		ImageHosting: config.ImageHostingConfig{
 			Host1: "pixhost",
 			Host2: "imgbox",
@@ -218,7 +235,7 @@ func TestNeededImageUploadTargetsUsesConfiguredHostPriority(t *testing.T) {
 func TestNeededImageUploadTargetsDoesNotUseUnconfiguredPolicyHost(t *testing.T) {
 	t.Parallel()
 
-	targets, err := NeededImageUploadTargets(config.Config{
+	targets, err := NeededImageUploadTargetsWithRegistry(imageHostPolicyTestRegistry(t), config.Config{
 		ImageHosting: config.ImageHostingConfig{
 			Host1: "imgbb",
 		},
@@ -237,8 +254,9 @@ func TestNeededImageUploadTargetsDoesNotUseUnconfiguredPolicyHost(t *testing.T) 
 func TestCandidateImageUploadTargetHostsUsesTrackerPolicyPreference(t *testing.T) {
 	t.Parallel()
 
-	policy := policyForTracker("PTP", config.TrackerConfig{})
-	hosts := candidateImageUploadTargetHosts("PTP", policy, []string{"imgbb", "pixhost"}, map[string]struct{}{})
+	registry := imageHostPolicyTestRegistry(t)
+	policy := policyForTrackerWithRegistry(registry, "PTP", config.TrackerConfig{})
+	hosts := candidateImageUploadTargetHosts(registry, "PTP", policy, []string{"imgbb", "pixhost"}, map[string]struct{}{})
 	if got, want := len(hosts), 2; got != want {
 		t.Fatalf("expected %d hosts, got %#v", want, hosts)
 	}
@@ -250,7 +268,7 @@ func TestCandidateImageUploadTargetHostsUsesTrackerPolicyPreference(t *testing.T
 func TestNeededImageUploadTargetsAllowsTrackerConfiguredHost(t *testing.T) {
 	t.Parallel()
 
-	targets, err := NeededImageUploadTargets(config.Config{
+	targets, err := NeededImageUploadTargetsWithRegistry(imageHostPolicyTestRegistry(t), config.Config{
 		ImageHosting: config.ImageHostingConfig{
 			Host1: "imgbb",
 		},
@@ -271,7 +289,7 @@ func TestNeededImageUploadTargetsAllowsTrackerConfiguredHost(t *testing.T) {
 func TestNeededImageUploadTargetsDoesNotShareTrackerConfiguredHostUnlessGloballyConfigured(t *testing.T) {
 	t.Parallel()
 
-	targets, err := NeededImageUploadTargets(config.Config{
+	targets, err := NeededImageUploadTargetsWithRegistry(imageHostPolicyTestRegistry(t), config.Config{
 		ImageHosting: config.ImageHostingConfig{
 			Host1: "imgbb",
 		},
@@ -299,7 +317,7 @@ func TestNeededImageUploadTargetsDoesNotShareTrackerConfiguredHostUnlessGlobally
 func TestNeededImageUploadTargetsUsesConfiguredLostimgForLST(t *testing.T) {
 	t.Parallel()
 
-	targets, err := NeededImageUploadTargets(config.Config{
+	targets, err := NeededImageUploadTargetsWithRegistry(imageHostPolicyTestRegistry(t), config.Config{
 		ImageHosting: config.ImageHostingConfig{
 			Host1:          "imgbb",
 			LostimgEnabled: true,
@@ -320,7 +338,7 @@ func TestNeededImageUploadTargetsUsesConfiguredLostimgForLST(t *testing.T) {
 func TestNeededImageUploadTargetsSkipsLostimgWhenDisabled(t *testing.T) {
 	t.Parallel()
 
-	targets, err := NeededImageUploadTargets(config.Config{
+	targets, err := NeededImageUploadTargetsWithRegistry(imageHostPolicyTestRegistry(t), config.Config{
 		ImageHosting: config.ImageHostingConfig{
 			Host1: "imgbb",
 		},
@@ -336,7 +354,7 @@ func TestNeededImageUploadTargetsSkipsLostimgWhenDisabled(t *testing.T) {
 func TestNeededImageUploadTargetsUsesConfiguredReelflixForRF(t *testing.T) {
 	t.Parallel()
 
-	targets, err := NeededImageUploadTargets(config.Config{
+	targets, err := NeededImageUploadTargetsWithRegistry(imageHostPolicyTestRegistry(t), config.Config{
 		ImageHosting: config.ImageHostingConfig{
 			Host1: "imgbb",
 		},
@@ -360,7 +378,7 @@ func TestNeededImageUploadTargetsUsesConfiguredReelflixForRF(t *testing.T) {
 func TestNeededImageUploadTargetsSkipsReelflixWhenDisabled(t *testing.T) {
 	t.Parallel()
 
-	targets, err := NeededImageUploadTargets(config.Config{
+	targets, err := NeededImageUploadTargetsWithRegistry(imageHostPolicyTestRegistry(t), config.Config{
 		ImageHosting: config.ImageHostingConfig{
 			Host1: "imgbb",
 		},
