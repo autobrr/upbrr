@@ -1725,7 +1725,6 @@ h2 {
   display: grid;
   place-items: center;
   padding: 2rem;
-  background: var(--bg);
 }
 
 .web-auth-card {
