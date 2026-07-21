@@ -41,6 +41,9 @@ func TestSetUnit3DAPIHeadersUsesBearerAuthorization(t *testing.T) {
 	if req.Header.Get("Accept") != "application/json" {
 		t.Fatal("expected Unit3D JSON accept header")
 	}
+	if req.Header.Get("User-Agent") != "upbrr" {
+		t.Fatal("expected Unit3D upbrr user-agent")
+	}
 	if req.URL.Query().Has("api_token") {
 		t.Fatal("Unit3D API token must not be placed in the query")
 	}
