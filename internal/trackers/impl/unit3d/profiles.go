@@ -4,52 +4,36 @@
 package unit3d
 
 import (
-	"strings"
+	"context"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-type unit3DSiteProfile struct {
-	resolveTypeID          func(meta api.PreparedMetadata) string
-	resolveResolutionID    func(meta api.PreparedMetadata) string
-	resolveCategoryID      func(meta api.PreparedMetadata) string
-	applyAdditionalPayload func(req trackers.UploadRequest, data map[string]string)
+// SiteProfile contains optional site-owned Unit3D payload callbacks.
+type SiteProfile struct {
+	// BuildName optionally overrides the generic Unit3D release-name builder.
+	BuildName func(meta api.UploadSubject, cfg config.TrackerConfig) string
+	// BuildDescription optionally renders site-specific tracker markup.
+	BuildDescription func(ctx context.Context, meta api.UploadSubject, appConfig config.Config, trackerConfig config.TrackerConfig, logger api.Logger, keptDescription string, menuImages []api.ScreenshotImage, screenshots []api.ScreenshotImage) (string, error)
+	// ResolveKeywords optionally maps prepared metadata to Unit3D keywords.
+	ResolveKeywords func(meta api.UploadSubject) string
+	// ResolveTypeID optionally maps prepared metadata to a site type identifier.
+	ResolveTypeID func(meta api.UploadSubject) string
+	// ResolveResolutionID optionally maps prepared metadata to a site resolution identifier.
+	ResolveResolutionID func(meta api.UploadSubject) string
+	// ResolveCategoryID optionally maps prepared metadata to a site category identifier.
+	ResolveCategoryID func(meta api.UploadSubject) string
+	// ApplyAdditionalPayload appends site-owned fields to a prepared payload.
+	ApplyAdditionalPayload func(req trackers.PreparationInput, data map[string]string)
+	// FinalizeDescription applies final site-owned description transformations.
+	FinalizeDescription func(description string, meta api.UploadSubject) string
 }
 
-var unit3DSiteProfiles = map[string]unit3DSiteProfile{
-	"A4K":    siteA4KProfile(),
-	"ACM":    siteACMProfile(),
-	"AITHER": siteAITHERProfile(),
-	"BLU":    siteBLUProfile(),
-	"CBR":    siteCBRProfile(),
-	"EMUW":   siteEMUWProfile(),
-	"IHD":    siteIHDProfile(),
-	"ITT":    siteITTProfile(),
-	"LDU":    siteLDUProfile(),
-	"LST":    siteLSTProfile(),
-	"LT":     siteLTProfile(),
-	"OE":     siteOEProfile(),
-	"OTW":    siteOTWProfile(),
-	"PT":     sitePTProfile(),
-	"R4E":    siteR4EProfile(),
-	"RF":     siteRFProfile(),
-	"RHD":    siteRHDProfile(),
-	"SHRI":   siteSHRIProfile(),
-	"STC":    siteSTCProfile(),
-	"TIK":    siteTIKProfile(),
-	"TLZ":    siteTLZProfile(),
-	"TOS":    siteTOSProfile(),
-	"UTP":    siteUTPProfile(),
-	"YUS":    siteYUSProfile(),
-	"ZNTH":   siteZNTHProfile(),
-}
-
-func unit3DSiteProfileFor(tracker string) (unit3DSiteProfile, bool) {
-	key := strings.ToUpper(strings.TrimSpace(tracker))
-	if key == "" {
-		return unit3DSiteProfile{}, false
+func firstSiteProfile(profiles []SiteProfile) SiteProfile {
+	if len(profiles) == 0 {
+		return SiteProfile{}
 	}
-	profile, ok := unit3DSiteProfiles[key]
-	return profile, ok
+	return profiles[0]
 }

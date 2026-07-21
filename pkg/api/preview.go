@@ -15,13 +15,12 @@ type MetadataPreview struct {
 	SourcePath           string
 	TrackerName          string
 	ReleaseName          string
-	Warnings             []string
 	ReleaseNameOverrides ReleaseNameOverrides
-	ExternalIDs          ExternalIDs
-	ExternalIDCandidates ExternalIDCandidates
-	ExternalIDInfo       []ExternalIDInfo
-	ExternalPreview      []ExternalPreview
+	Release              ReleaseRef
+	Identity             ExternalIdentity
+	Display              PreparedReleaseDisplay
 	Bluray               *BlurayMetadata
+	Diagnostics          []PreparationDiagnostic
 	TrackerData          []TrackerPreview
 	// TrackerRuleFailures is keyed by normalized tracker code and contains
 	// upload rule failures known at preview time.
@@ -29,8 +28,9 @@ type MetadataPreview struct {
 }
 
 type DescriptionBuilderPreview struct {
-	SourcePath string
-	Groups     []DescriptionBuilderGroup
+	SourcePath      string
+	Groups          []DescriptionBuilderGroup
+	ContentFailures []TrackerContentFailure
 }
 
 type DescriptionBuilderGroup struct {
@@ -45,8 +45,9 @@ type DescriptionBuilderGroup struct {
 }
 
 type PreparationPreview struct {
-	SourcePath   string
-	Descriptions []PreparationDescription
+	SourcePath      string
+	Descriptions    []PreparationDescription
+	ContentFailures []TrackerContentFailure
 }
 
 type TrackerDryRunPreview struct {
@@ -55,8 +56,9 @@ type TrackerDryRunPreview struct {
 }
 
 type UploadReview struct {
-	SourcePath string
-	Trackers   []TrackerReview
+	SourcePath  string
+	Trackers    []TrackerReview
+	Eligibility TrackerEligibility
 }
 
 type TrackerReview struct {
@@ -94,9 +96,19 @@ type TrackerDryRunEntry struct {
 	Files                   []TrackerDryRunFile
 	// DebugSections carries optional staged diagnostics for trackers whose dry-run
 	// preview needs to show more than one request or derived payload.
-	DebugSections []TrackerDryRunDebugSection
-	Questionnaire *TrackerQuestionnaire
-	ImageHost     ImageHostFeedback
+	DebugSections  []TrackerDryRunDebugSection
+	Questionnaire  *TrackerQuestionnaire
+	ImageHost      ImageHostFeedback
+	ContentFailure *TrackerContentFailure
+	Diagnostics    TrackerDryRunDiagnostics
+}
+
+// TrackerDryRunDiagnostics describes live-upload findings without changing
+// dry-run payload readiness.
+type TrackerDryRunDiagnostics struct {
+	RuleDecisions          []RuleDecision
+	Duplicate              DupeCheckResult
+	LiveEligibilityReasons []TrackerEligibilityReason
 }
 
 // TrackerDryRunDebugSection describes one named diagnostic payload inside a
@@ -169,40 +181,4 @@ type ExternalIDInfo struct {
 	Provider string
 	ID       int
 	Source   string
-}
-
-type ExternalPreview struct {
-	Provider         string
-	ID               int
-	Source           string
-	Title            string
-	Year             int
-	Overview         string
-	PosterURL        string
-	BackdropURL      string
-	Category         string
-	OriginalTitle    string
-	ReleaseDate      string
-	FirstAirDate     string
-	LastAirDate      string
-	OriginalLanguage string
-	TMDBType         string
-	Runtime          int
-	Genres           string
-	Keywords         string
-	YouTube          string
-	IMDBType         string
-	Rating           float64
-	RatingCount      int
-	RuntimeMinutes   int
-	Country          string
-	Premiered        string
-	IMDBID           int
-	TVDBID           int
-	TMDB             *TMDBMetadata
-	IMDB             *IMDBMetadata
-	TVDB             *TVDBMetadata
-	TVmaze           *TVmazeMetadata
-	// AniList contains rich preview metadata when Provider is "mal".
-	AniList *AniListMetadata
 }

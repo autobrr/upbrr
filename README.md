@@ -25,7 +25,6 @@ You should already know how your trackers expect uploads to be named and categor
 
 Have these ready:
 
-- TMDB API key
 - tracker API keys, cookies, or credentials required by the trackers you use
 - image host credentials
 - torrent client details or watch-folder paths
@@ -39,8 +38,10 @@ Have these ready:
       brew install ffmpeg
       ```
 
-      The CLI can find ffmpeg when your shell PATH includes Homebrew. If you start the GUI from Finder, macOS may not pass your shell PATH to the app, so the GUI may not see Homebrew's ffmpeg. Start the GUI from Terminal, or make ffmpeg available in the environment used to launch the app.
+      The CLI and WebUI server can find ffmpeg when their process environment includes Homebrew's bin directory.
     - Automatic DVD menu screenshots need an FFmpeg build whose `dvdvideo` demuxer exposes `menu`, `menu_lu`, `menu_vts`, `pgc`, and `pg`. A version number alone does not prove this capability. upbrr checks the selected FFmpeg at runtime; see [FFmpeg's dvdvideo documentation](https://ffmpeg.org/ffmpeg-formats.html#dvdvideo).
+
+- A TMDB API key is optional, but required for most trackers in upbrr.
 
 By default, upbrr stores its database at:
 
@@ -81,7 +82,7 @@ The importer accepts:
 
 Read all warnings printed during import. Unknown legacy keys, unsupported tracker fields, or unsupported image-host settings may be skipped or adjusted.
 
-You can also import config files from the Settings page in the GUI or web UI.
+You can also import config files from the WebUI Settings page.
 
 ### Web UI Browse Access
 
@@ -118,12 +119,6 @@ If your old Upload Assistant setup has tracker cookies under `data\cookies`, cop
 Restart upbrr after copying cookies, then verify tracker login/session status before uploading.
 
 ## Running upbrr
-
-Desktop GUI:
-
-```powershell
-.\upbrr-gui.exe
-```
 
 Web UI:
 
@@ -229,11 +224,11 @@ Useful CLI checks:
 
 ```powershell
 .\upbrr.exe --site-check --trackers BLU,OE "D:\releases\Some.Release"
-.\upbrr.exe --dry-run --trackers PTP,HDB "D:\releases\Some.Release"
+.\upbrr.exe --debug --trackers PTP,HDB "D:\releases\Example.Release.2026"
 .\upbrr.exe --queue "D:\upload-queue" --limit-queue 5
 ```
 
-NOTE: with cli `--debug` works as expected. Additionally, the printed feedback (even with debug) can be adjusted with `--log-level`. See `upbrr.exe --help`
+CLI `--debug` builds and prints the same non-submitting tracker payload preview as the WebUI dry run. It never submits to trackers. `--log-level debug` changes log verbosity only and does not select debug/dry-run behavior. See `upbrr.exe --help`.
 
 ### Automatic DVD Menu Screenshots
 
@@ -245,7 +240,7 @@ CLI example:
 .\upbrr.exe --get-dvd-menus "D:\releases\Example.Release.2026.DVD-GRP"
 ```
 
-In the GUI or web UI, fetch DVD metadata, then open **Disc Menus** and start automatic capture. Manual Disc Menu image import remains available for DVD, BDMV, and HDDVD sources. `screenshot_handling.max_menu_items` controls the maximum stored automatic menu images; the default is `6` and the supported range is `1` to `32`.
+In the WebUI, fetch DVD metadata, then open **Disc Menus** and start automatic capture. Manual Disc Menu image import remains available for DVD, BDMV, and HDDVD sources. `screenshot_handling.max_menu_items` controls the maximum stored automatic menu images; the default is `6` and the supported range is `1` to `32`.
 
 The FFmpeg capability check must find the `dvdvideo` demuxer and all required menu-coordinate options. If it does not, capture stops with an explicit capability error instead of sampling menu VOB files. Application Details shows the embedded Go DVD engine version, FFmpeg version, and menu-capability status without exposing local executable paths.
 

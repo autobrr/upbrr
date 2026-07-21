@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"strings"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
-	"github.com/autobrr/upbrr/pkg/api"
 )
 
 var (
@@ -35,7 +35,13 @@ type sourceLookupResolution struct {
 	Mode      string
 }
 
-func applySourceLookupOverride(meta *api.PreparedMetadata) {
+func applySourceLookupOverride(meta *preparationstate.State) {
+	applySourceLookupOverrideWithRegistry(meta, nil)
+}
+
+// applySourceLookupOverrideWithRegistry converts a source URL into tracker or
+// provider evidence without replacing explicit IDs already present in meta.
+func applySourceLookupOverrideWithRegistry(meta *preparationstate.State, registry *trackers.Registry) {
 	if meta == nil {
 		return
 	}
@@ -45,7 +51,7 @@ func applySourceLookupOverride(meta *api.PreparedMetadata) {
 		return
 	}
 
-	resolution, err := resolveSourceLookupURL(raw)
+	resolution, err := resolveSourceLookupURLWithRegistry(raw, registry)
 	if err != nil {
 		meta.LookupWarnings = append(meta.LookupWarnings, "Source URL lookup failed; using default metadata lookup flow.")
 		return
@@ -60,9 +66,11 @@ func applySourceLookupOverride(meta *api.PreparedMetadata) {
 		if meta.TrackerIDs == nil {
 			meta.TrackerIDs = make(map[string]string)
 		}
-		meta.TrackerIDs[trackerKey] = strings.TrimSpace(resolution.TrackerID)
-		meta.Trackers = []string{strings.ToUpper(trackerKey)}
-		meta.MatchedTrackers = []string{strings.ToUpper(trackerKey)}
+		if _, explicitlySet := meta.TrackerIDs[trackerKey]; !explicitlySet {
+			meta.TrackerIDs[trackerKey] = strings.TrimSpace(resolution.TrackerID)
+		}
+		meta.EvidenceTrackers = []string{strings.ToUpper(trackerKey)}
+		meta.MatchedEvidenceTrackers = []string{strings.ToUpper(trackerKey)}
 		meta.SourceLookupActive = true
 		meta.SourceLookupMode = "tracker"
 		meta.SourceLookupTracker = strings.ToUpper(trackerKey)
@@ -93,9 +101,8 @@ func applySourceLookupOverride(meta *api.PreparedMetadata) {
 		}
 		meta.SourceLookupActive = true
 		meta.SourceLookupMode = "media"
-		meta.Trackers = nil
-		meta.MatchedTrackers = nil
-		meta.TrackerIDs = nil
+		meta.EvidenceTrackers = nil
+		meta.MatchedEvidenceTrackers = nil
 		return
 	}
 
@@ -103,6 +110,10 @@ func applySourceLookupOverride(meta *api.PreparedMetadata) {
 }
 
 func resolveSourceLookupURL(raw string) (sourceLookupResolution, error) {
+	return resolveSourceLookupURLWithRegistry(raw, nil)
+}
+
+func resolveSourceLookupURLWithRegistry(raw string, registry *trackers.Registry) (sourceLookupResolution, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
 		return sourceLookupResolution{}, fmt.Errorf("metadata: parse source lookup URL: %w", err)
@@ -117,8 +128,12 @@ func resolveSourceLookupURL(raw string) (sourceLookupResolution, error) {
 		return sourceLookupResolution{}, url.InvalidHostError("missing host")
 	}
 
-	if tracker, trackerID, ok := extractUnit3DTrackerID(host, parsed.Path); ok {
-		return sourceLookupResolution{Tracker: tracker, TrackerID: trackerID, Mode: "tracker"}, nil
+	if tracker, trackerID, ok := extractUnit3DTrackerID(host, parsed.Path, registry); ok {
+		return sourceLookupResolution{
+			Tracker:   tracker,
+			TrackerID: trackerID,
+			Mode:      "tracker",
+		}, nil
 	}
 
 	path := parsed.EscapedPath()
@@ -178,9 +193,10 @@ func extractTVDBIDFromQuery(host string, query url.Values) (int, bool) {
 	return id, true
 }
 
-func extractUnit3DTrackerID(host string, path string) (string, string, bool) {
-	for _, tracker := range trackers.Unit3DTrackers() {
-		baseURL, ok := unit3dmeta.BaseURL(tracker)
+func extractUnit3DTrackerID(host string, path string, registry *trackers.Registry) (string, string, bool) {
+	trackerNames := registry.NamesByFamily(trackers.FamilyUnit3D)
+	for _, tracker := range trackerNames {
+		baseURL, ok := registry.LookupBaseURL(tracker)
 		if !ok {
 			continue
 		}

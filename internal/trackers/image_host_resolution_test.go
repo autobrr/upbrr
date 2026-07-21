@@ -52,7 +52,7 @@ func TestEnsureDescriptionImageHostSkipUploadDoesNotMaterializeURLOnlySlots(t *t
 	skipUpload := true
 	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
 	repo := &imageHostResolutionRepo{stubRepo: &stubRepo{}}
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		SourcePath:          sourcePath,
 		DescriptionOverride: "[center][img]http://8.8.8.8/image.gif[/img][/center]",
 		ImageHostOverrides: api.ImageHostOverrides{
@@ -62,7 +62,9 @@ func TestEnsureDescriptionImageHostSkipUploadDoesNotMaterializeURLOnlySlots(t *t
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")}}
 	trackerCfg := config.TrackerConfig{ImageHost: "imgbox"}
 
-	resolution, err := ensureDescriptionImageHostWithData(context.Background(), "MTV", meta, cfg, trackerCfg, repo, &stubImageService{}, api.NopLogger{}, nil)
+	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(
+		context.Background(), "MTV", meta, cfg, trackerCfg, repo, &stubImageService{}, api.NopLogger{}, descriptionAssetsTestRegistry(t), nil,
+	)
 	if err != nil {
 		t.Fatalf("ensure image host: %v", err)
 	}
@@ -285,7 +287,7 @@ func TestMaterializeDescriptionSlotImagesKeepsRetryStateOnDownloadFailure(t *tes
 		SectionKind:         screenshotSectionWrapped,
 		RenderInScreenshots: true,
 	}}
-	meta := api.PreparedMetadata{SourcePath: "source.mkv"}
+	meta := api.UploadSubject{SourcePath: "source.mkv"}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")}}
 
 	results, changed := materializeDescriptionSlotImages(context.Background(), meta, cfg, "AITHER", slots, api.NopLogger{})
@@ -323,7 +325,7 @@ func TestMaterializeDescriptionSlotImagesPreservesExistingLocalImagePath(t *test
 		SectionKind:         screenshotSectionWrapped,
 		RenderInScreenshots: true,
 	}}
-	meta := api.PreparedMetadata{SourcePath: "source.mkv"}
+	meta := api.UploadSubject{SourcePath: "source.mkv"}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(t.TempDir(), "upbrr.db")}}
 
 	results, changed := materializeDescriptionSlotImages(context.Background(), meta, cfg, "AITHER", slots, api.NopLogger{})

@@ -18,7 +18,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/autobrr/upbrr/internal/pathutil"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -27,7 +29,7 @@ const srrdbBaseURL = "https://api.srrdb.com"
 // SceneDetector resolves scene metadata from a prepared item. Implementations
 // may return a populated result with an error when an optional side effect fails.
 type SceneDetector interface {
-	Detect(ctx context.Context, meta api.PreparedMetadata) (SceneResult, error)
+	Detect(ctx context.Context, meta preparationstate.State) (SceneResult, error)
 }
 
 // SceneResult captures scene metadata from external sources. NFO fields are
@@ -166,7 +168,7 @@ func (c sceneCandidates) primaryLocalBase() string {
 // paths. VideoPath is the primary media file; SourcePath is the release root — a
 // folder for folder releases (its basename is the canonical dotted name) or the
 // media file itself for single-file releases.
-func sceneLocalCandidates(meta api.PreparedMetadata) sceneCandidates {
+func sceneLocalCandidates(meta preparationstate.State) sceneCandidates {
 	video := strings.TrimSpace(meta.VideoPath)
 	source := strings.TrimSpace(meta.SourcePath)
 	var c sceneCandidates
@@ -199,14 +201,20 @@ func sceneLocalCandidates(meta api.PreparedMetadata) sceneCandidates {
 	return c
 }
 
-func (d *srrdbDetector) Detect(ctx context.Context, meta api.PreparedMetadata) (SceneResult, error) {
+func (d *srrdbDetector) Detect(ctx context.Context, meta preparationstate.State) (SceneResult, error) {
 	cands := sceneLocalCandidates(meta)
 	if cands.empty() {
 		d.log().Tracef("metadata: scene detection skipped: no local candidates")
 		return SceneResult{}, nil
 	}
 	imdbID := sceneIMDbID(meta)
-	d.log().Debugf("metadata: scene detection start imdb=%d folders=%d files=%d media_present=%t", imdbID, len(cands.folders), len(cands.files), strings.TrimSpace(cands.mediaFilename) != "")
+	d.log().Debugf(
+		"metadata: scene detection start imdb=%d folders=%d files=%d media_present=%t",
+		imdbID,
+		len(cands.folders),
+		len(cands.files),
+		strings.TrimSpace(cands.mediaFilename) != "",
+	)
 
 	// For TV releases, a word:<title SxxEyy|Sxx> search is the cheapest
 	// high-signal path and avoids broad IMDb fan-out on long-running shows. TV
@@ -235,7 +243,7 @@ func (d *srrdbDetector) Detect(ctx context.Context, meta api.PreparedMetadata) (
 // detectViaTVWord runs the low-fan-out SRRDB word search for parsed TV releases.
 // It returns no match when the metadata cannot form a title/season query. Network
 // and decode failures are soft unless they are context cancellation.
-func (d *srrdbDetector) detectViaTVWord(ctx context.Context, meta api.PreparedMetadata, cands sceneCandidates) (SceneResult, error) {
+func (d *srrdbDetector) detectViaTVWord(ctx context.Context, meta preparationstate.State, cands sceneCandidates) (SceneResult, error) {
 	query := srrdbTVWordQuery(meta)
 	if query == "" {
 		return SceneResult{}, nil
@@ -257,7 +265,13 @@ func (d *srrdbDetector) detectViaTVWord(ctx context.Context, meta api.PreparedMe
 
 	best, source := selectSceneRelease(meta, cands, releases)
 	if best == nil {
-		d.log().Debugf("metadata: scene word no confident candidate query=%q candidates=%d folders=%d files=%d", query, len(releases), len(cands.folders), len(cands.files))
+		d.log().Debugf(
+			"metadata: scene word no confident candidate query=%q candidates=%d folders=%d files=%d",
+			query,
+			len(releases),
+			len(cands.folders),
+			len(cands.files),
+		)
 		return SceneResult{}, nil
 	}
 	return d.finishSceneMatch(ctx, cands, *best, source, "word")
@@ -266,7 +280,7 @@ func (d *srrdbDetector) detectViaTVWord(ctx context.Context, meta api.PreparedMe
 // detectViaIMDB lists every scene release for the title, selects the one matching
 // the local folder/filename, then verifies the media filename. Strictly
 // best-effort: every failure returns a no-match (except context cancellation).
-func (d *srrdbDetector) detectViaIMDB(ctx context.Context, meta api.PreparedMetadata, cands sceneCandidates, imdbID int) (SceneResult, error) {
+func (d *srrdbDetector) detectViaIMDB(ctx context.Context, meta preparationstate.State, cands sceneCandidates, imdbID int) (SceneResult, error) {
 	d.log().Tracef("metadata: scene imdb search start imdb=%d", imdbID)
 	releases, err := d.fetchIMDBReleases(ctx, meta, imdbID)
 	if err != nil {
@@ -284,7 +298,13 @@ func (d *srrdbDetector) detectViaIMDB(ctx context.Context, meta api.PreparedMeta
 
 	best, source := selectSceneRelease(meta, cands, releases)
 	if best == nil {
-		d.log().Debugf("metadata: scene imdb no confident candidate imdb=%d candidates=%d folders=%d files=%d", imdbID, len(releases), len(cands.folders), len(cands.files))
+		d.log().Debugf(
+			"metadata: scene imdb no confident candidate imdb=%d candidates=%d folders=%d files=%d",
+			imdbID,
+			len(releases),
+			len(cands.folders),
+			len(cands.files),
+		)
 		return SceneResult{}, nil
 	}
 	return d.finishSceneMatch(ctx, cands, *best, source, "imdb")
@@ -383,7 +403,7 @@ func (d *srrdbDetector) searchWord(ctx context.Context, query string) ([]srrdbSe
 // case-insensitive equality (only for selecting the right release when local
 // casing differs): exact folder match, then exact filename/release-name match,
 // then metadata scoring to break ties / reject weak candidates.
-func selectSceneRelease(meta api.PreparedMetadata, cands sceneCandidates, releases []srrdbSearchResult) (*srrdbSearchResult, string) {
+func selectSceneRelease(meta preparationstate.State, cands sceneCandidates, releases []srrdbSearchResult) (*srrdbSearchResult, string) {
 	for _, folder := range cands.folders {
 		for i := range releases {
 			if strings.EqualFold(strings.TrimSpace(releases[i].Release), folder) {
@@ -413,7 +433,16 @@ func (d *srrdbDetector) finishSceneMatch(ctx context.Context, cands sceneCandida
 		reason = sceneRenamedReason
 		d.log().Infof("metadata: scene release renamed or modified via=%s", matchSource)
 	}
-	d.log().Debugf("metadata: scene matched mode=%s via=%s release=%q folders=%v media=%q has_nfo=%t renamed=%t", mode, matchSource, release.Release, cands.folders, cands.mediaFilename, strings.EqualFold(release.HasNFO, "yes"), renamed)
+	d.log().Debugf(
+		"metadata: scene matched mode=%s via=%s release=%q folders=%v media=%q has_nfo=%t renamed=%t",
+		mode,
+		matchSource,
+		release.Release,
+		cands.folders,
+		cands.mediaFilename,
+		strings.EqualFold(release.HasNFO, "yes"),
+		renamed,
+	)
 	return d.buildSceneResult(ctx, release, renamed, reason)
 }
 
@@ -455,7 +484,15 @@ func (d *srrdbDetector) buildSceneResult(ctx context.Context, result srrdbSearch
 				scene.MALID = nfoIDs.MALID
 				scene.Service = nfoIDs.Service
 				scene.ServiceLongName = nfoIDs.ServiceLongName
-				d.log().Tracef("metadata: scene nfo ids tmdb=%d imdb=%d tvdb=%d tvmaze=%d mal=%d service_present=%t", scene.TMDBID, scene.IMDBID, scene.TVDBID, scene.TVmazeID, scene.MALID, scene.Service != "")
+				d.log().Tracef(
+					"metadata: scene nfo ids tmdb=%d imdb=%d tvdb=%d tvmaze=%d mal=%d service_present=%t",
+					scene.TMDBID,
+					scene.IMDBID,
+					scene.TVDBID,
+					scene.TVmazeID,
+					scene.MALID,
+					scene.Service != "",
+				)
 			} else {
 				d.log().Debugf("metadata: scene nfo id parse failed: %v", readErr)
 			}
@@ -774,7 +811,13 @@ func (d *srrdbDetector) fetchNFO(ctx context.Context, release string) (string, b
 		return path, false, detailsErr
 	}
 
-	d.log().Tracef("metadata: scene nfo downloading release=%q file=%q details_nfo=%t details_error=%t", trimmed, fileBase+".nfo", detailsNFO, detailsErr != nil)
+	d.log().Tracef(
+		"metadata: scene nfo downloading release=%q file=%q details_nfo=%t details_error=%t",
+		trimmed,
+		fileBase+".nfo",
+		detailsNFO,
+		detailsErr != nil,
+	)
 	nfoURL := fmt.Sprintf("https://www.srrdb.com/download/file/%s/%s.nfo", url.PathEscape(trimmed), url.PathEscape(fileBase))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, nfoURL, nil)
 	if err != nil {
@@ -888,15 +931,15 @@ const (
 )
 
 // sceneIMDbID returns the resolved IMDb id on meta in precedence order. Detection
-// runs in ApplyMediaDetails, after ResolveExternalIDs, so meta.ExternalIDs.IMDBID
+// runs during media-detail enrichment after identity resolution, so the canonical IMDB ID
 // is normally populated; 0 means "no id known" and the imdb: search is skipped in
 // favor of the r: fallback.
-func sceneIMDbID(meta api.PreparedMetadata) int {
+func sceneIMDbID(meta preparationstate.State) int {
 	if id := meta.ExternalIDOverrides.IMDBID; id != nil && *id > 0 {
 		return *id
 	}
-	if meta.ExternalIDs.IMDBID > 0 {
-		return meta.ExternalIDs.IMDBID
+	if meta.Identity.IMDBID > 0 {
+		return meta.Identity.IMDBID
 	}
 	if meta.ArrIMDBID > 0 {
 		return meta.ArrIMDBID
@@ -908,7 +951,7 @@ func sceneIMDbID(meta api.PreparedMetadata) int {
 // It returns "<title> SxxEyy" when an episode is known and "<title> Sxx" when
 // only the season is known. A normalized TV category, title, and season are
 // required so movie-like releases do not take the TV-only path.
-func srrdbTVWordQuery(meta api.PreparedMetadata) string {
+func srrdbTVWordQuery(meta preparationstate.State) string {
 	if !isSRRDBTVCategory(meta) {
 		return ""
 	}
@@ -928,14 +971,14 @@ func srrdbTVWordQuery(meta api.PreparedMetadata) string {
 
 // isSRRDBTVCategory reports whether scene detection should use TV-specific SRRDB
 // search behavior for the parsed release category.
-func isSRRDBTVCategory(meta api.PreparedMetadata) bool {
+func isSRRDBTVCategory(meta preparationstate.State) bool {
 	return api.NormalizeCategory(meta.Release.Category) == api.CategoryTV
 }
 
 // fetchIMDBReleases lists every scene release for an IMDb id via the imdb:
 // search, paginating up to srrdbIMDBMaxPages. The id is a validated integer, so
 // the URL cannot be influenced by parsed metadata (no SSRF surface).
-func (d *srrdbDetector) fetchIMDBReleases(ctx context.Context, meta api.PreparedMetadata, imdbID int) ([]srrdbSearchResult, error) {
+func (d *srrdbDetector) fetchIMDBReleases(ctx context.Context, meta preparationstate.State, imdbID int) ([]srrdbSearchResult, error) {
 	if imdbID <= 0 {
 		return nil, nil
 	}
@@ -962,7 +1005,7 @@ func (d *srrdbDetector) fetchIMDBReleases(ctx context.Context, meta api.Prepared
 	return all, nil
 }
 
-func (d *srrdbDetector) fetchIMDBReleasePage(ctx context.Context, meta api.PreparedMetadata, imdbID, page int) (srrdbIMDBSearchResponse, error) {
+func (d *srrdbDetector) fetchIMDBReleasePage(ctx context.Context, meta preparationstate.State, imdbID, page int) (srrdbIMDBSearchResponse, error) {
 	imdb := formatSRRDBIMDbID(imdbID)
 	if imdb == "" {
 		return srrdbIMDBSearchResponse{}, nil
@@ -992,7 +1035,7 @@ func (d *srrdbDetector) fetchIMDBReleasePage(ctx context.Context, meta api.Prepa
 // srrdbIMDBForeignFilterPath narrows the broad imdb: release listing by the
 // parsed release language. Empty or English-only release names search
 // non-foreign entries; any explicit non-English marker searches foreign entries.
-func srrdbIMDBForeignFilterPath(meta api.PreparedMetadata) string {
+func srrdbIMDBForeignFilterPath(meta preparationstate.State) string {
 	for _, language := range meta.Release.Language {
 		switch strings.ToLower(strings.TrimSpace(language)) {
 		case "":
@@ -1009,6 +1052,14 @@ func srrdbIMDBForeignFilterPath(meta api.PreparedMetadata) string {
 // sceneMediaExtensions are the archive members treated as the primary media file
 // for rename detection.
 var sceneMediaExtensions = map[string]struct{}{
-	".mkv": {}, ".mp4": {}, ".avi": {}, ".ts": {}, ".m2ts": {},
-	".vob": {}, ".iso": {}, ".wmv": {}, ".mov": {}, ".m4v": {},
+	".mkv":  {},
+	".mp4":  {},
+	".avi":  {},
+	".ts":   {},
+	".m2ts": {},
+	".vob":  {},
+	".iso":  {},
+	".wmv":  {},
+	".mov":  {},
+	".m4v":  {},
 }

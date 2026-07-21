@@ -8,26 +8,60 @@ import (
 	"testing"
 )
 
-func TestPreparedMetadataSeasonEpisodeHelpers(t *testing.T) {
-	meta := PreparedMetadata{
-		SeasonInt: 9,
-		Release: ReleaseInfo{
-			Season:  1,
-			Episode: 2,
-		},
-	}
+func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
+	t.Parallel()
 
-	canonicalSeason, canonicalEpisode := meta.CanonicalSeasonEpisode()
-	if canonicalSeason != 9 || canonicalEpisode != 0 {
-		t.Fatalf("canonical season/episode = %d/%d, want 9/0", canonicalSeason, canonicalEpisode)
+	source := UploadSubject{
+		Release: ReleaseInfo{Codec: []string{"H.265"}},
+		ProviderMetadata: SourceScopedMetadata{TMDB: &TMDBMetadata{
+			LocalizedTitles: map[string]string{"en": "Example Release 2026"},
+		}},
+		SelectedBDMVPlaylists: []PlaylistInfo{{File: "00001.mpls"}},
 	}
+	projected := NewDescriptionSubject(source)
+	projected.Release.Codec[0] = "changed"
+	projected.ProviderMetadata.TMDB.LocalizedTitles["en"] = "changed"
+	projected.SelectedBDMVPlaylists[0].File = "changed"
 
-	fallbackSeason, fallbackEpisode := meta.SeasonEpisodeWithParsedFallback()
-	if fallbackSeason != 9 || fallbackEpisode != 2 {
-		t.Fatalf("fallback season/episode = %d/%d, want 9/2", fallbackSeason, fallbackEpisode)
+	if source.Release.Codec[0] != "H.265" {
+		t.Fatal("release facts share storage with description subject")
 	}
-	if !meta.HasTVSeasonEpisodeSignal() {
-		t.Fatalf("expected parsed release episode to provide TV signal")
+	if source.ProviderMetadata.TMDB.LocalizedTitles["en"] != "Example Release 2026" {
+		t.Fatal("provider metadata shares storage with description subject")
+	}
+	if source.SelectedBDMVPlaylists[0].File != "00001.mpls" {
+		t.Fatal("playlist facts share storage with description subject")
+	}
+}
+
+func TestRuleFailureDispositionFailClosed(t *testing.T) {
+	t.Parallel()
+	failures := []RuleFailure{
+		{Rule: "legacy"},
+		{Rule: "advisory", Disposition: RuleDispositionAdvisory},
+		{Rule: "unknown", Disposition: "unexpected"},
+	}
+	if !HasBlockingRuleFailures(failures) {
+		t.Fatal("expected legacy and unknown dispositions to block")
+	}
+	storedFailures := []TrackerRuleFailure{
+		{Rule: "legacy"},
+		{Rule: "advisory", Disposition: RuleDispositionAdvisory},
+		{Rule: "unknown", Disposition: "unexpected"},
+	}
+	if got := CountBlockingRuleFailures(storedFailures); got != 2 {
+		t.Fatalf("blocking count = %d, want 2", got)
+	}
+	if got := BlockingRuleFailures(failures); len(got) != 2 || got[0].Rule != "legacy" || got[1].Rule != "unknown" {
+		t.Fatalf("unexpected blocking subset: %#v", got)
+	}
+	if got := AdvisoryRuleFailures(failures); len(got) != 1 || got[0].Rule != "advisory" {
+		t.Fatalf("unexpected advisory subset: %#v", got)
+	}
+	if NormalizeRuleDisposition("warning") != RuleDispositionAdvisory ||
+		NormalizeRuleDisposition("blocking") != RuleDispositionWaivable ||
+		NormalizeRuleDisposition("unexpected") != RuleDispositionStrict {
+		t.Fatal("legacy or unknown disposition normalization changed")
 	}
 }
 

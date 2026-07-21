@@ -318,7 +318,12 @@ func clutColor(value uint32, alpha uint8) color.NRGBA {
 	cr := boundedByte((value >> 8) & 0xff)
 	cb := boundedByte(value & 0xff)
 	r, g, b := color.YCbCrToRGB(y, cb, cr)
-	return color.NRGBA{R: r, G: g, B: b, A: alpha}
+	return color.NRGBA{
+		R: r,
+		G: g,
+		B: b,
+		A: alpha,
+	}
 }
 
 // Composite overlays subpicture pixels and an optional selected-button

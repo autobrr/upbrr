@@ -55,25 +55,24 @@ func TestLoadParseError(t *testing.T) {
 func TestLoadValidateError(t *testing.T) {
 	t.Parallel()
 
-	path := writeTemp(t, "main_settings:\n  tmdb_api: \"\"\n")
+	path := writeTemp(t, "main_settings:\n  input_history_limit: -1\n")
 	_, err := Load(path)
 	if err == nil {
 		t.Fatalf("expected validate error")
 	}
-	if !strings.Contains(err.Error(), "tmdb_api") {
-		t.Fatalf("validate error should mention tmdb_api, got: %v", err)
+	if !strings.Contains(err.Error(), "input_history_limit") {
+		t.Fatalf("validate error should mention input_history_limit, got: %v", err)
 	}
 }
 
-// Env overrides must be applied before Validate so an env-supplied TMDB_API
-// rescues a file with an empty tmdb_api.
-func TestLoadEnvOverrideRescuesValidation(t *testing.T) {
+// Env overrides must still populate the optional TMDB API key.
+func TestLoadEnvOverridePopulatesOptionalTMDBAPI(t *testing.T) {
 	t.Setenv("UA_DEFAULT_TMDB_API", "rescued")
 
 	path := writeTemp(t, "main_settings:\n  tmdb_api: \"\"\nscreenshot_handling:\n  screens: 2\n")
 	cfg, err := Load(path)
 	if err != nil {
-		t.Fatalf("expected rescue, got: %v", err)
+		t.Fatalf("load: %v", err)
 	}
 	if cfg.MainSettings.TMDBAPI != "rescued" {
 		t.Fatalf("TMDBAPI: got %q", cfg.MainSettings.TMDBAPI)
@@ -124,14 +123,13 @@ func TestLoadInvalidEnvBoolFallsBackToYAML(t *testing.T) {
 	}
 }
 
-// Loading the embedded example.yaml is the CLI's smoke test for template
-// integrity. It currently fails validate (no TMDB key). We pin that behavior
-// here so anyone who removes the validation must update this test too.
-func TestLoadExampleYAMLFailsValidate(t *testing.T) {
+// Loading the embedded example.yaml reaches required runtime settings after
+// accepting its empty optional TMDB key.
+func TestLoadExampleYAMLAllowsMissingTMDBAPI(t *testing.T) {
 	t.Parallel()
 
 	_, err := Load(filepath.Join("defaults", "example.yaml"))
-	if err == nil {
-		t.Fatalf("embedded example must still fail validate (template has no TMDB key)")
+	if err == nil || !strings.Contains(err.Error(), "torrent_clients.qbittorrent") {
+		t.Fatalf("expected validation to advance past optional TMDB key, got %v", err)
 	}
 }

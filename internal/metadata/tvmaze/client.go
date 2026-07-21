@@ -22,12 +22,15 @@ const defaultBaseURL = "https://api.tvmaze.com"
 
 var errNotFound = errors.New("tvmaze: not found")
 
+// Client resolves TV series and episode metadata through TVmaze.
 type Client struct {
 	baseURL string
 	http    *http.Client
 	logger  api.Logger
 }
 
+// NewClient substitutes a 10-second HTTP client and no-op logger for nil
+// dependencies.
 func NewClient(httpClient *http.Client, logger api.Logger) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 10 * time.Second}
@@ -42,6 +45,10 @@ func NewClient(httpClient *http.Client, logger api.Logger) *Client {
 	}
 }
 
+// Search prefers a manual TVmaze ID, then TVDB and IMDb lookups, followed by
+// optional full-name and two-word searches. Lookup failures are treated as
+// misses. ManualID remains selected even when its detail fetch fails; ManualDate
+// suppresses automatic selection from ordinary candidates.
 func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, error) {
 	input = applyReleaseHints(input)
 	imdbID := metautil.ParseIMDbNumeric(input.ImdbID)
@@ -62,7 +69,12 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 		if c.logger != nil {
 			c.logger.Infof("tvmaze: manual selected id=%d imdb=%d tvdb=%d", selected, imdbID, tvdbID)
 		}
-		return SearchResult{SelectedID: selected, IMDBID: imdbID, TVDBID: tvdbID, Candidates: candidates}, nil
+		return SearchResult{
+			SelectedID: selected,
+			IMDBID:     imdbID,
+			TVDBID:     tvdbID,
+			Candidates: candidates,
+		}, nil
 	}
 
 	results := make([]Candidate, 0)
@@ -133,6 +145,8 @@ func applyReleaseHints(input SearchInput) SearchInput {
 	return input
 }
 
+// GetEpisodeByNumber falls back on a date lookup only when TVmaze returns 404.
+// The fallback date prefers ManualDate, then the matching TVDB episode air date.
 func (c *Client) GetEpisodeByNumber(ctx context.Context, tvmazeID, season, episode int, lookup EpisodeLookupContext) (*EpisodeData, error) {
 	if tvmazeID == 0 || season == 0 || episode == 0 {
 		return nil, errNotFound
@@ -157,6 +171,8 @@ func (c *Client) GetEpisodeByNumber(ctx context.Context, tvmazeID, season, episo
 	return data, nil
 }
 
+// GetEpisodeByDate returns the first episode supplied for airdate. Invalid input,
+// a 404 response, or an empty episode list returns the package not-found error.
 func (c *Client) GetEpisodeByDate(ctx context.Context, tvmazeID int, airdate string) (*EpisodeData, error) {
 	if tvmazeID == 0 || strings.TrimSpace(airdate) == "" {
 		return nil, errNotFound

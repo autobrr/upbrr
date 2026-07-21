@@ -9,10 +9,9 @@ import (
 	"context"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func maybeApplyE2EServices(context.Context, *api.ServiceSet, config.Config, db.MetadataRepository, api.Logger) error {
+func maybeApplyE2EServices(context.Context, *api.ServiceSet, config.Config, api.RepositoryCapabilities, api.Logger) error {
 	return nil
 }

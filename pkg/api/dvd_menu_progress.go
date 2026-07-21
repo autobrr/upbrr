@@ -24,38 +24,6 @@ type DVDMenuProgressUpdate struct {
 	WarningCount int `json:"warningCount"`
 }
 
-// DVDMenuCaptureSnapshot reports frontend-visible state for one capture job.
-type DVDMenuCaptureSnapshot struct {
-	// JobID is the opaque identifier used for polling and cancellation.
-	JobID string `json:"jobID"`
-	// SourcePath is the host filesystem path associated with the prepared metadata.
-	SourcePath string `json:"sourcePath"`
-	// Status is queued, running, completed, failed, or canceled.
-	Status string `json:"status"`
-	// Phase is the current capture stage within Status.
-	Phase string `json:"phase"`
-	// Message is a user-facing progress or terminal summary.
-	Message string `json:"message"`
-	// DiscoveredMenus is the latest structural inventory count.
-	DiscoveredMenus int `json:"discoveredMenus"`
-	// VisitedStates is the latest evaluated VM-state count.
-	VisitedStates int `json:"visitedStates"`
-	// VisitedButtons is the latest evaluated button-command count.
-	VisitedButtons int `json:"visitedButtons"`
-	// CapturedCount is the latest rendered or persisted image count.
-	CapturedCount int `json:"capturedCount"`
-	// WarningCount is the latest distinct coverage-warning count.
-	WarningCount int `json:"warningCount"`
-	// Result is populated with the final or partial engine result when available.
-	Result DVDMenuCaptureResult `json:"result"`
-	// Error contains terminal failure text and is empty for successful jobs.
-	Error string `json:"error"`
-	// StartedAt is an RFC3339 UTC timestamp.
-	StartedAt string `json:"startedAt"`
-	// FinishedAt is an RFC3339 UTC timestamp, or empty while the job is active.
-	FinishedAt string `json:"finishedAt"`
-}
-
 // DVDMenuProgressReporter receives capture progress updates.
 type DVDMenuProgressReporter func(update DVDMenuProgressUpdate)
 

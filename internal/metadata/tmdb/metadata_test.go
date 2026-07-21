@@ -261,8 +261,16 @@ func TestBuildLocalizedTitlesUsesDeterministicGenericRegionalCandidate(t *testin
 				"pt-PT": "Titulo Portugal",
 			},
 			translations: []Translation{
-				{ISO6391: "pt", ISO31661: "PT", Data: TranslationData{Title: "Titulo Portugal"}},
-				{ISO6391: " pt ", ISO31661: " br ", Data: TranslationData{Title: "Titulo Brasil"}},
+				{
+					ISO6391:  "pt",
+					ISO31661: "PT",
+					Data:     TranslationData{Title: "Titulo Portugal"},
+				},
+				{
+					ISO6391:  " pt ",
+					ISO31661: " br ",
+					Data:     TranslationData{Title: "Titulo Brasil"},
+				},
 			},
 		},
 		{
@@ -274,8 +282,16 @@ func TestBuildLocalizedTitlesUsesDeterministicGenericRegionalCandidate(t *testin
 				"pt-PT": "Titulo Portugal",
 			},
 			translations: []Translation{
-				{ISO6391: " pt ", ISO31661: " br ", Data: TranslationData{Title: "Titulo Brasil"}},
-				{ISO6391: "pt", ISO31661: "PT", Data: TranslationData{Title: "Titulo Portugal"}},
+				{
+					ISO6391:  " pt ",
+					ISO31661: " br ",
+					Data:     TranslationData{Title: "Titulo Brasil"},
+				},
+				{
+					ISO6391:  "pt",
+					ISO31661: "PT",
+					Data:     TranslationData{Title: "Titulo Portugal"},
+				},
 			},
 		},
 		{
@@ -284,7 +300,11 @@ func TestBuildLocalizedTitlesUsesDeterministicGenericRegionalCandidate(t *testin
 			wantGeneric:     "American Title",
 			wantRegional:    map[string]string{"en-US": "American Title"},
 			translations: []Translation{
-				{ISO6391: "en", ISO31661: "US", Data: TranslationData{Title: "American Title"}},
+				{
+					ISO6391:  "en",
+					ISO31661: "US",
+					Data:     TranslationData{Title: "American Title"},
+				},
 			},
 		},
 		{
@@ -293,7 +313,11 @@ func TestBuildLocalizedTitlesUsesDeterministicGenericRegionalCandidate(t *testin
 			wantGeneric:     "Titre Canadien",
 			wantRegional:    map[string]string{"fr-CA": "Titre Canadien"},
 			translations: []Translation{
-				{ISO6391: " fr ", ISO31661: " ca ", Data: TranslationData{Title: "Titre Canadien"}},
+				{
+					ISO6391:  " fr ",
+					ISO31661: " ca ",
+					Data:     TranslationData{Title: "Titre Canadien"},
+				},
 			},
 		},
 		{
@@ -302,7 +326,11 @@ func TestBuildLocalizedTitlesUsesDeterministicGenericRegionalCandidate(t *testin
 			wantGeneric:     "Serie Mexicana",
 			wantRegional:    map[string]string{"es-MX": "Serie Mexicana"},
 			translations: []Translation{
-				{ISO6391: "es", ISO31661: "MX", Data: TranslationData{Name: "Serie Mexicana"}},
+				{
+					ISO6391:  "es",
+					ISO31661: "MX",
+					Data:     TranslationData{Name: "Serie Mexicana"},
+				},
 			},
 		},
 	}
@@ -325,10 +353,22 @@ func TestBuildLocalizedTitlesUsesDeterministicGenericRegionalCandidate(t *testin
 
 func TestBuildLocalizedTitlesKeepsNeutralGenericOverRegionalCandidate(t *testing.T) {
 	titles := buildLocalizedTitles([]Translation{
-		{ISO6391: "pt", ISO31661: "PT", Data: TranslationData{Title: "Titulo Portugal"}},
+		{
+			ISO6391:  "pt",
+			ISO31661: "PT",
+			Data:     TranslationData{Title: "Titulo Portugal"},
+		},
 		{ISO6391: "pt", Data: TranslationData{Title: "Titulo Neutro"}},
-		{ISO6391: "de", ISO31661: "DE", Data: TranslationData{Title: "Deutscher Titel"}},
-		{ISO6391: "en", ISO31661: "US", Data: TranslationData{Title: "American English"}},
+		{
+			ISO6391:  "de",
+			ISO31661: "DE",
+			Data:     TranslationData{Title: "Deutscher Titel"},
+		},
+		{
+			ISO6391:  "en",
+			ISO31661: "US",
+			Data:     TranslationData{Title: "American English"},
+		},
 		{ISO6391: "en", Data: TranslationData{Title: "Neutral English"}},
 	})
 
@@ -351,7 +391,11 @@ func TestBuildLocalizedTitlesKeepsNeutralGenericOverRegionalCandidate(t *testing
 
 func TestBuildLocalizedTitlesUsesTVTranslationName(t *testing.T) {
 	titles := buildLocalizedTitles([]Translation{
-		{ISO6391: "es", ISO31661: "ES", Data: TranslationData{Name: "Serie Espanola"}},
+		{
+			ISO6391:  "es",
+			ISO31661: "ES",
+			Data:     TranslationData{Name: "Serie Espanola"},
+		},
 	})
 
 	if got := titles["es"]; got != "Serie Espanola" {

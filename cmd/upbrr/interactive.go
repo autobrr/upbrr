@@ -18,8 +18,9 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/redaction"
-	"github.com/autobrr/upbrr/internal/trackerauth"
 	"github.com/autobrr/upbrr/internal/trackers"
+	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -27,30 +28,140 @@ import (
 const dryRunPayloadPreviewLimit = 240
 
 // cliTrackerAuthService is the CLI-facing subset of tracker auth operations
-// needed to verify and refresh tracker auth before dupe checking.
+// needed to verify and refresh tracker auth before dupe checking. ValidateMany
+// must return one status per tracker in input order.
 type cliTrackerAuthService interface {
 	Capabilities(ctx context.Context) ([]api.TrackerAuthCapability, error)
-	Validate(ctx context.Context, trackerID string) (api.TrackerAuthStatus, error)
+	ValidateMany(ctx context.Context, trackerIDs []string) ([]api.TrackerAuthStatus, error)
 	Submit2FA(ctx context.Context, challengeID string, code string) (api.TrackerAuthStatus, error)
 }
 
-func runInteractiveCLIPath(ctx context.Context, coreSvc api.Core, opts cliOptions, visited map[string]bool, sourcePath string, cfg config.Config) error {
+// cliSiteCheckCore composes metadata preparation and review for site-check-only runs.
+type cliSiteCheckCore interface {
+	cliMetadataPreviewer
+	cliUploadReviewer
+}
+
+// cliScreenshotCore is the CLI-facing screenshot seam.
+type cliScreenshotCore interface {
+	FetchScreenshotPlan(context.Context, api.Request) (api.ScreenshotPlan, error)
+	GenerateScreenshots(context.Context, api.Request, []api.ScreenshotSelection, api.ScreenshotPurpose) (api.ScreenshotResult, error)
+	SaveFinalScreenshotSelections(context.Context, api.Request, []api.ScreenshotImage) error
+}
+
+type cliDupeChecker interface {
+	CheckDupes(context.Context, api.Request) (api.DupeCheckSummary, error)
+}
+
+// cliInteractiveCore composes only capabilities used by the interactive path.
+type cliInteractiveCore interface {
+	cliPreparedUploadRunner
+	cliAcceptedTrackerDryRunRunner
+	cliMetadataPreviewer
+	cliUploadReviewer
+	cliScreenshotCore
+	cliDVDMenuCore
+	cliDupeChecker
+	cliDescriptionEditorCore
+}
+
+func runInteractiveCLIPath(
+	ctx context.Context,
+	coreSvc cliInteractiveCore,
+	opts cliOptions,
+	visited map[string]bool,
+	sourcePath string,
+	cfg config.Config,
+) error {
 	return runInteractiveCLIPathWithInputAndLogger(ctx, coreSvc, nil, opts, visited, sourcePath, 1, cfg, os.Stdin, api.NopLogger{})
 }
 
-// runInteractiveCLIPathWithLogger runs one interactive CLI upload path and
-// sends CLI-only tracker auth decisions to logger.
-func runInteractiveCLIPathWithLogger(ctx context.Context, coreSvc api.Core, baseArgs []string, opts cliOptions, visited map[string]bool, sourcePath string, screens int, cfg config.Config, logger api.Logger) error {
-	return runInteractiveCLIPathWithInputAndLogger(ctx, coreSvc, baseArgs, opts, visited, sourcePath, screens, cfg, os.Stdin, logger)
+// runInteractiveCLIPathWithLoggerAndPlaylist runs the interactive workflow with
+// one pre-resolved playlist instruction and process stdin.
+func runInteractiveCLIPathWithLoggerAndPlaylist(
+	ctx context.Context,
+	coreSvc cliInteractiveCore,
+	baseArgs []string,
+	opts cliOptions,
+	visited map[string]bool,
+	sourcePath string,
+	playlist api.PlaylistInstruction,
+	screens int,
+	cfg config.Config,
+	logger api.Logger,
+) error {
+	return runInteractiveCLIPathWithInputLoggerAndPlaylist(
+		ctx,
+		coreSvc,
+		baseArgs,
+		opts,
+		visited,
+		sourcePath,
+		playlist,
+		screens,
+		cfg,
+		os.Stdin,
+		logger,
+	)
 }
 
-func runInteractiveCLIPathWithInput(ctx context.Context, coreSvc api.Core, opts cliOptions, visited map[string]bool, sourcePath string, screens int, cfg config.Config, stdin io.Reader) error {
+func runInteractiveCLIPathWithInput(
+	ctx context.Context,
+	coreSvc cliInteractiveCore,
+	opts cliOptions,
+	visited map[string]bool,
+	sourcePath string,
+	screens int,
+	cfg config.Config,
+	stdin io.Reader,
+) error {
 	return runInteractiveCLIPathWithInputAndLogger(ctx, coreSvc, nil, opts, visited, sourcePath, screens, cfg, stdin, api.NopLogger{})
 }
 
-// runInteractiveCLIPathWithInputAndLogger is the injectable form of
-// runInteractiveCLIPathWithLogger used when tests need controlled stdin.
-func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Core, baseArgs []string, opts cliOptions, visited map[string]bool, sourcePath string, screens int, cfg config.Config, stdin io.Reader, logger api.Logger) error {
+// runInteractiveCLIPathWithInputAndLogger is the injectable interactive runner
+// used when tests need controlled stdin and logging.
+func runInteractiveCLIPathWithInputAndLogger(
+	ctx context.Context,
+	coreSvc cliInteractiveCore,
+	baseArgs []string,
+	opts cliOptions,
+	visited map[string]bool,
+	sourcePath string,
+	screens int,
+	cfg config.Config,
+	stdin io.Reader,
+	logger api.Logger,
+) error {
+	return runInteractiveCLIPathWithInputLoggerAndPlaylist(
+		ctx,
+		coreSvc,
+		baseArgs,
+		opts,
+		visited,
+		sourcePath,
+		api.PlaylistInstruction{},
+		screens,
+		cfg,
+		stdin,
+		logger,
+	)
+}
+
+// runInteractiveCLIPathWithInputLoggerAndPlaylist owns the interactive retry
+// loop while preserving the source-specific playlist instruction across retries.
+func runInteractiveCLIPathWithInputLoggerAndPlaylist(
+	ctx context.Context,
+	coreSvc cliInteractiveCore,
+	baseArgs []string,
+	opts cliOptions,
+	visited map[string]bool,
+	sourcePath string,
+	playlist api.PlaylistInstruction,
+	screens int,
+	cfg config.Config,
+	stdin io.Reader,
+	logger api.Logger,
+) error {
 	logger = cliAuthLogger(logger)
 	reader := bufio.NewReader(stdin)
 	currentArgs := append([]string(nil), baseArgs...)
@@ -63,11 +174,19 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 		if err != nil {
 			return err
 		}
+		req.PlaylistInstruction = cloneCLIPlaylistInstruction(playlist)
 		preview, err := coreSvc.FetchMetadataPreview(ctx, req)
 		if err != nil {
 			var rescanErr *api.BDMVRescanRequiredError
 			if errors.As(err, &rescanErr) && currentOpts.interactionMode() != api.InteractionModeUnattended {
-				confirm, promptErr := promptYesNo(reader, fmt.Sprintf("Cached BDMV summaries exist, but selected playlist(s) %s require a rescan. Rescan now? [Y/n]: ", strings.Join(rescanErr.MissingPlaylists, ", ")), true)
+				confirm, promptErr := promptYesNo(
+					reader,
+					fmt.Sprintf(
+						"Cached BDMV summaries exist, but selected playlist(s) %s require a rescan. Rescan now? [Y/n]: ",
+						strings.Join(rescanErr.MissingPlaylists, ", "),
+					),
+					true,
+				)
 				if promptErr != nil {
 					return promptErr
 				}
@@ -127,14 +246,30 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 	if err != nil {
 		return err
 	}
+	req.PlaylistInstruction = cloneCLIPlaylistInstruction(playlist)
 
-	candidateTrackers, removalBase := resolveCLIUploadTrackers(currentVisited, req, metadataPreview, cfg)
+	registry, err := trackerimpl.NewRegistry()
+	if err != nil {
+		return fmt.Errorf("upbrr: compose tracker registry: %w", err)
+	}
+	candidateTrackers, removalBase := resolveCLIUploadTrackers(currentVisited, req, metadataPreview, cfg, registry, currentOpts.Debug)
 	if len(candidateTrackers) == 0 {
 		fmt.Printf("No trackers configured for %s\n", formatPathLabel(sourcePath))
 		return nil
 	}
 	req.Trackers = candidateTrackers
 	req.TrackersRemove = appendTrackerRemovals(req.TrackersRemove, unselectedTrackers(removalBase, candidateTrackers)...)
+	if !currentOpts.Debug {
+		candidateTrackers, req.RuleAuthorizations, err = promptTrackerRuleReview(reader, req, candidateTrackers, metadataPreview)
+		if err != nil {
+			return err
+		}
+		if len(candidateTrackers) == 0 {
+			fmt.Printf("No trackers selected for %s\n", formatPathLabel(sourcePath))
+			return nil
+		}
+		req.Trackers = candidateTrackers
+	}
 
 	readyAuthTrackers, err := ensureCLITrackerAuthBeforeDupeCheckWithLogger(ctx, reader, cfg, req, candidateTrackers, metadataPreview, logger)
 	if err != nil {
@@ -152,14 +287,13 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 	if err != nil {
 		return err
 	}
-	var approved, ignoreDupesFor, ruleOverrides []string
-	if req.Options.Debug || req.Options.DryRun {
+	var approved, ignoreDupesFor []string
+	if currentOpts.Debug {
 		resultByTracker := mapDupeResultsByTracker(dupeSummary)
 		printUnattendedDupeReviewSummary(resultByTracker, candidateTrackers)
-		approved = debugDryRunApprovedTrackers(resultByTracker, candidateTrackers)
-		ignoreDupesFor = appendTrackerRemovals(nil, approved...)
+		approved = debugApprovedTrackers(resultByTracker, candidateTrackers)
 	} else {
-		approved, ignoreDupesFor, ruleOverrides, err = promptTrackerDupeReview(reader, dupeSummary, req, candidateTrackers, nil)
+		approved, ignoreDupesFor, err = promptTrackerDupeReview(reader, dupeSummary, req, candidateTrackers, nil)
 		if err != nil {
 			return err
 		}
@@ -172,13 +306,14 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 	req.Trackers = approved
 	req.TrackersRemove = appendTrackerRemovals(req.TrackersRemove, unselectedTrackers(candidateTrackers, approved)...)
 	req.IgnoreDupesFor = ignoreDupesFor
-	req.IgnoreTrackerRuleFailuresFor = ruleOverrides
 
 	if req.DoubleDupeCheck && len(approved) > 0 {
-		approved, err = runDoubleDupeCheck(ctx, reader, coreSvc, req, approved)
+		var recheckSummary api.DupeCheckSummary
+		approved, recheckSummary, err = runDoubleDupeCheck(ctx, reader, coreSvc, req, approved, currentOpts.Debug)
 		if err != nil {
 			return err
 		}
+		dupeSummary = recheckSummary
 		req.IgnoreDupesFor = appendTrackerRemovals(req.IgnoreDupesFor, approved...)
 		req.Trackers = approved
 		req.TrackersRemove = appendTrackerRemovals(req.TrackersRemove, unselectedTrackers(candidateTrackers, approved)...)
@@ -188,13 +323,43 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 		return nil
 	}
 
-	if req.Options.Debug || !req.Options.DryRun {
-		if err := runCLIScreenshotHandling(ctx, coreSvc, req); err != nil {
-			return err
-		}
+	if err := runCLIScreenshotHandling(ctx, coreSvc, req); err != nil {
+		return err
 	}
 	if err := prepareCLIImages(ctx, coreSvc, req, logger, false); err != nil {
 		return err
+	}
+
+	if currentOpts.Debug {
+		preview, err := runAcceptedCLIDebugDryRun(ctx, coreSvc, req, metadataPreview.Release, dupeSummary, true)
+		if err != nil {
+			return wrapUpbrrError(err)
+		}
+		review := cliReviewFromDryRunPreview(preview)
+		questionnaireAnswers, questionnaireChanged, err := promptTrackerQuestionnaires(reader, review, currentOpts)
+		if err != nil {
+			return err
+		}
+		if questionnaireChanged || len(questionnaireAnswers) > 0 {
+			req.TrackerQuestionnaireAnswers = questionnaireAnswers
+		}
+		if questionnaireChanged {
+			preview, err = runAcceptedCLIDebugDryRun(ctx, coreSvc, req, metadataPreview.Release, dupeSummary, true)
+			if err != nil {
+				return wrapUpbrrError(err)
+			}
+			review = cliReviewFromDryRunPreview(preview)
+		}
+		req, err = maybeEditCLIDescriptions(ctx, coreSvc, reader, req, review, currentOpts)
+		if err != nil {
+			return err
+		}
+		preview, err = runAcceptedCLIDebugDryRun(ctx, coreSvc, req, metadataPreview.Release, dupeSummary, false)
+		if err != nil {
+			return wrapUpbrrError(err)
+		}
+		printDebugTrackerDryRun(preview)
+		return nil
 	}
 
 	review, err := coreSvc.BuildUploadReview(ctx, req)
@@ -203,7 +368,7 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 	}
 
 	// Apply questionnaire answers before description editing and upload. When
-	// answers change, rebuild the review so printed dry-run/debug state matches
+	// answers change, rebuild the review so printed tracker-preview state matches
 	// the request that will be uploaded.
 	questionnaireAnswers, questionnaireChanged, err := promptTrackerQuestionnaires(reader, review, currentOpts)
 	if err != nil {
@@ -219,7 +384,7 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 		}
 	}
 
-	req, review, err = maybeEditCLIDescriptions(ctx, coreSvc, reader, req, review, currentOpts)
+	req, err = maybeEditCLIDescriptions(ctx, coreSvc, reader, req, review, currentOpts)
 	if err != nil {
 		return err
 	}
@@ -229,19 +394,78 @@ func runInteractiveCLIPathWithInputAndLogger(ctx context.Context, coreSvc api.Co
 		req.TrackerQuestionnaireAnswers = questionnaireAnswers
 	}
 
-	if req.Options.Debug {
-		printDebugUploadReview(review)
-		_, err = coreSvc.RunUploadPrepared(ctx, req)
-		return wrapUpbrrError(err)
-	}
-	if req.Options.DryRun {
-		printDryRunUploadReview(review, req)
-		_, err = coreSvc.RunUploadPrepared(ctx, req)
-		return wrapUpbrrError(err)
-	}
-
 	_, err = coreSvc.RunUploadPrepared(ctx, req)
 	return wrapUpbrrError(err)
+}
+
+func runAcceptedCLIDebugDryRun(
+	ctx context.Context,
+	coreSvc cliAcceptedTrackerDryRunRunner,
+	req api.Request,
+	release api.ReleaseRef,
+	dupeSummary api.DupeCheckSummary,
+	previewOnly bool,
+) (api.TrackerDryRunPreview, error) {
+	input := api.TrackerDryRunInput{
+		Release:                release,
+		Trackers:               append([]string(nil), req.Trackers...),
+		IgnoreDupesFor:         append([]string(nil), req.IgnoreDupesFor...),
+		QuestionnaireAnswers:   cloneCLIQuestionnaireAnswers(req.TrackerQuestionnaireAnswers),
+		DescriptionGroups:      api.CloneDescriptionBuilderGroups(req.DescriptionGroups),
+		TrackerIDOverrides:     maps.Clone(req.TrackerIDOverrides),
+		TrackerConfigOverrides: req.TrackerConfigOverrides,
+		TrackerSiteOverrides:   req.TrackerSiteOverrides,
+		ClientOverrides:        req.ClientOverrides,
+		ImageHostOverrides:     req.ImageHostOverrides,
+		ScreenshotOverrides:    req.ScreenshotOverrides,
+		TorrentOverrides:       req.TorrentOverrides,
+		Options:                req.Options,
+	}
+	if previewOnly {
+		input.Options.NoSeed = true
+	}
+	preview, err := coreSvc.RunAcceptedTrackerDryRun(ctx, api.TrackerDryRunPlan{
+		Input:     input,
+		Duplicate: api.NewAcceptedDuplicateEvidence(release, input.Trackers, dupeSummary),
+	})
+	if err != nil {
+		return api.TrackerDryRunPreview{}, fmt.Errorf("run accepted tracker debug: %w", err)
+	}
+	return preview, nil
+}
+
+func cloneCLIQuestionnaireAnswers(source map[string]map[string]string) map[string]map[string]string {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[string]map[string]string, len(source))
+	for tracker, answers := range source {
+		cloned[tracker] = maps.Clone(answers)
+	}
+	return cloned
+}
+
+func cliReviewFromDryRunPreview(preview api.TrackerDryRunPreview) api.UploadReview {
+	review := api.UploadReview{SourcePath: preview.SourcePath, Trackers: make([]api.TrackerReview, 0, len(preview.Trackers))}
+	for _, entry := range preview.Trackers {
+		ruleFailures := make([]api.RuleFailure, 0, len(entry.Diagnostics.RuleDecisions))
+		for _, decision := range entry.Diagnostics.RuleDecisions {
+			ruleFailures = append(ruleFailures, api.RuleFailure{
+				Rule:        decision.Rule,
+				Reason:      decision.Reason,
+				Disposition: decision.Disposition,
+			})
+		}
+		review.Trackers = append(review.Trackers, api.TrackerReview{
+			Tracker:       entry.Tracker,
+			Banned:        entry.Banned,
+			BannedReason:  entry.BannedReason,
+			RuleFailures:  ruleFailures,
+			DryRun:        entry,
+			Questionnaire: entry.Questionnaire,
+		})
+	}
+	return review
 }
 
 func resolvedCLIMetadataSourcePath(input string, preview api.MetadataPreview) string {
@@ -251,15 +475,22 @@ func resolvedCLIMetadataSourcePath(input string, preview api.MetadataPreview) st
 	return input
 }
 
-func resolveCLIUploadTrackers(visited map[string]bool, req api.Request, preview api.MetadataPreview, cfg config.Config) ([]string, []string) {
+func resolveCLIUploadTrackers(
+	visited map[string]bool,
+	req api.Request,
+	preview api.MetadataPreview,
+	cfg config.Config,
+	registry *trackers.Registry,
+	debug bool,
+) ([]string, []string) {
 	remove := append([]string{}, req.TrackersRemove...)
-	if !req.Options.Debug && !req.Options.DryRun {
+	if !debug {
 		remove = append(remove, matchedPreviewTrackers(preview)...)
 	}
-	removalBase := trackers.ResolveTrackersWithDefaults(cfg, req.Trackers, remove, api.NopLogger{})
+	removalBase := trackers.ResolveTrackersWithDefaultsAndRegistry(cfg, req.Trackers, remove, api.NopLogger{}, registry)
 	available := removalBase
 	if visited["trackers"] || req.Execution.SiteUploadTracker != "" {
-		available = trackers.ResolveTrackers(cfg, req.Trackers, remove, api.NopLogger{})
+		available = trackers.ResolveTrackersWithRegistry(cfg, req.Trackers, remove, api.NopLogger{}, registry)
 	}
 	return available, removalBase
 }
@@ -282,22 +513,58 @@ func trackerRuleFailuresForPreview(preview api.MetadataPreview, tracker string) 
 	return nil
 }
 
-// cliTrackerRuleFailuresIgnored reports whether a preview rule failure should
-// be bypassed for a tracker, using the global flag or a per-tracker override.
-func cliTrackerRuleFailuresIgnored(req api.Request, tracker string) bool {
-	if req.IgnoreTrackerRuleFailures {
-		return true
-	}
-	name := strings.ToUpper(strings.TrimSpace(tracker))
-	if name == "" {
-		return false
-	}
-	for _, allowed := range req.IgnoreTrackerRuleFailuresFor {
-		if strings.EqualFold(strings.TrimSpace(allowed), name) {
-			return true
+// promptTrackerRuleReview applies strict rule blocks and records exact
+// authorizations for current waivable failures before auth and duplicate work.
+func promptTrackerRuleReview(
+	reader *bufio.Reader,
+	req api.Request,
+	trackerNames []string,
+	preview api.MetadataPreview,
+) ([]string, []api.RuleAuthorization, error) {
+	approved := make([]string, 0, len(trackerNames))
+	authorizations := make([]api.RuleAuthorization, 0)
+	for _, tracker := range trackerNames {
+		name := strings.ToUpper(strings.TrimSpace(tracker))
+		if name == "" {
+			continue
 		}
+		assessment, err := trackers.AssessRuleFailures(name, trackerRuleFailuresForPreview(preview, name), nil)
+		if err != nil {
+			return nil, nil, fmt.Errorf("upbrr: assess %s rules: %w", name, err)
+		}
+		if len(assessment.Failures) == 0 {
+			approved = append(approved, name)
+			continue
+		}
+		fmt.Printf("\n[%s Rules]\n", name)
+		printRuleFailures(assessment.Failures)
+		if len(assessment.Strict) > 0 {
+			fmt.Println("Strict rule failure: upload disabled for this tracker.")
+			continue
+		}
+		if len(assessment.Waivable) == 0 {
+			approved = append(approved, name)
+			continue
+		}
+		if isUnattendedNoConfirm(req) {
+			fmt.Printf("Unattended upload blocked for %s: waivable rule authorization required.\n", name)
+			continue
+		}
+		allow, err := promptYesNo(reader, fmt.Sprintf("Authorize current waivable rule failures for %s?", name), false)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !allow {
+			continue
+		}
+		rules := make([]string, 0, len(assessment.Waivable))
+		for _, failure := range assessment.Waivable {
+			rules = append(rules, failure.Rule)
+		}
+		authorizations = append(authorizations, api.RuleAuthorization{Tracker: name, Rules: rules})
+		approved = append(approved, name)
 	}
-	return false
+	return approved, authorizations, nil
 }
 
 // removeUnreadyCLIAuthTrackers keeps only trackers marked ready to continue
@@ -330,7 +597,15 @@ func removeUnreadyCLIAuthTrackers(candidateTrackers []string, readyTrackers []st
 
 // ensureCLITrackerAuthBeforeDupeCheckWithLogger validates tracker auth using a
 // service that shares the CLI logger for service-level and CLI decision logs.
-func ensureCLITrackerAuthBeforeDupeCheckWithLogger(ctx context.Context, reader *bufio.Reader, cfg config.Config, req api.Request, trackerNames []string, preview api.MetadataPreview, logger api.Logger) ([]string, error) {
+func ensureCLITrackerAuthBeforeDupeCheckWithLogger(
+	ctx context.Context,
+	reader *bufio.Reader,
+	cfg config.Config,
+	req api.Request,
+	trackerNames []string,
+	preview api.MetadataPreview,
+	logger api.Logger,
+) ([]string, error) {
 	if len(trackerNames) == 0 {
 		return trackerNames, nil
 	}
@@ -340,16 +615,29 @@ func ensureCLITrackerAuthBeforeDupeCheckWithLogger(ctx context.Context, reader *
 
 // ensureCLITrackerAuthBeforeDupeCheckWithService is the injectable form of
 // ensureCLITrackerAuthBeforeDupeCheck used by tests.
-func ensureCLITrackerAuthBeforeDupeCheckWithService(ctx context.Context, reader *bufio.Reader, authSvc cliTrackerAuthService, req api.Request, trackerNames []string) ([]string, error) {
+func ensureCLITrackerAuthBeforeDupeCheckWithService(
+	ctx context.Context,
+	reader *bufio.Reader,
+	authSvc cliTrackerAuthService,
+	req api.Request,
+	trackerNames []string,
+) ([]string, error) {
 	return ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx, reader, authSvc, req, trackerNames, api.MetadataPreview{}, api.NopLogger{})
 }
 
 // ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger applies CLI-specific
 // keep/skip behavior and logs redacted outcomes for managed-auth trackers.
-// Preview rule failures suppress managed-auth checks only after capability
-// classification and leave those managed trackers out of the ready result, so
-// static API-key/passkey trackers stay quiet here.
-func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx context.Context, reader *bufio.Reader, authSvc cliTrackerAuthService, req api.Request, trackerNames []string, preview api.MetadataPreview, logger api.Logger) ([]string, error) {
+// Rule findings do not suppress auth diagnostics; static API-key/passkey
+// trackers remain outside managed-auth validation.
+func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(
+	ctx context.Context,
+	reader *bufio.Reader,
+	authSvc cliTrackerAuthService,
+	req api.Request,
+	trackerNames []string,
+	_ api.MetadataPreview,
+	logger api.Logger,
+) ([]string, error) {
 	logger = cliAuthLogger(logger)
 
 	capabilities, err := authSvc.Capabilities(ctx)
@@ -382,23 +670,25 @@ func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx context.Context
 			readyByTracker[name] = struct{}{}
 			continue
 		}
-		if !cliTrackerRuleFailuresIgnored(req, name) && len(trackerRuleFailuresForPreview(preview, name)) > 0 {
-			logger.Debugf("cli auth: tracker=%s skipped before auth due to rule failure", name)
-			continue
-		}
 		authCheckTrackers = append(authCheckTrackers, name)
 	}
 
 	logger.Debugf("cli auth: pre-dupe auth check start trackers=%d", len(authCheckTrackers))
 	for _, name := range authCheckTrackers {
 		capability := capabilityByTracker[name]
-
 		logger.Debugf("cli auth: validating tracker=%s auth_kind=%s", name, cliAuthLogField(capability.AuthKind))
-		status, err := authSvc.Validate(ctx, name)
-		if err != nil {
-			logger.Warnf("cli auth: validation failed tracker=%s error=%s", name, cliAuthLogError(err))
-			return nil, fmt.Errorf("upbrr: tracker auth %s: %w", name, err)
-		}
+	}
+	statuses, err := authSvc.ValidateMany(ctx, authCheckTrackers)
+	if err != nil {
+		logger.Warnf("cli auth: concurrent validation failed error=%s", cliAuthLogError(err))
+		return nil, fmt.Errorf("upbrr: tracker auth validation: %w", err)
+	}
+	if len(statuses) != len(authCheckTrackers) {
+		return nil, fmt.Errorf("upbrr: tracker auth validation returned %d statuses for %d trackers", len(statuses), len(authCheckTrackers))
+	}
+	for i, name := range authCheckTrackers {
+		capability := capabilityByTracker[name]
+		status := statuses[i]
 		logCLITrackerAuthStatus(logger, "validation result", status)
 		status, keep, err := handleCLITrackerAuthStatusWithLogger(ctx, reader, authSvc, capability, status, req, logger)
 		if err != nil {
@@ -432,19 +722,20 @@ func ensureCLITrackerAuthBeforeDupeCheckWithServiceAndLogger(ctx context.Context
 // work, matching the frontend tracker-auth settings filter instead of static
 // API-key/passkey config.
 func cliTrackerAuthApplies(capability api.TrackerAuthCapability) bool {
-	authKind := strings.ToLower(strings.TrimSpace(capability.AuthKind))
-	return capability.SupportsCookieFile ||
-		capability.SupportsLogin ||
-		capability.SupportsAutoLogin ||
-		capability.SupportsTOTP ||
-		capability.SupportsManual2FA ||
-		strings.Contains(authKind, "refresh") ||
-		strings.Contains(authKind, "2fa")
+	return trackerauth.IsManagedCapability(capability)
 }
 
 // handleCLITrackerAuthStatusWithLogger converts one auth status into a CLI
 // decision and logs blocked, prompt, and skip outcomes without secret material.
-func handleCLITrackerAuthStatusWithLogger(ctx context.Context, reader *bufio.Reader, authSvc cliTrackerAuthService, capability api.TrackerAuthCapability, status api.TrackerAuthStatus, req api.Request, logger api.Logger) (api.TrackerAuthStatus, bool, error) {
+func handleCLITrackerAuthStatusWithLogger(
+	ctx context.Context,
+	reader *bufio.Reader,
+	authSvc cliTrackerAuthService,
+	capability api.TrackerAuthCapability,
+	status api.TrackerAuthStatus,
+	req api.Request,
+	logger api.Logger,
+) (api.TrackerAuthStatus, bool, error) {
 	logger = cliAuthLogger(logger)
 	if cliTrackerAuthReady(status) {
 		return status, true, nil
@@ -457,7 +748,10 @@ func handleCLITrackerAuthStatusWithLogger(ctx context.Context, reader *bufio.Rea
 	if status.Needs2FA && strings.TrimSpace(status.ChallengeID) != "" {
 		if isUnattendedNoConfirm(req) {
 			logger.Warnf("cli auth: tracker=%s decision=blocked reason=2fa_required unattended=true", trackerID)
-			return status, false, fmt.Errorf("upbrr: unattended no-prompt tracker auth %s requires manual 2FA code before dupe check; run without --unattended or use --unattended_confirm to enter 2FA", trackerID)
+			return status, false, fmt.Errorf(
+				"upbrr: unattended no-prompt tracker auth %s requires manual 2FA code before dupe check; run without --unattended or use --unattended_confirm to enter 2FA",
+				trackerID,
+			)
 		}
 		logger.Infof("cli auth: tracker=%s decision=prompt_2fa", trackerID)
 		return promptCLITrackerAuth2FAWithLogger(ctx, reader, authSvc, trackerID, status, logger)
@@ -474,7 +768,14 @@ func handleCLITrackerAuthStatusWithLogger(ctx context.Context, reader *bufio.Rea
 
 // promptCLITrackerAuth2FAWithLogger prompts for manual 2FA and logs only the
 // submitted outcome; it never logs codes or challenge identifiers.
-func promptCLITrackerAuth2FAWithLogger(ctx context.Context, reader *bufio.Reader, authSvc cliTrackerAuthService, trackerID string, status api.TrackerAuthStatus, logger api.Logger) (api.TrackerAuthStatus, bool, error) {
+func promptCLITrackerAuth2FAWithLogger(
+	ctx context.Context,
+	reader *bufio.Reader,
+	authSvc cliTrackerAuthService,
+	trackerID string,
+	status api.TrackerAuthStatus,
+	logger api.Logger,
+) (api.TrackerAuthStatus, bool, error) {
 	logger = cliAuthLogger(logger)
 	for {
 		fmt.Printf("\n[%s Auth]\n%s\n", trackerID, cliTrackerAuthStatusMessage(status))
@@ -569,20 +870,12 @@ func cliAuthLogField(value string) string {
 // cliTrackerAuthReady reports whether a tracker-auth status is usable without
 // further user input before CLI dupe checking.
 func cliTrackerAuthReady(status api.TrackerAuthStatus) bool {
-	if status.Needs2FA {
-		return false
-	}
-	switch strings.TrimSpace(status.State) {
-	case trackerauth.StateConfigured, trackerauth.StateHasCookies:
-		return true
-	default:
-		return false
-	}
+	return trackerauth.IsReadyStatus(status)
 }
 
 // cliTrackerAuthStatusMessage renders the tracker auth status display contract:
 // Message is the stable summary and LastError is redacted detail displayed when
-// distinct, matching GUI/web auth cards.
+// distinct, matching WebUI auth cards.
 func cliTrackerAuthStatusMessage(status api.TrackerAuthStatus) string {
 	message := cliTrackerAuthDisplayField(status.Message)
 	detail := cliTrackerAuthDisplayField(status.LastError)
@@ -681,23 +974,7 @@ func appendTrackerRemovals(existing []string, extra ...string) []string {
 	return merged
 }
 
-func runCLIDupeCheck(ctx context.Context, coreSvc api.Core, req api.Request) (api.DupeCheckSummary, error) {
-	if req.SkipDupeCheck {
-		results := make([]api.DupeCheckResult, 0, len(req.Trackers))
-		for _, tracker := range req.Trackers {
-			name := strings.ToUpper(strings.TrimSpace(tracker))
-			if name == "" {
-				continue
-			}
-			results = append(results, api.DupeCheckResult{
-				Tracker:    name,
-				Skipped:    true,
-				Status:     "skipped",
-				SkipReason: "dupe check skipped",
-			})
-		}
-		return api.DupeCheckSummary{Results: results}, nil
-	}
+func runCLIDupeCheck(ctx context.Context, coreSvc cliDupeChecker, req api.Request) (api.DupeCheckSummary, error) {
 	summary, err := coreSvc.CheckDupes(ctx, req)
 	if err != nil {
 		return api.DupeCheckSummary{}, fmt.Errorf("upbrr: %w", err)
@@ -705,14 +982,19 @@ func runCLIDupeCheck(ctx context.Context, coreSvc api.Core, req api.Request) (ap
 	return summary, nil
 }
 
-func promptTrackerDupeReview(reader *bufio.Reader, summary api.DupeCheckSummary, req api.Request, trackers []string, namePreview map[string]api.TrackerDryRunEntry) ([]string, []string, []string, error) {
+func promptTrackerDupeReview(
+	reader *bufio.Reader,
+	summary api.DupeCheckSummary,
+	req api.Request,
+	trackers []string,
+	namePreview map[string]api.TrackerDryRunEntry,
+) ([]string, []string, error) {
 	resultByTracker := mapDupeResultsByTracker(summary)
 	approved := make([]string, 0, len(trackers))
 	ignoreDupesFor := make([]string, 0)
-	ruleOverrides := make([]string, 0)
 	if isUnattendedNoConfirm(req) {
 		approved = append(approved, printUnattendedDupeReviewSummary(resultByTracker, trackers)...)
-		return approved, ignoreDupesFor, ruleOverrides, nil
+		return approved, ignoreDupesFor, nil
 	}
 
 	for _, tracker := range trackers {
@@ -740,7 +1022,7 @@ func promptTrackerDupeReview(reader *bufio.Reader, summary api.DupeCheckSummary,
 		}
 		allow, err := promptYesNo(reader, prompt, false)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		if !allow {
 			continue
@@ -748,12 +1030,9 @@ func promptTrackerDupeReview(reader *bufio.Reader, summary api.DupeCheckSummary,
 		approved = append(approved, name)
 		if blocked {
 			ignoreDupesFor = append(ignoreDupesFor, name)
-			if result.Skipped || strings.Contains(strings.ToLower(result.SkipReason), "rule") || strings.Contains(strings.ToLower(result.Error), "rule") {
-				ruleOverrides = append(ruleOverrides, name)
-			}
 		}
 	}
-	return approved, ignoreDupesFor, ruleOverrides, nil
+	return approved, ignoreDupesFor, nil
 }
 
 type unattendedDupeReviewBlock struct {
@@ -808,35 +1087,18 @@ func printUnattendedDupeReviewSummary(resultByTracker map[string]api.DupeCheckRe
 	return approved
 }
 
-// debugDryRunApprovedTrackers keeps duplicate-hit trackers eligible for
-// debug/dry-run processing while preserving rule failures as terminal skips.
-func debugDryRunApprovedTrackers(resultByTracker map[string]api.DupeCheckResult, trackers []string) []string {
+// debugApprovedTrackers keeps every selected tracker eligible for payload
+// inspection without creating a duplicate override or waiver.
+func debugApprovedTrackers(_ map[string]api.DupeCheckResult, trackers []string) []string {
 	approved := make([]string, 0, len(trackers))
 	for _, tracker := range trackers {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
 		if name == "" {
 			continue
 		}
-		if result, ok := resultByTracker[name]; ok && isRuleSkippedDupeResult(result) {
-			continue
-		}
 		approved = append(approved, name)
 	}
 	return approved
-}
-
-// isRuleSkippedDupeResult reports whether a skipped dupe result came from
-// tracker rule validation. These skips remain terminal even in debug/dry-run.
-func isRuleSkippedDupeResult(result api.DupeCheckResult) bool {
-	if !result.Skipped {
-		return false
-	}
-	for _, rule := range result.SkipRules {
-		if strings.TrimSpace(rule) != "" {
-			return true
-		}
-	}
-	return false
 }
 
 // dupeReviewBlockReason returns the operator-facing reason for a blocked dupe
@@ -848,15 +1110,13 @@ func dupeReviewBlockReason(result api.DupeCheckResult) string {
 	if reason := strings.TrimSpace(result.Error); reason != "" {
 		return reason
 	}
-	if len(result.Notes) > 0 {
-		for _, note := range result.Notes {
-			note = strings.TrimSpace(note)
-			if note != "" {
-				return strings.TrimPrefix(note, "skip: ")
-			}
-		}
+	if code := strings.TrimSpace(result.SkipCode); code != "" {
+		return "duplicate search not run (" + code + ")"
 	}
-	return "skipped"
+	if strings.EqualFold(strings.TrimSpace(result.Status), "failed") {
+		return "duplicate search failed"
+	}
+	return "duplicate search not run"
 }
 
 // unattendedDupeSkipReasonLines groups skipped tracker names by exact reason so
@@ -906,19 +1166,12 @@ func buildTrackerUploadPrompt(tracker string, blocked bool, dryRun api.TrackerDr
 func mapDupeResultsByTracker(summary api.DupeCheckSummary) map[string]api.DupeCheckResult {
 	mapped := make(map[string]api.DupeCheckResult, len(summary.Results))
 	for _, result := range summary.Results {
-		trackers := splitCSV(strings.ReplaceAll(result.Tracker, ", ", ","))
-		if len(trackers) == 0 {
-			trackers = []string{result.Tracker}
+		name := strings.ToUpper(strings.TrimSpace(result.Tracker))
+		if name == "" {
+			continue
 		}
-		for _, tracker := range trackers {
-			name := strings.ToUpper(strings.TrimSpace(tracker))
-			if name == "" {
-				continue
-			}
-			copyResult := result
-			copyResult.Tracker = name
-			mapped[name] = copyResult
-		}
+		result.Tracker = name
+		mapped[name] = result
 	}
 	return mapped
 }
@@ -933,30 +1186,18 @@ func dupeResultNeedsConfirmation(result api.DupeCheckResult, hasResult bool) boo
 	if result.HasDupes || result.Skipped {
 		return true
 	}
-	if strings.EqualFold(strings.TrimSpace(result.Status), "failed") {
-		return true
-	}
-	return strings.TrimSpace(result.Error) != ""
+	return strings.EqualFold(strings.TrimSpace(result.Status), "failed")
 }
 
 func dupeResultSkipsPrompt(result api.DupeCheckResult) bool {
-	return isPathedTorrentDupeResult(result)
-}
-
-func isPathedTorrentDupeResult(result api.DupeCheckResult) bool {
-	for _, note := range result.Notes {
-		if strings.EqualFold(strings.TrimSpace(note), "pathed torrent match found; skipping dupe search") {
-			return true
-		}
-	}
-	return false
+	return result.HasDupes && strings.EqualFold(strings.TrimSpace(result.Match.MatchedReason), "in_client")
 }
 
 func isUserRequestedDupeSkipResult(result api.DupeCheckResult) bool {
-	return result.Skipped && strings.EqualFold(strings.TrimSpace(result.SkipReason), "dupe check skipped")
+	return result.Skipped && strings.EqualFold(strings.TrimSpace(result.SkipCode), "user_requested")
 }
 
-func runCLIScreenshotHandling(ctx context.Context, coreSvc api.Core, req api.Request) error {
+func runCLIScreenshotHandling(ctx context.Context, coreSvc cliScreenshotCore, req api.Request) error {
 	plan, err := coreSvc.FetchScreenshotPlan(ctx, req)
 	if err != nil {
 		return fmt.Errorf("upbrr: screenshot plan: %w", err)
@@ -1066,17 +1307,33 @@ func formatScreenshotErrors(errorsList []api.ScreenshotError) string {
 	return strings.Join(parts, "; ")
 }
 
-func runSiteCheckCLIPath(ctx context.Context, coreSvc api.Core, opts cliOptions, visited map[string]bool, sourcePath string, screens int) error {
+// runSiteCheckCLIPath adapts a plain path to the source-scoped site-check item workflow.
+func runSiteCheckCLIPath(ctx context.Context, coreSvc cliSiteCheckCore, opts cliOptions, visited map[string]bool, sourcePath string, screens int) error {
+	return runSiteCheckCLIItem(ctx, coreSvc, opts, visited, cliPreparationItem{originalPath: sourcePath, resolvedPath: sourcePath}, screens)
+}
+
+// runSiteCheckCLIItem prepares and reviews one source while preserving its
+// playlist instruction and original display path.
+func runSiteCheckCLIItem(
+	ctx context.Context,
+	coreSvc cliSiteCheckCore,
+	opts cliOptions,
+	visited map[string]bool,
+	item cliPreparationItem,
+	screens int,
+) error {
+	sourcePath := item.originalPath
 	req, err := buildCLIRequest(opts, visited, []string{sourcePath}, screens)
 	if err != nil {
 		return err
 	}
+	req.PlaylistInstruction = cloneCLIPlaylistInstruction(item.playlistInstruction)
 
 	preview, err := coreSvc.FetchMetadataPreview(ctx, req)
 	if err != nil {
 		return fmt.Errorf("upbrr: %w", err)
 	}
-	req.Paths = []string{resolvedCLIMetadataSourcePath(sourcePath, preview)}
+	req.SourcePath = resolvedCLIMetadataSourcePath(sourcePath, preview)
 	review, err := coreSvc.BuildUploadReview(ctx, req)
 	if err != nil {
 		return fmt.Errorf("upbrr: %w", err)
@@ -1091,12 +1348,7 @@ func runSiteCheckCLIPath(ctx context.Context, coreSvc api.Core, opts cliOptions,
 		if tracker.Banned && !tracker.DryRun.Banned {
 			fmt.Printf("Banned group: %s\n", tracker.BannedReason)
 		}
-		if len(tracker.RuleFailures) > 0 {
-			fmt.Println("Rule failures:")
-			for _, failure := range tracker.RuleFailures {
-				fmt.Printf("- %s: %s\n", failure.Rule, failure.Reason)
-			}
-		}
+		printRuleFailures(tracker.RuleFailures)
 		if !req.SkipDupeCheck && tracker.DupeCheck.HasDupes {
 			printDupeResult(tracker.DupeCheck)
 		}
@@ -1113,7 +1365,8 @@ func promptTrackerQuestionnaires(reader *bufio.Reader, review api.UploadReview, 
 	answers := make(map[string]map[string]string)
 	changed := false
 	for _, tracker := range review.Trackers {
-		if tracker.Banned || len(tracker.RuleFailures) > 0 || tracker.Questionnaire == nil || len(tracker.Questionnaire.Fields) == 0 {
+		if tracker.Banned || api.HasBlockingRuleFailures(tracker.RuleFailures) ||
+			tracker.Questionnaire == nil || len(tracker.Questionnaire.Fields) == 0 {
 			continue
 		}
 		trackerKey := strings.ToUpper(strings.TrimSpace(tracker.Tracker))
@@ -1127,11 +1380,19 @@ func promptTrackerQuestionnaires(reader *bufio.Reader, review api.UploadReview, 
 			if opts.Unattended && !opts.UnattendedConfirm {
 				if field.Required && defaultValue == "" {
 					if opts.Debug {
-						fmt.Printf("Debug mode: %s questionnaire value missing for %s; continuing without prompt.\n", questionnaireFieldLabel(field), tracker.Tracker)
+						fmt.Printf(
+							"Debug mode: %s questionnaire value missing for %s; continuing without prompt.\n",
+							questionnaireFieldLabel(field),
+							tracker.Tracker,
+						)
 						values[field.Key] = ""
 						continue
 					}
-					return nil, false, fmt.Errorf("upbrr: unattended upload requires %s questionnaire value for %s", questionnaireFieldLabel(field), tracker.Tracker)
+					return nil, false, fmt.Errorf(
+						"upbrr: unattended upload requires %s questionnaire value for %s",
+						questionnaireFieldLabel(field),
+						tracker.Tracker,
+					)
 				}
 				values[field.Key] = defaultValue
 				continue
@@ -1173,12 +1434,19 @@ func questionnaireFieldLabel(field api.TrackerQuestionnaireField) string {
 	return strings.TrimSpace(field.Key)
 }
 
-func runDoubleDupeCheck(ctx context.Context, reader *bufio.Reader, coreSvc api.Core, req api.Request, trackers []string) ([]string, error) {
+func runDoubleDupeCheck(
+	ctx context.Context,
+	reader *bufio.Reader,
+	coreSvc cliDupeChecker,
+	req api.Request,
+	trackers []string,
+	debug bool,
+) ([]string, api.DupeCheckSummary, error) {
 	recheckReq := req
 	recheckReq.Trackers = trackers
 	summary, err := coreSvc.CheckDupes(ctx, recheckReq)
 	if err != nil {
-		return nil, fmt.Errorf("upbrr: %w", err)
+		return nil, api.DupeCheckSummary{}, fmt.Errorf("upbrr: %w", err)
 	}
 
 	resultByTracker := make(map[string]api.DupeCheckResult, len(summary.Results))
@@ -1199,7 +1467,7 @@ func runDoubleDupeCheck(ctx context.Context, reader *bufio.Reader, coreSvc api.C
 		}
 		fmt.Printf("\nDouble dupe check flagged %s:\n", tracker)
 		printDupeResult(result)
-		if req.Options.Debug {
+		if debug {
 			fmt.Printf("Debug mode: keeping %s despite second dupe check.\n", tracker)
 			filtered = append(filtered, tracker)
 			continue
@@ -1210,13 +1478,13 @@ func runDoubleDupeCheck(ctx context.Context, reader *bufio.Reader, coreSvc api.C
 		}
 		upload, err := promptYesNo(reader, fmt.Sprintf("Upload to %s anyway after second dupe check? [y/N]: ", tracker), false)
 		if err != nil {
-			return nil, err
+			return nil, api.DupeCheckSummary{}, err
 		}
 		if upload {
 			filtered = append(filtered, tracker)
 		}
 	}
-	return filtered, nil
+	return filtered, summary, nil
 }
 
 func buildQuestionnairePrompt(field api.TrackerQuestionnaireField) string {
@@ -1254,55 +1522,59 @@ func printMetadataPreview(preview api.MetadataPreview, debug bool) {
 	if preview.TrackerName != "" {
 		fmt.Printf("Tracker data from: %s\n", preview.TrackerName)
 	}
-	printMetadataExternalIDs(preview)
-	if len(preview.ExternalIDCandidates.TMDB) > 0 || len(preview.ExternalIDCandidates.IMDB) > 0 {
+	printMetadataExternalIdentity(preview)
+	if metadataPreviewHasCandidates(preview.Diagnostics) {
 		fmt.Println("Candidate IDs available; use override args if needed.")
 	}
-	if len(preview.Warnings) > 0 {
+	warnings := make([]string, 0)
+	for _, diagnostic := range preview.Diagnostics {
+		if diagnostic.Severity == api.DiagnosticSeverityWarning && strings.TrimSpace(diagnostic.Message) != "" {
+			warnings = append(warnings, diagnostic.Message)
+		}
+	}
+	if len(warnings) > 0 {
 		fmt.Println("Warnings:")
-		for _, warning := range preview.Warnings {
+		for _, warning := range warnings {
 			fmt.Printf("- %s\n", warning)
 		}
 	}
 }
 
-func printMetadataDatabaseInfo(external api.ExternalPreview, preview api.MetadataPreview) {
+func printMetadataDatabaseInfo(external api.ProviderDisplay, _ api.MetadataPreview) {
 	fmt.Println()
 	fmt.Println("Database info")
-	title := strings.TrimSpace(external.Title)
-	if title == "" {
-		title = strings.TrimSpace(preview.ReleaseName)
+	summary := external.Summary
+	if summary.Title != "" && summary.Year != 0 {
+		fmt.Printf("Title: %s (%d)\n", summary.Title, summary.Year)
+	} else if summary.Title != "" {
+		fmt.Printf("Title: %s\n", summary.Title)
 	}
-	if title != "" && external.Year != 0 {
-		fmt.Printf("Title: %s (%d)\n", title, external.Year)
-	} else if title != "" {
-		fmt.Printf("Title: %s\n", title)
-	}
-	if overview := summarizeMetadataText(external.Overview, 260); overview != "" {
+	if overview := summarizeMetadataText(summary.Overview, 260); overview != "" {
 		fmt.Printf("Overview: %s\n", overview)
 	}
-	if genres := strings.TrimSpace(external.Genres); genres != "" {
+	if genres := strings.TrimSpace(summary.Genres); genres != "" {
 		fmt.Printf("Genres: %s\n", genres)
 	}
-	if category := metadataPreviewCategory(external, preview); category != "" {
-		fmt.Printf("Category: %s\n", category)
+	if summary.Category != "" {
+		fmt.Printf("Category: %s\n", strings.ToUpper(summary.Category))
 	}
-	if date := metadataPreviewDate(external); date != "" {
-		fmt.Printf("Date: %s\n", date)
+	if summary.Date != "" {
+		fmt.Printf("Date: %s\n", summary.Date)
 	}
-	if runtime := metadataPreviewRuntime(external); runtime != "" {
-		fmt.Printf("Runtime: %s\n", runtime)
+	if summary.RuntimeMinutes != 0 {
+		fmt.Printf("Runtime: %d min\n", summary.RuntimeMinutes)
 	}
-	if external.Rating != 0 {
-		if external.RatingCount != 0 {
-			fmt.Printf("Rating: %.1f (%d votes)\n", external.Rating, external.RatingCount)
+	if summary.Rating != 0 {
+		if summary.RatingCount != 0 {
+			fmt.Printf("Rating: %.1f (%d votes)\n", summary.Rating, summary.RatingCount)
 		} else {
-			fmt.Printf("Rating: %.1f\n", external.Rating)
+			fmt.Printf("Rating: %.1f\n", summary.Rating)
 		}
 	}
 }
 
-func printMetadataExternalIDs(preview api.MetadataPreview) {
+func printMetadataExternalIdentity(preview api.MetadataPreview) {
+	identity := preview.Identity
 	printedHeader := false
 	printHeader := func() {
 		if printedHeader {
@@ -1312,117 +1584,44 @@ func printMetadataExternalIDs(preview api.MetadataPreview) {
 		fmt.Println("External IDs")
 		printedHeader = true
 	}
-	if preview.ExternalIDs.TMDBID != 0 {
+	if identity.TMDBID != 0 {
 		printHeader()
-		fmt.Printf("TMDB: %s\n", tmdbURL(preview.ExternalIDs.TMDBID, metadataPreviewTMDBCategory(preview)))
+		fmt.Printf("TMDB: %d\n", identity.TMDBID)
 	}
-	if preview.ExternalIDs.IMDBID != 0 {
+	if identity.IMDBID != 0 {
 		printHeader()
-		fmt.Printf("IMDb: https://www.imdb.com/title/tt%07d\n", preview.ExternalIDs.IMDBID)
+		fmt.Printf("IMDb: tt%07d\n", identity.IMDBID)
 	}
-	if preview.ExternalIDs.TVDBID != 0 {
+	if identity.TVDBID != 0 {
 		printHeader()
-		fmt.Printf("TVDB: https://www.thetvdb.com/?id=%d&tab=series\n", preview.ExternalIDs.TVDBID)
+		fmt.Printf("TVDB: %d\n", identity.TVDBID)
 	}
-	if preview.ExternalIDs.TVmazeID != 0 {
+	if identity.TVmazeID != 0 {
 		printHeader()
-		fmt.Printf("TVmaze: https://www.tvmaze.com/shows/%d\n", preview.ExternalIDs.TVmazeID)
+		fmt.Printf("TVmaze: %d\n", identity.TVmazeID)
 	}
-	if preview.ExternalIDs.MALID != 0 {
+	if identity.MALID != 0 {
 		printHeader()
-		fmt.Printf("MAL: https://myanimelist.net/anime/%d\n", preview.ExternalIDs.MALID)
+		fmt.Printf("MAL: %d\n", identity.MALID)
 	}
 }
 
-func primaryMetadataPreview(preview api.MetadataPreview) *api.ExternalPreview {
-	preferred := []string{"tmdb", "tvdb", "imdb", "tvmaze"}
-	for _, provider := range preferred {
-		for i := range preview.ExternalPreview {
-			external := &preview.ExternalPreview[i]
-			if strings.EqualFold(strings.TrimSpace(external.Provider), provider) && metadataPreviewHasDetails(*external) {
-				return external
-			}
-		}
-	}
-	for i := range preview.ExternalPreview {
-		if metadataPreviewHasDetails(preview.ExternalPreview[i]) {
-			return &preview.ExternalPreview[i]
+func primaryMetadataPreview(preview api.MetadataPreview) *api.ProviderDisplay {
+	for index := range preview.Display.Providers {
+		if preview.Display.Providers[index].SummaryAvailable {
+			return &preview.Display.Providers[index]
 		}
 	}
 	return nil
 }
 
-func metadataPreviewHasDetails(external api.ExternalPreview) bool {
-	return strings.TrimSpace(external.Title) != "" ||
-		strings.TrimSpace(external.Overview) != "" ||
-		strings.TrimSpace(external.Genres) != "" ||
-		external.Year != 0 ||
-		external.Rating != 0 ||
-		external.Runtime != 0 ||
-		external.RuntimeMinutes != 0
-}
-
-func metadataPreviewCategory(external api.ExternalPreview, preview api.MetadataPreview) string {
-	if category := strings.TrimSpace(external.Category); category != "" {
-		return strings.ToUpper(category)
-	}
-	if category := strings.TrimSpace(preview.ExternalIDs.Category); category != "" {
-		return strings.ToUpper(category)
-	}
-	if tmdbType := strings.TrimSpace(external.TMDBType); tmdbType != "" {
-		return strings.ToUpper(tmdbType)
-	}
-	if imdbType := strings.TrimSpace(external.IMDBType); imdbType != "" {
-		return strings.ToUpper(imdbType)
-	}
-	return ""
-}
-
-func metadataPreviewDate(external api.ExternalPreview) string {
-	for _, value := range []string{external.ReleaseDate, external.FirstAirDate, external.Premiered} {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
+func metadataPreviewHasCandidates(diagnostics []api.PreparationDiagnostic) bool {
+	for _, diagnostic := range diagnostics {
+		if len(diagnostic.Candidates) > 0 {
+			return true
 		}
 	}
-	return ""
-}
-
-func metadataPreviewRuntime(external api.ExternalPreview) string {
-	runtime := external.Runtime
-	if runtime == 0 {
-		runtime = external.RuntimeMinutes
-	}
-	if runtime == 0 {
-		return ""
-	}
-	return fmt.Sprintf("%d min", runtime)
-}
-
-func metadataPreviewTMDBCategory(preview api.MetadataPreview) string {
-	for _, external := range preview.ExternalPreview {
-		if !strings.EqualFold(strings.TrimSpace(external.Provider), "tmdb") {
-			continue
-		}
-		if category := strings.TrimSpace(external.Category); category != "" {
-			return category
-		}
-		if tmdbType := strings.TrimSpace(external.TMDBType); tmdbType != "" {
-			return tmdbType
-		}
-	}
-	if category := strings.TrimSpace(preview.ExternalIDs.Category); category != "" {
-		return category
-	}
-	return "movie"
-}
-
-func tmdbURL(id int, category string) string {
-	switch strings.ToLower(strings.TrimSpace(category)) {
-	case "tv", "series", "show":
-		return fmt.Sprintf("https://www.themoviedb.org/tv/%d", id)
-	default:
-		return fmt.Sprintf("https://www.themoviedb.org/movie/%d", id)
-	}
+	return false
 }
 
 func summarizeMetadataText(value string, limit int) string {
@@ -1438,9 +1637,13 @@ func summarizeMetadataText(value string, limit int) string {
 }
 
 func printDupeResult(result api.DupeCheckResult) {
-	fmt.Printf("Dupe check status: %s\n", result.Status)
+	writeDupeResult(os.Stdout, result)
+}
+
+func writeDupeResult(w io.Writer, result api.DupeCheckResult) {
+	fmt.Fprintf(w, "Dupe check status: %s\n", result.Status)
 	for _, note := range result.Notes {
-		fmt.Printf("- %s\n", note)
+		fmt.Fprintf(w, "- %s\n", note)
 	}
 	entries := result.Filtered
 	if len(entries) == 0 {
@@ -1454,7 +1657,7 @@ func printDupeResult(result api.DupeCheckResult) {
 		if entry.Link != "" {
 			line += " - " + entry.Link
 		}
-		fmt.Printf("- %s\n", line)
+		fmt.Fprintf(w, "- %s\n", line)
 	}
 }
 
@@ -1483,12 +1686,16 @@ func writeDryRunSummary(w io.Writer, entry api.TrackerDryRunEntry) {
 	if bannedCheckError := strings.TrimSpace(entry.BannedCheckError); bannedCheckError != "" {
 		fmt.Fprintf(w, "Banned group check: %s\n", bannedCheckError)
 	}
+	writeDryRunDiagnostics(w, entry.Diagnostics)
 	if change := trackerReleaseNameChangeLine(entry); change != "" {
 		fmt.Fprintf(w, "Tracker %s\n", change)
 	} else if entry.ReleaseName != "" {
 		fmt.Fprintf(w, "Tracker release name: %s\n", entry.ReleaseName)
 	}
-	if imageMessage := strings.TrimSpace(entry.ImageHost.Message); imageMessage != "" && (entry.ImageHost.Reuploaded || strings.EqualFold(entry.ImageHost.Status, "warning")) {
+	if imageMessage := strings.TrimSpace(
+		entry.ImageHost.Message,
+	); imageMessage != "" &&
+		(entry.ImageHost.Reuploaded || strings.EqualFold(entry.ImageHost.Status, "warning")) {
 		fmt.Fprintf(w, "Images: %s\n", imageMessage)
 	}
 	for _, warning := range entry.ImageHost.Warnings {
@@ -1509,12 +1716,42 @@ func writeDryRunSummary(w io.Writer, entry api.TrackerDryRunEntry) {
 	}
 }
 
+func writeDryRunDiagnostics(w io.Writer, diagnostics api.TrackerDryRunDiagnostics) {
+	for _, decision := range diagnostics.RuleDecisions {
+		disposition := api.NormalizeRuleDisposition(decision.Disposition)
+		fmt.Fprintf(w, "Rule [%s] %s: %s", disposition, decision.Rule, decision.Reason)
+		if decision.Authorized {
+			fmt.Fprint(w, " (authorized)")
+		}
+		fmt.Fprintln(w)
+	}
+	dupe := diagnostics.Duplicate
+	if strings.TrimSpace(dupe.Tracker) != "" || strings.TrimSpace(dupe.Status) != "" || dupe.HasDupes || dupe.Skipped || strings.TrimSpace(dupe.Error) != "" {
+		writeDupeResult(w, dupe)
+	}
+	if len(diagnostics.LiveEligibilityReasons) > 0 {
+		fmt.Fprintln(w, "Live upload blockers:")
+		for _, reason := range diagnostics.LiveEligibilityReasons {
+			fmt.Fprintf(w, "- %s: %s\n", reason.Code, reason.Message)
+		}
+	}
+}
+
 func printDebugUploadReview(review api.UploadReview) {
 	fmt.Printf("\n[Debug Dry Run] %s\n", formatPathLabel(review.SourcePath))
 	for _, group := range groupDebugPayloads(review.Trackers) {
 		fmt.Printf("\n[%s Debug Payload]\n", strings.Join(group.trackers, ", "))
 		fmt.Print(group.body)
 	}
+}
+
+// printDebugTrackerDryRun renders the shared dry-run result with CLI debug labels.
+func printDebugTrackerDryRun(preview api.TrackerDryRunPreview) {
+	review := api.UploadReview{SourcePath: preview.SourcePath, Trackers: make([]api.TrackerReview, 0, len(preview.Trackers))}
+	for _, entry := range preview.Trackers {
+		review.Trackers = append(review.Trackers, api.TrackerReview{Tracker: entry.Tracker, DryRun: entry})
+	}
+	printDebugUploadReview(review)
 }
 
 // debugPayloadGroup represents one rendered debug payload body and the trackers
@@ -1567,23 +1804,37 @@ func debugPayloadTrackerLabel(tracker api.TrackerReview) string {
 	return label
 }
 
-func printDryRunUploadReview(review api.UploadReview, req api.Request) {
-	fmt.Printf("\n[Dry Run] %s\n", formatPathLabel(review.SourcePath))
-	for _, tracker := range review.Trackers {
-		fmt.Printf("\n[%s]\n", tracker.Tracker)
-		if tracker.Banned && !tracker.DryRun.Banned {
-			fmt.Printf("Banned group: %s\n", tracker.BannedReason)
+// printRuleFailures groups strict, waivable, and advisory results for CLI output.
+func printRuleFailures(failures []api.RuleFailure) {
+	strict := make([]api.RuleFailure, 0)
+	waivable := make([]api.RuleFailure, 0)
+	for _, failure := range failures {
+		switch api.NormalizeRuleDisposition(failure.Disposition) {
+		case api.RuleDispositionStrict:
+			strict = append(strict, failure)
+		case api.RuleDispositionWaivable:
+			waivable = append(waivable, failure)
+		case api.RuleDispositionAdvisory:
 		}
-		if len(tracker.RuleFailures) > 0 {
-			fmt.Println("Rule failures:")
-			for _, failure := range tracker.RuleFailures {
-				fmt.Printf("- %s: %s\n", failure.Rule, failure.Reason)
-			}
+	}
+	if len(strict) > 0 {
+		fmt.Println("Strict rule failures:")
+		for _, failure := range strict {
+			fmt.Printf("- %s: %s\n", failure.Rule, failure.Reason)
 		}
-		if !req.SkipDupeCheck && tracker.DupeCheck.HasDupes {
-			printDupeResult(tracker.DupeCheck)
+	}
+	if len(waivable) > 0 {
+		fmt.Println("Waivable rule failures:")
+		for _, failure := range waivable {
+			fmt.Printf("- %s: %s\n", failure.Rule, failure.Reason)
 		}
-		printDryRunSummary(tracker.DryRun)
+	}
+	advisories := api.AdvisoryRuleFailures(failures)
+	if len(advisories) > 0 {
+		fmt.Println("Rule advisories:")
+		for _, advisory := range advisories {
+			fmt.Printf("- %s: %s\n", advisory.Rule, advisory.Reason)
+		}
 	}
 }
 
@@ -1747,7 +1998,19 @@ func payloadIncludesDescription(payload map[string]string) bool {
 
 func isDryRunBodyPayloadField(key string) bool {
 	switch normalizedDryRunPayloadKey(key) {
-	case "description", "desc", "descr", "release_desc", "album_desc", "mediainfo", "mediainfo[]", "media_info", "bdinfo", "bd_info", "techinfo", "technical_info", "technicaldetails":
+	case "description",
+		"desc",
+		"descr",
+		"release_desc",
+		"album_desc",
+		"mediainfo",
+		"mediainfo[]",
+		"media_info",
+		"bdinfo",
+		"bd_info",
+		"techinfo",
+		"technical_info",
+		"technicaldetails":
 		return true
 	default:
 		return false

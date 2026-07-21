@@ -19,22 +19,35 @@ import (
 
 var editCLIDescriptionFile = editDescriptionFile
 
-func maybeEditCLIDescriptions(ctx context.Context, coreSvc api.Core, reader *bufio.Reader, req api.Request, review api.UploadReview, opts cliOptions) (api.Request, api.UploadReview, error) {
+// cliDescriptionEditorCore owns description preview and persisted overrides.
+type cliDescriptionEditorCore interface {
+	FetchDescriptionBuilderPreview(context.Context, api.Request) (api.DescriptionBuilderPreview, error)
+	SaveDescriptionOverride(context.Context, api.Request, string) (api.DescriptionBuilderGroup, error)
+}
+
+func maybeEditCLIDescriptions(
+	ctx context.Context,
+	coreSvc cliDescriptionEditorCore,
+	reader *bufio.Reader,
+	req api.Request,
+	review api.UploadReview,
+	opts cliOptions,
+) (api.Request, error) {
 	if req.Options.OnlyID || opts.OnlyID {
-		return req, review, nil
+		return req, nil
 	}
 	if opts.Unattended && !opts.UnattendedConfirm {
-		return req, review, nil
+		return req, nil
 	}
 
 	preview, err := coreSvc.FetchDescriptionBuilderPreview(ctx, req)
 	if err != nil {
-		return req, review, fmt.Errorf("upbrr: description builder: %w", err)
+		return req, fmt.Errorf("upbrr: description builder: %w", err)
 	}
 	groups := filterEditableDescriptionGroups(preview.Groups, review)
 	if len(groups) == 0 {
 		fmt.Println("No generated descriptions available to edit.")
-		return req, review, nil
+		return req, nil
 	}
 	printCLIDescriptionPreview(groups)
 
@@ -48,7 +61,7 @@ func maybeEditCLIDescriptions(ctx context.Context, coreSvc api.Core, reader *buf
 		}
 		edit, err := promptYesNo(reader, prompt, false)
 		if err != nil {
-			return req, review, err
+			return req, err
 		}
 		if !edit {
 			continue
@@ -57,7 +70,7 @@ func maybeEditCLIDescriptions(ctx context.Context, coreSvc api.Core, reader *buf
 		fmt.Printf("Editing description %s\n", label)
 		edited, didChange, err := editCLIDescriptionFile(ctx, group.RawDescription)
 		if err != nil {
-			return req, review, fmt.Errorf("upbrr: edit description %s: %w", label, err)
+			return req, fmt.Errorf("upbrr: edit description %s: %w", label, err)
 		}
 		if !didChange {
 			fmt.Printf("Description %s unchanged.\n", label)
@@ -71,22 +84,18 @@ func maybeEditCLIDescriptions(ctx context.Context, coreSvc api.Core, reader *buf
 		}
 		updated, err := coreSvc.SaveDescriptionOverride(ctx, saveReq, edited)
 		if err != nil {
-			return req, review, fmt.Errorf("upbrr: save description %s: %w", label, err)
+			return req, fmt.Errorf("upbrr: save description %s: %w", label, err)
 		}
 		groups[idx] = mergeDescriptionGroupUpdate(group, updated)
 		changed = true
 		fmt.Printf("Description %s saved.\n", label)
 	}
 	if !changed {
-		return req, review, nil
+		return req, nil
 	}
 
 	req.DescriptionGroups = replaceDescriptionGroups(preview.Groups, groups)
-	updatedReview, err := coreSvc.BuildUploadReview(ctx, req)
-	if err != nil {
-		return req, review, fmt.Errorf("upbrr: rebuild upload review: %w", err)
-	}
-	return req, updatedReview, nil
+	return req, nil
 }
 
 func filterEditableDescriptionGroups(groups []api.DescriptionBuilderGroup, review api.UploadReview) []api.DescriptionBuilderGroup {

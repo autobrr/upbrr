@@ -225,7 +225,16 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 			continue
 		}
 		if !knownTrackers[trackerName] {
-			warnings = append(warnings, "skipped unknown tracker: "+trackerName)
+			unknown := make(map[string]any, len(trackerValues))
+			for key, value := range trackerValues {
+				if strings.EqualFold(strings.TrimSpace(key), "url") {
+					warnings = append(warnings, fmt.Sprintf("ignored deprecated tracker URL: trackers.%s.%s", trackerName, key))
+					continue
+				}
+				unknown[key] = value
+			}
+			out.Trackers.Trackers[trackerName] = config.TrackerConfig{Unknown: unknown}
+			warnings = append(warnings, "preserved unsupported tracker entry: "+trackerName)
 			continue
 		}
 
@@ -234,6 +243,10 @@ func migrateTrackers(legacyTrackers map[string]any, template *config.Config, out
 		outTracker := out.Trackers.Trackers[trackerName]
 
 		for key, value := range trackerValues {
+			if strings.EqualFold(strings.TrimSpace(key), "url") {
+				warnings = append(warnings, fmt.Sprintf("ignored deprecated tracker URL: trackers.%s.%s", trackerName, key))
+				continue
+			}
 			templateValue := getTrackerFieldTemplate(templateTracker, hasTemplate, key)
 			if templateValue == nil {
 				warnings = append(warnings, fmt.Sprintf("skipped unknown tracker key %s.%s", trackerName, key))
@@ -486,7 +499,7 @@ func getTrackerFieldTemplate(templateTracker config.TrackerConfig, hasTemplate b
 
 // getTrackerFieldValue returns the value of a TrackerConfig field by its YAML tag.
 func getTrackerFieldValue(tc config.TrackerConfig, yamlKey string) any {
-	t := reflect.TypeOf(tc)
+	t := reflect.TypeFor[config.TrackerConfig]()
 	v := reflect.ValueOf(tc)
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
@@ -500,9 +513,8 @@ func getTrackerFieldValue(tc config.TrackerConfig, yamlKey string) any {
 
 // getTrackerFieldDefault returns a zero-value for known tracker fields.
 func getTrackerFieldDefault(yamlKey string) any {
-	t := reflect.TypeOf(config.TrackerConfig{})
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
+	t := reflect.TypeFor[config.TrackerConfig]()
+	for field := range t.Fields() {
 		tag := strings.TrimSpace(strings.Split(field.Tag.Get("yaml"), ",")[0])
 		if tag == yamlKey {
 			return reflect.Zero(field.Type).Interface()
@@ -513,7 +525,7 @@ func getTrackerFieldDefault(yamlKey string) any {
 
 // setTrackerField sets a field on a TrackerConfig by its YAML tag name.
 func setTrackerField(tc *config.TrackerConfig, yamlKey string, value any) {
-	t := reflect.TypeOf(*tc)
+	t := reflect.TypeFor[config.TrackerConfig]()
 	v := reflect.ValueOf(tc).Elem()
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
@@ -536,7 +548,7 @@ func setTrackerField(tc *config.TrackerConfig, yamlKey string, value any) {
 // setTorrentClientField sets a field on a TorrentClientConfig by its YAML tag.
 // Returns false if the field is unknown.
 func setTorrentClientField(tc *config.TorrentClientConfig, yamlKey string, value any) bool {
-	t := reflect.TypeOf(*tc)
+	t := reflect.TypeFor[config.TorrentClientConfig]()
 	v := reflect.ValueOf(tc).Elem()
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)

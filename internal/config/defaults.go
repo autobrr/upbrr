@@ -15,6 +15,7 @@ import (
 //go:embed defaults/example.yaml
 var embeddedExampleYAML []byte
 
+// EmbeddedExampleYAML returns a defensive copy of the embedded example config.
 func EmbeddedExampleYAML() []byte {
 	if len(embeddedExampleYAML) == 0 {
 		return nil
@@ -35,6 +36,8 @@ func loadEmbeddedDefaultConfigRaw() (*Config, error) {
 	return &cfg, nil
 }
 
+// LoadEmbeddedDefaultConfig parses the embedded example and backfills any
+// tracker defaults missing from its decoded shape.
 func LoadEmbeddedDefaultConfig() (*Config, error) {
 	cfg, err := loadEmbeddedDefaultConfigRaw()
 	if err != nil {

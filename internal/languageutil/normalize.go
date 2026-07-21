@@ -16,8 +16,9 @@ var (
 	languageNameMap     map[string]language.Tag
 )
 
-// NormalizeLanguageDisplay returns a title-cased display name for a language token.
-// The input can be a language code (en, eng, en-US) or a display name (English).
+// NormalizeLanguageDisplay returns the English base-language label resolved from
+// the first code or name token. Region and trailing tokens are discarded; blank
+// or unresolved input returns an empty string.
 func NormalizeLanguageDisplay(value string) string {
 	token := normalizeLanguageToken(value)
 	if token == "" {

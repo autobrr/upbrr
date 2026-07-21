@@ -15,7 +15,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/imagehostpolicy"
+	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -30,7 +31,6 @@ type cliOptions struct {
 	TrackersRemove        string
 	Debug                 bool
 	LogLevel              string
-	DryRun                bool
 	Screens               int
 	NoSeed                bool
 	SkipAutoTorrent       bool
@@ -164,7 +164,6 @@ func parseCLIOptions(args []string) (cliOptions, map[string]bool, []string, erro
 	fs.StringVar(&opts.TrackersRemove, "rtk", "", "Remove these trackers (comma-separated)")
 	fs.BoolVar(&opts.Debug, "debug", false, "Enable debug mode")
 	fs.StringVar(&opts.LogLevel, "log-level", "", "Set run log level (error, warn, info, debug, trace)")
-	fs.BoolVar(&opts.DryRun, "dry-run", false, "Run without uploading")
 	fs.IntVar(&opts.Screens, "screens", -1, "Number of screenshots to take")
 	fs.IntVar(&opts.Screens, "s", -1, "Number of screenshots to take")
 	fs.BoolVar(&opts.NoSeed, "no-seed", false, "Do not inject torrent into clients")
@@ -607,7 +606,7 @@ func cliHelpSections(name string) []helpSection {
 		{title: "Config", names: []string{"config", "export-config", "export-config-plaintext", "import-config", "create-auth"}},
 		{title: "Application", names: []string{"version", "cleanup"}},
 		{title: "Execution", names: []string{
-			"queue", "limit-queue", "site-check", "site-upload", "dry-run", "debug", "log-level", "upload-only",
+			"queue", "limit-queue", "site-check", "site-upload", "debug", "log-level", "upload-only",
 			"delete-tmp", "unattended", "unattended_confirm",
 		}},
 		{title: "Tracker Selection", names: []string{"trackers", "trackers-remove"}},
@@ -713,9 +712,12 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, s
 		runLogLevel = normalized
 	}
 
+	sourcePath := ""
+	if len(paths) == 1 {
+		sourcePath = paths[0]
+	}
 	req := api.Request{
-		Paths: paths,
-		Mode:  api.ModeCLI,
+		SourcePath: sourcePath,
 		Execution: api.ExecutionOptions{
 			QueueName:         strings.TrimSpace(opts.QueueName),
 			QueueLimit:        opts.LimitQueue,
@@ -725,8 +727,6 @@ func buildCLIRequest(opts cliOptions, visited map[string]bool, paths []string, s
 		Trackers:       splitCSV(opts.Trackers),
 		TrackersRemove: splitCSV(opts.TrackersRemove),
 		Options: api.UploadOptions{
-			Debug:           opts.Debug,
-			DryRun:          opts.DryRun || opts.Debug || opts.SiteCheck,
 			RunLogLevel:     runLogLevel,
 			Screens:         screens,
 			NoSeed:          opts.NoSeed,
@@ -948,15 +948,51 @@ func buildTrackerIDOverrides(opts cliOptions, visited map[string]bool) (map[stri
 		tracker     string
 		value       string
 	}{
-		{visitedName: "ptp", tracker: "ptp", value: opts.PTP},
-		{visitedName: "blu", tracker: "blu", value: opts.BLU},
-		{visitedName: "aither", tracker: "aither", value: opts.Aither},
-		{visitedName: "lst", tracker: "lst", value: opts.LST},
-		{visitedName: "oe", tracker: "oe", value: opts.OE},
-		{visitedName: "hdb", tracker: "hdb", value: opts.HDB},
-		{visitedName: "btn", tracker: "btn", value: opts.BTN},
-		{visitedName: "bhd", tracker: "bhd", value: opts.BHD},
-		{visitedName: "ulcx", tracker: "ulcx", value: opts.ULCX},
+		{
+			visitedName: "ptp",
+			tracker:     "ptp",
+			value:       opts.PTP,
+		},
+		{
+			visitedName: "blu",
+			tracker:     "blu",
+			value:       opts.BLU,
+		},
+		{
+			visitedName: "aither",
+			tracker:     "aither",
+			value:       opts.Aither,
+		},
+		{
+			visitedName: "lst",
+			tracker:     "lst",
+			value:       opts.LST,
+		},
+		{
+			visitedName: "oe",
+			tracker:     "oe",
+			value:       opts.OE,
+		},
+		{
+			visitedName: "hdb",
+			tracker:     "hdb",
+			value:       opts.HDB,
+		},
+		{
+			visitedName: "btn",
+			tracker:     "btn",
+			value:       opts.BTN,
+		},
+		{
+			visitedName: "bhd",
+			tracker:     "bhd",
+			value:       opts.BHD,
+		},
+		{
+			visitedName: "ulcx",
+			tracker:     "ulcx",
+			value:       opts.ULCX,
+		},
 	}
 
 	overrides := make(map[string]string)
@@ -1078,8 +1114,11 @@ func parseInfoHash(raw string) (string, error) {
 
 func parseImageHost(raw string) (string, error) {
 	trimmed := strings.ToLower(strings.TrimSpace(raw))
-	if imagehostpolicy.IsUploadHost(trimmed) && imagehostpolicy.OwnerForHost(trimmed) == "" {
-		return trimmed, nil
+	if imagehostpolicy.IsUploadHost(trimmed) {
+		registry, err := trackerimpl.NewRegistry()
+		if err == nil && registry.OwnerForImageHost(trimmed) == "" {
+			return trimmed, nil
+		}
 	}
 	return "", fmt.Errorf("invalid imghost %q", raw)
 }

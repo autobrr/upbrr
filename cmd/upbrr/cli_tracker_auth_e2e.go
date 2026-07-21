@@ -11,7 +11,8 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/trackerauth"
+	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
+	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -24,7 +25,7 @@ func newCLITrackerAuthService(cfg config.Config, logger api.Logger) cliTrackerAu
 	if value == "1" || strings.EqualFold(value, "true") {
 		return e2eCLITrackerAuthService{}
 	}
-	return trackerauth.NewServiceWithLogger(cfg, logger)
+	return trackerauth.NewServiceWithRegistryAndLogger(cfg, trackerimpl.MustNewRegistry(), logger)
 }
 
 // e2eCLITrackerAuthService treats tracker auth as configured without network IO.
@@ -35,9 +36,13 @@ func (e2eCLITrackerAuthService) Capabilities(context.Context) ([]api.TrackerAuth
 	return nil, nil
 }
 
-// Validate returns configured state without contacting the tracker.
-func (e2eCLITrackerAuthService) Validate(_ context.Context, trackerID string) (api.TrackerAuthStatus, error) {
-	return api.TrackerAuthStatus{TrackerID: strings.ToUpper(strings.TrimSpace(trackerID)), State: trackerauth.StateConfigured}, nil
+// ValidateMany returns configured state without contacting trackers.
+func (e2eCLITrackerAuthService) ValidateMany(_ context.Context, trackerIDs []string) ([]api.TrackerAuthStatus, error) {
+	statuses := make([]api.TrackerAuthStatus, 0, len(trackerIDs))
+	for _, trackerID := range trackerIDs {
+		statuses = append(statuses, api.TrackerAuthStatus{TrackerID: strings.ToUpper(strings.TrimSpace(trackerID)), State: trackerauth.StateConfigured})
+	}
+	return statuses, nil
 }
 
 // Submit2FA completes the fake challenge without external IO.

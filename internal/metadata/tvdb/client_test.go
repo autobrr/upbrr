@@ -17,9 +17,23 @@ import (
 
 func TestSelectBestSeries(t *testing.T) {
 	results := []SeriesSearchResult{
-		{TVDBID: 1, Name: "Show A", Year: "2020"},
-		{TVDBID: 2, Name: "Show B", Year: "2021", Aliases: []Alias{{Name: "Show B (2022)", Language: "eng"}}},
-		{TVDBID: 3, Name: "Show C", Year: "2023", Aliases: []Alias{{Name: "Show C 2024", Language: "eng"}}},
+		{
+			TVDBID: 1,
+			Name:   "Show A",
+			Year:   "2020",
+		},
+		{
+			TVDBID:  2,
+			Name:    "Show B",
+			Year:    "2021",
+			Aliases: []Alias{{Name: "Show B (2022)", Language: "eng"}},
+		},
+		{
+			TVDBID:  3,
+			Name:    "Show C",
+			Year:    "2023",
+			Aliases: []Alias{{Name: "Show C 2024", Language: "eng"}},
+		},
 	}
 	if id := selectBestSeries(results, "2021"); id != 2 {
 		t.Fatalf("expected 2, got %d", id)
@@ -59,11 +73,19 @@ func TestSpecificSeriesAliasDoesNotUseSlugFallback(t *testing.T) {
 		t.Fatalf("expected source-less series year to be ignored, got %q", got)
 	}
 
-	if got := specificSeriesAlias(EpisodesData{SeriesTitle: "Cats Eye", SeriesYear: 2025, SeriesYearSource: seriesYearSourceTranslationAlias}); got != "Cats Eye (2025)" {
+	if got := specificSeriesAlias(EpisodesData{
+		SeriesTitle:      "Cats Eye",
+		SeriesYear:       2025,
+		SeriesYearSource: seriesYearSourceTranslationAlias,
+	}); got != "Cats Eye (2025)" {
 		t.Fatalf("expected explicit series title/year, got %q", got)
 	}
 
-	if got := specificSeriesAlias(EpisodesData{SeriesTitle: "Hunter x Hunter (2011)", SeriesYear: 2011, SeriesYearSource: seriesYearSourceTranslationName}); got != "Hunter x Hunter (2011)" {
+	if got := specificSeriesAlias(EpisodesData{
+		SeriesTitle:      "Hunter x Hunter (2011)",
+		SeriesYear:       2011,
+		SeriesYearSource: seriesYearSourceTranslationName,
+	}); got != "Hunter x Hunter (2011)" {
 		t.Fatalf("expected title year not to be duplicated, got %q", got)
 	}
 }
@@ -74,13 +96,41 @@ func TestNormalizeIMDbRemote(t *testing.T) {
 		value string
 		want  string
 	}{
-		{name: "empty", value: " ", want: ""},
-		{name: "zero", value: "0", want: ""},
-		{name: "numeric", value: "1234567", want: "tt1234567"},
-		{name: "numeric_pads", value: "123", want: "tt0000123"},
-		{name: "lower_prefix", value: "tt1234567", want: "tt1234567"},
-		{name: "upper_prefix", value: "TT1234567", want: "tt1234567"},
-		{name: "mixed_prefix_trimmed", value: "  Tt7654321  ", want: "tt7654321"},
+		{
+			name:  "empty",
+			value: " ",
+			want:  "",
+		},
+		{
+			name:  "zero",
+			value: "0",
+			want:  "",
+		},
+		{
+			name:  "numeric",
+			value: "1234567",
+			want:  "tt1234567",
+		},
+		{
+			name:  "numeric_pads",
+			value: "123",
+			want:  "tt0000123",
+		},
+		{
+			name:  "lower_prefix",
+			value: "tt1234567",
+			want:  "tt1234567",
+		},
+		{
+			name:  "upper_prefix",
+			value: "TT1234567",
+			want:  "tt1234567",
+		},
+		{
+			name:  "mixed_prefix_trimmed",
+			value: "  Tt7654321  ",
+			want:  "tt7654321",
+		},
 	}
 
 	for _, tt := range tests {
@@ -94,8 +144,28 @@ func TestNormalizeIMDbRemote(t *testing.T) {
 
 func TestFindEpisodeMatch(t *testing.T) {
 	episodes := []Episode{
-		{ID: 10, SeasonNumber: 1, Number: 1, AbsoluteNumber: 1, Name: "Pilot", Overview: "Overview", SeasonName: "Season 1", Year: 2020, Aired: "2020-01-01"},
-		{ID: 11, SeasonNumber: 1, Number: 2, AbsoluteNumber: 2, Name: "Second", Overview: "Overview 2", SeasonName: "Season 1", Year: 2020, Aired: "2020-01-08"},
+		{
+			ID:             10,
+			SeasonNumber:   1,
+			Number:         1,
+			AbsoluteNumber: 1,
+			Name:           "Pilot",
+			Overview:       "Overview",
+			SeasonName:     "Season 1",
+			Year:           2020,
+			Aired:          "2020-01-01",
+		},
+		{
+			ID:             11,
+			SeasonNumber:   1,
+			Number:         2,
+			AbsoluteNumber: 2,
+			Name:           "Second",
+			Overview:       "Overview 2",
+			SeasonName:     "Season 1",
+			Year:           2020,
+			Aired:          "2020-01-08",
+		},
 	}
 
 	match, ok := findEpisodeMatch(episodes, EpisodeQuery{AiredDate: "2020-01-08"})
@@ -121,9 +191,22 @@ func TestFindEpisodeMatch(t *testing.T) {
 		t.Fatalf("expected aired date to propagate, got %q", match.Aired)
 	}
 
-	match, ok = findEpisodeMatch(episodes, EpisodeQuery{Season: 1, Episode: 3, Absolute: 2})
+	match, ok = findEpisodeMatch(episodes, EpisodeQuery{
+		Season:   1,
+		Episode:  3,
+		Absolute: 2,
+	})
 	if !ok || match.EpisodeID != 11 {
 		t.Fatalf("expected absolute number match")
+	}
+
+	match, ok = findEpisodeMatch(episodes, EpisodeQuery{Episode: 2})
+	if !ok || match.EpisodeID != 11 || match.SeasonNumber != 1 || match.EpisodeNumber != 2 {
+		t.Fatalf("expected seasonless episode to map by absolute number, got %#v", match)
+	}
+
+	if !episodeIsPresent(episodes, EpisodeQuery{Episode: 2}) {
+		t.Fatal("expected cached absolute episode to satisfy seasonless query")
 	}
 }
 
@@ -484,7 +567,12 @@ func TestGetEpisodesUpgradesLegacyCachedAliasYearSource(t *testing.T) {
 	cachePath := filepath.Join(cacheDir, "12-eng.json")
 	if err := writeEpisodesCache(cachePath, EpisodesData{
 		Episodes: []Episode{
-			{ID: 1, SeasonNumber: 1, Number: 1, Name: "Pilot"},
+			{
+				ID:           1,
+				SeasonNumber: 1,
+				Number:       1,
+				Name:         "Pilot",
+			},
 		},
 		Aliases: []Alias{
 			{Name: "Cat's Eye", Language: "eng"},
@@ -528,7 +616,12 @@ func TestGetEpisodesDoesNotUpgradeUnprovenLegacyCachedYear(t *testing.T) {
 	cacheDir := t.TempDir()
 	if err := writeEpisodesCache(filepath.Join(cacheDir, "12-eng.json"), EpisodesData{
 		Episodes: []Episode{
-			{ID: 1, SeasonNumber: 1, Number: 1, Name: "Pilot"},
+			{
+				ID:           1,
+				SeasonNumber: 1,
+				Number:       1,
+				Name:         "Pilot",
+			},
 		},
 		SeriesTitle: "Example Spy Show",
 		SeriesYear:  2026,

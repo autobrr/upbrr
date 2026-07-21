@@ -6,8 +6,6 @@ package config
 import (
 	"strings"
 	"testing"
-
-	"github.com/autobrr/upbrr/internal/imagehostpolicy"
 )
 
 // Validate is the CLI's fail-fast check. These tests target every failure
@@ -25,13 +23,12 @@ func withBase(mut func(*Config)) Config {
 	return cfg
 }
 
-func TestValidateMissingTMDBAPI(t *testing.T) {
+func TestValidateAllowsMissingTMDBAPI(t *testing.T) {
 	t.Parallel()
 
 	cfg := withBase(func(c *Config) { c.MainSettings.TMDBAPI = "" })
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "tmdb_api") {
-		t.Fatalf("want tmdb_api error, got %v", err)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("missing optional tmdb_api: %v", err)
 	}
 }
 
@@ -117,7 +114,11 @@ func TestValidateTorrentClientTypeDefaultsToQbit(t *testing.T) {
 
 	cfg := withBase(func(c *Config) {
 		c.TorrentClients = map[string]TorrentClientConfig{
-			"q": {QbitURL: "http://x", QbitUser: "u", QbitPass: "p"},
+			"q": {
+				QbitURL:  "http://x",
+				QbitUser: "u",
+				QbitPass: "p",
+			},
 		}
 	})
 	if err := cfg.Validate(); err != nil {
@@ -162,8 +163,18 @@ func TestValidateQbitHostAlternatives(t *testing.T) {
 		name   string
 		client TorrentClientConfig
 	}{
-		{"url", TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p"}},
-		{"qbit_url", TorrentClientConfig{Type: "qbit", QbitURL: "http://x", QbitUser: "u", QbitPass: "p"}},
+		{"url", TorrentClientConfig{
+			Type:     "qbit",
+			URL:      "http://x",
+			Username: "u",
+			Password: "p",
+		}},
+		{"qbit_url", TorrentClientConfig{
+			Type:     "qbit",
+			QbitURL:  "http://x",
+			QbitUser: "u",
+			QbitPass: "p",
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -213,9 +224,21 @@ func TestValidateQbitMissingCredentials(t *testing.T) {
 		client TorrentClientConfig
 		msg    string
 	}{
-		{"missing host", TorrentClientConfig{Type: "qbit", Username: "u", Password: "p"}, "url"},
-		{"missing user", TorrentClientConfig{Type: "qbit", URL: "http://x", Password: "p"}, "username"},
-		{"missing pass", TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u"}, "password"},
+		{"missing host", TorrentClientConfig{
+			Type:     "qbit",
+			Username: "u",
+			Password: "p",
+		}, "url"},
+		{"missing user", TorrentClientConfig{
+			Type:     "qbit",
+			URL:      "http://x",
+			Password: "p",
+		}, "username"},
+		{"missing pass", TorrentClientConfig{
+			Type:     "qbit",
+			URL:      "http://x",
+			Username: "u",
+		}, "password"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -240,26 +263,58 @@ func TestValidateQbitLinking(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "hardlink requires linked folder",
-			client:  TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "hardlink"},
+			name: "hardlink requires linked folder",
+			client: TorrentClientConfig{
+				Type:     "qbit",
+				URL:      "http://x",
+				Username: "u",
+				Password: "p",
+				Linking:  "hardlink",
+			},
 			wantErr: "linked_folder",
 		},
 		{
-			name:   "symlink accepts linked folder",
-			client: TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "symlink", LinkedFolder: StringList{"D:\\Links"}},
+			name: "symlink accepts linked folder",
+			client: TorrentClientConfig{
+				Type:         "qbit",
+				URL:          "http://x",
+				Username:     "u",
+				Password:     "p",
+				Linking:      "symlink",
+				LinkedFolder: StringList{"D:\\Links"},
+			},
 		},
 		{
-			name:   "reflink accepts linked folder",
-			client: TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "reflink", LinkedFolder: StringList{"D:\\Links"}},
+			name: "reflink accepts linked folder",
+			client: TorrentClientConfig{
+				Type:         "qbit",
+				URL:          "http://x",
+				Username:     "u",
+				Password:     "p",
+				Linking:      "reflink",
+				LinkedFolder: StringList{"D:\\Links"},
+			},
 		},
 		{
-			name:    "reflink requires linked folder",
-			client:  TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "reflink"},
+			name: "reflink requires linked folder",
+			client: TorrentClientConfig{
+				Type:     "qbit",
+				URL:      "http://x",
+				Username: "u",
+				Password: "p",
+				Linking:  "reflink",
+			},
 			wantErr: "linked_folder",
 		},
 		{
-			name:    "invalid mode rejected",
-			client:  TorrentClientConfig{Type: "qbit", URL: "http://x", Username: "u", Password: "p", Linking: "copy"},
+			name: "invalid mode rejected",
+			client: TorrentClientConfig{
+				Type:     "qbit",
+				URL:      "http://x",
+				Username: "u",
+				Password: "p",
+				Linking:  "copy",
+			},
 			wantErr: "linking",
 		},
 	}
@@ -308,51 +363,5 @@ func TestValidateQuiRequiresProxy(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "qui_proxy_url") {
 		t.Fatalf("want qui_proxy_url error, got %v", err)
-	}
-}
-
-// Every known tracker with an image-rehost policy must accept img_rehost=true.
-// If the schema shrinks, at least one tracker from each policy should still
-// pass so we don't accidentally flip a whole group off.
-func TestValidateAllImageRehostPoliciesAccepted(t *testing.T) {
-	t.Parallel()
-
-	for trackerName := range imagehostpolicy.KnownTrackerPolicies() {
-		cfg := withBase(func(c *Config) {
-			trackerCfg := TrackerConfig{ImgRehost: true}
-			if strings.EqualFold(trackerName, "THR") {
-				trackerCfg.ImgAPI = "secret"
-			}
-			c.Trackers.Trackers = map[string]TrackerConfig{trackerName: trackerCfg}
-		})
-		if err := cfg.Validate(); err != nil {
-			t.Errorf("tracker %s img_rehost should validate: %v", trackerName, err)
-		}
-	}
-}
-
-// A tracker name that doesn't match any policy (even with mixed case) must be
-// rejected when img_rehost is requested.
-func TestValidateUnknownRehostPolicyRejected(t *testing.T) {
-	t.Parallel()
-
-	cfg := withBase(func(c *Config) {
-		c.Trackers.Trackers = map[string]TrackerConfig{"TL": {ImgRehost: true}}
-	})
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "TL") {
-		t.Fatalf("want TL rejection, got %v", err)
-	}
-}
-
-// Case insensitivity: "hdb" must resolve the same policy as "HDB".
-func TestValidateImageRehostTrackerNameCaseInsensitive(t *testing.T) {
-	t.Parallel()
-
-	cfg := withBase(func(c *Config) {
-		c.Trackers.Trackers = map[string]TrackerConfig{"hdb": {ImgRehost: true}}
-	})
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("lowercase tracker name should still resolve policy: %v", err)
 	}
 }

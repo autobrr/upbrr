@@ -440,13 +440,6 @@ func walkSecretFields(cfg *Config, visit func(path string, value *string) error)
 			{name: "PronfoRAPIID", field: &entry.PronfoRAPIID},
 			{name: "LoginQuestion", field: &entry.LoginQuestion},
 			{name: "LoginAnswer", field: &entry.LoginAnswer},
-			{name: "Filebrowser", field: &entry.Filebrowser},
-		}
-		if strings.EqualFold(strings.TrimSpace(name), "BTN") {
-			trackerSecrets = append(trackerSecrets, struct {
-				name  string
-				field *string
-			}{name: "URL", field: &entry.URL})
 		}
 		for _, item := range trackerSecrets {
 			if err := visit("Trackers."+name+"."+item.name, item.field); err != nil {
@@ -505,7 +498,12 @@ func resolveSecretHelper(cfg *Config) (string, error) {
 
 	// Enforce owner-only rw permissions on Unix-like systems.
 	if runtime.GOOS != "windows" && info.Mode().Perm()&^0o600 != 0 {
-		return "", fmt.Errorf("%w: %s must have permissions 0600 (owner read/write only), got %o", ErrSecretEncryptionHelperUnavailable, webAuthFileName, info.Mode().Perm())
+		return "", fmt.Errorf(
+			"%w: %s must have permissions 0600 (owner read/write only), got %o",
+			ErrSecretEncryptionHelperUnavailable,
+			webAuthFileName,
+			info.Mode().Perm(),
+		)
 	}
 
 	record, err := authmaterial.LoadFromDBPath(dbPath)
@@ -597,7 +595,11 @@ func decryptSecretString(value string, helper string) (string, error) {
 		return "", fmt.Errorf("secrets: decode auth tag: %w", err)
 	}
 
-	return decryptSecretValue(secretPayload{ciphertext: ciphertext, nonce: nonce, authTag: authTag}, key)
+	return decryptSecretValue(secretPayload{
+		ciphertext: ciphertext,
+		nonce:      nonce,
+		authTag:    authTag,
+	}, key)
 }
 
 func isSecretEnvelope(value string) bool {

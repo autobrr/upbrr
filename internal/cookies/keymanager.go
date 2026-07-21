@@ -394,7 +394,12 @@ func storeAuthStateInDB(ctx context.Context, db cookieDBExecutor, state authStat
 		return fmt.Errorf("failed to marshal auth state: %w", err)
 	}
 
-	_, err = db.ExecContext(ctx, `INSERT OR REPLACE INTO config_settings (section, data, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)`, cookieAuthStateConfigSection, string(payload))
+	_, err = db.ExecContext(
+		ctx,
+		`INSERT OR REPLACE INTO config_settings (section, data, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)`,
+		cookieAuthStateConfigSection,
+		string(payload),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to save auth state: %w", err)
 	}

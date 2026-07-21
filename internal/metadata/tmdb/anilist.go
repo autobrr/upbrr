@@ -29,8 +29,9 @@ const maxAniListMetadataResponseBytes int64 = 1024 * 1024
 
 var seasonPattern = regexp.MustCompile(`(?i)(?:season\s*(\d+)|\bS(\d{1,2})\b)`)
 
-// ResolveAnime enriches anime metadata from AniList, preferring an explicit MAL
-// ID and falling back to TMDB title or filename searches.
+// ResolveAnime best-effort selects AniList metadata by explicit MAL ID or title
+// and season similarity. Lookup failures are treated as no match; an explicit
+// MAL ID is retained even when no candidate resolves.
 func (c *Client) ResolveAnime(ctx context.Context, tmdbName string, input MetadataInput) (AnimeResult, error) {
 	result := AnimeResult{Demographic: "Mina"}
 	if input.MALManual != 0 {

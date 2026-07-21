@@ -39,6 +39,8 @@ const (
 	legacyAuthArgon2KeyLen      = 32
 )
 
+// Record is the persisted web-auth state. PendingUpgrade makes auth-dependent
+// data rewrap resumable without replacing the active credentials early.
 type Record struct {
 	Username                string          `json:"username"`
 	PasswordHash            string          `json:"password_hash"`
@@ -50,6 +52,8 @@ type Record struct {
 	CreatedAt               time.Time       `json:"created_at"`
 }
 
+// PendingUpgrade stores the target auth record and the last completed rewrap
+// stage while the active record remains unchanged.
 type PendingUpgrade struct {
 	Stage     string    `json:"stage"`
 	Target    Record    `json:"target"`
@@ -62,11 +66,15 @@ const (
 	UpgradeStageDataRewrapped    = "data_rewrapped"
 )
 
+// Store serializes operations performed through one web-auth file handle.
+// Writes use a same-directory temporary file, sync it, set mode 0600, then
+// rename it over the active record.
 type Store struct {
 	path string
 	mu   sync.Mutex
 }
 
+// NewStore targets web-auth.json beside dbPath and creates its parent directory.
 func NewStore(dbPath string) (*Store, error) {
 	dir := filepath.Dir(strings.TrimSpace(dbPath))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -75,10 +83,14 @@ func NewStore(dbPath string) (*Store, error) {
 	return &Store{path: filepath.Join(dir, WebAuthFileName)}, nil
 }
 
+// AuthFilePath returns the web-auth.json path beside dbPath without touching
+// the filesystem.
 func AuthFilePath(dbPath string) string {
 	return filepath.Join(filepath.Dir(strings.TrimSpace(dbPath)), WebAuthFileName)
 }
 
+// BootstrapAuthFile creates the initial auth record and refuses to overwrite
+// an existing record.
 func BootstrapAuthFile(dbPath string, username string, password string) error {
 	store, err := NewStore(dbPath)
 	if err != nil {
@@ -87,6 +99,7 @@ func BootstrapAuthFile(dbPath string, username string, password string) error {
 	return store.Bootstrap(username, password)
 }
 
+// Exists reports whether the store's auth file currently exists.
 func (s *Store) Exists() (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -101,6 +114,8 @@ func (s *Store) Exists() (bool, error) {
 	return false, fmt.Errorf("web auth: stat auth file: %w", err)
 }
 
+// Load reads the persisted record without applying the stricter usability and
+// permission checks performed by [LoadRecordFromDBPath].
 func (s *Store) Load() (Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -116,6 +131,8 @@ func (s *Store) Load() (Record, error) {
 	return record, nil
 }
 
+// Bootstrap hashes the password, generates a stable encryption seed, and
+// creates a new record. It refuses to replace an existing auth file.
 func (s *Store) Bootstrap(username string, password string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -142,6 +159,8 @@ func (s *Store) Bootstrap(username string, password string) error {
 	return s.saveLocked(record)
 }
 
+// UpdatePasswordHash replaces only the hash when username matches the active
+// record.
 func (s *Store) UpdatePasswordHash(username string, passwordHash string) error {
 	return s.updateRecordLocked(func(record *Record) error {
 		if record.Username != strings.TrimSpace(username) {
@@ -152,6 +171,8 @@ func (s *Store) UpdatePasswordHash(username string, passwordHash string) error {
 	})
 }
 
+// UpdateRecord replaces mutable auth, export, browse, and upgrade fields while
+// preserving the active username and creation time.
 func (s *Store) UpdateRecord(updated Record) error {
 	return s.updateRecordLocked(func(record *Record) error {
 		if record.Username != strings.TrimSpace(updated.Username) {
@@ -168,6 +189,8 @@ func (s *Store) UpdateRecord(updated Record) error {
 	})
 }
 
+// BeginPendingUpgrade records target at the prepared stage only if current
+// still matches the active auth and browse settings.
 func (s *Store) BeginPendingUpgrade(current Record, target Record) error {
 	return s.updateRecordLocked(func(record *Record) error {
 		if record.Username != strings.TrimSpace(current.Username) {
@@ -191,6 +214,8 @@ func (s *Store) BeginPendingUpgrade(current Record, target Record) error {
 	})
 }
 
+// AdvancePendingUpgrade sets any recognized upgrade stage. It validates the
+// stage name but does not enforce forward-only transitions.
 func (s *Store) AdvancePendingUpgrade(username string, stage string) error {
 	stage = strings.TrimSpace(stage)
 	switch stage {
@@ -212,6 +237,8 @@ func (s *Store) AdvancePendingUpgrade(username string, stage string) error {
 	})
 }
 
+// FinalizePendingUpgrade replaces the active record with its pending target,
+// clears pending state, and preserves the original creation time.
 func (s *Store) FinalizePendingUpgrade(username string) (Record, error) {
 	var finalized Record
 
@@ -234,6 +261,8 @@ func (s *Store) FinalizePendingUpgrade(username string) (Record, error) {
 	return finalized, err
 }
 
+// ClearPendingUpgrade removes pending upgrade state without changing active
+// auth or browse settings.
 func (s *Store) ClearPendingUpgrade(username string) error {
 	return s.updateRecordLocked(func(record *Record) error {
 		if record.Username != strings.TrimSpace(username) {
@@ -264,6 +293,7 @@ func (s *Store) updateRecordLocked(apply func(record *Record) error) error {
 	return s.saveLocked(record)
 }
 
+// AuthMaterial returns a trimmed projection of the record's helper inputs.
 func (r Record) AuthMaterial() Material {
 	return Material{
 		Username:               strings.TrimSpace(r.Username),
@@ -311,6 +341,8 @@ func (s *Store) saveLocked(record Record) error {
 	return nil
 }
 
+// HashPassword validates the minimum length and returns an Argon2id encoded
+// hash with a new random salt.
 func HashPassword(password string) (string, error) {
 	password = strings.TrimSpace(password)
 	if len(password) < AuthPasswordMinLength {
@@ -339,11 +371,14 @@ func HashPassword(password string) (string, error) {
 	), nil
 }
 
+// VerifyPassword reports whether password matches a supported Argon2id encoding.
 func VerifyPassword(password string, encoded string) bool {
 	ok, _ := VerifyPasswordWithUpgrade(password, encoded)
 	return ok
 }
 
+// VerifyPasswordWithUpgrade reports both password validity and whether the
+// matched encoding uses the legacy three-part format.
 func VerifyPasswordWithUpgrade(password string, encoded string) (bool, bool) {
 	parts := strings.Split(encoded, "$")
 	if len(parts) < 3 || parts[0] != "argon2id" {

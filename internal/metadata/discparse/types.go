@@ -34,6 +34,9 @@ type PlaylistItem struct {
 	Size int64
 }
 
+// BDInfo contains normalized fields parsed from a BDInfo quick summary. SizeGB
+// is measured in binary GiB despite its historical field name; Path remains a
+// host filesystem path supplied by the caller.
 type BDInfo struct {
 	Playlist  string
 	SizeGB    float64

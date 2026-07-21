@@ -5,174 +5,192 @@ package webserver
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"maps"
-	"math/big"
-	"sort"
-	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/autobrr/upbrr/internal/guishared"
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/preparedrelease"
+	"github.com/autobrr/upbrr/internal/webserver/jobs"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 const (
-	completedJobRetention      = 24 * time.Hour
-	maxCompletedDupeJobs       = 200
-	maxCompletedUploadJobs     = 200
-	seedPreparedMetaTimeout    = 30 * time.Second
-	trackerUploadProgressEvent = "upload:progress"
+	seedPreparedMetaTimeout             = 30 * time.Second
+	trackerUploadSnapshotThrottle       = 200 * time.Millisecond
+	trackerUploadHashRateEmitDeltaMiB   = 1.0
+	trackerUploadProgressEvent          = "upload:progress"
+	errDupeCheckRequiresMetadataPreview = "dupe check requires metadata preview"
 )
 
-const errDupeCheckRequiresMetadataPreview = "dupe check requires metadata preview"
-
-// DupeCheckTrackerState reports frontend-visible state for one tracker in a
-// dupe check job.
-type DupeCheckTrackerState struct {
-	Tracker    string              `json:"tracker"`
-	Status     string              `json:"status"`
-	Message    string              `json:"message"`
-	Result     api.DupeCheckResult `json:"result"`
-	StartedAt  string              `json:"startedAt"`
-	FinishedAt string              `json:"finishedAt"`
+type preparedUploadRunner interface {
+	RunAcceptedUpload(context.Context, api.UploadExecutionPlan) (api.Result, error)
 }
 
-// DupeCheckSnapshot reports frontend-visible state for a dupe check job.
-type DupeCheckSnapshot struct {
-	JobID          string                  `json:"jobID"`
-	SourcePath     string                  `json:"sourcePath"`
-	Status         string                  `json:"status"`
-	Trackers       []DupeCheckTrackerState `json:"trackers"`
-	CompletedCount int                     `json:"completedCount"`
-	TotalCount     int                     `json:"totalCount"`
-	Summary        api.DupeCheckSummary    `json:"summary"`
-	Error          string                  `json:"error"`
-	StartedAt      string                  `json:"startedAt"`
-	FinishedAt     string                  `json:"finishedAt"`
+type dupeCheckRunner interface {
+	CheckAcceptedDupes(context.Context, api.DuplicateCheckInput) (api.DupeCheckSummary, error)
 }
 
-type dupeCheckJob struct {
-	mu             sync.Mutex
-	cleanupOnce    sync.Once
-	sessionID      string
-	id             string
-	sourcePath     string
-	uploadOptions  api.UploadOptions
-	core           api.Core
-	logger         interface{ Close() error }
-	overrides      api.ExternalIDOverrides
-	nameOverrides  api.ReleaseNameOverrides
-	trackers       []string
-	states         map[string]DupeCheckTrackerState
-	completedCount int
-	totalCount     int
-	summary        api.DupeCheckSummary
-	status         string
-	errorMessage   string
-	startedAt      time.Time
-	finishedAt     time.Time
-	cancel         context.CancelFunc
+// DupeCheckTrackerState aliases the shared frontend-visible state for one duplicate-check tracker.
+type DupeCheckTrackerState = jobs.DupeCheckTrackerState
+
+// DupeCheckSnapshot aliases the shared frontend-visible duplicate-check job snapshot.
+type DupeCheckSnapshot = jobs.DupeCheckSnapshot
+
+// TrackerUploadTrackerState aliases the shared frontend-visible state for one tracker upload.
+type TrackerUploadTrackerState = jobs.TrackerUploadTrackerState
+
+// TrackerUploadSnapshot aliases the shared frontend-visible tracker-upload job snapshot.
+type TrackerUploadSnapshot = jobs.TrackerUploadSnapshot
+
+// webJobSink routes shared snapshots to the authenticated owner's event stream.
+type webJobSink struct {
+	hub    *eventHub
+	logger api.Logger
 }
 
-// TrackerUploadTrackerState reports frontend-visible state for one tracker in
-// an upload job. UploadedCount includes accepted uploads returned before a later
-// tracker error or cancellation.
-type TrackerUploadTrackerState struct {
-	Tracker         string  `json:"tracker"`
-	Status          string  `json:"status"`
-	Task            string  `json:"task"`
-	TaskStatus      string  `json:"taskStatus"`
-	Message         string  `json:"message"`
-	CompletedPieces int     `json:"completedPieces"`
-	TotalPieces     int     `json:"totalPieces"`
-	Percent         int     `json:"percent"`
-	HashRateMiB     float64 `json:"hashRateMiB"`
-	UploadedCount   int     `json:"uploadedCount"`
-	StartedAt       string  `json:"startedAt"`
-	FinishedAt      string  `json:"finishedAt"`
+// EmitDupe emits a duplicate-check snapshot only to the owning session.
+func (s webJobSink) EmitDupe(ownerID string, snapshot jobs.DupeCheckSnapshot) {
+	if s.hub != nil {
+		s.hub.Emit(ownerID, "dupe:job:"+snapshot.JobID, snapshot)
+		s.hub.Emit(ownerID, "jobs:update", jobs.OwnerJobSnapshot{
+			Kind:          jobs.KindDuplicateCheck,
+			JobID:         snapshot.JobID,
+			CorrelationID: snapshot.CorrelationID,
+			Release:       snapshot.Release,
+			Status:        snapshot.Status,
+			StartedAt:     snapshot.StartedAt,
+			FinishedAt:    snapshot.FinishedAt,
+			Dupe:          &snapshot,
+		})
+	}
 }
 
-// TrackerUploadSnapshot reports frontend-visible state for a tracker upload
-// job. UploadedCount is the sum of per-tracker accepted uploads, including
-// partial counts returned with non-nil errors.
-type TrackerUploadSnapshot struct {
-	JobID                  string                      `json:"jobID"`
-	SourcePath             string                      `json:"sourcePath"`
-	Status                 string                      `json:"status"`
-	CurrentTask            string                      `json:"currentTask"`
-	CurrentTaskStatus      string                      `json:"currentTaskStatus"`
-	CurrentMessage         string                      `json:"currentMessage"`
-	CurrentCompletedPieces int                         `json:"currentCompletedPieces"`
-	CurrentTotalPieces     int                         `json:"currentTotalPieces"`
-	CurrentPercent         int                         `json:"currentPercent"`
-	CurrentHashRateMiB     float64                     `json:"currentHashRateMiB"`
-	Trackers               []TrackerUploadTrackerState `json:"trackers"`
-	FailedTrackers         []string                    `json:"failedTrackers"`
-	UploadedCount          int                         `json:"uploadedCount"`
-	Error                  string                      `json:"error"`
-	StartedAt              string                      `json:"startedAt"`
-	FinishedAt             string                      `json:"finishedAt"`
+// EmitUpload emits a tracker-upload snapshot only to the owning session.
+func (s webJobSink) EmitUpload(ownerID string, snapshot jobs.TrackerUploadSnapshot) {
+	if s.hub != nil {
+		s.hub.Emit(ownerID, "upload:job:"+snapshot.JobID, snapshot)
+		s.hub.Emit(ownerID, "jobs:update", jobs.OwnerJobSnapshot{
+			Kind:          jobs.KindTrackerUpload,
+			JobID:         snapshot.JobID,
+			CorrelationID: snapshot.CorrelationID,
+			RetryOf:       snapshot.RetryOf,
+			Release:       snapshot.Release,
+			Status:        snapshot.Status,
+			StartedAt:     snapshot.StartedAt,
+			FinishedAt:    snapshot.FinishedAt,
+			Upload:        &snapshot,
+		})
+	}
 }
 
-type trackerUploadJob struct {
-	mu          sync.Mutex
-	cleanupOnce sync.Once
-	sessionID   string
-	id          string
-	sourcePath  string
-	// uploadOptions is the per-job runtime snapshot needed for upload requests;
-	// the full config may contain secrets and must not be retained in job state.
-	uploadOptions        api.UploadOptions
-	runOptions           runOptions
-	core                 api.Core
-	logger               interface{ Close() error }
-	overrides            api.ExternalIDOverrides
-	nameOverrides        api.ReleaseNameOverrides
-	questionnaireAnswers map[string]map[string]string
-	descriptionGroups    []api.DescriptionBuilderGroup
-	trackers             []string
-	ignoreDupesFor       []string
-	states               map[string]TrackerUploadTrackerState
-	failedTrackers       []string
-	uploadedCount        int
-	status               string
-	currentTask          string
-	currentTaskStatus    string
-	currentMessage       string
-	currentCompleted     int
-	currentTotal         int
-	currentPercent       int
-	currentHashRateMiB   float64
-	lastSnapshotEmit     time.Time
-	snapshotThrottle     time.Duration
-	errorMessage         string
-	startedAt            time.Time
-	finishedAt           time.Time
-	cancel               context.CancelFunc
+// WarnJob records a sanitized lifecycle warning through the event hub logger.
+func (s webJobSink) WarnJob(message string) {
+	if s.logger != nil {
+		s.logger.Warnf("jobs: %s", message)
+	}
 }
 
-type trackerUploadRetryRequest struct {
-	sessionID            string
-	sourcePath           string
-	overrides            api.ExternalIDOverrides
-	nameOverrides        api.ReleaseNameOverrides
-	questionnaireAnswers map[string]map[string]string
-	descriptionGroups    []api.DescriptionBuilderGroup
-	failedTrackers       []string
-	ignoreDupesFor       []string
-	runOptions           runOptions
-	uploadOptions        api.UploadOptions
+func (b *Backend) ensureJobOwner(sessionID string) (*jobs.OwnerHandle, error) {
+	if b == nil {
+		return nil, jobs.ErrEngineClosed
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil, errors.New("session id is required")
+	}
+	b.jobOwnerMu.Lock()
+	defer b.jobOwnerMu.Unlock()
+	if b.jobEngine == nil {
+		b.jobEngine = jobs.New(webJobSink{hub: b.hub, logger: b.currentLogger()}, jobs.Config{})
+	}
+	if b.jobOwners == nil {
+		b.jobOwners = make(map[string]*jobs.OwnerHandle)
+	}
+	if owner := b.jobOwners[sessionID]; owner != nil {
+		return owner, nil
+	}
+	owner, err := b.jobEngine.RegisterOwner(sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("register job owner: %w", err)
+	}
+	b.jobOwners[sessionID] = owner
+	return owner, nil
 }
 
-const trackerUploadSnapshotThrottle = 200 * time.Millisecond
+func (b *Backend) lookupJobOwner(sessionID string) *jobs.OwnerHandle {
+	if b == nil {
+		return nil
+	}
+	b.jobOwnerMu.Lock()
+	defer b.jobOwnerMu.Unlock()
+	return b.jobOwners[strings.TrimSpace(sessionID)]
+}
 
-const trackerUploadHashRateEmitDeltaMiB = 1.0
+func (b *Backend) removeJobOwner(sessionID string) {
+	if b == nil || b.jobEngine == nil {
+		return
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	b.jobOwnerMu.Lock()
+	owner := b.jobOwners[sessionID]
+	delete(b.jobOwners, sessionID)
+	b.jobOwnerMu.Unlock()
+	if owner != nil {
+		_ = b.jobEngine.RemoveOwner(owner)
+	}
+	if b.reviews != nil {
+		b.reviews.PurgeOwner(sessionID)
+	}
+}
 
+// webUploadRunner preserves the embedded-web error prefix around prepared upload execution.
+type webUploadRunner struct {
+	core             preparedUploadRunner
+	generationTarget PreparedGenerationTransfer
+	generationSeed   preparedrelease.Seed
+	expectedRelease  api.ReleaseRef
+}
+
+// RunUpload delegates prepared upload execution and applies the embedded-web error contract.
+func (r webUploadRunner) RunUpload(ctx context.Context, plan api.UploadExecutionPlan) (api.Result, error) {
+	ref, err := r.generationTarget.ImportReleaseSeed(ctx, r.generationSeed)
+	if err != nil {
+		return api.Result{}, fmt.Errorf("web: import canonical generation: %w", err)
+	}
+	if ref != r.expectedRelease {
+		return api.Result{}, errors.New("web: import canonical generation: unexpected release reference")
+	}
+	return wrapWebResult(r.core.RunAcceptedUpload(ctx, plan))
+}
+
+// webDupeRunner preserves the direct duplicate-check error contract used by both transports.
+type webDupeRunner struct {
+	core             dupeCheckRunner
+	generationTarget PreparedGenerationTransfer
+	generationSeed   preparedrelease.Seed
+	expectedRelease  api.ReleaseRef
+}
+
+// CheckDupes delegates duplicate checking without changing runner error text.
+func (r webDupeRunner) CheckDupes(ctx context.Context, input api.DuplicateCheckInput) (api.DupeCheckSummary, error) {
+	ref, err := r.generationTarget.ImportReleaseSeed(ctx, r.generationSeed)
+	if err != nil {
+		return api.DupeCheckSummary{}, fmt.Errorf("import canonical generation: %w", err)
+	}
+	if ref != r.expectedRelease {
+		return api.DupeCheckSummary{}, errors.New("import canonical generation: unexpected release reference")
+	}
+	summary, err := r.core.CheckAcceptedDupes(ctx, input)
+	if err != nil {
+		return api.DupeCheckSummary{}, fmt.Errorf("%w", err)
+	}
+	return summary, nil
+}
+
+// normalizeTrackerList trims, removes blanks, and deduplicates tracker names case-insensitively.
 func normalizeTrackerList(trackers []string) []string {
 	seen := make(map[string]struct{})
 	resolved := make([]string, 0, len(trackers))
@@ -191,6 +209,7 @@ func normalizeTrackerList(trackers []string) []string {
 	return resolved
 }
 
+// cloneQuestionnaireAnswers deep-copies tracker questionnaire maps for request isolation.
 func cloneQuestionnaireAnswers(input map[string]map[string]string) map[string]map[string]string {
 	if len(input) == 0 {
 		return nil
@@ -204,6 +223,7 @@ func cloneQuestionnaireAnswers(input map[string]map[string]string) map[string]ma
 	return cloned
 }
 
+// normalizePatterns trims, removes blanks, and deduplicates log exclusion patterns.
 func normalizePatterns(patterns []string) []string {
 	seen := make(map[string]struct{})
 	result := make([]string, 0, len(patterns))
@@ -221,967 +241,418 @@ func normalizePatterns(patterns []string) []string {
 	return result
 }
 
-func randomJobID() string {
-	value, err := rand.Int(rand.Reader, new(big.Int).SetUint64(^uint64(0)))
+// StartDupeCheck starts a session-owned duplicate-check job for a host filesystem path.
+// Request cancellation applies only to preview-cache preparation; accepted jobs continue until completion or explicit cancellation.
+func (b *Backend) StartDupeCheck(
+	ctx context.Context,
+	sessionID string,
+	release api.ReleaseRef,
+	trackers []string,
+	correlationID string,
+) (string, error) {
+	owner, err := b.ensureJobOwner(sessionID)
 	if err != nil {
-		return strconv.FormatInt(time.Now().UnixNano(), 10)
+		return "", err
 	}
-	return fmt.Sprintf("%d-%x", time.Now().UnixNano(), value.Uint64())
-}
-
-// StartDupeCheck starts a dupe check job owned by sessionID and returns its job
-// ID. The request context controls the pre-job metadata cache export/import
-// work; after the job is accepted, cancellation is detached and callers must use
-// CancelDupeCheck. When the active core exposes the GUI prepared-metadata cache,
-// the matching preview must exist before a durable job is created.
-func (b *Backend) StartDupeCheck(ctx context.Context, sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string) (string, error) {
 	rt, err := b.requireRuntime()
 	if err != nil {
 		return "", err
+	}
+	if !rt.capabilities.PreparedGenerationReady() {
+		return "", ErrPreparedGenerationUnavailable
 	}
 	if ctx == nil {
 		return "", errors.New("request context is required")
 	}
-	trimmedPath := strings.TrimSpace(path)
-	if trimmedPath == "" {
-		return "", errors.New("path is required")
+	release.SourcePath = strings.TrimSpace(release.SourcePath)
+	if release.SourcePath == "" || release.Generation == 0 {
+		return "", api.NewOperationError(api.OperationFailure{
+			Code:      api.OperationFailureInvalidSource,
+			Operation: api.OperationKindDuplicateCheck,
+			Message:   "Source path is required.",
+			Recovery:  api.OperationRecoveryEditInput,
+		}, errors.New("path is required"))
 	}
 	resolvedTrackers := normalizeTrackerList(trackers)
 	if len(resolvedTrackers) == 0 {
-		return "", errors.New("at least one tracker must be selected")
+		return "", api.NewOperationError(api.OperationFailure{
+			Code:      api.OperationFailureNoEligibleTrackers,
+			Operation: api.OperationKindDuplicateCheck,
+			Message:   "No trackers are eligible for duplicate checking.",
+			Recovery:  api.OperationRecoverySelectTrackers,
+		}, errors.New("at least one tracker must be selected"))
 	}
 
-	req := api.Request{
-		Paths:                []string{trimmedPath},
-		Mode:                 api.ModeGUI,
-		Trackers:             resolvedTrackers,
-		Options:              rt.baseUploadOptions(),
-		ExternalIDOverrides:  overrides,
-		ReleaseNameOverrides: nameOverrides,
+	generationSeed, err := rt.capabilities.PreparedGenerationTransfer.ExportReleaseSeed(ctx, release)
+	if err != nil {
+		return "", fmt.Errorf("dupe check exact generation: %w", err)
 	}
-	var preparedMeta api.PreparedMetadata
-	preparedMetaFound := false
-	if exporter, ok := rt.core.(guishared.PreparedMetaExporter); ok {
-		var found bool
-		preparedMeta, found, err = exporter.ExportGUICachedPreparedMeta(ctx, req)
-		if err != nil {
-			return "", fmt.Errorf("dupe check metadata preview cache: %w", err)
-		}
-		if !found {
-			return "", errors.New(errDupeCheckRequiresMetadataPreview)
-		}
-		preparedMetaFound = true
-	}
-
 	if err := ctx.Err(); err != nil {
-		return "", fmt.Errorf("dupe check metadata preview cache: %w", err)
+		return "", fmt.Errorf("dupe check canceled before run setup: %w", err)
 	}
-	//nolint:contextcheck // Per-run core construction has no context-aware API; request context is checked before and after setup.
-	runCore, runLogger, err := b.buildRunCoreFromSnapshot(rt, runOptions{})
+
+	runCapabilities, runOwner, runLogger, err := b.buildRunCoreFromSnapshot(ctx, rt, runOptions{})
 	if err != nil {
 		return "", err
 	}
 	if err := ctx.Err(); err != nil {
-		_ = runCore.Close()
-		_ = runLogger.Close()
+		closeJobResources(runOwner, runLogger)
 		return "", fmt.Errorf("dupe check metadata preview cache: %w", err)
 	}
-	if preparedMetaFound {
-		importer, ok := runCore.(guishared.PreparedMetaImporter)
-		if !ok {
-			_ = runCore.Close()
-			_ = runLogger.Close()
-			return "", errors.New("dupe check metadata preview cache: run core cannot import prepared metadata")
-		}
-		if err := importer.ImportPreparedMetadataForGUI(ctx, req, preparedMeta); err != nil {
-			_ = runCore.Close()
-			_ = runLogger.Close()
-			return "", fmt.Errorf("dupe check metadata preview cache: %w", err)
-		}
+	if !runCapabilities.PreparedDupeReady() || !runCapabilities.PreparedGenerationReady() {
+		closeJobResources(runOwner, runLogger)
+		return "", ErrPreparedDupeUnavailable
 	}
-
-	jobID := randomJobID()
-	states := make(map[string]DupeCheckTrackerState, len(resolvedTrackers))
-	for _, tracker := range resolvedTrackers {
-		normalized := strings.ToUpper(strings.TrimSpace(tracker))
-		states[normalized] = DupeCheckTrackerState{Tracker: normalized, Status: "queued", Message: "queued"}
+	jobID, err := b.jobEngine.StartDupe(context.WithoutCancel(ctx), owner, jobs.DupeSpec{
+		CorrelationID: correlationID,
+		Snapshot: jobs.DuplicateExecutionSnapshot{
+			Seed:               generationSeed,
+			PreparedGeneration: release.Generation,
+			RuntimeGeneration:  rt.generationID,
+			Input: api.DuplicateCheckInput{
+				Release:     release,
+				Trackers:    append([]string(nil), resolvedTrackers...),
+				Interaction: api.InteractionModeInteractive,
+			},
+		},
+		Runner: webDupeRunner{
+			core:             runCapabilities.DuplicateExecution,
+			generationTarget: runCapabilities.PreparedGenerationTransfer,
+			generationSeed:   generationSeed,
+			expectedRelease:  release,
+		},
+		Resources: jobs.Resources{Core: runOwner, Logger: runLogger},
+	})
+	if err != nil {
+		closeJobResources(runOwner, runLogger)
+		return "", fmt.Errorf("web: start dupe job: %w", err)
 	}
-	job := &dupeCheckJob{
-		sessionID:     sessionID,
-		id:            jobID,
-		sourcePath:    trimmedPath,
-		uploadOptions: req.Options,
-		core:          runCore,
-		logger:        runLogger,
-		overrides:     overrides,
-		nameOverrides: nameOverrides,
-		trackers:      resolvedTrackers,
-		states:        states,
-		totalCount:    len(states),
-		summary:       api.DupeCheckSummary{SourcePath: trimmedPath},
-		status:        "queued",
-		startedAt:     time.Now().UTC(),
-	}
-
-	jobCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	job.cancel = cancel
-
-	b.dupeMu.Lock()
-	b.dupes[jobID] = job
-	b.pruneCompletedDupeJobsLocked(maxCompletedDupeJobs)
-	b.dupeMu.Unlock()
-	b.emitDupeCheckSnapshot(job)
-
-	b.dupeWG.Add(1)
-	go func() {
-		defer cancel()
-		b.runDupeCheckJob(jobCtx, job)
-	}()
 	return jobID, nil
 }
 
-// GetDupeCheckSnapshot returns a dupe job snapshot only to the session that
-// started the job.
+// GetDupeCheckSnapshot returns an immutable job snapshot when sessionID owns jobID.
+// Unknown and foreign-owned IDs return the same not-found error.
 func (b *Backend) GetDupeCheckSnapshot(sessionID string, jobID string) (DupeCheckSnapshot, error) {
-	job := b.getDupeCheckJobForSession(strings.TrimSpace(sessionID), strings.TrimSpace(jobID))
-	if job == nil {
-		return DupeCheckSnapshot{}, errors.New("dupe job not found")
+	snapshot, err := b.jobEngine.DupeSnapshot(b.lookupJobOwner(sessionID), strings.TrimSpace(jobID))
+	if err != nil {
+		return DupeCheckSnapshot{}, fmt.Errorf("%w", err)
 	}
-	return buildDupeCheckSnapshot(job), nil
+	return snapshot, nil
 }
 
-// CancelDupeCheck requests cancellation only for a dupe job owned by sessionID.
+// CancelDupeCheck requests cancellation when sessionID owns jobID.
+// Unknown and foreign-owned IDs return the same not-found error.
 func (b *Backend) CancelDupeCheck(sessionID string, jobID string) error {
-	job := b.getDupeCheckJobForSession(strings.TrimSpace(sessionID), strings.TrimSpace(jobID))
-	if job == nil {
-		return errors.New("dupe job not found")
-	}
-	job.mu.Lock()
-	cancel := job.cancel
-	job.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if err := b.jobEngine.CancelDupe(b.lookupJobOwner(sessionID), strings.TrimSpace(jobID)); err != nil {
+		return fmt.Errorf("%w", err)
 	}
 	return nil
 }
 
-func (b *Backend) runDupeCheckJob(ctx context.Context, job *dupeCheckJob) {
-	defer b.dupeWG.Done()
-	defer func() {
-		job.closeResources()
-	}()
-
-	job.mu.Lock()
-	job.status = "running"
-	job.mu.Unlock()
-	b.emitDupeCheckSnapshot(job)
-
-	progressCtx := api.WithDupeProgressReporter(ctx, func(update api.DupeProgressUpdate) {
-		b.applyDupeProgress(job, update)
-	})
-
-	req := api.Request{
-		Paths:                []string{job.sourcePath},
-		Mode:                 api.ModeGUI,
-		Trackers:             job.trackers,
-		Options:              job.uploadOptions,
-		ExternalIDOverrides:  job.overrides,
-		ReleaseNameOverrides: job.nameOverrides,
-	}
-
-	if job.core == nil {
-		err := errors.New("core not initialized")
-		job.mu.Lock()
-		job.finishedAt = time.Now().UTC()
-		job.cancel = nil
-		job.status = "failed"
-		job.errorMessage = logging.SanitizeMessage(err.Error())
-		job.mu.Unlock()
-		b.emitDupeCheckSnapshot(job)
-		b.scheduleDupeJobCleanup(job)
-		return
-	}
-
-	summary, err := job.core.CheckDupes(progressCtx, req)
-	job.mu.Lock()
-	job.finishedAt = time.Now().UTC()
-	job.cancel = nil
+// ReviewTrackerUpload stores a session-owned exact execution snapshot and
+// returns the single-use opaque token required to start it.
+func (b *Backend) ReviewTrackerUpload(
+	ctx context.Context,
+	sessionID string,
+	release api.ReleaseRef,
+	trackers []string,
+	ignoreDupesFor []string,
+	ruleAuthorizations []api.RuleAuthorization,
+	questionnaireAnswers map[string]map[string]string,
+	descriptionGroups []api.DescriptionBuilderGroup,
+	noSeed bool,
+	runLogLevel string,
+) (api.UploadReviewResult, error) {
+	runOpts, err := b.buildRunOptions(noSeed, runLogLevel)
 	if err != nil {
-		if ctx.Err() != nil {
-			job.status = "canceled"
-			job.errorMessage = "dupe check canceled"
-		} else {
-			job.status = "failed"
-			job.errorMessage = logging.SanitizeMessage(err.Error())
-		}
-		job.mu.Unlock()
-		b.emitDupeCheckSnapshot(job)
-		b.scheduleDupeJobCleanup(job)
-		return
+		return api.UploadReviewResult{}, err
 	}
-	job.summary = summary
-	for _, result := range summary.Results {
-		for _, tracker := range dupeResultTrackerNames(result) {
-			state := job.states[tracker]
-			if !isDupeTerminalStatus(state.Status) {
-				job.completedCount++
-			}
-			state.Tracker = tracker
-			state.Status = resultStatus(result)
-			state.Message = resultMessage(result)
-			state.Result = result
-			state.Result.Tracker = tracker
-			if state.StartedAt == "" {
-				state.StartedAt = job.startedAt.Format(time.RFC3339)
-			}
-			state.FinishedAt = job.finishedAt.Format(time.RFC3339)
-			job.states[tracker] = state
-		}
+	if _, err := b.ensureJobOwner(sessionID); err != nil {
+		return api.UploadReviewResult{}, err
 	}
-	if hasFailedDupeState(job.states) {
-		job.status = "completed_with_errors"
-		if strings.TrimSpace(job.errorMessage) == "" {
-			job.errorMessage = "one or more tracker dupe checks failed"
-		}
-	} else {
-		job.status = "completed"
-		job.errorMessage = ""
+	rt, err := b.requireRuntime()
+	if err != nil {
+		return api.UploadReviewResult{}, err
 	}
-	job.mu.Unlock()
-	b.emitDupeCheckSnapshot(job)
-	b.scheduleDupeJobCleanup(job)
-}
-
-func (b *Backend) applyDupeProgress(job *dupeCheckJob, update api.DupeProgressUpdate) {
-	tracker := strings.ToUpper(strings.TrimSpace(update.Tracker))
-	if tracker == "" {
-		return
+	if !rt.capabilities.PreparedGenerationReady() || !CapabilityAvailable(rt.capabilities.UploadReview) {
+		return api.UploadReviewResult{}, ErrPreparedGenerationUnavailable
 	}
-	job.mu.Lock()
-	state := job.states[tracker]
-	previousStatus := state.Status
-	state.Tracker = tracker
-	if strings.TrimSpace(update.Status) != "" {
-		state.Status = strings.TrimSpace(update.Status)
+	reviewCore, err := rt.uploadReviewCore()
+	if err != nil {
+		return api.UploadReviewResult{}, err
 	}
-	if strings.TrimSpace(update.Message) != "" {
-		state.Message = strings.TrimSpace(update.Message)
+	release.SourcePath = strings.TrimSpace(release.SourcePath)
+	if release.SourcePath == "" || release.Generation == 0 {
+		return api.UploadReviewResult{}, api.NewOperationError(api.OperationFailure{
+			Code:      api.OperationFailureInvalidSource,
+			Operation: api.OperationKindUploadReview,
+			Message:   "Source path is required.",
+			Recovery:  api.OperationRecoveryEditInput,
+		}, errors.New("path is required"))
 	}
-	if state.Status == "running" && state.StartedAt == "" {
-		state.StartedAt = time.Now().UTC().Format(time.RFC3339)
+	resolvedTrackers := normalizeTrackerList(trackers)
+	if len(resolvedTrackers) == 0 {
+		return api.UploadReviewResult{}, api.NewOperationError(api.OperationFailure{
+			Code:      api.OperationFailureNoEligibleTrackers,
+			Operation: api.OperationKindUploadReview,
+			Message:   "No trackers are eligible for upload.",
+			Recovery:  api.OperationRecoverySelectTrackers,
+		}, errors.New("at least one tracker must be selected"))
 	}
-	if update.Result.Tracker != "" {
-		state.Result = update.Result
-		upsertDupeSummaryResult(&job.summary, update.Result)
+	ignore := normalizeTrackerList(ignoreDupesFor)
+	options := buildRunUploadOptions(rt.cfg, runOpts)
+	if ctx == nil {
+		return api.UploadReviewResult{}, errors.New("request context is required")
 	}
-	if isDupeTerminalStatus(state.Status) && !isDupeTerminalStatus(previousStatus) {
-		job.completedCount++
-		state.FinishedAt = time.Now().UTC().Format(time.RFC3339)
+	generationSeed, err := rt.capabilities.PreparedGenerationTransfer.ExportReleaseSeed(ctx, release)
+	if err != nil {
+		return api.UploadReviewResult{}, fmt.Errorf("web: exact upload generation: %w", err)
 	}
-	if update.Total > 0 {
-		job.totalCount = update.Total
+	reviewInput := api.UploadReviewInput{
+		Release:              release,
+		Trackers:             append([]string(nil), resolvedTrackers...),
+		IgnoreDupesFor:       append([]string(nil), ignore...),
+		RuleAuthorizations:   cloneWebRuleAuthorizations(ruleAuthorizations),
+		QuestionnaireAnswers: cloneQuestionnaireAnswers(questionnaireAnswers),
+		DescriptionGroups:    api.CloneDescriptionBuilderGroups(descriptionGroups),
+		Options:              options,
 	}
-	job.states[tracker] = state
-	job.mu.Unlock()
-	b.emitDupeCheckSnapshot(job)
-}
-
-func (j *trackerUploadJob) closeResources() {
-	if j == nil {
-		return
+	reviewed, err := reviewCore.ReviewAcceptedUpload(ctx, reviewInput)
+	if err != nil {
+		return api.UploadReviewResult{}, fmt.Errorf("web: %w", err)
 	}
-	j.cleanupOnce.Do(func() {
-		j.mu.Lock()
-		coreSvc := j.core
-		logger := j.logger
-		j.core = nil
-		j.logger = nil
-		j.mu.Unlock()
-		if coreSvc != nil {
-			_ = coreSvc.Close()
-		}
-		if logger != nil {
-			_ = logger.Close()
-		}
+	token, err := b.uploadReviewRegistry().Issue(sessionID, UploadReviewSnapshot{
+		Execution: jobs.UploadExecutionSnapshot{
+			Seed:               generationSeed,
+			PreparedGeneration: release.Generation,
+			RuntimeGeneration:  rt.generationID,
+			Input:              reviewInput,
+			Outcome:            reviewed.Outcome,
+		},
+		Review: reviewed.Review,
 	})
-}
-
-func (j *dupeCheckJob) closeResources() {
-	if j == nil {
-		return
+	if err != nil {
+		return api.UploadReviewResult{}, fmt.Errorf("web: issue upload review token: %w", err)
 	}
-	j.cleanupOnce.Do(func() {
-		j.mu.Lock()
-		coreSvc := j.core
-		logger := j.logger
-		j.core = nil
-		j.logger = nil
-		j.mu.Unlock()
-		if coreSvc != nil {
-			_ = coreSvc.Close()
-		}
-		if logger != nil {
-			_ = logger.Close()
-		}
-	})
+	return api.UploadReviewResult{Review: reviewed.Review, Token: token}, nil
 }
 
-func trackerUploadRetryRequestFromJob(job *trackerUploadJob) (trackerUploadRetryRequest, error) {
-	if job == nil {
-		return trackerUploadRetryRequest{}, errors.New("upload job not found")
+func cloneWebRuleAuthorizations(values []api.RuleAuthorization) []api.RuleAuthorization {
+	if len(values) == 0 {
+		return nil
 	}
-
-	job.mu.Lock()
-	defer job.mu.Unlock()
-
-	if len(job.failedTrackers) == 0 {
-		return trackerUploadRetryRequest{}, errors.New("no failed trackers to retry")
+	cloned := make([]api.RuleAuthorization, len(values))
+	for idx, value := range values {
+		cloned[idx] = api.RuleAuthorization{Tracker: value.Tracker, Rules: append([]string(nil), value.Rules...)}
 	}
-
-	return trackerUploadRetryRequest{
-		sessionID:            job.sessionID,
-		sourcePath:           job.sourcePath,
-		overrides:            job.overrides,
-		nameOverrides:        job.nameOverrides,
-		questionnaireAnswers: cloneQuestionnaireAnswers(job.questionnaireAnswers),
-		descriptionGroups:    api.CloneDescriptionBuilderGroups(job.descriptionGroups),
-		failedTrackers:       append([]string(nil), job.failedTrackers...),
-		ignoreDupesFor:       append([]string(nil), job.ignoreDupesFor...),
-		runOptions:           job.runOptions,
-		uploadOptions:        job.uploadOptions,
-	}, nil
+	return cloned
 }
 
-// StartTrackerUpload starts an upload job owned by sessionID for selected
-// trackers and returns its job ID. Snapshots preserve partial upload counts
-// returned with later tracker errors or cancellation. The job captures upload
-// options at start time so failed-tracker retries reuse the original option set.
-func (b *Backend) StartTrackerUpload(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string) (string, error) {
-	return b.startTrackerUpload(sessionID, path, overrides, nameOverrides, trackers, ignoreDupesFor, questionnaireAnswers, descriptionGroups, debug, noSeed, runLogLevel, nil)
-}
-
-func (b *Backend) startTrackerUpload(sessionID string, path string, overrides api.ExternalIDOverrides, nameOverrides api.ReleaseNameOverrides, trackers []string, ignoreDupesFor []string, questionnaireAnswers map[string]map[string]string, descriptionGroups []api.DescriptionBuilderGroup, debug bool, noSeed bool, runLogLevel string, uploadOptions *api.UploadOptions) (string, error) {
+// StartReviewedTrackerUpload consumes one session-owned reviewed snapshot and
+// starts it only while the reviewed runtime generation remains active.
+func (b *Backend) StartReviewedTrackerUpload(sessionID string, token string, correlationID string) (string, error) {
+	owner, err := b.ensureJobOwner(sessionID)
+	if err != nil {
+		return "", err
+	}
+	reviewed, err := b.uploadReviewRegistry().Consume(sessionID, token)
+	if err != nil {
+		return "", api.NewOperationError(api.OperationFailure{
+			Code:      api.OperationFailureMissingReview,
+			Operation: api.OperationKindUploadExecute,
+			Message:   "Upload review is missing or expired.",
+			Recovery:  api.OperationRecoveryReviewAgain,
+		}, err)
+	}
 	rt, err := b.requireRuntime()
 	if err != nil {
 		return "", err
 	}
-	trimmedPath := strings.TrimSpace(path)
-	if trimmedPath == "" {
-		return "", errors.New("path is required")
+	if reviewed.Execution.RuntimeGeneration != rt.generationID {
+		return "", api.NewOperationError(api.OperationFailure{
+			Code:      api.OperationFailureStaleReview,
+			Operation: api.OperationKindUploadExecute,
+			Message:   "Upload review is stale after configuration changed.",
+			Recovery:  api.OperationRecoveryReviewAgain,
+		}, errors.New("runtime generation changed"))
 	}
-	resolvedTrackers := normalizeTrackerList(trackers)
-	if len(resolvedTrackers) == 0 {
-		return "", errors.New("at least one tracker must be selected")
+	runOpts := runOptions{
+		NoSeed:      reviewed.Execution.Input.Options.NoSeed,
+		RunLogLevel: reviewed.Execution.Input.Options.RunLogLevel,
 	}
-	runOpts, err := b.buildRunOptions(debug, noSeed, runLogLevel)
+	runCapabilities, runOwner, runLogger, err := b.buildRunCoreFromSnapshot(context.Background(), rt, runOpts)
 	if err != nil {
 		return "", err
 	}
-	runCore, runLogger, err := b.buildRunCoreFromSnapshot(rt, runOpts)
+	if !runCapabilities.PreparedUploadReady() || !runCapabilities.PreparedGenerationReady() {
+		closeJobResources(runOwner, runLogger)
+		return "", ErrPreparedUploadUnavailable
+	}
+	input := reviewed.Execution.Input
+	spec := jobs.UploadSpec{
+		CorrelationID: correlationID,
+		Snapshot:      reviewed.Execution,
+		Runner: webUploadRunner{
+			core:             runCapabilities.UploadExecution,
+			generationTarget: runCapabilities.PreparedGenerationTransfer,
+			generationSeed:   reviewed.Execution.Seed,
+			expectedRelease:  input.Release,
+		},
+		Resources: jobs.Resources{Core: runOwner, Logger: runLogger},
+	}
+	jobID, err := b.jobEngine.StartUpload(context.Background(), owner, spec)
 	if err != nil {
-		return "", err
+		closeJobResources(runOwner, runLogger)
+		return "", fmt.Errorf("web: start upload job: %w", err)
 	}
-	seedReq := api.Request{
-		Paths:                []string{trimmedPath},
-		Mode:                 api.ModeGUI,
-		DescriptionGroups:    api.CloneDescriptionBuilderGroups(descriptionGroups),
-		Trackers:             resolvedTrackers,
-		IgnoreDupesFor:       normalizeTrackerList(ignoreDupesFor),
-		ExternalIDOverrides:  overrides,
-		ReleaseNameOverrides: nameOverrides,
-	}
-	seedCtx, cancel := context.WithTimeout(context.Background(), seedPreparedMetaTimeout)
-	defer cancel()
-	if err := guishared.SeedRunCorePreparedMeta(seedCtx, rt.core, runCore, seedReq); err != nil {
-		_ = runCore.Close()
-		_ = runLogger.Close()
-		return "", fmt.Errorf("web: %w", err)
-	}
-
-	jobID := randomJobID()
-	jobUploadOptions := buildRunUploadOptions(rt.cfg, runOpts)
-	if uploadOptions != nil {
-		jobUploadOptions = *uploadOptions
-	}
-	job := &trackerUploadJob{
-		sessionID:            sessionID,
-		id:                   jobID,
-		sourcePath:           trimmedPath,
-		uploadOptions:        jobUploadOptions,
-		runOptions:           runOpts,
-		core:                 runCore,
-		logger:               runLogger,
-		overrides:            overrides,
-		nameOverrides:        nameOverrides,
-		questionnaireAnswers: cloneQuestionnaireAnswers(questionnaireAnswers),
-		descriptionGroups:    api.CloneDescriptionBuilderGroups(descriptionGroups),
-		trackers:             resolvedTrackers,
-		ignoreDupesFor:       normalizeTrackerList(ignoreDupesFor),
-		states:               make(map[string]TrackerUploadTrackerState, len(resolvedTrackers)),
-		status:               "queued",
-		startedAt:            time.Now().UTC(),
-		snapshotThrottle:     trackerUploadSnapshotThrottle,
-	}
-	for _, tracker := range resolvedTrackers {
-		job.states[tracker] = TrackerUploadTrackerState{Tracker: tracker, Status: "queued", Message: "queued"}
-	}
-	jobCtx, cancel := context.WithCancel(context.Background())
-	job.cancel = cancel
-
-	b.uploadMu.Lock()
-	b.uploads[jobID] = job
-	b.pruneCompletedUploadJobsLocked(maxCompletedUploadJobs)
-	b.uploadMu.Unlock()
-	b.emitTrackerUploadSnapshot(job)
-
-	b.uploadWG.Add(1)
-	go func() {
-		defer cancel()
-		b.runTrackerUploadJob(jobCtx, job)
-	}()
 	return jobID, nil
 }
 
-// CancelTrackerUpload requests cancellation only for an upload job owned by
-// sessionID.
-func (b *Backend) CancelTrackerUpload(sessionID string, jobID string) error {
-	job := b.getTrackerUploadJobForSession(strings.TrimSpace(sessionID), strings.TrimSpace(jobID))
-	if job == nil {
-		return errors.New("upload job not found")
+func (b *Backend) uploadReviewRegistry() *UploadReviewRegistry {
+	b.reviewMu.Lock()
+	defer b.reviewMu.Unlock()
+	if b.reviews == nil {
+		b.reviews = NewUploadReviewRegistry()
 	}
-	job.mu.Lock()
-	cancel := job.cancel
-	job.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	return b.reviews
+}
+
+// retryTrackerUpload rebuilds per-run resources while preserving the exact
+// reviewed operation and canonical preparation lineage.
+func (b *Backend) retryTrackerUpload(sessionID string, spec jobs.UploadSpec, runOpts runOptions) (string, error) {
+	owner, err := b.ensureJobOwner(sessionID)
+	if err != nil {
+		return "", err
+	}
+	rt, err := b.requireRuntime()
+	if err != nil {
+		return "", err
+	}
+	if !rt.capabilities.PreparedGenerationReady() {
+		return "", ErrPreparedGenerationUnavailable
+	}
+	input := spec.Snapshot.Input
+	input.Release.SourcePath = strings.TrimSpace(input.Release.SourcePath)
+	if input.Release.SourcePath == "" {
+		return "", errors.New("path is required")
+	}
+	input.Trackers = normalizeTrackerList(input.Trackers)
+	if len(input.Trackers) == 0 {
+		return "", errors.New("at least one tracker must be selected")
+	}
+	input.IgnoreDupesFor = normalizeTrackerList(input.IgnoreDupesFor)
+	spec.Snapshot.Input = input
+	if spec.Snapshot.RuntimeGeneration != rt.generationID {
+		return "", api.NewOperationError(api.OperationFailure{
+			Code:      api.OperationFailureStaleReview,
+			Operation: api.OperationKindUploadExecute,
+			Message:   "Upload retry requires a new review after configuration changed.",
+			Recovery:  api.OperationRecoveryReviewAgain,
+		}, errors.New("runtime generation changed"))
+	}
+
+	seedCtx, cancel := context.WithTimeout(context.Background(), seedPreparedMetaTimeout)
+	defer cancel()
+	releaseRef := spec.Snapshot.Input.Release
+	if _, err = rt.capabilities.PreparedGenerationTransfer.ExportReleaseSeed(seedCtx, releaseRef); err != nil {
+		return "", fmt.Errorf("web: canonical preparation: %w", err)
+	}
+	generationSeed := spec.Snapshot.Seed
+	runCapabilities, runOwner, runLogger, err := b.buildRunCoreFromSnapshot(seedCtx, rt, runOpts)
+	if err != nil {
+		return "", err
+	}
+	if !runCapabilities.PreparedUploadReady() || !runCapabilities.PreparedGenerationReady() {
+		closeJobResources(runOwner, runLogger)
+		return "", ErrPreparedUploadUnavailable
+	}
+
+	spec.Runner = webUploadRunner{
+		core:             runCapabilities.UploadExecution,
+		generationTarget: runCapabilities.PreparedGenerationTransfer,
+		generationSeed:   generationSeed,
+		expectedRelease:  releaseRef,
+	}
+	spec.Resources = jobs.Resources{Core: runOwner, Logger: runLogger}
+	jobID, err := b.jobEngine.StartUpload(context.Background(), owner, spec)
+	if err != nil {
+		closeJobResources(runOwner, runLogger)
+		return "", fmt.Errorf("web: start upload job: %w", err)
+	}
+	return jobID, nil
+}
+
+// CancelTrackerUpload requests cancellation when sessionID owns jobID.
+// Unknown and foreign-owned IDs return the same not-found error.
+func (b *Backend) CancelTrackerUpload(sessionID string, jobID string) error {
+	if err := b.jobEngine.CancelUpload(b.lookupJobOwner(sessionID), strings.TrimSpace(jobID)); err != nil {
+		return fmt.Errorf("%w", err)
 	}
 	return nil
 }
 
-// RetryFailedTrackerUpload starts a retry job for failed trackers only when
-// sessionID owns the original upload job. The retry reuses the original job's
-// run options, upload options, questionnaire answers, description groups, and
-// ignore-dupe list instead of rebuilding them from current settings.
-func (b *Backend) RetryFailedTrackerUpload(sessionID string, jobID string) (string, error) {
-	job := b.getTrackerUploadJobForSession(strings.TrimSpace(sessionID), strings.TrimSpace(jobID))
-	if job == nil {
-		return "", errors.New("upload job not found")
-	}
-	retry, err := trackerUploadRetryRequestFromJob(job)
+// RetryFailedTrackerUpload starts a new session-owned job for only the original failed trackers.
+// It rebuilds per-run resources from the current runtime while preserving the original job input and options.
+func (b *Backend) RetryFailedTrackerUpload(sessionID string, jobID string, correlationID string) (string, error) {
+	retry, err := b.jobEngine.UploadRetry(b.lookupJobOwner(sessionID), strings.TrimSpace(jobID))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w", err)
 	}
-	return b.startTrackerUpload(retry.sessionID, retry.sourcePath, retry.overrides, retry.nameOverrides, retry.failedTrackers, retry.ignoreDupesFor, retry.questionnaireAnswers, retry.descriptionGroups, retry.runOptions.Debug, retry.runOptions.NoSeed, retry.runOptions.RunLogLevel, &retry.uploadOptions)
+	runOpts := runOptions{
+		NoSeed:      retry.Snapshot.Input.Options.NoSeed,
+		RunLogLevel: retry.Snapshot.Input.Options.RunLogLevel,
+	}
+	return b.retryTrackerUpload(sessionID, retry.Spec(correlationID, nil, jobs.Resources{}), runOpts)
 }
 
-// GetTrackerUploadSnapshot returns an upload job snapshot only to the session
-// that started the job.
+// ListJobs returns immutable retained duplicate-check and upload Jobs for one authenticated owner.
+func (b *Backend) ListJobs(sessionID string) ([]jobs.OwnerJobSnapshot, error) {
+	owner, err := b.ensureJobOwner(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	snapshots, err := b.jobEngine.List(owner)
+	if err != nil {
+		return nil, fmt.Errorf("web: list owner jobs: %w", err)
+	}
+	return snapshots, nil
+}
+
+// GetTrackerUploadSnapshot returns an immutable job snapshot when sessionID owns jobID.
+// Unknown and foreign-owned IDs return the same not-found error.
 func (b *Backend) GetTrackerUploadSnapshot(sessionID string, jobID string) (TrackerUploadSnapshot, error) {
-	job := b.getTrackerUploadJobForSession(strings.TrimSpace(sessionID), strings.TrimSpace(jobID))
-	if job == nil {
-		return TrackerUploadSnapshot{}, errors.New("upload job not found")
+	snapshot, err := b.jobEngine.UploadSnapshot(b.lookupJobOwner(sessionID), strings.TrimSpace(jobID))
+	if err != nil {
+		return TrackerUploadSnapshot{}, fmt.Errorf("%w", err)
 	}
-	return buildTrackerUploadSnapshot(job), nil
+	return snapshot, nil
 }
 
-// runTrackerUploadJob records UploadedCount before error handling so partial
-// successes returned with non-nil errors remain visible in snapshots.
-func (b *Backend) runTrackerUploadJob(ctx context.Context, job *trackerUploadJob) {
-	defer b.uploadWG.Done()
-
-	job.mu.Lock()
-	job.status = "running"
-	job.mu.Unlock()
-	b.emitTrackerUploadSnapshot(job)
-
-	for _, tracker := range job.trackers {
-		if ctx.Err() != nil {
-			break
-		}
-		job.mu.Lock()
-		state := job.states[tracker]
-		state.Status = "running"
-		state.Message = "uploading"
-		state.StartedAt = time.Now().UTC().Format(time.RFC3339)
-		job.states[tracker] = state
-		job.mu.Unlock()
-		b.emitTrackerUploadSnapshot(job)
-
-		progressCtx := api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
-			b.applyTrackerUploadProgress(job, update)
-		})
-		result, err := b.runSingleTrackerUpload(progressCtx, job, tracker)
-		if result.UploadedCount > 0 {
-			job.mu.Lock()
-			state = job.states[tracker]
-			state.UploadedCount += result.UploadedCount
-			job.states[tracker] = state
-			job.uploadedCount += result.UploadedCount
-			job.mu.Unlock()
-		}
-		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			job.mu.Lock()
-			message := logging.SanitizeMessage(err.Error())
-			state = job.states[tracker]
-			state.Status = "failed"
-			state.Message = message
-			state.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-			job.states[tracker] = state
-			job.failedTrackers = append(job.failedTrackers, tracker)
-			job.errorMessage = message
-			job.mu.Unlock()
-			b.emitTrackerUploadSnapshot(job)
-			continue
-		}
-
-		job.mu.Lock()
-		state = job.states[tracker]
-		state.Status = "success"
-		state.Message = "uploaded"
-		state.FinishedAt = time.Now().UTC().Format(time.RFC3339)
-		job.states[tracker] = state
-		job.mu.Unlock()
-		b.emitTrackerUploadSnapshot(job)
+// closeJobResources releases adapter-owned resources after preparation or engine enrollment fails.
+func closeJobResources(coreSvc jobs.Closer, logger *logging.Logger) {
+	if coreSvc != nil {
+		_ = coreSvc.Close()
 	}
-
-	job.mu.Lock()
-	job.finishedAt = time.Now().UTC()
-	switch {
-	case ctx.Err() != nil:
-		job.status = "canceled"
-		job.errorMessage = "upload canceled"
-		for _, tracker := range job.trackers {
-			state := job.states[tracker]
-			if state.Status == "queued" || state.Status == "running" {
-				state.Status = "canceled"
-				state.Message = "canceled"
-				state.FinishedAt = job.finishedAt.Format(time.RFC3339)
-				job.states[tracker] = state
-			}
-		}
-	case len(job.failedTrackers) > 0:
-		job.status = "completed_with_errors"
-	default:
-		job.status = "completed"
-		job.errorMessage = ""
-	}
-	job.cancel = nil
-	job.mu.Unlock()
-	job.closeResources()
-	b.emitTrackerUploadSnapshot(job)
-	b.scheduleTrackerUploadJobCleanup(job)
-}
-
-func (b *Backend) applyTrackerUploadProgress(job *trackerUploadJob, update api.UploadProgressUpdate) {
-	if b == nil || job == nil {
-		return
-	}
-	tracker := strings.TrimSpace(update.Tracker)
-	if tracker == "" && len(job.trackers) == 1 {
-		tracker = job.trackers[0]
-	}
-
-	job.mu.Lock()
-	now := time.Now()
-	previousStatus := job.currentTaskStatus
-	previousPercent := job.currentPercent
-	previousHashRate := job.currentHashRateMiB
-	job.currentTask = strings.TrimSpace(update.Task)
-	job.currentTaskStatus = strings.TrimSpace(update.Status)
-	job.currentMessage = strings.TrimSpace(update.Message)
-	job.currentCompleted = update.CompletedPieces
-	job.currentTotal = update.TotalPieces
-	job.currentPercent = update.Percent
-	job.currentHashRateMiB = update.HashRateMiB
-	throttle := job.snapshotThrottle
-	if throttle <= 0 {
-		throttle = trackerUploadSnapshotThrottle
-	}
-	shouldEmit := job.lastSnapshotEmit.IsZero() ||
-		now.Sub(job.lastSnapshotEmit) >= throttle ||
-		previousPercent != job.currentPercent ||
-		previousStatus != job.currentTaskStatus ||
-		absFloat64(previousHashRate-job.currentHashRateMiB) >= trackerUploadHashRateEmitDeltaMiB
-	if tracker != "" {
-		state := job.states[tracker]
-		state.Tracker = tracker
-		state.Task = job.currentTask
-		state.TaskStatus = job.currentTaskStatus
-		state.CompletedPieces = update.CompletedPieces
-		state.TotalPieces = update.TotalPieces
-		state.Percent = update.Percent
-		state.HashRateMiB = update.HashRateMiB
-		if job.currentMessage != "" {
-			state.Message = job.currentMessage
-		}
-		if state.Status == "queued" && strings.EqualFold(job.currentTaskStatus, "running") {
-			state.Status = "running"
-		}
-		if state.StartedAt == "" && state.Status == "running" {
-			state.StartedAt = time.Now().UTC().Format(time.RFC3339)
-		}
-		job.states[tracker] = state
-	}
-	if shouldEmit {
-		job.lastSnapshotEmit = now
-	}
-	job.mu.Unlock()
-
-	if shouldEmit {
-		b.emitTrackerUploadSnapshot(job)
+	if logger != nil {
+		_ = logger.Close()
 	}
 }
 
-func absFloat64(value float64) float64 {
-	if value < 0 {
-		return -value
-	}
-	return value
-}
-
-func (b *Backend) runSingleTrackerUpload(ctx context.Context, job *trackerUploadJob, tracker string) (api.Result, error) {
-	req := api.Request{
-		Paths:                       []string{job.sourcePath},
-		Mode:                        api.ModeGUI,
-		DescriptionGroups:           api.CloneDescriptionBuilderGroups(job.descriptionGroups),
-		Trackers:                    []string{tracker},
-		IgnoreDupesFor:              append([]string(nil), job.ignoreDupesFor...),
-		IgnoreTrackerRuleFailures:   false,
-		Options:                     job.uploadOptions,
-		ExternalIDOverrides:         job.overrides,
-		ReleaseNameOverrides:        job.nameOverrides,
-		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(job.questionnaireAnswers),
-	}
-	return wrapWebResult(job.core.RunUploadPrepared(ctx, req))
-}
-
-func upsertDupeSummaryResult(summary *api.DupeCheckSummary, result api.DupeCheckResult) {
-	if summary == nil {
-		return
-	}
-	tracker := strings.ToUpper(strings.TrimSpace(result.Tracker))
-	for idx := range summary.Results {
-		if strings.ToUpper(strings.TrimSpace(summary.Results[idx].Tracker)) == tracker {
-			summary.Results[idx] = result
-			return
-		}
-	}
-	summary.Results = append(summary.Results, result)
-}
-
-// dupeResultTrackerNames expands grouped dupe summary labels into the
-// per-tracker state keys used by frontend snapshots.
-func dupeResultTrackerNames(result api.DupeCheckResult) []string {
-	trackers := strings.Split(result.Tracker, ",")
-	names := make([]string, 0, len(trackers))
-	seen := make(map[string]struct{}, len(trackers))
-	for _, tracker := range trackers {
-		name := strings.ToUpper(strings.TrimSpace(tracker))
-		if name == "" {
-			continue
-		}
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		names = append(names, name)
-	}
-	return names
-}
-
-func hasFailedDupeState(states map[string]DupeCheckTrackerState) bool {
-	for _, state := range states {
-		if strings.EqualFold(state.Status, "failed") {
-			return true
-		}
-	}
-	return false
-}
-
-func isDupeTerminalStatus(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "completed", "completed_with_errors", "skipped", "failed", "canceled":
-		return true
-	default:
-		return false
-	}
-}
-
-func isDupeJobTerminal(job *dupeCheckJob) bool {
-	if job == nil {
-		return false
-	}
-	job.mu.Lock()
-	defer job.mu.Unlock()
-	return isDupeTerminalStatus(job.status) && !job.finishedAt.IsZero()
-}
-
-func isTrackerUploadJobTerminal(job *trackerUploadJob) bool {
-	if job == nil {
-		return false
-	}
-	job.mu.Lock()
-	defer job.mu.Unlock()
-	switch strings.ToLower(strings.TrimSpace(job.status)) {
-	case "completed", "completed_with_errors", "failed", "canceled":
-		return !job.finishedAt.IsZero()
-	default:
-		return false
-	}
-}
-
-func resultStatus(result api.DupeCheckResult) string {
-	if strings.TrimSpace(result.Status) != "" {
-		return result.Status
-	}
-	if result.Skipped {
-		return "skipped"
-	}
-	if strings.TrimSpace(result.Error) != "" {
-		return "failed"
-	}
-	return "completed"
-}
-
-func resultMessage(result api.DupeCheckResult) string {
-	if strings.TrimSpace(result.Error) != "" {
-		return strings.TrimSpace(result.Error)
-	}
-	if strings.TrimSpace(result.SkipReason) != "" {
-		return strings.TrimSpace(result.SkipReason)
-	}
-	if result.HasDupes {
-		return fmt.Sprintf("%d dupes found", len(result.Filtered))
-	}
-	return "no dupes found"
-}
-
-func (b *Backend) emitDupeCheckSnapshot(job *dupeCheckJob) {
-	b.hub.Emit(job.sessionID, "dupe:job:"+job.id, buildDupeCheckSnapshot(job))
-}
-
-func buildDupeCheckSnapshot(job *dupeCheckJob) DupeCheckSnapshot {
-	job.mu.Lock()
-	defer job.mu.Unlock()
-	trackers := make([]DupeCheckTrackerState, 0, len(job.trackers))
-	for _, tracker := range job.trackers {
-		normalized := strings.ToUpper(strings.TrimSpace(tracker))
-		trackers = append(trackers, job.states[normalized])
-	}
-	return DupeCheckSnapshot{
-		JobID:          job.id,
-		SourcePath:     job.sourcePath,
-		Status:         job.status,
-		Trackers:       trackers,
-		CompletedCount: job.completedCount,
-		TotalCount:     job.totalCount,
-		Summary:        job.summary,
-		Error:          job.errorMessage,
-		StartedAt:      job.startedAt.Format(time.RFC3339),
-		FinishedAt:     formatTime(job.finishedAt),
-	}
-}
-
-func (b *Backend) getDupeCheckJob(jobID string) *dupeCheckJob {
-	b.dupeMu.Lock()
-	defer b.dupeMu.Unlock()
-	return b.dupes[jobID]
-}
-
-func (b *Backend) getDupeCheckJobForSession(sessionID string, jobID string) *dupeCheckJob {
-	job := b.getDupeCheckJob(jobID)
-	if job == nil {
-		return nil
-	}
-	job.mu.Lock()
-	defer job.mu.Unlock()
-	if strings.TrimSpace(job.sessionID) != sessionID {
-		return nil
-	}
-	return job
-}
-
-func (b *Backend) scheduleDupeJobCleanup(job *dupeCheckJob) {
-	if job == nil {
-		return
-	}
-
-	b.dupeMu.Lock()
-	b.pruneCompletedDupeJobsLocked(maxCompletedDupeJobs)
-	b.dupeMu.Unlock()
-
-	time.AfterFunc(completedJobRetention, func() {
-		b.dupeMu.Lock()
-		defer b.dupeMu.Unlock()
-
-		if current := b.dupes[job.id]; current == job && isDupeJobTerminal(job) {
-			delete(b.dupes, job.id)
-		}
-	})
-}
-
-func (b *Backend) pruneCompletedDupeJobsLocked(maxCompleted int) {
-	if maxCompleted <= 0 {
-		return
-	}
-
-	completed := make([]*dupeCheckJob, 0, len(b.dupes))
-	for _, job := range b.dupes {
-		if isDupeJobTerminal(job) {
-			completed = append(completed, job)
-		}
-	}
-	if len(completed) <= maxCompleted {
-		return
-	}
-
-	sort.Slice(completed, func(i, j int) bool {
-		return completed[i].finishedAt.Before(completed[j].finishedAt)
-	})
-
-	for _, job := range completed[:len(completed)-maxCompleted] {
-		delete(b.dupes, job.id)
-	}
-}
-
+// stopAllDupeJobs remains as a compatibility shim for shutdown tests and closes the shared engine.
 func (b *Backend) stopAllDupeJobs() {
-	b.dupeMu.Lock()
-	jobs := make([]*dupeCheckJob, 0, len(b.dupes))
-	for _, job := range b.dupes {
-		jobs = append(jobs, job)
-	}
-	b.dupeMu.Unlock()
-	for _, job := range jobs {
-		if job == nil {
-			continue
-		}
-		job.mu.Lock()
-		cancel := job.cancel
-		job.mu.Unlock()
-		if cancel != nil {
-			cancel()
-		}
-	}
-	b.dupeWG.Wait()
-}
-
-func (b *Backend) emitTrackerUploadSnapshot(job *trackerUploadJob) {
-	b.hub.Emit(job.sessionID, "upload:job:"+job.id, buildTrackerUploadSnapshot(job))
-}
-
-func buildTrackerUploadSnapshot(job *trackerUploadJob) TrackerUploadSnapshot {
-	job.mu.Lock()
-	defer job.mu.Unlock()
-	trackers := make([]TrackerUploadTrackerState, 0, len(job.trackers))
-	for _, tracker := range job.trackers {
-		trackers = append(trackers, job.states[tracker])
-	}
-	return TrackerUploadSnapshot{
-		JobID:                  job.id,
-		SourcePath:             job.sourcePath,
-		Status:                 job.status,
-		CurrentTask:            job.currentTask,
-		CurrentTaskStatus:      job.currentTaskStatus,
-		CurrentMessage:         job.currentMessage,
-		CurrentCompletedPieces: job.currentCompleted,
-		CurrentTotalPieces:     job.currentTotal,
-		CurrentPercent:         job.currentPercent,
-		CurrentHashRateMiB:     job.currentHashRateMiB,
-		Trackers:               trackers,
-		FailedTrackers:         append([]string(nil), job.failedTrackers...),
-		UploadedCount:          job.uploadedCount,
-		Error:                  job.errorMessage,
-		StartedAt:              job.startedAt.Format(time.RFC3339),
-		FinishedAt:             formatTime(job.finishedAt),
+	if b != nil && b.jobEngine != nil {
+		b.jobEngine.Close()
 	}
 }
 
-func (b *Backend) getTrackerUploadJob(jobID string) *trackerUploadJob {
-	b.uploadMu.Lock()
-	defer b.uploadMu.Unlock()
-	return b.uploads[jobID]
-}
-
-func (b *Backend) getTrackerUploadJobForSession(sessionID string, jobID string) *trackerUploadJob {
-	job := b.getTrackerUploadJob(jobID)
-	if job == nil {
-		return nil
-	}
-	job.mu.Lock()
-	defer job.mu.Unlock()
-	if strings.TrimSpace(job.sessionID) != sessionID {
-		return nil
-	}
-	return job
-}
-
-func (b *Backend) scheduleTrackerUploadJobCleanup(job *trackerUploadJob) {
-	if job == nil {
-		return
-	}
-
-	b.uploadMu.Lock()
-	b.pruneCompletedUploadJobsLocked(maxCompletedUploadJobs)
-	b.uploadMu.Unlock()
-
-	time.AfterFunc(completedJobRetention, func() {
-		b.uploadMu.Lock()
-		defer b.uploadMu.Unlock()
-
-		if current := b.uploads[job.id]; current == job && isTrackerUploadJobTerminal(job) {
-			delete(b.uploads, job.id)
-		}
-	})
-}
-
-func (b *Backend) pruneCompletedUploadJobsLocked(maxCompleted int) {
-	if maxCompleted <= 0 {
-		return
-	}
-
-	completed := make([]*trackerUploadJob, 0, len(b.uploads))
-	for _, job := range b.uploads {
-		if isTrackerUploadJobTerminal(job) {
-			completed = append(completed, job)
-		}
-	}
-	if len(completed) <= maxCompleted {
-		return
-	}
-
-	sort.Slice(completed, func(i, j int) bool {
-		return completed[i].finishedAt.Before(completed[j].finishedAt)
-	})
-
-	for _, job := range completed[:len(completed)-maxCompleted] {
-		delete(b.uploads, job.id)
-	}
-}
-
+// stopAllUploadJobs remains as a compatibility shim for shutdown tests and closes the shared engine.
 func (b *Backend) stopAllUploadJobs() {
-	b.uploadMu.Lock()
-	jobs := make([]*trackerUploadJob, 0, len(b.uploads))
-	for _, job := range b.uploads {
-		jobs = append(jobs, job)
+	if b != nil && b.jobEngine != nil {
+		b.jobEngine.Close()
 	}
-	b.uploadMu.Unlock()
-	for _, job := range jobs {
-		if job == nil {
-			continue
-		}
-		job.mu.Lock()
-		cancel := job.cancel
-		job.mu.Unlock()
-		if cancel != nil {
-			cancel()
-		}
-	}
-	b.uploadWG.Wait()
 }
 
+// stopAllLogStreams signals every active stream and waits for its worker to exit.
 func (b *Backend) stopAllLogStreams() {
 	b.streamMu.Lock()
 	streams := make([]*backendLogStream, 0, len(b.streams))
@@ -1196,17 +667,9 @@ func (b *Backend) stopAllLogStreams() {
 	}
 	b.streamMu.Unlock()
 	for _, stream := range streams {
-		if stream == nil {
-			continue
+		if stream != nil {
+			<-stream.done
 		}
-		<-stream.done
 	}
 	b.streamWG.Wait()
-}
-
-func formatTime(value time.Time) string {
-	if value.IsZero() {
-		return ""
-	}
-	return value.Format(time.RFC3339)
 }
