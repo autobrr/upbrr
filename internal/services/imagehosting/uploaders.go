@@ -864,10 +864,14 @@ func (u *pixhostUploader) Upload(ctx context.Context, imagePath string) (uploadR
 	if response.ThumbnailURL == "" {
 		return uploadResult{}, errors.New("pixhost upload failed")
 	}
-	rawURL := strings.ReplaceAll(response.ThumbnailURL, "https://t", "https://img")
+	// The API responds with pixhost.cc URLs, but some trackers (e.g. BHD) only
+	// render images hosted on pixhost.to; both domains serve the same content.
+	thumbURL := strings.ReplaceAll(response.ThumbnailURL, ".pixhost.cc/", ".pixhost.to/")
+	showURL := strings.ReplaceAll(response.ShowURL, "://pixhost.cc/", "://pixhost.to/")
+	rawURL := strings.ReplaceAll(thumbURL, "https://t", "https://img")
 	rawURL = strings.ReplaceAll(rawURL, "/thumbs/", "/images/")
 
-	return uploadResult{ImgURL: response.ThumbnailURL, RawURL: rawURL, WebURL: response.ShowURL}, nil
+	return uploadResult{ImgURL: thumbURL, RawURL: rawURL, WebURL: showURL}, nil
 }
 
 type ziplineUploader struct {

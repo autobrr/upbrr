@@ -503,13 +503,13 @@ func TestPixhostUploaderPostsCurrentDomain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Upload returned error: %v", err)
 	}
-	if result.ImgURL != "https://t1.pixhost.cc/thumbs/11645/shot.png" {
+	if result.ImgURL != "https://t1.pixhost.to/thumbs/11645/shot.png" {
 		t.Fatalf("unexpected img URL: %q", result.ImgURL)
 	}
-	if result.RawURL != "https://img1.pixhost.cc/images/11645/shot.png" {
+	if result.RawURL != "https://img1.pixhost.to/images/11645/shot.png" {
 		t.Fatalf("unexpected raw URL: %q", result.RawURL)
 	}
-	if result.WebURL != "https://pixhost.cc/show/11645/shot.png" {
+	if result.WebURL != "https://pixhost.to/show/11645/shot.png" {
 		t.Fatalf("unexpected web URL: %q", result.WebURL)
 	}
 }
