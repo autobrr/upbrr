@@ -70,8 +70,8 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	if entry.Payload["source"] != "WEB" {
 		t.Fatalf("expected source WEB, got %q", entry.Payload["source"])
 	}
-	if entry.Payload["imdb_id"] != "456" {
-		t.Fatalf("expected numeric imdb_id, got %q", entry.Payload["imdb_id"])
+	if entry.Payload["imdb_id"] != "0000456" {
+		t.Fatalf("expected zero-padded imdb_id, got %q", entry.Payload["imdb_id"])
 	}
 	if entry.Payload["tmdb_id"] != "123" {
 		t.Fatalf("expected numeric tmdb_id, got %q", entry.Payload["tmdb_id"])
@@ -282,8 +282,8 @@ func TestUploadRetriesInvalidIMDb(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if calls == 1 {
-			if imdbID != "456" {
-				t.Errorf("expected first imdb_id 456, got %q", imdbID)
+			if imdbID != "0000456" {
+				t.Errorf("expected first imdb_id 0000456, got %q", imdbID)
 				return
 			}
 			_, _ = fmt.Fprint(w, `{"status_code":0,"status_message":"Invalid imdb_id"}`)
