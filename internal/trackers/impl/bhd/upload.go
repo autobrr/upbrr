@@ -59,6 +59,9 @@ func upload(ctx context.Context, req trackers.UploadRequest) (api.UploadSummary,
 		return api.UploadSummary{}, err
 	}
 	if response.StatusCode == 0 && bhdInvalidIMDbPattern.MatchString(response.StatusMessage) {
+		if req.Logger != nil {
+			req.Logger.Warnf("trackers: BHD rejected imdb_id=%s, retrying upload without an IMDb id", state.fields["imdb_id"])
+		}
 		state.fields["imdb_id"] = "1"
 		response, responseBody, err = sendUpload(ctx, req, state)
 		if err != nil {
@@ -524,7 +527,9 @@ func resolveTags(meta api.PreparedMetadata) []string {
 
 func resolveIMDbID(meta api.PreparedMetadata) string {
 	if meta.ExternalIDs.IMDBID > 0 {
-		return strconv.Itoa(meta.ExternalIDs.IMDBID)
+		// BHD rejects unpadded IDs (tt0115147 sent as "115147" is
+		// "Invalid imdb_id"); IMDb IDs are zero-padded to at least 7 digits.
+		return fmt.Sprintf("%07d", meta.ExternalIDs.IMDBID)
 	}
 	return "1"
 }
