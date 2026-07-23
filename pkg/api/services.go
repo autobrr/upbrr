@@ -216,6 +216,7 @@ type PreparedMetadata struct {
 	ExternalMetadata            ExternalMetadata
 	AudioLanguages              []string
 	SubtitleLanguages           []string
+	AudioTitles                 []string
 	Container                   string
 	Audio                       string
 	Channels                    string

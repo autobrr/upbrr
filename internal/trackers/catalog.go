@@ -136,7 +136,7 @@ func IsNonUnit3DTracker(name string) bool {
 // or any tracker known to accept modified releases.
 func skipsModifiedReleaseCheck(name string) bool {
 	switch strings.ToUpper(strings.TrimSpace(name)) {
-	case "MANUAL":
+	case "MANUAL", "VMF":
 		return true
 	default:
 		return false

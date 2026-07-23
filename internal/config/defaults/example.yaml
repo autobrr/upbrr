@@ -519,6 +519,12 @@ trackers:
     api_key: ""
     url: "https://utp.to"
     anon: false
+  VMF:
+    link_dir_name: ""
+    api_key: ""
+    url: "https://tracker.vietmediaf.store"
+    anon: false
+    modq: false
   YUS:
     link_dir_name: ""
     api_key: ""

@@ -20,6 +20,8 @@ import (
 )
 
 var noGroupTagPattern = regexp.MustCompile(`(?i)-(nogrp|nogroup|unknown|-unk-)`)
+var vmfDubPattern = regexp.MustCompile(`(?i)(lồng tiếng|long tieng|\b(?:us|vn)lt\b)`)
+var vmfViePattern = regexp.MustCompile(`(?i)(thuyết minh|thuyet minh|\btm\b)`)
 var (
 	languageTagLookupOnce sync.Once
 	languageTagLookup     map[string]language.Tag
@@ -57,6 +59,8 @@ func buildUnit3DName(tracker string, meta api.PreparedMetadata, cfg config.Track
 		return addNoGroupSuffix(name, meta, "NOGRP")
 	case "ULCX":
 		return buildULCXName(name, meta)
+	case "VMF":
+		return buildVMFName(name, meta)
 	case "ZNTH":
 		return buildZNTHName(name, meta)
 	default:
@@ -85,6 +89,60 @@ func buildULCXName(name string, meta api.PreparedMetadata) string {
 		name = strings.Replace(name, "Hybrid ", "", 1)
 	}
 	return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
+}
+
+func buildVMFName(name string, meta api.PreparedMetadata) string {
+	hasDub := false
+	hasVie := false
+
+	for _, title := range meta.AudioTitles {
+		if vmfDubPattern.MatchString(title) {
+			hasDub = true
+		}
+		if vmfViePattern.MatchString(title) {
+			hasVie = true
+		}
+	}
+
+	for _, lang := range meta.AudioLanguages {
+		if strings.ToLower(strings.TrimSpace(lang)) == "vietnamese" {
+			hasVie = true
+		}
+	}
+
+	tag := ""
+	if hasDub {
+		tag = "ViE DUB"
+	} else if hasVie {
+		tag = "ViE"
+	}
+
+	if tag == "" || strings.Contains(strings.ToLower(name), strings.ToLower(tag)) {
+		return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
+	}
+
+	words := strings.Fields(name)
+	insertIdx := -1
+	parsedRes := strings.ToLower(meta.Release.Resolution)
+
+	// Attempt to find resolution to insert before
+	for i, w := range words {
+		lowerW := strings.ToLower(w)
+		if parsedRes != "" && lowerW == parsedRes {
+			insertIdx = i
+			break
+		}
+	}
+
+	if insertIdx != -1 {
+		newWords := make([]string, 0, len(words)+2)
+		newWords = append(newWords, words[:insertIdx]...)
+		newWords = append(newWords, tag)
+		newWords = append(newWords, words[insertIdx:]...)
+		return strings.Join(newWords, " ")
+	}
+
+	return strings.TrimSpace(name + " " + tag)
 }
 
 func resolveDPAudioLabel(languages []string) string {

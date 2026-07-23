@@ -54,8 +54,18 @@ func (s *Service) ApplyMediaDetails(ctx context.Context, meta api.PreparedMetada
 		s.logger.Warnf("metadata: mediainfo validation failed (missing unique id)")
 	}
 	meta.AudioLanguages, meta.SubtitleLanguages = extractMediaInfoLanguages(miDoc)
+	var audioTitles []string
+	for _, track := range miDoc.Media.Track {
+		if strings.EqualFold(strings.TrimSpace(trackString(track, "@type")), "Audio") {
+			title := trackString(track, "Title", "Title_String", "Title_String2", "Title_String3")
+			if strings.TrimSpace(title) != "" {
+				audioTitles = append(audioTitles, title)
+			}
+		}
+	}
+	meta.AudioTitles = audioTitles
 	if s.logger != nil && (len(meta.AudioLanguages) > 0 || len(meta.SubtitleLanguages) > 0) {
-		s.logger.Debugf("metadata: media languages audio=%v subs=%v", meta.AudioLanguages, meta.SubtitleLanguages)
+		s.logger.Debugf("metadata: media languages audio=%v subs=%v titles=%v", meta.AudioLanguages, meta.SubtitleLanguages, meta.AudioTitles)
 	}
 
 	bdinfo := loadBDInfo(meta, s.cfg.MainSettings.DBPath)
