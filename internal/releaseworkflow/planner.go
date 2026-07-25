@@ -377,6 +377,9 @@ func planContinuationCommand(
 	if !stageSucceeded(current.Media.Status) {
 		return nil, "capture-media"
 	}
+	if workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalMediaReady) {
+		return nil, ""
+	}
 	if !mediaRequirementsPrepared(current.Media) {
 		var artifactIDs []api.PublicResourceID
 		if request.Intent.MediaSelection != nil {
@@ -389,9 +392,6 @@ func planContinuationCommand(
 			ArtifactIDs:      artifactIDs,
 			IdempotencyKey:   key("prepare-image-requirements"),
 		}, "prepare-image-requirements"
-	}
-	if workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalMediaReady) {
-		return nil, ""
 	}
 	if !descriptionsHaveViableTracker(current.Descriptions) {
 		if request.Intent.Descriptions == nil {

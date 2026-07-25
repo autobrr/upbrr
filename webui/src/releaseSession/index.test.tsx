@@ -1195,6 +1195,7 @@ describe("useReleaseSession", () => {
         { Index: 3, TimestampSeconds: 40, Frame: 960, Source: "manual" },
       ]),
     );
+    expect(uploadImages).not.toHaveBeenCalled();
     await act(() => result.current.uploadedImages.load());
     await act(async () => {
       expect(await result.current.uploadedImages.upload()).toBe(true);

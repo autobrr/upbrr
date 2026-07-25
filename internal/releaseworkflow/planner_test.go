@@ -125,6 +125,12 @@ func TestContinuationPlannerInsertsExactImageRequirementBarrier(t *testing.T) {
 	if !ok || stage != "prepare-image-requirements" || upload.Host != "" || upload.Media.ID != current.Media.ID {
 		t.Fatalf("planned image barrier: stage=%q command=%#v", stage, command)
 	}
+
+	request.Goal = api.WorkflowGoalMediaReady
+	command, stage = planContinuationCommand(request, current, now)
+	if command != nil || stage != "" {
+		t.Fatalf("media-ready capture scheduled image hosting: stage=%q command=%#v", stage, command)
+	}
 }
 
 func TestContinuationPlannerAcceptsFinalizedProjectionSetBoundToPreflight(t *testing.T) {
