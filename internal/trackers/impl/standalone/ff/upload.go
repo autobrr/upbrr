@@ -6,31 +6,16 @@ package ff
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
-	"path/filepath"
 	"regexp"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
-	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
-)
-
-const (
-	baseURL    = "https://www.funfile.org"
-	loginURL   = baseURL + "/takelogin.php"
-	uploadURL  = baseURL + "/takeupload.php"
-	torrentURL = baseURL + "/details.php?id="
-	sourceFlag = "FunFile"
 )
 
 var idPattern = regexp.MustCompile(`details\.php\?id=(\d+)`)
@@ -45,6 +30,9 @@ type uploadState struct {
 }
 
 func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+	if err := standalone.ValidatePreparation(ctx, req, validationPolicy()); err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: validate preparation: %w", err)
+	}
 	state, cookies, err := prepareUploadState(ctx, req, req.Intent != trackers.PreparationIntentUpload)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
@@ -150,7 +138,7 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryR
 	if err != nil {
 		return uploadState{}, nil, err
 	}
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
+	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
 		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
@@ -189,213 +177,18 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryR
 			fields["pack"] = "1"
 		}
 	}
+	releaseName, nameErr := req.ReviewedUploadName()
+	if nameErr != nil {
+		return uploadState{}, nil, fmt.Errorf("trackers: FF release name: %w", nameErr)
+	}
 	state := uploadState{
 		torrentPath: torrentPath,
 		description: description,
-		releaseName: resolveName(req.Meta),
+		releaseName: releaseName,
 		fields:      fields,
 		extraFiles:  resolveExtraFiles(ctx, req.Meta),
 	}
 	return state, cookies, nil
-}
-
-func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerConfig, dbPath string, dryRun bool) ([]*http.Cookie, error) {
-	loaded, err := cookies.LoadTrackerHTTPCookies(ctx, dbPath, "FF", "www.funfile.org")
-	if err != nil {
-		if logger != nil {
-			logger.Debugf("trackers: LoadTrackerHTTPCookies failed for FF/www.funfile.org, dbPath=%s: %v", dbPath, err)
-		}
-	} else if len(loaded) > 0 {
-		return loaded, nil
-	}
-	if dryRun {
-		if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
-			return nil, errors.New("trackers: FF cookies not found")
-		}
-		// #nosec G124 -- Dry-run sentinel is an outbound tracker jar cookie, not a browser-set cookie.
-		return []*http.Cookie{{
-			Name:   "dryrun",
-			Value:  "1",
-			Domain: ".funfile.org",
-			Path:   "/",
-		}}, nil
-	}
-	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
-		return nil, errors.New("trackers: FF cookie invalid/missing and username/password not configured")
-	}
-	data := url.Values{}
-	data.Set("returnto", "/index.php")
-	data.Set("username", strings.TrimSpace(cfg.Username))
-	data.Set("password", strings.TrimSpace(cfg.Password))
-	data.Set("login", "Login")
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(data.Encode()))
-	if err != nil {
-		return nil, fmt.Errorf("trackers: FF login request build: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", "upbrr")
-	client := httpclient.CloneWithTimeout(
-		&http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
-		httpclient.DefaultTimeout,
-	)
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("trackers: FF login request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusFound {
-		return nil, fmt.Errorf("trackers: FF login failed status=%d", resp.StatusCode)
-	}
-	return resp.Cookies(), nil
-}
-
-func buildDescription(assets trackers.DescriptionAssets) string {
-	if strings.TrimSpace(assets.Description) != "" {
-		return finalizeDescription(strings.TrimSpace(assets.Description))
-	}
-	return ""
-}
-
-func resolveExtraFiles(ctx context.Context, meta api.UploadSubject) []commonhttp.FileField {
-	files := make([]commonhttp.FileField, 0, 2)
-	if ctx == nil {
-		return files
-	}
-	if poster := resolvePoster(meta); poster != "" {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, poster, nil)
-		if err == nil {
-			resp, err := httpclient.New(httpclient.DefaultTimeout).Do(req)
-			if err == nil {
-				defer resp.Body.Close()
-				if body, err := io.ReadAll(resp.Body); err == nil && len(body) > 0 {
-					files = append(files, commonhttp.FileField{
-						FieldName: "poster",
-						FileName:  "poster.jpg",
-						Content:   body,
-					})
-				}
-			}
-		}
-	}
-	dir := filepath.Dir(metautil.FirstNonEmptyTrimmed(meta.MediaInfoTextPath, meta.SourcePath))
-	if payload, path, err := commonhttp.ReadFirstMatching(dir, "*.nfo"); err == nil {
-		files = append(files, commonhttp.FileField{
-			FieldName: "nfo",
-			FileName:  filepath.Base(path),
-			Content:   payload,
-		})
-	}
-	return files
-}
-
-func resolveTypeID(meta api.UploadSubject) string {
-	if meta.Anime {
-		return "44"
-	}
-	if strings.EqualFold(categoryOf(meta), "TV") {
-		return "7"
-	}
-	return "19"
-}
-
-func resolveMovieType(meta api.UploadSubject) string {
-	if strings.EqualFold(strings.TrimSpace(meta.Source), "DVD") {
-		return "DVDR"
-	}
-	if strings.Contains(strings.ToLower(meta.VideoCodec), "hevc") || strings.Contains(strings.ToLower(meta.VideoEncode), "265") {
-		return "x265"
-	}
-	return "x264"
-}
-
-func resolveTVType(meta api.UploadSubject) string {
-	if strings.EqualFold(strings.TrimSpace(meta.Source), "DVD") {
-		return "DVDR"
-	}
-	if strings.Contains(strings.ToLower(meta.Source), "web") {
-		if isSD(meta) {
-			return "Web-SD"
-		}
-		return "Web-HD"
-	}
-	if strings.Contains(strings.ToLower(meta.VideoCodec), "hevc") || strings.Contains(strings.ToLower(meta.VideoEncode), "265") {
-		if isSD(meta) {
-			return "x265-SD"
-		}
-		return "x265-HD"
-	}
-	if isSD(meta) {
-		return "x264-SD"
-	}
-	return "x264-HD"
-}
-
-func resolveAnimeType(meta api.UploadSubject) string {
-	if meta.SeasonInt == 0 {
-		return "TVSpecial"
-	}
-	if strings.EqualFold(categoryOf(meta), "MOVIE") {
-		return "Movie"
-	}
-	return "TVSeries"
-}
-
-func resolveMovieSource(meta api.UploadSubject) string {
-	switch strings.ToLower(strings.TrimSpace(meta.Source)) {
-	case "dvd":
-		return "DVD"
-	case "blu-ray", "bluray":
-		return "BluRay"
-	case "hdtv":
-		return "HDTV"
-	case "webrip", "webdl", "web":
-		return "WebRIP"
-	default:
-		return "BluRay"
-	}
-}
-
-func resolveTVSource(meta api.UploadSubject) string {
-	switch strings.ToLower(strings.TrimSpace(meta.Source)) {
-	case "dvd":
-		return "DVD"
-	case "blu-ray", "bluray":
-		return "BluRay"
-	case "hdtv":
-		return "HDTV"
-	case "webrip", "webdl", "web":
-		return "WebRIP"
-	default:
-		return "HDTV"
-	}
-}
-
-func resolveAnimeSource(meta api.UploadSubject) string {
-	switch strings.ToLower(strings.TrimSpace(meta.Source)) {
-	case "dvd":
-		return "DVD"
-	case "blu-ray", "bluray":
-		return "BluRay"
-	default:
-		return "Anime Series"
-	}
-}
-
-func resolveAnimeVCodec(meta api.UploadSubject) string {
-	if strings.Contains(strings.ToLower(meta.VideoCodec), "vc-1") {
-		return "VC1"
-	}
-	if strings.Contains(strings.ToLower(meta.VideoEncode), "h.264") {
-		return "h264"
-	}
-	return "x264"
-}
-
-func resolveName(meta api.UploadSubject) string {
-	if meta.Scene && strings.TrimSpace(meta.SceneName) != "" {
-		return strings.TrimSpace(meta.SceneName)
-	}
-	return strings.ReplaceAll(metautil.FirstNonEmptyTrimmed(meta.ReleaseNameClean, meta.ReleaseName, meta.Filename), " ", ".")
 }
 
 func resolveIMDbURL(meta api.UploadSubject) string {
@@ -406,26 +199,4 @@ func resolveIMDbURL(meta api.UploadSubject) string {
 		return fmt.Sprintf("https://www.imdb.com/title/tt%07d", meta.Identity.IMDBID)
 	}
 	return ""
-}
-
-func resolvePoster(meta api.UploadSubject) string {
-	if meta.ProviderMetadata.TMDB != nil {
-		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Poster)
-	}
-	if meta.ProviderMetadata.IMDB != nil {
-		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Cover)
-	}
-	return ""
-}
-
-func categoryOf(meta api.UploadSubject) string {
-	category, err := meta.Identity.RequireCategory()
-	if err != nil {
-		return ""
-	}
-	return string(category)
-}
-
-func isSD(meta api.UploadSubject) bool {
-	return strings.EqualFold(strings.TrimSpace(meta.Release.Resolution), "480p") || strings.EqualFold(strings.TrimSpace(meta.Release.Resolution), "576p")
 }

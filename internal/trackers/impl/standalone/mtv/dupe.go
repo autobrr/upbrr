@@ -131,6 +131,9 @@ func isMTVTVCategory(meta api.DuplicateSubject) bool {
 }
 
 func cleanMTVSearchTitle(meta api.DuplicateSubject) string {
+	if meta.Projection != nil {
+		return dupe.ProjectedSearchName(meta)
+	}
 	query := strings.TrimSpace(meta.Release.Title)
 	if query == "" {
 		query = strings.TrimSpace(meta.ReleaseName)

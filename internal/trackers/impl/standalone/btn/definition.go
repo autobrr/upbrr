@@ -17,15 +17,6 @@ func (d *Definition) DataLookupConfigured(cfg config.Config) bool {
 	return len(config.ResolveBTNAPIToken(cfg)) >= 25
 }
 
-func bannedGroups() []string {
-	return []string{
-		"3LTON", "4yEo", "7VFr33104D", "AFG", "AniHLS", "AnimeRG", "AniURL", "DeadFish", "ELiTE", "eSc",
-		"EVO", "FGT", "FUM", "GalaxyTV", "GRANiTEN", "HAiKU", "Hi10", "ION10", "JFF", "JIVE", "LOAD", "MeGusta",
-		"mSD", "NhaNc3", "NOIVTC", "PHOENiX", "PlaySD", "playXD", "Pr1M371M3", "RAPiDCOWS", "REsuRRecTioN", "RMTeam",
-		"ROBOTS", "RUBiK", "SPASM", "Telly", "TM", "URANiME", "ViSiON", "W45Ps", "xRed", "XS", "ZKBL", "ZmN", "ZMNT", "[Oj]",
-	}
-}
-
 func validateBTNRequest(req trackers.PreparationInput) error {
 	category, err := req.Meta.Identity.RequireCategory()
 	if err != nil || category != api.CanonicalCategoryTV {

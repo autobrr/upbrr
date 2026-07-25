@@ -3,7 +3,7 @@
 
 import { createElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { installAppOperationMocks } from "../test/appRequestMock";
 import type { ConfigValue, TrackerCatalog, TrackerCatalogEntry } from "../types";
 
@@ -171,6 +171,23 @@ function TrackerSettingsHarness() {
   );
 }
 
+function TrackerReloadRaceHarness() {
+  const state = useSettingsState({ activeTab: "settings" });
+
+  return createElement(
+    "div",
+    null,
+    createElement(
+      "button",
+      { type: "button", disabled: state.settingsLoading, onClick: state.loadSettings },
+      "Reload",
+    ),
+    createElement("span", { "data-testid": "settings-dirty" }, String(state.settingsDirty)),
+    state.renderTrackerSection(false),
+    createElement(PayloadCapture, { value: state.buildSavePayload() }),
+  );
+}
+
 function TrackerSettingsAdvancedHarness() {
   const state = useSettingsState({ activeTab: "settings" });
 
@@ -227,6 +244,14 @@ function ScreenshotSettingsHarness() {
 }
 
 let latestPayload = "";
+
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+};
 
 type TestTrackerField = [key: string, defaultValue: ConfigValue, activation?: boolean];
 
@@ -1119,6 +1144,50 @@ describe("tracker catalog loading", () => {
 });
 
 describe("tracker catalog interactions", () => {
+  it("preserves a tracker removal completed while a reload is in flight", async () => {
+    const config = JSON.stringify({
+      Trackers: {
+        DefaultTrackers: [],
+        PreferredTracker: "",
+        Trackers: { BLU: { APIKey: "tracker-token" } },
+      },
+    });
+    const pendingReload = deferred<string>();
+    let request = 0;
+    const getConfig = vi.fn(() => {
+      request += 1;
+      return request === 1 ? Promise.resolve(config) : pendingReload.promise;
+    });
+    installAppOperationMocks({
+      GetConfig: getConfig,
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () =>
+        trackerCatalog(trackerCatalogEntry("BLU", [["APIKey", "", true]])),
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(TrackerReloadRaceHarness));
+
+    const cardName = await screen.findByText("BLU", {
+      selector: ".settings-card__summary-name",
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Reload" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+    await waitFor(() => expect(getConfig).toHaveBeenCalledTimes(2));
+
+    const card = cardName.closest(".settings-card");
+    fireEvent.click(within(card as HTMLElement).getByRole("button", { name: "Remove" }));
+    expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
+
+    pendingReload.resolve(config);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Reload" })).toBeEnabled());
+    expect(
+      screen.queryByText("BLU", { selector: ".settings-card__summary-name" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("settings-dirty")).toHaveTextContent("true");
+  });
+
   it("renders configured RHD without a frontend tracker schema entry", async () => {
     installAppOperationMocks({
       GetConfig: async () =>

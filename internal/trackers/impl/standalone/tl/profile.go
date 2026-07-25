@@ -4,7 +4,9 @@
 package tl
 
 import (
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -19,7 +21,9 @@ func Profile() standalone.Profile {
 		UploadContentMode:   trackers.UploadContentModeDescription,
 		PrepareDescription:  prepareDescription,
 		PrepareUpload:       prepareUpload,
+		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/tl/v1", resolveName, resolveSearchName),
 		NewDuplicateAdapter: newDuplicateAdapter,
+		ValidationPolicy:    validationPolicy(),
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{
@@ -33,7 +37,29 @@ func Profile() standalone.Profile {
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
 			TrackerURLPatterns: []string{"tracker.tleechreload", "tracker.torrentleech"},
 		},
-		AuthCapability: standalone.CookieAuthCapability("TL"),
+		AuthCapability: &api.TrackerAuthCapability{
+			TrackerID:          "TL",
+			DisplayName:        "TL",
+			AuthKind:           "passkey_or_cookies",
+			SupportsCookieFile: true,
+			RequiresPasskey:    true,
+		},
+		AuthPolicy: &trackers.AuthPolicy{
+			ResolveRequirements: func(_ config.Config, cfg config.TrackerConfig) trackers.EffectiveAuthRequirements {
+				if cfg.APIUpload {
+					return authcontract.Requirements(
+						"api_upload",
+						false,
+						[]trackers.AuthRequirement{trackers.AuthRequirementPasskey},
+					)
+				}
+				return authcontract.Requirements(
+					"form_upload",
+					false,
+					[]trackers.AuthRequirement{trackers.AuthRequirementStoredCookie},
+				)
+			},
+		},
 	}
 }
 

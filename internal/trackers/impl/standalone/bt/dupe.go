@@ -58,45 +58,49 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 
 	searchStr := imdbID
 	if meta.Anime {
-		tvdbNameEnglish := ""
-		tvdbName := ""
-		if meta.ProviderMetadata.TVDB != nil {
-			tvdbNameEnglish = strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish)
-			tvdbName = strings.TrimSpace(meta.ProviderMetadata.TVDB.Name)
-		}
+		if meta.Projection != nil {
+			searchStr = dupe.ProjectedSearchName(meta)
+		} else {
+			tvdbNameEnglish := ""
+			tvdbName := ""
+			if meta.ProviderMetadata.TVDB != nil {
+				tvdbNameEnglish = strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish)
+				tvdbName = strings.TrimSpace(meta.ProviderMetadata.TVDB.Name)
+			}
 
-		tmdbTitle := ""
-		tmdbOriginalTitle := ""
-		if meta.ProviderMetadata.TMDB != nil {
-			tmdbTitle = strings.TrimSpace(meta.ProviderMetadata.TMDB.Title)
-			tmdbOriginalTitle = strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalTitle)
-		}
+			tmdbTitle := ""
+			tmdbOriginalTitle := ""
+			if meta.ProviderMetadata.TMDB != nil {
+				tmdbTitle = strings.TrimSpace(meta.ProviderMetadata.TMDB.Title)
+				tmdbOriginalTitle = strings.TrimSpace(meta.ProviderMetadata.TMDB.OriginalTitle)
+			}
 
-		imdbTitle := ""
-		if meta.ProviderMetadata.IMDB != nil {
-			imdbTitle = strings.TrimSpace(meta.ProviderMetadata.IMDB.Title)
-		}
+			imdbTitle := ""
+			if meta.ProviderMetadata.IMDB != nil {
+				imdbTitle = strings.TrimSpace(meta.ProviderMetadata.IMDB.Title)
+			}
 
-		releaseName := strings.TrimSpace(meta.ReleaseName)
+			releaseName := strings.TrimSpace(meta.ReleaseName)
 
-		switch {
-		// English
-		case tvdbNameEnglish != "":
-			searchStr = tvdbNameEnglish
-		case tmdbTitle != "":
-			searchStr = tmdbTitle
-		case imdbTitle != "":
-			searchStr = imdbTitle
+			switch {
+			// English
+			case tvdbNameEnglish != "":
+				searchStr = tvdbNameEnglish
+			case tmdbTitle != "":
+				searchStr = tmdbTitle
+			case imdbTitle != "":
+				searchStr = imdbTitle
 
-		// Original
-		case tvdbName != "":
-			searchStr = tvdbName
-		case tmdbOriginalTitle != "":
-			searchStr = tmdbOriginalTitle
+			// Original
+			case tvdbName != "":
+				searchStr = tvdbName
+			case tmdbOriginalTitle != "":
+				searchStr = tmdbOriginalTitle
 
-		// Release Name
-		case releaseName != "":
-			searchStr = releaseName
+			// Release Name
+			case releaseName != "":
+				searchStr = releaseName
+			}
 		}
 	}
 

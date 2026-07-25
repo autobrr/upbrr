@@ -23,9 +23,6 @@ const (
 	PreparationIntentDescriptionPreview PreparationIntent = "description_preview"
 	// PreparationIntentDryRun resolves upload artifacts and payload preview without tracker mutation.
 	PreparationIntentDryRun PreparationIntent = "dry_run"
-	// PreparationIntentUploadReview resolves the upload payload needed for
-	// authorization without explicit dry-run diagnostic artifacts.
-	PreparationIntentUploadReview PreparationIntent = "upload_review"
 	// PreparationIntentUpload prepares a single-use plan that may submit to the tracker.
 	PreparationIntentUpload PreparationIntent = "upload"
 )
@@ -159,11 +156,6 @@ func NewDescriptionPlan(tracker string, result DescriptionResult) TrackerPlan {
 	}
 }
 
-// NewDryRunPlan constructs a non-submittable dry-run plan.
-func NewDryRunPlan(tracker string, preview api.TrackerDryRunEntry, release func() error) TrackerPlan {
-	return newPreviewPlan(tracker, PreparationIntentDryRun, preview, release)
-}
-
 func newPreviewPlan(tracker string, intent PreparationIntent, preview api.TrackerDryRunEntry, release func() error) TrackerPlan {
 	return TrackerPlan{
 		tracker: strings.ToUpper(strings.TrimSpace(tracker)),
@@ -197,6 +189,7 @@ func PrepareAdapter(
 	prepareUpload UploadPreparer,
 ) (TrackerPlan, *PreparationFailure) {
 	input = clonePreparationInput(input)
+	input = applyReviewedProjection(input)
 	if err := ctx.Err(); err != nil {
 		return TrackerPlan{}, NewPreparationFailure(input.Tracker, "canceled", "preparation canceled", err)
 	}
@@ -215,11 +208,8 @@ func PrepareAdapter(
 		if err != nil {
 			return TrackerPlan{}, NewPreparationFailure(input.Tracker, "dry_run", err.Error(), err)
 		}
-		return newPreviewPlan(input.Tracker, input.Intent, operation.preview, operation.release), nil
-	case PreparationIntentUploadReview:
-		operation, err := prepareUpload(ctx, input)
-		if err != nil {
-			return TrackerPlan{}, NewPreparationFailure(input.Tracker, "upload_review", err.Error(), err)
+		if err := validatePreparedProjection(input, operation.preview); err != nil {
+			return TrackerPlan{}, projectionPreparationFailure(input.Tracker, operation, err)
 		}
 		return newPreviewPlan(input.Tracker, input.Intent, operation.preview, operation.release), nil
 	case PreparationIntentUpload:
@@ -238,10 +228,21 @@ func PrepareAdapter(
 			}
 			return TrackerPlan{}, NewPreparationFailure(input.Tracker, "upload", "tracker upload preparation is not submittable", cause)
 		}
+		if err := validatePreparedProjection(input, operation.preview); err != nil {
+			return TrackerPlan{}, projectionPreparationFailure(input.Tracker, operation, err)
+		}
 		return NewUploadPlan(input.Tracker, operation.preview, operation.submit, operation.release), nil
 	default:
 		return TrackerPlan{}, NewPreparationFailure(input.Tracker, "intent", "unsupported preparation intent", nil)
 	}
+}
+
+func projectionPreparationFailure(tracker string, operation PreparedOperation, err error) *PreparationFailure {
+	cleanupErr := error(nil)
+	if operation.release != nil {
+		cleanupErr = operation.release()
+	}
+	return NewPreparationFailure(tracker, "projection", err.Error(), errors.Join(err, cleanupErr))
 }
 
 func clonePreparationInput(input PreparationInput) PreparationInput {
@@ -313,8 +314,6 @@ func cloneTrackerDryRunEntry(entry api.TrackerDryRunEntry) api.TrackerDryRunEntr
 	entry.Payload = maps.Clone(entry.Payload)
 	entry.Files = append([]api.TrackerDryRunFile(nil), entry.Files...)
 	entry.DebugSections = append([]api.TrackerDryRunDebugSection(nil), entry.DebugSections...)
-	entry.Diagnostics.RuleDecisions = append([]api.RuleDecision(nil), entry.Diagnostics.RuleDecisions...)
-	entry.Diagnostics.LiveEligibilityReasons = append([]api.TrackerEligibilityReason(nil), entry.Diagnostics.LiveEligibilityReasons...)
 	for idx := range entry.DebugSections {
 		entry.DebugSections[idx].Payload = maps.Clone(entry.DebugSections[idx].Payload)
 		entry.DebugSections[idx].Files = append([]api.TrackerDryRunFile(nil), entry.DebugSections[idx].Files...)

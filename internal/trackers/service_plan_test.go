@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,6 +23,28 @@ type barrierPlanDefinition struct {
 	started     chan<- string
 	releasePrep <-chan struct{}
 	submitted   chan<- string
+}
+
+func TestEmitTrackerPlanProgressUsesPerTrackerTaskCounters(t *testing.T) {
+	t.Parallel()
+
+	updates := make([]api.UploadProgressUpdate, 0, 2)
+	ctx := api.WithUploadProgressReporter(context.Background(), func(update api.UploadProgressUpdate) {
+		updates = append(updates, update)
+	})
+
+	emitTrackerPlanProgress(ctx, "Example.Release.2026-GRP", "ALPHA", "tracker_preparation", "running", "Preparing tracker plan")
+	emitTrackerPlanProgress(ctx, "Example.Release.2026-GRP", "ALPHA", "tracker_preparation", "completed", "Tracker plan ready")
+
+	if len(updates) != 2 {
+		t.Fatalf("progress updates = %#v", updates)
+	}
+	if updates[0].CompletedPieces != 0 || updates[0].TotalPieces != 1 || updates[0].Percent != 0 {
+		t.Fatalf("running progress = %#v", updates[0])
+	}
+	if updates[1].CompletedPieces != 1 || updates[1].TotalPieces != 1 || updates[1].Percent != 100 {
+		t.Fatalf("terminal progress = %#v", updates[1])
+	}
 }
 
 func (d barrierPlanDefinition) Name() string { return d.name }
@@ -131,6 +154,287 @@ type canceledPreparationDefinition struct {
 	name    string
 	started chan<- struct{}
 	wait    <-chan struct{}
+}
+
+type retainedProjectionDefinition struct {
+	name           string
+	prepared       *atomic.Int32
+	submitted      *atomic.Int32
+	input          chan<- PreparationInput
+	artifactPolicy *UploadArtifactPolicy
+}
+
+func (d retainedProjectionDefinition) Name() string { return d.name }
+
+func (retainedProjectionDefinition) UploadContentMode() UploadContentMode {
+	return UploadContentModeNone
+}
+
+func (retainedProjectionDefinition) DefaultBaseURL() string { return "https://tracker.example.invalid" }
+
+func (d retainedProjectionDefinition) UploadArtifactPolicy() *UploadArtifactPolicy {
+	return d.artifactPolicy
+}
+
+func (d retainedProjectionDefinition) Prepare(ctx context.Context, input PreparationInput) (TrackerPlan, *PreparationFailure) {
+	d.prepared.Add(1)
+	return prepareTestDefinition(ctx, input, d)
+}
+
+func (d retainedProjectionDefinition) prepareDryRun(_ context.Context, input PreparationInput) (api.TrackerDryRunEntry, error) {
+	releaseName, err := input.ReviewedUploadName()
+	if err != nil {
+		return api.TrackerDryRunEntry{}, err
+	}
+	return api.TrackerDryRunEntry{
+		Tracker:           d.name,
+		Status:            "ready",
+		UploadReleaseName: releaseName,
+		ReleaseName:       releaseName,
+		Payload:           map[string]string{"name": releaseName, "api_token": "private"},
+	}, nil
+}
+
+//nolint:unparam // Error is required by the tracker submission callback contract.
+func (d retainedProjectionDefinition) submit(_ context.Context, input PreparationInput) (api.UploadSummary, error) {
+	d.submitted.Add(1)
+	d.input <- input
+	return api.UploadSummary{
+		Uploaded: 1,
+		UploadedTorrents: []api.UploadedTorrent{{
+			Tracker:    d.name,
+			TorrentID:  "123",
+			TorrentURL: "https://tracker.example.invalid/torrents/123",
+		}},
+	}, nil
+}
+
+func TestRetainedUploadPlanExecutesExactReviewedProjectionWithoutRepreparing(t *testing.T) {
+	t.Parallel()
+
+	var prepared atomic.Int32
+	var submitted atomic.Int32
+	inputs := make(chan PreparationInput, 1)
+	registry := NewRegistry()
+	if err := registry.Register(retainedProjectionDefinition{
+		name:      "EXAMPLE",
+		prepared:  &prepared,
+		submitted: &submitted,
+		input:     inputs,
+	}); err != nil {
+		t.Fatalf("register retained definition: %v", err)
+	}
+	service := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	projection := api.TrackerReleaseProjection{
+		TrackerID:         "EXAMPLE",
+		UploadReleaseName: "Example.Release.2026.REVIEWED-GRP",
+		Readiness:         api.ReadinessStatusReady,
+		UploadReady:       true,
+	}
+	retained, err := service.PrepareRetainedUploadPlan(
+		context.Background(),
+		api.UploadSubject{SourcePath: "Example.Release.2026", ReleaseName: "Example.Release.2026.ORIGINAL-GRP"},
+		[]api.TrackerReleaseProjection{projection},
+	)
+	if err != nil {
+		t.Fatalf("prepare retained upload plan: %v", err)
+	}
+	preparations := retained.Preparations()
+	if prepared.Load() != 1 || submitted.Load() != 0 || len(preparations) != 1 ||
+		preparations[0].Preview.UploadReleaseName != projection.UploadReleaseName {
+		t.Fatalf("retained preparation = %#v prepared=%d submitted=%d", preparations, prepared.Load(), submitted.Load())
+	}
+	results, err := retained.Execute(context.Background())
+	if err != nil {
+		t.Fatalf("execute retained upload plan: %v", err)
+	}
+	if prepared.Load() != 1 || submitted.Load() != 1 || len(results) != 1 || results[0].Summary.Uploaded != 1 {
+		t.Fatalf("retained execution = %#v prepared=%d submitted=%d", results, prepared.Load(), submitted.Load())
+	}
+	input := <-inputs
+	if input.Projection == nil || input.Meta.ReleaseName != "Example.Release.2026.ORIGINAL-GRP" {
+		t.Fatalf("executed input = %#v", input)
+	}
+	if _, err := retained.Execute(context.Background()); !errors.Is(err, ErrPlanReleased) && !errors.Is(err, ErrPlanAlreadyUsed) {
+		t.Fatalf("second retained execution error = %v", err)
+	}
+}
+
+func TestRetainedUploadPlanRejectsStaleReleaseNamePolicyTrackerLocally(t *testing.T) {
+	t.Parallel()
+
+	var prepared atomic.Int32
+	registry := NewRegistry()
+	if err := registry.Register(retainedProjectionDefinition{
+		name:      "EXAMPLE",
+		prepared:  &prepared,
+		submitted: &atomic.Int32{},
+		input:     make(chan PreparationInput, 1),
+	}); err != nil {
+		t.Fatalf("register retained definition: %v", err)
+	}
+	service := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	retained, err := service.PrepareRetainedUploadPlan(
+		context.Background(),
+		api.UploadSubject{SourcePath: "Example.Release.2026", ReleaseName: "Example.Release.2026-GRP"},
+		[]api.TrackerReleaseProjection{{
+			TrackerID:            "EXAMPLE",
+			UploadReleaseName:    "Example.Release.2026-GRP",
+			Readiness:            api.ReadinessStatusReady,
+			UploadReady:          true,
+			ProjectorFingerprint: "projection-v1",
+			PolicyDecisions: []api.TrackerPolicyDecision{
+				{Code: releaseNamePolicyDecisionCode, Decision: "standalone/example/v0"},
+				{Code: releaseNameInstructionCode, Decision: "automatic"},
+			},
+		}},
+	)
+	if err != nil {
+		t.Fatalf("prepare retained upload plan: %v", err)
+	}
+	preparations := retained.Preparations()
+	if len(preparations) != 1 || preparations[0].Failure == nil || preparations[0].Failure.Code != "name_policy_stale" {
+		t.Fatalf("retained preparation = %#v", preparations)
+	}
+	if prepared.Load() != 0 {
+		t.Fatalf("tracker prepared after stale naming policy: %d", prepared.Load())
+	}
+}
+
+func TestRetainedUploadPlanPublishesExactDistinctTrackerArtifacts(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "Example.Release.2026.mkv")
+	baseTorrentPath := filepath.Join(tmp, "release.torrent")
+	createServiceTestTorrent(t, sourcePath, baseTorrentPath)
+	registry := NewRegistry()
+	var prepared atomic.Int32
+	var submitted atomic.Int32
+	for _, definition := range []Definition{
+		retainedProjectionDefinition{
+			name:           "ALPHA",
+			prepared:       &prepared,
+			submitted:      &submitted,
+			artifactPolicy: &UploadArtifactPolicy{Source: "AlphaSource"},
+		},
+		retainedProjectionDefinition{
+			name:           "BETA",
+			prepared:       &prepared,
+			submitted:      &submitted,
+			artifactPolicy: &UploadArtifactPolicy{Source: "BetaSource"},
+		},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register retained definition: %v", err)
+		}
+	}
+	service := NewServiceWithRegistry(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "upbrr.db")}}, nil, nil, registry)
+	projections := []api.TrackerReleaseProjection{
+		{
+			TrackerID:         "ALPHA",
+			UploadReleaseName: "Example.Release.2026.ALPHA-GRP",
+			Readiness:         api.ReadinessStatusReady,
+			UploadReady:       true,
+		},
+		{
+			TrackerID:         "BETA",
+			UploadReleaseName: "Example.Release.2026.BETA-GRP",
+			Readiness:         api.ReadinessStatusReady,
+			UploadReady:       true,
+		},
+	}
+	retained, err := service.PrepareRetainedUploadPlan(
+		context.Background(),
+		api.UploadSubject{
+			SourcePath:  sourcePath,
+			TorrentPath: baseTorrentPath,
+			ReleaseName: "Example.Release.2026-GRP",
+		},
+		projections,
+	)
+	if err != nil {
+		t.Fatalf("prepare retained upload plan: %v", err)
+	}
+	defer func() { _ = retained.Release() }()
+	preparations := retained.Preparations()
+	if len(preparations) != 2 {
+		t.Fatalf("retained preparations = %d", len(preparations))
+	}
+	if preparations[0].TorrentPath == "" || preparations[1].TorrentPath == "" || preparations[0].TorrentPath == preparations[1].TorrentPath {
+		t.Fatalf("retained tracker artifact paths = %q, %q", preparations[0].TorrentPath, preparations[1].TorrentPath)
+	}
+	assertTrackerArtifact(t, preparations[0].TorrentPath, "", "AlphaSource")
+	assertTrackerArtifact(t, preparations[1].TorrentPath, "", "BetaSource")
+	if prepared.Load() != 2 || submitted.Load() != 0 {
+		t.Fatalf("prepared=%d submitted=%d", prepared.Load(), submitted.Load())
+	}
+}
+
+func TestRetainedUploadPlanKeepsArtifactFailureTrackerLocal(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "Example.Release.2026.mkv")
+	baseTorrentPath := filepath.Join(tmp, "release.torrent")
+	createServiceTestTorrent(t, sourcePath, baseTorrentPath)
+	registry := NewRegistry()
+	var prepared atomic.Int32
+	var submitted atomic.Int32
+	for _, definition := range []Definition{
+		retainedProjectionDefinition{
+			name:           "ALPHA",
+			prepared:       &prepared,
+			submitted:      &submitted,
+			artifactPolicy: &UploadArtifactPolicy{Source: "AlphaSource", RequireAnnounce: true},
+		},
+		retainedProjectionDefinition{
+			name:           "BETA",
+			prepared:       &prepared,
+			submitted:      &submitted,
+			artifactPolicy: &UploadArtifactPolicy{Source: "BetaSource"},
+		},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register retained definition: %v", err)
+		}
+	}
+	service := NewServiceWithRegistry(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "upbrr.db")}}, nil, nil, registry)
+	retained, err := service.PrepareRetainedUploadPlan(
+		context.Background(),
+		api.UploadSubject{
+			SourcePath:  sourcePath,
+			TorrentPath: baseTorrentPath,
+			ReleaseName: "Example.Release.2026-GRP",
+		},
+		[]api.TrackerReleaseProjection{
+			{
+				TrackerID:         "ALPHA",
+				UploadReleaseName: "Example.Release.2026.ALPHA-GRP",
+				Readiness:         api.ReadinessStatusReady,
+				UploadReady:       true,
+			},
+			{
+				TrackerID:         "BETA",
+				UploadReleaseName: "Example.Release.2026.BETA-GRP",
+				Readiness:         api.ReadinessStatusReady,
+				UploadReady:       true,
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("prepare retained upload plan: %v", err)
+	}
+	defer func() { _ = retained.Release() }()
+	preparations := retained.Preparations()
+	if len(preparations) != 2 || preparations[0].Failure == nil ||
+		!strings.Contains(preparations[0].Failure.Message, "required announce URL is missing") {
+		t.Fatalf("required-announce preparation = %#v", preparations)
+	}
+	if preparations[1].Failure != nil || preparations[1].TorrentPath == "" {
+		t.Fatalf("unrelated tracker preparation = %#v", preparations[1])
+	}
+	assertTrackerArtifact(t, preparations[1].TorrentPath, "", "BetaSource")
 }
 
 func (d canceledPreparationDefinition) Name() string { return d.name }

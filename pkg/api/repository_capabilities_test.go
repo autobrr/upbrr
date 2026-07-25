@@ -67,6 +67,7 @@ func TestRepositoryCapabilityInterfacesDoNotExposeLifecycleOrSQL(t *testing.T) {
 		reflect.TypeFor[UploadLedgerRepository](),
 		reflect.TypeFor[TrackerStateRepository](),
 		reflect.TypeFor[MediaAssetRepository](),
+		reflect.TypeFor[ReleaseWorkflowStateRepository](),
 		reflect.TypeFor[ScreenshotLifecycleRepository](),
 	}
 	for _, interfaceType := range interfaces {

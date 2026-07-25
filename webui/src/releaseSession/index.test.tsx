@@ -4,24 +4,19 @@
 import type { ReactNode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { JobRegistryProvider } from "../jobRegistry";
-import type { JobRegistryTransport } from "../jobRegistry";
-import type {
-  DescriptionBuilderPreview,
-  DVDMenuCaptureResult,
-  MetadataPreview,
-  OwnerJobSnapshot,
-  PlaylistInfo,
-  ScreenshotPlan,
-} from "../types";
+import type { MetadataPreview, PrepareInput } from "../types";
 import { emptyExternalIdentity } from "../utils/canonicalIdentity";
-import {
-  ReleaseSessionProvider,
-  routeAccess,
-  trackerWorkflowRequirements,
-  useReleaseSession,
-} from ".";
-import type { PreparationCommand, ReleaseSessionPorts } from "./ports";
+import type {
+  ContinueReleaseWorkflowRequest,
+  DescriptionInstructions,
+  DupeDecision,
+  MediaCaptureInstructions,
+  ReleaseWorkflowCurrent,
+  TrackerProjectionInstructions,
+  WorkflowContinuation,
+} from "../api/generated/release-workflow";
+import { ReleaseSessionProvider, routeAccess, useReleaseSession } from ".";
+import type { ReleaseSessionPorts } from "./ports";
 
 const preview = (sourcePath: string, generation: number): MetadataPreview => ({
   SourcePath: sourcePath,
@@ -36,120 +31,6 @@ const preview = (sourcePath: string, generation: number): MetadataPreview => ({
   TrackerData: [],
 });
 
-const screenshotPlan = (sourcePath: string): ScreenshotPlan => ({
-  SourcePath: sourcePath,
-  DiscType: "",
-  DurationSeconds: 60,
-  FrameRate: 24,
-  SuggestedSelections: [],
-  ExistingScreenshots: [],
-  ExistingTrackerScreenshots: [],
-  FinalSelections: [],
-  TrackerImageLinks: [],
-  PreviewImages: [],
-  MetadataTimestamp: "",
-  RequiresManualFrames: false,
-});
-
-const dvdCaptureResult = (sourcePath: string): DVDMenuCaptureResult => ({
-  SourcePath: sourcePath,
-  Images: [],
-  SelectedLanguage: "en",
-  Region: 0,
-  DiscoveredMenus: 0,
-  VisitedStates: 0,
-  VisitedButtons: 0,
-  MaxItems: 6,
-  Complete: true,
-  Partial: false,
-  Truncated: false,
-  Warnings: [],
-  Engine: {
-    EngineVersion: "test",
-    SchemaVersion: 1,
-    SupportedFeatures: [],
-    FFmpegVersion: "test",
-    FFmpegDVDVideo: true,
-    MissingFFmpegOptions: [],
-  },
-});
-
-const completedDupeJob = (
-  sourcePath: string,
-  generation: number,
-  trackers: readonly string[] = ["AITHER"],
-): Extract<OwnerJobSnapshot, { kind: "duplicate_check" }> => ({
-  kind: "duplicate_check",
-  jobID: "dupe-job",
-  correlationID: "dupe-correlation",
-  release: { SourcePath: sourcePath, Generation: generation },
-  status: "completed",
-  startedAt: "2026-07-15T00:00:00Z",
-  finishedAt: "2026-07-15T00:00:01Z",
-  dupe: {
-    jobID: "dupe-job",
-    correlationID: "dupe-correlation",
-    release: { SourcePath: sourcePath, Generation: generation },
-    runtimeGeneration: 1,
-    status: "completed",
-    trackers: [],
-    completedCount: trackers.length,
-    totalCount: trackers.length,
-    summary: {
-      SourcePath: sourcePath,
-      Results: [],
-      Notes: [],
-      Eligibility: {
-        Release: { SourcePath: sourcePath, Generation: generation },
-        Trackers: trackers.map((tracker) => ({
-          Tracker: tracker,
-          Eligible: true,
-          Reasons: [],
-          RuleDecisions: [],
-        })),
-        EligibleTrackers: [...trackers],
-      },
-    },
-    startedAt: "2026-07-15T00:00:00Z",
-    finishedAt: "2026-07-15T00:00:01Z",
-  },
-});
-
-const runningDupeJob = (
-  sourcePath: string,
-  generation: number,
-  trackers: readonly string[] = ["AITHER"],
-): Extract<OwnerJobSnapshot, { kind: "duplicate_check" }> => {
-  const completed = completedDupeJob(sourcePath, generation, trackers);
-  return {
-    ...completed,
-    status: "running",
-    finishedAt: "",
-    dupe: {
-      ...completed.dupe,
-      status: "running",
-      trackers: trackers.map((tracker) => ({
-        tracker,
-        status: "running",
-        message: "checking tracker auth",
-        result: {} as never,
-        startedAt: completed.startedAt,
-        finishedAt: "",
-      })),
-      completedCount: 0,
-      summary: {
-        ...completed.dupe.summary,
-        Eligibility: {
-          Release: completed.release,
-          Trackers: [],
-          EligibleTrackers: [],
-        },
-      },
-      finishedAt: "",
-    },
-  };
-};
-
 const createDeferred = <T,>() => {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((resolvePromise) => {
@@ -158,131 +39,523 @@ const createDeferred = <T,>() => {
   return { promise, resolve };
 };
 
-const defaultJobTransport = (): JobRegistryTransport => ({
-  list: async () => [],
-  subscribe: () => () => undefined,
-  startDupe: async () => "dupe-job",
-  startUpload: async () => "upload-job",
-  retryUpload: async () => "retry-job",
-  cancelDupe: async () => undefined,
-  cancelUpload: async () => undefined,
-});
-
 type PortOverrides = Readonly<{
-  prepare?: ReleaseSessionPorts["preparation"]["execute"];
-  detectDiscType?: ReleaseSessionPorts["preparation"]["detectDiscType"];
-  discoverPlaylists?: ReleaseSessionPorts["preparation"]["discoverPlaylists"];
-  screenshotsLoad?: ReleaseSessionPorts["screenshots"]["load"];
-  screenshotsGenerate?: ReleaseSessionPorts["screenshots"]["generate"];
-  screenshotsSaveFinal?: ReleaseSessionPorts["screenshots"]["saveFinal"];
-  uploadedImagesListCandidates?: ReleaseSessionPorts["uploadedImages"]["listCandidates"];
-  uploadedImagesListUploaded?: ReleaseSessionPorts["uploadedImages"]["listUploaded"];
-  uploadedImagesUpload?: ReleaseSessionPorts["uploadedImages"]["upload"];
-  descriptionsLoad?: ReleaseSessionPorts["descriptions"]["load"];
-  menuCapture?: ReleaseSessionPorts["menuImages"]["capture"];
-  dryRun?: ReleaseSessionPorts["upload"]["dryRun"];
-  review?: ReleaseSessionPorts["upload"]["review"];
+  workflow?: ReleaseSessionPorts["workflow"];
 }>;
 
 const portsFor = (overrides: PortOverrides = {}): ReleaseSessionPorts => {
-  const execute = overrides.prepare ?? (async (command) => preview(command.sourcePath, 1));
   return {
-    preparation: {
-      detectDiscType: overrides.detectDiscType ?? (async () => ""),
-      discoverPlaylists: overrides.discoverPlaylists ?? (async () => []),
-      execute,
-    },
-    screenshots: {
-      load: overrides.screenshotsLoad ?? (async (release) => screenshotPlan(release.SourcePath)),
-      generate:
-        overrides.screenshotsGenerate ??
-        (async (release, _selections, purpose) => ({
-          SourcePath: release.SourcePath,
-          Purpose: purpose,
-          Images: [],
-          Tonemapped: false,
-          UsedLibplacebo: false,
-          Errors: [],
-        })),
-      previewFrame: async () => "data:image/png;base64,example",
-      remove: async () => undefined,
-      removeTrackerURL: async () => undefined,
-      saveFinal: overrides.screenshotsSaveFinal ?? (async () => undefined),
-      readImage: async () => "data:image/png;base64,example",
-    },
-    menuImages: {
-      list: async () => [],
-      readImage: async () => "data:image/png;base64,example",
-      importPaths: async () => undefined,
-      capture: overrides.menuCapture ?? (async (release) => dvdCaptureResult(release.SourcePath)),
-      remove: async () => undefined,
-    },
-    uploadedImages: {
-      listCandidates: overrides.uploadedImagesListCandidates ?? (async () => []),
-      readImage: async () => "",
-      listUploaded: overrides.uploadedImagesListUploaded ?? (async () => []),
-      upload: overrides.uploadedImagesUpload ?? (async () => ({ Links: [], Failures: [] })),
-      remove: async () => undefined,
-    },
+    workflow: overrides.workflow ?? workflowPorts(),
     descriptions: {
-      load:
-        overrides.descriptionsLoad ??
-        (async (release): Promise<DescriptionBuilderPreview> => ({
-          SourcePath: release.SourcePath,
-          Groups: [],
-          ContentFailures: [],
-        })),
       render: async (raw) => raw,
-      save: async (_release, groupKey, raw, trackers) => ({
-        GroupKey: groupKey,
-        Trackers: [...trackers],
-        Description: raw,
-        DescriptionHTML: raw,
-        RawDescription: raw,
-        RawDescriptionHTML: raw,
-        HasOverride: Boolean(raw),
-        ImageHost: {
-          Status: "",
-          Message: "",
-          Warnings: [],
-          Reuploaded: false,
-          SelectedHost: "",
-          AllowedHosts: [],
-        },
-      }),
-    },
-    upload: {
-      dryRun:
-        overrides.dryRun ??
-        (async (command) => ({ SourcePath: command.release.SourcePath, Trackers: [] })),
-      review:
-        overrides.review ??
-        (async (command) => ({
-          Review: {
-            SourcePath: command.release.SourcePath,
-            Trackers: [],
-            Eligibility: {
-              Release: command.release,
-              Trackers: [],
-              EligibleTrackers: [...command.trackers],
-            },
-          },
-          Token: "review-token",
-        })),
     },
   };
 };
 
-const wrapperFor = (
-  ports: ReleaseSessionPorts,
-  jobTransport: JobRegistryTransport = defaultJobTransport(),
-) =>
+const workflowCurrent = (workflowID: string, revision: number): ReleaseWorkflowCurrent => ({
+  continuation: {
+    lifecycle: revision > 1 ? "ready" : "waiting",
+    disposition: "none",
+    refs: {},
+    availableGoals: [
+      "prepared",
+      "trackers_assessed",
+      "duplicates_decided",
+      "media_ready",
+      "descriptions_ready",
+      "upload_reviewed",
+      "dry_run",
+      "uploaded",
+    ].map((goal) => ({ goal, available: revision > 1 })),
+  },
+  workflow: {
+    id: workflowID,
+    revision,
+    factInstructions: { id: `${workflowID}-facts`, revision: 1 },
+    status: revision > 1 ? "active" : "draft",
+    createdAt: "2026-07-20T00:00:00Z",
+    updatedAt: "2026-07-20T00:00:00Z",
+  },
+  factInstructions: {
+    id: `${workflowID}-facts`,
+    workflowId: workflowID,
+    revision: 1,
+    instructions: {
+      Identity: {},
+      ReleaseName: {},
+      Metadata: {},
+      SourceLookup: "",
+      BlurayReleaseID: "",
+      Playlist: { Set: false, Selected: [], UseAll: false },
+      TrackerIDs: {},
+    },
+    fingerprint: "0".repeat(64),
+    createdAt: "2026-07-20T00:00:00Z",
+  },
+});
+
+type WorkflowStageFixtures = Readonly<{
+  create(
+    instructions: PrepareInput["Instructions"],
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
+  prepare(
+    current: ReleaseWorkflowCurrent,
+    input: PrepareInput,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
+  selectCandidate(
+    current: ReleaseWorkflowCurrent,
+    releaseID: string,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
+  replaceFacts(
+    current: ReleaseWorkflowCurrent,
+    instructions: PrepareInput["Instructions"],
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
+  project(
+    current: ReleaseWorkflowCurrent,
+    trackers: readonly string[],
+    instructions: Readonly<Record<string, TrackerProjectionInstructions>>,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
+  preflight(
+    current: ReleaseWorkflowCurrent,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
+  checkDuplicates(
+    current: ReleaseWorkflowCurrent,
+    skipRemote: boolean,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
+  decideDuplicates(
+    current: ReleaseWorkflowCurrent,
+    decisions: Readonly<Record<string, DupeDecision>>,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
+  captureMedia(
+    current: ReleaseWorkflowCurrent,
+    command: MediaCaptureInstructions,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
+  generateDescriptions(
+    current: ReleaseWorkflowCurrent,
+    command: DescriptionInstructions,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
+  dryRunUploads(
+    current: ReleaseWorkflowCurrent,
+    noSeed: boolean,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
+  executeUploads(
+    current: ReleaseWorkflowCurrent,
+    noSeed: boolean,
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
+}>;
+
+type TestWorkflowPorts = ReleaseSessionPorts["workflow"] & WorkflowStageFixtures;
+
+const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflowPorts => {
+  const currentByWorkflow = new Map<string, ReleaseWorkflowCurrent>();
+  const continuationStep = new Map<string, number>();
+  const pendingPreparation = new Set<string>();
+  let activePorts!: TestWorkflowPorts;
+  const remember = (current: ReleaseWorkflowCurrent) => {
+    currentByWorkflow.set(current.workflow.id, current);
+    return current;
+  };
+  const continueWorkflow = async (
+    request: ContinueReleaseWorkflowRequest,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent> => {
+    const workflowID = request.authority?.workflowId || "workflow-new";
+    let current =
+      currentByWorkflow.get(workflowID) || (await activePorts.current(workflowID, signal));
+    const progressKey = `${workflowID}\u0000${request.idempotencyKey}`;
+    const step = continuationStep.get(progressKey) || 0;
+    let next = current;
+
+    switch (request.goal) {
+      case "prepared":
+        if (!request.authority && step === 0) {
+          const instructions =
+            request.intent.factInstructions || request.intent.preparation?.Instructions;
+          if (instructions) {
+            next = await activePorts.create(
+              instructions as PrepareInput["Instructions"],
+              request.idempotencyKey,
+              signal,
+            );
+            pendingPreparation.add(`${next.workflow.id}\u0000${request.idempotencyKey}`);
+          }
+        } else if (
+          request.authority &&
+          request.intent.preparation &&
+          (step === 0 || pendingPreparation.has(progressKey))
+        ) {
+          pendingPreparation.delete(progressKey);
+          next = await activePorts.prepare(
+            current,
+            request.intent.preparation as PrepareInput,
+            request.idempotencyKey,
+            signal,
+          );
+        }
+        break;
+      case "trackers_assessed":
+        if (step === 0) {
+          next = await activePorts.project(
+            current,
+            request.intent.trackerIds || [],
+            request.intent.projectionInstructions || {},
+            request.idempotencyKey,
+            signal,
+          );
+        } else if (step === 1) {
+          next = await activePorts.preflight(current, request.idempotencyKey, signal);
+        }
+        break;
+      case "duplicates_decided":
+        if (step === 0) {
+          next = await activePorts.project(
+            current,
+            request.intent.trackerIds || [],
+            request.intent.projectionInstructions || {},
+            request.idempotencyKey,
+            signal,
+          );
+        } else if (step === 1) {
+          next = await activePorts.preflight(current, request.idempotencyKey, signal);
+        } else if (step === 2) {
+          next = await activePorts.checkDuplicates(
+            current,
+            request.intent.skipRemoteDuplicates || false,
+            request.idempotencyKey,
+            signal,
+          );
+        } else if (
+          step === 3 &&
+          request.intent.duplicateDecisions &&
+          Object.keys(request.intent.duplicateDecisions).length > 0
+        ) {
+          next = await activePorts.decideDuplicates(
+            current,
+            request.intent.duplicateDecisions,
+            request.idempotencyKey,
+            signal,
+          );
+        }
+        break;
+      case "media_ready":
+        if (step === 0 && request.intent.media) {
+          next = await activePorts.captureMedia(
+            current,
+            request.intent.media,
+            request.idempotencyKey,
+            signal,
+          );
+        }
+        break;
+      case "descriptions_ready":
+        if (step === 0 && request.intent.descriptions) {
+          next = await activePorts.generateDescriptions(
+            current,
+            request.intent.descriptions,
+            request.idempotencyKey,
+            signal,
+          );
+        }
+        break;
+      case "dry_run":
+        if (step === 0) {
+          next = await activePorts.dryRunUploads(
+            current,
+            request.intent.noSeed || false,
+            request.idempotencyKey,
+            signal,
+          );
+          if (!next.dryRun) {
+            const revision = Math.max(next.workflow.revision, current.workflow.revision + 1);
+            const action = {
+              id: `${workflowID}-approve-upload`,
+              kind: "approve_upload",
+              prompt: "Approve exact upload.",
+              status: "pending",
+              workflowRevision: revision,
+              createdAt: "2026-07-20T00:00:00Z",
+            };
+            next = {
+              ...next,
+              workflow: {
+                ...next.workflow,
+                revision,
+                dryRun: { id: `${workflowID}-dry-run`, revision },
+                requiredActions: [action],
+              },
+              continuation: { ...next.continuation, requiredActions: [action] },
+              dryRun: {
+                id: `${workflowID}-dry-run`,
+                workflowId: workflowID,
+                revision,
+                projectionSet: { id: `${workflowID}-projections`, revision: 1 },
+                dupes: { id: `${workflowID}-dupes`, revision: 1 },
+                media: { id: `${workflowID}-media`, revision: 1 },
+                descriptions: { id: `${workflowID}-descriptions`, revision: 1 },
+                inputFingerprint: "2".repeat(64),
+                noSeed: request.intent.noSeed || false,
+                reports: [],
+                succeededCount: 0,
+                failedCount: 0,
+                skippedCount: 0,
+                status: "skipped",
+                createdAt: "2026-07-20T00:00:00Z",
+              },
+            } as unknown as ReleaseWorkflowCurrent;
+          }
+        }
+        break;
+      case "uploaded":
+        if (step === 0) {
+          next = await activePorts.executeUploads(
+            current,
+            request.intent.noSeed || false,
+            request.idempotencyKey,
+            signal,
+          );
+        }
+        break;
+    }
+
+    continuationStep.set(progressKey, step + 1);
+    current = remember(next);
+    return current;
+  };
+  const basePorts: TestWorkflowPorts = {
+    continue: continueWorkflow,
+    create: async () => workflowCurrent("workflow-new", 1),
+    current: async (workflowID) => workflowCurrent(workflowID, 1),
+    operation: async (workflowID, operationID) => ({
+      id: operationID,
+      workflowId: workflowID,
+      revision: 1,
+      sequence: 1,
+      command: "fixture",
+      operation: "preparation",
+      status: "completed",
+      progress: 100,
+      completed: 1,
+      total: 1,
+      startedAt: "2026-07-20T00:00:00Z",
+      updatedAt: "2026-07-20T00:00:01Z",
+    }),
+    cancelOperation: async (workflowID, operationID) => ({
+      id: operationID,
+      workflowId: workflowID,
+      revision: 1,
+      sequence: 1,
+      command: "fixture",
+      operation: "preparation",
+      status: "canceled",
+      progress: 0,
+      completed: 0,
+      total: 1,
+      startedAt: "2026-07-20T00:00:00Z",
+      updatedAt: "2026-07-20T00:00:01Z",
+    }),
+    prepare: async (current, input) =>
+      workflowCurrentFromPreview(
+        workflowCurrent(current.workflow.id, current.workflow.revision + 1),
+        preview(input.SourcePath, current.workflow.revision + 1),
+      ),
+    selectCandidate: async (current) =>
+      workflowCurrent(current.workflow.id, current.workflow.revision + 1),
+    replaceFacts: async (current) => current,
+    project: async (current, trackers) => ({
+      ...current,
+      workflow: {
+        ...current.workflow,
+        revision: current.workflow.revision + 1,
+        trackerProjections: {
+          id: `${current.workflow.id}-projections`,
+          revision: current.workflow.revision + 1,
+        },
+      },
+      projections: {
+        status: "ready",
+        projections: trackers.map((trackerId) => ({
+          trackerId,
+          displayName: trackerId,
+          canonicalReleaseName: "Example Release 2026 1080p-GRP",
+          uploadReleaseName: "Example.Release.2026.1080p-GRP",
+          artifacts: {
+            screenshotCount: 1,
+            dvdMenuCount: 1,
+            imageHosting: true,
+            description: true,
+          },
+          policyDecisions: [],
+          readiness: "ready",
+        })),
+      } as unknown as NonNullable<ReleaseWorkflowCurrent["projections"]>,
+    }),
+    preflight: async (current) => ({
+      ...current,
+      workflow: {
+        ...current.workflow,
+        revision: current.workflow.revision + 1,
+        trackerPreflight: {
+          id: `${current.workflow.id}-preflight`,
+          revision: current.workflow.revision + 1,
+        },
+      },
+      preflight: {
+        status: "ready",
+        results: (current.projections?.projections || []).map((projection) => ({
+          trackerId: projection.trackerId,
+          state: "ready",
+        })),
+      } as unknown as NonNullable<ReleaseWorkflowCurrent["preflight"]>,
+    }),
+    checkDuplicates: async (current) => ({
+      ...current,
+      workflow: {
+        ...current.workflow,
+        revision: current.workflow.revision + 1,
+        dupes: {
+          id: `${current.workflow.id}-dupes`,
+          revision: current.workflow.revision + 1,
+        },
+      },
+      dupes: {
+        status: "completed",
+        results: (current.projections?.projections || []).map((projection) => ({
+          trackerId: projection.trackerId,
+          uploadReleaseName: projection.uploadReleaseName,
+          matches: [],
+          decision: "no_match",
+          status: "completed",
+        })),
+      } as unknown as NonNullable<ReleaseWorkflowCurrent["dupes"]>,
+    }),
+    decideDuplicates: async (current) => current,
+    captureMedia: async (current) => current,
+    mediaPlan: async (workflowID) =>
+      ({
+        id: `${workflowID}-media-plan`,
+        workflowId: workflowID,
+        revision: 1,
+        release: { id: `${workflowID}-release`, revision: 1 },
+        projectionSet: { id: `${workflowID}-projections`, revision: 1 },
+        durationSeconds: 120,
+        frameRate: 24,
+        suggestedSelections: [],
+        createdAt: "2026-07-20T00:00:00Z",
+      }) as Awaited<ReturnType<ReleaseSessionPorts["workflow"]["mediaPlan"]>>,
+    previewFrame: async (current, timestampSeconds) => ({
+      id: "preview-1",
+      workflowId: current.workflow.id,
+      workflowRevision: current.workflow.revision,
+      release: current.workflow.release!,
+      timestampSeconds,
+      contentUrl: "/preview/1",
+      expiresAt: "2026-07-20T01:00:00Z",
+    }),
+    setMediaSelection: async (current) => current,
+    reorderMedia: async (current) => current,
+    deleteMedia: async (current) => current,
+    stageMedia: async (_current, file) => ({
+      id: `resource-${file.name}`,
+      contentType: file.type,
+      sizeBytes: file.size,
+    }),
+    attachMedia: async (current) => current,
+    uploadImages: async (current) => current,
+    retryImageHost: async (current) => current,
+    removeHostedImages: async (current) => current,
+    mediaURL: (_current, artifactID) => `/media/${artifactID}`,
+    generateDescriptions: async (current) => current,
+    saveDescriptionOverride: async (current) => current,
+    resetDescriptionOverride: async (current) => current,
+    dryRunUploads: async (current) => current,
+    executeUploads: async (current) => current,
+    retryFailedUploads: async (current) => current,
+    cancel: async (workflowID) => workflowCurrent(workflowID, 2),
+    invalidateTrackers: async (current) => current,
+  };
+  const configured = Object.assign(basePorts, overrides);
+  activePorts = {
+    ...configured,
+    continue: overrides.continue || continueWorkflow,
+    create: async (...args) => remember(await configured.create(...args)),
+    current: async (...args) => remember(await configured.current(...args)),
+    prepare: async (...args) => remember(await configured.prepare(...args)),
+    selectCandidate: async (...args) => remember(await configured.selectCandidate(...args)),
+    replaceFacts: async (...args) => remember(await configured.replaceFacts(...args)),
+    setMediaSelection: async (...args) => remember(await configured.setMediaSelection(...args)),
+    reorderMedia: async (...args) => remember(await configured.reorderMedia(...args)),
+    deleteMedia: async (...args) => remember(await configured.deleteMedia(...args)),
+    attachMedia: async (...args) => remember(await configured.attachMedia(...args)),
+    uploadImages: async (...args) => remember(await configured.uploadImages(...args)),
+    retryImageHost: async (...args) => remember(await configured.retryImageHost(...args)),
+    removeHostedImages: async (...args) => remember(await configured.removeHostedImages(...args)),
+    saveDescriptionOverride: async (...args) =>
+      remember(await configured.saveDescriptionOverride(...args)),
+    resetDescriptionOverride: async (...args) =>
+      remember(await configured.resetDescriptionOverride(...args)),
+    retryFailedUploads: async (...args) => remember(await configured.retryFailedUploads(...args)),
+    cancel: async (...args) => remember(await configured.cancel(...args)),
+    invalidateTrackers: async (...args) => remember(await configured.invalidateTrackers(...args)),
+  };
+  return activePorts;
+};
+
+const workflowCurrentFromPreview = (
+  current: ReleaseWorkflowCurrent,
+  value: MetadataPreview,
+): ReleaseWorkflowCurrent =>
+  ({
+    ...current,
+    workflow: {
+      ...current.workflow,
+      release: { id: `${current.workflow.id}-release`, revision: current.workflow.revision },
+    },
+    release: {
+      id: `${current.workflow.id}-release`,
+      workflowId: current.workflow.id,
+      revision: current.workflow.revision,
+      factInstructions: current.workflow.factInstructions,
+      release: {
+        Generation: value.Release.Generation,
+        Source: { SourcePath: value.SourcePath },
+        Naming: { ReleaseName: value.ReleaseName },
+        Identity: value.Identity,
+        ProviderMetadata: { Bluray: value.Bluray },
+      },
+      display: { ...value.Display, TrackerData: value.TrackerData },
+      diagnostics: value.Diagnostics,
+      fingerprint: "1".repeat(64),
+      createdAt: "2026-07-20T00:00:00Z",
+    },
+  }) as unknown as ReleaseWorkflowCurrent;
+
+const wrapperFor = (ports: ReleaseSessionPorts) =>
   function Wrapper({ children }: Readonly<{ children: ReactNode }>) {
-    return (
-      <JobRegistryProvider ownerKey="test-owner" transport={jobTransport}>
-        <ReleaseSessionProvider ports={ports}>{children}</ReleaseSessionProvider>
-      </JobRegistryProvider>
-    );
+    return <ReleaseSessionProvider ports={ports}>{children}</ReleaseSessionProvider>;
   };
 
 const selectAndPrepare = async (
@@ -293,103 +566,771 @@ const selectAndPrepare = async (
   act(() => result.current.input.selectSource(sourcePath));
   act(() => result.current.upload.chooseTrackers(["AITHER"]));
   await act(() => result.current.input.prepare());
+  await act(() => result.current.duplicates.run());
 };
 
 describe("tracker workflow capabilities", () => {
-  const catalog = {
-    entries: [
-      {
-        name: "BTN",
-        family: "standalone",
-        baseURL: "https://btn.example.invalid",
-        uploadContentMode: "none" as const,
-        fields: [],
-        configured: true,
-      },
-      {
-        name: "ANT",
-        family: "standalone",
-        baseURL: "https://ant.example.invalid",
-        uploadContentMode: "screenshots" as const,
-        fields: [],
-        configured: true,
-      },
-      {
-        name: "AITHER",
-        family: "unit3d",
-        baseURL: "https://aither.example.invalid",
-        uploadContentMode: "description" as const,
-        fields: [],
-        configured: true,
-      },
-    ],
-    unsupported: [],
-  };
-
-  it("derives none, screenshot, mixed, and conservative unknown requirements", () => {
-    expect(trackerWorkflowRequirements(["BTN"], catalog)).toEqual({
-      needsImages: false,
-      needsDescriptions: false,
+  it("opens only applicable pages and keeps tracker-scoped content failures local", () => {
+    const available = (
+      overrides: Readonly<Record<string, boolean>> = {},
+    ): WorkflowContinuation => ({
+      lifecycle: "ready",
+      disposition: "none",
+      refs: {},
+      availableGoals: [
+        "trackers_assessed",
+        "media_ready",
+        "descriptions_ready",
+        "upload_reviewed",
+      ].map((goal) => ({
+        goal,
+        available: overrides[goal] ?? true,
+        reason: overrides[goal] === false ? `Backend blocked ${goal}.` : "",
+      })),
     });
-    expect(trackerWorkflowRequirements(["ANT"], catalog)).toEqual({
-      needsImages: true,
-      needsDescriptions: false,
-    });
-    expect(trackerWorkflowRequirements(["BTN", "AITHER"], catalog)).toEqual({
-      needsImages: true,
-      needsDescriptions: true,
-    });
-    expect(trackerWorkflowRequirements(["UNKNOWN"], catalog)).toEqual({
-      needsImages: true,
-      needsDescriptions: true,
-    });
-  });
-
-  it("opens only applicable pages and blocks retained content failures", () => {
-    const none = routeAccess(
-      true,
-      false,
-      true,
-      trackerWorkflowRequirements(["BTN"], catalog),
-      true,
-      false,
-      false,
-    );
+    const none = routeAccess(available(), false, { needsImages: false, needsDescriptions: false });
     expect(none.screenshots.available).toBe(false);
     expect(none.descriptions.available).toBe(false);
     expect(none.upload.available).toBe(true);
 
-    const screenshots = routeAccess(
-      true,
-      false,
-      true,
-      trackerWorkflowRequirements(["ANT"], catalog),
-      true,
-      true,
-      false,
-    );
+    const screenshots = routeAccess(available({ upload_reviewed: false }), false, {
+      needsImages: true,
+      needsDescriptions: false,
+    });
     expect(screenshots.screenshots.available).toBe(true);
     expect(screenshots.descriptions.available).toBe(false);
     expect(screenshots.upload.available).toBe(false);
-    expect(screenshots.upload.reason).toContain("screenshot preparation");
+    expect(screenshots.upload.reason).toBe("Backend blocked upload_reviewed.");
 
-    const description = routeAccess(
-      true,
-      false,
-      true,
-      trackerWorkflowRequirements(["AITHER"], catalog),
-      false,
-      false,
-      true,
-    );
+    const description = routeAccess(available(), false, {
+      needsImages: true,
+      needsDescriptions: true,
+    });
     expect(description.screenshots.available).toBe(true);
     expect(description.descriptions.available).toBe(true);
-    expect(description.upload.available).toBe(false);
-    expect(description.upload.reason).toContain("description preparation");
+    expect(description.upload.available).toBe(true);
+    expect(description.upload.reason).toBe("");
   });
 });
 
 describe("useReleaseSession", () => {
+  it("reloads authoritative workflow state from the retained browser workflow id", async () => {
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", "workflow-retained");
+    const sourcePath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
+    const current = vi.fn(async (workflowID: string) => {
+      const restored = workflowCurrentFromPreview(
+        workflowCurrent(workflowID, 7),
+        preview(sourcePath, 7),
+      );
+      return {
+        ...restored,
+        selection: {
+          id: "selection-1",
+          workflowId: workflowID,
+          revision: 4,
+          catalog: { id: "catalog-1", revision: 2 },
+          runtime: { id: "runtime-1", revision: 3 },
+          trackerIds: ["AITHER"],
+          fingerprint: "1".repeat(64),
+          createdAt: "2026-07-20T00:00:00Z",
+        },
+      } as unknown as ReleaseWorkflowCurrent;
+    });
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ current }) })),
+    });
+
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    expect(current).toHaveBeenCalledWith("workflow-retained", expect.any(AbortSignal));
+    expect(result.current.workflow.view.current?.workflow).toMatchObject({
+      id: "workflow-retained",
+      revision: 7,
+    });
+    expect(result.current.upload.view.selectedTrackers).toEqual(["AITHER"]);
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("passes the current skip-client option to an explicit workflow dry run", async () => {
+    const workflowID = "workflow-dry-run-options";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const retained = workflowCurrent(workflowID, 7);
+    const dryRunUploads = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({
+            current: async () => retained,
+            dryRunUploads,
+          }),
+        }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    act(() => result.current.upload.changeOptions({ noSeed: true }));
+    await act(() => result.current.upload.runDryRun());
+
+    expect(dryRunUploads).toHaveBeenCalledWith(
+      expect.objectContaining({ workflow: expect.objectContaining({ id: workflowID }) }),
+      true,
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("executes a direct upload through one workflow command", async () => {
+    const workflowID = "workflow-skipped-upload";
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const retained = workflowCurrent(workflowID, 7);
+    const executeUploads = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({
+            current: async () => retained,
+            executeUploads,
+          }),
+        }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("ready"));
+    await act(async () => {
+      expect(await result.current.upload.start()).toBe(true);
+    });
+
+    expect(executeUploads).toHaveBeenCalledWith(
+      expect.objectContaining({ workflow: expect.objectContaining({ id: workflowID }) }),
+      false,
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("resumes an accepted workflow operation by polling without browser events", async () => {
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", "workflow-active");
+    const startedAt = "2026-07-20T00:00:00Z";
+    const operation = (status: "queued" | "running" | "completed", sequence: number) =>
+      ({
+        id: "operation-active",
+        workflowId: "workflow-active",
+        revision: 2,
+        resultRevision: status === "completed" ? 3 : undefined,
+        sequence,
+        command: "check_duplicates",
+        operation: "duplicate_check",
+        phase: "duplicate_check",
+        status,
+        progress: status === "queued" ? 0 : status === "running" ? 50 : 100,
+        completed: status === "completed" ? 1 : 0,
+        total: 1,
+        message: status === "completed" ? "Operation complete." : "Checking tracker.",
+        startedAt,
+        updatedAt: startedAt,
+        completedAt: status === "completed" ? startedAt : undefined,
+      }) as const;
+    const current = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ...workflowCurrent("workflow-active", 2),
+        operation: operation("queued", 1),
+      })
+      .mockResolvedValueOnce({
+        ...workflowCurrent("workflow-active", 3),
+        operation: operation("completed", 3),
+      });
+    const poll = vi
+      .fn()
+      .mockResolvedValueOnce(operation("running", 2))
+      .mockResolvedValueOnce(operation("completed", 3));
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ current, operation: poll }) })),
+    });
+
+    await waitFor(() => expect(result.current.workflow.view.current?.workflow.revision).toBe(3), {
+      timeout: 3000,
+    });
+    expect(poll).toHaveBeenCalledTimes(2);
+    expect(result.current.workflow.view.current?.operation?.status).toBe("completed");
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("surfaces the safe failure retained by a terminal workflow operation", async () => {
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", "workflow-failed");
+    const startedAt = "2026-07-20T00:00:00Z";
+    const queued = {
+      id: "operation-failed",
+      workflowId: "workflow-failed",
+      revision: 1,
+      sequence: 1,
+      command: "prepare",
+      operation: "preparation",
+      status: "queued",
+      progress: 0,
+      completed: 0,
+      total: 1,
+      startedAt,
+      updatedAt: startedAt,
+    } as const;
+    const failed = {
+      ...queued,
+      sequence: 2,
+      status: "failed",
+      progress: 100,
+      completed: 1,
+      message: "Operation failed.",
+      failures: [
+        {
+          failure: {
+            Code: "source_unavailable",
+            Operation: "preparation",
+            Message: "The source path is unavailable.",
+            Recovery: "edit_input",
+          },
+        },
+      ],
+      completedAt: startedAt,
+    } as const;
+    const current = vi
+      .fn()
+      .mockResolvedValueOnce({ ...workflowCurrent("workflow-failed", 1), operation: queued })
+      .mockResolvedValueOnce({ ...workflowCurrent("workflow-failed", 1), operation: failed });
+    const operation = vi.fn().mockResolvedValue(failed);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ current, operation }) })),
+    });
+
+    await waitFor(() => expect(result.current.workflow.view.status).toBe("error"));
+    expect(result.current.workflow.view.error).toBe(
+      "The source path is unavailable. Recovery: edit input.",
+    );
+    expect(result.current.workflow.view.failure?.Code).toBe("source_unavailable");
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("saves and resets authoritative descriptions through revisioned workflow commands", async () => {
+    const workflowID = "workflow-descriptions";
+    const sourcePath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
+    const withDescription = (
+      revision: number,
+      unit3dSource: string,
+      standaloneSource = "standalone source",
+    ): ReleaseWorkflowCurrent => {
+      const current = workflowCurrent(workflowID, revision);
+      return {
+        ...current,
+        workflow: {
+          ...current.workflow,
+          descriptions: { id: "descriptions-1", revision },
+        },
+        descriptions: {
+          id: "descriptions-1",
+          workflowId: workflowID,
+          revision,
+          release: { id: "release-1", revision: 1 },
+          releaseRef: { SourcePath: sourcePath, Generation: 1 },
+          projectionSet: { id: "projections-1", revision: 2 },
+          media: { id: "media-1", revision: 3 },
+          inputFingerprint: "1".repeat(64),
+          templateFingerprint: "2".repeat(64),
+          descriptions: [
+            {
+              groupKey: "unit3d",
+              trackerIds: ["AITHER"],
+              source: unit3dSource,
+              rendered: `<p>${unit3dSource}</p>`,
+              contentFingerprint: "3".repeat(64),
+            },
+            {
+              groupKey: "standalone",
+              trackerIds: ["BLU"],
+              source: standaloneSource,
+              rendered: `<p>${standaloneSource}</p>`,
+              contentFingerprint: "4".repeat(64),
+            },
+          ],
+          status: "completed",
+          createdAt: "2026-07-21T00:00:00Z",
+        },
+      };
+    };
+    const saveDescriptionOverride = vi
+      .fn()
+      .mockResolvedValueOnce(withDescription(8, "edited source"));
+    const resetDescriptionOverride = vi
+      .fn()
+      .mockResolvedValueOnce(withDescription(9, "regenerated source"));
+    window.sessionStorage.setItem("upbrr.activeReleaseWorkflow", workflowID);
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({
+            current: async () => withDescription(7, "generated source"),
+            saveDescriptionOverride,
+            resetDescriptionOverride,
+          }),
+        }),
+      ),
+    });
+
+    await waitFor(() => expect(result.current.descriptions.view.artifact?.revision).toBe(7));
+    act(() => result.current.descriptions.edit("unit3d", "edited source"));
+    await act(() => result.current.descriptions.save("unit3d"));
+
+    expect(saveDescriptionOverride).toHaveBeenCalledWith(
+      expect.anything(),
+      "unit3d",
+      "edited source",
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+    expect(result.current.descriptions.view.artifact?.revision).toBe(8);
+    expect(result.current.descriptions.view.artifact?.descriptions[1]?.source).toBe(
+      "standalone source",
+    );
+    expect(result.current.descriptions.view.notice).toBe("Description saved.");
+
+    await act(() => result.current.descriptions.reset("unit3d"));
+
+    expect(resetDescriptionOverride).toHaveBeenCalledWith(
+      expect.anything(),
+      "unit3d",
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+    expect(result.current.descriptions.view.artifact?.revision).toBe(9);
+    expect(result.current.descriptions.view.artifact?.descriptions[0]?.source).toBe(
+      "regenerated source",
+    );
+    expect(result.current.descriptions.view.notice).toBe("Description reset.");
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("prepares through the backend workflow and retains only its compatibility preview", async () => {
+    const create = vi.fn(async () => workflowCurrent("workflow-browser", 1));
+    const prepareWorkflow = vi.fn(
+      async (
+        _current: ReleaseWorkflowCurrent,
+        _input: PrepareInput,
+        _idempotencyKey: string,
+        _signal: AbortSignal,
+      ) => {
+        return workflowCurrentFromPreview(
+          workflowCurrent("workflow-browser", 2),
+          preview("C:\\media\\Example Release", 2),
+        );
+      },
+    );
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({
+            create,
+            prepare: prepareWorkflow,
+          }),
+        }),
+      ),
+    });
+
+    act(() => result.current.input.selectSource("C:\\media\\Example Release"));
+    await act(() => result.current.input.prepare());
+
+    expect(create).toHaveBeenCalledOnce();
+    expect(prepareWorkflow).toHaveBeenCalledOnce();
+    expect(prepareWorkflow).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+    expect(result.current.workflow.view.current?.workflow.revision).toBe(2);
+    expect(result.current.identity.view.release).toEqual({
+      SourcePath: "C:\\media\\Example Release",
+      Generation: 2,
+    });
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("renders and resumes the backend playlist required action", async () => {
+    const sourcePath = "C:\\media\\Example Disc";
+    const withRelease = (
+      current: ReleaseWorkflowCurrent,
+      required: boolean,
+    ): ReleaseWorkflowCurrent =>
+      ({
+        ...workflowCurrentFromPreview(current, preview(sourcePath, current.workflow.revision)),
+        workflow: {
+          ...current.workflow,
+          status: required ? "blocked" : "active",
+          requiredActions: required
+            ? [
+                {
+                  id: "action-playlist",
+                  kind: "select_playlist",
+                  status: "pending",
+                  workflowRevision: current.workflow.revision,
+                  prompt: "Select one or more Blu-ray playlists to analyze.",
+                  options: [{ value: "00001.mpls", label: "00001.mpls" }],
+                  createdAt: "2026-07-20T00:00:00Z",
+                },
+              ]
+            : [],
+        },
+      }) as unknown as ReleaseWorkflowCurrent;
+    const prepareWorkflow = vi
+      .fn()
+      .mockResolvedValueOnce(withRelease(workflowCurrent("workflow-playlist-browser", 2), true))
+      .mockResolvedValueOnce(withRelease(workflowCurrent("workflow-playlist-browser", 4), false));
+    const replaceFacts = vi.fn(async () => workflowCurrent("workflow-playlist-browser", 3));
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({
+            create: async () => workflowCurrent("workflow-playlist-browser", 1),
+            prepare: prepareWorkflow,
+            replaceFacts,
+          }),
+        }),
+      ),
+    });
+
+    act(() => result.current.input.selectSource(sourcePath));
+    await act(() => result.current.input.prepare());
+
+    expect(result.current.input.view.status).toBe("awaiting_input");
+    expect(result.current.input.view.playlist).toEqual(
+      expect.objectContaining({
+        required: true,
+        selected: ["00001.mpls"],
+        candidates: [expect.objectContaining({ file: "00001.mpls" })],
+      }),
+    );
+
+    await act(() => result.current.input.confirmPlaylists());
+
+    expect(replaceFacts).not.toHaveBeenCalled();
+    expect(prepareWorkflow).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        Instructions: expect.objectContaining({
+          Playlist: { Set: true, Selected: ["00001.mpls"], UseAll: false },
+        }),
+      }),
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+    expect(result.current.input.view.status).toBe("ready");
+    expect(result.current.workflow.view.current?.workflow.revision).toBe(4);
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("routes the browser release flow through authoritative workflow commands", async () => {
+    let revision = 2;
+    const advance = (current: ReleaseWorkflowCurrent) =>
+      workflowCurrent(current.workflow.id, ++revision);
+    const project = vi.fn(async (current: ReleaseWorkflowCurrent) => advance(current));
+    const preflight = vi.fn(async (current: ReleaseWorkflowCurrent) => {
+      const next = advance(current);
+      return {
+        ...next,
+        projections: {
+          status: "ready",
+          projections: [
+            {
+              trackerId: "AITHER",
+              artifacts: {
+                screenshotCount: 1,
+                dvdMenuCount: 0,
+                imageHosting: true,
+                description: true,
+              },
+            },
+          ],
+        } as unknown as NonNullable<ReleaseWorkflowCurrent["projections"]>,
+        preflight: { status: "ready" } as NonNullable<ReleaseWorkflowCurrent["preflight"]>,
+      };
+    });
+    const checkDuplicates = vi.fn(async (current: ReleaseWorkflowCurrent) => ({
+      ...advance(current),
+      projections: current.projections,
+      preflight: current.preflight,
+      dupes: {
+        status: "completed",
+        results: [
+          {
+            trackerId: "AITHER",
+            uploadReleaseName: "Example.Release.S01E01.1080p-GRP",
+            matches: [
+              {
+                id: "123",
+                name: "Example.Release.S01E01.1080p-GRP",
+                reason: "in_client",
+              },
+            ],
+            decision: "accepted",
+            status: "completed",
+          },
+        ],
+      } as unknown as NonNullable<ReleaseWorkflowCurrent["dupes"]>,
+    }));
+    const captureMedia = vi.fn(
+      async (current: ReleaseWorkflowCurrent, instructions: MediaCaptureInstructions) => {
+        const next = advance(current);
+        return {
+          ...current,
+          workflow: {
+            ...next.workflow,
+            media: { id: "media-browser", revision: next.workflow.revision },
+          },
+          media: {
+            id: "media-browser",
+            workflowId: next.workflow.id,
+            revision: next.workflow.revision,
+            release: { id: "release-browser", revision: 1 },
+            releaseRef: {
+              SourcePath: "C:\\media\\Example Release",
+              Generation: 2,
+            },
+            projectionSet: { id: "projections-browser", revision: 1 },
+            captureFingerprint: "5".repeat(64),
+            requirementsFingerprint: "6".repeat(64),
+            imageRequirementsPrepared: false,
+            artifacts: Array.from({ length: instructions.screenshotCount }, (_, index) => ({
+              id: `screen-${index}`,
+              kind: "screenshot" as const,
+              purpose: "final" as const,
+              selected: true,
+              order: index,
+            })),
+            status: "completed" as const,
+            createdAt: "2026-07-21T00:00:00Z",
+          },
+        };
+      },
+    );
+    const generateDescriptions = vi.fn(
+      async (current: ReleaseWorkflowCurrent, _instructions: DescriptionInstructions) =>
+        advance(current),
+    );
+    const uploadImages = vi.fn(async (current: ReleaseWorkflowCurrent) => {
+      const next = advance(current);
+      return {
+        ...next,
+        workflow: {
+          ...next.workflow,
+          media: { id: "media-hosted", revision: next.workflow.revision },
+        },
+        media: {
+          ...current.media!,
+          id: "media-hosted",
+          revision: next.workflow.revision,
+          workflowId: next.workflow.id,
+          imageRequirementsPrepared: true,
+          failedHosts: ["imgbox"],
+          hostAttempts: [
+            {
+              id: "host-attempt-1",
+              media: { id: current.media!.id, revision: current.media!.revision },
+              host: "imgbox",
+              status: "failed" as const,
+              fallback: false,
+              artifactIds: ["screen-0"],
+              failures: [],
+              attemptedAt: "2026-07-21T00:00:00Z",
+            },
+          ],
+        },
+      };
+    });
+    const executeUploads = vi.fn(async (current: ReleaseWorkflowCurrent) => advance(current));
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({
+            create: async () => workflowCurrent("workflow-browser-flow", 1),
+            prepare: async (current) =>
+              workflowCurrentFromPreview(
+                workflowCurrent(current.workflow.id, 2),
+                preview("C:\\media\\Example Release", 2),
+              ),
+            project,
+            preflight,
+            checkDuplicates,
+            captureMedia,
+            uploadImages,
+            generateDescriptions,
+            executeUploads,
+          }),
+        }),
+      ),
+    });
+
+    act(() => result.current.input.selectSource("C:\\media\\Example Release"));
+    act(() => result.current.duplicates.chooseTrackers(["AITHER"]));
+    await act(() => result.current.input.prepare());
+    await act(() => result.current.duplicates.run());
+    expect(result.current.navigation.view.access.screenshots.available).toBe(true);
+    await act(() =>
+      result.current.screenshots.generate("final", [
+        { Index: 0, TimestampSeconds: 10, Frame: 240, Source: "manual" },
+        { Index: 1, TimestampSeconds: 20, Frame: 480, Source: "manual" },
+        { Index: 2, TimestampSeconds: 30, Frame: 720, Source: "manual" },
+        { Index: 3, TimestampSeconds: 40, Frame: 960, Source: "manual" },
+      ]),
+    );
+    await act(() => result.current.uploadedImages.load());
+    await act(async () => {
+      expect(await result.current.uploadedImages.upload()).toBe(true);
+    });
+    expect(uploadImages).toHaveBeenCalledOnce();
+    await act(() => result.current.descriptions.load());
+    await act(() => result.current.upload.start());
+
+    expect(project).toHaveBeenCalledOnce();
+    expect(preflight).toHaveBeenCalledOnce();
+    expect(checkDuplicates).toHaveBeenCalledOnce();
+    expect(captureMedia).toHaveBeenCalled();
+    expect(generateDescriptions).toHaveBeenCalledOnce();
+    expect(generateDescriptions.mock.calls[0]?.[1].options.Screens).toBe(4);
+    expect(generateDescriptions.mock.calls[0]?.[1].imageHost).toEqual({
+      FailedHosts: ["imgbox"],
+      SkipUpload: true,
+    });
+    expect(executeUploads).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflow: expect.objectContaining({ id: "workflow-browser-flow" }),
+      }),
+      false,
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
+  it("accepts selective tracker invalidation without retaining downstream plan state", async () => {
+    const projection = (trackerId: string, readiness: "ready" | "stale") => ({
+      trackerId,
+      displayName: trackerId,
+      canonicalReleaseName: "Example.Release.2026.1080p-GRP",
+      uploadReleaseName: `Example.Release.2026.1080p-${trackerId}`,
+      additionalNames: {},
+      taxonomy: {},
+      descriptionGroup: trackerId.toLowerCase(),
+      metadataLocale: "",
+      duplicateCriteria: {},
+      artifacts: {
+        screenshotCount: 0,
+        dvdMenuCount: 0,
+        mediaInfo: false,
+        bdInfo: false,
+        nfo: false,
+        description: false,
+        imageHosting: false,
+        torrent: true,
+      },
+      policy: { decisions: [], failures: [] },
+      uploadReady: readiness === "ready",
+      dupeReady: readiness === "ready",
+      readiness,
+      inputFingerprint: "1".repeat(64),
+      catalogFingerprint: "2".repeat(64),
+      configFingerprint: "3".repeat(64),
+      projectorFingerprint: "4".repeat(64),
+      semanticFingerprint: "5".repeat(64),
+    });
+    const initial = workflowCurrentFromPreview(
+      workflowCurrent("workflow-selective-browser", 2),
+      preview("C:\\media\\Example Release", 2),
+    );
+    const withDryRun = {
+      ...initial,
+      workflow: {
+        ...initial.workflow,
+        trackerProjections: { id: "projections-1", revision: 2 },
+        dryRun: { id: "dry-run-1", revision: 2 },
+      },
+      projections: {
+        id: "projections-1",
+        workflowId: initial.workflow.id,
+        revision: 2,
+        release: { id: "release-1", revision: 2 },
+        releaseRef: { SourcePath: "C:\\media\\Example Release", Generation: 2 },
+        selection: { id: "selection-1", revision: 2 },
+        projections: [projection("ALPHA", "ready"), projection("BETA", "ready")],
+        inputFingerprint: "6".repeat(64),
+        policyFingerprint: "7".repeat(64),
+        status: "ready",
+        createdAt: "2026-07-20T00:00:00Z",
+      },
+      dryRun: { id: "dry-run-1" },
+    } as unknown as ReleaseWorkflowCurrent;
+    const invalidateTrackers = vi.fn(async () => {
+      const invalidated = workflowCurrent(initial.workflow.id, 3);
+      return {
+        ...invalidated,
+        workflow: {
+          ...invalidated.workflow,
+          trackerProjections: { id: "projections-1", revision: 3 },
+        },
+        projections: {
+          ...withDryRun.projections!,
+          revision: 3,
+          projections: [projection("ALPHA", "stale"), projection("BETA", "ready")],
+        },
+      } as unknown as ReleaseWorkflowCurrent;
+    });
+    const { result, unmount } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(
+        portsFor({
+          workflow: workflowPorts({
+            create: async () => workflowCurrent(initial.workflow.id, 1),
+            prepare: async () => withDryRun,
+            invalidateTrackers,
+          }),
+        }),
+      ),
+    });
+
+    act(() => result.current.input.selectSource("C:\\media\\Example Release"));
+    await act(() => result.current.input.prepare());
+    await act(() => result.current.workflow.invalidateTrackers(["ALPHA"], "config changed"));
+
+    expect(invalidateTrackers).toHaveBeenCalledWith(
+      expect.anything(),
+      ["ALPHA"],
+      "config changed",
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+    expect(result.current.workflow.view.current?.projections?.projections).toEqual([
+      expect.objectContaining({ trackerId: "ALPHA", readiness: "stale" }),
+      expect.objectContaining({ trackerId: "BETA", readiness: "ready" }),
+    ]);
+    expect(result.current.workflow.view.current?.dryRun).toBeUndefined();
+
+    unmount();
+    window.sessionStorage.removeItem("upbrr.activeReleaseWorkflow");
+  });
+
   it("keeps manual path typing as an unselected draft", () => {
     const { result } = renderHook(useReleaseSession, { wrapper: wrapperFor(portsFor()) });
 
@@ -424,94 +1365,36 @@ describe("useReleaseSession", () => {
     });
   });
 
-  it("discovers BDMV playlists and prepares with one direct playlist instruction", async () => {
-    const candidates: PlaylistInfo[] = [
-      { file: "00001.mpls", duration: 120, items: [], score: 1, edition: "" },
-      { file: "00002.mpls", duration: 240, items: [], score: 2, edition: "" },
-    ];
-    const prepare = vi.fn(async (command: PreparationCommand) => {
-      command.onProgress({
-        correlationID: command.correlationID,
-        phase: "bdinfo",
-        order: 350,
-        label: "Analyze Blu-ray playlists",
-        message: "Blu-ray analysis complete.",
-        status: "completed",
-        timestamp: "2026-07-16T00:00:00Z",
-      });
-      return preview(command.sourcePath, 1);
-    });
-    const discoverPlaylists = vi.fn(async () => candidates);
-    const { result } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(
-        portsFor({
-          prepare,
-          detectDiscType: async () => "BDMV",
-          discoverPlaylists,
-        }),
+  it("delegates disc and playlist decisions to canonical preparation", async () => {
+    const prepare = vi.fn(async (current: ReleaseWorkflowCurrent, input: PrepareInput) =>
+      workflowCurrentFromPreview(
+        workflowCurrent(current.workflow.id, current.workflow.revision + 1),
+        preview(input.SourcePath, 1),
       ),
+    );
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ prepare }) })),
     });
 
     act(() => result.current.input.selectSource("C:\\media\\Example Disc"));
     act(() => result.current.input.chooseTrackers(["GRP"]));
     await act(() => result.current.input.prepare());
 
-    expect(prepare).not.toHaveBeenCalled();
-    expect(discoverPlaylists).toHaveBeenCalledWith(
-      "C:\\media\\Example Disc",
-      expect.any(AbortSignal),
-    );
-    expect(result.current.input.view.playlist.required).toBe(true);
-    expect(result.current.input.view.playlist.candidates.map((item) => item.file)).toEqual([
-      "00002.mpls",
-      "00001.mpls",
-    ]);
-    expect(result.current.input.view.status).toBe("awaiting_input");
-    expect(result.current.input.view.playlist.status).toBe("awaiting_selection");
-    expect(
-      result.current.input.view.progress.steps.map((step) => [step.phase, step.status]),
-    ).toEqual([
-      ["disc_detection", "completed"],
-      ["playlist_discovery", "completed"],
-      ["playlist_selection", "awaiting_input"],
-    ]);
-    const correlationID = result.current.input.view.progress.correlationID;
-
-    act(() => result.current.input.choosePlaylists(["00002.mpls"], false));
-    await act(() => result.current.input.confirmPlaylists());
-
-    expect(prepare).toHaveBeenCalledWith(
+    expect(prepare.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
-        sourcePath: "C:\\media\\Example Disc",
-        operation: "prepare",
-        controls: { confirmBDMVRescan: false },
-        intent: expect.objectContaining({
-          playlist: { Set: true, Selected: ["00002.mpls"], UseAll: false },
-        }),
+        SourcePath: "C:\\media\\Example Disc",
+        Controls: { Interaction: "interactive", ConfirmBDMVRescan: false },
       }),
     );
     expect(result.current.identity.view.release).toEqual({
       SourcePath: "C:\\media\\Example Disc",
       Generation: 1,
     });
-    expect(result.current.input.view.progress.correlationID).toBe(correlationID);
-    expect(result.current.input.view.progress.status).toBe("ready");
-    expect(result.current.input.view.progress.steps).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ phase: "playlist_selection", status: "completed" }),
-        expect.objectContaining({ phase: "bdinfo", status: "completed" }),
-      ]),
-    );
-    expect(result.current.input.view.playlist).toMatchObject({
-      status: "complete",
-      required: false,
-      selected: ["00002.mpls"],
-    });
   });
 
   it("retries the same preparation with explicit BDMV rescan permission", async () => {
-    const prepare = vi.fn(async (command: PreparationCommand) => {
-      if (!command.controls.confirmBDMVRescan) {
+    const prepare = vi.fn(async (current: ReleaseWorkflowCurrent, input: PrepareInput) => {
+      if (!input.Controls?.ConfirmBDMVRescan) {
         throw Object.assign(new Error("Confirmation required."), {
           failure: {
             Code: "confirmation_required",
@@ -521,10 +1404,13 @@ describe("useReleaseSession", () => {
           },
         });
       }
-      return preview(command.sourcePath, 1);
+      return workflowCurrentFromPreview(
+        workflowCurrent(current.workflow.id, current.workflow.revision + 1),
+        preview(input.SourcePath, 1),
+      );
     });
     const { result } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(portsFor({ prepare })),
+      wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ prepare }) })),
     });
     const sourcePath = "C:\\media\\Example Disc";
     const directIntent = {
@@ -539,9 +1425,9 @@ describe("useReleaseSession", () => {
     await act(() => result.current.input.confirmBDMVRescan());
 
     expect(prepare).toHaveBeenCalledTimes(2);
-    expect(prepare.mock.calls.map((call) => call[0].controls)).toEqual([
-      { confirmBDMVRescan: false },
-      { confirmBDMVRescan: true },
+    expect(prepare.mock.calls.map((call) => call[1].Controls?.ConfirmBDMVRescan)).toEqual([
+      false,
+      true,
     ]);
     expect(result.current.identity.view.release).toEqual({ SourcePath: sourcePath, Generation: 1 });
   });
@@ -549,7 +1435,13 @@ describe("useReleaseSession", () => {
   it("binds exact generations and invalidates dependent facets on N+1", async () => {
     let generation = 0;
     const ports = portsFor({
-      prepare: async (command) => preview(command.sourcePath, ++generation),
+      workflow: workflowPorts({
+        prepare: async (current, input) =>
+          workflowCurrentFromPreview(
+            workflowCurrent(current.workflow.id, current.workflow.revision + 1),
+            preview(input.SourcePath, ++generation),
+          ),
+      }),
     });
     const { result } = renderHook(useReleaseSession, { wrapper: wrapperFor(ports) });
 
@@ -567,17 +1459,27 @@ describe("useReleaseSession", () => {
   });
 
   it("aborts and suppresses stale preparation completion after source replacement", async () => {
-    const first = createDeferred<MetadataPreview>();
+    const first = createDeferred<ReleaseWorkflowCurrent>();
     let firstSignal: AbortSignal | undefined;
-    const prepare = vi.fn(async (command: PreparationCommand) => {
-      if (command.sourcePath.endsWith("First")) {
-        firstSignal = command.signal;
-        return first.promise;
-      }
-      return preview(command.sourcePath, 1);
-    });
+    const prepare = vi.fn(
+      async (
+        current: ReleaseWorkflowCurrent,
+        input: PrepareInput,
+        _idempotencyKey: string,
+        signal: AbortSignal,
+      ) => {
+        if (input.SourcePath.endsWith("First")) {
+          firstSignal = signal;
+          return first.promise;
+        }
+        return workflowCurrentFromPreview(
+          workflowCurrent(current.workflow.id, current.workflow.revision + 1),
+          preview(input.SourcePath, 1),
+        );
+      },
+    );
     const { result } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(portsFor({ prepare })),
+      wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ prepare }) })),
     });
 
     act(() => result.current.input.selectSource("C:\\media\\First"));
@@ -593,34 +1495,31 @@ describe("useReleaseSession", () => {
     act(() => result.current.upload.chooseTrackers(["AITHER"]));
     await act(() => result.current.input.prepare());
 
-    first.resolve(preview("C:\\media\\First", 1));
+    first.resolve(
+      workflowCurrentFromPreview(
+        workflowCurrent("workflow-new", 2),
+        preview("C:\\media\\First", 1),
+      ),
+    );
     await act(() => firstCommand);
     expect(result.current.identity.view.sourcePath).toBe("C:\\media\\Second");
   });
 
-  it("rejects stale progress and completion from an older same-source attempt", async () => {
-    const first = createDeferred<MetadataPreview>();
-    let firstCommand: PreparationCommand | null = null;
+  it("rejects stale completion from an older same-source attempt", async () => {
+    const first = createDeferred<ReleaseWorkflowCurrent>();
     let calls = 0;
-    const execute = vi.fn(async (command: PreparationCommand) => {
+    const execute = vi.fn(async (current: ReleaseWorkflowCurrent, input: PrepareInput) => {
       calls += 1;
       if (calls === 1) {
-        firstCommand = command;
         return first.promise;
       }
-      command.onProgress({
-        correlationID: command.correlationID,
-        phase: "preview_projection",
-        order: 1200,
-        label: "Build metadata preview",
-        message: "Current attempt.",
-        status: "completed",
-        timestamp: "2026-07-16T00:00:01Z",
-      });
-      return preview(command.sourcePath, 2);
+      return workflowCurrentFromPreview(
+        workflowCurrent(current.workflow.id, current.workflow.revision + 1),
+        preview(input.SourcePath, 2),
+      );
     });
     const { result } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(portsFor({ prepare: execute })),
+      wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ prepare: execute }) })),
     });
     const sourcePath = "C:\\media\\Example";
     act(() => result.current.input.selectSource(sourcePath));
@@ -632,24 +1531,12 @@ describe("useReleaseSession", () => {
     await waitFor(() => expect(execute).toHaveBeenCalledTimes(1));
     await act(() => result.current.input.prepare());
 
-    const staleCommand = firstCommand as PreparationCommand | null;
-    if (!staleCommand) throw new Error("first preparation command was not captured");
-    staleCommand.onProgress({
-      correlationID: staleCommand.correlationID,
-      phase: "stale_phase",
-      order: 1,
-      label: "Stale phase",
-      message: "Stale attempt.",
-      status: "completed",
-      timestamp: "2026-07-16T00:00:00Z",
-    });
-    first.resolve(preview(sourcePath, 1));
+    first.resolve(
+      workflowCurrentFromPreview(workflowCurrent("workflow-new", 2), preview(sourcePath, 1)),
+    );
     await act(() => firstResult);
 
     expect(result.current.identity.view.release).toEqual({ SourcePath: sourcePath, Generation: 2 });
-    expect(
-      result.current.input.view.progress.steps.some((step) => step.phase === "stale_phase"),
-    ).toBe(false);
   });
 
   it("carries workflow drafts across same-source generations and clears them for another source", async () => {
@@ -673,23 +1560,17 @@ describe("useReleaseSession", () => {
   });
 
   it("keeps independent facets concurrent and suppresses stale media completion", async () => {
-    const screenshot = createDeferred<ScreenshotPlan>();
-    const descriptionsLoad = vi.fn(async (release) => ({
-      SourcePath: release.SourcePath,
-      Groups: [],
-      ContentFailures: [],
-    }));
-    const jobTransport: JobRegistryTransport = {
-      ...defaultJobTransport(),
-      list: async () => [completedDupeJob("C:\\media\\Example", 1)],
-    };
+    const screenshot =
+      createDeferred<Awaited<ReturnType<ReleaseSessionPorts["workflow"]["mediaPlan"]>>>();
+    const generateDescriptions = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
     const { result } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
-          screenshotsLoad: async () => screenshot.promise,
-          descriptionsLoad,
+          workflow: workflowPorts({
+            mediaPlan: async () => screenshot.promise,
+            generateDescriptions,
+          }),
         }),
-        jobTransport,
       ),
     });
     await selectAndPrepare(result, "C:\\media\\Example");
@@ -700,58 +1581,89 @@ describe("useReleaseSession", () => {
       screenshotCommand = result.current.screenshots.load();
     });
     await act(() => result.current.descriptions.load());
-    expect(descriptionsLoad).toHaveBeenCalledTimes(1);
+    expect(generateDescriptions).not.toHaveBeenCalled();
 
     await act(() => result.current.input.prepare());
-    screenshot.resolve(screenshotPlan("C:\\media\\Example"));
+    screenshot.resolve({
+      id: "media-plan-1",
+      workflowId: "workflow-new",
+      revision: 4,
+      release: { id: "release-1", revision: 1 },
+      projectionSet: { id: "projections-1", revision: 1 },
+      durationSeconds: 60,
+      frameRate: 24,
+      suggestedSelections: [],
+      createdAt: "2026-07-20T00:00:00Z",
+    });
     await act(() => screenshotCommand);
     expect(result.current.screenshots.view.plan).toBeNull();
     expect(result.current.screenshots.view.staleReason).toBe("Prepared generation changed.");
   });
 
-  it("persists generated final screenshots through the canonical session", async () => {
+  it("publishes and reorders opaque final screenshots through workflow commands", async () => {
     const sourcePath = "C:\\media\\Example";
-    const existing = {
-      Index: 0,
-      TimestampSeconds: 5,
-      Path: "C:\\tmp\\existing.png",
-      Purpose: "final" as const,
-      Width: 1920,
-      Height: 1080,
-      SizeBytes: 1024,
-    };
-    const generated = {
-      ...existing,
-      Index: 1,
-      TimestampSeconds: 10,
-      Path: "C:\\tmp\\generated.png",
-    };
-    const loadedPlan: ScreenshotPlan = {
-      ...screenshotPlan(sourcePath),
-      SuggestedSelections: [{ Index: 1, TimestampSeconds: 10, Frame: 240, Source: "auto" }],
-      FinalSelections: [existing],
-    };
-    const saveFinal = vi.fn(async () => undefined);
-    const generate = vi.fn(async () => ({
-      SourcePath: sourcePath,
-      Purpose: "final" as const,
-      Images: [generated],
-      Tonemapped: false,
-      UsedLibplacebo: false,
-      Errors: [],
-    }));
-    const jobTransport: JobRegistryTransport = {
-      ...defaultJobTransport(),
-      list: async () => [completedDupeJob(sourcePath, 1)],
-    };
+    const captureMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => {
+      const revision = current.workflow.revision + 1;
+      return {
+        ...current,
+        workflow: {
+          ...current.workflow,
+          revision,
+          media: { id: "media-final", revision },
+        },
+        media: {
+          id: "media-final",
+          workflowId: current.workflow.id,
+          revision,
+          release: current.workflow.release!,
+          releaseRef: { SourcePath: sourcePath, Generation: 1 },
+          projectionSet: current.workflow.trackerProjections!,
+          captureFingerprint: "5".repeat(64),
+          requirementsFingerprint: "6".repeat(64),
+          imageRequirementsPrepared: false,
+          artifacts: [
+            {
+              id: "screen-existing",
+              kind: "screenshot" as const,
+              purpose: "final" as const,
+              selected: true,
+              order: 0,
+              index: 0,
+            },
+            {
+              id: "screen-generated",
+              kind: "screenshot" as const,
+              purpose: "final" as const,
+              selected: true,
+              order: 1,
+              index: 1,
+            },
+          ],
+          status: "completed" as const,
+          createdAt: "2026-07-20T00:00:00Z",
+        },
+      };
+    });
+    const reorderMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
     const { result } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
-          screenshotsLoad: async () => loadedPlan,
-          screenshotsGenerate: generate,
-          screenshotsSaveFinal: saveFinal,
+          workflow: workflowPorts({
+            mediaPlan: async (workflowID) => ({
+              id: "media-plan-1",
+              workflowId: workflowID,
+              revision: 4,
+              release: { id: "release-1", revision: 1 },
+              projectionSet: { id: "projections-1", revision: 1 },
+              durationSeconds: 60,
+              frameRate: 24,
+              suggestedSelections: [{ Index: 1, TimestampSeconds: 10, Frame: 240, Source: "auto" }],
+              createdAt: "2026-07-20T00:00:00Z",
+            }),
+            captureMedia,
+            reorderMedia,
+          }),
         }),
-        jobTransport,
       ),
     });
     await selectAndPrepare(result, sourcePath);
@@ -761,50 +1673,84 @@ describe("useReleaseSession", () => {
     await act(() => result.current.screenshots.load());
     await act(() => result.current.screenshots.generate("final"));
 
-    expect(generate).toHaveBeenCalledWith(
-      { SourcePath: sourcePath, Generation: 1 },
-      [{ Index: 1, TimestampSeconds: 10, Frame: 240, Source: "auto" }],
-      "final",
+    expect(captureMedia).toHaveBeenCalledWith(
+      expect.objectContaining({ workflow: expect.objectContaining({ id: "workflow-new" }) }),
+      expect.objectContaining({
+        purpose: "final",
+        selections: [{ Index: 1, TimestampSeconds: 10, Frame: 240, Source: "auto" }],
+      }),
+      expect.any(String),
       expect.any(AbortSignal),
     );
-    expect(saveFinal).toHaveBeenCalledWith(
-      { SourcePath: sourcePath, Generation: 1 },
-      [existing, generated],
-      expect.any(AbortSignal),
-    );
-    expect(result.current.screenshots.view.finalSelectionPaths).toEqual([
-      existing.Path,
-      generated.Path,
+    expect(result.current.screenshots.view.finalSelectionArtifactIDs).toEqual([
+      "screen-existing",
+      "screen-generated",
     ]);
 
     await act(() => result.current.screenshots.reorderFinal(1, 0));
-    expect(saveFinal).toHaveBeenLastCalledWith(
-      { SourcePath: sourcePath, Generation: 1 },
-      [generated, existing],
+    expect(reorderMedia).toHaveBeenCalledWith(
+      expect.anything(),
+      ["screen-generated", "screen-existing"],
+      expect.any(String),
       expect.any(AbortSignal),
     );
-    expect(result.current.screenshots.view.finalSelectionPaths).toEqual([
-      generated.Path,
-      existing.Path,
-    ]);
+  });
+
+  it("keeps a multi-transition continuation busy until controller ownership is released", async () => {
+    const finalTransition = createDeferred<boolean>();
+    const captureMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
+    const baseWorkflow = workflowPorts({ captureMedia });
+    const baseContinue = baseWorkflow.continue;
+    let duplicateTransitions = 0;
+    const workflow: ReleaseSessionPorts["workflow"] = {
+      ...baseWorkflow,
+      continue: async (request, signal) => {
+        const current = await baseContinue(request, signal);
+        if (request.goal === "duplicates_decided") {
+          duplicateTransitions += 1;
+          if (duplicateTransitions === 4) await finalTransition.promise;
+        }
+        return current;
+      },
+    };
+    const { result } = renderHook(useReleaseSession, {
+      wrapper: wrapperFor(portsFor({ workflow })),
+    });
+    act(() => result.current.input.selectSource("C:\\media\\Example"));
+    act(() => result.current.duplicates.chooseTrackers(["AITHER"]));
+    await act(() => result.current.input.prepare());
+
+    let duplicateCommand!: Promise<boolean>;
+    act(() => {
+      duplicateCommand = result.current.duplicates.run();
+    });
+    await waitFor(() => expect(duplicateTransitions).toBe(4));
+    expect(result.current.workflow.view.status).toBe("running");
+    expect(await result.current.menuImages.capture()).toBe(false);
+    expect(captureMedia).not.toHaveBeenCalled();
+
+    finalTransition.resolve(true);
+    await act(() => duplicateCommand);
+    expect(result.current.workflow.view.status).toBe("ready");
+    await act(async () => {
+      expect(await result.current.menuImages.capture()).toBe(true);
+    });
+    expect(captureMedia).toHaveBeenCalledOnce();
   });
 
   it("cancels DVD menu capture as an abortable session media operation", async () => {
-    const capture = createDeferred<DVDMenuCaptureResult>();
+    const capture = createDeferred<ReleaseWorkflowCurrent>();
     let captureSignal: AbortSignal | undefined;
-    const jobTransport: JobRegistryTransport = {
-      ...defaultJobTransport(),
-      list: async () => [completedDupeJob("C:\\media\\Example", 1)],
-    };
     const { result } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
-          menuCapture: async (_release, signal) => {
-            captureSignal = signal;
-            return capture.promise;
-          },
+          workflow: workflowPorts({
+            captureMedia: async (_current, _instructions, _key, signal) => {
+              captureSignal = signal;
+              return capture.promise;
+            },
+          }),
         }),
-        jobTransport,
       ),
     });
     await selectAndPrepare(result, "C:\\media\\Example");
@@ -821,243 +1767,174 @@ describe("useReleaseSession", () => {
 
     expect(captureSignal?.aborted).toBe(true);
     expect(result.current.menuImages.view.status).toBe("idle");
-    expect(result.current.menuImages.view.staleReason).toBe("Operation canceled.");
-    capture.resolve(dvdCaptureResult("C:\\media\\Example"));
+    expect(result.current.menuImages.view.staleReason).toBe("");
+    capture.resolve(workflowCurrent("workflow-new", 6));
     await act(() => command);
-    expect(result.current.menuImages.view.capture).toBeNull();
   });
 
-  it("does not hide dry run behind description save and marks authority stale after edits", async () => {
-    const dryRun = vi.fn(async (command) => ({
-      SourcePath: command.release.SourcePath,
-      Trackers: [],
-    }));
-    const descriptionPreview: DescriptionBuilderPreview = {
-      SourcePath: "C:\\media\\Example",
-      ContentFailures: [],
-      Groups: [
-        {
-          GroupKey: "unit3d",
-          Trackers: ["AITHER"],
-          Description: "generated",
-          DescriptionHTML: "generated",
-          RawDescription: "generated",
-          RawDescriptionHTML: "generated",
-          HasOverride: false,
-          ImageHost: {
-            Status: "",
-            Message: "",
-            Warnings: [],
-            Reuploaded: false,
-            SelectedHost: "",
-            AllowedHosts: [],
-          },
+  it("runs dry run directly without a description-save or review gate", async () => {
+    const dryRunUploads = vi.fn(async (current: ReleaseWorkflowCurrent, noSeed: boolean) => {
+      const revision = current.workflow.revision + 1;
+      return {
+        ...current,
+        workflow: {
+          ...current.workflow,
+          revision,
+          dryRun: { id: "dry-run-1", revision },
         },
-      ],
-    };
-    const jobTransport: JobRegistryTransport = {
-      ...defaultJobTransport(),
-      list: async () => [completedDupeJob("C:\\media\\Example", 1)],
-    };
+        dryRun: {
+          id: "dry-run-1",
+          workflowId: current.workflow.id,
+          revision,
+          projectionSet: current.workflow.trackerProjections!,
+          dupes: current.workflow.dupes!,
+          media: { id: "media-1", revision: 1 },
+          descriptions: { id: "descriptions-1", revision: 1 },
+          inputFingerprint: "1".repeat(64),
+          noSeed,
+          reports: [],
+          succeededCount: 0,
+          failedCount: 0,
+          skippedCount: 0,
+          status: "skipped" as const,
+          createdAt: "2026-07-22T00:00:00Z",
+        },
+      } as ReleaseWorkflowCurrent;
+    });
     const { result } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(
-        portsFor({ descriptionsLoad: async () => descriptionPreview, dryRun }),
-        jobTransport,
-      ),
+      wrapper: wrapperFor(portsFor({ workflow: workflowPorts({ dryRunUploads }) })),
     });
     await selectAndPrepare(result, "C:\\media\\Example");
     await waitFor(() => expect(result.current.duplicates.view.status).toBe("ready"));
-    await act(() => result.current.descriptions.load());
-
-    act(() => result.current.descriptions.edit("unit3d", "edited"));
-    await act(() => result.current.descriptions.save("unit3d"));
-    expect(dryRun).not.toHaveBeenCalled();
+    expect(dryRunUploads).not.toHaveBeenCalled();
 
     await act(() => result.current.upload.runDryRun());
     expect(result.current.upload.view.dryRunStatus).toBe("ready");
-    expect(dryRun).toHaveBeenCalledOnce();
-    expect(dryRun.mock.calls[0]?.[0].dupeJobID).toBe("dupe-job");
-    expect(dryRun.mock.calls[0]?.[0]).not.toHaveProperty("summary");
-    expect(dryRun.mock.calls[0]?.[0]).not.toHaveProperty("results");
-    act(() => result.current.upload.answerQuestionnaire("AITHER", "season", "2"));
-    expect(result.current.upload.view.dryRun).not.toBeNull();
-    expect(result.current.upload.view.dryRunStaleReason).toBe("Questionnaire answers changed.");
-    expect(await result.current.upload.review()).toBe(false);
-
-    act(() => result.current.upload.chooseTrackers(["AITHER", "BLU"]));
-    expect(await result.current.upload.runDryRun()).toBe(false);
-    expect(dryRun).toHaveBeenCalledOnce();
-  });
-
-  it("preserves an accepted Job start when the source session is replaced", async () => {
-    const start = createDeferred<string>();
-    const jobTransport: JobRegistryTransport = {
-      ...defaultJobTransport(),
-      list: async () => [completedDupeJob("C:\\media\\Example", 1)],
-      startDupe: vi.fn(async () => start.promise),
-    };
-    const { result } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(portsFor(), jobTransport),
-    });
-    await selectAndPrepare(result, "C:\\media\\Example");
-
-    let command!: Promise<boolean>;
-    act(() => {
-      command = result.current.duplicates.run();
-    });
-    await waitFor(() => expect(jobTransport.startDupe).toHaveBeenCalledTimes(1));
-    expect(result.current.duplicates.view.status).toBe("running");
-    expect(result.current.duplicates.view.snapshot).toBeNull();
-    act(() => result.current.input.selectSource("C:\\media\\Other"));
-    start.resolve("dupe-job");
-
-    await expect(command).resolves.toBe(true);
-    expect(result.current.identity.view.sourcePath).toBe("C:\\media\\Other");
-  });
-
-  it("exposes running duplicate auth progress before terminal eligibility exists", async () => {
-    const jobTransport: JobRegistryTransport = {
-      ...defaultJobTransport(),
-      list: async () => [runningDupeJob("C:\\media\\Example", 1)],
-    };
-    const { result } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(portsFor(), jobTransport),
-    });
-
-    await selectAndPrepare(result, "C:\\media\\Example");
-    await waitFor(() => expect(result.current.duplicates.view.status).toBe("running"));
-
-    expect(result.current.duplicates.view.snapshot?.totalCount).toBe(1);
-    expect(result.current.duplicates.view.snapshot?.trackers[0]?.message).toBe(
-      "checking tracker auth",
+    expect(dryRunUploads).toHaveBeenCalledWith(
+      expect.anything(),
+      false,
+      expect.any(String),
+      expect.any(AbortSignal),
     );
-    expect(result.current.duplicates.view.eligibility?.Trackers).toEqual([]);
+    expect(result.current.upload.view.dryRunResult?.id).toBe("dry-run-1");
   });
 
-  it("tracks selected and completed image uploads through the session facet", async () => {
-    const images: Awaited<ReturnType<ReleaseSessionPorts["uploadedImages"]["listCandidates"]>> = [
-      {
-        Index: 0,
-        TimestampSeconds: 1,
-        Path: "C:\\managed\\one.png",
-        Purpose: "final",
-        Width: 1920,
-        Height: 1080,
-        SizeBytes: 1,
-      },
-      {
-        Index: 1,
-        TimestampSeconds: 2,
-        Path: "C:\\managed\\two.png",
-        Purpose: "final",
-        Width: 1920,
-        Height: 1080,
-        SizeBytes: 1,
-      },
-    ];
-    const uploadResult =
-      createDeferred<Awaited<ReturnType<ReleaseSessionPorts["uploadedImages"]["upload"]>>>();
-    let uploaded: Awaited<ReturnType<ReleaseSessionPorts["uploadedImages"]["listUploaded"]>> = [];
-    const jobTransport: JobRegistryTransport = {
-      ...defaultJobTransport(),
-      list: async () => [completedDupeJob("C:\\media\\Example", 1)],
-    };
+  it("hydrates hosted-image outcomes from the workflow media snapshot", async () => {
+    const captureMedia = vi.fn(async (current: ReleaseWorkflowCurrent) => {
+      const revision = current.workflow.revision + 1;
+      return {
+        ...current,
+        workflow: { ...current.workflow, revision, media: { id: "media-1", revision } },
+        media: {
+          id: "media-1",
+          workflowId: current.workflow.id,
+          revision,
+          release: current.workflow.release!,
+          releaseRef: { SourcePath: "C:\\media\\Example", Generation: 1 },
+          projectionSet: current.workflow.trackerProjections!,
+          captureFingerprint: "5".repeat(64),
+          requirementsFingerprint: "6".repeat(64),
+          imageRequirementsPrepared: false,
+          artifacts: [
+            {
+              id: "screen-1",
+              kind: "screenshot" as const,
+              purpose: "final" as const,
+              selected: true,
+              order: 0,
+            },
+            {
+              id: "screen-2",
+              kind: "screenshot" as const,
+              purpose: "final" as const,
+              selected: true,
+              order: 1,
+            },
+          ],
+          status: "completed" as const,
+          createdAt: "2026-07-16T00:00:00Z",
+        },
+      };
+    });
+    const uploadImages = vi.fn(async (current: ReleaseWorkflowCurrent) => {
+      const revision = current.workflow.revision + 1;
+      const hosted = {
+        id: "hosted-1",
+        kind: "hosted_image" as const,
+        purpose: "final" as const,
+        selected: true,
+        order: 2,
+        source: "screen-1",
+        host: "example",
+        url: "https://example.invalid/1.png",
+      };
+      return {
+        ...current,
+        workflow: { ...current.workflow, revision, media: { id: "media-2", revision } },
+        media: {
+          ...current.media!,
+          id: "media-2",
+          revision,
+          imageRequirementsPrepared: true,
+          artifacts: [...current.media!.artifacts, hosted],
+          hostAttempts: [
+            {
+              id: "attempt-1",
+              media: { id: current.media!.id, revision: current.media!.revision },
+              host: "example",
+              status: "completed" as const,
+              fallback: false,
+              artifactIds: ["screen-1", "screen-2"],
+              results: [hosted],
+              attemptedAt: "2026-07-16T00:00:01Z",
+            },
+          ],
+        },
+      };
+    });
     const { result } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(
         portsFor({
-          uploadedImagesListCandidates: async () => images,
-          uploadedImagesListUploaded: async () => uploaded,
-          uploadedImagesUpload: async (uploadCommand) => {
-            uploadCommand.onProgress({
-              correlationID: uploadCommand.correlationID,
-              attemptID: "example|global",
-              host: "example",
-              usageScope: "global",
-              trackers: ["AITHER"],
-              fallback: false,
-              completed: 1,
-              total: 2,
-              succeeded: 1,
-              failed: 0,
-              reused: 0,
-              status: "running",
-              message: "Uploading images.",
-              timestamp: "2026-07-16T00:00:00Z",
-            });
-            const value = await uploadResult.promise;
-            uploadCommand.onProgress({
-              correlationID: uploadCommand.correlationID,
-              attemptID: "example|global",
-              host: "example",
-              usageScope: "global",
-              trackers: ["AITHER"],
-              fallback: false,
-              completed: 2,
-              total: 2,
-              succeeded: 2,
-              failed: 0,
-              reused: 0,
-              status: "completed",
-              message: "Host upload complete.",
-              timestamp: "2026-07-16T00:00:01Z",
-            });
-            uploaded = value.Links;
-            return value;
-          },
+          workflow: workflowPorts({ captureMedia, uploadImages }),
         }),
-        jobTransport,
       ),
     });
     await selectAndPrepare(result, "C:\\media\\Example");
     await waitFor(() =>
       expect(result.current.navigation.view.access.uploadedImages.available).toBe(true),
     );
+    await act(() =>
+      result.current.screenshots.generate("final", [
+        { Index: 0, TimestampSeconds: 1, Frame: 24, Source: "manual" },
+        { Index: 1, TimestampSeconds: 2, Frame: 48, Source: "manual" },
+      ]),
+    );
+    expect(result.current.uploadedImages.view.staleReason).not.toBe("");
     await act(() => result.current.uploadedImages.load());
-    act(() => result.current.uploadedImages.chooseHost("example"));
-
-    let command!: Promise<boolean>;
-    act(() => {
-      command = result.current.uploadedImages.upload();
-    });
-    await waitFor(() => expect(result.current.uploadedImages.view.status).toBe("running"));
-    expect(result.current.uploadedImages.view.progress.attempts).toEqual([
-      expect.objectContaining({ attemptID: "example|global", completed: 1, total: 2 }),
+    expect(result.current.uploadedImages.view.selectedArtifactIDs).toEqual([
+      "screen-1",
+      "screen-2",
     ]);
+    await act(() => result.current.uploadedImages.upload());
 
-    uploadResult.resolve({
-      Links: images.map((image) => ({
-        SourcePath: "C:\\media\\Example",
-        ImagePath: image.Path,
-        Host: "example",
-        UsageScope: "global",
-        ImgURL: `https://example.invalid/${image.Index}.png`,
-        RawURL: `https://example.invalid/${image.Index}.png`,
-        WebURL: `https://example.invalid/${image.Index}.png`,
-        SizeBytes: image.SizeBytes,
-        UploadedAt: "2026-07-16T00:00:00Z",
-      })),
-      Failures: [],
-    });
-    await act(() => command);
-
-    expect(result.current.uploadedImages.view.progress.attempts).toEqual([
+    expect(uploadImages).toHaveBeenCalledWith(
+      expect.anything(),
+      ["screen-1", "screen-2"],
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+    expect(result.current.uploadedImages.view.uploaded).toEqual([
       expect.objectContaining({
-        attemptID: "example|global",
-        completed: 2,
-        total: 2,
-        status: "completed",
+        artifactID: "hosted-1",
+        host: "example",
+        url: "https://example.invalid/1.png",
       }),
     ]);
-    expect(result.current.uploadedImages.view.status).toBe("ready");
   });
 
   it("preserves explicit-empty tracker intent and blocks duplicate start", async () => {
-    const jobTransport: JobRegistryTransport = {
-      ...defaultJobTransport(),
-      startDupe: vi.fn(async () => "dupe-job"),
-    };
     const { result } = renderHook(useReleaseSession, {
-      wrapper: wrapperFor(portsFor(), jobTransport),
+      wrapper: wrapperFor(portsFor()),
     });
     act(() => result.current.input.selectSource("C:\\media\\Example"));
     await act(() => result.current.input.prepare());
@@ -1069,7 +1946,6 @@ describe("useReleaseSession", () => {
       started = await result.current.duplicates.run();
     });
     expect(started).toBe(false);
-    expect(jobTransport.startDupe).not.toHaveBeenCalled();
     expect(result.current.duplicates.view.error).toBe(
       "Select at least one tracker to run duplicate checking.",
     );
@@ -1080,12 +1956,6 @@ describe("useReleaseSession", () => {
       started = await result.current.duplicates.run();
     });
     expect(started).toBe(true);
-    expect(jobTransport.startDupe).toHaveBeenCalledWith(
-      {
-        release: { SourcePath: "C:\\media\\Example", Generation: 1 },
-        trackers: ["AITHER"],
-      },
-      expect.any(String),
-    );
+    expect(result.current.duplicates.view.status).toBe("ready");
   });
 });

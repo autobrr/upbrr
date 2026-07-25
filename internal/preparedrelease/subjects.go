@@ -16,7 +16,7 @@ import (
 
 // ResolveUploadSubject validates and projects one exact prepared generation
 // into the upload module's operation-owned read model.
-func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadReviewInput) (api.UploadSubject, error) {
+func (m *Module) ResolveUploadSubject(ctx context.Context, input api.UploadSubjectInput) (api.UploadSubject, error) {
 	owned, err := m.resolveEnvelope(ctx, input.Release)
 	if err != nil {
 		return api.UploadSubject{}, err

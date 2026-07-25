@@ -8,10 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
-	"strings"
 
-	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	"github.com/autobrr/upbrr/internal/apitoken"
 	"github.com/autobrr/upbrr/internal/services/trackericon"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -34,6 +32,7 @@ func nonNilAppList[T any](values []T) []T {
 // registerAppRoutes installs authenticated browser operations and their
 // request-shape adapters on mux.
 func (s *Server) registerAppRoutes(mux *http.ServeMux) {
+	s.registerReleaseWorkflowAppRoutes(mux)
 	mux.HandleFunc("/api/app/ListTrackerAuthCapabilities", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -166,181 +165,6 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
-	mux.HandleFunc("/api/app/DetectDiscType", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		var req struct{ Path string }
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.DetectDiscType(r.Context(), req.Path)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/FetchMetadata", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
-		var req struct {
-			CorrelationID     string
-			Path              string
-			SourceLookupURL   string
-			Overrides         api.ExternalIDOverrides
-			NameOverrides     api.ReleaseNameOverrides
-			Playlist          api.PlaylistInstruction
-			ConfirmBDMVRescan bool
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.FetchMetadata(
-			r.Context(),
-			current.ID,
-			metadataPreparationRequest{
-				CorrelationID:     req.CorrelationID,
-				Path:              req.Path,
-				SourceLookupURL:   req.SourceLookupURL,
-				Overrides:         req.Overrides,
-				NameOverrides:     req.NameOverrides,
-				Playlist:          req.Playlist,
-				ConfirmBDMVRescan: req.ConfirmBDMVRescan,
-			},
-		)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/ResetMetadata", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
-		var req struct {
-			CorrelationID     string
-			Path              string
-			SourceLookupURL   string
-			Overrides         api.ExternalIDOverrides
-			NameOverrides     api.ReleaseNameOverrides
-			Playlist          api.PlaylistInstruction
-			ConfirmBDMVRescan bool
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.ResetMetadata(
-			r.Context(),
-			current.ID,
-			metadataPreparationRequest{
-				CorrelationID:     req.CorrelationID,
-				Path:              req.Path,
-				SourceLookupURL:   req.SourceLookupURL,
-				Overrides:         req.Overrides,
-				NameOverrides:     req.NameOverrides,
-				Playlist:          req.Playlist,
-				ConfirmBDMVRescan: req.ConfirmBDMVRescan,
-			},
-		)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/SelectBlurayCandidate", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
-		var req struct {
-			CorrelationID string
-			Path          string
-			ReleaseID     string
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.SelectBlurayCandidate(r.Context(), current.ID, blurayCandidateSelectionRequest{
-			CorrelationID: req.CorrelationID,
-			Path:          req.Path,
-			ReleaseID:     req.ReleaseID,
-		})
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/FetchPreparation", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
-		var req struct {
-			Path           string
-			Overrides      api.ExternalIDOverrides
-			NameOverrides  api.ReleaseNameOverrides
-			Trackers       []string
-			IgnoreDupesFor []string
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.FetchPreparation(current.ID, req.Path, req.Overrides, req.NameOverrides, req.Trackers, req.IgnoreDupesFor)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/FetchTrackerDryRun", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
-		var req struct {
-			DupeJobID            string
-			Release              api.ReleaseRef
-			Trackers             []string
-			IgnoreDupesFor       []string
-			QuestionnaireAnswers map[string]map[string]string
-			DescriptionGroups    []api.DescriptionBuilderGroup
-			NoSeed               bool
-			RunLogLevel          string
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.FetchTrackerDryRun(
-			r.Context(),
-			current.ID,
-			req.DupeJobID,
-			req.Release,
-			req.Trackers,
-			req.IgnoreDupesFor,
-			req.QuestionnaireAnswers,
-			req.DescriptionGroups,
-			req.NoSeed,
-			req.RunLogLevel,
-		)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/FetchDescriptionBuilder", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		var req struct {
-			Release  api.ReleaseRef
-			Trackers []string
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.FetchDescriptionBuilder(req.Release, req.Trackers)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
 	mux.HandleFunc("/api/app/RenderDescription", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
 		var req struct{ Raw string }
 		if err := decodeJSON(r, &req); err != nil {
@@ -348,39 +172,6 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			return
 		}
 		value, err := s.backend.RenderDescription(req.Raw)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/SaveDescriptionOverride", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		var req struct {
-			Release  api.ReleaseRef
-			GroupKey string
-			Raw      string
-			Trackers []string
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.SaveDescriptionOverride(req.Release, req.GroupKey, req.Raw, req.Trackers)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/DiscoverPlaylists", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		var req struct{ Path string }
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.DiscoverPlaylists(r.Context(), req.Path)
 		if err != nil {
 			writeAppError(w, err)
 			return
@@ -415,274 +206,6 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, value)
 	}))
 
-	mux.HandleFunc("/api/app/FetchScreenshotPlan", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		var req struct {
-			Release api.ReleaseRef
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.FetchScreenshotPlan(req.Release)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/GenerateScreenshots", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		var req struct {
-			Release    api.ReleaseRef
-			Selections []api.ScreenshotSelection
-			Purpose    api.ScreenshotPurpose
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.GenerateScreenshots(req.Release, req.Selections, req.Purpose)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/PreviewScreenshotFrame", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		var req struct {
-			Release          api.ReleaseRef
-			TimestampSeconds float64
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.PreviewScreenshotFrame(req.Release, req.TimestampSeconds)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/DeleteScreenshot", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		var req struct {
-			Release   api.ReleaseRef
-			ImagePath string
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		if err := s.backend.DeleteScreenshot(req.Release, req.ImagePath); err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-	}))
-
-	mux.HandleFunc("/api/app/DeleteTrackerImageURL", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		var req struct {
-			Release api.ReleaseRef
-			URL     string
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		if err := s.backend.DeleteTrackerImageURL(req.Release, req.URL); err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-	}))
-
-	mux.HandleFunc("/api/app/SaveFinalScreenshotSelections", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		var req struct {
-			Release api.ReleaseRef
-			Images  []api.ScreenshotImage
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		if err := s.backend.SaveFinalScreenshotSelections(req.Release, req.Images); err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-	}))
-
-	mux.HandleFunc("/api/app/ImportMenuImages", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
-		var req struct {
-			Release api.ReleaseRef
-			Paths   []string
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		policy, err := s.webBrowsePolicy(current)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		if !policy.AllowUnrestricted && len(policy.Roots) == 0 {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "web browse root is not configured"})
-			return
-		}
-		importPaths, err := menuImportPathsWithinBrowsePolicy(req.Paths, policy)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		if err := s.backend.ImportMenuImages(req.Release, importPaths); err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-	}))
-
-	mux.HandleFunc("/api/app/CaptureDVDMenus", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-			return
-		}
-		var req struct {
-			Release api.ReleaseRef
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.CaptureDVDMenus(r.Context(), req.Release)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/ListDVDMenuScreenshots", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		var req struct {
-			Release api.ReleaseRef
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.ListDVDMenuScreenshots(req.Release)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, nonNilAppList(value))
-	}))
-
-	mux.HandleFunc("/api/app/DeleteDVDMenuScreenshot", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-			return
-		}
-		var req struct {
-			Release   api.ReleaseRef
-			ImagePath string
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		if err := s.backend.DeleteDVDMenuScreenshot(req.Release, req.ImagePath); err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-	}))
-
-	mux.HandleFunc("/api/app/ReadScreenshotImage", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		var req struct{ Path string }
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.ReadScreenshotImage(req.Path)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/ListUploadCandidates", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		var req struct {
-			Release api.ReleaseRef
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.ListUploadCandidates(req.Release)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, nonNilAppList(value))
-	}))
-
-	mux.HandleFunc("/api/app/ListUploadedImages", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		var req struct {
-			Release api.ReleaseRef
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.ListUploadedImages(req.Release)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, nonNilAppList(value))
-	}))
-
-	mux.HandleFunc("/api/app/UploadImages", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
-		var req struct {
-			CorrelationID string
-			Release       api.ReleaseRef
-			Trackers      []string
-			Host          string
-			Images        []api.ScreenshotImage
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.UploadImages(r.Context(), current.ID, req.CorrelationID, req.Release, req.Trackers, req.Host, req.Images)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/DeleteUploadedImage", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
-		var req struct {
-			Release   api.ReleaseRef
-			ImagePath string
-			Host      string
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		if err := s.backend.DeleteUploadedImage(req.Release, req.ImagePath, req.Host); err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-	}))
-
 	mux.HandleFunc("/api/app/GetConfig", s.requireSession(func(w http.ResponseWriter, _ *http.Request, _ session) {
 		value, err := s.backend.GetConfig()
 		if err != nil {
@@ -708,6 +231,85 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 			return
 		}
 		writeJSON(w, http.StatusOK, value)
+	}))
+
+	mux.HandleFunc("/api/app/ListAPITokens", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		value, err := s.apiTokens.list(r.Context())
+		if err != nil {
+			if s.backend != nil {
+				s.backend.logWarnf("web: list API tokens failed: %v", err)
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list API tokens failed"})
+			return
+		}
+		writeJSON(w, http.StatusOK, nonNilAppList(value))
+	}))
+
+	mux.HandleFunc("/api/app/CreateAPIToken", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req struct {
+			Name    string           `json:"name"`
+			OwnerID string           `json:"ownerId"`
+			Scopes  []apitoken.Scope `json:"scopes"`
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		created, err := s.apiTokens.create(r.Context(), apitoken.CreateInput{
+			Name:    req.Name,
+			OwnerID: req.OwnerID,
+			Scopes:  req.Scopes,
+		})
+		if err != nil {
+			if errors.Is(err, apitoken.ErrInvalid) {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			if s.backend != nil {
+				s.backend.logWarnf("web: create API token failed: %v", err)
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create API token failed"})
+			return
+		}
+		writeJSON(w, http.StatusCreated, created)
+	}))
+
+	mux.HandleFunc("/api/app/RevokeAPIToken", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req struct {
+			ID string `json:"id"`
+		}
+		if err := decodeJSON(r, &req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := s.apiTokens.revoke(r.Context(), req.ID); err != nil {
+			if errors.Is(err, apitoken.ErrNotFound) {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "API token not found or already revoked"})
+				return
+			}
+			if errors.Is(err, apitoken.ErrInvalid) {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			if s.backend != nil {
+				s.backend.logWarnf("web: revoke API token failed: %v", err)
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "revoke API token failed"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))
 
 	mux.HandleFunc("/api/app/GetDefaultConfig", s.requireSession(func(w http.ResponseWriter, _ *http.Request, _ session) {
@@ -879,165 +481,6 @@ func (s *Server) registerAppRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))
 
-	mux.HandleFunc("/api/app/StartDupeCheck", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
-		var req struct {
-			Release       api.ReleaseRef
-			Trackers      []string
-			CorrelationID string
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.StartDupeCheck(
-			r.Context(), current.ID, req.Release, req.Trackers, req.CorrelationID,
-		)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/CancelDupeCheck", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
-		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-			return
-		}
-		var req struct{ JobID string }
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		if err := s.backend.CancelDupeCheck(current.ID, req.JobID); err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-	}))
-
-	mux.HandleFunc("/api/app/GetDupeCheckSnapshot", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
-		var req struct{ JobID string }
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.GetDupeCheckSnapshot(current.ID, req.JobID)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/ReviewTrackerUpload", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
-		var req struct {
-			Release              api.ReleaseRef
-			Trackers             []string
-			IgnoreDupesFor       []string
-			RuleAuthorizations   []api.RuleAuthorization
-			QuestionnaireAnswers map[string]map[string]string
-			DescriptionGroups    []api.DescriptionBuilderGroup
-			NoSeed               bool
-			RunLogLevel          string
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.ReviewTrackerUpload(
-			r.Context(),
-			current.ID,
-			req.Release,
-			req.Trackers,
-			req.IgnoreDupesFor,
-			req.RuleAuthorizations,
-			req.QuestionnaireAnswers,
-			req.DescriptionGroups,
-			req.NoSeed,
-			req.RunLogLevel,
-		)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/StartReviewedTrackerUpload", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
-		var req struct {
-			Token         string
-			CorrelationID string
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.StartReviewedTrackerUpload(current.ID, req.Token, req.CorrelationID)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/CancelTrackerUpload", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
-		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-			return
-		}
-		var req struct{ JobID string }
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		if err := s.backend.CancelTrackerUpload(current.ID, req.JobID); err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-	}))
-
-	mux.HandleFunc("/api/app/RetryFailedTrackerUpload", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
-		var req struct {
-			JobID         string
-			CorrelationID string
-		}
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.RetryFailedTrackerUpload(current.ID, req.JobID, req.CorrelationID)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/GetTrackerUploadSnapshot", s.requireSession(func(w http.ResponseWriter, r *http.Request, current session) {
-		var req struct{ JobID string }
-		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		value, err := s.backend.GetTrackerUploadSnapshot(current.ID, req.JobID)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-	}))
-
-	mux.HandleFunc("/api/app/ListJobs", s.requireSession(func(w http.ResponseWriter, _ *http.Request, current session) {
-		value, err := s.backend.ListJobs(current.ID)
-		if err != nil {
-			writeAppError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, nonNilAppList(value))
-	}))
-
 	mux.HandleFunc("/api/app/GetTrackerIcon", s.requireSession(func(w http.ResponseWriter, r *http.Request, _ session) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -1098,84 +541,6 @@ func (s *Server) webBrowsePolicy(current session) (webBrowsePolicy, error) {
 		return webBrowsePolicy{}, err
 	}
 	return webBrowsePolicy{Roots: roots}, nil
-}
-
-// menuImportPathsWithinBrowsePolicy resolves menu image paths under the active
-// browse policy. Directory inputs expand to their immediate non-directory
-// entries after each resolved path is checked against configured roots.
-func menuImportPathsWithinBrowsePolicy(paths []string, policy webBrowsePolicy) ([]string, error) {
-	if policy.AllowUnrestricted {
-		return paths, nil
-	}
-	filtered := make([]string, 0, len(paths))
-	for _, rawPath := range paths {
-		resolvedPath, info, err := resolveMenuImportPath(rawPath)
-		if err != nil {
-			return nil, err
-		}
-		if !pathWithinBrowseRoots(resolvedPath, policy.Roots) {
-			return nil, fmt.Errorf("menu image path %q is outside configured web browse roots", rawPath)
-		}
-		if !info.IsDir() {
-			filtered = append(filtered, resolvedPath)
-			continue
-		}
-		entries, err := os.ReadDir(resolvedPath)
-		if err != nil {
-			return nil, fmt.Errorf("read menu dir %s: %w", resolvedPath, err)
-		}
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-			entryPath := filepath.Join(resolvedPath, entry.Name())
-			entryResolved, entryInfo, err := resolveMenuImportPath(entryPath)
-			if err != nil {
-				return nil, err
-			}
-			if entryInfo.IsDir() {
-				continue
-			}
-			if !pathWithinBrowseRoots(entryResolved, policy.Roots) {
-				return nil, fmt.Errorf("menu image path %q is outside configured web browse roots", entryPath)
-			}
-			filtered = append(filtered, entryResolved)
-		}
-	}
-	return filtered, nil
-}
-
-// resolveMenuImportPath normalizes a menu image path to its absolute symlink
-// target and returns metadata for the resolved filesystem entry.
-func resolveMenuImportPath(rawPath string) (string, os.FileInfo, error) {
-	trimmed := strings.TrimSpace(rawPath)
-	if trimmed == "" {
-		return "", nil, errors.New("menu image path is required")
-	}
-	candidate, err := filepath.Abs(filepath.Clean(trimmed))
-	if err != nil {
-		return "", nil, fmt.Errorf("resolve menu path %s: %w", trimmed, err)
-	}
-	resolved, err := filepath.EvalSymlinks(candidate)
-	if err != nil {
-		return "", nil, fmt.Errorf("resolve menu path symlinks %s: %w", trimmed, err)
-	}
-	info, err := os.Stat(resolved)
-	if err != nil {
-		return "", nil, fmt.Errorf("stat menu path %s: %w", resolved, err)
-	}
-	return resolved, info, nil
-}
-
-// pathWithinBrowseRoots reports whether candidate is contained by any
-// normalized browse root.
-func pathWithinBrowseRoots(candidate string, roots []string) bool {
-	for _, root := range roots {
-		if pathutil.IsWithinRoot(root, candidate) {
-			return true
-		}
-	}
-	return false
 }
 
 // writeAppError exposes structured operation failures with their safe message

@@ -5,14 +5,43 @@ package trackers
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// RuleCheck returns keyed tracker-specific failures or an operational error.
-// It may return multiple independent failures from one evaluation pass.
-type RuleCheck func(ctx context.Context, meta api.RuleSubject, logger api.Logger) ([]api.RuleFailure, error)
+// ValidationCheck returns keyed tracker-specific constructibility or policy
+// failures without performing I/O or reading runtime secrets.
+type ValidationCheck func(ctx context.Context, subject api.TrackerValidationSubject, logger api.Logger) ([]api.RuleFailure, error)
+
+// ValidationPolicyBinding identifies one versioned tracker validation policy.
+type ValidationPolicyBinding struct {
+	ID    string
+	Check ValidationCheck
+}
+
+// NoExtraValidationPolicy returns an explicit versioned policy that reports no
+// tracker-specific failures.
+func NoExtraValidationPolicy(id string) ValidationPolicyBinding {
+	return ValidationPolicyBinding{
+		ID: strings.TrimSpace(id),
+		Check: func(context.Context, api.TrackerValidationSubject, api.Logger) ([]api.RuleFailure, error) {
+			return nil, nil
+		},
+	}
+}
+
+func validateValidationPolicy(binding ValidationPolicyBinding) error {
+	switch {
+	case strings.TrimSpace(binding.ID) == "":
+		return errors.New("validation policy ID is required")
+	case binding.Check == nil:
+		return errors.New("validation policy check is required")
+	default:
+		return nil
+	}
+}
 
 // NewRuleFailure constructs a normalized keyed tracker-rule result.
 func NewRuleFailure(rule string, reason string, disposition api.RuleDisposition) api.RuleFailure {
@@ -21,6 +50,17 @@ func NewRuleFailure(rule string, reason string, disposition api.RuleDisposition)
 		Reason:      strings.TrimSpace(reason),
 		Disposition: api.NormalizeRuleDisposition(disposition),
 	}
+}
+
+// RuleFailureBlocksExecution reports whether a validation failure makes the
+// tracker ineligible in the selected workflow execution mode.
+func RuleFailureBlocksExecution(failure api.RuleFailure, mode api.WorkflowExecutionMode) bool {
+	disposition := api.NormalizeRuleDisposition(failure.Disposition)
+	if disposition == api.RuleDispositionAdvisory {
+		return false
+	}
+	return disposition != api.RuleDispositionWaivable ||
+		api.NormalizeWorkflowExecutionMode(mode) != api.WorkflowExecutionModeDebug
 }
 
 // LanguageRule configures language requirements and the release types to which they apply.
@@ -82,6 +122,4 @@ type RuleSet struct {
 	BlockGroupUnlessType map[string][]string
 	// RequireSceneNFO requires an NFO for scene releases.
 	RequireSceneNFO bool
-	// Check evaluates additional tracker-specific rules.
-	Check RuleCheck
 }

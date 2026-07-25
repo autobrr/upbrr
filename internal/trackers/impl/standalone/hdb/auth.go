@@ -115,3 +115,11 @@ func resolveAuthSessionAt(
 	}
 	return nil
 }
+
+func resolveHDBCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
+	values, err := cookies.LoadTrackerHTTPCookies(ctx, dbPath, "HDB", "hdbits.org")
+	if err != nil {
+		return values, fmt.Errorf("trackers: HDB load cookies: %w", err)
+	}
+	return values, nil
+}

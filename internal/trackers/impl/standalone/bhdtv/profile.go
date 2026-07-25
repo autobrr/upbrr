@@ -5,6 +5,7 @@ package bhdtv
 
 import (
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 )
@@ -16,9 +17,12 @@ func Profile() standalone.Profile {
 		BaseURL:              "https://www.bit-hdtv.com",
 		DescriptionGroup:     "bhdtv",
 		UploadContentMode:    trackers.UploadContentModeDescription,
+		AuthCapability:       authcontract.APIKeyCapability("BHDTV"),
 		PrepareDescription:   prepareDescription,
 		PrepareUpload:        prepareUpload,
+		ReleaseNamePolicy:    trackers.SimpleSubjectReleaseNamePolicy("standalone/bhdtv/v1", resolveUploadName),
 		NewDuplicateAdapter:  func(dupe.Dependencies) dupe.Adapter { return bhdtvDuplicateAdapter{} },
+		ValidationPolicy:     validationPolicy(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "BIT-HDTV", UseMyAnnounce: true},
 	}
 }

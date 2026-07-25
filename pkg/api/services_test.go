@@ -17,11 +17,13 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 			LocalizedTitles: map[string]string{"en": "Example Release 2026"},
 		}},
 		SelectedBDMVPlaylists: []PlaylistInfo{{File: "00001.mpls"}},
+		ImageHostOverrides:    ImageHostOverrides{FailedHosts: []string{"imgbox"}},
 	}
 	projected := NewDescriptionSubject(source)
 	projected.Release.Codec[0] = "changed"
 	projected.ProviderMetadata.TMDB.LocalizedTitles["en"] = "changed"
 	projected.SelectedBDMVPlaylists[0].File = "changed"
+	projected.ImageHost.FailedHosts[0] = "changed"
 
 	if source.Release.Codec[0] != "H.265" {
 		t.Fatal("release facts share storage with description subject")
@@ -31,6 +33,72 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 	}
 	if source.SelectedBDMVPlaylists[0].File != "00001.mpls" {
 		t.Fatal("playlist facts share storage with description subject")
+	}
+	if source.ImageHostOverrides.FailedHosts[0] != "imgbox" {
+		t.Fatal("failed image hosts share storage with description subject")
+	}
+}
+
+func TestNewTrackerValidationSubjectDetachesMutableFacts(t *testing.T) {
+	t.Parallel()
+
+	anon := true
+	source := UploadSubject{
+		Release: ReleaseInfo{Codec: []string{"H.265"}},
+		ProviderMetadata: SourceScopedMetadata{TMDB: &TMDBMetadata{
+			LocalizedTitles: map[string]string{"en": "Example Release 2026"},
+		}},
+		TrackerQuestionnaireAnswers: map[string]map[string]string{
+			"EXAMPLE": {"edition": "director"},
+		},
+		TrackerConfigOverrides: TrackerConfigOverrides{Anon: &anon},
+		MediaInfoJSONPath:      `C:\private\MEDIAINFO.json`,
+		SceneNFOPath:           `C:\private\release.nfo`,
+		Disc:                   DiscFacts{Summary: "BDINFO"},
+	}
+
+	projected := NewTrackerValidationSubject(source, "example")
+	projected.Release.Codec[0] = "changed"
+	projected.ProviderMetadata.TMDB.LocalizedTitles["en"] = "changed"
+	projected.QuestionnaireAnswers["edition"] = "changed"
+	*projected.TrackerConfigOverrides.Anon = false
+
+	if source.Release.Codec[0] != "H.265" {
+		t.Fatal("release facts share storage with validation subject")
+	}
+	if source.ProviderMetadata.TMDB.LocalizedTitles["en"] != "Example Release 2026" {
+		t.Fatal("provider metadata shares storage with validation subject")
+	}
+	if source.TrackerQuestionnaireAnswers["EXAMPLE"]["edition"] != "director" {
+		t.Fatal("questionnaire answers share storage with validation subject")
+	}
+	if !*source.TrackerConfigOverrides.Anon {
+		t.Fatal("tracker overrides share storage with validation subject")
+	}
+	if projected.Tracker != "EXAMPLE" || !projected.MediaInfoJSONReady || !projected.SceneNFOReady || !projected.BDInfoReady {
+		t.Fatalf("unexpected projected validation facts: %#v", projected)
+	}
+	if projected.PreparedResourceFingerprint == "" {
+		t.Fatal("prepared-resource fingerprint is empty")
+	}
+
+	source.Release.Codec[0] = "source changed"
+	source.ProviderMetadata.TMDB.LocalizedTitles["en"] = "source changed"
+	source.TrackerQuestionnaireAnswers["EXAMPLE"]["edition"] = "source changed"
+	if projected.Release.Codec[0] != "changed" ||
+		projected.ProviderMetadata.TMDB.LocalizedTitles["en"] != "changed" ||
+		projected.QuestionnaireAnswers["edition"] != "changed" {
+		t.Fatal("validation subject changed after source mutation")
+	}
+}
+
+func TestTrackerValidationResourceFingerprintIncludesBDInfoReadiness(t *testing.T) {
+	t.Parallel()
+
+	withoutBDInfo := NewTrackerValidationSubject(UploadSubject{DiscType: "BDMV"}, "EXAMPLE")
+	withBDInfo := NewTrackerValidationSubject(UploadSubject{DiscType: "BDMV", Disc: DiscFacts{Summary: "BDINFO"}}, "EXAMPLE")
+	if withoutBDInfo.PreparedResourceFingerprint == withBDInfo.PreparedResourceFingerprint {
+		t.Fatal("BDInfo readiness did not invalidate the prepared-resource fingerprint")
 	}
 }
 

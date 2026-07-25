@@ -4,6 +4,7 @@
 package impl
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestNewRegistryIncludesHDB(t *testing.T) {
@@ -102,6 +104,139 @@ func TestNewRegistryIncludesHDB(t *testing.T) {
 	}
 }
 
+func TestRegistryProjectsARAndMTVNamesBeforeDuplicateChecking(t *testing.T) {
+	t.Parallel()
+
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+	tests := []struct {
+		tracker       string
+		subject       api.UploadSubject
+		wantUpload    string
+		wantDuplicate string
+	}{
+		{
+			tracker: "AR",
+			subject: api.UploadSubject{
+				SourcePath:  `C:\Media\Example Release 2026.mkv`,
+				ReleaseName: "Canonical.Release.Name.2026-GRP",
+				Tag:         "GRP",
+				Release: api.ReleaseInfo{
+					Title: "Example Release",
+					Year:  2026,
+				},
+			},
+			wantUpload:    "Example.Release.2026",
+			wantDuplicate: "Example Release 2026",
+		},
+		{
+			tracker: "MTV",
+			subject: api.UploadSubject{
+				ReleaseName: "Example Release 2026 1080p WEB-DL-GRP",
+				Release:     api.ReleaseInfo{Title: "Example Release 2026"},
+			},
+			wantUpload:    "Example.Release.2026.1080p.WEB-DL-GRP",
+			wantDuplicate: "Example Release 2026",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.tracker, func(t *testing.T) {
+			t.Parallel()
+			projection, failure := registry.ProjectRelease(context.Background(), trackers.PreparationInput{
+				Tracker: test.tracker,
+				Meta:    test.subject,
+			}, "", "", "")
+			if failure != nil {
+				t.Fatalf("project %s: %v", test.tracker, failure)
+			}
+			if projection.UploadReleaseName != test.wantUpload {
+				t.Fatalf("upload name = %q, want %q", projection.UploadReleaseName, test.wantUpload)
+			}
+			if projection.DuplicateCriteria.Name != test.wantDuplicate {
+				t.Fatalf("duplicate name = %q, want %q", projection.DuplicateCriteria.Name, test.wantDuplicate)
+			}
+			if projection.UploadReleaseName != projection.DuplicateCriteria.Name &&
+				!slices.ContainsFunc(projection.AdditionalNames, func(name api.TrackerReleaseName) bool {
+					return name.Role == api.TrackerReleaseNameRoleSearch && name.Value == projection.DuplicateCriteria.Name
+				}) {
+				t.Fatalf("explicit search name missing from projection: %#v", projection.AdditionalNames)
+			}
+		})
+	}
+}
+
+func TestRegistryProjectsVersionedReleaseNamesForEveryBuiltIn(t *testing.T) {
+	t.Parallel()
+
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+	subject := api.UploadSubject{
+		SourcePath:       `C:\Media\Example.Release.2026.1080p.WEB-DL.H.264-GRP.mkv`,
+		Filename:         "Example.Release.2026.1080p.WEB-DL.H.264-GRP.mkv",
+		ReleaseName:      "Example.Release.2026.1080p.WEB-DL.H.264-GRP",
+		ReleaseNameNoTag: "Example.Release.2026.1080p.WEB-DL.H.264",
+		SceneName:        "Example.Release.2026.1080p.WEB-DL.H.264-GRP",
+		Tag:              "-GRP",
+		Type:             "WEBDL",
+		Source:           "WEB",
+		VideoCodec:       "H.264",
+		Audio:            "DDP 5.1",
+		Identity: api.ExternalIdentity{
+			Category: "MOVIE",
+			IMDBID:   1234567,
+			TMDBID:   12345,
+		},
+		Release: api.ReleaseInfo{
+			Title:      "Example Release",
+			Year:       2026,
+			Resolution: "1080p",
+			Type:       "WEBDL",
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			TMDB: &api.TMDBMetadata{
+				Title:            "Example Release",
+				OriginalTitle:    "Example Release",
+				OriginalLanguage: "en",
+				Year:             2026,
+			},
+		},
+	}
+	for _, name := range registry.Names() {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			descriptor, ok := registry.LookupDescriptor(name)
+			if !ok {
+				t.Fatalf("descriptor missing")
+			}
+			projection, failure := registry.ProjectRelease(context.Background(), trackers.PreparationInput{
+				Tracker: name,
+				Meta:    subject,
+			}, "", "", "")
+			if failure != nil {
+				t.Fatalf("project release: %v", failure)
+			}
+			if strings.TrimSpace(projection.UploadReleaseName) == "" || strings.TrimSpace(projection.DuplicateCriteria.Name) == "" {
+				t.Fatalf("projected names = upload %q, search %q", projection.UploadReleaseName, projection.DuplicateCriteria.Name)
+			}
+			if !slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
+				return decision.Code == "release_name_policy" && decision.Decision == descriptor.ReleaseNamePolicy.ID
+			}) {
+				t.Fatalf("release-name policy provenance missing: %#v", projection.PolicyDecisions)
+			}
+			if projection.DuplicateCriteria.Name != projection.UploadReleaseName &&
+				!slices.ContainsFunc(projection.AdditionalNames, func(candidate api.TrackerReleaseName) bool {
+					return candidate.Role == api.TrackerReleaseNameRoleSearch && candidate.Value == projection.DuplicateCriteria.Name
+				}) {
+				t.Fatalf("distinct duplicate-search name is undeclared: %#v", projection)
+			}
+		})
+	}
+}
+
 func TestNewRegistryCapabilityInventory(t *testing.T) {
 	registry, err := NewRegistry()
 	if err != nil {
@@ -175,6 +310,106 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 	}
 	if policy, ok := registry.LookupDupePolicy("ANT"); !ok || !policy.DolbyVisionImpliesHDR {
 		t.Fatalf("ANT dupe policy = %#v, %t", policy, ok)
+	}
+}
+
+func TestNewRegistryMigrationInventoryClassifiesEveryBuiltIn(t *testing.T) {
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+
+	familyCounts := map[trackers.Family]int{}
+	for _, name := range registry.Names() {
+		descriptor, ok := registry.LookupDescriptor(name)
+		if !ok {
+			t.Fatalf("%s descriptor missing", name)
+		}
+		definition, ok := registry.Lookup(name)
+		if !ok {
+			t.Fatalf("%s definition missing", name)
+		}
+		if descriptor.ReleaseNamePolicy.Resolver == nil || strings.TrimSpace(descriptor.ReleaseNamePolicy.ID) == "" ||
+			strings.TrimSpace(descriptor.ProjectorVersion) == "" {
+			t.Fatalf("%s versioned release projector missing", name)
+		}
+
+		var namingAndTaxonomyOwner string
+		switch descriptor.Family {
+		case trackers.FamilyUnit3D:
+			namingAndTaxonomyOwner = "unit3d-site-profile"
+		case trackers.FamilyAZFamily:
+			namingAndTaxonomyOwner = "azfamily-site-definition"
+		case trackers.FamilyStandalone:
+			namingAndTaxonomyOwner = "standalone-prepared-operation"
+		case trackers.FamilyUnknown:
+			t.Fatalf("%s family is unclassified", name)
+		}
+		familyCounts[descriptor.Family]++
+
+		_, hasDupeAdapter := definition.(dupe.Factory)
+		t.Logf(
+			"tracker=%s family=%s naming_taxonomy=%s dupe_adapter=%t metadata=%t rules=%t audio=%t artifacts=%t upload_artifact=%t images=%t description_group=%q auth=%t claim=%t banned_static=%t banned_live=%t localized_metadata=%t content_mode=%s",
+			name,
+			descriptor.Family,
+			namingAndTaxonomyOwner,
+			hasDupeAdapter,
+			descriptor.Metadata != nil,
+			descriptor.Rules != nil,
+			descriptor.AudioPolicy != nil,
+			descriptor.Artifact != nil,
+			descriptor.UploadArtifact != nil,
+			descriptor.ImageHost != nil,
+			descriptor.DescriptionGroup,
+			descriptor.AuthCapability != nil || descriptor.AuthResolver != nil,
+			descriptor.ClaimPolicy != nil || descriptor.ClaimFactory != nil,
+			len(descriptor.BannedGroups) > 0,
+			descriptor.BannedPolicy != nil,
+			descriptor.MetadataLocale != "",
+			descriptor.UploadContentMode,
+		)
+	}
+
+	for _, family := range []trackers.Family{trackers.FamilyUnit3D, trackers.FamilyAZFamily, trackers.FamilyStandalone} {
+		if familyCounts[family] == 0 {
+			t.Fatalf("migration inventory has no %s definitions", family)
+		}
+	}
+}
+
+func TestNewRegistryEveryBuiltInPublishesTypedProjectionOutcome(t *testing.T) {
+	t.Parallel()
+
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+	fingerprint, err := api.CanonicalWorkflowFingerprint("registry-projection-contract")
+	if err != nil {
+		t.Fatalf("projection fingerprint: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, name := range registry.Names() {
+		projection, failure := registry.ProjectRelease(ctx, trackers.PreparationInput{
+			Tracker: name,
+			Meta: api.UploadSubject{
+				ReleaseName: "Example.Release.2026.1080p-GRP",
+			},
+		}, fingerprint, fingerprint, fingerprint)
+		if failure == nil {
+			t.Errorf("%s canceled projection returned no typed failure", name)
+		}
+		if projection.TrackerID != api.TrackerID(name) || projection.UploadReleaseName == "" {
+			t.Errorf("%s projection identity/name = %#v", name, projection)
+		}
+		if projection.InputFingerprint != fingerprint || projection.CatalogFingerprint != fingerprint ||
+			projection.ConfigFingerprint != fingerprint || projection.ProjectorFingerprint == "" || projection.CriteriaFingerprint == "" {
+			t.Errorf("%s projection fingerprints (failure=%v cause=%v) = %#v", name, failure, failure.Unwrap(), projection)
+		}
+		if projection.Readiness != api.ReadinessStatusBlocked || projection.DupeReady || projection.UploadReady {
+			t.Errorf("%s canceled projection readiness = %#v", name, projection)
+		}
 	}
 }
 
@@ -425,12 +660,107 @@ func TestNewRegistryIncludesAuthCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new registry: %v", err)
 	}
-	trackersWithAuth := []string{"AR", "ASC", "AZ", "BJS", "BT", "BTN", "CZ", "FF", "FL", "HDB", "HDS", "HDT", "IS", "MTV", "PHD", "PTP", "PTS", "RTF", "THR", "TL"}
-	for _, tracker := range trackersWithAuth {
+	for _, tracker := range registry.Names() {
 		capability, ok := registry.LookupAuthCapability(tracker)
 		if !ok || capability.TrackerID != tracker {
 			t.Errorf("%s auth capability = %#v, %t", tracker, capability, ok)
 		}
+		requirements, ok := registry.ResolveEffectiveAuthRequirements(tracker, config.Config{}, config.TrackerConfig{})
+		if !ok || len(requirements.Alternatives) == 0 {
+			t.Errorf("%s effective auth requirements = %#v, %t", tracker, requirements, ok)
+		}
+	}
+}
+
+func TestNewRegistryResolvesHybridAuthRequirements(t *testing.T) {
+	t.Parallel()
+
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+	tests := []struct {
+		name       string
+		tracker    string
+		cfg        config.TrackerConfig
+		wantMode   string
+		want2FA    bool
+		wantFirst  []trackers.AuthRequirement
+		wantSecond []trackers.AuthRequirement
+	}{
+		{
+			name:      "BTN API and cookie",
+			tracker:   "BTN",
+			wantMode:  "api_and_upload_session",
+			want2FA:   true,
+			wantFirst: []trackers.AuthRequirement{trackers.AuthRequirementAPIKey, trackers.AuthRequirementStoredCookie},
+			wantSecond: []trackers.AuthRequirement{
+				trackers.AuthRequirementAPIKey,
+				trackers.AuthRequirementCredentialLogin,
+			},
+		},
+		{
+			name:     "HDB username passkey cookie",
+			tracker:  "HDB",
+			wantMode: "passkey_cookie",
+			wantFirst: []trackers.AuthRequirement{
+				trackers.AuthRequirementUsername,
+				trackers.AuthRequirementPasskey,
+				trackers.AuthRequirementStoredCookie,
+			},
+		},
+		{
+			name:     "PTP API and upload session",
+			tracker:  "PTP",
+			wantMode: "api_and_upload_session",
+			want2FA:  true,
+			wantFirst: []trackers.AuthRequirement{
+				trackers.AuthRequirementAPIUser,
+				trackers.AuthRequirementAPIKey,
+				trackers.AuthRequirementStoredCookie,
+			},
+		},
+		{
+			name:      "RTF API key or credential refresh",
+			tracker:   "RTF",
+			wantMode:  "api_key_or_refresh",
+			wantFirst: []trackers.AuthRequirement{trackers.AuthRequirementAPIKey},
+			wantSecond: []trackers.AuthRequirement{
+				trackers.AuthRequirementCredentialLogin,
+			},
+		},
+		{
+			name:      "TL API upload",
+			tracker:   "TL",
+			cfg:       config.TrackerConfig{APIUpload: true},
+			wantMode:  "api_upload",
+			wantFirst: []trackers.AuthRequirement{trackers.AuthRequirementPasskey},
+		},
+		{
+			name:      "TL form upload",
+			tracker:   "TL",
+			wantMode:  "form_upload",
+			wantFirst: []trackers.AuthRequirement{trackers.AuthRequirementStoredCookie},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			requirements, ok := registry.ResolveEffectiveAuthRequirements(test.tracker, config.Config{}, test.cfg)
+			if !ok {
+				t.Fatalf("%s requirements missing", test.tracker)
+			}
+			if requirements.Mode != test.wantMode || requirements.Supports2FA != test.want2FA {
+				t.Fatalf("%s requirements = %#v", test.tracker, requirements)
+			}
+			if len(requirements.Alternatives) == 0 || !slices.Equal(requirements.Alternatives[0].AllOf, test.wantFirst) {
+				t.Fatalf("%s first alternative = %#v, want %#v", test.tracker, requirements.Alternatives, test.wantFirst)
+			}
+			if test.wantSecond != nil &&
+				(len(requirements.Alternatives) < 2 || !slices.Equal(requirements.Alternatives[1].AllOf, test.wantSecond)) {
+				t.Fatalf("%s second alternative = %#v, want %#v", test.tracker, requirements.Alternatives, test.wantSecond)
+			}
+		})
 	}
 }
 

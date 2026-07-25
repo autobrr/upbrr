@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -82,12 +83,19 @@ func (r *Registry) Register(def Definition) error {
 	descriptor := Descriptor{Definition: def}
 	if def != nil {
 		descriptor.Name = def.Name()
+		descriptor.DisplayName = def.Name()
 		descriptor.Family = FamilyStandalone
 		if provider, ok := def.(BaseURLProvider); ok {
 			descriptor.BaseURL = strings.TrimSpace(provider.DefaultBaseURL())
 		}
 		if provider, ok := def.(FamilyProvider); ok {
 			descriptor.Family = provider.TrackerFamily()
+		}
+		descriptor.ProjectorVersion = strings.ToLower(string(descriptor.Family)) + "-v2"
+		if provider, ok := def.(ReleaseNamePolicyProvider); ok {
+			descriptor.ReleaseNamePolicy = provider.ReleaseNamePolicy()
+		} else {
+			descriptor.ReleaseNamePolicy = defaultReleaseNamePolicy(descriptor.Family)
 		}
 		if provider, ok := def.(LocalizedMetadataProvider); ok {
 			descriptor.MetadataLocale = strings.TrimSpace(provider.LocalizedMetadataLocale())
@@ -105,6 +113,9 @@ func (r *Registry) Register(def Definition) error {
 		}
 		if provider, ok := def.(RuleProvider); ok {
 			descriptor.Rules = provider.Rules()
+		}
+		if provider, ok := def.(ValidationPolicyProvider); ok {
+			descriptor.Validation = provider.ValidationPolicy()
 		}
 		if provider, ok := def.(DataLookupPolicyProvider); ok {
 			descriptor.DataPolicy = provider.DataLookupPolicy()
@@ -220,6 +231,20 @@ func (r *Registry) LookupAuthPolicy(tracker string) (AuthPolicy, bool) {
 		return AuthPolicy{}, false
 	}
 	return *descriptor.AuthPolicy, true
+}
+
+// ResolveEffectiveAuthRequirements returns secret-free requirements for the
+// tracker's effective config mode.
+func (r *Registry) ResolveEffectiveAuthRequirements(
+	tracker string,
+	cfg config.Config,
+	trackerConfig config.TrackerConfig,
+) (EffectiveAuthRequirements, bool) {
+	policy, ok := r.LookupAuthPolicy(tracker)
+	if !ok || policy.ResolveRequirements == nil {
+		return EffectiveAuthRequirements{}, false
+	}
+	return policy.ResolveRequirements(cfg, trackerConfig).Clone(), true
 }
 
 // LookupAuthStateManager returns tracker-owned persisted auth cleanup.
@@ -414,11 +439,68 @@ func (r *Registry) RegisterDescriptor(descriptor Descriptor) error {
 		descriptor.AuthCapability.Notes = append([]string(nil), descriptor.AuthCapability.Notes...)
 	}
 	descriptor.Name = name
+	descriptor.DisplayName = strings.TrimSpace(descriptor.DisplayName)
+	if descriptor.DisplayName == "" {
+		descriptor.DisplayName = name
+	}
+	descriptor.ProjectorVersion = strings.TrimSpace(descriptor.ProjectorVersion)
+	aliases := make([]string, 0, len(descriptor.Aliases))
+	seenAliases := make(map[string]struct{}, len(descriptor.Aliases))
+	for _, alias := range descriptor.Aliases {
+		alias = strings.ToUpper(strings.TrimSpace(alias))
+		if alias == "" || alias == name {
+			return fmt.Errorf("trackers: definition %s has invalid alias", name)
+		}
+		if _, ok := seenAliases[alias]; ok {
+			continue
+		}
+		seenAliases[alias] = struct{}{}
+		aliases = append(aliases, alias)
+	}
+	descriptor.Aliases = aliases
+	for existingName, existing := range r.descriptors {
+		if slices.Contains(existing.Aliases, name) {
+			return fmt.Errorf("trackers: definition name %s conflicts with alias owned by %s", name, existingName)
+		}
+		for _, alias := range descriptor.Aliases {
+			if alias == existingName || slices.Contains(existing.Aliases, alias) {
+				return fmt.Errorf("trackers: definition %s alias %s conflicts with %s", name, alias, existingName)
+			}
+		}
+	}
 	if descriptor.Family == FamilyUnknown {
 		descriptor.Family = FamilyStandalone
 		if provider, ok := def.(FamilyProvider); ok {
 			descriptor.Family = provider.TrackerFamily()
 		}
+	}
+	if descriptor.ReleaseNamePolicy.Resolver == nil {
+		if provider, ok := def.(ReleaseNamePolicyProvider); ok {
+			descriptor.ReleaseNamePolicy = provider.ReleaseNamePolicy()
+		} else {
+			descriptor.ReleaseNamePolicy = defaultReleaseNamePolicy(descriptor.Family)
+		}
+	}
+	descriptor.ReleaseNamePolicy.ID = strings.TrimSpace(descriptor.ReleaseNamePolicy.ID)
+	if err := validateReleaseNamePolicy(descriptor.ReleaseNamePolicy); err != nil {
+		return fmt.Errorf("trackers: definition %s has invalid release-name policy: %w", name, err)
+	}
+	if descriptor.ProjectorVersion == "" {
+		descriptor.ProjectorVersion = strings.ToLower(string(descriptor.Family)) + "-v2"
+	}
+	if descriptor.ProjectorVersion == "" {
+		return fmt.Errorf("trackers: definition %s has no versioned release projector", name)
+	}
+	if descriptor.Validation.ID == "" && descriptor.Validation.Check == nil {
+		if provider, ok := def.(ValidationPolicyProvider); ok {
+			descriptor.Validation = provider.ValidationPolicy()
+		} else {
+			descriptor.Validation = NoExtraValidationPolicy(strings.ToLower(name) + "-no-extra-validation-v1")
+		}
+	}
+	descriptor.Validation.ID = strings.TrimSpace(descriptor.Validation.ID)
+	if err := validateValidationPolicy(descriptor.Validation); err != nil {
+		return fmt.Errorf("trackers: definition %s has invalid validation policy: %w", name, err)
 	}
 	if strings.TrimSpace(descriptor.BaseURL) == "" {
 		if provider, ok := def.(BaseURLProvider); ok {
@@ -508,11 +590,10 @@ func (r *Registry) Lookup(tracker string) (Definition, bool) {
 	if r == nil {
 		return nil, false
 	}
-	key := strings.ToUpper(strings.TrimSpace(tracker))
-	if key == "" {
+	if strings.TrimSpace(tracker) == "" {
 		return nil, false
 	}
-	descriptor, ok := r.descriptors[key]
+	descriptor, ok := r.LookupDescriptor(tracker)
 	return descriptor.Definition, ok
 }
 
@@ -523,8 +604,19 @@ func (r *Registry) LookupDescriptor(tracker string) (Descriptor, bool) {
 	if r == nil {
 		return Descriptor{}, false
 	}
-	descriptor, ok := r.descriptors[strings.ToUpper(strings.TrimSpace(tracker))]
-	return descriptor, ok
+	wanted := strings.ToUpper(strings.TrimSpace(tracker))
+	descriptor, ok := r.descriptors[wanted]
+	if ok {
+		descriptor.Aliases = slices.Clone(descriptor.Aliases)
+		return descriptor, true
+	}
+	for _, candidate := range r.descriptors {
+		if slices.Contains(candidate.Aliases, wanted) {
+			candidate.Aliases = slices.Clone(candidate.Aliases)
+			return candidate, true
+		}
+	}
+	return Descriptor{}, false
 }
 
 // LookupRules returns tracker's registered rule capability.

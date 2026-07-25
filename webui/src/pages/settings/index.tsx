@@ -17,6 +17,7 @@ import type {
   TrackerAuthCapability,
   TrackerAuthStatus,
 } from "../../types";
+import APITokensSettings from "./api_tokens";
 
 type SettingsSection = { key: string; jsonKey: string; label: string };
 
@@ -28,6 +29,11 @@ const applicationDetailsSection = {
 const trackerAuthSection = {
   key: "tracker_auth",
   label: "Tracker Auth",
+};
+
+const apiTokensSection = {
+  key: "api_tokens",
+  label: "API Tokens",
 };
 
 const settingsInputClass =
@@ -826,6 +832,19 @@ export default function SettingsPage(props: Props) {
               {applicationDetailsSection.label}
             </button>
             <button
+              key={apiTokensSection.key}
+              type="button"
+              className={cn(
+                "flex h-8 w-full items-center rounded-md px-3 text-left text-sm font-medium transition",
+                settingsSection === apiTokensSection.key
+                  ? "bg-[var(--accent)] text-slate-950 shadow-[0_8px_24px_rgba(245,185,66,0.16)]"
+                  : "text-[var(--muted)] hover:bg-white/10 hover:text-[var(--text)]",
+              )}
+              onClick={() => setSettingsSection(apiTokensSection.key)}
+            >
+              {apiTokensSection.label}
+            </button>
+            <button
               key={trackerAuthSection.key}
               type="button"
               className={cn(
@@ -842,8 +861,10 @@ export default function SettingsPage(props: Props) {
 
           <div className="settings-body">
             {settingsSection === applicationDetailsSection.key ? applicationDetailsPanel : null}
+            {settingsSection === apiTokensSection.key ? <APITokensSettings /> : null}
             {settingsSection === trackerAuthSection.key ? trackerAuthPanel : null}
             {settingsSection === applicationDetailsSection.key ||
+            settingsSection === apiTokensSection.key ||
             settingsSection === trackerAuthSection.key ? null : configData ? (
               <div className="settings-form">
                 {showAdvancedToggle ? (

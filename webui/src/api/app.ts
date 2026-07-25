@@ -4,39 +4,36 @@
 import type {
   ApplicationInfo,
   BrowseDirectoryResponse,
-  DescriptionBuilderPreview,
-  DVDMenuCaptureResult,
-  DupeCheckSnapshot,
-  ExternalIDOverrides,
   HistoryEntry,
   HistoryOverview,
   ImageHostPolicyMetadata,
-  MetadataPreview,
-  OwnerJobSnapshot,
-  PlaylistInfo,
-  PlaylistInstruction,
-  PreparationPreview,
-  PrepareInput,
-  PrepareResult,
-  ReleaseNameOverrides,
-  ReleaseRef,
-  ScreenshotImage,
-  ScreenshotPlan,
-  ScreenshotPurpose,
-  ScreenshotResult,
-  ScreenshotSelection,
   TrackerAuthCapability,
   TrackerAuthLoginRequest,
   TrackerAuthStatus,
   TrackerCatalog,
-  TrackerDryRunPreview,
-  RuleAuthorization,
-  TrackerUploadSnapshot,
-  UploadedImageLink,
-  UploadImagesResult,
-  UploadReviewResult,
 } from "../types";
-import { requestApp } from "./client";
+import type {
+  AttachReleaseWorkflowMediaRequest,
+  CancelReleaseWorkflowRequest,
+  ContinueReleaseWorkflowRequest,
+  DeleteReleaseWorkflowMediaRequest,
+  FramePreview,
+  InvalidateReleaseWorkflowTrackersRequest,
+  MediaPlan,
+  Operation,
+  PreviewReleaseWorkflowFrameRequest,
+  ReleaseWorkflowCurrent,
+  RemoveReleaseWorkflowHostedImagesRequest,
+  ReorderReleaseWorkflowMediaRequest,
+  ResetReleaseWorkflowDescriptionOverrideRequest,
+  RetryReleaseWorkflowImageHostRequest,
+  RetryReleaseWorkflowUploadRequest,
+  SaveReleaseWorkflowDescriptionOverrideRequest,
+  SetReleaseWorkflowMediaSelectionRequest,
+  UploadReleaseWorkflowImagesRequest,
+  WorkflowResourceRef,
+} from "./generated/release-workflow";
+import { requestApp, requestAppForm, withBasePath } from "./client";
 
 type LogEntry = {
   ID: number;
@@ -46,6 +43,22 @@ type LogEntry = {
 };
 
 type ConfigImportResult = { message: string; warnings: string[] };
+
+export type APITokenScope = "workflow:read" | "workflow:write" | "workflow:execute";
+
+export type APITokenRecord = Readonly<{
+  id: string;
+  name: string;
+  ownerId: string;
+  scopes: APITokenScope[];
+  createdAt: string;
+  revokedAt?: string;
+}>;
+
+export type CreatedAPIToken = Readonly<{
+  record: APITokenRecord;
+  token: string;
+}>;
 
 const maxCookieImportContentBytes = 1024 * 1024;
 const encodedTextByteLength = (value: string) => new TextEncoder().encode(value).length;
@@ -81,277 +94,96 @@ export const applicationClient = {
   getInfo: () => requestApp<ApplicationInfo>("GetApplicationInfo"),
 };
 
-/** Canonical release preparation and metadata preview operations. */
-export const preparationClient = {
-  detectDiscType: (path: string, signal?: AbortSignal) =>
-    requestApp<string>("DetectDiscType", { Path: path }, { signal }),
-  fetchMetadata: (
-    correlationID: string,
-    path: string,
-    sourceLookupURL: string,
-    overrides: ExternalIDOverrides,
-    nameOverrides: ReleaseNameOverrides,
-    playlist: PlaylistInstruction,
-    confirmBDMVRescan: boolean,
+/** Persistent public API bearer-token management for authenticated WebUI operators. */
+export const apiTokenClient = {
+  list: () => requestApp<APITokenRecord[]>("ListAPITokens"),
+  create: (name: string, ownerId: string, scopes: APITokenScope[]) =>
+    requestApp<CreatedAPIToken>("CreateAPIToken", { name, ownerId, scopes }),
+  revoke: (id: string) => requestApp<void>("RevokeAPIToken", { id }),
+};
+
+/** Authoritative owner-scoped release workflow commands and snapshots. */
+export const releaseWorkflowClient = {
+  continue: (request: ContinueReleaseWorkflowRequest, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>("ContinueReleaseWorkflow", request, { signal }),
+  current: (workflowID: string, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>(
+      "GetReleaseWorkflow",
+      { workflowId: workflowID },
+      { signal },
+    ),
+  setMediaSelection: (command: SetReleaseWorkflowMediaSelectionRequest, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>("SetReleaseWorkflowMediaSelection", command, { signal }),
+  deleteMedia: (command: DeleteReleaseWorkflowMediaRequest, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>("DeleteReleaseWorkflowMedia", command, { signal }),
+  reorderMedia: (command: ReorderReleaseWorkflowMediaRequest, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>("ReorderReleaseWorkflowMedia", command, { signal }),
+  mediaPlan: (workflowID: string, signal?: AbortSignal) =>
+    requestApp<MediaPlan>("GetReleaseWorkflowMediaPlan", { workflowId: workflowID }, { signal }),
+  previewFrame: (command: PreviewReleaseWorkflowFrameRequest, signal?: AbortSignal) =>
+    requestApp<FramePreview>("PreviewReleaseWorkflowFrame", command, { signal }),
+  stageMedia: (workflowID: string, expectedRevision: number, file: File, signal?: AbortSignal) => {
+    const body = new FormData();
+    body.set("workflowId", workflowID);
+    body.set("expectedRevision", String(expectedRevision));
+    body.set("file", file, file.name);
+    return requestAppForm<WorkflowResourceRef>("StageReleaseWorkflowMedia", body, { signal });
+  },
+  attachMedia: (command: AttachReleaseWorkflowMediaRequest, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>("AttachReleaseWorkflowMedia", command, { signal }),
+  uploadImages: (command: UploadReleaseWorkflowImagesRequest, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>("UploadReleaseWorkflowImages", command, { signal }),
+  retryImageHost: (command: RetryReleaseWorkflowImageHostRequest, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>("RetryReleaseWorkflowImageHost", command, { signal }),
+  removeHostedImages: (command: RemoveReleaseWorkflowHostedImagesRequest, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>("RemoveReleaseWorkflowHostedImages", command, { signal }),
+  mediaURL: (workflowID: string, mediaID: string, mediaRevision: number, artifactID: string) => {
+    const query = new URLSearchParams({
+      workflowId: workflowID,
+      mediaId: mediaID,
+      mediaRevision: String(mediaRevision),
+      artifactId: artifactID,
+    });
+    return withBasePath(`/api/app/release-workflow-media?${query.toString()}`);
+  },
+  saveDescriptionOverride: (
+    command: SaveReleaseWorkflowDescriptionOverrideRequest,
     signal?: AbortSignal,
   ) =>
-    requestApp<MetadataPreview>(
-      "FetchMetadata",
-      {
-        CorrelationID: correlationID,
-        Path: path,
-        SourceLookupURL: sourceLookupURL,
-        Overrides: overrides,
-        NameOverrides: nameOverrides,
-        Playlist: playlist,
-        ConfirmBDMVRescan: confirmBDMVRescan,
-      },
-      { signal },
-    ),
-  prepareRelease: (input: PrepareInput) =>
-    requestApp<PrepareResult>("PrepareRelease", { Input: input }),
-  resetMetadata: (
-    correlationID: string,
-    path: string,
-    sourceLookupURL: string,
-    overrides: ExternalIDOverrides,
-    nameOverrides: ReleaseNameOverrides,
-    playlist: PlaylistInstruction,
-    confirmBDMVRescan: boolean,
-    signal?: AbortSignal,
-  ) =>
-    requestApp<MetadataPreview>(
-      "ResetMetadata",
-      {
-        CorrelationID: correlationID,
-        Path: path,
-        SourceLookupURL: sourceLookupURL,
-        Overrides: overrides,
-        NameOverrides: nameOverrides,
-        Playlist: playlist,
-        ConfirmBDMVRescan: confirmBDMVRescan,
-      },
-      { signal },
-    ),
-  selectBlurayCandidate: (
-    correlationID: string,
-    path: string,
-    releaseID: string,
-    signal?: AbortSignal,
-  ) =>
-    requestApp<MetadataPreview>(
-      "SelectBlurayCandidate",
-      { CorrelationID: correlationID, Path: path, ReleaseID: releaseID },
-      { signal },
-    ),
-  fetchDescriptionBuilder: (release: ReleaseRef, trackers: string[], signal?: AbortSignal) =>
-    requestApp<DescriptionBuilderPreview>(
-      "FetchDescriptionBuilder",
-      {
-        Release: release,
-        Trackers: trackers,
-      },
-      { signal },
-    ),
-  fetchPreparation: (
-    path: string,
-    overrides: ExternalIDOverrides,
-    nameOverrides: ReleaseNameOverrides,
-    trackers: string[],
-    ignoreDupesFor: string[],
-  ) =>
-    requestApp<PreparationPreview>("FetchPreparation", {
-      Path: path,
-      Overrides: overrides,
-      NameOverrides: nameOverrides,
-      Trackers: trackers,
-      IgnoreDupesFor: ignoreDupesFor,
+    requestApp<ReleaseWorkflowCurrent>("SaveReleaseWorkflowDescriptionOverride", command, {
+      signal,
     }),
-  fetchTrackerDryRun: (
-    dupeJobID: string,
-    release: ReleaseRef,
-    trackers: string[],
-    ignoreDupesFor: string[],
-    questionnaireAnswers: Record<string, Record<string, string>>,
-    descriptionGroups: DescriptionBuilderPreview["Groups"],
-    noSeed: boolean,
-    runLogLevel: string,
+  resetDescriptionOverride: (
+    command: ResetReleaseWorkflowDescriptionOverrideRequest,
     signal?: AbortSignal,
   ) =>
-    requestApp<TrackerDryRunPreview>(
-      "FetchTrackerDryRun",
-      {
-        DupeJobID: dupeJobID,
-        Release: release,
-        Trackers: trackers,
-        IgnoreDupesFor: ignoreDupesFor,
-        QuestionnaireAnswers: questionnaireAnswers,
-        DescriptionGroups: descriptionGroups,
-        NoSeed: noSeed,
-        RunLogLevel: runLogLevel,
-      },
-      { signal },
-    ),
-};
-
-/** BDMV playlist discovery for one selected preparation source. */
-export const playlistClient = {
-  discover: (path: string, signal?: AbortSignal) =>
-    requestApp<PlaylistInfo[]>("DiscoverPlaylists", { Path: path }, { signal }),
-};
-
-/** Session-owned duplicate-check jobs. */
-export const dupeClient = {
-  start: (release: ReleaseRef, trackers: string[], correlationID: string) =>
-    requestApp<string>("StartDupeCheck", {
-      Release: release,
-      Trackers: trackers,
-      CorrelationID: correlationID,
+    requestApp<ReleaseWorkflowCurrent>("ResetReleaseWorkflowDescriptionOverride", command, {
+      signal,
     }),
-  cancel: (jobID: string) => requestApp<void>("CancelDupeCheck", { JobID: jobID }),
-  getSnapshot: (jobID: string) =>
-    requestApp<DupeCheckSnapshot>("GetDupeCheckSnapshot", { JobID: jobID }),
-};
-
-/** Screenshot planning, rendering, selection, and removal operations. */
-export const screenshotClient = {
-  fetchPlan: (release: ReleaseRef, signal?: AbortSignal) =>
-    requestApp<ScreenshotPlan>("FetchScreenshotPlan", { Release: release }, { signal }),
-  generate: (
-    release: ReleaseRef,
-    selections: ScreenshotSelection[],
-    purpose: ScreenshotPurpose,
-    signal?: AbortSignal,
-  ) =>
-    requestApp<ScreenshotResult>(
-      "GenerateScreenshots",
-      {
-        Release: release,
-        Selections: selections,
-        Purpose: purpose,
-      },
+  retryFailedUploads: (command: RetryReleaseWorkflowUploadRequest, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>("RetryReleaseWorkflowUpload", command, { signal }),
+  cancel: (command: CancelReleaseWorkflowRequest, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>("CancelReleaseWorkflow", command, { signal }),
+  invalidateTrackers: (command: InvalidateReleaseWorkflowTrackersRequest, signal?: AbortSignal) =>
+    requestApp<ReleaseWorkflowCurrent>("InvalidateReleaseWorkflowTrackers", command, { signal }),
+  operation: (workflowID: string, operationID: string, signal?: AbortSignal) =>
+    requestApp<Operation>(
+      "GetReleaseWorkflowOperation",
+      { workflowId: workflowID, operationId: operationID },
       { signal },
     ),
-  previewFrame: (release: ReleaseRef, timestampSeconds: number, signal?: AbortSignal) =>
-    requestApp<string>(
-      "PreviewScreenshotFrame",
-      {
-        Release: release,
-        TimestampSeconds: timestampSeconds,
-      },
-      { signal },
-    ),
-  remove: (release: ReleaseRef, imagePath: string, signal?: AbortSignal) =>
-    requestApp<void>(
-      "DeleteScreenshot",
-      {
-        Release: release,
-        ImagePath: imagePath,
-      },
-      { signal },
-    ),
-  saveFinalSelections: (release: ReleaseRef, images: ScreenshotImage[], signal?: AbortSignal) =>
-    requestApp<void>(
-      "SaveFinalScreenshotSelections",
-      {
-        Release: release,
-        Images: images,
-      },
-      { signal },
-    ),
-  readImage: (path: string, signal?: AbortSignal) =>
-    requestApp<string>("ReadScreenshotImage", { Path: path }, { signal }),
-  deleteTrackerImageURL: (release: ReleaseRef, url: string, signal?: AbortSignal) =>
-    requestApp<void>(
-      "DeleteTrackerImageURL",
-      {
-        Release: release,
-        URL: url,
-      },
+  cancelOperation: (workflowID: string, operationID: string, signal?: AbortSignal) =>
+    requestApp<Operation>(
+      "CancelReleaseWorkflowOperation",
+      { workflowId: workflowID, operationId: operationID },
       { signal },
     ),
 };
 
-/** DVD menu capture and persisted menu-image operations. */
-export const menuImageClient = {
-  importPaths: (release: ReleaseRef, paths: string[], signal?: AbortSignal) =>
-    requestApp<void>(
-      "ImportMenuImages",
-      {
-        Release: release,
-        Paths: paths,
-      },
-      { signal },
-    ),
-  capture: (release: ReleaseRef, signal?: AbortSignal) =>
-    requestApp<DVDMenuCaptureResult>("CaptureDVDMenus", { Release: release }, { signal }),
-  list: (release: ReleaseRef, signal?: AbortSignal) =>
-    requestApp<ScreenshotImage[]>("ListDVDMenuScreenshots", { Release: release }, { signal }),
-  remove: (release: ReleaseRef, imagePath: string, signal?: AbortSignal) =>
-    requestApp<void>(
-      "DeleteDVDMenuScreenshot",
-      {
-        Release: release,
-        ImagePath: imagePath,
-      },
-      { signal },
-    ),
-};
-
-/** Image-host upload state and operations. */
-export const uploadedImageClient = {
-  listCandidates: (release: ReleaseRef, signal?: AbortSignal) =>
-    requestApp<ScreenshotImage[]>("ListUploadCandidates", { Release: release }, { signal }),
-  listUploaded: (release: ReleaseRef, signal?: AbortSignal) =>
-    requestApp<UploadedImageLink[]>("ListUploadedImages", { Release: release }, { signal }),
-  upload: (
-    correlationID: string,
-    release: ReleaseRef,
-    trackers: string[],
-    host: string,
-    images: ScreenshotImage[],
-    signal?: AbortSignal,
-  ) =>
-    requestApp<UploadImagesResult>(
-      "UploadImages",
-      {
-        CorrelationID: correlationID,
-        Release: release,
-        Trackers: trackers,
-        Host: host,
-        Images: images,
-      },
-      { signal },
-    ),
-  remove: (release: ReleaseRef, imagePath: string, host: string, signal?: AbortSignal) =>
-    requestApp<void>(
-      "DeleteUploadedImage",
-      { Release: release, ImagePath: imagePath, Host: host },
-      { signal },
-    ),
-};
-
-/** Description rendering and override persistence. */
+/** Stateless generic BBCode rendering. */
 export const descriptionClient = {
   render: (raw: string, signal?: AbortSignal) =>
     requestApp<string>("RenderDescription", { Raw: raw }, { signal }),
-  saveOverride: (
-    release: ReleaseRef,
-    groupKey: string,
-    raw: string,
-    trackers: string[],
-    signal?: AbortSignal,
-  ) =>
-    requestApp<DescriptionBuilderPreview["Groups"][number]>(
-      "SaveDescriptionOverride",
-      {
-        Release: release,
-        GroupKey: groupKey,
-        Raw: raw,
-        Trackers: trackers,
-      },
-      { signal },
-    ),
 };
 
 /** Config persistence plus browser-native import and download behavior. */
@@ -469,48 +301,4 @@ export const historyClient = {
     requestApp<HistoryOverview>("GetHistoryOverview", { SourcePath: sourcePath }),
   removeRelease: (sourcePath: string) =>
     requestApp<void>("DeleteHistoryRelease", { SourcePath: sourcePath }),
-};
-
-/** Reviewed tracker-upload handoff and session-owned job lifecycle. */
-export const uploadClient = {
-  review: (
-    release: ReleaseRef,
-    trackers: string[],
-    ignoreDupesFor: string[],
-    ruleAuthorizations: RuleAuthorization[],
-    questionnaireAnswers: Record<string, Record<string, string>>,
-    descriptionGroups: DescriptionBuilderPreview["Groups"],
-    noSeed: boolean,
-    runLogLevel: string,
-    signal?: AbortSignal,
-  ) =>
-    requestApp<UploadReviewResult>(
-      "ReviewTrackerUpload",
-      {
-        Release: release,
-        Trackers: trackers,
-        IgnoreDupesFor: ignoreDupesFor,
-        RuleAuthorizations: ruleAuthorizations,
-        QuestionnaireAnswers: questionnaireAnswers,
-        DescriptionGroups: descriptionGroups,
-        NoSeed: noSeed,
-        RunLogLevel: runLogLevel,
-      },
-      { signal },
-    ),
-  startReviewed: (token: string, correlationID: string) =>
-    requestApp<string>("StartReviewedTrackerUpload", {
-      Token: token,
-      CorrelationID: correlationID,
-    }),
-  cancel: (jobID: string) => requestApp<void>("CancelTrackerUpload", { JobID: jobID }),
-  retryFailed: (jobID: string, correlationID: string) =>
-    requestApp<string>("RetryFailedTrackerUpload", { JobID: jobID, CorrelationID: correlationID }),
-  getSnapshot: (jobID: string) =>
-    requestApp<TrackerUploadSnapshot>("GetTrackerUploadSnapshot", { JobID: jobID }),
-};
-
-/** Authenticated-owner retained Job listing. */
-export const jobsClient = {
-  list: () => requestApp<OwnerJobSnapshot[]>("ListJobs"),
 };

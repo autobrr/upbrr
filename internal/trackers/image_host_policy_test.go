@@ -166,6 +166,27 @@ func TestNeededImageUploadTargetsFallsBackFromTrackerConfiguredHostForUnrestrict
 	}
 }
 
+func TestNeededImageUploadTargetsForMetadataExcludesEarlierFailedHosts(t *testing.T) {
+	t.Parallel()
+
+	targets, err := NeededImageUploadTargetsForMetadataWithRegistry(
+		imageHostPolicyTestRegistry(t),
+		config.Config{ImageHosting: config.ImageHostingConfig{
+			Host1: "imgbox",
+			Host2: "imgbb",
+		}},
+		[]string{"MTV"},
+		"",
+		api.UploadSubject{ImageHostOverrides: api.ImageHostOverrides{FailedHosts: []string{"imgbox"}}},
+	)
+	if err != nil {
+		t.Fatalf("resolve metadata image upload targets: %v", err)
+	}
+	if len(targets) != 1 || targets[0].Host != "imgbb" {
+		t.Fatalf("expected imgbb after earlier imgbox failure, got %#v", targets)
+	}
+}
+
 func TestNeededImageUploadTargetsDoesNotFallbackToUnsupportedHostForRestrictedTracker(t *testing.T) {
 	t.Parallel()
 

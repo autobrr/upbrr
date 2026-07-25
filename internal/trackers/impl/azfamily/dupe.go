@@ -200,6 +200,9 @@ func loadAZFamilyCookies(ctx context.Context, cfg config.Config, tracker string,
 }
 
 func lookupAZDupeTitle(meta api.DuplicateSubject) string {
+	if meta.Projection != nil {
+		return dupe.ProjectedSearchName(meta)
+	}
 	if title := strings.TrimSpace(meta.Release.Title); title != "" {
 		return title
 	}

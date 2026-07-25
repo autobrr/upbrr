@@ -9,6 +9,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -28,6 +29,7 @@ func Profile() standalone.Profile {
 		},
 		NewDuplicateAdapter: func(deps dupe.Dependencies) dupe.Adapter { return newDuplicateAdapterAt(deps, ptpBaseURL) },
 		Rules:               &trackers.RuleSet{RequireMovieUnlessTVPack: true},
+		ValidationPolicy:    validationPolicy(),
 		BannedGroups:        bannedGroups(),
 		DataPolicy:          &trackers.DataLookupPolicy{Cooldown: time.Minute},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{Requirements: []trackers.MetadataRequirement{{
@@ -53,11 +55,31 @@ func Profile() standalone.Profile {
 			SupportsAutoLogin:  true,
 			SupportsTOTP:       true,
 			SupportsManual2FA:  true,
+			RequiresAPIKey:     true,
 		},
 		AuthResolver: func(ctx context.Context, cfg config.TrackerConfig, dbPath string, login api.TrackerAuthLoginRequest) error {
 			return resolveSessionForTrackerAuthLoginAt(ctx, cfg, dbPath, login, ptpBaseURL)
 		},
-		AuthPolicy: &trackers.AuthPolicy{LoginRequiresAnnounceURL: true},
+		AuthPolicy: &trackers.AuthPolicy{
+			ResolveRequirements: authcontract.StaticRequirements(authcontract.Requirements(
+				"api_and_upload_session",
+				true,
+				[]trackers.AuthRequirement{
+					trackers.AuthRequirementAPIUser,
+					trackers.AuthRequirementAPIKey,
+					trackers.AuthRequirementStoredCookie,
+				},
+				[]trackers.AuthRequirement{
+					trackers.AuthRequirementAPIUser,
+					trackers.AuthRequirementAPIKey,
+					trackers.AuthRequirementCredentialLogin,
+					trackers.AuthRequirementAnnounceURL,
+				},
+			)),
+			APIKeyRequiresUploadSession: true,
+			CookieCompletesAPIKeyAuth:   true,
+			LoginRequiresAnnounceURL:    true,
+		},
 	}
 }
 

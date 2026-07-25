@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -45,6 +44,9 @@ type uploadState struct {
 }
 
 func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+	if err := standalone.ValidatePreparation(ctx, req, validationPolicy()); err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: validate preparation: %w", err)
+	}
 	state, cookies, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
@@ -177,7 +179,7 @@ func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {
 }
 
 func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (uploadState, []*http.Cookie, error) {
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
+	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
 		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
@@ -191,11 +193,15 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 		assets = trackers.DescriptionAssets{}
 	}
 	description := buildDescription(req, assets)
+	releaseName, nameErr := req.ReviewedUploadName()
+	if nameErr != nil {
+		return uploadState{}, nil, fmt.Errorf("trackers: IS release name: %w", nameErr)
+	}
 	fields := map[string]string{
 		"UseNFOasDescr": "no",
 		"message":       buildMessage(req.Meta),
 		"category":      strconv.Itoa(resolveCategoryID(req.Meta)),
-		"subject":       resolveSubject(req.Meta),
+		"subject":       releaseName,
 		"nothingtopost": "1",
 		"t_image_url":   resolvePoster(req.Meta),
 		"submit":        "Upload Torrent",
@@ -219,57 +225,6 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 	return state, cookies, nil
 }
 
-func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
-	values, err := cookies.LoadTrackerHTTPCookies(ctx, dbPath, "IS", "immortalseed.me")
-	if err != nil {
-		return values, fmt.Errorf("trackers: IS load cookies: %w", err)
-	}
-	return values, nil
-}
-
-func buildDescription(req trackers.PreparationInput, assets trackers.DescriptionAssets) string {
-	if assets.Final {
-		return strings.TrimSpace(assets.Description)
-	}
-	meta := req.Meta
-	parts := make([]string, 0, 8)
-	if strings.TrimSpace(meta.EpisodeOverview) != "" {
-		parts = append(parts, "Title: "+strings.TrimSpace(meta.EpisodeTitle), "Overview: "+strings.TrimSpace(meta.EpisodeOverview))
-	}
-	if media := trackers.ReadBDinfoOrMediaInfo(req.Runtime.DBPath, meta); media != "" {
-		parts = append(parts, media)
-	}
-	if strings.TrimSpace(assets.Description) != "" {
-		parts = append(parts, strings.TrimSpace(assets.Description))
-	}
-	if len(assets.MenuImages) > 0 {
-		var menuLines []string
-		if header := strings.TrimSpace(req.Runtime.Description.DiscMenuHeader); header != "" {
-			menuLines = append(menuLines, header)
-		}
-		for _, image := range assets.MenuImages {
-			if strings.TrimSpace(image.RawURL) != "" {
-				menuLines = append(menuLines, image.RawURL)
-			}
-		}
-		if len(menuLines) > 0 {
-			parts = append(parts, strings.Join(menuLines, "\n"))
-		}
-	}
-	if len(assets.Screenshots) > 0 {
-		var shotLines []string
-		for _, image := range assets.Screenshots {
-			if strings.TrimSpace(image.RawURL) != "" {
-				shotLines = append(shotLines, image.RawURL)
-			}
-		}
-		if len(shotLines) > 0 {
-			parts = append(parts, "Screenshots:\n"+strings.Join(shotLines, "\n"))
-		}
-	}
-	return finalizeDescription(strings.TrimSpace(strings.Join(parts, "\n\n")))
-}
-
 func buildMessage(meta api.UploadSubject) string {
 	message := strings.TrimSpace(resolveOverview(meta))
 	if trailer := resolveYouTube(meta); trailer != "" {
@@ -279,117 +234,6 @@ func buildMessage(meta api.UploadSubject) string {
 		message += "[youtube]" + trailer + "[/youtube]"
 	}
 	return message
-}
-
-func resolveCategoryID(meta api.UploadSubject) int {
-	category := strings.ToUpper(strings.TrimSpace(categoryOf(meta)))
-	resolution := strings.TrimSpace(meta.Release.Resolution)
-	genres := strings.ToLower(resolveGenres(meta) + " " + resolveKeywords(meta))
-	nonEnglish := !hasEnglishAudio(meta)
-	switch category {
-	case "TV":
-		if strings.Contains(genres, "documentary") {
-			if isSD(meta) {
-				return 13
-			}
-			return 15
-		}
-		if meta.Anime {
-			return 6
-		}
-		if strings.Contains(genres, "children") || strings.Contains(genres, "cartoon") {
-			return 5
-		}
-		if meta.TVPack {
-			if resolution == "2160p" {
-				return 63
-			}
-			if isSD(meta) {
-				return 6
-			}
-			return 4
-		}
-		if resolution == "2160p" {
-			return 64
-		}
-		if resolution == "1080p" || resolution == "1080i" || resolution == "720p" {
-			return 8
-		}
-		if isSD(meta) {
-			if strings.Contains(strings.ToLower(meta.VideoEncode), "xvid") {
-				return 9
-			}
-			return 48
-		}
-		return 47
-	default:
-		if strings.Contains(genres, "documentary") {
-			if isSD(meta) {
-				return 13
-			}
-			return 15
-		}
-		if meta.Anime {
-			return 6
-		}
-		if resolution == "2160p" {
-			if nonEnglish {
-				return 60
-			}
-			return 62
-		}
-		if !isSD(meta) {
-			if nonEnglish {
-				return 18
-			}
-			return 16
-		}
-		if isSD(meta) {
-			if nonEnglish {
-				return 33
-			}
-			return 14
-		}
-		if nonEnglish {
-			return 34
-		}
-		return 17
-	}
-}
-
-func hasEnglishAudio(meta api.UploadSubject) bool {
-	for _, language := range meta.AudioLanguages {
-		lower := strings.ToLower(strings.TrimSpace(language))
-		if lower == "english" || lower == "en" {
-			return true
-		}
-	}
-	return false
-}
-
-func resolveSubject(meta api.UploadSubject) string {
-	if meta.Scene && strings.TrimSpace(meta.SceneName) != "" {
-		return strings.TrimSpace(meta.SceneName)
-	}
-	name := strings.TrimSpace(meta.ReleaseName)
-	name = strings.ReplaceAll(name, strings.TrimSpace(meta.Release.Alt), "")
-	name = strings.ReplaceAll(name, "Dubbed", "")
-	name = strings.ReplaceAll(name, "Dual-Audio", "")
-	name = strings.Join(strings.Fields(name), ".")
-	return strings.Trim(name, ".")
-}
-
-func resolvePoster(meta api.UploadSubject) string {
-	switch {
-	case meta.ProviderMetadata.TMDB != nil:
-		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Poster)
-	case meta.ProviderMetadata.IMDB != nil:
-		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Cover)
-	case meta.ProviderMetadata.TVmaze != nil:
-		return strings.TrimSpace(meta.ProviderMetadata.TVmaze.Poster)
-	default:
-		return ""
-	}
 }
 
 func resolveIMDbURL(meta api.UploadSubject) string {
@@ -402,19 +246,6 @@ func resolveIMDbURL(meta api.UploadSubject) string {
 	return ""
 }
 
-func resolveOverview(meta api.UploadSubject) string {
-	switch {
-	case meta.ProviderMetadata.TMDB != nil:
-		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Overview)
-	case meta.ProviderMetadata.IMDB != nil:
-		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Plot)
-	case meta.ProviderMetadata.TVmaze != nil:
-		return strings.TrimSpace(meta.ProviderMetadata.TVmaze.Summary)
-	default:
-		return strings.TrimSpace(meta.EpisodeOverview)
-	}
-}
-
 func resolveYouTube(meta api.UploadSubject) string {
 	if meta.ProviderMetadata.TMDB != nil {
 		return strings.TrimSpace(meta.ProviderMetadata.TMDB.YouTube)
@@ -422,47 +253,11 @@ func resolveYouTube(meta api.UploadSubject) string {
 	return ""
 }
 
-func resolveGenres(meta api.UploadSubject) string {
-	if meta.ProviderMetadata.TMDB != nil {
-		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres)
-	}
-	if meta.ProviderMetadata.IMDB != nil {
-		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres)
-	}
-	return strings.TrimSpace(meta.Release.Genre)
-}
-
 func resolveKeywords(meta api.UploadSubject) string {
 	if meta.ProviderMetadata.TMDB != nil {
 		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Keywords)
 	}
 	return ""
-}
-
-func resolveNFO(meta api.UploadSubject) (commonhttp.FileField, bool) {
-	dir := filepath.Dir(metautil.FirstNonEmptyTrimmed(meta.MediaInfoTextPath, meta.SourcePath))
-	payload, path, err := commonhttp.ReadFirstMatching(dir, "*.nfo")
-	if err != nil {
-		return commonhttp.FileField{}, false
-	}
-	return commonhttp.FileField{
-		FieldName: "nfofile",
-		FileName:  filepath.Base(path),
-		Content:   payload,
-	}, true
-}
-
-func isSD(meta api.UploadSubject) bool {
-	resolution := strings.TrimSpace(meta.Release.Resolution)
-	return resolution == "" || resolution == "480p" || resolution == "576p"
-}
-
-func categoryOf(meta api.UploadSubject) string {
-	category, err := meta.Identity.RequireCategory()
-	if err != nil {
-		return ""
-	}
-	return string(category)
 }
 
 func yesNo(value bool) string {

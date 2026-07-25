@@ -12,16 +12,18 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// rules requires a supported HD resolution as a strict block and reports a
-// missing IMDb identifier as waivable.
-func rules() *trackers.RuleSet { return &trackers.RuleSet{Check: checkRules} }
+// validationPolicy requires a supported HD resolution as a strict block and
+// reports a missing IMDb identifier as waivable.
+func validationPolicy() trackers.ValidationPolicyBinding {
+	return trackers.ValidationPolicyBinding{ID: "standalone-hds-constructibility-v1", Check: checkRules}
+}
 
-func checkRules(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {
+func checkRules(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context canceled: %w", err)
 	}
 	failures := make([]api.RuleFailure, 0, 2)
-	resolution := trackers.ResolveRuleResolution(meta)
+	resolution := strings.TrimSpace(meta.Release.Resolution)
 	if !supportsHDSResolution(resolution) {
 		failures = append(failures, trackers.NewRuleFailure(
 			"min_resolution",

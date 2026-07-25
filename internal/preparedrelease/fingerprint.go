@@ -257,11 +257,15 @@ type sourceFingerprintEntry struct {
 func canonicalFingerprintEntries(entries []api.SourceManifestEntry) []sourceFingerprintEntry {
 	result := make([]sourceFingerprintEntry, 0, len(entries))
 	for _, entry := range entries {
+		modifiedNano := entry.ModifiedAt.UTC().UnixNano()
+		if entry.Type == api.SourceEntryTypeDirectory {
+			modifiedNano = 0
+		}
 		result = append(result, sourceFingerprintEntry{
 			Path:         canonicalSourceKey(entry.Path),
 			Type:         entry.Type,
 			Size:         entry.Size,
-			ModifiedNano: entry.ModifiedAt.UTC().UnixNano(),
+			ModifiedNano: modifiedNano,
 			Disc:         entry.Disc,
 			Playlist:     filepath.ToSlash(entry.Playlist),
 		})

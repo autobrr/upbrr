@@ -14,11 +14,11 @@ import (
 func TestMinimumContentAgeRuleIsStrict(t *testing.T) {
 	t.Parallel()
 
-	ruleSet := Profile().Rules
-	if ruleSet == nil || ruleSet.Check == nil {
+	policy := Profile().ValidationPolicy
+	if policy.Check == nil {
 		t.Fatal("RTF minimum content age rule is not registered")
 	}
-	failures, err := ruleSet.Check(context.Background(), api.RuleSubject{
+	failures, err := policy.Check(context.Background(), api.TrackerValidationSubject{
 		Release: api.ReleaseInfo{Year: 9999},
 	}, nil)
 	if err != nil {
@@ -37,12 +37,12 @@ func TestMinimumContentAgeBoundary(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.July, 18, 0, 0, 0, 0, time.UTC)
-	if minimumContentAgeViolation(api.RuleSubject{
+	if minimumContentAgeViolation(api.TrackerValidationSubject{
 		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{ReleaseDate: "2016-07-21"}},
 	}, now) {
 		t.Fatal("content on the age boundary was rejected")
 	}
-	if !minimumContentAgeViolation(api.RuleSubject{
+	if !minimumContentAgeViolation(api.TrackerValidationSubject{
 		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{ReleaseDate: "2016-07-22"}},
 	}, now) {
 		t.Fatal("content newer than the age boundary was allowed")

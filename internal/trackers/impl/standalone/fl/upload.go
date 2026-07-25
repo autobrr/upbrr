@@ -6,7 +6,6 @@ package fl
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,25 +16,12 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/autobrr/upbrr/internal/authmaterial"
-	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/httpclient"
-	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
-)
-
-const (
-	baseURL      = "https://filelist.io"
-	loginPageURL = baseURL + "/login.php"
-	loginURL     = baseURL + "/takelogin.php"
-	uploadURL    = baseURL + "/takeupload.php"
-	downloadURL  = baseURL + "/download.php?id="
 )
 
 var (
@@ -54,6 +40,9 @@ type uploadState struct {
 }
 
 func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+	if err := standalone.ValidatePreparation(ctx, req, validationPolicy()); err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: validate preparation: %w", err)
+	}
 	state, cookies, err := prepareUploadState(ctx, req, req.Intent != trackers.PreparationIntentUpload)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
@@ -153,7 +142,7 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryR
 	if err != nil {
 		return uploadState{}, nil, err
 	}
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
+	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
 		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
@@ -163,7 +152,10 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryR
 		assets = trackers.DescriptionAssets{}
 	}
 	description := buildDescription(assets)
-	name := resolveName(req.Meta, standalone.QuestionnaireAnswers(req.Meta, "FL"))
+	name, nameErr := req.ReviewedUploadName()
+	if nameErr != nil {
+		return uploadState{}, nil, fmt.Errorf("trackers: FL release name: %w", nameErr)
+	}
 	fields := map[string]string{
 		"name":  name,
 		"type":  strconv.Itoa(resolveCategoryID(req.Meta)),
@@ -196,128 +188,6 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryR
 	return state, cookies, nil
 }
 
-// resolveCookies returns usable stored FL cookies or performs credential login.
-// Login-page read errors are reported before token parsing, and successful
-// credential login requires durable cookie persistence.
-func resolveCookies(ctx context.Context, logger api.Logger, cfg config.TrackerConfig, dbPath string, dryRun bool) ([]*http.Cookie, error) {
-	loaded, err := cookies.LoadTrackerHTTPCookies(ctx, dbPath, "FL", ".filelist.io")
-	if err != nil {
-		if logger != nil {
-			logger.Debugf("trackers: LoadTrackerHTTPCookies failed for FL/.filelist.io, dbPath=%s: %v", dbPath, err)
-		}
-	} else if valid := validFLCookies(loaded); len(valid) > 0 {
-		return valid, nil
-	} else if logger != nil {
-		logger.Debugf("trackers: FL loaded cookies were missing/expired, falling back to credential login, dbPath=%s", dbPath)
-	}
-	if dryRun {
-		if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
-			return nil, errors.New("trackers: FL cookies not found")
-		}
-		// #nosec G124 -- Dry-run sentinel is an outbound tracker jar cookie, not a browser-set cookie.
-		return []*http.Cookie{{
-			Name:   "dryrun",
-			Value:  "1",
-			Domain: ".filelist.io",
-			Path:   "/",
-		}}, nil
-	}
-	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
-		return nil, errors.New("trackers: FL cookie invalid/missing and username/password not configured")
-	}
-	if err := ensureLoginCookieStorageAvailable(dbPath); err != nil {
-		return nil, err
-	}
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		return nil, fmt.Errorf("trackers: FL create login cookie jar: %w", err)
-	}
-	client := newHTTPClient(httpclient.DefaultTimeout)
-	client.Jar = jar
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, loginPageURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("trackers: FL login page request build: %w", err)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("trackers: FL login page request: %w", err)
-	}
-	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		return nil, fmt.Errorf("trackers: FL read login page response: %w", err)
-	}
-	match := validatorPattern.FindStringSubmatch(string(body))
-	if len(match) < 2 {
-		return nil, errors.New("trackers: FL validator token not found")
-	}
-	data := url.Values{}
-	data.Set("validator", match[1])
-	data.Set("username", strings.TrimSpace(cfg.Username))
-	data.Set("password", strings.TrimSpace(cfg.Password))
-	data.Set("unlock", "1")
-	loginReq, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(data.Encode()))
-	if err != nil {
-		return nil, fmt.Errorf("trackers: FL login request build: %w", err)
-	}
-	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	loginResp, err := client.Do(loginReq)
-	if err != nil {
-		return nil, fmt.Errorf("trackers: FL login request: %w", err)
-	}
-	defer loginResp.Body.Close()
-	if loginResp.StatusCode < 200 || loginResp.StatusCode >= 400 {
-		return nil, fmt.Errorf("trackers: FL login failed status=%d", loginResp.StatusCode)
-	}
-	base, _ := url.Parse(baseURL)
-	loginCookies := client.Jar.Cookies(base)
-	if err := persistLoginCookies(ctx, dbPath, loginCookies); err != nil {
-		return nil, err
-	}
-	return loginCookies, nil
-}
-
-// persistLoginCookies saves FL login cookies and returns any persistence error
-// so callers do not report login success without durable cookie storage.
-func persistLoginCookies(ctx context.Context, dbPath string, values []*http.Cookie) error {
-	valid := validFLCookies(values)
-	if len(valid) == 0 {
-		return errors.New("trackers: FL login returned no usable cookies")
-	}
-	if err := cookies.SaveTrackerHTTPCookies(ctx, dbPath, "FL", valid); err != nil {
-		return fmt.Errorf("trackers: FL persist login cookies: %w", err)
-	}
-	return nil
-}
-
-func ensureLoginCookieStorageAvailable(dbPath string) error {
-	if _, err := authmaterial.LoadFromDBPath(dbPath); err != nil {
-		if errors.Is(err, authmaterial.ErrUnavailable) {
-			return fmt.Errorf("trackers: FL encrypted cookie storage unavailable before credential login: %w", cookies.ErrAuthHelperUnavailable)
-		}
-		return fmt.Errorf("trackers: FL check encrypted cookie storage before credential login: %w", err)
-	}
-	return nil
-}
-
-func validFLCookies(values []*http.Cookie) []*http.Cookie {
-	now := time.Now()
-	valid := make([]*http.Cookie, 0, len(values))
-	for _, cookie := range values {
-		if cookie == nil {
-			continue
-		}
-		if strings.TrimSpace(cookie.Name) == "" || strings.TrimSpace(cookie.Value) == "" {
-			continue
-		}
-		if !cookie.Expires.IsZero() && cookie.Expires.Before(now) {
-			continue
-		}
-		valid = append(valid, cookie)
-	}
-	return valid
-}
-
 func downloadPersonalizedTorrent(ctx context.Context, client *http.Client, id string, outputPath string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL+id, nil)
 	if err != nil {
@@ -338,129 +208,9 @@ func downloadPersonalizedTorrent(ctx context.Context, client *http.Client, id st
 	return nil
 }
 
-func buildDescription(assets trackers.DescriptionAssets) string {
-	return finalizeDescription(strings.TrimSpace(assets.Description))
-}
-
-func buildQuestionnaire(meta api.UploadSubject, computedName string) *api.TrackerQuestionnaire {
-	answers := standalone.QuestionnaireAnswers(meta, "FL")
-	return &api.TrackerQuestionnaire{Tracker: "FL", Fields: []api.TrackerQuestionnaireField{{
-		Key:      "name",
-		Label:    "FileList Name",
-		Kind:     "text",
-		Value:    metautil.FirstNonEmptyTrimmed(strings.TrimSpace(answers["name"]), computedName),
-		Required: true,
-	}}}
-}
-
-func resolveName(meta api.UploadSubject, answers map[string]string) string {
-	if answers != nil && strings.TrimSpace(answers["name"]) != "" {
-		return strings.TrimSpace(answers["name"])
-	}
-	name := strings.TrimSpace(meta.ReleaseName)
-	name = strings.ReplaceAll(name, " DV ", " DoVi ")
-	name = strings.ReplaceAll(name, "BluRay REMUX", "Remux")
-	name = strings.ReplaceAll(name, "BluRay Remux", "Remux")
-	name = strings.ReplaceAll(name, "PQ10", "HDR")
-	name = strings.ReplaceAll(name, "HDR10+", "HDR")
-	name = strings.ReplaceAll(name, "DD+", "DDP")
-	name = strings.Join(strings.Fields(name), ".")
-	return strings.Trim(name, ".")
-}
-
 func resolveTorrentFileName(meta api.UploadSubject, releaseName string) string {
 	if meta.Anime && strings.EqualFold(strings.TrimSpace(strings.TrimPrefix(meta.Tag, "-")), "SubsPlease") {
 		return releaseName
 	}
 	return strings.TrimSuffix(strings.TrimSpace(meta.Filename), filepath.Ext(strings.TrimSpace(meta.Filename)))
-}
-
-func resolveCategoryID(meta api.UploadSubject) int {
-	if meta.Anime {
-		return 24
-	}
-	category := strings.ToUpper(strings.TrimSpace(categoryOf(meta)))
-	resolution := strings.TrimSpace(meta.Release.Resolution)
-	switch {
-	case strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD"):
-		if hasRomanianSub(meta) {
-			return 3
-		}
-		return 2
-	case category == "TV":
-		if resolution == "2160p" {
-			return 27
-		}
-		if isSD(meta) {
-			return 23
-		}
-		return 21
-	default:
-		if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") || strings.EqualFold(strings.TrimSpace(meta.Type), "REMUX") {
-			if resolution == "2160p" {
-				return 26
-			}
-			return 20
-		}
-		if resolution == "2160p" {
-			return 6
-		}
-		if isSD(meta) {
-			return 1
-		}
-		if hasRomanianSub(meta) {
-			return 19
-		}
-		return 4
-	}
-}
-
-func hasRomanianAudio(meta api.UploadSubject) bool {
-	for _, lang := range meta.AudioLanguages {
-		lower := strings.ToLower(strings.TrimSpace(lang))
-		if lower == "romanian" || lower == "ro" {
-			return true
-		}
-	}
-	return false
-}
-
-func hasRomanianSub(meta api.UploadSubject) bool {
-	for _, lang := range meta.SubtitleLanguages {
-		lower := strings.ToLower(strings.TrimSpace(lang))
-		if lower == "romanian" || lower == "ro" {
-			return true
-		}
-	}
-	return false
-}
-
-func resolveMedia(meta api.UploadSubject) string {
-	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-		return strings.TrimSpace(meta.Disc.Summary)
-	}
-	return metautil.FirstNonEmptyTrimmed(commonhttp.ReadOptionalFile(meta.MediaInfoTextPath), strings.TrimSpace(meta.DVDVOBMediaInfoText))
-}
-
-func resolveGenres(meta api.UploadSubject) string {
-	if meta.ProviderMetadata.IMDB != nil {
-		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres)
-	}
-	if meta.ProviderMetadata.TMDB != nil {
-		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres)
-	}
-	return strings.TrimSpace(meta.Release.Genre)
-}
-
-func categoryOf(meta api.UploadSubject) string {
-	category, err := meta.Identity.RequireCategory()
-	if err != nil {
-		return ""
-	}
-	return string(category)
-}
-
-func isSD(meta api.UploadSubject) bool {
-	resolution := strings.TrimSpace(meta.Release.Resolution)
-	return resolution == "480p" || resolution == "576p"
 }

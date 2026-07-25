@@ -66,7 +66,10 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	}
 	if _, hasIMDB := payload["imdb"]; !hasIMDB {
 		if _, hasTVDB := payload["tvdb"]; !hasTVDB {
-			query := firstHDBText(meta.ReleaseName, meta.Filename, meta.Release.Title)
+			query := dupe.ProjectedSearchName(meta)
+			if meta.Projection == nil {
+				query = firstHDBText(meta.ReleaseName, meta.Filename, meta.Release.Title)
+			}
 			if query == "" {
 				s.logger.Warnf("dupechecking: HDB missing imdb/tvdb IDs and search text for %s", meta.SourcePath)
 				return dupe.NotRun(dupe.NotRunMissingMetadata, "missing imdb/tvdb id for HDB dupe search", nil)

@@ -372,7 +372,7 @@ func (s *Service) Upload(
 		uploadedResults, err := uploadBatch(ctx, batch, meta, normalizedHost, unique)
 		batchWallDuration := time.Since(batchStart)
 		if err != nil {
-			s.logger.Errorf(
+			s.logger.Debugf(
 				"image hosting: batch upload failed host=%s tracker=%s batches=%d images=%d wall_duration=%v err=%s",
 				normalizedHost,
 				logTracker,
@@ -388,7 +388,7 @@ func (s *Service) Upload(
 				progressTarget.Total,
 				0,
 				len(unique),
-				"Host batch upload failed.",
+				fmt.Sprintf("%d of %d host uploads failed.", len(unique), len(unique)),
 			)
 			return nil, err
 		}

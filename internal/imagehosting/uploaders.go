@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -21,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
@@ -162,15 +162,50 @@ type imgboxUploader struct {
 }
 
 func (u *imgboxUploader) Upload(ctx context.Context, imagePath string) (uploadResult, error) {
-	csrfToken, cookie, err := imgboxGetCsrfAndCookie(ctx, u.client)
+	results, err := u.UploadBatch(ctx, []string{imagePath})
 	if err != nil {
 		return uploadResult{}, err
+	}
+	if len(results) != 1 {
+		return uploadResult{}, errors.New("imgbox returned an invalid upload result count")
+	}
+	return results[0], nil
+}
+
+func (u *imgboxUploader) UploadBatch(ctx context.Context, imagePaths []string) ([]uploadResult, error) {
+	if len(imagePaths) == 0 {
+		return nil, errors.New("imgbox upload requires at least one image")
+	}
+	csrfToken, cookie, err := imgboxGetCsrfAndCookie(ctx, u.client)
+	if err != nil {
+		return nil, err
 	}
 	uploadToken, err := imgboxGetUploadToken(ctx, u.client, csrfToken, cookie)
 	if err != nil {
-		return uploadResult{}, err
+		return nil, err
 	}
+	results := make([]uploadResult, len(imagePaths))
+	errorsByIndex := make([]error, len(imagePaths))
+	var wg sync.WaitGroup
+	for index, imagePath := range imagePaths {
+		wg.Go(func() {
+			results[index], errorsByIndex[index] = u.uploadWithSession(ctx, imagePath, csrfToken, cookie, uploadToken)
+		})
+	}
+	wg.Wait()
+	if err := errors.Join(errorsByIndex...); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
 
+func (u *imgboxUploader) uploadWithSession(
+	ctx context.Context,
+	imagePath string,
+	csrfToken string,
+	cookie string,
+	uploadToken imgboxUploadToken,
+) (uploadResult, error) {
 	fields := map[string]string{
 		"token_id":         uploadToken.TokenID,
 		"token_secret":     uploadToken.TokenSecret,
@@ -180,15 +215,13 @@ func (u *imgboxUploader) Upload(ctx context.Context, imagePath string) (uploadRe
 		"thumbnail_size":   "350r",
 		"comments_enabled": "0",
 	}
-	headers := imgboxHeaders(cookie, map[string]string{"X-CSRF-Token": csrfToken})
+	headers := imgboxUploadHeaders(cookie, csrfToken)
 	body, status, err := postMultipart(ctx, u.client, "https://imgbox.com/upload/process", fields, "files[]", imagePath, headers)
 	if err != nil {
 		return uploadResult{}, fmt.Errorf("imgbox HTTP request failed: %w", err)
 	}
 	if status != http.StatusOK {
-		// Try to extract error message from response
-		bodyStr := safeResponsePreview(body)
-		return uploadResult{}, fmt.Errorf("imgbox upload failed with status %d, response: %s", status, bodyStr)
+		return uploadResult{}, fmt.Errorf("imgbox upload unavailable (HTTP %d)", status)
 	}
 
 	var response struct {
@@ -202,16 +235,14 @@ func (u *imgboxUploader) Upload(ctx context.Context, imagePath string) (uploadRe
 		Error string `json:"error"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
-		bodyStr := safeResponsePreview(body)
-		return uploadResult{}, fmt.Errorf("imgbox invalid JSON response: %w, body: %s", err, bodyStr)
+		return uploadResult{}, fmt.Errorf("imgbox upload returned invalid JSON: %w", err)
 	}
 	if !response.OK && len(response.Files) == 0 {
 		errMsg := "unknown error"
 		if message := safeResponseMessage(response.Error); message != "" {
 			errMsg = message
 		}
-		bodyStr := safeResponsePreview(body)
-		return uploadResult{}, fmt.Errorf("imgbox upload rejected: %s (response: %s)", errMsg, bodyStr)
+		return uploadResult{}, fmt.Errorf("imgbox upload rejected: %s", errMsg)
 	}
 	if len(response.Files) == 0 {
 		return uploadResult{}, errors.New("imgbox returned no files in response")
@@ -219,7 +250,7 @@ func (u *imgboxUploader) Upload(ctx context.Context, imagePath string) (uploadRe
 
 	file := response.Files[0]
 	if file.OriginalURL == "" || file.ThumbnailURL == "" {
-		return uploadResult{}, fmt.Errorf("imgbox returned incomplete URLs (original: %q, thumbnail: %q)", file.OriginalURL, file.ThumbnailURL)
+		return uploadResult{}, errors.New("imgbox returned incomplete upload URLs")
 	}
 	webURL := file.ImageURL
 	if webURL == "" {
@@ -360,7 +391,7 @@ func imgboxGetCsrfAndCookie(ctx context.Context, client *http.Client) (string, s
 	if err != nil {
 		return "", "", fmt.Errorf("imgbox create csrf request: %w", err)
 	}
-	for key, value := range imgboxHeaders("", nil) {
+	for key, value := range imgboxNavigationHeaders() {
 		req.Header.Set(key, value)
 	}
 	resp, err := client.Do(req)
@@ -371,6 +402,16 @@ func imgboxGetCsrfAndCookie(ctx context.Context, client *http.Client) (string, s
 	body, err := readLimitedAndCloseResponseBody(resp)
 	if err != nil {
 		return "", "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("imgbox anonymous upload session unavailable (HTTP %d)", resp.StatusCode)
+	}
+	contentType := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type")))
+	if contentType != "" && !strings.HasPrefix(contentType, "text/html") {
+		return "", "", errors.New("imgbox anonymous upload session returned unexpected content")
+	}
+	if imgboxChallengeDocument(string(body)) {
+		return "", "", errors.New("imgbox anonymous upload session is temporarily challenged")
 	}
 	csrfToken, err := imgboxExtractCsrfToken(string(body))
 	if err != nil {
@@ -395,7 +436,7 @@ func imgboxGetUploadToken(ctx context.Context, client *http.Client, csrfToken st
 	if err != nil {
 		return imgboxUploadToken{}, fmt.Errorf("imgbox create token request: %w", err)
 	}
-	headers := imgboxHeaders(cookie, map[string]string{"X-CSRF-Token": csrfToken})
+	headers := imgboxUploadHeaders(cookie, csrfToken)
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
@@ -409,40 +450,49 @@ func imgboxGetUploadToken(ctx context.Context, client *http.Client, csrfToken st
 		return imgboxUploadToken{}, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		bodyStr := safeResponsePreview(body)
-		return imgboxUploadToken{}, fmt.Errorf("imgbox token request failed with status %d, response: %s", resp.StatusCode, bodyStr)
+		return imgboxUploadToken{}, fmt.Errorf("imgbox anonymous upload token unavailable (HTTP %d)", resp.StatusCode)
 	}
 	var tokenResp map[string]any
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		bodyStr := safeResponsePreview(body)
-		return imgboxUploadToken{}, fmt.Errorf("imgbox token response invalid JSON: %w, body: %s", err, bodyStr)
+		return imgboxUploadToken{}, fmt.Errorf("imgbox token response invalid JSON: %w", err)
 	}
-	return imgboxUploadToken{
+	token := imgboxUploadToken{
 		TokenID:       imgboxJSONValue(tokenResp["token_id"]),
 		TokenSecret:   imgboxJSONValue(tokenResp["token_secret"]),
 		GalleryID:     imgboxJSONValue(tokenResp["gallery_id"]),
 		GallerySecret: imgboxJSONValue(tokenResp["gallery_secret"]),
-	}, nil
+	}
+	if token.TokenID == "" || token.TokenID == "null" || token.TokenSecret == "" || token.TokenSecret == "null" {
+		return imgboxUploadToken{}, errors.New("imgbox anonymous upload token response was incomplete")
+	}
+	return token, nil
 }
 
-func imgboxHeaders(cookie string, extra map[string]string) map[string]string {
-	headers := map[string]string{
-		"DNT":              "1",
+func imgboxNavigationHeaders() map[string]string {
+	return map[string]string{
+		"Accept":          "text/html,application/xhtml+xml",
+		"Accept-Language": "en-US,en;q=0.5",
+		"User-Agent":      "upbrr",
+	}
+}
+
+func imgboxUploadHeaders(cookie string, csrfToken string) map[string]string {
+	return map[string]string{
 		"Origin":           "https://imgbox.com",
 		"Referer":          "https://imgbox.com/",
 		"Accept":           "application/json, text/javascript, */*; q=0.01",
-		"User-Agent":       "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/117.0",
+		"User-Agent":       "upbrr",
 		"X-Requested-With": "XMLHttpRequest",
-		"Accept-Language":  "en-US,en;q=0.5",
-		"Accept-Encoding":  "gzip, deflate, br",
-		"Sec-GPC":          "1",
-		"Connection":       "keep-alive",
+		"X-CSRF-Token":     csrfToken,
+		"Cookie":           cookie,
 	}
-	if strings.TrimSpace(cookie) != "" {
-		headers["Cookie"] = cookie
-	}
-	maps.Copy(headers, extra)
-	return headers
+}
+
+func imgboxChallengeDocument(body string) bool {
+	normalized := strings.ToLower(body)
+	return strings.Contains(normalized, "cf-chl-") ||
+		strings.Contains(normalized, "attention required") ||
+		strings.Contains(normalized, "checking your browser")
 }
 
 func imgboxExtractCsrfToken(body string) (string, error) {

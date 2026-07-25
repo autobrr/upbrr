@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -50,6 +51,12 @@ func New(profile Profile) (*Definition, error) {
 		if strings.TrimSpace(profile.AuthCapability.DisplayName) == "" {
 			profile.AuthCapability.DisplayName = profile.Name
 		}
+		if profile.AuthPolicy == nil {
+			profile.AuthPolicy = &trackers.AuthPolicy{}
+		}
+		if profile.AuthPolicy.ResolveRequirements == nil {
+			profile.AuthPolicy.ResolveRequirements = authcontract.RequirementsForCapability(*profile.AuthCapability)
+		}
 	}
 	return &Definition{profile: profile}, nil
 }
@@ -84,6 +91,14 @@ func (d *Definition) UploadContentMode() trackers.UploadContentMode {
 	return d.profile.UploadContentMode
 }
 
+// ReleaseNamePolicy returns the profile policy or the explicit standalone default.
+func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {
+	if d.profile.ReleaseNamePolicy.Resolver != nil {
+		return d.profile.ReleaseNamePolicy
+	}
+	return trackers.CanonicalReleaseNamePolicy()
+}
+
 // Prepare dispatches intent through the tracker-local profile callbacks.
 func (d *Definition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
 	if input.Intent == trackers.PreparationIntentDescriptionPreview && !d.profile.UploadContentMode.UsesDescription() {
@@ -93,6 +108,11 @@ func (d *Definition) Prepare(ctx context.Context, input trackers.PreparationInpu
 			"tracker does not support shared description preparation",
 			nil,
 		)
+	}
+	var failure *trackers.PreparationFailure
+	input, failure = trackers.PrepareInputWithReleaseNamePolicy(input, d.ReleaseNamePolicy())
+	if failure != nil {
+		return trackers.TrackerPlan{}, failure
 	}
 	return trackers.PrepareAdapter(ctx, input, d.profile.PrepareDescription, d.profile.PrepareUpload)
 }
@@ -104,6 +124,15 @@ func (d *Definition) NewDuplicateAdapter(dependencies dupe.Dependencies) dupe.Ad
 
 // Rules returns a defensive copy of tracker-owned validation rules.
 func (d *Definition) Rules() *trackers.RuleSet { return cloneRules(d.profile.Rules) }
+
+// ValidationPolicy returns the tracker-local policy or an explicit versioned
+// no-extra-validation policy for this standalone definition.
+func (d *Definition) ValidationPolicy() trackers.ValidationPolicyBinding {
+	if d.profile.ValidationPolicy.Check != nil || strings.TrimSpace(d.profile.ValidationPolicy.ID) != "" {
+		return d.profile.ValidationPolicy
+	}
+	return trackers.NoExtraValidationPolicy("standalone-" + strings.ToLower(d.profile.Name) + "-constructibility-v1")
+}
 
 // ClaimPolicy returns tracker-owned claim orchestration policy.
 func (d *Definition) ClaimPolicy() *trackers.ClaimPolicy { return cloneValue(d.profile.ClaimPolicy) }

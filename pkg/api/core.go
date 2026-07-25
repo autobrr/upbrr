@@ -11,7 +11,6 @@ type Request struct {
 	DescriptionGroups           []DescriptionBuilderGroup
 	Trackers                    []string
 	TrackersRemove              []string
-	RuleAuthorizations          []RuleAuthorization
 	IgnoreDupesFor              []string
 	SkipDupeCheck               bool
 	SkipDupeAsActual            bool

@@ -58,7 +58,10 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		params.Set("search_type", "t_genre")
 		params.Set("keywords", fmt.Sprintf("tt%07d", meta.Identity.IMDBID))
 	} else {
-		query := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName) + " " + isSeasonEpisode(meta))
+		query := dupe.ProjectedSearchName(meta)
+		if meta.Projection == nil {
+			query = strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName) + " " + isSeasonEpisode(meta))
+		}
 		params.Set("search_type", "t_name")
 		params.Set("keywords", query)
 	}

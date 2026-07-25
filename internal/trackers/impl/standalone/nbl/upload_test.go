@@ -31,6 +31,7 @@ func TestPrepareUploadStateUsesNumericIgnoreDupes(t *testing.T) {
 		Meta: api.UploadSubject{
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
+			ReleaseName:       "Example.Show.S01E01.1080p-GRP",
 		},
 		TrackerConfig: config.TrackerConfig{APIKey: "api-key"},
 	})

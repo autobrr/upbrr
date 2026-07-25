@@ -166,13 +166,16 @@ func TestBTNHandlerFallsBackToTitleSearch(t *testing.T) {
 		Identity: api.ExternalIdentity{
 			Category: "TV",
 		},
-		Release: api.ReleaseInfo{Title: "Example Show"},
+		Release: api.ReleaseInfo{Title: "Ignored Title"},
+		Projection: &api.TrackerReleaseProjection{
+			DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Exact Projected Search"},
+		},
 	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	filter := payloads.lastFilter(t)
-	assertBTNFilterValue(t, filter, "searchstr", "Example Show")
+	assertBTNFilterValue(t, filter, "searchstr", "Exact Projected Search")
 }
 
 func TestBTNHandlerNormalizesEntries(t *testing.T) {

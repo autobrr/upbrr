@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MenuImagesFacet } from "../../releaseSession/types";
 
 type Props = Readonly<{
@@ -13,14 +13,6 @@ type Props = Readonly<{
   setLightboxAlt: (value: string) => void;
 }>;
 
-const hiddenCaptureWarningCodes = new Set([
-  "unsupported_post_link",
-  "structural_state",
-  "structural_only",
-  "nav_scan_limit",
-  "structural_discovery",
-]);
-
 /** Thin presentation adapter for the exact-generation menu-image facet. */
 export default function MenuImagesPage({
   facet,
@@ -30,8 +22,7 @@ export default function MenuImagesPage({
   setLightboxImage,
   setLightboxAlt,
 }: Props) {
-  const [menuPaths, setMenuPaths] = useState<string[]>([]);
-  const [menuPathDraft, setMenuPathDraft] = useState("");
+  const [menuFiles, setMenuFiles] = useState<File[]>([]);
   const [notice, setNotice] = useState("");
   const removeButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const captureButtonRef = useRef<HTMLButtonElement>(null);
@@ -47,19 +38,11 @@ export default function MenuImagesPage({
     if (view.status === "idle" && view.staleReason) void loadRef.current();
   }, [view.staleReason, view.status]);
 
-  const handleAddPath = () => {
-    const selectedPath = menuPathDraft.trim();
-    if (!selectedPath) return;
-    setMenuPaths((previous) => Array.from(new Set([...previous, selectedPath])));
-    setMenuPathDraft("");
-    setNotice("");
-  };
-
   const handleImport = async () => {
-    if (menuPaths.length === 0) return;
+    if (menuFiles.length === 0) return;
     setNotice("");
-    if (await facet.importPaths(menuPaths)) {
-      setMenuPaths([]);
+    if (await facet.importFiles(menuFiles)) {
+      setMenuFiles([]);
       setNotice("Menu images imported successfully.");
     }
   };
@@ -69,18 +52,10 @@ export default function MenuImagesPage({
     await facet.capture();
   };
 
-  const handleDelete = async (imagePath: string) => {
+  const handleDelete = async (artifactID: string) => {
     setNotice("");
-    if (await facet.remove(imagePath)) setNotice("Menu image removed.");
+    if (await facet.remove(artifactID)) setNotice("Menu image removed.");
   };
-
-  const completionMessage = useMemo(() => {
-    if (!view.capture) return "";
-    if (view.capture.Truncated) return "Maximum reached";
-    return `Captured ${view.capture.Images.length} DVD menu image${view.capture.Images.length === 1 ? "" : "s"}.`;
-  }, [view.capture]);
-  const visibleCaptureWarnings =
-    view.capture?.Warnings?.filter((warning) => !hiddenCaptureWarningCodes.has(warning.Code)) ?? [];
 
   return (
     <section className="grid gap-4">
@@ -91,6 +66,19 @@ export default function MenuImagesPage({
           Capture DVD menus or import existing disc menu images for upload and descriptions.
         </p>
       </header>
+
+      {view.artifacts ? (
+        <section className="panel grid gap-1" role="status">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2>Authoritative DVD menu set</h2>
+            <span className="muted">{view.artifacts.status}</span>
+          </div>
+          <p className="muted">
+            {view.artifacts.artifacts.filter((artifact) => artifact.kind === "dvd_menu").length}{" "}
+            captured menu image(s)
+          </p>
+        </section>
+      ) : null}
 
       {automaticCaptureAvailable ? (
         <section className="panel grid gap-3" aria-busy={running}>
@@ -114,26 +102,6 @@ export default function MenuImagesPage({
               </button>
             ) : null}
           </div>
-          {view.capture ? (
-            <div className="grid gap-1" role="status" aria-live="polite">
-              <p className="muted m-0">
-                Menus {view.capture.DiscoveredMenus} · States {view.capture.VisitedStates} · Buttons{" "}
-                {view.capture.VisitedButtons} · Captured {view.capture.Images.length}
-                {visibleCaptureWarnings.length > 0
-                  ? ` · Warnings ${visibleCaptureWarnings.length}`
-                  : ""}
-              </p>
-              {completionMessage ? <p className="success m-0">{completionMessage}</p> : null}
-              {view.capture.Truncated ? (
-                <p className="muted m-0">Configured maximum: {view.capture.MaxItems}.</p>
-              ) : null}
-              {visibleCaptureWarnings.map((warning) => (
-                <p className="muted m-0" key={warning.Code}>
-                  {warning.Message}
-                </p>
-              ))}
-            </div>
-          ) : null}
         </section>
       ) : (
         <section className="panel">
@@ -147,41 +115,40 @@ export default function MenuImagesPage({
       <section className="panel grid gap-3">
         <div>
           <h2>Import menu images</h2>
-          <p className="muted">Add PNG, JPEG, or WebP paths visible to the WebUI host.</p>
+          <p className="muted">Choose PNG, JPEG, or WebP files from this device.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <input
             className="min-w-[18rem] flex-1"
-            aria-label="Menu image path"
-            value={menuPathDraft}
-            onChange={(event) => setMenuPathDraft(event.target.value)}
-            placeholder="D:\\Media\\menu.png"
+            aria-label="Menu image files"
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            multiple
+            onChange={(event) => setMenuFiles(Array.from(event.target.files || []))}
+            disabled={running}
           />
-          <button className="ghost" type="button" onClick={handleAddPath} disabled={running}>
-            Add path
-          </button>
           <button
             className="primary"
             type="button"
             onClick={handleImport}
-            disabled={running || menuPaths.length === 0}
+            disabled={running || menuFiles.length === 0}
           >
             {running ? "Working..." : "Import images"}
           </button>
         </div>
-        {menuPaths.length > 0 ? (
+        {menuFiles.length > 0 ? (
           <ul className="m-0 grid list-none gap-1 p-0">
-            {menuPaths.map((selectedPath) => (
+            {menuFiles.map((file) => (
               <li
                 className="flex items-center justify-between gap-2 rounded border border-white/10 bg-white/5 p-2"
-                key={selectedPath}
+                key={`${file.name}-${file.size}-${file.lastModified}`}
               >
-                <span className="min-w-0 break-all">{selectedPath}</span>
+                <span className="min-w-0 break-all">{file.name}</span>
                 <button
                   className="ghost"
                   type="button"
                   onClick={() =>
-                    setMenuPaths((previous) => previous.filter((item) => item !== selectedPath))
+                    setMenuFiles((previous) => previous.filter((item) => item !== file))
                   }
                 >
                   Remove
@@ -213,28 +180,28 @@ export default function MenuImagesPage({
             {view.images.map((item, index) => {
               const itemNumber = index + 1;
               return (
-                <article className="grid gap-2" key={item.image.Path}>
+                <article className="grid gap-2" key={item.image.artifactID}>
                   <button
                     className="screens-thumb"
                     type="button"
                     aria-label={`Preview DVD menu ${itemNumber}`}
                     onClick={() => {
-                      setLightboxImage(item.dataURI);
+                      setLightboxImage(item.contentURL);
                       setLightboxAlt(`DVD menu ${itemNumber}`);
                     }}
                   >
-                    <img src={item.dataURI} alt="" />
+                    <img src={item.contentURL} alt="" />
                   </button>
                   <button
                     ref={(element) => {
-                      if (element) removeButtonRefs.current.set(item.image.Path, element);
-                      else removeButtonRefs.current.delete(item.image.Path);
+                      if (element) removeButtonRefs.current.set(item.image.artifactID, element);
+                      else removeButtonRefs.current.delete(item.image.artifactID);
                     }}
                     className="danger"
                     type="button"
                     aria-label={`Remove DVD menu ${itemNumber}`}
                     disabled={running}
-                    onClick={() => handleDelete(item.image.Path)}
+                    onClick={() => handleDelete(item.image.artifactID)}
                   >
                     Remove
                   </button>

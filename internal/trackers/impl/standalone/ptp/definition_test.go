@@ -268,53 +268,17 @@ func TestDefinitionBuildUploadDryRunForNewGroupIncludesQuestionnaire(t *testing.
 	}
 }
 
-func TestResolveUploadTorrentPathReusesPreparedPTPArtifact(t *testing.T) {
-	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "ua.db")
-	sourcePath := filepath.Join(tmp, "Movie.mkv")
-	torrentPath := filepath.Join(tmp, "release.torrent")
-	createTestTorrent(t, filepath.Join(tmp, "source.bin"), torrentPath)
-
-	preparedMeta, err := trackers.PrepareTrackerUploadTorrent(
-		api.UploadSubject{SourcePath: sourcePath, TorrentPath: torrentPath},
-		dbPath,
-		"PTP",
-		config.TrackerConfig{AnnounceURL: "https://please.passthepopcorn.me/passkey/announce"},
-	)
-	if err != nil {
-		t.Fatalf("prepare tracker torrent: %v", err)
-	}
-
-	resolvedPath, err := resolveUploadTorrentPath(preparedMeta, dbPath)
-	if err != nil {
-		t.Fatalf("resolve upload torrent path: %v", err)
-	}
-	if resolvedPath != preparedMeta.TorrentPath {
-		t.Fatalf("expected prepared artifact path %q, got %q", preparedMeta.TorrentPath, resolvedPath)
-	}
-
-	torrentMeta, err := metainfo.LoadFromFile(resolvedPath)
-	if err != nil {
-		t.Fatalf("load prepared artifact: %v", err)
-	}
-	if torrentMeta.Announce != "https://please.passthepopcorn.me/passkey/announce" {
-		t.Fatal("expected prepared announce preserved")
-	}
-	info, err := torrentMeta.UnmarshalInfo()
-	if err != nil {
-		t.Fatalf("unmarshal prepared info: %v", err)
-	}
-	if info.Source != "PTP" {
-		t.Fatalf("expected prepared source preserved, got %q", info.Source)
-	}
-}
-
 func TestDefinitionUploadSuccess(t *testing.T) {
 	tmp := t.TempDir()
 	dbPath := newPTPAuthDB(t)
-	torrentPath := filepath.Join(tmp, "release.torrent")
-	createTestTorrent(t, filepath.Join(tmp, "source.bin"), torrentPath)
-	markTorrentWithPrivateMetadata(t, torrentPath)
+	baseTorrentPath := filepath.Join(tmp, "release.torrent")
+	createTestTorrent(t, filepath.Join(tmp, "source.bin"), baseTorrentPath)
+	markTorrentWithPrivateMetadata(t, baseTorrentPath)
+	announceURL := "https://please.passthepopcorn.me/passkey/announce"
+	torrentPath := filepath.Join(tmp, "[ptp].release.torrent")
+	if err := trackers.WritePersonalizedTorrent(baseTorrentPath, torrentPath, announceURL, "", "PTP"); err != nil {
+		t.Fatalf("prepare PTP torrent artifact: %v", err)
+	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.RequestURI() {
@@ -372,8 +336,13 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 					t.Errorf("expected cleaned upload torrent created-by, got %q", uploadedMeta.CreatedBy)
 					return
 				}
-				if uploadedMeta.Announce != "" {
-					t.Error("expected upload torrent announce stripped")
+				if uploadedMeta.Announce != announceURL {
+					t.Error("expected prepared tracker announce")
+					return
+				}
+				info, err := uploadedMeta.UnmarshalInfo()
+				if err != nil || info.Source != "PTP" {
+					t.Error("expected prepared PTP source")
 					return
 				}
 				if r.FormValue("AntiCsrfToken") != "csrf-token" {
@@ -417,7 +386,7 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 		TrackerConfig: config.TrackerConfig{
 			Username:    "user",
 			Password:    "pass",
-			AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
+			AnnounceURL: announceURL,
 		},
 		Runtime: trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}),
 		Logger:  api.NopLogger{},

@@ -329,6 +329,9 @@ func TestUploadPostsToRedirectedLoginHost(t *testing.T) {
 		Meta: api.UploadSubject{
 			TorrentPath: torrentPath,
 			ReleaseName: "Release",
+			Identity:    api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+			Type:        "WEBDL",
+			Release:     api.ReleaseInfo{Resolution: "1080p"},
 		},
 		TrackerConfig: config.TrackerConfig{
 			Username: "user",

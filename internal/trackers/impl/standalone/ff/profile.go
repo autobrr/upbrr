@@ -4,11 +4,10 @@
 package ff
 
 import (
-	"context"
-
 	"github.com/autobrr/upbrr/internal/trackers"
+	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
-	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/internal/cookieauth"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -21,7 +20,9 @@ func Profile() standalone.Profile {
 		UploadContentMode:   trackers.UploadContentModeDescription,
 		PrepareDescription:  prepareDescription,
 		PrepareUpload:       prepareUpload,
+		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/ff/v1", resolveName, resolveSearchName),
 		NewDuplicateAdapter: newDuplicateAdapter,
+		ValidationPolicy:    validationPolicy(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{
 			Source: sourceFlag,
 		},
@@ -37,7 +38,15 @@ func Profile() standalone.Profile {
 			SupportsLogin:      true,
 			SupportsAutoLogin:  true,
 		},
-		AuthResolver: cookieauth.CookieLoginResolver(cookieauth.CookieLoginSpec{
+		AuthPolicy: &trackers.AuthPolicy{
+			ResolveRequirements: authcontract.StaticRequirements(authcontract.Requirements(
+				"cookies_or_login",
+				false,
+				[]trackers.AuthRequirement{trackers.AuthRequirementStoredCookie},
+				[]trackers.AuthRequirement{trackers.AuthRequirementCredentialLogin},
+			)),
+		},
+		AuthResolver: trackerauth.CookieLoginResolver(trackerauth.CookieLoginSpec{
 			TrackerID:     "FF",
 			BaseURL:       baseURL,
 			CookieDomain:  "www.funfile.org",
@@ -50,11 +59,3 @@ func Profile() standalone.Profile {
 
 // New returns a fresh FF definition from its tracker-local profile.
 func New() *standalone.Definition { return standalone.MustNew(Profile()) }
-
-func prepareDescription(_ context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {
-	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
-	if err != nil {
-		assets = trackers.DescriptionAssets{}
-	}
-	return trackers.DescriptionResult{Group: "ff", Description: buildDescription(assets)}, nil
-}

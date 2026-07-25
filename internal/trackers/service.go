@@ -318,6 +318,7 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 	}
 	preferredImageHosts := preparationImageHostPreferences(s.cfg, meta, resolved, s.logger, s.registry)
 	preflight := s.preflightDescriptionImageHostsWithPreferences(ctx, meta, resolved, preferredImageHosts, preloaded, false)
+	mergePreflightImageHostFailures(&meta.ImageHostOverrides, preflight)
 	preflightUploaded := false
 	for _, resolution := range preflight {
 		if resolution.feedback.Reuploaded {
@@ -381,12 +382,9 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 				continue
 			}
 		}
+		mergeImageHostFeedbackFailures(&meta.ImageHostOverrides, resolution.feedback)
 		if resolution.blocking {
-			message := strings.TrimSpace(resolution.feedback.Message)
-			if message == "" {
-				message = "image-host requirements could not be met"
-			}
-			failed := failedPreparedUploadContent(tracker, UploadContentModeDescription, errors.New(message))
+			failed := unavailableImageHostPreparedUploadContent(tracker, UploadContentModeDescription, resolution.feedback)
 			contentFailures = append(contentFailures, *failed.Failure)
 			continue
 		}
@@ -491,8 +489,19 @@ func uploadSubjectForDescription(subject api.DescriptionSubject) api.UploadSubje
 		TrackerConfigOverrides: subject.TrackerConfig,
 		TrackerSiteOverrides:   subject.TrackerSite,
 		ImageHostOverrides:     subject.ImageHost,
+		ExactScreenshots:       cloneOptionalDescriptionSlice(subject.ExactScreenshots),
+		ExactUploadedImages:    cloneOptionalDescriptionSlice(subject.ExactUploadedImages),
 		TrackerData:            append([]api.TrackerMetadata(nil), subject.TrackerData...),
 	}
+}
+
+func cloneOptionalDescriptionSlice[T any](values []T) []T {
+	if values == nil {
+		return nil
+	}
+	cloned := make([]T, len(values))
+	copy(cloned, values)
+	return cloned
 }
 
 // preparationImageHostPreferences returns the first upload host each tracker
@@ -520,7 +529,7 @@ func preparationImageHostPreferences(
 	preferred := make(map[string]string, len(trackers))
 	for _, target := range targets {
 		host := strings.ToLower(strings.TrimSpace(target.Host))
-		if host == "" {
+		if host == "" || hostInList(host, meta.ImageHostOverrides.FailedHosts) {
 			continue
 		}
 		for _, tracker := range target.Trackers {
@@ -547,12 +556,21 @@ func blockedPreparationImageHostFeedback(feedback api.ImageHostFeedback) api.Ima
 	return feedback
 }
 
-// BuildUploadReview builds tracker payloads needed for upload authorization
-// without enabling explicit dry-run diagnostic artifacts or tracker submission.
-// Shared preparation may still write local torrent artifacts, rehost images,
-// and persist reusable image-slot state.
-func (s *Service) BuildUploadReview(ctx context.Context, meta api.UploadSubject, trackersList []string) ([]api.TrackerDryRunEntry, error) {
-	return s.buildUploadPreview(ctx, meta, trackersList, PreparationIntentUploadReview)
+func mergePreflightImageHostFailures(overrides *api.ImageHostOverrides, preflight imageHostPreflight) {
+	for _, resolution := range preflight {
+		mergeImageHostFeedbackFailures(overrides, resolution.feedback)
+	}
+}
+
+func mergeImageHostFeedbackFailures(overrides *api.ImageHostOverrides, feedback api.ImageHostFeedback) {
+	if overrides == nil {
+		return
+	}
+	failedHosts := failedImageHostNames(feedback.Warnings)
+	if len(failedHosts) == 0 {
+		return
+	}
+	overrides.FailedHosts = normalizeImageHostNames(append(overrides.FailedHosts, failedHosts...))
 }
 
 // BuildUploadDryRun builds explicit payload previews without tracker submission.
@@ -562,8 +580,7 @@ func (s *Service) BuildUploadDryRun(ctx context.Context, meta api.UploadSubject,
 	return s.buildUploadPreview(ctx, meta, trackersList, PreparationIntentDryRun)
 }
 
-// buildUploadPreview evaluates every resolved tracker builder and banned-group
-// state. Core owns cross-tracker rule, duplicate, and eligibility decisions.
+// buildUploadPreview evaluates every resolved tracker builder and banned-group state.
 func (s *Service) buildUploadPreview(
 	ctx context.Context,
 	meta api.UploadSubject,
@@ -613,6 +630,7 @@ func (s *Service) buildUploadPreview(
 	if screenshotPreloadErr == nil {
 		preferredImageHosts := preparationImageHostPreferences(s.cfg, meta, resolved, logger, s.registry)
 		preflight = s.preflightDescriptionImageHostsWithPreferences(ctx, meta, resolved, preferredImageHosts, preloaded, false)
+		mergePreflightImageHostFailures(&meta.ImageHostOverrides, preflight)
 	}
 
 	results := make([]api.TrackerDryRunEntry, 0, len(resolved))
@@ -634,7 +652,7 @@ func (s *Service) buildUploadPreview(
 		}
 		trackerCfg := trackerConfigFor(s.cfg, tracker)
 		trackerCfg = applyTrackerConfigOverrides(trackerCfg, meta.TrackerConfigOverrides)
-		trackerMeta, err := PrepareTrackerUploadTorrentWithRegistry(meta, s.cfg.MainSettings.DBPath, tracker, trackerCfg, s.registry)
+		trackerMeta, err := prepareTrackerUploadTorrentWithRegistry(meta, s.cfg.MainSettings.DBPath, tracker, trackerCfg, s.registry)
 		if err != nil {
 			entry.Status = "error"
 			entry.Message = safeTrackerMessage(err)
@@ -657,6 +675,7 @@ func (s *Service) buildUploadPreview(
 			continue
 		}
 		content := s.prepareUploadContent(ctx, tracker, trackerMeta, trackerCfg, preloaded, preflight)
+		mergeImageHostFeedbackFailures(&meta.ImageHostOverrides, content.ImageHost)
 		if content.State == preparedUploadContentFailed {
 			entry.Status = "blocked"
 			entry.Message = content.Failure.Message

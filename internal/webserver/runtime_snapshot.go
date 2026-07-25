@@ -9,7 +9,6 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
-	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // backendRuntimeSnapshot is a shallow, single-generation view of config and
@@ -74,36 +73,8 @@ func requireBackendCapability[T any](capability T, name string) (T, error) {
 	return capability, nil
 }
 
-func (rt backendRuntimeSnapshot) metadataCore() (MetadataCapability, error) {
-	return requireBackendCapability(rt.capabilities.Metadata, "metadata")
-}
-
-func (rt backendRuntimeSnapshot) releasePreparationCore() (ReleasePreparationCapability, error) {
-	return requireBackendCapability(rt.capabilities.ReleasePreparation, "release preparation")
-}
-
-func (rt backendRuntimeSnapshot) selectionCore() (SelectionCapability, error) {
-	return requireBackendCapability(rt.capabilities.Selection, "blu-ray selection")
-}
-
-func (rt backendRuntimeSnapshot) preparationCore() (PreparationCapability, error) {
-	return requireBackendCapability(rt.capabilities.Preparation, "preparation")
-}
-
-func (rt backendRuntimeSnapshot) uploadReviewCore() (UploadReviewCapability, error) {
-	return requireBackendCapability(rt.capabilities.UploadReview, "upload review")
-}
-
-func (rt backendRuntimeSnapshot) screenshotCore() (ScreenshotCapability, error) {
-	return requireBackendCapability(rt.capabilities.Screenshots, "screenshot")
-}
-
-func (rt backendRuntimeSnapshot) hostedImageCore() (HostedImageCapability, error) {
-	return requireBackendCapability(rt.capabilities.HostedImages, "hosted image")
-}
-
-func (rt backendRuntimeSnapshot) dvdMenuCore() (DVDCapability, error) {
-	return requireBackendCapability(rt.capabilities.DVD, "DVD menu")
+func (rt backendRuntimeSnapshot) releaseWorkflowCore() (ReleaseWorkflowCapability, error) {
+	return requireBackendCapability(rt.capabilities.ReleaseWorkflow, "release workflow")
 }
 
 func (rt backendRuntimeSnapshot) descriptionCore() (DescriptionCapability, error) {
@@ -128,17 +99,17 @@ func (b *Backend) currentLogger() *logging.Logger {
 	return b.logger
 }
 
-// logDebugf writes through the active logger while holding the runtime read
+// logDebug writes through the active logger while holding the runtime read
 // lock so replacement cannot close the selected logger before the write
 // completes.
-func (b *Backend) logDebugf(format string, args ...any) {
+func (b *Backend) logDebug(message string) {
 	if b == nil {
 		return
 	}
 	b.runtimeMu.RLock()
 	defer b.runtimeMu.RUnlock()
 	if b.logger != nil {
-		b.logger.Debugf(format, args...)
+		b.logger.Debugf("webserver: %s", message)
 	}
 }
 
@@ -183,23 +154,6 @@ func (s *Server) logErrorf(format string, args ...any) {
 		return
 	}
 	s.backend.logErrorf(format, args...)
-}
-
-// baseUploadOptions returns upload options derived from the same runtime
-// snapshot as the core selected for a request.
-func (rt backendRuntimeSnapshot) baseUploadOptions() api.UploadOptions {
-	return buildBaseMetadataOptions(rt.cfg)
-}
-
-// replaceRuntime swaps one complete runtime generation and returns the previous
-// lifecycle owner and logger for separate shutdown after follow-up work such as
-// log stream rebinding.
-func (b *Backend) replaceRuntime(
-	cfg config.Config,
-	capabilities CoreCapabilities,
-	logger *logging.Logger,
-) (LifecycleOwner, *logging.Logger) {
-	return b.replaceRuntimeGeneration(AllocateRuntimeGenerationID(), cfg, capabilities, nil, logger)
 }
 
 func (b *Backend) replaceRuntimeGeneration(

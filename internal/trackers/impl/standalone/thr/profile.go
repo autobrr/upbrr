@@ -4,11 +4,8 @@
 package thr
 
 import (
-	"context"
-	"errors"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -18,13 +15,25 @@ import (
 // including the strict requirement for matching TMDB or IMDb metadata.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		Name:                "THR",
-		BaseURL:             baseURL,
-		DescriptionGroup:    "thr",
-		UploadContentMode:   trackers.UploadContentModeDescription,
-		PrepareDescription:  prepareDescription,
-		PrepareUpload:       prepareUpload,
+		Name:               "THR",
+		BaseURL:            baseURL,
+		DescriptionGroup:   "thr",
+		UploadContentMode:  trackers.UploadContentModeDescription,
+		PrepareDescription: prepareDescription,
+		PrepareUpload:      prepareUpload,
+		ReleaseNamePolicy: trackers.NewReleaseNamePolicy("standalone/thr/v1", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+			if input.RequestedName != nil {
+				subject := input.Subject
+				subject.ReleaseName = *input.RequestedName
+				return trackers.ResolvedReleaseNames{Upload: resolveName(subject)}, nil
+			}
+			if override := strings.TrimSpace(standalone.QuestionnaireAnswers(input.Subject, "THR")["name_override"]); override != "" {
+				return trackers.ResolvedReleaseNames{Upload: override}, nil
+			}
+			return trackers.ResolvedReleaseNames{Upload: resolveName(input.Subject)}, nil
+		}),
 		NewDuplicateAdapter: newDuplicateAdapter,
+		ValidationPolicy:    validationPolicy(),
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{
@@ -53,24 +62,3 @@ func Profile() standalone.Profile {
 
 // New returns a fresh THR definition from its tracker-local profile.
 func New() *standalone.Definition { return standalone.MustNew(Profile()) }
-
-func resolveAuthSession(ctx context.Context, cfg config.TrackerConfig, _ string, _ api.TrackerAuthLoginRequest) error {
-	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
-		return errors.New("trackers: THR username/password not configured")
-	}
-	if _, err := LoginSession(ctx, cfg); err != nil {
-		if errors.Is(err, ErrLoginFailed) {
-			return &trackers.AuthResolutionError{
-				Reason:           "login failed",
-				ConfirmedInvalid: true,
-				Err:              err,
-			}
-		}
-		return &trackers.AuthResolutionError{
-			Reason:    "remote login unavailable",
-			Transient: true,
-			Err:       err,
-		}
-	}
-	return nil
-}

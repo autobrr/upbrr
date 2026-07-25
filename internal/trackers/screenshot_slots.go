@@ -929,7 +929,7 @@ func selectSlotImageForTracker(slot api.ScreenshotSlot, tracker string, policy i
 		return image, host, scope, true
 	}
 
-	if len(policy.allowed) == 0 || hostAllowed(slot.OriginalHost, policy.allowed) {
+	if !hostInList(slot.OriginalHost, policy.failed) && (len(policy.allowed) == 0 || hostAllowed(slot.OriginalHost, policy.allowed)) {
 		originalURL := strings.TrimSpace(slot.OriginalURL)
 		if originalURL != "" {
 			host := strings.TrimSpace(slot.OriginalHost)
@@ -959,6 +959,9 @@ func selectVariantForSlot(slot api.ScreenshotSlot, tracker string, policy imageH
 				continue
 			}
 			host := strings.ToLower(strings.TrimSpace(variant.Host))
+			if hostInList(host, policy.failed) {
+				continue
+			}
 			if len(policy.allowed) > 0 && !hostAllowed(host, policy.allowed) {
 				continue
 			}
@@ -1002,6 +1005,9 @@ func allRenderableSlotsHaveEligibleVariant(slots []api.ScreenshotSlot, tracker s
 		found := false
 		for _, variant := range slot.Variants {
 			if !uploadEligibleForTracker(variant.UsageScope, tracker) {
+				continue
+			}
+			if hostInList(variant.Host, policy.failed) {
 				continue
 			}
 			if len(policy.allowed) > 0 && !hostAllowed(variant.Host, policy.allowed) {

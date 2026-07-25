@@ -41,7 +41,42 @@ func EvaluateRules(ctx context.Context, tracker string, meta api.RuleSubject, lo
 // authorization, while metadata requirements retain their site-specific
 // disposition.
 func EvaluateRulesWithRegistry(ctx context.Context, registry *Registry, tracker string, meta api.RuleSubject, logger api.Logger) ([]api.RuleFailure, error) {
-	return evaluateRules(ctx, registry, tracker, meta, logger)
+	failures, err := evaluateRules(ctx, registry, tracker, meta, logger)
+	if err != nil {
+		return nil, err
+	}
+	custom, err := evaluateValidationPolicy(
+		ctx,
+		registry,
+		tracker,
+		api.NewTrackerValidationSubjectFromRuleSubject(meta, tracker),
+		logger,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return append(failures, custom...), nil
+}
+
+// EvaluateTrackerValidationWithRegistry evaluates generic rules, metadata
+// requirements, and the tracker-native versioned validation policy against the
+// full detached validation subject.
+func EvaluateTrackerValidationWithRegistry(
+	ctx context.Context,
+	registry *Registry,
+	tracker string,
+	subject api.TrackerValidationSubject,
+	logger api.Logger,
+) ([]api.RuleFailure, error) {
+	failures, err := evaluateRules(ctx, registry, tracker, ruleSubjectFromValidation(subject), logger)
+	if err != nil {
+		return nil, err
+	}
+	custom, err := evaluateValidationPolicy(ctx, registry, tracker, subject, logger)
+	if err != nil {
+		return nil, err
+	}
+	return append(failures, custom...), nil
 }
 
 func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta api.RuleSubject, logger api.Logger) ([]api.RuleFailure, error) {
@@ -199,17 +234,70 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 		}
 	}
 
-	if rules.Check != nil {
-		customFailures, err := rules.Check(ctx, meta, logger)
-		if err != nil {
-			return nil, fmt.Errorf("trackers: %s rule check: %w", name, err)
-		}
-		for _, failure := range customFailures {
-			addFailure(failure.Rule, failure.Reason, failure.Disposition)
-		}
-	}
-
 	return failures, nil
+}
+
+func evaluateValidationPolicy(
+	ctx context.Context,
+	registry *Registry,
+	tracker string,
+	subject api.TrackerValidationSubject,
+	logger api.Logger,
+) ([]api.RuleFailure, error) {
+	if registry == nil {
+		return nil, nil
+	}
+	descriptor, ok := registry.LookupDescriptor(tracker)
+	if !ok || descriptor.Validation.Check == nil {
+		return nil, nil
+	}
+	failures, err := descriptor.Validation.Check(ctx, subject, logger)
+	if err != nil {
+		return nil, fmt.Errorf("trackers: %s validation policy %s: %w", strings.ToUpper(strings.TrimSpace(tracker)), descriptor.Validation.ID, err)
+	}
+	normalized := make([]api.RuleFailure, 0, len(failures))
+	for _, failure := range failures {
+		normalized = append(normalized, NewRuleFailure(failure.Rule, failure.Reason, failure.Disposition))
+	}
+	return normalized, nil
+}
+
+func ruleSubjectFromValidation(subject api.TrackerValidationSubject) api.RuleSubject {
+	sceneNFOPath := ""
+	if subject.SceneNFOReady {
+		sceneNFOPath = "ready"
+	}
+	return api.RuleSubject{
+		SourcePath:         subject.SourcePath,
+		VideoPath:          subject.VideoPath,
+		FileList:           append([]string(nil), subject.FileList...),
+		DiscType:           subject.DiscType,
+		Scene:              subject.Scene,
+		SceneNFOPath:       sceneNFOPath,
+		SceneRenamed:       subject.SceneRenamed,
+		SceneRenamedReason: subject.SceneRenamedReason,
+		PersonalRelease:    subject.PersonalRelease,
+		Release:            subject.Release,
+		ReleaseName:        subject.ReleaseName,
+		ReleaseNameNoTag:   subject.ReleaseNameNoTag,
+		Tag:                subject.Tag,
+		Identity:           subject.Identity,
+		ProviderMetadata:   subject.ProviderMetadata,
+		AudioLanguages:     append([]string(nil), subject.AudioLanguages...),
+		SubtitleLanguages:  append([]string(nil), subject.SubtitleLanguages...),
+		TVPack:             subject.TVPack,
+		Type:               subject.Type,
+		Source:             subject.Source,
+		Container:          subject.Container,
+		BitDepth:           subject.BitDepth,
+		VideoCodec:         subject.VideoCodec,
+		VideoEncode:        subject.VideoEncode,
+		HDR:                subject.HDR,
+		Region:             subject.Region,
+		WebDV:              subject.WebDV,
+		Anime:              subject.Anime,
+		Assessments:        subject.Assessments,
+	}
 }
 
 // ResolveRuleCategory returns the common category used by tracker rules.

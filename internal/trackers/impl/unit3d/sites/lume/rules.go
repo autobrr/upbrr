@@ -28,11 +28,15 @@ func Rules() *trackers.RuleSet {
 			AllowOriginal:  true,
 			ApplyIfNonDisc: true,
 		},
-		Check: checkRequirements,
 	}
 }
 
-func checkRequirements(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {
+// ValidationPolicy returns LUME's tracker-specific constructibility checks.
+func ValidationPolicy() trackers.ValidationPolicyBinding {
+	return trackers.ValidationPolicyBinding{ID: "unit3d-lume-constructibility-v1", Check: checkRequirements}
+}
+
+func checkRequirements(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context canceled: %w", err)
 	}
@@ -43,7 +47,7 @@ func checkRequirements(ctx context.Context, meta api.RuleSubject, _ api.Logger) 
 	if unit3d.IsDiscType(meta.DiscType) {
 		return failures, nil
 	}
-	resolution := unit3d.RuleResolution(meta)
+	resolution := unit3d.RuleResolution(unit3d.ValidationRuleSubject(meta))
 	if resolution == "" {
 		failures = append(failures, trackers.NewRuleFailure("resolution_required", "LUME requires a known resolution", api.RuleDispositionStrict))
 		return failures, nil

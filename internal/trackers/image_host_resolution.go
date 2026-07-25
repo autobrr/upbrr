@@ -389,6 +389,7 @@ func firstPreferredDescriptionImageHost(hosts []string) string {
 func optionalImageHostSelectionPolicy(policy imageHostPolicy, preferredHosts ...string) imageHostPolicy {
 	return imageHostPolicy{
 		preferred: optionalImageHostPreferredHosts(policy, preferredHosts...),
+		failed:    append([]string(nil), policy.failed...),
 	}
 }
 
@@ -404,7 +405,7 @@ func optionalImageHostUploadPolicy(policy imageHostPolicy, preferredHosts ...str
 	if len(hosts) == 0 {
 		return policy
 	}
-	return newPreferredImageHostPolicy(hosts[0], hosts[1:]...)
+	return applyFailedImageHosts(newPreferredImageHostPolicy(hosts[0], hosts[1:]...), policy.failed)
 }
 
 // optionalImageHostPreferredHosts returns policy preferences with an explicit
@@ -412,7 +413,9 @@ func optionalImageHostUploadPolicy(policy imageHostPolicy, preferredHosts ...str
 func optionalImageHostPreferredHosts(policy imageHostPolicy, preferredHosts ...string) []string {
 	hosts := append([]string(nil), policy.preferred...)
 	if host := firstPreferredDescriptionImageHost(preferredHosts); host != "" {
-		hosts = prependHost(host, hosts)
+		if !hostInList(host, policy.failed) {
+			hosts = prependHost(host, hosts)
+		}
 	}
 	return hosts
 }
@@ -641,7 +644,7 @@ func failedImageHostNames(warnings []api.ImageHostWarning) []string {
 
 func effectiveImageHostSelectionPolicy(policy imageHostPolicy, preferredHosts ...string) imageHostPolicy {
 	host := firstPreferredDescriptionImageHost(preferredHosts)
-	if host == "" || !hostAllowed(host, policy.allowed) {
+	if host == "" || hostInList(host, policy.failed) || !hostAllowed(host, policy.allowed) {
 		return policy
 	}
 	effective := policy
@@ -674,7 +677,7 @@ func reusableHostCandidates(policy imageHostPolicy) []string {
 	allowedUploads := make(map[string]struct{}, len(policy.uploadHosts))
 	for _, host := range policy.uploadHosts {
 		normalized := strings.ToLower(strings.TrimSpace(host))
-		if normalized != "" {
+		if normalized != "" && !hostInList(normalized, policy.failed) {
 			allowedUploads[normalized] = struct{}{}
 		}
 	}
@@ -682,7 +685,7 @@ func reusableHostCandidates(policy imageHostPolicy) []string {
 	seen := make(map[string]struct{}, len(policy.preferred))
 	for _, host := range policy.preferred {
 		normalized := strings.ToLower(strings.TrimSpace(host))
-		if normalized == "" {
+		if normalized == "" || hostInList(normalized, policy.failed) {
 			continue
 		}
 		if _, ok := allowedUploads[normalized]; !ok {

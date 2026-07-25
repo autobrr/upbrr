@@ -15,7 +15,7 @@ func TestOperationErrorExposesSafeFailureAndRetainsCause(t *testing.T) {
 	cause := errors.New("token=secret-value")
 	failure := OperationFailure{
 		Code:      OperationFailureNoEligibleTrackers,
-		Operation: OperationKindUploadReview,
+		Operation: OperationKindUploadDryRun,
 		Message:   "No selected trackers are eligible.",
 		Recovery:  OperationRecoverySelectTrackers,
 	}

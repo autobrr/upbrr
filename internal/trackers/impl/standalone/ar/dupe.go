@@ -179,6 +179,9 @@ func mapCookiesToSlice(values map[string]*http.Cookie) []*http.Cookie {
 }
 
 func arSearchQuery(meta api.DuplicateSubject) string {
+	if meta.Projection != nil {
+		return dupe.ProjectedSearchName(meta)
+	}
 	title := strings.TrimSpace(meta.Release.Title)
 	if title == "" && meta.ProviderMetadata.TMDB != nil {
 		title = strings.TrimSpace(meta.ProviderMetadata.TMDB.Title)

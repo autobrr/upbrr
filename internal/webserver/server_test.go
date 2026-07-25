@@ -24,7 +24,6 @@ import (
 )
 
 type serverCloseCore struct {
-	preparedMetaTestCore
 	closed *bool
 }
 

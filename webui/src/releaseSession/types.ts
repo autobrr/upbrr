@@ -2,30 +2,34 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type {
-  DescriptionBuilderPreview,
-  DVDMenuCaptureResult,
-  DupeCheckSnapshot,
   ExternalIDOverrides,
   ImageUploadProgressUpdate,
   MetadataPreview,
   OperationFailure,
   PlaylistInfo,
-  PreparationProgressUpdate,
+  PrepareInput,
   ReleaseNameOverrides,
   ReleaseRef,
-  ScreenshotImage,
   ScreenshotPlan,
   ScreenshotPurpose,
-  ScreenshotResult,
   ScreenshotSelection,
-  TrackerDryRunPreview,
-  TrackerEligibility,
   TrackerPreview,
-  TrackerUploadSnapshot,
-  UploadedImageLink,
   UploadImageHostFailure,
-  UploadReviewResult,
 } from "../types";
+import type {
+  DupeAssessment,
+  DupeDecision,
+  DescriptionInstructions,
+  DescriptionSet,
+  MediaArtifactSet,
+  MediaCaptureInstructions,
+  ReleaseWorkflowCurrent,
+  TrackerPreflightAssessment,
+  TrackerReleaseProjectionSet,
+  TrackerProjectionInstructions,
+  UploadDryRunResult,
+  UploadResult,
+} from "../api/generated/release-workflow";
 
 export type ReleaseRoute =
   | "input"
@@ -58,13 +62,6 @@ export type PlaylistStatus =
   | "complete"
   | "error"
   | "cancelled";
-
-/** Ordered advisory preparation stage retained after transport correlation is validated. */
-export type PreparationStep = Readonly<
-  Omit<PreparationProgressUpdate, "correlationID" | "status"> & {
-    status: PreparationProgressUpdate["status"] | "awaiting_input";
-  }
->;
 
 export type PreparationIntent = Readonly<{
   sourceLookupURL: string;
@@ -103,12 +100,6 @@ export type InputFacet = Readonly<{
     preparationDirty: boolean;
     intent: PreparationIntent;
     selectedTrackers: readonly string[];
-    progress: Readonly<{
-      correlationID: string;
-      status: PreparationStatus;
-      message: string;
-      steps: readonly PreparationStep[];
-    }>;
     preview: MetadataPreview | null;
     trackerData: readonly TrackerPreview[];
     playlist: Readonly<{
@@ -137,16 +128,18 @@ export type InputFacet = Readonly<{
   selectCandidate(releaseID: string): Promise<boolean>;
 }>;
 
-/** Duplicate-check commands and retained per-tracker Job progress for the active generation. */
+/** Duplicate-check commands and exact workflow-owned tracker outcomes. */
 export type DuplicatesFacet = Readonly<{
   view: Readonly<{
     status: FacetStatus;
-    snapshot: DupeCheckSnapshot | null;
-    eligibility: TrackerEligibility | null;
+    assessment?: DupeAssessment | null;
+    projections?: TrackerReleaseProjectionSet | null;
+    preflight?: TrackerPreflightAssessment | null;
+    completed: number;
+    total: number;
     ignoredTrackers: readonly string[];
     selectedTrackers: readonly string[];
     error: string;
-    transientError: string;
   }>;
   run(): Promise<boolean>;
   cancel(): Promise<boolean>;
@@ -160,9 +153,10 @@ export type ScreenshotsFacet = Readonly<{
     revision: number;
     status: FacetStatus;
     plan: ScreenshotPlan | null;
-    result: ScreenshotResult | null;
+    artifacts?: MediaArtifactSet | null;
+    workflowMode?: boolean;
     selections: readonly ScreenshotSelection[];
-    finalSelectionPaths: readonly string[];
+    finalSelectionArtifactIDs: readonly string[];
     previewImage: string;
     staleReason: string;
     error: string;
@@ -177,33 +171,53 @@ export type ScreenshotsFacet = Readonly<{
     selections?: readonly ScreenshotSelection[],
   ): Promise<boolean>;
   previewFrame(timestampSeconds: number): Promise<boolean>;
-  remove(imagePath: string): Promise<boolean>;
-  removeMany(imagePaths: readonly string[]): Promise<boolean>;
-  removeTrackerURL(url: string): Promise<boolean>;
-  removeTrackerURLs(urls: readonly string[]): Promise<boolean>;
-  selectFinal(imagePath: string, selected: boolean): Promise<boolean>;
+  remove(artifactID: string): Promise<boolean>;
+  removeMany(artifactIDs: readonly string[]): Promise<boolean>;
+  selectFinal(artifactID: string, selected: boolean): Promise<boolean>;
   reorderFinal(fromIndex: number, toIndex: number): Promise<boolean>;
   saveFinal(): Promise<boolean>;
-  readImage(path: string): Promise<string>;
+  selectArtifact(artifactID: string, selected: boolean): Promise<boolean>;
+  deleteArtifacts(artifactIDs: readonly string[]): Promise<boolean>;
+  readImage(artifactID: string): Promise<string>;
 }>;
 
-export type MenuImagePreview = Readonly<{ image: ScreenshotImage; dataURI: string }>;
-export type UploadedImageCandidate = Readonly<{ image: ScreenshotImage; dataURI: string }>;
+export type MediaImageView = Readonly<{
+  artifactID: string;
+  index: number;
+  timestampSeconds: number;
+  purpose: ScreenshotPurpose;
+  width: number;
+  height: number;
+  sizeBytes: number;
+}>;
+
+export type MenuImagePreview = Readonly<{ image: MediaImageView; contentURL: string }>;
+export type UploadedImageCandidate = Readonly<{
+  image: MediaImageView;
+  contentURL: string;
+}>;
+export type HostedImageView = Readonly<{
+  artifactID: string;
+  host: string;
+  url: string;
+  sizeBytes: number;
+  uploadedAt: string;
+}>;
 
 export type MenuImagesFacet = Readonly<{
   view: Readonly<{
     revision: number;
     status: FacetStatus;
     images: readonly MenuImagePreview[];
-    capture: DVDMenuCaptureResult | null;
+    artifacts?: MediaArtifactSet | null;
     staleReason: string;
     error: string;
   }>;
   load(): Promise<boolean>;
-  importPaths(paths: readonly string[]): Promise<boolean>;
+  importFiles(files: readonly File[]): Promise<boolean>;
   capture(): Promise<boolean>;
   cancelCapture(): void;
-  remove(imagePath: string): Promise<boolean>;
+  remove(artifactID: string): Promise<boolean>;
 }>;
 
 /** Correlated absolute host-attempt snapshots for one image upload command. */
@@ -218,27 +232,25 @@ export type UploadedImagesFacet = Readonly<{
     revision: number;
     status: FacetStatus;
     candidates: readonly UploadedImageCandidate[];
-    uploaded: readonly UploadedImageLink[];
-    selectedPaths: readonly string[];
-    host: string;
+    uploaded: readonly HostedImageView[];
+    selectedArtifactIDs: readonly string[];
     failures: readonly UploadImageHostFailure[];
     progress: ImageUploadProgress;
     staleReason: string;
     error: string;
   }>;
   load(): Promise<boolean>;
-  chooseHost(host: string): void;
-  select(imagePath: string, selected: boolean): void;
+  select(artifactID: string, selected: boolean): void;
   selectAll(selected: boolean): void;
   upload(): Promise<boolean>;
-  remove(imagePath: string, host: string): Promise<boolean>;
+  remove(artifactID: string, host: string): Promise<boolean>;
 }>;
 
 export type DescriptionsFacet = Readonly<{
   view: Readonly<{
     revision: number;
     status: FacetStatus;
-    preview: DescriptionBuilderPreview | null;
+    artifact?: DescriptionSet | null;
     rawByGroup: Readonly<Record<string, string>>;
     renderedByGroup: Readonly<Record<string, string>>;
     dirtyGroups: readonly string[];
@@ -257,34 +269,53 @@ export type UploadFacet = Readonly<{
   view: Readonly<{
     revision: number;
     selectedTrackers: readonly string[];
-    eligibility: TrackerEligibility | null;
+    projections: TrackerReleaseProjectionSet | null;
     ignoredDupesFor: readonly string[];
-    authorizedRulesByTracker: Readonly<Record<string, readonly string[]>>;
     questionnaireAnswers: Readonly<Record<string, Readonly<Record<string, string>>>>;
     options: UploadRunOptions;
     dryRunStatus: FacetStatus;
-    dryRun: TrackerDryRunPreview | null;
-    dryRunStaleReason: string;
-    reviewStatus: FacetStatus;
-    review: UploadReviewResult | null;
-    reviewStaleReason: string;
-    snapshot: TrackerUploadSnapshot | null;
+    uploadStatus: FacetStatus;
+    dryRunResult: UploadDryRunResult | null;
+    result: UploadResult | null;
     error: string;
-    transientError: string;
   }>;
   chooseTrackers(trackers: readonly string[]): void;
   answerQuestionnaire(tracker: string, key: string, value: string): void;
   changeOptions(options: Partial<UploadRunOptions>): void;
-  setRuleAuthorized(tracker: string, rule: string, authorized: boolean): void;
   runDryRun(): Promise<boolean>;
-  review(): Promise<boolean>;
   start(): Promise<boolean>;
   cancel(): Promise<boolean>;
   retry(): Promise<boolean>;
 }>;
 
+/** Authoritative backend workflow state and intent-only transition methods. */
+export type WorkflowFacet = Readonly<{
+  view: Readonly<{
+    status: FacetStatus;
+    current: ReleaseWorkflowCurrent | null;
+    error: string;
+    failure: OperationFailure | null;
+  }>;
+  reload(): Promise<boolean>;
+  begin(input: PrepareInput): Promise<boolean>;
+  project(
+    trackers: readonly string[],
+    instructions?: Readonly<Record<string, TrackerProjectionInstructions>>,
+  ): Promise<boolean>;
+  preflight(): Promise<boolean>;
+  checkDuplicates(skipRemote?: boolean): Promise<boolean>;
+  decideDuplicates(decisions: Readonly<Record<string, DupeDecision>>): Promise<boolean>;
+  captureMedia(instructions: MediaCaptureInstructions): Promise<boolean>;
+  generateDescriptions(instructions: DescriptionInstructions): Promise<boolean>;
+  dryRunUploads(): Promise<boolean>;
+  executeUploads(): Promise<boolean>;
+  retryFailedUploads(): Promise<boolean>;
+  invalidateTrackers(trackerIDs: readonly string[], reason: string): Promise<boolean>;
+}>;
+
 /** Sole public active-release workflow interface. */
 export type ReleaseSession = Readonly<{
+  workflow: WorkflowFacet;
   identity: IdentityFacet;
   navigation: NavigationFacet;
   input: InputFacet;

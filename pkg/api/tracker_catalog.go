@@ -19,6 +19,7 @@ type TrackerCatalogEntry struct {
 	UploadContentMode string                `json:"uploadContentMode"`
 	Fields            []TrackerCatalogField `json:"fields"`
 	Configured        bool                  `json:"configured"`
+	Default           bool                  `json:"default"`
 }
 
 // TrackerCatalog is the complete settings manifest for supported trackers and

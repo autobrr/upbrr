@@ -14,25 +14,27 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// Rules returns the profile's country, age, and technical eligibility checks.
-// Country routing and blocking, PHD SD content, and H.264 above 1080p are
-// strict failures; remaining failures are waivable.
-func (d *Definition) Rules() *trackers.RuleSet {
-	return &trackers.RuleSet{Check: d.evaluateRules}
+// ValidationPolicy returns the versioned AZ-family constructibility and site
+// policy binding.
+func (d *Definition) ValidationPolicy() trackers.ValidationPolicyBinding {
+	return trackers.ValidationPolicyBinding{
+		ID:    "azfamily-" + strings.ToLower(d.site.Name) + "-constructibility-v1",
+		Check: d.evaluateRules,
+	}
 }
 
-func (d *Definition) evaluateRules(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {
+func (d *Definition) evaluateRules(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context canceled: %w", err)
 	}
-	failures := make([]api.RuleFailure, 0)
+	failures := validateAZConstructibility(d.site, meta)
 	add := func(rule, reason string) {
 		failures = append(failures, trackers.NewRuleFailure(rule, reason, api.RuleDispositionWaivable))
 	}
 	addStrict := func(rule, reason string) {
 		failures = append(failures, trackers.NewRuleFailure(rule, reason, api.RuleDispositionStrict))
 	}
-	category := strings.ToUpper(strings.TrimSpace(trackers.ResolveRuleCategory(meta)))
+	category := strings.ToUpper(strings.TrimSpace(string(meta.Identity.Category)))
 	if category != "MOVIE" && category != "TV" {
 		add("content_type", "only movies and TV shows are allowed")
 	}
@@ -73,7 +75,7 @@ func (d *Definition) evaluateRules(ctx context.Context, meta api.RuleSubject, _ 
 	return failures, nil
 }
 
-func evaluatePHDTechnicalRules(meta api.RuleSubject, add func(string, string), addStrict func(string, string)) {
+func evaluatePHDTechnicalRules(meta api.TrackerValidationSubject, add func(string, string), addStrict func(string, string)) {
 	resolution := strings.ToLower(strings.TrimSpace(meta.Release.Resolution))
 	if resolution == "480p" || resolution == "576p" || resolution == "480i" || resolution == "576i" {
 		addStrict("sd_forbidden", "SD content is forbidden")
@@ -94,7 +96,10 @@ func evaluatePHDTechnicalRules(meta api.RuleSubject, add func(string, string), a
 	}
 	codec := strings.ToLower(strings.TrimSpace(meta.VideoCodec))
 	encode := strings.ToLower(strings.TrimSpace(meta.VideoEncode))
-	releaseType := strings.ToLower(strings.TrimSpace(trackers.ResolveRuleType(meta)))
+	releaseType := strings.ToLower(strings.TrimSpace(meta.Type))
+	if releaseType == "" {
+		releaseType = strings.ToLower(strings.TrimSpace(meta.Release.Type))
+	}
 	source := strings.ToLower(strings.TrimSpace(meta.Source))
 	if releaseType == "remux" && codec != "" && codec != "mpeg-2" && codec != "vc-1" && codec != "h.264" && codec != "h.265" && codec != "avc" {
 		add("video_codec", "BluRay remuxes require MPEG-2, VC-1, H.264, or H.265")
@@ -112,21 +117,21 @@ func evaluatePHDTechnicalRules(meta api.RuleSubject, add func(string, string), a
 	if releaseType == "encode" && encode == "x265" && strings.TrimSpace(meta.BitDepth) != "10" {
 		add("bit_depth", "x265 encodes must be 10-bit")
 	}
-	if res := trackers.ResolveRuleResolution(meta); strings.HasSuffix(res, "p") {
+	if res := strings.ToLower(strings.TrimSpace(meta.Release.Resolution)); strings.HasSuffix(res, "p") {
 		if height, err := strconv.Atoi(strings.TrimSuffix(res, "p")); err == nil && height > 1080 && (encode == "h.264" || encode == "x264") {
 			addStrict("h264_resolution_limit", "H.264/x264 is only allowed for 1080p and below")
 		}
 	}
 }
 
-func originCountries(meta api.RuleSubject) []string {
+func originCountries(meta api.TrackerValidationSubject) []string {
 	if meta.ProviderMetadata.TMDB != nil {
 		return meta.ProviderMetadata.TMDB.OriginCountry
 	}
 	return nil
 }
 
-func isOlderThan50Years(meta api.RuleSubject) bool {
+func isOlderThan50Years(meta api.TrackerValidationSubject) bool {
 	year := meta.Release.Year
 	if year == 0 && meta.ProviderMetadata.TMDB != nil {
 		year = meta.ProviderMetadata.TMDB.Year

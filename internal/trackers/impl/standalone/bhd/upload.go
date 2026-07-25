@@ -16,14 +16,11 @@ import (
 	"net/textproto"
 	"os"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
-	"github.com/autobrr/upbrr/internal/metadata/metautil"
-	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -49,6 +46,9 @@ type uploadState struct {
 }
 
 func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+	if err := standalone.ValidatePreparation(ctx, req, validationPolicy()); err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: validate preparation: %w", err)
+	}
 	state, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
@@ -200,7 +200,7 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 	if err != nil {
 		return uploadState{}, err
 	}
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
+	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
 		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
@@ -211,8 +211,12 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 	if !ok {
 		return uploadState{}, fmt.Errorf("trackers: BHD unsupported source %q", req.Meta.Source)
 	}
+	releaseName, nameErr := req.ReviewedUploadName()
+	if nameErr != nil {
+		return uploadState{}, fmt.Errorf("trackers: BHD release name: %w", nameErr)
+	}
 	fields := map[string]string{
-		"name":        resolveUploadName(req.Meta),
+		"name":        releaseName,
 		"category_id": resolveCategoryID(req.Meta),
 		"type":        resolveType(req.Meta),
 		"source":      source,
@@ -340,52 +344,6 @@ func buildMultipartPayload(fields map[string]string, mediaDump string, torrentPa
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
-func resolveMediaDump(meta api.UploadSubject, dbPath string) (string, error) {
-	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
-	case "BDMV":
-		text := readBDInfoNoErr(dbPath, meta)
-		if text == "" {
-			return "", errors.New("trackers: BHD missing BDInfo text; generate or attach BDInfo before uploading")
-		}
-		return text, nil
-	case "DVD":
-		text := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.DVDVOBMediaInfoText), readTextFileNoErr(strings.TrimSpace(meta.MediaInfoTextPath)))
-		if text == "" {
-			return "", errors.New("trackers: BHD missing DVD MediaInfo text; generate or attach DVD MediaInfo before uploading")
-		}
-		return text, nil
-	default:
-		if strings.TrimSpace(meta.MediaInfoTextPath) == "" {
-			return "", errors.New("trackers: BHD missing mediainfo text; generate or attach MediaInfo before uploading")
-		}
-		payload, err := os.ReadFile(strings.TrimSpace(meta.MediaInfoTextPath))
-		if err != nil {
-			return "", fmt.Errorf("trackers: BHD read mediainfo: %w", err)
-		}
-		return string(payload), nil
-	}
-}
-
-func resolveMediaPath(meta api.UploadSubject, dbPath string) string {
-	switch strings.ToUpper(strings.TrimSpace(meta.DiscType)) {
-	case "BDMV":
-		if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
-			return ""
-		}
-		tmpRoot, err := db.Subdir(dbPath, "tmp")
-		if err != nil {
-			return ""
-		}
-		tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
-		if err != nil {
-			return ""
-		}
-		return paths.BDMVSummaryPath(tmpDir, paths.PrimaryBDMVPlaylistFor(meta.SelectedBDMVPlaylists))
-	default:
-		return strings.TrimSpace(meta.MediaInfoTextPath)
-	}
-}
-
 func uploadEndpoint(apiKey string) string {
 	return strings.TrimRight(bhdBaseURL, "/") + "/api/upload/" + strings.TrimSpace(apiKey)
 }
@@ -435,113 +393,11 @@ func writeFailureArtifact(req trackers.PreparationInput, payload []byte, name st
 	return path, nil
 }
 
-func resolveUploadName(meta api.UploadSubject) string {
-	name := metautil.FirstNonEmptyTrimmed(
-		strings.TrimSpace(meta.ReleaseName),
-		strings.TrimSpace(meta.ReleaseNameNoTag),
-		strings.TrimSpace(meta.Filename),
-		pathutil.Base(meta.SourcePath),
-	)
-	if IsDVDSource(meta.Source) {
-		audio := strings.Join(strings.Fields(strings.TrimSpace(meta.Audio)), " ")
-		if audio != "" && strings.TrimSpace(meta.VideoCodec) != "" {
-			name = strings.Replace(name, audio, strings.TrimSpace(meta.VideoCodec)+" "+audio, 1)
-		}
-	}
-	return strings.ReplaceAll(name, "DD+", "DDP")
-}
-
-func resolveCategoryID(meta api.UploadSubject) string {
-	if strings.EqualFold(strings.TrimSpace(string(meta.Identity.Category)), "TV") {
-		return "2"
-	}
-	return "1"
-}
-
 func resolveTMDBID(meta api.UploadSubject) string {
 	if meta.Identity.TMDBID == 0 {
 		return ""
 	}
 	return strconv.Itoa(meta.Identity.TMDBID)
-}
-
-func resolveSource(meta api.UploadSubject) (string, bool) {
-	return SourceForMetadata(meta)
-}
-
-func resolveType(meta api.UploadSubject) string {
-	return Type(meta)
-}
-
-func resolveEdition(meta api.UploadSubject, tags []string) (bool, string) {
-	edition := strings.TrimSpace(meta.Edition)
-	if slices.Contains(tags, "Hybrid") {
-		edition = strings.TrimSpace(strings.ReplaceAll(edition, "Hybrid", ""))
-	}
-	if edition == "" {
-		return false, ""
-	}
-	for _, token := range []string{"collector", "director", "extended", "limited", "special", "theatrical", "uncut", "unrated"} {
-		if strings.Contains(strings.ToLower(edition), token) {
-			switch token {
-			case "director":
-				return false, "Director"
-			default:
-				return false, strings.ToUpper(token[:1]) + token[1:]
-			}
-		}
-	}
-	return true, edition
-}
-
-func resolveTags(meta api.UploadSubject) []string {
-	tags := make([]string, 0, 12)
-	switch strings.ToUpper(strings.TrimSpace(meta.Type)) {
-	case "WEBRIP":
-		tags = append(tags, "WEBRip")
-	case "WEBDL", "WEB-DL":
-		tags = append(tags, "WEBDL")
-	}
-	if strings.EqualFold(strings.TrimSpace(meta.Is3D), "3D") {
-		tags = append(tags, "3D")
-	}
-	audio := strings.ToLower(strings.TrimSpace(meta.Audio))
-	if strings.Contains(audio, "dual-audio") {
-		tags = append(tags, "DualAudio")
-	}
-	if strings.Contains(audio, "dubbed") {
-		tags = append(tags, "EnglishDub")
-	}
-	if strings.Contains(strings.ToLower(meta.Edition), "open matte") {
-		tags = append(tags, "OpenMatte")
-	}
-	if meta.Scene {
-		tags = append(tags, "Scene")
-	}
-	if meta.PersonalRelease {
-		tags = append(tags, "Personal")
-	}
-	if strings.Contains(strings.ToLower(meta.Edition), "hybrid") {
-		tags = append(tags, "Hybrid")
-	}
-	if meta.HasCommentary {
-		tags = append(tags, "Commentary")
-	}
-	hdr := strings.ToUpper(strings.TrimSpace(meta.HDR))
-	if strings.Contains(hdr, "DV") {
-		tags = append(tags, "DV")
-	}
-	if strings.Contains(hdr, "HDR") {
-		if strings.Contains(hdr, "HDR10+") {
-			tags = append(tags, "HDR10+")
-		} else {
-			tags = append(tags, "HDR10")
-		}
-	}
-	if strings.Contains(hdr, "HLG") {
-		tags = append(tags, "HLG")
-	}
-	return dedupeStrings(tags)
 }
 
 func resolveIMDbID(meta api.UploadSubject) string {
@@ -563,45 +419,6 @@ func resolveLive(cfg config.TrackerConfig) string {
 		return "0"
 	}
 	return "1"
-}
-
-func resolveRegion(region string) string {
-	allowed := map[string]struct{}{
-		"AUS": {},
-		"CAN": {},
-		"CEE": {},
-		"CHN": {},
-		"ESP": {},
-		"EUR": {},
-		"FRA": {},
-		"GBR": {},
-		"GER": {},
-		"HKG": {},
-		"ITA": {},
-		"JPN": {},
-		"KOR": {},
-		"NOR": {},
-		"NLD": {},
-		"RUS": {},
-		"TWN": {},
-		"USA": {},
-	}
-	upper := strings.ToUpper(strings.TrimSpace(region))
-	if _, ok := allowed[upper]; ok {
-		return upper
-	}
-	return ""
-}
-
-func isSD(meta api.UploadSubject) bool {
-	return IsSD(meta)
-}
-
-func boolFlag(value bool) string {
-	if value {
-		return "1"
-	}
-	return "0"
 }
 
 func dedupeStrings(values []string) []string {

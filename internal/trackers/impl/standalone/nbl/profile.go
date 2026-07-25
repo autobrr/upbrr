@@ -5,6 +5,7 @@ package nbl
 
 import (
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -17,9 +18,12 @@ func Profile() standalone.Profile {
 		BaseURL:             "https://nebulance.io",
 		DescriptionGroup:    "nbl",
 		UploadContentMode:   trackers.UploadContentModeNone,
+		AuthCapability:      authcontract.APIKeyCapability("NBL"),
 		PrepareUpload:       prepareUpload,
+		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/nbl/v1", resolveUploadName, resolveSearchName),
 		NewDuplicateAdapter: newDuplicateAdapter,
 		Rules:               rules(),
+		ValidationPolicy:    validationPolicy(),
 		BannedGroups:        bannedGroups(),
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,

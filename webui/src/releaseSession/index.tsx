@@ -2,46 +2,45 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { ReactNode } from "react";
-import { createContext, useContext, useEffect, useMemo, useReducer, useRef } from "react";
-import { useReleaseJobs } from "../jobRegistry";
-import { useTrackerCatalogSnapshot } from "../trackerCatalog";
+import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type {
-  DVDMenuCaptureResult,
+  MetadataPreview,
   OperationFailure,
-  PreparationProgressUpdate,
+  PrepareInput,
   ReleaseRef,
-  ScreenshotImage,
   ScreenshotPlan,
   ScreenshotPurpose,
-  ScreenshotResult,
   ScreenshotSelection,
-  TrackerCatalog,
-  TrackerContentFailure,
   UploadImageHostFailure,
 } from "../types";
-import type { DryRunCommand, ReleaseSessionPorts, UploadCommand } from "./ports";
+import type {
+  DescriptionInstructions,
+  ContinueReleaseWorkflowRequest,
+  DupeDecision,
+  MediaCaptureInstructions,
+  Operation as WorkflowOperationStatus,
+  PrepareInput as WorkflowPrepareInput,
+  ReleaseFactInstructions,
+  ReleaseWorkflowCurrent,
+  WorkflowContinuation,
+  WorkflowGoal,
+  WorkflowIntent,
+} from "../api/generated/release-workflow";
+import type { ReleaseSessionPorts } from "./ports";
 import { productionReleaseSessionPorts } from "./production";
 import { initialSessionState, sessionReducer } from "./reducer";
 import type {
   PreparationIntent,
-  PreparationStep,
   ReleaseRoute,
   ReleaseSession,
   RouteAccess,
   UploadRunOptions,
 } from "./types";
 
-const emptyRelease: ReleaseRef = { SourcePath: "", Generation: 0 };
 const SessionContext = createContext<ReleaseSession | null>(null);
 
-type WorkflowFacet =
-  | "screenshots"
-  | "menuImages"
-  | "uploadedImages"
-  | "descriptions"
-  | "dryRun"
-  | "review";
-type ControllerKey = WorkflowFacet | "preparation" | "screenshotRead";
+type WorkflowFacet = "screenshots" | "menuImages" | "uploadedImages" | "descriptions";
+type ControllerKey = WorkflowFacet | "preparation" | "workflow";
 type WorkflowCommand = Readonly<{
   controller: AbortController;
   release: ReleaseRef;
@@ -51,6 +50,8 @@ type WorkflowCommand = Readonly<{
 
 const errorText = (error: unknown) =>
   error instanceof Error && error.message ? error.message : String(error);
+
+const workflowViewValue = <T,>(value: unknown): T => structuredClone(value) as T;
 
 const operationFailureFromError = (error: unknown): OperationFailure | null => {
   if (!error || typeof error !== "object" || !("failure" in error)) return null;
@@ -68,8 +69,67 @@ const operationFailureFromError = (error: unknown): OperationFailure | null => {
   return candidate as OperationFailure;
 };
 
+const workflowOperationFailureError = (failure: Readonly<{ Message: string; Recovery: string }>) =>
+  Object.assign(
+    new Error(
+      failure.Recovery && failure.Recovery !== "none"
+        ? `${failure.Message} Recovery: ${failure.Recovery.replaceAll("_", " ")}.`
+        : failure.Message,
+    ),
+    { failure },
+  );
+
 const normalizedNames = (values: readonly string[]) =>
   Array.from(new Set(values.map((value) => value.trim().toUpperCase()).filter(Boolean)));
+
+const workflowFactInstructions = (
+  instructions: PrepareInput["Instructions"],
+): ReleaseFactInstructions => ({
+  Identity: instructions.Identity,
+  ...(instructions.Category !== undefined ? { Category: instructions.Category } : {}),
+  ReleaseName: instructions.ReleaseName,
+  Metadata: instructions.Metadata ?? {},
+  SourceLookup: instructions.SourceLookup,
+  BlurayReleaseID: instructions.BlurayReleaseID ?? "",
+  Playlist: instructions.Playlist,
+  TrackerIDs: instructions.TrackerIDs ?? {},
+});
+
+const workflowPrepareInput = (input: PrepareInput): WorkflowPrepareInput => ({
+  SourcePath: input.SourcePath,
+  Intent: input.Intent,
+  Instructions: workflowFactInstructions(input.Instructions),
+  Policy: {
+    KeepFolder: input.Policy.KeepFolder,
+    KeepImages: input.Policy.KeepImages ?? false,
+    OnlyID: input.Policy.OnlyID,
+  },
+  Search: {
+    Skip: input.Search?.Skip ?? false,
+    ...(input.Search?.Client !== undefined ? { Client: input.Search.Client } : {}),
+  },
+  Controls: {
+    Interaction: input.Controls?.Interaction ?? "",
+    ConfirmBDMVRescan: input.Controls?.ConfirmBDMVRescan ?? false,
+    ...(input.Controls?.ForceRecheck !== undefined
+      ? { ForceRecheck: input.Controls.ForceRecheck }
+      : {}),
+  },
+  Force: input.Force,
+});
+
+const workflowDescriptionScreenshotCount = (current: ReleaseWorkflowCurrent) =>
+  current.media?.artifacts.filter((artifact) => artifact.selected && artifact.kind === "screenshot")
+    .length || 0;
+
+const workflowDescriptionImageHostOverrides = (
+  failedHosts: readonly string[],
+): DescriptionInstructions["imageHost"] => {
+  const FailedHosts = Array.from(
+    new Set(failedHosts.map((host) => host.trim().toLowerCase()).filter(Boolean)),
+  );
+  return { FailedHosts, SkipUpload: true };
+};
 
 const sameNames = (left: readonly string[], right: readonly string[]) => {
   const normalizedLeft = normalizedNames(left);
@@ -80,156 +140,84 @@ const sameNames = (left: readonly string[], right: readonly string[]) => {
   );
 };
 
-const uniqueScreenshotImages = (images: readonly ScreenshotImage[]) => {
-  const paths = new Set<string>();
-  return images.filter((image) => {
-    const path = image.Path.trim();
-    if (!path || paths.has(path)) return false;
-    paths.add(path);
-    return true;
-  });
-};
+const isActiveWorkflowOperation = (
+  operation: WorkflowOperationStatus | null | undefined,
+): operation is WorkflowOperationStatus =>
+  operation?.status === "queued" || operation?.status === "running";
 
-const availableScreenshotImages = (plan: ScreenshotPlan | null, result: ScreenshotResult | null) =>
-  uniqueScreenshotImages([
-    ...(plan?.ExistingScreenshots || []),
-    ...(plan?.ExistingTrackerScreenshots || []),
-    ...(plan?.FinalSelections || []),
-    ...(plan?.PreviewImages || []),
-    ...(result?.Images || []),
-  ]);
+const isFailedWorkflowOperation = (operation: WorkflowOperationStatus) =>
+  ["failed", "interrupted", "canceled"].includes(operation.status);
 
-const orderedScreenshotImages = (paths: readonly string[], images: readonly ScreenshotImage[]) => {
-  const byPath = new Map(images.map((image) => [image.Path, image]));
-  return paths.map((path) => byPath.get(path)).filter((image): image is ScreenshotImage => !!image);
-};
-
-const mergeFinalScreenshotImages = (
-  current: readonly ScreenshotImage[],
-  additions: readonly ScreenshotImage[],
-) => {
-  const merged = uniqueScreenshotImages(current);
-  const indexByPath = new Map(merged.map((image, index) => [image.Path, index]));
-  additions.forEach((image) => {
-    if (!image.Path) return;
-    const existingIndex = indexByPath.get(image.Path);
-    if (existingIndex !== undefined) {
-      merged[existingIndex] = image;
+const waitForWorkflowPoll = (signal: AbortSignal, delay = 200) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
       return;
     }
-    const insertAt = merged.findIndex(
-      (entry) => image.TimestampSeconds > 0 && entry.TimestampSeconds > image.TimestampSeconds,
-    );
-    if (insertAt < 0) merged.push(image);
-    else merged.splice(insertAt, 0, image);
-    indexByPath.clear();
-    merged.forEach((entry, index) => indexByPath.set(entry.Path, index));
+    const timeout = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, delay);
+    const onAbort = () => {
+      window.clearTimeout(timeout);
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
   });
-  return merged;
-};
 
-const isCompleted = (status: string) =>
-  ["completed", "completed_with_errors"].includes(status.toLowerCase().trim());
-
-export type TrackerWorkflowRequirements = Readonly<{
+type TrackerWorkflowRequirements = Readonly<{
   needsImages: boolean;
   needsDescriptions: boolean;
 }>;
 
-/** Derives the strictest content workflow required by the selected tracker set. */
-export const trackerWorkflowRequirements = (
-  selectedTrackers: readonly string[],
-  catalog: TrackerCatalog | null,
-): TrackerWorkflowRequirements => {
-  const modes = new Map(
-    (catalog?.entries ?? []).map((entry) => [
-      entry.name.trim().toUpperCase(),
-      entry.uploadContentMode,
-    ]),
-  );
-  let needsImages = false;
-  let needsDescriptions = false;
-  selectedTrackers.forEach((tracker) => {
-    const mode = modes.get(tracker.trim().toUpperCase()) ?? "description";
-    needsImages ||= mode === "screenshots" || mode === "description";
-    needsDescriptions ||= mode === "description";
-  });
-  return { needsImages, needsDescriptions };
-};
-
-const selectedContentFailure = (
-  failures: readonly TrackerContentFailure[] | undefined,
-  selectedTrackers: readonly string[],
-  code: TrackerContentFailure["code"],
-) => {
-  const selected = new Set(normalizedNames(selectedTrackers));
-  return Boolean(
-    failures?.some(
-      (failure) =>
-        failure.code === code &&
-        selected.has(
-          String(failure.tracker || "")
-            .trim()
-            .toUpperCase(),
-        ),
-    ),
-  );
-};
-
 export const routeAccess = (
-  bound: boolean,
+  continuation: WorkflowContinuation | null | undefined,
   hasTrackerData: boolean,
-  duplicatesReady: boolean,
   requirements: TrackerWorkflowRequirements,
-  descriptionsReady: boolean,
-  screenshotFailed: boolean,
-  descriptionFailed: boolean,
 ): Readonly<Record<ReleaseRoute, RouteAccess>> => {
-  const preparationReason = "Prepare the selected source first.";
-  const duplicateReason = duplicatesReady ? "" : "Complete duplicate checking first.";
-  const screenshotReason = requirements.needsImages
-    ? duplicateReason
-    : "Selected trackers do not use shared screenshots.";
-  const descriptionReason = requirements.needsDescriptions
-    ? duplicateReason
-    : "Selected trackers do not use shared descriptions.";
-  const uploadBlockedReason = screenshotFailed
-    ? "Retry failed screenshot preparation first."
-    : descriptionFailed
-      ? "Retry failed description preparation first."
-      : requirements.needsDescriptions && !descriptionsReady
-        ? "Prepare descriptions first."
-        : "";
+  const goal = (name: string): RouteAccess => {
+    const availability = continuation?.availableGoals.find((candidate) => candidate.goal === name);
+    return {
+      available: availability?.available === true,
+      reason:
+        availability?.available === true
+          ? ""
+          : availability?.reason || "Workflow state is not ready yet.",
+    };
+  };
+  const trackerAssessment = goal("trackers_assessed");
+  const media = goal("media_ready");
+  const descriptions = goal("descriptions_ready");
+  const upload = goal("upload_reviewed");
   return {
     input: { available: true, reason: "" },
     trackerData: {
-      available: bound && hasTrackerData,
-      reason: bound ? "No tracker data is available." : preparationReason,
+      available: trackerAssessment.available && hasTrackerData,
+      reason: trackerAssessment.available
+        ? "No tracker data is available."
+        : trackerAssessment.reason,
     },
-    duplicates: {
-      available: bound,
-      reason: bound ? "" : preparationReason,
-    },
+    duplicates: trackerAssessment,
     screenshots: {
-      available: bound && duplicatesReady && requirements.needsImages,
-      reason: bound ? screenshotReason : preparationReason,
+      available: media.available && requirements.needsImages,
+      reason: requirements.needsImages
+        ? media.reason
+        : "Selected trackers do not use shared screenshots.",
     },
-    menuImages: {
-      available: bound && duplicatesReady,
-      reason: bound ? duplicateReason : preparationReason,
-    },
+    menuImages: media,
     uploadedImages: {
-      available: bound && duplicatesReady && requirements.needsImages,
-      reason: bound ? screenshotReason : preparationReason,
+      available: media.available && requirements.needsImages,
+      reason: requirements.needsImages
+        ? media.reason
+        : "Selected trackers do not use shared screenshots.",
     },
     descriptions: {
-      available: bound && duplicatesReady && requirements.needsDescriptions,
-      reason: bound ? descriptionReason : preparationReason,
+      available: descriptions.available && requirements.needsDescriptions,
+      reason: requirements.needsDescriptions
+        ? descriptions.reason
+        : "Selected trackers do not use shared descriptions.",
     },
-    upload: {
-      available: bound && duplicatesReady && uploadBlockedReason === "",
-      reason: bound ? duplicateReason || uploadBlockedReason : preparationReason,
-    },
+    upload,
   };
 };
 
@@ -244,41 +232,106 @@ const cloneIntent = (intent: PreparationIntent): PreparationIntent => ({
   },
 });
 
-const inferredDiscType = (sourcePath: string) =>
-  /(^|[\\/])BDMV([\\/]|$)/i.test(sourcePath) ? "BDMV" : "";
+const workflowPreparationIntent = (current: ReleaseWorkflowCurrent): PreparationIntent => {
+  const instructions = current.factInstructions?.instructions;
+  return {
+    sourceLookupURL: instructions?.SourceLookup || "",
+    identity: { ...(instructions?.Identity || {}) },
+    releaseName: { ...(instructions?.ReleaseName || {}) },
+    playlist: {
+      Set: Boolean(instructions?.Playlist?.Set),
+      Selected: [...(instructions?.Playlist?.Selected || [])],
+      UseAll: Boolean(instructions?.Playlist?.UseAll),
+    },
+  };
+};
 
-const localPreparationStep = (
-  phase: string,
-  order: number,
-  label: string,
-  status: PreparationStep["status"],
-  message: string,
-): PreparationStep => ({
-  phase,
-  order,
-  label,
-  message,
-  status,
-  timestamp: new Date().toISOString(),
+const metadataPreviewFromWorkflow = (current: ReleaseWorkflowCurrent): MetadataPreview | null => {
+  const snapshot = current.release;
+  if (!snapshot) return null;
+  const release = snapshot.release;
+  const trackerData = [...(snapshot.display.TrackerData || [])];
+  return {
+    SourcePath: release.Source.SourcePath,
+    TrackerName: trackerData[0]?.Tracker || "",
+    ReleaseName: snapshot.display.ReleaseName || release.Naming.ReleaseName,
+    ReleaseNameOverrides: { ...(current.factInstructions?.instructions.ReleaseName || {}) },
+    Release: {
+      SourcePath: release.Source.SourcePath,
+      Generation: release.Generation,
+    },
+    Identity: release.Identity,
+    Display: workflowViewValue<MetadataPreview["Display"]>(snapshot.display),
+    Bluray: workflowViewValue<MetadataPreview["Bluray"]>(release.ProviderMetadata.Bluray || null),
+    Diagnostics: workflowViewValue<MetadataPreview["Diagnostics"]>(snapshot.diagnostics || []),
+    TrackerData: workflowViewValue<MetadataPreview["TrackerData"]>(trackerData),
+  };
+};
+
+const workflowStorageKey = "upbrr.activeReleaseWorkflow";
+
+const storedWorkflowID = () => {
+  try {
+    return window.sessionStorage.getItem(workflowStorageKey)?.trim() || "";
+  } catch {
+    return "";
+  }
+};
+
+const storeWorkflowID = (workflowID: string) => {
+  try {
+    if (workflowID) window.sessionStorage.setItem(workflowStorageKey, workflowID);
+    else window.sessionStorage.removeItem(workflowStorageKey);
+  } catch {
+    // Storage can be unavailable in hardened/private browser contexts.
+  }
+};
+
+const preparationInputForWorkflow = (
+  sourcePath: string,
+  intent: PreparationIntent,
+  confirmBDMVRescan: boolean,
+): PrepareInput => ({
+  SourcePath: sourcePath,
+  Intent: "preview",
+  Instructions: {
+    Identity: { ...intent.identity },
+    Category: intent.releaseName.Category,
+    ReleaseName: { ...intent.releaseName },
+    Metadata: {},
+    SourceLookup: intent.sourceLookupURL,
+    BlurayReleaseID: "",
+    Playlist: {
+      Set: intent.playlist.Set,
+      Selected: [...intent.playlist.Selected],
+      UseAll: intent.playlist.UseAll,
+    },
+    TrackerIDs: {},
+  },
+  Policy: { KeepFolder: false, KeepImages: false, OnlyID: false },
+  Search: { Skip: false },
+  Controls: {
+    Interaction: "interactive",
+    ConfirmBDMVRescan: confirmBDMVRescan,
+  },
+  Force: false,
 });
-
-const selectedDescriptionGroups = (
-  groups: readonly import("../types").DescriptionBuilderGroup[],
-  rawByGroup: Readonly<Record<string, string>>,
-) =>
-  groups.map((group) => ({
-    ...group,
-    Trackers: [...group.Trackers],
-    RawDescription: rawByGroup[group.GroupKey] ?? group.RawDescription,
-  }));
 
 /** Owns canonical release workflow state, cancellation, correlation, and transport ports. */
 export function ReleaseSessionProvider({
   ports,
+  defaultTrackers = [],
   children,
-}: Readonly<{ ports?: ReleaseSessionPorts; children: ReactNode }>) {
-  const trackerCatalog = useTrackerCatalogSnapshot();
+}: Readonly<{
+  ports?: ReleaseSessionPorts;
+  defaultTrackers?: readonly string[];
+  children: ReactNode;
+}>) {
   const [state, dispatch] = useReducer(sessionReducer, undefined, initialSessionState);
+  const normalizedDefaultTrackers = useMemo(
+    () => normalizedNames(defaultTrackers),
+    [defaultTrackers],
+  );
   const controllers = useRef<Partial<Record<ControllerKey, AbortController>>>({});
   const preparationRevision = useRef(0);
   const lastPreparation = useRef<{
@@ -287,8 +340,371 @@ export function ReleaseSessionProvider({
     intent: PreparationIntent;
   } | null>(null);
   const workflowRevisions = useRef<Partial<Record<WorkflowFacet, number>>>({});
+  const lastWorkflowError = useRef<unknown>(null);
   const activePorts = useMemo(() => ports ?? productionReleaseSessionPorts(), [ports]);
-  const releaseJobs = useReleaseJobs(state.release ?? emptyRelease);
+  const [workflowView, setWorkflowView] = useState<{
+    status: "idle" | "running" | "ready" | "error";
+    current: ReleaseWorkflowCurrent | null;
+    error: string;
+    failure: OperationFailure | null;
+  }>({ status: "idle", current: null, error: "", failure: null });
+
+  useEffect(() => {
+    dispatch({
+      type: "default_trackers_received",
+      sessionRevision: state.sessionRevision,
+      trackers: normalizedDefaultTrackers,
+    });
+  }, [normalizedDefaultTrackers, state.sessionRevision]);
+
+  const publishWorkflowCurrent = (current: ReleaseWorkflowCurrent, status: "running" | "ready") => {
+    storeWorkflowID(current.workflow.id);
+    if (current.selection?.trackerIds) {
+      dispatch({ type: "trackers_chosen", trackers: current.selection.trackerIds });
+    }
+    setWorkflowView({ status, current, error: "", failure: null });
+    return current;
+  };
+
+  const acceptWorkflowCurrent = (current: ReleaseWorkflowCurrent) =>
+    publishWorkflowCurrent(current, "ready");
+
+  const releaseWorkflowController = (controller: AbortController) => {
+    if (controllers.current.workflow === controller) delete controllers.current.workflow;
+  };
+
+  const awaitWorkflowCommand = async (
+    initial: ReleaseWorkflowCurrent,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent> => {
+    publishWorkflowCurrent(initial, "running");
+    let operation = initial.operation;
+    if (!isActiveWorkflowOperation(operation)) return initial;
+
+    while (operation && isActiveWorkflowOperation(operation)) {
+      await waitForWorkflowPoll(signal);
+      operation = await activePorts.workflow.operation(initial.workflow.id, operation.id, signal);
+      const update = operation;
+      setWorkflowView((view) => ({
+        ...view,
+        status: isActiveWorkflowOperation(update) ? "running" : view.status,
+        current: view.current ? { ...view.current, operation: update } : view.current,
+      }));
+    }
+
+    const current = await activePorts.workflow.current(initial.workflow.id, signal);
+    publishWorkflowCurrent(current, "running");
+    const terminalOperation = operation as WorkflowOperationStatus | undefined;
+    if (terminalOperation && isFailedWorkflowOperation(terminalOperation)) {
+      const failure = terminalOperation.failures?.[0]?.failure;
+      if (failure) throw workflowOperationFailureError(failure);
+      throw new Error(
+        terminalOperation.message || `Workflow operation ${terminalOperation.status}.`,
+      );
+    }
+    return current;
+  };
+
+  const failBackendWorkflow = (error: unknown) => {
+    const failure = operationFailureFromError(error);
+    if (failure?.Code === "missing_prerequisite" && failure.Recovery === "refresh_release") {
+      storeWorkflowID("");
+    }
+    setWorkflowView((current) => ({
+      ...current,
+      status: "error",
+      error: errorText(error),
+      failure,
+    }));
+    return null;
+  };
+
+  const continueBackendGoal = async (
+    initial: ReleaseWorkflowCurrent,
+    goal: WorkflowGoal,
+    intent: WorkflowIntent,
+    idempotencyKey: string,
+    signal: AbortSignal,
+    extra: Pick<ContinueReleaseWorkflowRequest, "answers" | "approval"> = {},
+  ): Promise<ReleaseWorkflowCurrent> => {
+    let current = initial;
+    for (let transition = 0; transition < 32; transition += 1) {
+      const next = await awaitWorkflowCommand(
+        await activePorts.workflow.continue(
+          {
+            authority: {
+              workflowId: current.workflow.id,
+              expectedRevision: current.workflow.revision,
+            },
+            goal,
+            intent: { interaction: "interactive", ...intent },
+            idempotencyKey,
+            ...extra,
+          },
+          signal,
+        ),
+        signal,
+      );
+      if (next.workflow.revision === current.workflow.revision) return next;
+      current = next;
+    }
+    throw new Error("Release workflow continuation exceeded the transition limit.");
+  };
+
+  const dispatchPlaylistAction = (
+    current: ReleaseWorkflowCurrent,
+    sourcePath: string,
+    commandRevision: number,
+    correlationID: string,
+  ) => {
+    const action = current.workflow.requiredActions?.find(
+      (candidate) => candidate.kind === "select_playlist" && candidate.status === "pending",
+    );
+    if (!action) return false;
+    dispatch({
+      type: "playlist_required",
+      sourcePath,
+      commandRevision,
+      correlationID,
+      candidates: (action.options || []).map((option) => ({
+        file: option.value,
+        duration: 0,
+        items: [],
+        score: 0,
+        edition: "",
+      })),
+      error: "",
+    });
+    return true;
+  };
+
+  const reloadBackendWorkflow = async (): Promise<boolean> => {
+    const workflowID = workflowView.current?.workflow.id || storedWorkflowID();
+    if (!workflowID) return false;
+    abortController("workflow");
+    const controller = new AbortController();
+    controllers.current.workflow = controller;
+    setWorkflowView((current) => ({ ...current, status: "running", error: "", failure: null }));
+    try {
+      const current = await awaitWorkflowCommand(
+        await activePorts.workflow.current(workflowID, controller.signal),
+        controller.signal,
+      );
+      releaseWorkflowController(controller);
+      if (controller.signal.aborted) return false;
+      acceptWorkflowCurrent(current);
+      const sourcePath = current.release?.release.Source.SourcePath || "";
+      if (sourcePath) {
+        const commandRevision = current.workflow.revision;
+        const correlationID = `workflow-restore-${current.workflow.id}-${commandRevision}`;
+        const intent = workflowPreparationIntent(current);
+        preparationRevision.current = Math.max(preparationRevision.current, commandRevision);
+        lastPreparation.current = { operation: "prepare", sourcePath, intent };
+        dispatch({
+          type: "source_selected",
+          sourcePath,
+          defaultTrackers: normalizedDefaultTrackers,
+        });
+        if (current.selection?.trackerIds) {
+          dispatch({ type: "trackers_chosen", trackers: current.selection.trackerIds });
+        }
+        dispatch({
+          type: "preparation_started",
+          sourcePath,
+          commandRevision,
+          correlationID,
+          intent,
+        });
+        if (!dispatchPlaylistAction(current, sourcePath, commandRevision, correlationID)) {
+          const preview = metadataPreviewFromWorkflow(current);
+          if (!preview) throw new Error("Workflow release snapshot is unavailable.");
+          dispatch({
+            type: "preparation_succeeded",
+            sourcePath,
+            commandRevision,
+            correlationID,
+            preview,
+          });
+        }
+      }
+      return true;
+    } catch (error) {
+      releaseWorkflowController(controller);
+      if (!controller.signal.aborted) failBackendWorkflow(error);
+      return false;
+    } finally {
+      releaseWorkflowController(controller);
+    }
+  };
+
+  const startBackendWorkflow = async (
+    input: PrepareInput,
+  ): Promise<ReleaseWorkflowCurrent | null> => {
+    if (controllers.current.workflow) return null;
+    const controller = new AbortController();
+    controllers.current.workflow = controller;
+    setWorkflowView((current) => ({ ...current, status: "running", error: "", failure: null }));
+    const commandID = `workflow-${Date.now().toString(36)}-${state.commandRevision.toString(36)}`;
+    lastWorkflowError.current = null;
+    try {
+      const intent: WorkflowIntent = {
+        factInstructions: workflowFactInstructions(input.Instructions),
+        preparation: workflowPrepareInput(input),
+      };
+      const created = await awaitWorkflowCommand(
+        await activePorts.workflow.continue(
+          {
+            goal: "prepared",
+            intent,
+            idempotencyKey: commandID,
+          },
+          controller.signal,
+        ),
+        controller.signal,
+      );
+      const prepared = await continueBackendGoal(
+        created,
+        "prepared",
+        intent,
+        commandID,
+        controller.signal,
+      );
+      releaseWorkflowController(controller);
+      if (controller.signal.aborted) return null;
+      return acceptWorkflowCurrent(prepared);
+    } catch (error) {
+      releaseWorkflowController(controller);
+      lastWorkflowError.current = error;
+      if (!controller.signal.aborted) failBackendWorkflow(error);
+      return null;
+    } finally {
+      releaseWorkflowController(controller);
+    }
+  };
+
+  const runBackendWorkflow = async (
+    execute: (
+      current: ReleaseWorkflowCurrent,
+      commandID: string,
+      signal: AbortSignal,
+    ) => Promise<ReleaseWorkflowCurrent>,
+  ): Promise<boolean> => {
+    if (!workflowView.current || controllers.current.workflow) return false;
+    const controller = new AbortController();
+    controllers.current.workflow = controller;
+    setWorkflowView((current) => ({ ...current, status: "running", error: "", failure: null }));
+    const commandID = `workflow-${Date.now().toString(36)}-${workflowView.current.workflow.revision.toString(36)}`;
+    try {
+      const current = await awaitWorkflowCommand(
+        await execute(workflowView.current, commandID, controller.signal),
+        controller.signal,
+      );
+      releaseWorkflowController(controller);
+      if (controller.signal.aborted) return false;
+      acceptWorkflowCurrent(current);
+      return true;
+    } catch (error) {
+      releaseWorkflowController(controller);
+      if (!controller.signal.aborted) failBackendWorkflow(error);
+      return false;
+    } finally {
+      releaseWorkflowController(controller);
+    }
+  };
+
+  const cancelBackendWorkflow = async (reason: string): Promise<boolean> => {
+    const workflowID = workflowView.current?.workflow.id || storedWorkflowID();
+    if (!workflowID) return false;
+    const operation = workflowView.current?.operation;
+    abortController("workflow");
+    const controller = new AbortController();
+    controllers.current.workflow = controller;
+    setWorkflowView((current) => ({ ...current, status: "running", error: "", failure: null }));
+    const commandID = `workflow-cancel-${Date.now().toString(36)}`;
+    try {
+      let current: ReleaseWorkflowCurrent;
+      const cancelingOperation = isActiveWorkflowOperation(operation);
+      if (cancelingOperation) {
+        await activePorts.workflow.cancelOperation(workflowID, operation.id, controller.signal);
+        current = await activePorts.workflow.current(workflowID, controller.signal);
+      } else {
+        current = await activePorts.workflow.cancel(
+          workflowID,
+          reason,
+          commandID,
+          controller.signal,
+        );
+      }
+      releaseWorkflowController(controller);
+      if (controller.signal.aborted) return false;
+      acceptWorkflowCurrent(current);
+      if (!cancelingOperation) storeWorkflowID("");
+      return true;
+    } catch (error) {
+      releaseWorkflowController(controller);
+      if (!controller.signal.aborted) failBackendWorkflow(error);
+      return false;
+    } finally {
+      releaseWorkflowController(controller);
+    }
+  };
+
+  const checkBackendDuplicates = async (): Promise<boolean> => {
+    if (
+      !workflowView.current ||
+      controllers.current.workflow ||
+      state.selectedTrackers.length === 0
+    ) {
+      return false;
+    }
+    const controller = new AbortController();
+    controllers.current.workflow = controller;
+    setWorkflowView((current) => ({ ...current, status: "running", error: "", failure: null }));
+    const commandID = `workflow-dupes-${Date.now().toString(36)}-${workflowView.current.workflow.revision.toString(36)}`;
+    try {
+      const projectionInstructions = Object.fromEntries(
+        state.selectedTrackers.map((tracker) => [
+          tracker,
+          {
+            questionnaire: Object.fromEntries(
+              Object.entries(state.questionnaireAnswers[tracker] || {}).map(([key, value]) => [
+                key,
+                value,
+              ]),
+            ),
+          },
+        ]),
+      );
+      const current = await continueBackendGoal(
+        workflowView.current,
+        "duplicates_decided",
+        {
+          trackerIds: [...state.selectedTrackers],
+          projectionInstructions,
+          skipRemoteDuplicates: false,
+        },
+        commandID,
+        controller.signal,
+      );
+      releaseWorkflowController(controller);
+      if (controller.signal.aborted) return false;
+      acceptWorkflowCurrent(current);
+      return true;
+    } catch (error) {
+      releaseWorkflowController(controller);
+      if (!controller.signal.aborted) failBackendWorkflow(error);
+      return false;
+    } finally {
+      releaseWorkflowController(controller);
+    }
+  };
+
+  useEffect(() => {
+    if (!storedWorkflowID()) return;
+    void reloadBackendWorkflow();
+    // Reload once when the transport binding changes; commands own later refreshes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePorts.workflow]);
 
   const abortController = (key: ControllerKey) => {
     controllers.current[key]?.abort();
@@ -304,22 +720,12 @@ export function ReleaseSessionProvider({
 
   const selectSource = (value: string) => {
     abortAll();
-    dispatch({ type: "source_selected", sourcePath: value });
-  };
-
-  const dispatchPreparationStep = (
-    sourcePath: string,
-    commandRevision: number,
-    correlationID: string,
-    step: PreparationStep,
-  ) =>
     dispatch({
-      type: "preparation_progressed",
-      sourcePath,
-      commandRevision,
-      correlationID,
-      step,
+      type: "source_selected",
+      sourcePath: value,
+      defaultTrackers: normalizedDefaultTrackers,
     });
+  };
 
   const executePreparation = async (
     operation: "prepare" | "reset" | "candidate",
@@ -332,24 +738,97 @@ export function ReleaseSessionProvider({
     releaseID = "",
   ): Promise<boolean> => {
     try {
-      const preview = await activePorts.preparation.execute({
-        operation,
-        correlationID,
-        sourcePath,
-        intent,
-        controls,
-        releaseID,
-        signal: controller.signal,
-        onProgress: (update: PreparationProgressUpdate) =>
-          dispatchPreparationStep(sourcePath, commandRevision, correlationID, {
-            phase: update.phase,
-            order: update.order,
-            label: update.label,
-            message: update.message,
-            status: update.status,
-            timestamp: update.timestamp,
-          }),
-      });
+      const input = preparationInputForWorkflow(sourcePath, intent, controls.confirmBDMVRescan);
+      const pendingPlaylist = workflowView.current?.workflow.requiredActions?.some(
+        (action) => action.kind === "select_playlist" && action.status === "pending",
+      );
+      let current: ReleaseWorkflowCurrent | null;
+      if (operation === "candidate") {
+        const previous = workflowView.current;
+        if (!previous?.release || previous.release.release.Source.SourcePath !== sourcePath) {
+          throw new Error("Blu-ray candidate selection requires the current prepared workflow.");
+        }
+        setWorkflowView((view) => ({
+          ...view,
+          status: "running",
+          error: "",
+          failure: null,
+        }));
+        const commandID = `workflow-candidate-${Date.now().toString(36)}-${previous.workflow.revision.toString(36)}`;
+        const candidateInput = workflowPrepareInput({
+          ...input,
+          Instructions: { ...input.Instructions, BlurayReleaseID: releaseID },
+          Force: true,
+        });
+        current = await continueBackendGoal(
+          previous,
+          "prepared",
+          {
+            factInstructions: candidateInput.Instructions,
+            preparation: candidateInput,
+          },
+          commandID,
+          controller.signal,
+        );
+      } else if (operation === "reset") {
+        const previous = workflowView.current;
+        if (!previous?.release || previous.release.release.Source.SourcePath !== sourcePath) {
+          throw new Error("Reset requires the current prepared workflow.");
+        }
+        setWorkflowView((view) => ({
+          ...view,
+          status: "running",
+          error: "",
+          failure: null,
+        }));
+        const commandID = `workflow-reset-${Date.now().toString(36)}-${previous.workflow.revision.toString(36)}`;
+        const resetInput = workflowPrepareInput({ ...input, Force: true });
+        current = await continueBackendGoal(
+          previous,
+          "prepared",
+          {
+            factInstructions: resetInput.Instructions,
+            preparation: resetInput,
+          },
+          commandID,
+          controller.signal,
+        );
+      } else if (
+        intent.playlist.Set &&
+        pendingPlaylist &&
+        workflowView.current?.release?.release.Source.SourcePath === sourcePath
+      ) {
+        setWorkflowView((view) => ({
+          ...view,
+          status: "running",
+          error: "",
+          failure: null,
+        }));
+        const commandID = `workflow-playlist-${Date.now().toString(36)}-${workflowView.current.workflow.revision.toString(36)}`;
+        const playlistInput = workflowPrepareInput(input);
+        current = await continueBackendGoal(
+          workflowView.current,
+          "prepared",
+          {
+            factInstructions: playlistInput.Instructions,
+            preparation: playlistInput,
+          },
+          commandID,
+          controller.signal,
+        );
+      } else {
+        current = await startBackendWorkflow(input);
+      }
+      if (!current) {
+        throw (
+          lastWorkflowError.current || new Error("Canonical workflow preparation did not complete.")
+        );
+      }
+      if (dispatchPlaylistAction(current, sourcePath, commandRevision, correlationID)) {
+        return false;
+      }
+      const preview = metadataPreviewFromWorkflow(current);
+      if (!preview) throw new Error("Workflow release snapshot is unavailable.");
       dispatch({
         type: "preparation_succeeded",
         sourcePath,
@@ -385,9 +864,14 @@ export function ReleaseSessionProvider({
     if (!sourcePath) return false;
     if (sourcePath !== state.selectedSource) {
       abortAll();
-      dispatch({ type: "source_selected", sourcePath });
+      dispatch({
+        type: "source_selected",
+        sourcePath,
+        defaultTrackers: normalizedDefaultTrackers,
+      });
     }
     abortController("preparation");
+    abortController("workflow");
     const controller = new AbortController();
     controllers.current.preparation = controller;
     const commandRevision = Math.max(preparationRevision.current + 1, state.commandRevision + 1);
@@ -403,188 +887,15 @@ export function ReleaseSessionProvider({
       intent,
     });
 
-    if (intent.playlist.Set) {
-      dispatchPreparationStep(
-        sourcePath,
-        commandRevision,
-        correlationID,
-        localPreparationStep(
-          "playlist_selection",
-          40,
-          "Accept Blu-ray playlist selection",
-          "completed",
-          "Using the accepted playlist selection.",
-        ),
-      );
-      return executePreparation(
-        operation,
-        sourcePath,
-        intent,
-        controls,
-        commandRevision,
-        correlationID,
-        controller,
-      );
-    }
-
-    dispatchPreparationStep(
+    return executePreparation(
+      operation,
       sourcePath,
+      intent,
+      controls,
       commandRevision,
       correlationID,
-      localPreparationStep(
-        "disc_detection",
-        10,
-        "Detect disc type",
-        "running",
-        "Inspecting source.",
-      ),
+      controller,
     );
-    let discType = "";
-    try {
-      discType = (await activePorts.preparation.detectDiscType(sourcePath, controller.signal))
-        .trim()
-        .toUpperCase();
-      dispatchPreparationStep(
-        sourcePath,
-        commandRevision,
-        correlationID,
-        localPreparationStep(
-          "disc_detection",
-          10,
-          "Detect disc type",
-          "completed",
-          "Source inspected.",
-        ),
-      );
-    } catch {
-      if (controller.signal.aborted) {
-        if (controllers.current.preparation === controller) delete controllers.current.preparation;
-        return false;
-      }
-      discType = inferredDiscType(sourcePath);
-      dispatchPreparationStep(
-        sourcePath,
-        commandRevision,
-        correlationID,
-        localPreparationStep(
-          "disc_detection",
-          10,
-          "Detect disc type",
-          "completed",
-          "Source inspected using the path hint.",
-        ),
-      );
-    }
-
-    if (controller.signal.aborted) {
-      if (controllers.current.preparation === controller) delete controllers.current.preparation;
-      return false;
-    }
-
-    if (discType !== "BDMV") {
-      dispatchPreparationStep(
-        sourcePath,
-        commandRevision,
-        correlationID,
-        localPreparationStep(
-          "playlist_discovery",
-          20,
-          "Discover Blu-ray playlists",
-          "skipped",
-          "Source is not a Blu-ray disc.",
-        ),
-      );
-      return executePreparation(
-        operation,
-        sourcePath,
-        intent,
-        controls,
-        commandRevision,
-        correlationID,
-        controller,
-      );
-    }
-
-    dispatchPreparationStep(
-      sourcePath,
-      commandRevision,
-      correlationID,
-      localPreparationStep(
-        "playlist_discovery",
-        20,
-        "Discover Blu-ray playlists",
-        "running",
-        "Discovering playlists.",
-      ),
-    );
-    try {
-      const discovered = await activePorts.preparation.discoverPlaylists(
-        sourcePath,
-        controller.signal,
-      );
-      if (controller.signal.aborted) return false;
-      const candidates = [...discovered]
-        .sort((left, right) => (right.score || 0) - (left.score || 0))
-        .slice(0, 10);
-      dispatchPreparationStep(
-        sourcePath,
-        commandRevision,
-        correlationID,
-        localPreparationStep(
-          "playlist_discovery",
-          20,
-          "Discover Blu-ray playlists",
-          "completed",
-          `${candidates.length} playlist${candidates.length === 1 ? "" : "s"} found.`,
-        ),
-      );
-      dispatchPreparationStep(
-        sourcePath,
-        commandRevision,
-        correlationID,
-        localPreparationStep(
-          "playlist_selection",
-          30,
-          "Select Blu-ray playlists",
-          candidates.length ? "awaiting_input" : "failed",
-          candidates.length ? "Select one or more playlists." : "No Blu-ray playlists were found.",
-        ),
-      );
-      dispatch({
-        type: "playlist_required",
-        sourcePath,
-        commandRevision,
-        correlationID,
-        candidates,
-        error: candidates.length ? "" : "No BDMV playlists were found.",
-      });
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        dispatchPreparationStep(
-          sourcePath,
-          commandRevision,
-          correlationID,
-          localPreparationStep(
-            "playlist_discovery",
-            20,
-            "Discover Blu-ray playlists",
-            "failed",
-            "Playlist discovery failed.",
-          ),
-        );
-        dispatch({
-          type: "playlist_required",
-          sourcePath,
-          commandRevision,
-          correlationID,
-          candidates: [],
-          error: errorText(error),
-        });
-      }
-    } finally {
-      if (controllers.current.preparation === controller) delete controllers.current.preparation;
-    }
-    return false;
   };
 
   const runPreparation = (operation: "prepare" | "reset") =>
@@ -666,40 +977,37 @@ export function ReleaseSessionProvider({
 
   const loadScreenshotPlan = async (): Promise<boolean> => {
     const command = beginWorkflow("screenshots", access.screenshots.reason);
-    if (!command) return false;
+    if (!command || !workflowView.current) return false;
     try {
-      const plan = await activePorts.screenshots.load(command.release, command.controller.signal);
+      const workflowPlan = await activePorts.workflow.mediaPlan(
+        workflowView.current.workflow.id,
+        command.controller.signal,
+      );
+      const selectedArtifactIDs = (workflowView.current.media?.artifacts || [])
+        .filter((artifact) => artifact.kind === "screenshot" && artifact.selected)
+        .sort((left, right) => (left.order || 0) - (right.order || 0))
+        .map((artifact) => artifact.id);
+      const plan: ScreenshotPlan = {
+        SourcePath: workflowView.current.release?.release.Source.SourcePath || "",
+        DiscType: workflowPlan.discType || "",
+        DurationSeconds: workflowPlan.durationSeconds,
+        FrameRate: workflowPlan.frameRate,
+        SuggestedSelections: [...(workflowPlan.suggestedSelections || [])],
+        ExistingScreenshots: [],
+        ExistingTrackerScreenshots: [],
+        FinalSelections: [],
+        TrackerImageLinks: [],
+        PreviewImages: [],
+        MetadataTimestamp: workflowPlan.createdAt,
+        RequiresManualFrames: (workflowPlan.suggestedSelections || []).length === 0,
+      };
       dispatch({
         type: "screenshots_loaded",
         sessionRevision: command.sessionRevision,
         revision: command.revision,
         plan,
         reseedDrafts: true,
-      });
-      return !command.controller.signal.aborted;
-    } catch (error) {
-      failWorkflow("screenshots", command, error);
-      return false;
-    } finally {
-      finishWorkflow("screenshots", command);
-    }
-  };
-
-  const mutateScreenshots = async (
-    mutate: (command: WorkflowCommand) => Promise<ScreenshotResult | null>,
-  ): Promise<boolean> => {
-    const command = beginWorkflow("screenshots", access.screenshots.reason);
-    if (!command) return false;
-    try {
-      const result = await mutate(command);
-      const plan = await activePorts.screenshots.load(command.release, command.controller.signal);
-      dispatch({
-        type: "screenshots_loaded",
-        sessionRevision: command.sessionRevision,
-        revision: command.revision,
-        plan,
-        ...(result ? { result } : {}),
-        changed: true,
+        finalSelectionArtifactIDs: selectedArtifactIDs,
       });
       return !command.controller.signal.aborted;
     } catch (error) {
@@ -714,60 +1022,75 @@ export function ReleaseSessionProvider({
     purpose: ScreenshotPurpose,
     selections?: readonly ScreenshotSelection[],
   ): Promise<boolean> => {
-    const command = beginWorkflow("screenshots", access.screenshots.reason);
-    if (!command) return false;
-    try {
+    if (workflowView.current && purpose === "preview") {
+      const requested = selections ?? state.screenshots.selections;
+      const selection = requested[0];
+      if (!selection) return false;
+      return previewWorkflowFrame(selection.TimestampSeconds);
+    }
+    if (workflowView.current) {
       const requested = [...(selections ?? state.screenshots.selections)];
-      const existingIndices = new Set(
-        [
-          ...(state.screenshots.value?.ExistingScreenshots || []),
-          ...(state.screenshots.value?.FinalSelections || []),
-          ...(state.screenshots.result?.Purpose === "final"
-            ? state.screenshots.result.Images || []
-            : []),
-        ].map((image) => image.Index),
+      return runBackendWorkflow((current, commandID, signal) =>
+        continueBackendGoal(
+          current,
+          "media_ready",
+          {
+            media: {
+              screenshotCount: requested.length,
+              purpose,
+              selections: requested,
+              captureDvdMenus: false,
+              maxDvdMenuItems: 0,
+            },
+          },
+          commandID,
+          signal,
+        ),
       );
-      const captureSelections =
-        purpose === "final"
-          ? requested.filter((selection) => !existingIndices.has(selection.Index))
-          : requested;
-      if (captureSelections.length === 0) {
-        throw new Error(
-          purpose === "final"
-            ? "All requested screenshots already exist."
-            : "No screenshot selections available.",
-        );
-      }
-      const result = await activePorts.screenshots.generate(
-        command.release,
-        captureSelections,
-        purpose,
+    }
+    return false;
+  };
+
+  const persistFinalScreenshotArtifacts = async (artifactIDs: readonly string[]) => {
+    const normalizedArtifactIDs = Array.from(
+      new Set(artifactIDs.map((artifactID) => artifactID.trim()).filter(Boolean)),
+    );
+    dispatch({
+      type: "screenshot_final_artifacts_changed",
+      artifactIDs: normalizedArtifactIDs,
+    });
+    if (!workflowView.current?.media || normalizedArtifactIDs.length === 0) return false;
+    return runBackendWorkflow((current, commandID, signal) =>
+      activePorts.workflow.reorderMedia(current, normalizedArtifactIDs, commandID, signal),
+    );
+  };
+
+  const removeMediaArtifacts = async (artifactIDs: readonly string[]) => {
+    const normalizedArtifactIDs = Array.from(
+      new Set(artifactIDs.map((artifactID) => artifactID.trim()).filter(Boolean)),
+    );
+    if (normalizedArtifactIDs.length === 0) return false;
+    if (!workflowView.current?.media) return false;
+    return runBackendWorkflow((current, commandID, signal) =>
+      activePorts.workflow.deleteMedia(current, normalizedArtifactIDs, commandID, signal),
+    );
+  };
+
+  const previewWorkflowFrame = async (timestampSeconds: number): Promise<boolean> => {
+    const command = beginWorkflow("screenshots", access.screenshots.reason);
+    if (!command || !workflowView.current) return false;
+    try {
+      const preview = await activePorts.workflow.previewFrame(
+        workflowView.current,
+        timestampSeconds,
+        `preview-${workflowView.current.workflow.id}-${workflowView.current.workflow.revision}-${timestampSeconds}`,
         command.controller.signal,
       );
-      let finalSelectionPaths: readonly string[] | undefined;
-      if (purpose === "final") {
-        const available = availableScreenshotImages(
-          state.screenshots.value,
-          state.screenshots.result,
-        );
-        const current = orderedScreenshotImages(state.screenshots.finalSelectionPaths, available);
-        const finalImages = mergeFinalScreenshotImages(current, result.Images || []);
-        await activePorts.screenshots.saveFinal(
-          command.release,
-          finalImages,
-          command.controller.signal,
-        );
-        finalSelectionPaths = finalImages.map((image) => image.Path);
-      }
-      const plan = await activePorts.screenshots.load(command.release, command.controller.signal);
       dispatch({
-        type: "screenshots_loaded",
+        type: "screenshot_previewed",
         sessionRevision: command.sessionRevision,
         revision: command.revision,
-        plan,
-        result,
-        changed: true,
-        ...(finalSelectionPaths ? { finalSelectionPaths } : {}),
+        image: preview.contentUrl,
       });
       return !command.controller.signal.aborted;
     } catch (error) {
@@ -778,97 +1101,29 @@ export function ReleaseSessionProvider({
     }
   };
 
-  const persistFinalScreenshotPaths = async (imagePaths: readonly string[]) => {
-    const normalizedPaths = Array.from(
-      new Set(imagePaths.map((path) => path.trim()).filter(Boolean)),
-    );
-    const images = orderedScreenshotImages(
-      normalizedPaths,
-      availableScreenshotImages(state.screenshots.value, state.screenshots.result),
-    );
-    dispatch({ type: "screenshot_final_paths_changed", imagePaths: normalizedPaths });
-    return mutateScreenshots(async (command) => {
-      await activePorts.screenshots.saveFinal(command.release, images, command.controller.signal);
-      return null;
-    });
-  };
-
-  const removeScreenshots = async (imagePaths: readonly string[]) => {
-    const paths = Array.from(new Set(imagePaths.map((path) => path.trim()).filter(Boolean)));
-    if (paths.length === 0) return false;
-    const deletedPaths = new Set(paths);
-    const linkedURLs = (state.screenshots.value?.TrackerImageLinks || [])
-      .filter((link) => deletedPaths.has(link.Path))
-      .map((link) => link.URL)
-      .filter(Boolean);
-    const remainingFinalPaths = state.screenshots.finalSelectionPaths.filter(
-      (path) => !deletedPaths.has(path),
-    );
-    const remainingFinalImages = orderedScreenshotImages(
-      remainingFinalPaths,
-      availableScreenshotImages(state.screenshots.value, state.screenshots.result),
-    );
-    dispatch({ type: "screenshot_final_paths_changed", imagePaths: remainingFinalPaths });
-    return mutateScreenshots(async (command) => {
-      for (const path of paths) {
-        await activePorts.screenshots.remove(command.release, path, command.controller.signal);
-      }
-      for (const url of linkedURLs) {
-        await activePorts.screenshots.removeTrackerURL(
-          command.release,
-          url,
-          command.controller.signal,
-        );
-      }
-      if (remainingFinalPaths.length !== state.screenshots.finalSelectionPaths.length) {
-        await activePorts.screenshots.saveFinal(
-          command.release,
-          remainingFinalImages,
-          command.controller.signal,
-        );
-      }
-      return null;
-    });
-  };
-
-  const removeTrackerURLs = async (urls: readonly string[]) => {
-    const normalizedURLs = Array.from(new Set(urls.map((url) => url.trim()).filter(Boolean)));
-    if (normalizedURLs.length === 0) return false;
-    return mutateScreenshots(async (command) => {
-      for (const url of normalizedURLs) {
-        await activePorts.screenshots.removeTrackerURL(
-          command.release,
-          url,
-          command.controller.signal,
-        );
-      }
-      return null;
-    });
-  };
-
-  const loadMenuImages = async (
-    mutate?: (command: WorkflowCommand) => Promise<DVDMenuCaptureResult | null>,
-  ): Promise<boolean> => {
+  const loadMenuImages = async (): Promise<boolean> => {
     const command = beginWorkflow("menuImages", access.menuImages.reason);
-    if (!command) return false;
+    if (!command || !workflowView.current) return false;
     try {
-      const capture = mutate ? await mutate(command) : null;
-      const images = await activePorts.menuImages.list(command.release, command.controller.signal);
-      const previews = await Promise.all(
-        images.map(async (image) => ({
-          image,
-          dataURI: image.Path
-            ? await activePorts.menuImages.readImage(image.Path, command.controller.signal)
-            : "",
-        })),
-      );
+      const previews = (workflowView.current.media?.artifacts || [])
+        .filter((artifact) => artifact.kind === "dvd_menu")
+        .map((artifact, index) => ({
+          image: {
+            artifactID: artifact.id,
+            index: artifact.index ?? index,
+            timestampSeconds: artifact.timestampSeconds || 0,
+            purpose: "menu" as const,
+            width: artifact.width || 0,
+            height: artifact.height || 0,
+            sizeBytes: artifact.sizeBytes || 0,
+          },
+          contentURL: activePorts.workflow.mediaURL(workflowView.current!, artifact.id),
+        }));
       dispatch({
         type: "menu_images_loaded",
         sessionRevision: command.sessionRevision,
         revision: command.revision,
         images: previews,
-        ...(capture ? { capture } : {}),
-        changed: Boolean(mutate),
       });
       return !command.controller.signal.aborted;
     } catch (error) {
@@ -879,34 +1134,49 @@ export function ReleaseSessionProvider({
     }
   };
 
-  const loadUploadedImages = async (
-    mutate?: (
-      command: WorkflowCommand,
-    ) => Promise<Readonly<{ failures: readonly UploadImageHostFailure[] }>>,
-    correlationID = "",
-  ): Promise<boolean> => {
+  const loadUploadedImages = async (): Promise<boolean> => {
     const command = beginWorkflow("uploadedImages", access.uploadedImages.reason);
-    if (!command) return false;
+    if (!command || !workflowView.current) return false;
     dispatch({
       type: "uploaded_images_progress_reset",
       sessionRevision: command.sessionRevision,
       revision: command.revision,
-      correlationID,
+      correlationID: "",
     });
     try {
-      const mutation = mutate
-        ? await mutate(command)
-        : { failures: [] as readonly UploadImageHostFailure[] };
-      const [candidateImages, uploaded] = await Promise.all([
-        activePorts.uploadedImages.listCandidates(command.release, command.controller.signal),
-        activePorts.uploadedImages.listUploaded(command.release, command.controller.signal),
-      ]);
-      const candidates = await Promise.all(
-        candidateImages.map(async (image) => ({
-          image,
-          dataURI: image.Path
-            ? await activePorts.uploadedImages.readImage(image.Path, command.controller.signal)
-            : "",
+      const media = workflowView.current.media;
+      const candidates = (media?.artifacts || [])
+        .filter(
+          (artifact) =>
+            artifact.selected && (artifact.kind === "screenshot" || artifact.kind === "dvd_menu"),
+        )
+        .map((artifact, index) => ({
+          image: {
+            artifactID: artifact.id,
+            index: artifact.index ?? index,
+            timestampSeconds: artifact.timestampSeconds || 0,
+            purpose: artifact.purpose as ScreenshotPurpose,
+            width: artifact.width || 0,
+            height: artifact.height || 0,
+            sizeBytes: artifact.sizeBytes || 0,
+          },
+          contentURL: activePorts.workflow.mediaURL(workflowView.current!, artifact.id),
+        }));
+      const uploaded = (media?.artifacts || [])
+        .filter((artifact) => artifact.kind === "hosted_image")
+        .map((artifact) => ({
+          artifactID: artifact.id,
+          host: artifact.host || "",
+          url: artifact.url || "",
+          sizeBytes: artifact.sizeBytes || 0,
+          uploadedAt: media?.createdAt || "",
+        }));
+      const failures: UploadImageHostFailure[] = (media?.hostAttempts || []).flatMap((attempt) =>
+        (attempt.failures || []).map((failure) => ({
+          Host: attempt.host,
+          UsageScope: "workflow",
+          Trackers: failure.trackerId ? [failure.trackerId] : [],
+          Message: failure.failure.Message,
         })),
       );
       dispatch({
@@ -915,8 +1185,8 @@ export function ReleaseSessionProvider({
         revision: command.revision,
         candidates,
         uploaded,
-        failures: mutation.failures,
-        changed: Boolean(mutate),
+        failures,
+        failedHosts: media?.failedHosts || [],
       });
       return !command.controller.signal.aborted;
     } catch (error) {
@@ -928,27 +1198,36 @@ export function ReleaseSessionProvider({
   };
 
   const loadDescriptions = async (): Promise<boolean> => {
-    const command = beginWorkflow("descriptions", access.descriptions.reason);
-    if (!command) return false;
-    try {
-      const preview = await activePorts.descriptions.load(
-        command.release,
-        state.selectedTrackers,
-        command.controller.signal,
-      );
-      dispatch({
-        type: "descriptions_loaded",
-        sessionRevision: command.sessionRevision,
-        revision: command.revision,
-        preview,
-      });
-      return !command.controller.signal.aborted;
-    } catch (error) {
-      failWorkflow("descriptions", command, error);
-      return false;
-    } finally {
-      finishWorkflow("descriptions", command);
-    }
+    if (!workflowView.current?.media) return false;
+    if (workflowView.current.descriptions) return true;
+    const completed = await runBackendWorkflow((current, commandID, signal) =>
+      continueBackendGoal(
+        current,
+        "descriptions_ready",
+        {
+          descriptions: {
+            questionnaireAnswers: state.questionnaireAnswers,
+            options: {
+              RunLogLevel: state.uploadOptions.runLogLevel,
+              Screens: workflowDescriptionScreenshotCount(current),
+              NoSeed: state.uploadOptions.noSeed,
+              SkipAutoTorrent: false,
+              OnlyID: false,
+              KeepFolder: false,
+              KeepImages: false,
+              CaptureDVDMenus: false,
+              InteractionMode: "interactive",
+            },
+            imageHost: workflowDescriptionImageHostOverrides(current.media?.failedHosts || []),
+            templateVersion: "workflow-v1",
+          },
+        },
+        `${commandID}-descriptions`,
+        signal,
+      ),
+    );
+    if (completed) dispatch({ type: "description_dirty_cleared" });
+    return completed;
   };
 
   const renderDescription = async (groupKey: string): Promise<boolean> => {
@@ -979,194 +1258,280 @@ export function ReleaseSessionProvider({
   };
 
   const saveDescription = async (groupKey: string, reset: boolean): Promise<boolean> => {
-    const command = beginWorkflow("descriptions", access.descriptions.reason);
-    if (!command) return false;
     const key = groupKey.trim();
-    const group = state.descriptions.value?.Groups.find((item) => item.GroupKey === key);
-    const inputRevision = state.descriptions.inputRevision;
-    if (!group) {
-      failWorkflow("descriptions", command, new Error("Description group not found."));
-      finishWorkflow("descriptions", command);
-      return false;
-    }
-    try {
-      const updated = await activePorts.descriptions.save(
-        command.release,
-        key,
-        reset ? "" : state.descriptions.rawByGroup[key] || "",
-        group.Trackers,
-        command.controller.signal,
-      );
+    if (!key || !workflowView.current?.descriptions) return false;
+    const completed = await runBackendWorkflow((current, commandID, signal) =>
+      reset
+        ? activePorts.workflow.resetDescriptionOverride(current, key, commandID, signal)
+        : activePorts.workflow.saveDescriptionOverride(
+            current,
+            key,
+            state.descriptions.rawByGroup[key] || "",
+            commandID,
+            signal,
+          ),
+    );
+    if (completed) {
       dispatch({
-        type: "description_saved",
-        sessionRevision: command.sessionRevision,
-        revision: command.revision,
-        inputRevision,
-        group: updated,
+        type: "description_dirty_cleared",
+        groupKey: key,
+        notice: reset ? "Description reset." : "Description saved.",
       });
-      return !command.controller.signal.aborted;
-    } catch (error) {
-      failWorkflow("descriptions", command, error);
-      return false;
-    } finally {
-      finishWorkflow("descriptions", command);
     }
-  };
-
-  const buildUploadCommand = (release: ReleaseRef): UploadCommand => ({
-    release,
-    trackers: [...state.selectedTrackers],
-    ignoreDupesFor: [...state.ignoredDupesFor],
-    ruleAuthorizations: Object.entries(state.authorizedRulesByTracker).map(([tracker, rules]) => ({
-      Tracker: tracker,
-      Rules: [...rules],
-    })),
-    questionnaireAnswers: Object.fromEntries(
-      Object.entries(state.questionnaireAnswers).map(([tracker, answers]) => [
-        tracker,
-        { ...answers },
-      ]),
-    ),
-    descriptionGroups: selectedDescriptionGroups(
-      state.descriptions.value?.Groups || [],
-      state.descriptions.rawByGroup,
-    ),
-    options: { ...state.uploadOptions },
-  });
-
-  const buildDryRunCommand = (release: ReleaseRef, dupeJobID: string): DryRunCommand => {
-    const command = buildUploadCommand(release);
-    return {
-      dupeJobID,
-      release: command.release,
-      trackers: command.trackers,
-      ignoreDupesFor: command.ignoreDupesFor,
-      questionnaireAnswers: command.questionnaireAnswers,
-      descriptionGroups: command.descriptionGroups,
-      options: command.options,
-    };
+    return completed;
   };
 
   const runDryRun = async (): Promise<boolean> => {
-    const command = beginWorkflow("dryRun", access.upload.reason);
-    if (!command) return false;
-    const inputRevision = state.uploadInputRevision;
+    if (!workflowView.current) return false;
+    return runBackendWorkflow((current, commandID, signal) =>
+      continueBackendGoal(
+        current,
+        "dry_run",
+        { noSeed: state.uploadOptions.noSeed },
+        commandID,
+        signal,
+      ),
+    );
+  };
+
+  const executeExactUpload = async (): Promise<boolean> => {
+    if (!workflowView.current || controllers.current.workflow) return false;
+    const controller = new AbortController();
+    controllers.current.workflow = controller;
+    setWorkflowView((current) => ({ ...current, status: "running", error: "", failure: null }));
+    const commandID = `workflow-upload-${Date.now().toString(36)}-${workflowView.current.workflow.revision.toString(36)}`;
     try {
-      const dupeJobID = releaseJobs.dupe?.dupe?.jobID?.trim() || "";
-      if (!duplicatesReady || !dupeJobID) {
-        throw new Error("Complete duplicate checking before running a dry run.");
+      let current = workflowView.current;
+      if (!current.dryRun) {
+        current = await continueBackendGoal(
+          current,
+          "dry_run",
+          { noSeed: state.uploadOptions.noSeed },
+          `${commandID}-review`,
+          controller.signal,
+        );
       }
-      const preview = await activePorts.upload.dryRun(
-        buildDryRunCommand(command.release, dupeJobID),
-        command.controller.signal,
+      const approvalAction = current.continuation.requiredActions?.find(
+        (action) => action.kind === "approve_upload" && action.status === "pending",
       );
-      dispatch({
-        type: "dry_run_loaded",
-        sessionRevision: command.sessionRevision,
-        revision: command.revision,
-        inputRevision,
-        preview,
-      });
-      return !command.controller.signal.aborted;
+      if (!current.dryRun || !approvalAction) {
+        throw new Error("Exact upload approval action is unavailable.");
+      }
+      const uploaded = await continueBackendGoal(
+        current,
+        "uploaded",
+        { noSeed: state.uploadOptions.noSeed },
+        `${commandID}-execute`,
+        controller.signal,
+        {
+          approval: {
+            actionId: approvalAction.id,
+            dryRun: { id: current.dryRun.id, revision: current.dryRun.revision },
+            inputFingerprint: current.dryRun.inputFingerprint,
+          },
+        },
+      );
+      releaseWorkflowController(controller);
+      if (controller.signal.aborted) return false;
+      acceptWorkflowCurrent(uploaded);
+      return true;
     } catch (error) {
-      failWorkflow("dryRun", command, error);
+      releaseWorkflowController(controller);
+      if (!controller.signal.aborted) failBackendWorkflow(error);
       return false;
     } finally {
-      finishWorkflow("dryRun", command);
+      releaseWorkflowController(controller);
     }
   };
 
-  const reviewUpload = async (): Promise<boolean> => {
-    const staleReason =
-      state.dryRun.status === "ready" && !state.dryRun.staleReason
-        ? access.upload.reason
-        : state.dryRun.staleReason || "Run the current dry run first.";
-    const command = beginWorkflow("review", staleReason);
-    if (!command) return false;
-    const inputRevision = state.uploadInputRevision;
-    try {
-      const review = await activePorts.upload.review(
-        buildUploadCommand(command.release),
-        command.controller.signal,
-      );
-      dispatch({
-        type: "review_loaded",
-        sessionRevision: command.sessionRevision,
-        revision: command.revision,
-        inputRevision,
-        review,
-      });
-      return !command.controller.signal.aborted;
-    } catch (error) {
-      failWorkflow("review", command, error);
-      return false;
-    } finally {
-      finishWorkflow("review", command);
-    }
-  };
-
-  const currentDupeSnapshot = releaseJobs.dupe?.dupe ?? null;
-  const assessedDupeSelection =
-    currentDupeSnapshot?.summary?.Eligibility?.Trackers?.map((tracker) => tracker.Tracker) || [];
-  const runningDupeSelection =
-    currentDupeSnapshot?.trackers?.map((tracker) => tracker.tracker) || [];
-  const dupeSelection = assessedDupeSelection.length ? assessedDupeSelection : runningDupeSelection;
-  const duplicateAssessmentCurrent = sameNames(dupeSelection, state.selectedTrackers);
-  const duplicateStartPending = releaseJobs.pending.some(
-    (pending) => pending.kind === "duplicate_check",
-  );
+  const workflowDupeAssessment = workflowView.current?.dupes || null;
+  const workflowDupeSelection =
+    workflowView.current?.projections?.projections.map((projection) => projection.trackerId) || [];
+  const duplicateAssessmentCurrent = sameNames(workflowDupeSelection, state.selectedTrackers);
+  const duplicateOperation =
+    workflowView.current?.operation?.operation === "duplicate_check"
+      ? workflowView.current.operation
+      : null;
+  const duplicateStartPending = isActiveWorkflowOperation(duplicateOperation ?? undefined);
   const duplicatesReady =
     !duplicateStartPending &&
     duplicateAssessmentCurrent &&
-    isCompleted(String(currentDupeSnapshot?.status || ""));
-  const uploadSnapshot = releaseJobs.upload?.upload ?? null;
-  const bound = Boolean(state.release) && !state.preparationDirty;
-  const requirements = trackerWorkflowRequirements(
-    state.selectedTrackers,
-    trackerCatalog?.catalog ?? null,
-  );
-  const currentDryRunFailures =
-    state.dryRun.status === "ready" && !state.dryRun.staleReason
-      ? (state.dryRun.value?.Trackers ?? [])
-          .map((entry) => entry.ContentFailure)
-          .filter((failure): failure is TrackerContentFailure => Boolean(failure))
-      : [];
-  const screenshotFailed =
-    (requirements.needsImages &&
-      state.screenshots.status === "error" &&
-      !state.screenshots.staleReason) ||
-    selectedContentFailure(
-      currentDryRunFailures,
-      state.selectedTrackers,
-      "screenshot_preparation_failed",
-    );
-  const descriptionFailed =
-    selectedContentFailure(
-      state.descriptions.value?.ContentFailures,
-      state.selectedTrackers,
-      "description_preparation_failed",
-    ) ||
-    selectedContentFailure(
-      currentDryRunFailures,
-      state.selectedTrackers,
-      "description_preparation_failed",
-    );
-  const descriptionsReady =
-    !requirements.needsDescriptions ||
-    (state.descriptions.status === "ready" &&
-      !state.descriptions.staleReason &&
-      !descriptionFailed);
+    workflowDupeAssessment?.status === "completed";
+  const projectedTrackers = workflowView.current?.projections?.projections || [];
+  const requirements: TrackerWorkflowRequirements = {
+    needsImages: projectedTrackers.some(
+      (projection) =>
+        projection.artifacts.screenshotCount > 0 ||
+        projection.artifacts.dvdMenuCount > 0 ||
+        projection.artifacts.imageHosting,
+    ),
+    needsDescriptions: projectedTrackers.some((projection) => projection.artifacts.description),
+  };
   const access = routeAccess(
-    bound,
+    workflowView.current?.continuation,
     Boolean(state.preview?.TrackerData?.length),
-    duplicatesReady,
     requirements,
-    descriptionsReady,
-    screenshotFailed,
-    descriptionFailed,
+  );
+  const workflowMedia = workflowView.current?.media;
+  const workflowMediaURL = (artifactID: string) =>
+    workflowView.current ? activePorts.workflow.mediaURL(workflowView.current, artifactID) : "";
+  const selectedScreenshotIDs = (workflowMedia?.artifacts || [])
+    .filter((artifact) => artifact.kind === "screenshot" && artifact.selected)
+    .sort((left, right) => (left.order || 0) - (right.order || 0))
+    .map((artifact) => artifact.id);
+  const workflowMenuImages = (workflowMedia?.artifacts || [])
+    .filter((artifact) => artifact.kind === "dvd_menu")
+    .sort((left, right) => (left.order || 0) - (right.order || 0))
+    .map((artifact, index) => ({
+      image: {
+        artifactID: artifact.id,
+        index: artifact.index ?? index,
+        timestampSeconds: artifact.timestampSeconds || 0,
+        purpose: "menu" as const,
+        width: artifact.width || 0,
+        height: artifact.height || 0,
+        sizeBytes: artifact.sizeBytes || 0,
+      },
+      contentURL: workflowMediaURL(artifact.id),
+    }));
+  const workflowUploadCandidates = (workflowMedia?.artifacts || [])
+    .filter(
+      (artifact) =>
+        artifact.selected && (artifact.kind === "screenshot" || artifact.kind === "dvd_menu"),
+    )
+    .map((artifact, index) => ({
+      image: {
+        artifactID: artifact.id,
+        index: artifact.index ?? index,
+        timestampSeconds: artifact.timestampSeconds || 0,
+        purpose: artifact.purpose as ScreenshotPurpose,
+        width: artifact.width || 0,
+        height: artifact.height || 0,
+        sizeBytes: artifact.sizeBytes || 0,
+      },
+      contentURL: workflowMediaURL(artifact.id),
+    }));
+  const workflowUploadedImages = (workflowMedia?.artifacts || [])
+    .filter((artifact) => artifact.kind === "hosted_image")
+    .map((artifact) => ({
+      artifactID: artifact.id,
+      host: artifact.host || "",
+      url: artifact.url || "",
+      sizeBytes: artifact.sizeBytes || 0,
+      uploadedAt: workflowMedia?.createdAt || "",
+    }));
+  const workflowHostFailures: UploadImageHostFailure[] = (
+    workflowMedia?.hostAttempts || []
+  ).flatMap((attempt) =>
+    (attempt.failures || []).map((failure) => ({
+      Host: attempt.host,
+      UsageScope: "workflow",
+      Trackers: failure.trackerId ? [failure.trackerId] : [],
+      Message: failure.failure.Message,
+    })),
   );
 
+  const workflowUploadOperation = workflowView.current?.operation?.operation;
+  const workflowDryRunStatus =
+    workflowView.status === "running" && workflowUploadOperation === "upload_dry_run"
+      ? "running"
+      : workflowView.current?.dryRun
+        ? "ready"
+        : "idle";
+  const workflowUploadStatus =
+    workflowView.status === "running" && workflowUploadOperation === "upload_execute"
+      ? "running"
+      : workflowView.current?.uploadResult
+        ? "ready"
+        : "idle";
+
   const session: ReleaseSession = {
+    workflow: {
+      view: workflowView,
+      reload: reloadBackendWorkflow,
+      begin: async (input) => Boolean(await startBackendWorkflow(input)),
+      project: (trackers, instructions = {}) =>
+        runBackendWorkflow((current, commandID, signal) =>
+          continueBackendGoal(
+            current,
+            "trackers_assessed",
+            { trackerIds: [...trackers], projectionInstructions: instructions },
+            commandID,
+            signal,
+          ),
+        ),
+      preflight: () =>
+        runBackendWorkflow((current, commandID, signal) =>
+          continueBackendGoal(current, "trackers_assessed", {}, commandID, signal),
+        ),
+      checkDuplicates: (skipRemote = false) =>
+        runBackendWorkflow((current, commandID, signal) =>
+          continueBackendGoal(
+            current,
+            "duplicates_decided",
+            { skipRemoteDuplicates: skipRemote },
+            commandID,
+            signal,
+          ),
+        ),
+      decideDuplicates: (decisions: Readonly<Record<string, DupeDecision>>) =>
+        runBackendWorkflow((current, commandID, signal) =>
+          continueBackendGoal(
+            current,
+            "duplicates_decided",
+            { duplicateDecisions: decisions },
+            commandID,
+            signal,
+          ),
+        ),
+      captureMedia: (instructions: MediaCaptureInstructions) =>
+        runBackendWorkflow((current, commandID, signal) =>
+          continueBackendGoal(current, "media_ready", { media: instructions }, commandID, signal),
+        ),
+      generateDescriptions: (instructions: DescriptionInstructions) =>
+        runBackendWorkflow((current, commandID, signal) =>
+          continueBackendGoal(
+            current,
+            "descriptions_ready",
+            { descriptions: instructions },
+            commandID,
+            signal,
+          ),
+        ),
+      dryRunUploads: () =>
+        runBackendWorkflow((current, commandID, signal) =>
+          continueBackendGoal(
+            current,
+            "dry_run",
+            { noSeed: state.uploadOptions.noSeed },
+            commandID,
+            signal,
+          ),
+        ),
+      executeUploads: () => executeExactUpload(),
+      retryFailedUploads: () => {
+        const result = workflowView.current?.uploadResult;
+        if (!result) return Promise.resolve(false);
+        const trackerIDs = result.results
+          .filter((item) => item.status === "failed")
+          .map((item) => item.trackerId);
+        if (trackerIDs.length === 0) return Promise.resolve(false);
+        return runBackendWorkflow((current, commandID, signal) =>
+          activePorts.workflow.retryFailedUploads(
+            current,
+            { id: result.id, revision: result.revision },
+            trackerIDs,
+            state.uploadOptions.noSeed,
+            commandID,
+            signal,
+          ),
+        );
+      },
+      invalidateTrackers: (trackerIDs, reason) =>
+        runBackendWorkflow((current, commandID, signal) =>
+          activePorts.workflow.invalidateTrackers(current, trackerIDs, reason, commandID, signal),
+        ),
+    },
     identity: {
       view: {
         sessionRevision: state.sessionRevision,
@@ -1186,12 +1551,6 @@ export function ReleaseSessionProvider({
         preparationDirty: state.preparationDirty,
         intent: state.preparationIntent,
         selectedTrackers: state.selectedTrackers,
-        progress: {
-          correlationID: state.preparation.correlationID,
-          status: state.preparation.status,
-          message: state.preparation.message,
-          steps: state.preparation.steps,
-        },
         preview: state.preview,
         trackerData: state.preview?.TrackerData || [],
         playlist: state.playlist,
@@ -1235,18 +1594,6 @@ export function ReleaseSessionProvider({
           correlationID,
           intent,
         });
-        dispatchPreparationStep(
-          sourcePath,
-          commandRevision,
-          correlationID,
-          localPreparationStep(
-            "playlist_selection",
-            30,
-            "Select Blu-ray playlists",
-            "completed",
-            "Playlist selection accepted.",
-          ),
-        );
         return executePreparation(
           operation,
           sourcePath,
@@ -1279,22 +1626,32 @@ export function ReleaseSessionProvider({
       view: {
         status: duplicateStartPending
           ? "running"
-          : currentDupeSnapshot
-            ? duplicatesReady
-              ? "ready"
-              : isCompleted(currentDupeSnapshot.status)
-                ? "idle"
-                : "running"
-            : "idle",
-        snapshot: !duplicateStartPending && duplicateAssessmentCurrent ? currentDupeSnapshot : null,
-        eligibility:
-          !duplicateStartPending && duplicateAssessmentCurrent
-            ? currentDupeSnapshot?.summary?.Eligibility || null
-            : null,
+          : duplicatesReady
+            ? "ready"
+            : workflowDupeAssessment?.status === "failed"
+              ? "error"
+              : "idle",
+        assessment: duplicateAssessmentCurrent ? workflowDupeAssessment : null,
+        projections: duplicateAssessmentCurrent ? workflowView.current?.projections || null : null,
+        preflight: duplicateAssessmentCurrent ? workflowView.current?.preflight || null : null,
+        completed:
+          duplicateOperation?.completed ||
+          workflowDupeAssessment?.results.filter((result) =>
+            ["completed", "failed", "skipped"].includes(result.status),
+          ).length ||
+          0,
+        total:
+          duplicateOperation?.total ||
+          workflowView.current?.projections?.projections.length ||
+          state.selectedTrackers.length,
         ignoredTrackers: state.ignoredDupesFor,
         selectedTrackers: state.selectedTrackers,
-        error: state.duplicatesError || currentDupeSnapshot?.failure?.Message || "",
-        transientError: releaseJobs.transientError,
+        error:
+          workflowView.failure?.Message ||
+          state.duplicatesError ||
+          workflowDupeAssessment?.results.flatMap((result) => result.failures || [])[0]?.failure
+            .Message ||
+          "",
       },
       run: async () => {
         dispatch({ type: "job_command_started", kind: "duplicates" });
@@ -1307,134 +1664,182 @@ export function ReleaseSessionProvider({
           });
           return false;
         }
-        try {
-          await releaseJobs.startDupe({ trackers: [...state.selectedTrackers] });
-          return true;
-        } catch (error) {
-          dispatch({ type: "job_command_failed", kind: "duplicates", error: errorText(error) });
+        if (!workflowView.current) {
+          dispatch({
+            type: "job_command_failed",
+            kind: "duplicates",
+            error: "Release workflow duplicate checking is unavailable.",
+          });
           return false;
         }
+        const completed = await checkBackendDuplicates();
+        if (!completed) {
+          dispatch({
+            type: "job_command_failed",
+            kind: "duplicates",
+            error: workflowView.failure?.Message || "Duplicate workflow did not complete.",
+          });
+        }
+        return completed;
       },
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),
       cancel: async () => {
-        if (!releaseJobs.dupe) return false;
-        try {
-          await releaseJobs.cancel(releaseJobs.dupe);
-          return true;
-        } catch (error) {
-          dispatch({ type: "job_command_failed", kind: "duplicates", error: errorText(error) });
-          return false;
-        }
+        if (!workflowView.current) return false;
+        return cancelBackendWorkflow("duplicate check canceled");
       },
-      setIgnored: (tracker, ignored) => dispatch({ type: "dupe_ignore_changed", tracker, ignored }),
+      setIgnored: (tracker, ignored) => {
+        const normalizedTracker = tracker.trim().toUpperCase();
+        const result = workflowDupeAssessment?.results.find(
+          (candidate) => candidate.trackerId === normalizedTracker,
+        );
+        if (!result) return;
+        const inClient = result.matches?.some(
+          (match) => match.reason?.trim().toLowerCase() === "in_client",
+        );
+        const canOverride =
+          !inClient &&
+          Boolean(result.matches?.length) &&
+          ["pending", "accepted", "ignored"].includes(result.decision);
+        if (!canOverride) return;
+        dispatch({ type: "dupe_ignore_changed", tracker: normalizedTracker, ignored });
+        void runBackendWorkflow((current, commandID, signal) =>
+          continueBackendGoal(
+            current,
+            "duplicates_decided",
+            {
+              duplicateDecisions: {
+                [normalizedTracker]: ignored ? "ignored" : "accepted",
+              },
+            },
+            commandID,
+            signal,
+          ),
+        );
+      },
     },
     screenshots: {
       view: {
         revision: state.screenshots.revision,
-        status: state.screenshots.status,
+        status: state.screenshots.status === "running" ? "running" : workflowView.status,
         plan: state.screenshots.value,
-        result: state.screenshots.result,
+        artifacts: workflowView.current?.media
+          ? {
+              ...workflowView.current.media,
+              artifacts: workflowView.current.media.artifacts.map((artifact) => ({
+                ...artifact,
+                url: workflowMediaURL(artifact.id),
+              })),
+            }
+          : null,
+        workflowMode: Boolean(workflowView.current),
         selections: state.screenshots.selections,
-        finalSelectionPaths: state.screenshots.finalSelectionPaths,
+        finalSelectionArtifactIDs: selectedScreenshotIDs,
         previewImage: state.screenshots.previewImage,
         staleReason: state.screenshots.staleReason,
-        error: state.screenshots.error,
+        error: workflowView.failure?.Message || workflowView.error || state.screenshots.error,
       },
       load: loadScreenshotPlan,
       changeSelection: (index, value) =>
         dispatch({ type: "screenshot_selection_changed", index, value }),
       generate: generateScreenshots,
-      previewFrame: async (timestampSeconds) => {
-        const command = beginWorkflow("screenshots", access.screenshots.reason);
-        if (!command) return false;
-        try {
-          const image = await activePorts.screenshots.previewFrame(
-            command.release,
-            timestampSeconds,
-            command.controller.signal,
-          );
-          dispatch({
-            type: "screenshot_previewed",
-            sessionRevision: command.sessionRevision,
-            revision: command.revision,
-            image,
-          });
-          return !command.controller.signal.aborted;
-        } catch (error) {
-          failWorkflow("screenshots", command, error);
-          return false;
-        } finally {
-          finishWorkflow("screenshots", command);
-        }
-      },
-      remove: (imagePath) => removeScreenshots([imagePath]),
-      removeMany: removeScreenshots,
-      removeTrackerURL: (url) => removeTrackerURLs([url]),
-      removeTrackerURLs,
-      selectFinal: (imagePath, selected) => {
-        const paths = new Set(state.screenshots.finalSelectionPaths);
-        if (selected) paths.add(imagePath);
-        else paths.delete(imagePath);
-        return persistFinalScreenshotPaths([...paths]);
+      previewFrame: previewWorkflowFrame,
+      remove: (artifactID) => removeMediaArtifacts([artifactID]),
+      removeMany: removeMediaArtifacts,
+      selectFinal: (artifactID, selected) => {
+        if (!workflowView.current?.media) return Promise.resolve(false);
+        return runBackendWorkflow((current, commandID, signal) =>
+          activePorts.workflow.setMediaSelection(
+            current,
+            [artifactID],
+            selected,
+            commandID,
+            signal,
+          ),
+        );
       },
       reorderFinal: (fromIndex, toIndex) => {
-        const paths = [...state.screenshots.finalSelectionPaths];
+        const artifactIDs = [...selectedScreenshotIDs];
         if (
           fromIndex === toIndex ||
           fromIndex < 0 ||
           toIndex < 0 ||
-          fromIndex >= paths.length ||
-          toIndex >= paths.length
+          fromIndex >= artifactIDs.length ||
+          toIndex >= artifactIDs.length
         ) {
           return Promise.resolve(false);
         }
-        const [moved] = paths.splice(fromIndex, 1);
-        paths.splice(toIndex, 0, moved);
-        return persistFinalScreenshotPaths(paths);
+        const [moved] = artifactIDs.splice(fromIndex, 1);
+        artifactIDs.splice(toIndex, 0, moved);
+        return persistFinalScreenshotArtifacts(artifactIDs);
       },
-      saveFinal: () => persistFinalScreenshotPaths(state.screenshots.finalSelectionPaths),
-      readImage: async (path) => {
-        if (controllers.current.screenshotRead)
-          throw new Error("An image read is already running.");
-        const controller = new AbortController();
-        controllers.current.screenshotRead = controller;
-        try {
-          return await activePorts.screenshots.readImage(path, controller.signal);
-        } finally {
-          if (controllers.current.screenshotRead === controller) {
-            delete controllers.current.screenshotRead;
-          }
-        }
+      saveFinal: () => persistFinalScreenshotArtifacts(selectedScreenshotIDs),
+      selectArtifact: (artifactID, selected) => {
+        if (!workflowView.current) return Promise.resolve(false);
+        return runBackendWorkflow((current, commandID, signal) =>
+          activePorts.workflow.setMediaSelection(
+            current,
+            [artifactID],
+            selected,
+            commandID,
+            signal,
+          ),
+        );
       },
+      deleteArtifacts: (artifactIDs) => {
+        if (!workflowView.current) return Promise.resolve(false);
+        return runBackendWorkflow((current, commandID, signal) =>
+          activePorts.workflow.deleteMedia(current, artifactIDs, commandID, signal),
+        );
+      },
+      readImage: async (artifactID) => workflowMediaURL(artifactID),
     },
     menuImages: {
       view: {
         revision: state.menuImages.revision,
         status: state.menuImages.status,
-        images: state.menuImages.value || [],
-        capture: state.menuImages.capture,
-        staleReason: state.menuImages.staleReason,
-        error: state.menuImages.error,
+        images: workflowMenuImages,
+        artifacts: workflowView.current?.media || null,
+        staleReason: "",
+        error: workflowView.failure?.Message || state.menuImages.error,
       },
       load: () => loadMenuImages(),
-      importPaths: (paths) =>
-        loadMenuImages(async (command) => {
-          await activePorts.menuImages.importPaths(
-            command.release,
-            paths,
-            command.controller.signal,
-          );
-          return null;
+      importFiles: (files) =>
+        runBackendWorkflow(async (current, commandID, signal) => {
+          const resources = [];
+          for (const file of files) {
+            resources.push(await activePorts.workflow.stageMedia(current, file, signal));
+          }
+          return activePorts.workflow.attachMedia(current, resources, commandID, signal);
         }),
       capture: () =>
-        loadMenuImages((command) =>
-          activePorts.menuImages.capture(command.release, command.controller.signal),
+        runBackendWorkflow((current, commandID, signal) =>
+          continueBackendGoal(
+            current,
+            "media_ready",
+            {
+              media: {
+                screenshotCount: 0,
+                purpose: "menu",
+                captureDvdMenus: true,
+                maxDvdMenuItems: 0,
+              },
+            },
+            commandID,
+            signal,
+          ),
         ),
       cancelCapture: () => {
-        const controller = controllers.current.menuImages;
+        const controller = controllers.current.workflow;
         if (!controller) return;
         controller.abort();
-        delete controllers.current.menuImages;
+        delete controllers.current.workflow;
+        if (workflowView.current?.operation?.id) {
+          void activePorts.workflow.cancelOperation(
+            workflowView.current.workflow.id,
+            workflowView.current.operation.id,
+            new AbortController().signal,
+          );
+        }
         dispatch({
           type: "workflow_canceled",
           facet: "menuImages",
@@ -1442,85 +1847,49 @@ export function ReleaseSessionProvider({
           revision: state.menuImages.revision,
         });
       },
-      remove: (imagePath) =>
-        loadMenuImages(async (command) => {
-          await activePorts.menuImages.remove(
-            command.release,
-            imagePath,
-            command.controller.signal,
-          );
-          return null;
-        }),
+      remove: (artifactID) => removeMediaArtifacts([artifactID]),
     },
     uploadedImages: {
       view: {
         revision: state.uploadedImages.revision,
         status: state.uploadedImages.status,
-        candidates: state.uploadedImages.value?.candidates || [],
-        uploaded: state.uploadedImages.value?.uploaded || [],
-        selectedPaths: state.uploadedImages.selectedPaths,
-        host: state.uploadedImages.host,
-        failures: state.uploadedImages.failures,
+        candidates: workflowUploadCandidates,
+        uploaded: workflowUploadedImages,
+        selectedArtifactIDs: state.uploadedImages.selectedArtifactIDs,
+        failures: workflowHostFailures,
         progress: state.uploadedImages.progress,
         staleReason: state.uploadedImages.staleReason,
-        error: state.uploadedImages.error,
+        error: workflowView.failure?.Message || workflowView.error || state.uploadedImages.error,
       },
       load: () => loadUploadedImages(),
-      chooseHost: (host) => dispatch({ type: "upload_host_changed", host }),
-      select: (imagePath, selected) =>
-        dispatch({ type: "upload_image_selected", imagePath, selected }),
+      select: (artifactID, selected) =>
+        dispatch({ type: "upload_image_selected", artifactID, selected }),
       selectAll: (selected) => dispatch({ type: "upload_images_selected_all", selected }),
       upload: () => {
-        const selectedPaths = new Set(state.uploadedImages.selectedPaths);
-        const images = (state.uploadedImages.value?.candidates || [])
-          .filter((item) => selectedPaths.has(item.image.Path))
-          .map((item) => item.image);
-        const correlationID = `image-upload-${Date.now().toString(36)}-${(
-          state.uploadedImages.revision + 1
-        ).toString(36)}`;
-        return loadUploadedImages(async (command) => {
-          const result = await activePorts.uploadedImages.upload({
-            correlationID,
-            release: command.release,
-            trackers: state.selectedTrackers,
-            host: state.uploadedImages.host,
-            images,
-            signal: command.controller.signal,
-            onProgress: (update) =>
-              dispatch({
-                type: "uploaded_images_progressed",
-                sessionRevision: command.sessionRevision,
-                revision: command.revision,
-                update,
-              }),
-          });
-          return {
-            failures: result.Failures || [],
-          };
-        }, correlationID);
+        const candidates = new Set(workflowUploadCandidates.map((item) => item.image.artifactID));
+        const artifactIDs = state.uploadedImages.selectedArtifactIDs.filter((id) =>
+          candidates.has(id),
+        );
+        return runBackendWorkflow((current, commandID, signal) =>
+          activePorts.workflow.uploadImages(current, artifactIDs, commandID, signal),
+        );
       },
-      remove: (imagePath, host) =>
-        loadUploadedImages(async (command) => {
-          await activePorts.uploadedImages.remove(
-            command.release,
-            imagePath,
-            host,
-            command.controller.signal,
-          );
-          return { failures: [] };
-        }),
+      remove: (artifactID, _host) =>
+        runBackendWorkflow((current, commandID, signal) =>
+          activePorts.workflow.removeHostedImages(current, [artifactID], commandID, signal),
+        ),
     },
     descriptions: {
       view: {
         revision: state.descriptions.revision,
-        status: state.descriptions.status,
-        preview: state.descriptions.value,
+        status: workflowView.status,
+        artifact: workflowView.current?.descriptions || null,
         rawByGroup: state.descriptions.rawByGroup,
         renderedByGroup: state.descriptions.renderedByGroup,
         dirtyGroups: state.descriptions.dirtyGroups,
         staleReason: state.descriptions.staleReason,
         notice: state.descriptions.notice,
-        error: state.descriptions.error,
+        error: workflowView.failure?.Message || state.descriptions.error,
       },
       load: loadDescriptions,
       edit: (groupKey, raw) => dispatch({ type: "description_edited", groupKey, raw }),
@@ -1530,89 +1899,64 @@ export function ReleaseSessionProvider({
     },
     upload: {
       view: {
-        revision: Math.max(state.dryRun.revision, state.review.revision),
+        revision: workflowView.current?.workflow.revision ?? 0,
         selectedTrackers: state.selectedTrackers,
-        eligibility: duplicateAssessmentCurrent
-          ? currentDupeSnapshot?.summary?.Eligibility || null
-          : null,
+        projections: workflowView.current?.projections || null,
         ignoredDupesFor: state.ignoredDupesFor,
-        authorizedRulesByTracker: state.authorizedRulesByTracker,
         questionnaireAnswers: state.questionnaireAnswers,
         options: state.uploadOptions,
-        dryRunStatus: state.dryRun.status,
-        dryRun: state.dryRun.value,
-        dryRunStaleReason: state.dryRun.staleReason,
-        reviewStatus: state.review.status,
-        review: state.review.value,
-        reviewStaleReason: state.review.staleReason,
-        snapshot: uploadSnapshot,
-        error:
-          state.uploadError ||
-          state.review.error ||
-          state.dryRun.error ||
-          uploadSnapshot?.failure?.Message ||
-          "",
-        transientError: releaseJobs.transientError,
+        dryRunStatus: workflowDryRunStatus,
+        uploadStatus: workflowUploadStatus,
+        dryRunResult: workflowView.current?.dryRun || null,
+        result: workflowView.current?.uploadResult || null,
+        error: workflowView.failure?.Message || workflowView.error || state.uploadError || "",
       },
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),
       answerQuestionnaire: (tracker, key, value) =>
         dispatch({ type: "questionnaire_answered", tracker, key, value }),
       changeOptions: (options: Partial<UploadRunOptions>) =>
         dispatch({ type: "upload_options_changed", value: options }),
-      setRuleAuthorized: (tracker, rule, authorized) =>
-        dispatch({ type: "rule_authorization_changed", tracker, rule, authorized }),
       runDryRun,
-      review: reviewUpload,
       start: async () => {
         dispatch({ type: "job_command_started", kind: "upload" });
-        const review = state.review;
-        if (
-          !state.release ||
-          review.status !== "ready" ||
-          review.staleReason ||
-          !review.value?.Token
-        ) {
+        if (!workflowView.current) {
           dispatch({
             type: "job_command_failed",
             kind: "upload",
-            error: review.staleReason || "Complete the current upload review first.",
+            error: "Prepare the release workflow first.",
           });
           return false;
         }
-        try {
-          await releaseJobs.startUpload(review.value.Token);
-          return true;
-        } catch (error) {
-          dispatch({ type: "job_command_failed", kind: "upload", error: errorText(error) });
-          return false;
+        const completed = await executeExactUpload();
+        if (!completed) {
+          dispatch({
+            type: "job_command_failed",
+            kind: "upload",
+            error: workflowView.failure?.Message || "Upload execution failed.",
+          });
         }
+        return completed;
       },
       cancel: async () => {
-        if (!releaseJobs.upload) return false;
-        try {
-          await releaseJobs.cancel(releaseJobs.upload);
-          return true;
-        } catch (error) {
-          dispatch({ type: "job_command_failed", kind: "upload", error: errorText(error) });
-          return false;
-        }
+        if (!workflowView.current) return false;
+        return cancelBackendWorkflow("upload canceled");
       },
       retry: async () => {
-        if (!releaseJobs.upload) {
-          dispatch({
-            type: "job_command_failed",
-            kind: "upload",
-            error: "No retained upload job is available.",
-          });
-          return false;
-        }
-        try {
-          await releaseJobs.retryUpload(releaseJobs.upload);
-          return true;
-        } catch (error) {
-          dispatch({ type: "job_command_failed", kind: "upload", error: errorText(error) });
-          return false;
-        }
+        const result = workflowView.current?.uploadResult;
+        const trackerIDs = (result?.results || [])
+          .filter((item) => item.status === "failed")
+          .map((item) => item.trackerId);
+        if (!result || trackerIDs.length === 0) return false;
+        return runBackendWorkflow((current, commandID, signal) =>
+          activePorts.workflow.retryFailedUploads(
+            current,
+            { id: result.id, revision: result.revision },
+            trackerIDs,
+            state.uploadOptions.noSeed,
+            commandID,
+            signal,
+          ),
+        );
       },
     },
   };

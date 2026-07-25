@@ -765,6 +765,40 @@ func preloadUploadAssetData(
 		return nil, fmt.Errorf("trackers: %w", err)
 	}
 	preloaded.trackerRecords = trackerRecords
+	if meta.ExactScreenshots != nil {
+		preloaded.selections = make([]api.ScreenshotFinalSelection, 0, len(meta.ExactScreenshots))
+		preloaded.screenshotSlots = make([]api.ScreenshotSlot, 0, len(meta.ExactScreenshots))
+		allowedPaths := make(map[string]struct{}, len(meta.ExactScreenshots))
+		for index, image := range meta.ExactScreenshots {
+			imagePath := strings.TrimSpace(image.Path)
+			if imagePath == "" {
+				continue
+			}
+			allowedPaths[imagePath] = struct{}{}
+			preloaded.selections = append(preloaded.selections, api.ScreenshotFinalSelection{
+				SourcePath: meta.SourcePath,
+				ImagePath:  imagePath,
+				Order:      index,
+				Source:     string(image.Purpose),
+			})
+			preloaded.screenshotSlots = append(preloaded.screenshotSlots, api.ScreenshotSlot{
+				SourcePath:          meta.SourcePath,
+				SlotOrder:           index,
+				SourceKind:          string(image.Purpose),
+				ImagePath:           imagePath,
+				RenderInScreenshots: true,
+			})
+		}
+		uploads := meta.ExactUploadedImages
+		for _, upload := range uploads {
+			if _, allowed := allowedPaths[strings.TrimSpace(upload.ImagePath)]; allowed {
+				preloaded.uploads = append(preloaded.uploads, upload)
+			}
+		}
+		applyUploadedVariantsToSlots(preloaded.screenshotSlots, preloaded.uploads)
+		preloaded.screenshotSlotsLoaded = true
+		return preloaded, nil
+	}
 
 	selections, err := repo.ListFinalSelections(ctx, meta.SourcePath)
 	if err != nil {

@@ -15,6 +15,8 @@ import (
 type SiteProfile struct {
 	// BuildName optionally overrides the generic Unit3D release-name builder.
 	BuildName func(meta api.UploadSubject, cfg config.TrackerConfig) string
+	// BuildNameVersion identifies a custom BuildName implementation.
+	BuildNameVersion string
 	// BuildDescription optionally renders site-specific tracker markup.
 	BuildDescription func(ctx context.Context, meta api.UploadSubject, appConfig config.Config, trackerConfig config.TrackerConfig, logger api.Logger, keptDescription string, menuImages []api.ScreenshotImage, screenshots []api.ScreenshotImage) (string, error)
 	// ResolveKeywords optionally maps prepared metadata to Unit3D keywords.

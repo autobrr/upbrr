@@ -44,6 +44,8 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	switch {
 	case meta.Identity.IMDBID != 0:
 		params.Set("imdbId", strconv.Itoa(meta.Identity.IMDBID))
+	case meta.Projection != nil:
+		params.Set("search", dupe.ProjectedSearchName(meta))
 	case strings.TrimSpace(meta.Release.Title) != "":
 		params.Set("search", strings.TrimSpace(meta.Release.Title))
 	default:

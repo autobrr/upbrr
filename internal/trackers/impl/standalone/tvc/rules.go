@@ -12,15 +12,17 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// rules strictly blocks UHD, BDMV-disc, and remux uploads.
-func rules() *trackers.RuleSet { return &trackers.RuleSet{Check: checkRules} }
+// validationPolicy strictly blocks UHD, BDMV-disc, and remux uploads.
+func validationPolicy() trackers.ValidationPolicyBinding {
+	return trackers.ValidationPolicyBinding{ID: "standalone-tvc-constructibility-v1", Check: checkRules}
+}
 
-func checkRules(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {
+func checkRules(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context canceled: %w", err)
 	}
 	failures := make([]api.RuleFailure, 0, 3)
-	if strings.EqualFold(trackers.ResolveRuleResolution(meta), "2160p") {
+	if strings.EqualFold(strings.TrimSpace(meta.Release.Resolution), "2160p") {
 		failures = append(failures, trackers.NewRuleFailure(
 			"uhd_forbidden",
 			"TVC disallows UHD uploads",

@@ -122,8 +122,9 @@ func (r *SQLiteRepository) CommitPreparedRelease(ctx context.Context, release ap
 }
 
 // LoadPreparedRelease returns the current complete generation for sourcePath.
-// Missing or generation-mismatched identity/metadata is treated as corrupt
-// prepared state rather than silently falling back to legacy rows.
+// Missing identity/metadata makes an incomplete derived generation a cache
+// miss so canonical preparation can atomically replace it. Generation
+// mismatches remain corrupt state and fail closed.
 func (r *SQLiteRepository) LoadPreparedRelease(ctx context.Context, sourcePath string) (api.PreparedRelease, error) {
 	if r == nil || r.db == nil {
 		return api.PreparedRelease{}, errors.New("db: repository not initialized")
@@ -417,6 +418,9 @@ func loadPreparedIdentityTx(
 		&identity.Resolution.ContractVersion,
 		&resolvedAt,
 	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return api.ExternalIdentity{}, fmt.Errorf("db load prepared release: identity missing: %w", internalerrors.ErrNotFound)
+		}
 		return api.ExternalIdentity{}, fmt.Errorf("db load prepared release: identity: %w", err)
 	}
 	if generation <= 0 || api.PreparedGeneration(generation) != wantGeneration {
@@ -475,6 +479,9 @@ func loadSourceScopedMetadataTx(
 		&blurayJSON,
 		&updatedAt,
 	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return api.SourceScopedMetadata{}, fmt.Errorf("db load prepared release: provider metadata missing: %w", internalerrors.ErrNotFound)
+		}
 		return api.SourceScopedMetadata{}, fmt.Errorf("db load prepared release: provider metadata: %w", err)
 	}
 	if generation <= 0 || api.PreparedGeneration(generation) != wantGeneration {

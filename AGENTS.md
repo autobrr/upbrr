@@ -45,12 +45,13 @@ Before commit, also run `git diff --check`, changed-package `make gofix-check-ch
 
 ## Repo Map
 
-- CLI `cmd/upbrr`; workflow orchestration `internal/core`; config `internal/config`; remaining domain services `internal/services`.
+- CLI `cmd/upbrr`; application workflow `internal/releaseworkflow`; workflow domain adapters `internal/core`; config `internal/config`; remaining domain services `internal/services`.
 - Canonical prepared generations/display `internal/preparedrelease`; external identity `internal/externalidentity`; source resources `internal/sourcelayout`; torrent-client discovery `internal/clientdiscovery`.
 - Tracker contracts/orchestration `internal/trackers`; implementation families `internal/trackers/impl/{unit3d,azfamily,standalone}`; standalone trackers `internal/trackers/impl/standalone/<tracker>`; Unit3D sites `internal/trackers/impl/unit3d/sites/<tracker>`.
-- Tracker auth/dupe/data coordinators `internal/trackers/{auth,dupe,data}`; generic BBCode/description/image hosting `internal/{bbcode,description,imagehosting}`.
+- Tracker semantic modules use `name.go`, `auth.go`, `taxonomy.go`, `validation.go`, `description.go`, `media.go`, and `questionnaire.go` where behavior exists. Tracker `upload.go` files own prepare/submit/preview orchestration and transport only.
+- Tracker auth/dupe/data coordinators `internal/trackers/{auth,dupe,data}`; encrypted cookie persistence `internal/cookies`; generic BBCode/description/image hosting `internal/{bbcode,description,imagehosting}`.
 - Paths `internal/pathing` with `layout` and checker-only `policy`; torrent clients `internal/torrentclient`; metainfo `internal/torrent/metainfo`; release policy `internal/releasepolicy`.
-- WebUI server/API and retained jobs `internal/webserver`; API contracts `pkg/api`; frontend release ownership `webui/src/releaseSession`; shared job coordination `webui/src/jobRegistry`.
+- WebUI server/API host `internal/webserver`; API contracts `pkg/api`; frontend workflow state and operation ownership `webui/src/releaseSession`.
 
 ## Logging Levels
 
@@ -66,6 +67,8 @@ Before commit, also run `git diff --check`, changed-package `make gofix-check-ch
 
 - Keep changes narrow; fix root cause; do not revert user changes.
 - Preserve CLI and WebUI behavior where they share workflows.
+- Treat debug mode as end-to-end flow validation, not a non-mutating dry run. It suppresses actual tracker submission but intentionally may bypass policy gates such as banned-group blocking so screenshots, descriptions, tracker preparation, and later stages remain testable. Client injection still runs by default; CLI `-ns` and the WebUI Upload page's skip-client-injection option are the explicit opt-outs. Do not report these debug-mode behaviors as defects unless they diverge from these semantics.
+- Resolve versioned tracker upload/search names centrally before duplicate checking. Principal payload fields must consume `PreparationInput.ReviewedUploadName()`; custom naming algorithms live in `name.go`.
 - Preserve CLI `--unattended` / `--unattended_confirm` (`--uac`) safety: `--unattended` must not prompt; `--unattended_confirm` may ask required confirmation/manual inputs. No hidden prompts/confirms or ambiguous fallthrough.
 - Never log credentials/tokens/API keys/cookies/secret payloads; use repo redaction/logging policy.
 - Shareable examples, diagnostics, docs, and test fixtures must not use real release names, real movie/show titles, or real provider IDs. Use synthetic placeholders such as `Example Release 2026`, `Example.Release.2026.1080p-GRP`, and `tt1234567`. Prefer generic group tags such as `GRP` when the group is incidental; real group names are allowed when relevant to behavior. Production domain lists such as tracker banned groups may keep real values when those values are required behavior.

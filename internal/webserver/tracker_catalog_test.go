@@ -15,12 +15,15 @@ import (
 func TestListTrackerCatalogComposesIdentitySchemaAndConfiguredState(t *testing.T) {
 	t.Parallel()
 
-	backend := &Backend{cfg: config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-		"RHD":     {APIKey: "configured"},
-		"BTN":     {Username: "partial"},
-		"AITHER":  {ImageHost: "imgbox"},
-		"RETIRED": {Unknown: map[string]any{"keep_me": "retained"}},
-	}}}}
+	backend := &Backend{cfg: config.Config{Trackers: config.TrackersConfig{
+		DefaultTrackers: config.CSVList{"RHD"},
+		Trackers: map[string]config.TrackerConfig{
+			"RHD":     {APIKey: "configured"},
+			"BTN":     {Username: "partial"},
+			"AITHER":  {ImageHost: "imgbox"},
+			"RETIRED": {Unknown: map[string]any{"keep_me": "retained"}},
+		},
+	}}}
 
 	catalog, err := backend.ListTrackerCatalog()
 	if err != nil {
@@ -32,8 +35,11 @@ func TestListTrackerCatalogComposesIdentitySchemaAndConfiguredState(t *testing.T
 
 	rhd := catalogEntryByName(t, catalog.Entries, "RHD")
 	if !rhd.Configured || rhd.Family != string(trackers.FamilyUnit3D) || rhd.BaseURL == "" ||
-		rhd.UploadContentMode != string(trackers.UploadContentModeDescription) {
+		rhd.UploadContentMode != string(trackers.UploadContentModeDescription) || !rhd.Default {
 		t.Fatalf("RHD catalog entry = %#v", rhd)
+	}
+	if catalogEntryByName(t, catalog.Entries, "BTN").Default {
+		t.Fatal("non-default BTN was marked as default")
 	}
 	if mode := catalogEntryByName(t, catalog.Entries, "BTN").UploadContentMode; mode != string(trackers.UploadContentModeNone) {
 		t.Fatalf("BTN upload content mode = %q", mode)

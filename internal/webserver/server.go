@@ -37,6 +37,9 @@ type Options struct {
 	CLIConfig CLIConfig
 	// DevelopmentNoAuth enables the development-only auth bypass for loopback hosts.
 	DevelopmentNoAuth bool
+	// APITokens supplies optional runtime-only compatibility credentials for /api/v1.
+	// Persisted credentials are loaded from web-auth.json.
+	APITokens []APITokenCredential
 }
 
 // Server owns the embedded web UI HTTP server, backend services, auth stores, and event hub.
@@ -49,6 +52,7 @@ type Server struct {
 	hub                *eventHub
 	authLimiter        *fixedWindowLimiter
 	generalLimiter     *fixedWindowLimiter
+	apiTokens          *apiTokenStore
 	trustedProxies     []*net.IPNet
 	server             *http.Server
 	assets             fs.FS
@@ -99,13 +103,16 @@ func New(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	sessions.SetRemovedCallback(backend.removeJobOwner)
 	sessionsClosed := false
 	defer func() {
 		if !sessionsClosed {
 			sessions.Close()
 		}
 	}()
+	apiTokens, err := newAPITokenStore(opts.APITokens, authStore)
+	if err != nil {
+		return nil, err
+	}
 	srv := &Server{
 		cfg:            cfg,
 		cliCfg:         cliCfg,
@@ -115,6 +122,7 @@ func New(opts Options) (*Server, error) {
 		hub:            hub,
 		authLimiter:    newFixedWindowLimiter(10, 5*time.Minute),
 		generalLimiter: newFixedWindowLimiter(300, time.Minute),
+		apiTokens:      apiTokens,
 		trustedProxies: parseTrustedProxies(cliCfg.TrustedProxies),
 		assets:         assets,
 	}

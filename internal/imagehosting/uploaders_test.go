@@ -14,8 +14,150 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
+
+func TestImgboxBatchBootstrapsAnonymousSessionOnce(t *testing.T) {
+	t.Parallel()
+
+	var homepageRequests atomic.Int32
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != "https://imgbox.com/" {
+			t.Fatalf("unexpected request after failed bootstrap: %s", req.URL.String())
+		}
+		homepageRequests.Add(1)
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Header:     http.Header{"Content-Type": []string{"text/html"}},
+			Body:       io.NopCloser(strings.NewReader("temporary challenge")),
+		}, nil
+	})}
+
+	_, err := (&imgboxUploader{client: client}).UploadBatch(
+		context.Background(),
+		[]string{"one.png", "two.png", "three.png", "four.png"},
+	)
+	if err == nil || !strings.Contains(err.Error(), "anonymous upload session unavailable (HTTP 503)") {
+		t.Fatalf("batch bootstrap error = %v", err)
+	}
+	if got := homepageRequests.Load(); got != 1 {
+		t.Fatalf("homepage requests = %d, want 1", got)
+	}
+}
+
+func TestImgboxChallengeDocumentIsHostUnavailability(t *testing.T) {
+	t.Parallel()
+
+	client := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
+			Body:       io.NopCloser(strings.NewReader(`<html><div id="cf-chl-widget">Checking your browser</div></html>`)),
+		}, nil
+	})}
+	_, err := (&imgboxUploader{client: client}).UploadBatch(context.Background(), []string{"one.png"})
+	if err == nil || !strings.Contains(err.Error(), "temporarily challenged") {
+		t.Fatalf("challenge error = %v", err)
+	}
+}
+
+func TestImgboxRejectsIncompleteAnonymousToken(t *testing.T) {
+	t.Parallel()
+
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.String() {
+		case "https://imgbox.com/":
+			header := http.Header{"Content-Type": []string{"text/html"}}
+			header.Add("Set-Cookie", "session=synthetic; Path=/")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     header,
+				Body:       io.NopCloser(strings.NewReader(`<input name="authenticity_token" value="csrf-token">`)),
+			}, nil
+		case "https://imgbox.com/ajax/token/generate":
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"gallery_id":"2"}`)),
+			}, nil
+		default:
+			t.Fatalf("unexpected request URL: %s", req.URL.String())
+			return nil, nil
+		}
+	})}
+	_, err := (&imgboxUploader{client: client}).UploadBatch(context.Background(), []string{"one.png"})
+	if err == nil || !strings.Contains(err.Error(), "token response was incomplete") {
+		t.Fatalf("incomplete token error = %v", err)
+	}
+}
+
+func TestImgboxBatchReusesAnonymousSessionAndToken(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	paths := make([]string, 3)
+	for index := range paths {
+		paths[index] = filepath.Join(root, fmt.Sprintf("shot-%d.png", index))
+		if err := os.WriteFile(paths[index], []byte("synthetic image"), 0o600); err != nil {
+			t.Fatalf("write image: %v", err)
+		}
+	}
+	var homepageRequests atomic.Int32
+	var tokenRequests atomic.Int32
+	var uploadRequests atomic.Int32
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.String() {
+		case "https://imgbox.com/":
+			homepageRequests.Add(1)
+			header := http.Header{"Content-Type": []string{"text/html"}}
+			header.Add("Set-Cookie", "session=synthetic; Path=/")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     header,
+				Body:       io.NopCloser(strings.NewReader(`<input name="authenticity_token" value="csrf-token">`)),
+			}, nil
+		case "https://imgbox.com/ajax/token/generate":
+			tokenRequests.Add(1)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(
+					`{"token_id":"1","token_secret":"synthetic","gallery_id":"2","gallery_secret":"synthetic"}`,
+				)),
+			}, nil
+		case "https://imgbox.com/upload/process":
+			index := uploadRequests.Add(1)
+			body := fmt.Sprintf(
+				`{"ok":true,"files":[{"original_url":"https://img.example.invalid/raw-%d.png","thumbnail_url":"https://img.example.invalid/thumb-%d.png"}]}`,
+				index,
+				index,
+			)
+			return &http.Response{
+StatusCode: http.StatusOK,
+ Header: make(http.Header),
+ Body: io.NopCloser(strings.NewReader(body)),
+}, nil
+		default:
+			t.Fatalf("unexpected request URL: %s", req.URL.String())
+			return nil, nil
+		}
+	})}
+
+	results, err := (&imgboxUploader{client: client}).UploadBatch(context.Background(), paths)
+	if err != nil {
+		t.Fatalf("upload batch: %v", err)
+	}
+	if len(results) != len(paths) || homepageRequests.Load() != 1 || tokenRequests.Load() != 1 || uploadRequests.Load() != int32(len(paths)) {
+		t.Fatalf(
+			"batch results=%d homepage=%d token=%d uploads=%d",
+			len(results),
+			homepageRequests.Load(),
+			tokenRequests.Load(),
+			uploadRequests.Load(),
+		)
+	}
+}
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 

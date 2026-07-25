@@ -12,8 +12,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/cookies"
-	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -38,6 +36,9 @@ type uploadState struct {
 }
 
 func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+	if err := standalone.ValidatePreparation(ctx, req, validationPolicy()); err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: validate preparation: %w", err)
+	}
 	state, cookies, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
@@ -149,7 +150,7 @@ func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {
 }
 
 func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (uploadState, []*http.Cookie, error) {
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
+	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
 		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
@@ -159,12 +160,16 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 		assets = trackers.DescriptionAssets{}
 	}
 	description := buildDescription(req.Meta, assets)
+	releaseName, err := req.ReviewedUploadName()
+	if err != nil {
+		return uploadState{}, nil, fmt.Errorf("trackers: PTS reviewed upload name: %w", err)
+	}
 
 	state := uploadState{
 		torrentPath:   torrentPath,
 		description:   description,
-		releaseName:   metautil.FirstNonEmptyTrimmed(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
-		fields:        buildPayload(req.Meta, description),
+		releaseName:   releaseName,
+		fields:        buildPayload(req.Meta, description, releaseName),
 		questionnaire: buildQuestionnaire(req.Meta),
 		blockedReason: validateUpload(req.Meta),
 	}
@@ -175,111 +180,13 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 	return state, cookies, nil
 }
 
-func buildPayload(meta api.UploadSubject, description string) map[string]string {
+func buildPayload(meta api.UploadSubject, description string, releaseName string) map[string]string {
 	return map[string]string{
-		"name":  metautil.FirstNonEmptyTrimmed(meta.ReleaseName, meta.Release.Title, meta.Filename),
+		"name":  releaseName,
 		"url":   imdbURL(meta),
 		"descr": description,
 		"type":  resolveType(meta),
 	}
-}
-
-func buildDescription(meta api.UploadSubject, assets trackers.DescriptionAssets) string {
-	parts := make([]string, 0, 4)
-	if info := commonhttp.ReadOptionalFile(strings.TrimSpace(meta.MediaInfoTextPath)); strings.TrimSpace(info) != "" {
-		parts = append(parts, info)
-	}
-	if base := strings.TrimSpace(assets.Description); base != "" {
-		parts = append(parts, sanitizeDescription(base))
-	}
-	if shots := screenshotBlock(assets.Screenshots); shots != "" {
-		parts = append(parts, shots)
-	}
-	parts = append(parts, "[right][url=https://github.com/autobrr/upbrr][size=1]upbrr[/size][/url][/right]")
-	return finalizeDescription(strings.TrimSpace(strings.Join(parts, "\n\n")))
-}
-
-func buildQuestionnaire(meta api.UploadSubject) *api.TrackerQuestionnaire {
-	if hasMandarin(meta) {
-		return nil
-	}
-	answer := strings.ToLower(strings.TrimSpace(standalone.QuestionnaireAnswers(meta, "PTS")["mandarin_override"]))
-	return &api.TrackerQuestionnaire{
-		Tracker: "PTS",
-		Fields: []api.TrackerQuestionnaireField{{
-			Key:      "mandarin_override",
-			Label:    "Mandarin Requirement",
-			Kind:     "select",
-			Options:  []string{"no", "yes"},
-			Value:    metautil.FirstNonEmptyTrimmed(answer, "no"),
-			Help:     "PTS expects Mandarin audio or subtitles. Choose yes to override and upload anyway.",
-			Required: true,
-		}},
-	}
-}
-
-func validateUpload(meta api.UploadSubject) string {
-	if hasMandarin(meta) {
-		return ""
-	}
-	if strings.EqualFold(strings.TrimSpace(standalone.QuestionnaireAnswers(meta, "PTS")["mandarin_override"]), "yes") {
-		return ""
-	}
-	return "missing Mandarin audio/subtitles; answer the override questionnaire to continue"
-}
-
-func hasMandarin(meta api.UploadSubject) bool {
-	for _, values := range [][]string{meta.AudioLanguages, meta.SubtitleLanguages} {
-		for _, value := range values {
-			lower := strings.ToLower(strings.TrimSpace(value))
-			if strings.Contains(lower, "mandarin") || strings.Contains(lower, "chinese") {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
-	values, err := cookies.LoadTrackerHTTPCookies(ctx, dbPath, "PTS", "ptskit.org")
-	if err != nil {
-		return values, fmt.Errorf("trackers: PTS load cookies: %w", err)
-	}
-	return values, nil
-}
-
-func resolveType(meta api.UploadSubject) string {
-	if _, err := meta.Identity.RequireCategory(); err != nil {
-		return ""
-	}
-	if meta.Anime {
-		return "407"
-	}
-	if isTV(meta) {
-		return "405"
-	}
-	return "404"
-}
-
-func sanitizeDescription(input string) string {
-	return finalizeDescription(input)
-}
-
-func screenshotBlock(images []api.ScreenshotImage) string {
-	if len(images) == 0 {
-		return ""
-	}
-	lines := []string{"[center][b]Screenshots[/b]"}
-	for _, image := range images {
-		imgURL := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.ImgURL, image.RawURL))
-		webURL := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.WebURL, imgURL))
-		if imgURL == "" || webURL == "" {
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("[url=%s][img]%s[/img][/url]", webURL, imgURL))
-	}
-	lines = append(lines, "[/center]")
-	return strings.Join(lines, "\n")
 }
 
 func parseUploadID(location string, body string) string {
@@ -290,16 +197,4 @@ func parseUploadID(location string, body string) string {
 		}
 	}
 	return ""
-}
-
-func imdbURL(meta api.UploadSubject) string {
-	if meta.Identity.IMDBID <= 0 {
-		return ""
-	}
-	return fmt.Sprintf("https://www.imdb.com/title/tt%07d", meta.Identity.IMDBID)
-}
-
-func isTV(meta api.UploadSubject) bool {
-	category, err := meta.Identity.RequireCategory()
-	return err == nil && category == api.CanonicalCategoryTV
 }

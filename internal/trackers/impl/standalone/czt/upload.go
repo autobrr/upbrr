@@ -88,6 +88,11 @@ func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSumma
 		return api.UploadSummary{}, fmt.Errorf("context canceled: %w", err)
 	}
 	req.Intent = trackers.PreparationIntentUpload
+	var nameFailure *trackers.PreparationFailure
+	req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, Profile().ReleaseNamePolicy)
+	if nameFailure != nil {
+		return api.UploadSummary{}, nameFailure
+	}
 	plan, failure := trackers.PrepareAdapter(ctx, req, nil, prepareUpload)
 	if failure != nil {
 		return api.UploadSummary{}, failure
@@ -100,6 +105,9 @@ func upload(ctx context.Context, req trackers.PreparationInput) (api.UploadSumma
 }
 
 func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+	if err := standalone.ValidatePreparation(ctx, req, validationPolicy()); err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: validate preparation: %w", err)
+	}
 	state, err := prepareUploadState(ctx, req, req.Intent == trackers.PreparationIntentUpload)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
@@ -419,7 +427,7 @@ func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {
 }
 
 func prepareUploadState(ctx context.Context, req trackers.PreparationInput, requireCategory bool) (uploadState, error) {
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
+	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
 		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
@@ -431,7 +439,10 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, requ
 	// (user notes + screenshot images).
 	mediaInfo := buildMediaInfo(req)
 	userDescr := buildDescription(req, assets)
-	releaseName := resolveName(req.Meta)
+	releaseName, nameErr := req.ReviewedUploadName()
+	if nameErr != nil {
+		return uploadState{}, fmt.Errorf("trackers: CZT release name: %w", nameErr)
+	}
 	baseURL := resolveBaseURL()
 	passkey := strings.TrimSpace(req.TrackerConfig.Passkey)
 	if passkey == "" {
@@ -491,20 +502,6 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, requ
 		baseURL:       baseURL,
 		questionnaire: categoryQuestionnaire(req.Meta),
 	}, nil
-}
-
-// uploadDescriptionAssets uses caller-prepared assets when available, falling
-// back to local resolution and an empty asset set on resolution failure.
-func uploadDescriptionAssets(_ context.Context, req trackers.PreparationInput) trackers.DescriptionAssets {
-	if req.Assets != nil {
-		return *req.Assets
-	}
-	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
-	if err != nil {
-		trackers.LogDescriptionAssetResolutionFailure(req.Logger, req.Tracker, err)
-		return trackers.DescriptionAssets{}
-	}
-	return assets
 }
 
 // persistReturnedTorrent decodes the tracker-returned base64 torrent, verifies
@@ -652,51 +649,6 @@ func reserveReturnedTorrentBackupPath(dir string, pattern string) (string, error
 	return path, nil
 }
 
-// buildMediaInfo returns the raw MediaInfo/BDInfo text for the CZTeam `descr`
-// field.
-func buildMediaInfo(req trackers.PreparationInput) string {
-	return strings.TrimSpace(trackers.ReadBDinfoOrMediaInfo(req.Runtime.DBPath, req.Meta))
-}
-
-// buildDescription assembles the CZTeam `user_descr` body: the (possibly
-// user-edited) description text followed by a BBCode screenshot block. Kept as a
-// separate function so definition.BuildDescription can drive the description
-// builder UI with the same output.
-func buildDescription(_ trackers.PreparationInput, assets trackers.DescriptionAssets) string {
-	// A "final" description is the already-assembled body (saved override or
-	// canonical group description) with screenshots embedded; the resolver does
-	// not clear assets.Screenshots here, so re-appending would duplicate them.
-	// Use it verbatim, matching the assets.Final convention other impls follow.
-	if assets.Final {
-		return strings.TrimSpace(assets.Description)
-	}
-	parts := make([]string, 0, 2)
-	if body := strings.TrimSpace(assets.Description); body != "" {
-		parts = append(parts, body)
-	}
-	if shots := bbcodeScreenshotBlock(assets.Screenshots); shots != "" {
-		parts = append(parts, shots)
-	}
-	return strings.TrimSpace(strings.Join(parts, "\n\n"))
-}
-
-// bbcodeScreenshotBlock renders at most two raw screenshot image URLs. CZTeam's
-// formatter accepts plain [img] tags here; linked/thumbnail URLs are ignored.
-func bbcodeScreenshotBlock(images []api.ScreenshotImage) string {
-	parts := make([]string, 0, 2)
-	for _, image := range images {
-		raw := strings.TrimSpace(image.RawURL)
-		if raw == "" {
-			continue
-		}
-		parts = append(parts, "[img]"+raw+"[/img]")
-		if len(parts) == 2 {
-			break
-		}
-	}
-	return strings.Join(parts, "\n")
-}
-
 // resolveBaseURL returns the fixed CZTeam origin used for upload, details, and
 // returned download URLs. CZTeam is not a tracker family/configurable endpoint.
 func resolveBaseURL() string {
@@ -759,236 +711,6 @@ func resolveCZTURLBase(baseURL string) string {
 	parsed.Fragment = ""
 	parsed.User = nil
 	return strings.TrimRight(parsed.String(), "/")
-}
-
-func resolveName(meta api.UploadSubject) string {
-	if name := strings.TrimSpace(meta.SceneName); name != "" {
-		return name
-	}
-	return strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.ReleaseName, meta.Release.Title, meta.Filename))
-}
-
-// cztCategory pairs a CZTeam categories.id with its display name.
-type cztCategory struct {
-	id   string
-	name string
-}
-
-// cztCategories lists CZTeam upload categories for the upload-time override
-// dropdown. upbrr auto-detects only video categories from metadata; everything
-// else (software, games, music, XXX, images, docs, …) is chosen here.
-var cztCategories = []cztCategory{
-	{"1", "XxX"},
-	{"4", "Games/PC ISO"},
-	{"5", "TvEps/HD"},
-	{"6", "Music/Audio"},
-	{"7", "TvEps"},
-	{"9", "Mobile"},
-	{"12", "Games/Consoles"},
-	{"19", "Movies/XviD"},
-	{"20", "Movies/DVD-R"},
-	{"21", "Games/PC Rips"},
-	{"22", "Software"},
-	{"23", "Anime"},
-	{"24", "Images"},
-	{"25", "Docs"},
-	{"28", "Movies/DVD-RO"},
-	{"29", "Movies/HD"},
-	{"30", "Music/MVID"},
-	{"31", "MAC"},
-	{"32", "Sports"},
-	{"33", "Movies/HDTV-RO"},
-	{"34", "TvEps/HD-RO"},
-	{"35", "Music/Lossless"},
-	{"36", "Full BluRay-RO"},
-	{"37", "Movies/3D"},
-	{"38", "Movies-RO"},
-}
-
-func categoryNames() []string {
-	out := make([]string, 0, len(cztCategories))
-	for _, c := range cztCategories {
-		out = append(out, c.name)
-	}
-	return out
-}
-
-func categoryIDForName(name string) string {
-	name = strings.TrimSpace(name)
-	for _, c := range cztCategories {
-		if strings.EqualFold(c.name, name) {
-			return c.id
-		}
-	}
-	return ""
-}
-
-func categoryNameForID(id string) string {
-	for _, c := range cztCategories {
-		if c.id == id {
-			return c.name
-		}
-	}
-	return ""
-}
-
-// categoryQuestionnaire offers a (non-blocking) category dropdown pre-filled
-// with the auto-detected category, so the user can override it for content
-// upbrr can't classify from video metadata.
-func categoryQuestionnaire(meta api.UploadSubject) *api.TrackerQuestionnaire {
-	auto := autoCategory(meta)
-	return &api.TrackerQuestionnaire{
-		Tracker: trackerName,
-		Fields: []api.TrackerQuestionnaireField{{
-			Key:      "category",
-			Label:    "Category",
-			Kind:     "select",
-			Options:  categoryNames(),
-			Value:    categoryNameForID(auto),
-			Help:     "Auto-detected from video metadata. Override for software, games, music, XXX, etc.",
-			Required: auto == "",
-		}},
-	}
-}
-
-// resolveCategory returns the CZTeam category id: an explicit questionnaire
-// override when the user picked one, otherwise the auto-detected video category.
-func resolveCategory(meta api.UploadSubject) (string, error) {
-	if id := resolveQuestionnaireCategory(standalone.QuestionnaireAnswers(meta, trackerName)["category"]); id != "" {
-		return id, nil
-	}
-	if id := autoCategory(meta); id != "" {
-		return id, nil
-	}
-	return "", errors.New("trackers: CZT category requires explicit questionnaire selection for non-video content")
-}
-
-func resolveQuestionnaireCategory(value string) string {
-	if id := categoryIDForName(value); id != "" {
-		return id
-	}
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	for _, c := range cztCategories {
-		if c.id == trimmed {
-			return c.id
-		}
-	}
-	return ""
-}
-
-// autoCategory maps prepared metadata to a CZTeam numeric categories.id when
-// metadata supports automatic classification. Unknown non-video content returns
-// empty so callers can require an explicit questionnaire category instead of
-// falling back to a movie bucket.
-func autoCategory(meta api.UploadSubject) string {
-	category, err := meta.Identity.RequireCategory()
-	if err != nil {
-		return ""
-	}
-
-	ro := hasRomanianSubs(meta)
-	hd := isHD(meta.Release.Resolution)
-
-	switch {
-	case meta.Anime:
-		return "23" // Anime
-	case category == api.CanonicalCategoryTV:
-		if hd && ro {
-			return "34" // TvEps/HD-RO
-		}
-		if hd {
-			return "5" // TvEps/HD
-		}
-		return "7" // TvEps (no SD-RO TV category exists)
-	}
-
-	// Movies.
-	src := strings.ToUpper(metautil.FirstNonEmptyTrimmed(meta.Source, meta.Release.Source))
-	isDVD := strings.Contains(src, "DVD") || strings.EqualFold(meta.DiscType, "DVD") || strings.EqualFold(meta.Type, "DVDRIP")
-	isFullBluRay := strings.EqualFold(meta.DiscType, "BDMV") ||
-		(strings.EqualFold(meta.Type, "REMUX") && strings.Contains(src, "BLURAY"))
-	if category != api.CanonicalCategoryMovie {
-		return ""
-	}
-
-	if ro {
-		switch {
-		case isFullBluRay:
-			return "36" // Full BluRay-RO
-		case isDVD:
-			return "28" // Movies/DVD-RO
-		case hd:
-			return "33" // Movies/HDTV-RO
-		default:
-			return "38" // Movies-RO
-		}
-	}
-	switch {
-	case isDVD:
-		return "20" // Movies/DVD-R
-	case hd:
-		return "29" // Movies/HD
-	case hasCodec(meta, "XviD"):
-		return "19" // Movies/XviD
-	default:
-		return "29" // default to Movies/HD when movie evidence exists
-	}
-}
-
-func missingRequiredCategory(state uploadState) bool {
-	if state.questionnaire == nil {
-		return false
-	}
-	if strings.TrimSpace(state.fields["category"]) != "" {
-		return false
-	}
-	for _, field := range state.questionnaire.Fields {
-		if field.Key == "category" && field.Required {
-			return true
-		}
-	}
-	return false
-}
-
-func hasRomanianSubs(meta api.UploadSubject) bool {
-	for _, s := range meta.SubtitleLanguages {
-		v := strings.ToLower(strings.TrimSpace(s))
-		if v == "ro" || v == "rum" || v == "ron" || strings.HasPrefix(v, "roman") {
-			return true
-		}
-	}
-	return false
-}
-
-func isHD(res string) bool {
-	res = strings.TrimSpace(res)
-	for _, prefix := range []string{"720", "1080", "2160", "4320"} {
-		if strings.HasPrefix(res, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func hasCodec(meta api.UploadSubject, want string) bool {
-	for _, c := range meta.Release.Codec {
-		if strings.EqualFold(strings.TrimSpace(c), want) {
-			return true
-		}
-	}
-	return false
-}
-
-func firstCodec(meta api.UploadSubject) string {
-	for _, c := range meta.Release.Codec {
-		if v := strings.TrimSpace(c); v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 func imdbID(meta api.UploadSubject) string {

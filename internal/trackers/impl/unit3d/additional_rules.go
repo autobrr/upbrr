@@ -23,6 +23,41 @@ var ruleResolutionOrder = map[string]int{
 	"8640p": 11,
 }
 
+// ValidationRuleSubject projects the shared validation contract into the
+// narrower helpers used by existing Unit3D site policies.
+func ValidationRuleSubject(meta api.TrackerValidationSubject) api.RuleSubject {
+	return api.RuleSubject{
+		SourcePath:         meta.SourcePath,
+		VideoPath:          meta.VideoPath,
+		FileList:           append([]string(nil), meta.FileList...),
+		DiscType:           meta.DiscType,
+		Scene:              meta.Scene,
+		SceneRenamed:       meta.SceneRenamed,
+		SceneRenamedReason: meta.SceneRenamedReason,
+		PersonalRelease:    meta.PersonalRelease,
+		Release:            meta.Release,
+		ReleaseName:        meta.ReleaseName,
+		ReleaseNameNoTag:   meta.ReleaseNameNoTag,
+		Tag:                meta.Tag,
+		Identity:           meta.Identity,
+		ProviderMetadata:   meta.ProviderMetadata,
+		AudioLanguages:     append([]string(nil), meta.AudioLanguages...),
+		SubtitleLanguages:  append([]string(nil), meta.SubtitleLanguages...),
+		TVPack:             meta.TVPack,
+		Type:               meta.Type,
+		Source:             meta.Source,
+		Container:          meta.Container,
+		BitDepth:           meta.BitDepth,
+		VideoCodec:         meta.VideoCodec,
+		VideoEncode:        meta.VideoEncode,
+		HDR:                meta.HDR,
+		Region:             meta.Region,
+		WebDV:              meta.WebDV,
+		Anime:              meta.Anime,
+		Assessments:        meta.Assessments,
+	}
+}
+
 // ResolutionBelow reports whether value ranks below minimum in the Unit3D resolution order.
 func ResolutionBelow(value, minimum string) bool {
 	return ruleResolutionOrder[value] < ruleResolutionOrder[minimum]

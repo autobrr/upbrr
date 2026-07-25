@@ -12,7 +12,11 @@ import (
 
 func evaluateSiteRules(t *testing.T, tracker string, meta api.RuleSubject) []api.RuleFailure {
 	t.Helper()
-	failures, err := New(tracker).evaluateRules(context.Background(), meta, api.NopLogger{})
+	failures, err := New(tracker).evaluateRules(
+		context.Background(),
+		api.NewTrackerValidationSubjectFromRuleSubject(meta, tracker),
+		api.NopLogger{},
+	)
 	if err != nil {
 		t.Fatalf("evaluate %s rules: %v", tracker, err)
 	}
@@ -57,23 +61,23 @@ func TestEvaluateRulesCountryRestrictionsAreStrict(t *testing.T) {
 		rule    string
 	}{
 		{
-name: "AZ redirect",
- tracker: "AZ",
- country: "US",
- rule: "country_redirect",
-},
+			name:    "AZ redirect",
+			tracker: "AZ",
+			country: "US",
+			rule:    "country_redirect",
+		},
 		{
-name: "CZ block",
- tracker: "CZ",
- country: "AQ",
- rule: "country_block",
-},
+			name:    "CZ block",
+			tracker: "CZ",
+			country: "AQ",
+			rule:    "country_block",
+		},
 		{
-name: "PHD block",
- tracker: "PHD",
- country: "AQ",
- rule: "country_block",
-},
+			name:    "PHD block",
+			tracker: "PHD",
+			country: "AQ",
+			rule:    "country_block",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

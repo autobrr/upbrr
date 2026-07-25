@@ -2325,6 +2325,53 @@ func TestTrackerAuthSnapshotRestoreIgnoresCanceledContext(t *testing.T) {
 	}
 }
 
+func TestValidateBoundsRemoteAuthAndFailedValidationIsNotReady(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newTrackerAuthTestDB(t)
+	deadlineCh := make(chan time.Time, 1)
+	adapter := &fakeAdapter{
+		capability: api.TrackerAuthCapability{TrackerID: "MTV", SupportsLogin: true},
+		validateCtx: func(ctx context.Context) (Session, error) {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				return Session{}, errors.New("validation context has no deadline")
+			}
+			deadlineCh <- deadline
+			return Session{}, &ValidationError{
+				TrackerID: "MTV",
+				Transient: true,
+				Reason:    "remote validation unavailable",
+				Err:       context.DeadlineExceeded,
+			}
+		},
+	}
+	service := newTestService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"MTV": {Username: "user", Password: "pass"},
+		}},
+	})
+	service.adapters["MTV"] = adapter
+
+	startedAt := time.Now()
+	status, err := service.Validate(context.Background(), "MTV")
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	deadline := <-deadlineCh
+	if deadline.Before(startedAt.Add(trackerAuthValidationTimeout-time.Second)) ||
+		deadline.After(startedAt.Add(trackerAuthValidationTimeout+time.Second)) {
+		t.Fatalf("validation deadline = %v, expected approximately %v", deadline, startedAt.Add(trackerAuthValidationTimeout))
+	}
+	if strings.TrimSpace(status.LastError) == "" {
+		t.Fatal("expected failed validation detail")
+	}
+	if IsReadyStatus(status) {
+		t.Fatalf("failed remote validation reported ready: %#v", status)
+	}
+}
+
 func TestValidateManyRunsTrackerChecksConcurrentlyAndPreservesOrder(t *testing.T) {
 	t.Parallel()
 

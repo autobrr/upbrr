@@ -1,0 +1,341 @@
+// Copyright (c) 2025-2026, Audionut and the autobrr contributors.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+package webserver
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
+	"github.com/autobrr/upbrr/pkg/api"
+)
+
+const apiV1TestToken = "synthetic-api-token-000000000001"
+
+func TestAPITokenStoreScopesAndOwnerIsolation(t *testing.T) {
+	t.Parallel()
+
+	store, err := newAPITokenStore([]APITokenCredential{
+		{
+			Token:   apiV1TestToken,
+			OwnerID: "automation",
+			Scopes:  []APITokenScope{APITokenScopeWorkflowRead},
+		},
+	})
+	if err != nil {
+		t.Fatalf("new token store: %v", err)
+	}
+	principal, ok := store.authenticate(apiV1TestToken)
+	if !ok || principal.OwnerID != "api:automation" || len(principal.Scopes) != 1 || principal.Scopes[0] != APITokenScopeWorkflowRead {
+		t.Fatalf("principal = %#v, ok=%t", principal, ok)
+	}
+	if _, ok := store.authenticate("synthetic-api-token-000000000002"); ok {
+		t.Fatal("unexpected authentication for different token")
+	}
+	if _, err := newAPITokenStore([]APITokenCredential{{Token: "short", OwnerID: "owner"}}); err == nil {
+		t.Fatal("expected short token rejection")
+	}
+}
+
+func TestAPIV1AuthIsSeparateFromBrowserCSRFAndEnforcesScope(t *testing.T) {
+	t.Parallel()
+
+	store, err := newAPITokenStore([]APITokenCredential{{
+		Token:   apiV1TestToken,
+		OwnerID: "reader",
+		Scopes:  []APITokenScope{APITokenScopeWorkflowRead},
+	}})
+	if err != nil {
+		t.Fatalf("new token store: %v", err)
+	}
+	server := &Server{
+		apiTokens:      store,
+		generalLimiter: newFixedWindowLimiter(100, time.Minute),
+	}
+	mux := http.NewServeMux()
+	server.registerV1Routes(mux)
+
+	csrfOnly := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/api/v1/continuations",
+		strings.NewReader(`{"goal":"prepared","intent":{}}`),
+	)
+	csrfOnly.Header.Set("X-Csrf-Token", apiV1TestToken)
+	csrfOnly.Header.Set("Idempotency-Key", "csrf-is-not-bearer")
+	csrfResponse := httptest.NewRecorder()
+	mux.ServeHTTP(csrfResponse, csrfOnly)
+	if csrfResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("CSRF-only status = %d, want 401", csrfResponse.Code)
+	}
+
+	readToken := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/api/v1/continuations",
+		strings.NewReader(`{"goal":"prepared","intent":{}}`),
+	)
+	readToken.Header.Set("Authorization", "Bearer "+apiV1TestToken)
+	readToken.Header.Set("Idempotency-Key", "read-scope-write")
+	readResponse := httptest.NewRecorder()
+	mux.ServeHTTP(readResponse, readToken)
+	if readResponse.Code != http.StatusForbidden {
+		t.Fatalf("read-scope write status = %d, want 403", readResponse.Code)
+	}
+}
+
+func TestAPIV1RejectsOversizedAndUnknownRequestBodiesBeforeExecution(t *testing.T) {
+	t.Parallel()
+
+	store, err := newAPITokenStore([]APITokenCredential{{Token: apiV1TestToken, OwnerID: "writer"}})
+	if err != nil {
+		t.Fatalf("new token store: %v", err)
+	}
+	server := &Server{
+		apiTokens:      store,
+		generalLimiter: newFixedWindowLimiter(100, time.Minute),
+	}
+	mux := http.NewServeMux()
+	server.registerV1Routes(mux)
+
+	oversized := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/api/v1/continuations",
+		bytes.NewReader(append([]byte(`{"goal":"prepared","intent":{},"padding":"`), bytes.Repeat([]byte("x"), apiV1RequestMaxBytes)...)),
+	)
+	oversized.Header.Set("Authorization", "Bearer "+apiV1TestToken)
+	oversized.Header.Set("Idempotency-Key", "oversized")
+	oversizedResponse := httptest.NewRecorder()
+	mux.ServeHTTP(oversizedResponse, oversized)
+	if oversizedResponse.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized status = %d, want 413", oversizedResponse.Code)
+	}
+
+	unknown := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/api/v1/continuations",
+		strings.NewReader(`{"goal":"prepared","intent":{},"unknown":true}`),
+	)
+	unknown.Header.Set("Authorization", "Bearer "+apiV1TestToken)
+	unknown.Header.Set("Idempotency-Key", "unknown-field")
+	unknownResponse := httptest.NewRecorder()
+	mux.ServeHTTP(unknownResponse, unknown)
+	if unknownResponse.Code != http.StatusBadRequest {
+		t.Fatalf("unknown-field status = %d, want 400", unknownResponse.Code)
+	}
+}
+
+func TestAPIV1AppliesGeneralRateLimitBeforeAuthentication(t *testing.T) {
+	t.Parallel()
+
+	store, err := newAPITokenStore([]APITokenCredential{{Token: apiV1TestToken, OwnerID: "reader"}})
+	if err != nil {
+		t.Fatalf("new token store: %v", err)
+	}
+	server := &Server{
+		apiTokens:      store,
+		generalLimiter: newFixedWindowLimiter(0, time.Minute),
+	}
+	mux := http.NewServeMux()
+	server.registerV1Routes(mux)
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/workflows/workflow-1", nil)
+	request.Header.Set("Authorization", "Bearer "+apiV1TestToken)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusTooManyRequests {
+		t.Fatalf("rate-limited status = %d, want 429", response.Code)
+	}
+}
+
+func TestAPIV1CommandRoutesDecodeSharedWorkflowRequests(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		method   string
+		segments []string
+		body     string
+		want     any
+	}{
+		{"invalidate", http.MethodPost, []string{"workflow-1", "trackers", "invalidate"}, `{"trackerIds":["EXAMPLE"]}`, releaseworkflow.InvalidateTrackersCommand{}},
+		{"select media", http.MethodPut, []string{"workflow-1", "media", "media-1", "selection"}, `{"media":{"revision":1},"artifactIds":["artifact-1"],"selected":true}`, releaseworkflow.SetMediaSelectionCommand{}},
+		{"delete media", http.MethodPost, []string{"workflow-1", "media", "media-1", "delete"}, `{"media":{"revision":1},"artifactIds":["artifact-1"]}`, releaseworkflow.DeleteMediaArtifactsCommand{}},
+		{"reorder media", http.MethodPut, []string{"workflow-1", "media", "media-1", "reorder"}, `{"media":{"revision":1},"artifactIds":["artifact-1"]}`, releaseworkflow.ReorderMediaArtifactsCommand{}},
+		{"attach media", http.MethodPost, []string{"workflow-1", "media", "attach"}, `{"attachments":[{"resource":{"id":"resource-1"},"kind":"screenshot","purpose":"final"}]}`, releaseworkflow.AttachMediaArtifactsCommand{}},
+		{"upload images", http.MethodPost, []string{"workflow-1", "media", "media-1", "images", "upload"}, `{"media":{"revision":1},"artifactIds":["artifact-1"],"host":"imgbox"}`, releaseworkflow.UploadMediaImagesCommand{}},
+		{"retry image host", http.MethodPost, []string{"workflow-1", "media", "media-1", "images", "retry"}, `{"media":{"revision":1},"artifactIds":["artifact-1"],"host":"imgbox"}`, releaseworkflow.UploadMediaImagesCommand{}},
+		{"remove hosted images", http.MethodPost, []string{"workflow-1", "media", "media-1", "images", "remove"}, `{"media":{"revision":1},"artifactIds":["artifact-1"]}`, releaseworkflow.RemoveHostedImagesCommand{}},
+		{"save description", http.MethodPost, []string{"workflow-1", "descriptions", "description-1", "groups", "group-1", "save"}, `{"override":{"descriptions":{"revision":1},"source":"synthetic"}}`, releaseworkflow.SaveDescriptionOverrideCommand{}},
+		{"reset description", http.MethodPost, []string{"workflow-1", "descriptions", "description-1", "groups", "group-1", "reset"}, `{"descriptions":{"revision":1}}`, releaseworkflow.ResetDescriptionOverrideCommand{}},
+		{"retry upload", http.MethodPost, []string{"workflow-1", "uploads", "result-1", "retry"}, `{"retry":{"result":{"revision":1},"trackerIds":["EXAMPLE"]}}`, releaseworkflow.RetryFailedUploadsCommand{}},
+		{"cancel", http.MethodPost, []string{"workflow-1", "cancel"}, `{}`, releaseworkflow.CancelWorkflowCommand{}},
+	}
+
+	server := &Server{}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			request := httptest.NewRequestWithContext(context.Background(), test.method, "/", strings.NewReader(test.body))
+			response := httptest.NewRecorder()
+			command, ok := server.apiV1WorkflowCommand(
+				response,
+				request,
+				api.WorkflowID("workflow-1"),
+				3,
+				"idempotency-1",
+				test.segments,
+			)
+			if !ok {
+				t.Fatalf("route rejected shared request: status=%d body=%s", response.Code, response.Body.String())
+			}
+			if reflect.TypeOf(command) != reflect.TypeOf(test.want) {
+				t.Fatalf("command type = %T, want %T", command, test.want)
+			}
+		})
+	}
+}
+
+func TestAPIV1RetiredStageRoutesAreNotCommands(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		method   string
+		segments []string
+	}{
+		{"replace facts", http.MethodPut, []string{"workflow-1", "facts"}},
+		{"prepare", http.MethodPost, []string{"workflow-1", "prepare"}},
+		{"reset", http.MethodPost, []string{"workflow-1", "reset"}},
+		{"candidate", http.MethodPost, []string{"workflow-1", "candidates", "candidate-1", "select"}},
+		{"project", http.MethodPost, []string{"workflow-1", "trackers", "project"}},
+		{"preflight", http.MethodPost, []string{"workflow-1", "trackers", "preflight"}},
+		{"check duplicates", http.MethodPost, []string{"workflow-1", "duplicates", "check"}},
+		{"decide duplicates", http.MethodPost, []string{"workflow-1", "duplicates", "decide"}},
+		{"capture media", http.MethodPost, []string{"workflow-1", "media", "capture"}},
+		{"generate descriptions", http.MethodPost, []string{"workflow-1", "descriptions", "generate"}},
+		{"dry run", http.MethodPost, []string{"workflow-1", "uploads", "dry-run"}},
+		{"upload", http.MethodPost, []string{"workflow-1", "uploads", "execute"}},
+		{"resolve action", http.MethodPost, []string{"workflow-1", "actions", "action-1"}},
+	}
+
+	server := &Server{}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			request := httptest.NewRequestWithContext(context.Background(), test.method, "/", strings.NewReader(`{}`))
+			response := httptest.NewRecorder()
+			if command, ok := server.apiV1WorkflowCommand(
+				response,
+				request,
+				api.WorkflowID("workflow-1"),
+				3,
+				"idempotency-1",
+				test.segments,
+			); ok || command != nil || response.Code != http.StatusNotFound {
+				t.Fatalf("retired route command=%T ok=%v status=%d", command, ok, response.Code)
+			}
+		})
+	}
+}
+
+func TestReleaseWorkflowOpenAPICoversRuntimeRoutes(t *testing.T) {
+	t.Parallel()
+
+	var document struct {
+		OpenAPI string `json:"openapi"`
+		Paths   map[string]map[string]struct {
+			Responses map[string]json.RawMessage `json:"responses"`
+		} `json:"paths"`
+		Components struct {
+			Schemas map[string]struct {
+				Required []string `json:"required"`
+			} `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(releaseWorkflowOpenAPI, &document); err != nil {
+		t.Fatalf("parse embedded OpenAPI: %v", err)
+	}
+	if document.OpenAPI != "3.1.0" {
+		t.Fatalf("openapi = %q", document.OpenAPI)
+	}
+	want := map[string]string{
+		"/continuations":                                                               "post",
+		"/workflows/{workflowId}":                                                      "get",
+		"/workflows/{workflowId}/trackers/invalidate":                                  "post",
+		"/workflows/{workflowId}/media/plan":                                           "get",
+		"/workflows/{workflowId}/media/previews":                                       "post",
+		"/workflows/{workflowId}/media/previews/{previewId}":                           "get",
+		"/workflows/{workflowId}/media/resources":                                      "post",
+		"/workflows/{workflowId}/media/attach":                                         "post",
+		"/workflows/{workflowId}/media/{mediaId}/artifacts/{artifactId}":               "get",
+		"/workflows/{workflowId}/media/{mediaId}/selection":                            "put",
+		"/workflows/{workflowId}/media/{mediaId}/reorder":                              "put",
+		"/workflows/{workflowId}/media/{mediaId}/delete":                               "post",
+		"/workflows/{workflowId}/media/{mediaId}/images/upload":                        "post",
+		"/workflows/{workflowId}/media/{mediaId}/images/retry":                         "post",
+		"/workflows/{workflowId}/media/{mediaId}/images/remove":                        "post",
+		"/workflows/{workflowId}/descriptions/{descriptionId}/groups/{groupKey}/save":  "post",
+		"/workflows/{workflowId}/descriptions/{descriptionId}/groups/{groupKey}/reset": "post",
+		"/workflows/{workflowId}/uploads/{resultId}/retry":                             "post",
+		"/workflows/{workflowId}/cancel":                                               "post",
+		"/workflows/{workflowId}/operations/{operationId}":                             "get",
+		"/workflows/{workflowId}/operations/{operationId}/cancel":                      "post",
+	}
+	for requestPath, method := range want {
+		methods, ok := document.Paths[requestPath]
+		if !ok {
+			t.Fatalf("OpenAPI missing path %s", requestPath)
+		}
+		if _, ok := methods[method]; !ok {
+			t.Fatalf("OpenAPI path %s missing method %s", requestPath, method)
+		}
+	}
+	for _, requestPath := range []string{
+		"/workflows/{workflowId}/media/{mediaId}/images/upload",
+		"/workflows/{workflowId}/media/{mediaId}/images/retry",
+		"/workflows/{workflowId}/uploads/{resultId}/retry",
+	} {
+		if _, ok := document.Paths[requestPath]["post"].Responses["202"]; !ok {
+			t.Fatalf("OpenAPI long-running path %s does not return 202", requestPath)
+		}
+	}
+	for _, requestPath := range []string{
+		"/workflows",
+		"/workflows/{workflowId}/facts",
+		"/workflows/{workflowId}/prepare",
+		"/workflows/{workflowId}/reset",
+		"/workflows/{workflowId}/candidates/{candidateId}/select",
+		"/workflows/{workflowId}/trackers/project",
+		"/workflows/{workflowId}/trackers/preflight",
+		"/workflows/{workflowId}/duplicates/check",
+		"/workflows/{workflowId}/duplicates/decide",
+		"/workflows/{workflowId}/media/capture",
+		"/workflows/{workflowId}/descriptions/generate",
+		"/workflows/{workflowId}/uploads/dry-run",
+		"/workflows/{workflowId}/uploads/execute",
+		"/workflows/{workflowId}/actions/{actionId}",
+	} {
+		if _, ok := document.Paths[requestPath]; ok {
+			t.Fatalf("OpenAPI retained retired stage path %s", requestPath)
+		}
+	}
+	required := make(map[string]struct{})
+	for _, field := range document.Components.Schemas["Operation"].Required {
+		required[field] = struct{}{}
+	}
+	for _, field := range []string{"sequence", "command", "completed", "total", "updatedAt"} {
+		if _, ok := required[field]; !ok {
+			t.Fatalf("OpenAPI operation schema does not require %s", field)
+		}
+	}
+}

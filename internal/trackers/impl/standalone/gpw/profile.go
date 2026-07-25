@@ -5,6 +5,7 @@ package gpw
 
 import (
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 )
 
@@ -15,9 +16,11 @@ func Profile() standalone.Profile {
 		BaseURL:              baseURL,
 		DescriptionGroup:     "gpw",
 		UploadContentMode:    trackers.UploadContentModeDescription,
+		AuthCapability:       authcontract.APIKeyCapability("GPW"),
 		PrepareDescription:   prepareDescription,
 		PrepareUpload:        prepareUpload,
 		NewDuplicateAdapter:  newDuplicateAdapter,
+		ValidationPolicy:     validationPolicy(),
 		BannedGroups:         bannedGroups(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: sourceFlag},
 		ImageHostPolicy: &trackers.ImageHostPolicy{

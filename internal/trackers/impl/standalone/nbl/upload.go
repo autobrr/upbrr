@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/httpclient"
-	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -36,6 +35,9 @@ type uploadState struct {
 }
 
 func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+	if err := standalone.ValidatePreparation(ctx, req, validationPolicy()); err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: validate preparation: %w", err)
+	}
 	state, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
@@ -128,6 +130,11 @@ func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {
 }
 
 func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (uploadState, error) {
+	var nameFailure *trackers.PreparationFailure
+	req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, Profile().ReleaseNamePolicy)
+	if nameFailure != nil {
+		return uploadState{}, nameFailure
+	}
 	select {
 	case <-ctx.Done():
 		return uploadState{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -137,13 +144,17 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 		return uploadState{}, errors.New("trackers: NBL missing api_key")
 	}
 
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
+	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
 		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
 	mediaInfo, err := resolveMediaInfo(req.Meta)
 	if err != nil {
 		return uploadState{}, err
+	}
+	releaseName, err := req.ReviewedUploadName()
+	if err != nil {
+		return uploadState{}, fmt.Errorf("trackers: NBL reviewed upload name: %w", err)
 	}
 
 	fields := map[string]string{
@@ -157,7 +168,7 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 
 	return uploadState{
 		torrentPath: torrentPath,
-		releaseName: resolveUploadName(req.Meta),
+		releaseName: releaseName,
 		fields:      fields,
 	}, nil
 }
@@ -190,37 +201,6 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 		return nil, "", fmt.Errorf("trackers: NBL close multipart writer: %w", err)
 	}
 	return body.Bytes(), writer.FormDataContentType(), nil
-}
-
-func resolveMediaInfo(meta api.UploadSubject) (string, error) {
-	if strings.TrimSpace(meta.MediaInfoTextPath) == "" {
-		return "", errors.New("trackers: NBL missing mediainfo text")
-	}
-	payload, err := os.ReadFile(strings.TrimSpace(meta.MediaInfoTextPath))
-	if err != nil {
-		return "", fmt.Errorf("trackers: NBL read mediainfo: %w", err)
-	}
-	return string(payload), nil
-}
-
-func resolveCategoryID(meta api.UploadSubject) int {
-	if meta.TVPack {
-		return 3
-	}
-	return 1
-}
-
-func resolveUploadName(meta api.UploadSubject) string {
-	if name := strings.TrimSpace(meta.ReleaseName); name != "" {
-		return name
-	}
-	if name := strings.TrimSpace(meta.ReleaseNameNoTag); name != "" {
-		return name
-	}
-	if name := strings.TrimSpace(meta.Filename); name != "" {
-		return name
-	}
-	return pathutil.Base(meta.SourcePath)
 }
 
 func nblString(value any) string {

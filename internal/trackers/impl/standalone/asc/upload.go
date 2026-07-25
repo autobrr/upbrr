@@ -42,6 +42,9 @@ type uploadState struct {
 }
 
 func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+	if err := standalone.ValidatePreparation(ctx, req, validationPolicy()); err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: validate preparation: %w", err)
+	}
 	state, cookies, err := prepareUploadState(ctx, req, req.Intent != trackers.PreparationIntentUpload)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
@@ -163,7 +166,7 @@ func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {
 }
 
 func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryRun bool) (uploadState, []*http.Cookie, error) {
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
+	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
 		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
@@ -176,7 +179,11 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryR
 
 	description := buildDescription(ctx, req.Meta, req.Runtime.DescriptionConfig(), assets, req.TrackerConfig.CustomLayout)
 
-	fields, releaseName := buildPayload(req.Meta, req.TrackerConfig, assets, description)
+	releaseName, nameErr := req.ReviewedUploadName()
+	if nameErr != nil {
+		return uploadState{}, nil, fmt.Errorf("trackers: ASC release name: %w", nameErr)
+	}
+	fields := buildPayload(req.Meta, req.TrackerConfig, assets, description, releaseName)
 	state := uploadState{
 		uploadURL:     resolveUploadURL(req.Meta),
 		torrentPath:   torrentPath,
@@ -185,7 +192,9 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryR
 		releaseName:   releaseName,
 		questionnaire: buildQuestionnaire(req.Meta),
 	}
-	if reason := validatePayload(ctx, req.Meta, fields, req.Runtime.DBPath); reason != "" {
+	if reason := authProblem(ctx, req.Runtime.DBPath); reason != "" {
+		state.blockedReason = reason
+	} else if reason := validatePayloadFields(req.Meta, fields); reason != "" {
 		state.blockedReason = reason
 	}
 	if dryRun {
@@ -204,9 +213,9 @@ func buildPayload(
 	trackerCfg config.TrackerConfig,
 	assets trackers.DescriptionAssets,
 	description string,
-) (map[string]string, string) {
+	releaseName string,
+) map[string]string {
 	answers := standalone.QuestionnaireAnswers(meta, "ASC")
-	releaseName := resolveUploadTitle(meta)
 	fields := map[string]string{
 		"ano":        strconv.Itoa(resolveYear(meta)),
 		"audio":      resolveAudio(meta),
@@ -251,54 +260,7 @@ func buildPayload(
 		fields["idioma"] = resolveAnimeLanguage(meta)
 		fields["lang"] = resolveAnimeAudioLanguage(meta)
 	}
-	return fields, releaseName
-}
-
-func buildQuestionnaire(meta api.UploadSubject) *api.TrackerQuestionnaire {
-	answers := standalone.QuestionnaireAnswers(meta, "ASC")
-	fields := make([]api.TrackerQuestionnaireField, 0, 2)
-	if strings.TrimSpace(resolveOverview(meta, answers)) == "" {
-		fields = append(fields, api.TrackerQuestionnaireField{
-			Key:      "overview",
-			Label:    "Sinopse",
-			Kind:     "textarea",
-			Value:    strings.TrimSpace(answers["overview"]),
-			Required: true,
-		})
-	}
-	if strings.TrimSpace(resolveGenres(meta, answers)) == "" {
-		fields = append(fields, api.TrackerQuestionnaireField{
-			Key:         "genre",
-			Label:       "Gêneros",
-			Kind:        "text",
-			Value:       strings.TrimSpace(answers["genre"]),
-			Placeholder: "Drama, Action",
-			Required:    true,
-		})
-	}
-	if len(fields) == 0 {
-		return nil
-	}
-	return &api.TrackerQuestionnaire{Tracker: "ASC", Fields: fields}
-}
-
-func validatePayload(ctx context.Context, meta api.UploadSubject, fields map[string]string, dbPath string) string {
-	if reason := authProblem(ctx, dbPath); reason != "" {
-		return reason
-	}
-	if !meta.Anime && strings.TrimSpace(fields["imdb"]) == "" {
-		return "missing IMDb ID"
-	}
-	if strings.TrimSpace(fields["capa"]) == "" {
-		return "missing poster URL"
-	}
-	if strings.TrimSpace(fields["genre"]) == "" {
-		return "missing genre"
-	}
-	if strings.TrimSpace(resolveOverview(meta, standalone.QuestionnaireAnswers(meta, "ASC"))) == "" {
-		return "missing overview"
-	}
-	return ""
+	return fields
 }
 
 func resolveUploadURL(meta api.UploadSubject) string {

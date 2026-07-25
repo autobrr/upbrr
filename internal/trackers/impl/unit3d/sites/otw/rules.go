@@ -13,27 +13,30 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// Rules returns OTW's waivable genre, adult-content, reality-content, and
-// release-group restrictions.
-func Rules() *trackers.RuleSet { return &trackers.RuleSet{Check: checkGenres} }
+// ValidationPolicy returns OTW's waivable genre, adult-content,
+// reality-content, and release-group restrictions.
+func ValidationPolicy() trackers.ValidationPolicyBinding {
+	return trackers.ValidationPolicyBinding{ID: "unit3d-otw-policy-v1", Check: checkGenres}
+}
 
-func checkGenres(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {
+func checkGenres(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context canceled: %w", err)
 	}
 	failures := make([]api.RuleFailure, 0, 3)
-	genres := unit3d.RuleGenres(meta)
+	ruleSubject := unit3d.ValidationRuleSubject(meta)
+	genres := unit3d.RuleGenres(ruleSubject)
 	if !unit3d.ContainsRuleValue(genres, []string{"animation", "family"}) {
 		failures = append(failures, trackers.NewRuleFailure("genre", "Genre does not match Animation or Family for OTW.", api.RuleDispositionWaivable))
 	}
-	if unit3d.AdultContent(meta) {
+	if unit3d.AdultContent(ruleSubject) {
 		failures = append(failures, trackers.NewRuleFailure("block_adult", "Adult animation not allowed at OTW.", api.RuleDispositionWaivable))
 	}
 	if unit3d.ContainsRuleValue(genres, []string{"reality", "game show", "game-show", "reality tv", "reality television"}) {
 		failures = append(failures, trackers.NewRuleFailure("block_reality", "Reality / Game Show content not allowed at OTW.", api.RuleDispositionWaivable))
 	}
-	typeValue := unit3d.RuleType(meta)
-	group := unit3d.RuleGroup(meta)
+	typeValue := unit3d.RuleType(ruleSubject)
+	group := unit3d.RuleGroup(ruleSubject)
 	if group != "" && typeValue != "WEBDL" && !unit3d.IsDiscType(meta.DiscType) {
 		restricted := map[string]bool{
 			"CMRG":     true,

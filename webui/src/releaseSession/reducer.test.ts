@@ -4,18 +4,18 @@
 import { describe, expect, it } from "vitest";
 import { initialSessionState, sessionReducer } from "./reducer";
 
-describe("sessionReducer rule authorization", () => {
-  it("keeps duplicate ignores and exact rule authorizations independent across upload retry state", () => {
+describe("sessionReducer upload intent", () => {
+  it("keeps duplicate decisions and questionnaire answers independent", () => {
     let state = initialSessionState();
     state = sessionReducer(state, {
-      type: "rule_authorization_changed",
-      tracker: " aither ",
-      rule: "container",
-      authorized: true,
+      type: "questionnaire_answered",
+      tracker: " example ",
+      key: "edition",
+      value: "Extended",
     });
     state = sessionReducer(state, {
       type: "dupe_ignore_changed",
-      tracker: "AITHER",
+      tracker: "EXAMPLE",
       ignored: true,
     });
     state = sessionReducer(state, { type: "job_command_started", kind: "upload" });
@@ -25,16 +25,8 @@ describe("sessionReducer rule authorization", () => {
       error: "retryable failure",
     });
 
-    expect(state.ignoredDupesFor).toEqual(["AITHER"]);
-    expect(state.authorizedRulesByTracker).toEqual({ AITHER: ["container"] });
-
-    state = sessionReducer(state, {
-      type: "rule_authorization_changed",
-      tracker: "AITHER",
-      rule: "container",
-      authorized: false,
-    });
-    expect(state.ignoredDupesFor).toEqual(["AITHER"]);
-    expect(state.authorizedRulesByTracker).toEqual({});
+    expect(state.ignoredDupesFor).toEqual(["EXAMPLE"]);
+    expect(state.questionnaireAnswers).toEqual({ EXAMPLE: { edition: "Extended" } });
+    expect(state.uploadError).toBe("retryable failure");
   });
 });

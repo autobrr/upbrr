@@ -18,10 +18,15 @@ func Rules() *trackers.RuleSet {
 		Languages:    []string{"spanish", "es", "spa"},
 		RequireAudio: true,
 		RequireSubs:  true,
-	}, Check: checkSubtitleOnly}
+	}}
 }
 
-func checkSubtitleOnly(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {
+// ValidationPolicy returns TTR's release-language metadata check.
+func ValidationPolicy() trackers.ValidationPolicyBinding {
+	return trackers.ValidationPolicyBinding{ID: "unit3d-ttr-language-v1", Check: checkSubtitleOnly}
+}
+
+func checkSubtitleOnly(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context canceled: %w", err)
 	}

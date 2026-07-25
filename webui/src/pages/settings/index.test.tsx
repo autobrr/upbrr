@@ -118,7 +118,7 @@ describe("SettingsPage", () => {
       within(settingsTags as HTMLElement)
         .getAllByRole("button")
         .map((button) => button.textContent),
-    ).toEqual(["Main", "Trackers", "Application Details", "Tracker Auth"]);
+    ).toEqual(["Main", "Trackers", "Application Details", "API Tokens", "Tracker Auth"]);
     expect(screen.queryByText("autobrr/upbrr")).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Application Details" }));

@@ -4,10 +4,14 @@
 import type { OperationFailure } from "../types";
 
 type EventCallback = (payload: unknown) => void;
+type AppRequestOptions = Readonly<{
+  signal?: AbortSignal;
+  correlationID?: string;
+}>;
 type AppRequestHandler = (
   method: string,
   body?: unknown,
-  options?: { signal?: AbortSignal },
+  options?: AppRequestOptions,
 ) => Promise<unknown>;
 
 declare global {
@@ -180,16 +184,22 @@ const dispatchEventBlock = (block: string) => {
   callbacks.get(eventName)?.forEach((callback) => callback(payload));
 };
 
-const postJSON = async <T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> => {
+const postJSON = async <T>(
+  path: string,
+  body?: unknown,
+  options: AppRequestOptions = {},
+): Promise<T> => {
+  const correlationID = options.correlationID?.trim() || "";
   const requestInit = (): RequestInit => ({
     method: "POST",
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
+      ...(correlationID ? { "X-Upbrr-Correlation-Id": correlationID } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal,
+    signal: options.signal,
   });
   let response = await fetch(withBasePath(path), requestInit());
   let payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(
@@ -198,6 +208,34 @@ const postJSON = async <T>(path: string, body?: unknown, signal?: AbortSignal): 
   if (!response.ok && isAuthFailureStatus(response.status) && (await refreshAuthState())) {
     response = await fetch(withBasePath(path), requestInit());
     payload = await parseJSONResponse<T & { error?: string }>(response);
+  }
+  if (!response.ok) {
+    if (payload?.failure) throw new OperationFailureError(payload.failure);
+    throw new Error(String(payload?.error || response.statusText || "Request failed"));
+  }
+  if (payload === null) throw new Error("Request returned an empty response");
+  return payload as T;
+};
+
+const postForm = async <T>(
+  path: string,
+  body: FormData,
+  options: AppRequestOptions = {},
+): Promise<T> => {
+  const requestInit = (): RequestInit => ({
+    method: "POST",
+    credentials: "include",
+    headers: csrfToken ? { "X-CSRF-Token": csrfToken } : {},
+    body,
+    signal: options.signal,
+  });
+  let response = await fetch(withBasePath(path), requestInit());
+  let payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(
+    response,
+  );
+  if (!response.ok && isAuthFailureStatus(response.status) && (await refreshAuthState())) {
+    response = await fetch(withBasePath(path), requestInit());
+    payload = await parseJSONResponse<T & { error?: string; failure?: OperationFailure }>(response);
   }
   if (!response.ok) {
     if (payload?.failure) throw new OperationFailureError(payload.failure);
@@ -241,12 +279,24 @@ export const subscribeWebEvent = (eventName: string, callback: EventCallback) =>
 export const requestApp = <T>(
   method: string,
   body?: unknown,
-  options: { signal?: AbortSignal } = {},
+  options: AppRequestOptions = {},
 ): Promise<T> => {
   if (testAppRequestHandler) {
     return testAppRequestHandler(method, body, options).then((result) => result as T);
   }
-  return postJSON<T>(`/api/app/${method}`, body, options.signal);
+  return postJSON<T>(`/api/app/${method}`, body, options);
+};
+
+/** Uploads multipart application content with the same session/CSRF behavior. */
+export const requestAppForm = <T>(
+  method: string,
+  body: FormData,
+  options: AppRequestOptions = {},
+): Promise<T> => {
+  if (testAppRequestHandler) {
+    return testAppRequestHandler(method, body, options).then((result) => result as T);
+  }
+  return postForm<T>(`/api/app/${method}`, body, options);
 };
 
 /** Installs a request transport for unit tests without creating runtime globals. */

@@ -143,6 +143,9 @@ func buildRTFSearchParams(meta api.DuplicateSubject) (url.Values, bool) {
 }
 
 func cleanRTFSearchTitle(meta api.DuplicateSubject) string {
+	if meta.Projection != nil {
+		return dupe.ProjectedSearchName(meta)
+	}
 	query := strings.TrimSpace(meta.Release.Title)
 	if query == "" {
 		query = strings.TrimSpace(meta.ReleaseName)

@@ -141,8 +141,14 @@ func TestDefinitionBuildUploadDryRunPrerequisiteMessagesIncludeAction(t *testing
 			name: "missing api key",
 			req: trackers.PreparationInput{
 				Tracker: "BHD",
-				Meta:    api.UploadSubject{Identity: api.ExternalIdentity{TMDBID: 123}},
-				Logger:  api.NopLogger{},
+				Meta: api.UploadSubject{
+					ReleaseName: "Example.Release.2026.1080p-GRP",
+					Identity:    api.ExternalIdentity{TMDBID: 123},
+					Type:        "ENCODE",
+					Source:      "BLURAY",
+					Container:   "mkv",
+				},
+				Logger: api.NopLogger{},
 			},
 			wantCause:  "missing api_key",
 			wantAction: "configure the BHD api_key",
@@ -152,18 +158,30 @@ func TestDefinitionBuildUploadDryRunPrerequisiteMessagesIncludeAction(t *testing
 			req: trackers.PreparationInput{
 				Tracker:       "BHD",
 				TrackerConfig: config.TrackerConfig{APIKey: "token"},
+				Meta: api.UploadSubject{
+					ReleaseName: "Example.Release.2026.1080p-GRP",
+					Type:        "ENCODE",
+					Source:      "BLURAY",
+					Container:   "mkv",
+				},
 				Logger:        api.NopLogger{},
 			},
-			wantCause:  "missing tmdb id",
-			wantAction: "refresh metadata or set a TMDB id",
+			wantCause:  "required_provider_id",
+			wantAction: "canonical TMDB ID",
 		},
 		{
 			name: "missing mediainfo text",
 			req: trackers.PreparationInput{
 				Tracker:       "BHD",
 				TrackerConfig: config.TrackerConfig{APIKey: "token"},
-				Meta:          api.UploadSubject{Identity: api.ExternalIdentity{TMDBID: 123}},
-				Logger:        api.NopLogger{},
+				Meta: api.UploadSubject{
+					ReleaseName: "Example.Release.2026.1080p-GRP",
+					Identity:    api.ExternalIdentity{TMDBID: 123},
+					Type:        "ENCODE",
+					Source:      "BLURAY",
+					Container:   "mkv",
+				},
+				Logger: api.NopLogger{},
 			},
 			wantCause:  "missing mediainfo text",
 			wantAction: "generate or attach MediaInfo",
@@ -189,7 +207,7 @@ func TestDefinitionBuildUploadDryRunPrerequisiteMessagesIncludeAction(t *testing
 	}
 }
 
-func TestDefinitionBuildUploadDryRunKeepsWaivableContainerDiagnosticOutOfPayloadReadiness(t *testing.T) {
+func TestDefinitionBuildUploadDryRunRejectsInvalidContainer(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
@@ -202,7 +220,7 @@ func TestDefinitionBuildUploadDryRunKeepsWaivableContainerDiagnosticOutOfPayload
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	preview, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
+	_, err := New().prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
 		Meta: api.UploadSubject{
 			SourcePath:        filepath.Join(tmp, "Movie.avi"),
@@ -217,11 +235,8 @@ func TestDefinitionBuildUploadDryRunKeepsWaivableContainerDiagnosticOutOfPayload
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
 		Logger:        api.NopLogger{},
 	})
-	if err != nil {
-		t.Fatalf("prepare dry run: %v", err)
-	}
-	if preview.Status != "ready" {
-		t.Fatalf("dry-run status = %q, want ready", preview.Status)
+	if err == nil || !strings.Contains(err.Error(), "constructibility container") {
+		t.Fatalf("expected strict container constructibility error, got %v", err)
 	}
 }
 
@@ -275,7 +290,7 @@ func TestDefinitionBuildUploadDryRunRejectsInvalidSource(t *testing.T) {
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
 		Logger:        api.NopLogger{},
 	})
-	if err == nil || !strings.Contains(err.Error(), "unsupported source") {
+	if err == nil || !strings.Contains(err.Error(), "unsupported_source") {
 		t.Fatalf("expected unsupported source error, got %v", err)
 	}
 }

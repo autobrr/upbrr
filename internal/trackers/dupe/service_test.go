@@ -6,14 +6,36 @@ package dupe
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+type bannedGroupDefinition struct{}
+
+func (bannedGroupDefinition) Name() string { return "DP" }
+
+func (bannedGroupDefinition) DefaultBaseURL() string { return "https://tracker.example.invalid" }
+
+func (bannedGroupDefinition) UploadContentMode() trackerspkg.UploadContentMode {
+	return trackerspkg.UploadContentModeNone
+}
+
+func (bannedGroupDefinition) BannedGroups() []string { return []string{"SUBSPLEASE"} }
+
+func (bannedGroupDefinition) Prepare(
+	context.Context,
+	trackerspkg.PreparationInput,
+) (trackerspkg.TrackerPlan, *trackerspkg.PreparationFailure) {
+	return trackerspkg.TrackerPlan{}, nil
+}
 
 func testService(adapters map[string]Adapter) *Service {
 	return &Service{
@@ -24,6 +46,56 @@ func testService(adapters map[string]Adapter) *Service {
 			return cloneEntries(entries), api.DupeMatch{}
 		},
 		cancelWarningThreshold: time.Second,
+	}
+}
+
+func TestCheckWithAssessmentReportsDebugBannedGroupAsBypassed(t *testing.T) {
+	registry := trackerspkg.NewRegistry()
+	if err := registry.Register(bannedGroupDefinition{}); err != nil {
+		t.Fatalf("register banned-group definition: %v", err)
+	}
+	tempDir := t.TempDir()
+	var adapterCalled atomic.Bool
+	service := testService(map[string]Adapter{
+		"DP": AdapterFunc(func(context.Context, api.DuplicateSubject) AdapterResult {
+			adapterCalled.Store(true)
+			return Resolved(nil, nil)
+		}),
+	})
+	service.banned = trackerspkg.NewBannedGroupCheckerWithRegistry(filepath.Join(tempDir, "upbrr.db"), registry)
+	var (
+		progressMu sync.Mutex
+		progress   []api.DupeProgressUpdate
+	)
+	ctx := api.WithDupeProgressReporter(context.Background(), func(update api.DupeProgressUpdate) {
+		progressMu.Lock()
+		progress = append(progress, update)
+		progressMu.Unlock()
+	})
+	summary, assessment, err := service.CheckWithAssessment(ctx, api.DuplicateSubject{
+		SourcePath: filepath.Join(tempDir, "Example.Release.2026.1080p-GRP.mkv"),
+		Tag:        "SubsPlease",
+	}, []string{"DP"}, CheckOptions{BypassBannedGroups: true})
+	if err != nil {
+		t.Fatalf("check bypassed banned group: %v", err)
+	}
+	if adapterCalled.Load() {
+		t.Fatal("bypassed banned-group result invoked duplicate adapter")
+	}
+	if len(summary.Results) != 1 || summary.Results[0].Status != "bypassed" ||
+		summary.Results[0].SkipCode != NotRunBannedGroup ||
+		!strings.Contains(summary.Results[0].SkipReason, "debug mode bypassed policy") {
+		t.Fatalf("bypassed duplicate result = %#v", summary.Results)
+	}
+	decision, ok := assessment.Decision("DP")
+	if !ok || decision.Verdict != VerdictWaived || decision.Authorization != AuthorizationWaiver {
+		t.Fatalf("bypassed assessment decision = %#v found=%t", decision, ok)
+	}
+	progressMu.Lock()
+	defer progressMu.Unlock()
+	if len(progress) == 0 || progress[len(progress)-1].Status != "bypassed" ||
+		!strings.Contains(progress[len(progress)-1].Message, "debug mode bypassed policy") {
+		t.Fatalf("bypassed duplicate progress = %#v", progress)
 	}
 }
 
@@ -52,6 +124,105 @@ func TestAdapterResultDefensiveCopies(t *testing.T) {
 	if result.Entries()[0].Files[0] != "one.mkv" {
 		t.Fatal("result accessor exposed mutable state")
 	}
+}
+
+func TestCheckProjectionSetUsesExactCriteriaAndProjectsUploadName(t *testing.T) {
+	t.Parallel()
+
+	var received api.DuplicateSubject
+	service := testService(map[string]Adapter{
+		"A": AdapterFunc(func(_ context.Context, subject api.DuplicateSubject) AdapterResult {
+			received = subject
+			return Resolved(nil, nil)
+		}),
+	})
+	projectionFingerprint := mustDupeFingerprint(t, "projection")
+	criteriaFingerprint := mustDupeFingerprint(t, "criteria")
+	inputFingerprint := mustDupeFingerprint(t, "input")
+	catalogFingerprint := mustDupeFingerprint(t, "catalog")
+	configFingerprint := mustDupeFingerprint(t, "config")
+	policyFingerprint := mustDupeFingerprint(t, "policy")
+	now := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
+	projectionSet := api.TrackerReleaseProjectionSet{
+		ID:         "projection-set-1",
+		WorkflowID: "workflow-1",
+		Revision:   1,
+		Release: api.ReleaseSnapshotRef{
+			ID:       "release-1",
+			Revision: 1,
+		},
+		ReleaseRef: api.ReleaseRef{
+			SourcePath: "C:\\releases\\Example.Release.2026.1080p-GRP",
+			Generation: 1,
+		},
+		Catalog: api.TrackerCatalogSnapshotRef{
+			ID:       "catalog-1",
+			Revision: 1,
+		},
+		Runtime: api.TrackerRuntimeSnapshotRef{
+			ID:       "runtime-1",
+			Revision: 1,
+		},
+		Selection: api.TrackerSelectionRef{
+			ID:       "selection-1",
+			Revision: 1,
+		},
+		InputFingerprint:  inputFingerprint,
+		PolicyFingerprint: policyFingerprint,
+		Projections: []api.TrackerReleaseProjection{{
+			TrackerID:            "A",
+			DisplayName:          "Tracker A",
+			CanonicalReleaseName: "Example.Release.2026.1080p-GRP",
+			UploadReleaseName:    "Example.Release.2026.TrackerA-GRP",
+			AdditionalNames: []api.TrackerReleaseName{{
+				Role:  api.TrackerReleaseNameRoleSearch,
+				Value: "Example Release 2026",
+			}},
+			DuplicateCriteria: api.TrackerDuplicateCriteria{
+				Name:   "Example Release 2026",
+				Season: 2,
+			},
+			InputFingerprint:     inputFingerprint,
+			CatalogFingerprint:   catalogFingerprint,
+			ConfigFingerprint:    configFingerprint,
+			ProjectorFingerprint: projectionFingerprint,
+			CriteriaFingerprint:  criteriaFingerprint,
+			Readiness:            api.ReadinessStatusReady,
+			DupeReady:            true,
+			UploadReady:          true,
+		}},
+		Status:    api.StageStatusReady,
+		CreatedAt: now,
+	}
+	summary, _, err := service.CheckProjectionSet(context.Background(), api.DuplicateSubject{
+		SourcePath:  projectionSet.ReleaseRef.SourcePath,
+		ReleaseName: projectionSet.Projections[0].CanonicalReleaseName,
+	}, projectionSet, CheckOptions{})
+	if err != nil {
+		t.Fatalf("check projection set: %v", err)
+	}
+	if received.Projection == nil || received.ReleaseName != "Example Release 2026" || received.SeasonInt != 2 {
+		t.Fatalf("adapter subject = %#v", received)
+	}
+	if len(summary.Results) != 1 {
+		t.Fatalf("duplicate results = %#v", summary.Results)
+	}
+	result := summary.Results[0]
+	if result.CanonicalReleaseName != projectionSet.Projections[0].CanonicalReleaseName ||
+		result.UploadReleaseName != projectionSet.Projections[0].UploadReleaseName ||
+		result.ProjectionFingerprint != projectionFingerprint || result.CriteriaFingerprint != criteriaFingerprint ||
+		result.ProjectionStatus != api.ReadinessStatusReady {
+		t.Fatalf("projected duplicate result = %#v", result)
+	}
+}
+
+func mustDupeFingerprint(t *testing.T, value string) api.WorkflowFingerprint {
+	t.Helper()
+	fingerprint, err := api.CanonicalWorkflowFingerprint(value)
+	if err != nil {
+		t.Fatalf("fingerprint %q: %v", value, err)
+	}
+	return fingerprint
 }
 
 func TestCheckReturnsResolvedOrderAndActualCompletionProgress(t *testing.T) {

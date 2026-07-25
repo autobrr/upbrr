@@ -1,4 +1,4 @@
-.PHONY: help build backend frontend frontend-bundle dev dev-frontend test test-go test-frontend e2e e2e-build e2e-web e2e-cli lint lint-json logpolicy pathpolicy literalpolicy architecturepolicy literalpolicy-fix precommit prepush fmt fmt-go fmt-frontend gofix gofix-check gofix-changed gofix-check-changed commitmsg-check clean
+.PHONY: help build backend frontend frontend-bundle dev dev-frontend test test-go test-frontend e2e e2e-build e2e-web e2e-cli lint lint-json logpolicy pathpolicy literalpolicy architecturepolicy workflow-contracts workflow-contracts-check literalpolicy-fix precommit prepush fmt fmt-go fmt-frontend gofix gofix-check gofix-changed gofix-check-changed commitmsg-check clean
 
 ifeq ($(OS),Windows_NT)
 EXE := .exe
@@ -40,6 +40,8 @@ help:
 	@echo Linting
 	@echo   make lint               Run architecture/path/literal policies and full Go lint
 	@echo   make architecturepolicy Run architecture ownership policy check
+	@echo   make workflow-contracts Generate workflow OpenAPI and WebUI transport types
+	@echo   make workflow-contracts-check Check workflow OpenAPI and WebUI type drift
 	@echo   make lint-json          Write Go lint JSON to lint-report.json
 	@echo   make logpolicy          Run logging policy check
 	@echo   make pathpolicy         Run path portability policy check
@@ -108,7 +110,7 @@ e2e-web: e2e-build
 e2e-cli: e2e-build
 	pnpm --dir webui exec playwright test --project=cli-full-upload
 
-lint: architecturepolicy pathpolicy literalpolicy
+lint: architecturepolicy pathpolicy literalpolicy workflow-contracts-check
 	golangci-lint run $(GOLANGCI_FLAGS) ./...
 
 lint-json:
@@ -125,6 +127,12 @@ literalpolicy:
 
 architecturepolicy:
 	go run ./cmd/architecturepolicy
+
+workflow-contracts:
+	go run ./cmd/workflowcontractgen
+
+workflow-contracts-check:
+	go run ./cmd/workflowcontractgen -check
 
 literalpolicy-fix:
 	go run ./cmd/literalpolicy -fix

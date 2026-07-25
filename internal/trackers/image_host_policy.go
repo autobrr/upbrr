@@ -17,6 +17,7 @@ type imageHostPolicy struct {
 	allowed     []string
 	uploadHosts []string
 	preferred   []string
+	failed      []string
 	required    bool
 	fallbackOK  bool
 }
@@ -59,11 +60,11 @@ func policyForTrackerWithConfigAndRegistry(registry *Registry, tracker string, a
 
 func applyImageHostOverrides(registry *Registry, tracker string, policy imageHostPolicy, overrides api.ImageHostOverrides) (imageHostPolicy, error) {
 	if overrides.PreferredHost == nil {
-		return policy, nil
+		return applyFailedImageHosts(policy, overrides.FailedHosts), nil
 	}
 	host := strings.ToLower(strings.TrimSpace(*overrides.PreferredHost))
 	if host == "" {
-		return policy, nil
+		return applyFailedImageHosts(policy, overrides.FailedHosts), nil
 	}
 	if owner := trackerForOwnedHost(registry, host); owner != "" && !strings.EqualFold(owner, tracker) {
 		return imageHostPolicy{}, fmt.Errorf("trackers: %s image host override %q is owned by %s", strings.TrimSpace(tracker), host, owner)
@@ -72,7 +73,7 @@ func applyImageHostOverrides(registry *Registry, tracker string, policy imageHos
 		return imageHostPolicy{}, fmt.Errorf("trackers: %s image host override %q is unsupported", strings.TrimSpace(tracker), host)
 	}
 	if len(policy.allowed) == 0 {
-		return newPreferredImageHostPolicy(host), nil
+		return applyFailedImageHosts(newPreferredImageHostPolicy(host), overrides.FailedHosts), nil
 	}
 	if !hostAllowed(host, policy.allowed) {
 		return imageHostPolicy{}, fmt.Errorf(
@@ -84,7 +85,39 @@ func applyImageHostOverrides(registry *Registry, tracker string, policy imageHos
 	}
 	policy.preferred = prependHost(host, policy.preferred)
 	policy.fallbackOK = true
-	return policy, nil
+	return applyFailedImageHosts(policy, overrides.FailedHosts), nil
+}
+
+func applyFailedImageHosts(policy imageHostPolicy, failedHosts []string) imageHostPolicy {
+	policy.failed = normalizeImageHostNames(failedHosts)
+	if len(policy.failed) == 0 {
+		return policy
+	}
+	policy.uploadHosts = filterImageHostNames(policy.uploadHosts, policy.failed)
+	policy.preferred = filterImageHostNames(policy.preferred, policy.failed)
+	return policy
+}
+
+func normalizeImageHostNames(hosts []string) []string {
+	normalized := make([]string, 0, len(hosts))
+	for _, host := range hosts {
+		host = strings.ToLower(strings.TrimSpace(host))
+		if host != "" {
+			normalized = appendUniqueHost(normalized, host)
+		}
+	}
+	return normalized
+}
+
+func filterImageHostNames(hosts []string, excluded []string) []string {
+	filtered := make([]string, 0, len(hosts))
+	for _, host := range hosts {
+		if hostInList(host, excluded) {
+			continue
+		}
+		filtered = appendUniqueHost(filtered, host)
+	}
+	return filtered
 }
 
 func resolveImageHostPolicyWithRegistry(
@@ -108,11 +141,11 @@ func resolveImageHostPolicyWithRegistry(
 		return imageHostPolicy{}, fmt.Errorf("trackers: %s configured image_host %q is not allowed", strings.TrimSpace(tracker), trackerCfg.ImageHost)
 	}
 	if len(policy.allowed) == 0 {
-		return newPreferredImageHostPolicy(host), nil
+		return applyFailedImageHosts(newPreferredImageHostPolicy(host), overrides.FailedHosts), nil
 	}
 	policy.preferred = prependHost(host, policy.preferred)
 	policy.fallbackOK = true
-	return policy, nil
+	return applyFailedImageHosts(policy, overrides.FailedHosts), nil
 }
 
 func resolveImageHostPolicyForMetadataWithRegistry(
@@ -355,7 +388,10 @@ func neededImageUploadTargets(
 			continue
 		}
 
-		policy := policyForTrackerForTarget(registry, name, appCfg, trackerCfg)
+		policy, err := resolveImageHostPolicyForTarget(registry, name, appCfg, trackerCfg, meta)
+		if err != nil {
+			return nil, err
+		}
 		candidates := imageUploadCandidatesForTracker(registry, appCfg, name, userHosts)
 		candidates = appendOwnedPolicyUploadHosts(registry, candidates, name, policy)
 		flexibleTargets = append(flexibleTargets, imageUploadPolicyTarget{
@@ -534,17 +570,9 @@ func resolveImageHostPolicyForTarget(
 	meta *api.UploadSubject,
 ) (imageHostPolicy, error) {
 	if meta == nil {
-		policy, err := resolveImageHostPolicyWithRegistry(registry, tracker, trackerCfg, api.ImageHostOverrides{})
-		if err != nil {
-			return imageHostPolicy{}, err
-		}
-		return withUnrestrictedImageHostFallbacks(registry, tracker, policy, appCfg), nil
+		return resolveImageHostPolicyForMetadataWithRegistry(registry, tracker, appCfg, trackerCfg, api.ImageHostOverrides{})
 	}
-	return resolveImageHostPolicyForMetadataWithRegistry(registry, tracker, appCfg, trackerCfg, api.ImageHostOverrides{})
-}
-
-func policyForTrackerForTarget(registry *Registry, tracker string, appCfg config.Config, trackerCfg config.TrackerConfig) imageHostPolicy {
-	return policyForTrackerWithConfigAndRegistry(registry, tracker, appCfg, trackerCfg)
+	return resolveImageHostPolicyForMetadataWithRegistry(registry, tracker, appCfg, trackerCfg, meta.ImageHostOverrides)
 }
 
 func imageUploadCandidatesForTracker(registry *Registry, appCfg config.Config, tracker string, userHosts []string) []string {
@@ -607,7 +635,7 @@ func normalizeConfiguredImageUploadHosts(registry *Registry, hosts ...string) []
 
 func imageHostUsableForPolicy(registry *Registry, tracker string, host string, policy imageHostPolicy) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
-	if host == "" || !supportedUploadImageHost(host) {
+	if host == "" || hostInList(host, policy.failed) || !supportedUploadImageHost(host) {
 		return false
 	}
 	if owner := trackerForOwnedHost(registry, host); owner != "" && !strings.EqualFold(owner, tracker) {

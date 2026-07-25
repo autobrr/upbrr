@@ -8,6 +8,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -19,9 +20,15 @@ func Profile() standalone.Profile {
 		BaseURL:           btnDefaultBaseURL,
 		DescriptionGroup:  "btn",
 		UploadContentMode: trackers.UploadContentModeNone,
+		ValidationPolicy:  validationPolicy(),
 		PrepareUpload: func(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 			return prepareUploadAt(ctx, req, btnDefaultBaseURL)
 		},
+		ReleaseNamePolicy: trackers.SubjectReleaseNameSearchPolicy(
+			"standalone/btn/v1",
+			func(meta api.UploadSubject, _ config.TrackerConfig) string { return resolveUploadName(meta) },
+			func(meta api.UploadSubject, _ config.TrackerConfig) string { return resolveSearchName(meta) },
+		),
 		NewDuplicateAdapter: newDuplicateAdapter,
 		BannedGroups:        bannedGroups(),
 		DataPolicy:          &trackers.DataLookupPolicy{DeferWhenCollectingImages: true},
@@ -56,6 +63,12 @@ func Profile() standalone.Profile {
 			return resolveSessionForTrackerAuthLoginAt(ctx, cfg, dbPath, login, btnDefaultBaseURL)
 		},
 		AuthPolicy: &trackers.AuthPolicy{ //nolint:gosec // Operator messages name API keys; no credential is embedded.
+			ResolveRequirements: authcontract.StaticRequirements(authcontract.Requirements(
+				"api_and_upload_session",
+				true,
+				[]trackers.AuthRequirement{trackers.AuthRequirementAPIKey, trackers.AuthRequirementStoredCookie},
+				[]trackers.AuthRequirement{trackers.AuthRequirementAPIKey, trackers.AuthRequirementCredentialLogin},
+			)),
 			ResolveAPIKey:               func(cfg config.Config, _ config.TrackerConfig) string { return config.ResolveBTNAPIToken(cfg) },
 			APIKeyRequiresUploadSession: true,
 			MissingAPIKeyMessage:        "API key is required for torrent resolution; imported cookies or login credentials cover upload auth",

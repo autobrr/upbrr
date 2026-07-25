@@ -9,6 +9,7 @@ import { setAppRequestHandlerForTests } from "./api/client";
 import type { MetadataPreview, TrackerCatalog } from "./types";
 import { emptyExternalIdentity } from "./utils/canonicalIdentity";
 import { sourcePathHistoryStorageKey } from "./utils/inputHistory";
+import type { ReleaseWorkflowCurrent } from "./api/generated/release-workflow";
 
 const storedValues = new Map<string, string>();
 const localStorageStub: Storage = {
@@ -42,6 +43,7 @@ const trackerCatalog = (): TrackerCatalog => ({
     baseURL: `https://${name.toLowerCase()}.example.invalid`,
     uploadContentMode: "description",
     configured: true,
+    default: true,
     fields: [{ key: "APIKey", yamlKey: "api_key", default: "", activation: true }],
   })),
   unsupported: [],
@@ -64,12 +66,11 @@ const metadataPreview = (sourcePath: string): MetadataPreview => ({
 describe("App shell", () => {
   it("composes the release session and renders input routing", async () => {
     setAppRequestHandlerForTests(async (method) => {
-      if (method === "ListJobs") return [];
       if (method === "GetConfig" || method === "GetDefaultConfig") return "{}";
       throw new Error(`unexpected app request: ${method}`);
     });
 
-    render(createElement(App, { jobOwnerKey: "test-owner" }));
+    render(createElement(App));
 
     expect(screen.getByRole("heading", { name: "Build Release Name" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: "Dupe Check" })).toBeDisabled());
@@ -83,7 +84,6 @@ describe("App shell", () => {
       entries: [],
     }));
     setAppRequestHandlerForTests(async (method, body) => {
-      if (method === "ListJobs") return [];
       if (method === "GetConfig" || method === "GetDefaultConfig") return "{}";
       if (method === "BrowseDirectory") return browse((body as { path: string }).path);
       throw new Error(`unexpected app request: ${method}`);
@@ -102,7 +102,6 @@ describe("App shell", () => {
       JSON.stringify([{ path: "C:\\media\\Previously.Used.mkv", mode: "file" }]),
     );
     setAppRequestHandlerForTests(async (method) => {
-      if (method === "ListJobs") return [];
       if (method === "GetConfig" || method === "GetDefaultConfig") return "{}";
       throw new Error(`unexpected app request: ${method}`);
     });
@@ -116,8 +115,54 @@ describe("App shell", () => {
   });
 
   it("selects configured default trackers for each fresh release session", async () => {
+    let workflowSequence = 0;
+    let sourcePath = "";
+    const workflows = new Map<string, ReleaseWorkflowCurrent>();
+    const workflowCurrent = (
+      workflowID: string,
+      revision: number,
+      selected = false,
+    ): ReleaseWorkflowCurrent => ({
+      continuation: {
+        lifecycle: selected ? "ready" : "waiting",
+        disposition: "none",
+        refs: {},
+        availableGoals: [
+          "prepared",
+          "trackers_assessed",
+          "duplicates_decided",
+          "media_ready",
+          "descriptions_ready",
+          "upload_reviewed",
+          "dry_run",
+          "uploaded",
+        ].map((goal) => ({ goal, available: selected })),
+      },
+      workflow: {
+        id: workflowID,
+        revision,
+        factInstructions: { id: `${workflowID}-facts`, revision: 1 },
+        ...(selected ? { selection: { id: `${workflowID}-selection`, revision } } : {}),
+        status: selected ? "active" : "draft",
+        createdAt: "2026-07-20T00:00:00Z",
+        updatedAt: "2026-07-20T00:00:00Z",
+      },
+      ...(selected
+        ? {
+            selection: {
+              id: `${workflowID}-selection`,
+              workflowId: workflowID,
+              revision,
+              catalog: { id: `${workflowID}-catalog`, revision },
+              runtime: { id: `${workflowID}-runtime`, revision },
+              trackerIds: ["AITHER", "BLU"],
+              fingerprint: "0".repeat(64),
+              createdAt: "2026-07-20T00:00:00Z",
+            },
+          }
+        : {}),
+    });
     setAppRequestHandlerForTests(async (method, body) => {
-      if (method === "ListJobs") return [];
       if (method === "ListTrackerCatalog") return trackerCatalog();
       if (method === "GetDefaultConfig") return "{}";
       if (method === "GetConfig") {
@@ -131,9 +176,49 @@ describe("App shell", () => {
           },
         });
       }
-      if (method === "DetectDiscType") return "";
-      if (method === "FetchMetadata") {
-        return metadataPreview(String((body as { Path?: string }).Path || ""));
+      if (method === "ContinueReleaseWorkflow") {
+        const command = body as {
+          authority?: { workflowId: string };
+          intent: { preparation?: { SourcePath: string } };
+        };
+        if (!command.authority) {
+          workflowSequence += 1;
+          const created = workflowCurrent(`workflow-${workflowSequence}`, 1);
+          workflows.set(created.workflow.id, created);
+          return created;
+        }
+        const retained = workflows.get(command.authority.workflowId);
+        if (retained?.release) return retained;
+        sourcePath = command.intent.preparation?.SourcePath || "";
+        const current = workflowCurrent(command.authority.workflowId, 2);
+        const value = metadataPreview(sourcePath);
+        const prepared = {
+          ...current,
+          workflow: {
+            ...current.workflow,
+            release: { id: `${command.authority.workflowId}-release`, revision: 2 },
+            status: "active",
+          },
+          release: {
+            id: `${command.authority.workflowId}-release`,
+            workflowId: command.authority.workflowId,
+            revision: 2,
+            factInstructions: current.workflow.factInstructions,
+            release: {
+              Generation: value.Release.Generation,
+              Source: { SourcePath: sourcePath, Classification: { DiscType: "" }, Entries: [] },
+              Naming: { ReleaseName: value.ReleaseName },
+              Identity: value.Identity,
+              ProviderMetadata: { Bluray: value.Bluray },
+            },
+            display: { ...value.Display, TrackerData: value.TrackerData },
+            diagnostics: value.Diagnostics,
+            fingerprint: "1".repeat(64),
+            createdAt: "2026-07-20T00:00:00Z",
+          },
+        } as unknown as ReleaseWorkflowCurrent;
+        workflows.set(prepared.workflow.id, prepared);
+        return prepared;
       }
       throw new Error(`unexpected app request: ${method}`);
     });

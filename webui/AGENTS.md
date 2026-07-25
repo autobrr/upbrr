@@ -7,7 +7,7 @@ Scoped rules for `webui`. Root repo rules still apply.
 - Scripts and dependencies: `package.json`, `pnpm-lock.yaml`.
 - TypeScript config: `tsconfig*.json`, `vite.config.ts`, `vitest.config.ts`.
 - Lint/format behavior: ESLint, Prettier, Stylelint config files and Lefthook.
-- API/runtime contracts: `pkg/api`, `internal/webserver`, typed clients under `src/api`, release ownership under `src/releaseSession`, and shared Job coordination under `src/jobRegistry`.
+- API/runtime contracts: `pkg/api`, `internal/webserver`, generated workflow transport types and clients under `src/api`, and release ownership under `src/releaseSession`.
 
 ## Commands
 
@@ -38,11 +38,13 @@ pnpm --dir webui run build
 - Preserve CLI and WebUI behavior when changing shared request shapes, upload options, or prepared metadata.
 - Match existing component state patterns before adding new abstraction.
 
-## Release Session / Job Ownership
+## Release Session / Workflow Ownership
 
 - Release workflow pages consume `useReleaseSession` facets; they do not import production API clients to coordinate release operations directly.
-- `src/releaseSession` owns active release state, operation intents, and preparation/image-upload progress subscriptions. Views render facet state instead of subscribing independently.
-- `src/jobRegistry` owns `jobs:update` transport and duplicate-check/tracker-upload Job coordination. Active release Job access remains behind `useReleaseSession`.
+- `src/releaseSession` owns active release state, workflow operation intents, durable polling, and progress projection. Views render facet state instead of subscribing independently.
+- Render backend-provided tracker auth capabilities/status/actions, questionnaire schemas/defaults, and reviewed upload/search names. Submit user answers/actions through shared contracts.
+- Do not derive tracker-specific auth readiness, taxonomy, descriptions, media facts, questionnaire fields, or release-name transformations in frontend code.
+- Production workflow transport is mandatory. Do not add release Job clients, optional workflow ports, or fallback orchestration.
 - Facets expose declarative state and intent methods, not React setters, dispatch functions, or refs.
 - Use structured failure codes/metadata for recovery. Do not infer recovery from error-message text.
 - Consume backend-provided disc resource paths; do not derive BDMV paths from preparation source strings in the frontend.

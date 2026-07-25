@@ -45,7 +45,7 @@ func TestDefinitionBuildUploadDryRunIncludesQuestionnaire(t *testing.T) {
 			SourcePath:        filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
-			Identity:          api.ExternalIdentity{TMDBID: 123},
+			Identity:          api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 123},
 			ProviderMetadata: api.SourceScopedMetadata{
 				TMDB: &api.TMDBMetadata{Genres: "Adult", Keywords: "adult"},
 			},
@@ -60,20 +60,30 @@ func TestDefinitionBuildUploadDryRunIncludesQuestionnaire(t *testing.T) {
 	if entry.Questionnaire == nil {
 		t.Fatal("expected questionnaire")
 	}
-	if got := len(entry.Questionnaire.Fields); got != 3 {
-		t.Fatalf("expected 3 questionnaire fields, got %d", got)
+	if got := len(entry.Questionnaire.Fields); got != 2 {
+		t.Fatalf("expected 2 questionnaire fields, got %d", got)
 	}
-	if entry.Questionnaire.Fields[0].Key != "type" {
-		t.Fatalf("expected type field first, got %q", entry.Questionnaire.Fields[0].Key)
+	if entry.Questionnaire.Fields[0].Key != "tags" {
+		t.Fatalf("expected tags field first, got %q", entry.Questionnaire.Fields[0].Key)
 	}
-	if entry.Questionnaire.Fields[0].Kind != "select" {
-		t.Fatalf("expected type field to use select control, got %q", entry.Questionnaire.Fields[0].Kind)
+	if entry.Questionnaire.Fields[1].Kind != "select" {
+		t.Fatalf("expected adult screens field to use select control, got %q", entry.Questionnaire.Fields[1].Kind)
 	}
-	if got := len(entry.Questionnaire.Fields[0].Options); got != 4 {
+}
+
+func TestBuildQuestionnaireIncludesTypeOptionsWhenTypeIsUnresolved(t *testing.T) {
+	t.Parallel()
+
+	questionnaire := buildQuestionnaire(api.UploadSubject{}, uploadState{})
+	if questionnaire == nil || len(questionnaire.Fields) == 0 {
+		t.Fatal("expected unresolved type questionnaire field")
+	}
+	field := questionnaire.Fields[0]
+	if field.Key != "type" || field.Kind != "select" {
+		t.Fatalf("unexpected type field: %#v", field)
+	}
+	if got := len(field.Options); got != 4 {
 		t.Fatalf("expected 4 type options, got %d", got)
-	}
-	if entry.Questionnaire.Fields[2].Kind != "select" {
-		t.Fatalf("expected adult screens field to use select control, got %q", entry.Questionnaire.Fields[2].Kind)
 	}
 }
 
@@ -96,7 +106,7 @@ func TestDefinitionBuildUploadDryRunMarksManualTagsWhenOnlyIMDbGenresExist(t *te
 			SourcePath:        filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
-			Identity:          api.ExternalIdentity{TMDBID: 123},
+			Identity:          api.ExternalIdentity{Category: api.CanonicalCategoryMovie, TMDBID: 123},
 			ProviderMetadata: api.SourceScopedMetadata{
 				IMDB: &api.IMDBMetadata{Genres: "Action, Drama"},
 			},

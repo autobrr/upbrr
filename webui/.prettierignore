@@ -18,6 +18,13 @@ coverage/
 playwright-report/
 test-results/
 
+# Instruction-file aliases are link placeholders in Windows worktrees.
+CLAUDE.md
+e2e/CLAUDE.md
+
 # Binary / minified
 *.min.js
 *.min.css
+
+# Generated transport contracts
+src/api/generated/

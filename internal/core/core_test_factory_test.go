@@ -7,9 +7,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/config"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
-	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -17,11 +15,8 @@ import (
 // factory intentionally bypasses production config validation and default
 // service construction while preserving the production composition graph.
 type testCoreOptions struct {
-	cfg      config.Config
-	logger   api.Logger
-	services api.ServiceSet
-	repo     any
-	registry *trackers.Registry
+	logger api.Logger
+	repo   any
 }
 
 func newTestCore(opts testCoreOptions) *Core {
@@ -31,35 +26,16 @@ func newTestCore(opts testCoreOptions) *Core {
 	}
 
 	repositories := api.RepositoryCapabilitiesFrom(opts.repo)
-	core := &Core{logger: logger, selections: repositories.Selections()}
-	core.history = newHistoryModule(repositories.History(), opts.cfg.MainSettings.DBPath, logger)
-	core.description = newDescriptionModule(opts.cfg, logger, opts.services, repositories.Selections(), opts.registry, core.preparedFacts)
-	var mediaRepo mediaRepository
-	if repositories.Trackers() != nil && repositories.Media() != nil {
-		mediaRepo = mediaRepositoryView{TrackerStateRepository: repositories.Trackers(), MediaAssetRepository: repositories.Media()}
-	}
-	core.media = newMediaModule(opts.cfg, logger, opts.services, mediaRepo, opts.registry, core.preparedFacts)
-	core.upload = newUploadModule(
-		opts.cfg,
-		logger,
-		opts.services,
-		repositories.ReleaseState(),
-		repositories.Trackers(),
-		opts.registry,
-		core.preparedFacts,
-		core.description.resolveOverrideRequest,
-		core.description.resolveSubjectGroups,
-		core.ImportAcceptedMenuImages,
-	)
-	core.dupe = newDupeModule(opts.cfg, logger, opts.services, opts.registry, core.preparedFacts)
+	core := &Core{logger: logger}
+	core.history = newHistoryModule(repositories.History(), "", logger)
 	return core
 }
 
-func TestNewTestCoreWiresCanonicalModules(t *testing.T) {
+func TestNewTestCoreWiresHistoryModule(t *testing.T) {
 	t.Parallel()
 
 	core := newTestCore(testCoreOptions{})
-	if core.history == nil || core.description == nil || core.media == nil || core.upload == nil || core.dupe == nil {
+	if core.history == nil {
 		t.Fatal("test Core composition is incomplete")
 	}
 }

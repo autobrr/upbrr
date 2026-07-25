@@ -50,7 +50,7 @@ export type OperationKind =
   | "preparation"
   | "duplicate_check"
   | "dry_run"
-  | "upload_review"
+  | "upload_dry_run"
   | "upload_execute"
   | "media"
   | "description"
@@ -61,24 +61,6 @@ export type OperationFailure = {
   Operation: OperationKind;
   Message: string;
   Recovery: string;
-};
-
-export type TrackerEligibilityReason = {
-  Code: string;
-  Message: string;
-};
-
-export type TrackerEligibilityState = {
-  Tracker: string;
-  Eligible: boolean;
-  Reasons: TrackerEligibilityReason[];
-  RuleDecisions: RuleDecision[];
-};
-
-export type TrackerEligibility = {
-  Release: ReleaseRef;
-  Trackers: TrackerEligibilityState[];
-  EligibleTrackers: string[];
 };
 
 export type SourceScopedMetadata = {
@@ -93,6 +75,113 @@ export type SourceScopedMetadata = {
   UpdatedAt: string;
 };
 
+export type SourceManifestEntry = {
+  Path: string;
+  Type: "unknown" | "file" | "directory" | "playlist" | string;
+  Size: number;
+  ModifiedAt: string;
+  Disc: string;
+  Playlist: string;
+};
+
+export type SourceManifest = {
+  SourcePath: string;
+  Size: number;
+  Entries: SourceManifestEntry[];
+  SelectedPlaylists: PlaylistInfo[];
+  Classification: { DiscType: string; Container: string; MediaType: string };
+};
+
+export type NamingFacts = {
+  Filename: string;
+  ReleaseName: string;
+  NameWithoutTag: string;
+  CleanName: string;
+  Tag: string;
+  Type: string;
+  Artist: string;
+  Title: string;
+  Subtitle: string;
+  AlternateTitle: string;
+  Year: number;
+  Month: number;
+  Day: number;
+  Source: string;
+  Resolution: string;
+  Codecs: string[];
+  Audio: string[];
+  HDR: string[];
+  Extension: string;
+  Languages: string[];
+  Site: string;
+  Genre: string;
+  Channels: string;
+  Collection: string;
+  Region: string;
+  Size: string;
+  Group: string;
+  Disc: string;
+  Editions: string[];
+  Other: string[];
+  Scene: boolean;
+  SceneName: string;
+  Personal: boolean;
+};
+
+export type EpisodeFacts = {
+  Season: number;
+  Episode: number;
+  SeasonLabel: string;
+  EpisodeLabel: string;
+  DailyDate: string;
+  Pack: boolean;
+  Title: string;
+  Overview: string;
+  Year: number;
+  AiredDate: string;
+  AirDays: string[];
+  AirTime: string;
+  AirTimezone: string;
+  AirTimezoneSource: string;
+  DateMatched: boolean;
+};
+
+export type MediaFacts = {
+  AudioLanguages: string[];
+  SubtitleLanguages: string[];
+  Container: string;
+  Audio: string;
+  Channels: string;
+  Commentary: boolean;
+  ThreeD: string;
+  Source: string;
+  Type: string;
+  UHD: string;
+  HDR: string;
+  Distributor: string;
+  Region: string;
+  VideoCodec: string;
+  VideoEncode: string;
+  HasEncodeSettings: boolean;
+  BitDepth: string;
+  Edition: string;
+  Repack: string;
+  WebDV: boolean;
+  StreamOptimized: number;
+  Service: string;
+  ServiceLongName: string;
+  MediaInfoUniqueID: string;
+  Anime: boolean;
+};
+
+export type DiscFacts = {
+  Type: string;
+  Summary: string;
+  DurationSeconds: number;
+  PlaylistCount: number;
+  DVDVOBSet: string;
+};
+
 export type PreparedRelease = {
   Generation: number;
   Compatibility: {
@@ -101,11 +190,11 @@ export type PreparedRelease = {
     PolicyFingerprint: string;
     ContractVersion: string;
   };
-  Source: Record<string, unknown> & { SourcePath?: string };
-  Naming: Record<string, unknown> & { ReleaseName?: string };
-  Episode: Record<string, unknown>;
-  Media: Record<string, unknown>;
-  Disc: Record<string, unknown>;
+  Source: SourceManifest;
+  Naming: NamingFacts;
+  Episode: EpisodeFacts;
+  Media: MediaFacts;
+  Disc: DiscFacts;
   Identity: ExternalIdentity;
   ProviderMetadata: SourceScopedMetadata;
   Assessments: {
@@ -126,12 +215,30 @@ export type PrepareInput = {
     Identity: ExternalIDOverrides;
     Category?: string | null;
     ReleaseName: ReleaseNameOverrides;
+    Metadata?: {
+      Distributor?: string | null;
+      OriginalLanguage?: string | null;
+      PersonalRelease?: boolean | null;
+      Commentary?: boolean | null;
+      WebDV?: boolean | null;
+      StreamOptimized?: boolean | null;
+      Anime?: boolean | null;
+    };
     SourceLookup: string;
+    BlurayReleaseID?: string;
     Playlist: PlaylistInstruction;
+    TrackerIDs?: Record<string, string>;
   };
   Policy: {
     KeepFolder: boolean;
+    KeepImages?: boolean;
     OnlyID: boolean;
+  };
+  Search?: { Skip: boolean; Client?: string | null };
+  Controls?: {
+    Interaction: "interactive" | "unattended" | "unattended_confirm";
+    ConfirmBDMVRescan: boolean;
+    ForceRecheck?: boolean | null;
   };
   Force: boolean;
 };
@@ -152,17 +259,6 @@ export type PreparationDiagnostic = {
   Severity: "info" | "warning" | string;
   Message: string;
   Candidates: ExternalIdentityCandidate[];
-};
-
-export type UploadReview = {
-  SourcePath: string;
-  Trackers: unknown[];
-  Eligibility: TrackerEligibility;
-};
-
-export type UploadReviewResult = {
-  Review: UploadReview;
-  Token: string;
 };
 
 /** External ID overrides use null/undefined for untouched fields and 0 for an explicit clear. */
@@ -665,6 +761,7 @@ export type ProviderDisplay =
 export type PreparedReleaseDisplay = {
   ReleaseName: string;
   Providers: ProviderDisplay[];
+  TrackerData?: TrackerPreview[];
 };
 
 export type BlurayImage = {
@@ -751,15 +848,6 @@ export type RuleFailure = {
   Disposition?: "advisory" | "waivable" | "strict" | string;
 };
 
-export type RuleDecision = RuleFailure & {
-  Authorized: boolean;
-};
-
-export type RuleAuthorization = {
-  Tracker: string;
-  Rules: string[];
-};
-
 export type DupeEntry = {
   Name: string;
   SizeBytes: number;
@@ -813,6 +901,11 @@ export type DupeMatch = {
  */
 export type DupeCheckResult = {
   Tracker: string;
+  CanonicalReleaseName: string;
+  UploadReleaseName: string;
+  ProjectionFingerprint: string;
+  CriteriaFingerprint: string;
+  ProjectionStatus: string;
   Raw: DupeEntry[];
   Filtered: DupeEntry[];
   HasDupes: boolean;
@@ -833,31 +926,6 @@ export type DupeCheckSummary = {
   SourcePath: string;
   Results: DupeCheckResult[];
   Notes: string[];
-  Eligibility: TrackerEligibility;
-};
-
-export type DupeCheckTrackerState = {
-  tracker: string;
-  status: string;
-  message: string;
-  result: DupeCheckResult;
-  startedAt: string;
-  finishedAt: string;
-};
-
-export type DupeCheckSnapshot = {
-  jobID: string;
-  correlationID: string;
-  release: ReleaseRef;
-  runtimeGeneration: number;
-  status: string;
-  trackers: DupeCheckTrackerState[];
-  completedCount: number;
-  totalCount: number;
-  summary: DupeCheckSummary;
-  failure?: OperationFailure;
-  startedAt: string;
-  finishedAt: string;
 };
 
 export type MetadataPreview = {
@@ -875,44 +943,6 @@ export type MetadataPreview = {
   TrackerRuleFailures?: Record<string, RuleFailure[]>;
 };
 
-/** Advisory terminal and non-terminal states emitted by canonical preparation stages. */
-export type PreparationProgressStatus = "running" | "completed" | "skipped" | "failed";
-
-/** Frontend-safe preparation progress event correlated to one active command. */
-export type PreparationProgressUpdate = {
-  /** Binds the update to the initiating release-session command. */
-  correlationID: string;
-  /** Stable machine-readable preparation phase. */
-  phase: string;
-  /** Stable presentation order, not a completion percentage. */
-  order: number;
-  /** User-facing canonical stage name. */
-  label: string;
-  /** User-facing detail for the latest phase transition. */
-  message: string;
-  /** Latest advisory state of the phase. */
-  status: PreparationProgressStatus;
-  /** UTC RFC3339 timestamp assigned by the WebUI transport boundary. */
-  timestamp: string;
-};
-
-export type PreparationDescription = {
-  GroupKey: string;
-  Trackers: string[];
-  RawDescription: string;
-  RawDescriptionHTML: string;
-  Description: string;
-  DescriptionHTML: string;
-  HasOverride: boolean;
-  ImageHost: ImageHostFeedback;
-};
-
-export type PreparationPreview = {
-  SourcePath: string;
-  Descriptions: PreparationDescription[];
-  ContentFailures: TrackerContentFailure[];
-};
-
 export type ImageHostFeedback = {
   Status: string;
   SelectedHost: string;
@@ -925,23 +955,6 @@ export type ImageHostFeedback = {
 export type ImageHostWarning = {
   Host: string;
   Message: string;
-};
-
-export type DescriptionBuilderGroup = {
-  GroupKey: string;
-  Trackers: string[];
-  Description: string;
-  DescriptionHTML: string;
-  RawDescription: string;
-  RawDescriptionHTML: string;
-  HasOverride: boolean;
-  ImageHost: ImageHostFeedback;
-};
-
-export type DescriptionBuilderPreview = {
-  SourcePath: string;
-  Groups: DescriptionBuilderGroup[];
-  ContentFailures: TrackerContentFailure[];
 };
 
 /** Image category shared by capture, selection, upload, and menu workflows. */
@@ -1126,6 +1139,8 @@ export type ImageUploadProgressUpdate = {
 export type UploadImagesResult = {
   Links: UploadedImageLink[];
   Failures: UploadImageHostFailure[];
+  /** Every host attempt that failed, including failures recovered by fallback. */
+  FailedHosts?: string[];
 };
 
 export type HistoryEntry = {
@@ -1236,151 +1251,6 @@ export type TrackerUploadItem = {
   config: ConfigMap;
 };
 
-export type TrackerUploadTrackerState = {
-  tracker: string;
-  status: string;
-  task: string;
-  taskStatus: string;
-  message: string;
-  completedPieces: number;
-  totalPieces: number;
-  percent: number;
-  hashRateMiB: number;
-  uploadedCount: number;
-  startedAt: string;
-  finishedAt: string;
-};
-
-export type UploadProgressUpdate = {
-  sourcePath: string;
-  tracker: string;
-  task: string;
-  status: string;
-  message: string;
-  completedPieces: number;
-  totalPieces: number;
-  percent: number;
-  hashRateMiB: number;
-  timestamp: string;
-};
-
-export type TrackerUploadSnapshot = {
-  jobID: string;
-  correlationID: string;
-  retryOf?: string;
-  release: ReleaseRef;
-  runtimeGeneration: number;
-  status: string;
-  currentTask: string;
-  currentTaskStatus: string;
-  currentMessage: string;
-  currentCompletedPieces: number;
-  currentTotalPieces: number;
-  currentPercent: number;
-  currentHashRateMiB: number;
-  trackers: TrackerUploadTrackerState[];
-  failedTrackers: string[];
-  uploadedCount: number;
-  failure?: OperationFailure;
-  startedAt: string;
-  finishedAt: string;
-};
-
-export type OwnerJobSnapshot =
-  | {
-      kind: "duplicate_check";
-      jobID: string;
-      correlationID: string;
-      release: ReleaseRef;
-      status: string;
-      startedAt: string;
-      finishedAt: string;
-      dupe: DupeCheckSnapshot;
-    }
-  | {
-      kind: "tracker_upload";
-      jobID: string;
-      correlationID: string;
-      retryOf?: string;
-      release: ReleaseRef;
-      status: string;
-      startedAt: string;
-      finishedAt: string;
-      upload: TrackerUploadSnapshot;
-    };
-
-export type TrackerDryRunFile = {
-  Field: string;
-  Path: string;
-  Present: boolean;
-};
-
-export type TrackerQuestionnaireField = {
-  Key: string;
-  Label: string;
-  Kind: string;
-  Options?: string[];
-  Value: string;
-  Placeholder: string;
-  Help: string;
-  Required: boolean;
-};
-
-export type TrackerQuestionnaire = {
-  Tracker: string;
-  Fields: TrackerQuestionnaireField[];
-};
-
-export type TrackerDryRunEntry = {
-  Tracker: string;
-  Status: string;
-  Message: string;
-  Banned: boolean;
-  BannedReason: string;
-  BannedCheckError: string;
-  ReleaseName: string;
-  OriginalReleaseName: string;
-  UploadReleaseName: string;
-  ReleaseNameChanged: boolean;
-  ReleaseNameChangeReason: string;
-  DescriptionGroup: string;
-  Description: string;
-  Endpoint: string;
-  Payload: Record<string, string>;
-  Files: TrackerDryRunFile[];
-  /** Optional staged diagnostics for trackers that expose intermediate dry-run payloads. */
-  DebugSections?: TrackerDryRunDebugSection[] | null;
-  Questionnaire?: TrackerQuestionnaire | null;
-  ImageHost: ImageHostFeedback;
-  ContentFailure?: TrackerContentFailure | null;
-  Diagnostics: TrackerDryRunDiagnostics;
-};
-
-export type TrackerDryRunDiagnostics = {
-  RuleDecisions: RuleDecision[];
-  Duplicate: DupeCheckResult;
-  LiveEligibilityReasons: TrackerEligibilityReason[];
-};
-
-export type TrackerContentFailure = {
-  tracker: string;
-  code: "screenshot_preparation_failed" | "description_preparation_failed";
-  message: string;
-};
-
-/** One named diagnostic payload rendered inside a tracker dry-run preview. */
-export type TrackerDryRunDebugSection = {
-  Title: string;
-  Endpoint: string;
-  Payload: Record<string, string>;
-  Files: TrackerDryRunFile[];
-};
-
-export type TrackerDryRunPreview = {
-  SourcePath: string;
-  Trackers: TrackerDryRunEntry[];
-};
-
 export type ConfigValue = string | number | boolean | null | ConfigMap | ConfigValue[];
 export type ConfigMap = { [key: string]: ConfigValue };
 export type TrackerCatalogField = {
@@ -1396,6 +1266,7 @@ export type TrackerCatalogEntry = {
   uploadContentMode: "none" | "screenshots" | "description";
   fields: TrackerCatalogField[];
   configured: boolean;
+  default?: boolean;
 };
 export type TrackerCatalog = {
   entries: TrackerCatalogEntry[];

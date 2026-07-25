@@ -4,7 +4,10 @@
 package asc
 
 import (
+	"strings"
+
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 )
 
@@ -18,11 +21,23 @@ func Profile() standalone.Profile {
 		LocalizedMetadataLocale: "pt-BR",
 		PrepareDescription:      prepareDescription,
 		PrepareUpload:           prepareUpload,
-		NewDuplicateAdapter:     newDuplicateAdapter,
-		UploadArtifactPolicy:    &trackers.UploadArtifactPolicy{Source: sourceFlag},
-		AudioPolicy:             &trackers.AudioPolicy{AllowBloat: true},
-		TorrentIdentityPolicy:   &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"amigos-share.club"}},
-		AuthCapability:          standalone.CookieAuthCapability("ASC"),
+		ValidationPolicy:        validationPolicy(),
+		ReleaseNamePolicy: trackers.NewReleaseNamePolicy("standalone/asc/v1", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+			uploadName := resolveUploadTitle(input.Subject)
+			if input.RequestedName != nil {
+				uploadName = strings.TrimSpace(*input.RequestedName)
+			}
+			searchName := uploadName
+			if input.Subject.Anime {
+				searchName = resolveSearchTitle(input.Subject)
+			}
+			return trackers.ResolvedReleaseNames{Upload: uploadName, Duplicate: searchName}, nil
+		}),
+		NewDuplicateAdapter:   newDuplicateAdapter,
+		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag},
+		AudioPolicy:           &trackers.AudioPolicy{AllowBloat: true},
+		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"amigos-share.club"}},
+		AuthCapability:        authcontract.CookieCapability("ASC"),
 	}
 }
 

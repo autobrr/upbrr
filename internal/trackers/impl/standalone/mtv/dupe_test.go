@@ -135,7 +135,7 @@ func TestMTVHandlerUsesIMDBPriorityAndParsesXML(t *testing.T) {
 	}
 }
 
-func TestMTVHandlerFallsBackToCleanedTitleQuery(t *testing.T) {
+func TestMTVHandlerUsesExactProjectedTitleQuery(t *testing.T) {
 	t.Parallel()
 
 	client := &http.Client{
@@ -144,7 +144,7 @@ func TestMTVHandlerFallsBackToCleanedTitleQuery(t *testing.T) {
 			assertQueryParam(t, query, "t", "search")
 			assertQueryParam(t, query, "apikey", "token")
 			assertQueryParam(t, query, "limit", "100")
-			assertQueryParam(t, query, "q", "Johns Story The Return")
+			assertQueryParam(t, query, "q", "Exact Projected Query")
 			if got := query.Get("imdbid"); got != "" {
 				t.Fatalf("imdbid should be empty, got %q", got)
 			}
@@ -165,7 +165,12 @@ func TestMTVHandlerFallsBackToCleanedTitleQuery(t *testing.T) {
 				},
 			},
 		}, client, api.NopLogger{})
-	meta := api.DuplicateSubject{Release: api.ReleaseInfo{Title: "John's Story: The Return"}}
+	meta := api.DuplicateSubject{
+		Release: api.ReleaseInfo{Title: "Ignored Title"},
+		Projection: &api.TrackerReleaseProjection{
+			DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Exact Projected Query"},
+		},
+	}
 
 	entries, notes, err := adapterEvidence(handler.Search(context.Background(), meta))
 	if err != nil {
@@ -176,6 +181,14 @@ func TestMTVHandlerFallsBackToCleanedTitleQuery(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("expected no entries, got %d", len(entries))
+	}
+}
+
+func TestCleanMTVSearchTitleDirectFallback(t *testing.T) {
+	t.Parallel()
+
+	if got := cleanMTVSearchTitle(api.DuplicateSubject{Release: api.ReleaseInfo{Title: "John's Story: The Return"}}); got != "Johns Story The Return" {
+		t.Fatalf("fallback query = %q", got)
 	}
 }
 

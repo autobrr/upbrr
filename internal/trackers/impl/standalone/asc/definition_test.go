@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -67,7 +68,7 @@ func TestDefinitionBuildUploadDryRunBlockedWithoutCookies(t *testing.T) {
 	}
 }
 
-func TestDefinitionBuildUploadDryRunQuestionnaireForMissingMetadata(t *testing.T) {
+func TestDefinitionBuildUploadDryRunRejectsMissingQuestionnaireMetadata(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
@@ -84,7 +85,7 @@ func TestDefinitionBuildUploadDryRunQuestionnaireForMissingMetadata(t *testing.T
 		t.Fatalf("write torrent: %v", err)
 	}
 
-	entry, err := prepareDryRun(context.Background(), trackers.PreparationInput{
+	_, err := prepareDryRun(context.Background(), trackers.PreparationInput{
 		Tracker: "ASC",
 		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "movie.mkv"),
@@ -105,13 +106,19 @@ func TestDefinitionBuildUploadDryRunQuestionnaireForMissingMetadata(t *testing.T
 		}),
 		Logger: api.NopLogger{},
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "required_genre") {
+		t.Fatalf("expected direct dry-run constructibility error, got %v", err)
 	}
-	if entry.Questionnaire == nil {
+}
+
+func TestBuildQuestionnaireForMissingMetadata(t *testing.T) {
+	t.Parallel()
+
+	questionnaire := buildQuestionnaire(api.UploadSubject{})
+	if questionnaire == nil {
 		t.Fatal("expected questionnaire")
 	}
-	if got := len(entry.Questionnaire.Fields); got != 2 {
+	if got := len(questionnaire.Fields); got != 2 {
 		t.Fatalf("expected 2 questionnaire fields, got %d", got)
 	}
 }

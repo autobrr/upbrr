@@ -54,18 +54,6 @@ func (e *PartialUploadError) Failures() []TrackerFailure {
 	return append([]TrackerFailure(nil), e.failures...)
 }
 
-// TrackerLocalUploadFailures implements api.TrackerLocalUploadError without exposing private plan state.
-func (e *PartialUploadError) TrackerLocalUploadFailures() []string {
-	if e == nil {
-		return nil
-	}
-	trackers := make([]string, 0, len(e.failures))
-	for _, failure := range e.failures {
-		trackers = append(trackers, failure.Tracker)
-	}
-	return trackers
-}
-
 // Unwrap returns diagnostic causes for tracker failures that retained one.
 func (e *PartialUploadError) Unwrap() []error {
 	if e == nil {
@@ -80,14 +68,9 @@ func (e *PartialUploadError) Unwrap() []error {
 	return causes
 }
 
-// IsPartialUploadError reports whether err represents only tracker-local failures.
-func IsPartialUploadError(err error) bool {
-	var partial *PartialUploadError
-	return errors.As(err, &partial)
-}
-
 type trackerPlanSlot struct {
 	tracker                  string
+	torrentPath              string
 	plan                     TrackerPlan
 	failure                  *TrackerFailure
 	summary                  api.UploadSummary
@@ -116,7 +99,7 @@ func (s *Service) Upload(ctx context.Context, meta api.UploadSubject) (api.Uploa
 		s.logger.Infof("trackers: no trackers configured, skipping upload")
 		return api.UploadSummary{}, nil
 	}
-	if baseTorrent, err := ResolveUploadTorrentPath(meta, s.cfg.MainSettings.DBPath); err == nil {
+	if baseTorrent, err := resolveUploadTorrentBasePath(meta, s.cfg.MainSettings.DBPath); err == nil {
 		meta.TorrentPath = baseTorrent
 	} else if !isUploadTorrentNotFound(err) {
 		return api.UploadSummary{}, fmt.Errorf("trackers: shared upload torrent: %w", err)
@@ -124,7 +107,7 @@ func (s *Service) Upload(ctx context.Context, meta api.UploadSubject) (api.Uploa
 
 	preflight := s.preflightDescriptionImageHosts(ctx, meta, resolved)
 	banned := s.prepareBannedState(ctx, meta, resolved)
-	slots := s.prepareUploadPlans(ctx, meta, resolved, preflight, banned)
+	slots := s.prepareUploadPlans(ctx, meta, resolved, preflight, banned, nil)
 	if err := ctx.Err(); err != nil {
 		s.releaseTrackerPlans(slots)
 		for idx := range slots {
@@ -191,13 +174,13 @@ func (s *Service) prepareUploadPlans(
 	resolved []string,
 	preflight imageHostPreflight,
 	banned map[string]*TrackerFailure,
+	projections map[string]api.TrackerReleaseProjection,
 ) []trackerPlanSlot {
 	slots := make([]trackerPlanSlot, len(resolved))
 	workerCount := min(defaultMaxConcurrentTrackerPreparations, len(resolved))
 	jobs := make(chan int)
 	var wg sync.WaitGroup
 	worker := func() {
-		defer wg.Done()
 		for idx := range jobs {
 			tracker := resolved[idx]
 			slot := trackerPlanSlot{tracker: tracker}
@@ -219,8 +202,23 @@ func (s *Service) prepareUploadPlans(
 				slots[idx] = slot
 				continue
 			}
+			if projection, ok := projections[normalizeTrackerName(tracker)]; ok && projection.ProjectorFingerprint != "" {
+				descriptor, descriptorOK := s.registry.LookupDescriptor(tracker)
+				recordedPolicyID := projectedReleaseNamePolicyID(projection)
+				_, instructionOK := projectedRequestedReleaseName(projection)
+				if !descriptorOK || recordedPolicyID == "" || recordedPolicyID != descriptor.ReleaseNamePolicy.ID || !instructionOK {
+					slot.failure = &TrackerFailure{
+						Tracker: tracker,
+						Code:    "name_policy_stale",
+						Message: "reviewed tracker release-name policy is stale",
+					}
+					slots[idx] = slot
+					emitTrackerPlanProgress(ctx, meta.SourcePath, tracker, "tracker_preparation", "failed", slot.failure.Message)
+					continue
+				}
+			}
 			trackerCfg := applyTrackerConfigOverrides(trackerConfigFor(s.cfg, tracker), meta.TrackerConfigOverrides)
-			trackerMeta, err := PrepareTrackerUploadTorrentWithRegistry(meta, s.cfg.MainSettings.DBPath, tracker, trackerCfg, s.registry)
+			trackerMeta, err := prepareTrackerUploadTorrentWithRegistry(meta, s.cfg.MainSettings.DBPath, tracker, trackerCfg, s.registry)
 			if err != nil {
 				slot.failure = trackerFailure(tracker, "artifact", err)
 				slots[idx] = slot
@@ -238,7 +236,15 @@ func (s *Service) prepareUploadPlans(
 				emitTrackerPlanProgress(ctx, meta.SourcePath, tracker, "tracker_preparation", "failed", slot.failure.Message)
 				continue
 			}
-			plan, failure := definition.Prepare(ctx, s.preparationInput(ctx, PreparationIntentUpload, tracker, trackerMeta, trackerCfg, content.Assets))
+			input := s.preparationInput(ctx, PreparationIntentUpload, tracker, trackerMeta, trackerCfg, content.Assets)
+			if projection, ok := projections[normalizeTrackerName(tracker)]; ok {
+				projected := projection
+				input.Projection = &projected
+				if requestedName, provenanceOK := projectedRequestedReleaseName(projected); provenanceOK {
+					input.RequestedUploadName = requestedName
+				}
+			}
+			plan, failure := definition.Prepare(ctx, input)
 			if failure != nil {
 				slot.failure = &TrackerFailure{
 					Tracker: tracker,
@@ -250,14 +256,14 @@ func (s *Service) prepareUploadPlans(
 				emitTrackerPlanProgress(ctx, meta.SourcePath, tracker, "tracker_preparation", "failed", slot.failure.Message)
 				continue
 			}
+			slot.torrentPath = trackerMeta.TorrentPath
 			slot.plan = plan
 			slots[idx] = slot
 			emitTrackerPlanProgress(ctx, meta.SourcePath, tracker, "tracker_preparation", "completed", "Tracker plan ready")
 		}
 	}
 	for range workerCount {
-		wg.Add(1)
-		go worker()
+		wg.Go(worker)
 	}
 	next := 0
 enqueue:
@@ -277,6 +283,164 @@ enqueue:
 		}
 	}
 	return slots
+}
+
+// RetainedTrackerPreparation is one process-local view of a private prepared tracker operation.
+type RetainedTrackerPreparation struct {
+	Tracker string
+	// TorrentPath is the exact tracker artifact shared by preview injection and submission.
+	// It is execution authority, not a transport contract.
+	TorrentPath string
+	Preview     api.TrackerDryRunEntry
+	Failure     *TrackerFailure
+}
+
+// RetainedTrackerResult is one tracker outcome produced by a retained operation.
+type RetainedTrackerResult struct {
+	Tracker string
+	Summary api.UploadSummary
+	Failure *TrackerFailure
+}
+
+// RetainedUploadPlan owns exact single-use tracker plans produced by one
+// preparation barrier. It is process-local execution authority.
+type RetainedUploadPlan struct {
+	service  *Service
+	meta     api.UploadSubject
+	slots    []trackerPlanSlot
+	mu       sync.Mutex
+	executed bool
+	released bool
+}
+
+// PrepareRetainedUploadPlan builds submittable operations from exact reviewed projections.
+func (s *Service) PrepareRetainedUploadPlan(
+	ctx context.Context,
+	meta api.UploadSubject,
+	projections []api.TrackerReleaseProjection,
+) (*RetainedUploadPlan, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("trackers: retained upload preparation: %w", err)
+	}
+	if strings.TrimSpace(meta.SourcePath) == "" {
+		return nil, errors.New("trackers: retained upload preparation source is missing")
+	}
+	if s == nil || s.registry == nil {
+		return nil, errors.New("trackers: retained upload preparation registry is unavailable")
+	}
+	resolved := make([]string, 0, len(projections))
+	projectionByTracker := make(map[string]api.TrackerReleaseProjection, len(projections))
+	for _, projection := range projections {
+		tracker := normalizeTrackerName(string(projection.TrackerID))
+		if tracker == "" || !projection.UploadReady || projection.Readiness != api.ReadinessStatusReady {
+			continue
+		}
+		if _, exists := projectionByTracker[tracker]; exists {
+			return nil, fmt.Errorf("trackers: retained upload preparation contains duplicate tracker %s", tracker)
+		}
+		resolved = append(resolved, tracker)
+		projectionByTracker[tracker] = projection
+	}
+	if len(resolved) == 0 {
+		return nil, errors.New("trackers: retained upload preparation has no eligible projections")
+	}
+	meta.Trackers = append([]string(nil), resolved...)
+	if baseTorrent, err := resolveUploadTorrentBasePath(meta, s.cfg.MainSettings.DBPath); err == nil {
+		meta.TorrentPath = baseTorrent
+	} else if !isUploadTorrentNotFound(err) {
+		return nil, fmt.Errorf("trackers: retained upload shared torrent: %w", err)
+	}
+	preflight := s.preflightDescriptionImageHosts(ctx, meta, resolved)
+	slots := s.prepareUploadPlans(ctx, meta, resolved, preflight, nil, projectionByTracker)
+	if err := ctx.Err(); err != nil {
+		s.releaseTrackerPlans(slots)
+		return nil, fmt.Errorf("trackers: retained upload preparation: %w", err)
+	}
+	return &RetainedUploadPlan{
+		service: s,
+		meta:    meta,
+		slots:   slots,
+	}, nil
+}
+
+// Preparations returns detached sanitized-preparation source values. Callers
+// must sanitize the payload projection before transport exposure.
+func (p *RetainedUploadPlan) Preparations() []RetainedTrackerPreparation {
+	if p == nil {
+		return nil
+	}
+	result := make([]RetainedTrackerPreparation, 0, len(p.slots))
+	for _, slot := range p.slots {
+		preparation := RetainedTrackerPreparation{Tracker: slot.tracker, TorrentPath: slot.torrentPath}
+		if slot.failure != nil {
+			failure := *slot.failure
+			preparation.Failure = &failure
+		} else {
+			preparation.Preview = slot.plan.DryRun()
+		}
+		result = append(result, preparation)
+	}
+	return result
+}
+
+// Execute consumes all retained tracker plans without rebuilding payloads.
+func (p *RetainedUploadPlan) Execute(ctx context.Context) ([]RetainedTrackerResult, error) {
+	if p == nil || p.service == nil {
+		return nil, ErrPlanNotSubmittable
+	}
+	p.mu.Lock()
+	if p.released {
+		p.mu.Unlock()
+		return nil, ErrPlanReleased
+	}
+	if p.executed {
+		p.mu.Unlock()
+		return nil, ErrPlanAlreadyUsed
+	}
+	p.executed = true
+	p.mu.Unlock()
+
+	p.service.createPendingRecords(ctx, p.meta, p.slots)
+	p.service.submitTrackerPlans(ctx, p.meta, p.slots)
+	p.service.releaseTrackerPlans(p.slots)
+	p.mu.Lock()
+	p.released = true
+	p.mu.Unlock()
+
+	results := make([]RetainedTrackerResult, 0, len(p.slots))
+	for _, slot := range p.slots {
+		result := RetainedTrackerResult{Tracker: slot.tracker, Summary: slot.summary}
+		if slot.failure != nil {
+			failure := *slot.failure
+			result.Failure = &failure
+		}
+		results = append(results, result)
+	}
+	if err := ctx.Err(); err != nil && trackerPlansCanceled(p.slots) {
+		return results, fmt.Errorf("trackers: retained upload execution: %w", err)
+	}
+	return results, nil
+}
+
+// Release invalidates unconsumed retained plans and frees adapter resources.
+func (p *RetainedUploadPlan) Release() error {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	if p.released {
+		p.mu.Unlock()
+		return nil
+	}
+	p.released = true
+	p.mu.Unlock()
+	var errs []error
+	for _, slot := range p.slots {
+		if err := slot.plan.Release(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (s *Service) preparationInput(
@@ -373,8 +537,56 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				continue
 			}
 			emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "running", "Uploading to tracker")
+			effectFingerprint, fingerprintErr := api.CanonicalWorkflowFingerprint(struct {
+				Tracker string
+				Preview api.TrackerDryRunEntry
+			}{
+				Tracker: slot.tracker,
+				Preview: slot.plan.DryRun(),
+			})
+			if fingerprintErr != nil {
+				slot.failure = trackerFailure(slot.tracker, "effect_fence", fingerprintErr)
+				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "failed")
+				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
+				continue
+			}
+			effectReceipt, effectErr := api.BeginWorkflowExternalEffect(ctx, api.WorkflowExternalEffect{
+				Kind:                api.WorkflowExternalEffectTrackerSubmission,
+				ScopeID:             slot.tracker,
+				SemanticFingerprint: effectFingerprint,
+			})
+			if effectErr != nil {
+				code := "effect_fence"
+				if errors.Is(effectErr, api.ErrReleaseWorkflowEffectOutcomeUnknown) {
+					code = "unknown_outcome"
+				}
+				slot.failure = trackerFailure(slot.tracker, code, effectErr)
+				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, code)
+				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
+				continue
+			}
+			if effectReceipt.AlreadySucceeded {
+				slot.summary = api.UploadSummary{Uploaded: 1}
+				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "uploaded")
+				emitTrackerPlanProgress(
+					ctx,
+					meta.SourcePath,
+					slot.tracker,
+					"tracker_upload",
+					"completed",
+					"Prior tracker upload receipt retained",
+				)
+				continue
+			}
 			summary, err := slot.plan.Submit(ctx)
 			slot.canceledDuringSubmission = ctx.Err() != nil
+			receiptErr := api.CompleteWorkflowExternalEffect(ctx, effectReceipt, err == nil)
+			if receiptErr != nil {
+				slot.failure = trackerFailure(slot.tracker, "unknown_outcome", receiptErr)
+				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "unknown_outcome")
+				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
+				continue
+			}
 			if err != nil {
 				slot.failure = trackerFailure(slot.tracker, "submit", err)
 				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "failed")
@@ -490,12 +702,22 @@ func safeTrackerMessage(err error) string {
 func normalizeTrackerName(tracker string) string { return strings.ToUpper(strings.TrimSpace(tracker)) }
 
 func emitTrackerPlanProgress(ctx context.Context, sourcePath string, tracker string, task string, status string, message string) {
+	completed := 0
+	percent := 0
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "failed", "canceled", "cancelled", "skipped":
+		completed = 1
+		percent = 100
+	}
 	api.EmitUploadProgress(ctx, api.UploadProgressUpdate{
-		SourcePath: sourcePath,
-		Tracker:    tracker,
-		Task:       task,
-		Status:     status,
-		Message:    message,
-		Timestamp:  time.Now().UTC().Format(time.RFC3339Nano),
+		SourcePath:      sourcePath,
+		Tracker:         tracker,
+		Task:            task,
+		Status:          status,
+		Message:         message,
+		CompletedPieces: completed,
+		TotalPieces:     1,
+		Percent:         percent,
+		Timestamp:       time.Now().UTC().Format(time.RFC3339Nano),
 	})
 }

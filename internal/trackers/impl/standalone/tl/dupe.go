@@ -34,9 +34,12 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	if !tlConfigured(s.cfg) {
 		return dupe.NotRun(dupe.NotRunMissingCredentials, "missing passkey for tracker", nil)
 	}
-	query := strings.TrimSpace(meta.Release.Title)
-	if query == "" {
-		query = strings.TrimSpace(meta.ReleaseName)
+	query := dupe.ProjectedSearchName(meta)
+	if meta.Projection == nil {
+		query = strings.TrimSpace(meta.Release.Title)
+		if query == "" {
+			query = strings.TrimSpace(meta.ReleaseName)
+		}
 	}
 	if query == "" {
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing title for TL dupe search", nil)

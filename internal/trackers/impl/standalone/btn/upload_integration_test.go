@@ -1607,7 +1607,7 @@ func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
 			switch rpc.Method {
 			case "getTorrentsSearch":
 				apiSearchCalls.Add(1)
-				_, _ = w.Write([]byte(`{"result":{"torrents":{"779":{"GroupID":"123","ReleaseName":"Example.Show.S01E01.1080p.WEB-DL.x265-GRP"},"778":{"GroupID":"123","ReleaseName":"Example.Show.S01E01.720p.WEB-DL.x265-GRP"},"777":{"GroupID":"999","ReleaseName":"Example.Show.S01E01.1080p.WEB-DL.x265-GRP"}}}}`))
+				_, _ = w.Write([]byte(`{"result":{"torrents":{"779":{"GroupID":"123","ReleaseName":"Example.Show.S01E01.1080p.WEB-DL.H.265-GRP"},"778":{"GroupID":"123","ReleaseName":"Example.Show.S01E01.720p.WEB-DL.H.265-GRP"},"777":{"GroupID":"999","ReleaseName":"Example.Show.S01E01.1080p.WEB-DL.H.265-GRP"}}}}`))
 			case "getTorrentById":
 				apiDownloadCalls.Add(1)
 				var selectedID string

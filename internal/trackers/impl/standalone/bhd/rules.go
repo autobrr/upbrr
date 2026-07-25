@@ -17,19 +17,40 @@ func rules() *trackers.RuleSet {
 		RequireValidMISetting: true,
 		BlockAdult:            true,
 		AdultMessage:          "Porn/xxx is not allowed at BHD.",
-		Check:                 checkRequirements,
 	}
 }
 
-func checkRequirements(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {
+func validationPolicy() trackers.ValidationPolicyBinding {
+	return trackers.ValidationPolicyBinding{
+		ID:    "standalone-bhd-constructibility-v1",
+		Check: checkRequirements,
+	}
+}
+
+func checkRequirements(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context canceled: %w", err)
+	}
+	failures := make([]api.RuleFailure, 0, 3)
+	if _, ok := Source(meta.Source); !ok {
+		failures = append(failures, trackers.NewRuleFailure(
+			"unsupported_source",
+			"BHD does not support the release source.",
+			api.RuleDispositionStrict,
+		))
+	}
+	if meta.Identity.TMDBID <= 0 {
+		failures = append(failures, trackers.NewRuleFailure(
+			"required_provider_id",
+			"BHD requires a canonical TMDB ID.",
+			api.RuleDispositionStrict,
+		))
 	}
 	switch strings.ToUpper(strings.TrimSpace(meta.Type)) {
 	case "REMUX", "ENCODE", "WEBDL", "WEBRIP":
 		container := strings.ToLower(strings.TrimSpace(meta.Container))
 		if container != "" && container != "mkv" && container != "mp4" {
-			return []api.RuleFailure{trackers.NewRuleFailure(
+			failures = append(failures, trackers.NewRuleFailure(
 				"container",
 				fmt.Sprintf(
 					"Container %q is not allowed for %s. Only MKV and MP4 are permitted.",
@@ -37,8 +58,8 @@ func checkRequirements(ctx context.Context, meta api.RuleSubject, _ api.Logger) 
 					strings.ToUpper(strings.TrimSpace(meta.Type)),
 				),
 				api.RuleDispositionStrict,
-			)}, nil
+			))
 		}
 	}
-	return nil, nil
+	return failures, nil
 }

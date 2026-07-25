@@ -405,6 +405,9 @@ func resolveASCCategory(meta api.DuplicateSubject) string {
 }
 
 func resolveASCTitle(meta api.DuplicateSubject) string {
+	if meta.Projection != nil {
+		return dupe.ProjectedSearchName(meta)
+	}
 	if strings.TrimSpace(meta.Release.Title) != "" {
 		return strings.TrimSpace(meta.Release.Title)
 	}

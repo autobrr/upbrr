@@ -34,6 +34,10 @@ func buildFinalPayload(
 	fileInfo string,
 	screenshotIDs []string,
 ) (url.Values, error) {
+	releaseName, err := req.ReviewedUploadName()
+	if err != nil {
+		return nil, fmt.Errorf("trackers: %s release name: %w", site.Name, err)
+	}
 	langs := languageValues(req.Meta)
 	tags, err := resolveTags(ctx, site, state, req)
 	if err != nil {
@@ -43,7 +47,7 @@ func buildFinalPayload(
 	values.Set("_token", state.token)
 	values.Set("torrent_id", "")
 	values.Set("type_id", categoryID(req.Meta))
-	values.Set("file_name", editName(site, req.Meta))
+	values.Set("file_name", releaseName)
 	values.Set("description", buildDescriptionFromAssets(ctx, req))
 	values.Set("qqfile", "")
 	values.Set("rip_type_id", ripTypeID(req.Meta))

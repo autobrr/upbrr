@@ -4,9 +4,8 @@
 package dc
 
 import (
-	"context"
-
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 )
 
@@ -17,8 +16,11 @@ func Profile() standalone.Profile {
 		BaseURL:             baseURL,
 		DescriptionGroup:    "dc",
 		UploadContentMode:   trackers.UploadContentModeDescription,
+		AuthCapability:      authcontract.APIKeyCapability("DC"),
 		PrepareDescription:  prepareDescription,
 		PrepareUpload:       prepareUpload,
+		ValidationPolicy:    validationPolicy(),
+		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNamePolicy("standalone/dc/v1", resolveUploadName),
 		NewDuplicateAdapter: newDuplicateAdapter,
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{
 			Source: sourceFlag,
@@ -37,18 +39,3 @@ func Profile() standalone.Profile {
 
 // New returns a fresh DC definition from its tracker-local profile.
 func New() *standalone.Definition { return standalone.MustNew(Profile()) }
-
-func prepareDescription(_ context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {
-	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
-	if err != nil {
-		assets = trackers.DescriptionAssets{}
-	}
-	description := buildDescription(trackers.PreparationInput{
-		Tracker:       req.Tracker,
-		Meta:          req.Meta,
-		TrackerConfig: req.TrackerConfig,
-		Runtime:       req.Runtime,
-		Logger:        req.Logger,
-	}, assets)
-	return trackers.DescriptionResult{Group: "dc", Description: description}, nil
-}

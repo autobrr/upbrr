@@ -5,6 +5,7 @@ package bt
 
 import (
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 )
 
@@ -18,11 +19,13 @@ func Profile() standalone.Profile {
 		LocalizedMetadataLocale: "pt-BR",
 		PrepareDescription:      prepareDescription,
 		PrepareUpload:           prepareUpload,
+		ValidationPolicy:        validationPolicy(),
+		ReleaseNamePolicy:       trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/bt/v1", resolveUploadName, resolveSearchName),
 		NewDuplicateAdapter:     newDuplicateAdapter,
 		UploadArtifactPolicy:    &trackers.UploadArtifactPolicy{Source: sourceFlag},
 		AudioPolicy:             &trackers.AudioPolicy{AllowBloat: true},
 		TorrentIdentityPolicy:   &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"t.brasiltracker.org"}},
-		AuthCapability:          standalone.CookieAuthCapability("BT"),
+		AuthCapability:          authcontract.CookieCapability("BT"),
 	}
 }
 

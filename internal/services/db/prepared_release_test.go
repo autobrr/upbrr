@@ -6,6 +6,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -82,6 +83,61 @@ func TestPreparedReleaseLoadRejectsMixedGeneration(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "generation mismatch") {
 		t.Fatalf("load error = %v, want generation mismatch", err)
 	}
+}
+
+func TestPreparedReleaseIncompleteGenerationIsRecoverableCacheMiss(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		deleteCompanion func(context.Context, *SQLiteRepository, string) error
+	}{
+		{name: "identity", deleteCompanion: deletePreparedIdentityFixture},
+		{name: "provider metadata", deleteCompanion: deletePreparedMetadataFixture},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := openPreparedReleaseTestRepo(t)
+			release := preparedReleaseDBFixture(filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv"), 1)
+			ctx := context.Background()
+			if err := repo.CommitPreparedRelease(ctx, release); err != nil {
+				t.Fatalf("commit prepared release: %v", err)
+			}
+			if err := test.deleteCompanion(ctx, repo, release.Source.SourcePath); err != nil {
+				t.Fatalf("delete %s: %v", test.name, err)
+			}
+
+			if _, err := repo.LoadPreparedRelease(ctx, release.Source.SourcePath); !errors.Is(err, internalerrors.ErrNotFound) {
+				t.Fatalf("load incomplete generation error = %v, want not found", err)
+			}
+			if err := repo.CommitPreparedRelease(ctx, release); err != nil {
+				t.Fatalf("repair incomplete generation: %v", err)
+			}
+			loaded, err := repo.LoadPreparedRelease(ctx, release.Source.SourcePath)
+			if err != nil {
+				t.Fatalf("load repaired generation: %v", err)
+			}
+			if !reflect.DeepEqual(loaded, release) {
+				t.Fatalf("repaired prepared release differs\ngot:  %#v\nwant: %#v", loaded, release)
+			}
+		})
+	}
+}
+
+func deletePreparedIdentityFixture(ctx context.Context, repo *SQLiteRepository, sourcePath string) error {
+	if _, err := repo.RawDB().ExecContext(ctx, `DELETE FROM external_ids WHERE source_path = ?`, sourcePath); err != nil {
+		return fmt.Errorf("delete prepared identity fixture: %w", err)
+	}
+	return nil
+}
+
+func deletePreparedMetadataFixture(ctx context.Context, repo *SQLiteRepository, sourcePath string) error {
+	if _, err := repo.RawDB().ExecContext(ctx, `DELETE FROM external_metadata WHERE source_path = ?`, sourcePath); err != nil {
+		return fmt.Errorf("delete prepared metadata fixture: %w", err)
+	}
+	return nil
 }
 
 func TestPreparedReleasePurgeDeletesGenerationState(t *testing.T) {
@@ -209,11 +265,11 @@ func preparedReleaseDBFixture(sourcePath string, generation api.PreparedGenerati
 			Languages:   []string{"English"},
 		},
 		Episode: api.EpisodeFacts{
-Season: 1,
- Episode: 2,
- SeasonLabel: "S01",
- EpisodeLabel: "E02",
-},
+			Season:       1,
+			Episode:      2,
+			SeasonLabel:  "S01",
+			EpisodeLabel: "E02",
+		},
 		Media: api.MediaFacts{
 			AudioLanguages:    []string{"English"},
 			SubtitleLanguages: []string{"English"},

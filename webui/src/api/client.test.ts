@@ -42,15 +42,14 @@ describe("web client", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { initializeWebClient } = await import("./client");
-    const { screenshotClient } = await import("./app");
+    const { releaseWorkflowClient } = await import("./app");
     initializeWebClient("csrf-token", true);
 
-    const release = { SourcePath: "C:/media/Example.mkv", Generation: 3 };
-    const result = await screenshotClient.fetchPlan(release);
+    const result = await releaseWorkflowClient.mediaPlan("workflow-1");
 
     expect(result).toEqual({ ok: true });
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/app/FetchScreenshotPlan",
+      "/api/app/GetReleaseWorkflowMediaPlan",
       expect.objectContaining({
         method: "POST",
         credentials: "include",
@@ -58,57 +57,44 @@ describe("web client", () => {
           "Content-Type": "application/json",
           "X-CSRF-Token": "csrf-token",
         },
-        body: JSON.stringify({
-          Release: release,
-        }),
+        body: JSON.stringify({ workflowId: "workflow-1" }),
       }),
     );
   });
 
-  it("uses the abortable exact DVD menu capture payload", async () => {
+  it("uses exact opaque workflow media payloads", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse({ Images: [], Warnings: [] }))
-      .mockResolvedValueOnce(jsonResponse([]))
-      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+      .mockResolvedValueOnce(jsonResponse({ workflow: { id: "workflow-1" } }));
     vi.stubGlobal("fetch", fetchMock);
 
     const { initializeWebClient } = await import("./client");
-    const { menuImageClient } = await import("./app");
+    const { releaseWorkflowClient } = await import("./app");
     initializeWebClient("csrf-token", true);
 
     const controller = new AbortController();
-    const release = { SourcePath: "C:/media/Example", Generation: 3 };
-    await menuImageClient.capture(release, controller.signal);
-    await menuImageClient.list(release);
-    await menuImageClient.remove(release, "C:/managed/menu.png");
+    await releaseWorkflowClient.deleteMedia(
+      {
+        workflowId: "workflow-1",
+        expectedRevision: 7,
+        media: { id: "media-1", revision: 6 },
+        artifactIds: ["menu-1"],
+        idempotencyKey: "delete-menu-1",
+      },
+      controller.signal,
+    );
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "/api/app/CaptureDVDMenus",
+      "/api/app/DeleteReleaseWorkflowMedia",
       expect.objectContaining({
         signal: controller.signal,
         body: JSON.stringify({
-          Release: release,
-        }),
-      }),
-    );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      "/api/app/ListDVDMenuScreenshots",
-      expect.objectContaining({
-        body: JSON.stringify({
-          Release: release,
-        }),
-      }),
-    );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      3,
-      "/api/app/DeleteDVDMenuScreenshot",
-      expect.objectContaining({
-        body: JSON.stringify({
-          Release: release,
-          ImagePath: "C:/managed/menu.png",
+          workflowId: "workflow-1",
+          expectedRevision: 7,
+          media: { id: "media-1", revision: 6 },
+          artifactIds: ["menu-1"],
+          idempotencyKey: "delete-menu-1",
         }),
       }),
     );
@@ -184,7 +170,7 @@ describe("web client", () => {
     const { initializeWebClient, requestApp } = await import("./client");
     initializeWebClient("csrf-token", true);
 
-    await expect(requestApp("FetchScreenshotPlan", {})).rejects.toThrow(
+    await expect(requestApp("GetReleaseWorkflow", {})).rejects.toThrow(
       "Prepared release changed. Recovery: refresh release.",
     );
   });
@@ -237,23 +223,34 @@ describe("web client", () => {
           csrfToken: "stale-csrf",
         }),
       )
-      .mockResolvedValueOnce(jsonResponse("job-1"));
+      .mockResolvedValueOnce(jsonResponse({ workflow: { id: "workflow-1" } }));
     vi.stubGlobal("fetch", fetchMock);
 
     const { initializeWebClient } = await import("./client");
-    const { dupeClient } = await import("./app");
+    const { releaseWorkflowClient } = await import("./app");
     initializeWebClient("stale-csrf", false);
 
-    const result = await dupeClient.start(
-      { SourcePath: "C:/media/movie.mkv", Generation: 1 },
-      ["AITHER"],
-      "dupe-correlation",
-    );
+    const request = {
+      goal: "prepared",
+      idempotencyKey: "create-1",
+      intent: {
+        factInstructions: {
+          Identity: {},
+          ReleaseName: {},
+          Metadata: {},
+          SourceLookup: "",
+          BlurayReleaseID: "",
+          Playlist: { Set: false, Selected: [], UseAll: false },
+          TrackerIDs: {},
+        },
+      },
+    };
+    const result = await releaseWorkflowClient.continue(request);
 
-    expect(result).toBe("job-1");
+    expect(result.workflow.id).toBe("workflow-1");
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "/api/app/StartDupeCheck",
+      "/api/app/ContinueReleaseWorkflow",
       expect.objectContaining({
         credentials: "include",
         headers: expect.objectContaining({ "X-CSRF-Token": "stale-csrf" }),
@@ -264,7 +261,7 @@ describe("web client", () => {
     });
     expect(fetchMock).toHaveBeenNthCalledWith(
       3,
-      "/api/app/StartDupeCheck",
+      "/api/app/ContinueReleaseWorkflow",
       expect.objectContaining({
         credentials: "include",
         headers: expect.objectContaining({ "X-CSRF-Token": "stale-csrf" }),
@@ -285,15 +282,25 @@ describe("web client", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { initializeWebClient } = await import("./client");
-    const { dupeClient } = await import("./app");
+    const { releaseWorkflowClient } = await import("./app");
     initializeWebClient("session-a-csrf", false);
 
     await expect(
-      dupeClient.start(
-        { SourcePath: "C:/media/movie.mkv", Generation: 1 },
-        ["AITHER"],
-        "dupe-correlation",
-      ),
+      releaseWorkflowClient.continue({
+        goal: "prepared",
+        idempotencyKey: "create-1",
+        intent: {
+          factInstructions: {
+            Identity: {},
+            ReleaseName: {},
+            Metadata: {},
+            SourceLookup: "",
+            BlurayReleaseID: "",
+            Playlist: { Set: false, Selected: [], UseAll: false },
+            TrackerIDs: {},
+          },
+        },
+      }),
     ).rejects.toThrow("Web session changed in another tab");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });

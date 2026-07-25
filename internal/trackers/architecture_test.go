@@ -4,6 +4,8 @@
 package trackers_test
 
 import (
+	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -52,6 +54,49 @@ func TestTrackerImplementationImportBoundaries(t *testing.T) {
 				t.Errorf("stale architecture debt allowlist: file=%s import=%s", file, importPath)
 			}
 		}
+	}
+}
+
+func TestTrackerImplementationsDoNotRediscoverUploadTorrentSources(t *testing.T) {
+	t.Parallel()
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve architecture test path")
+	}
+	implementationRoot := filepath.Join(filepath.Dir(currentFile), "impl")
+	err := filepath.WalkDir(implementationRoot, func(filePath string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("walk tracker implementation: %w", walkErr)
+		}
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			return nil
+		}
+		relative, err := filepath.Rel(implementationRoot, filePath)
+		if err != nil {
+			return fmt.Errorf("resolve tracker implementation path: %w", err)
+		}
+		parsed, err := parser.ParseFile(token.NewFileSet(), filePath, nil, 0)
+		if err != nil {
+			t.Errorf("parse tracker implementation %s: %v", relative, err)
+			return nil
+		}
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			switch typed := node.(type) {
+			case *ast.FuncDecl:
+				if typed.Name.Name == "resolveTorrentPath" || typed.Name.Name == "resolveUploadTorrentPath" {
+					t.Errorf("tracker implementation owns upload torrent resolution: file=%s function=%s", relative, typed.Name.Name)
+				}
+			case *ast.SelectorExpr:
+				if typed.Sel.Name == "ClientTorrentPath" {
+					t.Errorf("tracker implementation reads fallback client torrent path: file=%s", relative)
+				}
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("scan tracker implementations: %v", err)
 	}
 }
 

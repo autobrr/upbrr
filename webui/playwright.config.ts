@@ -38,5 +38,9 @@ export default defineConfig({
       name: "cli-full-upload",
       testMatch: /cli-full-upload\.spec\.ts/,
     },
+    {
+      name: "api-full-upload",
+      testMatch: /api-full-upload\.spec\.ts/,
+    },
   ],
 });

@@ -210,33 +210,35 @@ type fakeBatchUploader struct {
 
 type recordingImageHostLogger struct {
 	mu       sync.Mutex
+	levels   []string
 	messages []string
 }
 
-func (l *recordingImageHostLogger) record(format string, args ...any) {
+func (l *recordingImageHostLogger) record(level string, format string, args ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.levels = append(l.levels, level)
 	l.messages = append(l.messages, fmt.Sprintf(format, args...))
 }
 
 func (l *recordingImageHostLogger) Tracef(format string, args ...any) {
-	l.record(format, args...)
+	l.record("TRACE", format, args...)
 }
 
 func (l *recordingImageHostLogger) Debugf(format string, args ...any) {
-	l.record(format, args...)
+	l.record("DEBUG", format, args...)
 }
 
 func (l *recordingImageHostLogger) Infof(format string, args ...any) {
-	l.record(format, args...)
+	l.record("INFO", format, args...)
 }
 
 func (l *recordingImageHostLogger) Warnf(format string, args ...any) {
-	l.record(format, args...)
+	l.record("WARN", format, args...)
 }
 
 func (l *recordingImageHostLogger) Errorf(format string, args ...any) {
-	l.record(format, args...)
+	l.record("ERROR", format, args...)
 }
 
 func (l *recordingImageHostLogger) contains(value string) bool {
@@ -248,6 +250,18 @@ func (l *recordingImageHostLogger) contains(value string) bool {
 		}
 	}
 	return false
+}
+
+func (l *recordingImageHostLogger) countLevelContaining(level string, value string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	count := 0
+	for index, message := range l.messages {
+		if l.levels[index] == level && strings.Contains(message, value) {
+			count++
+		}
+	}
+	return count
 }
 
 func (u *fakeBatchUploader) Upload(_ context.Context, imagePath string) (uploadResult, error) {
@@ -549,6 +563,53 @@ func TestUploadImagesUsesBatchUploader(t *testing.T) {
 	}
 	if uploaderStub.galleryNames[0] != "Movie.2026.2160p.WEB-DL" {
 		t.Fatalf("expected content gallery name, got %q", uploaderStub.galleryNames[0])
+	}
+}
+
+func TestUploadImagesBatchFailureUsesDebugDiagnosticsAndStableProgress(t *testing.T) {
+	imagePath := filepath.Join(t.TempDir(), "shot-01.png")
+	if err := os.WriteFile(imagePath, []byte("synthetic image"), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	logger := &recordingImageHostLogger{}
+	service := &Service{
+		cfg:       config.Config{},
+		logger:    logger,
+		uploaders: map[string]uploader{"hdb": &fakeBatchUploader{err: errors.New("synthetic host failure")}},
+		registry:  imageHostingTestRegistry(t),
+	}
+	var updates []api.ImageUploadProgressUpdate
+	ctx := api.WithImageUploadProgressReporter(context.Background(), func(update api.ImageUploadProgressUpdate) {
+		updates = append(updates, update)
+	})
+	ctx = api.WithImageUploadProgressTarget(ctx, api.ImageUploadProgressTarget{
+		AttemptID:  "hdb|tracker:HDB",
+		Host:       "hdb",
+		UsageScope: "tracker:HDB",
+		Trackers:   []string{"HDB"},
+		Total:      1,
+	})
+
+	_, err := service.Upload(ctx, api.ImageHostingSubject{
+		SourcePath:  filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv"),
+		GalleryName: "Example.Release.2026.1080p-GRP",
+	}, "hdb", "tracker:HDB", []api.ScreenshotImage{{Path: imagePath}})
+	if err == nil {
+		t.Fatal("expected batch upload failure")
+	}
+	if logger.countLevelContaining("DEBUG", "batch upload failed") != 1 {
+		t.Fatal("expected one debug batch-failure diagnostic")
+	}
+	if logger.countLevelContaining("ERROR", "batch upload failed") != 0 {
+		t.Fatal("recoverable batch failure must not log at error level")
+	}
+	if len(updates) == 0 {
+		t.Fatal("expected image-upload progress")
+	}
+	final := updates[len(updates)-1]
+	if final.Status != api.ImageUploadProgressFailed || final.Message != "1 of 1 host uploads failed." {
+		t.Fatal("unexpected terminal image-upload progress")
 	}
 }
 

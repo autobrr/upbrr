@@ -5,6 +5,7 @@ package bjs
 
 import (
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -19,6 +20,7 @@ func Profile() standalone.Profile {
 		LocalizedMetadataLocale: "pt-BR",
 		PrepareDescription:      prepareDescription,
 		PrepareUpload:           prepareUpload,
+		ValidationPolicy:        validationPolicy(),
 		NewDuplicateAdapter:     newDuplicateAdapter,
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
@@ -31,7 +33,7 @@ func Profile() standalone.Profile {
 		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag},
 		AudioPolicy:           &trackers.AudioPolicy{AllowBloat: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"tracker.bj-share.info"}},
-		AuthCapability:        standalone.CookieAuthCapability("BJS"),
+		AuthCapability:        authcontract.CookieCapability("BJS"),
 	}
 }
 

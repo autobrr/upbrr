@@ -42,7 +42,10 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	case meta.Identity.IMDBID != 0:
 		searchTerm["imdb"] = strconv.Itoa(meta.Identity.IMDBID)
 	default:
-		searchTerm["series"] = strings.TrimSpace(meta.Release.Title)
+		searchTerm["series"] = dupe.ProjectedSearchName(meta)
+		if meta.Projection == nil {
+			searchTerm["series"] = strings.TrimSpace(meta.Release.Title)
+		}
 	}
 	raw, err := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",

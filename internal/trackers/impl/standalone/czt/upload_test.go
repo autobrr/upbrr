@@ -999,28 +999,15 @@ func TestCategoryQuestionnaireRequiresUnknownNonVideo(t *testing.T) {
 	}
 }
 
-func TestBuildUploadDryRunBlocksMissingRequiredCategory(t *testing.T) {
+func TestBuildUploadDryRunRejectsMissingRequiredCategory(t *testing.T) {
 	req := cztUploadRequest(t, defaultBaseURL)
 	req.Meta.Identity.Category = api.CanonicalCategoryUnknown
 	req.Meta.Release.Category = "Other Data"
 
 	req.Intent = trackers.PreparationIntentDryRun
-	plan, failure := New().Prepare(context.Background(), req)
-	if failure != nil {
-		t.Fatalf("unexpected dry-run error: %v", failure)
-	}
-	entry := plan.DryRun()
-	if entry.Status != "blocked" {
-		t.Fatalf("expected blocked dry-run status, got %q", entry.Status)
-	}
-	if !strings.Contains(entry.Message, "category questionnaire") {
-		t.Fatalf("expected category questionnaire message, got %q", entry.Message)
-	}
-	if _, ok := entry.Payload["category"]; ok {
-		t.Fatalf("expected unresolved category omitted from payload, got %q", entry.Payload["category"])
-	}
-	if entry.Questionnaire == nil || len(entry.Questionnaire.Fields) != 1 || !entry.Questionnaire.Fields[0].Required {
-		t.Fatalf("expected required category questionnaire, got %+v", entry.Questionnaire)
+	_, failure := New().Prepare(context.Background(), req)
+	if failure == nil || !strings.Contains(failure.Error(), "unsupported_category") {
+		t.Fatalf("expected direct dry-run constructibility error, got %v", failure)
 	}
 
 	if _, err := prepareUploadState(context.Background(), req, true); err == nil {

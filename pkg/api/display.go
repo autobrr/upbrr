@@ -8,6 +8,7 @@ package api
 type PreparedReleaseDisplay struct {
 	ReleaseName string
 	Providers   []ProviderDisplay
+	TrackerData []TrackerPreview
 }
 
 // ProviderDisplay is one provider-local display projection. Details contains

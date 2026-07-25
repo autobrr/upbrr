@@ -134,6 +134,183 @@ var migrationRegistry = []migrationStep{
 		dependsOn: []string{"2026_07_add_canonical_release_generations"},
 		apply:     migrateAddTrackerRuleDisposition,
 	},
+	{
+		id:        "2026_07_add_release_workflow_states",
+		dependsOn: []string{"2026_07_add_tracker_rule_disposition"},
+		apply:     migrateAddReleaseWorkflowStates,
+	},
+	{
+		id:        "2026_07_add_release_workflow_operations",
+		dependsOn: []string{"2026_07_add_release_workflow_states"},
+		apply:     migrateAddReleaseWorkflowOperations,
+	},
+	{
+		id:        "2026_07_add_release_workflow_durability",
+		dependsOn: []string{"2026_07_add_release_workflow_operations"},
+		apply:     migrateAddReleaseWorkflowDurability,
+	},
+	{
+		id:        "2026_07_add_release_workflow_work_leases",
+		dependsOn: []string{"2026_07_add_release_workflow_durability"},
+		apply:     migrateAddReleaseWorkflowWorkLeases,
+	},
+}
+
+func migrateAddReleaseWorkflowStates(ctx context.Context, exec migrationExecutor) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS release_workflow_states (
+			owner_id TEXT NOT NULL,
+			workflow_id TEXT NOT NULL,
+			revision INTEGER NOT NULL,
+			status TEXT NOT NULL,
+			creation_key TEXT NOT NULL DEFAULT "",
+			creation_fingerprint TEXT NOT NULL DEFAULT "",
+			state_json BLOB NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY (owner_id, workflow_id)
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_release_workflow_creation_key
+			ON release_workflow_states (owner_id, creation_key)
+			WHERE creation_key != ""`,
+		`CREATE INDEX IF NOT EXISTS idx_release_workflow_retention
+			ON release_workflow_states (status, updated_at)`,
+	}
+	for _, statement := range statements {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("db: add release workflow states: %w", err)
+		}
+	}
+	return nil
+}
+
+func migrateAddReleaseWorkflowOperations(ctx context.Context, exec migrationExecutor) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS release_workflow_operations (
+			owner_id TEXT NOT NULL,
+			workflow_id TEXT NOT NULL,
+			operation_id TEXT NOT NULL,
+			expected_revision INTEGER NOT NULL,
+			idempotency_key TEXT NOT NULL DEFAULT "",
+			command_fingerprint TEXT NOT NULL,
+			command_name TEXT NOT NULL,
+			process_epoch TEXT NOT NULL,
+			status TEXT NOT NULL,
+			sequence INTEGER NOT NULL,
+			operation_json BLOB NOT NULL,
+			started_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			completed_at TEXT,
+			PRIMARY KEY (owner_id, workflow_id, operation_id),
+			FOREIGN KEY (owner_id, workflow_id) REFERENCES release_workflow_states (owner_id, workflow_id) ON DELETE CASCADE
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_release_workflow_operation_active
+			ON release_workflow_operations (owner_id, workflow_id)
+			WHERE status IN ("queued", "running")`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_release_workflow_operation_idempotency
+			ON release_workflow_operations (owner_id, workflow_id, command_name, idempotency_key)
+			WHERE idempotency_key != ""`,
+		`CREATE INDEX IF NOT EXISTS idx_release_workflow_operation_retention
+			ON release_workflow_operations (status, updated_at)`,
+	}
+	for _, statement := range statements {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("db: add release workflow operations: %w", err)
+		}
+	}
+	return nil
+}
+
+func migrateAddReleaseWorkflowDurability(ctx context.Context, exec migrationExecutor) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS release_workflow_intents (
+			owner_id TEXT NOT NULL,
+			workflow_id TEXT NOT NULL,
+			idempotency_key TEXT NOT NULL,
+			request_fingerprint TEXT NOT NULL,
+			goal TEXT NOT NULL,
+			intent_json BLOB NOT NULL,
+			accepted_at TEXT NOT NULL,
+			PRIMARY KEY (owner_id, workflow_id, idempotency_key),
+			FOREIGN KEY (owner_id, workflow_id) REFERENCES release_workflow_states (owner_id, workflow_id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS release_workflow_continuations (
+			owner_id TEXT NOT NULL,
+			workflow_id TEXT NOT NULL,
+			revision INTEGER NOT NULL,
+			continuation_json BLOB NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY (owner_id, workflow_id),
+			FOREIGN KEY (owner_id, workflow_id) REFERENCES release_workflow_states (owner_id, workflow_id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS release_workflow_events (
+			owner_id TEXT NOT NULL,
+			workflow_id TEXT NOT NULL,
+			sequence INTEGER NOT NULL,
+			event_key TEXT NOT NULL,
+			operation_id TEXT NOT NULL DEFAULT "",
+			event_json BLOB NOT NULL,
+			created_at TEXT NOT NULL,
+			PRIMARY KEY (owner_id, workflow_id, sequence),
+			UNIQUE (owner_id, workflow_id, event_key),
+			FOREIGN KEY (owner_id, workflow_id) REFERENCES release_workflow_states (owner_id, workflow_id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_release_workflow_events_operation
+			ON release_workflow_events (owner_id, workflow_id, operation_id, sequence)`,
+		`CREATE TABLE IF NOT EXISTS release_workflow_effects (
+			owner_id TEXT NOT NULL,
+			workflow_id TEXT NOT NULL,
+			operation_id TEXT NOT NULL,
+			effect_id TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			scope_id TEXT NOT NULL,
+			semantic_fingerprint TEXT NOT NULL,
+			status TEXT NOT NULL,
+			started_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			completed_at TEXT,
+			PRIMARY KEY (owner_id, workflow_id, effect_id),
+			FOREIGN KEY (owner_id, workflow_id) REFERENCES release_workflow_states (owner_id, workflow_id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_release_workflow_effect_semantic
+			ON release_workflow_effects (
+				owner_id, workflow_id, kind, scope_id, semantic_fingerprint, started_at
+			)`,
+		`CREATE INDEX IF NOT EXISTS idx_release_workflow_effect_operation
+			ON release_workflow_effects (owner_id, workflow_id, operation_id, status)`,
+	}
+	for _, statement := range statements {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("db: add release workflow durability: %w", err)
+		}
+	}
+	return nil
+}
+
+func migrateAddReleaseWorkflowWorkLeases(ctx context.Context, exec migrationExecutor) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS release_workflow_work (
+			owner_id TEXT NOT NULL,
+			workflow_id TEXT NOT NULL,
+			operation_id TEXT NOT NULL,
+			lease_owner TEXT NOT NULL,
+			lease_expires_at TEXT NOT NULL,
+			checkpoint_json BLOB NOT NULL,
+			updated_at TEXT NOT NULL,
+			completed_at TEXT,
+			PRIMARY KEY (owner_id, workflow_id, operation_id),
+			FOREIGN KEY (owner_id, workflow_id, operation_id)
+				REFERENCES release_workflow_operations (owner_id, workflow_id, operation_id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_release_workflow_work_lease
+			ON release_workflow_work (completed_at, lease_expires_at)`,
+	}
+	for _, statement := range statements {
+		if _, err := exec.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("db: add release workflow work leases: %w", err)
+		}
+	}
+	return nil
 }
 
 // migrateAddTrackerRuleDisposition adds exact enforcement and authorization

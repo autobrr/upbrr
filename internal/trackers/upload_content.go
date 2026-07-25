@@ -38,14 +38,14 @@ func (m UploadContentMode) UsesImages() bool {
 
 // FailureReasonCode returns the canonical eligibility reason for a failed
 // associated content object.
-func (m UploadContentMode) FailureReasonCode() api.TrackerEligibilityReasonCode {
+func (m UploadContentMode) FailureReasonCode() api.TrackerContentFailureCode {
 	switch m {
 	case UploadContentModeNone:
 		return ""
 	case UploadContentModeScreenshots:
-		return api.TrackerEligibilityScreenshotPreparationFailed
+		return api.TrackerContentFailureScreenshotPreparation
 	case UploadContentModeDescription:
-		return api.TrackerEligibilityDescriptionPreparationFailed
+		return api.TrackerContentFailureDescriptionPreparation
 	default:
 		return ""
 	}

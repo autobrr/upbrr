@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -16,6 +16,14 @@ export const e2eBinary = path.join(
   "dist",
   process.platform === "win32" ? "upbrr-e2e.exe" : "upbrr-e2e",
 );
+
+/** Shared semantic fixture used to compare CLI, embedded WebUI, and HTTP-only behavior. */
+export const releaseWorkflowParityFixture = {
+  trackerID: "BTN",
+  releaseDisplayName: "E2E.Movie.2026.1080p.WEB-DL",
+  expectedTrackerUploads: 1,
+  expectedClientSearches: 1,
+} as const;
 
 const png1x1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
@@ -51,12 +59,15 @@ export type E2EWorkspace = {
 
 export type AppServer = {
   url: string;
+  output: () => string;
   stop: () => Promise<void>;
 };
 
 type StartAppOptions = {
   /** External base path passed to `upbrr serve --base-url`; empty or "/" uses root mode. */
   baseURL?: string;
+  /** Set false when restarting the same persisted workflow database. */
+  seed?: boolean;
 };
 
 /** Creates an isolated E2E workspace with temp config, media fixtures, and fake services. */
@@ -123,6 +134,16 @@ export async function createBluraySourceFixture(workspace: E2EWorkspace): Promis
   return discRoot;
 }
 
+/** Adds a minimal DVD folder layout without invoking external disc tooling. */
+export async function createDVDSourceFixture(workspace: E2EWorkspace): Promise<string> {
+  const discRoot = path.join(workspace.root, "media", "Example DVD");
+  const videoRoot = path.join(discRoot, "VIDEO_TS");
+  await mkdir(videoRoot, { recursive: true });
+  await writeFile(path.join(videoRoot, "VIDEO_TS.IFO"), "synthetic DVD control data\n");
+  await writeFile(path.join(videoRoot, "VTS_01_1.VOB"), "synthetic DVD video data\n");
+  return discRoot;
+}
+
 /**
  * Starts the embedded web server for a workspace and waits for auth status at
  * the configured base path before returning its browser URL. Startup retries
@@ -133,7 +154,7 @@ export async function startApp(
   workspace: E2EWorkspace,
   options: StartAppOptions = {},
 ): Promise<AppServer> {
-  await seedConfigDatabase(workspace);
+  if (options.seed !== false) await seedConfigDatabase(workspace);
   for (let attempt = 1; attempt <= startAppBindAttempts; attempt++) {
     try {
       return await startAppOnce(workspace, options);
@@ -183,6 +204,7 @@ async function startAppOnce(
   }
   return {
     url: `${origin}${basePath ? `${basePath}/` : "/"}`,
+    output: () => output.join(""),
     stop: async () => {
       await stopProcess(child);
     },
@@ -216,6 +238,56 @@ async function seedConfigDatabase(workspace: E2EWorkspace) {
   if (result.code !== 0) {
     throw new Error(`failed to seed e2e config DB:\n${result.output}`);
   }
+  await ensureE2EWebAuth(workspace);
+}
+
+async function ensureE2EWebAuth(workspace: E2EWorkspace) {
+  try {
+    await access(path.join(workspace.root, "web-auth.json"));
+    return;
+  } catch {
+    // Create isolated synthetic browser auth material used by persistent API keys.
+  }
+  const result = await runProcess(
+    e2eBinary,
+    ["--create-auth", "--config", workspace.configPath],
+    workspace.env,
+    "e2e-user\nsynthetic-e2e-password\nsynthetic-e2e-password\n",
+  );
+  if (result.code !== 0) {
+    throw new Error(`failed to create e2e web auth:\n${result.output}`);
+  }
+}
+
+/** Generates one persistent API token through the public CLI without exposing it in diagnostics. */
+export async function createE2EAPIToken(
+  workspace: E2EWorkspace,
+  owner = "e2e-client",
+): Promise<string> {
+  const result = await runProcess(
+    e2eBinary,
+    [
+      "api-token",
+      "create",
+      "--config",
+      workspace.configPath,
+      "--name",
+      `E2E ${owner}`,
+      "--owner",
+      owner,
+      "--scopes",
+      "workflow:read,workflow:write,workflow:execute",
+    ],
+    workspace.env,
+  );
+  if (result.code !== 0) {
+    throw new Error(`failed to generate e2e API credential:\n${result.output}`);
+  }
+  const match = /^Token:\s*(\S+)$/m.exec(result.output);
+  if (!match?.[1]) {
+    throw new Error("API credential command did not return a one-time value");
+  }
+  return match[1];
 }
 
 export async function fetchMetadata(page: Page, appUrl: string, sourcePath: string) {
@@ -223,7 +295,7 @@ export async function fetchMetadata(page: Page, appUrl: string, sourcePath: stri
   await expect(page.getByRole("heading", { name: "Build Release Name" })).toBeVisible();
   await page.getByLabel("Source path").fill(sourcePath);
   await page.getByRole("button", { name: "Fetch metadata" }).click();
-  await expect(page.getByText("E2E.Movie.2026.1080p.WEB-DL")).toBeVisible();
+  await expect(page.getByText(releaseWorkflowParityFixture.releaseDisplayName)).toBeVisible();
   await page.getByText("Select Trackers").click();
   await expect(page.getByText("BTN").first()).toBeVisible();
   await page.keyboard.press("Escape");
@@ -252,8 +324,7 @@ logging:
   level: "debug"
   file_enabled: false
 trackers:
-  default_trackers: ["BTN"]
-  preferred_tracker: "BTN"
+  default_trackers: ["${releaseWorkflowParityFixture.trackerID}"]
   AITHER:
     api_key: "e2e"
     image_host: "imgbb"
@@ -405,17 +476,19 @@ function runProcess(
   command: string,
   args: string[],
   env: NodeJS.ProcessEnv,
+  input?: string,
 ): Promise<{ code: number | null; output: string }> {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd: repoRoot,
       env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       windowsHide: true,
     });
     const output: string[] = [];
     child.stdout?.on("data", (chunk) => output.push(String(chunk)));
     child.stderr?.on("data", (chunk) => output.push(String(chunk)));
     child.on("close", (code) => resolve({ code, output: output.join("") }));
+    if (input !== undefined) child.stdin?.end(input);
   });
 }

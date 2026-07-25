@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -32,7 +33,6 @@ type ServiceSet struct {
 type TrackerService interface {
 	Upload(ctx context.Context, subject UploadSubject) (UploadSummary, error)
 	BuildPreparation(ctx context.Context, subject DescriptionSubject, trackers []string) (PreparationPreview, error)
-	BuildUploadReview(ctx context.Context, subject UploadSubject, trackers []string) ([]TrackerDryRunEntry, error)
 	BuildUploadDryRun(ctx context.Context, subject UploadSubject, trackers []string) ([]TrackerDryRunEntry, error)
 }
 
@@ -89,6 +89,8 @@ type DuplicateSubject struct {
 	TrackerRuleFailures  map[string][]RuleFailure
 	BlockedTrackers      map[string][]TrackerBlockReason
 	CrossSeedTorrents    []UploadedTorrent
+	// Projection is the exact safe tracker-local interpretation used for this search.
+	Projection *TrackerReleaseProjection
 }
 
 // CanonicalSeasonEpisode returns the prepared TV season and episode.
@@ -226,76 +228,293 @@ type UploadSubject struct {
 	ReleaseNameClean            string
 	BlockedTrackers             map[string][]TrackerBlockReason
 	TrackerRuleFailures         map[string][]RuleFailure
+	// ExactScreenshots, when non-nil, constrain description/image preparation
+	// to the retained workflow-owned media set instead of repository discovery.
+	ExactScreenshots    []ScreenshotImage
+	ExactUploadedImages []UploadedImageLink
 }
 
 // RuleSubject contains only stable facts used by generic and tracker-specific
 // eligibility rules.
 type RuleSubject struct {
-	SourcePath          string
-	VideoPath           string
-	FileList            []string
-	DiscType            string
-	Scene               bool
-	SceneNFOPath        string
-	SceneRenamed        bool
-	SceneRenamedReason  string
-	PersonalRelease     bool
-	Release             ReleaseInfo
-	ReleaseName         string
-	ReleaseNameNoTag    string
-	Tag                 string
-	Identity            ExternalIdentity
-	ProviderMetadata    SourceScopedMetadata
-	AudioLanguages      []string
-	SubtitleLanguages   []string
-	TVPack              bool
-	Type                string
-	Source              string
-	Container           string
-	BitDepth            string
-	VideoCodec          string
-	VideoEncode         string
-	HDR                 string
-	Region              string
-	WebDV               bool
-	Anime               bool
-	Assessments         ReleaseAssessments
-	DescriptionOverride string
+	SourcePath           string
+	VideoPath            string
+	FileList             []string
+	DiscType             string
+	Scene                bool
+	SceneNFOPath         string
+	SceneRenamed         bool
+	SceneRenamedReason   string
+	PersonalRelease      bool
+	Release              ReleaseInfo
+	ReleaseName          string
+	ReleaseNameNoTag     string
+	Tag                  string
+	Identity             ExternalIdentity
+	ProviderMetadata     SourceScopedMetadata
+	AudioLanguages       []string
+	SubtitleLanguages    []string
+	TVPack               bool
+	Type                 string
+	Source               string
+	Container            string
+	BitDepth             string
+	VideoCodec           string
+	VideoEncode          string
+	HDR                  string
+	Region               string
+	WebDV                bool
+	Anime                bool
+	Assessments          ReleaseAssessments
+	DescriptionOverride  string
+	Disc                 DiscFacts
+	MediaInfoJSONReady   bool
+	MediaInfoTextReady   bool
+	DVDVOBMediaInfoReady bool
+}
+
+// TrackerValidationSubject contains only immutable canonical facts, projected
+// tracker answers, and prepared-resource readiness used by side-effect-free
+// pre-duplicate validation.
+type TrackerValidationSubject struct {
+	Tracker                     string
+	SourcePath                  string
+	VideoPath                   string
+	FileList                    []string
+	SourceSize                  int64
+	DiscType                    string
+	Scene                       bool
+	SceneNFOReady               bool
+	SceneRenamed                bool
+	SceneRenamedReason          string
+	PersonalRelease             bool
+	Release                     ReleaseInfo
+	ReleaseName                 string
+	ReleaseNameNoTag            string
+	Tag                         string
+	Identity                    ExternalIdentity
+	ProviderMetadata            SourceScopedMetadata
+	AudioLanguages              []string
+	SubtitleLanguages           []string
+	SeasonInt                   int
+	EpisodeInt                  int
+	SeasonStr                   string
+	EpisodeStr                  string
+	TVPack                      bool
+	DailyEpisodeDate            string
+	Anime                       bool
+	EpisodeTitle                string
+	EpisodeOverview             string
+	Disc                        DiscFacts
+	Type                        string
+	Source                      string
+	Container                   string
+	Audio                       string
+	Channels                    string
+	HasCommentary               bool
+	Is3D                        string
+	BitDepth                    string
+	VideoCodec                  string
+	VideoEncode                 string
+	HasEncodeSettings           bool
+	HDR                         string
+	UHD                         string
+	Distributor                 string
+	Region                      string
+	Edition                     string
+	Repack                      string
+	WebDV                       bool
+	Service                     string
+	ServiceLongName             string
+	StreamOptimized             int
+	Assessments                 ReleaseAssessments
+	QuestionnaireAnswers        map[string]string
+	TrackerConfigOverrides      TrackerConfigOverrides
+	TrackerSiteOverrides        TrackerSiteOverrides
+	ReleaseNameOverrides        ReleaseNameOverrides
+	MediaInfoJSONReady          bool
+	MediaInfoTextReady          bool
+	DVDVOBMediaInfoReady        bool
+	BDInfoReady                 bool
+	PreparedResourceFingerprint string
+}
+
+// NewTrackerValidationSubject projects an upload subject into the detached
+// pre-duplicate validation contract for one tracker.
+func NewTrackerValidationSubject(subject UploadSubject, tracker string) TrackerValidationSubject {
+	tracker = strings.ToUpper(strings.TrimSpace(tracker))
+	answers := make(map[string]string)
+	for configuredTracker, values := range subject.TrackerQuestionnaireAnswers {
+		if !strings.EqualFold(strings.TrimSpace(configuredTracker), tracker) {
+			continue
+		}
+		maps.Copy(answers, values)
+		break
+	}
+	resourceFingerprint, _ := CanonicalWorkflowFingerprint(struct {
+		MediaInfoJSON   bool
+		MediaInfoText   bool
+		DVDVOBMediaInfo bool
+		BDInfo          bool
+		SceneNFO        bool
+	}{
+		MediaInfoJSON:   strings.TrimSpace(subject.MediaInfoJSONPath) != "",
+		MediaInfoText:   strings.TrimSpace(subject.MediaInfoTextPath) != "",
+		DVDVOBMediaInfo: strings.TrimSpace(subject.DVDVOBMediaInfoText) != "",
+		BDInfo:          strings.TrimSpace(subject.Disc.Summary) != "",
+		SceneNFO:        strings.TrimSpace(subject.SceneNFOPath) != "",
+	})
+	return TrackerValidationSubject{
+		Tracker:                     tracker,
+		SourcePath:                  subject.SourcePath,
+		VideoPath:                   subject.VideoPath,
+		FileList:                    slices.Clone(subject.FileList),
+		SourceSize:                  subject.SourceSize,
+		DiscType:                    subject.DiscType,
+		Scene:                       subject.Scene,
+		SceneNFOReady:               strings.TrimSpace(subject.SceneNFOPath) != "",
+		SceneRenamed:                subject.SceneRenamed,
+		SceneRenamedReason:          subject.SceneRenamedReason,
+		PersonalRelease:             subject.PersonalRelease,
+		Release:                     cloneTrackerValidationValue(subject.Release),
+		ReleaseName:                 subject.ReleaseName,
+		ReleaseNameNoTag:            subject.ReleaseNameNoTag,
+		Tag:                         subject.Tag,
+		Identity:                    cloneTrackerValidationValue(subject.Identity),
+		ProviderMetadata:            cloneTrackerValidationValue(subject.ProviderMetadata),
+		AudioLanguages:              slices.Clone(subject.AudioLanguages),
+		SubtitleLanguages:           slices.Clone(subject.SubtitleLanguages),
+		SeasonInt:                   subject.SeasonInt,
+		EpisodeInt:                  subject.EpisodeInt,
+		SeasonStr:                   subject.SeasonStr,
+		EpisodeStr:                  subject.EpisodeStr,
+		TVPack:                      subject.TVPack,
+		DailyEpisodeDate:            subject.DailyEpisodeDate,
+		Anime:                       subject.Anime,
+		EpisodeTitle:                subject.EpisodeTitle,
+		EpisodeOverview:             subject.EpisodeOverview,
+		Disc:                        cloneTrackerValidationValue(subject.Disc),
+		Type:                        subject.Type,
+		Source:                      subject.Source,
+		Container:                   subject.Container,
+		Audio:                       subject.Audio,
+		Channels:                    subject.Channels,
+		HasCommentary:               subject.HasCommentary,
+		Is3D:                        subject.Is3D,
+		BitDepth:                    subject.BitDepth,
+		VideoCodec:                  subject.VideoCodec,
+		VideoEncode:                 subject.VideoEncode,
+		HasEncodeSettings:           subject.HasEncodeSettings,
+		HDR:                         subject.HDR,
+		UHD:                         subject.UHD,
+		Distributor:                 subject.Distributor,
+		Region:                      subject.Region,
+		Edition:                     subject.Edition,
+		Repack:                      subject.Repack,
+		WebDV:                       subject.WebDV,
+		Service:                     subject.Service,
+		ServiceLongName:             subject.ServiceLongName,
+		StreamOptimized:             subject.StreamOptimized,
+		Assessments:                 cloneTrackerValidationValue(subject.Assessments),
+		QuestionnaireAnswers:        answers,
+		TrackerConfigOverrides:      cloneTrackerValidationValue(subject.TrackerConfigOverrides),
+		TrackerSiteOverrides:        cloneTrackerValidationValue(subject.TrackerSiteOverrides),
+		ReleaseNameOverrides:        cloneTrackerValidationValue(subject.ReleaseNameOverrides),
+		MediaInfoJSONReady:          strings.TrimSpace(subject.MediaInfoJSONPath) != "",
+		MediaInfoTextReady:          strings.TrimSpace(subject.MediaInfoTextPath) != "",
+		DVDVOBMediaInfoReady:        strings.TrimSpace(subject.DVDVOBMediaInfoText) != "",
+		BDInfoReady:                 strings.TrimSpace(subject.Disc.Summary) != "",
+		PreparedResourceFingerprint: string(resourceFingerprint),
+	}
+}
+
+func cloneTrackerValidationValue[T any](value T) T {
+	cloned, err := clonePreparedValue(value)
+	if err != nil {
+		return value
+	}
+	return cloned
+}
+
+// NewTrackerValidationSubjectFromRuleSubject preserves the legacy generic-rule
+// entry point while routing custom checks through the validation contract.
+func NewTrackerValidationSubjectFromRuleSubject(subject RuleSubject, tracker string) TrackerValidationSubject {
+	return TrackerValidationSubject{
+		Tracker:              strings.ToUpper(strings.TrimSpace(tracker)),
+		SourcePath:           subject.SourcePath,
+		VideoPath:            subject.VideoPath,
+		FileList:             slices.Clone(subject.FileList),
+		DiscType:             subject.DiscType,
+		Scene:                subject.Scene,
+		SceneNFOReady:        strings.TrimSpace(subject.SceneNFOPath) != "",
+		SceneRenamed:         subject.SceneRenamed,
+		SceneRenamedReason:   subject.SceneRenamedReason,
+		PersonalRelease:      subject.PersonalRelease,
+		Release:              cloneTrackerValidationValue(subject.Release),
+		ReleaseName:          subject.ReleaseName,
+		ReleaseNameNoTag:     subject.ReleaseNameNoTag,
+		Tag:                  subject.Tag,
+		Identity:             cloneTrackerValidationValue(subject.Identity),
+		ProviderMetadata:     cloneTrackerValidationValue(subject.ProviderMetadata),
+		AudioLanguages:       slices.Clone(subject.AudioLanguages),
+		SubtitleLanguages:    slices.Clone(subject.SubtitleLanguages),
+		TVPack:               subject.TVPack,
+		Type:                 subject.Type,
+		Source:               subject.Source,
+		Container:            subject.Container,
+		BitDepth:             subject.BitDepth,
+		VideoCodec:           subject.VideoCodec,
+		VideoEncode:          subject.VideoEncode,
+		HDR:                  subject.HDR,
+		Region:               subject.Region,
+		WebDV:                subject.WebDV,
+		Anime:                subject.Anime,
+		Assessments:          cloneTrackerValidationValue(subject.Assessments),
+		Disc:                 cloneTrackerValidationValue(subject.Disc),
+		MediaInfoJSONReady:   subject.MediaInfoJSONReady,
+		MediaInfoTextReady:   subject.MediaInfoTextReady,
+		DVDVOBMediaInfoReady: subject.DVDVOBMediaInfoReady,
+		BDInfoReady:          strings.TrimSpace(subject.Disc.Summary) != "",
+	}
 }
 
 // NewRuleSubject projects upload facts into the rule evaluator's read model.
 func NewRuleSubject(subject UploadSubject) RuleSubject {
 	return RuleSubject{
-		SourcePath:          subject.SourcePath,
-		VideoPath:           subject.VideoPath,
-		FileList:            append([]string(nil), subject.FileList...),
-		DiscType:            subject.DiscType,
-		Scene:               subject.Scene,
-		SceneNFOPath:        subject.SceneNFOPath,
-		SceneRenamed:        subject.SceneRenamed,
-		SceneRenamedReason:  subject.SceneRenamedReason,
-		PersonalRelease:     subject.PersonalRelease,
-		Release:             subject.Release,
-		ReleaseName:         subject.ReleaseName,
-		ReleaseNameNoTag:    subject.ReleaseNameNoTag,
-		Tag:                 subject.Tag,
-		Identity:            subject.Identity,
-		ProviderMetadata:    subject.ProviderMetadata,
-		AudioLanguages:      append([]string(nil), subject.AudioLanguages...),
-		SubtitleLanguages:   append([]string(nil), subject.SubtitleLanguages...),
-		TVPack:              subject.TVPack,
-		Type:                subject.Type,
-		Source:              subject.Source,
-		Container:           subject.Container,
-		BitDepth:            subject.BitDepth,
-		VideoCodec:          subject.VideoCodec,
-		VideoEncode:         subject.VideoEncode,
-		HDR:                 subject.HDR,
-		Region:              subject.Region,
-		WebDV:               subject.WebDV,
-		Anime:               subject.Anime,
-		Assessments:         subject.Assessments,
-		DescriptionOverride: subject.DescriptionOverride,
+		SourcePath:           subject.SourcePath,
+		VideoPath:            subject.VideoPath,
+		FileList:             append([]string(nil), subject.FileList...),
+		DiscType:             subject.DiscType,
+		Scene:                subject.Scene,
+		SceneNFOPath:         subject.SceneNFOPath,
+		SceneRenamed:         subject.SceneRenamed,
+		SceneRenamedReason:   subject.SceneRenamedReason,
+		PersonalRelease:      subject.PersonalRelease,
+		Release:              subject.Release,
+		ReleaseName:          subject.ReleaseName,
+		ReleaseNameNoTag:     subject.ReleaseNameNoTag,
+		Tag:                  subject.Tag,
+		Identity:             subject.Identity,
+		ProviderMetadata:     subject.ProviderMetadata,
+		AudioLanguages:       append([]string(nil), subject.AudioLanguages...),
+		SubtitleLanguages:    append([]string(nil), subject.SubtitleLanguages...),
+		TVPack:               subject.TVPack,
+		Type:                 subject.Type,
+		Source:               subject.Source,
+		Container:            subject.Container,
+		BitDepth:             subject.BitDepth,
+		VideoCodec:           subject.VideoCodec,
+		VideoEncode:          subject.VideoEncode,
+		HDR:                  subject.HDR,
+		Region:               subject.Region,
+		WebDV:                subject.WebDV,
+		Anime:                subject.Anime,
+		Assessments:          subject.Assessments,
+		DescriptionOverride:  subject.DescriptionOverride,
+		Disc:                 subject.Disc,
+		MediaInfoJSONReady:   strings.TrimSpace(subject.MediaInfoJSONPath) != "",
+		MediaInfoTextReady:   strings.TrimSpace(subject.MediaInfoTextPath) != "",
+		DVDVOBMediaInfoReady: strings.TrimSpace(subject.DVDVOBMediaInfoText) != "",
 	}
 }
 
@@ -328,6 +547,8 @@ type DescriptionSubject struct {
 	TrackerSite           TrackerSiteOverrides
 	ImageHost             ImageHostOverrides
 	TrackerData           []TrackerMetadata
+	ExactScreenshots      []ScreenshotImage
+	ExactUploadedImages   []UploadedImageLink
 }
 
 // NewDescriptionSubject projects upload state into the description builder's
@@ -360,11 +581,22 @@ func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 		TrackerSite:           subject.TrackerSiteOverrides,
 		ImageHost:             subject.ImageHostOverrides,
 		TrackerData:           append([]TrackerMetadata(nil), subject.TrackerData...),
+		ExactScreenshots:      cloneOptionalSlice(subject.ExactScreenshots),
+		ExactUploadedImages:   cloneOptionalSlice(subject.ExactUploadedImages),
 	}
 	cloned, err := clonePreparedValue(projected)
 	if err != nil {
 		panic(fmt.Sprintf("clone description subject: %v", err))
 	}
+	return cloned
+}
+
+func cloneOptionalSlice[T any](values []T) []T {
+	if values == nil {
+		return nil
+	}
+	cloned := make([]T, len(values))
+	copy(cloned, values)
 	return cloned
 }
 
@@ -394,6 +626,9 @@ type ClientOverrides struct {
 type ImageHostOverrides struct {
 	PreferredHost *string
 	SkipUpload    *bool
+	// FailedHosts lists image hosts whose earlier attempt failed for this run.
+	// Later stages must not reuse or retry them.
+	FailedHosts []string
 }
 
 type TorrentOverrides struct {
@@ -441,12 +676,6 @@ type RuleFailure struct {
 	Rule        string
 	Reason      string
 	Disposition RuleDisposition
-}
-
-// RuleAuthorization binds user consent to exact current rule keys for one tracker.
-type RuleAuthorization struct {
-	Tracker string
-	Rules   []string
 }
 
 // NormalizeRuleDisposition maps legacy persisted values and fails closed for

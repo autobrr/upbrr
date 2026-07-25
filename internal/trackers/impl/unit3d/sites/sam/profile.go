@@ -4,9 +4,7 @@
 package sam
 
 import (
-	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
-	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // Profile returns SAM's Unit3D site manifest.
@@ -15,10 +13,8 @@ func Profile() unit3d.Profile {
 		Name:    "SAM",
 		BaseURL: "https://samaritano.cc",
 		Site: unit3d.SiteProfile{
-			BuildName: buildName,
+			BuildName:        buildName,
+			BuildNameVersion: "v1",
 		},
 	}
-}
-func buildName(meta api.UploadSubject, cfg config.TrackerConfig) string {
-	return unit3d.FormatLocalizedName(meta, cfg.TagForCustomRelease)
 }

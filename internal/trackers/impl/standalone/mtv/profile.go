@@ -8,6 +8,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -23,7 +24,9 @@ func Profile() standalone.Profile {
 		PrepareUpload: func(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 			return prepareUploadAt(ctx, req, mtvBaseURL)
 		},
+		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/mtv/v1", resolveUploadName, resolveSearchName),
 		NewDuplicateAdapter: newDuplicateAdapter,
+		ValidationPolicy:    validationPolicy(),
 		BannedGroups:        bannedGroups(),
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
@@ -58,6 +61,12 @@ func Profile() standalone.Profile {
 			return resolveSessionForTrackerAuthLoginAt(ctx, cfg, dbPath, login, mtvBaseURL)
 		},
 		AuthPolicy: &trackers.AuthPolicy{
+			ResolveRequirements: authcontract.StaticRequirements(authcontract.Requirements(
+				"api_and_upload_session",
+				true,
+				[]trackers.AuthRequirement{trackers.AuthRequirementAPIKey, trackers.AuthRequirementStoredCookie},
+				[]trackers.AuthRequirement{trackers.AuthRequirementAPIKey, trackers.AuthRequirementCredentialLogin},
+			)),
 			APIKeyRequiresUploadSession: true,
 			CookieCompletesAPIKeyAuth:   true,
 			UploadSessionMissingMessage: "API key covers Torznab/search; imported cookies or login credentials required for upload auth",

@@ -272,35 +272,37 @@ func defaultVerdict(entry assessmentEntry) Verdict {
 
 func assessmentBinding(meta api.DuplicateSubject, tracker string, trackerConfig config.TrackerConfig) string {
 	bound := struct {
-		SourcePath           string
-		SourceSize           int64
-		VideoPath            string
-		FileList             []string
-		Filename             string
-		SceneName            string
-		ReleaseName          string
-		Release              api.ReleaseInfo
-		ReleaseNameOverrides api.ReleaseNameOverrides
-		Identity             api.ExternalIdentity
-		ProviderMetadata     api.SourceScopedMetadata
-		TrackerIDs           map[string]string
-		DiscType             string
-		Type                 string
-		Source               string
-		Tag                  string
-		HDR                  string
-		UHD                  string
-		VideoEncode          string
-		SeasonInt            int
-		EpisodeInt           int
-		SeasonStr            string
-		EpisodeStr           string
-		TVPack               bool
-		Anime                bool
-		InClient             bool
-		RuleFailures         []api.RuleFailure
-		Tracker              string
-		Config               config.TrackerConfig
+		SourcePath            string
+		SourceSize            int64
+		VideoPath             string
+		FileList              []string
+		Filename              string
+		SceneName             string
+		ReleaseName           string
+		Release               api.ReleaseInfo
+		ReleaseNameOverrides  api.ReleaseNameOverrides
+		Identity              api.ExternalIdentity
+		ProviderMetadata      api.SourceScopedMetadata
+		TrackerIDs            map[string]string
+		DiscType              string
+		Type                  string
+		Source                string
+		Tag                   string
+		HDR                   string
+		UHD                   string
+		VideoEncode           string
+		SeasonInt             int
+		EpisodeInt            int
+		SeasonStr             string
+		EpisodeStr            string
+		TVPack                bool
+		Anime                 bool
+		InClient              bool
+		RuleFailures          []api.RuleFailure
+		Tracker               string
+		Config                config.TrackerConfig
+		ProjectionFingerprint api.WorkflowFingerprint
+		CriteriaFingerprint   api.WorkflowFingerprint
 	}{
 		SourcePath:           strings.TrimSpace(meta.SourcePath),
 		SourceSize:           meta.SourceSize,
@@ -331,6 +333,10 @@ func assessmentBinding(meta api.DuplicateSubject, tracker string, trackerConfig 
 		RuleFailures:         append([]api.RuleFailure(nil), trackerRuleFailures(meta, tracker)...),
 		Tracker:              normalizeTracker(tracker),
 		Config:               trackerConfig,
+	}
+	if meta.Projection != nil {
+		bound.ProjectionFingerprint = meta.Projection.ProjectorFingerprint
+		bound.CriteriaFingerprint = meta.Projection.CriteriaFingerprint
 	}
 	encoded, err := json.Marshal(bound)
 	if err != nil {

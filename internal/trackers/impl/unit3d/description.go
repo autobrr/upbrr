@@ -46,3 +46,7 @@ func buildUnit3DDescription(
 	}
 	return description, nil
 }
+
+func ensureUnit3DDVDVOBDescription(description string, meta api.UploadSubject) string {
+	return descriptionunit3d.AppendDVDVOBMediaInfoBlock(description, api.NewDescriptionSubject(meta))
+}

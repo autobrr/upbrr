@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -32,6 +33,9 @@ type Profile struct {
 	Site SiteProfile
 	// Rules contains site-specific release validation requirements.
 	Rules *trackers.RuleSet
+	// ValidationPolicy contains optional site-specific validation composed with
+	// mandatory Unit3D constructibility.
+	ValidationPolicy trackers.ValidationPolicyBinding
 	// MetadataPolicy overrides the Unit3D metadata requirements for this site.
 	MetadataPolicy *trackers.TrackerMetadataPolicy
 	// AudioPolicy contains site-specific multi-language constraints.
@@ -134,6 +138,30 @@ func (d *Definition) Rules() *trackers.RuleSet {
 	return &rules
 }
 
+// ValidationPolicy composes mandatory Unit3D constructibility with optional
+// site-specific policy.
+func (d *Definition) ValidationPolicy() trackers.ValidationPolicyBinding {
+	sitePolicy := d.profile.ValidationPolicy
+	id := "unit3d-" + strings.ToLower(d.profile.Name) + "-constructibility-v1"
+	if strings.TrimSpace(sitePolicy.ID) != "" {
+		id += "+" + strings.TrimSpace(sitePolicy.ID)
+	}
+	return trackers.ValidationPolicyBinding{
+		ID: id,
+		Check: func(ctx context.Context, subject api.TrackerValidationSubject, logger api.Logger) ([]api.RuleFailure, error) {
+			failures := validateUnit3DConstructibility(d.profile.Name, subject, d.profile.Site)
+			if sitePolicy.Check == nil {
+				return failures, nil
+			}
+			siteFailures, err := sitePolicy.Check(ctx, subject, logger)
+			if err != nil {
+				return nil, fmt.Errorf("unit3d site validation: %w", err)
+			}
+			return append(failures, siteFailures...), nil
+		},
+	}
+}
+
 // BannedGroups returns a defensive copy of the site's static release-group blacklist.
 func (d *Definition) BannedGroups() []string { return append([]string(nil), d.profile.BannedGroups...) }
 
@@ -176,27 +204,52 @@ func (d *Definition) Name() string {
 // TrackerFamily identifies the definition as Unit3D-backed.
 func (d *Definition) TrackerFamily() trackers.Family { return trackers.FamilyUnit3D }
 
+// ReleaseNamePolicy returns the versioned Unit3D site naming policy.
+func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {
+	if d.profile.Site.BuildName != nil {
+		version := strings.TrimSpace(d.profile.Site.BuildNameVersion)
+		if version == "" {
+			return trackers.ReleaseNamePolicyBinding{}
+		}
+		return trackers.SubjectReleaseNamePolicy(
+			//pathpolicy:allow release-name policy ID is slash-delimited data, not a local filesystem path
+			strings.Join([]string{"unit3d", strings.ToLower(d.profile.Name), version}, "/"),
+			func(meta api.UploadSubject, cfg config.TrackerConfig) string {
+				return buildUnit3DName(d.profile.Name, meta, cfg, d.profile.Site)
+			},
+		)
+	}
+	return trackers.NewReleaseNamePolicy("unit3d/canonical/v1", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+		return trackers.ResolvedReleaseNames{Upload: buildUnit3DName(d.profile.Name, input.Subject, input.TrackerConfig, d.profile.Site)}, nil
+	})
+}
+
 // UploadContentMode declares the aggregate description workflow shared by Unit3D sites.
 func (d *Definition) UploadContentMode() trackers.UploadContentMode {
 	return trackers.UploadContentModeDescription
 }
 
-// AuthCapability declares the API key required by standard Unit3D APIs.
-func (d *Definition) AuthCapability() api.TrackerAuthCapability {
-	return api.TrackerAuthCapability{
-		TrackerID:      d.profile.Name,
-		DisplayName:    d.profile.Name,
-		AuthKind:       "api_key",
-		RequiresAPIKey: true,
-	}
-}
-
 // Prepare builds a fresh intent-scoped tracker plan for this Unit3D profile.
 func (d *Definition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
+	var failure *trackers.PreparationFailure
+	input, failure = trackers.PrepareInputWithReleaseNamePolicy(input, d.ReleaseNamePolicy())
+	if failure != nil {
+		return trackers.TrackerPlan{}, failure
+	}
 	return trackers.PrepareAdapter(ctx, input, d.prepareDescription, d.prepareUpload)
 }
 
 func (d *Definition) prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+	policy := d.ValidationPolicy()
+	failures, err := policy.Check(ctx, api.NewTrackerValidationSubject(req.Meta, req.Tracker), req.Logger)
+	if err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s constructibility: %w", d.profile.Name, err)
+	}
+	for _, failure := range failures {
+		if trackers.RuleFailureBlocksExecution(failure, req.ExecutionMode) {
+			return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s constructibility %s: %s", d.profile.Name, failure.Rule, failure.Reason)
+		}
+	}
 	if d.profile.BaseURL != "" {
 		return prepareUnit3DUpload(ctx, req, d.profile.BaseURL, d.profile.Site)
 	}

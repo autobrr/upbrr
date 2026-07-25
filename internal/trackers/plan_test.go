@@ -14,6 +14,31 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+type trackerEffectReporterStub struct {
+	beginErr    error
+	completeErr error
+	begun       []api.WorkflowExternalEffect
+}
+
+func (r *trackerEffectReporterStub) Begin(
+	_ context.Context,
+	effect api.WorkflowExternalEffect,
+) (api.WorkflowExternalEffectReceipt, error) {
+	r.begun = append(r.begun, effect)
+	if r.beginErr != nil {
+		return api.WorkflowExternalEffectReceipt{}, r.beginErr
+	}
+	return api.WorkflowExternalEffectReceipt{EffectID: "effect-1"}, nil
+}
+
+func (r *trackerEffectReporterStub) Complete(
+	context.Context,
+	api.WorkflowExternalEffectReceipt,
+	bool,
+) error {
+	return r.completeErr
+}
+
 func TestTrackerPlanIsImmutableSingleUseAndExactOnceRelease(t *testing.T) {
 	t.Parallel()
 	preview := api.TrackerDryRunEntry{
@@ -78,11 +103,63 @@ func TestTrackerPlanReleaseBeforeSubmitRejectsSubmission(t *testing.T) {
 	}
 }
 
+func TestTrackerSubmissionFencePreventsRetryAfterUnknownOutcome(t *testing.T) {
+	t.Parallel()
+
+	var submits atomic.Int32
+	reporter := &trackerEffectReporterStub{beginErr: api.ErrReleaseWorkflowEffectOutcomeUnknown}
+	ctx := api.WithWorkflowExternalEffectReporter(context.Background(), reporter)
+	slots := []trackerPlanSlot{{
+		tracker: "ALPHA",
+		plan: NewUploadPlan(
+			"ALPHA",
+			api.TrackerDryRunEntry{Tracker: "ALPHA", Status: "ready"},
+			func(context.Context) (api.UploadSummary, error) {
+				submits.Add(1)
+				return api.UploadSummary{Uploaded: 1}, nil
+			},
+			nil,
+		),
+	}}
+	(&Service{}).submitTrackerPlans(ctx, api.UploadSubject{SourcePath: "C:\\synthetic"}, slots)
+	if submits.Load() != 0 || slots[0].failure == nil || slots[0].failure.Code != "unknown_outcome" {
+		t.Fatalf("fenced tracker submission submits=%d failure=%#v", submits.Load(), slots[0].failure)
+	}
+	if len(reporter.begun) != 1 || reporter.begun[0].Kind != api.WorkflowExternalEffectTrackerSubmission ||
+		reporter.begun[0].ScopeID != "ALPHA" || reporter.begun[0].SemanticFingerprint == "" {
+		t.Fatalf("tracker submission effect=%#v", reporter.begun)
+	}
+}
+
+func TestTrackerSubmissionReceiptFailureBecomesUnknownOutcome(t *testing.T) {
+	t.Parallel()
+
+	var submits atomic.Int32
+	reporter := &trackerEffectReporterStub{completeErr: errors.New("synthetic receipt failure")}
+	ctx := api.WithWorkflowExternalEffectReporter(context.Background(), reporter)
+	slots := []trackerPlanSlot{{
+		tracker: "ALPHA",
+		plan: NewUploadPlan(
+			"ALPHA",
+			api.TrackerDryRunEntry{Tracker: "ALPHA", Status: "ready"},
+			func(context.Context) (api.UploadSummary, error) {
+				submits.Add(1)
+				return api.UploadSummary{Uploaded: 1}, nil
+			},
+			nil,
+		),
+	}}
+	(&Service{}).submitTrackerPlans(ctx, api.UploadSubject{SourcePath: "C:\\synthetic"}, slots)
+	if submits.Load() != 1 || slots[0].failure == nil || slots[0].failure.Code != "unknown_outcome" {
+		t.Fatalf("unretained tracker receipt submits=%d failure=%#v", submits.Load(), slots[0].failure)
+	}
+}
+
 func TestNonUploadPlansCannotSubmit(t *testing.T) {
 	t.Parallel()
 	for _, plan := range []TrackerPlan{
 		NewDescriptionPlan("AITHER", DescriptionResult{Group: "unit3d", Description: "example"}),
-		NewDryRunPlan("AITHER", api.TrackerDryRunEntry{Tracker: "AITHER"}, nil),
+		newPreviewPlan("AITHER", PreparationIntentDryRun, api.TrackerDryRunEntry{Tracker: "AITHER"}, nil),
 	} {
 		if _, err := plan.Submit(context.Background()); !errors.Is(err, ErrPlanNotSubmittable) {
 			t.Fatalf("submit error = %v", err)
@@ -136,7 +213,7 @@ func TestPrepareAdapterBuildsUploadOperationOnce(t *testing.T) {
 func TestPrepareAdapterKeepsPreviewIntentsNonSubmittable(t *testing.T) {
 	t.Parallel()
 
-	for _, intent := range []PreparationIntent{PreparationIntentDryRun, PreparationIntentUploadReview} {
+	for _, intent := range []PreparationIntent{PreparationIntentDryRun} {
 		t.Run(string(intent), func(t *testing.T) {
 			t.Parallel()
 			var releases atomic.Int32

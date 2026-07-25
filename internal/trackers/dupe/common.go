@@ -13,6 +13,15 @@ func normalizeTracker(tracker string) string {
 	return strings.ToUpper(strings.TrimSpace(tracker))
 }
 
+// ProjectedSearchName returns the exact reviewed duplicate-search name when a
+// projection is present, otherwise the direct-call release-name fallback.
+func ProjectedSearchName(meta api.DuplicateSubject) string {
+	if meta.Projection != nil {
+		return strings.TrimSpace(meta.Projection.DuplicateCriteria.Name)
+	}
+	return strings.TrimSpace(meta.ReleaseName)
+}
+
 func trimEntries(entries []api.DupeEntry) []api.DupeEntry {
 	if len(entries) == 0 {
 		return nil

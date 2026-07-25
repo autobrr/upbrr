@@ -1653,6 +1653,80 @@ func TestResolveDescriptionAssetsFailsOnSelectedUploadMismatch(t *testing.T) {
 	}
 }
 
+func TestResolveDescriptionAssetsAttachesExactUploadedVariants(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+	imagePath := filepath.Join(t.TempDir(), "screen.png")
+	meta := api.UploadSubject{
+		SourcePath: sourcePath,
+		ExactScreenshots: []api.ScreenshotImage{{
+			Path:    imagePath,
+			Purpose: api.ScreenshotPurposeFinal,
+		}},
+		ExactUploadedImages: []api.UploadedImageLink{{
+			SourcePath: sourcePath,
+			ImagePath:  imagePath,
+			Host:       "pixhost",
+			UsageScope: "global",
+			ImgURL:     "https://img.example.invalid/thumb.png",
+			RawURL:     "https://img.example.invalid/screen.png",
+			WebURL:     "https://img.example.invalid/view",
+		}},
+	}
+	repo := &stubRepo{}
+	registry := descriptionAssetsTestRegistry(t)
+	preloaded, err := preloadDescriptionAssetData(context.Background(), meta, repo, registry)
+	if err != nil {
+		t.Fatalf("preload exact assets: %v", err)
+	}
+	assets, err := resolveDescriptionAssets(context.Background(), "HHD", meta, repo, api.NopLogger{}, preloaded, registry)
+	if err != nil {
+		t.Fatalf("resolve exact assets: %v", err)
+	}
+	if len(assets.Screenshots) != 1 || assets.Screenshots[0].RawURL != "https://img.example.invalid/screen.png" {
+		t.Fatalf("exact screenshots = %#v", assets.Screenshots)
+	}
+	if repo.uploadsCalls != 0 {
+		t.Fatalf("exact uploads unexpectedly queried broad repository state %d time(s)", repo.uploadsCalls)
+	}
+}
+
+func TestResolveDescriptionAssetsExactEmptyUploadsDoNotReadAmbientRepositoryState(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+	imagePath := filepath.Join(t.TempDir(), "screen.png")
+	meta := api.UploadSubject{
+		SourcePath: sourcePath,
+		ExactScreenshots: []api.ScreenshotImage{{
+			Path:    imagePath,
+			Purpose: api.ScreenshotPurposeFinal,
+		}},
+	}
+	repo := &stubRepo{uploads: []api.UploadedImageLink{{
+		SourcePath: sourcePath,
+		ImagePath:  imagePath,
+		Host:       "pixhost",
+		RawURL:     "https://img.example.invalid/ambient.png",
+	}}}
+	preloaded, err := preloadDescriptionAssetData(
+		context.Background(),
+		meta,
+		repo,
+		descriptionAssetsTestRegistry(t),
+	)
+	if err != nil {
+		t.Fatalf("preload exact empty uploads: %v", err)
+	}
+	if repo.uploadsCalls != 0 {
+		t.Fatalf("exact empty uploads queried broad repository state %d time(s)", repo.uploadsCalls)
+	}
+	if len(preloaded.uploads) != 0 {
+		t.Fatalf("exact empty uploads retained ambient variants: %#v", preloaded.uploads)
+	}
+}
+
 func TestResolveDescriptionAssetsBackfillsSlotsFromDescriptionOrder(t *testing.T) {
 	repo := &stubRepo{
 		descriptionOverride: strings.TrimSpace(`
@@ -2623,6 +2697,57 @@ func TestEnsureDescriptionImageHostUploadsPreferredHostForUnrestrictedTracker(t 
 		if screenshot.Host != "imgbb" || strings.TrimSpace(screenshot.RawURL) == "" {
 			t.Fatalf("expected imgbb screenshot URLs, got %#v", resolution.screenshots)
 		}
+	}
+}
+
+func TestEnsureDescriptionImageHostSkipsHostThatFailedEarlierInRun(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{
+				SourcePath: sourcePath,
+				ImagePath:  filepath.Join(t.TempDir(), "a.png"),
+				Order:      0,
+			},
+			{
+				SourcePath: sourcePath,
+				ImagePath:  filepath.Join(t.TempDir(), "b.png"),
+				Order:      1,
+			},
+		},
+	}
+	meta := api.UploadSubject{
+		SourcePath: sourcePath,
+		ImageHostOverrides: api.ImageHostOverrides{
+			FailedHosts: []string{" IMGBOX ", "imgbox"},
+		},
+	}
+	images := &stubImageService{}
+
+	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(
+		context.Background(),
+		"OE",
+		meta,
+		config.Config{ImageHosting: config.ImageHostingConfig{Host1: "imgbox", Host2: "imgbb"}},
+		config.TrackerConfig{},
+		repo,
+		images,
+		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
+		nil,
+		"imgbox",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolution.blocking || resolution.feedback.SelectedHost != "imgbb" {
+		t.Fatalf("expected imgbb fallback after prior imgbox failure, got %#v", resolution)
+	}
+	if len(images.calls) != 1 || images.calls[0] != "imgbb" {
+		t.Fatalf("expected description upload to skip imgbox, got calls %#v", images.calls)
+	}
+	if len(resolution.screenshots) != 2 {
+		t.Fatalf("expected every screenshot from fallback host, got %#v", resolution.screenshots)
 	}
 }
 

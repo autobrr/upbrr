@@ -9,15 +9,16 @@ import "errors"
 type OperationKind string
 
 const (
-	OperationKindUnknown        OperationKind = "unknown"
-	OperationKindPreparation    OperationKind = "preparation"
-	OperationKindDuplicateCheck OperationKind = "duplicate_check"
-	OperationKindDryRun         OperationKind = "dry_run"
-	OperationKindUploadReview   OperationKind = "upload_review"
-	OperationKindUploadExecute  OperationKind = "upload_execute"
-	OperationKindMedia          OperationKind = "media"
-	OperationKindDescription    OperationKind = "description"
-	OperationKindImageHosting   OperationKind = "image_hosting"
+	OperationKindUnknown         OperationKind = "unknown"
+	OperationKindPreparation     OperationKind = "preparation"
+	OperationKindDuplicateCheck  OperationKind = "duplicate_check"
+	OperationKindDryRun          OperationKind = "dry_run"
+	OperationKindUploadDryRun    OperationKind = "upload_dry_run"
+	OperationKindUploadExecute   OperationKind = "upload_execute"
+	OperationKindClientInjection OperationKind = "client_injection"
+	OperationKindMedia           OperationKind = "media"
+	OperationKindDescription     OperationKind = "description"
+	OperationKindImageHosting    OperationKind = "image_hosting"
 )
 
 // OperationFailureCode is a stable machine-readable failure classification.
@@ -33,7 +34,14 @@ const (
 	OperationFailureTrackerAuthRequired    OperationFailureCode = "tracker_auth_required"
 	OperationFailureNoEligibleTrackers     OperationFailureCode = "no_eligible_trackers"
 	OperationFailureStaleReview            OperationFailureCode = "stale_review"
+	OperationFailureStaleResult            OperationFailureCode = "stale_result"
 	OperationFailureMissingReview          OperationFailureCode = "missing_review"
+	OperationFailureMissingPreparedTracker OperationFailureCode = "missing_prepared_tracker_operation"
+	OperationFailureMissingExactTorrent    OperationFailureCode = "missing_exact_tracker_torrent"
+	OperationFailureDryRunClientInjection  OperationFailureCode = "dry_run_client_injection_failed"
+	OperationFailureClientInjection        OperationFailureCode = "client_injection_failed"
+	OperationFailureImageHostUnavailable   OperationFailureCode = "image_host_unavailable"
+	OperationFailureUnknownOutcome         OperationFailureCode = "unknown_submission_outcome"
 	OperationFailureInternal               OperationFailureCode = "internal"
 )
 
@@ -49,6 +57,7 @@ const (
 	OperationRecoveryAuthenticateTrackers OperationRecovery = "authenticate_trackers"
 	OperationRecoverySelectTrackers       OperationRecovery = "select_trackers"
 	OperationRecoveryReviewAgain          OperationRecovery = "review_again"
+	OperationRecoveryReprepare            OperationRecovery = "reprepare"
 	OperationRecoveryRetry                OperationRecovery = "retry"
 )
 

@@ -1,10 +1,11 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { configClient, hostBrowser as hostBrowserClient } from "./api/app";
 import { isHostPathCaseInsensitive } from "./api/client";
+import { WorkflowOperationProgress } from "./components/WorkflowOperationProgress";
 import BlurayCandidatesPage from "./pages/bluray_candidates";
 import DescriptionBuilderPage from "./pages/description_builder";
 import DupeCheckPage from "./pages/dupe_check";
@@ -19,9 +20,8 @@ import TrackerUploadPage from "./pages/tracker_upload";
 import UploadImagesPage from "./pages/upload_images";
 import { useSettingsState } from "./hooks/useSettingsState";
 import { useTrackerIcons } from "./hooks/useTrackerIcons";
-import { JobRegistryProvider, useJobNotifications } from "./jobRegistry";
 import { ReleaseSessionProvider, useReleaseSession } from "./releaseSession";
-import { TrackerCatalogProvider } from "./trackerCatalog";
+import { TrackerCatalogProvider, useTrackerCatalog } from "./trackerCatalog";
 import type { ReleaseRoute } from "./releaseSession/types";
 import type { BrowseDirectoryResponse, ConfigMap } from "./types";
 import { cn } from "./utils/cn";
@@ -36,7 +36,6 @@ import {
   type SourcePathHistoryEntry,
   type SourcePathMode,
 } from "./utils/inputHistory";
-import { normalizeDefaultTrackerList } from "./utils/settings";
 
 const appLayoutClass =
   "relative z-[1] block min-h-screen ml-[204px] max-[960px]:ml-0 max-[960px]:pb-[78px]";
@@ -84,7 +83,6 @@ const browserStorage = () => {
 /** Shell/router around the sole active release-session interface. */
 function AppShell() {
   const releaseSession = useReleaseSession();
-  const jobNotifications = useJobNotifications();
   const [activeTab, setActiveTab] = useState<ActiveTab>("input");
   const [navigationNotice, setNavigationNotice] = useState("");
   const [lightboxImage, setLightboxImage] = useState("");
@@ -103,7 +101,6 @@ function AppShell() {
       return [];
     }
   });
-  const defaultTrackerSelectionSession = useRef<number | null>(null);
   const [hostBrowserMode, setHostBrowserMode] = useState<SourcePathMode | null>(null);
   const [hostBrowser, setHostBrowser] = useState<BrowseDirectoryResponse | null>(null);
   const [hostBrowserLoading, setHostBrowserLoading] = useState(false);
@@ -136,7 +133,6 @@ function AppShell() {
     sectionFieldMeta,
     updateConfigValue,
     updateScreenshotConfigValue,
-    configuredImageHosts,
     screenshotConfig,
     clearSettingsStatus,
     resolveImageHostLabel,
@@ -168,23 +164,6 @@ function AppShell() {
       .map(([name, config]) => ({ name, config: config as ConfigMap }))
       .sort((left, right) => left.name.localeCompare(right.name));
   }, [configData, trackerSelectionNames]);
-  const defaultTrackerNames = useMemo(() => {
-    const root = configData?.Trackers;
-    if (!root || typeof root !== "object" || Array.isArray(root)) return [];
-    return normalizeDefaultTrackerList((root as ConfigMap).DefaultTrackers ?? []);
-  }, [configData]);
-  const configuredDefaultTrackers = useMemo(() => {
-    const configuredNames = new Map(
-      trackerUploadItems.map((item) => [item.name.trim().toUpperCase(), item.name]),
-    );
-    return Array.from(
-      new Set(
-        defaultTrackerNames
-          .map((name) => configuredNames.get(name.trim().toUpperCase()) || "")
-          .filter(Boolean),
-      ),
-    );
-  }, [defaultTrackerNames, trackerUploadItems]);
   const trackerIconSrcByName = useTrackerIcons(trackerUploadItems, useFavicons);
   const maxMenuItems = useMemo(() => {
     const value = screenshotConfig?.MaxMenuItems;
@@ -196,11 +175,8 @@ function AppShell() {
   const access = releaseSession.navigation.view.access;
   const hasTrackerData = releaseSession.input.view.trackerData.length > 0;
   const hasBlurayData = Boolean(preview?.Bluray);
-  const currentDiscType = /(^|[\\/])VIDEO_TS([\\/]|$)/i.test(sourcePath)
-    ? "DVD"
-    : /(^|[\\/])BDMV([\\/]|$)/i.test(sourcePath)
-      ? "BDMV"
-      : "";
+  const currentDiscType =
+    releaseSession.workflow.view.current?.release?.release.Source.Classification.DiscType || "";
 
   const applyTheme = useCallback((value: ThemeMode) => {
     const resolved =
@@ -251,31 +227,6 @@ function AppShell() {
     if (release?.SourcePath)
       rememberSource(release.SourcePath, inferSourcePathMode(release.SourcePath));
   }, [releaseSession.identity.view.release, rememberSource]);
-  useEffect(() => {
-    const sessionRevision = releaseSession.identity.view.sessionRevision;
-    if (
-      defaultTrackerSelectionSession.current === sessionRevision ||
-      !configData ||
-      (defaultTrackerNames.length > 0 && trackerUploadItems.length === 0)
-    ) {
-      return;
-    }
-    defaultTrackerSelectionSession.current = sessionRevision;
-    const current = new Set(releaseSession.input.view.selectedTrackers);
-    if (
-      current.size !== configuredDefaultTrackers.length ||
-      configuredDefaultTrackers.some((tracker) => !current.has(tracker.trim().toUpperCase()))
-    ) {
-      releaseSession.input.chooseTrackers(configuredDefaultTrackers);
-    }
-  }, [
-    configData,
-    configuredDefaultTrackers,
-    defaultTrackerNames.length,
-    releaseSession.identity.view.sessionRevision,
-    releaseSession.input,
-    trackerUploadItems.length,
-  ]);
   useEffect(() => {
     persistHistory(
       normalizeSourcePathHistory(sourcePathHistory, inputHistoryLimit, isHostPathCaseInsensitive()),
@@ -451,11 +402,6 @@ function AppShell() {
             </button>
           </div>
           <div className={`${sidebarGroupClass} mt-auto max-[960px]:mt-0`}>
-            {jobNotifications.pending.length ? (
-              <span className="px-2 text-xs text-[var(--muted)]">
-                Pending jobs: {jobNotifications.pending.length}
-              </span>
-            ) : null}
             <button
               className={navButtonClass(activeTab === "history")}
               type="button"
@@ -498,6 +444,7 @@ function AppShell() {
               {navigationNotice}
             </p>
           ) : null}
+          <WorkflowOperationProgress operation={releaseSession.workflow.view.current?.operation} />
           {activeTab === "settings" ? (
             <SettingsPage
               configData={configData}
@@ -583,7 +530,6 @@ function AppShell() {
           ) : activeTab === "upload_images" ? (
             <UploadImagesPage
               facet={releaseSession.uploadedImages}
-              configuredImageHosts={configuredImageHosts}
               resolveImageHostLabel={resolveImageHostLabel}
               setLightboxImage={setLightboxImage}
               setLightboxAlt={setLightboxAlt}
@@ -603,13 +549,7 @@ function AppShell() {
               trackerIconSrcByName={trackerIconSrcByName}
             />
           ) : activeTab === "upload" ? (
-            <TrackerUploadPage
-              facet={releaseSession.upload}
-              trackerUploadItems={trackerUploadItems}
-              useFavicons={useFavicons}
-              faviconOnly={faviconOnly}
-              trackerIconSrcByName={trackerIconSrcByName}
-            />
+            <TrackerUploadPage facet={releaseSession.upload} />
           ) : activeTab === "tracker" ? (
             <TrackerDataPage
               facet={releaseSession.input}
@@ -732,15 +672,27 @@ function AppShell() {
   );
 }
 
-/** Composes owner Job registry and active release session around the shell. */
-export default function App({ jobOwnerKey = "standalone" }: Readonly<{ jobOwnerKey?: string }>) {
+/** Composes the active release session around the shell. */
+export default function App() {
   return (
-    <JobRegistryProvider ownerKey={jobOwnerKey}>
-      <TrackerCatalogProvider>
-        <ReleaseSessionProvider>
-          <AppShell />
-        </ReleaseSessionProvider>
-      </TrackerCatalogProvider>
-    </JobRegistryProvider>
+    <TrackerCatalogProvider>
+      <AppReleaseSession />
+    </TrackerCatalogProvider>
+  );
+}
+
+function AppReleaseSession() {
+  const { catalog } = useTrackerCatalog();
+  const defaultTrackers = useMemo(
+    () =>
+      (catalog?.entries || [])
+        .filter((entry) => entry.configured && entry.default === true)
+        .map((entry) => entry.name),
+    [catalog],
+  );
+  return (
+    <ReleaseSessionProvider defaultTrackers={defaultTrackers}>
+      <AppShell />
+    </ReleaseSessionProvider>
   );
 }

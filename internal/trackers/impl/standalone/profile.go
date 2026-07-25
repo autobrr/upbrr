@@ -5,23 +5,11 @@ package standalone
 
 import (
 	"context"
-	"strings"
 
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
-
-// CookieAuthCapability returns the standard stored-cookie capability for a tracker.
-func CookieAuthCapability(name string) *api.TrackerAuthCapability {
-	name = strings.ToUpper(strings.TrimSpace(name))
-	return &api.TrackerAuthCapability{
-		TrackerID:          name,
-		DisplayName:        name,
-		AuthKind:           "cookies",
-		SupportsCookieFile: true,
-	}
-}
 
 // DescriptionPreparer builds tracker-local description content for one intent.
 type DescriptionPreparer func(context.Context, trackers.PreparationInput) (trackers.DescriptionResult, error)
@@ -38,8 +26,10 @@ type Profile struct {
 	UploadContentMode       trackers.UploadContentMode
 	PrepareDescription      DescriptionPreparer
 	PrepareUpload           trackers.UploadPreparer
+	ReleaseNamePolicy       trackers.ReleaseNamePolicyBinding
 	NewDuplicateAdapter     func(dupe.Dependencies) dupe.Adapter
 	Rules                   *trackers.RuleSet
+	ValidationPolicy        trackers.ValidationPolicyBinding
 	ClaimPolicy             *trackers.ClaimPolicy
 	DataPolicy              *trackers.DataLookupPolicy
 	ArtifactPolicy          *trackers.ArtifactPolicy

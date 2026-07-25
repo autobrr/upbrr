@@ -5,6 +5,7 @@ package pts
 
 import (
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 )
 
@@ -17,8 +18,9 @@ func Profile() standalone.Profile {
 		UploadContentMode:     trackers.UploadContentModeDescription,
 		PrepareDescription:    prepareDescription,
 		PrepareUpload:         prepareUpload,
+		ValidationPolicy:      validationPolicy(),
 		NewDuplicateAdapter:   newDuplicateAdapter,
-		AuthCapability:        standalone.CookieAuthCapability("PTS"),
+		AuthCapability:        authcontract.CookieCapability("PTS"),
 		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"https://tracker.ptskit.com"}},
 	}

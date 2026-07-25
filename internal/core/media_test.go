@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +31,54 @@ type imageHostBehavior struct {
 type imageUploadCallResult struct {
 	result api.UploadImagesResult
 	err    error
+}
+
+type mediaLogEntry struct {
+	level   string
+	message string
+}
+
+type recordingMediaLogger struct {
+	mu      sync.Mutex
+	entries []mediaLogEntry
+}
+
+func (l *recordingMediaLogger) record(level string, format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.entries = append(l.entries, mediaLogEntry{level: level, message: fmt.Sprintf(format, args...)})
+}
+
+func (l *recordingMediaLogger) Tracef(format string, args ...any) {
+	l.record("TRACE", format, args...)
+}
+
+func (l *recordingMediaLogger) Debugf(format string, args ...any) {
+	l.record("DEBUG", format, args...)
+}
+
+func (l *recordingMediaLogger) Infof(format string, args ...any) {
+	l.record("INFO", format, args...)
+}
+
+func (l *recordingMediaLogger) Warnf(format string, args ...any) {
+	l.record("WARN", format, args...)
+}
+
+func (l *recordingMediaLogger) Errorf(format string, args ...any) {
+	l.record("ERROR", format, args...)
+}
+
+func (l *recordingMediaLogger) countLevelContaining(level string, value string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	count := 0
+	for _, entry := range l.entries {
+		if entry.level == level && strings.Contains(entry.message, value) {
+			count++
+		}
+	}
+	return count
 }
 
 type barrierImageHostingService struct {
@@ -68,63 +117,7 @@ func (s *barrierImageHostingService) Upload(
 	return links, behavior.err
 }
 
-func TestUploadImagesToTargetsOverlapsHostsAndPreservesTargetOrder(t *testing.T) {
-	t.Parallel()
-
-	alphaRelease := make(chan struct{})
-	betaRelease := make(chan struct{})
-	service := &barrierImageHostingService{
-		entered: make(chan imageHostCall, 2),
-		behaviors: map[string]imageHostBehavior{
-			"alpha": {release: alphaRelease, err: errors.New("alpha failed")},
-			"beta":  {release: betaRelease, err: errors.New("beta failed")},
-		},
-	}
-	logger := &eligibilityCaptureLogger{}
-	module := &mediaModule{images: service, logger: logger}
-	targets := []trackers.ImageUploadTarget{
-		{
-Host: "alpha",
- UsageScope: "global",
- Trackers: []string{"ONE"},
-},
-		{
-Host: "beta",
- UsageScope: "global",
- Trackers: []string{"TWO"},
-},
-	}
-	done := make(chan api.UploadImagesResult, 1)
-	go func() {
-		done <- module.uploadImagesToTargets(
-			context.Background(),
-			api.UploadSubject{SourcePath: "C:\\media\\Example.Release.2026.mkv"},
-			targets,
-			[]api.ScreenshotImage{{Path: "screen.png"}},
-			false,
-		)
-	}()
-
-	first := receiveImageHostCall(t, service.entered)
-	second := receiveImageHostCall(t, service.entered)
-	if first.host == second.host || first.fallback || second.fallback {
-		t.Fatalf("primary host entries = %#v, %#v", first, second)
-	}
-	close(betaRelease)
-	close(alphaRelease)
-	result := receiveImageUploadResult(t, done)
-	if got := uploadLinkHosts(result.Links); !slices.Equal(got, []string{"alpha", "beta"}) {
-		t.Fatalf("link order = %v", got)
-	}
-	if got := uploadFailureHosts(result.Failures); !slices.Equal(got, []string{"alpha", "beta"}) {
-		t.Fatalf("failure order = %v", got)
-	}
-	if info := strings.Join(logger.level("info"), "\n"); !strings.Contains(info, "hosts=2 host_names=alpha,beta fallback=false images=1") {
-		t.Fatalf("round-start log missing: %q", info)
-	}
-}
-
-func TestUploadImagesFallbackWaitsForPrimaryRoundAndOverlapsFallbackHosts(t *testing.T) {
+func TestUploadImagesFallbackStartsBeforeUnrelatedPrimaryCompletes(t *testing.T) {
 	t.Parallel()
 
 	registry := mediaImageHostRegistry(t)
@@ -143,6 +136,7 @@ func TestUploadImagesFallbackWaitsForPrimaryRoundAndOverlapsFallbackHosts(t *tes
 			"ptscreens": {release: releases["ptscreens"]},
 		},
 	}
+	logger := &recordingMediaLogger{}
 	module := &mediaModule{
 		cfg: config.Config{ImageHosting: config.ImageHostingConfig{
 			Host1: "pixhost",
@@ -151,7 +145,7 @@ func TestUploadImagesFallbackWaitsForPrimaryRoundAndOverlapsFallbackHosts(t *tes
 			Host4: "ptscreens",
 		}},
 		images:   service,
-		logger:   api.NopLogger{},
+		logger:   logger,
 		registry: registry,
 	}
 	resolvedFallbacks, err := module.resolveFallbackImageUploadTargets(
@@ -172,17 +166,18 @@ func TestUploadImagesFallbackWaitsForPrimaryRoundAndOverlapsFallbackHosts(t *tes
 			context.Background(),
 			api.UploadSubject{SourcePath: "C:\\media\\Example.Release.2026.mkv"},
 			"pixhost",
+			nil,
 			[]trackers.ImageUploadTarget{
 				{
-Host: "pixhost",
- UsageScope: "global",
- Trackers: []string{"ONE"},
-},
+					Host:       "pixhost",
+					UsageScope: "global",
+					Trackers:   []string{"ONE"},
+				},
 				{
-Host: "onlyimage",
- UsageScope: "global",
- Trackers: []string{"TWO"},
-},
+					Host:       "onlyimage",
+					UsageScope: "global",
+					Trackers:   []string{"TWO"},
+				},
 			},
 			[]api.ScreenshotImage{{Path: "screen.png"}},
 		)
@@ -197,22 +192,14 @@ Host: "onlyimage",
 		t.Fatalf("primary hosts = %v", got)
 	}
 	close(releases["pixhost"])
-	select {
-	case call := <-service.entered:
-		t.Fatalf("fallback started before primary round completed: %#v", call)
-	default:
+	firstFallback := receiveImageHostCall(t, service.entered)
+	if firstFallback.host != "imgbb" || !firstFallback.fallback {
+		t.Fatalf("first fallback = %#v, want imgbb before onlyimage completes", firstFallback)
 	}
 	close(releases["onlyimage"])
-
-	fallback := []imageHostCall{
-		receiveImageHostCall(t, service.entered),
-		receiveImageHostCall(t, service.entered),
-	}
-	if got := sortedCallHosts(fallback); !slices.Equal(got, []string{"imgbb", "ptscreens"}) {
-		t.Fatalf("fallback hosts = %v", got)
-	}
-	if !fallback[0].fallback || !fallback[1].fallback {
-		t.Fatalf("fallback flags = %#v", fallback)
+	secondFallback := receiveImageHostCall(t, service.entered)
+	if secondFallback.host != "ptscreens" || !secondFallback.fallback {
+		t.Fatalf("second fallback = %#v", secondFallback)
 	}
 	close(releases["ptscreens"])
 	close(releases["imgbb"])
@@ -223,6 +210,92 @@ Host: "onlyimage",
 	result := callResult.result
 	if len(result.Failures) != 0 || len(result.Links) != 4 {
 		t.Fatalf("fallback result = %#v", result)
+	}
+	if !slices.Equal(result.FailedHosts, []string{"onlyimage", "pixhost"}) {
+		t.Fatalf("failed hosts = %v", result.FailedHosts)
+	}
+	if len(result.Attempts) != 4 {
+		t.Fatalf("host attempts = %#v", result.Attempts)
+	}
+	failedAttempts, fallbackAttempts := 0, 0
+	for _, attempt := range result.Attempts {
+		if attempt.Failure != nil {
+			failedAttempts++
+		}
+		if attempt.Fallback {
+			fallbackAttempts++
+		}
+	}
+	if failedAttempts != 2 || fallbackAttempts != 2 {
+		t.Fatalf("host attempt accounting failed=%d fallback=%d attempts=%#v", failedAttempts, fallbackAttempts, result.Attempts)
+	}
+	if logger.countLevelContaining("INFO", "starting image upload fallback") != 2 {
+		t.Fatal("expected fallback decisions at info level")
+	}
+	if logger.countLevelContaining("WARN", "starting image upload fallback") != 0 {
+		t.Fatal("recovering fallback decisions must not log at warning level")
+	}
+}
+
+func TestResolveImageUploadTargetsUsesExactWorkflowTrackerSelection(t *testing.T) {
+	t.Parallel()
+
+	registry := mediaImageHostRegistry(t)
+	if err := registry.RegisterDescriptor(trackers.Descriptor{
+		Name:              "LST",
+		Definition:        mediaImageHostDefinition("LST"),
+		Family:            trackers.FamilyUnit3D,
+		BaseURL:           "https://lst.example.invalid",
+		UploadContentMode: trackers.UploadContentModeScreenshots,
+		ImageHost: &trackers.ImageHostPolicy{
+			ConditionalHost:   "lostimg",
+			OwnedHosts:        []string{"lostimg"},
+			EnableWithLostimg: true,
+		},
+	}); err != nil {
+		t.Fatalf("register LST: %v", err)
+	}
+	module := &mediaModule{
+		cfg: config.Config{ImageHosting: config.ImageHostingConfig{
+			Host1:          "imgbb",
+			LostimgEnabled: true,
+		}},
+		logger:   api.NopLogger{},
+		registry: registry,
+	}
+
+	for _, test := range []struct {
+		name    string
+		subject api.UploadSubject
+	}{
+		{
+			name: "legacy removal",
+			subject: api.UploadSubject{
+				TrackersRemove: []string{"LST"},
+			},
+		},
+		{
+			name: "prepared client match",
+			subject: api.UploadSubject{
+				MatchedTrackers: []string{"LST"},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			targets, err := module.resolveImageUploadTargets([]string{"ONE", "LST"}, test.subject, "imgbb", nil)
+			if err != nil {
+				t.Fatalf("resolve image upload targets: %v", err)
+			}
+			if got := uploadTargetHosts(targets); !slices.Equal(got, []string{"imgbb", "lostimg"}) {
+				t.Fatalf("resolved hosts = %v, targets=%#v", got, targets)
+			}
+			if len(targets) != 2 || targets[1].Host != "lostimg" ||
+				targets[1].UsageScope != "tracker:LST" || !slices.Equal(targets[1].Trackers, []string{"LST"}) {
+				t.Fatalf("LST target = %#v, targets=%#v", targets[1], targets)
+			}
+		})
 	}
 }
 
@@ -270,17 +343,6 @@ func receiveImageHostCall(t *testing.T, calls <-chan imageHostCall) imageHostCal
 	}
 }
 
-func receiveImageUploadResult(t *testing.T, results <-chan api.UploadImagesResult) api.UploadImagesResult {
-	t.Helper()
-	select {
-	case result := <-results:
-		return result
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for image upload result")
-		return api.UploadImagesResult{}
-	}
-}
-
 func receiveImageUploadCallResult(t *testing.T, results <-chan imageUploadCallResult) imageUploadCallResult {
 	t.Helper()
 	select {
@@ -290,22 +352,6 @@ func receiveImageUploadCallResult(t *testing.T, results <-chan imageUploadCallRe
 		t.Fatal("timed out waiting for image upload result")
 		return imageUploadCallResult{}
 	}
-}
-
-func uploadLinkHosts(links []api.UploadedImageLink) []string {
-	hosts := make([]string, 0, len(links))
-	for _, link := range links {
-		hosts = append(hosts, link.Host)
-	}
-	return hosts
-}
-
-func uploadFailureHosts(failures []api.UploadImageHostFailure) []string {
-	hosts := make([]string, 0, len(failures))
-	for _, failure := range failures {
-		hosts = append(hosts, failure.Host)
-	}
-	return hosts
 }
 
 func sortedCallHosts(calls []imageHostCall) []string {

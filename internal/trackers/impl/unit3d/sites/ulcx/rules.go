@@ -26,27 +26,33 @@ func Rules() *trackers.RuleSet {
 			RequireSubs:    true,
 			ApplyIfNonDisc: true,
 		},
-		Check: checkRules,
 	}
 }
 
-func checkRules(ctx context.Context, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {
+// ValidationPolicy returns ULCX's tracker-specific semantic checks.
+func ValidationPolicy() trackers.ValidationPolicyBinding {
+	return trackers.ValidationPolicyBinding{ID: "unit3d-ulcx-policy-v1", Check: checkRules}
+}
+
+func checkRules(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context canceled: %w", err)
 	}
 	failures := make([]api.RuleFailure, 0, 3)
-	if unit3d.ContainsRuleValue(unit3d.RuleKeywords(meta), []string{"concert"}) {
+	ruleSubject := unit3d.ValidationRuleSubject(meta)
+	if unit3d.ContainsRuleValue(unit3d.RuleKeywords(ruleSubject), []string{"concert"}) {
 		failures = append(failures, trackers.NewRuleFailure("block_concert", "Concerts not allowed at ULCX.", api.RuleDispositionWaivable))
 	}
-	resolution := unit3d.RuleResolution(meta)
-	if strings.EqualFold(strings.TrimSpace(meta.VideoCodec), "HEVC") && resolution != "2160p" && !unit3d.Animation(meta) && !unit3d.Anime(meta) {
+	resolution := unit3d.RuleResolution(ruleSubject)
+	if strings.EqualFold(strings.TrimSpace(meta.VideoCodec), "HEVC") && resolution != "2160p" && !unit3d.Animation(ruleSubject) &&
+		!unit3d.Anime(ruleSubject) {
 		failures = append(failures, trackers.NewRuleFailure(
 			"hevc_resolution_2160p",
 			"This content might not fit HEVC rules for ULCX.",
 			api.RuleDispositionStrict,
 		))
 	}
-	typeValue := unit3d.RuleType(meta)
+	typeValue := unit3d.RuleType(ruleSubject)
 	if (typeValue == "ENCODE" || typeValue == "HDTV") && unit3d.ResolutionBelow(resolution, "720p") {
 		failures = append(failures, trackers.NewRuleFailure(
 			"encode_min_resolution",

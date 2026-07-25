@@ -1,163 +1,214 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import {
-  descriptionClient,
-  menuImageClient,
-  playlistClient,
-  preparationClient,
-  screenshotClient,
-  uploadedImageClient,
-  uploadClient,
-} from "../api/app";
-import { subscribeWebEvent } from "../api/client";
-import type { ImageUploadProgressUpdate, PreparationProgressUpdate } from "../types";
+import { descriptionClient, releaseWorkflowClient } from "../api/app";
 import type { ReleaseSessionPorts } from "./ports";
-
-const preparationProgressEvent = "preparation:progress";
-const imageUploadProgressEvent = "image-upload:progress";
-
-const executePreparation: ReleaseSessionPorts["preparation"]["execute"] = async (command) => {
-  const off = subscribeWebEvent(preparationProgressEvent, (payload: unknown) => {
-    const update = payload as PreparationProgressUpdate;
-    if (update?.correlationID === command.correlationID) command.onProgress(update);
-  });
-  try {
-    switch (command.operation) {
-      case "prepare":
-        return await preparationClient.fetchMetadata(
-          command.correlationID,
-          command.sourcePath,
-          command.intent.sourceLookupURL,
-          command.intent.identity,
-          command.intent.releaseName,
-          { ...command.intent.playlist, Selected: [...command.intent.playlist.Selected] },
-          command.controls.confirmBDMVRescan,
-          command.signal,
-        );
-      case "reset":
-        return await preparationClient.resetMetadata(
-          command.correlationID,
-          command.sourcePath,
-          command.intent.sourceLookupURL,
-          command.intent.identity,
-          command.intent.releaseName,
-          { ...command.intent.playlist, Selected: [...command.intent.playlist.Selected] },
-          command.controls.confirmBDMVRescan,
-          command.signal,
-        );
-      case "candidate":
-        return await preparationClient.selectBlurayCandidate(
-          command.correlationID,
-          command.sourcePath,
-          command.releaseID || "",
-          command.signal,
-        );
-    }
-  } finally {
-    off();
-  }
-};
-
-const uploadImages: ReleaseSessionPorts["uploadedImages"]["upload"] = async (command) => {
-  const off = subscribeWebEvent(imageUploadProgressEvent, (payload: unknown) => {
-    const update = payload as ImageUploadProgressUpdate;
-    if (update?.correlationID === command.correlationID) command.onProgress(update);
-  });
-  try {
-    return await uploadedImageClient.upload(
-      command.correlationID,
-      command.release,
-      [...command.trackers],
-      command.host,
-      [...command.images],
-      command.signal,
-    );
-  } finally {
-    off();
-  }
-};
 
 /** Composes production transports once at the application boundary. */
 export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
-  preparation: {
-    detectDiscType: (sourcePath, signal) => preparationClient.detectDiscType(sourcePath, signal),
-    discoverPlaylists: (sourcePath, signal) => playlistClient.discover(sourcePath, signal),
-    execute: executePreparation,
-  },
-  screenshots: {
-    load: (release, signal) => screenshotClient.fetchPlan(release, signal),
-    generate: (release, selections, purpose, signal) =>
-      screenshotClient.generate(release, [...selections], purpose, signal),
-    previewFrame: (release, timestampSeconds, signal) =>
-      screenshotClient.previewFrame(release, timestampSeconds, signal),
-    remove: (release, imagePath, signal) => screenshotClient.remove(release, imagePath, signal),
-    removeTrackerURL: (release, url, signal) =>
-      screenshotClient.deleteTrackerImageURL(release, url, signal),
-    saveFinal: (release, images, signal) =>
-      screenshotClient.saveFinalSelections(release, [...images], signal),
-    readImage: (path, signal) => screenshotClient.readImage(path, signal),
-  },
-  menuImages: {
-    list: (release, signal) => menuImageClient.list(release, signal),
-    readImage: (path, signal) => screenshotClient.readImage(path, signal),
-    importPaths: (release, paths, signal) =>
-      menuImageClient.importPaths(release, [...paths], signal),
-    capture: (release, signal) => menuImageClient.capture(release, signal),
-    remove: (release, imagePath, signal) => menuImageClient.remove(release, imagePath, signal),
-  },
-  uploadedImages: {
-    listCandidates: (release, signal) => uploadedImageClient.listCandidates(release, signal),
-    readImage: (path, signal) => screenshotClient.readImage(path, signal),
-    listUploaded: (release, signal) => uploadedImageClient.listUploaded(release, signal),
-    upload: uploadImages,
-    remove: (release, imagePath, host, signal) =>
-      uploadedImageClient.remove(release, imagePath, host, signal),
+  workflow: {
+    continue: (request, signal) => releaseWorkflowClient.continue(request, signal),
+    current: (workflowID, signal) => releaseWorkflowClient.current(workflowID, signal),
+    operation: (workflowID, operationID, signal) =>
+      releaseWorkflowClient.operation(workflowID, operationID, signal),
+    cancelOperation: (workflowID, operationID, signal) =>
+      releaseWorkflowClient.cancelOperation(workflowID, operationID, signal),
+    mediaPlan: (workflowID, signal) => releaseWorkflowClient.mediaPlan(workflowID, signal),
+    previewFrame: (current, timestampSeconds, idempotencyKey, signal) =>
+      releaseWorkflowClient.previewFrame(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          timestampSeconds,
+          idempotencyKey,
+        },
+        signal,
+      ),
+    setMediaSelection: (current, artifactIDs, selected, idempotencyKey, signal) => {
+      if (!current.media) throw new Error("Workflow media is unavailable.");
+      return releaseWorkflowClient.setMediaSelection(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          media: { id: current.media.id, revision: current.media.revision },
+          artifactIds: artifactIDs,
+          selected,
+          idempotencyKey,
+        },
+        signal,
+      );
+    },
+    deleteMedia: (current, artifactIDs, idempotencyKey, signal) => {
+      if (!current.media) throw new Error("Workflow media is unavailable.");
+      return releaseWorkflowClient.deleteMedia(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          media: { id: current.media.id, revision: current.media.revision },
+          artifactIds: artifactIDs,
+          idempotencyKey,
+        },
+        signal,
+      );
+    },
+    reorderMedia: (current, artifactIDs, idempotencyKey, signal) => {
+      if (!current.media) throw new Error("Workflow media is unavailable.");
+      return releaseWorkflowClient.reorderMedia(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          media: { id: current.media.id, revision: current.media.revision },
+          artifactIds: artifactIDs,
+          idempotencyKey,
+        },
+        signal,
+      );
+    },
+    stageMedia: (current, file, signal) =>
+      releaseWorkflowClient.stageMedia(
+        current.workflow.id,
+        current.workflow.revision,
+        file,
+        signal,
+      ),
+    attachMedia: (current, resources, idempotencyKey, signal) =>
+      releaseWorkflowClient.attachMedia(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          ...(current.media
+            ? { media: { id: current.media.id, revision: current.media.revision } }
+            : {}),
+          attachments: resources.map((resource, order) => ({
+            resource,
+            kind: "dvd_menu",
+            purpose: "menu",
+            order,
+          })),
+          idempotencyKey,
+        },
+        signal,
+      ),
+    uploadImages: (current, artifactIDs, idempotencyKey, signal) => {
+      if (!current.media) throw new Error("Workflow media is unavailable.");
+      return releaseWorkflowClient.uploadImages(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          media: { id: current.media.id, revision: current.media.revision },
+          artifactIds: artifactIDs,
+          idempotencyKey,
+        },
+        signal,
+      );
+    },
+    retryImageHost: (current, artifactIDs, host, idempotencyKey, signal) => {
+      if (!current.media) throw new Error("Workflow media is unavailable.");
+      return releaseWorkflowClient.retryImageHost(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          media: { id: current.media.id, revision: current.media.revision },
+          artifactIds: artifactIDs,
+          host,
+          idempotencyKey,
+        },
+        signal,
+      );
+    },
+    removeHostedImages: (current, artifactIDs, idempotencyKey, signal) => {
+      if (!current.media) throw new Error("Workflow media is unavailable.");
+      return releaseWorkflowClient.removeHostedImages(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          media: { id: current.media.id, revision: current.media.revision },
+          artifactIds: artifactIDs,
+          idempotencyKey,
+        },
+        signal,
+      );
+    },
+    mediaURL: (current, artifactID) => {
+      if (!current.media) return "";
+      return releaseWorkflowClient.mediaURL(
+        current.workflow.id,
+        current.media.id,
+        current.media.revision,
+        artifactID,
+      );
+    },
+    saveDescriptionOverride: (current, groupKey, source, idempotencyKey, signal) => {
+      if (!current.descriptions) throw new Error("Workflow descriptions are unavailable.");
+      return releaseWorkflowClient.saveDescriptionOverride(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          idempotencyKey,
+          override: {
+            descriptions: {
+              id: current.descriptions.id,
+              revision: current.descriptions.revision,
+            },
+            groupKey,
+            source,
+          },
+        },
+        signal,
+      );
+    },
+    resetDescriptionOverride: (current, groupKey, idempotencyKey, signal) => {
+      if (!current.descriptions) throw new Error("Workflow descriptions are unavailable.");
+      return releaseWorkflowClient.resetDescriptionOverride(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          idempotencyKey,
+          descriptions: {
+            id: current.descriptions.id,
+            revision: current.descriptions.revision,
+          },
+          groupKey,
+        },
+        signal,
+      );
+    },
+    retryFailedUploads: (current, result, trackerIDs, noSeed, idempotencyKey, signal) =>
+      releaseWorkflowClient.retryFailedUploads(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          retry: { result, trackerIds: [...trackerIDs] },
+          noSeed,
+          idempotencyKey,
+        },
+        signal,
+      ),
+    cancel: async (workflowID, reason, idempotencyKey, signal) => {
+      const current = await releaseWorkflowClient.current(workflowID, signal);
+      return releaseWorkflowClient.cancel(
+        {
+          workflowId: workflowID,
+          expectedRevision: current.workflow.revision,
+          reason,
+          idempotencyKey,
+        },
+        signal,
+      );
+    },
+    invalidateTrackers: (current, trackerIDs, reason, idempotencyKey, signal) =>
+      releaseWorkflowClient.invalidateTrackers(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          trackerIds: [...trackerIDs],
+          reason,
+          idempotencyKey,
+        },
+        signal,
+      ),
   },
   descriptions: {
-    load: (release, trackers, signal) =>
-      preparationClient.fetchDescriptionBuilder(release, [...trackers], signal),
     render: (raw, signal) => descriptionClient.render(raw, signal),
-    save: (release, groupKey, raw, trackers, signal) =>
-      descriptionClient.saveOverride(release, groupKey, raw, [...trackers], signal),
-  },
-  upload: {
-    dryRun: (command, signal) =>
-      preparationClient.fetchTrackerDryRun(
-        command.dupeJobID,
-        command.release,
-        [...command.trackers],
-        [...command.ignoreDupesFor],
-        Object.fromEntries(
-          Object.entries(command.questionnaireAnswers).map(([tracker, values]) => [
-            tracker,
-            { ...values },
-          ]),
-        ),
-        [...command.descriptionGroups],
-        command.options.noSeed,
-        command.options.runLogLevel,
-        signal,
-      ),
-    review: (command, signal) =>
-      uploadClient.review(
-        command.release,
-        [...command.trackers],
-        [...command.ignoreDupesFor],
-        command.ruleAuthorizations.map((authorization) => ({
-          Tracker: authorization.Tracker,
-          Rules: [...authorization.Rules],
-        })),
-        Object.fromEntries(
-          Object.entries(command.questionnaireAnswers).map(([tracker, values]) => [
-            tracker,
-            { ...values },
-          ]),
-        ),
-        [...command.descriptionGroups],
-        command.options.noSeed,
-        command.options.runLogLevel,
-        signal,
-      ),
   },
 });

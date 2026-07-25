@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { configClient, trackerCatalogClient } from "../api/app";
 import { Button } from "../components/ui/button";
@@ -595,6 +595,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   const [settingsSection, setSettingsSection] = useState(settingsSections[0].key);
   const [settingsAdvanced, setSettingsAdvanced] = useState<Record<string, boolean>>({});
   const [sensitiveValues, setSensitiveValues] = useState<Record<string, string>>({});
+  const settingsMutationVersion = useRef(0);
 
   const configuredImageHosts = useMemo(() => {
     if (!configData || !configData.ImageHosting || typeof configData.ImageHosting !== "object") {
@@ -686,6 +687,12 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
 
   const setSettingsSavedMessage = (message: string) => {
     setSettingsSaved(message);
+  };
+
+  const markSettingsChanged = () => {
+    settingsMutationVersion.current += 1;
+    setSettingsDirty(true);
+    setSettingsSaved("");
   };
 
   const buildSavePayload = () => {
@@ -795,6 +802,8 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   );
 
   const updateConfigValue = (path: string[], value: ConfigValue) => {
+    if (!configData) return;
+    markSettingsChanged();
     setConfigData((prev) => {
       if (!prev) return prev;
       const clone = structuredClone(prev) as ConfigMap;
@@ -808,7 +817,6 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         cursor = cursor[key] as ConfigMap;
       }
       cursor[path[path.length - 1]] = value;
-      setSettingsDirty(true);
       return clone;
     });
 
@@ -838,6 +846,8 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   };
 
   const removeConfigKey = (path: string[], key: string) => {
+    if (!configData) return;
+    markSettingsChanged();
     setConfigData((prev) => {
       if (!prev) return prev;
       const clone = structuredClone(prev) as ConfigMap;
@@ -852,13 +862,13 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         return prev;
       }
       delete cursor[key];
-      setSettingsDirty(true);
       return clone;
     });
   };
 
   const addConfigKey = (path: string[], key: string, value: ConfigValue) => {
-    if (!key.trim()) return;
+    if (!configData || !key.trim()) return;
+    markSettingsChanged();
     setConfigData((prev) => {
       if (!prev) return prev;
       const clone = structuredClone(prev) as ConfigMap;
@@ -873,7 +883,6 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       }
       if (cursor[key] !== undefined) return prev;
       cursor[key] = value;
-      setSettingsDirty(true);
       return clone;
     });
   };
@@ -881,15 +890,18 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   const loadSettings = useCallback(async () => {
     clearSettingsStatus();
     const getConfig = configClient.get;
+    const mutationVersion = settingsMutationVersion.current;
     setSettingsLoading(true);
     try {
       const result = await getConfig();
       const parsed = JSON.parse(result) as ConfigMap;
       const masked = maskSensitiveConfig(parsed);
-      setConfigData(masked.masked);
-      setSensitiveValues(masked.originals);
-      setDraftTrackerEntries({});
-      setSettingsDirty(false);
+      if (settingsMutationVersion.current === mutationVersion) {
+        setConfigData(masked.masked);
+        setSensitiveValues(masked.originals);
+        setDraftTrackerEntries({});
+        setSettingsDirty(false);
+      }
     } catch (err) {
       setSettingsError(String(err));
     } finally {
@@ -912,6 +924,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
   const handleSaveSettings = async () => {
     clearSettingsStatus();
     const saveConfig = configClient.save;
+    const mutationVersion = settingsMutationVersion.current;
     const payload = buildSavePayload();
     if (!payload) {
       setSettingsError("Settings are not loaded.");
@@ -920,7 +933,11 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     setSettingsLoading(true);
     try {
       await saveConfig(payload);
-      markSettingsSaved("Settings saved and applied.");
+      if (settingsMutationVersion.current === mutationVersion) {
+        markSettingsSaved("Settings saved and applied.");
+      } else {
+        setSettingsSaved("Earlier changes saved. Newer edits remain unsaved.");
+      }
     } catch (err) {
       setSettingsError(String(err));
     } finally {

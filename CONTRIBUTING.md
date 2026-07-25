@@ -10,7 +10,9 @@ This document is a guide to help you through the process of contributing to upbr
 
 - **Code** — new features, bug fixes, improvements
 - **Report bugs** — with clear reproduction steps and environment details
-- **Tracker implementations** — support for new private trackers lives under `internal/trackers/impl`
+- **Tracker implementations** — support for new private trackers lives under
+  `internal/trackers/impl`; follow [`ADDING_TRACKERS.md`](./ADDING_TRACKERS.md) for the required
+  module, auth, naming, registry, config, and validation contracts
 - **Documentation** — improvements to this file, the README, or inline Go/TS docs
 
 ## Developer guide
@@ -209,6 +211,7 @@ pnpm --dir webui run lint:style
 
 # Broad Go regression, lint, and policy sweeps:
 make test-go
+make architecturepolicy
 make lint
 make logpolicy
 make pathpolicy
@@ -231,11 +234,15 @@ Alternatively, `make precommit` and `make prepush` run the configured Lefthook c
 - The frontend build output is embedded into the Go app from `internal/webserver/assets`.
 - The CLI and embedded WebUI share the same core services and config model under `internal/`.
 - Canonical prepared generations and display projections live under `internal/preparedrelease`; external identity, source-resource resolution, and torrent-client discovery live under `internal/externalidentity`, `internal/sourcelayout`, and `internal/clientdiscovery`.
-- WebUI runtime activation and retained background jobs live under `internal/webserver`; frontend release state and shared Job coordination live under `webui/src/releaseSession` and `webui/src/jobRegistry`.
+- WebUI runtime activation and workflow HTTP adapters live under `internal/webserver`; durable workflow coordination lives under `internal/releaseworkflow`; frontend release state and operation coordination live under `webui/src/releaseSession`.
 - Tracker implementations follow registry families: Unit3D protocol behavior and sites live under `internal/trackers/impl/unit3d`, AvistaZ-family behavior under `internal/trackers/impl/azfamily`, and every other tracker in its own `internal/trackers/impl/standalone/<tracker>` package.
-- The family-grouped supported manifest lives only in `internal/trackers/impl/registry.go`. Site profiles/definitions own default endpoints and policy; `internal/config/defaults/example.yaml` owns ordered credential/config fields and contains no tracker URL. A standard Unit3D addition should need only its site profile/rules, one manifest entry, one example-config stanza, and combined rule tests.
-- Standalone packages compose identity, preparation callbacks, duplicate factories, auth descriptors, and static policy in `profile.go`. Shared `standalone.Definition` supplies registry capabilities; only dynamic data/claim factories need a small local wrapper. Upload preparation captures one immutable operation used by preview and submission.
-- Shared tracker contracts and registry-driven orchestration live under `internal/trackers`; generic auth, dupe, and tracker-data coordinators are in its `auth`, `dupe`, and `data` subpackages.
+- Tracker modules use responsibility files where behavior exists: `name.go`, `auth.go`, `taxonomy.go`, `validation.go`, `description.go`, `media.go`, `questionnaire.go`, and optional `payload.go`. `profile.go`/`definition.go` wire identity and policy; `upload.go` owns prepare/submit/preview orchestration and transport only. Do not create empty marker files. See [`ADDING_TRACKERS.md`](./ADDING_TRACKERS.md).
+- The family-grouped supported manifest lives only in `internal/trackers/impl/registry.go`. Site profiles/definitions own default endpoints and policy; `internal/config/defaults/example.yaml` owns ordered credential/config fields and contains no tracker URL. A standard Unit3D addition should need only its site profile, optional rules/validation, one manifest entry, one example-config stanza, and combined rule/validation tests.
+- Standalone packages compose identity, preparation callbacks, duplicate factories, auth descriptors, versioned validation, and static policy in `profile.go`. Shared `standalone.Definition` supplies registry capabilities and a versioned no-extra-validation default; only dynamic data/claim factories need a small local wrapper. Upload preparation captures one immutable operation used by preview and submission.
+- Shared tracker contracts and registry-driven orchestration live under `internal/trackers`; generic auth, dupe, and tracker-data coordinators are in its `auth`, `dupe`, and `data` subpackages. Central auth owns cross-surface status/import/validate/login/2FA/delete coordination, secret-free effective requirements, reusable cookie-login lifecycle, and TOTP; tracker-local `auth.go` retains protocol forms/endpoints/markers/filtering. Encrypted cookie persistence remains in `internal/cookies`.
+- Every tracker has an explicit versioned release-name policy resolved before duplicate checking. Custom algorithms live in `name.go`; principal payload fields consume the reviewed projection rather than re-deriving a name during upload.
+- Every tracker resolves a versioned, side-effect-free validation policy before duplicate checking. Tracker-specific payload constructibility checks live in `validation.go`; release-eligibility extensions may stay with `rules.go`. Both consume `api.TrackerValidationSubject`.
+- `make architecturepolicy` rejects validation and other tracker semantic algorithms in `upload.go`, misplaced static banned-group declarations, misplaced Unit3D callbacks/naming functions, unreviewed principal payload names, and tracker imports of presentation owners.
 - Generic release/path/torrent-client infrastructure lives under `internal/releasepolicy`, `internal/pathing`, and `internal/torrentclient`. Torrent metainfo helpers live under `internal/torrent/metainfo`.
 - Generic BBCode, description, and image-hosting infrastructure lives under `internal/bbcode`, `internal/description`, and `internal/imagehosting`; tracker-specific policy stays with its tracker implementation.
 - `pkg/api` holds request/response types shared across surfaces.

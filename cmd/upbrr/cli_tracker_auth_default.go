@@ -12,7 +12,6 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// newCLITrackerAuthService returns the production tracker-auth implementation.
 func newCLITrackerAuthService(cfg config.Config, logger api.Logger) cliTrackerAuthService {
 	return trackerauth.NewServiceWithRegistryAndLogger(cfg, trackerimpl.MustNewRegistry(), logger)
 }

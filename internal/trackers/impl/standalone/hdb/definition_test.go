@@ -269,7 +269,7 @@ func TestDefinitionBuildUploadDryRunUsesProvidedAssets(t *testing.T) {
 func TestBuildUploadFieldsSkipsTVDBForMovie(t *testing.T) {
 	fields := buildUploadFields(api.UploadSubject{
 		Identity: api.ExternalIdentity{Category: "MOVIE", TVDBID: 765432},
-	}, config.Config{}, 1, 5, 6, "description")
+	}, config.Config{}, 1, 5, 6, "description", "Example.Release.2026.1080p-GRP")
 
 	if _, ok := fields["tvdb"]; ok {
 		t.Fatalf("did not expect tvdb for movie payload")
@@ -287,7 +287,7 @@ func TestBuildUploadFieldsIncludesTVDBForTV(t *testing.T) {
 		Identity:   api.ExternalIdentity{Category: "TV", TVDBID: 765432},
 		SeasonInt:  2,
 		EpisodeInt: 3,
-	}, config.Config{}, 2, 5, 6, "description")
+	}, config.Config{}, 2, 5, 6, "description", "Example.Show.S02E03.1080p-GRP")
 
 	if got := fields["tvdb"]; got != "765432" {
 		t.Fatalf("expected tvdb=765432, got %q", got)

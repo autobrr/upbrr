@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Switch } from "../../components/ui/switch";
 import type { ScreenshotsFacet } from "../../releaseSession/types";
-import type { ConfigMap, ConfigValue, ScreenshotImage, ScreenshotSelection } from "../../types";
+import type { ConfigMap, ConfigValue, ScreenshotSelection } from "../../types";
 
 type Props = Readonly<{
   facet: ScreenshotsFacet;
@@ -19,15 +19,6 @@ type Props = Readonly<{
   setLightboxImage: (value: string) => void;
   setLightboxAlt: (value: string) => void;
 }>;
-
-const uniqueImages = (images: readonly ScreenshotImage[]) => {
-  const paths = new Set<string>();
-  return images.filter((image) => {
-    if (!image.Path || paths.has(image.Path)) return false;
-    paths.add(image.Path);
-    return true;
-  });
-};
 
 /** Presents screenshot planning, generation, ordering, preview, and final selection. */
 export default function ScreenshotsPage({
@@ -45,68 +36,34 @@ export default function ScreenshotsPage({
 }: Props) {
   const { view } = facet;
   const loadRef = useRef(facet.load);
-  const readImageRef = useRef(facet.readImage);
-  const imageCacheRef = useRef<Record<string, string>>({});
-  const [imageDataByPath, setImageDataByPath] = useState<Record<string, string>>({});
   const [livePreviewSeconds, setLivePreviewSeconds] = useState(0);
   const [finalDragIndex, setFinalDragIndex] = useState<number | null>(null);
   loadRef.current = facet.load;
-  readImageRef.current = facet.readImage;
 
   useEffect(() => {
-    if (view.status === "idle" && view.staleReason) void loadRef.current();
-  }, [view.staleReason, view.status]);
+    if (
+      view.status !== "running" &&
+      !view.plan &&
+      (view.workflowMode || Boolean(view.staleReason))
+    ) {
+      void loadRef.current();
+    }
+  }, [view.plan, view.staleReason, view.status, view.workflowMode]);
 
   const plan = view.plan;
   const busy = view.status === "running";
   const selections = view.selections;
-  const existingImages = uniqueImages(plan?.ExistingScreenshots || []);
-  const existingTrackerImages = uniqueImages(plan?.ExistingTrackerScreenshots || []);
-  const previewImages = uniqueImages([
-    ...(plan?.PreviewImages || []),
-    ...(view.result?.Purpose === "preview" ? view.result.Images || [] : []),
-  ]);
-  const availableImages = uniqueImages([
-    ...existingImages,
-    ...existingTrackerImages,
-    ...(plan?.FinalSelections || []),
-    ...previewImages,
-    ...(view.result?.Images || []),
-  ]);
-  const imageByPath = useMemo(
-    () => new Map(availableImages.map((image) => [image.Path, image])),
-    [availableImages],
+  const workflowImages = useMemo(
+    () =>
+      (view.artifacts?.artifacts || [])
+        .filter((artifact) => artifact.kind === "screenshot")
+        .sort((left, right) => (left.order || 0) - (right.order || 0)),
+    [view.artifacts],
   );
-  const finalImages = view.finalSelectionPaths
-    .map((path) => imageByPath.get(path))
-    .filter((image): image is ScreenshotImage => !!image);
-  const finalPaths = useMemo(() => new Set(view.finalSelectionPaths), [view.finalSelectionPaths]);
-  const localImagePathKey = availableImages
-    .map((image) => image.Path)
-    .filter(Boolean)
-    .join("\u0000");
-
-  useEffect(() => {
-    let canceled = false;
-    const loadImages = async () => {
-      const next = { ...imageCacheRef.current };
-      for (const path of localImagePathKey ? localImagePathKey.split("\u0000") : []) {
-        if (next[path]) continue;
-        try {
-          next[path] = await readImageRef.current(path);
-        } catch {
-          next[path] = "";
-        }
-        if (canceled) return;
-      }
-      imageCacheRef.current = next;
-      setImageDataByPath(next);
-    };
-    void loadImages();
-    return () => {
-      canceled = true;
-    };
-  }, [localImagePathKey]);
+  const selectedWorkflowImages = useMemo(
+    () => workflowImages.filter((artifact) => artifact.selected),
+    [workflowImages],
+  );
 
   const previewDuration = Math.max(plan?.DurationSeconds || 0, 0);
   const previewFrameRate = Math.max(plan?.FrameRate || 0, 0);
@@ -148,28 +105,6 @@ export default function ScreenshotsPage({
     void facet.generate("preview", [selection]);
   };
 
-  const openLocalImage = (image: ScreenshotImage, label: string) => {
-    const dataURI = imageDataByPath[image.Path];
-    if (!dataURI) return;
-    setLightboxImage(dataURI);
-    setLightboxAlt(label);
-  };
-
-  const confirmDeleteAll = (label: string, images: readonly ScreenshotImage[]) => {
-    if (!images.length || !globalThis.confirm(`Delete all ${label} images from the temp folder?`))
-      return;
-    void facet.removeMany(images.map((image) => image.Path));
-  };
-
-  const renderLocalThumbnail = (image: ScreenshotImage, alt: string) => {
-    const dataURI = imageDataByPath[image.Path];
-    return dataURI ? (
-      <img src={dataURI} alt={alt} />
-    ) : (
-      <span className="muted block p-4 text-center text-sm">Loading image...</span>
-    );
-  };
-
   return (
     <section className="screens-panel">
       <header className="screens-header">
@@ -179,6 +114,19 @@ export default function ScreenshotsPage({
           Review tracker images, adjust frame times, and generate screenshots.
         </p>
       </header>
+
+      {view.artifacts ? (
+        <section className="panel grid gap-1" role="status">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2>Authoritative media set</h2>
+            <span className="muted">{view.artifacts.status}</span>
+          </div>
+          <p className="muted">
+            {view.artifacts.artifacts.filter((artifact) => artifact.kind === "screenshot").length}{" "}
+            captured screenshot(s)
+          </p>
+        </section>
+      ) : null}
 
       <section className="panel screens-actions" aria-busy={busy}>
         <div>
@@ -206,6 +154,147 @@ export default function ScreenshotsPage({
           </button>
         </div>
       </section>
+
+      <section className="panel screens-list">
+        <details>
+          <summary>
+            Frame Selection · {selections.length} frame{selections.length === 1 ? "" : "s"}
+          </summary>
+          <div className="screens-gallery__header mt-3">
+            <p className="muted">Adjust timestamps or frame numbers, then preview.</p>
+          </div>
+          {!plan ? (
+            <p className="muted">Load suggestions to edit frame selections.</p>
+          ) : selections.length === 0 ? (
+            <p className="muted">No selections available yet.</p>
+          ) : (
+            <div className="screens-rows">
+              {selections.map((selection, index) => (
+                <div className="screens-row" key={`sel-${selection.Index}`}>
+                  <div>
+                    <p className="label">Shot {selection.Index + 1}</p>
+                    <p className="muted">Source: {selection.Source || "auto"}</p>
+                  </div>
+                  <label className="screens-field">
+                    <span>Seconds</span>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={selection.TimestampSeconds}
+                      onChange={(event) =>
+                        facet.changeSelection(index, {
+                          TimestampSeconds: Number(event.target.value) || 0,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="screens-field">
+                    <span>Frame</span>
+                    <input
+                      type="number"
+                      step="1"
+                      value={selection.Frame}
+                      onChange={(event) =>
+                        facet.changeSelection(index, { Frame: Number(event.target.value) || 0 })
+                      }
+                    />
+                  </label>
+                  <button
+                    className="ghost"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void facet.generate("preview", [selection])}
+                  >
+                    {busy ? "Previewing..." : "Preview"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </details>
+      </section>
+
+      {workflowImages.length ? (
+        <section className="panel screens-gallery" aria-busy={busy}>
+          <div className="screens-gallery__header">
+            <h2>Generated Screenshots</h2>
+            <p className="muted">Workflow-owned screenshots ready for description building.</p>
+            <button
+              className="ghost"
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                if (globalThis.confirm("Delete all generated screenshots?"))
+                  void facet.deleteArtifacts(workflowImages.map((artifact) => artifact.id));
+              }}
+            >
+              Delete all
+            </button>
+          </div>
+          <div className="screens-grid">
+            {workflowImages.map((artifact, index) => {
+              const selectedIndex = selectedWorkflowImages.findIndex(
+                (selected) => selected.id === artifact.id,
+              );
+              return (
+                <div
+                  className="screens-thumb-card"
+                  key={artifact.id}
+                  draggable={artifact.selected}
+                  onDragStart={() => setFinalDragIndex(selectedIndex)}
+                  onDragOver={(event) => {
+                    if (artifact.selected) event.preventDefault();
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    if (artifact.selected && finalDragIndex !== null)
+                      void facet.reorderFinal(finalDragIndex, selectedIndex);
+                    setFinalDragIndex(null);
+                  }}
+                  onDragEnd={() => setFinalDragIndex(null)}
+                >
+                  <button
+                    className="screens-thumb"
+                    type="button"
+                    disabled={!artifact.url}
+                    onClick={() => {
+                      if (!artifact.url) return;
+                      setLightboxImage(artifact.url);
+                      setLightboxAlt(`Screenshot ${index + 1}`);
+                    }}
+                  >
+                    {artifact.url ? (
+                      <img src={artifact.url} alt={`Screenshot ${index + 1}`} loading="lazy" />
+                    ) : (
+                      <span className="muted block p-4 text-center text-sm">Image unavailable</span>
+                    )}
+                  </button>
+                  <button
+                    className="ghost"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void facet.selectArtifact(artifact.id, !artifact.selected)}
+                  >
+                    {artifact.selected ? "Unselect" : "Select"}
+                  </button>
+                  <button
+                    className="screens-thumb-delete"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void facet.deleteArtifacts([artifact.id])}
+                  >
+                    Delete
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : view.workflowMode && view.artifacts ? (
+        <section className="panel">
+          <p className="muted">No generated screenshots retained for this workflow.</p>
+        </section>
+      ) : null}
 
       <section className="panel screens-settings">
         <details>
@@ -476,295 +565,6 @@ export default function ScreenshotsPage({
           <p className="muted">Load suggestions to enable live preview.</p>
         )}
       </section>
-
-      {(plan?.TrackerImageLinks || []).length ? (
-        <section className="panel screens-gallery">
-          <div className="screens-gallery__header">
-            <h2>Tracker Images</h2>
-            <p className="muted">Already available from tracker data.</p>
-            <button
-              className="ghost"
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                const links = plan?.TrackerImageLinks || [];
-                if (globalThis.confirm("Delete all tracker image links?"))
-                  void facet.removeTrackerURLs(links.map((link) => link.URL));
-              }}
-            >
-              Delete all
-            </button>
-          </div>
-          <div className="screens-grid">
-            {plan?.TrackerImageLinks.map((link, index) => (
-              <div className="screens-thumb-card" key={`${link.URL}-${index}`}>
-                <button
-                  className="screens-thumb"
-                  type="button"
-                  onClick={() => {
-                    setLightboxImage(link.URL);
-                    setLightboxAlt("Tracker image");
-                  }}
-                >
-                  <img src={link.URL} alt="Tracker screenshot" loading="lazy" />
-                </button>
-                <button
-                  className="screens-thumb-delete"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void facet.removeTrackerURL(link.URL)}
-                >
-                  Delete
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {existingImages.length ? (
-        <section className="panel screens-gallery">
-          <div className="screens-gallery__header">
-            <h2>Existing Captures</h2>
-            <p className="muted">Previously generated screenshots in the temp folder.</p>
-            <button
-              className="ghost"
-              type="button"
-              disabled={busy}
-              onClick={() => confirmDeleteAll("existing", existingImages)}
-            >
-              Delete all
-            </button>
-          </div>
-          <div className="screens-grid">
-            {existingImages.map((image) => {
-              const selected = finalPaths.has(image.Path);
-              return (
-                <div className="screens-thumb-card" key={`existing-${image.Path}`}>
-                  <button
-                    className="screens-thumb"
-                    type="button"
-                    onClick={() => openLocalImage(image, `Existing ${image.Index + 1}`)}
-                  >
-                    {renderLocalThumbnail(image, `Existing ${image.Index + 1}`)}
-                  </button>
-                  <button
-                    className="ghost"
-                    type="button"
-                    disabled={busy || selected}
-                    onClick={() => void facet.selectFinal(image.Path, true)}
-                  >
-                    {selected ? "Added" : "Add to final"}
-                  </button>
-                  <button
-                    className="screens-thumb-delete"
-                    type="button"
-                    disabled={busy || !selected}
-                    onClick={() => void facet.selectFinal(image.Path, false)}
-                  >
-                    Remove
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
-
-      {existingTrackerImages.length ? (
-        <section className="panel screens-gallery">
-          <div className="screens-gallery__header">
-            <h2>Tracker Temp Images</h2>
-            <p className="muted">Images stored in tracker temp folders.</p>
-            <button
-              className="ghost"
-              type="button"
-              disabled={busy}
-              onClick={() => confirmDeleteAll("tracker", existingTrackerImages)}
-            >
-              Delete all
-            </button>
-          </div>
-          <div className="screens-grid">
-            {existingTrackerImages.map((image) => {
-              const selected = finalPaths.has(image.Path);
-              return (
-                <div className="screens-thumb-card" key={`tracker-${image.Path}`}>
-                  <button
-                    className="screens-thumb"
-                    type="button"
-                    onClick={() => openLocalImage(image, "Tracker temp image")}
-                  >
-                    {renderLocalThumbnail(image, "Tracker temp screenshot")}
-                  </button>
-                  <button
-                    className="ghost"
-                    type="button"
-                    disabled={busy || selected}
-                    onClick={() => void facet.selectFinal(image.Path, true)}
-                  >
-                    {selected ? "Added" : "Add to final"}
-                  </button>
-                  <button
-                    className="screens-thumb-delete"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void facet.remove(image.Path)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
-
-      <section className="panel screens-list">
-        <div className="screens-gallery__header">
-          <h2>Frame Selection</h2>
-          <p className="muted">Adjust timestamps or frame numbers, then preview.</p>
-        </div>
-        {!plan ? (
-          <p className="muted">Load suggestions to edit frame selections.</p>
-        ) : selections.length === 0 ? (
-          <p className="muted">No selections available yet.</p>
-        ) : (
-          <div className="screens-rows">
-            {selections.map((selection, index) => (
-              <div className="screens-row" key={`sel-${selection.Index}`}>
-                <div>
-                  <p className="label">Shot {selection.Index + 1}</p>
-                  <p className="muted">Source: {selection.Source || "auto"}</p>
-                </div>
-                <label className="screens-field">
-                  <span>Seconds</span>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={selection.TimestampSeconds}
-                    onChange={(event) =>
-                      facet.changeSelection(index, {
-                        TimestampSeconds: Number(event.target.value) || 0,
-                      })
-                    }
-                  />
-                </label>
-                <label className="screens-field">
-                  <span>Frame</span>
-                  <input
-                    type="number"
-                    step="1"
-                    value={selection.Frame}
-                    onChange={(event) =>
-                      facet.changeSelection(index, { Frame: Number(event.target.value) || 0 })
-                    }
-                  />
-                </label>
-                <button
-                  className="ghost"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void facet.generate("preview", [selection])}
-                >
-                  {busy ? "Previewing..." : "Preview"}
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {previewImages.length ? (
-        <section className="panel screens-gallery">
-          <div className="screens-gallery__header">
-            <h2>Preview Captures</h2>
-            <p className="muted">Click any image to view full size.</p>
-            <button
-              className="ghost"
-              type="button"
-              disabled={busy}
-              onClick={() => confirmDeleteAll("preview", previewImages)}
-            >
-              Delete all
-            </button>
-          </div>
-          <div className="screens-grid">
-            {previewImages.map((image) => (
-              <button
-                className="screens-thumb"
-                type="button"
-                key={`preview-${image.Path}`}
-                onClick={() => openLocalImage(image, `Preview ${image.Index + 1}`)}
-              >
-                {renderLocalThumbnail(image, `Preview ${image.Index + 1}`)}
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {finalImages.length ? (
-        <section className="panel screens-gallery">
-          <div className="screens-gallery__header">
-            <h2>Final Captures</h2>
-            <p className="muted">Generated screenshots ready for upload.</p>
-            <button
-              className="ghost"
-              type="button"
-              disabled={busy}
-              onClick={() => confirmDeleteAll("final", finalImages)}
-            >
-              Delete all
-            </button>
-          </div>
-          <div className="screens-grid">
-            {finalImages.map((image, index) => (
-              <div className="screens-thumb-card" key={`final-${image.Path}`}>
-                <button
-                  className="screens-thumb"
-                  type="button"
-                  draggable
-                  onDragStart={() => setFinalDragIndex(index)}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    if (finalDragIndex !== null) void facet.reorderFinal(finalDragIndex, index);
-                    setFinalDragIndex(null);
-                  }}
-                  onDragEnd={() => setFinalDragIndex(null)}
-                  onClick={() => openLocalImage(image, `Screenshot ${index + 1}`)}
-                >
-                  {renderLocalThumbnail(image, `Screenshot ${index + 1}`)}
-                </button>
-                <button
-                  className="screens-thumb-delete"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void facet.remove(image.Path)}
-                >
-                  Delete
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {view.result?.Errors?.length ? (
-        <section className="panel screens-errors">
-          <div className="screens-gallery__header">
-            <h2>Capture Warnings</h2>
-          </div>
-          <ul>
-            {view.result.Errors.map((entry, index) => (
-              <li key={`err-${entry.Index}-${index}`}>
-                Shot {entry.Index + 1}: {entry.Message}
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
     </section>
   );
 }

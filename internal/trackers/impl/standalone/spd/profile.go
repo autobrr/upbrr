@@ -4,9 +4,8 @@
 package spd
 
 import (
-	"context"
-
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -19,9 +18,12 @@ func Profile() standalone.Profile {
 		BaseURL:             baseURL,
 		DescriptionGroup:    "spd",
 		UploadContentMode:   trackers.UploadContentModeDescription,
+		AuthCapability:      authcontract.APIKeyCapability("SPD"),
 		PrepareDescription:  prepareDescription,
 		PrepareUpload:       prepareUpload,
+		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/spd/v1", resolveUploadName, resolveSearchName),
 		NewDuplicateAdapter: newDuplicateAdapter,
+		ValidationPolicy:    validationPolicy(),
 		BannedGroupPolicy: &trackers.BannedGroupPolicy{
 			DefaultEndpoint:   baseURL + "/api/torrent/release-group/blacklist",
 			EndpointPath:      "/api/torrent/release-group/blacklist",
@@ -47,18 +49,3 @@ func Profile() standalone.Profile {
 
 // New returns a fresh SPD definition from its tracker-local profile.
 func New() *standalone.Definition { return standalone.MustNew(Profile()) }
-
-func prepareDescription(_ context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {
-	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
-	if err != nil {
-		assets = trackers.DescriptionAssets{}
-	}
-	description := buildDescription(trackers.PreparationInput{
-		Tracker:       req.Tracker,
-		Meta:          req.Meta,
-		TrackerConfig: req.TrackerConfig,
-		Runtime:       req.Runtime,
-		Logger:        req.Logger,
-	}, assets)
-	return trackers.DescriptionResult{Group: "spd", Description: description}, nil
-}

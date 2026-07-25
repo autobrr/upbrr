@@ -50,27 +50,6 @@ type PreparationPreview struct {
 	ContentFailures []TrackerContentFailure
 }
 
-type TrackerDryRunPreview struct {
-	SourcePath string
-	Trackers   []TrackerDryRunEntry
-}
-
-type UploadReview struct {
-	SourcePath  string
-	Trackers    []TrackerReview
-	Eligibility TrackerEligibility
-}
-
-type TrackerReview struct {
-	Tracker       string
-	Banned        bool
-	BannedReason  string
-	RuleFailures  []RuleFailure
-	DupeCheck     DupeCheckResult
-	DryRun        TrackerDryRunEntry
-	Questionnaire *TrackerQuestionnaire
-}
-
 type TrackerDryRunEntry struct {
 	Tracker string
 	Status  string
@@ -106,9 +85,7 @@ type TrackerDryRunEntry struct {
 // TrackerDryRunDiagnostics describes live-upload findings without changing
 // dry-run payload readiness.
 type TrackerDryRunDiagnostics struct {
-	RuleDecisions          []RuleDecision
-	Duplicate              DupeCheckResult
-	LiveEligibilityReasons []TrackerEligibilityReason
+	Duplicate DupeCheckResult
 }
 
 // TrackerDryRunDebugSection describes one named diagnostic payload inside a

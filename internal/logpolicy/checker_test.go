@@ -3259,39 +3259,6 @@ func stable(app *App, eventCtx any, job *trackerUploadJob) {
 	}
 }
 
-func TestDryRunPreviewSerializationRequiresSanitization(t *testing.T) {
-	t.Parallel()
-
-	content := `package core
-
-import "github.com/autobrr/upbrr/pkg/api"
-
-func unsafe(entries []api.TrackerDryRunEntry) api.TrackerDryRunPreview {
-	return api.TrackerDryRunPreview{Trackers: entries}
-}
-
-func safe(entries []api.TrackerDryRunEntry) api.TrackerDryRunPreview {
-	return api.TrackerDryRunPreview{Trackers: sanitizeTrackerDryRunEntries(entries)}
-}
-
-func empty() api.TrackerDryRunPreview {
-	return api.TrackerDryRunPreview{Trackers: []api.TrackerDryRunEntry{}}
-}
-
-func sanitizeTrackerDryRunEntries(entries []api.TrackerDryRunEntry) []api.TrackerDryRunEntry {
-	return entries
-}
-`
-	fset, file := parsePolicyFixture(t, content)
-	violations := checkDryRunPreviewSerialization(fset, "internal/core/sample.go", file, nil)
-	if len(violations) != 1 {
-		t.Fatalf("expected 1 violation, got %d: %#v", len(violations), violations)
-	}
-	if !strings.Contains(violations[0].Message, "must be sanitized") {
-		t.Fatalf("expected dry-run serialization violation, got %q", violations[0].Message)
-	}
-}
-
 func TestUnit3DQueryCredentialAuthRequiresBearerHeader(t *testing.T) {
 	t.Parallel()
 

@@ -4,7 +4,10 @@
 package tvc
 
 import (
+	"strings"
+
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -13,14 +16,24 @@ import (
 // including strict metadata, UHD, BDMV-disc, and remux restrictions.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		Name:                "TVC",
-		BaseURL:             "https://tvchaosuk.com",
-		DescriptionGroup:    "tvc",
-		UploadContentMode:   trackers.UploadContentModeDescription,
-		PrepareDescription:  prepareDescription,
-		PrepareUpload:       prepareUpload,
+		Name:               "TVC",
+		BaseURL:            "https://tvchaosuk.com",
+		DescriptionGroup:   "tvc",
+		UploadContentMode:  trackers.UploadContentModeDescription,
+		AuthCapability:     authcontract.APIKeyCapability("TVC"),
+		PrepareDescription: prepareDescription,
+		PrepareUpload:      prepareUpload,
+		ReleaseNamePolicy: trackers.NewReleaseNamePolicy("standalone/tvc/v1", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+			if input.RequestedName != nil {
+				return trackers.ResolvedReleaseNames{Upload: strings.TrimSpace(*input.RequestedName)}, nil
+			}
+			if override := strings.TrimSpace(standalone.QuestionnaireAnswers(input.Subject, "TVC")["name_override"]); override != "" {
+				return trackers.ResolvedReleaseNames{Upload: override}, nil
+			}
+			return trackers.ResolvedReleaseNames{Upload: resolveName(input.Subject)}, nil
+		}),
 		NewDuplicateAdapter: newDuplicateAdapter,
-		Rules:               rules(),
+		ValidationPolicy:    validationPolicy(),
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{

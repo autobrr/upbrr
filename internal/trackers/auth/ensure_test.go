@@ -16,6 +16,7 @@ import (
 type fakeAdapter struct {
 	capability    api.TrackerAuthCapability
 	validate      func() (Session, error)
+	validateCtx   func(context.Context) (Session, error)
 	login         func() (Session, error)
 	submit        func(context.Context, config.TrackerConfig, string, api.TrackerAuthLoginRequest) (Session, error)
 	validateCalls int
@@ -31,8 +32,11 @@ func (a *fakeAdapter) Status(context.Context, config.TrackerConfig, string) (api
 	return api.TrackerAuthStatus{TrackerID: a.capability.TrackerID}, nil
 }
 
-func (a *fakeAdapter) Validate(context.Context, config.TrackerConfig, string) (Session, error) {
+func (a *fakeAdapter) Validate(ctx context.Context, _ config.TrackerConfig, _ string) (Session, error) {
 	a.validateCalls++
+	if a.validateCtx != nil {
+		return a.validateCtx(ctx)
+	}
 	if a.validate == nil {
 		return Session{}, errors.New("unexpected validate")
 	}

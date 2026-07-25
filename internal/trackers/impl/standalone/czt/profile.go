@@ -5,6 +5,7 @@ package czt
 
 import (
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -16,8 +17,11 @@ func Profile() standalone.Profile {
 		BaseURL:             defaultBaseURL,
 		DescriptionGroup:    descGroup,
 		UploadContentMode:   trackers.UploadContentModeDescription,
+		AuthCapability:      authcontract.PasskeyCapability(trackerName),
 		PrepareDescription:  prepareDescription,
 		PrepareUpload:       prepareUpload,
+		ValidationPolicy:    validationPolicy(),
+		ReleaseNamePolicy:   trackers.SceneFirstReleaseNamePolicy(),
 		NewDuplicateAdapter: newDuplicateAdapter,
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			Requirements: []trackers.MetadataRequirement{{

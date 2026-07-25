@@ -143,7 +143,7 @@ export default function WebRoot() {
             Logout
           </button>
         </div>
-        <App jobOwnerKey={status.username} />
+        <App />
       </div>
     );
   }

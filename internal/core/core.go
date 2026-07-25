@@ -5,13 +5,14 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
 	"path" //nolint:depguard // Builds URL paths, not local filesystem paths.
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -23,10 +24,9 @@ import (
 	"github.com/autobrr/upbrr/internal/externalidentity"
 	"github.com/autobrr/upbrr/internal/filesystem"
 	"github.com/autobrr/upbrr/internal/imagehosting"
-	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/metadata"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
-	"github.com/autobrr/upbrr/internal/redaction"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/services/dvdmenus"
@@ -46,23 +46,20 @@ import (
 // the repository only when construction opened that repository internally.
 // Operation contexts are per call and are not retained by Core.
 type Core struct {
-	logger     api.Logger
-	repoOwner  api.RepositoryOwner
-	selections api.ReleaseSelectionRepository
-	ownsRepo   bool
+	logger    api.Logger
+	repoOwner api.RepositoryOwner
+	ownsRepo  bool
 
 	history       *historyModule
 	preparedFacts *preparedrelease.Module
-	description   *descriptionModule
+	workflow      *releaseworkflow.Module
 	media         *mediaModule
-	upload        *uploadModule
-	dupe          *dupeModule
 }
 
-// New constructs a Core using a background context for initialization. Call
-// [Core.Close] when finished; it closes only an internally opened repository.
-func New(deps api.CoreDependencies) (*Core, error) {
-	return newCore(context.Background(), deps)
+func workflowPrivateVaultRoot(dbPath string) string {
+	dbPath = filepath.Clean(strings.TrimSpace(dbPath))
+	sum := sha256.Sum256([]byte(dbPath))
+	return filepath.Join(filepath.Dir(dbPath), "workflow-private", hex.EncodeToString(sum[:16]))
 }
 
 // NewWithContext constructs a Core and applies ctx to initialization work such
@@ -268,619 +265,289 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 	if err != nil {
 		return nil, fmt.Errorf("core: canonical preparation: %w", err)
 	}
-
-	core := &Core{
-		logger:        logger,
-		repoOwner:     repoOwner,
-		selections:    repositories.Selections(),
-		ownsRepo:      ownsRepo,
-		preparedFacts: preparedFacts,
+	trackerWorkflowProjector, err := trackers.NewWorkflowProjector(registry, cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("core: tracker workflow projector: %w", err)
 	}
-	core.history = newHistoryModule(repositories.History(), cfg.MainSettings.DBPath, logger)
-	core.history.preparedFacts = core.preparedFacts
-	core.description = newDescriptionModule(cfg, logger, services, repositories.Selections(), registry, core.preparedFacts)
-	core.media = newMediaModule(
+	workflowRepository, err := releaseworkflow.NewPersistentRepository(repositories.Workflows())
+	if err != nil {
+		return nil, fmt.Errorf("core: release workflow repository: %w", err)
+	}
+	workflowPreparer := releaseworkflow.ReleasePreparerFunc{
+		PrepareFunc: preparedFacts.Prepare,
+		DisplayFunc: func(ctx context.Context, ref api.ReleaseRef) (api.PreparedReleaseDisplay, error) {
+			display, displayErr := preparedFacts.ResolveDisplay(ctx, ref)
+			if displayErr != nil {
+				return api.PreparedReleaseDisplay{}, fmt.Errorf("workflow resolve prepared release display: %w", displayErr)
+			}
+			records, loadErr := repositories.Trackers().ListTrackerMetadataByPath(ctx, ref.SourcePath)
+			if loadErr != nil && !errors.Is(loadErr, internalerrors.ErrNotFound) {
+				return api.PreparedReleaseDisplay{}, fmt.Errorf("workflow display tracker data: %w", loadErr)
+			}
+			display.TrackerData = buildTrackerPreview(records, cfg)
+			return display, nil
+		},
+		SubjectFunc:   preparedFacts.ResolveUploadSubject,
+		DuplicateFunc: preparedFacts.ResolveDuplicateSubject,
+	}
+	workflowMedia := newMediaModule(
 		cfg,
 		logger,
 		services,
 		mediaRepositoryView{TrackerStateRepository: repositories.Trackers(), MediaAssetRepository: repositories.Media()},
 		registry,
-		core.preparedFacts,
+		preparedFacts,
 	)
-	core.upload = newUploadModule(
-		cfg,
-		logger,
-		services,
-		repositories.ReleaseState(),
-		repositories.Trackers(),
-		registry,
-		core.preparedFacts,
-		core.description.resolveOverrideRequest,
-		core.description.resolveSubjectGroups,
-		core.ImportAcceptedMenuImages,
+	workflowMediaArtifacts := workflowMediaBuilder{
+		config:      cfg,
+		resolver:    preparedFacts,
+		screenshots: services.Screenshots,
+		dvdMenus:    services.DVDMenus,
+		media:       workflowMedia,
+	}
+	var workflowPrivateResources releaseworkflow.PrivateResourceStore = releaseworkflow.NewMemoryPrivateResourceStore()
+	if sqliteRepo, ok := repoOwner.(*db.SQLiteRepository); ok && strings.TrimSpace(sqliteRepo.DBPath()) != "" {
+		vault, vaultErr := releaseworkflow.NewPrivateArtifactVault(
+			workflowPrivateVaultRoot(sqliteRepo.DBPath()),
+			workflowPrivateResourceCodecs(workflowMediaArtifacts)...,
+		)
+		if vaultErr != nil {
+			return nil, fmt.Errorf("core: release workflow private artifact vault: %w", vaultErr)
+		}
+		workflowPrivateResources = vault
+	}
+	workflow, err := releaseworkflow.New(
+		workflowRepository,
+		workflowPrivateResources,
+		workflowPreparer,
+		releaseworkflow.WithTrackerProjectionBuilder(trackerWorkflowProjector),
+		releaseworkflow.WithTrackerPreflightBuilder(workflowPreflightBuilder{
+			auth:     services.TrackerAuth,
+			config:   cfg,
+			registry: registry,
+			logger:   logger,
+			banned:   trackers.NewBannedGroupCheckerWithRegistry(cfg.MainSettings.DBPath, registry),
+		}),
+		releaseworkflow.WithDupeAssessmentBuilder(workflowDupeBuilder{service: services.Dupes}),
+		releaseworkflow.WithMediaArtifactBuilder(workflowMediaArtifacts),
+		releaseworkflow.WithDescriptionBuilder(workflowDescriptionBuilder{
+			resolver: preparedFacts,
+			trackers: services.Trackers,
+		}),
+		releaseworkflow.WithUploadPlanBuilder(newWorkflowUploadPlanBuilder(preparedFacts, services.Trackers, services.Torrents, services.Clients)),
+		releaseworkflow.WithOperationErrorClassifier(classifyOperationError),
+		releaseworkflow.WithLogger(logger),
 	)
-	core.dupe = newDupeModule(cfg, logger, services, registry, core.preparedFacts)
+	if err != nil {
+		return nil, fmt.Errorf("core: release workflow: %w", err)
+	}
+
+	core := &Core{
+		logger:        logger,
+		repoOwner:     repoOwner,
+		ownsRepo:      ownsRepo,
+		preparedFacts: preparedFacts,
+		workflow:      workflow,
+	}
+	core.history = newHistoryModule(repositories.History(), cfg.MainSettings.DBPath, logger)
+	core.history.preparedFacts = core.preparedFacts
+	core.media = workflowMedia
 	constructionSucceeded = true
 	return core, nil
 }
 
-// RunUploadPrepared validates and prepares req.SourcePath, refreshes upload
-// review authority, and uploads only eligible trackers. Omitted tracker
-// selections expand configured defaults. If tracker upload or later client
-// injection fails after some uploads complete, Result.UploadedCount preserves
-// the completed count.
-func (c *Core) RunUploadPrepared(ctx context.Context, req api.Request) (result api.Result, err error) {
-	result, err = c.upload.runPrepared(ctx, req)
-	return result, classifyOperationError(api.OperationKindUploadExecute, err)
-}
-
-// RunAcceptedUpload executes the eligible trackers from a reviewed outcome
-// against its exact prepared generation without rerunning upload review.
-func (c *Core) RunAcceptedUpload(ctx context.Context, plan api.UploadExecutionPlan) (api.Result, error) {
-	result, err := c.upload.runAccepted(ctx, plan)
-	return classifyOperationResult(api.OperationKindUploadExecute, result, err)
-}
-
-func emitPreparedUploadProgress(ctx context.Context, req api.Request, sourcePath string, tracker string, task string, status string, message string) {
-	normalizedTracker := strings.TrimSpace(tracker)
-	if normalizedTracker == "" && len(req.Trackers) == 1 {
-		normalizedTracker = firstRequestedTracker(req.Trackers)
-	}
-	api.EmitUploadProgress(ctx, api.UploadProgressUpdate{
-		SourcePath: sourcePath,
-		Tracker:    normalizedTracker,
-		Task:       task,
-		Status:     status,
-		Message:    message,
-		Timestamp:  time.Now().UTC().Format(time.RFC3339),
-	})
-}
-
-func firstRequestedTracker(trackers []string) string {
-	for _, tracker := range trackers {
-		name := strings.TrimSpace(tracker)
-		if name != "" {
-			return name
-		}
-	}
-	return ""
-}
-
-// CheckDupes prepares one source and checks its resolved tracker set. The
-// result includes eligibility derived from duplicate, auth, rule, and policy
-// evidence; it does not persist duplicate results into the prepared generation.
-func (c *Core) CheckDupes(ctx context.Context, req api.Request) (api.DupeCheckSummary, error) {
-	summary, err := c.dupe.check(ctx, req)
-	return summary, classifyOperationError(api.OperationKindDuplicateCheck, err)
-}
-
-// CheckAcceptedDupes executes duplicate checking against state imported and
-// validated for one exact accepted prepared generation.
-func (c *Core) CheckAcceptedDupes(ctx context.Context, input api.DuplicateCheckInput) (api.DupeCheckSummary, error) {
-	summary, err := c.dupe.checkAccepted(ctx, input)
-	return summary, classifyOperationError(api.OperationKindDuplicateCheck, err)
-}
-
-// FetchScreenshotPlan prepares one source and builds its screenshot capture plan.
-func (c *Core) FetchScreenshotPlan(ctx context.Context, req api.Request) (api.ScreenshotPlan, error) {
-	ref, err := c.prepareRequestRef(ctx, req, api.PreparationIntentMedia)
-	if err != nil {
-		return api.ScreenshotPlan{}, err
-	}
-	return c.FetchAcceptedScreenshotPlan(ctx, api.MediaPlanInput{
-		Release: ref,
-		Count:   req.Options.Screens,
-		Options: req.ScreenshotOverrides,
-	})
-}
-
-// FetchAcceptedScreenshotPlan plans screenshots for one exact prepared generation.
-func (c *Core) FetchAcceptedScreenshotPlan(ctx context.Context, input api.MediaPlanInput) (api.ScreenshotPlan, error) {
-	result, err := c.media.fetchAcceptedScreenshotPlan(ctx, input)
-	return classifyOperationResult(api.OperationKindMedia, result, err)
-}
-
-// GenerateScreenshots prepares one source and captures the selected frames.
-func (c *Core) GenerateScreenshots(
+// ContinueReleaseWorkflow reconciles typed desired state through the central planner.
+func (c *Core) ContinueReleaseWorkflow(
 	ctx context.Context,
-	req api.Request,
-	selections []api.ScreenshotSelection,
-	purpose api.ScreenshotPurpose,
-) (api.ScreenshotResult, error) {
-	ref, err := c.prepareRequestRef(ctx, req, api.PreparationIntentMedia)
-	if err != nil {
-		return api.ScreenshotResult{}, err
-	}
-	return c.GenerateAcceptedScreenshots(ctx, api.MediaPlanInput{
-		Release: ref,
-		Count:   req.Options.Screens,
-		Purpose: purpose,
-		Options: req.ScreenshotOverrides,
-	}, selections)
+	ownerID string,
+	request api.ContinueReleaseWorkflowRequest,
+) (releaseworkflow.CommandResult, error) {
+	result, err := c.workflow.Continue(ctx, ownerID, request)
+	return result, classifyOperationError(api.OperationKindUnknown, err)
 }
 
-// GenerateAcceptedScreenshots captures selections for one exact prepared generation.
-func (c *Core) GenerateAcceptedScreenshots(
+// ExecuteReleaseWorkflow applies one owner-scoped typed workflow command.
+func (c *Core) ExecuteReleaseWorkflow(
 	ctx context.Context,
-	input api.MediaPlanInput,
-	selections []api.ScreenshotSelection,
-) (api.ScreenshotResult, error) {
-	result, err := c.media.generateAcceptedScreenshots(ctx, input, selections)
-	return classifyOperationResult(api.OperationKindMedia, result, err)
+	ownerID string,
+	command releaseworkflow.Command,
+) (releaseworkflow.CommandResult, error) {
+	result, err := c.workflow.Execute(ctx, ownerID, command)
+	return result, classifyOperationError(releaseWorkflowOperation(command), err)
 }
 
-// PreviewScreenshotFrame renders one frame at timestampSeconds for one
-// validated source without adding it to the final screenshot selection.
-func (c *Core) PreviewScreenshotFrame(ctx context.Context, req api.Request, timestampSeconds float64) (api.ScreenshotPreview, error) {
-	ref, err := c.prepareRequestRef(ctx, req, api.PreparationIntentMedia)
-	if err != nil {
-		return api.ScreenshotPreview{}, err
-	}
-	return c.PreviewAcceptedScreenshotFrame(ctx, api.MediaPlanInput{
-		Release: ref,
-		Count:   req.Options.Screens,
-		Options: req.ScreenshotOverrides,
-	}, timestampSeconds)
-}
-
-// PreviewAcceptedScreenshotFrame renders one frame for an exact prepared generation.
-func (c *Core) PreviewAcceptedScreenshotFrame(
+// StartReleaseWorkflow durably accepts one long-running workflow command.
+func (c *Core) StartReleaseWorkflow(
 	ctx context.Context,
-	input api.MediaPlanInput,
+	ownerID string,
+	command releaseworkflow.Command,
+) (api.WorkflowOperationStatus, error) {
+	operation, err := c.workflow.Start(ctx, ownerID, command)
+	if err != nil {
+		return api.WorkflowOperationStatus{}, classifyOperationError(releaseWorkflowOperation(command), err)
+	}
+	return operation, nil
+}
+
+func releaseWorkflowOperation(command releaseworkflow.Command) api.OperationKind {
+	switch command.(type) {
+	case releaseworkflow.CreateWorkflowCommand,
+		releaseworkflow.ReplaceFactInstructionsCommand,
+		releaseworkflow.PrepareReleaseCommand:
+		return api.OperationKindPreparation
+	case releaseworkflow.CheckDuplicatesCommand,
+		releaseworkflow.DecideDuplicatesCommand:
+		return api.OperationKindDuplicateCheck
+	case releaseworkflow.CaptureMediaCommand,
+		releaseworkflow.SetMediaSelectionCommand,
+		releaseworkflow.DeleteMediaArtifactsCommand,
+		releaseworkflow.ReorderMediaArtifactsCommand,
+		releaseworkflow.AttachMediaArtifactsCommand,
+		releaseworkflow.RemoveHostedImagesCommand:
+		return api.OperationKindMedia
+	case releaseworkflow.UploadMediaImagesCommand:
+		return api.OperationKindImageHosting
+	case releaseworkflow.GenerateDescriptionsCommand:
+		return api.OperationKindDescription
+	case releaseworkflow.ExecuteUploadsCommand, releaseworkflow.RetryFailedUploadsCommand:
+		return api.OperationKindUploadExecute
+	case releaseworkflow.CancelWorkflowCommand:
+		return api.OperationKindUnknown
+	default:
+		return api.OperationKindUploadDryRun
+	}
+}
+
+// OpenReleaseWorkflowMediaArtifact returns one owner-scoped opaque workflow
+// media resource without exposing its retained filesystem path.
+func (c *Core) OpenReleaseWorkflowMediaArtifact(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	media api.MediaArtifactSetRef,
+	artifactID api.PublicResourceID,
+) (releaseworkflow.MediaArtifactContent, error) {
+	content, err := c.workflow.MediaArtifact(ctx, ownerID, workflowID, media, artifactID)
+	if err != nil {
+		return releaseworkflow.MediaArtifactContent{}, classifyOperationError(api.OperationKindMedia, err)
+	}
+	return content, nil
+}
+
+// ReleaseWorkflowMediaPlan returns the safe media plan for the workflow's
+// current exact release and tracker projections.
+func (c *Core) ReleaseWorkflowMediaPlan(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+) (api.MediaPlan, error) {
+	plan, err := c.workflow.MediaPlan(ctx, ownerID, workflowID)
+	if err != nil {
+		return api.MediaPlan{}, classifyOperationError(api.OperationKindMedia, err)
+	}
+	return plan, nil
+}
+
+// PreviewReleaseWorkflowFrame creates one owner-scoped non-authoritative frame preview.
+func (c *Core) PreviewReleaseWorkflowFrame(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	expectedRevision api.WorkflowRevision,
 	timestampSeconds float64,
-) (api.ScreenshotPreview, error) {
-	result, err := c.media.previewAcceptedScreenshotFrame(ctx, input, timestampSeconds)
-	return classifyOperationResult(api.OperationKindMedia, result, err)
-}
-
-// DeleteScreenshot removes a managed local screenshot and attempts cleanup of
-// its persisted records. The default screenshot service rejects paths outside
-// the release's managed temporary directory.
-func (c *Core) DeleteScreenshot(ctx context.Context, req api.Request, imagePath string) error {
-	ref, err := c.prepareRequestRef(ctx, req, api.PreparationIntentMedia)
+) (api.FramePreview, error) {
+	preview, err := c.workflow.PreviewFrame(ctx, ownerID, workflowID, expectedRevision, timestampSeconds)
 	if err != nil {
-		return err
+		return api.FramePreview{}, classifyOperationError(api.OperationKindMedia, err)
 	}
-	return c.DeleteAcceptedScreenshot(ctx, api.MediaPlanInput{
-		Release: ref,
-		Count:   req.Options.Screens,
-		Options: req.ScreenshotOverrides,
-	}, imagePath)
+	return preview, nil
 }
 
-// DeleteAcceptedScreenshot deletes one managed image for an exact prepared generation.
-func (c *Core) DeleteAcceptedScreenshot(ctx context.Context, input api.MediaPlanInput, imagePath string) error {
-	return classifyOperationError(api.OperationKindMedia, c.media.deleteAcceptedScreenshot(ctx, input, imagePath))
-}
-
-// DeleteTrackerImageURL removes url from persisted tracker metadata for one
-// validated source; it does not delete the remote image.
-func (c *Core) DeleteTrackerImageURL(ctx context.Context, req api.Request, url string) error {
-	ref, err := c.prepareRequestRef(ctx, req, api.PreparationIntentMedia)
-	if err != nil {
-		return err
-	}
-	return c.DeleteAcceptedTrackerImageURL(ctx, api.ImageHostingInput{Release: ref}, url)
-}
-
-// DeleteAcceptedTrackerImageURL removes one tracker image from an exact generation.
-func (c *Core) DeleteAcceptedTrackerImageURL(ctx context.Context, input api.ImageHostingInput, url string) error {
-	return classifyOperationError(api.OperationKindImageHosting, c.media.deleteAcceptedTrackerImageURL(ctx, input, url))
-}
-
-// SaveFinalScreenshotSelections validates and persists the non-menu final
-// screenshot selection for one source. Menu images in images are ignored.
-func (c *Core) SaveFinalScreenshotSelections(ctx context.Context, req api.Request, images []api.ScreenshotImage) error {
-	ref, err := c.prepareRequestRef(ctx, req, api.PreparationIntentMedia)
-	if err != nil {
-		return err
-	}
-	return c.SaveAcceptedFinalScreenshotSelections(ctx, api.MediaPlanInput{
-		Release: ref,
-		Count:   req.Options.Screens,
-		Options: req.ScreenshotOverrides,
-	}, images)
-}
-
-// SaveAcceptedFinalScreenshotSelections persists selections for an exact prepared generation.
-func (c *Core) SaveAcceptedFinalScreenshotSelections(ctx context.Context, input api.MediaPlanInput, images []api.ScreenshotImage) error {
-	return classifyOperationError(api.OperationKindMedia, c.media.saveAcceptedFinalScreenshotSelections(ctx, input, images))
-}
-
-// ImportMenuImages copies supported host-filesystem images into one release's
-// managed temporary directory and appends them to its final selection.
-func (c *Core) ImportMenuImages(ctx context.Context, req api.Request, importPaths []string) error {
-	ref, err := c.prepareRequestRef(ctx, req, api.PreparationIntentMedia)
-	if err != nil {
-		return err
-	}
-	return c.ImportAcceptedMenuImages(ctx, api.MediaPlanInput{Release: ref}, importPaths)
-}
-
-// ImportAcceptedMenuImages imports menu images for one exact prepared generation.
-func (c *Core) ImportAcceptedMenuImages(ctx context.Context, input api.MediaPlanInput, importPaths []string) error {
-	return classifyOperationError(api.OperationKindMedia, c.media.importAcceptedMenuImages(ctx, input, importPaths))
-}
-
-// ListUploadCandidates returns persisted normal and disc-menu images eligible
-// for image-host upload for one validated source.
-func (c *Core) ListUploadCandidates(ctx context.Context, req api.Request) ([]api.ScreenshotImage, error) {
-	ref, err := c.prepareRequestRef(ctx, req, api.PreparationIntentMedia)
-	if err != nil {
-		return nil, err
-	}
-	return c.ListAcceptedUploadCandidates(ctx, api.ImageHostingInput{Release: ref})
-}
-
-// ListAcceptedUploadCandidates returns image-host candidates for an exact generation.
-func (c *Core) ListAcceptedUploadCandidates(ctx context.Context, input api.ImageHostingInput) ([]api.ScreenshotImage, error) {
-	result, err := c.media.listAcceptedUploadCandidates(ctx, input)
-	return classifyOperationResult(api.OperationKindImageHosting, result, err)
-}
-
-// ListUploadedImages returns persisted image-host links for one validated
-// source.
-func (c *Core) ListUploadedImages(ctx context.Context, req api.Request) ([]api.UploadedImageLink, error) {
-	ref, err := c.prepareRequestRef(ctx, req, api.PreparationIntentMedia)
-	if err != nil {
-		return nil, err
-	}
-	return c.ListAcceptedUploadedImages(ctx, api.ImageHostingInput{Release: ref})
-}
-
-// ListAcceptedUploadedImages returns persisted links for one exact generation.
-func (c *Core) ListAcceptedUploadedImages(ctx context.Context, input api.ImageHostingInput) ([]api.UploadedImageLink, error) {
-	result, err := c.media.listAcceptedUploadedImages(ctx, input)
-	return classifyOperationResult(api.OperationKindImageHosting, result, err)
-}
-
-// UploadImages uploads selected images to the requested host and any additional
-// hosts required by eligible trackers. Per-host failures are returned in the
-// result alongside successful links.
-func (c *Core) UploadImages(
+// OpenReleaseWorkflowPreview returns one owner-scoped opaque transient preview.
+func (c *Core) OpenReleaseWorkflowPreview(
 	ctx context.Context,
-	req api.Request,
-	host string,
-	images []api.ScreenshotImage,
-) (api.UploadImagesResult, error) {
-	ref, err := c.prepareRequestRef(ctx, req, api.PreparationIntentMedia)
+	ownerID string,
+	workflowID api.WorkflowID,
+	previewID api.PublicResourceID,
+) (releaseworkflow.MediaArtifactContent, error) {
+	content, err := c.workflow.PreviewArtifact(ctx, ownerID, workflowID, previewID)
 	if err != nil {
-		return api.UploadImagesResult{}, err
+		return releaseworkflow.MediaArtifactContent{}, classifyOperationError(api.OperationKindMedia, err)
 	}
-	return c.UploadAcceptedImages(ctx, api.ImageHostingInput{
-		Release:  ref,
-		Trackers: append([]string(nil), req.Trackers...),
-		Host:     host,
-	}, images)
+	return content, nil
 }
 
-// UploadAcceptedImages uploads selected images for an exact prepared generation.
-func (c *Core) UploadAcceptedImages(
+// StageReleaseWorkflowMediaResource retains private image bytes for a later
+// exact workflow attachment command.
+func (c *Core) StageReleaseWorkflowMediaResource(
 	ctx context.Context,
-	input api.ImageHostingInput,
-	images []api.ScreenshotImage,
-) (api.UploadImagesResult, error) {
-	result, err := c.media.uploadAcceptedImages(ctx, input, images)
-	return classifyOperationResult(api.OperationKindImageHosting, result, err)
-}
-
-// DeleteUploadedImage removes one persisted image-host link. It does not delete
-// either the local image or the remote asset.
-func (c *Core) DeleteUploadedImage(ctx context.Context, req api.Request, imagePath string, host string) error {
-	ref, err := c.prepareRequestRef(ctx, req, api.PreparationIntentMedia)
+	ownerID string,
+	workflowID api.WorkflowID,
+	expectedRevision api.WorkflowRevision,
+	content releaseworkflow.StagedMediaContent,
+) (api.WorkflowResourceRef, error) {
+	resource, err := c.workflow.StageMediaResource(ctx, ownerID, workflowID, expectedRevision, content)
 	if err != nil {
-		return err
+		return api.WorkflowResourceRef{}, classifyOperationError(api.OperationKindMedia, err)
 	}
-	return c.DeleteAcceptedUploadedImage(ctx, api.ImageHostingInput{Release: ref}, imagePath, host)
+	return resource, nil
 }
 
-// DeleteAcceptedUploadedImage removes one persisted link for an exact generation.
-func (c *Core) DeleteAcceptedUploadedImage(ctx context.Context, input api.ImageHostingInput, imagePath string, host string) error {
-	return classifyOperationError(api.OperationKindImageHosting, c.media.deleteAcceptedUploadedImage(ctx, input, imagePath, host))
-}
-
-// FetchMetadataPreview prepares and enriches metadata for one validated source,
-// emits metadata progress, and stores an isolated prepared-release snapshot.
-func (c *Core) FetchMetadataPreview(ctx context.Context, req api.Request) (preview api.MetadataPreview, err error) {
-	defer func() { err = classifyOperationError(api.OperationKindPreparation, err) }()
-	input, err := api.MapPreparationRequest(req, api.PreparationIntentPreview)
+// CurrentReleaseWorkflow returns the current aggregate and immutable stage projections.
+func (c *Core) CurrentReleaseWorkflow(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+) (releaseworkflow.CommandResult, error) {
+	result, err := c.workflow.Current(ctx, ownerID, workflowID)
 	if err != nil {
-		return api.MetadataPreview{}, fmt.Errorf("core: map metadata preparation request: %w", err)
-	}
-	prepared, err := c.preparedFacts.Prepare(ctx, input)
-	if err != nil {
-		return api.MetadataPreview{}, fmt.Errorf("core: prepare metadata preview: %w", err)
-	}
-	preview, err = c.FetchAcceptedMetadataPreview(ctx, api.ReleaseRef{
-		SourcePath: prepared.Release.Source.SourcePath,
-		Generation: prepared.Release.Generation,
-	})
-	preview.ReleaseNameOverrides = req.ReleaseNameOverrides
-	return preview, err
-}
-
-// PrepareRelease returns one immutable canonical prepared-release generation.
-func (c *Core) PrepareRelease(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
-	result, err := c.preparedFacts.Prepare(ctx, input)
-	if err != nil {
-		return api.PrepareResult{}, classifyOperationError(api.OperationKindPreparation, fmt.Errorf("core: prepare release: %w", err))
+		return releaseworkflow.CommandResult{}, fmt.Errorf("core: current release workflow: %w", err)
 	}
 	return result, nil
 }
 
-// ExportReleaseSeed snapshots one exact canonical prepared generation.
-func (c *Core) ExportReleaseSeed(ctx context.Context, ref api.ReleaseRef) (preparedrelease.Seed, error) {
-	seed, err := c.preparedFacts.Export(ctx, ref)
+// ReleaseWorkflowOperation returns one pollable workflow operation.
+func (c *Core) ReleaseWorkflowOperation(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	operationID api.WorkflowOperationID,
+) (api.WorkflowOperationStatus, error) {
+	operation, err := c.workflow.Operation(ctx, ownerID, workflowID, operationID)
 	if err != nil {
-		return preparedrelease.Seed{}, fmt.Errorf("core: export release seed: %w", err)
+		return api.WorkflowOperationStatus{}, fmt.Errorf("core: release workflow operation: %w", err)
 	}
-	return seed, nil
+	return operation, nil
 }
 
-// ImportReleaseSeed validates and installs one exact canonical prepared generation.
-func (c *Core) ImportReleaseSeed(ctx context.Context, seed preparedrelease.Seed) (api.ReleaseRef, error) {
-	ref, err := c.preparedFacts.Import(ctx, seed)
+// ReleaseWorkflowOperationEvents returns retained operation events after one workflow-global cursor.
+func (c *Core) ReleaseWorkflowOperationEvents(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	operationID api.WorkflowOperationID,
+	after uint64,
+	limit int,
+) ([]api.WorkflowEvent, error) {
+	events, err := c.workflow.OperationEvents(ctx, ownerID, workflowID, operationID, after, limit)
 	if err != nil {
-		return api.ReleaseRef{}, fmt.Errorf("core: import release seed: %w", err)
+		return nil, fmt.Errorf("core: release workflow operation events: %w", err)
 	}
-	return ref, nil
+	return events, nil
 }
 
-// FetchPreparationPreview builds tracker preparation data for one source,
-// reusing an exact compatible prepared generation when available.
-func (c *Core) FetchPreparationPreview(ctx context.Context, req api.Request) (preview api.PreparationPreview, err error) {
-	defer func() { err = classifyOperationError(api.OperationKindDescription, err) }()
-	input, err := api.MapPreparationRequest(req, api.PreparationIntentDescription)
+// CancelReleaseWorkflowOperation requests cancellation of one active operation.
+func (c *Core) CancelReleaseWorkflowOperation(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	operationID api.WorkflowOperationID,
+) (api.WorkflowOperationStatus, error) {
+	operation, err := c.workflow.CancelOperation(ctx, ownerID, workflowID, operationID)
 	if err != nil {
-		return api.PreparationPreview{}, fmt.Errorf("core: map description preparation request: %w", err)
+		return api.WorkflowOperationStatus{}, fmt.Errorf("core: cancel release workflow operation: %w", err)
 	}
-	prepared, err := c.preparedFacts.Prepare(ctx, input)
-	if err != nil {
-		return api.PreparationPreview{}, fmt.Errorf("core: prepare description preview: %w", err)
-	}
-	return c.FetchAcceptedPreparationPreview(ctx, api.DescriptionInput{
-		Release:  api.ReleaseRef{SourcePath: prepared.Release.Source.SourcePath, Generation: prepared.Release.Generation},
-		Trackers: append([]string(nil), req.Trackers...),
-		Options:  req.Options,
-	})
-}
-
-// RunAcceptedTrackerDryRun builds non-submitting tracker payloads for one exact
-// generation using completed duplicate evidence. Unless NoSeed is set, ready
-// payloads may produce tracker-specific torrents and inject them into the client.
-func (c *Core) RunAcceptedTrackerDryRun(ctx context.Context, plan api.TrackerDryRunPlan) (api.TrackerDryRunPreview, error) {
-	preview, err := c.upload.runAcceptedTrackerDryRun(ctx, plan)
-	return preview, classifyOperationError(api.OperationKindDryRun, err)
-}
-
-func sanitizeTrackerDryRunEntries(entries []api.TrackerDryRunEntry) []api.TrackerDryRunEntry {
-	sanitized := make([]api.TrackerDryRunEntry, len(entries))
-	for index, entry := range entries {
-		entry.Message = logging.SanitizeMessage(entry.Message)
-		entry.BannedReason = logging.SanitizeMessage(entry.BannedReason)
-		entry.BannedCheckError = logging.SanitizeMessage(entry.BannedCheckError)
-		entry.Endpoint = logging.SanitizeMessage(entry.Endpoint)
-		entry.Payload = redactDryRunPayload(entry.Payload)
-		entry.Files = sanitizeTrackerDryRunFiles(entry.Files)
-		entry.DebugSections = sanitizeTrackerDryRunDebugSections(entry.DebugSections)
-		entry.ImageHost = sanitizeDryRunImageHostFeedback(entry.ImageHost)
-		for idx := range entry.Diagnostics.RuleDecisions {
-			entry.Diagnostics.RuleDecisions[idx].Reason = logging.SanitizeMessage(entry.Diagnostics.RuleDecisions[idx].Reason)
-		}
-		for idx := range entry.Diagnostics.LiveEligibilityReasons {
-			entry.Diagnostics.LiveEligibilityReasons[idx].Message = logging.SanitizeMessage(entry.Diagnostics.LiveEligibilityReasons[idx].Message)
-		}
-		entry.Diagnostics.Duplicate.Error = logging.SanitizeMessage(entry.Diagnostics.Duplicate.Error)
-		entry.Diagnostics.Duplicate.SkipReason = logging.SanitizeMessage(entry.Diagnostics.Duplicate.SkipReason)
-		sanitized[index] = entry
-	}
-	return sanitized
-}
-
-func redactDryRunPayload(payload map[string]string) map[string]string {
-	if payload == nil {
-		return nil
-	}
-	redacted := make(map[string]string, len(payload))
-	for key, value := range payload {
-		wrapped := map[string]any{key: value}
-		result, ok := redaction.RedactPrivateInfo(wrapped, nil).(map[string]any)
-		if !ok {
-			redacted[key] = "[REDACTED]"
-			continue
-		}
-		redactedValue, ok := result[key].(string)
-		if !ok {
-			redacted[key] = "[REDACTED]"
-			continue
-		}
-		redacted[key] = logging.SanitizeMessage(redactedValue)
-	}
-	return redacted
-}
-
-func sanitizeTrackerDryRunFiles(files []api.TrackerDryRunFile) []api.TrackerDryRunFile {
-	sanitized := slices.Clone(files)
-	for index := range sanitized {
-		sanitized[index].Path = logging.SanitizeMessage(sanitized[index].Path)
-	}
-	return sanitized
-}
-
-func sanitizeTrackerDryRunDebugSections(sections []api.TrackerDryRunDebugSection) []api.TrackerDryRunDebugSection {
-	sanitized := make([]api.TrackerDryRunDebugSection, len(sections))
-	for index, section := range sections {
-		section.Endpoint = logging.SanitizeMessage(section.Endpoint)
-		section.Payload = redactDryRunPayload(section.Payload)
-		section.Files = sanitizeTrackerDryRunFiles(section.Files)
-		sanitized[index] = section
-	}
-	return sanitized
-}
-
-func sanitizeDryRunImageHostFeedback(feedback api.ImageHostFeedback) api.ImageHostFeedback {
-	feedback.Message = logging.SanitizeMessage(feedback.Message)
-	feedback.Warnings = slices.Clone(feedback.Warnings)
-	for index := range feedback.Warnings {
-		feedback.Warnings[index].Message = logging.SanitizeMessage(feedback.Warnings[index].Message)
-	}
-	return feedback
-}
-
-// trackerDryRunTorrentPath returns the present torrent file path advertised by
-// a dry-run payload, ignoring other upload file fields.
-func trackerDryRunTorrentPath(entry api.TrackerDryRunEntry) string {
-	for _, file := range entry.Files {
-		if strings.EqualFold(strings.TrimSpace(file.Field), "torrent") && file.Present {
-			return strings.TrimSpace(file.Path)
-		}
-	}
-	return ""
-}
-
-func annotateDryRunSubjectReleaseNames(subject api.UploadSubject, entries []api.TrackerDryRunEntry) {
-	annotateDryRunNames(subject.ReleaseName, subject.ReleaseNameNoTag, subject.Filename, entries)
-}
-
-func annotateDryRunNames(releaseName string, nameWithoutTag string, filename string, entries []api.TrackerDryRunEntry) {
-	original := strings.TrimSpace(releaseName)
-	if original == "" {
-		original = strings.TrimSpace(nameWithoutTag)
-	}
-	if original == "" {
-		original = strings.TrimSpace(filename)
-	}
-	for idx := range entries {
-		uploadName := strings.TrimSpace(entries[idx].ReleaseName)
-		if uploadName == "" {
-			uploadName = original
-		}
-		entries[idx].OriginalReleaseName = original
-		entries[idx].UploadReleaseName = uploadName
-		entries[idx].ReleaseNameChanged = original != "" && uploadName != "" && uploadName != original
-		if entries[idx].ReleaseNameChanged && strings.TrimSpace(entries[idx].ReleaseNameChangeReason) == "" {
-			entries[idx].ReleaseNameChangeReason = "tracker naming rules"
-		}
-	}
-}
-
-// FetchDescriptionBuilderPreview builds editable description groups for one
-// validated source and its resolved tracker set.
-func (c *Core) FetchDescriptionBuilderPreview(ctx context.Context, req api.Request) (api.DescriptionBuilderPreview, error) {
-	ref, err := c.prepareRequestRef(ctx, req, api.PreparationIntentDescription)
-	if err != nil {
-		return api.DescriptionBuilderPreview{}, err
-	}
-	return c.FetchAcceptedDescriptionBuilderPreview(ctx, api.DescriptionInput{
-		Release:           ref,
-		Trackers:          append([]string(nil), req.Trackers...),
-		Groups:            api.CloneDescriptionBuilderGroups(req.DescriptionGroups),
-		ImageHost:         req.ImageHostOverrides,
-		QuestionnaireData: cloneOperationQuestionnaireAnswers(req.TrackerQuestionnaireAnswers),
-		Options:           req.Options,
-	})
-}
-
-// FetchAcceptedDescriptionBuilderPreview builds groups for one exact generation.
-func (c *Core) FetchAcceptedDescriptionBuilderPreview(ctx context.Context, input api.DescriptionInput) (api.DescriptionBuilderPreview, error) {
-	result, err := c.description.fetchAcceptedPreview(ctx, input)
-	return classifyOperationResult(api.OperationKindDescription, result, err)
-}
-
-// FetchDescriptionBuilderGroupPreview builds one editable description group
-// selected by the request's group or first tracker.
-func (c *Core) FetchDescriptionBuilderGroupPreview(ctx context.Context, req api.Request) (api.DescriptionBuilderGroup, error) {
-	ref, err := c.prepareRequestRef(ctx, req, api.PreparationIntentDescription)
-	if err != nil {
-		return api.DescriptionBuilderGroup{}, err
-	}
-	return c.FetchAcceptedDescriptionBuilderGroupPreview(ctx, api.DescriptionInput{
-		Release:           ref,
-		Trackers:          append([]string(nil), req.Trackers...),
-		GroupKey:          req.DescriptionOverrideGroup,
-		Groups:            api.CloneDescriptionBuilderGroups(req.DescriptionGroups),
-		ImageHost:         req.ImageHostOverrides,
-		QuestionnaireData: cloneOperationQuestionnaireAnswers(req.TrackerQuestionnaireAnswers),
-		Options:           req.Options,
-	})
-}
-
-// FetchAcceptedDescriptionBuilderGroupPreview builds one exact-generation group.
-func (c *Core) FetchAcceptedDescriptionBuilderGroupPreview(ctx context.Context, input api.DescriptionInput) (api.DescriptionBuilderGroup, error) {
-	result, err := c.description.fetchAcceptedGroupPreview(ctx, input)
-	return classifyOperationResult(api.OperationKindDescription, result, err)
-}
-
-// SelectBlurayCandidate publishes a new prepared generation containing the
-// selected Blu-ray candidate as a release-fact instruction.
-func (c *Core) SelectBlurayCandidate(ctx context.Context, sourcePath string, releaseID string) (api.MetadataPreview, error) {
-	trimmedPath := strings.TrimSpace(sourcePath)
-	trimmedID := strings.TrimSpace(releaseID)
-	if trimmedPath == "" || trimmedID == "" {
-		return api.MetadataPreview{}, classifyOperationError(api.OperationKindPreparation, internalerrors.ErrInvalidInput)
-	}
-	prepared, err := c.preparedFacts.Prepare(ctx, api.PrepareInput{
-		SourcePath: trimmedPath,
-		Intent:     api.PreparationIntentPreview,
-		Instructions: api.ReleaseFactInstructions{
-			BlurayReleaseID: trimmedID,
-		},
-		Force: true,
-	})
-	if err != nil {
-		return api.MetadataPreview{}, classifyOperationError(api.OperationKindPreparation, fmt.Errorf("core: select Blu-ray candidate: %w", err))
-	}
-	return c.FetchAcceptedMetadataPreview(ctx, api.ReleaseRef{SourcePath: prepared.Release.Source.SourcePath, Generation: prepared.Release.Generation})
-}
-
-// explicitTrackerSelectionResolvedEmpty reports whether a non-empty requested
-// tracker set was fully removed by tracker resolution.
-func explicitTrackerSelectionResolvedEmpty(requested []string, resolved []string) bool {
-	return len(requested) > 0 && len(resolved) == 0
-}
-
-// resolveTrackersPreservingExplicitEmpty resolves requested trackers while
-// preserving the difference between an omitted selection and an explicit
-// selection that was fully removed.
-//
-// includeDefaults adds configured defaults to non-empty explicit selections.
-// fallbackDefaultsWhenExplicitEmpty controls whether a removed explicit
-// selection may fall back to defaults instead of returning explicitEmpty.
-func resolveTrackersPreservingExplicitEmpty(
-	cfg config.Config,
-	requested []string,
-	remove []string,
-	logger api.Logger,
-	registry *trackers.Registry,
-	includeDefaults bool,
-	fallbackDefaultsWhenExplicitEmpty bool,
-) ([]string, bool) {
-	resolved := trackers.ResolveTrackersWithRegistry(cfg, requested, remove, logger, registry)
-	if explicitTrackerSelectionResolvedEmpty(requested, resolved) {
-		if includeDefaults && fallbackDefaultsWhenExplicitEmpty {
-			defaults := trackers.ResolveTrackersWithRegistry(cfg, nil, remove, logger, registry)
-			if len(defaults) > 0 {
-				return defaults, false
-			}
-		}
-		return nil, true
-	}
-	if includeDefaults && len(requested) > 0 {
-		return trackers.ResolveTrackersWithDefaultsAndRegistry(cfg, requested, remove, logger, registry), false
-	}
-	return resolved, false
-}
-
-// DetectDiscType classifies one preparation source through the canonical source-layout resolver.
-func (c *Core) DetectDiscType(ctx context.Context, sourcePath string) (string, error) {
-	if ctx == nil {
-		return "", internalerrors.ErrInvalidInput
-	}
-	layout, err := sourcelayout.Resolve(ctx, sourcePath)
-	if err != nil {
-		return "", classifyOperationError(api.OperationKindPreparation, fmt.Errorf("core: resolve source layout: %w", err))
-	}
-	return layout.DiscType, nil
+	return operation, nil
 }
 
 // DiscoverPlaylists scans the local source for Blu-ray playlists and returns
@@ -934,68 +601,6 @@ func (c *Core) DiscoverPlaylists(ctx context.Context, sourcePath string) ([]api.
 	return result, nil
 }
 
-// SavePlaylistSelection persists selected playlist names, or the use-all flag,
-// under the source path's normalized slash-delimited database key.
-func (c *Core) SavePlaylistSelection(ctx context.Context, sourcePath string, playlists []string, useAll bool) error {
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("core: save playlist selection canceled: %w", err)
-	}
-	if strings.TrimSpace(sourcePath) == "" {
-		return internalerrors.ErrInvalidInput
-	}
-	if c.selections == nil {
-		return errors.New("core: repository not initialized")
-	}
-
-	// Normalize path to ensure consistent storage and retrieval
-	normalizedPath := filepath.ToSlash(filepath.Clean(sourcePath))
-	c.logger.Debugf("core: saving playlist selection for %q (normalized: %q): %d playlists, useAll=%v", sourcePath, normalizedPath, len(playlists), useAll)
-
-	if err := c.selections.SavePlaylistSelection(ctx, normalizedPath, playlists, useAll); err != nil {
-		c.logger.Warnf("core: save playlist selection failed: %v", err)
-		return fmt.Errorf("core: %w", err)
-	}
-
-	c.logger.Infof("core: playlist selection saved for %q", normalizedPath)
-	return nil
-}
-
-// LoadPlaylistSelection returns the selection stored under the source path's
-// normalized slash-delimited database key. It returns
-// [internalerrors.ErrNotFound] when absent.
-func (c *Core) LoadPlaylistSelection(ctx context.Context, sourcePath string) (api.PlaylistSelection, error) {
-	if err := ctx.Err(); err != nil {
-		return api.PlaylistSelection{}, fmt.Errorf("core: load playlist selection canceled: %w", err)
-	}
-	if strings.TrimSpace(sourcePath) == "" {
-		return api.PlaylistSelection{}, internalerrors.ErrInvalidInput
-	}
-	if c.selections == nil {
-		return api.PlaylistSelection{}, errors.New("core: repository not initialized")
-	}
-
-	normalizedPath := filepath.ToSlash(filepath.Clean(sourcePath))
-	c.logger.Debugf("core: loading playlist selection source=%q normalized=%q", sourcePath, normalizedPath)
-
-	selection, err := c.selections.GetPlaylistSelection(ctx, normalizedPath)
-	if err != nil {
-		if errors.Is(err, internalerrors.ErrNotFound) {
-			c.logger.Debugf("core: playlist selection decision=not_found source=%q", sourcePath)
-			return api.PlaylistSelection{}, internalerrors.ErrNotFound
-		}
-		c.logger.Warnf("core: load playlist selection failed: %v", err)
-		return api.PlaylistSelection{}, fmt.Errorf("core: %w", err)
-	}
-
-	c.logger.Debugf(
-		"core: playlist selection decision=loaded source=%q playlists=%d use_all=%v",
-		sourcePath,
-		len(selection.SelectedPlaylists),
-		selection.UseAll,
-	)
-	return selection, nil
-}
-
 // ListHistory returns stored releases with their latest display status.
 func (c *Core) ListHistory(ctx context.Context) ([]api.HistoryEntry, error) {
 	return c.history.List(ctx)
@@ -1033,33 +638,10 @@ func (c *Core) Close() error {
 
 // RenderDescription renders raw BBCode after rejecting a pre-canceled context.
 func (c *Core) RenderDescription(ctx context.Context, raw string) (string, error) {
-	result, err := c.description.render(ctx, raw)
-	return classifyOperationResult(api.OperationKindDescription, result, err)
-}
-
-// SaveDescriptionOverride stores a trimmed override for one validated source
-// and group. Blank raw content deletes the existing override.
-func (c *Core) SaveDescriptionOverride(ctx context.Context, req api.Request, raw string) (api.DescriptionBuilderGroup, error) {
-	ref, err := c.prepareRequestRef(ctx, req, api.PreparationIntentDescription)
-	if err != nil {
-		return api.DescriptionBuilderGroup{}, err
+	if err := ctx.Err(); err != nil {
+		return "", classifyOperationError(api.OperationKindDescription, fmt.Errorf("core: render description canceled: %w", err))
 	}
-	return c.SaveAcceptedDescriptionOverride(ctx, api.DescriptionInput{
-		Release:  ref,
-		Trackers: append([]string(nil), req.Trackers...),
-		GroupKey: req.DescriptionOverrideGroup,
-		Options:  req.Options,
-	}, raw)
-}
-
-// SaveAcceptedDescriptionOverride persists an override scoped to one exact generation.
-func (c *Core) SaveAcceptedDescriptionOverride(
-	ctx context.Context,
-	input api.DescriptionInput,
-	raw string,
-) (api.DescriptionBuilderGroup, error) {
-	result, err := c.description.saveAcceptedOverride(ctx, input, raw)
-	return classifyOperationResult(api.OperationKindDescription, result, err)
+	return description.Render(raw), nil
 }
 
 func buildTrackerPreview(records []api.TrackerMetadata, cfg config.Config) []api.TrackerPreview {
@@ -1171,13 +753,6 @@ func baseFromAnnounce(announce string) string {
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return parsed.String()
-}
-
-func normalizeExecutionRequest(req api.Request) api.Request {
-	if strings.TrimSpace(req.Execution.SiteUploadTracker) != "" {
-		req.Trackers = []string{strings.ToUpper(strings.TrimSpace(req.Execution.SiteUploadTracker))}
-	}
-	return req
 }
 
 // migrateLegacyCookies performs automatic migration of cookies from file-based storage

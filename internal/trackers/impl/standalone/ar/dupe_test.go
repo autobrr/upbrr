@@ -53,8 +53,8 @@ func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 			if got := query.Get("action"); got != "browse" {
 				t.Fatalf("expected action=browse, got %q", got)
 			}
-			if got := query.Get("searchstr"); got != "Movie Title 2023" {
-				t.Fatalf("expected searchstr to include title+year, got %q", got)
+			if got := query.Get("searchstr"); got != "Exact Projected Query" {
+				t.Fatalf("expected exact projected searchstr, got %q", got)
 			}
 			if got := req.Header.Get("User-Agent"); got == "" {
 				t.Fatalf("expected User-Agent header")
@@ -77,7 +77,12 @@ func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 			MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmpDir, "ua.db")},
 		}, client, api.NopLogger{})
 
-	meta := api.DuplicateSubject{Release: api.ReleaseInfo{Title: "Movie Title", Year: 2023}}
+	meta := api.DuplicateSubject{
+		Release: api.ReleaseInfo{Title: "Movie Title", Year: 2023},
+		Projection: &api.TrackerReleaseProjection{
+			DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Exact Projected Query"},
+		},
+	}
 	entries, notes, err := adapterEvidence(handler.Search(context.Background(), meta))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -109,6 +114,14 @@ func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 	}
 	if entry.Download != "https://alpharatio.cc/torrents.php?action=download&id=55" {
 		t.Fatalf("unexpected download %q", entry.Download)
+	}
+}
+
+func TestARSearchQueryDirectFallbackIncludesYear(t *testing.T) {
+	t.Parallel()
+
+	if got := arSearchQuery(api.DuplicateSubject{Release: api.ReleaseInfo{Title: "Movie Title", Year: 2023}}); got != "Movie Title 2023" {
+		t.Fatalf("fallback query = %q", got)
 	}
 }
 

@@ -8,16 +8,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/http/cookiejar"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/cookies"
-	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
-	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -43,6 +37,9 @@ type uploadState struct {
 }
 
 func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+	if err := standalone.ValidatePreparation(ctx, req, validationPolicy()); err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: validate preparation: %w", err)
+	}
 	state, client, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
@@ -142,7 +139,7 @@ func buildUploadPreview(state uploadState) api.TrackerDryRunEntry {
 }
 
 func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (uploadState, *http.Client, error) {
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
+	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
 		return uploadState{}, nil, fmt.Errorf("trackers: %w", err)
 	}
@@ -153,7 +150,10 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 	}
 	description := buildDescription(req, assets)
 
-	releaseName := resolveName(req.Meta)
+	releaseName, nameErr := req.ReviewedUploadName()
+	if nameErr != nil {
+		return uploadState{}, nil, fmt.Errorf("trackers: TL release name: %w", nameErr)
+	}
 	state := uploadState{
 		torrentPath: torrentPath,
 		description: description,
@@ -236,255 +236,4 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 // for this tracker payload.
 func tlAnimeIDURL(malID int) string {
 	return fmt.Sprintf("https://anilist.co/anime/%d", malID)
-}
-
-func cookieClient(ctx context.Context, dbPath string) (*http.Client, error) {
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		return nil, fmt.Errorf("trackers: TL create cookie jar: %w", err)
-	}
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		Jar:     jar,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	cookies, err := loadCookies(ctx, dbPath)
-	if err != nil {
-		return nil, err
-	}
-	target, _ := url.Parse(baseURL)
-	jar.SetCookies(target, cookies)
-	return client, nil
-}
-
-func buildDescription(req trackers.PreparationInput, assets trackers.DescriptionAssets) string {
-	if assets.Final {
-		return strings.TrimSpace(assets.Description)
-	}
-	meta := req.Meta
-	parts := make([]string, 0, 8)
-
-	// Custom Header
-	if header := strings.TrimSpace(req.Runtime.Description.CustomDescriptionHeader); header != "" {
-		parts = append(parts, header)
-	}
-
-	// Logo
-	if req.Runtime.Description.AddLogo {
-		if logo, _ := descriptionunit3d.ResolveLogo(api.NewDescriptionSubject(meta), req.Runtime.DescriptionConfig()); logo != "" {
-			parts = append(parts, `<center><img src="`+logo+`" style="max-width: 300px;"></center>`)
-		}
-	}
-
-	// TV Episode details
-	if strings.TrimSpace(meta.EpisodeOverview) != "" {
-		parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeTitle)+"[/center]")
-		parts = append(parts, "[center]"+strings.TrimSpace(meta.EpisodeOverview)+"[/center]")
-	}
-
-	// File information (BDInfo or MediaInfo)
-	if media := trackers.ReadBDinfoOrMediaInfo(req.Runtime.DBPath, meta); media != "" {
-		parts = append(parts, media)
-	}
-
-	// User description
-	if strings.TrimSpace(assets.Description) != "" {
-		parts = append(parts, strings.TrimSpace(assets.Description))
-	}
-
-	// menu
-	if len(assets.MenuImages) > 0 {
-		// header
-		if header := strings.TrimSpace(req.Runtime.Description.DiscMenuHeader); header != "" {
-			parts = append(parts, header)
-		}
-		// images
-		if shots := screenshotBlock(assets.MenuImages); shots != "" {
-			parts = append(parts, shots)
-		}
-	}
-	// Screenshot Header
-	if header := strings.TrimSpace(req.Runtime.Description.ScreenshotHeader); header != "" {
-		parts = append(parts, header)
-	}
-
-	// Tonemapped Header
-	if tonemapHeader := strings.TrimSpace(
-		req.Runtime.Description.TonemappedHeader,
-	); tonemapHeader != "" &&
-		descriptionunit3d.ShouldIncludeTonemappedHeader(api.NewDescriptionSubject(meta), req.Runtime.DescriptionConfig(), assets.Screenshots) {
-		parts = append(parts, tonemapHeader)
-	}
-
-	// screenshots
-	if shots := screenshotBlock(assets.Screenshots); shots != "" {
-		parts = append(parts, shots)
-	}
-
-	// custom user signature
-	if signature := strings.TrimSpace(req.Runtime.Description.CustomSignature); signature != "" {
-		parts = append(parts, signature)
-	}
-
-	// upbrr signature
-	link, text := descriptionunit3d.UppbrrSignatureLink()
-	parts = append(parts, fmt.Sprintf("<div style=\"text-align: right; font-size: 11px;\"><a href=\"%s\">%s</a></div>", link, text))
-
-	// finalize description
-	finalDescription := finalizeDescription(strings.TrimSpace(strings.Join(parts, "\n\n")))
-
-	// Explicit dry runs retain the local diagnostic description artifact.
-	if req.Intent == trackers.PreparationIntentDryRun {
-		descriptionunit3d.SaveDescriptionDebug(api.NewDescriptionSubject(meta), "TL", req.Runtime.DBPath, finalDescription, req.Logger)
-	}
-
-	return finalDescription
-}
-
-func resolveCategory(meta api.UploadSubject) string {
-	if _, err := meta.Identity.RequireCategory(); err != nil {
-		return ""
-	}
-	if meta.Anime {
-		return "34"
-	}
-	if !isTV(meta) {
-		if meta.ProviderMetadata.TMDB.OriginalLanguage != "" && !strings.EqualFold(meta.ProviderMetadata.TMDB.OriginalLanguage, "en") {
-			return "36"
-		}
-		if containsWord(genresText(meta), "Documentary") {
-			return "29"
-		}
-		if meta.Release.Resolution == "2160p" {
-			return "47"
-		}
-		if strings.EqualFold(meta.DiscType, "BDMV") || strings.EqualFold(meta.Type, "REMUX") && strings.EqualFold(meta.Source, "BluRay") {
-			return "13"
-		}
-		if strings.EqualFold(meta.Type, "ENCODE") && strings.EqualFold(meta.Source, "BluRay") {
-			return "14"
-		}
-		if strings.EqualFold(meta.DiscType, "DVD") || strings.Contains(strings.ToUpper(meta.Source), "DVD") && strings.EqualFold(meta.Type, "REMUX") {
-			return "12"
-		}
-		if strings.Contains(strings.ToUpper(meta.Source), "DVD") || strings.EqualFold(meta.Type, "DVDRIP") {
-			return "11"
-		}
-		if strings.Contains(strings.ToUpper(meta.Type), "WEB") {
-			return "37"
-		}
-		if strings.EqualFold(meta.Type, "HDTV") {
-			return "43"
-		}
-	}
-	if isTV(meta) && meta.ProviderMetadata.TMDB.OriginalLanguage != "" && !strings.EqualFold(meta.ProviderMetadata.TMDB.OriginalLanguage, "en") {
-		return "44"
-	}
-	if meta.TVPack {
-		return "27"
-	}
-	if isSD(meta.Release.Resolution) {
-		return "26"
-	}
-	return "32"
-}
-
-func resolveName(meta api.UploadSubject) string {
-	if strings.TrimSpace(meta.SceneName) != "" {
-		return strings.TrimSpace(meta.SceneName)
-	}
-	return strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.ReleaseName, meta.Release.Title, meta.Filename))
-}
-
-func announceKey(cfg config.TrackerConfig) string {
-	return strings.TrimSpace(cfg.Passkey)
-}
-
-func announceList(cfg config.TrackerConfig) []string {
-	passkey := strings.TrimSpace(cfg.Passkey)
-	if passkey == "" {
-		return nil
-	}
-	return []string{
-		"https://tracker.torrentleech.org/a/" + passkey + "/announce",
-		"https://tracker.tleechreload.org/a/" + passkey + "/announce",
-	}
-}
-
-func loadCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
-	values, err := cookies.LoadTrackerHTTPCookies(ctx, dbPath, "TL", "torrentleech.org")
-	if err != nil {
-		return values, fmt.Errorf("trackers: TL load cookies: %w", err)
-	}
-	return values, nil
-}
-
-func imdbURL(meta api.UploadSubject) string {
-	if meta.Identity.IMDBID <= 0 {
-		return ""
-	}
-	return fmt.Sprintf("https://www.imdb.com/title/tt%07d", meta.Identity.IMDBID)
-}
-
-func tvmazeURL(meta api.UploadSubject) string {
-	if meta.Identity.TVmazeID <= 0 {
-		return ""
-	}
-	return fmt.Sprintf("https://www.tvmaze.com/shows/%d", meta.Identity.TVmazeID)
-}
-
-func screenshots(images []api.ScreenshotImage) []string {
-	out := make([]string, 0, len(images))
-	for _, image := range images {
-		if raw := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.RawURL, image.ImgURL)); raw != "" {
-			out = append(out, raw)
-		}
-	}
-	return out
-}
-
-func screenshotBlock(images []api.ScreenshotImage) string {
-	if len(images) == 0 {
-		return ""
-	}
-	parts := []string{"<center>"}
-	for idx, image := range images {
-		img := metautil.FirstNonEmptyTrimmed(image.ImgURL, image.RawURL)
-		web := metautil.FirstNonEmptyTrimmed(image.WebURL, img)
-		if img == "" || web == "" {
-			continue
-		}
-		parts = append(parts, `<a href="`+web+`"><img src="`+img+`" style="max-width: 350px;"></a>`)
-		if (idx+1)%2 == 0 {
-			parts = append(parts, "<br><br>")
-		}
-	}
-	parts = append(parts, "</center>")
-	return strings.Join(parts, "  ")
-}
-
-func containsWord(a string, b string) bool {
-	return strings.Contains(strings.ToLower(a), strings.ToLower(b))
-}
-
-func isSD(res string) bool {
-	return strings.HasPrefix(res, "480") || strings.HasPrefix(res, "576") || strings.HasPrefix(res, "540")
-}
-
-func boolWord(cond bool, yes string, no string) string {
-	if cond {
-		return yes
-	}
-	return no
-}
-
-func isTV(meta api.UploadSubject) bool {
-	category, err := meta.Identity.RequireCategory()
-	return err == nil && category == api.CanonicalCategoryTV
-}
-
-func genresText(meta api.UploadSubject) string {
-	return metautil.FirstNonEmptyTrimmed(meta.ProviderMetadata.TMDB.Genres, meta.Release.Genre)
 }

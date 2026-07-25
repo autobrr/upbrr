@@ -45,9 +45,19 @@ func TestBuildUploadDryRunBlockedWhenMediaMissing(t *testing.T) {
 	writeAZCookieFile(t, tmp, "AZ", parsedServerURL.Hostname())
 
 	plan, failure := testDefinitionAt(server.URL).Prepare(context.Background(), trackers.PreparationInput{
-		Intent:        trackers.PreparationIntentDryRun,
-		Tracker:       "AZ",
-		Meta:          api.UploadSubject{Identity: api.ExternalIdentity{Category: "MOVIE", IMDBID: 123}},
+		Intent:  trackers.PreparationIntentDryRun,
+		Tracker: "AZ",
+		Meta: api.UploadSubject{
+			ReleaseName: "Example.Release.2026.1080p-GRP",
+			Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 123},
+			Release:     api.ReleaseInfo{
+Resolution: "1080p",
+ Source: "WEB-DL",
+ Type: "WEBDL",
+},
+			Source:      "WEB-DL",
+			Type:        "WEBDL",
+		},
 		TrackerConfig: config.TrackerConfig{},
 		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmp, "ua.db")}}),
 		Logger:        api.NopLogger{},

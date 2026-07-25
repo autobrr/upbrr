@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -54,10 +55,22 @@ func (e *AuthResolutionError) Unwrap() error {
 type PreparationInput struct {
 	// Intent selects the maximum preparation depth for this invocation.
 	Intent PreparationIntent
+	// ExecutionMode controls projection-time policy waivers. Empty means normal.
+	ExecutionMode api.WorkflowExecutionMode
 	// Tracker is the normalized tracker name receiving the upload.
 	Tracker string
 	// Meta is the prepared release snapshot used throughout this upload attempt.
+	// For dry-run and upload preparation, TorrentPath is the exact tracker artifact;
+	// adapters must not replace it with client, source, or generic torrent paths.
 	Meta api.UploadSubject
+	// Projection locks reviewed tracker-local names and taxonomy for final preparation.
+	Projection *api.TrackerReleaseProjection
+	// RequestedUploadName is an optional user instruction consumed by the
+	// tracker naming policy before projection. A non-nil empty value is invalid.
+	RequestedUploadName *string
+	// AdditionalReleaseNames contains typed user-supplied secondary names that
+	// are normalized and fingerprinted with the tracker naming result.
+	AdditionalReleaseNames []api.TrackerReleaseName
 	// TrackerConfig is the effective configuration for Tracker.
 	TrackerConfig config.TrackerConfig
 	// Runtime contains the deliberately projected non-tracker configuration needed by adapters.
@@ -106,6 +119,37 @@ type Definition interface {
 	Prepare(ctx context.Context, input PreparationInput) (TrackerPlan, *PreparationFailure)
 }
 
+// ReleaseNameInput contains the immutable values available to one pure
+// tracker-owned release-name policy.
+type ReleaseNameInput struct {
+	Subject       api.UploadSubject
+	TrackerConfig config.TrackerConfig
+	RequestedName *string
+}
+
+// ResolvedReleaseNames contains tracker-facing principal and secondary names.
+// Duplicate defaults to Upload when empty.
+type ResolvedReleaseNames struct {
+	Upload     string
+	Duplicate  string
+	Additional []api.TrackerReleaseName
+}
+
+// ReleaseNamePolicy resolves tracker-facing names without I/O or mutable state.
+type ReleaseNamePolicy func(ReleaseNameInput) (ResolvedReleaseNames, error)
+
+// ReleaseNamePolicyBinding identifies one versioned naming implementation.
+type ReleaseNamePolicyBinding struct {
+	ID       string
+	Resolver ReleaseNamePolicy
+}
+
+// ReleaseNamePolicyProvider declares tracker-owned release-name behavior.
+type ReleaseNamePolicyProvider interface {
+	// ReleaseNamePolicy returns one required pure, versioned naming binding.
+	ReleaseNamePolicy() ReleaseNamePolicyBinding
+}
+
 // FamilyProvider declares a tracker's protocol family.
 type FamilyProvider interface {
 	// TrackerFamily returns the tracker's protocol family.
@@ -152,9 +196,60 @@ type AuthCapabilityDescriptorProvider interface {
 	AuthCapabilityDescriptor() *api.TrackerAuthCapability
 }
 
+// AuthRequirement identifies one secret-free fact needed for tracker auth.
+type AuthRequirement string
+
+const (
+	// AuthRequirementAPIKey requires an effective tracker API key.
+	AuthRequirementAPIKey AuthRequirement = "api_key"
+	// AuthRequirementPasskey requires a tracker passkey or equivalent announce key.
+	AuthRequirementPasskey AuthRequirement = "passkey"
+	// AuthRequirementStoredCookie requires a persisted tracker session cookie.
+	AuthRequirementStoredCookie AuthRequirement = "stored_cookie"
+	// AuthRequirementCredentialLogin requires configured username/password login.
+	AuthRequirementCredentialLogin AuthRequirement = "credential_login" //nolint:gosec // Requirement label, not a credential.
+	// AuthRequirementUsername requires the tracker username independently of login support.
+	AuthRequirementUsername AuthRequirement = "username"
+	// AuthRequirementAPIUser requires a tracker API user independently of its API key.
+	AuthRequirementAPIUser AuthRequirement = "api_user"
+	// AuthRequirementAnnounceURL requires a personal announce URL.
+	AuthRequirementAnnounceURL AuthRequirement = "announce_url"
+)
+
+// AuthRequirementAlternative is one complete set of auth facts. Alternatives
+// are ORed; requirements within AllOf are ANDed.
+type AuthRequirementAlternative struct {
+	AllOf []AuthRequirement
+}
+
+// EffectiveAuthRequirements describes the auth facts for the effective
+// tracker mode without exposing credential values.
+type EffectiveAuthRequirements struct {
+	Mode         string
+	Alternatives []AuthRequirementAlternative
+	Supports2FA  bool
+}
+
+// Clone returns an independent requirements value.
+func (r EffectiveAuthRequirements) Clone() EffectiveAuthRequirements {
+	clone := r
+	clone.Alternatives = make([]AuthRequirementAlternative, len(r.Alternatives))
+	for idx := range r.Alternatives {
+		clone.Alternatives[idx].AllOf = slices.Clone(r.Alternatives[idx].AllOf)
+	}
+	return clone
+}
+
+// AuthRequirementsResolver returns secret-free requirements for effective
+// application and tracker config.
+type AuthRequirementsResolver func(config.Config, config.TrackerConfig) EffectiveAuthRequirements
+
 // AuthPolicy declares coordinator behavior that cannot be inferred from the
 // user-facing auth capability alone.
 type AuthPolicy struct {
+	// ResolveRequirements returns the secret-free auth facts for the effective
+	// tracker mode.
+	ResolveRequirements AuthRequirementsResolver
 	// ResolveAPIKey returns the effective API credential, including any legacy
 	// config source still supported by the owning tracker.
 	ResolveAPIKey func(config.Config, config.TrackerConfig) string
@@ -207,6 +302,13 @@ type AuthStateManagerProvider interface {
 type RuleProvider interface {
 	// Rules returns tracker-owned release validation rules.
 	Rules() *RuleSet
+}
+
+// ValidationPolicyProvider declares tracker-owned, side-effect-free
+// constructibility and custom policy validation.
+type ValidationPolicyProvider interface {
+	// ValidationPolicy returns one versioned validation binding.
+	ValidationPolicy() ValidationPolicyBinding
 }
 
 // ArtifactPolicy declares tracker-owned torrent artifact constraints.
@@ -456,16 +558,26 @@ type ClaimPolicyProvider interface {
 type Descriptor struct {
 	// Name is the stable normalized tracker identifier.
 	Name string
+	// DisplayName is mutable presentation text separate from stable identity.
+	DisplayName string
+	// Aliases contains explicit legacy identities accepted during migration.
+	Aliases []string
+	// ProjectorVersion identifies the naming/taxonomy implementation contract.
+	ProjectorVersion string
 	// Family identifies the tracker protocol family.
 	Family Family
 	// BaseURL is the tracker's default endpoint.
 	BaseURL string
 	// Definition is the required preparation adapter.
 	Definition Definition
+	// ReleaseNamePolicy owns the tracker-local upload and duplicate-search names.
+	ReleaseNamePolicy ReleaseNamePolicyBinding
 	// UploadContentMode identifies the shared content object consumed before preparation.
 	UploadContentMode UploadContentMode
 	// Rules contains optional tracker-owned validation rules.
 	Rules *RuleSet
+	// Validation contains the versioned tracker-native validation policy.
+	Validation ValidationPolicyBinding
 	// Artifact contains optional generic torrent limits.
 	Artifact *ArtifactPolicy
 	// DataFactory constructs optional tracker metadata lookup support.

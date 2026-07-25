@@ -4,7 +4,6 @@
 package api
 
 import (
-	"strings"
 	"time"
 )
 
@@ -64,15 +63,20 @@ type DupeMatch struct {
 // skipped or failed checks carry Status plus SkipReason or Error. SkipCode is a
 // stable machine-readable reason.
 type DupeCheckResult struct {
-	Tracker     string
-	Raw         []DupeEntry
-	Filtered    []DupeEntry
-	HasDupes    bool
-	ContentFail bool
-	Match       DupeMatch
-	Notes       []string
-	Skipped     bool
-	SkipReason  string
+	Tracker               string
+	CanonicalReleaseName  string
+	UploadReleaseName     string
+	ProjectionFingerprint WorkflowFingerprint
+	CriteriaFingerprint   WorkflowFingerprint
+	ProjectionStatus      ReadinessStatus
+	Raw                   []DupeEntry
+	Filtered              []DupeEntry
+	HasDupes              bool
+	ContentFail           bool
+	Match                 DupeMatch
+	Notes                 []string
+	Skipped               bool
+	SkipReason            string
 	// SkipCode is a stable machine-readable skip reason.
 	SkipCode  string
 	Status    string
@@ -83,67 +87,7 @@ type DupeCheckResult struct {
 // DupeCheckSummary groups duplicate-search results for one prepared source
 // path.
 type DupeCheckSummary struct {
-	SourcePath  string
-	Results     []DupeCheckResult
-	Notes       []string
-	Eligibility TrackerEligibility
-}
-
-// NewAcceptedDuplicateEvidence detaches one completed duplicate summary for
-// transfer into an accepted dry-run plan.
-func NewAcceptedDuplicateEvidence(release ReleaseRef, trackers []string, summary DupeCheckSummary) AcceptedDuplicateEvidence {
-	selected := make(map[string]struct{}, len(trackers))
-	for _, tracker := range trackers {
-		if tracker = strings.ToUpper(strings.TrimSpace(tracker)); tracker != "" {
-			selected[tracker] = struct{}{}
-		}
-	}
-	results := make([]DupeCheckResult, 0, len(selected))
-	for _, result := range summary.Results {
-		if _, ok := selected[strings.ToUpper(strings.TrimSpace(result.Tracker))]; ok {
-			results = append(results, result)
-		}
-	}
-	return AcceptedDuplicateEvidence{
-		Release:  release,
-		Trackers: append([]string(nil), trackers...),
-		Results:  CloneDupeCheckResults(results),
-	}
-}
-
-// Clone returns duplicate evidence detached from caller-owned slices.
-func (e AcceptedDuplicateEvidence) Clone() AcceptedDuplicateEvidence {
-	e.Trackers = append([]string(nil), e.Trackers...)
-	e.Results = CloneDupeCheckResults(e.Results)
-	return e
-}
-
-// CloneDupeCheckResults returns duplicate results with every nested mutable
-// collection detached from its source.
-func CloneDupeCheckResults(results []DupeCheckResult) []DupeCheckResult {
-	if results == nil {
-		return nil
-	}
-	cloned := make([]DupeCheckResult, len(results))
-	for index, result := range results {
-		result.Raw = cloneDupeEntries(result.Raw)
-		result.Filtered = cloneDupeEntries(result.Filtered)
-		result.Match.MatchedEpisodeIDs = append([]DupeEpisodeMatch(nil), result.Match.MatchedEpisodeIDs...)
-		result.Notes = append([]string(nil), result.Notes...)
-		cloned[index] = result
-	}
-	return cloned
-}
-
-func cloneDupeEntries(entries []DupeEntry) []DupeEntry {
-	if entries == nil {
-		return nil
-	}
-	cloned := make([]DupeEntry, len(entries))
-	for index, entry := range entries {
-		entry.Files = append([]string(nil), entry.Files...)
-		entry.Flags = append([]string(nil), entry.Flags...)
-		cloned[index] = entry
-	}
-	return cloned
+	SourcePath string
+	Results    []DupeCheckResult
+	Notes      []string
 }

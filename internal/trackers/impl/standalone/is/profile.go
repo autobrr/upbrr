@@ -5,6 +5,7 @@ package is
 
 import (
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 )
 
@@ -17,8 +18,10 @@ func Profile() standalone.Profile {
 		UploadContentMode:     trackers.UploadContentModeDescription,
 		PrepareDescription:    prepareDescription,
 		PrepareUpload:         prepareUpload,
+		ValidationPolicy:      validationPolicy(),
+		ReleaseNamePolicy:     trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/is/v1", resolveSubject, resolveSearchName),
 		NewDuplicateAdapter:   newDuplicateAdapter,
-		AuthCapability:        standalone.CookieAuthCapability("IS"),
+		AuthCapability:        authcontract.CookieCapability("IS"),
 		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: sourceFlag},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{baseURL}},
 	}

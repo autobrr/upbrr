@@ -50,7 +50,10 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		params.Set("search", fmt.Sprintf("tt%07d", meta.Identity.IMDBID))
 		params.Set("searchin", "3")
 	} else {
-		query := metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName)
+		query := dupe.ProjectedSearchName(meta)
+		if meta.Projection == nil {
+			query = metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName)
+		}
 		if query == "" {
 			return dupe.NotRun(dupe.NotRunMissingMetadata, "missing FL search query", nil)
 		}

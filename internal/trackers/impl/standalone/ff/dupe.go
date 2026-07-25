@@ -52,7 +52,10 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	}
 	query := fmt.Sprintf("tt%07d", meta.Identity.IMDBID)
 	if meta.Anime {
-		query = metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName)
+		query = dupe.ProjectedSearchName(meta)
+		if meta.Projection == nil {
+			query = metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName)
+		}
 	}
 	status, root, err := commonhttp.GetHTML(ctx, s.http, baseURL+"/torrents.php", url.Values{"searchstr": {query}}, trackerCookies)
 	if err != nil || status < http.StatusOK || status >= http.StatusMultipleChoices || root == nil {

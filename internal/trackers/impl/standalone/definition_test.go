@@ -81,13 +81,6 @@ func TestNewDefinitionRejectsMissingRequiredProfileFields(t *testing.T) {
 	}
 }
 
-func TestCookieAuthCapabilityNormalizesTrackerID(t *testing.T) {
-	capability := CookieAuthCapability(" tl ")
-	if capability.TrackerID != "TL" || capability.DisplayName != "TL" || capability.AuthKind != "cookies" || !capability.SupportsCookieFile {
-		t.Fatalf("unexpected capability: %#v", capability)
-	}
-}
-
 func TestDefinitionLeavesUndeclaredAuthCapabilityAbsent(t *testing.T) {
 	definition := MustNew(validProfile())
 	if capability := definition.AuthCapabilityDescriptor(); capability != nil {

@@ -5,7 +5,6 @@ package api
 
 import (
 	"context"
-	"errors"
 )
 
 // UploadProgressUpdate describes one source- and tracker-scoped upload progress event.
@@ -34,28 +33,6 @@ type UploadProgressUpdate struct {
 
 // UploadProgressReporter receives synchronous progress notifications from an upload context.
 type UploadProgressReporter func(update UploadProgressUpdate)
-
-// TrackerLocalUploadError distinguishes attributable tracker failures from operation-wide errors.
-type TrackerLocalUploadError interface {
-	error
-	// TrackerLocalUploadFailures returns tracker names whose attributable work failed.
-	TrackerLocalUploadFailures() []string
-}
-
-// IsTrackerLocalUploadError reports whether err contains tracker-local failure classification.
-func IsTrackerLocalUploadError(err error) bool {
-	var local TrackerLocalUploadError
-	return errors.As(err, &local)
-}
-
-// TrackerLocalUploadFailureNames returns a defensive tracker list from a classified error.
-func TrackerLocalUploadFailureNames(err error) []string {
-	var local TrackerLocalUploadError
-	if !errors.As(err, &local) {
-		return nil
-	}
-	return append([]string(nil), local.TrackerLocalUploadFailures()...)
-}
 
 type uploadProgressReporterKey struct{}
 

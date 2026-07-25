@@ -80,7 +80,3 @@ func classifyOperationError(operation api.OperationKind, err error) error {
 	}
 	return api.NewOperationError(failure, err)
 }
-
-func classifyOperationResult[T any](operation api.OperationKind, value T, err error) (T, error) {
-	return value, classifyOperationError(operation, err)
-}

@@ -1,24 +1,15 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ScreenshotsFacet } from "../../releaseSession/types";
-import type { ScreenshotImage, ScreenshotPlan } from "../../types";
+import type { ScreenshotPlan } from "../../types";
 import ScreenshotsPage from ".";
 
-const image = (
-  path: string,
-  index: number,
-  purpose: ScreenshotImage["Purpose"],
-): ScreenshotImage => ({
-  Index: index,
-  TimestampSeconds: index + 1,
-  Path: path,
-  Purpose: purpose,
-  Width: 1920,
-  Height: 1080,
-  SizeBytes: 1024,
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
 });
 
 const plan = (): ScreenshotPlan => ({
@@ -27,17 +18,11 @@ const plan = (): ScreenshotPlan => ({
   DurationSeconds: 120,
   FrameRate: 24,
   SuggestedSelections: [{ Index: 0, TimestampSeconds: 12, Frame: 288, Source: "auto" }],
-  ExistingScreenshots: [image("C:\\tmp\\existing.png", 0, "final")],
-  ExistingTrackerScreenshots: [image("C:\\tmp\\tracker.png", 1, "final")],
-  FinalSelections: [image("C:\\tmp\\final.png", 2, "final")],
-  TrackerImageLinks: [
-    {
-      Tracker: "EXAMPLE",
-      URL: "https://images.example/screenshot.png",
-      Path: "C:\\tmp\\tracker.png",
-    },
-  ],
-  PreviewImages: [image("C:\\tmp\\preview.png", 3, "preview")],
+  ExistingScreenshots: [],
+  ExistingTrackerScreenshots: [],
+  FinalSelections: [],
+  TrackerImageLinks: [],
+  PreviewImages: [],
   MetadataTimestamp: "2026-07-16T00:00:00Z",
   RequiresManualFrames: false,
 });
@@ -49,9 +34,38 @@ const facet = (): ScreenshotsFacet => {
       revision: 1,
       status: "ready",
       plan: screenshotPlan,
-      result: null,
+      workflowMode: true,
+      artifacts: {
+        id: "media-1",
+        workflowId: "workflow-1",
+        revision: 6,
+        release: { id: "release-1", revision: 2 },
+        releaseRef: {
+          SourcePath: "C:\\media\\Example.Release.2026.1080p-GRP.mkv",
+          Generation: 1,
+        },
+        projectionSet: { id: "projections-1", revision: 4 },
+        captureFingerprint: "1".repeat(64),
+        requirementsFingerprint: "2".repeat(64),
+        imageRequirementsPrepared: false,
+        artifacts: [
+          {
+            id: "artifact-1",
+            kind: "screenshot",
+            purpose: "final",
+            selected: true,
+            order: 0,
+            width: 1920,
+            height: 1080,
+            sizeBytes: 1024,
+            url: "/api/app/release-workflow-media?artifactId=artifact-1",
+          },
+        ],
+        status: "completed",
+        createdAt: "2026-07-21T00:00:00Z",
+      },
       selections: screenshotPlan.SuggestedSelections,
-      finalSelectionPaths: screenshotPlan.FinalSelections.map((entry) => entry.Path),
+      finalSelectionArtifactIDs: ["artifact-1"],
       previewImage: "data:image/png;base64,live",
       staleReason: "",
       error: "",
@@ -62,16 +76,47 @@ const facet = (): ScreenshotsFacet => {
     previewFrame: vi.fn(async () => true),
     remove: vi.fn(async () => true),
     removeMany: vi.fn(async () => true),
-    removeTrackerURL: vi.fn(async () => true),
-    removeTrackerURLs: vi.fn(async () => true),
     selectFinal: vi.fn(async () => true),
     reorderFinal: vi.fn(async () => true),
     saveFinal: vi.fn(async () => true),
+    selectArtifact: vi.fn(async () => true),
+    deleteArtifacts: vi.fn(async () => true),
     readImage: vi.fn(async (path) => `data:image/png;base64,${encodeURIComponent(path)}`),
   };
 };
 
 describe("ScreenshotsPage", () => {
+  it("loads frame suggestions when an authoritative workflow first opens the page", async () => {
+    const base = facet();
+    const screenshots: ScreenshotsFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        workflowMode: true,
+        plan: null,
+        selections: [],
+      },
+    };
+
+    render(
+      <ScreenshotsPage
+        facet={screenshots}
+        screenshotConfig={{ Screens: 4, ToneMap: false }}
+        updateScreenshotConfigValue={vi.fn()}
+        loadSettings={vi.fn()}
+        settingsLoading={false}
+        settingsDirty={false}
+        settingsSaved=""
+        settingsError=""
+        applyScreenshotSettings={vi.fn()}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(screenshots.load).toHaveBeenCalledOnce());
+  });
+
   it("restores the main gallery layout while routing actions through the session facet", async () => {
     const screenshots = facet();
     const updateScreenshotConfigValue = vi.fn();
@@ -91,23 +136,12 @@ describe("ScreenshotsPage", () => {
       />,
     );
 
-    for (const heading of [
-      "Live Preview",
-      "Tracker Images",
-      "Existing Captures",
-      "Tracker Temp Images",
-      "Frame Selection",
-      "Preview Captures",
-      "Final Captures",
-    ]) {
+    for (const heading of ["Live Preview", "Generated Screenshots"]) {
       expect(screen.getByRole("heading", { name: heading })).toBeVisible();
     }
-
-    await waitFor(() => expect(screenshots.readImage).toHaveBeenCalledTimes(4));
-    expect(screen.getByAltText("Existing 1")).toHaveAttribute(
-      "src",
-      expect.stringContaining("data:image/png"),
-    );
+    const frameSummary = screen.getByText("Frame Selection · 1 frame");
+    const frameDetails = frameSummary.closest("details");
+    expect(frameDetails).not.toHaveAttribute("open");
 
     fireEvent.click(screen.getByRole("button", { name: "Load suggestions" }));
     expect(screenshots.load).toHaveBeenCalledOnce();
@@ -115,19 +149,96 @@ describe("ScreenshotsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Generate screenshots" }));
     expect(screenshots.generate).toHaveBeenCalledWith("final");
 
-    const frameSection = screen
-      .getByRole("heading", { name: "Frame Selection" })
-      .closest("section");
-    if (!frameSection) throw new Error("frame selection section missing");
-    fireEvent.click(within(frameSection).getByRole("button", { name: "Preview" }));
+    if (!frameDetails) throw new Error("frame selection details missing");
+    fireEvent.click(frameSummary);
+    fireEvent.click(within(frameDetails).getByRole("button", { name: "Preview" }));
     expect(screenshots.generate).toHaveBeenCalledWith("preview", [
       { Index: 0, TimestampSeconds: 12, Frame: 288, Source: "auto" },
     ]);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Add to final" })[0]);
-    expect(screenshots.selectFinal).toHaveBeenCalledWith("C:\\tmp\\existing.png", true);
-
     fireEvent.change(screen.getByLabelText("Screenshot count"), { target: { value: "6" } });
     expect(updateScreenshotConfigValue).toHaveBeenCalledWith("Screens", 6);
+  });
+
+  it("renders and mutates workflow-owned screenshots by opaque artifact ID", () => {
+    const base = facet();
+    const screenshots: ScreenshotsFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        workflowMode: true,
+        artifacts: {
+          id: "media-1",
+          workflowId: "workflow-1",
+          revision: 6,
+          release: { id: "release-1", revision: 2 },
+          releaseRef: {
+            SourcePath: "C:\\media\\Example.Release.2026.1080p-GRP.mkv",
+            Generation: 1,
+          },
+          projectionSet: { id: "projections-1", revision: 4 },
+          captureFingerprint: "1".repeat(64),
+          requirementsFingerprint: "2".repeat(64),
+          imageRequirementsPrepared: false,
+          artifacts: [
+            {
+              id: "artifact-1",
+              kind: "screenshot",
+              purpose: "final",
+              selected: true,
+              order: 0,
+              width: 1920,
+              height: 1080,
+              sizeBytes: 1024,
+              url: "/api/app/release-workflow-media?artifactId=artifact-1",
+            },
+          ],
+          status: "completed",
+          createdAt: "2026-07-21T00:00:00Z",
+        },
+      },
+    };
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirm);
+    const view = render(
+      <ScreenshotsPage
+        facet={screenshots}
+        screenshotConfig={{ Screens: 4, ToneMap: false }}
+        updateScreenshotConfigValue={vi.fn()}
+        loadSettings={vi.fn()}
+        settingsLoading={false}
+        settingsDirty={false}
+        settingsSaved=""
+        settingsError=""
+        applyScreenshotSettings={vi.fn()}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+      />,
+    );
+    const page = within(view.container);
+
+    const gallery = page.getByRole("heading", { name: "Generated Screenshots" }).closest("section");
+    if (!gallery) throw new Error("generated screenshot gallery missing");
+    expect(within(gallery).getByAltText("Screenshot 1")).toHaveAttribute(
+      "src",
+      expect.stringContaining("artifactId=artifact-1"),
+    );
+    fireEvent.click(within(gallery).getByRole("button", { name: "Unselect" }));
+    expect(screenshots.selectArtifact).toHaveBeenCalledWith("artifact-1", false);
+    fireEvent.click(within(gallery).getByRole("button", { name: "Delete" }));
+    expect(screenshots.deleteArtifacts).toHaveBeenCalledWith(["artifact-1"]);
+    fireEvent.click(within(gallery).getByRole("button", { name: "Delete all" }));
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(screenshots.deleteArtifacts).toHaveBeenLastCalledWith(["artifact-1"]);
+
+    const captureActions = page
+      .getByRole("button", { name: "Generate screenshots" })
+      .closest("section");
+    const frameDetails = page.getByText("Frame Selection · 1 frame").closest("details");
+    expect(captureActions?.compareDocumentPosition(frameDetails as Node)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(frameDetails).not.toHaveAttribute("open");
+    vi.unstubAllGlobals();
   });
 });

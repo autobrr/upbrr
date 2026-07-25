@@ -740,3 +740,21 @@ func filterEmpty(values []string) []string {
 	}
 	return out
 }
+
+func prepareDescription(ctx context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {
+	select {
+	case <-ctx.Done():
+		return trackers.DescriptionResult{}, fmt.Errorf("context canceled: %w", ctx.Err())
+	default:
+	}
+
+	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
+	if err != nil {
+		assets = trackers.DescriptionAssets{}
+	}
+	description := buildDescription(ctx, req.Meta, req.Runtime.DescriptionConfig(), assets, req.TrackerConfig.CustomLayout)
+	return trackers.DescriptionResult{
+		Group:       "asc",
+		Description: strings.TrimSpace(description),
+	}, nil
+}

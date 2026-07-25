@@ -67,13 +67,7 @@ func (s *Service) prepareUploadContent(
 		return failedPreparedUploadContent(tracker, mode, err)
 	}
 	if resolution.blocking {
-		message := strings.TrimSpace(resolution.feedback.Message)
-		if message == "" {
-			message = "image-host requirements could not be met"
-		}
-		failed := failedPreparedUploadContent(tracker, mode, errors.New(message))
-		failed.ImageHost = blockedPreparationImageHostFeedback(resolution.feedback)
-		return failed
+		return unavailableImageHostPreparedUploadContent(tracker, mode, resolution.feedback)
 	}
 
 	var assets DescriptionAssets
@@ -110,6 +104,21 @@ func failedPreparedUploadContent(tracker string, mode UploadContentMode, err err
 			Message: message,
 		},
 	}
+}
+
+func unavailableImageHostPreparedUploadContent(
+	tracker string,
+	mode UploadContentMode,
+	feedback api.ImageHostFeedback,
+) preparedUploadContent {
+	message := strings.TrimSpace(feedback.Message)
+	if message == "" {
+		message = "image-host requirements could not be met"
+	}
+	failed := failedPreparedUploadContent(tracker, mode, errors.New(message))
+	failed.Failure.Code = api.TrackerContentFailureImageHostUnavailable
+	failed.ImageHost = blockedPreparationImageHostFeedback(feedback)
+	return failed
 }
 
 func resolveScreenshotAssets(

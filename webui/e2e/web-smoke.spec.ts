@@ -38,6 +38,62 @@ test("embedded web boots with dev auth, navigates core pages, and reports invali
   }
 });
 
+test("embedded settings generates and revokes a persistent API token", async ({ page }) => {
+  const workspace = await createE2EWorkspace();
+  let app: AppServer | undefined;
+  try {
+    app = await startApp(workspace);
+    await page.goto(app.url);
+    await page.getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("button", { name: "API Tokens" }).click();
+    await expect(page.getByRole("heading", { name: "Generate API token" })).toBeVisible();
+
+    await page.getByLabel("Name").fill("WebUI automation");
+    await page.getByLabel("Owner").fill("webui-owner");
+    await page.getByRole("button", { name: "Generate token" }).click();
+    const generatedInput = page.getByLabel("Generated API token");
+    await expect(generatedInput).toBeVisible();
+    const apiToken = await generatedInput.inputValue();
+    expect(apiToken.length > 24).toBe(true);
+
+    const authorized = await page.request.post(
+      new URL("api/v1/continuations", app.url).toString(),
+      {
+        headers: {
+          Authorization: `Bearer ${apiToken}`,
+          "Content-Type": "application/json",
+          "Idempotency-Key": "webui-created-token",
+        },
+        data: {
+          goal: "prepared",
+          intent: { factInstructions: {} },
+        },
+      },
+    );
+    expect(authorized.status()).toBe(200);
+
+    await page.getByRole("button", { name: "Revoke", exact: true }).click();
+    await page.getByRole("button", { name: "Revoke token" }).click();
+    await expect(page.getByText("Revoked", { exact: true })).toBeVisible();
+
+    const revoked = await page.request.post(new URL("api/v1/continuations", app.url).toString(), {
+      headers: {
+        Authorization: `Bearer ${apiToken}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": "webui-revoked-token",
+      },
+      data: {
+        goal: "prepared",
+        intent: { factInstructions: {} },
+      },
+    });
+    expect(revoked.status()).toBe(401);
+  } finally {
+    await app?.stop();
+    await workspace.cleanup();
+  }
+});
+
 test("embedded tracker settings use the catalog for entries, reset, and unsupported config", async ({
   page,
 }) => {

@@ -8,12 +8,10 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -21,7 +19,6 @@ import (
 	"github.com/autobrr/upbrr/internal/logging"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/preparedrelease"
-	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -33,10 +30,6 @@ type mediaRepository interface {
 	SaveTrackerMetadata(ctx context.Context, metadata api.TrackerMetadata) error
 	ListUploadedImagesByPath(ctx context.Context, path string) ([]api.UploadedImageLink, error)
 	DeleteUploadedImage(ctx context.Context, path string, imagePath string, host string) error
-}
-
-type mediaFilesystemService interface {
-	ValidatePaths(ctx context.Context, paths []string) ([]string, error)
 }
 
 type mediaScreenshotService interface {
@@ -75,8 +68,6 @@ type mediaImageHostingService interface {
 type mediaModule struct {
 	cfg           config.Config
 	logger        api.Logger
-	filesystem    mediaFilesystemService
-	screenshots   mediaScreenshotService
 	dvdMenus      mediaDVDMenuService
 	images        mediaImageHostingService
 	repo          mediaRepository
@@ -95,8 +86,6 @@ func newMediaModule(
 	return &mediaModule{
 		cfg:           cfg,
 		logger:        logger,
-		filesystem:    services.Filesystem,
-		screenshots:   services.Screenshots,
 		dvdMenus:      services.DVDMenus,
 		images:        services.Images,
 		repo:          repo,
@@ -129,332 +118,108 @@ func (m *mediaModule) dvdMenuCapability(ctx context.Context) (api.DVDMenuEngineI
 	return wrapCoreResult(m.dvdMenus.Capability(ctx))
 }
 
-func (m *mediaModule) captureAcceptedDVDMenus(ctx context.Context, input api.MediaPlanInput) (api.DVDMenuCaptureResult, error) {
-	if m.dvdMenus == nil {
-		return api.DVDMenuCaptureResult{}, errors.New("core: DVD menu service not configured")
-	}
-	if m.preparedFacts == nil {
-		return api.DVDMenuCaptureResult{}, errors.New("core: canonical preparation is not configured")
-	}
-	subject, err := m.preparedFacts.ResolveDVDMenuSubject(ctx, input)
-	if err != nil {
-		return api.DVDMenuCaptureResult{}, fmt.Errorf("core: resolve DVD menu capture subject: %w", err)
-	}
-	return wrapCoreResult(m.dvdMenus.Capture(ctx, subject, m.cfg.ScreenshotHandling.ResolvedMaxMenuItems()))
+type menuImageContent struct {
+	contentType string
+	bytes       []byte
 }
 
-func (m *mediaModule) listAcceptedDVDMenuScreenshots(ctx context.Context, input api.MediaPlanInput) ([]api.ScreenshotImage, error) {
-	if m.dvdMenus == nil {
-		return nil, errors.New("core: DVD menu service not configured")
-	}
-	if m.preparedFacts == nil {
-		return nil, errors.New("core: canonical preparation is not configured")
-	}
-	subject, err := m.preparedFacts.ResolveDVDMenuSubject(ctx, input)
-	if err != nil {
-		return nil, fmt.Errorf("core: resolve DVD menu list subject: %w", err)
-	}
-	return wrapCoreResult(m.dvdMenus.List(ctx, subject))
-}
-
-func (m *mediaModule) deleteAcceptedDVDMenuScreenshot(ctx context.Context, input api.MediaPlanInput, imagePath string) error {
-	if m.dvdMenus == nil {
-		return errors.New("core: DVD menu service not configured")
-	}
-	if m.preparedFacts == nil {
-		return errors.New("core: canonical preparation is not configured")
-	}
-	if strings.TrimSpace(imagePath) == "" {
-		return internalerrors.ErrInvalidInput
-	}
-	subject, err := m.preparedFacts.ResolveDVDMenuSubject(ctx, input)
-	if err != nil {
-		return fmt.Errorf("core: resolve DVD menu deletion subject: %w", err)
-	}
-	return wrapCoreError(m.dvdMenus.Delete(ctx, subject, imagePath))
-}
-
-func (m *mediaModule) fetchAcceptedScreenshotPlan(ctx context.Context, input api.MediaPlanInput) (api.ScreenshotPlan, error) {
-	if m.screenshots == nil {
-		return api.ScreenshotPlan{}, errors.New("core: screenshots service not configured")
-	}
-	if m.preparedFacts == nil {
-		return api.ScreenshotPlan{}, errors.New("core: canonical preparation is not configured")
-	}
-	if input.Count <= 0 {
-		input.Count = m.cfg.ScreenshotHandling.Screens
-	}
-	subject, err := m.preparedFacts.ResolveScreenshotSubject(ctx, input)
-	if err != nil {
-		return api.ScreenshotPlan{}, fmt.Errorf("core: resolve screenshot plan subject: %w", err)
-	}
-	return wrapCoreResult(m.screenshots.Plan(ctx, subject, input.Count))
-}
-
-func (m *mediaModule) generateAcceptedScreenshots(
+// importAcceptedMenuImageContents persists browser/API-uploaded image bytes in
+// managed release storage and returns private image identities for workflow use.
+func (m *mediaModule) importAcceptedMenuImageContents(
 	ctx context.Context,
 	input api.MediaPlanInput,
-	selections []api.ScreenshotSelection,
-) (api.ScreenshotResult, error) {
-	if m.screenshots == nil {
-		return api.ScreenshotResult{}, errors.New("core: screenshots service not configured")
+	contents []menuImageContent,
+) (api.DVDMenuSubject, []api.ScreenshotImage, error) {
+	if len(contents) == 0 {
+		return api.DVDMenuSubject{}, nil, nil
 	}
-	if m.preparedFacts == nil {
-		return api.ScreenshotResult{}, errors.New("core: canonical preparation is not configured")
-	}
-	if len(selections) == 0 {
-		return api.ScreenshotResult{}, internalerrors.ErrInvalidInput
-	}
-	subject, err := m.preparedFacts.ResolveScreenshotSubject(ctx, input)
-	if err != nil {
-		return api.ScreenshotResult{}, fmt.Errorf("core: resolve screenshot capture subject: %w", err)
-	}
-	return wrapCoreResult(m.screenshots.Capture(ctx, subject, selections, input.Purpose))
-}
-
-func (m *mediaModule) previewAcceptedScreenshotFrame(
-	ctx context.Context,
-	input api.MediaPlanInput,
-	timestampSeconds float64,
-) (api.ScreenshotPreview, error) {
-	if m.screenshots == nil {
-		return api.ScreenshotPreview{}, errors.New("core: screenshots service not configured")
-	}
-	if m.preparedFacts == nil {
-		return api.ScreenshotPreview{}, errors.New("core: canonical preparation is not configured")
-	}
-	subject, err := m.preparedFacts.ResolveScreenshotSubject(ctx, input)
-	if err != nil {
-		return api.ScreenshotPreview{}, fmt.Errorf("core: resolve screenshot preview subject: %w", err)
-	}
-	return wrapCoreResult(m.screenshots.PreviewFrame(ctx, subject, timestampSeconds))
-}
-
-func (m *mediaModule) deleteAcceptedScreenshot(ctx context.Context, input api.MediaPlanInput, imagePath string) error {
-	if m.screenshots == nil {
-		return errors.New("core: screenshots service not configured")
-	}
-	if m.preparedFacts == nil {
-		return errors.New("core: canonical preparation is not configured")
-	}
-	if strings.TrimSpace(imagePath) == "" {
-		return internalerrors.ErrInvalidInput
-	}
-	subject, err := m.preparedFacts.ResolveScreenshotSubject(ctx, input)
-	if err != nil {
-		return fmt.Errorf("core: resolve screenshot deletion subject: %w", err)
-	}
-	return wrapCoreError(m.screenshots.Delete(ctx, subject, imagePath))
-}
-
-func (m *mediaModule) deleteAcceptedTrackerImageURL(ctx context.Context, input api.ImageHostingInput, rawURL string) error {
-	if m.repo == nil {
-		return errors.New("core: repository not configured")
-	}
-	if m.preparedFacts == nil {
-		return errors.New("core: canonical preparation is not configured")
-	}
-	trimmedURL := strings.TrimSpace(rawURL)
-	if trimmedURL == "" {
-		return internalerrors.ErrInvalidInput
-	}
-	subject, err := m.preparedFacts.ResolveImageHostingSubject(ctx, input)
-	if err != nil {
-		return fmt.Errorf("core: resolve tracker image deletion subject: %w", err)
-	}
-	return m.deleteTrackerImageURLForSource(ctx, subject.SourcePath, trimmedURL)
-}
-
-func (m *mediaModule) deleteTrackerImageURLForSource(ctx context.Context, sourcePath string, trimmedURL string) error {
-	records, err := m.repo.ListTrackerMetadataByPath(ctx, sourcePath)
-	if err != nil {
-		return fmt.Errorf("core: tracker metadata lookup: %w", err)
-	}
-
-	for _, record := range records {
-		if len(record.ImageURLs) == 0 {
-			continue
-		}
-		filtered := make([]string, 0, len(record.ImageURLs))
-		removed := false
-		for _, value := range record.ImageURLs {
-			if strings.TrimSpace(value) == trimmedURL {
-				removed = true
-				continue
-			}
-			filtered = append(filtered, value)
-		}
-		if !removed {
-			continue
-		}
-		record.ImageURLs = filtered
-		if strings.TrimSpace(record.SourcePath) == "" {
-			record.SourcePath = sourcePath
-		}
-		if err := m.repo.SaveTrackerMetadata(ctx, record); err != nil {
-			return fmt.Errorf("core: save tracker metadata: %w", err)
-		}
-	}
-
-	return nil
-}
-
-func (m *mediaModule) saveAcceptedFinalScreenshotSelections(ctx context.Context, input api.MediaPlanInput, images []api.ScreenshotImage) error {
-	if m.screenshots == nil {
-		return errors.New("core: screenshots service not configured")
-	}
-	if m.preparedFacts == nil {
-		return errors.New("core: canonical preparation is not configured")
-	}
-	subject, err := m.preparedFacts.ResolveScreenshotSubject(ctx, input)
-	if err != nil {
-		return fmt.Errorf("core: resolve final screenshot selection subject: %w", err)
-	}
-	return wrapCoreError(m.screenshots.SaveFinalSelections(ctx, subject, images))
-}
-
-// importAcceptedMenuImages copies supported host-filesystem images into one
-// exact prepared release's managed temp directory. Content-addressed names
-// deduplicate imports, and DB records/selections are appended atomically.
-func (m *mediaModule) importAcceptedMenuImages(ctx context.Context, input api.MediaPlanInput, importPaths []string) error {
-	if len(importPaths) == 0 {
-		return nil
-	}
-	if m.preparedFacts == nil {
-		return errors.New("core: canonical preparation is not configured")
+	if m.preparedFacts == nil || m.repo == nil {
+		return api.DVDMenuSubject{}, nil, errors.New("core: menu image import is unavailable")
 	}
 	subject, err := m.preparedFacts.ResolveDVDMenuSubject(ctx, input)
 	if err != nil {
-		return fmt.Errorf("core: resolve menu image import subject: %w", err)
+		return api.DVDMenuSubject{}, nil, fmt.Errorf("core: resolve staged menu image subject: %w", err)
 	}
-	return m.importMenuImagesForSource(ctx, subject.SourcePath, importPaths)
-}
-
-func (m *mediaModule) importMenuImagesForSource(ctx context.Context, sourcePath string, importPaths []string) error {
-	var expandedPaths []string
-	for _, p := range importPaths {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		info, err := os.Stat(p)
-		if err != nil {
-			return fmt.Errorf("stat menu path %s: %w", p, err)
-		}
-		if info.IsDir() {
-			entries, err := os.ReadDir(p)
-			if err != nil {
-				return fmt.Errorf("read menu dir %s: %w", p, err)
-			}
-			for _, entry := range entries {
-				if !entry.IsDir() {
-					ext := strings.ToLower(filepath.Ext(entry.Name()))
-					if isMenuImageExtension(ext) {
-						expandedPaths = append(expandedPaths, filepath.Join(p, entry.Name()))
-					}
-				}
-			}
-		} else {
-			ext := strings.ToLower(filepath.Ext(p))
-			if isMenuImageExtension(ext) {
-				expandedPaths = append(expandedPaths, p)
-			}
-		}
-	}
-
 	tmpRoot, err := db.Subdir(m.cfg.MainSettings.DBPath, "tmp")
 	if err != nil {
-		return fmt.Errorf("core: resolve tmp root: %w", err)
+		return api.DVDMenuSubject{}, nil, fmt.Errorf("core: resolve tmp root: %w", err)
 	}
-
-	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, sourcePath, api.ReleaseInfo{})
+	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, subject.SourcePath, api.ReleaseInfo{})
 	if err != nil {
-		return fmt.Errorf("core: create release tmp dir: %w", err)
+		return api.DVDMenuSubject{}, nil, fmt.Errorf("core: create release tmp dir: %w", err)
 	}
-
-	if len(expandedPaths) == 0 {
-		return nil
-	}
-
 	now := time.Now().UTC()
-	records := make([]api.Screenshot, 0, len(expandedPaths))
-	selections := make([]api.ScreenshotFinalSelection, 0, len(expandedPaths))
-	created := make([]string, 0, len(expandedPaths))
-	seen := make(map[string]struct{}, len(expandedPaths))
-	for _, sourceImage := range expandedPaths {
-		destPath, wasCreated, err := copyManagedMenuImage(tmpDir, sourceImage)
-		if err != nil {
+	images := make([]api.ScreenshotImage, 0, len(contents))
+	records := make([]api.Screenshot, 0, len(contents))
+	selections := make([]api.ScreenshotFinalSelection, 0, len(contents))
+	created := make([]string, 0, len(contents))
+	seen := make(map[string]struct{}, len(contents))
+	for _, content := range contents {
+		if err := ctx.Err(); err != nil {
 			removeMenuImportFiles(created)
-			return err
+			return api.DVDMenuSubject{}, nil, fmt.Errorf("core: stage menu image canceled: %w", err)
 		}
-		if _, exists := seen[destPath]; exists {
+		extension, extensionErr := stagedMenuImageExtension(content.contentType)
+		if extensionErr != nil || len(content.bytes) == 0 {
+			removeMenuImportFiles(created)
+			return api.DVDMenuSubject{}, nil, internalerrors.ErrInvalidInput
+		}
+		destPath, wasCreated, writeErr := writeManagedMenuImage(tmpDir, content.bytes, extension)
+		if writeErr != nil {
+			removeMenuImportFiles(created)
+			return api.DVDMenuSubject{}, nil, writeErr
+		}
+		if _, duplicate := seen[destPath]; duplicate {
 			continue
 		}
 		seen[destPath] = struct{}{}
 		if wasCreated {
 			created = append(created, destPath)
 		}
+		image := api.ScreenshotImage{
+			Index:     len(images),
+			Path:      destPath,
+			Purpose:   api.ScreenshotPurposeMenu,
+			SizeBytes: int64(len(content.bytes)),
+		}
+		images = append(images, image)
 		records = append(records, api.Screenshot{
-			SourcePath: sourcePath,
+			SourcePath: subject.SourcePath,
 			ImagePath:  destPath,
 			Purpose:    api.ScreenshotPurposeMenu,
 			CapturedAt: now,
 		})
 		selections = append(selections, api.ScreenshotFinalSelection{
-			SourcePath: sourcePath,
+			SourcePath: subject.SourcePath,
 			ImagePath:  destPath,
 			Order:      len(selections),
 			Source:     api.ScreenshotSelectionSourceMenu,
 			SelectedAt: now,
 		})
 	}
-	if err := m.repo.AppendManualMenuScreenshots(ctx, sourcePath, records, selections); err != nil {
+	if err := m.repo.AppendManualMenuScreenshots(ctx, subject.SourcePath, records, selections); err != nil {
 		removeMenuImportFiles(created)
-		return fmt.Errorf("core: save menu selections: %w", err)
+		return api.DVDMenuSubject{}, nil, fmt.Errorf("core: save staged menu selections: %w", err)
 	}
-	return nil
+	return subject, images, nil
 }
 
-func isMenuImageExtension(extension string) bool {
-	switch strings.ToLower(strings.TrimSpace(extension)) {
-	case ".png", ".jpg", ".jpeg", ".webp":
-		return true
+func stagedMenuImageExtension(contentType string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0])) {
+	case "image/png":
+		return ".png", nil
+	case "image/jpeg":
+		return ".jpg", nil
+	case "image/webp":
+		return ".webp", nil
 	default:
-		return false
+		return "", internalerrors.ErrInvalidInput
 	}
 }
 
-// copyManagedMenuImage stages one import and assigns a content-addressed managed
-// name. The boolean result reports whether this call created the destination.
-func copyManagedMenuImage(tmpDir string, sourcePath string) (string, bool, error) {
-	source, err := os.Open(sourcePath)
-	if err != nil {
-		return "", false, fmt.Errorf("core: open menu image: %w", err)
-	}
-	defer source.Close()
-
-	staged, err := os.CreateTemp(tmpDir, ".manual-dvd-menu-*.partial")
-	if err != nil {
-		return "", false, fmt.Errorf("core: stage menu image: %w", err)
-	}
-	stagedPath := staged.Name()
-	cleanupStaged := true
-	defer func() {
-		if cleanupStaged {
-			_ = os.Remove(stagedPath)
-		}
-	}()
-
-	hash := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(staged, hash), source); err != nil {
-		_ = staged.Close()
-		return "", false, fmt.Errorf("core: copy menu image: %w", err)
-	}
-	if err := staged.Close(); err != nil {
-		return "", false, fmt.Errorf("core: close staged menu image: %w", err)
-	}
-	extension := strings.ToLower(filepath.Ext(sourcePath))
-	destPath := filepath.Join(tmpDir, fmt.Sprintf("manual-dvd-menu-%x%s", hash.Sum(nil)[:8], extension))
+func writeManagedMenuImage(tmpDir string, data []byte, extension string) (string, bool, error) {
+	sum := sha256.Sum256(data)
+	destPath := filepath.Join(tmpDir, fmt.Sprintf("manual-dvd-menu-%x%s", sum[:8], extension))
 	if info, err := os.Stat(destPath); err == nil {
 		if info.IsDir() {
 			return "", false, internalerrors.ErrInvalidInput
@@ -463,13 +228,31 @@ func copyManagedMenuImage(tmpDir string, sourcePath string) (string, bool, error
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", false, fmt.Errorf("core: inspect managed menu image: %w", err)
 	}
+	staged, err := os.CreateTemp(tmpDir, ".manual-dvd-menu-*.partial")
+	if err != nil {
+		return "", false, fmt.Errorf("core: stage menu image: %w", err)
+	}
+	stagedPath := staged.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(stagedPath)
+		}
+	}()
+	if _, err := staged.Write(data); err != nil {
+		_ = staged.Close()
+		return "", false, fmt.Errorf("core: write staged menu image: %w", err)
+	}
+	if err := staged.Close(); err != nil {
+		return "", false, fmt.Errorf("core: close staged menu image: %w", err)
+	}
 	if err := os.Rename(stagedPath, destPath); err != nil {
 		if info, statErr := os.Stat(destPath); statErr == nil && !info.IsDir() {
 			return destPath, false, nil
 		}
-		return "", false, fmt.Errorf("core: finalize menu image: %w", err)
+		return "", false, fmt.Errorf("core: finalize staged menu image: %w", err)
 	}
-	cleanupStaged = false
+	cleanup = false
 	return destPath, true, nil
 }
 
@@ -477,36 +260,6 @@ func removeMenuImportFiles(paths []string) {
 	for _, pathValue := range paths {
 		_ = os.Remove(pathValue)
 	}
-}
-
-// listAcceptedUploadCandidates returns persisted normal and disc-menu images
-// eligible for image-host upload for one exact prepared generation.
-func (m *mediaModule) listAcceptedUploadCandidates(ctx context.Context, input api.ImageHostingInput) ([]api.ScreenshotImage, error) {
-	if m.images == nil {
-		return nil, errors.New("core: image hosting service not configured")
-	}
-	if m.preparedFacts == nil {
-		return nil, errors.New("core: canonical preparation is not configured")
-	}
-	subject, err := m.preparedFacts.ResolveImageHostingSubject(ctx, input)
-	if err != nil {
-		return nil, fmt.Errorf("core: resolve image upload candidate subject: %w", err)
-	}
-	return wrapCoreResult(m.images.ListCandidates(ctx, subject))
-}
-
-func (m *mediaModule) listAcceptedUploadedImages(ctx context.Context, input api.ImageHostingInput) ([]api.UploadedImageLink, error) {
-	if m.repo == nil {
-		return nil, errors.New("core: repository not configured")
-	}
-	if m.preparedFacts == nil {
-		return nil, errors.New("core: canonical preparation is not configured")
-	}
-	subject, err := m.preparedFacts.ResolveImageHostingSubject(ctx, input)
-	if err != nil {
-		return nil, fmt.Errorf("core: resolve uploaded image list subject: %w", err)
-	}
-	return wrapCoreResult(m.repo.ListUploadedImagesByPath(ctx, subject.SourcePath))
 }
 
 // uploadAcceptedImages uploads selected images to the requested global host
@@ -527,35 +280,46 @@ func (m *mediaModule) uploadAcceptedImages(
 	if len(images) == 0 {
 		return api.UploadImagesResult{}, internalerrors.ErrInvalidInput
 	}
-	subject, err := m.preparedFacts.ResolveUploadSubject(ctx, api.UploadReviewInput{
+	subject, err := m.preparedFacts.ResolveUploadSubject(ctx, api.UploadSubjectInput{
 		Release:  input.Release,
 		Trackers: append([]string(nil), input.Trackers...),
 	})
 	if err != nil {
 		return api.UploadImagesResult{}, fmt.Errorf("core: resolve image upload subject: %w", err)
 	}
-	targets, err := m.resolveImageUploadTargets(input.Trackers, subject, input.Host)
+	targets, err := m.resolveImageUploadTargets(input.Trackers, subject, input.Host, input.ExcludedHosts)
 	if err != nil {
 		return api.UploadImagesResult{}, err
 	}
-	return m.uploadImagesToTargetsWithFallback(ctx, subject, input.Host, targets, images)
+	return m.uploadImagesToTargetsWithFallback(ctx, subject, input.Host, input.ExcludedHosts, targets, images)
 }
 
-func (m *mediaModule) resolveImageUploadTargets(trackerNames []string, subject api.UploadSubject, host string) ([]trackers.ImageUploadTarget, error) {
+func (m *mediaModule) resolveImageUploadTargets(
+	trackerNames []string,
+	subject api.UploadSubject,
+	host string,
+	excludedHosts []string,
+) ([]trackers.ImageUploadTarget, error) {
 	normalizedHost := strings.ToLower(strings.TrimSpace(host))
-	if normalizedHost == "" {
-		return nil, internalerrors.ErrInvalidInput
-	}
 
-	trackerCfg := m.cfg
-	trackerCfg.Trackers.DefaultTrackers = nil
-	resolvedTrackers := trackers.ResolveTrackersWithRegistry(trackerCfg, trackerNames, subject.TrackersRemove, m.logger, m.registry)
-	resolvedTrackers = m.filterImageUploadTrackers(resolvedTrackers, subject)
-	targets, err := trackers.NeededImageUploadTargetsForMetadataWithRegistry(m.registry, m.cfg, resolvedTrackers, normalizedHost, subject)
+	// The workflow already supplied its exact downstream-eligible projection set.
+	// Do not reapply legacy prepared-subject removals or client matches here.
+	resolvedTrackers := trackers.ResolveExplicitTrackersWithRegistry(trackerNames, m.logger, m.registry)
+	targets, err := trackers.NeededImageUploadTargetsForMetadataExcludingWithRegistry(
+		m.registry,
+		m.cfg,
+		resolvedTrackers,
+		normalizedHost,
+		excludedHosts,
+		subject,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("core: %w", err)
 	}
 	if len(targets) == 0 {
+		if normalizedHost == "" {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("core: image host %q is tracker-scoped but no active tracker can use it", normalizedHost)
 	}
 	normalized := make([]trackers.ImageUploadTarget, 0, len(targets))
@@ -575,82 +339,6 @@ func (m *mediaModule) resolveImageUploadTargets(trackerNames []string, subject a
 	return normalized, nil
 }
 
-// filterImageUploadTrackers returns canonical tracker names that can receive
-// tracker-scoped image uploads, excluding unconditional policy blocks and existing matches.
-func (m *mediaModule) filterImageUploadTrackers(trackerNames []string, meta api.UploadSubject) []string {
-	filtered := make([]string, 0, len(trackerNames))
-	for _, tracker := range trackerNames {
-		name := strings.ToUpper(strings.TrimSpace(tracker))
-		if name == "" {
-			continue
-		}
-		blockedReasons := blockedReasonsForTracker(meta.BlockedTrackers, name)
-		existingMatch := matchedTrackerForUpload(meta.MatchedTrackers, name)
-		if len(blockedReasons) > 0 || existingMatch {
-			if m.logger != nil {
-				m.logger.Debugf(
-					"core: excluding blocked image upload tracker tracker=%s blocked_reasons=%v rule_failures=%d existing_match=%t",
-					name,
-					blockedReasons,
-					len(ruleFailuresForTracker(meta.TrackerRuleFailures, name)),
-					existingMatch,
-				)
-			}
-			continue
-		}
-		filtered = append(filtered, name)
-	}
-	return filtered
-}
-
-func matchedTrackerForUpload(matchedTrackers []string, tracker string) bool {
-	if len(matchedTrackers) == 0 {
-		return false
-	}
-	name := strings.ToUpper(strings.TrimSpace(tracker))
-	if name == "" {
-		return false
-	}
-	for _, matched := range matchedTrackers {
-		if strings.EqualFold(strings.TrimSpace(matched), name) {
-			return true
-		}
-	}
-	return false
-}
-
-func blockedReasonsForTracker(blocked map[string][]api.TrackerBlockReason, tracker string) []api.TrackerBlockReason {
-	if len(blocked) == 0 {
-		return nil
-	}
-	name := strings.ToUpper(strings.TrimSpace(tracker))
-	if reasons, ok := blocked[name]; ok {
-		return reasons
-	}
-	for key, reasons := range blocked {
-		if strings.EqualFold(strings.TrimSpace(key), name) {
-			return reasons
-		}
-	}
-	return nil
-}
-
-func ruleFailuresForTracker(failures map[string][]api.RuleFailure, tracker string) []api.RuleFailure {
-	if len(failures) == 0 {
-		return nil
-	}
-	name := strings.ToUpper(strings.TrimSpace(tracker))
-	if trackerFailures, ok := failures[name]; ok {
-		return trackerFailures
-	}
-	for key, trackerFailures := range failures {
-		if strings.EqualFold(strings.TrimSpace(key), name) {
-			return trackerFailures
-		}
-	}
-	return nil
-}
-
 func (m *mediaModule) resolveFallbackImageUploadTargets(
 	host string,
 	trackerNames []string,
@@ -658,7 +346,7 @@ func (m *mediaModule) resolveFallbackImageUploadTargets(
 	meta api.UploadSubject,
 ) ([]trackers.ImageUploadTarget, error) {
 	normalizedHost := strings.ToLower(strings.TrimSpace(host))
-	if normalizedHost == "" || len(trackerNames) == 0 {
+	if len(trackerNames) == 0 {
 		return nil, nil
 	}
 	targets, err := trackers.NeededImageUploadTargetsForMetadataExcludingWithRegistry(m.registry, m.cfg, trackerNames, normalizedHost, excludedHosts, meta)
@@ -680,131 +368,180 @@ func (m *mediaModule) uploadImagesToTargetsWithFallback(
 	ctx context.Context,
 	meta api.UploadSubject,
 	host string,
+	excludedHosts []string,
 	targets []trackers.ImageUploadTarget,
 	images []api.ScreenshotImage,
 ) (api.UploadImagesResult, error) {
-	allLinks := make([]api.UploadedImageLink, 0, len(images)*len(targets))
-	failedHosts := make(map[string]struct{}, len(targets))
-	currentTargets := targets
-	fallbackAttempt := false
-	var failures []api.UploadImageHostFailure
+	type scheduledAttempt struct {
+		target   trackers.ImageUploadTarget
+		fallback bool
+		links    []api.UploadedImageLink
+		err      error
+		done     bool
+	}
+	type completedAttempt struct {
+		index int
+		links []api.UploadedImageLink
+		err   error
+	}
 
-	for len(currentTargets) > 0 {
-		result := m.uploadImagesToTargets(ctx, meta, currentTargets, images, fallbackAttempt)
-		allLinks = append(allLinks, result.Links...)
-		if len(result.Failures) == 0 {
-			return api.UploadImagesResult{Links: allLinks}, nil
+	attempts := make([]*scheduledAttempt, 0, len(targets))
+	attemptByTarget := make(map[string]*scheduledAttempt, len(targets))
+	failedHosts := make(map[string]struct{}, len(targets)+len(excludedHosts))
+	for _, excludedHost := range excludedHosts {
+		if normalized := strings.ToLower(strings.TrimSpace(excludedHost)); normalized != "" {
+			failedHosts[normalized] = struct{}{}
 		}
+	}
+	coveredTrackers := make(map[string]struct{})
+	results := make(chan completedAttempt)
+	pending := 0
 
-		failures = result.Failures
-		for _, failure := range result.Failures {
-			host := strings.ToLower(strings.TrimSpace(failure.Host))
-			if host != "" {
-				failedHosts[host] = struct{}{}
+	targetKey := func(target trackers.ImageUploadTarget) string {
+		return strings.ToLower(strings.TrimSpace(target.Host)) + "\x00" + normalizeImageUploadUsageScope(target.UsageScope)
+	}
+	markCovered := func(target trackers.ImageUploadTarget) {
+		for _, tracker := range target.Trackers {
+			name := strings.ToUpper(strings.TrimSpace(tracker))
+			if name != "" {
+				coveredTrackers[name] = struct{}{}
 			}
 		}
-
-		blockedTrackers := uploadFailureTrackers(failures)
-		fallbackTargets, err := m.resolveFallbackImageUploadTargets(host, blockedTrackers, sortedMapKeys(failedHosts), meta)
-		if err != nil {
-			return api.UploadImagesResult{}, err
-		}
-
-		var recoveredTrackers []string
-		nextTargets := make([]trackers.ImageUploadTarget, 0, len(fallbackTargets))
-		for _, target := range fallbackTargets {
-			if uploadedLinksCoverTarget(allLinks, target, len(images)) {
-				recoveredTrackers = append(recoveredTrackers, target.Trackers...)
-				continue
-			}
-			nextTargets = append(nextTargets, target)
-		}
-		failures = filterUploadFailuresForRecoveredTrackers(failures, recoveredTrackers)
-		if len(nextTargets) == 0 {
-			if len(failures) == 0 {
-				return api.UploadImagesResult{Links: allLinks}, nil
-			}
-			return api.UploadImagesResult{Links: allLinks, Failures: failures}, nil
-		}
-
-		m.logger.Warnf(
-			"core: retrying image uploads after host failures failed_hosts=%s fallback_hosts=%s trackers=%v",
-			strings.Join(sortedMapKeys(failedHosts), ","),
-			strings.Join(uploadTargetHosts(nextTargets), ","),
-			uploadTargetTrackers(nextTargets),
-		)
-		currentTargets = nextTargets
-		fallbackAttempt = true
 	}
-
-	return api.UploadImagesResult{Links: allLinks, Failures: failures}, nil
-}
-
-func uploadFailureTrackers(failures []api.UploadImageHostFailure) []string {
-	trackersList := make([]string, 0)
-	for _, failure := range failures {
-		for _, tracker := range failure.Trackers {
-			trackersList = appendUniqueNormalizedTracker(trackersList, tracker)
-		}
-	}
-	return trackersList
-}
-
-func filterUploadFailuresForRecoveredTrackers(failures []api.UploadImageHostFailure, recoveredTrackers []string) []api.UploadImageHostFailure {
-	if len(failures) == 0 || len(recoveredTrackers) == 0 {
-		return failures
-	}
-	recovered := make(map[string]struct{}, len(recoveredTrackers))
-	for _, tracker := range recoveredTrackers {
-		name := strings.ToUpper(strings.TrimSpace(tracker))
-		if name != "" {
-			recovered[name] = struct{}{}
-		}
-	}
-
-	filtered := make([]api.UploadImageHostFailure, 0, len(failures))
-	for _, failure := range failures {
-		remainingTrackers := make([]string, 0, len(failure.Trackers))
-		for _, tracker := range failure.Trackers {
+	uncoveredTrackers := func(trackersList []string) []string {
+		result := make([]string, 0, len(trackersList))
+		for _, tracker := range trackersList {
 			name := strings.ToUpper(strings.TrimSpace(tracker))
 			if name == "" {
 				continue
 			}
-			if _, ok := recovered[name]; ok {
-				continue
+			if _, covered := coveredTrackers[name]; !covered {
+				result = appendUniqueNormalizedTracker(result, name)
 			}
-			remainingTrackers = appendUniqueNormalizedTracker(remainingTrackers, name)
 		}
-		if len(failure.Trackers) > 0 && len(remainingTrackers) == 0 {
-			continue
-		}
-		failure.Trackers = remainingTrackers
-		filtered = append(filtered, failure)
+		return result
 	}
-	return filtered
-}
+	launch := func(target trackers.ImageUploadTarget, fallback bool) bool {
+		target = normalizeImageUploadTarget(target)
+		if target.Host == "" || len(uncoveredTrackers(target.Trackers)) == 0 {
+			return false
+		}
+		key := targetKey(target)
+		if existing := attemptByTarget[key]; existing != nil {
+			for _, tracker := range target.Trackers {
+				existing.target.Trackers = appendUniqueNormalizedTracker(existing.target.Trackers, tracker)
+			}
+			if existing.done && existing.err == nil {
+				markCovered(existing.target)
+			}
+			return false
+		}
+		attempt := &scheduledAttempt{target: target, fallback: fallback}
+		index := len(attempts)
+		attempts = append(attempts, attempt)
+		attemptByTarget[key] = attempt
+		pending++
+		go func() {
+			links, err := m.uploadImagesToTarget(ctx, meta, target, images, fallback)
+			results <- completedAttempt{
+				index: index,
+				links: links,
+				err:   err,
+			}
+		}()
+		return true
+	}
 
-func uploadedLinksCoverTarget(links []api.UploadedImageLink, target trackers.ImageUploadTarget, expectedImages int) bool {
-	if expectedImages == 0 {
-		return false
+	for _, target := range targets {
+		launch(target, false)
 	}
-	host := strings.ToLower(strings.TrimSpace(target.Host))
-	scope := normalizeImageUploadUsageScope(target.UsageScope)
-	seenPaths := make(map[string]struct{}, expectedImages)
-	for _, link := range links {
-		if !strings.EqualFold(strings.TrimSpace(link.Host), host) {
+	var schedulerErr error
+	for pending > 0 {
+		completed := <-results
+		pending--
+		attempt := attempts[completed.index]
+		attempt.links = completed.links
+		attempt.err = completed.err
+		attempt.done = true
+		if completed.err == nil {
+			markCovered(attempt.target)
+		}
+		if completed.err == nil || schedulerErr != nil {
 			continue
 		}
-		if normalizeImageUploadUsageScope(link.UsageScope) != scope {
+		failedHost := strings.ToLower(strings.TrimSpace(attempt.target.Host))
+		if failedHost != "" {
+			failedHosts[failedHost] = struct{}{}
+		}
+		blockedTrackers := uncoveredTrackers(attempt.target.Trackers)
+		if len(blockedTrackers) == 0 {
 			continue
 		}
-		path := normalizedUploadImagePath(link.ImagePath)
-		if path == "" {
+		fallbackTargets, err := m.resolveFallbackImageUploadTargets(host, blockedTrackers, sortedMapKeys(failedHosts), meta)
+		if err != nil {
+			schedulerErr = err
 			continue
 		}
-		seenPaths[path] = struct{}{}
+		startedTargets := make([]trackers.ImageUploadTarget, 0, len(fallbackTargets))
+		for _, fallbackTarget := range fallbackTargets {
+			if launch(fallbackTarget, true) {
+				startedTargets = append(startedTargets, fallbackTarget)
+			}
+		}
+		if len(startedTargets) > 0 {
+			m.logger.Infof(
+				"core: starting image upload fallback failed_hosts=%s fallback_hosts=%s trackers=%v",
+				strings.Join(sortedMapKeys(failedHosts), ","),
+				strings.Join(uploadTargetHosts(startedTargets), ","),
+				uploadTargetTrackers(startedTargets),
+			)
+		}
 	}
-	return len(seenPaths) >= expectedImages
+	if schedulerErr != nil {
+		return api.UploadImagesResult{}, schedulerErr
+	}
+
+	allLinks := make([]api.UploadedImageLink, 0, len(images)*len(attempts))
+	failures := make([]api.UploadImageHostFailure, 0)
+	attemptResults := make([]api.UploadImageHostAttemptResult, 0, len(attempts))
+	for _, attempt := range attempts {
+		allLinks = append(allLinks, attempt.links...)
+		attemptResult := api.UploadImageHostAttemptResult{
+			Host:       attempt.target.Host,
+			UsageScope: attempt.target.UsageScope,
+			Trackers:   append([]string(nil), attempt.target.Trackers...),
+			Fallback:   attempt.fallback,
+			Links:      append([]api.UploadedImageLink(nil), attempt.links...),
+		}
+		if attempt.err == nil {
+			attemptResults = append(attemptResults, attemptResult)
+			continue
+		}
+		attemptFailure := api.UploadImageHostFailure{
+			Host:       attempt.target.Host,
+			UsageScope: attempt.target.UsageScope,
+			Trackers:   append([]string(nil), attempt.target.Trackers...),
+			Message:    logging.SanitizeMessage(uploadFailureMessage(attempt.err)),
+		}
+		attemptResult.Failure = &attemptFailure
+		attemptResults = append(attemptResults, attemptResult)
+		remainingTrackers := uncoveredTrackers(attempt.target.Trackers)
+		if len(attempt.target.Trackers) > 0 && len(remainingTrackers) == 0 {
+			continue
+		}
+		failures = append(failures, api.UploadImageHostFailure{
+			Host:       attempt.target.Host,
+			UsageScope: attempt.target.UsageScope,
+			Trackers:   remainingTrackers,
+			Message:    logging.SanitizeMessage(uploadFailureMessage(attempt.err)),
+		})
+	}
+	return api.UploadImagesResult{
+		Links:       allLinks,
+		Failures:    failures,
+		FailedHosts: sortedMapKeys(failedHosts),
+		Attempts:    attemptResults,
+	}, nil
 }
 
 func uploadTargetHosts(targets []trackers.ImageUploadTarget) []string {
@@ -846,88 +583,6 @@ func sortedMapKeys(values map[string]struct{}) []string {
 	}
 	slices.Sort(keys)
 	return keys
-}
-
-func (m *mediaModule) uploadImagesToTargets(
-	ctx context.Context,
-	meta api.UploadSubject,
-	targets []trackers.ImageUploadTarget,
-	images []api.ScreenshotImage,
-	fallback bool,
-) api.UploadImagesResult {
-	m.logger.Infof(
-		"core: image upload round started hosts=%d host_names=%s fallback=%t images=%d",
-		len(targets),
-		strings.Join(uploadTargetHosts(targets), ","),
-		fallback,
-		len(images),
-	)
-	type uploadResult struct {
-		index  int
-		target trackers.ImageUploadTarget
-		links  []api.UploadedImageLink
-		err    error
-	}
-
-	resultCh := make(chan uploadResult, len(targets))
-	var wg sync.WaitGroup
-	for idx, target := range targets {
-		wg.Add(1)
-		go func(idx int, target trackers.ImageUploadTarget) {
-			defer wg.Done()
-			uploaded, err := m.uploadImagesToTarget(ctx, meta, target, images, fallback)
-			resultCh <- uploadResult{
-				index:  idx,
-				target: normalizeImageUploadTarget(target),
-				links:  uploaded,
-				err:    err,
-			}
-		}(idx, target)
-	}
-	wg.Wait()
-	close(resultCh)
-
-	ordered := make([]uploadResult, len(targets))
-	for result := range resultCh {
-		ordered[result.index] = result
-	}
-
-	results := make([]api.UploadedImageLink, 0, len(images)*len(targets))
-	failures := make([]api.UploadImageHostFailure, 0)
-	failureMessages := make([]string, 0)
-	for _, result := range ordered {
-		results = append(results, result.links...)
-		if result.err != nil {
-			failure := api.UploadImageHostFailure{
-				Host:       result.target.Host,
-				UsageScope: result.target.UsageScope,
-				Trackers:   slices.Clone(result.target.Trackers),
-				Message:    logging.SanitizeMessage(uploadFailureMessage(result.err)),
-			}
-			failures = append(failures, failure)
-			failureMessages = append(failureMessages, fmt.Sprintf(
-				"host=%s trackers=%v err=%s",
-				result.target.Host,
-				result.target.Trackers,
-				redaction.RedactValue(failure.Message, nil),
-			))
-		}
-	}
-	if len(failures) == 0 {
-		return api.UploadImagesResult{Links: results}
-	}
-	result := api.UploadImagesResult{Links: results, Failures: failures}
-	if len(results) > 0 {
-		m.logger.Warnf(
-			"core: image uploads completed with %d host failures and %d successful links: %s",
-			len(failures),
-			len(results),
-			strings.Join(failureMessages, "; "),
-		)
-		return result
-	}
-	m.logger.Warnf("core: image uploads failed for all hosts: %s", strings.Join(failureMessages, "; "))
-	return result
 }
 
 func normalizeImageUploadTarget(target trackers.ImageUploadTarget) trackers.ImageUploadTarget {
@@ -1172,27 +827,4 @@ func (m *mediaModule) imageHostOwnerLogValue(host string) string {
 		return tracker
 	}
 	return "shared"
-}
-
-func (m *mediaModule) deleteAcceptedUploadedImage(
-	ctx context.Context,
-	input api.ImageHostingInput,
-	imagePath string,
-	host string,
-) error {
-	if m.repo == nil {
-		return errors.New("core: repository not configured")
-	}
-	if m.preparedFacts == nil {
-		return errors.New("core: canonical preparation is not configured")
-	}
-	if strings.TrimSpace(imagePath) == "" || strings.TrimSpace(host) == "" {
-		return internalerrors.ErrInvalidInput
-	}
-	subject, err := m.preparedFacts.ResolveImageHostingSubject(ctx, input)
-	if err != nil {
-		return fmt.Errorf("core: resolve uploaded image deletion subject: %w", err)
-	}
-	m.logger.Debugf("core: deleting uploaded image path=%s host=%s tracker=%s", imagePath, host, m.imageHostOwnerLogValue(host))
-	return wrapCoreError(m.repo.DeleteUploadedImage(ctx, subject.SourcePath, imagePath, host))
 }

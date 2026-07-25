@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type {
-  DescriptionBuilderGroup,
-  DescriptionBuilderPreview,
-  DVDMenuCaptureResult,
   ExternalIDOverrides,
   ImageUploadProgressUpdate,
   MetadataPreview,
@@ -13,19 +10,15 @@ import type {
   ReleaseNameOverrides,
   ReleaseRef,
   ScreenshotPlan,
-  ScreenshotResult,
   ScreenshotSelection,
-  TrackerDryRunPreview,
-  UploadedImageLink,
   UploadImageHostFailure,
-  UploadReviewResult,
 } from "../types";
 import type {
   FacetStatus,
+  HostedImageView,
   MenuImagePreview,
   PreparationIntent,
   PreparationStatus,
-  PreparationStep,
   PlaylistStatus,
   UploadedImageCandidate,
   UploadRunOptions,
@@ -41,27 +34,25 @@ export type WorkflowState<T> = Readonly<{
 
 type ScreenshotState = WorkflowState<ScreenshotPlan> &
   Readonly<{
-    result: ScreenshotResult | null;
     previewImage: string;
     selections: readonly ScreenshotSelection[];
-    finalSelectionPaths: readonly string[];
+    finalSelectionArtifactIDs: readonly string[];
   }>;
-type MenuImageState = WorkflowState<readonly MenuImagePreview[]> &
-  Readonly<{ capture: DVDMenuCaptureResult | null }>;
+type MenuImageState = WorkflowState<readonly MenuImagePreview[]>;
 type UploadedImageState = WorkflowState<{
   candidates: readonly UploadedImageCandidate[];
-  uploaded: readonly UploadedImageLink[];
+  uploaded: readonly HostedImageView[];
 }> &
   Readonly<{
-    host: string;
-    selectedPaths: readonly string[];
+    selectedArtifactIDs: readonly string[];
     failures: readonly UploadImageHostFailure[];
+    failedHosts: readonly string[];
     progress: Readonly<{
       correlationID: string;
       attempts: readonly ImageUploadProgressUpdate[];
     }>;
   }>;
-type DescriptionState = WorkflowState<DescriptionBuilderPreview> &
+type DescriptionState = WorkflowState<never> &
   Readonly<{
     inputRevision: number;
     rawByGroup: Readonly<Record<string, string>>;
@@ -83,8 +74,6 @@ type PreparationAttemptState = Readonly<{
   sourcePath: string;
   commandRevision: number;
   status: PreparationStatus;
-  message: string;
-  steps: readonly PreparationStep[];
   error: string;
   failure: OperationFailure | null;
 }>;
@@ -102,33 +91,28 @@ export type SessionState = Readonly<{
   release: ReleaseRef | null;
   preview: MetadataPreview | null;
   selectedTrackers: readonly string[];
+  trackerSelectionTouched: boolean;
   ignoredDupesFor: readonly string[];
-  authorizedRulesByTracker: Readonly<Record<string, readonly string[]>>;
   questionnaireAnswers: Readonly<Record<string, Readonly<Record<string, string>>>>;
   uploadOptions: UploadRunOptions;
-  uploadInputRevision: number;
   duplicatesError: string;
   uploadError: string;
   screenshots: ScreenshotState;
   menuImages: MenuImageState;
   uploadedImages: UploadedImageState;
   descriptions: DescriptionState;
-  dryRun: WorkflowState<TrackerDryRunPreview>;
-  review: WorkflowState<UploadReviewResult>;
 }>;
 
-type FacetName =
-  | "screenshots"
-  | "menuImages"
-  | "uploadedImages"
-  | "descriptions"
-  | "dryRun"
-  | "review";
+type FacetName = "screenshots" | "menuImages" | "uploadedImages" | "descriptions";
 
 /** Closed set of source, preparation, asset, review, and Job state transitions. */
 export type SessionAction =
   | Readonly<{ type: "draft_changed"; value: string }>
-  | Readonly<{ type: "source_selected"; sourcePath: string }>
+  | Readonly<{
+      type: "source_selected";
+      sourcePath: string;
+      defaultTrackers?: readonly string[];
+    }>
   | Readonly<{ type: "source_lookup_changed"; value: string }>
   | Readonly<{ type: "identity_changed"; value: Readonly<ExternalIDOverrides> }>
   | Readonly<{ type: "release_name_changed"; value: Readonly<ReleaseNameOverrides> }>
@@ -157,13 +141,6 @@ export type SessionAction =
       intent: PreparationIntent;
     }>
   | Readonly<{
-      type: "preparation_progressed";
-      sourcePath: string;
-      commandRevision: number;
-      correlationID: string;
-      step: PreparationStep;
-    }>
-  | Readonly<{
       type: "preparation_succeeded";
       sourcePath: string;
       commandRevision: number;
@@ -179,13 +156,12 @@ export type SessionAction =
       failure: OperationFailure | null;
     }>
   | Readonly<{ type: "trackers_chosen"; trackers: readonly string[] }>
-  | Readonly<{ type: "dupe_ignore_changed"; tracker: string; ignored: boolean }>
   | Readonly<{
-      type: "rule_authorization_changed";
-      tracker: string;
-      rule: string;
-      authorized: boolean;
+      type: "default_trackers_received";
+      sessionRevision: number;
+      trackers: readonly string[];
     }>
+  | Readonly<{ type: "dupe_ignore_changed"; tracker: string; ignored: boolean }>
   | Readonly<{ type: "questionnaire_answered"; tracker: string; key: string; value: string }>
   | Readonly<{ type: "upload_options_changed"; value: Partial<UploadRunOptions> }>
   | Readonly<{
@@ -193,7 +169,10 @@ export type SessionAction =
       index: number;
       value: Partial<Pick<ScreenshotSelection, "TimestampSeconds" | "Frame">>;
     }>
-  | Readonly<{ type: "screenshot_final_paths_changed"; imagePaths: readonly string[] }>
+  | Readonly<{
+      type: "screenshot_final_artifacts_changed";
+      artifactIDs: readonly string[];
+    }>
   | Readonly<{ type: "job_command_started"; kind: "duplicates" | "upload" }>
   | Readonly<{ type: "job_command_failed"; kind: "duplicates" | "upload"; error: string }>
   | Readonly<{
@@ -220,10 +199,9 @@ export type SessionAction =
       sessionRevision: number;
       revision: number;
       plan: ScreenshotPlan;
-      result?: ScreenshotResult;
       changed?: boolean;
       reseedDrafts?: boolean;
-      finalSelectionPaths?: readonly string[];
+      finalSelectionArtifactIDs?: readonly string[];
     }>
   | Readonly<{
       type: "screenshot_previewed";
@@ -236,7 +214,6 @@ export type SessionAction =
       sessionRevision: number;
       revision: number;
       images: readonly MenuImagePreview[];
-      capture?: DVDMenuCaptureResult;
       changed?: boolean;
     }>
   | Readonly<{
@@ -244,8 +221,9 @@ export type SessionAction =
       sessionRevision: number;
       revision: number;
       candidates: readonly UploadedImageCandidate[];
-      uploaded: readonly UploadedImageLink[];
+      uploaded: readonly HostedImageView[];
       failures?: readonly UploadImageHostFailure[];
+      failedHosts?: readonly string[];
       changed?: boolean;
     }>
   | Readonly<{
@@ -260,16 +238,10 @@ export type SessionAction =
       revision: number;
       update: ImageUploadProgressUpdate;
     }>
-  | Readonly<{ type: "upload_host_changed"; host: string }>
-  | Readonly<{ type: "upload_image_selected"; imagePath: string; selected: boolean }>
+  | Readonly<{ type: "upload_image_selected"; artifactID: string; selected: boolean }>
   | Readonly<{ type: "upload_images_selected_all"; selected: boolean }>
   | Readonly<{ type: "description_edited"; groupKey: string; raw: string }>
-  | Readonly<{
-      type: "descriptions_loaded";
-      sessionRevision: number;
-      revision: number;
-      preview: DescriptionBuilderPreview;
-    }>
+  | Readonly<{ type: "description_dirty_cleared"; groupKey?: string; notice?: string }>
   | Readonly<{
       type: "description_rendered";
       sessionRevision: number;
@@ -277,27 +249,6 @@ export type SessionAction =
       inputRevision: number;
       groupKey: string;
       html: string;
-    }>
-  | Readonly<{
-      type: "description_saved";
-      sessionRevision: number;
-      revision: number;
-      inputRevision: number;
-      group: DescriptionBuilderGroup;
-    }>
-  | Readonly<{
-      type: "dry_run_loaded";
-      sessionRevision: number;
-      revision: number;
-      inputRevision: number;
-      preview: TrackerDryRunPreview;
-    }>
-  | Readonly<{
-      type: "review_loaded";
-      sessionRevision: number;
-      revision: number;
-      inputRevision: number;
-      review: UploadReviewResult;
     }>;
 
 const emptyIntent = (): PreparationIntent => ({
@@ -339,8 +290,6 @@ export const initialSessionState = (): SessionState => ({
     sourcePath: "",
     commandRevision: 0,
     status: "idle",
-    message: "",
-    steps: [],
     error: "",
     failure: null,
   },
@@ -357,41 +306,37 @@ export const initialSessionState = (): SessionState => ({
   release: null,
   preview: null,
   selectedTrackers: [],
+  trackerSelectionTouched: false,
   ignoredDupesFor: [],
-  authorizedRulesByTracker: {},
   questionnaireAnswers: {},
   uploadOptions: emptyOptions(),
-  uploadInputRevision: 0,
   duplicatesError: "",
   uploadError: "",
   screenshots: {
     ...emptyWorkflow<ScreenshotPlan>(),
-    result: null,
     previewImage: "",
     selections: [],
-    finalSelectionPaths: [],
+    finalSelectionArtifactIDs: [],
   },
-  menuImages: { ...emptyWorkflow<readonly MenuImagePreview[]>(), capture: null },
+  menuImages: emptyWorkflow<readonly MenuImagePreview[]>(),
   uploadedImages: {
     ...emptyWorkflow<{
       candidates: readonly UploadedImageCandidate[];
-      uploaded: readonly UploadedImageLink[];
+      uploaded: readonly HostedImageView[];
     }>(),
-    host: "",
-    selectedPaths: [],
+    selectedArtifactIDs: [],
     failures: [],
+    failedHosts: [],
     progress: { correlationID: "", attempts: [] },
   },
   descriptions: {
-    ...emptyWorkflow<DescriptionBuilderPreview>(),
+    ...emptyWorkflow<never>(),
     inputRevision: 0,
     rawByGroup: {},
     renderedByGroup: {},
     dirtyGroups: [],
     notice: "",
   },
-  dryRun: emptyWorkflow(),
-  review: emptyWorkflow(),
 });
 
 const normalizeNames = (values: readonly string[]) =>
@@ -407,29 +352,6 @@ const preparationMatches = (
   commandRevision === state.commandRevision &&
   correlationID === state.preparation.correlationID;
 
-const upsertPreparationStep = (
-  steps: readonly PreparationStep[],
-  step: PreparationStep,
-): readonly PreparationStep[] =>
-  [...steps.filter((current) => current.phase !== step.phase), { ...step }].sort(
-    (left, right) => left.order - right.order || left.phase.localeCompare(right.phase),
-  );
-
-const completeRunningPreparationSteps = (steps: readonly PreparationStep[]) =>
-  steps.map((step) =>
-    step.status === "running" ? { ...step, status: "completed" as const } : step,
-  );
-
-const failCurrentPreparationStep = (steps: readonly PreparationStep[]) => {
-  const next = [...steps];
-  for (let index = next.length - 1; index >= 0; index -= 1) {
-    if (next[index].status !== "running") continue;
-    next[index] = { ...next[index], status: "failed" };
-    break;
-  }
-  return next;
-};
-
 const invalidate = <T>(
   previous: WorkflowState<T>,
   reason: string,
@@ -442,11 +364,6 @@ const invalidate = <T>(
   error: "",
 });
 
-const invalidateAuthority = (state: SessionState, reason: string, clear: boolean) => ({
-  dryRun: invalidate(state.dryRun, reason, clear),
-  review: invalidate(state.review, reason, true),
-});
-
 const invalidateAssetConsumers = (state: SessionState) => ({
   descriptions: {
     ...invalidate(state.descriptions, "Image assets changed.", false),
@@ -456,24 +373,21 @@ const invalidateAssetConsumers = (state: SessionState) => ({
     dirtyGroups: state.descriptions.dirtyGroups,
     notice: "",
   },
-  ...invalidateAuthority(state, "Image assets changed.", false),
-  uploadInputRevision: state.uploadInputRevision + 1,
 });
 
 const invalidateReleaseWork = (state: SessionState, reason: string) => ({
   screenshots: {
     ...invalidate(state.screenshots, reason, true),
-    result: null,
     previewImage: "",
     selections: [],
-    finalSelectionPaths: [],
+    finalSelectionArtifactIDs: [],
   },
-  menuImages: { ...invalidate(state.menuImages, reason, true), capture: null },
+  menuImages: invalidate(state.menuImages, reason, true),
   uploadedImages: {
     ...invalidate(state.uploadedImages, reason, true),
-    host: state.uploadedImages.host,
-    selectedPaths: [],
+    selectedArtifactIDs: [],
     failures: [],
+    failedHosts: [],
     progress: { correlationID: "", attempts: [] },
   },
   descriptions: {
@@ -484,7 +398,6 @@ const invalidateReleaseWork = (state: SessionState, reason: string) => ({
     dirtyGroups: [],
     notice: "",
   },
-  ...invalidateAuthority(state, reason, true),
 });
 
 const workflowFor = (state: SessionState, facet: FacetName): WorkflowState<unknown> => state[facet];
@@ -524,26 +437,35 @@ const preparationIntentChanged = (
   intent: PreparationIntent,
 ): SessionState => ({
   ...state,
-  ...invalidateAuthority(state, "Preparation input changed.", false),
   preparationIntent: intent,
   preparationDirty: Boolean(state.release),
-  uploadInputRevision: state.uploadInputRevision + 1,
 });
 
-const upsertDescriptionGroup = (
-  preview: DescriptionBuilderPreview | null,
-  group: DescriptionBuilderGroup,
-): DescriptionBuilderPreview => {
-  const groups = [...(preview?.Groups || [])];
-  const index = groups.findIndex((current) => current.GroupKey === group.GroupKey);
-  if (index >= 0) groups[index] = group;
-  else groups.push(group);
-  return {
-    SourcePath: preview?.SourcePath || "",
-    Groups: groups,
-    ContentFailures: [...(preview?.ContentFailures || [])],
-  };
-};
+const trackerSelectionChanged = (
+  state: SessionState,
+  trackers: readonly string[],
+  touched: boolean,
+): SessionState => ({
+  ...state,
+  screenshots:
+    state.screenshots.status === "error"
+      ? {
+          ...state.screenshots,
+          status: "idle",
+          error: "",
+        }
+      : state.screenshots,
+  descriptions: {
+    ...invalidate(state.descriptions, "Tracker selection changed.", true),
+    inputRevision: state.descriptions.inputRevision + 1,
+    rawByGroup: {},
+    renderedByGroup: {},
+    dirtyGroups: [],
+    notice: "",
+  },
+  selectedTrackers: normalizeNames(trackers),
+  trackerSelectionTouched: touched,
+});
 
 /** Applies one transition, ignoring stale revision- or correlation-scoped completions. */
 export const sessionReducer = (state: SessionState, action: SessionAction): SessionState => {
@@ -565,8 +487,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           sourcePath,
           commandRevision: state.commandRevision + 1,
           status: "idle",
-          message: "",
-          steps: [],
           error: "",
           failure: null,
         },
@@ -582,12 +502,11 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         },
         release: null,
         preview: null,
-        selectedTrackers: [],
+        selectedTrackers: normalizeNames(action.defaultTrackers || []),
+        trackerSelectionTouched: false,
         ignoredDupesFor: [],
-        authorizedRulesByTracker: {},
         questionnaireAnswers: {},
         uploadOptions: emptyOptions(),
-        uploadInputRevision: state.uploadInputRevision + 1,
         duplicatesError: "",
         uploadError: "",
       };
@@ -622,7 +541,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         preparation: {
           ...state.preparation,
           status: action.error ? "error" : "awaiting_input",
-          message: action.error || "Select one or more Blu-ray playlists.",
           error: action.error,
           failure: null,
         },
@@ -639,7 +557,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
     case "playlist_draft_changed":
       return {
         ...state,
-        ...invalidateAuthority(state, "Playlist selection changed.", false),
         preparationDirty: Boolean(state.release),
         playlist: {
           ...state.playlist,
@@ -647,7 +564,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           useAll: action.useAll,
           error: "",
         },
-        uploadInputRevision: state.uploadInputRevision + 1,
       };
     case "playlist_dismissed":
       return {
@@ -655,7 +571,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         preparation: {
           ...state.preparation,
           status: "cancelled",
-          message: "Playlist selection cancelled.",
         },
         playlist: { ...state.playlist, status: "cancelled", required: false, error: "" },
       };
@@ -671,7 +586,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         preparation: {
           ...state.preparation,
           status: "running",
-          message: "Processing selected Blu-ray playlists.",
           error: "",
           failure: null,
         },
@@ -688,8 +602,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           sourcePath: action.sourcePath,
           commandRevision: action.commandRevision,
           status: "running",
-          message: "Preparing release metadata.",
-          steps: [],
           error: "",
           failure: null,
         },
@@ -706,24 +618,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           error: "",
         },
       };
-    case "preparation_progressed":
-      if (
-        !preparationMatches(state, action.sourcePath, action.commandRevision, action.correlationID)
-      ) {
-        return state;
-      }
-      return {
-        ...state,
-        preparation: {
-          ...state.preparation,
-          message: action.step.message || state.preparation.message,
-          steps: upsertPreparationStep(state.preparation.steps, action.step),
-        },
-        playlist:
-          action.step.phase === "playlist_discovery" && action.step.status === "running"
-            ? { ...state.playlist, status: "discovering", error: "" }
-            : state.playlist,
-      };
     case "preparation_succeeded": {
       if (
         !preparationMatches(state, action.sourcePath, action.commandRevision, action.correlationID)
@@ -738,7 +632,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           preparation: {
             ...state.preparation,
             status: "error",
-            message: "Preparation returned a different source.",
             error: "Preparation returned a different source.",
             failure: null,
           },
@@ -753,8 +646,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         preparation: {
           ...state.preparation,
           status: "ready",
-          message: "Metadata preparation complete.",
-          steps: completeRunningPreparationSteps(state.preparation.steps),
           error: "",
           failure: null,
         },
@@ -785,8 +676,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         preparation: {
           ...state.preparation,
           status: "error",
-          message: action.error,
-          steps: failCurrentPreparationStep(state.preparation.steps),
           error: action.error,
           failure: action.failure ? { ...action.failure } : null,
         },
@@ -795,31 +684,20 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
             ? { ...state.playlist, status: "error", error: action.error }
             : state.playlist,
       };
-    case "trackers_chosen": {
+    case "trackers_chosen":
+      return trackerSelectionChanged(state, action.trackers, true);
+    case "default_trackers_received": {
+      if (action.sessionRevision !== state.sessionRevision || state.trackerSelectionTouched) {
+        return state;
+      }
       const trackers = normalizeNames(action.trackers);
-      return {
-        ...state,
-        ...invalidateAuthority(state, "Tracker selection changed.", false),
-        screenshots:
-          state.screenshots.status === "error"
-            ? {
-                ...state.screenshots,
-                status: "idle",
-                error: "",
-              }
-            : state.screenshots,
-        descriptions: {
-          ...invalidate(state.descriptions, "Tracker selection changed.", true),
-          inputRevision: state.descriptions.inputRevision + 1,
-          rawByGroup: {},
-          renderedByGroup: {},
-          dirtyGroups: [],
-          notice: "",
-        },
-        selectedTrackers: trackers,
-        authorizedRulesByTracker: {},
-        uploadInputRevision: state.uploadInputRevision + 1,
-      };
+      if (
+        trackers.length === state.selectedTrackers.length &&
+        trackers.every((tracker, index) => tracker === state.selectedTrackers[index])
+      ) {
+        return state;
+      }
+      return trackerSelectionChanged(state, trackers, false);
     }
     case "dupe_ignore_changed": {
       const tracker = action.tracker.trim().toUpperCase();
@@ -829,26 +707,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       else ignored.delete(tracker);
       return {
         ...state,
-        ...invalidateAuthority(state, "Duplicate override changed.", false),
         ignoredDupesFor: [...ignored],
-        uploadInputRevision: state.uploadInputRevision + 1,
-      };
-    }
-    case "rule_authorization_changed": {
-      const tracker = action.tracker.trim().toUpperCase();
-      const rule = action.rule.trim();
-      if (!tracker || !rule) return state;
-      const rules = new Set(state.authorizedRulesByTracker[tracker] || []);
-      if (action.authorized) rules.add(rule);
-      else rules.delete(rule);
-      const authorizedRulesByTracker = { ...state.authorizedRulesByTracker };
-      if (rules.size > 0) authorizedRulesByTracker[tracker] = [...rules];
-      else delete authorizedRulesByTracker[tracker];
-      return {
-        ...state,
-        review: invalidate(state.review, "Rule authorization changed.", true),
-        authorizedRulesByTracker,
-        uploadInputRevision: state.uploadInputRevision + 1,
       };
     }
     case "questionnaire_answered": {
@@ -857,20 +716,16 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       if (!tracker || !key) return state;
       return {
         ...state,
-        ...invalidateAuthority(state, "Questionnaire answers changed.", false),
         questionnaireAnswers: {
           ...state.questionnaireAnswers,
           [tracker]: { ...state.questionnaireAnswers[tracker], [key]: action.value },
         },
-        uploadInputRevision: state.uploadInputRevision + 1,
       };
     }
     case "upload_options_changed":
       return {
         ...state,
-        ...invalidateAuthority(state, "Upload options changed.", false),
         uploadOptions: { ...state.uploadOptions, ...action.value },
-        uploadInputRevision: state.uploadInputRevision + 1,
       };
     case "screenshot_selection_changed":
       return {
@@ -882,13 +737,13 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           ),
         },
       };
-    case "screenshot_final_paths_changed":
+    case "screenshot_final_artifacts_changed":
       return {
         ...state,
         screenshots: {
           ...state.screenshots,
-          finalSelectionPaths: Array.from(
-            new Set(action.imagePaths.map((path) => path.trim()).filter(Boolean)),
+          finalSelectionArtifactIDs: Array.from(
+            new Set(action.artifactIDs.map((artifactID) => artifactID.trim()).filter(Boolean)),
           ),
         },
       };
@@ -929,15 +784,14 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         screenshots: {
           ...readyWorkflow(state.screenshots),
           value: action.plan,
-          result: action.result ?? state.screenshots.result,
           selections: action.reseedDrafts
             ? action.plan.SuggestedSelections || []
             : state.screenshots.selections,
-          finalSelectionPaths:
-            action.finalSelectionPaths ??
+          finalSelectionArtifactIDs:
+            action.finalSelectionArtifactIDs ??
             (action.reseedDrafts
               ? (action.plan.FinalSelections || []).map((image) => image.Path).filter(Boolean)
-              : state.screenshots.finalSelectionPaths),
+              : state.screenshots.finalSelectionArtifactIDs),
         },
       };
     case "screenshot_previewed":
@@ -956,7 +810,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         menuImages: {
           ...readyWorkflow(state.menuImages),
           value: action.images,
-          capture: action.capture ?? state.menuImages.capture,
         },
       };
     case "uploaded_images_loaded":
@@ -968,8 +821,11 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         uploadedImages: {
           ...readyWorkflow(state.uploadedImages),
           value: { candidates: action.candidates, uploaded: action.uploaded },
-          selectedPaths: action.candidates.map((item) => item.image.Path).filter(Boolean),
+          selectedArtifactIDs: action.candidates
+            .map((item) => item.image.artifactID)
+            .filter(Boolean),
           failures: action.failures ?? [],
+          failedHosts: action.failedHosts ?? state.uploadedImages.failedHosts,
         },
       };
     case "uploaded_images_progress_reset":
@@ -979,6 +835,7 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         ...state,
         uploadedImages: {
           ...state.uploadedImages,
+          ...(action.correlationID ? { failedHosts: [] } : {}),
           progress: { correlationID: action.correlationID, attempts: [] },
         },
       };
@@ -1014,15 +871,13 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         },
       };
     }
-    case "upload_host_changed":
-      return { ...state, uploadedImages: { ...state.uploadedImages, host: action.host } };
     case "upload_image_selected": {
-      const selected = new Set(state.uploadedImages.selectedPaths);
-      if (action.selected) selected.add(action.imagePath);
-      else selected.delete(action.imagePath);
+      const selected = new Set(state.uploadedImages.selectedArtifactIDs);
+      if (action.selected) selected.add(action.artifactID);
+      else selected.delete(action.artifactID);
       return {
         ...state,
-        uploadedImages: { ...state.uploadedImages, selectedPaths: [...selected] },
+        uploadedImages: { ...state.uploadedImages, selectedArtifactIDs: [...selected] },
       };
     }
     case "upload_images_selected_all":
@@ -1030,9 +885,9 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
         ...state,
         uploadedImages: {
           ...state.uploadedImages,
-          selectedPaths: action.selected
+          selectedArtifactIDs: action.selected
             ? (state.uploadedImages.value?.candidates || [])
-                .map((item) => item.image.Path)
+                .map((item) => item.image.artifactID)
                 .filter(Boolean)
             : [],
         },
@@ -1042,7 +897,6 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
       if (!groupKey) return state;
       return {
         ...state,
-        ...invalidateAuthority(state, "Description changed.", false),
         descriptions: {
           ...state.descriptions,
           inputRevision: state.descriptions.inputRevision + 1,
@@ -1050,36 +904,28 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           dirtyGroups: Array.from(new Set([...state.descriptions.dirtyGroups, groupKey])),
           notice: "",
         },
-        uploadInputRevision: state.uploadInputRevision + 1,
       };
     }
-    case "descriptions_loaded":
-      if (!workflowMatches(state, "descriptions", action.sessionRevision, action.revision))
-        return state;
+    case "description_dirty_cleared": {
+      const groupKey = action.groupKey?.trim() || "";
+      const keepEntry = ([key]: [string, string]) => !groupKey || key !== groupKey;
       return {
         ...state,
-        ...invalidateAuthority(state, "Descriptions regenerated.", false),
         descriptions: {
-          ...readyWorkflow(state.descriptions),
-          inputRevision: state.descriptions.inputRevision + 1,
-          value: action.preview,
+          ...state.descriptions,
           rawByGroup: Object.fromEntries(
-            (action.preview.Groups || []).map((group) => [
-              group.GroupKey,
-              group.RawDescription || "",
-            ]),
+            Object.entries(state.descriptions.rawByGroup).filter(keepEntry),
           ),
           renderedByGroup: Object.fromEntries(
-            (action.preview.Groups || []).map((group) => [
-              group.GroupKey,
-              group.RawDescriptionHTML || "",
-            ]),
+            Object.entries(state.descriptions.renderedByGroup).filter(keepEntry),
           ),
-          dirtyGroups: [],
-          notice: "",
+          dirtyGroups: groupKey
+            ? state.descriptions.dirtyGroups.filter((key) => key !== groupKey)
+            : [],
+          notice: action.notice || "",
         },
-        uploadInputRevision: state.uploadInputRevision + 1,
       };
+    }
     case "description_rendered":
       if (
         !workflowMatches(state, "descriptions", action.sessionRevision, action.revision) ||
@@ -1097,50 +943,5 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           },
         },
       };
-    case "description_saved":
-      if (
-        !workflowMatches(state, "descriptions", action.sessionRevision, action.revision) ||
-        action.inputRevision !== state.descriptions.inputRevision
-      ) {
-        return state;
-      }
-      return {
-        ...state,
-        ...invalidateAuthority(state, "Description saved; run dry run again.", false),
-        descriptions: {
-          ...readyWorkflow(state.descriptions),
-          inputRevision: state.descriptions.inputRevision + 1,
-          value: upsertDescriptionGroup(state.descriptions.value, action.group),
-          rawByGroup: {
-            ...state.descriptions.rawByGroup,
-            [action.group.GroupKey]: action.group.RawDescription || "",
-          },
-          renderedByGroup: {
-            ...state.descriptions.renderedByGroup,
-            [action.group.GroupKey]: action.group.RawDescriptionHTML || "",
-          },
-          dirtyGroups: state.descriptions.dirtyGroups.filter(
-            (groupKey) => groupKey !== action.group.GroupKey,
-          ),
-          notice: "Description saved.",
-        },
-        uploadInputRevision: state.uploadInputRevision + 1,
-      };
-    case "dry_run_loaded":
-      if (
-        !workflowMatches(state, "dryRun", action.sessionRevision, action.revision) ||
-        action.inputRevision !== state.uploadInputRevision
-      ) {
-        return state;
-      }
-      return { ...state, dryRun: { ...readyWorkflow(state.dryRun), value: action.preview } };
-    case "review_loaded":
-      if (
-        !workflowMatches(state, "review", action.sessionRevision, action.revision) ||
-        action.inputRevision !== state.uploadInputRevision
-      ) {
-        return state;
-      }
-      return { ...state, review: { ...readyWorkflow(state.review), value: action.review } };
   }
 };

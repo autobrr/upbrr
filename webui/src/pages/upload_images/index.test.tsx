@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { UploadedImagesFacet } from "../../releaseSession/types";
 import UploadImagesPage from "./index";
@@ -9,7 +9,40 @@ import UploadImagesPage from "./index";
 afterEach(cleanup);
 
 describe("UploadImagesPage", () => {
-  it("forwards explicit upload intent", () => {
+  it("loads stale candidates so the session can default-select every image", async () => {
+    const load = vi.fn(async () => true);
+    const facet: UploadedImagesFacet = {
+      view: {
+        revision: 1,
+        status: "idle",
+        candidates: [],
+        uploaded: [],
+        selectedArtifactIDs: [],
+        failures: [],
+        progress: { correlationID: "", attempts: [] },
+        staleReason: "Image assets changed.",
+        error: "",
+      },
+      load,
+      select: vi.fn(),
+      selectAll: vi.fn(),
+      upload: vi.fn(async () => true),
+      remove: vi.fn(async () => true),
+    };
+
+    render(
+      <UploadImagesPage
+        facet={facet}
+        resolveImageHostLabel={(value) => value}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(load).toHaveBeenCalledOnce());
+  });
+
+  it("forwards backend-derived host preparation intent", () => {
     const upload = vi.fn(async () => true);
     const facet: UploadedImagesFacet = {
       view: {
@@ -18,27 +51,25 @@ describe("UploadImagesPage", () => {
         candidates: [
           {
             image: {
-              Index: 0,
-              TimestampSeconds: 1,
-              Path: "C:\\managed\\shot.png",
-              Purpose: "final",
-              Width: 1920,
-              Height: 1080,
-              SizeBytes: 1,
+              artifactID: "artifact-1",
+              index: 0,
+              timestampSeconds: 1,
+              purpose: "final",
+              width: 1920,
+              height: 1080,
+              sizeBytes: 1,
             },
-            dataURI: "data:image/png;base64,AA==",
+            contentURL: "/api/app/release-workflow-media?artifactId=artifact-1",
           },
         ],
         uploaded: [],
-        selectedPaths: ["C:\\managed\\shot.png"],
-        host: "example",
+        selectedArtifactIDs: ["artifact-1"],
         failures: [],
         progress: { correlationID: "", attempts: [] },
         staleReason: "",
         error: "",
       },
       load: vi.fn(async () => true),
-      chooseHost: vi.fn(),
       select: vi.fn(),
       selectAll: vi.fn(),
       upload,
@@ -47,13 +78,12 @@ describe("UploadImagesPage", () => {
     render(
       <UploadImagesPage
         facet={facet}
-        configuredImageHosts={["example"]}
         resolveImageHostLabel={(value) => value}
         setLightboxImage={vi.fn()}
         setLightboxAlt={vi.fn()}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Upload selected (1)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Prepare required hosts (1)" }));
     expect(upload).toHaveBeenCalledOnce();
   });
 
@@ -64,8 +94,7 @@ describe("UploadImagesPage", () => {
         status: "running",
         candidates: [],
         uploaded: [],
-        selectedPaths: [],
-        host: "example",
+        selectedArtifactIDs: [],
         failures: [],
         progress: {
           correlationID: "image-upload-1",
@@ -108,7 +137,6 @@ describe("UploadImagesPage", () => {
         error: "",
       },
       load: vi.fn(async () => true),
-      chooseHost: vi.fn(),
       select: vi.fn(),
       selectAll: vi.fn(),
       upload: vi.fn(async () => true),
@@ -118,17 +146,13 @@ describe("UploadImagesPage", () => {
     render(
       <UploadImagesPage
         facet={facet}
-        configuredImageHosts={["example"]}
         resolveImageHostLabel={(value) => value}
         setLightboxImage={vi.fn()}
         setLightboxAlt={vi.fn()}
       />,
     );
 
-    expect(screen.getByRole("progressbar", { name: "Image host upload progress" })).toHaveAttribute(
-      "aria-valuenow",
-      "3",
-    );
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(
       screen.getByText("3 of 6 image-host uploads processed across 2 hosts."),
     ).toBeInTheDocument();

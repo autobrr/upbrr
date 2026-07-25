@@ -1299,15 +1299,6 @@ export default function InputPage(props: Props) {
     ? buildPreviewDetails(selectedPreview, tvdbDisplayMode)
     : [];
 
-  const metadataStatusLabel = (status: string) => {
-    if (status === "running") return "Running";
-    if (status === "completed") return "Done";
-    if (status === "skipped") return "Skipped";
-    if (status === "awaiting_input") return "Waiting";
-    if (status === "failed") return "Failed";
-    return status;
-  };
-
   const playlist = view.playlist;
   const togglePlaylist = (file: string) => {
     const selected = new Set(playlist.selected);
@@ -1512,36 +1503,6 @@ export default function InputPage(props: Props) {
               {diagnostic.Message}
             </p>
           ))}
-        {view.progress.status !== "ready" &&
-        (view.progress.status !== "idle" || view.progress.steps.length > 0) ? (
-          <div className="metadata-progress">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="label">Preparation progress</p>
-              <span className="muted text-xs">{view.progress.message}</span>
-            </div>
-            <div className="metadata-progress__list">
-              {view.progress.steps.map((step) => {
-                const status = step.status;
-                return (
-                  <div
-                    key={step.phase}
-                    className={`metadata-progress__item metadata-progress__item--${status}`}
-                  >
-                    <span className="min-w-0">
-                      <span className="metadata-progress__phase">{step.label}</span>
-                      {step.message ? (
-                        <span className="block truncate text-xs text-[var(--muted)]">
-                          {step.message}
-                        </span>
-                      ) : null}
-                    </span>
-                    <span className="metadata-progress__status">{metadataStatusLabel(status)}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
       </section>
 
       <section className="results">

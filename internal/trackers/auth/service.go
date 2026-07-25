@@ -48,6 +48,9 @@ const (
 
 	// maxConcurrentValidations bounds simultaneous tracker and auth DB work.
 	maxConcurrentValidations = 4
+	// trackerAuthValidationTimeout bounds workflow and explicit remote auth
+	// checks independently of tracker-local HTTP client timeouts.
+	trackerAuthValidationTimeout = 10 * time.Second
 
 	expiredSessionActionMessage = "stored session expired or invalid; log in again or import fresh cookies"
 )
@@ -77,6 +80,7 @@ type trackerSpec struct {
 	needsCredentials bool
 	notes            []string
 	policy           trackerscatalog.AuthPolicy
+	requirements     trackerscatalog.EffectiveAuthRequirements
 }
 
 // NewServiceWithRegistryAndLogger snapshots tracker-owned auth capabilities at
@@ -259,7 +263,9 @@ func (s *Service) Validate(ctx context.Context, trackerID string) (status api.Tr
 	status = s.statusForSpec(ctx, spec)
 
 	if _, ok := s.adapterFor(spec.id); ok {
-		session, ensureErr := s.EnsureSession(ctx, EnsureRequest{
+		validationCtx, cancel := context.WithTimeout(ctx, trackerAuthValidationTimeout)
+		defer cancel()
+		session, ensureErr := s.EnsureSession(validationCtx, EnsureRequest{
 			TrackerID: spec.id,
 			Config:    mustTrackerConfig(s.cfg, spec.id),
 			DBPath:    s.cfg.MainSettings.DBPath,
@@ -328,7 +334,7 @@ func IsManagedCapability(capability api.TrackerAuthCapability) bool {
 // IsReadyStatus reports whether a status represents usable auth without further
 // user input. A pending 2FA challenge is never ready, regardless of state.
 func IsReadyStatus(status api.TrackerAuthStatus) bool {
-	if status.Needs2FA {
+	if status.Needs2FA || strings.TrimSpace(status.LastError) != "" {
 		return false
 	}
 	switch strings.TrimSpace(status.State) {
@@ -609,6 +615,23 @@ func (s *Service) statusForSpec(ctx context.Context, spec trackerSpec) api.Track
 			status.State = StateLoginRequired
 		}
 	}
+	if spec.authKind == "passkey_or_cookies" &&
+		len(spec.requirements.Alternatives) > 0 &&
+		status.State != StateEncryptedStorageUnavailable {
+		satisfied, storedCookieOnly := requirementsSatisfied(spec.requirements, cfg, hasAPIKey, status.CookieCount)
+		if satisfied {
+			if storedCookieOnly {
+				status.State = StateHasCookies
+			} else {
+				status.State = StateConfigured
+			}
+		} else if status.State == StateConfigured || status.State == StateHasCookies {
+			status.State = StateNotConfigured
+			if spec.login {
+				status.State = StateLoginRequired
+			}
+		}
+	}
 	if !missingAPIKey && spec.cookies && status.CookieCount == 0 && !encryptedStorage &&
 		authStatusRequiresEncryptedStorage(spec, hasCredentials, hasAPIKey, hasPasskey) {
 		status.State = StateEncryptedStorageUnavailable
@@ -643,6 +666,53 @@ func (s *Service) effectiveAPIKey(spec trackerSpec, cfg config.TrackerConfig) st
 
 func passkeyCoversAuth(spec trackerSpec) bool {
 	return spec.passkey && spec.policy.PasskeyCoversAuth
+}
+
+func requirementsSatisfied(
+	requirements trackerscatalog.EffectiveAuthRequirements,
+	cfg config.TrackerConfig,
+	hasAPIKey bool,
+	cookieCount int,
+) (bool, bool) {
+	for _, alternative := range requirements.Alternatives {
+		satisfied := true
+		storedCookieOnly := len(alternative.AllOf) == 1 && alternative.AllOf[0] == trackerscatalog.AuthRequirementStoredCookie
+		for _, requirement := range alternative.AllOf {
+			if !requirementSatisfied(requirement, cfg, hasAPIKey, cookieCount) {
+				satisfied = false
+				break
+			}
+		}
+		if satisfied {
+			return true, storedCookieOnly
+		}
+	}
+	return false, false
+}
+
+func requirementSatisfied(
+	requirement trackerscatalog.AuthRequirement,
+	cfg config.TrackerConfig,
+	hasAPIKey bool,
+	cookieCount int,
+) bool {
+	switch requirement {
+	case trackerscatalog.AuthRequirementAPIKey:
+		return hasAPIKey
+	case trackerscatalog.AuthRequirementPasskey:
+		return strings.TrimSpace(cfg.Passkey) != ""
+	case trackerscatalog.AuthRequirementStoredCookie:
+		return cookieCount > 0
+	case trackerscatalog.AuthRequirementCredentialLogin:
+		return strings.TrimSpace(cfg.Username) != "" && strings.TrimSpace(cfg.Password) != ""
+	case trackerscatalog.AuthRequirementUsername:
+		return strings.TrimSpace(cfg.Username) != ""
+	case trackerscatalog.AuthRequirementAPIUser:
+		return strings.TrimSpace(cfg.PTPAPIUser) != ""
+	case trackerscatalog.AuthRequirementAnnounceURL:
+		return strings.TrimSpace(cfg.AnnounceURL) != ""
+	}
+	return false
 }
 
 // hasUsableLoginConfig reports whether credential login has every config value
@@ -723,6 +793,8 @@ func (s *Service) specs() []trackerSpec {
 			continue
 		}
 		policy, _ := s.registry.LookupAuthPolicy(id)
+		cfg, _ := trackerConfig(s.cfg, id)
+		requirements, _ := s.registry.ResolveEffectiveAuthRequirements(id, s.cfg, cfg)
 		out = append(out, trackerSpec{
 			id:               normalizeTrackerID(capability.TrackerID),
 			authKind:         capability.AuthKind,
@@ -736,6 +808,7 @@ func (s *Service) specs() []trackerSpec {
 			needsCredentials: capability.SupportsLogin && capability.AuthKind != "api_key_credential_refresh",
 			notes:            append([]string(nil), capability.Notes...),
 			policy:           policy,
+			requirements:     requirements,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].id < out[j].id })

@@ -547,6 +547,8 @@ func formatFlagUsage(fs *flag.FlagSet, usage string) string {
 		fmt.Fprint(&builder, "  serve [options]\n")
 		fmt.Fprint(&builder, "      Start the embedded web UI server\n")
 		fmt.Fprint(&builder, "      Options: --addr, --host, --port, --base-url, --persist-web-config, --dev-no-auth\n")
+		fmt.Fprint(&builder, "  api-token <create|list|revoke> [options]\n")
+		fmt.Fprint(&builder, "      Generate and manage persistent API bearer tokens\n")
 	}
 	fmt.Fprint(&builder, "\nOptions:\n")
 	sections := cliHelpSections(fs.Name())

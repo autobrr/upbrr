@@ -39,6 +39,35 @@ type indexedResult struct {
 type CheckOptions struct {
 	// SkipRemote suppresses tracker network search while preserving definitive local-client checks.
 	SkipRemote bool
+	// BypassBannedGroups classifies a known banned-group gate as explicitly
+	// bypassed without refreshing dynamic policy or invoking the tracker adapter.
+	BypassBannedGroups bool
+	// Projections binds each search to exact tracker-local criteria. Nil keeps
+	// the temporary legacy compatibility path.
+	Projections map[string]api.TrackerReleaseProjection
+}
+
+// CheckProjectionSet searches only dupe-ready projections from one exact set.
+func (s *Service) CheckProjectionSet(
+	ctx context.Context,
+	meta api.DuplicateSubject,
+	projectionSet api.TrackerReleaseProjectionSet,
+	options CheckOptions,
+) (api.DupeCheckSummary, Assessment, error) {
+	if err := projectionSet.Validate(); err != nil {
+		return api.DupeCheckSummary{}, EmptyAssessment(), fmt.Errorf("dupechecking: projection set: %w", err)
+	}
+	options.Projections = make(map[string]api.TrackerReleaseProjection, len(projectionSet.Projections))
+	trackers := make([]string, 0, len(projectionSet.Projections))
+	for _, projection := range projectionSet.Projections {
+		if projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady {
+			continue
+		}
+		tracker := normalizeTracker(string(projection.TrackerID))
+		options.Projections[tracker] = projection
+		trackers = append(trackers, tracker)
+	}
+	return s.CheckWithAssessment(ctx, meta, trackers, options)
 }
 
 // Service coordinates bounded duplicate checks through tracker-bound adapters.
@@ -165,10 +194,32 @@ func (s *Service) CheckWithAssessment(
 					Message:    "searching",
 					Total:      total,
 				})
-				result, entry, operationCanceled := s.checkTracker(ctx, meta, job.tracker, options)
+				trackerMeta, projectionErr := duplicateSubjectForProjection(meta, job.tracker, options.Projections)
+				if projectionErr != nil {
+					checkedAt := time.Now().UTC()
+					result := notRunPublicResult(job.tracker, NotRunMissingMetadata, projectionErr.Error(), checkedAt)
+					decorateProjectionResult(&result, trackerMeta.Projection)
+					results <- indexedResult{
+						index:  job.index,
+						result: result,
+						entry: newAssessmentEntry(
+							trackerMeta,
+							s.cfg,
+							job.tracker,
+							DispositionNotRun,
+							NotRunMissingMetadata,
+							false,
+							api.DupeMatch{},
+							nil,
+						),
+					}
+					continue
+				}
+				result, entry, operationCanceled := s.checkTracker(ctx, trackerMeta, job.tracker, options)
 				if operationCanceled {
 					continue
 				}
+				decorateProjectionResult(&result, trackerMeta.Projection)
 				results <- indexedResult{
 					index:  job.index,
 					result: result,
@@ -231,6 +282,69 @@ func (s *Service) CheckWithAssessment(
 		}
 	}
 	return summary, assessment, nil
+}
+
+func duplicateSubjectForProjection(
+	meta api.DuplicateSubject,
+	tracker string,
+	projections map[string]api.TrackerReleaseProjection,
+) (api.DuplicateSubject, error) {
+	if projections == nil {
+		return meta, nil
+	}
+	projection, ok := projections[normalizeTracker(tracker)]
+	if !ok {
+		return meta, errors.New("tracker projection is missing")
+	}
+	meta.Projection = &projection
+	criteria := projection.DuplicateCriteria
+	name := strings.TrimSpace(criteria.Name)
+	if name == "" {
+		return meta, errors.New("tracker projection duplicate-search name is missing")
+	}
+	if projection.UploadReleaseName != name {
+		declared := false
+		for _, additional := range projection.AdditionalNames {
+			if additional.Role == api.TrackerReleaseNameRoleSearch && strings.TrimSpace(additional.Value) == name {
+				declared = true
+				break
+			}
+		}
+		if !declared {
+			return meta, errors.New("tracker projection duplicate-search name is not declared")
+		}
+	}
+	meta.ReleaseName = name
+	if value := strings.TrimSpace(criteria.Type.Label); value != "" {
+		meta.Type = value
+	}
+	if value := strings.TrimSpace(criteria.Source.Label); value != "" {
+		meta.Source = value
+	}
+	if criteria.Season > 0 {
+		meta.SeasonInt = criteria.Season
+	}
+	if criteria.Episode > 0 {
+		meta.EpisodeInt = criteria.Episode
+	}
+	if value := strings.TrimSpace(criteria.Date); value != "" {
+		meta.DailyEpisodeDate = value
+	}
+	if !projection.DupeReady || projection.Readiness != api.ReadinessStatusReady {
+		return meta, errors.New("tracker projection is not duplicate-ready")
+	}
+	return meta, nil
+}
+
+func decorateProjectionResult(result *api.DupeCheckResult, projection *api.TrackerReleaseProjection) {
+	if result == nil || projection == nil {
+		return
+	}
+	result.CanonicalReleaseName = projection.CanonicalReleaseName
+	result.UploadReleaseName = projection.UploadReleaseName
+	result.ProjectionFingerprint = projection.ProjectorFingerprint
+	result.CriteriaFingerprint = projection.CriteriaFingerprint
+	result.ProjectionStatus = projection.Readiness
 }
 
 func (s *Service) warnOnSlowCancellation(ctx context.Context, workersDone <-chan struct{}, done chan<- struct{}, sourcePath string) {
@@ -303,7 +417,7 @@ func (s *Service) checkTracker(
 		return result, entry, false
 	}
 
-	if trackerspkg.NormalizeBannedReleaseGroup(meta.Tag) != "" {
+	if trackerspkg.NormalizeBannedReleaseGroup(meta.Tag) != "" && !options.BypassBannedGroups {
 		if err := s.banned.RefreshDynamic(ctx, s.cfg, []string{tracker}, s.logger); err != nil {
 			if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 				return api.DupeCheckResult{}, assessmentEntry{}, true
@@ -320,19 +434,29 @@ func (s *Service) checkTracker(
 		}
 	}
 	if reason, err := s.bannedGroupSkipReason(tracker, meta.Tag); reason != "" || err != nil {
-		if err != nil {
-			message := bannedGroupCheckFailureMessage(err)
-			s.logger.Warnf(
-				"dupechecking: banned-group check failed tracker=%s source=%s err=%s",
-				tracker,
-				meta.SourcePath,
-				redaction.RedactValue(err.Error(), nil),
-			)
-			result = failedPublicResult(tracker, FailureInternal, message, checkedAt)
-			return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionFailed, FailureInternal, false, api.DupeMatch{}, nil), false
+		switch {
+		case err != nil:
+			if !options.BypassBannedGroups {
+				message := bannedGroupCheckFailureMessage(err)
+				s.logger.Warnf(
+					"dupechecking: banned-group check failed tracker=%s source=%s err=%s",
+					tracker,
+					meta.SourcePath,
+					redaction.RedactValue(err.Error(), nil),
+				)
+				result = failedPublicResult(tracker, FailureInternal, message, checkedAt)
+				return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionFailed, FailureInternal, false, api.DupeMatch{}, nil), false
+			}
+		case options.BypassBannedGroups:
+			result = bypassedPublicResult(tracker, NotRunBannedGroup, reason, checkedAt)
+			entry = newAssessmentEntry(meta, s.cfg, tracker, DispositionNotRun, NotRunBannedGroup, false, api.DupeMatch{}, nil)
+			entry.authorization = AuthorizationWaiver
+			entry.verdict = VerdictWaived
+			return result, entry, false
+		default:
+			result = notRunPublicResult(tracker, NotRunBannedGroup, reason, checkedAt)
+			return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionNotRun, NotRunBannedGroup, false, api.DupeMatch{}, nil), false
 		}
-		result = notRunPublicResult(tracker, NotRunBannedGroup, reason, checkedAt)
-		return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionNotRun, NotRunBannedGroup, false, api.DupeMatch{}, nil), false
 	}
 
 	adapter, ok := s.adapters[tracker]
@@ -447,6 +571,19 @@ func notRunPublicResult(tracker string, code string, message string, checkedAt t
 	}
 }
 
+func bypassedPublicResult(tracker string, code string, message string, checkedAt time.Time) api.DupeCheckResult {
+	message = sanitizeSafeMessage(message, "duplicate policy bypassed")
+	return api.DupeCheckResult{
+		Tracker:    tracker,
+		Notes:      []string{message},
+		Skipped:    true,
+		SkipReason: "debug mode bypassed policy: " + message,
+		SkipCode:   code,
+		Status:     "bypassed",
+		CheckedAt:  checkedAt,
+	}
+}
+
 func failedPublicResult(tracker string, _ string, message string, checkedAt time.Time) api.DupeCheckResult {
 	message = sanitizeSafeMessage(message, "duplicate search failed")
 	return api.DupeCheckResult{
@@ -553,6 +690,8 @@ func dupeProgressMessage(result api.DupeCheckResult) string {
 		return sanitizeSafeMessage(result.Error, "duplicate search failed")
 	case "skipped":
 		return sanitizeSafeMessage(result.SkipReason, "duplicate search not run")
+	case "bypassed":
+		return sanitizeSafeMessage(result.SkipReason, "duplicate policy bypassed")
 	default:
 		if result.HasDupes {
 			return fmt.Sprintf("%d dupes found", len(result.Filtered))

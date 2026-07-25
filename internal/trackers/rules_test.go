@@ -56,6 +56,7 @@ func evaluateNonMetadataRulesForTest(ctx context.Context, tracker string, meta a
 	if strings.TrimSpace(meta.ProviderMetadata.TVmaze.Name) == "" {
 		meta.ProviderMetadata.TVmaze.Name = "Example Series"
 	}
+	meta = withConstructibleTrackerFactsForTest(meta)
 	registry, err := impl.NewRegistry()
 	if err != nil {
 		panic(err)
@@ -68,6 +69,7 @@ func evaluateNonMetadataRulesForTest(ctx context.Context, tracker string, meta a
 }
 
 func evaluateBHDRulesWithRegistryForTest(ctx context.Context, meta api.RuleSubject) []api.RuleFailure {
+	meta = withConstructibleTrackerFactsForTest(meta)
 	registry, err := impl.NewRegistry()
 	if err != nil {
 		panic(err)
@@ -77,6 +79,36 @@ func evaluateBHDRulesWithRegistryForTest(ctx context.Context, meta api.RuleSubje
 		panic(err)
 	}
 	return failures
+}
+
+func withConstructibleTrackerFactsForTest(meta api.RuleSubject) api.RuleSubject {
+	if strings.TrimSpace(meta.Type) == "" {
+		meta.Type = "WEBDL"
+	}
+	if strings.TrimSpace(meta.Source) == "" {
+		meta.Source = "WEB-DL"
+	}
+	if strings.TrimSpace(meta.Release.Type) == "" {
+		meta.Release.Type = meta.Type
+	}
+	if strings.TrimSpace(meta.Release.Source) == "" {
+		meta.Release.Source = meta.Source
+	}
+	if strings.TrimSpace(string(meta.Identity.Category)) == "" {
+		meta.Identity.Category = api.CanonicalCategoryMovie
+	}
+	if meta.Identity.TMDBID <= 0 {
+		meta.Identity.TMDBID = 1
+	}
+	if meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.Type) == "" {
+		meta.ProviderMetadata.IMDB.Type = "movie"
+	}
+	meta.MediaInfoJSONReady = true
+	meta.MediaInfoTextReady = true
+	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
+		meta.Disc.Summary = "BDINFO"
+	}
+	return meta
 }
 
 func TestEvaluateRulesRequiresUniqueID(t *testing.T) {
@@ -97,6 +129,115 @@ func hasMISettingsFailure(failures []api.RuleFailure) bool {
 		}
 	}
 	return false
+}
+
+func validationPolicyFailuresForTest(t *testing.T, tracker string, subject api.TrackerValidationSubject) []api.RuleFailure {
+	t.Helper()
+	registry, err := impl.NewRegistry()
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+	descriptor, ok := registry.LookupDescriptor(tracker)
+	if !ok {
+		t.Fatalf("missing tracker descriptor %s", tracker)
+	}
+	failures, err := descriptor.Validation.Check(context.Background(), subject, api.NopLogger{})
+	if err != nil {
+		t.Fatalf("evaluate %s validation policy: %v", tracker, err)
+	}
+	return failures
+}
+
+func TestStandaloneConstructibilityAuditPoliciesRejectInvalidFacts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		tracker string
+		subject api.TrackerValidationSubject
+		rule    string
+	}{
+		{tracker: "ANT", rule: "unsupported_type"},
+		{tracker: "BHDTV", rule: "unsupported_category"},
+		{tracker: "FF", rule: "unsupported_category"},
+		{tracker: "FL", rule: "unsupported_category"},
+		{tracker: "MTV", rule: "unsupported_category"},
+		{tracker: "NBL", rule: "prepared_media_missing"},
+		{tracker: "THR", rule: "unsupported_category"},
+		{tracker: "TL", rule: "unsupported_category"},
+		{tracker: "GPW", rule: "prepared_media_missing"},
+		{tracker: "PTP", rule: "unsupported_category"},
+		{tracker: "SPD", rule: "unsupported_category"},
+	}
+	for _, test := range tests {
+		t.Run(test.tracker, func(t *testing.T) {
+			t.Parallel()
+			failures := validationPolicyFailuresForTest(t, test.tracker, test.subject)
+			if !hasRuleFailure(failures, test.rule) {
+				t.Fatalf("%s validation missing %s failure: %#v", test.tracker, test.rule, failures)
+			}
+		})
+	}
+}
+
+func TestARConstructibilityPolicyDocumentsOtherTypeFallback(t *testing.T) {
+	t.Parallel()
+
+	if failures := validationPolicyFailuresForTest(t, "AR", api.TrackerValidationSubject{}); len(failures) != 0 {
+		t.Fatalf("AR default Other type fallback must remain constructible: %#v", failures)
+	}
+}
+
+func TestGPWConstructibilityPolicyDocumentsTaxonomyFallbacks(t *testing.T) {
+	t.Parallel()
+
+	subject := api.TrackerValidationSubject{MediaInfoTextReady: true}
+	if failures := validationPolicyFailuresForTest(t, "GPW", subject); len(failures) != 0 {
+		t.Fatalf("GPW explicit taxonomy fallbacks must remain constructible: %#v", failures)
+	}
+}
+
+func TestPTPConstructibilityPolicyDocumentsTaxonomyFallbacks(t *testing.T) {
+	t.Parallel()
+
+	subject := api.TrackerValidationSubject{Identity: api.ExternalIdentity{Category: api.CanonicalCategoryMovie}}
+	if failures := validationPolicyFailuresForTest(t, "PTP", subject); len(failures) != 0 {
+		t.Fatalf("PTP explicit taxonomy fallbacks must remain constructible: %#v", failures)
+	}
+}
+
+func TestUnit3DPayloadCallbacksRejectKnownInvalidFacts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		tracker string
+		subject api.TrackerValidationSubject
+		rule    string
+	}{
+		{
+tracker: "ACM",
+ subject: api.TrackerValidationSubject{Region: "North America"},
+ rule: "unsupported_region",
+},
+		{
+tracker: "LST",
+ subject: api.TrackerValidationSubject{Edition: "Unknown Edition"},
+ rule: "unsupported_edition",
+},
+		{
+tracker: "SHRI",
+ subject: api.TrackerValidationSubject{DiscType: "DVD"},
+ rule: "region_required",
+},
+	}
+	for _, test := range tests {
+		t.Run(test.tracker, func(t *testing.T) {
+			t.Parallel()
+			failures := validationPolicyFailuresForTest(t, test.tracker, test.subject)
+			if !hasRuleFailure(failures, test.rule) {
+				t.Fatalf("%s validation missing %s failure: %#v", test.tracker, test.rule, failures)
+			}
+		})
+	}
 }
 
 func encodeAssessments(status api.EncodeSettingsStatus) api.ReleaseAssessments {
@@ -775,7 +916,7 @@ func TestEvaluateRulesModifiedReleaseAcrossFamilies(t *testing.T) {
 	}
 	clean := api.RuleSubject{
 		SourcePath: "/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP",
-		Release:    api.ReleaseInfo{Group: "GRP"},
+		Release:    api.ReleaseInfo{Group: "GRP", Resolution: "2160p"},
 	}
 	sceneRename := clean
 	sceneRename.SceneRenamed = true
@@ -822,7 +963,7 @@ func TestEvaluateRulesMetadataPolicyReturnsEvaluatedEmpty(t *testing.T) {
 
 	clean := api.RuleSubject{
 		SourcePath: "/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP",
-		Release:    api.ReleaseInfo{Group: "GRP"},
+		Release:    api.ReleaseInfo{Group: "GRP", Resolution: "2160p"},
 	}
 	if got := evaluateNonMetadataRulesForTest(context.Background(), "MTV", clean); got == nil || len(got) != 0 {
 		t.Fatalf("expected evaluated empty result, got %#v", got)
@@ -850,149 +991,149 @@ func TestResolutionDependentRulesAreStrict(t *testing.T) {
 	tests := make([]ruleTest, 0, 20)
 	tests = append(tests, []ruleTest{
 		{
-name: "RHD missing",
- tracker: "RHD",
- meta: base(""),
- rule: "min_resolution",
- want: true,
-},
+			name:    "RHD missing",
+			tracker: "RHD",
+			meta:    base(""),
+			rule:    "min_resolution",
+			want:    true,
+		},
 		{
-name: "RHD below",
- tracker: "RHD",
- meta: base("576p"),
- rule: "min_resolution",
- want: true,
-},
+			name:    "RHD below",
+			tracker: "RHD",
+			meta:    base("576p"),
+			rule:    "min_resolution",
+			want:    true,
+		},
 		{
-name: "RHD boundary",
- tracker: "RHD",
- meta: base("720p"),
- rule: "min_resolution",
-},
+			name:    "RHD boundary",
+			tracker: "RHD",
+			meta:    base("720p"),
+			rule:    "min_resolution",
+		},
 		{
-name: "SP below",
- tracker: "SP",
- meta: base("720p"),
- rule: "min_resolution",
- want: true,
-},
+			name:    "SP below",
+			tracker: "SP",
+			meta:    base("720p"),
+			rule:    "min_resolution",
+			want:    true,
+		},
 		{
-name: "SP boundary",
- tracker: "SP",
- meta: base("1080p"),
- rule: "min_resolution",
-},
+			name:    "SP boundary",
+			tracker: "SP",
+			meta:    base("1080p"),
+			rule:    "min_resolution",
+		},
 		{
-name: "LUME missing",
- tracker: "LUME",
- meta: base(""),
- rule: "resolution_required",
- want: true,
-},
+			name:    "LUME missing",
+			tracker: "LUME",
+			meta:    base(""),
+			rule:    "resolution_required",
+			want:    true,
+		},
 		{
-name: "LUME below",
- tracker: "LUME",
- meta: base("576p"),
- rule: "min_resolution",
- want: true,
-},
+			name:    "LUME below",
+			tracker: "LUME",
+			meta:    base("576p"),
+			rule:    "min_resolution",
+			want:    true,
+		},
 		{
-name: "LUME boundary",
- tracker: "LUME",
- meta: base("720p"),
- rule: "min_resolution",
-},
+			name:    "LUME boundary",
+			tracker: "LUME",
+			meta:    base("720p"),
+			rule:    "min_resolution",
+		},
 		{
-name: "PHD SD progressive",
- tracker: "PHD",
- meta: base("576p"),
- rule: "sd_forbidden",
- want: true,
-},
+			name:    "PHD SD progressive",
+			tracker: "PHD",
+			meta:    base("576p"),
+			rule:    "sd_forbidden",
+			want:    true,
+		},
 		{
-name: "PHD SD interlaced",
- tracker: "PHD",
- meta: base("480i"),
- rule: "sd_forbidden",
- want: true,
-},
+			name:    "PHD SD interlaced",
+			tracker: "PHD",
+			meta:    base("480i"),
+			rule:    "sd_forbidden",
+			want:    true,
+		},
 		{
-name: "HDS missing",
- tracker: "HDS",
- meta: base(""),
- rule: "min_resolution",
- want: true,
-},
+			name:    "HDS missing",
+			tracker: "HDS",
+			meta:    base(""),
+			rule:    "min_resolution",
+			want:    true,
+		},
 		{
-name: "HDS below",
- tracker: "HDS",
- meta: base("576p"),
- rule: "min_resolution",
- want: true,
-},
+			name:    "HDS below",
+			tracker: "HDS",
+			meta:    base("576p"),
+			rule:    "min_resolution",
+			want:    true,
+		},
 		{
-name: "HDS boundary",
- tracker: "HDS",
- meta: base("720p"),
- rule: "min_resolution",
-},
+			name:    "HDS boundary",
+			tracker: "HDS",
+			meta:    base("720p"),
+			rule:    "min_resolution",
+		},
 		{
-name: "HDT missing",
- tracker: "HDT",
- meta: base(""),
- rule: "resolution_required",
- want: true,
-},
+			name:    "HDT missing",
+			tracker: "HDT",
+			meta:    base(""),
+			rule:    "resolution_required",
+			want:    true,
+		},
 		{
-name: "HDT known SD",
- tracker: "HDT",
- meta: base("576p"),
- rule: "resolution_required",
-},
+			name:    "HDT known SD",
+			tracker: "HDT",
+			meta:    base("576p"),
+			rule:    "resolution_required",
+		},
 		{
-name: "TVC UHD",
- tracker: "TVC",
- meta: base("2160p"),
- rule: "uhd_forbidden",
- want: true,
-},
+			name:    "TVC UHD",
+			tracker: "TVC",
+			meta:    base("2160p"),
+			rule:    "uhd_forbidden",
+			want:    true,
+		},
 		{
-name: "TVC HD",
- tracker: "TVC",
- meta: base("1080p"),
- rule: "uhd_forbidden",
-},
+			name:    "TVC HD",
+			tracker: "TVC",
+			meta:    base("1080p"),
+			rule:    "uhd_forbidden",
+		},
 	}...)
 
 	ulcxHEVC := base("1080p")
 	ulcxHEVC.VideoCodec = "HEVC"
 	tests = append(tests, ruleTest{
-name: "ULCX HEVC threshold",
- tracker: "ULCX",
- meta: ulcxHEVC,
- rule: "hevc_resolution_2160p",
- want: true,
-})
+		name:    "ULCX HEVC threshold",
+		tracker: "ULCX",
+		meta:    ulcxHEVC,
+		rule:    "hevc_resolution_2160p",
+		want:    true,
+	})
 	ulcxEncode := base("576p")
 	ulcxEncode.Type = "ENCODE"
 	tests = append(tests, ruleTest{
-name: "ULCX encode minimum",
- tracker: "ULCX",
- meta: ulcxEncode,
- rule: "encode_min_resolution",
- want: true,
-})
+		name:    "ULCX encode minimum",
+		tracker: "ULCX",
+		meta:    ulcxEncode,
+		rule:    "encode_min_resolution",
+		want:    true,
+	})
 	phdCodec := base("2160p")
 	phdCodec.Type = "ENCODE"
 	phdCodec.Source = "BLURAY"
 	phdCodec.VideoEncode = "x264"
 	tests = append(tests, ruleTest{
-name: "PHD H264 threshold",
- tracker: "PHD",
- meta: phdCodec,
- rule: "h264_resolution_limit",
- want: true,
-})
+		name:    "PHD H264 threshold",
+		tracker: "PHD",
+		meta:    phdCodec,
+		rule:    "h264_resolution_limit",
+		want:    true,
+	})
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

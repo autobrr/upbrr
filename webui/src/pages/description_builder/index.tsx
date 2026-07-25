@@ -32,7 +32,7 @@ export default function DescriptionBuilderPage(props: Props) {
   } = props;
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const { view } = facet;
-  const groups = view.preview?.Groups || [];
+  const groups = view.artifact?.descriptions || [];
   const builderLoading = view.status === "running";
   const builderError = view.error;
   const builderSaved = view.notice;
@@ -83,17 +83,18 @@ export default function DescriptionBuilderPage(props: Props) {
         </section>
       ) : (
         groups.map((group, i) => {
-          const groupKey = group.GroupKey;
+          const groupKey = group.groupKey;
           const reactKey = groupKey || `default-${i}`;
-          const seededRaw = group.RawDescription || "";
+          const seededRaw = group.source || "";
           const raw = view.rawByGroup[groupKey] ?? seededRaw;
-          const seededRendered = group.RawDescriptionHTML || "";
+          const seededRendered = group.rendered || "";
           const renderedHTML = view.renderedByGroup[groupKey] ?? seededRendered;
           const expanded = expandedGroups[groupKey] ?? false;
-          const trackers = (group.Trackers || []).map((tracker) => tracker.trim()).filter(Boolean);
+          const trackers = (group.trackerIds || [])
+            .map((tracker) => tracker.trim())
+            .filter(Boolean);
           const label = groupLabel(groupKey, trackers);
           const hideTrackerNames = faviconOnly && useFavicons && trackers.length > 0;
-          const imageHostWarnings = group.ImageHost?.Warnings || [];
 
           return (
             <section className="panel grid gap-3" key={reactKey}>
@@ -115,33 +116,7 @@ export default function DescriptionBuilderPage(props: Props) {
                       {hideTrackerNames ? null : label}
                     </span>
                   </h2>
-                  <p className="muted">
-                    {group.HasOverride
-                      ? "Saved override active for this group."
-                      : "Using generated raw description."}
-                  </p>
-                  {group.ImageHost?.Reuploaded && group.ImageHost?.Message ? (
-                    <p className="muted">{group.ImageHost.Message}</p>
-                  ) : null}
-                  {group.ImageHost?.Status === "warning" && group.ImageHost?.Message ? (
-                    <p className="m-0 mt-1 rounded-md border border-amber-400/40 bg-amber-400/10 px-2 py-1 text-[0.82rem] text-amber-100 [overflow-wrap:anywhere]">
-                      {group.ImageHost.Message}
-                    </p>
-                  ) : null}
-                  {imageHostWarnings.map((warning, index) => {
-                    const host = String(warning.Host || "").trim();
-                    const message = String(warning.Message || "").trim();
-                    if (!host && !message) return null;
-                    return (
-                      <p
-                        className="m-0 mt-1 rounded-md border border-amber-400/40 bg-amber-400/10 px-2 py-1 text-[0.82rem] text-amber-100 [overflow-wrap:anywhere]"
-                        key={`${host || "host"}-${index}`}
-                      >
-                        {host ? `${host} failed` : "Image host warning"}
-                        {message ? `: ${message}` : ""}
-                      </p>
-                    );
-                  })}
+                  <p className="muted">Workflow-owned generated description.</p>
                 </div>
                 <button
                   className="ghost"

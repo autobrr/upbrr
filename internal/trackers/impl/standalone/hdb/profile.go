@@ -9,6 +9,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -21,6 +22,7 @@ func Profile() standalone.Profile {
 		BaseURL:            hdbBaseURL,
 		DescriptionGroup:   "hdb",
 		UploadContentMode:  trackers.UploadContentModeDescription,
+		ValidationPolicy:   validationPolicy(),
 		PrepareDescription: prepareDescription,
 		PrepareUpload: func(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 			return prepareUploadAt(ctx, req, hdbBaseURL, nil)
@@ -60,7 +62,19 @@ func Profile() standalone.Profile {
 			SupportsCookieFile: true,
 			RequiresPasskey:    true,
 		},
-		AuthPolicy: &trackers.AuthPolicy{PasskeyRequiresUsername: true, PasskeyRequiresCookie: true},
+		AuthPolicy: &trackers.AuthPolicy{
+			ResolveRequirements: authcontract.StaticRequirements(authcontract.Requirements(
+				"passkey_cookie",
+				false,
+				[]trackers.AuthRequirement{
+					trackers.AuthRequirementUsername,
+					trackers.AuthRequirementPasskey,
+					trackers.AuthRequirementStoredCookie,
+				},
+			)),
+			PasskeyRequiresUsername: true,
+			PasskeyRequiresCookie:   true,
+		},
 		AuthResolver: func(ctx context.Context, cfg config.TrackerConfig, dbPath string, request api.TrackerAuthLoginRequest) error {
 			return resolveAuthSessionAt(ctx, cfg, dbPath, request, hdbBaseURL, nil)
 		},

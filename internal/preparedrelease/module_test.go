@@ -20,6 +20,39 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestCanonicalFingerprintEntriesIgnoreDirectoryModificationTime(t *testing.T) {
+	t.Parallel()
+	first := time.Date(2026, time.July, 20, 10, 0, 0, 0, time.UTC)
+	second := first.Add(time.Hour)
+	entries := []api.SourceManifestEntry{
+		{
+			Path:       "C:\\media\\Example",
+			Type:       api.SourceEntryTypeDirectory,
+			ModifiedAt: first,
+		},
+		{
+			Path:       "C:\\media\\Example\\video.mkv",
+			Type:       api.SourceEntryTypeFile,
+			Size:       7,
+			ModifiedAt: first,
+		},
+	}
+	baseline := canonicalFingerprintEntries(entries)
+	entries[0].ModifiedAt = second
+	directoryChanged := canonicalFingerprintEntries(entries)
+	if baseline[0].ModifiedNano != 0 || directoryChanged[0].ModifiedNano != 0 {
+		t.Fatalf("directory modification times = %d, %d", baseline[0].ModifiedNano, directoryChanged[0].ModifiedNano)
+	}
+	if baseline[1].ModifiedNano != directoryChanged[1].ModifiedNano {
+		t.Fatalf("unchanged file modification time changed: %d != %d", baseline[1].ModifiedNano, directoryChanged[1].ModifiedNano)
+	}
+	entries[1].ModifiedAt = second
+	fileChanged := canonicalFingerprintEntries(entries)
+	if fileChanged[1].ModifiedNano == baseline[1].ModifiedNano {
+		t.Fatal("file modification time was omitted from the source fingerprint")
+	}
+}
+
 func TestPrepareUsesExactCompatibilityAndPublishesConcreteAssessments(t *testing.T) {
 	t.Parallel()
 	path := writePreparedTestFile(t, "source.mkv", "first")
@@ -159,7 +192,7 @@ func TestPrepareHydratesPersistedClientEvidenceOnceAfterRestart(t *testing.T) {
 	}
 
 	ref := api.ReleaseRef{SourcePath: path, Generation: reused.Release.Generation}
-	upload, err := restarted.ResolveUploadSubject(context.Background(), api.UploadReviewInput{Release: ref})
+	upload, err := restarted.ResolveUploadSubject(context.Background(), api.UploadSubjectInput{Release: ref})
 	if err != nil {
 		t.Fatalf("resolve hydrated upload subject: %v", err)
 	}
@@ -203,7 +236,7 @@ func TestPrepareForceRecheckBuildsOneFreshGeneration(t *testing.T) {
 		t.Fatalf("forced preparation calls collect=%d hydrate=%d, want 2/0", collector.collectCount(), collector.hydrateCount())
 	}
 	ref := api.ReleaseRef{SourcePath: path, Generation: second.Release.Generation}
-	upload, err := module.ResolveUploadSubject(context.Background(), api.UploadReviewInput{Release: ref})
+	upload, err := module.ResolveUploadSubject(context.Background(), api.UploadSubjectInput{Release: ref})
 	if err != nil {
 		t.Fatalf("resolve forced upload subject: %v", err)
 	}
@@ -333,7 +366,7 @@ func TestOperationSubjectsUseExactGenerationAndDetachedFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	ref := api.ReleaseRef{SourcePath: path, Generation: prepared.Release.Generation}
-	upload, err := module.ResolveUploadSubject(context.Background(), api.UploadReviewInput{
+	upload, err := module.ResolveUploadSubject(context.Background(), api.UploadSubjectInput{
 		Release:  ref,
 		Trackers: []string{"AITHER"},
 		Options:  api.UploadOptions{KeepImages: true},

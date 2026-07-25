@@ -271,10 +271,11 @@ type stubPreparationDefinition struct {
 }
 
 type trackingUploadDefinition struct {
-	name     string
-	started  chan<- string
-	requests chan<- PreparationInput
-	release  <-chan struct{}
+	name           string
+	started        chan<- string
+	requests       chan<- PreparationInput
+	release        <-chan struct{}
+	artifactPolicy *UploadArtifactPolicy
 }
 
 type blockingImageService struct {
@@ -659,14 +660,7 @@ func (t trackingUploadDefinition) Name() string {
 }
 
 func (t trackingUploadDefinition) UploadArtifactPolicy() *UploadArtifactPolicy {
-	switch t.name {
-	case "HDB":
-		return &UploadArtifactPolicy{Source: "HDBits"}
-	case "PTP":
-		return &UploadArtifactPolicy{Source: "PTP"}
-	default:
-		return nil
-	}
+	return t.artifactPolicy
 }
 
 func (t trackingUploadDefinition) Prepare(ctx context.Context, input PreparationInput) (TrackerPlan, *PreparationFailure) {
@@ -741,23 +735,20 @@ func TestBuildUploadDryRunUsesBuilder(t *testing.T) {
 	}
 }
 
-func TestBuildUploadPreviewUsesTypedReviewAndDryRunIntents(t *testing.T) {
+func TestBuildUploadPreviewUsesTypedDryRunIntent(t *testing.T) {
 	t.Parallel()
 
-	intents := make([]PreparationIntent, 0, 2)
+	intents := make([]PreparationIntent, 0, 1)
 	registry := NewRegistry()
 	if err := registry.Register(stubDryRunDefinition{name: "BLU", intents: &intents}); err != nil {
 		t.Fatalf("register stub: %v", err)
 	}
 	svc := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
 	subject := api.UploadSubject{SourcePath: "/tmp/file"}
-	if _, err := svc.BuildUploadReview(context.Background(), subject, []string{"BLU"}); err != nil {
-		t.Fatalf("build upload review: %v", err)
-	}
 	if _, err := svc.BuildUploadDryRun(context.Background(), subject, []string{"BLU"}); err != nil {
 		t.Fatalf("build explicit dry run: %v", err)
 	}
-	if !slices.Equal(intents, []PreparationIntent{PreparationIntentUploadReview, PreparationIntentDryRun}) {
+	if !slices.Equal(intents, []PreparationIntent{PreparationIntentDryRun}) {
 		t.Fatalf("preparation intents = %#v", intents)
 	}
 }
@@ -811,10 +802,10 @@ func TestBuildUploadDryRunNoneModeSkipsSharedContent(t *testing.T) {
 	inputs := make([]PreparationInput, 0, 1)
 	registry := NewRegistry()
 	if err := registry.Register(stubDryRunDefinition{
-name: "NONE",
- mode: UploadContentModeNone,
- inputs: &inputs,
-}); err != nil {
+		name:   "NONE",
+		mode:   UploadContentModeNone,
+		inputs: &inputs,
+	}); err != nil {
 		t.Fatalf("register stub: %v", err)
 	}
 	repo := &stubRepo{
@@ -857,17 +848,17 @@ func TestBuildUploadDryRunDistinguishesReadyEmptyAndFailedScreenshots(t *testing
 		wantCalls  int
 	}{
 		{
-name: "ready empty",
- repo: &stubRepo{},
- wantStatus: "ready",
- wantCalls: 1,
-},
+			name:       "ready empty",
+			repo:       &stubRepo{},
+			wantStatus: "ready",
+			wantCalls:  1,
+		},
 		{
-name: "failed",
- repo: &stubRepo{selectionsErr: errors.New("selections unavailable")},
- wantStatus: "blocked",
- wantCalls: 0,
-},
+			name:       "failed",
+			repo:       &stubRepo{selectionsErr: errors.New("selections unavailable")},
+			wantStatus: "blocked",
+			wantCalls:  0,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -875,10 +866,10 @@ name: "failed",
 			inputs := make([]PreparationInput, 0, 1)
 			registry := NewRegistry()
 			if err := registry.Register(stubDryRunDefinition{
-name: "IMAGES",
- mode: UploadContentModeScreenshots,
- inputs: &inputs,
-}); err != nil {
+				name:   "IMAGES",
+				mode:   UploadContentModeScreenshots,
+				inputs: &inputs,
+			}); err != nil {
 				t.Fatalf("register stub: %v", err)
 			}
 			svc := NewServiceWithRegistry(config.Config{}, nil, test.repo, registry)
@@ -900,7 +891,7 @@ name: "IMAGES",
 				if test.repo.overrideCalls != 0 {
 					t.Fatalf("screenshot mode loaded description overrides %d time(s)", test.repo.overrideCalls)
 				}
-			} else if entries[0].ContentFailure == nil || entries[0].ContentFailure.Code != api.TrackerEligibilityScreenshotPreparationFailed {
+			} else if entries[0].ContentFailure == nil || entries[0].ContentFailure.Code != api.TrackerContentFailureScreenshotPreparation {
 				t.Fatalf("expected structured screenshot failure, got %#v", entries[0].ContentFailure)
 			}
 		})
@@ -915,15 +906,15 @@ func TestBuildUploadDryRunScopesDescriptionPreloadFailure(t *testing.T) {
 	registry := NewRegistry()
 	for _, definition := range []Definition{
 		stubDryRunDefinition{
-name: "IMAGES",
- mode: UploadContentModeScreenshots,
- inputs: &screenshotInputs,
-},
+			name:   "IMAGES",
+			mode:   UploadContentModeScreenshots,
+			inputs: &screenshotInputs,
+		},
 		stubDryRunDefinition{
-name: "DESCRIPTION",
- mode: UploadContentModeDescription,
- inputs: &descriptionInputs,
-},
+			name:   "DESCRIPTION",
+			mode:   UploadContentModeDescription,
+			inputs: &descriptionInputs,
+		},
 	} {
 		if err := registry.Register(definition); err != nil {
 			t.Fatalf("register stub: %v", err)
@@ -946,7 +937,7 @@ name: "DESCRIPTION",
 	if len(screenshotInputs) != 1 || len(descriptionInputs) != 0 {
 		t.Fatalf("expected only screenshot adapter invocation, screenshots=%d descriptions=%d", len(screenshotInputs), len(descriptionInputs))
 	}
-	if entries[1].ContentFailure == nil || entries[1].ContentFailure.Code != api.TrackerEligibilityDescriptionPreparationFailed {
+	if entries[1].ContentFailure == nil || entries[1].ContentFailure.Code != api.TrackerContentFailureDescriptionPreparation {
 		t.Fatalf("expected structured description failure, got %#v", entries[1].ContentFailure)
 	}
 }
@@ -994,8 +985,8 @@ func TestBuildUploadDryRunBlocksWhenImageHostFallbacksFail(t *testing.T) {
 	if entry.ImageHost.Status != "blocked" || len(entry.ImageHost.Warnings) != 1 {
 		t.Fatalf("expected blocked image host feedback, got %#v", entry.ImageHost)
 	}
-	if entry.ContentFailure == nil || entry.ContentFailure.Code != api.TrackerEligibilityDescriptionPreparationFailed {
-		t.Fatalf("expected structured description failure, got %#v", entry.ContentFailure)
+	if entry.ContentFailure == nil || entry.ContentFailure.Code != api.TrackerContentFailureImageHostUnavailable {
+		t.Fatalf("expected structured image-host failure, got %#v", entry.ContentFailure)
 	}
 }
 
@@ -1043,14 +1034,70 @@ func TestBuildPreparationBlocksWhenImageHostFallbacksFail(t *testing.T) {
 		t.Fatalf("expected 1 structured content failure, got %#v", preview.ContentFailures)
 	}
 	failure := preview.ContentFailures[0]
-	if failure.Tracker != "PTP" || failure.Code != api.TrackerEligibilityDescriptionPreparationFailed {
-		t.Fatalf("expected PTP description failure, got %#v", failure)
+	if failure.Tracker != "PTP" || failure.Code != api.TrackerContentFailureImageHostUnavailable {
+		t.Fatalf("expected PTP image-host failure, got %#v", failure)
 	}
 	if !strings.Contains(failure.Message, "could not upload screenshots") {
 		t.Fatalf("expected blocking image host message, got %q", failure.Message)
 	}
 	if got := strings.Join(images.calls, ","); got != "pixhost" {
 		t.Fatalf("expected one preflight upload attempt, got %q", got)
+	}
+}
+
+func TestBuildPreparationDoesNotRetryFailedImageHostForLaterTrackers(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		stubPreparationDefinition{
+			name:        "MTV",
+			group:       "mtv",
+			description: "MTV description",
+		},
+		stubPreparationDefinition{
+			name:        "OE",
+			group:       "oe",
+			description: "OE description",
+		},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register stub: %v", err)
+		}
+	}
+
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{
+				SourcePath: sourcePath,
+				ImagePath:  filepath.Join(t.TempDir(), "screen-1.png"),
+				Order:      0,
+			},
+		},
+	}
+	images := &stubImageService{
+		errs: map[string]error{"imgbox": errors.New("imgbox unavailable")},
+		repo: repo,
+	}
+	svc := NewServiceWithRegistryAndImages(config.Config{ImageHosting: config.ImageHostingConfig{
+		Host1: "imgbox",
+		Host2: "imgbb",
+	}}, nil, repo, registry, images)
+
+	preview, err := svc.BuildPreparation(
+		context.Background(),
+		api.NewDescriptionSubject(api.UploadSubject{SourcePath: sourcePath}),
+		[]string{"MTV", "OE"},
+	)
+	if err != nil {
+		t.Fatalf("build preparation: %v", err)
+	}
+	if len(preview.ContentFailures) != 0 || len(preview.Descriptions) != 2 {
+		t.Fatalf("unexpected preparation result: %#v", preview)
+	}
+	if got := strings.Join(images.calls, ","); got != "imgbox,imgbb" {
+		t.Fatalf("expected one failed imgbox attempt followed by reusable imgbb upload, got %q", got)
 	}
 }
 
@@ -1112,8 +1159,8 @@ func TestBuildPreparationBlocksWhenUploadedImagesDoNotCoverRHDSlots(t *testing.T
 		t.Fatalf("expected 1 structured content failure, got %#v", preview.ContentFailures)
 	}
 	failure := preview.ContentFailures[0]
-	if failure.Tracker != "RHD" || failure.Code != api.TrackerEligibilityDescriptionPreparationFailed {
-		t.Fatalf("expected RHD description failure, got %#v", failure)
+	if failure.Tracker != "RHD" || failure.Code != api.TrackerContentFailureImageHostUnavailable {
+		t.Fatalf("expected RHD image-host failure, got %#v", failure)
 	}
 	if !strings.Contains(failure.Message, "missing screenshot variant for slot 0") {
 		t.Fatalf("expected slot coverage failure, got %#v", failure)
@@ -1725,14 +1772,16 @@ func TestUploadPreparesDistinctTrackerArtifactsBeforeConcurrentUploads(t *testin
 	registry := NewRegistry()
 	for _, definition := range []Definition{
 		trackingUploadDefinition{
-			name:     "HDB",
-			requests: requests,
-			release:  release,
+			name:           "HDB",
+			requests:       requests,
+			release:        release,
+			artifactPolicy: &UploadArtifactPolicy{Source: "HDBits"},
 		},
 		trackingUploadDefinition{
-			name:     "PTP",
-			requests: requests,
-			release:  release,
+			name:           "PTP",
+			requests:       requests,
+			release:        release,
+			artifactPolicy: &UploadArtifactPolicy{Source: "PTP"},
 		},
 	} {
 		if err := registry.Register(definition); err != nil {

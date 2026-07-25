@@ -56,16 +56,6 @@ func nextSessionLogStopGenerationLocked(s *Server, sessionID string) uint64 {
 	return sessionLogStopGenerations.byServ[s][sessionID]
 }
 
-// clearSessionLogStopGeneration drops idle-stop generation state after the
-// owning delayed cleanup exits, regardless of whether it stopped the session
-// log streams or yielded to a replacement subscriber.
-func clearSessionLogStopGeneration(s *Server, sessionID string) {
-	sessionLogStopGenerations.mu.Lock()
-	defer sessionLogStopGenerations.mu.Unlock()
-
-	clearSessionLogStopGenerationLocked(s, sessionID)
-}
-
 func clearSessionLogStopGenerationLocked(s *Server, sessionID string) {
 	sessionGenerations, ok := sessionLogStopGenerations.byServ[s]
 	if !ok {
@@ -115,6 +105,7 @@ func (s *Server) registerRootRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/app/TrackerIcon", s.requireSession(s.handleTrackerIcon))
 
 	s.registerAppRoutes(mux)
+	s.registerV1Routes(mux)
 
 	fileServer := http.FileServer(http.FS(s.assets))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -517,7 +508,6 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, current se
 	}
 	if s.backend != nil {
 		s.backend.StopSessionLogStreams(current.ID)
-		s.backend.removeJobOwner(current.ID)
 	}
 	if cookie, err := r.Cookie(sessionCookieName); err == nil && cookie.Value == current.ID {
 		//nolint:gosec // Session clear cookie sets HttpOnly, SameSite, and Secure for HTTPS requests.
@@ -751,21 +741,6 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, current se
 	}
 }
 
-// stopSessionLogStreamsIfIdle schedules cleanup for the latest session
-// disconnect only, so stale SSE disconnect timers cannot stop shared session
-// logs during a newer reconnect grace window.
-func (s *Server) stopSessionLogStreamsIfIdle(sessionID string) {
-	if s == nil || s.backend == nil {
-		return
-	}
-	trimmedSessionID := strings.TrimSpace(sessionID)
-	if trimmedSessionID == "" {
-		return
-	}
-
-	s.scheduleStopSessionLogStreamsIfIdle(trimmedSessionID, nextSessionLogStopGeneration(s, trimmedSessionID))
-}
-
 func (s *Server) scheduleStopSessionLogStreamsIfIdle(sessionID string, generation uint64) {
 	if s == nil || s.backend == nil || generation == 0 {
 		return
@@ -825,12 +800,6 @@ func (s *Server) requireSession(next func(http.ResponseWriter, *http.Request, se
 		if !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 			return
-		}
-		if s.backend != nil {
-			if _, err := s.backend.ensureJobOwner(current.ID); err != nil {
-				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "job runtime unavailable"})
-				return
-			}
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
 			if !s.verifySameOrigin(r, current) || !s.verifyCSRF(r, current) {

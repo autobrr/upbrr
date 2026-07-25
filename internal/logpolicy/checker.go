@@ -899,7 +899,6 @@ func checkFile(fset *token.FileSet, root string, path string) ([]Violation, erro
 	violations = append(violations, checkUnboundedResponseBodyUses(fset, relPath, file, aliases)...)
 	violations = append(violations, checkDiagnosticArtifactWrites(fset, relPath, file, aliases, allows)...)
 	violations = append(violations, checkFrontendVisibleRawErrors(fset, relPath, file, aliases, allows)...)
-	violations = append(violations, checkDryRunPreviewSerialization(fset, relPath, file, allows)...)
 	violations = append(violations, checkUnit3DQueryCredentialAuth(fset, relPath, file, allows)...)
 
 	sensitiveViolations := checkSensitiveOutputParsed(fset, relPath, file, aliases, allows, false)
@@ -1318,63 +1317,6 @@ func isAPICompositeType(expr ast.Expr, aliases map[string]string) bool {
 	}
 	pkg, ok := selector.X.(*ast.Ident)
 	return ok && aliases[pkg.Name] == "github.com/autobrr/upbrr/pkg/api"
-}
-
-// checkDryRunPreviewSerialization requires backend redaction before tracker
-// endpoint/payload data is placed in a WebUI API preview response.
-func checkDryRunPreviewSerialization(fset *token.FileSet, relPath string, file *ast.File, allows map[int]*logpolicyAllow) []Violation {
-	violations := make([]Violation, 0)
-	ast.Inspect(file, func(node ast.Node) bool {
-		literal, ok := node.(*ast.CompositeLit)
-		if !ok || compositeTypeName(literal.Type) != "TrackerDryRunPreview" {
-			return true
-		}
-		for _, element := range literal.Elts {
-			field, ok := element.(*ast.KeyValueExpr)
-			if !ok {
-				continue
-			}
-			key, ok := field.Key.(*ast.Ident)
-			if !ok || key.Name != "Trackers" || isEmptyCompositeLiteral(field.Value) || isSanitizedDryRunEntriesExpr(field.Value) {
-				continue
-			}
-			appendLogpolicyViolation(
-				fset,
-				relPath,
-				allows,
-				&violations,
-				field.Value.Pos(),
-				"TrackerDryRunPreview entries must be sanitized before WebUI API serialization",
-			)
-		}
-		return true
-	})
-	return violations
-}
-
-func compositeTypeName(expr ast.Expr) string {
-	switch typed := expr.(type) {
-	case *ast.Ident:
-		return typed.Name
-	case *ast.SelectorExpr:
-		return typed.Sel.Name
-	default:
-		return ""
-	}
-}
-
-func isEmptyCompositeLiteral(expr ast.Expr) bool {
-	literal, ok := expr.(*ast.CompositeLit)
-	return ok && len(literal.Elts) == 0
-}
-
-func isSanitizedDryRunEntriesExpr(expr ast.Expr) bool {
-	call, ok := expr.(*ast.CallExpr)
-	if !ok {
-		return false
-	}
-	name := strings.ToLower(callName(call))
-	return strings.Contains(name, "dryrun") && (strings.Contains(name, "redact") || strings.Contains(name, "sanit"))
 }
 
 // checkResponseJSONParseErrorOutput flags parse errors from raw JSON envelope

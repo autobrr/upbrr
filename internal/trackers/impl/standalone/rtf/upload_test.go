@@ -30,6 +30,7 @@ func TestBuildUploadDryRunUsesDescriptionPayloadAndLeavesNFOEmpty(t *testing.T) 
 		Tracker: "RTF",
 		Meta: api.UploadSubject{
 			TorrentPath:         torrentPath,
+			ReleaseName:         "Example.Release.2026.1080p-GRP",
 			DescriptionOverride: "Custom description",
 		},
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
@@ -272,6 +273,7 @@ func TestUploadGeneratesMissingAPIKeyFromCredentials(t *testing.T) {
 func TestUploadRejectsMalformedBaseURL(t *testing.T) {
 	_, err := uploadAt(context.Background(), trackers.PreparationInput{
 		Tracker:       "RTF",
+		Meta:          api.UploadSubject{ReleaseName: "Example.Release.2026.1080p-GRP"},
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
 	}, "not a url")
 	if err == nil {

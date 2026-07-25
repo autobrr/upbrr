@@ -29,6 +29,11 @@ test("embedded web serves UI, API, assets, manifest, and events under a base pat
     await page.goto(app.url);
     await authStatus;
     await expect(page.getByRole("heading", { name: "Build Release Name" })).toBeVisible();
+
+    // Direct release workflows no longer subscribe to legacy job events. Open
+    // the logging page, the remaining event-stream consumer, before asserting
+    // base-path routing for the stream.
+    await page.getByRole("button", { name: "Logging" }).click();
     await eventRequest;
 
     const apiAuthStatus = await request.get(`${origin}/upbrr/api/auth/status`);

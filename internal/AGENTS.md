@@ -43,7 +43,7 @@ go test -race -v -timeout 20m ./internal/webserver/... ./pkg/api
 4. `internal/clientdiscovery` owns normalized source-scoped torrent-client search.
 5. `internal/webserver` owns browser transport, retained background jobs, and runtime activation through `RuntimeActivator`.
 6. Generic tracker orchestration under `internal/trackers` consumes typed registry capabilities; auth, dupe, and data coordinators live in dedicated subpackages.
-7. Tracker implementations are grouped by registry family: Unit3D sites under `internal/trackers/impl/unit3d/sites/<tracker>`, AvistaZ-family profiles under `internal/trackers/impl/azfamily`, and all other trackers under `internal/trackers/impl/standalone/<tracker>`. Tracker-local packages own endpoints, payloads, auth, lookup, rules, descriptions, and policy.
+7. Tracker implementations are grouped by registry family: Unit3D sites under `internal/trackers/impl/unit3d/sites/<tracker>`, AvistaZ-family profiles under `internal/trackers/impl/azfamily`, and all other trackers under `internal/trackers/impl/standalone/<tracker>`. Tracker-local packages own endpoints, payloads, auth, lookup, rules, validation, descriptions, and policy.
 8. DB/repository layers persist config, prepared generations, history, images, upload records, and status.
 
 Preserve behavior across CLI and WebUI unless intentionally changing an entrypoint.
@@ -61,7 +61,7 @@ Preserve behavior across CLI and WebUI unless intentionally changing an entrypoi
 - Canonical preparation contracts are single-source and preserve the caller's interaction mode.
 - `PreparedRelease` contains typed, reusable source facts only. Do not retain workflow options, tracker choices, questionnaire answers, overrides, or outcomes in prepared state.
 - Operations consume owner-local inputs plus an exact `ReleaseRef`; workflow interfaces must not accept a broad `PreparedRelease` when a narrower contract suffices.
-- `PreparedReleaseDisplay` and `ProviderDisplay` construction belongs to `internal/preparedrelease`; `TrackerEligibility` construction belongs to `internal/core`.
+- `PreparedReleaseDisplay` and `ProviderDisplay` construction belongs to `internal/preparedrelease`; tracker readiness belongs to workflow projection/preflight snapshots.
 - Browser correlation IDs and event timestamps are transport concerns. Inject them under `internal/webserver`, not canonical preparation inputs or facts.
 
 ## Go Rules
@@ -118,8 +118,23 @@ Current expected local/generated ignores: `dist/`, `webui/dist/`, `internal/webs
 
 - Standalone tracker behavior belongs in `internal/trackers/impl/standalone/<tracker>`; Unit3D site exceptions belong in `internal/trackers/impl/unit3d/sites/<tracker>`. Each standalone package composes identity and static capabilities in `profile.go`; dynamic data/claim factories may use a small local wrapper around `standalone.Definition`. Register definitions explicitly in `internal/trackers/impl/registry.go`; generic packages must not import individual implementations.
 - `internal/trackers/impl/registry.go` is the only complete supported-tracker composition list and groups definitions by family. Tracker profiles/definitions own endpoints and typed policy; `internal/config/defaults/example.yaml` owns ordered config surfaces/defaults. Generic metadata, auth, image-hosting, torrent-client, and frontend code must consume registry/catalog capabilities without tracker-name dispatch.
+- Tracker semantic file ownership is strict:
+  - `profile.go` / `definition.go`: identity, endpoint, family, static capabilities, policy bindings, callback wiring; no substantial algorithms.
+  - `name.go`: pure versioned upload/search-name policy.
+  - `auth.go` / `auth_*.go`: tracker-local login/session validation, CSRF/auth-key extraction, cookie selection, and typed auth failures.
+  - `taxonomy.go`: pure tracker vocabulary mappings for category/type/source/codec/resolution/audio/language/tags/flags; no I/O.
+  - `validation.go`: side-effect-free pre-duplicate payload constructibility and prepared-resource checks over `api.TrackerValidationSubject`; no network, filesystem reads, runtime secrets, or mutable services. Release-eligibility policy that extends `rules.go` may expose its validation binding there.
+  - `description.go` plus optional `bbcode.go`: description preparation/composition and tracker markup.
+  - `media.go`: MediaInfo/BDInfo/NFO path selection, reads, parsing, and normalized technical facts.
+  - `questionnaire.go`: schema, stable answer keys, defaults, normalization, and validation; no prompting/UI.
+  - `payload.go`: payload-only field/file encoding when separated.
+  - `upload.go`: prepare/submit/preview orchestration, transport, response parsing, and immutable prepared state capture. It may call semantic modules but must not declare their algorithms, including validation or constructibility checks.
+- Do not create empty marker files. Unit3D/AZ family defaults and central declarative auth count as owned behavior. Unit3D shares family auth/taxonomy/description/media and permits site-local callback implementations only in the matching semantic file. AZ-family behavior remains family-owned. Unrelated standalone trackers do not share taxonomy or description dispatch.
+- `internal/trackers/auth` owns cross-surface status/import/validate/login/2FA/delete coordination, secret-free effective requirements, reusable cookie-login lifecycle, and TOTP. `internal/cookies` owns encrypted persistence. Tracker packages retain protocol forms/endpoints, validation markers, cookie filters, and challenge interpretation; tracker auth code never prompts.
+- Every built-in tracker needs explicit effective auth requirements, a versioned release-name policy, and a resolved versioned validation policy. Family/default validation counts as explicit; tracker-specific payload constructibility checks live in `validation.go`, while release-eligibility policy may stay with `rules.go`. Principal payload fields consume `PreparationInput.ReviewedUploadName()` after central projection; no late name derivation in upload or payload code.
+- `internal/architecturepolicy` keeps validation algorithms out of tracker `upload.go`, enforces static banned-group locality, Unit3D callback file bindings, name locality, reviewed-name payload fences, and forbidden imports. Add accepted/rejected fixture coverage when extending these rules.
 - Upload preparation returns one immutable `trackers.PreparedOperation`: preview and submission must use the same captured canonical state. Submission may defer short-lived remote tokens, but must not rebuild payloads, reread mutable prepared inputs, or rerun image uploads. Dry-run and upload-review never receive a submittable plan.
-- Standard Unit3D additions require the site profile/rules, one Unit3D registry entry, one example-config stanza without `url`, and combined rule cases. Do not infer configured custom trackers; unsupported saved entries stay inert and preserve non-URL unknown fields.
+- Standard Unit3D additions require the site profile, optional site rules/validation, one Unit3D registry entry, one example-config stanza without `url`, and combined rule/validation cases. Do not infer configured custom trackers; unsupported saved entries stay inert and preserve non-URL unknown fields.
 - DB schema changes use stable, additive, forward-only, idempotent SQLite migrations where practical; preserve `schema_migrations` and the legacy `user_version` bridge.
 - WebUI client changes need matching `/api/app/*` routes, typed request shapes, and unit/embedded browser verification.
 - Generated/built outputs are mostly ignored; do not commit populated `internal/webserver/assets` unless deliberately updating generated artifacts.

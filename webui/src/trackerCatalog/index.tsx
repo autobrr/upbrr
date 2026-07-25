@@ -78,8 +78,3 @@ export function useTrackerCatalog(): TrackerCatalogState {
   const standalone = useTrackerCatalogOwner(shared === null);
   return shared ?? standalone;
 }
-
-/** Returns the app-owned snapshot without starting a request outside the app provider. */
-export function useTrackerCatalogSnapshot(): TrackerCatalogState | null {
-  return useContext(TrackerCatalogContext);
-}

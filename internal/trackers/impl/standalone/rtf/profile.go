@@ -8,6 +8,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -21,8 +22,9 @@ func Profile() standalone.Profile {
 		UploadContentMode:    trackers.UploadContentModeScreenshots,
 		PrepareDescription:   prepareDescription,
 		PrepareUpload:        prepareUpload,
+		ReleaseNamePolicy:    trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/rtf/v1", resolveUploadName, resolveSearchName),
 		NewDuplicateAdapter:  newDuplicateAdapter,
-		Rules:                rules(),
+		ValidationPolicy:     validationPolicy(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: sourceFlag},
 		DupePolicy:           &trackers.DupePolicy{ContainsFilenameMatch: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
@@ -37,6 +39,14 @@ func Profile() standalone.Profile {
 			SupportsLogin:     true,
 			SupportsAutoLogin: true,
 			RequiresAPIKey:    true,
+		},
+		AuthPolicy: &trackers.AuthPolicy{
+			ResolveRequirements: authcontract.StaticRequirements(authcontract.Requirements(
+				"api_key_or_refresh",
+				false,
+				[]trackers.AuthRequirement{trackers.AuthRequirementAPIKey},
+				[]trackers.AuthRequirement{trackers.AuthRequirementCredentialLogin},
+			)),
 		},
 		AuthResolver: func(ctx context.Context, cfg config.TrackerConfig, dbPath string, request api.TrackerAuthLoginRequest) error {
 			return resolveSessionForTrackerAuthLoginAt(ctx, cfg, dbPath, request, defaultBaseURL)

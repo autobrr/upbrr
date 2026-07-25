@@ -6,10 +6,6 @@ package btn
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha1" //nolint:gosec // TOTP interoperability requires SHA-1.
-	"encoding/base32"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +30,7 @@ import (
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
+	authtotp "github.com/autobrr/upbrr/internal/trackers/auth/totp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -462,42 +459,11 @@ func (s *claimChecker) btnClaimsSessionValid(ctx context.Context, client *http.C
 }
 
 func resolveBTNClaims2FACode(otpURI string) (string, error) {
-	trimmed := strings.TrimSpace(otpURI)
-	if trimmed == "" {
-		return "", errors.New("otp_uri not configured")
-	}
-	parsed, err := url.Parse(trimmed)
+	code, err := authtotp.FromURI(otpURI)
 	if err != nil {
-		return "", fmt.Errorf("metadata: parse BTN claims otp_uri: %w", err)
+		return "", fmt.Errorf("trackers: BTN claims generate TOTP: %w", err)
 	}
-	secret := strings.TrimSpace(parsed.Query().Get("secret"))
-	if secret == "" {
-		return "", errors.New("otp_uri missing secret")
-	}
-	period := 30
-	if value := strings.TrimSpace(parsed.Query().Get("period")); value != "" {
-		if parsedValue, parseErr := strconv.Atoi(value); parseErr == nil && parsedValue > 0 {
-			period = parsedValue
-		}
-	}
-	decoder := base32.StdEncoding.WithPadding(base32.NoPadding)
-	secretBytes, err := decoder.DecodeString(strings.ToUpper(secret))
-	if err != nil {
-		return "", fmt.Errorf("metadata: decode BTN otp secret: %w", err)
-	}
-	counterTime := time.Now().Unix() / int64(period)
-	if counterTime < 0 {
-		return "", errors.New("totp counter before unix epoch")
-	}
-	counter := uint64(counterTime)
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, counter)
-	mac := hmac.New(sha1.New, secretBytes)
-	_, _ = mac.Write(buf)
-	hash := mac.Sum(nil)
-	offset := hash[len(hash)-1] & 0x0f
-	code := (int(hash[offset])&0x7f)<<24 | int(hash[offset+1])<<16 | int(hash[offset+2])<<8 | int(hash[offset+3])
-	return fmt.Sprintf("%06d", code%1000000), nil
+	return code, nil
 }
 
 func sanitizeBTNWebBaseURL(raw string) string {

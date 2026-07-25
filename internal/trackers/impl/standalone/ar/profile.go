@@ -9,6 +9,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -16,13 +17,21 @@ import (
 // Profile returns AR identity, preparation, dupe, auth, and policy behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		Name:                "AR",
-		BaseURL:             arBaseURL,
-		DescriptionGroup:    "ar",
-		UploadContentMode:   trackers.UploadContentModeDescription,
-		PrepareDescription:  prepareDescription,
-		PrepareUpload:       prepareUpload,
+		Name:               "AR",
+		BaseURL:            arBaseURL,
+		DescriptionGroup:   "ar",
+		UploadContentMode:  trackers.UploadContentModeDescription,
+		PrepareDescription: prepareDescription,
+		PrepareUpload:      prepareUpload,
+		ReleaseNamePolicy: trackers.NewReleaseNamePolicy("standalone/ar/v1", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
+			name := resolveARName(input.Subject)
+			if input.RequestedName != nil {
+				name = normalizeARName(*input.RequestedName, input.Subject.Tag)
+			}
+			return trackers.ResolvedReleaseNames{Upload: name, Duplicate: resolveARSearchName(input.Subject)}, nil
+		}),
 		NewDuplicateAdapter: newDuplicateAdapter,
+		ValidationPolicy:    validationPolicy(),
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{
@@ -51,6 +60,14 @@ func Profile() standalone.Profile {
 			SupportsCookieFile: true,
 			SupportsLogin:      true,
 			SupportsAutoLogin:  true,
+		},
+		AuthPolicy: &trackers.AuthPolicy{
+			ResolveRequirements: authcontract.StaticRequirements(authcontract.Requirements(
+				"cookies_or_login",
+				false,
+				[]trackers.AuthRequirement{trackers.AuthRequirementStoredCookie},
+				[]trackers.AuthRequirement{trackers.AuthRequirementCredentialLogin},
+			)),
 		},
 		AuthResolver: func(ctx context.Context, cfg config.TrackerConfig, dbPath string, _ api.TrackerAuthLoginRequest) error {
 			_, _, err := resolveSession(ctx, cfg, dbPath, nil)

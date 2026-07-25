@@ -6,13 +6,16 @@ import { Button } from "../../components/ui/button";
 import { PillCheckbox } from "../../components/ui/checkbox";
 import { Switch } from "../../components/ui/switch";
 import { TrackerIconImage } from "../../components/ui/tracker-icon";
-import type { DuplicatesFacet } from "../../releaseSession/types";
-import type { DupeCheckResult, DupeCheckTrackerState, TrackerUploadItem } from "../../types";
 import type { TrackerIconCache } from "../../hooks/useTrackerIcons";
 import { trackerIconFor } from "../../hooks/useTrackerIcons";
-import { cn } from "../../utils/cn";
-import { dupeSkipReason } from "../../utils/dupeCheck";
+import type { DuplicatesFacet } from "../../releaseSession/types";
+import type { TrackerUploadItem } from "../../types";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
+import type {
+  DupeAssessment,
+  TrackerPreflightAssessment,
+  TrackerReleaseProjectionSet,
+} from "../../api/generated/release-workflow";
 
 type Props = {
   facet: DuplicatesFacet;
@@ -23,114 +26,249 @@ type Props = {
   trackerIconSrcByName: TrackerIconCache;
 };
 
-const isFinishedTrackerStatus = (status: string) => {
-  switch (status.toLowerCase().trim()) {
-    case "complete":
-    case "completed":
+const uniqueFailureMessages = (failures: readonly { failure: { Message: string } }[]): string[] => {
+  const seen = new Set<string>();
+  return failures.flatMap((failure) => {
+    const message = failure.failure.Message.trim();
+    if (!message || seen.has(message)) return [];
+    seen.add(message);
+    return [message];
+  });
+};
+
+const hasInClientMatch = (result: DupeAssessment["results"][number] | undefined) =>
+  Boolean(result?.matches?.some((match) => match.reason?.trim().toLowerCase() === "in_client"));
+
+const workflowDupeSummary = (
+  result: DupeAssessment["results"][number] | undefined,
+  searchBlocked: boolean,
+  inClient: boolean,
+) => {
+  if (searchBlocked && !result) {
+    return "Duplicate search not run because this tracker is blocked.";
+  }
+  if (result?.status === "skipped") return "Duplicate search skipped.";
+  if (!result) return "Duplicate search has not run.";
+  if (result.status === "failed") return "Duplicate search failed.";
+  if (inClient) return "In client · upload blocked";
+  const count = result.matches?.length || 0;
+  switch (result.decision) {
+    case "accepted":
+      return `${count} match(es) · upload blocked`;
+    case "ignored":
+      return `${count} match(es) · duplicate override enabled`;
+    case "pending":
+      return `${count} match(es) · review optional`;
+    case "no_match":
+      return "0 match(es) · no duplicate found";
     case "skipped":
-    case "failed":
-    case "canceled":
-      return true;
-    default:
-      return false;
+      return "Duplicate search skipped.";
   }
 };
 
-/**
- * Converts a finished tracker job state into a displayable dupe result.
- * Pending states without backend results are skipped so progress snapshots do not
- * appear as upload-eligible tracker rows.
- */
-const resultFromTrackerState = (state: DupeCheckTrackerState): DupeCheckResult | null => {
-  const resultTracker = String(state.result?.Tracker || "").trim();
-  const status = String(state.result?.Status || state.status || "").trim();
-  if (!resultTracker && !isFinishedTrackerStatus(status)) return null;
-  const tracker = String(resultTracker || state.tracker || "").trim();
-  if (!tracker) return null;
-  return {
-    ...state.result,
-    Tracker: tracker,
-    Status: status,
-  };
-};
-
-/** Prefers per-tracker snapshot results over summary rows. */
-const displayResultsFor = (
-  summaryResults: DupeCheckResult[],
-  trackerStates: DupeCheckTrackerState[] | undefined,
-) => {
-  const stateResults = (trackerStates || [])
-    .map(resultFromTrackerState)
-    .filter((result): result is DupeCheckResult => Boolean(result));
-  return stateResults.length > 0 ? stateResults : summaryResults;
-};
-
-/** Presents per-tracker duplicate progress, outcomes, and authorization controls. */
-export default function DupeCheckPage(props: Readonly<Props>) {
-  const {
-    facet,
-    sourcePath,
-    trackerUploadItems,
-    useFavicons = true,
-    faviconOnly = false,
-    trackerIconSrcByName,
-  } = props;
-  const { view } = facet;
-  const snapshot = view.snapshot;
-  const dupeLoading = view.status === "running";
-  const dupeSummary = snapshot?.summary;
-  const dupeSummaryNotes = dupeSummary?.Notes || [];
-  const dupeTrackerStates = snapshot?.trackers;
-  const ignoredTrackers = new Set(view.ignoredTrackers);
-  const dupeError = view.error || view.transientError;
-  const dupeProgressStatus = snapshot?.status || view.status;
-  const dupeCompletedCount = snapshot?.completedCount || 0;
-  const dupeTotalCount = snapshot?.totalCount || view.selectedTrackers.length;
-  const activeTrackerStates = (dupeTrackerStates || []).filter(
-    (tracker) => !isFinishedTrackerStatus(tracker.status),
+const workflowTrackerIDs = (
+  assessment: DupeAssessment | null,
+  preflight: TrackerPreflightAssessment | null,
+  projections: TrackerReleaseProjectionSet | null,
+) =>
+  Array.from(
+    new Set([
+      ...(projections?.projections || []).map((projection) => projection.trackerId),
+      ...(preflight?.results || []).map((result) => result.trackerId),
+      ...(assessment?.results || []).map((result) => result.trackerId),
+    ]),
   );
 
-  const hasDupeNotes = dupeSummaryNotes.length > 0;
-  const displayResults = displayResultsFor(dupeSummary?.Results || [], dupeTrackerStates);
-  const hasDupeResults = displayResults.length > 0;
-  const dupeEmptyMessage = hasDupeNotes ? dupeSummaryNotes.join(" ") : "No dupe results yet.";
-  const showProgress =
-    dupeLoading || dupeProgressStatus === "running" || dupeProgressStatus === "queued";
-  const progressText =
-    dupeTotalCount > 0
-      ? `${Math.min(dupeCompletedCount, dupeTotalCount)}/${dupeTotalCount} trackers complete`
-      : "Preparing tracker search";
-  const progressPercent =
-    dupeTotalCount > 0
-      ? Math.round((Math.min(dupeCompletedCount, dupeTotalCount) / dupeTotalCount) * 100)
-      : 0;
-  const sortedResults = displayResults.slice().sort((left, right) => {
-    const leftCount = left.Filtered?.length ?? 0;
-    const rightCount = right.Filtered?.length ?? 0;
-    const leftInClient = left.Match?.MatchedReason === "in_client";
-    const rightInClient = right.Match?.MatchedReason === "in_client";
-    const leftHasDupes = leftCount > 0;
-    const rightHasDupes = rightCount > 0;
-
-    if (leftHasDupes && rightHasDupes && rightCount !== leftCount) {
-      return rightCount - leftCount;
-    }
-    if (leftHasDupes !== rightHasDupes) {
-      return leftHasDupes ? -1 : 1;
-    }
-    if (leftInClient !== rightInClient) {
-      return leftInClient ? -1 : 1;
-    }
-    return left.Tracker.localeCompare(right.Tracker);
+const uploadEligibleTrackerIDs = (
+  assessment: DupeAssessment | null,
+  preflight: TrackerPreflightAssessment | null,
+  projections: TrackerReleaseProjectionSet | null,
+) => {
+  const projectionByTracker = new Map(
+    (projections?.projections || []).map((projection) => [projection.trackerId, projection]),
+  );
+  const preflightByTracker = new Map(
+    (preflight?.results || []).map((result) => [result.trackerId, result]),
+  );
+  const dupeByTracker = new Map(
+    (assessment?.results || []).map((result) => [result.trackerId, result]),
+  );
+  return workflowTrackerIDs(assessment, preflight, projections).filter((trackerID) => {
+    const projection = projectionByTracker.get(trackerID);
+    const readiness = preflightByTracker.get(trackerID);
+    const result = dupeByTracker.get(trackerID);
+    return (
+      projection?.readiness === "ready" &&
+      readiness?.state === "ready" &&
+      result?.status === "completed" &&
+      !hasInClientMatch(result) &&
+      ["no_match", "ignored"].includes(result.decision)
+    );
   });
-  const eligibility = view.eligibility;
-  const availableTrackers = eligibility?.EligibleTrackers || [];
-  const unavailableCount = (eligibility?.Trackers || []).filter(
-    (tracker) => !tracker.Eligible,
-  ).length;
-  const hideTrackerNames = faviconOnly && useFavicons;
+};
+
+function WorkflowDupeAssessmentView({
+  assessment,
+  preflight,
+  projections,
+  ignoredTrackers,
+  setIgnored,
+}: Readonly<{
+  assessment: DupeAssessment | null;
+  preflight: TrackerPreflightAssessment | null;
+  projections: TrackerReleaseProjectionSet | null;
+  ignoredTrackers: ReadonlySet<string>;
+  setIgnored(tracker: string, ignored: boolean): void;
+}>) {
+  const projectionsByTracker = new Map(
+    (projections?.projections || []).map((projection) => [projection.trackerId, projection]),
+  );
+  const preflightByTracker = new Map(
+    (preflight?.results || []).map((result) => [result.trackerId, result]),
+  );
+  const dupesByTracker = new Map(
+    (assessment?.results || []).map((result) => [result.trackerId, result]),
+  );
+  const trackerIDs = workflowTrackerIDs(assessment, preflight, projections);
+
+  return (
+    <div className="grid gap-2">
+      {trackerIDs.map((trackerID) => {
+        const result = dupesByTracker.get(trackerID);
+        const projection = projectionsByTracker.get(trackerID);
+        const readiness = preflightByTracker.get(trackerID);
+        const canonicalName = projection?.canonicalReleaseName || "";
+        const ruleStatus = (projection?.policyDecisions || []).filter(
+          (decision) => decision.blocking,
+        );
+        const failureMessages = uniqueFailureMessages([
+          ...(projection?.failures || []),
+          ...(readiness?.failures || []),
+          ...(result?.failures || []),
+        ]);
+        const inClient = hasInClientMatch(result);
+        const searchBlocked = Boolean(
+          (projection && projection.readiness !== "ready") ||
+          (readiness && readiness.state !== "ready"),
+        );
+        const canOverride = Boolean(
+          result &&
+          !inClient &&
+          result.matches?.length &&
+          ["pending", "accepted", "ignored"].includes(result.decision),
+        );
+        const matches = Array.from(
+          new Map(
+            (result?.matches || []).map((match) => [
+              `${match.id || ""}\u0000${match.name}\u0000${match.reason || ""}`,
+              match,
+            ]),
+          ).values(),
+        );
+        const uploadName =
+          result?.uploadReleaseName || projection?.uploadReleaseName || "Unavailable";
+        const searchName = result?.criteria?.name || projection?.duplicateCriteria?.name;
+        return (
+          <article className="panel grid gap-2 py-3" key={trackerID}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-bold">{projection?.displayName || trackerID}</p>
+              <div className="flex flex-wrap gap-1">
+                <Badge tone={projection?.readiness === "ready" ? "info" : "danger"}>
+                  Projection {projection?.readiness || "unknown"}
+                </Badge>
+                <Badge tone={readiness?.state === "ready" ? "info" : "danger"}>
+                  Preflight {readiness?.state || "not run"}
+                </Badge>
+                <Badge tone={ruleStatus.length ? "danger" : "info"}>
+                  {ruleStatus.length ? `${ruleStatus.length} blocking rule(s)` : "Rules ready"}
+                </Badge>
+                {inClient ? <Badge tone="danger">In client</Badge> : null}
+              </div>
+            </div>
+            <div className="grid gap-1 text-sm">
+              {canonicalName && canonicalName !== result?.uploadReleaseName ? (
+                <p className="muted">
+                  <span className="font-semibold text-[var(--text)]">Canonical:</span>{" "}
+                  {canonicalName}
+                </p>
+              ) : null}
+              <p>
+                <span className="font-semibold">Tracker upload:</span> {uploadName}
+              </p>
+              {searchName && searchName !== uploadName ? (
+                <p>
+                  <span className="font-semibold">Duplicate search:</span> {searchName}
+                </p>
+              ) : null}
+              <p className="muted">{workflowDupeSummary(result, searchBlocked, inClient)}</p>
+            </div>
+            {failureMessages.length ? (
+              <div className="grid gap-1 text-sm">
+                {failureMessages.map((message) => (
+                  <p className="error" key={message}>
+                    {message}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+            {matches.length ? (
+              <div className="flex flex-wrap gap-2 text-sm">
+                {matches.map((match) =>
+                  match.link ? (
+                    <a
+                      className="tracker-link"
+                      href={match.link}
+                      key={match.id || match.name}
+                      onAuxClick={handleExternalLinkClick}
+                      onClick={handleExternalLinkClick}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      {match.name}
+                    </a>
+                  ) : (
+                    <span key={match.id || match.name}>{match.name}</span>
+                  ),
+                )}
+              </div>
+            ) : null}
+            {canOverride ? (
+              <label className="inline-flex items-center gap-2 text-xs font-semibold">
+                <span>Ignore duplicate match</span>
+                <Switch
+                  aria-label={`Ignore dupes for ${trackerID}`}
+                  checked={result?.decision === "ignored" || ignoredTrackers.has(trackerID)}
+                  onChange={(event) => setIgnored(trackerID, event.target.checked)}
+                />
+              </label>
+            ) : null}
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Presents exact workflow-owned per-tracker duplicate outcomes and selection controls. */
+export default function DupeCheckPage({
+  facet,
+  sourcePath,
+  trackerUploadItems,
+  useFavicons = true,
+  faviconOnly = false,
+  trackerIconSrcByName,
+}: Readonly<Props>) {
+  const { view } = facet;
+  const assessment = view.assessment || null;
+  const preflight = view.preflight || null;
+  const projections = view.projections || null;
+  const trackerIDs = workflowTrackerIDs(assessment, preflight, projections);
+  const availableTrackers = uploadEligibleTrackerIDs(assessment, preflight, projections);
+  const ignoredTrackers = new Set(view.ignoredTrackers);
   const selectedTrackers = new Set(view.selectedTrackers);
   const trackerSelectionRequired = selectedTrackers.size === 0;
+  const dupeLoading = view.status === "running";
+  const hideTrackerNames = faviconOnly && useFavicons;
 
   return (
     <section className="flex flex-col gap-3">
@@ -190,33 +328,29 @@ export default function DupeCheckPage(props: Readonly<Props>) {
         <div className="min-w-0">
           <p className="label">Source path</p>
           <p className="value break-words text-sm">{sourcePath || "No path selected"}</p>
-          {hasDupeResults ? (
+          {trackerIDs.length ? (
             <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-[var(--muted)]">
               <span className="font-semibold text-[var(--text)]">
                 Available for upload: {availableTrackers.length}
               </span>
-              {availableTrackers.length ? (
-                availableTrackers.map((tracker) => {
-                  const iconSrc = trackerIconFor(trackerIconSrcByName, tracker);
-                  return (
-                    <Badge
-                      aria-label={hideTrackerNames ? tracker : undefined}
-                      className="text-[var(--text)] flex items-center gap-1"
-                      style={{
-                        backgroundColor: "color-mix(in srgb, var(--accent-2) 14%, transparent)",
-                        borderColor: "color-mix(in srgb, var(--accent-2) 42%, transparent)",
-                      }}
-                      key={`available-${tracker}`}
-                    >
-                      <TrackerIconImage tracker={tracker} iconSrc={iconSrc} enabled={useFavicons} />
-                      {hideTrackerNames ? null : tracker}
-                    </Badge>
-                  );
-                })
-              ) : (
-                <span>No trackers passed.</span>
-              )}
-              {unavailableCount > 0 ? <span>{unavailableCount} blocked.</span> : null}
+              {availableTrackers.map((tracker) => (
+                <Badge
+                  aria-label={hideTrackerNames ? tracker : undefined}
+                  className="text-[var(--text)] flex items-center gap-1"
+                  key={`available-${tracker}`}
+                  tone="info"
+                >
+                  <TrackerIconImage
+                    tracker={tracker}
+                    iconSrc={trackerIconFor(trackerIconSrcByName, tracker)}
+                    enabled={useFavicons}
+                  />
+                  {hideTrackerNames ? null : tracker}
+                </Badge>
+              ))}
+              {trackerIDs.length > availableTrackers.length ? (
+                <span>{trackerIDs.length - availableTrackers.length} blocked.</span>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -227,204 +361,22 @@ export default function DupeCheckPage(props: Readonly<Props>) {
           onClick={() => void facet.run()}
           disabled={dupeLoading || !sourcePath.trim() || trackerSelectionRequired}
         >
-          {dupeLoading
-            ? `Checking ${dupeCompletedCount}/${dupeTotalCount || "?"}...`
-            : "Run dupe check"}
+          {dupeLoading ? `Checking ${view.completed}/${view.total || "?"}...` : "Run dupe check"}
         </Button>
       </section>
 
-      {showProgress ? (
-        <section className="panel grid gap-2 py-3" role="status" aria-live="polite">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="font-semibold text-[var(--text)]">Duplicate check progress</p>
-            <p className="muted text-sm">{progressText}</p>
-          </div>
-          <div
-            aria-label="Duplicate check progress"
-            aria-valuemax={dupeTotalCount || undefined}
-            aria-valuemin={0}
-            aria-valuenow={dupeCompletedCount}
-            className="h-2 w-full overflow-hidden rounded-full bg-white/10"
-            role="progressbar"
-          >
-            <div
-              className="h-full rounded-full bg-[var(--accent-2)] transition-[width]"
-              style={{ width: `${progressPercent}%` }}
-            />
-          </div>
-          {activeTrackerStates.length ? (
-            <div className="grid gap-1 text-sm">
-              {activeTrackerStates.map((tracker) => (
-                <div
-                  className="flex flex-wrap items-center justify-between gap-2 rounded border border-white/10 bg-white/5 px-2 py-1.5"
-                  key={tracker.tracker}
-                >
-                  <span className="font-semibold">{tracker.tracker}</span>
-                  <span className="muted">{tracker.message || tracker.status || "Queued"}</span>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </section>
-      ) : null}
+      {view.error ? <p className="error">{view.error}</p> : null}
 
-      {dupeError ? <p className="error">{dupeError}</p> : null}
-
-      {hasDupeNotes ? (
-        <div className="flex flex-wrap gap-1.5">
-          {dupeSummaryNotes.map((note, index) => (
-            <Badge tone="info" key={`${note}-${index}`}>
-              {note}
-            </Badge>
-          ))}
-        </div>
-      ) : null}
-
-      {hasDupeResults ? (
-        <div className="overflow-hidden rounded-lg border border-white/10 bg-[rgba(12,16,26,0.76)]">
-          <div className="hidden grid-cols-[minmax(90px,140px)_58px_minmax(0,1fr)_116px] gap-3 border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted)] md:grid">
-            <span>Tracker</span>
-            <span>Dupes</span>
-            <span>Matches</span>
-            <span>Action</span>
-          </div>
-          <div className="divide-y divide-white/10">
-            {sortedResults.map((result) => {
-              const dupeCount = result.Filtered?.length ?? 0;
-              const hasDupes = result.HasDupes ?? false;
-              const inClient = result.Match?.MatchedReason === "in_client";
-              const status = String(result.Status || "")
-                .toLowerCase()
-                .trim();
-              const hasFailure = status === "failed";
-              const skipReason = dupeSkipReason(result);
-              const authRequired =
-                result.SkipCode === "tracker_auth_not_ready" ||
-                result.SkipCode === "auth_not_ready";
-              const skippedReason = result.Skipped && !authRequired ? skipReason : "";
-              const visibleNotes = result.Notes || [];
-              const showIgnoreToggle =
-                !inClient && (hasDupes || Boolean(result.Skipped) || hasFailure);
-              const displayDupeCount = dupeCount;
-
-              return (
-                <article
-                  className="grid grid-cols-[minmax(72px,96px)_44px_minmax(0,1fr)] gap-2 px-2 py-2 text-sm md:grid-cols-[minmax(90px,140px)_58px_minmax(0,1fr)_116px] md:gap-3 md:px-3"
-                  key={result.Tracker}
-                >
-                  <div className="min-w-0 flex items-center gap-2">
-                    <div
-                      className="flex shrink-0 flex-wrap items-center gap-1"
-                      aria-label={hideTrackerNames ? result.Tracker : undefined}
-                    >
-                      <TrackerIconImage
-                        tracker={result.Tracker}
-                        iconSrc={trackerIconFor(trackerIconSrcByName, result.Tracker)}
-                        enabled={useFavicons}
-                      />
-                    </div>
-                    {hideTrackerNames ? null : (
-                      <p className="font-bold text-[var(--text)]">{result.Tracker}</p>
-                    )}
-                  </div>
-
-                  <p
-                    className={cn(
-                      "font-bold tabular-nums",
-                      displayDupeCount > 0 ? "text-[var(--accent)]" : "text-[var(--muted)]",
-                    )}
-                  >
-                    {displayDupeCount}
-                  </p>
-
-                  <div className="min-w-0">
-                    {inClient ||
-                    authRequired ||
-                    skippedReason ||
-                    hasFailure ||
-                    visibleNotes.length ? (
-                      <p className="mb-1 flex flex-wrap items-center gap-1 text-sm leading-5">
-                        {inClient ? <Badge tone="info">In client</Badge> : null}
-
-                        {authRequired ? (
-                          <>
-                            <Badge tone="danger">Auth required</Badge>
-                            <span className="text-[var(--muted)]">{skipReason}</span>
-                          </>
-                        ) : null}
-
-                        {skippedReason ? (
-                          <>
-                            <Badge tone="info">Skipped</Badge>
-                            <span className="text-[var(--muted)]">{skippedReason}</span>
-                          </>
-                        ) : null}
-
-                        {hasFailure ? (
-                          <>
-                            <Badge tone="danger">Error</Badge>
-                            <span className="text-[var(--muted)]">
-                              {result.Error || "Tracker dupe check failed"}
-                            </span>
-                          </>
-                        ) : null}
-
-                        {visibleNotes.map((note, index) => (
-                          <Badge tone="info" key={`${note}-${index}`}>
-                            {note}
-                          </Badge>
-                        ))}
-                      </p>
-                    ) : null}
-
-                    {result.Filtered?.length ? (
-                      <p className="value text-sm leading-5">
-                        {result.Filtered.map((entry, index) => (
-                          <span className="inline" key={`${entry.Name}-${index}`}>
-                            {entry.Link ? (
-                              <a
-                                href={entry.Link}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="tracker-link"
-                                onAuxClick={handleExternalLinkClick}
-                                onClick={handleExternalLinkClick}
-                              >
-                                {entry.Name}
-                              </a>
-                            ) : (
-                              <span>{entry.Name}</span>
-                            )}
-                            {index < result.Filtered.length - 1 ? (
-                              <span className="text-[var(--muted)]">, </span>
-                            ) : null}
-                          </span>
-                        ))}
-                      </p>
-                    ) : null}
-                  </div>
-
-                  <div className="col-span-3 md:col-span-1">
-                    {showIgnoreToggle ? (
-                      <div className="inline-flex items-center gap-2 text-xs font-semibold text-[var(--text)]">
-                        <span>Ignore</span>
-                        <Switch
-                          aria-label={`Ignore dupes for ${result.Tracker}`}
-                          checked={ignoredTrackers.has(result.Tracker)}
-                          onChange={(event) =>
-                            facet.setIgnored(result.Tracker, event.target.checked)
-                          }
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </div>
+      {trackerIDs.length ? (
+        <WorkflowDupeAssessmentView
+          assessment={assessment}
+          ignoredTrackers={ignoredTrackers}
+          preflight={preflight}
+          projections={projections}
+          setIgnored={facet.setIgnored}
+        />
       ) : (
-        <p className="muted">{dupeEmptyMessage}</p>
+        <p className="muted">No dupe results yet.</p>
       )}
     </section>
   );

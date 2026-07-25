@@ -705,6 +705,20 @@ func resolveAudioBloatPolicyWithRegistry(
 	return blocked, warned
 }
 
+// EvaluateAudioBloatPolicy returns tracker-scoped disallowed and warning-only
+// extra audio languages for an exact workflow upload subject.
+func EvaluateAudioBloatPolicy(
+	subject api.UploadSubject,
+	candidateTrackers []string,
+	registry *trackers.Registry,
+) (map[string][]string, map[string][]string) {
+	return resolveAudioBloatPolicyWithRegistry(preparationstate.State{
+		DiscType:         subject.DiscType,
+		AudioLanguages:   append([]string(nil), subject.AudioLanguages...),
+		ProviderMetadata: subject.ProviderMetadata,
+	}, candidateTrackers, registry)
+}
+
 func appendUniqueString(values []string, value string) []string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -725,14 +739,6 @@ func containsCanonicalLanguage(values []string, target string) bool {
 		}
 	}
 	return false
-}
-
-func audioBloatReason(languages []string, hardBlocked bool) string {
-	parts := strings.Join(languages, ", ")
-	if hardBlocked {
-		return fmt.Sprintf("audio languages %s are not allowed for this tracker on bloated releases", parts)
-	}
-	return fmt.Sprintf("audio languages %s may be considered bloated", parts)
 }
 
 // selectPrimaryAudioTrack returns the track used to derive the release audio

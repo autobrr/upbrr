@@ -127,6 +127,9 @@ func trackerID(meta api.DuplicateSubject) string {
 }
 
 func searchTitle(meta api.DuplicateSubject) string {
+	if meta.Projection != nil {
+		return dupe.ProjectedSearchName(meta)
+	}
 	candidates := []string{strings.TrimSpace(meta.Release.Title)}
 	if meta.ProviderMetadata.TVDB != nil {
 		candidates = append(candidates, strings.TrimSpace(meta.ProviderMetadata.TVDB.Name), strings.TrimSpace(meta.ProviderMetadata.TVDB.NameEnglish))

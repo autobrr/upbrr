@@ -22,44 +22,6 @@ func (d *Definition) DataLookupConfigured(cfg config.Config) bool {
 	}
 	return false
 }
-func bannedGroups() []string {
-	return []string{
-		"aXXo",
-		"BMDru",
-		"BRrip",
-		"CM8",
-		"CrEwSaDe",
-		"CTFOH",
-		"d3g",
-		"DNL",
-		"FaNGDiNG0",
-		"HD2DVD",
-		"HDT",
-		"HDTime",
-		"ION10",
-		"iPlanet",
-		"KiNGDOM",
-		"mHD",
-		"mSD",
-		"nHD",
-		"nikt0",
-		"nSD",
-		"NhaNc3",
-		"OFT",
-		"PRODJi",
-		"SANTi",
-		"SPiRiT",
-		"STUTTERSHIT",
-		"ViSION",
-		"VXT",
-		"WAF",
-		"x0r",
-		"YIFY",
-		"LAMA",
-		"WORLD",
-	}
-}
-
 func prepareDescription(ctx context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {
 	select {
 	case <-ctx.Done():

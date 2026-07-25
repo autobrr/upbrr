@@ -5,12 +5,9 @@ package webserver
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -24,53 +21,20 @@ import (
 	"github.com/autobrr/upbrr/internal/filesystem"
 	imagehostpolicy "github.com/autobrr/upbrr/internal/imagehosting/policy"
 	"github.com/autobrr/upbrr/internal/logging"
-	pathutil "github.com/autobrr/upbrr/internal/pathing"
-	paths "github.com/autobrr/upbrr/internal/pathing/layout"
-	"github.com/autobrr/upbrr/internal/services/bdinfo"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/sourcelayout"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
 	trackerimpl "github.com/autobrr/upbrr/internal/trackers/impl"
-	sharedjobs "github.com/autobrr/upbrr/internal/webserver/jobs"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 const previewTimeout = 30 * time.Minute
 
-// metadataPreparationRequest is the transport-neutral command shared by prepare
-// and reset routes for one browser-selected source.
-type metadataPreparationRequest struct {
-	// CorrelationID binds emitted progress to the initiating browser command.
-	CorrelationID string
-	// Path is the selected host filesystem source path.
-	Path string
-	// SourceLookupURL optionally supplies tracker or provider lookup evidence.
-	SourceLookupURL string
-	// Overrides contains explicit external identity selections.
-	Overrides api.ExternalIDOverrides
-	// NameOverrides contains explicit release-name selections.
-	NameOverrides api.ReleaseNameOverrides
-	// Playlist carries direct Blu-ray playlist selection state.
-	Playlist api.PlaylistInstruction
-	// ConfirmBDMVRescan permits replacement of a partial cached Blu-ray analysis.
-	ConfirmBDMVRescan bool
-}
-
-// blurayCandidateSelectionRequest selects one candidate within a correlated preparation attempt.
-type blurayCandidateSelectionRequest struct {
-	// CorrelationID binds emitted progress to the initiating browser command.
-	CorrelationID string
-	// Path is the selected host filesystem source path.
-	Path string
-	// ReleaseID identifies the candidate returned by the current preview.
-	ReleaseID string
-}
-
 func newTrackerAuthService(cfg config.Config, logger api.Logger) *trackerauth.Service {
 	return trackerauth.NewServiceWithRegistryAndLogger(cfg, trackerimpl.MustNewRegistry(), logger)
 }
 
-// Backend owns the embedded web API runtime and request-scoped background jobs.
+// Backend owns the embedded web API runtime.
 type Backend struct {
 	runtimeMu         sync.RWMutex
 	cfg               config.Config
@@ -86,13 +50,6 @@ type Backend struct {
 	streams  map[string]*backendLogStream
 	streamWG sync.WaitGroup
 
-	// jobEngine owns session-scoped duplicate-check and tracker-upload jobs.
-	jobEngine  *sharedjobs.Engine
-	jobOwnerMu sync.Mutex
-	jobOwners  map[string]*sharedjobs.OwnerHandle
-	reviewMu   sync.Mutex
-	reviews    *UploadReviewRegistry
-
 	activationInitMu sync.Mutex
 	activator        *RuntimeActivator
 }
@@ -106,19 +63,26 @@ type backendLogStream struct {
 	done      chan struct{}
 }
 
-type runOptions struct {
-	NoSeed      bool
-	RunLogLevel string
-}
-
 // logExclusions stores muted log patterns for the WebUI.
 type logExclusions struct {
 	Patterns []string `json:"patterns"`
 }
 
-// NewBackend constructs a Backend using a background context.
-func NewBackend(cfg config.Config, hub *eventHub) (*Backend, error) {
-	return NewBackendWithContext(context.Background(), cfg, hub)
+func normalizePatterns(patterns []string) []string {
+	seen := make(map[string]struct{})
+	result := make([]string, 0, len(patterns))
+	for _, pattern := range patterns {
+		trimmed := strings.TrimSpace(pattern)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result
 }
 
 // NewBackendWithContext opens the shared repository, creates the logger, and
@@ -178,7 +142,6 @@ func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub
 		repo:              repo,
 		hub:               hub,
 		streams:           make(map[string]*backendLogStream),
-		jobOwners:         make(map[string]*sharedjobs.OwnerHandle),
 	}
 	if _, err := backend.runtimeActivator(); err != nil {
 		if coreOwner != nil {
@@ -188,21 +151,12 @@ func NewBackendWithContext(ctx context.Context, cfg config.Config, hub *eventHub
 		_ = logger.Close()
 		return nil, fmt.Errorf("web: %w", err)
 	}
-	backend.jobEngine = sharedjobs.New(webJobSink{hub: hub, logger: logger}, sharedjobs.Config{
-		UploadProgress: sharedjobs.UploadProgressPolicy{
-			MinInterval:      trackerUploadSnapshotThrottle,
-			HashRateDeltaMiB: trackerUploadHashRateEmitDeltaMiB,
-		},
-	})
 	return backend, nil
 }
 
 // Close stops active background work and releases runtime, repository, and log resources.
 func (b *Backend) Close() error {
 	b.stopAllLogStreams()
-	if b.jobEngine != nil {
-		b.jobEngine.Close()
-	}
 	rt := b.runtimeSnapshot()
 	if rt.coreOwner != nil {
 		_ = rt.coreOwner.Close()
@@ -230,491 +184,6 @@ func (b *Backend) DetectDiscType(ctx context.Context, path string) (string, erro
 	return layout.DiscType, nil
 }
 
-// withPreparationProgress installs the sole WebUI progress boundary. It
-// requires correlation, sanitizes display text, timestamps updates, and emits
-// them only to the initiating session.
-func (b *Backend) withPreparationProgress(ctx context.Context, sessionID string, correlationID string) (context.Context, error) {
-	correlationID = strings.TrimSpace(correlationID)
-	if correlationID == "" {
-		return nil, errors.New("preparation correlation ID is required")
-	}
-	progressCtx := api.WithPreparationProgressReporter(ctx, func(update api.PreparationProgressUpdate) {
-		update.CorrelationID = correlationID
-		update.Label = logging.SanitizeMessage(strings.TrimSpace(update.Label))
-		update.Message = logging.SanitizeMessage(strings.TrimSpace(update.Message))
-		update.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
-		b.hub.Emit(sessionID, "preparation:progress", update)
-	})
-	progressCtx = bdinfo.WithProgressReporter(progressCtx, func(line string) {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			return
-		}
-		api.EmitPreparationProgress(
-			progressCtx,
-			api.NewPreparationProgressUpdate(api.PreparationPhaseBDInfo, api.PreparationProgressRunning, line),
-		)
-	})
-	return progressCtx, nil
-}
-
-// withImageUploadProgress installs the WebUI image-host progress boundary. It
-// correlates, sanitizes, timestamps, and scopes advisory updates to one session.
-func (b *Backend) withImageUploadProgress(ctx context.Context, sessionID string, correlationID string) (context.Context, error) {
-	correlationID = strings.TrimSpace(correlationID)
-	if correlationID == "" {
-		return nil, errors.New("image upload correlation ID is required")
-	}
-	return api.WithImageUploadProgressReporter(ctx, func(update api.ImageUploadProgressUpdate) {
-		update.CorrelationID = correlationID
-		update.AttemptID = logging.SanitizeMessage(strings.TrimSpace(update.AttemptID))
-		update.Host = logging.SanitizeMessage(strings.TrimSpace(update.Host))
-		update.UsageScope = logging.SanitizeMessage(strings.TrimSpace(update.UsageScope))
-		for index := range update.Trackers {
-			update.Trackers[index] = logging.SanitizeMessage(strings.TrimSpace(update.Trackers[index]))
-		}
-		update.Message = logging.SanitizeMessage(strings.TrimSpace(update.Message))
-		update.Timestamp = time.Now().UTC().Format(time.RFC3339Nano)
-		b.hub.Emit(sessionID, "image-upload:progress", update)
-	}), nil
-}
-
-// FetchMetadata prepares and caches a metadata preview for the selected release
-// path while emitting correlation-scoped progress to sessionID.
-func (b *Backend) FetchMetadata(
-	ctx context.Context,
-	sessionID string,
-	command metadataPreparationRequest,
-) (api.MetadataPreview, error) {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return api.MetadataPreview{}, err
-	}
-	metadataCore, err := rt.metadataCore()
-	if err != nil {
-		return api.MetadataPreview{}, err
-	}
-	trimmedPath := strings.TrimSpace(command.Path)
-	if trimmedPath == "" {
-		return api.MetadataPreview{}, errors.New("path is required")
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
-	defer cancel()
-	progressCtx, err := b.withPreparationProgress(ctx, sessionID, command.CorrelationID)
-	if err != nil {
-		return api.MetadataPreview{}, err
-	}
-
-	req := api.Request{
-		SourcePath:      trimmedPath,
-		SourceLookupURL: strings.TrimSpace(command.SourceLookupURL),
-		Options:         rt.baseUploadOptions(),
-
-		ExternalIDOverrides:  command.Overrides,
-		ReleaseNameOverrides: command.NameOverrides,
-		PlaylistInstruction:  command.Playlist,
-		ConfirmBDMVRescan:    command.ConfirmBDMVRescan,
-	}
-
-	preparationCore, err := rt.releasePreparationCore()
-	if err != nil {
-		return api.MetadataPreview{}, err
-	}
-	_, ref, err := PrepareGeneration(progressCtx, preparationCore, req, api.PreparationIntentPreview)
-	if err != nil {
-		return api.MetadataPreview{}, fmt.Errorf("web: %w", err)
-	}
-	preview, err := metadataCore.FetchAcceptedMetadataPreview(progressCtx, ref)
-	if err != nil {
-		return api.MetadataPreview{}, fmt.Errorf("web: %w", err)
-	}
-	preview.ReleaseNameOverrides = command.NameOverrides
-	return preview, nil
-}
-
-// PrepareRelease creates or reuses one canonical prepared-release generation.
-func (b *Backend) PrepareRelease(input api.PrepareInput) (api.PrepareResult, error) {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return api.PrepareResult{}, err
-	}
-	preparationCore, err := rt.releasePreparationCore()
-	if err != nil {
-		return api.PrepareResult{}, err
-	}
-	if strings.TrimSpace(input.SourcePath) == "" {
-		return api.PrepareResult{}, errors.New("path is required")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	return wrapWebResult(preparationCore.PrepareRelease(ctx, input))
-}
-
-// SelectBlurayCandidate updates the prepared release with the chosen Blu-ray
-// metadata candidate and emits correlation-scoped progress to sessionID.
-func (b *Backend) SelectBlurayCandidate(
-	ctx context.Context,
-	sessionID string,
-	command blurayCandidateSelectionRequest,
-) (api.MetadataPreview, error) {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return api.MetadataPreview{}, err
-	}
-	selectionCore, err := rt.selectionCore()
-	if err != nil {
-		return api.MetadataPreview{}, err
-	}
-	if strings.TrimSpace(command.Path) == "" {
-		return api.MetadataPreview{}, errors.New("path is required")
-	}
-	if strings.TrimSpace(command.ReleaseID) == "" {
-		return api.MetadataPreview{}, errors.New("release ID is required")
-	}
-	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
-	defer cancel()
-	progressCtx, err := b.withPreparationProgress(ctx, sessionID, command.CorrelationID)
-	if err != nil {
-		return api.MetadataPreview{}, err
-	}
-	finish := api.BeginPreparationProgress(progressCtx, api.PreparationPhaseCandidateSelection, "Applying Blu-ray candidate selection.")
-	preview, err := selectionCore.SelectBlurayCandidate(progressCtx, command.Path, command.ReleaseID)
-	finish(err)
-	return wrapWebResult(preview, err)
-}
-
-// ResetMetadata removes persisted source artifacts, then rebuilds prepared
-// metadata using the supplied overrides and correlation-scoped progress.
-func (b *Backend) ResetMetadata(
-	ctx context.Context,
-	sessionID string,
-	command metadataPreparationRequest,
-) (api.MetadataPreview, error) {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return api.MetadataPreview{}, err
-	}
-	metadataCore, err := rt.metadataCore()
-	if err != nil {
-		return api.MetadataPreview{}, err
-	}
-	if b.repo == nil {
-		return api.MetadataPreview{}, errors.New("config repository not initialized")
-	}
-	trimmedPath := strings.TrimSpace(command.Path)
-	if trimmedPath == "" {
-		return api.MetadataPreview{}, errors.New("path is required")
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
-	defer cancel()
-	progressCtx, err := b.withPreparationProgress(ctx, sessionID, command.CorrelationID)
-	if err != nil {
-		return api.MetadataPreview{}, err
-	}
-	resetFinish := api.BeginPreparationProgress(progressCtx, api.PreparationPhaseResetCleanup, "Removing previous metadata artifacts.")
-
-	tmpRoot, err := db.Subdir(rt.cfg.MainSettings.DBPath, "tmp")
-	if err != nil {
-		resetFinish(err)
-		return api.MetadataPreview{}, fmt.Errorf("reset metadata: resolve tmp dir: %w", err)
-	}
-
-	artifactPaths := make([]string, 0)
-	shots, err := b.repo.ListScreenshotsByPath(ctx, trimmedPath)
-	if err != nil {
-		resetFinish(err)
-		return api.MetadataPreview{}, fmt.Errorf("reset metadata: list screenshots: %w", err)
-	}
-	for _, shot := range shots {
-		artifactPaths = append(artifactPaths, shot.ImagePath)
-	}
-	uploaded, err := b.repo.ListUploadedImagesByPath(ctx, trimmedPath)
-	if err != nil {
-		resetFinish(err)
-		return api.MetadataPreview{}, fmt.Errorf("reset metadata: list uploaded images: %w", err)
-	}
-	for _, image := range uploaded {
-		artifactPaths = append(artifactPaths, image.ImagePath)
-	}
-	finals, err := b.repo.ListFinalSelections(ctx, trimmedPath)
-	if err != nil {
-		resetFinish(err)
-		return api.MetadataPreview{}, fmt.Errorf("reset metadata: list final selections: %w", err)
-	}
-	for _, image := range finals {
-		artifactPaths = append(artifactPaths, image.ImagePath)
-	}
-	artifactPaths = slices.Compact(artifactPaths)
-
-	tmpDirs := make(map[string]struct{})
-	fallbackBase := paths.ReleaseTempBaseFor(trimmedPath, api.ReleaseInfo{})
-	tmpDirs[filepath.Join(tmpRoot, fallbackBase)] = struct{}{}
-	stored, err := b.repo.GetByPath(ctx, trimmedPath)
-	if err == nil {
-		releaseBase := paths.ReleaseTempBaseFor(trimmedPath, api.ReleaseInfo{
-			Title:    stored.Title,
-			Alt:      stored.Alt,
-			Year:     stored.Year,
-			Category: string(stored.Category),
-			Source:   stored.Source,
-			Type:     stored.Type,
-			Group:    stored.Group,
-		})
-		tmpDirs[filepath.Join(tmpRoot, releaseBase)] = struct{}{}
-	}
-	for _, filePath := range artifactPaths {
-		contentRoot, ok := resolveContentTmpRoot(tmpRoot, filePath)
-		if ok {
-			tmpDirs[contentRoot] = struct{}{}
-		}
-	}
-	if err := b.repo.PurgeContentData(ctx, trimmedPath); err != nil {
-		resetFinish(err)
-		return api.MetadataPreview{}, fmt.Errorf("reset metadata: purge sqlite: %w", err)
-	}
-	for _, filePath := range artifactPaths {
-		_ = removeIfWithinRoot(tmpRoot, filePath, false)
-	}
-	for dir := range tmpDirs {
-		_ = removeIfWithinRoot(tmpRoot, dir, true)
-	}
-	resetFinish(nil)
-
-	req := api.Request{
-		SourcePath:      trimmedPath,
-		SourceLookupURL: strings.TrimSpace(command.SourceLookupURL),
-		Options:         rt.baseUploadOptions(),
-
-		ExternalIDOverrides:  command.Overrides,
-		ReleaseNameOverrides: command.NameOverrides,
-		PlaylistInstruction:  command.Playlist,
-		ConfirmBDMVRescan:    command.ConfirmBDMVRescan,
-	}
-	preparationCore, err := rt.releasePreparationCore()
-	if err != nil {
-		return api.MetadataPreview{}, err
-	}
-	_, ref, err := PrepareGeneration(progressCtx, preparationCore, req, api.PreparationIntentPreview)
-	if err != nil {
-		return api.MetadataPreview{}, fmt.Errorf("web: %w", err)
-	}
-	preview, err := metadataCore.FetchAcceptedMetadataPreview(progressCtx, ref)
-	if err != nil {
-		return api.MetadataPreview{}, fmt.Errorf("web: %w", err)
-	}
-	preview.ReleaseNameOverrides = command.NameOverrides
-	return preview, nil
-}
-
-// FetchPreparation returns tracker review data prepared from the current release snapshot.
-func (b *Backend) FetchPreparation(
-	sessionID string,
-	path string,
-	overrides api.ExternalIDOverrides,
-	nameOverrides api.ReleaseNameOverrides,
-	trackersList []string,
-	ignoreDupesFor []string,
-) (api.PreparationPreview, error) {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return api.PreparationPreview{}, err
-	}
-	preparationCore, err := rt.preparationCore()
-	if err != nil {
-		return api.PreparationPreview{}, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	req := api.Request{
-		SourcePath:           strings.TrimSpace(path),
-		Trackers:             append([]string{}, trackersList...),
-		IgnoreDupesFor:       normalizeTrackerList(ignoreDupesFor),
-		Options:              rt.baseUploadOptions(),
-		ExternalIDOverrides:  overrides,
-		ReleaseNameOverrides: nameOverrides,
-	}
-	progressCtx := bdinfo.WithProgressReporter(ctx, func(line string) {
-		if strings.TrimSpace(line) == "" {
-			return
-		}
-		b.hub.Emit(sessionID, "bdinfo:progress", map[string]string{
-			"path": strings.TrimSpace(path),
-			"line": line,
-		})
-	})
-	ref, err := prepareWebReleaseRef(progressCtx, rt, req, api.PreparationIntentDescription)
-	if err != nil {
-		return api.PreparationPreview{}, err
-	}
-	return wrapWebResult(preparationCore.FetchAcceptedPreparationPreview(progressCtx, api.DescriptionInput{
-		Release:  ref,
-		Trackers: append([]string(nil), trackersList...),
-		Options:  req.Options,
-	}))
-}
-
-// FetchTrackerDryRun runs prepared payload previews for selected trackers.
-func (b *Backend) FetchTrackerDryRun(
-	ctx context.Context,
-	sessionID string,
-	dupeJobID string,
-	release api.ReleaseRef,
-	trackersList []string,
-	ignoreDupesFor []string,
-	questionnaireAnswers map[string]map[string]string,
-	descriptionGroups []api.DescriptionBuilderGroup,
-	noSeed bool,
-	runLogLevel string,
-) (api.TrackerDryRunPreview, error) {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return api.TrackerDryRunPreview{}, err
-	}
-	if !rt.capabilities.PreparedDryRunReady() {
-		return api.TrackerDryRunPreview{}, ErrPreparedDryRunUnavailable
-	}
-	runOpts, err := b.buildRunOptions(noSeed, runLogLevel)
-	if err != nil {
-		return api.TrackerDryRunPreview{}, err
-	}
-	release, err = normalizeExactRelease(release, api.OperationKindDryRun)
-	if err != nil {
-		return api.TrackerDryRunPreview{}, err
-	}
-	b.logDebugf("web: tracker dry-run request path=%s no_seed=%t run_log_level=%s", release.SourcePath, noSeed, runOpts.RunLogLevel)
-	resolvedTrackers := normalizeTrackerList(trackersList)
-	duplicateEvidence, err := b.acceptedDryRunDuplicateEvidence(sessionID, dupeJobID, release, rt.generationID, resolvedTrackers)
-	if err != nil {
-		return api.TrackerDryRunPreview{}, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
-	defer cancel()
-	req := api.Request{
-		DescriptionGroups:           api.CloneDescriptionBuilderGroups(descriptionGroups),
-		Trackers:                    append([]string{}, resolvedTrackers...),
-		IgnoreDupesFor:              normalizeTrackerList(ignoreDupesFor),
-		Options:                     buildRunUploadOptions(rt.cfg, runOpts),
-		TrackerQuestionnaireAnswers: cloneQuestionnaireAnswers(questionnaireAnswers),
-	}
-	progressCtx := api.WithUploadProgressReporter(ctx, func(update api.UploadProgressUpdate) {
-		b.hub.Emit(sessionID, trackerUploadProgressEvent, update)
-	})
-	if rt.logger != nil {
-		operationLogger, scopeErr := logging.NewOperationLogger(rt.logger, runOpts.RunLogLevel)
-		if scopeErr != nil {
-			return api.TrackerDryRunPreview{}, fmt.Errorf("web: scoped dry-run logger: %w", scopeErr)
-		}
-		progressCtx = logging.WithOperationLogger(progressCtx, operationLogger)
-	}
-	progressCtx = bdinfo.WithProgressReporter(progressCtx, func(line string) {
-		if strings.TrimSpace(line) == "" {
-			return
-		}
-		b.hub.Emit(sessionID, "bdinfo:progress", map[string]string{
-			"path": release.SourcePath,
-			"line": line,
-		})
-	})
-	return wrapWebResult(rt.capabilities.DryRun.RunAcceptedTrackerDryRun(progressCtx, api.TrackerDryRunPlan{
-		Input: api.TrackerDryRunInput{
-			Release:                release,
-			Trackers:               append([]string(nil), req.Trackers...),
-			IgnoreDupesFor:         append([]string(nil), req.IgnoreDupesFor...),
-			QuestionnaireAnswers:   cloneQuestionnaireAnswers(req.TrackerQuestionnaireAnswers),
-			DescriptionGroups:      api.CloneDescriptionBuilderGroups(req.DescriptionGroups),
-			TrackerConfigOverrides: req.TrackerConfigOverrides,
-			TrackerSiteOverrides:   req.TrackerSiteOverrides,
-			ImageHostOverrides:     req.ImageHostOverrides,
-			TorrentOverrides:       req.TorrentOverrides,
-			Options:                req.Options,
-		},
-		Duplicate: duplicateEvidence,
-	}))
-}
-
-// acceptedDryRunDuplicateEvidence returns duplicate evidence only when the
-// retained job belongs to the session and matches the exact release, runtime
-// generation, and ordered tracker selection used by the dry run.
-func (b *Backend) acceptedDryRunDuplicateEvidence(
-	sessionID string,
-	jobID string,
-	release api.ReleaseRef,
-	runtimeGeneration uint64,
-	trackers []string,
-) (api.AcceptedDuplicateEvidence, error) {
-	missing := func(message string, cause error) (api.AcceptedDuplicateEvidence, error) {
-		return api.AcceptedDuplicateEvidence{}, api.NewOperationError(api.OperationFailure{
-			Code:      api.OperationFailureMissingPrerequisite,
-			Operation: api.OperationKindDryRun,
-			Message:   message,
-			Recovery:  api.OperationRecoveryCompletePrerequisite,
-		}, cause)
-	}
-	if strings.TrimSpace(jobID) == "" || b == nil || b.jobEngine == nil {
-		return missing("Run duplicate checking before starting a dry run.", errors.New("duplicate job is required"))
-	}
-	snapshot, err := b.jobEngine.DupeSnapshot(b.lookupJobOwner(sessionID), strings.TrimSpace(jobID))
-	if err != nil {
-		return missing("Duplicate-check results are unavailable. Run duplicate checking again.", err)
-	}
-	status := strings.ToLower(strings.TrimSpace(snapshot.Status))
-	if status != sharedjobs.StatusCompleted && status != sharedjobs.StatusCompletedWithErrors {
-		return missing("Duplicate checking must finish before starting a dry run.", fmt.Errorf("duplicate job status is %s", status))
-	}
-	if snapshot.Release != release {
-		return api.AcceptedDuplicateEvidence{}, api.NewOperationError(api.OperationFailure{
-			Code:      api.OperationFailureStaleGeneration,
-			Operation: api.OperationKindDryRun,
-			Message:   "Duplicate-check results are stale. Run duplicate checking again.",
-			Recovery:  api.OperationRecoveryCompletePrerequisite,
-		}, errors.New("duplicate job release does not match dry-run release"))
-	}
-	if snapshot.RuntimeGeneration != runtimeGeneration {
-		return api.AcceptedDuplicateEvidence{}, api.NewOperationError(api.OperationFailure{
-			Code:      api.OperationFailureStaleGeneration,
-			Operation: api.OperationKindDryRun,
-			Message:   "Runtime settings changed. Run duplicate checking again.",
-			Recovery:  api.OperationRecoveryCompletePrerequisite,
-		}, errors.New("duplicate job runtime generation is stale"))
-	}
-	requested := normalizeTrackerList(snapshot.RequestedTrackers)
-	if !slices.Equal(requested, trackers) {
-		return missing(
-			"Duplicate-check results do not match the selected trackers. Run duplicate checking again.",
-			errors.New("duplicate job tracker selection does not match dry-run selection"),
-		)
-	}
-	return api.NewAcceptedDuplicateEvidence(release, requested, snapshot.Summary), nil
-}
-
-// FetchDescriptionBuilder returns editable tracker description groups for the prepared release.
-func (b *Backend) FetchDescriptionBuilder(
-	release api.ReleaseRef,
-	trackersList []string,
-) (api.DescriptionBuilderPreview, error) {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return api.DescriptionBuilderPreview{}, err
-	}
-	descriptionCore, err := rt.descriptionCore()
-	if err != nil {
-		return api.DescriptionBuilderPreview{}, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	ref, err := normalizeExactRelease(release, api.OperationKindDescription)
-	if err != nil {
-		return api.DescriptionBuilderPreview{}, err
-	}
-	return wrapWebResult(descriptionCore.FetchAcceptedDescriptionBuilderPreview(ctx, api.DescriptionInput{
-		Release:  ref,
-		Trackers: append([]string(nil), trackersList...),
-		Options:  rt.baseUploadOptions(),
-	}))
-}
-
 // RenderDescription converts tracker markup into sanitized preview HTML.
 func (b *Backend) RenderDescription(raw string) (string, error) {
 	rt, err := b.requireRuntime()
@@ -728,35 +197,6 @@ func (b *Backend) RenderDescription(raw string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
 	defer cancel()
 	return wrapWebResult(descriptionCore.RenderDescription(ctx, raw))
-}
-
-// SaveDescriptionOverride publishes edited description groups to the prepared release.
-func (b *Backend) SaveDescriptionOverride(
-	release api.ReleaseRef,
-	groupKey string,
-	raw string,
-	trackers []string,
-) (api.DescriptionBuilderGroup, error) {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return api.DescriptionBuilderGroup{}, err
-	}
-	descriptionCore, err := rt.descriptionCore()
-	if err != nil {
-		return api.DescriptionBuilderGroup{}, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	ref, err := normalizeExactRelease(release, api.OperationKindDescription)
-	if err != nil {
-		return api.DescriptionBuilderGroup{}, err
-	}
-	return wrapWebResult(descriptionCore.SaveAcceptedDescriptionOverride(ctx, api.DescriptionInput{
-		Release:  ref,
-		Trackers: append([]string(nil), trackers...),
-		GroupKey: strings.TrimSpace(groupKey),
-		Options:  rt.baseUploadOptions(),
-	}, raw))
 }
 
 // DiscoverPlaylists returns Blu-ray playlists available under the selected release path.
@@ -799,311 +239,6 @@ func (b *Backend) BrowseDirectoryWithinRoots(path string, mode string, roots []s
 	}
 	fallback := BrowseDirectoryFallback(b.currentConfig().MainSettings.DBPath)
 	return wrapWebResult(BrowseDirectoryWithinRoots(api.BrowseDirectoryRequest{Path: path, Mode: mode}, fallback, roots))
-}
-
-// FetchScreenshotPlan returns existing images and capture selections for a prepared release.
-func (b *Backend) FetchScreenshotPlan(release api.ReleaseRef) (api.ScreenshotPlan, error) {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return api.ScreenshotPlan{}, err
-	}
-	screenshotCore, err := rt.screenshotCore()
-	if err != nil {
-		return api.ScreenshotPlan{}, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	ref, err := normalizeExactRelease(release, api.OperationKindMedia)
-	if err != nil {
-		return api.ScreenshotPlan{}, err
-	}
-	return wrapWebResult(screenshotCore.FetchAcceptedScreenshotPlan(ctx, api.MediaPlanInput{
-		Release: ref,
-		Count:   rt.baseUploadOptions().Screens,
-	}))
-}
-
-// GenerateScreenshots captures selected frames and persists the resulting managed images.
-func (b *Backend) GenerateScreenshots(
-	release api.ReleaseRef,
-	selections []api.ScreenshotSelection,
-	purpose api.ScreenshotPurpose,
-) (api.ScreenshotResult, error) {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return api.ScreenshotResult{}, err
-	}
-	screenshotCore, err := rt.screenshotCore()
-	if err != nil {
-		return api.ScreenshotResult{}, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	ref, err := normalizeExactRelease(release, api.OperationKindMedia)
-	if err != nil {
-		return api.ScreenshotResult{}, err
-	}
-	return wrapWebResult(screenshotCore.GenerateAcceptedScreenshots(ctx, api.MediaPlanInput{
-		Release: ref,
-		Count:   rt.baseUploadOptions().Screens,
-		Purpose: purpose,
-	}, selections))
-}
-
-// PreviewScreenshotFrame returns an encoded preview for the requested timestamp in seconds.
-func (b *Backend) PreviewScreenshotFrame(
-	release api.ReleaseRef,
-	timestampSeconds float64,
-) (string, error) {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return "", err
-	}
-	screenshotCore, err := rt.screenshotCore()
-	if err != nil {
-		return "", err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	ref, err := normalizeExactRelease(release, api.OperationKindMedia)
-	if err != nil {
-		return "", err
-	}
-	preview, err := screenshotCore.PreviewAcceptedScreenshotFrame(ctx, api.MediaPlanInput{
-		Release: ref,
-		Count:   rt.baseUploadOptions().Screens,
-	}, timestampSeconds)
-	if err != nil {
-		return "", fmt.Errorf("web: %w", err)
-	}
-	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(preview.ImageBytes), nil
-}
-
-// DeleteScreenshot removes one managed screenshot and its prepared-release reference.
-func (b *Backend) DeleteScreenshot(release api.ReleaseRef, imagePath string) error {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return err
-	}
-	screenshotCore, err := rt.screenshotCore()
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	ref, err := normalizeExactRelease(release, api.OperationKindMedia)
-	if err != nil {
-		return err
-	}
-	return wrapWebError(screenshotCore.DeleteAcceptedScreenshot(ctx, api.MediaPlanInput{
-		Release: ref,
-		Count:   rt.baseUploadOptions().Screens,
-	}, imagePath))
-}
-
-// DeleteTrackerImageURL removes one tracker image URL from prepared release metadata.
-func (b *Backend) DeleteTrackerImageURL(release api.ReleaseRef, imageURL string) error {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return err
-	}
-	screenshotCore, err := rt.screenshotCore()
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	ref, err := normalizeExactRelease(release, api.OperationKindMedia)
-	if err != nil {
-		return err
-	}
-	return wrapWebError(screenshotCore.DeleteAcceptedTrackerImageURL(ctx, api.ImageHostingInput{Release: ref}, imageURL))
-}
-
-// SaveFinalScreenshotSelections persists the ordered image set selected for tracker preparation.
-func (b *Backend) SaveFinalScreenshotSelections(
-	release api.ReleaseRef,
-	images []api.ScreenshotImage,
-) error {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return err
-	}
-	screenshotCore, err := rt.screenshotCore()
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	ref, err := normalizeExactRelease(release, api.OperationKindMedia)
-	if err != nil {
-		return err
-	}
-	return wrapWebError(screenshotCore.SaveAcceptedFinalScreenshotSelections(ctx, api.MediaPlanInput{
-		Release: ref,
-		Count:   rt.baseUploadOptions().Screens,
-	}, images))
-}
-
-// ImportMenuImages copies selected host images into managed DVD menu storage.
-func (b *Backend) ImportMenuImages(release api.ReleaseRef, paths []string) error {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return err
-	}
-	screenshotCore, err := rt.screenshotCore()
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	ref, err := normalizeExactRelease(release, api.OperationKindMedia)
-	if err != nil {
-		return err
-	}
-	return wrapWebError(screenshotCore.ImportAcceptedMenuImages(ctx, api.MediaPlanInput{Release: ref}, paths))
-}
-
-// ReadScreenshotImage returns a managed screenshot encoded for frontend display.
-func (b *Backend) ReadScreenshotImage(path string) (string, error) {
-	trimmed := strings.TrimSpace(path)
-	if trimmed == "" {
-		return "", errors.New("path is required")
-	}
-	if !b.isPathWithinManagedDirs(trimmed) {
-		return "", errors.New("path outside managed directories")
-	}
-	payload, err := os.ReadFile(trimmed)
-	if err != nil {
-		return "", fmt.Errorf("read preview image: %w", err)
-	}
-	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(payload), nil
-}
-
-// ListUploadCandidates returns managed screenshots eligible for image-host upload.
-func (b *Backend) ListUploadCandidates(release api.ReleaseRef) ([]api.ScreenshotImage, error) {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return nil, err
-	}
-	hostedImageCore, err := rt.hostedImageCore()
-	if err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	ref, err := normalizeExactRelease(release, api.OperationKindMedia)
-	if err != nil {
-		return nil, err
-	}
-	return wrapWebResult(hostedImageCore.ListAcceptedUploadCandidates(ctx, api.ImageHostingInput{Release: ref}))
-}
-
-// ListUploadedImages returns persisted image-host links for the prepared release.
-func (b *Backend) ListUploadedImages(release api.ReleaseRef) ([]api.UploadedImageLink, error) {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return nil, err
-	}
-	hostedImageCore, err := rt.hostedImageCore()
-	if err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	ref, err := normalizeExactRelease(release, api.OperationKindMedia)
-	if err != nil {
-		return nil, err
-	}
-	return wrapWebResult(hostedImageCore.ListAcceptedUploadedImages(ctx, api.ImageHostingInput{Release: ref}))
-}
-
-// UploadImages sends selected managed images to the requested configured host and persists returned links.
-func (b *Backend) UploadImages(
-	ctx context.Context,
-	sessionID string,
-	correlationID string,
-	release api.ReleaseRef,
-	trackersList []string,
-	host string,
-	images []api.ScreenshotImage,
-) (api.UploadImagesResult, error) {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return api.UploadImagesResult{}, err
-	}
-	hostedImageCore, err := rt.hostedImageCore()
-	if err != nil {
-		return api.UploadImagesResult{}, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, previewTimeout)
-	defer cancel()
-	progressCtx, err := b.withImageUploadProgress(ctx, sessionID, correlationID)
-	if err != nil {
-		return api.UploadImagesResult{}, err
-	}
-	ref, err := normalizeExactRelease(release, api.OperationKindMedia)
-	if err != nil {
-		return api.UploadImagesResult{}, err
-	}
-	return wrapWebResult(hostedImageCore.UploadAcceptedImages(progressCtx, api.ImageHostingInput{
-		Release:  ref,
-		Trackers: append([]string(nil), trackersList...),
-		Host:     host,
-	}, images))
-}
-
-// DeleteUploadedImage removes one persisted image-host link from release state.
-func (b *Backend) DeleteUploadedImage(release api.ReleaseRef, imagePath string, host string) error {
-	rt, err := b.requireRuntime()
-	if err != nil {
-		return err
-	}
-	hostedImageCore, err := rt.hostedImageCore()
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), previewTimeout)
-	defer cancel()
-	ref, err := normalizeExactRelease(release, api.OperationKindMedia)
-	if err != nil {
-		return err
-	}
-	return wrapWebError(hostedImageCore.DeleteAcceptedUploadedImage(ctx, api.ImageHostingInput{Release: ref}, imagePath, host))
-}
-
-// normalizeExactRelease trims and validates the source path while preserving
-// the caller's exact prepared generation.
-func normalizeExactRelease(release api.ReleaseRef, operation api.OperationKind) (api.ReleaseRef, error) {
-	release.SourcePath = strings.TrimSpace(release.SourcePath)
-	if release.SourcePath == "" || release.Generation == 0 {
-		return api.ReleaseRef{}, api.NewOperationError(api.OperationFailure{
-			Code:      api.OperationFailureInvalidSource,
-			Operation: operation,
-			Message:   "An exact prepared release is required.",
-			Recovery:  api.OperationRecoveryRefreshRelease,
-		}, errors.New("exact release reference is required"))
-	}
-	return release, nil
-}
-
-// prepareWebReleaseRef creates or reuses canonical preparation and returns only
-// the exact reference needed by the requested browser operation.
-func prepareWebReleaseRef(
-	ctx context.Context,
-	rt backendRuntimeSnapshot,
-	request api.Request,
-	intent api.PreparationIntent,
-) (api.ReleaseRef, error) {
-	preparer, err := rt.releasePreparationCore()
-	if err != nil {
-		return api.ReleaseRef{}, err
-	}
-	_, ref, err := PrepareGeneration(ctx, preparer, request, intent)
-	if err != nil {
-		return api.ReleaseRef{}, fmt.Errorf("web: %w", err)
-	}
-	return ref, nil
 }
 
 // GetConfig returns the current exportable config as JSON with encrypted
@@ -1365,6 +500,13 @@ func (b *Backend) ListTrackerCatalog() (api.TrackerCatalog, error) {
 	}
 
 	cfg := b.currentConfig()
+	defaultTrackers := make(map[string]struct{}, len(cfg.Trackers.DefaultTrackers))
+	for _, name := range cfg.Trackers.DefaultTrackers {
+		normalized := strings.ToUpper(strings.TrimSpace(name))
+		if normalized != "" {
+			defaultTrackers[normalized] = struct{}{}
+		}
+	}
 	entries := make([]api.TrackerCatalogEntry, 0, len(schemas))
 	seen := make(map[string]struct{}, len(schemas))
 	for _, schema := range schemas {
@@ -1382,6 +524,7 @@ func (b *Backend) ListTrackerCatalog() (api.TrackerCatalog, error) {
 			}
 		}
 		trackerCfg, _ := trackerConfigByName(cfg.Trackers.Trackers, schema.Name)
+		_, isDefault := defaultTrackers[schema.Name]
 		entries = append(entries, api.TrackerCatalogEntry{
 			Name:              schema.Name,
 			Family:            string(descriptor.Family),
@@ -1389,6 +532,7 @@ func (b *Backend) ListTrackerCatalog() (api.TrackerCatalog, error) {
 			UploadContentMode: string(descriptor.UploadContentMode),
 			Fields:            fields,
 			Configured:        config.TrackerConfigured(trackerCfg, schema),
+			Default:           isDefault,
 		})
 		seen[schema.Name] = struct{}{}
 	}
@@ -1694,147 +838,25 @@ func (b *Backend) StopSessionLogStreams(sessionID string) {
 	}
 }
 
-func (b *Backend) buildRunOptions(noSeed bool, runLogLevel string) (runOptions, error) {
-	if strings.TrimSpace(runLogLevel) == "" {
-		return runOptions{NoSeed: noSeed}, nil
-	}
-	normalized, err := api.ParseLogLevel(runLogLevel)
-	if err != nil {
-		return runOptions{}, fmt.Errorf("web: %w", err)
-	}
-	return runOptions{
-		NoSeed:      noSeed,
-		RunLogLevel: normalized,
-	}, nil
-}
-
-// buildRunCoreFromSnapshot creates a per-run core and logger from the same
-// runtime snapshot used to build upload options. The transient core skips
-// startup-only legacy cookie migration while sharing the backend repository.
-// The capability bundle borrows the core; callers must close the returned
-// owner and logger separately unless they transfer both to a job.
-func (b *Backend) buildRunCoreFromSnapshot(
-	ctx context.Context,
-	rt backendRuntimeSnapshot,
-	opts runOptions,
-) (CoreCapabilities, LifecycleOwner, *logging.Logger, error) {
-	if err := ctx.Err(); err != nil {
-		return CoreCapabilities{}, nil, nil, fmt.Errorf("web: build run core canceled: %w", err)
-	}
-	effectiveLogLevel := logging.ResolveEffectiveLevel(rt.cfg.Logging.Level, opts.RunLogLevel, false)
-	logger, err := logging.NewWithLevel(rt.cfg.Logging, rt.cfg.MainSettings.DBPath, effectiveLogLevel)
-	if err != nil {
-		return CoreCapabilities{}, nil, nil, fmt.Errorf("web: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		_ = logger.Close()
-		return CoreCapabilities{}, nil, nil, fmt.Errorf("web: build run core canceled: %w", err)
-	}
-	coreSvc, err := core.NewWithContext(ctx, api.CoreDependencies{
-		Config: rt.cfg,
-		Logger: logger,
-		Services: api.ServiceSet{
-			Filesystem: filesystem.NewValidator(),
-		},
-		Repository:          b.repo.RepositoryCapabilities(),
-		RepositoryOwner:     b.repo,
-		SkipCookieMigration: true,
-	})
-	if err != nil {
-		_ = logger.Close()
-		return CoreCapabilities{}, nil, nil, fmt.Errorf("web: %w", err)
-	}
-	capabilities, owner := BindCoreCapabilities(coreSvc)
-	return capabilities, owner, logger, nil
-}
-
-func buildRunUploadOptions(cfg config.Config, opts runOptions) api.UploadOptions {
-	options := buildBaseMetadataOptions(cfg)
-	options.NoSeed = opts.NoSeed
-	options.RunLogLevel = opts.RunLogLevel
-	return options
-}
-
-func buildBaseMetadataOptions(cfg config.Config) api.UploadOptions {
-	return api.UploadOptions{
-		Screens:         cfg.ScreenshotHandling.Screens,
-		SkipAutoTorrent: cfg.Metadata.SkipAutoTorrent,
-		OnlyID:          cfg.Metadata.OnlyID,
-		KeepImages:      cfg.Metadata.KeepImages,
-	}
-}
-
-func (b *Backend) isPathWithinManagedDirs(candidate string) bool {
-	tmpDir, err := db.Subdir(b.currentConfig().MainSettings.DBPath, "tmp")
-	if err == nil && pathutil.IsWithinRoot(tmpDir, candidate) {
-		return true
-	}
-	logPath, err := logging.LogPath(b.currentConfig().MainSettings.DBPath)
-	if err == nil && pathutil.IsWithinRoot(filepath.Dir(logPath), candidate) {
-		return true
-	}
-	return false
-}
-
-func resolveContentTmpRoot(tmpRoot string, candidate string) (string, bool) {
-	trimmed := strings.TrimSpace(candidate)
-	if trimmed == "" {
-		return "", false
-	}
-	absCandidate, err := filepath.Abs(trimmed)
-	if err != nil {
-		return "", false
-	}
-	absTmpRoot, err := filepath.Abs(strings.TrimSpace(tmpRoot))
-	if err != nil {
-		return "", false
-	}
-	if !pathutil.IsWithinRoot(absTmpRoot, absCandidate) {
-		return "", false
-	}
-	rel, err := filepath.Rel(absTmpRoot, absCandidate)
-	if err != nil {
-		return "", false
-	}
-	parts := strings.Split(rel, string(filepath.Separator))
-	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" || parts[0] == "." {
-		return "", false
-	}
-	return filepath.Join(absTmpRoot, parts[0]), true
-}
-
-func removeIfWithinRoot(root string, target string, recursive bool) error {
-	trimmed := strings.TrimSpace(target)
-	if trimmed == "" {
-		return nil
-	}
-	absRoot, err := filepath.Abs(strings.TrimSpace(root))
-	if err != nil {
-		return fmt.Errorf("cleanup path: resolve root path: %w", err)
-	}
-	absTarget, err := filepath.Abs(trimmed)
-	if err != nil {
-		return fmt.Errorf("cleanup path: resolve target path: %w", err)
-	}
-	if pathutil.SamePath(absRoot, absTarget) || !pathutil.IsWithinRoot(absRoot, absTarget) {
-		return nil
-	}
-	if recursive {
-		if _, err := os.Stat(absTarget); err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return fmt.Errorf("cleanup path: stat target: %w", err)
+func (b *Backend) stopAllLogStreams() {
+	b.streamMu.Lock()
+	streams := make([]*backendLogStream, 0, len(b.streams))
+	for id, stream := range b.streams {
+		delete(b.streams, id)
+		streams = append(streams, stream)
+		select {
+		case <-stream.stop:
+		default:
+			close(stream.stop)
 		}
-		if err := os.RemoveAll(absTarget); err != nil {
-			return fmt.Errorf("cleanup path: remove target tree: %w", err)
+	}
+	b.streamMu.Unlock()
+	for _, stream := range streams {
+		if stream != nil {
+			<-stream.done
 		}
-		return nil
 	}
-	if err := os.Remove(absTarget); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("cleanup path: remove target: %w", err)
-	}
-	return nil
+	b.streamWG.Wait()
 }
 
 func errorsIsNotFound(err error) bool {

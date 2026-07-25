@@ -139,6 +139,9 @@ func (h cztHandler) Search(ctx context.Context, meta api.DuplicateSubject) dupe.
 // cztSearchQuery prefers exact upload/client names before media titles because
 // CZTeam's name search matches torrent release names.
 func cztSearchQuery(meta api.DuplicateSubject) string {
+	if meta.Projection != nil {
+		return dupe.ProjectedSearchName(meta)
+	}
 	return metautil.FirstNonEmptyTrimmed(
 		meta.SceneName,
 		meta.ReleaseName,

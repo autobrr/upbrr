@@ -16,7 +16,6 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
-	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -49,6 +48,9 @@ type apiResponse struct {
 }
 
 func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+	if err := standalone.ValidatePreparation(ctx, req, validationPolicy()); err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: validate preparation: %w", err)
+	}
 	state, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
@@ -181,7 +183,7 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 	if strings.TrimSpace(req.TrackerConfig.APIKey) == "" {
 		return uploadState{}, errors.New("trackers: GPW missing api_key")
 	}
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
+	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
 		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
@@ -194,10 +196,14 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 	groupID, _ := lookupGroupID(ctx, req.TrackerConfig.APIKey, req.Meta)
 	answers := standalone.QuestionnaireAnswers(req.Meta, "GPW")
 	fields := buildFields(req, req.TrackerConfig, description, groupID, answers)
+	releaseName, err := req.ReviewedUploadName()
+	if err != nil {
+		return uploadState{}, fmt.Errorf("trackers: GPW reviewed upload name: %w", err)
+	}
 	state := uploadState{
 		torrentPath:   torrentPath,
 		description:   description,
-		releaseName:   metautil.FirstNonEmptyTrimmed(req.Meta.ReleaseName, req.Meta.Release.Title, req.Meta.Filename),
+		releaseName:   releaseName,
 		fields:        fields,
 		groupID:       groupID,
 		questionnaire: buildQuestionnaire(req.Meta, groupID, answers),
@@ -306,152 +312,6 @@ func isDiscUpload(meta api.UploadSubject) bool {
 	return strings.TrimSpace(meta.DiscType) != "" || strings.EqualFold(strings.TrimSpace(meta.Type), "DISC")
 }
 
-func buildQuestionnaire(meta api.UploadSubject, groupID string, answers map[string]string) *api.TrackerQuestionnaire {
-	if groupID != "" {
-		return nil
-	}
-	fields := []api.TrackerQuestionnaireField{
-		{
-			Key:      "poster_url",
-			Label:    "Poster URL",
-			Kind:     "text",
-			Value:    metautil.FirstNonEmptyTrimmed(answers["poster_url"], resolvePoster(meta)),
-			Required: true,
-		},
-		{
-			Key:         "director_imdb",
-			Label:       "Director IMDb ID",
-			Kind:        "text",
-			Value:       answers["director_imdb"],
-			Placeholder: "nm0000138",
-			Required:    true,
-		},
-		{
-			Key:      "director_name",
-			Label:    "Director Name",
-			Kind:     "text",
-			Value:    metautil.FirstNonEmptyTrimmed(answers["director_name"], resolveDirectorName(meta)),
-			Required: true,
-		},
-		{
-			Key:   "director_chinese",
-			Label: "Director Chinese",
-			Kind:  "text",
-			Value: answers["director_chinese"],
-		},
-		{
-			Key:      "tags",
-			Label:    "Tags",
-			Kind:     "text",
-			Value:    metautil.FirstNonEmptyTrimmed(answers["tags"], resolveTags(meta)),
-			Required: true,
-		},
-	}
-	return &api.TrackerQuestionnaire{Tracker: "GPW", Fields: fields}
-}
-
-func validateFields(groupID string, fields map[string]string) string {
-	if groupID == "" {
-		for _, key := range []string{"image", "artists[]", "artist_ids[]", "tags"} {
-			if strings.TrimSpace(fields[key]) == "" {
-				return "missing required new-group data"
-			}
-		}
-	}
-	return ""
-}
-
-func buildDescription(req trackers.PreparationInput, assets trackers.DescriptionAssets) string {
-	if assets.Final {
-		return strings.TrimSpace(assets.Description)
-	}
-	meta := req.Meta
-	parts := make([]string, 0, 3)
-	// custom header
-	if header := strings.TrimSpace(req.Runtime.Description.CustomDescriptionHeader); header != "" {
-		parts = append(parts, header)
-	}
-
-	// logo
-	logoURL, logoSize := descriptionunit3d.ResolveLogo(api.NewDescriptionSubject(meta), req.Runtime.DescriptionConfig())
-	if logoURL != "" {
-		if strings.HasSuffix(logoURL, ".svg") {
-			logoURL = strings.ReplaceAll(logoURL, ".svg", ".png")
-		}
-		parts = append(parts, fmt.Sprintf("[center][img=%d]%s[/img][/center]", logoSize, logoURL))
-	}
-
-	// description
-	if base := strings.TrimSpace(assets.Description); base != "" {
-		parts = append(parts, base)
-	}
-
-	// menu
-	if len(assets.MenuImages) > 0 {
-		// header
-		if header := strings.TrimSpace(req.Runtime.Description.DiscMenuHeader); header != "" {
-			parts = append(parts, header)
-		}
-		// images
-		if shots := screenshotBlock(assets.MenuImages); shots != "" {
-			parts = append(parts, shots)
-		}
-	}
-	// Screenshot Header
-	if header := strings.TrimSpace(req.Runtime.Description.ScreenshotHeader); header != "" {
-		parts = append(parts, header)
-	}
-
-	// Tonemapped Header
-	if tonemapHeader := strings.TrimSpace(
-		req.Runtime.Description.TonemappedHeader,
-	); tonemapHeader != "" &&
-		descriptionunit3d.ShouldIncludeTonemappedHeader(api.NewDescriptionSubject(meta), req.Runtime.DescriptionConfig(), assets.Screenshots) {
-		parts = append(parts, tonemapHeader)
-	}
-
-	// screenshots
-	if shots := screenshotBlock(assets.Screenshots); shots != "" {
-		parts = append(parts, shots)
-	}
-
-	// custom user signature
-	if signature := strings.TrimSpace(req.Runtime.Description.CustomSignature); signature != "" {
-		parts = append(parts, signature)
-	}
-
-	// upbrr signature
-	link, text := descriptionunit3d.UppbrrSignatureLink()
-	parts = append(parts, fmt.Sprintf("[align=right][url=%s][size=1]%s[/size][/url][/align]", link, text))
-
-	// finalize description
-	finalDescription := finalizeDescription(strings.TrimSpace(strings.Join(parts, "\n\n")))
-
-	// Explicit dry runs retain the local diagnostic description artifact.
-	if req.Intent == trackers.PreparationIntentDryRun {
-		descriptionunit3d.SaveDescriptionDebug(api.NewDescriptionSubject(meta), "GPW", req.Runtime.DBPath, finalDescription, req.Logger)
-	}
-
-	return finalDescription
-}
-
-func screenshotBlock(images []api.ScreenshotImage) string {
-	if len(images) == 0 {
-		return ""
-	}
-	parts := make([]string, 0, len(images))
-	for _, image := range images {
-		if strings.TrimSpace(image.RawURL) == "" {
-			continue
-		}
-		parts = append(parts, "[img]"+strings.TrimSpace(image.RawURL)+"[/img]")
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return "[center]" + strings.Join(parts, " ") + "[/center]"
-}
-
 func extractTorrentID(value any) string {
 	switch typed := value.(type) {
 	case map[string]any:
@@ -470,143 +330,12 @@ func extractTorrentID(value any) string {
 	return ""
 }
 
-func resolveCodec(meta api.UploadSubject) string {
-	codec := strings.ToLower(strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.VideoEncode, meta.VideoCodec)))
-	switch {
-	case strings.Contains(codec, "hevc"), strings.Contains(codec, "265"):
-		return "HEVC"
-	case strings.Contains(codec, "avc"), strings.Contains(codec, "264"):
-		return "AVC"
-	case strings.Contains(codec, "vc-1"):
-		return "VC-1"
-	default:
-		return "Other"
-	}
-}
-
-func resolveContainer(meta api.UploadSubject) string {
-	container := strings.ToLower(strings.TrimSpace(meta.Container))
-	switch container {
-	case "mkv", "mp4", "avi", "vob", "m2ts":
-		return strings.ToUpper(container)
-	default:
-		return "Other"
-	}
-}
-
-func resolveProcessing(meta api.UploadSubject) string {
-	switch strings.ToUpper(strings.TrimSpace(meta.Type)) {
-	case "ENCODE":
-		return "Encode"
-	case "REMUX":
-		return "Remux"
-	case "DIY":
-		return "DIY"
-	default:
-		return "Untouched"
-	}
-}
-
-func resolveResolution(meta api.UploadSubject) string {
-	resolution := strings.ToLower(strings.TrimSpace(meta.Release.Resolution))
-	switch resolution {
-	case "480p", "576p", "720p", "1080i", "1080p", "2160p":
-		return resolution
-	default:
-		return "Other"
-	}
-}
-
-func resolveSource(meta api.UploadSubject) string {
-	switch strings.ToUpper(strings.TrimSpace(meta.Type)) {
-	case "DISC":
-		if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-			return "Blu-ray"
-		}
-		return "DVD"
-	case "WEBDL", "WEBRIP":
-		return "WEB"
-	case "REMUX", "ENCODE":
-		return "Blu-ray"
-	case "HDTV":
-		return "HDTV"
-	default:
-		return "Other"
-	}
-}
-
-func resolveSubtitleType(meta api.UploadSubject) string {
-	if len(meta.SubtitleLanguages) > 0 {
-		return "1"
-	}
-	return "3"
-}
-
-func resolveSubtitles(meta api.UploadSubject) []string {
-	out := make([]string, 0, len(meta.SubtitleLanguages))
-	for _, lang := range meta.SubtitleLanguages {
-		switch strings.ToLower(strings.TrimSpace(lang)) {
-		case "english", "en":
-			out = append(out, "English")
-		case "chinese", "zh":
-			out = append(out, "Chinese")
-		case "portuguese", "pt":
-			out = append(out, "Portuguese")
-		}
-	}
-	return out
-}
-
 func resolveIdentifier(meta api.UploadSubject) string {
 	if meta.Identity.IMDBID > 0 {
 		return fmt.Sprintf("tt%07d", meta.Identity.IMDBID)
 	}
 	if meta.Identity.TMDBID > 0 {
 		return strconv.Itoa(meta.Identity.TMDBID)
-	}
-	return ""
-}
-
-func resolveOverview(meta api.UploadSubject) string {
-	if meta.ProviderMetadata.TMDB != nil {
-		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Overview)
-	}
-	if meta.ProviderMetadata.IMDB != nil {
-		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Plot)
-	}
-	return ""
-}
-
-func resolvePoster(meta api.UploadSubject) string {
-	if meta.ProviderMetadata.TMDB != nil {
-		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Poster)
-	}
-	if meta.ProviderMetadata.IMDB != nil {
-		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Cover)
-	}
-	return ""
-}
-
-func resolveMovieType(meta api.UploadSubject) string {
-	if meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.RuntimeMinutes > 0 && meta.ProviderMetadata.IMDB.RuntimeMinutes < 45 {
-		return "2"
-	}
-	return "1"
-}
-
-func resolveTags(meta api.UploadSubject) string {
-	if meta.ProviderMetadata.TMDB != nil {
-		return strings.TrimSpace(strings.ToLower(strings.ReplaceAll(meta.ProviderMetadata.TMDB.Genres, ", ", ",")))
-	}
-	return strings.TrimSpace(strings.ToLower(meta.Release.Genre))
-}
-
-func resolveDirectorName(meta api.UploadSubject) string {
-	if meta.ProviderMetadata.TMDB != nil && len(meta.ProviderMetadata.TMDB.Directors) > 0 {
-		return strings.TrimSpace(meta.ProviderMetadata.TMDB.Directors[0])
-	}
-	if meta.ProviderMetadata.IMDB != nil && len(meta.ProviderMetadata.IMDB.Directors) > 0 {
-		return strings.TrimSpace(meta.ProviderMetadata.IMDB.Directors[0].Name)
 	}
 	return ""
 }
@@ -619,36 +348,6 @@ func resolveYear(meta api.UploadSubject) int {
 		return meta.ProviderMetadata.IMDB.Year
 	}
 	return meta.Release.Year
-}
-
-func resolveMediaFlags(meta api.UploadSubject) map[string]string {
-	flags := map[string]string{}
-	audio := strings.ToLower(strings.TrimSpace(meta.Audio))
-	hdr := strings.ToUpper(strings.TrimSpace(meta.HDR))
-	if strings.Contains(audio, "atmos") {
-		flags["dolby_atmos"] = "on"
-	}
-	if strings.Contains(audio, "dts:x") {
-		flags["dts_x"] = "on"
-	}
-	if meta.Channels == "5.1" {
-		flags["audio_51"] = "on"
-	}
-	if meta.Channels == "7.1" {
-		flags["audio_71"] = "on"
-	}
-	if meta.BitDepth == "10" && hdr == "" {
-		flags["10_bit"] = "on"
-	}
-	if strings.Contains(hdr, "DV") {
-		flags["dolby_vision"] = "on"
-	}
-	if strings.Contains(hdr, "HDR10+") {
-		flags["hdr10plus"] = "on"
-	} else if strings.Contains(hdr, "HDR") {
-		flags["hdr10"] = "on"
-	}
-	return flags
 }
 
 func onOff(value bool) string {

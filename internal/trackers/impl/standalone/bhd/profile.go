@@ -5,6 +5,7 @@ package bhd
 
 import (
 	"github.com/autobrr/upbrr/internal/trackers"
+	authcontract "github.com/autobrr/upbrr/internal/trackers/auth/contract"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -16,10 +17,13 @@ func Profile() standalone.Profile {
 		BaseURL:              bhdBaseURL,
 		DescriptionGroup:     "bhd",
 		UploadContentMode:    trackers.UploadContentModeDescription,
+		AuthCapability:       authcontract.APIKeyCapability("BHD"),
 		PrepareDescription:   prepareDescription,
 		PrepareUpload:        prepareUpload,
+		ReleaseNamePolicy:    trackers.SimpleSubjectReleaseNamePolicy("standalone/bhd/v1", resolveUploadName),
 		NewDuplicateAdapter:  newDuplicateAdapter,
 		Rules:                rules(),
+		ValidationPolicy:     validationPolicy(),
 		BannedGroups:         bannedGroups(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "BHD"},
 		AudioPolicy:          &trackers.AudioPolicy{BlockEnglishOriginalWithForeign: true},

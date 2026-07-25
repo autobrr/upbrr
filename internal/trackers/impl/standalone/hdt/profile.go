@@ -4,8 +4,6 @@
 package hdt
 
 import (
-	"context"
-
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -20,8 +18,9 @@ func Profile() standalone.Profile {
 		UploadContentMode:   trackers.UploadContentModeDescription,
 		PrepareDescription:  prepareDescription,
 		PrepareUpload:       prepareUpload,
+		ReleaseNamePolicy:   trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/hdt/v1", resolveName, resolveSearchName),
 		NewDuplicateAdapter: newDuplicateAdapter,
-		Rules:               rules(),
+		ValidationPolicy:    validationPolicy(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{
 			Source: "hd-torrents.org",
 		},
@@ -37,18 +36,3 @@ func Profile() standalone.Profile {
 
 // New returns a fresh HDT definition from its tracker-local profile.
 func New() *standalone.Definition { return standalone.MustNew(Profile()) }
-
-func prepareDescription(_ context.Context, req trackers.PreparationInput) (trackers.DescriptionResult, error) {
-	assets, err := trackers.PreparedDescriptionAssets(req.Assets)
-	if err != nil {
-		assets = trackers.DescriptionAssets{}
-	}
-	description := buildDescription(trackers.PreparationInput{
-		Tracker:       req.Tracker,
-		Meta:          req.Meta,
-		TrackerConfig: req.TrackerConfig,
-		Runtime:       req.Runtime,
-		Logger:        req.Logger,
-	}, assets)
-	return trackers.DescriptionResult{Group: "hdt", Description: description}, nil
-}

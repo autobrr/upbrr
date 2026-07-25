@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -21,6 +22,37 @@ func TestDefinitionName(t *testing.T) {
 	def := New()
 	if def.Name() != "BTN" {
 		t.Fatalf("expected BTN, got %q", def.Name())
+	}
+}
+
+func TestDefinitionProjectReleaseUsesBTNSceneName(t *testing.T) {
+	t.Parallel()
+
+	registry := trackers.NewRegistry()
+	if err := registry.Register(New()); err != nil {
+		t.Fatalf("register BTN: %v", err)
+	}
+	fingerprint, err := api.CanonicalWorkflowFingerprint("btn-name-policy")
+	if err != nil {
+		t.Fatalf("fingerprint: %v", err)
+	}
+	projection, failure := registry.ProjectRelease(context.Background(), trackers.PreparationInput{
+		Tracker: "BTN",
+		Meta: api.UploadSubject{
+			ReleaseName:  "Example Show S01E01 Episode Name 1080p AAC 2.0 x264-GRP",
+			Filename:     "Example.Show.S01E01.1080p.AAC2.0.x264-GRP.mkv",
+			EpisodeTitle: "Episode Name",
+			Tag:          "-GRP",
+		},
+	}, fingerprint, fingerprint, fingerprint)
+	if failure != nil {
+		t.Fatalf("project BTN release: %v", failure)
+	}
+	if projection.CanonicalReleaseName != "Example Show S01E01 Episode Name 1080p AAC 2.0 x264-GRP" {
+		t.Fatalf("canonical name = %q", projection.CanonicalReleaseName)
+	}
+	if projection.UploadReleaseName != "Example.Show.S01E01.1080p.AAC2.0.x264-GRP" {
+		t.Fatalf("BTN upload name = %q", projection.UploadReleaseName)
 	}
 }
 
@@ -34,6 +66,46 @@ func TestApplyBTNNameMapping(t *testing.T) {
 	}
 	if mapped != "Example.Show.S01E01.1080p.WEB-DL.H.265-GRP" {
 		t.Fatalf("unexpected mapped name: %s", mapped)
+	}
+}
+
+func TestBuildBTNUploadPayloadLocksFinalNameAndTaxonomy(t *testing.T) {
+	t.Parallel()
+
+	payload, err := buildBTNUploadPayload(trackers.PreparationInput{
+		Meta: api.UploadSubject{
+			ReleaseName: "Example.Show.S01E01.1080p.WEB-DL.x265-GRP",
+			Type:        "WEBDL",
+			Source:      "WEB-DL",
+			Container:   "MKV",
+			VideoEncode: "x265",
+			Release:     api.ReleaseInfo{Resolution: "1080p"},
+		},
+		Tracker: "BTN",
+		Projection: &api.TrackerReleaseProjection{
+			TrackerID:         "BTN",
+			UploadReleaseName: "Example.Show.S01E01.1080p.WEB-DL.H.265-GRP",
+			Readiness:         api.ReadinessStatusReady,
+			UploadReady:       true,
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("build BTN upload payload: %v", err)
+	}
+	if got := payload["scenename"]; got != "Example.Show.S01E01.1080p.WEB-DL.H.265-GRP" {
+		t.Fatalf("final scenename = %q", got)
+	}
+	if got := payload["format"]; got != "MKV" {
+		t.Fatalf("format = %q", got)
+	}
+	if got := payload["bitrate"]; got != "H.265" {
+		t.Fatalf("bitrate = %q", got)
+	}
+	if got := payload["media"]; got != "WEB-DL" {
+		t.Fatalf("media = %q", got)
+	}
+	if got := payload["resolution"]; got != "1080p" {
+		t.Fatalf("resolution = %q", got)
 	}
 }
 

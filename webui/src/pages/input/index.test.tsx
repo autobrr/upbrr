@@ -31,7 +31,6 @@ const inputFacet = (): InputFacet => ({
       playlist: { Set: false, Selected: [], UseAll: false },
     },
     selectedTrackers: [],
-    progress: { correlationID: "", status: "idle", message: "", steps: [] },
     preview: null,
     trackerData: [],
     playlist: {
@@ -139,12 +138,6 @@ const readyInputFacet = (generation: number): InputFacet => {
       ...base.view,
       selectedSource: "C:\\media\\Example.mkv",
       status: "ready",
-      progress: {
-        correlationID: `attempt-${generation}`,
-        status: "ready",
-        message: "Metadata preparation complete.",
-        steps: [],
-      },
       preview: metadataPreview(generation),
     },
   };
@@ -227,90 +220,6 @@ describe("InputPage", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Confirm Selection" }));
     expect(facet.confirmPlaylists).toHaveBeenCalledOnce();
-  });
-
-  it("renders ordered session progress without a hard-coded phase catalog", () => {
-    const base = inputFacet();
-    const facet: InputFacet = {
-      ...base,
-      view: {
-        ...base.view,
-        status: "running",
-        progress: {
-          correlationID: "attempt-1",
-          status: "running",
-          message: "Future work is active.",
-          steps: [
-            {
-              phase: "future_phase",
-              order: 9999,
-              label: "Future preparation phase",
-              message: "Future phase detail.",
-              status: "running",
-              timestamp: "2026-07-16T00:00:00Z",
-            },
-          ],
-        },
-      },
-    };
-    render(
-      <InputPage
-        facet={facet}
-        sourcePathHistory={[]}
-        handleBrowseFile={vi.fn()}
-        handleBrowseFolder={vi.fn()}
-        trackerUploadItems={[]}
-        showExternalIDInputUI={false}
-        setLightboxImage={vi.fn()}
-        setLightboxAlt={vi.fn()}
-        trackerIconSrcByName={{}}
-      />,
-    );
-
-    expect(screen.getByText("Future preparation phase")).toBeVisible();
-    expect(screen.getByText("Future phase detail.")).toBeVisible();
-  });
-
-  it("hides preparation progress after preparation completes", () => {
-    const base = inputFacet();
-    const facet: InputFacet = {
-      ...base,
-      view: {
-        ...base.view,
-        status: "ready",
-        progress: {
-          correlationID: "attempt-1",
-          status: "ready",
-          message: "Metadata preparation complete.",
-          steps: [
-            {
-              phase: "source_inspection",
-              order: 100,
-              label: "Inspect source",
-              message: "Source inspected.",
-              status: "completed",
-              timestamp: "2026-07-16T00:00:00Z",
-            },
-          ],
-        },
-      },
-    };
-    render(
-      <InputPage
-        facet={facet}
-        sourcePathHistory={[]}
-        handleBrowseFile={vi.fn()}
-        handleBrowseFolder={vi.fn()}
-        trackerUploadItems={[]}
-        showExternalIDInputUI={false}
-        setLightboxImage={vi.fn()}
-        setLightboxAlt={vi.fn()}
-        trackerIconSrcByName={{}}
-      />,
-    );
-
-    expect(screen.queryByText("Preparation progress")).not.toBeInTheDocument();
-    expect(screen.queryByText("Inspect source")).not.toBeInTheDocument();
   });
 
   it("selects the highest-priority metadata source for each prepared generation", () => {

@@ -18,7 +18,6 @@ import (
 
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
-	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -53,6 +52,9 @@ type uploadResponse struct {
 }
 
 func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+	if err := standalone.ValidatePreparation(ctx, req, validationPolicy()); err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: validate preparation: %w", err)
+	}
 	state, err := prepareUploadState(ctx, req)
 	if err != nil {
 		return trackers.PreparedOperation{}, err
@@ -161,14 +163,18 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 		return uploadState{}, err
 	}
 
-	torrentPath, err := trackers.ResolveUploadTorrentPath(req.Meta, req.Runtime.DBPath)
+	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
 		return uploadState{}, fmt.Errorf("trackers: %w", err)
 	}
 
+	releaseName, nameErr := req.ReviewedUploadName()
+	if nameErr != nil {
+		return uploadState{}, fmt.Errorf("trackers: BHDTV release name: %w", nameErr)
+	}
 	fields := map[string]string{
 		"api_key":    strings.TrimSpace(req.TrackerConfig.APIKey),
-		"name":       resolveUploadName(req.Meta),
+		"name":       releaseName,
 		"mediainfo":  mediaDump,
 		"cat":        resolveCategoryID(req.Meta),
 		"subcat":     resolveSubcategoryID(req.Meta),
@@ -250,160 +256,6 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
-func resolveMediaDump(meta api.UploadSubject) (string, error) {
-	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-		text := readBDInfoNoErr("", meta)
-		if text == "" {
-			return "", errors.New("trackers: BHDTV missing BD summary")
-		}
-		return text, nil
-	}
-
-	text := metautil.FirstNonEmptyTrimmed(strings.TrimSpace(meta.MediaInfoTextPath), strings.TrimSpace(meta.DVDVOBMediaInfoText))
-	if strings.EqualFold(text, strings.TrimSpace(meta.MediaInfoTextPath)) {
-		payload, err := os.ReadFile(strings.TrimSpace(meta.MediaInfoTextPath))
-		if err != nil {
-			return "", fmt.Errorf("trackers: BHDTV read mediainfo: %w", err)
-		}
-		return string(payload), nil
-	}
-	if strings.TrimSpace(text) != "" {
-		return text, nil
-	}
-	return "", errors.New("trackers: BHDTV missing mediainfo text")
-}
-
-func resolveInlineDescription(meta api.UploadSubject) string {
-	if strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-		return "Disc so Check Mediainfo dump "
-	}
-	text, err := resolveMediaDump(meta)
-	if err != nil {
-		return ""
-	}
-	return text
-}
-
-func resolveUploadName(meta api.UploadSubject) string {
-	name := metautil.FirstNonEmptyTrimmed(
-		strings.TrimSpace(meta.ReleaseName),
-		strings.TrimSpace(meta.ReleaseNameNoTag),
-		strings.TrimSpace(meta.Filename),
-		pathutil.Base(meta.SourcePath),
-	)
-	replacer := strings.NewReplacer(" ", ".", ":.", ".", ":", ".", "DD+", "DDP")
-	normalized := replacer.Replace(name)
-	for strings.Contains(normalized, "..") {
-		normalized = strings.ReplaceAll(normalized, "..", ".")
-	}
-	return strings.Trim(normalized, ".")
-}
-
-func resolveCategoryID(meta api.UploadSubject) string {
-	if categoryOf(meta) == "TV" {
-		if meta.TVPack {
-			return "12"
-		}
-		return "10"
-	}
-	return "7"
-}
-
-func resolveSubcategoryID(meta api.UploadSubject) string {
-	if categoryOf(meta) != "TV" {
-		return resolveMovieSubcategory(meta)
-	}
-	if meta.TVPack {
-		return resolveTVPackSubcategory(meta.Type)
-	}
-	return resolveTVEpisodeSubcategory(meta.Type)
-}
-
-func resolveMovieSubcategory(meta api.UploadSubject) string {
-	switch strings.ToUpper(strings.TrimSpace(meta.Type)) {
-	case "DISC":
-		if meta.Is3D != "" {
-			return "46"
-		}
-		return "2"
-	case "REMUX":
-		switch {
-		case strings.Contains(strings.ToUpper(metautil.FirstNonEmptyTrimmed(meta.ReleaseName, meta.ReleaseNameNoTag)), "265"):
-			return "48"
-		case meta.Is3D != "":
-			return "45"
-		default:
-			return "2"
-		}
-	case "HDTV":
-		return "6"
-	case "ENCODE":
-		switch {
-		case strings.Contains(strings.ToUpper(metautil.FirstNonEmptyTrimmed(meta.ReleaseName, meta.ReleaseNameNoTag)), "265"):
-			return "43"
-		case meta.Is3D != "":
-			return "44"
-		default:
-			return "1"
-		}
-	case "WEBDL", "WEBRIP":
-		return "5"
-	default:
-		return "0"
-	}
-}
-
-func resolveTVEpisodeSubcategory(typeValue string) string {
-	switch strings.ToUpper(strings.TrimSpace(typeValue)) {
-	case "HDTV":
-		return "7"
-	case "WEBDL", "WEBRIP":
-		return "8"
-	case "ENCODE":
-		return "10"
-	case "REMUX":
-		return "11"
-	case "DISC":
-		return "12"
-	default:
-		return "0"
-	}
-}
-
-func resolveTVPackSubcategory(typeValue string) string {
-	switch strings.ToUpper(strings.TrimSpace(typeValue)) {
-	case "HDTV":
-		return "13"
-	case "WEBDL":
-		return "14"
-	case "WEBRIP":
-		return "8"
-	case "ENCODE":
-		return "16"
-	case "REMUX":
-		return "17"
-	case "DISC":
-		return "18"
-	default:
-		return "0"
-	}
-}
-
-func resolveResolutionID(meta api.UploadSubject) string {
-	switch normalizeResolution(metautil.FirstNonEmptyTrimmed(meta.Release.Resolution, meta.ReleaseName, meta.Filename)) {
-	case "2160P":
-		return "4"
-	case "1080P":
-		return "3"
-	case "1080I":
-		return "2"
-	case "720P":
-		return "1"
-	default:
-		return "10"
-	}
-}
-
 func resolveReferenceURL(meta api.UploadSubject) string {
 	if categoryOf(meta) == "TV" && meta.Identity.TVmazeID != 0 {
 		return fmt.Sprintf("https://www.tvmaze.com/shows/%d", meta.Identity.TVmazeID)
@@ -412,31 +264,6 @@ func resolveReferenceURL(meta api.UploadSubject) string {
 		return strings.TrimSpace(meta.ProviderMetadata.IMDB.IMDbURL)
 	}
 	return ""
-}
-
-func categoryOf(meta api.UploadSubject) string {
-	category, err := meta.Identity.RequireCategory()
-	if err != nil {
-		return ""
-	}
-	return strings.ToUpper(string(category))
-}
-
-func buildDescription(assets trackers.DescriptionAssets) string {
-	base := strings.ReplaceAll(strings.TrimSpace(assets.Description), "[img=250]", "[img=250x250]")
-	parts := make([]string, 0, 1+len(assets.Screenshots))
-	if base != "" {
-		parts = append(parts, base)
-	}
-	for _, image := range assets.Screenshots {
-		webURL := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.WebURL, image.RawURL))
-		imgURL := strings.TrimSpace(metautil.FirstNonEmptyTrimmed(image.RawURL, image.ImgURL, image.WebURL))
-		if webURL == "" || imgURL == "" {
-			continue
-		}
-		parts = append(parts, fmt.Sprintf("[url=%s][img]%s[/img][/url]", webURL, imgURL))
-	}
-	return strings.Join(parts, " ")
 }
 
 func writeFailureArtifact(req trackers.PreparationInput, payload []byte, name string) (string, error) {
@@ -464,38 +291,4 @@ func writeFailureArtifact(req trackers.PreparationInput, payload []byte, name st
 		return "", fmt.Errorf("trackers: BHDTV write failure artifact: %w", err)
 	}
 	return path, nil
-}
-
-func readBDInfoNoErr(_ string, meta api.UploadSubject) string {
-	if summary := strings.TrimSpace(meta.Disc.Summary); summary != "" {
-		return summary
-	}
-	if infoPath := guessBDInfoPath(meta); infoPath != "" {
-		payload, err := os.ReadFile(infoPath)
-		if err == nil {
-			return strings.TrimSpace(string(payload))
-		}
-	}
-	return ""
-}
-
-func guessBDInfoPath(meta api.UploadSubject) string {
-	if len(meta.SelectedBDMVPlaylists) == 0 {
-		return ""
-	}
-	base := strings.TrimSpace(meta.MediaInfoTextPath)
-	if base != "" {
-		return filepath.Join(filepath.Dir(base), paths.BDMVSummaryFilename(paths.PrimaryBDMVPlaylistFor(meta.SelectedBDMVPlaylists)))
-	}
-	return ""
-}
-
-func normalizeResolution(value string) string {
-	upper := strings.ToUpper(strings.TrimSpace(value))
-	for _, candidate := range []string{"2160P", "1080P", "1080I", "720P"} {
-		if strings.Contains(upper, candidate) {
-			return candidate
-		}
-	}
-	return upper
 }

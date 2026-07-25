@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -30,6 +32,15 @@ func (d *Definition) Name() string {
 
 // TrackerFamily identifies the definition as AZ-family-backed.
 func (d *Definition) TrackerFamily() trackers.Family { return trackers.FamilyAZFamily }
+
+// ReleaseNamePolicy returns the versioned AZ-family naming policy.
+func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {
+	return trackers.SubjectReleaseNameSearchPolicy(
+		fmt.Sprintf("azfamily/%s/v1", strings.ToLower(d.site.Name)),
+		func(meta api.UploadSubject, _ config.TrackerConfig) string { return editName(d.site, meta) },
+		func(meta api.UploadSubject, _ config.TrackerConfig) string { return resolveSearchName(meta) },
+	)
+}
 
 // UploadContentMode declares the aggregate description workflow shared by AZ-family sites.
 func (d *Definition) UploadContentMode() trackers.UploadContentMode {
@@ -110,10 +121,18 @@ func (d *Definition) BannedGroups() []string {
 
 // Prepare builds a fresh intent-scoped tracker plan for this AZ-family profile.
 func (d *Definition) Prepare(ctx context.Context, input trackers.PreparationInput) (trackers.TrackerPlan, *trackers.PreparationFailure) {
+	var failure *trackers.PreparationFailure
+	input, failure = trackers.PrepareInputWithReleaseNamePolicy(input, d.ReleaseNamePolicy())
+	if failure != nil {
+		return trackers.TrackerPlan{}, failure
+	}
 	return trackers.PrepareAdapter(ctx, input, d.prepareDescription, d.prepareUpload)
 }
 
 func (d *Definition) prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+	if failures := validateAZConstructibility(d.site, api.NewTrackerValidationSubject(req.Meta, req.Tracker)); len(failures) > 0 {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s constructibility: %s", d.site.Name, failures[0].Reason)
+	}
 	return prepareUpload(ctx, applyTrackerConfig(d.site, req.TrackerConfig), req)
 }
 

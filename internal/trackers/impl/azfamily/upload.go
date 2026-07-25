@@ -6,7 +6,6 @@ package azfamily
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -56,9 +55,9 @@ func prepareUpload(ctx context.Context, site siteDefinition, req trackers.Prepar
 		req.Logger.Infof("trackers: %s matched %d open request(s)", site.Name, len(requests))
 	}
 
-	torrentPath, err := resolveTorrentPath(req.Meta, req.Runtime.DBPath)
+	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
-		return trackers.PreparedOperation{}, err
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s prepared upload torrent: %w", site.Name, err)
 	}
 	fileInfo, err := resolveMediaInfoText(req.Meta)
 	if err != nil {
@@ -87,7 +86,7 @@ func prepareUpload(ctx context.Context, site siteDefinition, req trackers.Prepar
 		Tracker:          site.Name,
 		Status:           "ready",
 		Message:          "upload payload prepared",
-		ReleaseName:      editName(site, req.Meta),
+		ReleaseName:      payload.Get("file_name"),
 		DescriptionGroup: "azfamily",
 		Description:      payload.Get("description"),
 		Endpoint:         site.BaseURL + "/upload/" + categorySlug(req.Meta),
@@ -155,7 +154,7 @@ func buildUploadDryRun(ctx context.Context, site siteDefinition, req trackers.Pr
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
-	torrentPath, _ := resolveTorrentPath(req.Meta, req.Runtime.DBPath)
+	torrentPath, _ := trackers.PreparedUploadTorrentPath(req.Meta)
 	if media.Missing || strings.TrimSpace(media.MediaCode) == "" {
 		return api.TrackerDryRunEntry{
 			Tracker: site.Name,
@@ -184,7 +183,7 @@ func buildUploadDryRun(ctx context.Context, site siteDefinition, req trackers.Pr
 		Tracker:          site.Name,
 		Status:           "ready",
 		Message:          "dry-run payload generated",
-		ReleaseName:      editName(site, req.Meta),
+		ReleaseName:      payload.Get("file_name"),
 		DescriptionGroup: "azfamily",
 		Description:      payload.Get("description"),
 		Endpoint:         site.BaseURL + "/upload/" + categorySlug(req.Meta),
@@ -259,39 +258,6 @@ func createTask(
 		InfoHash:    strings.TrimSpace(req.Meta.InfoHash),
 		RedirectURL: absoluteURL(site.BaseURL, location),
 	}, nil
-}
-
-func resolveMediaInfoText(meta api.UploadSubject) (string, error) {
-	if path := strings.TrimSpace(meta.MediaInfoTextPath); path != "" {
-		if data, err := os.ReadFile(path); err == nil {
-			return string(data), nil
-		}
-	}
-	return "", errors.New("trackers: missing MediaInfo/BDInfo text")
-}
-
-func resolveTorrentPath(meta api.UploadSubject, dbPath string) (string, error) {
-	for _, candidate := range []string{strings.TrimSpace(meta.TorrentPath), strings.TrimSpace(meta.ClientTorrentPath)} {
-		if candidate == "" {
-			continue
-		}
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil
-		}
-	}
-	if strings.TrimSpace(dbPath) != "" && strings.TrimSpace(meta.SourcePath) != "" {
-		tmpRoot, err := db.Subdir(dbPath, "tmp")
-		if err == nil {
-			tmpDir, base, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
-			if err == nil {
-				guessed := filepath.Join(tmpDir, base+".torrent")
-				if info, err := os.Stat(guessed); err == nil && !info.IsDir() {
-					return guessed, nil
-				}
-			}
-		}
-	}
-	return "", errors.New("trackers: torrent file not found")
 }
 
 func resolveTrackerTorrentPath(meta api.UploadSubject, dbPath string, tracker string) (string, error) {

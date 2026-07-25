@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
-	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
@@ -51,6 +50,11 @@ type preparedUploadState struct {
 
 func uploadAt(ctx context.Context, req trackers.PreparationInput, baseURL string, httpClient *http.Client) (api.UploadSummary, error) {
 	req.Intent = trackers.PreparationIntentUpload
+	var nameFailure *trackers.PreparationFailure
+	req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, trackers.CanonicalReleaseNamePolicy())
+	if nameFailure != nil {
+		return api.UploadSummary{}, nameFailure
+	}
 	plan, failure := trackers.PrepareAdapter(ctx, req, nil, func(ctx context.Context, input trackers.PreparationInput) (trackers.PreparedOperation, error) {
 		return prepareUploadAt(ctx, input, baseURL, httpClient)
 	})
@@ -70,6 +74,9 @@ func prepareUploadAt(
 	baseURL string,
 	httpClient *http.Client,
 ) (trackers.PreparedOperation, error) {
+	if err := standalone.ValidatePreparation(ctx, req, validationPolicy()); err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: validate preparation: %w", err)
+	}
 	select {
 	case <-ctx.Done():
 		return trackers.PreparedOperation{}, fmt.Errorf("context canceled: %w", ctx.Err())
@@ -105,18 +112,22 @@ func prepareUploadAt(
 		}
 	}
 
-	torrentPath, err := resolveTorrentPath(req.Meta, req.Runtime.DBPath)
+	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
-		return trackers.PreparedOperation{}, err
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: HDB prepared upload torrent: %w", err)
 	}
 
 	uploadURL := strings.TrimRight(baseURL, "/")
 	uploadURL += hdbUploadPath
 
-	fields := buildUploadFields(req.Meta, req.Runtime.DescriptionConfig(), category, codec, medium, descriptionText)
+	releaseName, err := req.ReviewedUploadName()
+	if err != nil {
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: HDB reviewed upload name: %w", err)
+	}
+	fields := buildUploadFields(req.Meta, req.Runtime.DescriptionConfig(), category, codec, medium, descriptionText, releaseName)
 	preview := standalone.BuildPreview(standalone.PreviewSpec{
 		Tracker:          "HDB",
-		ReleaseName:      resolveUploadName(req.Meta),
+		ReleaseName:      releaseName,
 		DescriptionGroup: "hdb",
 		Description:      descriptionText,
 		Endpoint:         uploadURL,
@@ -220,9 +231,17 @@ func submitPreparedUpload(ctx context.Context, req trackers.PreparationInput, st
 	}, nil
 }
 
-func buildUploadFields(meta api.UploadSubject, appConfig config.Config, categoryID int, codecID int, mediumID int, description string) map[string]string {
+func buildUploadFields(
+	meta api.UploadSubject,
+	appConfig config.Config,
+	categoryID int,
+	codecID int,
+	mediumID int,
+	description string,
+	releaseName string,
+) map[string]string {
 	fields := map[string]string{
-		"name":     resolveUploadName(meta),
+		"name":     releaseName,
 		"category": strconv.Itoa(categoryID),
 		"codec":    strconv.Itoa(codecID),
 		"medium":   strconv.Itoa(mediumID),
@@ -266,26 +285,6 @@ func buildUploadFields(meta api.UploadSubject, appConfig config.Config, category
 	}
 
 	return fields
-}
-
-// isHDBTVCategory reports whether HDB upload payloads may include TVDB fields.
-// Canonical movie identity suppresses TVDB fields even when episode facts exist.
-func isHDBTVCategory(meta api.UploadSubject) bool {
-	category, err := meta.Identity.RequireCategory()
-	return err == nil && category == api.CanonicalCategoryTV
-}
-
-func resolveUploadName(meta api.UploadSubject) string {
-	if name := strings.TrimSpace(meta.ReleaseName); name != "" {
-		return name
-	}
-	if name := strings.TrimSpace(meta.ReleaseNameNoTag); name != "" {
-		return name
-	}
-	if name := strings.TrimSpace(meta.Filename); name != "" {
-		return name
-	}
-	return pathutil.Base(meta.SourcePath)
 }
 
 func resolveIMDbURL(meta api.UploadSubject) string {
@@ -337,37 +336,6 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
-func resolveTorrentPath(meta api.UploadSubject, dbPath string) (string, error) {
-	candidates := []string{
-		strings.TrimSpace(meta.TorrentPath),
-		strings.TrimSpace(meta.ClientTorrentPath),
-		strings.TrimSpace(meta.SourcePath),
-	}
-	for _, candidate := range candidates {
-		if candidate == "" || !strings.EqualFold(filepath.Ext(candidate), ".torrent") {
-			continue
-		}
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil
-		}
-	}
-
-	if strings.TrimSpace(dbPath) != "" && strings.TrimSpace(meta.SourcePath) != "" {
-		tmpRoot, err := db.Subdir(dbPath, "tmp")
-		if err == nil {
-			tmpDir, base, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
-			if err == nil {
-				guessed := filepath.Join(tmpDir, base+".torrent")
-				if info, err := os.Stat(guessed); err == nil && !info.IsDir() {
-					return guessed, nil
-				}
-			}
-		}
-	}
-
-	return "", errors.New("trackers: HDB torrent file not found")
-}
-
 func resolveTrackerTorrentPath(meta api.UploadSubject, dbPath string, tracker string) (string, error) {
 	if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
 		return "", errors.New("trackers: HDB tracker torrent path requires db path and source path")
@@ -387,14 +355,6 @@ func resolveTrackerTorrentPath(meta api.UploadSubject, dbPath string, tracker st
 		name = "tracker"
 	}
 	return filepath.Join(tmpDir, base+"."+name+".torrent"), nil
-}
-
-func resolveHDBCookies(ctx context.Context, dbPath string) ([]*http.Cookie, error) {
-	values, err := cookiepkg.LoadTrackerHTTPCookies(ctx, dbPath, "HDB", "hdbits.org")
-	if err != nil {
-		return values, fmt.Errorf("trackers: HDB load cookies: %w", err)
-	}
-	return values, nil
 }
 
 func downloadPersonalizedTorrent(
@@ -456,166 +416,4 @@ func buildHDBDownloadURL(uploadURL string, meta api.UploadSubject, torrentID str
 		url.QueryEscape(torrentID),
 		url.QueryEscape(passkey),
 	)
-}
-
-func hdbCategoryID(meta api.UploadSubject) int {
-	category, _ := meta.Identity.RequireCategory()
-	switch category {
-	case api.CanonicalCategoryMovie:
-		return 1
-	case api.CanonicalCategoryTV:
-		return 2
-	case api.CanonicalCategoryUnknown:
-	}
-	genres := ""
-	keywords := ""
-	if meta.ProviderMetadata.TMDB != nil {
-		genres = strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.TMDB.Genres))
-		keywords = strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.TMDB.Keywords))
-	}
-	if strings.Contains(genres, "documentary") || strings.Contains(keywords, "documentary") {
-		return 3
-	}
-	if meta.ProviderMetadata.IMDB != nil {
-		imdbType := strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.IMDB.Type))
-		imdbGenres := strings.ToLower(strings.TrimSpace(meta.ProviderMetadata.IMDB.Genres))
-		if strings.Contains(imdbType, "concert") || (strings.Contains(imdbType, "video") && strings.Contains(imdbGenres, "music")) {
-			return 4
-		}
-	}
-	return 0
-}
-
-func hdbCodecID(meta api.UploadSubject) int {
-	codec := strings.ToUpper(strings.TrimSpace(meta.VideoCodec))
-	if codec == "" {
-		codec = strings.ToUpper(strings.TrimSpace(meta.VideoEncode))
-	}
-	switch codec {
-	case "AVC", "H.264":
-		return 1
-	case "MPEG-2":
-		return 2
-	case "VC-1":
-		return 3
-	case "XVID":
-		return 4
-	case "HEVC", "H.265":
-		return 5
-	case "VP9":
-		return 6
-	default:
-		return 0
-	}
-}
-
-func hdbMediumID(meta api.UploadSubject) int {
-	discType := strings.ToUpper(strings.TrimSpace(meta.DiscType))
-	contentType := resolveHDBType(meta)
-	if discType == "BDMV" || discType == "HD DVD" {
-		return 1
-	}
-	if contentType == "HDTV" {
-		if meta.HasEncodeSettings {
-			return 3
-		}
-		return 4
-	}
-	switch contentType {
-	case "ENCODE", "WEBRIP":
-		return 3
-	case "REMUX":
-		return 5
-	case "WEBDL":
-		return 6
-	default:
-		return 0
-	}
-}
-
-func resolveHDBType(meta api.UploadSubject) string {
-	typeValue := normalizeHDBType(meta.Type)
-	if typeValue == "" || isHDBCategoryType(typeValue) {
-		if meta.ReleaseNameOverrides.Type != nil {
-			typeValue = normalizeHDBType(*meta.ReleaseNameOverrides.Type)
-		}
-	}
-	if typeValue == "" || isHDBCategoryType(typeValue) {
-		typeValue = normalizeHDBType(meta.Release.Type)
-	}
-	if typeValue == "" || isHDBCategoryType(typeValue) {
-		if strings.TrimSpace(meta.DiscType) != "" {
-			typeValue = "DISC"
-		}
-	}
-	if typeValue == "" || isHDBCategoryType(typeValue) {
-		typeValue = inferHDBTypeFromSource(meta.Source)
-	}
-	if typeValue == "" || isHDBCategoryType(typeValue) {
-		typeValue = inferHDBTypeFromPath(meta.SourcePath)
-	}
-	if typeValue == "" || isHDBCategoryType(typeValue) {
-		if strings.TrimSpace(meta.VideoEncode) != "" {
-			typeValue = "ENCODE"
-		}
-	}
-	if typeValue == "" || isHDBCategoryType(typeValue) {
-		if strings.TrimSpace(meta.VideoCodec) != "" || strings.TrimSpace(meta.Release.Resolution) != "" || strings.TrimSpace(meta.Release.Ext) != "" {
-			typeValue = "ENCODE"
-		}
-	}
-	return typeValue
-}
-
-func normalizeHDBType(value string) string {
-	upper := strings.ToUpper(strings.TrimSpace(value))
-	if upper == "" {
-		return ""
-	}
-	upper = strings.ReplaceAll(upper, "-", "")
-	upper = strings.ReplaceAll(upper, " ", "")
-	upper = strings.ReplaceAll(upper, "_", "")
-	switch upper {
-	case "WEBDL":
-		return "WEBDL"
-	case "WEBRIP":
-		return "WEBRIP"
-	}
-	return upper
-}
-
-func isHDBCategoryType(value string) bool {
-	upper := strings.ToUpper(strings.TrimSpace(value))
-	return upper == "MOVIE" || upper == "TV"
-}
-
-func inferHDBTypeFromSource(source string) string {
-	upper := normalizeHDBType(source)
-	switch {
-	case strings.Contains(upper, "WEBDL"):
-		return "WEBDL"
-	case strings.Contains(upper, "WEBRIP"):
-		return "WEBRIP"
-	case strings.Contains(upper, "HDTV"):
-		return "HDTV"
-	}
-	return ""
-}
-
-func inferHDBTypeFromPath(path string) string {
-	base := strings.ToUpper(strings.TrimSpace(path))
-	compact := strings.NewReplacer(".", "", "-", "", "_", "", " ", "").Replace(base)
-	switch {
-	case strings.Contains(compact, "REMUX"):
-		return "REMUX"
-	case strings.Contains(compact, "WEBDL"):
-		return "WEBDL"
-	case strings.Contains(compact, "WEBRIP"):
-		return "WEBRIP"
-	case strings.Contains(compact, "HDTV"):
-		return "HDTV"
-	case strings.Contains(compact, "DVDRIP"):
-		return "DVDRIP"
-	}
-	return ""
 }

@@ -3,146 +3,177 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import { setAppRequestHandlerForTests } from "../api/client";
+import type { ReleaseWorkflowCurrent } from "../api/generated/release-workflow";
 import { productionReleaseSessionPorts } from "./production";
-import type { PreparationIntent } from "./types";
 
-afterEach(() => setAppRequestHandlerForTests(null));
-
-const intent = (): PreparationIntent => ({
-  sourceLookupURL: "https://example.invalid/source",
-  identity: {},
-  releaseName: {},
-  playlist: { Set: true, Selected: ["00001.mpls"], UseAll: false },
+afterEach(() => {
+  setAppRequestHandlerForTests(null);
+  delete window.__UPBRR_BASE_URL__;
 });
 
 describe("productionReleaseSessionPorts", () => {
-  it("keeps the original source and carries direct playlist intent without persistence", async () => {
+  it("forwards one typed continuation request without stage-specific translation", async () => {
     const requests: Array<{ method: string; body: unknown }> = [];
-    setAppRequestHandlerForTests(async (method, body) => {
+    let requestOptions: Readonly<{ signal?: AbortSignal; correlationID?: string }> | undefined;
+    setAppRequestHandlerForTests(async (method, body, options) => {
       requests.push({ method, body });
-      return {};
-    });
-    const ports = productionReleaseSessionPorts();
-    const signal = new AbortController().signal;
-    const sourcePath = "C:\\media\\Example Disc";
-
-    await ports.preparation.discoverPlaylists(sourcePath, signal);
-    await ports.preparation.execute({
-      operation: "prepare",
-      correlationID: "attempt-1",
-      sourcePath,
-      intent: intent(),
-      controls: { confirmBDMVRescan: false },
-      signal,
-      onProgress: () => undefined,
-    });
-
-    expect(requests.map((request) => request.method)).toEqual([
-      "DiscoverPlaylists",
-      "FetchMetadata",
-    ]);
-    expect(requests[0].body).toEqual({ Path: sourcePath });
-    expect(requests[1].body).toMatchObject({
-      Path: sourcePath,
-      CorrelationID: "attempt-1",
-      Playlist: { Set: true, Selected: ["00001.mpls"], UseAll: false },
-      ConfirmBDMVRescan: false,
-    });
-    expect(requests[1].body).not.toHaveProperty("Trackers");
-  });
-
-  it("sends rescan confirmation only on an explicit retry", async () => {
-    const requests: Array<{ method: string; body: unknown }> = [];
-    setAppRequestHandlerForTests(async (method, body) => {
-      requests.push({ method, body });
-      return {};
+      requestOptions = options;
+      return {
+        workflow: { id: "workflow-1", revision: 1 },
+      };
     });
     const ports = productionReleaseSessionPorts();
     const sourcePath = "C:\\media\\Example Disc\\BDMV";
+    const signal = new AbortController().signal;
+    const request = {
+      goal: "prepared",
+      intent: {
+        factInstructions: {
+          Identity: {},
+          ReleaseName: {},
+          Metadata: {},
+          SourceLookup: "https://example.invalid/source",
+          BlurayReleaseID: "",
+          Playlist: { Set: true, Selected: ["00001.mpls"], UseAll: false },
+          TrackerIDs: {},
+        },
+        preparation: {
+          SourcePath: sourcePath,
+          Intent: "upload",
+          Instructions: {
+            Identity: {},
+            ReleaseName: {},
+            Metadata: {},
+            SourceLookup: "https://example.invalid/source",
+            BlurayReleaseID: "",
+            Playlist: { Set: true, Selected: ["00001.mpls"], UseAll: false },
+            TrackerIDs: {},
+          },
+          Policy: { KeepFolder: false, KeepImages: false, OnlyID: false },
+          Search: { Skip: false },
+          Controls: { Interaction: "interactive", ConfirmBDMVRescan: true },
+          Force: false,
+        },
+      },
+      idempotencyKey: "continue-1",
+    };
+    await ports.workflow.continue(request, signal);
 
-    await ports.preparation.execute({
-      operation: "reset",
-      correlationID: "attempt-2",
-      sourcePath,
-      intent: intent(),
-      controls: { confirmBDMVRescan: true },
-      signal: new AbortController().signal,
-      onProgress: () => undefined,
-    });
-
-    expect(requests).toHaveLength(1);
-    expect(requests[0]).toMatchObject({
-      method: "ResetMetadata",
-      body: { CorrelationID: "attempt-2", Path: sourcePath, ConfirmBDMVRescan: true },
-    });
+    expect(requests).toEqual([
+      {
+        method: "ContinueReleaseWorkflow",
+        body: request,
+      },
+    ]);
+    expect(requestOptions).toEqual({ signal });
   });
 
-  it("sends image-upload correlation with the host request", async () => {
+  it("reloads the authoritative revision before canceling a workflow", async () => {
     const requests: Array<{ method: string; body: unknown }> = [];
     setAppRequestHandlerForTests(async (method, body) => {
       requests.push({ method, body });
-      return { Links: [], Failures: [] };
+      return { workflow: { id: "workflow-1", revision: 7, status: "canceled" } };
     });
     const ports = productionReleaseSessionPorts();
 
-    await ports.uploadedImages.upload({
-      correlationID: "image-upload-1",
-      release: { SourcePath: "C:\\media\\Example", Generation: 1 },
-      trackers: ["AITHER"],
-      host: "imgbox",
-      images: [],
-      signal: new AbortController().signal,
-      onProgress: () => undefined,
+    await ports.workflow.cancel(
+      "workflow-1",
+      "user canceled",
+      "cancel-1",
+      new AbortController().signal,
+    );
+
+    expect(requests).toEqual([
+      { method: "GetReleaseWorkflow", body: { workflowId: "workflow-1" } },
+      {
+        method: "CancelReleaseWorkflow",
+        body: {
+          workflowId: "workflow-1",
+          expectedRevision: 7,
+          reason: "user canceled",
+          idempotencyKey: "cancel-1",
+        },
+      },
+    ]);
+  });
+
+  it("reconciles dry-run and client-injection options through Continue", async () => {
+    const requests: Array<{ method: string; body: unknown }> = [];
+    const current = {
+      workflow: { id: "workflow-1", revision: 7 },
+    } as ReleaseWorkflowCurrent;
+    setAppRequestHandlerForTests(async (method, body) => {
+      requests.push({ method, body });
+      return current;
     });
+    const ports = productionReleaseSessionPorts();
+
+    await ports.workflow.continue(
+      {
+        authority: { workflowId: "workflow-1", expectedRevision: 7 },
+        goal: "dry_run",
+        intent: { noSeed: true },
+        idempotencyKey: "dry-run-1",
+      },
+      new AbortController().signal,
+    );
+
+    expect(requests).toEqual([
+      {
+        method: "ContinueReleaseWorkflow",
+        body: {
+          authority: { workflowId: "workflow-1", expectedRevision: 7 },
+          goal: "dry_run",
+          intent: { noSeed: true },
+          idempotencyKey: "dry-run-1",
+        },
+      },
+    ]);
+  });
+
+  it("binds image-host upload to exact workflow media", async () => {
+    const requests: Array<{ method: string; body: unknown }> = [];
+    setAppRequestHandlerForTests(async (method, body) => {
+      requests.push({ method, body });
+      return { workflow: { id: "workflow-1", revision: 8 } };
+    });
+    const ports = productionReleaseSessionPorts();
+
+    const current = {
+      workflow: { id: "workflow-1", revision: 7 },
+      media: { id: "media-1", revision: 6 },
+    } as ReleaseWorkflowCurrent;
+    await ports.workflow.uploadImages(
+      current,
+      ["artifact-1"],
+      "image-upload-1",
+      new AbortController().signal,
+    );
 
     expect(requests).toEqual([
       expect.objectContaining({
-        method: "UploadImages",
-        body: expect.objectContaining({
-          CorrelationID: "image-upload-1",
-          Host: "imgbox",
-        }),
+        method: "UploadReleaseWorkflowImages",
+        body: {
+          workflowId: "workflow-1",
+          expectedRevision: 7,
+          media: { id: "media-1", revision: 6 },
+          artifactIds: ["artifact-1"],
+          idempotencyKey: "image-upload-1",
+        },
       }),
     ]);
   });
 
-  it("transports duplicate ignores and live rule authorizations independently", async () => {
-    const requests: Array<{ method: string; body: unknown }> = [];
-    setAppRequestHandlerForTests(async (method, body) => {
-      requests.push({ method, body });
-      return {};
-    });
+  it("builds opaque workflow media URLs under the configured base path", () => {
+    window.__UPBRR_BASE_URL__ = "/upbrr/";
     const ports = productionReleaseSessionPorts();
-    const signal = new AbortController().signal;
-    const common = {
-      release: { SourcePath: "C:\\media\\Example", Generation: 1 },
-      trackers: ["AITHER"],
-      ignoreDupesFor: ["AITHER"],
-      questionnaireAnswers: {},
-      descriptionGroups: [],
-      options: { noSeed: false, runLogLevel: "info" },
-    } as const;
+    const current = {
+      workflow: { id: "workflow 1" },
+      media: { id: "media/1", revision: 4 },
+    } as ReleaseWorkflowCurrent;
 
-    await ports.upload.dryRun({ ...common, dupeJobID: "dupe-job" }, signal);
-    await ports.upload.review(
-      {
-        ...common,
-        ruleAuthorizations: [{ Tracker: "AITHER", Rules: ["container"] }],
-      },
-      signal,
+    expect(ports.workflow.mediaURL(current, "artifact?1")).toBe(
+      "/upbrr/api/app/release-workflow-media?workflowId=workflow+1&mediaId=media%2F1&mediaRevision=4&artifactId=artifact%3F1",
     );
-
-    expect(requests[0]).toMatchObject({
-      method: "FetchTrackerDryRun",
-      body: { IgnoreDupesFor: ["AITHER"], NoSeed: false },
-    });
-    expect(requests[0].body).not.toHaveProperty("RuleAuthorizations");
-    expect(requests[1]).toMatchObject({
-      method: "ReviewTrackerUpload",
-      body: {
-        IgnoreDupesFor: ["AITHER"],
-        RuleAuthorizations: [{ Tracker: "AITHER", Rules: ["container"] }],
-      },
-    });
   });
 });
