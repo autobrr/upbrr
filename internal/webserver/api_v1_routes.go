@@ -22,12 +22,19 @@ const (
 )
 
 func (s *Server) registerV1Routes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v1/docs", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		serveReleaseWorkflowSwaggerUI(w)
+	})
 	mux.HandleFunc("/api/v1/openapi.json", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 			return
 		}
-		serveReleaseWorkflowOpenAPI(w)
+		s.serveReleaseWorkflowOpenAPI(w)
 	})
 	mux.HandleFunc("/api/v1/continuations", s.handleAPIV1WorkflowContinuation)
 	mux.HandleFunc("/api/v1/workflows", http.NotFound)

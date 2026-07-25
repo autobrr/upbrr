@@ -14,6 +14,7 @@ tmp/
 /scripts/*.yml
 /scripts/*.json
 /scripts/*.py
+!/scripts/fetch_metadata_api.py
 
 # E2E / Playwright artifacts
 webui/playwright-report/

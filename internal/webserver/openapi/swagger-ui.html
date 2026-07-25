@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>upbrr API Documentation</title>
+    <link rel="icon" type="image/x-icon" href="../../favicon.ico">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@{{SWAGGER_UI_VERSION}}/swagger-ui.css">
+    <style>
+        html {
+            box-sizing: border-box;
+            overflow-y: scroll;
+        }
+        *, *::before, *::after {
+            box-sizing: inherit;
+        }
+        body {
+            margin: 0;
+            background: #fafafa;
+        }
+        .swagger-ui .topbar {
+            display: none;
+        }
+        .swagger-ui .wrapper {
+            max-width: 1460px;
+            margin: 0 auto;
+        }
+        .swagger-ui .opblock-tag {
+            margin: 20px 0 10px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e0e0e0;
+            font-size: 24px !important;
+        }
+        .swagger-ui .scheme-container {
+            position: sticky;
+            z-index: 10;
+            top: 0;
+            padding: 10px 0;
+            background: #fff;
+            box-shadow: 0 1px 2px rgb(0 0 0 / 10%);
+        }
+        .swagger-ui .filter-container {
+            position: sticky;
+            z-index: 9;
+            top: 60px;
+            margin-bottom: 20px;
+            padding: 10px 0;
+            background: #fff;
+        }
+        .swagger-ui .filter-container input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #4990e2;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        .swagger-ui .opblock {
+            margin-bottom: 10px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div id="swagger-ui"></div>
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@{{SWAGGER_UI_VERSION}}/swagger-ui-bundle.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@{{SWAGGER_UI_VERSION}}/swagger-ui-standalone-preset.js"></script>
+    <script>
+        window.onload = function () {
+            window.ui = SwaggerUIBundle({
+                url: "openapi.json",
+                dom_id: "#swagger-ui",
+                deepLinking: true,
+                presets: [
+                    SwaggerUIBundle.presets.apis,
+                    SwaggerUIStandalonePreset
+                ],
+                plugins: [
+                    SwaggerUIBundle.plugins.DownloadUrl
+                ],
+                layout: "StandaloneLayout",
+                persistAuthorization: true,
+                tryItOutEnabled: true,
+                filter: true,
+                docExpansion: "list",
+                defaultModelsExpandDepth: 1,
+                defaultModelExpandDepth: 1,
+                displayRequestDuration: true,
+                showExtensions: true,
+                showCommonExtensions: true,
+                tagsSorter: "alpha",
+                operationsSorter: "alpha",
+                validatorUrl: null
+            });
+        };
+    </script>
+</body>
+</html>

@@ -20,6 +20,118 @@ import (
 
 const apiV1TestToken = "synthetic-api-token-000000000001"
 
+func TestAPIV1DocumentationRoutesArePublicAndPinned(t *testing.T) {
+	t.Parallel()
+
+	server := &Server{}
+	mux := http.NewServeMux()
+	server.registerV1Routes(mux)
+
+	docsRequest := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/docs", nil)
+	docsResponse := httptest.NewRecorder()
+	mux.ServeHTTP(docsResponse, docsRequest)
+	if docsResponse.Code != http.StatusOK {
+		t.Fatalf("docs status = %d, want 200", docsResponse.Code)
+	}
+	if contentType := docsResponse.Header().Get("Content-Type"); contentType != "text/html; charset=utf-8" {
+		t.Fatalf("docs content type = %q", contentType)
+	}
+	if cacheControl := docsResponse.Header().Get("Cache-Control"); cacheControl != "no-cache" {
+		t.Fatalf("docs cache control = %q", cacheControl)
+	}
+	if options := docsResponse.Header().Get("X-Content-Type-Options"); options != "nosniff" {
+		t.Fatalf("docs content type options = %q", options)
+	}
+	page := docsResponse.Body.String()
+	for _, want := range []string{
+		"https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui.css",
+		"https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui-bundle.js",
+		"https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui-standalone-preset.js",
+		`url: "openapi.json"`,
+		"deepLinking: true",
+		"persistAuthorization: true",
+		"tryItOutEnabled: true",
+		"filter: true",
+		`docExpansion: "list"`,
+		"defaultModelsExpandDepth: 1",
+		"defaultModelExpandDepth: 1",
+		"displayRequestDuration: true",
+		"showExtensions: true",
+		"showCommonExtensions: true",
+		`tagsSorter: "alpha"`,
+		`operationsSorter: "alpha"`,
+		"validatorUrl: null",
+	} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("docs HTML missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"{{SWAGGER_UI_VERSION}}", "requestInterceptor", "X-API-Key", apiV1TestToken} {
+		if strings.Contains(page, forbidden) {
+			t.Fatalf("docs HTML contains forbidden value %q", forbidden)
+		}
+	}
+
+	postRequest := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/docs", nil)
+	postResponse := httptest.NewRecorder()
+	mux.ServeHTTP(postResponse, postRequest)
+	if postResponse.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("docs POST status = %d, want 405", postResponse.Code)
+	}
+
+	openAPIRequest := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/openapi.json", nil)
+	openAPIResponse := httptest.NewRecorder()
+	mux.ServeHTTP(openAPIResponse, openAPIRequest)
+	if openAPIResponse.Code != http.StatusOK {
+		t.Fatalf("OpenAPI status = %d, want 200", openAPIResponse.Code)
+	}
+	if contentType := openAPIResponse.Header().Get("Content-Type"); contentType != "application/vnd.oai.openapi+json;version=3.1" {
+		t.Fatalf("OpenAPI content type = %q", contentType)
+	}
+	var document struct {
+		Servers []struct {
+			URL string `json:"url"`
+		} `json:"servers"`
+		Components struct {
+			SecuritySchemes map[string]json.RawMessage `json:"securitySchemes"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(openAPIResponse.Body.Bytes(), &document); err != nil {
+		t.Fatalf("parse served OpenAPI: %v", err)
+	}
+	if len(document.Servers) != 1 || document.Servers[0].URL != "/api/v1" {
+		t.Fatalf("root OpenAPI servers = %#v", document.Servers)
+	}
+	if _, ok := document.Components.SecuritySchemes["bearerAuth"]; !ok {
+		t.Fatal("served OpenAPI lacks native bearer authentication")
+	}
+}
+
+func TestReleaseWorkflowOpenAPIBasePathChangesOnlyServers(t *testing.T) {
+	t.Parallel()
+
+	root, err := releaseWorkflowOpenAPIDocument("")
+	if err != nil {
+		t.Fatalf("root OpenAPI: %v", err)
+	}
+	prefixed, err := releaseWorkflowOpenAPIDocument("/upbrr")
+	if err != nil {
+		t.Fatalf("prefixed OpenAPI: %v", err)
+	}
+	var rootDocument map[string]any
+	if err := json.Unmarshal(root, &rootDocument); err != nil {
+		t.Fatalf("parse root OpenAPI: %v", err)
+	}
+	var prefixedDocument map[string]any
+	if err := json.Unmarshal(prefixed, &prefixedDocument); err != nil {
+		t.Fatalf("parse prefixed OpenAPI: %v", err)
+	}
+	rootDocument["servers"] = prefixedDocument["servers"]
+	if !reflect.DeepEqual(rootDocument, prefixedDocument) {
+		t.Fatal("base-path OpenAPI changed fields other than servers")
+	}
+}
+
 func TestAPITokenStoreScopesAndOwnerIsolation(t *testing.T) {
 	t.Parallel()
 

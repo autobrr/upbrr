@@ -1,6 +1,153 @@
 {
   "components": {
+    "responses": {
+      "BadRequest": {
+        "content": {
+          "application/json": {
+            "example": {
+              "error": "Invalid API request."
+            },
+            "schema": {
+              "$ref": "#/components/schemas/APIErrorResponse"
+            }
+          }
+        },
+        "description": "Invalid header, query, body, or typed request."
+      },
+      "Conflict": {
+        "content": {
+          "application/json": {
+            "example": {
+              "error": "The workflow changed. Reload its current state before continuing.",
+              "failure": {
+                "Code": "stale_review",
+                "Message": "The workflow changed. Reload its current state before continuing.",
+                "Operation": "unknown",
+                "Recovery": "review_again"
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/APIErrorResponse"
+            }
+          }
+        },
+        "description": "Stale revision, idempotency conflict, or blocked transition."
+      },
+      "Forbidden": {
+        "content": {
+          "application/json": {
+            "example": {
+              "error": "API token scope denied"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/APIErrorResponse"
+            }
+          }
+        },
+        "description": "Bearer token lacks the required workflow scope."
+      },
+      "InternalServerError": {
+        "content": {
+          "application/json": {
+            "example": {
+              "error": "The operation could not be completed.",
+              "failure": {
+                "Code": "internal",
+                "Message": "The operation could not be completed.",
+                "Operation": "unknown",
+                "Recovery": "retry"
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/APIErrorResponse"
+            }
+          }
+        },
+        "description": "Authentication or runtime failure hidden behind a safe message."
+      },
+      "NotFound": {
+        "content": {
+          "application/json": {
+            "example": {
+              "error": "Release workflow not found."
+            },
+            "schema": {
+              "$ref": "#/components/schemas/APIErrorResponse"
+            }
+          }
+        },
+        "description": "Owner-scoped workflow or resource was not found."
+      },
+      "PayloadTooLarge": {
+        "content": {
+          "application/json": {
+            "example": {
+              "error": "Invalid API request body."
+            },
+            "schema": {
+              "$ref": "#/components/schemas/APIErrorResponse"
+            }
+          }
+        },
+        "description": "JSON request exceeds the public API limit."
+      },
+      "PreconditionRequired": {
+        "content": {
+          "application/json": {
+            "example": {
+              "error": "Valid If-Match workflow revision required."
+            },
+            "schema": {
+              "$ref": "#/components/schemas/APIErrorResponse"
+            }
+          }
+        },
+        "description": "Missing or invalid If-Match workflow revision."
+      },
+      "TooManyRequests": {
+        "content": {
+          "application/json": {
+            "example": {
+              "error": "Rate limit exceeded."
+            },
+            "schema": {
+              "$ref": "#/components/schemas/APIErrorResponse"
+            }
+          }
+        },
+        "description": "General request rate limit exceeded."
+      },
+      "Unauthorized": {
+        "content": {
+          "application/json": {
+            "example": {
+              "error": "API token required"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/APIErrorResponse"
+            }
+          }
+        },
+        "description": "Missing, invalid, or revoked bearer token."
+      }
+    },
     "schemas": {
+      "APIErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Safe human-readable error summary."
+          },
+          "failure": {
+            "$ref": "#/components/schemas/OperationFailure",
+            "description": "Optional structured workflow failure metadata."
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
       "AniListAiringEpisode": {
         "type": "object",
         "properties": {
@@ -7300,6 +7447,8 @@
     },
     "securitySchemes": {
       "bearerAuth": {
+        "bearerFormat": "upbrr API token",
+        "description": "Create a scoped token under Settings → API Tokens. Available scopes: workflow:read, workflow:write, workflow:execute.",
         "scheme": "bearer",
         "type": "http"
       }
@@ -7314,17 +7463,12 @@
   "paths": {
     "/continuations": {
       "post": {
+        "description": "Starts a workflow or advances an existing owner-scoped workflow toward the requested goal.",
         "operationId": "continueWorkflow",
         "parameters": [
           {
-            "in": "header",
-            "name": "If-Match",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -7336,11 +7480,74 @@
         "requestBody": {
           "content": {
             "application/json": {
+              "examples": {
+                "continueWorkflow": {
+                  "summary": "Continue an existing workflow",
+                  "value": {
+                    "authority": {
+                      "expectedRevision": 1,
+                      "workflowId": "workflow-example"
+                    },
+                    "goal": "prepared",
+                    "intent": {
+                      "factInstructions": {}
+                    }
+                  }
+                },
+                "startWorkflow": {
+                  "summary": "Start and prepare a workflow",
+                  "value": {
+                    "goal": "prepared",
+                    "intent": {
+                      "factInstructions": {}
+                    }
+                  }
+                }
+              },
               "schema": {
-                "$ref": "#/components/schemas/ContinueReleaseWorkflowRequest"
+                "type": "object",
+                "properties": {
+                  "answers": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/RequiredActionAnswer"
+                    }
+                  },
+                  "approval": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/UploadApproval"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "authority": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/WorkflowAuthority"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "goal": {
+                    "$ref": "#/components/schemas/WorkflowGoal"
+                  },
+                  "intent": {
+                    "$ref": "#/components/schemas/WorkflowIntent"
+                  }
+                },
+                "required": [
+                  "goal",
+                  "intent"
+                ]
               }
             }
           },
+          "description": "Idempotency-Key is supplied in the header. authority is optional when starting a workflow and required when continuing one.",
           "required": true
         },
         "responses": {
@@ -7352,63 +7559,93 @@
                 }
               }
             },
-            "description": "Successful response"
+            "description": "Workflow already reached a terminal result for the requested goal.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseWorkflowCurrent"
+                }
+              }
+            },
+            "description": "Workflow accepted with a non-terminal operation attached.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Conflict"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Continue a workflow",
+        "tags": [
+          "Workflow"
+        ]
       }
     },
     "/openapi.json": {
       "get": {
+        "description": "Returns the generated OpenAPI 3.1 contract used by the instance-local interactive documentation.",
         "operationId": "getOpenAPI",
         "responses": {
           "200": {
             "description": "OpenAPI document"
           }
         },
-        "security": []
+        "security": [],
+        "summary": "Get raw OpenAPI contract",
+        "tags": [
+          "Operations"
+        ]
       }
     },
     "/workflows/{workflowId}": {
       "get": {
+        "description": "Returns the authoritative owner-scoped workflow and retained stage snapshots.",
         "operationId": "getWorkflow",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "If-Match",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Idempotency-Key",
             "required": true,
             "schema": {
               "type": "string"
@@ -7424,34 +7661,47 @@
                 }
               }
             },
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Structured operation failure"
+            "description": "Current workflow state.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
-          "409": {
-            "description": "Structured operation failure"
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Get workflow state",
+        "tags": [
+          "Workflow"
+        ]
       }
     },
     "/workflows/{workflowId}/cancel": {
       "post": {
+        "description": "Cancels the current workflow using exact revision and idempotency authority.",
         "operationId": "cancelWorkflow",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
             "required": true,
@@ -7460,6 +7710,8 @@
             }
           },
           {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
             "in": "header",
             "name": "If-Match",
             "required": true,
@@ -7468,6 +7720,8 @@
             }
           },
           {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -7480,10 +7734,16 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CancelReleaseWorkflowRequest"
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                }
               }
             }
           },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
           "required": true
         },
         "responses": {
@@ -7495,34 +7755,59 @@
                 }
               }
             },
-            "description": "Successful response"
+            "description": "Canceled workflow state.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Conflict"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Cancel workflow",
+        "tags": [
+          "Workflow"
+        ]
       }
     },
     "/workflows/{workflowId}/descriptions/{descriptionId}/groups/{groupKey}/reset": {
       "post": {
+        "description": "Resets one route-bound description group to its generated value.",
         "operationId": "resetWorkflowDescriptionOverride",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
             "required": true,
@@ -7531,6 +7816,8 @@
             }
           },
           {
+            "description": "Route-bound description-set identifier.",
+            "example": "description-example",
             "in": "path",
             "name": "descriptionId",
             "required": true,
@@ -7539,6 +7826,8 @@
             }
           },
           {
+            "description": "Route-bound description group key.",
+            "example": "overview",
             "in": "path",
             "name": "groupKey",
             "required": true,
@@ -7547,6 +7836,8 @@
             }
           },
           {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
             "in": "header",
             "name": "If-Match",
             "required": true,
@@ -7555,6 +7846,8 @@
             }
           },
           {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -7567,10 +7860,35 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ResetReleaseWorkflowDescriptionOverrideRequest"
+                "type": "object",
+                "properties": {
+                  "descriptions": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "$ref": "#/components/schemas/DescriptionSetID",
+                        "description": "Server supplied from the {descriptionId} path parameter; compatibility values are accepted but ignored."
+                      },
+                      "revision": {
+                        "$ref": "#/components/schemas/WorkflowRevision"
+                      }
+                    },
+                    "required": [
+                      "revision"
+                    ]
+                  },
+                  "groupKey": {
+                    "type": "string",
+                    "description": "Server supplied from the {groupKey} path parameter; compatibility values are accepted but ignored."
+                  }
+                },
+                "required": [
+                  "descriptions"
+                ]
               }
             }
           },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
           "required": true
         },
         "responses": {
@@ -7582,34 +7900,59 @@
                 }
               }
             },
-            "description": "Successful response"
+            "description": "Workflow state after resetting the description override.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Conflict"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Reset description override",
+        "tags": [
+          "Descriptions"
+        ]
       }
     },
     "/workflows/{workflowId}/descriptions/{descriptionId}/groups/{groupKey}/save": {
       "post": {
+        "description": "Saves one route-bound description group override.",
         "operationId": "saveWorkflowDescriptionOverride",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
             "required": true,
@@ -7618,6 +7961,8 @@
             }
           },
           {
+            "description": "Route-bound description-set identifier.",
+            "example": "description-example",
             "in": "path",
             "name": "descriptionId",
             "required": true,
@@ -7626,6 +7971,8 @@
             }
           },
           {
+            "description": "Route-bound description group key.",
+            "example": "overview",
             "in": "path",
             "name": "groupKey",
             "required": true,
@@ -7634,6 +7981,8 @@
             }
           },
           {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
             "in": "header",
             "name": "If-Match",
             "required": true,
@@ -7642,6 +7991,8 @@
             }
           },
           {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -7654,10 +8005,47 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SaveReleaseWorkflowDescriptionOverrideRequest"
+                "type": "object",
+                "properties": {
+                  "override": {
+                    "type": "object",
+                    "properties": {
+                      "descriptions": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "$ref": "#/components/schemas/DescriptionSetID",
+                            "description": "Server supplied from the {descriptionId} path parameter; compatibility values are accepted but ignored."
+                          },
+                          "revision": {
+                            "$ref": "#/components/schemas/WorkflowRevision"
+                          }
+                        },
+                        "required": [
+                          "revision"
+                        ]
+                      },
+                      "groupKey": {
+                        "type": "string",
+                        "description": "Server supplied from the {groupKey} path parameter; compatibility values are accepted but ignored."
+                      },
+                      "source": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "descriptions",
+                      "source"
+                    ]
+                  }
+                },
+                "required": [
+                  "override"
+                ]
               }
             }
           },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
           "required": true
         },
         "responses": {
@@ -7669,34 +8057,59 @@
                 }
               }
             },
-            "description": "Successful response"
+            "description": "Workflow state after saving the description override.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Conflict"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Save description override",
+        "tags": [
+          "Descriptions"
+        ]
       }
     },
     "/workflows/{workflowId}/media/attach": {
       "post": {
+        "description": "Attaches staged resources to the workflow's current media lineage.",
         "operationId": "attachWorkflowMedia",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
             "required": true,
@@ -7705,6 +8118,8 @@
             }
           },
           {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
             "in": "header",
             "name": "If-Match",
             "required": true,
@@ -7713,6 +8128,8 @@
             }
           },
           {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -7725,10 +8142,32 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AttachReleaseWorkflowMediaRequest"
+                "type": "object",
+                "properties": {
+                  "attachments": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/MediaAttachment"
+                    }
+                  },
+                  "media": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/MediaArtifactSetRef"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "attachments"
+                ]
               }
             }
           },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
           "required": true
         },
         "responses": {
@@ -7740,52 +8179,61 @@
                 }
               }
             },
-            "description": "Successful response"
+            "description": "Workflow state after attaching media.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Conflict"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Attach staged media",
+        "tags": [
+          "Media"
+        ]
       }
     },
     "/workflows/{workflowId}/media/plan": {
       "get": {
+        "description": "Returns the safe media capture and artifact plan for the workflow.",
         "operationId": "getWorkflowMediaPlan",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "If-Match",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Idempotency-Key",
             "required": true,
             "schema": {
               "type": "string"
@@ -7801,34 +8249,38 @@
                 }
               }
             },
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Structured operation failure"
+            "description": "Current media plan."
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
-          "409": {
-            "description": "Structured operation failure"
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Get media plan",
+        "tags": [
+          "Media"
+        ]
       }
     },
     "/workflows/{workflowId}/media/previews": {
       "post": {
+        "description": "Creates a non-authoritative frame preview at the requested timestamp.",
         "operationId": "previewWorkflowMediaFrame",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
             "required": true,
@@ -7837,6 +8289,8 @@
             }
           },
           {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
             "in": "header",
             "name": "If-Match",
             "required": true,
@@ -7845,6 +8299,8 @@
             }
           },
           {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -7857,10 +8313,19 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PreviewReleaseWorkflowFrameRequest"
+                "type": "object",
+                "properties": {
+                  "timestampSeconds": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "timestampSeconds"
+                ]
               }
             }
           },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
           "required": true
         },
         "responses": {
@@ -7872,34 +8337,50 @@
                 }
               }
             },
-            "description": "Successful response"
+            "description": "Created frame preview metadata."
           },
           "400": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Conflict"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Create frame preview",
+        "tags": [
+          "Media"
+        ]
       }
     },
     "/workflows/{workflowId}/media/previews/{previewId}": {
       "get": {
+        "description": "Streams a retained preview with its runtime image content type.",
         "operationId": "openWorkflowMediaPreview",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
             "required": true,
@@ -7908,24 +8389,10 @@
             }
           },
           {
+            "description": "Retained frame-preview identifier.",
+            "example": "preview-example",
             "in": "path",
             "name": "previewId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "If-Match",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Idempotency-Key",
             "required": true,
             "schema": {
               "type": "string"
@@ -7940,36 +8407,58 @@
                   "format": "binary",
                   "type": "string"
                 }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
               }
             },
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Structured operation failure"
+            "description": "Preview image bytes. Runtime content types include PNG, JPEG, and WebP."
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
-          "409": {
-            "description": "Structured operation failure"
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Open frame preview",
+        "tags": [
+          "Media"
+        ]
       }
     },
     "/workflows/{workflowId}/media/resources": {
       "post": {
+        "description": "Stages one PNG, JPEG, or WebP resource of at most 20 MiB.",
         "operationId": "stageWorkflowMediaResource",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
             "required": true,
@@ -7978,6 +8467,8 @@
             }
           },
           {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
             "in": "header",
             "name": "If-Match",
             "required": true,
@@ -8014,34 +8505,47 @@
                 }
               }
             },
-            "description": "Successful response"
+            "description": "Staged workflow resource reference."
           },
           "400": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Conflict"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Stage media resource",
+        "tags": [
+          "Media"
+        ]
       }
     },
     "/workflows/{workflowId}/media/{mediaId}/artifacts/{artifactId}": {
       "get": {
+        "description": "Streams an artifact from the exact requested media revision with its runtime image content type.",
         "operationId": "openWorkflowMediaArtifact",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
             "required": true,
@@ -8050,6 +8554,8 @@
             }
           },
           {
+            "description": "Route-bound media artifact-set identifier.",
+            "example": "media-example",
             "in": "path",
             "name": "mediaId",
             "required": true,
@@ -8058,6 +8564,8 @@
             }
           },
           {
+            "description": "Opaque public artifact identifier.",
+            "example": "artifact-example",
             "in": "path",
             "name": "artifactId",
             "required": true,
@@ -8066,19 +8574,14 @@
             }
           },
           {
-            "in": "header",
-            "name": "If-Match",
+            "description": "Exact positive revision of the route-bound media artifact set.",
+            "example": 1,
+            "in": "query",
+            "name": "revision",
             "required": true,
             "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Idempotency-Key",
-            "required": true,
-            "schema": {
-              "type": "string"
+              "minimum": 1,
+              "type": "integer"
             }
           }
         ],
@@ -8090,36 +8593,61 @@
                   "format": "binary",
                   "type": "string"
                 }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
               }
             },
-            "description": "Successful response"
+            "description": "Media artifact bytes. Runtime content types include PNG, JPEG, and WebP."
           },
           "400": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
-          "409": {
-            "description": "Structured operation failure"
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Open media artifact",
+        "tags": [
+          "Media"
+        ]
       }
     },
     "/workflows/{workflowId}/media/{mediaId}/delete": {
       "post": {
+        "description": "Deletes retained artifacts from the route-bound media set.",
         "operationId": "deleteWorkflowMedia",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
             "required": true,
@@ -8128,6 +8656,8 @@
             }
           },
           {
+            "description": "Route-bound media artifact-set identifier.",
+            "example": "media-example",
             "in": "path",
             "name": "mediaId",
             "required": true,
@@ -8136,6 +8666,8 @@
             }
           },
           {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
             "in": "header",
             "name": "If-Match",
             "required": true,
@@ -8144,6 +8676,8 @@
             }
           },
           {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -8156,10 +8690,38 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DeleteReleaseWorkflowMediaRequest"
+                "type": "object",
+                "properties": {
+                  "artifactIds": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/PublicResourceID"
+                    }
+                  },
+                  "media": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "$ref": "#/components/schemas/MediaArtifactSetID",
+                        "description": "Server supplied from the {mediaId} path parameter; compatibility values are accepted but ignored."
+                      },
+                      "revision": {
+                        "$ref": "#/components/schemas/WorkflowRevision"
+                      }
+                    },
+                    "required": [
+                      "revision"
+                    ]
+                  }
+                },
+                "required": [
+                  "artifactIds",
+                  "media"
+                ]
               }
             }
           },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
           "required": true
         },
         "responses": {
@@ -8171,34 +8733,59 @@
                 }
               }
             },
-            "description": "Successful response"
+            "description": "Workflow state after deleting media.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Conflict"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Delete media artifacts",
+        "tags": [
+          "Media"
+        ]
       }
     },
     "/workflows/{workflowId}/media/{mediaId}/images/remove": {
       "post": {
+        "description": "Removes hosted outcomes for selected route-bound media artifacts.",
         "operationId": "removeWorkflowHostedImages",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
             "required": true,
@@ -8207,6 +8794,8 @@
             }
           },
           {
+            "description": "Route-bound media artifact-set identifier.",
+            "example": "media-example",
             "in": "path",
             "name": "mediaId",
             "required": true,
@@ -8215,6 +8804,8 @@
             }
           },
           {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
             "in": "header",
             "name": "If-Match",
             "required": true,
@@ -8223,6 +8814,8 @@
             }
           },
           {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -8235,10 +8828,38 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RemoveReleaseWorkflowHostedImagesRequest"
+                "type": "object",
+                "properties": {
+                  "artifactIds": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/PublicResourceID"
+                    }
+                  },
+                  "media": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "$ref": "#/components/schemas/MediaArtifactSetID",
+                        "description": "Server supplied from the {mediaId} path parameter; compatibility values are accepted but ignored."
+                      },
+                      "revision": {
+                        "$ref": "#/components/schemas/WorkflowRevision"
+                      }
+                    },
+                    "required": [
+                      "revision"
+                    ]
+                  }
+                },
+                "required": [
+                  "artifactIds",
+                  "media"
+                ]
               }
             }
           },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
           "required": true
         },
         "responses": {
@@ -8250,34 +8871,59 @@
                 }
               }
             },
-            "description": "Successful response"
+            "description": "Workflow state after removing hosted images.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Conflict"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Remove hosted images",
+        "tags": [
+          "Media"
+        ]
       }
     },
     "/workflows/{workflowId}/media/{mediaId}/images/retry": {
       "post": {
+        "description": "Starts a durable retry for a prior image-hosting failure.",
         "operationId": "retryWorkflowImageHost",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
             "required": true,
@@ -8286,6 +8932,8 @@
             }
           },
           {
+            "description": "Route-bound media artifact-set identifier.",
+            "example": "media-example",
             "in": "path",
             "name": "mediaId",
             "required": true,
@@ -8294,6 +8942,8 @@
             }
           },
           {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
             "in": "header",
             "name": "If-Match",
             "required": true,
@@ -8302,6 +8952,8 @@
             }
           },
           {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -8314,10 +8966,42 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RetryReleaseWorkflowImageHostRequest"
+                "type": "object",
+                "properties": {
+                  "artifactIds": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/PublicResourceID"
+                    }
+                  },
+                  "host": {
+                    "type": "string"
+                  },
+                  "media": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "$ref": "#/components/schemas/MediaArtifactSetID",
+                        "description": "Server supplied from the {mediaId} path parameter; compatibility values are accepted but ignored."
+                      },
+                      "revision": {
+                        "$ref": "#/components/schemas/WorkflowRevision"
+                      }
+                    },
+                    "required": [
+                      "revision"
+                    ]
+                  }
+                },
+                "required": [
+                  "artifactIds",
+                  "host",
+                  "media"
+                ]
               }
             }
           },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
           "required": true
         },
         "responses": {
@@ -8325,38 +9009,63 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Operation"
+                  "$ref": "#/components/schemas/ReleaseWorkflowCurrent"
                 }
               }
             },
-            "description": "Successful response"
+            "description": "Workflow state with the non-terminal image-hosting retry attached.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Conflict"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Retry image hosting",
+        "tags": [
+          "Media"
+        ]
       }
     },
     "/workflows/{workflowId}/media/{mediaId}/images/upload": {
       "post": {
+        "description": "Starts durable image-hosting work for selected artifacts in the route-bound media set.",
         "operationId": "uploadWorkflowImages",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
             "required": true,
@@ -8365,6 +9074,8 @@
             }
           },
           {
+            "description": "Route-bound media artifact-set identifier.",
+            "example": "media-example",
             "in": "path",
             "name": "mediaId",
             "required": true,
@@ -8373,6 +9084,8 @@
             }
           },
           {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
             "in": "header",
             "name": "If-Match",
             "required": true,
@@ -8381,6 +9094,8 @@
             }
           },
           {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -8393,10 +9108,40 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UploadReleaseWorkflowImagesRequest"
+                "type": "object",
+                "properties": {
+                  "artifactIds": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/PublicResourceID"
+                    }
+                  },
+                  "host": {
+                    "type": "string"
+                  },
+                  "media": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "$ref": "#/components/schemas/MediaArtifactSetID",
+                        "description": "Server supplied from the {mediaId} path parameter; compatibility values are accepted but ignored."
+                      },
+                      "revision": {
+                        "$ref": "#/components/schemas/WorkflowRevision"
+                      }
+                    },
+                    "required": [
+                      "revision"
+                    ]
+                  }
+                },
+                "required": [
+                  "media"
+                ]
               }
             }
           },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
           "required": true
         },
         "responses": {
@@ -8404,38 +9149,63 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Operation"
+                  "$ref": "#/components/schemas/ReleaseWorkflowCurrent"
                 }
               }
             },
-            "description": "Successful response"
+            "description": "Workflow state with the non-terminal image-hosting operation attached.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Conflict"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Upload selected images",
+        "tags": [
+          "Media"
+        ]
       }
     },
     "/workflows/{workflowId}/media/{mediaId}/reorder": {
       "put": {
+        "description": "Establishes the exact artifact order for the route-bound media set.",
         "operationId": "reorderWorkflowMedia",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
             "required": true,
@@ -8444,6 +9214,8 @@
             }
           },
           {
+            "description": "Route-bound media artifact-set identifier.",
+            "example": "media-example",
             "in": "path",
             "name": "mediaId",
             "required": true,
@@ -8452,6 +9224,8 @@
             }
           },
           {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
             "in": "header",
             "name": "If-Match",
             "required": true,
@@ -8460,6 +9234,8 @@
             }
           },
           {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -8472,10 +9248,38 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ReorderReleaseWorkflowMediaRequest"
+                "type": "object",
+                "properties": {
+                  "artifactIds": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/PublicResourceID"
+                    }
+                  },
+                  "media": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "$ref": "#/components/schemas/MediaArtifactSetID",
+                        "description": "Server supplied from the {mediaId} path parameter; compatibility values are accepted but ignored."
+                      },
+                      "revision": {
+                        "$ref": "#/components/schemas/WorkflowRevision"
+                      }
+                    },
+                    "required": [
+                      "revision"
+                    ]
+                  }
+                },
+                "required": [
+                  "artifactIds",
+                  "media"
+                ]
               }
             }
           },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
           "required": true
         },
         "responses": {
@@ -8487,34 +9291,59 @@
                 }
               }
             },
-            "description": "Successful response"
+            "description": "Workflow state after reordering media.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Conflict"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Reorder media artifacts",
+        "tags": [
+          "Media"
+        ]
       }
     },
     "/workflows/{workflowId}/media/{mediaId}/selection": {
       "put": {
+        "description": "Changes selected artifacts in the route-bound media set.",
         "operationId": "selectWorkflowMedia",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
             "required": true,
@@ -8523,6 +9352,8 @@
             }
           },
           {
+            "description": "Route-bound media artifact-set identifier.",
+            "example": "media-example",
             "in": "path",
             "name": "mediaId",
             "required": true,
@@ -8531,6 +9362,8 @@
             }
           },
           {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
             "in": "header",
             "name": "If-Match",
             "required": true,
@@ -8539,6 +9372,8 @@
             }
           },
           {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -8551,10 +9386,42 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SetReleaseWorkflowMediaSelectionRequest"
+                "type": "object",
+                "properties": {
+                  "artifactIds": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/PublicResourceID"
+                    }
+                  },
+                  "media": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "$ref": "#/components/schemas/MediaArtifactSetID",
+                        "description": "Server supplied from the {mediaId} path parameter; compatibility values are accepted but ignored."
+                      },
+                      "revision": {
+                        "$ref": "#/components/schemas/WorkflowRevision"
+                      }
+                    },
+                    "required": [
+                      "revision"
+                    ]
+                  },
+                  "selected": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "artifactIds",
+                  "media",
+                  "selected"
+                ]
               }
             }
           },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
           "required": true
         },
         "responses": {
@@ -8566,34 +9433,59 @@
                 }
               }
             },
-            "description": "Successful response"
+            "description": "Workflow state after updating media selection.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Conflict"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Set media selection",
+        "tags": [
+          "Media"
+        ]
       }
     },
     "/workflows/{workflowId}/operations/{operationId}": {
       "get": {
+        "description": "Returns durable status for one owner-scoped workflow operation.",
         "operationId": "getWorkflowOperation",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
             "required": true,
@@ -8602,24 +9494,10 @@
             }
           },
           {
+            "description": "Durable workflow operation identifier.",
+            "example": "operation-example",
             "in": "path",
             "name": "operationId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "If-Match",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Idempotency-Key",
             "required": true,
             "schema": {
               "type": "string"
@@ -8635,34 +9513,38 @@
                 }
               }
             },
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Structured operation failure"
+            "description": "Current operation status."
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
-          "409": {
-            "description": "Structured operation failure"
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Get workflow operation",
+        "tags": [
+          "Operations"
+        ]
       }
     },
     "/workflows/{workflowId}/operations/{operationId}/cancel": {
       "post": {
+        "description": "Requests cancellation without workflow revision or idempotency authority.",
         "operationId": "cancelWorkflowOperation",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
             "required": true,
@@ -8671,6 +9553,8 @@
             }
           },
           {
+            "description": "Durable workflow operation identifier.",
+            "example": "operation-example",
             "in": "path",
             "name": "operationId",
             "required": true,
@@ -8688,34 +9572,41 @@
                 }
               }
             },
-            "description": "Successful response"
-          },
-          "400": {
-            "description": "Structured operation failure"
+            "description": "Operation status after cancellation."
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Conflict"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Cancel workflow operation",
+        "tags": [
+          "Operations"
+        ]
       }
     },
     "/workflows/{workflowId}/trackers/invalidate": {
       "post": {
+        "description": "Invalidates selected tracker projections and their dependent workflow state.",
         "operationId": "invalidateWorkflowTrackers",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
             "required": true,
@@ -8724,6 +9615,8 @@
             }
           },
           {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
             "in": "header",
             "name": "If-Match",
             "required": true,
@@ -8732,6 +9625,8 @@
             }
           },
           {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -8744,10 +9639,26 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/InvalidateReleaseWorkflowTrackersRequest"
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  },
+                  "trackerIds": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/TrackerID"
+                    }
+                  }
+                },
+                "required": [
+                  "reason",
+                  "trackerIds"
+                ]
               }
             }
           },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
           "required": true
         },
         "responses": {
@@ -8759,34 +9670,59 @@
                 }
               }
             },
-            "description": "Successful response"
+            "description": "Workflow state after tracker invalidation.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Conflict"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Invalidate tracker state",
+        "tags": [
+          "Workflow"
+        ]
       }
     },
     "/workflows/{workflowId}/uploads/{resultId}/retry": {
       "post": {
+        "description": "Starts durable upload retries for selected failed trackers from the route-bound prior result.",
         "operationId": "retryWorkflowUploads",
         "parameters": [
           {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
             "in": "path",
             "name": "workflowId",
             "required": true,
@@ -8795,6 +9731,8 @@
             }
           },
           {
+            "description": "Route-bound prior upload-result identifier.",
+            "example": "result-example",
             "in": "path",
             "name": "resultId",
             "required": true,
@@ -8803,6 +9741,8 @@
             }
           },
           {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
             "in": "header",
             "name": "If-Match",
             "required": true,
@@ -8811,6 +9751,8 @@
             }
           },
           {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
@@ -8823,10 +9765,50 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RetryReleaseWorkflowUploadRequest"
+                "type": "object",
+                "properties": {
+                  "noSeed": {
+                    "type": "boolean"
+                  },
+                  "retry": {
+                    "type": "object",
+                    "properties": {
+                      "result": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "$ref": "#/components/schemas/UploadResultID",
+                            "description": "Server supplied from the {resultId} path parameter; compatibility values are accepted but ignored."
+                          },
+                          "revision": {
+                            "$ref": "#/components/schemas/WorkflowRevision"
+                          }
+                        },
+                        "required": [
+                          "revision"
+                        ]
+                      },
+                      "trackerIds": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/components/schemas/TrackerID"
+                        }
+                      }
+                    },
+                    "required": [
+                      "result",
+                      "trackerIds"
+                    ]
+                  }
+                },
+                "required": [
+                  "noSeed",
+                  "retry"
+                ]
               }
             }
           },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
           "required": true
         },
         "responses": {
@@ -8834,31 +9816,53 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Operation"
+                  "$ref": "#/components/schemas/ReleaseWorkflowCurrent"
                 }
               }
             },
-            "description": "Successful response"
+            "description": "Workflow state with the non-terminal upload retry attached.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
-            "description": "Structured operation failure"
+            "$ref": "#/components/responses/Conflict"
           },
-          "422": {
-            "description": "Structured operation failure"
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
-        }
+        },
+        "summary": "Retry failed uploads",
+        "tags": [
+          "Uploads"
+        ]
       }
     }
   },
@@ -8870,6 +9874,28 @@
   "servers": [
     {
       "url": "/api/v1"
+    }
+  ],
+  "tags": [
+    {
+      "description": "Description override management.",
+      "name": "Descriptions"
+    },
+    {
+      "description": "Media planning, previews, artifacts, selection, and image hosting.",
+      "name": "Media"
+    },
+    {
+      "description": "Durable long-running operation status and cancellation.",
+      "name": "Operations"
+    },
+    {
+      "description": "Tracker upload retry operations.",
+      "name": "Uploads"
+    },
+    {
+      "description": "Workflow continuation, state, invalidation, and cancellation.",
+      "name": "Workflow"
     }
   ]
 }
