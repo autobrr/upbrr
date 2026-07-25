@@ -136,6 +136,11 @@ const imageHostKeyMap: Record<string, string[]> = {
   utppm: ["UTPPMAPI"],
 };
 
+const conditionalImageHostEnabledKeys: Record<string, string> = {
+  lostimg: "LostimgEnabled",
+  reelflix: "ReelflixEnabled",
+};
+
 const stringField = (key: string, meta: Omit<FieldMeta, "key" | "type"> = {}): FieldMeta => ({
   key,
   type: "string",
@@ -224,6 +229,10 @@ const sensitiveKeyHints = [
 const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
   ImageHosting: {
     LostimgAPI: stringField("LostimgAPI", { label: "API key", sensitive: true }),
+    ReelflixAPI: stringField("ReelflixAPI", {
+      label: "ReelFliX API key",
+      sensitive: true,
+    }),
   },
   MainSettings: {
     InputHistoryLimit: { key: "InputHistoryLimit", label: "Input history limit", type: "number" },
@@ -743,24 +752,6 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         !Array.isArray(configData.ImageHosting)
           ? (configData.ImageHosting as ConfigMap)
           : null;
-      const trackerRoot =
-        configData?.Trackers &&
-        typeof configData.Trackers === "object" &&
-        !Array.isArray(configData.Trackers)
-          ? (configData.Trackers as ConfigMap)
-          : null;
-      const trackerEntries =
-        trackerRoot?.Trackers &&
-        typeof trackerRoot.Trackers === "object" &&
-        !Array.isArray(trackerRoot.Trackers)
-          ? (trackerRoot.Trackers as ConfigMap)
-          : null;
-      const trackerCfg =
-        trackerEntries?.[trackerKey] &&
-        typeof trackerEntries[trackerKey] === "object" &&
-        !Array.isArray(trackerEntries[trackerKey])
-          ? (trackerEntries[trackerKey] as ConfigMap)
-          : null;
       const globalFallbackHosts = fallbackHosts.filter((host) => !ownerByHost[host]);
       const globalHosts = (configuredImageHosts.length ? configuredImageHosts : globalFallbackHosts)
         .map((host) => normalizeImageHostValue(host))
@@ -771,7 +762,7 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
       const policyHasGlobalHosts = Array.from(policyHostSet).some((host) => !ownerByHost[host]);
       const policyAllowsGlobalFallback =
         policyHostSet.size === 0 ||
-        Array.from(policyHostSet).every((host) => host === "lostimg" || host === "reelflix");
+        Array.from(policyHostSet).every((host) => conditionalImageHostEnabledKeys[host]);
       const hosts = globalHosts.filter(
         (host) => policyAllowsGlobalFallback || (policyHasGlobalHosts && policyHostSet.has(host)),
       );
@@ -782,13 +773,8 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
         if (!owner || owner.trim().toUpperCase() !== trackerKey) {
           return;
         }
-        if (normalizedHost === "lostimg" && !Boolean(imageCfg?.LostimgEnabled)) {
-          return;
-        }
-        if (
-          normalizedHost === "reelflix" &&
-          normalizeImageHostValue(String(trackerCfg?.ImageHost ?? "")) !== "reelflix"
-        ) {
+        const enabledKey = conditionalImageHostEnabledKeys[normalizedHost];
+        if (enabledKey && !Boolean(imageCfg?.[enabledKey])) {
           return;
         }
         if (!hosts.includes(normalizedHost)) {
@@ -1928,6 +1914,22 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
               (imageCfg.LostimgAPI as ConfigValue) ?? "",
               ["ImageHosting", "LostimgAPI"],
               sectionFieldMeta.ImageHosting.LostimgAPI,
+            )}
+            <div className="settings-switch-row">
+              <span>ReelFliX enabled</span>
+              <Switch
+                aria-label="ReelFliX enabled"
+                checked={Boolean(imageCfg.ReelflixEnabled)}
+                onChange={(event) =>
+                  updateConfigValue(["ImageHosting", "ReelflixEnabled"], event.target.checked)
+                }
+              />
+            </div>
+            {renderField(
+              "ReelflixAPI",
+              (imageCfg.ReelflixAPI as ConfigValue) ?? "",
+              ["ImageHosting", "ReelflixAPI"],
+              sectionFieldMeta.ImageHosting.ReelflixAPI,
             )}
           </div>
         </div>

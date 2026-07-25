@@ -520,6 +520,26 @@ func TestImgboxUploaderInRegistry(t *testing.T) {
 	}
 }
 
+func TestReelflixUploaderUsesGlobalImageHostingAPIKey(t *testing.T) {
+	t.Parallel()
+
+	registry := newUploaderRegistry(config.Config{
+		ImageHosting: config.ImageHostingConfig{ReelflixAPI: "global-image-key"},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{
+				"RF": {ImgAPI: "legacy-tracker-key"},
+			},
+		},
+	}, nil, imageHostingTestRegistry(t))
+	uploader, ok := registry["reelflix"].(*reelflixUploader)
+	if !ok {
+		t.Fatal("ReelFliX uploader has unexpected type")
+	}
+	if uploader.apiKey != "global-image-key" {
+		t.Fatal("ReelFliX uploader did not use global image-hosting credentials")
+	}
+}
+
 func TestUploadImagesUsesBatchUploader(t *testing.T) {
 	tmpDir := t.TempDir()
 	firstPath := filepath.Join(tmpDir, "shot-01.png")

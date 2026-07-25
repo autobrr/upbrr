@@ -52,9 +52,9 @@ func testImageHostPolicyForTracker(name string) *ImageHostPolicy {
 		}
 	case "LST":
 		return &ImageHostPolicy{
-			ConditionalHost:   "lostimg",
-			OwnedHosts:        []string{"lostimg"},
-			EnableWithLostimg: true,
+			ConditionalHost:        "lostimg",
+			OwnedHosts:             []string{"lostimg"},
+			EnableWithImageHosting: true,
 		}
 	case "MTV":
 		return &ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb"}}
@@ -64,9 +64,9 @@ func testImageHostPolicyForTracker(name string) *ImageHostPolicy {
 		return &ImageHostPolicy{AllowedHosts: []string{"pixhost", "imgbb", "onlyimage", "ptscreens", "passtheimage"}}
 	case "RF":
 		return &ImageHostPolicy{
-			ConditionalHost:      "reelflix",
-			OwnedHosts:           []string{"reelflix"},
-			EnableWhenConfigured: true,
+			ConditionalHost:        "reelflix",
+			OwnedHosts:             []string{"reelflix"},
+			EnableWithImageHosting: true,
 		}
 	case "STC":
 		return &ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb"}}

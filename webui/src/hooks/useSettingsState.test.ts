@@ -1010,11 +1010,14 @@ describe("Tracker client selectors", () => {
     expect(values).not.toContain("lostimg");
   });
 
-  it("shows Reelflix as an RF image host and exposes RF image API", async () => {
+  it("shows ReelFliX as an RF image host when configured in image hosting", async () => {
     installAppOperationMocks({
       GetConfig: async () =>
         JSON.stringify({
-          ImageHosting: {},
+          ImageHosting: {
+            ReelflixEnabled: true,
+            ReelflixAPI: "secret",
+          },
           Trackers: {
             DefaultTrackers: [],
             PreferredTracker: "",
@@ -1022,8 +1025,7 @@ describe("Tracker client selectors", () => {
               RF: {
                 LinkDirName: "",
                 APIKey: "tracker-token",
-                ImgAPI: "",
-                ImageHost: "reelflix",
+                ImageHost: "",
                 Anon: false,
               },
             },
@@ -1035,7 +1037,6 @@ describe("Tracker client selectors", () => {
           trackerCatalogEntry("RF", [
             ["LinkDirName", ""],
             ["APIKey", "", true],
-            ["ImgAPI", ""],
             ["ImageHost", ""],
             ["Anon", false],
           ]),
@@ -1057,17 +1058,7 @@ describe("Tracker client selectors", () => {
 
     const imageHostSelect = screen.getByLabelText("Image host") as HTMLSelectElement;
     expect(Array.from(imageHostSelect.options).map((option) => option.value)).toContain("reelflix");
-
-    fireEvent.change(screen.getByLabelText("Image API"), {
-      target: { value: "secret" },
-    });
-
-    await waitFor(() => expect(screen.getByLabelText("Image API")).toHaveValue("secret"));
-
-    const payload = readPayload<{
-      Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
-    }>();
-    expect(payload.Trackers?.Trackers?.RF?.ImgAPI).toBe("secret");
+    expect(screen.queryByLabelText("Image API")).not.toBeInTheDocument();
   });
 
   it("shows configured global hosts for RF when Reelflix is disabled", async () => {
@@ -1084,7 +1075,6 @@ describe("Tracker client selectors", () => {
               RF: {
                 LinkDirName: "",
                 APIKey: "tracker-token",
-                ImgAPI: "",
                 ImageHost: "",
                 Anon: false,
               },
@@ -1097,7 +1087,6 @@ describe("Tracker client selectors", () => {
           trackerCatalogEntry("RF", [
             ["LinkDirName", ""],
             ["APIKey", "", true],
-            ["ImgAPI", ""],
             ["ImageHost", ""],
             ["Anon", false],
           ]),
@@ -1497,7 +1486,7 @@ describe("Image hosting settings", () => {
     expect(payload.ImageHosting?.LostimgAPI).toBe("secret");
   });
 
-  it("does not hard-code tracker-owned host fields into global image hosting", async () => {
+  it("renders ReelFliX config and keeps it out of global host priority", async () => {
     installAppOperationMocks({
       GetConfig: async () =>
         JSON.stringify({
@@ -1508,14 +1497,8 @@ describe("Image hosting settings", () => {
             Host4: "",
             Host5: "",
             Host6: "",
-          },
-          Trackers: {
-            Trackers: {
-              RF: {
-                ImageHost: "",
-                ImgAPI: "",
-              },
-            },
+            ReelflixEnabled: false,
+            ReelflixAPI: "",
           },
         }),
       GetDefaultConfig: async () => JSON.stringify({}),
@@ -1530,7 +1513,21 @@ describe("Image hosting settings", () => {
     const hostOne = screen.getByLabelText("Host 1") as HTMLSelectElement;
     expect(Array.from(hostOne.options).map((option) => option.value)).not.toContain("reelflix");
 
-    expect(screen.queryByLabelText("RF Reelflix")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("ReelFliX enabled"));
+    fireEvent.change(screen.getByLabelText("ReelFliX API key"), {
+      target: { value: "secret" },
+    });
+
+    await waitFor(() => expect(screen.getByLabelText("ReelFliX enabled")).toBeChecked());
+
+    const payload = readPayload<{
+      ImageHosting?: {
+        ReelflixEnabled?: boolean;
+        ReelflixAPI?: string;
+      };
+    }>();
+    expect(payload.ImageHosting?.ReelflixEnabled).toBe(true);
+    expect(payload.ImageHosting?.ReelflixAPI === "secret").toBe(true);
     expect(screen.queryByLabelText("Image API")).not.toBeInTheDocument();
   });
 });

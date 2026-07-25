@@ -113,6 +113,20 @@ type ImageHostingConfig struct {
 	UTPPMAPI        string `yaml:"utppm_api"`
 	LostimgEnabled  bool   `yaml:"lostimg_enabled"`
 	LostimgAPI      string `yaml:"lostimg_api"`
+	ReelflixEnabled bool   `yaml:"reelflix_enabled"`
+	ReelflixAPI     string `yaml:"reelflix_api"`
+}
+
+// HostEnabled reports whether an optional image-host integration is enabled.
+func (c ImageHostingConfig) HostEnabled(host string) bool {
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "lostimg":
+		return c.LostimgEnabled
+	case "reelflix":
+		return c.ReelflixEnabled
+	default:
+		return false
+	}
 }
 
 type MetadataConfig struct {
@@ -1105,7 +1119,8 @@ func trackerAPIKeyForExactName(trackers map[string]TrackerConfig, name string) s
 // CZT keeps user credentials in Passkey only, so stale URL, APIKey, and
 // AnnounceURL values are removed while preserving the passkey.
 // Legacy Metadata.BTNAPI is moved into the BTN tracker APIKey when needed, then
-// cleared once a tracker token is available.
+// cleared once a tracker token is available. Legacy RF image-host settings are
+// moved into the global image-hosting section.
 // The returned flag reports whether cfg was modified.
 func MergeMissingTrackerDefaults(cfg *Config) (bool, error) {
 	report, err := MergeMissingTrackerDefaultsWithReport(cfg)
@@ -1143,6 +1158,13 @@ func MergeMissingTrackerDefaultsWithReport(cfg *Config) (TrackerDefaultsMergeRep
 	}
 	if cfg.Trackers.DefaultTrackers == nil {
 		cfg.Trackers.DefaultTrackers = CSVList{}
+	}
+	imageHostingChanged, trackersChanged := migrateLegacyReelflixImageHosting(cfg)
+	if imageHostingChanged {
+		report.markChanged("ImageHosting")
+	}
+	if trackersChanged {
+		report.markChanged("Trackers")
 	}
 	defaults, err := loadEmbeddedDefaultConfigRaw()
 	if err != nil || defaults == nil || len(defaults.Trackers.Trackers) == 0 {
@@ -1197,6 +1219,40 @@ func MergeMissingTrackerDefaultsWithReport(cfg *Config) (TrackerDefaultsMergeRep
 	}
 	report.ChangedSections = sortedUniqueStrings(report.ChangedSections)
 	return report, nil
+}
+
+func migrateLegacyReelflixImageHosting(cfg *Config) (bool, bool) {
+	if cfg == nil || len(cfg.Trackers.Trackers) == 0 {
+		return false, false
+	}
+	name, trackerCfg, ok := trackerDefaultMergeEntry(cfg.Trackers.Trackers, "RF")
+	if !ok {
+		return false, false
+	}
+
+	imageHostingChanged := false
+	if strings.TrimSpace(cfg.ImageHosting.ReelflixAPI) == "" && strings.TrimSpace(trackerCfg.ImgAPI) != "" {
+		cfg.ImageHosting.ReelflixAPI = trackerCfg.ImgAPI
+		imageHostingChanged = true
+	}
+	if !cfg.ImageHosting.ReelflixEnabled && strings.EqualFold(strings.TrimSpace(trackerCfg.ImageHost), "reelflix") {
+		cfg.ImageHosting.ReelflixEnabled = true
+		imageHostingChanged = true
+	}
+
+	trackersChanged := false
+	if trackerCfg.ImgAPI != "" {
+		trackerCfg.ImgAPI = ""
+		trackersChanged = true
+	}
+	if strings.EqualFold(strings.TrimSpace(trackerCfg.ImageHost), "reelflix") {
+		trackerCfg.ImageHost = ""
+		trackersChanged = true
+	}
+	if trackersChanged {
+		cfg.Trackers.Trackers[name] = trackerCfg
+	}
+	return imageHostingChanged, trackersChanged
 }
 
 // trackerDefaultMergeEntry returns the exact tracker entry when present, then

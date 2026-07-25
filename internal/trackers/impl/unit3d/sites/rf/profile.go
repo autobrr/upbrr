@@ -6,7 +6,7 @@ import (
 )
 
 // Profile returns RF's no-group naming, site-specific type and resolution
-// mappings, required release-group dupe policy, and conditional owned image host.
+// mappings, required release-group dupe policy, and optional owned image host.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
 		Name:    "RF",
@@ -22,9 +22,9 @@ func Profile() unit3d.Profile {
 			RequireReleaseGroup: true,
 		},
 		ImageHost: &trackers.ImageHostPolicy{
-			ConditionalHost:      "reelflix",
-			OwnedHosts:           []string{"reelflix"},
-			EnableWhenConfigured: true,
+			ConditionalHost:        "reelflix",
+			OwnedHosts:             []string{"reelflix"},
+			EnableWithImageHosting: true,
 		},
 		TorrentIdentity: &trackers.TorrentIdentityPolicy{
 			TrackerURLPatterns: []string{"https://reelflix.xyz"},

@@ -377,12 +377,9 @@ func TestNeededImageUploadTargetsUsesConfiguredReelflixForRF(t *testing.T) {
 
 	targets, err := NeededImageUploadTargetsWithRegistry(imageHostPolicyTestRegistry(t), config.Config{
 		ImageHosting: config.ImageHostingConfig{
-			Host1: "imgbb",
-		},
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{
-				"RF": {ImageHost: "reelflix", ImgAPI: "secret"},
-			},
+			Host1:           "imgbb",
+			ReelflixEnabled: true,
+			ReelflixAPI:     "secret",
 		},
 	}, []string{"RF"}, "imgbb")
 	if err != nil {
@@ -402,11 +399,6 @@ func TestNeededImageUploadTargetsSkipsReelflixWhenDisabled(t *testing.T) {
 	targets, err := NeededImageUploadTargetsWithRegistry(imageHostPolicyTestRegistry(t), config.Config{
 		ImageHosting: config.ImageHostingConfig{
 			Host1: "imgbb",
-		},
-		Trackers: config.TrackersConfig{
-			Trackers: map[string]config.TrackerConfig{
-				"RF": {ImgAPI: "secret"},
-			},
 		},
 	}, []string{"RF"}, "imgbb")
 	if err != nil {

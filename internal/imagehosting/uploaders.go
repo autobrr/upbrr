@@ -71,7 +71,7 @@ func newUploaderRegistry(cfg config.Config, client *http.Client, registry *track
 			client: client,
 		},
 		"passtheimage": &passTheImageUploader{apiKey: cfg.ImageHosting.PassTheImageAPI, client: client},
-		"reelflix":     &reelflixUploader{apiKey: ownedHostTrackerConfig(cfg, registry, "reelflix").ImgAPI, client: client},
+		"reelflix":     &reelflixUploader{apiKey: cfg.ImageHosting.ReelflixAPI, client: client},
 		"seedpool_cdn": &seedpoolUploader{apiKey: cfg.ImageHosting.SeedpoolCDNAPI, client: client},
 		"sharex": &shareXUploader{
 			apiKey: cfg.ImageHosting.ShareXAPIKey,

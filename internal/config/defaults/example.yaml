@@ -28,6 +28,8 @@ image_hosting:
   utppm_api: ""
   lostimg_enabled: false
   lostimg_api: ""
+  reelflix_enabled: false
+  reelflix_api: ""
 
 metadata:
   btn_api: ""
@@ -370,7 +372,6 @@ trackers:
   RF:
     link_dir_name: ""
     api_key: ""
-    img_api: ""
     anon: false
   RHD:
     link_dir_name: ""

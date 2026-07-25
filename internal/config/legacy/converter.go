@@ -44,6 +44,8 @@ var legacyDefaultSectionByKey = map[string]string{
 	"utppm_api":                      "image_hosting",
 	"lostimg_enabled":                "image_hosting",
 	"lostimg_api":                    "image_hosting",
+	"reelflix_enabled":               "image_hosting",
+	"reelflix_api":                   "image_hosting",
 	"btn_api":                        "metadata",
 	"skip_auto_torrent":              "metadata",
 	"skip_tracker_filename_lookup":   "metadata",

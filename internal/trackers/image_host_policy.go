@@ -52,7 +52,7 @@ func policyForTrackerWithRegistry(registry *Registry, tracker string, trackerCfg
 }
 
 func policyForTrackerWithConfigAndRegistry(registry *Registry, tracker string, appCfg config.Config, trackerCfg config.TrackerConfig) imageHostPolicy {
-	if host, enabled := conditionalImageHost(registry, appCfg, tracker, trackerCfg); enabled {
+	if host, enabled := conditionalImageHost(registry, appCfg, tracker); enabled {
 		return newImageHostPolicy(host)
 	}
 	return policyForTrackerWithRegistry(registry, tracker, trackerCfg)
@@ -156,7 +156,7 @@ func resolveImageHostPolicyForMetadataWithRegistry(
 	overrides api.ImageHostOverrides,
 ) (imageHostPolicy, error) {
 	host := strings.ToLower(strings.TrimSpace(trackerCfg.ImageHost))
-	if conditionalHost, enabled := conditionalImageHost(registry, appCfg, tracker, trackerCfg); host == conditionalHost && !enabled {
+	if conditionalHost, enabled := conditionalImageHost(registry, appCfg, tracker); host == conditionalHost && !enabled {
 		trackerCfg.ImageHost = ""
 	}
 	if strings.TrimSpace(trackerCfg.ImageHost) != "" || overrides.PreferredHost != nil {
@@ -577,7 +577,7 @@ func resolveImageHostPolicyForTarget(
 
 func imageUploadCandidatesForTracker(registry *Registry, appCfg config.Config, tracker string, userHosts []string) []string {
 	candidates := append([]string(nil), userHosts...)
-	if host, enabled := conditionalImageHost(registry, appCfg, tracker, trackerConfigForImageHostPolicy(appCfg, tracker)); enabled {
+	if host, enabled := conditionalImageHost(registry, appCfg, tracker); enabled {
 		candidates = appendUniqueHost(candidates, host)
 	}
 	return candidates
@@ -600,7 +600,7 @@ func configuredImageUploadHosts(registry *Registry, appCfg config.Config) []stri
 	return normalizeConfiguredImageUploadHosts(registry, cfg.Host1, cfg.Host2, cfg.Host3, cfg.Host4, cfg.Host5, cfg.Host6)
 }
 
-func conditionalImageHost(registry *Registry, appCfg config.Config, tracker string, trackerCfg config.TrackerConfig) (string, bool) {
+func conditionalImageHost(registry *Registry, appCfg config.Config, tracker string) (string, bool) {
 	declared, ok := registry.LookupImageHostPolicy(tracker)
 	if !ok {
 		return "", false
@@ -609,10 +609,7 @@ func conditionalImageHost(registry *Registry, appCfg config.Config, tracker stri
 	if host == "" {
 		return "", false
 	}
-	if declared.EnableWithLostimg && appCfg.ImageHosting.LostimgEnabled {
-		return host, true
-	}
-	if declared.EnableWhenConfigured && strings.EqualFold(strings.TrimSpace(trackerCfg.ImageHost), host) {
+	if declared.EnableWithImageHosting && appCfg.ImageHosting.HostEnabled(host) {
 		return host, true
 	}
 	return host, false

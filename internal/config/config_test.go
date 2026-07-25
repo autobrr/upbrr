@@ -837,6 +837,38 @@ func TestMergeMissingTrackerDefaults(t *testing.T) {
 	}
 }
 
+func TestMergeMissingTrackerDefaultsPromotesLegacyReelflixImageHosting(t *testing.T) {
+	t.Parallel()
+
+	cfg := &Config{
+		Trackers: TrackersConfig{
+			Trackers: map[string]TrackerConfig{
+				"rf": {
+					ImgAPI:    "legacy-image-key",
+					ImageHost: "ReelFlix",
+				},
+			},
+		},
+	}
+
+	report, err := MergeMissingTrackerDefaultsWithReport(cfg)
+	if err != nil {
+		t.Fatalf("merge missing tracker defaults: %v", err)
+	}
+	if !report.Changed ||
+		!slices.Contains(report.ChangedSections, "ImageHosting") ||
+		!slices.Contains(report.ChangedSections, "Trackers") {
+		t.Fatalf("expected ReelFliX migration sections, got %#v", report.ChangedSections)
+	}
+	if !cfg.ImageHosting.ReelflixEnabled || cfg.ImageHosting.ReelflixAPI != "legacy-image-key" {
+		t.Fatal("legacy RF image-host settings were not promoted")
+	}
+	legacy := cfg.Trackers.Trackers["rf"]
+	if legacy.ImgAPI != "" || legacy.ImageHost != "" {
+		t.Fatal("legacy RF image-host settings were not cleared")
+	}
+}
+
 func TestResolveBTNAPITokenPrefersTrackerConfig(t *testing.T) {
 	t.Parallel()
 

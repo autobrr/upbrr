@@ -108,6 +108,7 @@ func ImportFromYAML(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config import: decrypt secrets: %w", err)
 	}
+	migrateLegacyReelflixImageHosting(decryptedCfg)
 
 	return decryptedCfg, nil
 }

@@ -248,9 +248,9 @@ func TestResolveImageUploadTargetsUsesExactWorkflowTrackerSelection(t *testing.T
 		BaseURL:           "https://lst.example.invalid",
 		UploadContentMode: trackers.UploadContentModeScreenshots,
 		ImageHost: &trackers.ImageHostPolicy{
-			ConditionalHost:   "lostimg",
-			OwnedHosts:        []string{"lostimg"},
-			EnableWithLostimg: true,
+			ConditionalHost:        "lostimg",
+			OwnedHosts:             []string{"lostimg"},
+			EnableWithImageHosting: true,
 		},
 	}); err != nil {
 		t.Fatalf("register LST: %v", err)

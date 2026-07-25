@@ -383,6 +383,7 @@ func walkSecretFields(cfg *Config, visit func(path string, value *string) error)
 		&cfg.ImageHosting.ShareXAPIKey,
 		&cfg.ImageHosting.UTPPMAPI,
 		&cfg.ImageHosting.LostimgAPI,
+		&cfg.ImageHosting.ReelflixAPI,
 	}
 	for idx, field := range imageSecrets {
 		if err := visit(fmt.Sprintf("ImageHosting[%d]", idx), field); err != nil {

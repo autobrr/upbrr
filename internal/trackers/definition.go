@@ -483,10 +483,8 @@ type ImageHostPolicy struct {
 	DisableWithoutAPI bool
 	// ConditionalHost is enabled only when its associated runtime condition is met.
 	ConditionalHost string
-	// EnableWithLostimg enables ConditionalHost when LostImg is configured.
-	EnableWithLostimg bool
-	// EnableWhenConfigured enables ConditionalHost when that uploader is configured.
-	EnableWhenConfigured bool
+	// EnableWithImageHosting enables ConditionalHost through global image-hosting settings.
+	EnableWithImageHosting bool
 }
 
 // ImageHostPolicyProvider declares tracker-owned image-host restrictions.

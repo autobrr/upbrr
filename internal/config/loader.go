@@ -23,6 +23,7 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("parse config: %w", err)
 	}
 
+	migrateLegacyReelflixImageHosting(&cfg)
 	ApplyEnvOverrides(&cfg)
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
