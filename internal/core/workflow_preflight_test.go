@@ -36,6 +36,38 @@ type workflowAudioPolicyDefinition struct {
 	claimCalls *int
 }
 
+type workflowImageHostPolicyDefinition struct {
+	name   string
+	policy *trackerspkg.ImageHostPolicy
+}
+
+func (d workflowImageHostPolicyDefinition) Name() string { return d.name }
+
+func (d workflowImageHostPolicyDefinition) DefaultBaseURL() string {
+	return "https://image-host.invalid"
+}
+
+func (d workflowImageHostPolicyDefinition) UploadContentMode() trackerspkg.UploadContentMode {
+	return trackerspkg.UploadContentModeDescription
+}
+
+func (d workflowImageHostPolicyDefinition) Prepare(
+	context.Context,
+	trackerspkg.PreparationInput,
+) (trackerspkg.TrackerPlan, *trackerspkg.PreparationFailure) {
+	return trackerspkg.TrackerPlan{}, nil
+}
+
+func (d workflowImageHostPolicyDefinition) ImageHostPolicy() *trackerspkg.ImageHostPolicy {
+	if d.policy == nil {
+		return nil
+	}
+	policy := *d.policy
+	policy.AllowedHosts = slices.Clone(d.policy.AllowedHosts)
+	policy.OwnedHosts = slices.Clone(d.policy.OwnedHosts)
+	return &policy
+}
+
 func (d workflowAudioPolicyDefinition) Name() string { return d.name }
 
 func (d workflowAudioPolicyDefinition) DefaultBaseURL() string { return "https://alpha.invalid" }
@@ -253,6 +285,49 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		}
 		if len(assessment.Results[0].Failures) != 1 || !strings.Contains(assessment.Results[0].Failures[0].Failure.Message, "French") {
 			t.Fatalf("audio policy failure = %#v", assessment.Results[0].Failures)
+		}
+	})
+
+	t.Run("required image host policy", func(t *testing.T) {
+		policyRegistry := trackerspkg.NewRegistry()
+		for _, definition := range []workflowImageHostPolicyDefinition{
+			{
+				name: "ALPHA",
+				policy: &trackerspkg.ImageHostPolicy{
+					AllowedHosts: []string{"pixhost"},
+				},
+			},
+			{name: "BETA"},
+		} {
+			if err := policyRegistry.Register(definition); err != nil {
+				t.Fatalf("register image-host policy: %v", err)
+			}
+		}
+		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{}, registry: policyRegistry}
+		assessment, finalized, err := builder.Build(context.Background(), api.UploadSubject{}, catalog, runtime, projections, now)
+		if err != nil {
+			t.Fatalf("build image-host policy preflight: %v", err)
+		}
+		if assessment.Results[0].State != api.TrackerPreflightStateFailed ||
+			finalized[0].Readiness != api.ReadinessStatusIneligible || finalized[0].DupeReady {
+			t.Fatalf("missing image-host preflight = %#v/%#v", assessment.Results[0], finalized[0])
+		}
+		if len(assessment.Results[0].Failures) != 1 ||
+			assessment.Results[0].Failures[0].Failure.Code != api.OperationFailureMissingPrerequisite ||
+			assessment.Results[0].Failures[0].Failure.Operation != api.OperationKindImageHosting {
+			t.Fatalf("missing image-host failure = %#v", assessment.Results[0].Failures)
+		}
+		if assessment.Results[1].State != api.TrackerPreflightStateReady || !finalized[1].DupeReady {
+			t.Fatalf("unrestricted sibling preflight = %#v/%#v", assessment.Results[1], finalized[1])
+		}
+
+		builder.config.ImageHosting.Host1 = "pixhost"
+		assessment, finalized, err = builder.Build(context.Background(), api.UploadSubject{}, catalog, runtime, projections, now)
+		if err != nil {
+			t.Fatalf("build configured image-host preflight: %v", err)
+		}
+		if assessment.Results[0].State != api.TrackerPreflightStateReady || !finalized[0].DupeReady {
+			t.Fatalf("configured image-host preflight = %#v/%#v", assessment.Results[0], finalized[0])
 		}
 	})
 

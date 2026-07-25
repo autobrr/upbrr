@@ -144,6 +144,108 @@ func TestResolveImageHostPolicy(t *testing.T) {
 	}
 }
 
+func TestImageHostPolicySatisfiedWithRegistry(t *testing.T) {
+	t.Parallel()
+
+	preferredPixhost := "pixhost"
+	tests := []struct {
+		name      string
+		tracker   string
+		cfg       config.Config
+		overrides api.ImageHostOverrides
+		want      bool
+		wantErr   bool
+	}{
+		{
+			name:    "required policy without selected host",
+			tracker: "PTP",
+		},
+		{
+			name:    "required policy with incompatible global host",
+			tracker: "PTP",
+			cfg: config.Config{ImageHosting: config.ImageHostingConfig{
+				Host1: "imgbox",
+			}},
+		},
+		{
+			name:    "required policy with compatible global host",
+			tracker: "PTP",
+			cfg: config.Config{ImageHosting: config.ImageHostingConfig{
+				Host1: "pixhost",
+			}},
+			want: true,
+		},
+		{
+			name:    "required policy with compatible tracker host",
+			tracker: "PTP",
+			cfg: config.Config{Trackers: config.TrackersConfig{
+				Trackers: map[string]config.TrackerConfig{
+					"PTP": {ImageHost: "ptscreens"},
+				},
+			}},
+			want: true,
+		},
+		{
+			name:      "required policy with compatible request host",
+			tracker:   "PTP",
+			overrides: api.ImageHostOverrides{PreferredHost: &preferredPixhost},
+			want:      true,
+		},
+		{
+			name:    "tracker without required policy",
+			tracker: "AITHER",
+			want:    true,
+		},
+		{
+			name:    "owned rehost enabled",
+			tracker: "HDB",
+			cfg: config.Config{Trackers: config.TrackersConfig{
+				Trackers: map[string]config.TrackerConfig{
+					"HDB": {ImgRehost: true},
+				},
+			}},
+			want: true,
+		},
+		{
+			name:    "conditional owned host enabled",
+			tracker: "RF",
+			cfg: config.Config{ImageHosting: config.ImageHostingConfig{
+				ReelflixEnabled: true,
+			}},
+			want: true,
+		},
+		{
+			name:    "invalid tracker host",
+			tracker: "PTP",
+			cfg: config.Config{Trackers: config.TrackersConfig{
+				Trackers: map[string]config.TrackerConfig{
+					"PTP": {ImageHost: "imgbox"},
+				},
+			}},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := ImageHostPolicySatisfiedWithRegistry(
+				imageHostPolicyTestRegistry(t),
+				tc.cfg,
+				tc.tracker,
+				tc.overrides,
+			)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("policy satisfaction error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if err == nil && got != tc.want {
+				t.Fatalf("policy satisfaction = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestNeededImageUploadTargetsFallsBackFromTrackerConfiguredHostForUnrestrictedTracker(t *testing.T) {
 	t.Parallel()
 

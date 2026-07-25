@@ -291,7 +291,7 @@ func TestWorkflowDupeBuilderHonorsCancellation(t *testing.T) {
 	}
 }
 
-func TestWorkflowDupeBuilderSearchesEligibleTrackersAndRetainsSkippedRows(t *testing.T) {
+func TestWorkflowDupeBuilderSearchesEligibleTrackersAndRetainsImageHostSkippedRows(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
@@ -322,10 +322,10 @@ func TestWorkflowDupeBuilderSearchesEligibleTrackersAndRetainsSkippedRows(t *tes
 	ineligible.Failures = []api.WorkflowFailure{{
 		TrackerID: "BETA",
 		Failure: api.OperationFailure{
-			Code:      api.OperationFailureNoEligibleTrackers,
-			Operation: api.OperationKindDuplicateCheck,
-			Message:   "Tracker policy excludes this release.",
-			Recovery:  api.OperationRecoverySelectTrackers,
+			Code:      api.OperationFailureMissingPrerequisite,
+			Operation: api.OperationKindImageHosting,
+			Message:   "Required image host is not selected.",
+			Recovery:  api.OperationRecoveryCompletePrerequisite,
 		},
 	}}
 	preflight := api.TrackerPreflightAssessment{

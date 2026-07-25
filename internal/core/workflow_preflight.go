@@ -256,6 +256,23 @@ func (b workflowPreflightBuilder) Build(
 				Message:   "Tracker credentials are not configured.",
 			})
 		}
+		trackerName := string(projection.TrackerID)
+		if result.State == api.TrackerPreflightStateReady {
+			imageHostReady, err := trackers.ImageHostPolicySatisfiedWithRegistry(
+				b.registry,
+				b.config,
+				trackerName,
+				subject.ImageHostOverrides,
+			)
+			if err != nil {
+				setMissingImageHostPreflight(&result, "Configured image host does not satisfy this tracker's image-host policy.")
+			} else if !imageHostReady {
+				setMissingImageHostPreflight(
+					&result,
+					"Required image host is not selected. Configure a compatible host in Image Hosting or tracker settings.",
+				)
+			}
+		}
 		descriptor := descriptorByID[projection.TrackerID]
 		if !debugMode && result.State == api.TrackerPreflightStateReady && descriptor.Capabilities.DynamicBannedGroups && bannedRefreshErr != nil {
 			setRetryablePreflight(&result, "Tracker banned-group data could not be refreshed. Retry preflight.")
@@ -282,7 +299,6 @@ func (b workflowPreflightBuilder) Build(
 				}
 			}
 		}
-		trackerName := string(projection.TrackerID)
 		if !debugMode && result.State == api.TrackerPreflightStateReady && len(audioBlocked[trackerName]) > 0 {
 			setPolicyBlockedPreflight(
 				&result,
@@ -470,6 +486,19 @@ func setPolicyBlockedPreflight(result *api.TrackerPreflightResult, message strin
 		message,
 		api.OperationRecoverySelectTrackers,
 	)}
+}
+
+func setMissingImageHostPreflight(result *api.TrackerPreflightResult, message string) {
+	result.State = api.TrackerPreflightStateFailed
+	result.Failures = []api.WorkflowFailure{{
+		Failure: api.OperationFailure{
+			Code:      api.OperationFailureMissingPrerequisite,
+			Operation: api.OperationKindImageHosting,
+			Message:   message,
+			Recovery:  api.OperationRecoveryCompletePrerequisite,
+		},
+		TrackerID: result.TrackerID,
+	}}
 }
 
 func preflightFailure(

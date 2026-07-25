@@ -278,6 +278,50 @@ func NeededImageUploadTargetsWithRegistry(registry *Registry, appCfg config.Conf
 	return neededImageUploadTargets(registry, appCfg, trackerNames, selectedHost, nil, nil)
 }
 
+// ImageHostPolicySatisfiedWithRegistry reports whether a tracker with an active
+// required image-host policy has at least one compatible user-selected upload
+// host. Trackers without an active required policy are satisfied.
+func ImageHostPolicySatisfiedWithRegistry(
+	registry *Registry,
+	appCfg config.Config,
+	tracker string,
+	overrides api.ImageHostOverrides,
+) (bool, error) {
+	name := strings.ToUpper(strings.TrimSpace(tracker))
+	if name == "" {
+		return true, nil
+	}
+	trackerCfg := trackerConfigForImageHostPolicy(appCfg, name)
+	policy, err := resolveImageHostPolicyForMetadataWithRegistry(registry, name, appCfg, trackerCfg, overrides)
+	if err != nil {
+		return false, err
+	}
+	if !policy.required {
+		return true, nil
+	}
+
+	candidates := imageUploadCandidatesForTracker(registry, appCfg, name, configuredImageUploadHosts(registry, appCfg))
+	conditionalHost, conditionalEnabled := conditionalImageHost(registry, appCfg, name)
+	addExplicitCandidate := func(host string) {
+		host = strings.ToLower(strings.TrimSpace(host))
+		if host == "" || (host == conditionalHost && !conditionalEnabled) {
+			return
+		}
+		candidates = appendUniqueHost(candidates, host)
+	}
+	addExplicitCandidate(trackerCfg.ImageHost)
+	if overrides.PreferredHost != nil {
+		addExplicitCandidate(*overrides.PreferredHost)
+	}
+	candidates = appendOwnedPolicyUploadHosts(registry, candidates, name, policy)
+	for _, host := range candidates {
+		if imageHostUsableForPolicy(registry, name, host, policy) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // NeededImageUploadTargetsForMetadataWithRegistry resolves image upload targets from tracker-owned policies.
 func NeededImageUploadTargetsForMetadataWithRegistry(
 	registry *Registry,
