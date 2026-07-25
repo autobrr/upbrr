@@ -446,6 +446,129 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 	}
 }
 
+func TestWorkflowUploadPlanFailsTerminalImageHostTrackerAndRestoresAfterRetry(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	service := &workflowRetainedUploadServiceFake{torrentPaths: map[api.TrackerID]string{
+		"ALPHA": filepath.Join(tempDir, "Example.Release.2026.ALPHA-GRP.torrent"),
+		"BETA":  filepath.Join(tempDir, "Example.Release.2026.BETA-GRP.torrent"),
+	}}
+	for tracker, torrentPath := range service.torrentPaths {
+		if err := os.WriteFile(torrentPath, []byte("exact torrent "+tracker), 0o600); err != nil {
+			t.Fatalf("write %s torrent: %v", tracker, err)
+		}
+	}
+	builder := workflowUploadPlanBuilder{
+		resolver: &workflowDescriptionResolverFake{},
+		trackers: service,
+	}
+	projections := api.TrackerReleaseProjectionSet{
+		ReleaseRef: api.ReleaseRef{SourcePath: "C:\\media\\Example.Release.2026", Generation: 1},
+		Projections: []api.TrackerReleaseProjection{
+			{
+				TrackerID:         "ALPHA",
+				DisplayName:       "Alpha",
+				UploadReleaseName: "Example.Release.2026.ALPHA-GRP",
+				Readiness:         api.ReadinessStatusReady,
+				UploadReady:       true,
+			},
+			{
+				TrackerID:         "BETA",
+				DisplayName:       "Beta",
+				UploadReleaseName: "Example.Release.2026.BETA-GRP",
+				Readiness:         api.ReadinessStatusReady,
+				UploadReady:       true,
+			},
+		},
+	}
+	dupes := api.DupeAssessment{Results: []api.TrackerDupeAssessment{
+		{
+			TrackerID: "ALPHA",
+			Decision:  api.DupeDecisionNoMatch,
+			Status:    api.StageStatusCompleted,
+		},
+		{
+			TrackerID: "BETA",
+			Decision:  api.DupeDecisionNoMatch,
+			Status:    api.StageStatusCompleted,
+		},
+	}}
+	media := api.MediaArtifactSet{
+		ID:                 "media-1",
+		Revision:           1,
+		CaptureFingerprint: workflowTestFingerprint(t, "media-with-image-host-failure"),
+		Failures: []api.WorkflowFailure{{
+			Failure: api.OperationFailure{
+				Code:      api.OperationFailureImageHostUnavailable,
+				Operation: api.OperationKindImageHosting,
+				Message:   "Required image host failed.",
+				Recovery:  api.OperationRecoveryRetry,
+			},
+			TrackerID: "BETA",
+			Resource:  "pixhost",
+		}},
+	}
+	descriptions := api.DescriptionSet{
+		ID:               "descriptions-1",
+		Revision:         1,
+		InputFingerprint: workflowTestFingerprint(t, "descriptions-after-image-host-failure"),
+	}
+
+	plan, execution, err := builder.Build(
+		context.Background(),
+		projections,
+		dupes,
+		workflowDupePrivateEvidence{},
+		media,
+		workflowMediaPrivateArtifacts{},
+		descriptions,
+		api.DescriptionInstructions{Options: api.UploadOptions{SkipAutoTorrent: true}},
+		releaseworkflow.UploadPlanBuildOptions{},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("build image-host-failed upload plan: %v", err)
+	}
+	defer func() { _ = execution.Release() }()
+	if plan.Status != api.StageStatusReady || len(plan.Trackers) != 2 ||
+		len(service.projections) != 1 || service.projections[0].TrackerID != "ALPHA" {
+		t.Fatalf("image-host-failed upload plan=%#v retained=%#v", plan, service.projections)
+	}
+	if !plan.Trackers[0].Eligible || plan.Trackers[0].Status != api.StageStatusReady {
+		t.Fatalf("successful sibling upload plan = %#v", plan.Trackers[0])
+	}
+	failed := plan.Trackers[1]
+	if failed.TrackerID != "BETA" || failed.Eligible || failed.Status != api.StageStatusFailed ||
+		len(failed.Failures) != 1 ||
+		failed.Failures[0].Failure.Code != api.OperationFailureImageHostUnavailable {
+		t.Fatalf("failed image-host upload plan = %#v", failed)
+	}
+
+	media.Failures = nil
+	retryPlan, retryExecution, err := builder.Build(
+		context.Background(),
+		projections,
+		dupes,
+		workflowDupePrivateEvidence{},
+		media,
+		workflowMediaPrivateArtifacts{},
+		descriptions,
+		api.DescriptionInstructions{Options: api.UploadOptions{SkipAutoTorrent: true}},
+		releaseworkflow.UploadPlanBuildOptions{},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("build upload plan after image-host retry: %v", err)
+	}
+	defer func() { _ = retryExecution.Release() }()
+	if retryPlan.Status != api.StageStatusReady || len(retryPlan.Trackers) != 2 ||
+		!retryPlan.Trackers[0].Eligible || !retryPlan.Trackers[1].Eligible ||
+		len(service.projections) != 2 {
+		t.Fatalf("restored image-host upload plan=%#v retained=%#v", retryPlan, service.projections)
+	}
+}
+
 func TestWorkflowUploadPlanStopsBeforePreparationWhenEveryTrackerWasSkipped(t *testing.T) {
 	t.Parallel()
 

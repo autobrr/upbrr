@@ -32,6 +32,94 @@ func TestWorkflowContinuationReducesPartialTrackerOutcome(t *testing.T) {
 	}
 }
 
+func TestWorkflowContinuationFailsOnlyTrackerWithTerminalImageHostFailure(t *testing.T) {
+	t.Parallel()
+
+	current := continuationTestCurrent()
+	current.Media = &api.MediaArtifactSet{
+		Status: api.StageStatusCompleted,
+		Failures: []api.WorkflowFailure{{
+			Failure: api.OperationFailure{
+				Code:      api.OperationFailureImageHostUnavailable,
+				Operation: api.OperationKindImageHosting,
+				Message:   "Required image host failed.",
+				Recovery:  api.OperationRecoveryRetry,
+			},
+			TrackerID: "BETA",
+			Resource:  "pixhost",
+		}},
+	}
+
+	continuation := projectWorkflowContinuation(current)
+	if len(continuation.TrackerOutcomes) != 2 ||
+		continuation.TrackerOutcomes[0].TrackerID != "ALPHA" ||
+		continuation.TrackerOutcomes[0].Disposition == api.WorkflowDispositionFailed {
+		t.Fatalf("successful sibling outcome = %#v", continuation.TrackerOutcomes)
+	}
+	failed := continuation.TrackerOutcomes[1]
+	if failed.TrackerID != "BETA" || failed.Disposition != api.WorkflowDispositionFailed ||
+		failed.Lifecycle != api.OperationLifecycleTerminal || !failed.Retryable || len(failed.Failures) != 1 {
+		t.Fatalf("failed image-host tracker outcome = %#v", failed)
+	}
+}
+
+func TestTerminalOperationStatusReportsPartialImageHostOutcome(t *testing.T) {
+	t.Parallel()
+
+	attemptedAt := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
+	failure := api.WorkflowFailure{
+		Failure: api.OperationFailure{
+			Code:      api.OperationFailureImageHostUnavailable,
+			Operation: api.OperationKindImageHosting,
+			Message:   "Required image host failed.",
+			Recovery:  api.OperationRecoveryRetry,
+		},
+		TrackerID: "BETA",
+		Resource:  "pixhost",
+	}
+	command := UploadMediaImagesCommand{}
+	mixed := CommandResult{Media: &api.MediaArtifactSet{
+		HostAttempts: []api.HostedImageAttempt{
+			{
+				Host:        "imgbox",
+				Status:      api.StageStatusCompleted,
+				Results:     []api.MediaArtifact{{ID: "hosted-alpha", Kind: api.MediaArtifactHostedImage}},
+				AttemptedAt: attemptedAt,
+			},
+			{
+				Host:        "pixhost",
+				Status:      api.StageStatusFailed,
+				AttemptedAt: attemptedAt,
+			},
+		},
+		Failures: []api.WorkflowFailure{failure},
+	}}
+	if got := terminalOperationStatus(command, mixed); got != api.StageStatusPartial {
+		t.Fatalf("mixed image-host operation status = %q", got)
+	}
+
+	failed := mixed
+	failed.Media = &api.MediaArtifactSet{
+		HostAttempts: []api.HostedImageAttempt{
+			{
+				Host:        "imgbox",
+				Status:      api.StageStatusCompleted,
+				Results:     []api.MediaArtifact{{ID: "prior-hosted-alpha", Kind: api.MediaArtifactHostedImage}},
+				AttemptedAt: attemptedAt.Add(-time.Minute),
+			},
+			{
+				Host:        "pixhost",
+				Status:      api.StageStatusFailed,
+				AttemptedAt: attemptedAt,
+			},
+		},
+		Failures: []api.WorkflowFailure{failure},
+	}
+	if got := terminalOperationStatus(command, failed); got != api.StageStatusFailed {
+		t.Fatalf("failed image-host operation status = %q", got)
+	}
+}
+
 func TestWorkflowContinuationKeepsRunningRootAndFailedChildDistinct(t *testing.T) {
 	t.Parallel()
 

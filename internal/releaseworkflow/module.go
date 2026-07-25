@@ -1025,13 +1025,16 @@ func terminalOperationStatus(command Command, result CommandResult) api.StageSta
 		}
 	case UploadMediaImagesCommand:
 		if result.Media != nil && len(result.Media.HostAttempts) > 0 {
-			hasHostedResult := slices.ContainsFunc(result.Media.HostAttempts, func(attempt api.HostedImageAttempt) bool {
+			hasHostedResult := slices.ContainsFunc(latestHostedImageAttempts(result.Media.HostAttempts), func(attempt api.HostedImageAttempt) bool {
 				return len(attempt.Results) > 0
 			})
 			hasUnresolvedFailure := slices.ContainsFunc(result.Media.Failures, func(failure api.WorkflowFailure) bool {
 				return failure.Failure.Operation == api.OperationKindImageHosting
 			})
-			if hasUnresolvedFailure && !hasHostedResult {
+			switch {
+			case hasUnresolvedFailure && hasHostedResult:
+				stageStatus = api.StageStatusPartial
+			case hasUnresolvedFailure:
 				stageStatus = api.StageStatusFailed
 			}
 		}
@@ -1062,6 +1065,21 @@ func terminalOperationStatus(command Command, result CommandResult) api.StageSta
 		return api.StageStatusCompleted
 	}
 	return api.StageStatusCompleted
+}
+
+func latestHostedImageAttempts(attempts []api.HostedImageAttempt) []api.HostedImageAttempt {
+	var latest time.Time
+	for _, attempt := range attempts {
+		if attempt.AttemptedAt.After(latest) {
+			latest = attempt.AttemptedAt
+		}
+	}
+	if latest.IsZero() {
+		return attempts
+	}
+	return slices.DeleteFunc(append([]api.HostedImageAttempt(nil), attempts...), func(attempt api.HostedImageAttempt) bool {
+		return !attempt.AttemptedAt.Equal(latest)
+	})
 }
 
 func (m *Module) ensureOperationRecovery(ctx context.Context) error {
@@ -4348,7 +4366,7 @@ func (m *Module) generateDescriptions(
 		(media.Status != api.StageStatusCompleted && media.Status != api.StageStatusSkipped) {
 		return CommandResult{}, fmt.Errorf("%w: description dependencies are stale or not ready", ErrInvalidTransition)
 	}
-	descriptionProjections := DownstreamEligibleProjections(projections, dupes)
+	descriptionProjections := DownstreamEligibleProjectionsAfterMedia(projections, dupes, media)
 	privateMedia, err := m.private.Get(ownerID, workflow.ID, mediaPrivateResourceID(media.ID), now)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow load media artifacts for descriptions: %w", err)
@@ -4495,7 +4513,7 @@ func (m *Module) mutateDescriptionOverride(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow load media artifacts for description override: %w", err)
 	}
-	descriptionProjections := DownstreamEligibleProjections(projections, dupes)
+	descriptionProjections := DownstreamEligibleProjectionsAfterMedia(projections, dupes, media)
 	rebuilt, err := m.descriptionBuilder.Build(
 		ctx,
 		projections.ReleaseRef,

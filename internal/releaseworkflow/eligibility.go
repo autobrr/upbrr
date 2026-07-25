@@ -3,7 +3,12 @@
 
 package releaseworkflow
 
-import "github.com/autobrr/upbrr/pkg/api"
+import (
+	"slices"
+	"strings"
+
+	"github.com/autobrr/upbrr/pkg/api"
+)
 
 // ProjectionEligibleForDownstream reports whether retained projection and
 // duplicate state permit media, description, and upload-plan work.
@@ -39,5 +44,39 @@ func DownstreamEligibleProjections(
 			eligible.Projections = append(eligible.Projections, projection)
 		}
 	}
+	return eligible
+}
+
+// TrackerImageHostFailure returns the terminal image-host failure that blocks
+// one tracker in the retained media snapshot.
+func TrackerImageHostFailure(media api.MediaArtifactSet, trackerID api.TrackerID) (api.WorkflowFailure, bool) {
+	trackerID = api.TrackerID(strings.ToUpper(strings.TrimSpace(string(trackerID))))
+	if trackerID == "" {
+		return api.WorkflowFailure{}, false
+	}
+	for _, failure := range media.Failures {
+		if failure.Failure.Operation != api.OperationKindImageHosting {
+			continue
+		}
+		failedTracker := api.TrackerID(strings.ToUpper(strings.TrimSpace(string(failure.TrackerID))))
+		if failedTracker == trackerID {
+			return failure, true
+		}
+	}
+	return api.WorkflowFailure{}, false
+}
+
+// DownstreamEligibleProjectionsAfterMedia removes trackers with terminal
+// tracker-scoped image-host failures from the regular post-dupe eligible set.
+func DownstreamEligibleProjectionsAfterMedia(
+	projections api.TrackerReleaseProjectionSet,
+	dupes api.DupeAssessment,
+	media api.MediaArtifactSet,
+) api.TrackerReleaseProjectionSet {
+	eligible := DownstreamEligibleProjections(projections, dupes)
+	eligible.Projections = slices.DeleteFunc(eligible.Projections, func(projection api.TrackerReleaseProjection) bool {
+		_, failed := TrackerImageHostFailure(media, projection.TrackerID)
+		return failed
+	})
 	return eligible
 }

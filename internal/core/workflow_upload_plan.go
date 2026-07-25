@@ -168,6 +168,7 @@ func (b workflowUploadPlanBuilder) Build(
 	planProjections := make([]api.TrackerReleaseProjection, 0, len(projections.Projections))
 	trackerStatuses := make(map[api.TrackerID]api.StageStatus, len(projections.Projections))
 	trackerReasons := make(map[api.TrackerID]string, len(projections.Projections))
+	trackerFailures := make(map[api.TrackerID][]api.WorkflowFailure, len(projections.Projections))
 	targets := make(map[api.TrackerID]struct{}, len(options.TrackerIDs))
 	for _, trackerID := range options.TrackerIDs {
 		targets[api.TrackerID(strings.ToUpper(strings.TrimSpace(string(trackerID))))] = struct{}{}
@@ -180,6 +181,16 @@ func (b workflowUploadPlanBuilder) Build(
 		}
 		dupe, exists := dupeByTracker[projection.TrackerID]
 		if !releaseworkflow.ProjectionEligibleForDownstream(projection, dupe, exists) {
+			continue
+		}
+		if failure, failed := releaseworkflow.TrackerImageHostFailure(media, projection.TrackerID); failed {
+			trackerStatuses[projection.TrackerID] = api.StageStatusFailed
+			trackerReasons[projection.TrackerID] = strings.TrimSpace(failure.Failure.Message)
+			if trackerReasons[projection.TrackerID] == "" {
+				trackerReasons[projection.TrackerID] = "Required image hosting failed."
+			}
+			trackerFailures[projection.TrackerID] = []api.WorkflowFailure{failure}
+			planProjections = append(planProjections, projection)
 			continue
 		}
 		if projection.Artifacts.Description {
@@ -293,6 +304,7 @@ func (b workflowUploadPlanBuilder) Build(
 			Taxonomy:          projection.Taxonomy,
 			DescriptionGroup:  projection.DescriptionGroup,
 			Status:            trackerStatuses[projection.TrackerID],
+			Failures:          append([]api.WorkflowFailure(nil), trackerFailures[projection.TrackerID]...),
 		}
 		switch reason := trackerReasons[projection.TrackerID]; {
 		case reason != "":
