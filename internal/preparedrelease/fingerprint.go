@@ -54,6 +54,9 @@ func normalizeTrackerIDs(values map[string]string) map[string]string {
 			result[key] = value
 		}
 	}
+	if len(result) == 0 {
+		return nil
+	}
 	return result
 }
 

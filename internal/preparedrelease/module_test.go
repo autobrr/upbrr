@@ -161,6 +161,20 @@ func TestPrepareRequirePreparedRejectsMissingAndReusesCompatibleGeneration(t *te
 			collector.callCount(),
 		)
 	}
+
+	required.Instructions.TrackerIDs = map[string]string{}
+	reused, err = module.Prepare(context.Background(), required)
+	if err != nil {
+		t.Fatalf("reuse required generation with empty tracker IDs: %v", err)
+	}
+	if reused.Release.Generation != prepared.Release.Generation || collector.callCount() != 1 {
+		t.Fatalf(
+			"empty tracker IDs reuse generation=%d want=%d collector=%d",
+			reused.Release.Generation,
+			prepared.Release.Generation,
+			collector.callCount(),
+		)
+	}
 }
 
 func TestPrepareReportsCanonicalOwnerStagesAndReuse(t *testing.T) {
