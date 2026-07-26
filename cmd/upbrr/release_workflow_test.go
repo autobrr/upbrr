@@ -824,7 +824,7 @@ func TestCLIWorkflowCompletionUsesOneCompositeDebugRequest(t *testing.T) {
 	}
 }
 
-func TestCLIWorkflowUnattendedDefersManualTrackerInputsToCentralPolicy(t *testing.T) {
+func TestCLIWorkflowUnattendedDefersQuestionnaireToCentralPolicy(t *testing.T) {
 	t.Parallel()
 
 	instructions := make(map[api.TrackerID]api.TrackerProjectionInstructions)
@@ -846,70 +846,42 @@ func TestCLIWorkflowUnattendedDefersManualTrackerInputsToCentralPolicy(t *testin
 	if changed || len(instructions) != 0 {
 		t.Fatalf("unattended questionnaire changed instructions = %#v", instructions)
 	}
-
-	session := cliWorkflowSession{
-		intent: cliWorkflowIntent{interaction: api.InteractionModeUnattended},
-		current: releaseworkflow.CommandResult{
-			Workflow: api.ReleaseWorkflow{Revision: 3},
-			Continuation: api.WorkflowContinuation{RequiredActions: []api.RequiredAction{{
-				ID:        "authenticate-alpha",
-				Kind:      api.RequiredActionAuthenticateTracker,
-				Status:    api.RequiredActionStatusPending,
-				TrackerID: "ALPHA",
-			}}},
-		},
-	}
-	answers, declined, err := session.collectContinuationActionAnswers(
-		context.Background(),
-		nil,
-		config.Config{},
-		api.NopLogger{},
-	)
-	if err != nil {
-		t.Fatalf("collect unattended tracker action: %v", err)
-	}
-	if declined || len(answers) != 0 {
-		t.Fatalf("unattended tracker action answers = %#v declined=%t", answers, declined)
-	}
 }
 
-func TestCLIWorkflowInteractiveLeavesUnreadyTrackerActionLaneLocal(t *testing.T) {
+func TestCLIWorkflowLegacyAuthActionsRequireFreshAttempt(t *testing.T) {
 	t.Parallel()
 
-	session := cliWorkflowSession{
-		intent: cliWorkflowIntent{interaction: api.InteractionModeInteractive},
-		current: releaseworkflow.CommandResult{
-			Workflow: api.ReleaseWorkflow{Revision: 3},
-			Continuation: api.WorkflowContinuation{RequiredActions: []api.RequiredAction{{
-				ID:        "authenticate-alpha",
-				Kind:      api.RequiredActionAuthenticateTracker,
-				Status:    api.RequiredActionStatusPending,
-				TrackerID: "ALPHA",
-			}}},
-		},
-		trackerAuth: func(
-			_ context.Context,
-			_ *bufio.Reader,
-			_ config.Config,
-			_ api.InteractionMode,
-			_ []string,
-			_ api.MetadataPreview,
-			_ api.Logger,
-		) ([]string, error) {
-			return nil, nil
-		},
-	}
-	answers, declined, err := session.collectContinuationActionAnswers(
-		context.Background(),
-		nil,
-		config.Config{},
-		api.NopLogger{},
-	)
-	if err != nil {
-		t.Fatalf("collect unready tracker action: %v", err)
-	}
-	if declined || len(answers) != 0 {
-		t.Fatalf("unready tracker action answers = %#v declined=%t", answers, declined)
+	for _, interaction := range []api.InteractionMode{
+		api.InteractionModeInteractive,
+		api.InteractionModeUnattended,
+		api.InteractionModeUnattendedConfirm,
+	} {
+		session := cliWorkflowSession{
+			intent: cliWorkflowIntent{interaction: interaction},
+			current: releaseworkflow.CommandResult{
+				Workflow: api.ReleaseWorkflow{Revision: 3},
+				Continuation: api.WorkflowContinuation{RequiredActions: []api.RequiredAction{{
+					ID:        "authenticate-alpha",
+					Kind:      legacyTrackerAuthActionKind,
+					Status:    api.RequiredActionStatusPending,
+					TrackerID: "ALPHA",
+				}}},
+			},
+		}
+		answers, declined, err := session.collectContinuationActionAnswers(
+			context.Background(),
+			nil,
+			config.Config{},
+			api.NopLogger{},
+		)
+		if err == nil ||
+			!strings.Contains(err.Error(), "outside the upload workflow") ||
+			!strings.Contains(err.Error(), "fresh attempt") {
+			t.Fatalf("interaction %s legacy auth error = %v", interaction, err)
+		}
+		if declined || len(answers) != 0 {
+			t.Fatalf("interaction %s legacy auth answers = %#v declined=%t", interaction, answers, declined)
+		}
 	}
 }
 

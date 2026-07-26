@@ -249,10 +249,10 @@ func TestWorkflowDupeBuilderRetainsStrictInClientEvidence(t *testing.T) {
 		context.Background(),
 		api.DuplicateSubject{SourcePath: "C:\\releases\\Example.Release.2026.mkv"},
 		api.TrackerReleaseProjectionSet{
-ID: "projections-1",
- Revision: 4,
- Projections: []api.TrackerReleaseProjection{projection},
-},
+			ID:          "projections-1",
+			Revision:    4,
+			Projections: []api.TrackerReleaseProjection{projection},
+		},
 		api.TrackerPreflightAssessment{
 			ID:        "preflight-1",
 			Revision:  5,
@@ -291,7 +291,7 @@ func TestWorkflowDupeBuilderHonorsCancellation(t *testing.T) {
 	}
 }
 
-func TestWorkflowDupeBuilderSearchesEligibleTrackersAndRetainsImageHostSkippedRows(t *testing.T) {
+func TestWorkflowDupeBuilderSearchesReadySiblingAndRetainsAuthBlockedRow(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
@@ -318,14 +318,14 @@ func TestWorkflowDupeBuilderSearchesEligibleTrackersAndRetainsImageHostSkippedRo
 		}
 	}
 	ready := projection("ALPHA", api.ReadinessStatusReady, true)
-	ineligible := projection("BETA", api.ReadinessStatusIneligible, false)
-	ineligible.Failures = []api.WorkflowFailure{{
+	authBlocked := projection("BETA", api.ReadinessStatusBlocked, false)
+	authBlocked.Failures = []api.WorkflowFailure{{
 		TrackerID: "BETA",
 		Failure: api.OperationFailure{
-			Code:      api.OperationFailureMissingPrerequisite,
-			Operation: api.OperationKindImageHosting,
-			Message:   "Required image host is not selected.",
-			Recovery:  api.OperationRecoveryCompletePrerequisite,
+			Code:      api.OperationFailureTrackerAuthRequired,
+			Operation: api.OperationKindDuplicateCheck,
+			Message:   "Tracker authentication is not ready for this attempt.",
+			Recovery:  api.OperationRecoveryAuthenticateTrackers,
 		},
 	}}
 	preflight := api.TrackerPreflightAssessment{
@@ -336,10 +336,10 @@ func TestWorkflowDupeBuilderSearchesEligibleTrackersAndRetainsImageHostSkippedRo
 		Results: []api.TrackerPreflightResult{
 			{TrackerID: "ALPHA", State: api.TrackerPreflightStateReady},
 			{
-TrackerID: "BETA",
- State: api.TrackerPreflightStateFailed,
- Failures: ineligible.Failures,
-},
+				TrackerID: "BETA",
+				State:     api.TrackerPreflightStateRetryable,
+				Failures:  authBlocked.Failures,
+			},
 		},
 	}
 	service := &workflowDupeServiceFake{}
@@ -347,10 +347,10 @@ TrackerID: "BETA",
 		context.Background(),
 		api.DuplicateSubject{SourcePath: "C:\\releases\\Example.Release.2026.mkv"},
 		api.TrackerReleaseProjectionSet{
-ID: "projections-1",
- Revision: 4,
- Projections: []api.TrackerReleaseProjection{ready, ineligible},
-},
+			ID:          "projections-1",
+			Revision:    4,
+			Projections: []api.TrackerReleaseProjection{ready, authBlocked},
+		},
 		preflight,
 		now,
 		false,

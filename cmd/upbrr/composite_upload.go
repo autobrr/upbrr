@@ -19,6 +19,13 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+const (
+	legacyTrackerAuthActionKind        = api.RequiredActionKind("authenticate_tracker")
+	legacyTrackerTwoFactorActionKind   = api.RequiredActionKind("provide_two_factor")
+	legacyTrackerAuthFeedbackKind      = api.ReleaseWorkflowUploadFeedbackKind("trackerAuthentication")
+	legacyTrackerTwoFactorFeedbackKind = api.ReleaseWorkflowUploadFeedbackKind("twoFactor")
+)
+
 func (s *cliWorkflowSession) completeComposite(
 	ctx context.Context,
 	debug bool,
@@ -145,7 +152,7 @@ func firstPendingCLICompositeAction(actions []api.RequiredAction) *api.RequiredA
 }
 
 func (s *cliWorkflowSession) collectCompositeUploadFeedback(
-	ctx context.Context,
+	_ context.Context,
 	reader *bufio.Reader,
 	cfg config.Config,
 	logger api.Logger,
@@ -158,11 +165,20 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 		},
 		IdempotencyKey: s.nextIdempotencyKey("feedback-" + string(action.Kind)),
 	}
+	if action.Kind == legacyTrackerAuthActionKind || action.Kind == legacyTrackerTwoFactorActionKind {
+		return feedback, false, errors.New(
+			"upbrr: tracker authentication must be resolved outside the upload workflow; start a fresh attempt",
+		)
+	}
 	if s.intent.interaction == api.InteractionModeUnattended {
 		return feedback, false, fmt.Errorf("upbrr: strict unattended upload requires global action %s: %s", action.Kind, action.Prompt)
 	}
 
 	switch action.Kind {
+	case legacyTrackerAuthActionKind, legacyTrackerTwoFactorActionKind:
+		return feedback, false, errors.New(
+			"upbrr: tracker authentication must be resolved outside the upload workflow; start a fresh attempt",
+		)
 	case api.RequiredActionSelectPlaylist:
 		selected, err := selectCLIWorkflowPlaylists(reader, action, cfg.Metadata.UseLargestPlaylist)
 		if err != nil {
@@ -192,40 +208,6 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 			feedback,
 			api.ReleaseWorkflowUploadFeedbackRescanConfirmation,
 		)
-	case api.RequiredActionAuthenticateTracker, api.RequiredActionProvideTwoFactor:
-		ready, err := s.ensureTrackerAuthBeforeDupeCheck(
-			ctx,
-			reader,
-			cfg,
-			s.intent.interaction,
-			[]string{string(action.TrackerID)},
-			cliWorkflowMetadataPreview(s.current),
-			logger,
-		)
-		if err != nil {
-			return feedback, false, err
-		}
-		if action.Kind == api.RequiredActionAuthenticateTracker || len(ready) != 1 {
-			feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{
-				Kind: api.ReleaseWorkflowUploadFeedbackTrackerAuthentication,
-				TrackerAuthentication: &api.ReleaseWorkflowUploadTrackerAuthentication{
-					TrackerID: action.TrackerID,
-				},
-			}
-		} else {
-			challengeID := "completed-by-cli-auth-adapter"
-			if len(action.Options) > 0 && strings.TrimSpace(action.Options[0].Value) != "" {
-				challengeID = action.Options[0].Value
-			}
-			feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{
-				Kind: api.ReleaseWorkflowUploadFeedbackTwoFactor,
-				TwoFactor: &api.ReleaseWorkflowUploadTwoFactor{
-					TrackerID:   action.TrackerID,
-					ChallengeID: challengeID,
-					Code:        "completed-by-cli-auth-adapter",
-				},
-			}
-		}
 	case api.RequiredActionProvideTrackerInput, api.RequiredActionAnswerQuestionnaire:
 		return s.collectCompositeTrackerFeedback(reader, action, feedback)
 	case api.RequiredActionAuthorizeRules:
@@ -292,8 +274,8 @@ func compositeCLIConfirmationFeedback(
 		feedback.Response.Reprepare = &api.ReleaseWorkflowUploadReprepare{Confirmed: true}
 	case api.ReleaseWorkflowUploadFeedbackPlaylistSelection,
 		api.ReleaseWorkflowUploadFeedbackMetadataSelection,
-		api.ReleaseWorkflowUploadFeedbackTrackerAuthentication,
-		api.ReleaseWorkflowUploadFeedbackTwoFactor,
+		legacyTrackerAuthFeedbackKind,
+		legacyTrackerTwoFactorFeedbackKind,
 		api.ReleaseWorkflowUploadFeedbackTrackerInput,
 		api.ReleaseWorkflowUploadFeedbackQuestionnaire,
 		api.ReleaseWorkflowUploadFeedbackDuplicateReview,

@@ -18,8 +18,9 @@ import (
 )
 
 const (
-	compositeUploadSessionVersion  = 1
+	compositeUploadSessionVersion  = 2
 	compositeUploadTransitionLimit = 64
+	deprecatedAuthFeedbackMessage  = "Tracker authentication must be resolved outside the upload workflow. Start a fresh attempt."
 )
 
 type compositeUploadSession struct {
@@ -125,22 +126,18 @@ func (c applyCompositeUploadFeedbackCommand) commandFingerprint() (api.WorkflowF
 }
 
 type compositeUploadFeedbackResponse struct {
-	Kind                         api.ReleaseWorkflowUploadFeedbackKind
-	SelectedValues               []string
-	Confirmed                    bool
-	UseAll                       bool
-	TrackerID                    api.TrackerID
-	Projection                   *api.ReleaseWorkflowUploadTrackerProjection
-	Questionnaire                map[string]*string
-	DuplicateDecision            api.DupeDecision
-	TrackerIDs                   []api.TrackerID
-	Facts                        *api.ReleaseWorkflowUploadFacts
-	Preparation                  *api.ReleaseWorkflowUploadPreparation
-	Reconciliation               string
-	ChallengeID                  string `json:"-"`
-	AuthenticationNeedsTwoFactor bool   `json:"-"`
-	AuthenticationChallengeID    string `json:"-"`
-	AuthenticationSkipTracker    bool   `json:"-"`
+	Kind              api.ReleaseWorkflowUploadFeedbackKind
+	SelectedValues    []string
+	Confirmed         bool
+	UseAll            bool
+	TrackerID         api.TrackerID
+	Projection        *api.ReleaseWorkflowUploadTrackerProjection
+	Questionnaire     map[string]*string
+	DuplicateDecision api.DupeDecision
+	TrackerIDs        []api.TrackerID
+	Facts             *api.ReleaseWorkflowUploadFacts
+	Preparation       *api.ReleaseWorkflowUploadPreparation
+	Reconciliation    string
 }
 
 // StartUpload validates and normalizes one owner-scoped request, idempotently
@@ -748,6 +745,28 @@ func (m *Module) finishCompositeSession(
 	operationID api.WorkflowOperationID,
 	reason string,
 ) error {
+	return m.checkpointCompositeTerminalSession(ctx, ownerID, workflowID, operationID, reason, nil)
+}
+
+func (m *Module) failCompositeSession(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	operationID api.WorkflowOperationID,
+	reason string,
+	failure api.OperationFailure,
+) error {
+	return m.checkpointCompositeTerminalSession(ctx, ownerID, workflowID, operationID, reason, &failure)
+}
+
+func (m *Module) checkpointCompositeTerminalSession(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	operationID api.WorkflowOperationID,
+	reason string,
+	failure *api.OperationFailure,
+) error {
 	lock := m.commandLock(strings.TrimSpace(ownerID) + "\x00" + string(workflowID))
 	lock.Lock()
 	defer lock.Unlock()
@@ -761,6 +780,11 @@ func (m *Module) finishCompositeSession(
 	state.Composite.ActiveOperationID = ""
 	state.Composite.LastOperationID = operationID
 	state.Composite.TerminalReason = strings.TrimSpace(reason)
+	if failure != nil {
+		state.Workflow.Status = api.WorkflowStatusFailed
+		state.Workflow.RequiredActions = nil
+		state.Workflow.Failures = []api.WorkflowFailure{{Failure: *failure}}
+	}
 	if err := m.saveCompositeMetadata(context.WithoutCancel(ctx), ownerID, &state); err != nil {
 		return fmt.Errorf("release workflow save composite terminal checkpoint: %w", err)
 	}
@@ -852,6 +876,23 @@ func (m *Module) runCompositeUpload(
 		}
 		next, stage := planContinuationCommand(request, current, m.clock.Now().UTC())
 		if next == nil {
+			if stage == "no-eligible-trackers" {
+				failure := compositeNoEligibleTrackersFailure(current, command.operationKind())
+				if err := m.failCompositeSession(
+					ctx,
+					ownerID,
+					command.WorkflowID,
+					operationID,
+					"no_eligible_trackers",
+					failure,
+				); err != nil {
+					return CommandResult{}, err
+				}
+				return CommandResult{}, api.NewOperationError(
+					failure,
+					errors.New("release workflow composite upload has no eligible tracker lanes"),
+				)
+			}
 			if err := m.finishCompositeSession(ctx, ownerID, command.WorkflowID, operationID, "no_viable_transition"); err != nil {
 				return CommandResult{}, err
 			}
@@ -876,6 +917,43 @@ func (m *Module) runCompositeUpload(
 		Message:   "The upload exceeded its defensive transition limit.",
 		Recovery:  api.OperationRecoveryRetry,
 	}, errors.New("release workflow composite upload transition limit exceeded"))
+}
+
+func compositeNoEligibleTrackersFailure(current CommandResult, operation api.OperationKind) api.OperationFailure {
+	failure := api.OperationFailure{
+		Code:      api.OperationFailureNoEligibleTrackers,
+		Operation: operation,
+		Message:   "No selected trackers are eligible for this upload attempt.",
+		Recovery:  api.OperationRecoverySelectTrackers,
+	}
+	if compositeAllTrackerLanesAuthBlocked(current) {
+		failure.Message = "No selected trackers are eligible because tracker authentication is not ready. Resolve authentication, then restart the upload workflow."
+		failure.Recovery = api.OperationRecoveryAuthenticateTrackers
+	}
+	return failure
+}
+
+func compositeAllTrackerLanesAuthBlocked(current CommandResult) bool {
+	if current.Projections == nil || current.Preflight == nil || len(current.Projections.Projections) == 0 {
+		return false
+	}
+	authBlocked := make(map[api.TrackerID]struct{}, len(current.Preflight.Results))
+	for _, result := range current.Preflight.Results {
+		if slices.ContainsFunc(result.Failures, func(failure api.WorkflowFailure) bool {
+			return failure.Failure.Code == api.OperationFailureTrackerAuthRequired
+		}) {
+			authBlocked[result.TrackerID] = struct{}{}
+		}
+	}
+	for _, projection := range current.Projections.Projections {
+		if projection.Readiness == api.ReadinessStatusReady && projection.DupeReady {
+			return false
+		}
+		if _, ok := authBlocked[projection.TrackerID]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Module) hydrateCompositePreparedRelease(
@@ -1403,10 +1481,10 @@ func compositeUploadFeedbackActionKind(kind api.ReleaseWorkflowUploadFeedbackKin
 		return api.RequiredActionSelectMetadata
 	case api.ReleaseWorkflowUploadFeedbackRescanConfirmation:
 		return api.RequiredActionConfirmRescan
-	case api.ReleaseWorkflowUploadFeedbackTrackerAuthentication:
-		return api.RequiredActionAuthenticateTracker
-	case api.ReleaseWorkflowUploadFeedbackTwoFactor:
-		return api.RequiredActionProvideTwoFactor
+	case legacyTrackerAuthFeedbackKind:
+		return legacyTrackerAuthActionKind
+	case legacyTrackerTwoFactorFeedbackKind:
+		return legacyTrackerTwoFactorActionKind
 	case api.ReleaseWorkflowUploadFeedbackTrackerInput:
 		return api.RequiredActionProvideTrackerInput
 	case api.ReleaseWorkflowUploadFeedbackQuestionnaire:
@@ -1438,11 +1516,9 @@ func normalizedCompositeFeedback(feedback api.ReleaseWorkflowUploadFeedback) com
 		response.Facts = feedback.Response.MetadataSelection.Facts
 	case api.ReleaseWorkflowUploadFeedbackRescanConfirmation:
 		response.Confirmed = feedback.Response.RescanConfirmation.Confirmed
-	case api.ReleaseWorkflowUploadFeedbackTrackerAuthentication:
-		response.TrackerID = normalizeCompositeTrackerID(feedback.Response.TrackerAuthentication.TrackerID)
-	case api.ReleaseWorkflowUploadFeedbackTwoFactor:
-		response.TrackerID = normalizeCompositeTrackerID(feedback.Response.TwoFactor.TrackerID)
-		response.ChallengeID = strings.TrimSpace(feedback.Response.TwoFactor.ChallengeID)
+	case legacyTrackerAuthFeedbackKind,
+		legacyTrackerTwoFactorFeedbackKind:
+		// Deprecated auth feedback is rejected before durable normalization.
 	case api.ReleaseWorkflowUploadFeedbackTrackerInput:
 		response.TrackerID = normalizeCompositeTrackerID(feedback.Response.TrackerInput.TrackerID)
 		projection := feedback.Response.TrackerInput.Projection
@@ -1476,15 +1552,18 @@ func normalizeCompositeTrackerID(value api.TrackerID) api.TrackerID {
 	return api.TrackerID(strings.ToUpper(strings.TrimSpace(string(value))))
 }
 
-// SubmitUploadFeedback validates exact action authority, performs any private
-// authentication step, idempotently applies one response, and starts the resumed
-// composite operation.
+// SubmitUploadFeedback validates exact action authority, idempotently applies
+// one response, and starts the resumed composite operation.
 func (m *Module) SubmitUploadFeedback(
 	ctx context.Context,
 	ownerID string,
 	workflowID api.WorkflowID,
 	feedback api.ReleaseWorkflowUploadFeedback,
 ) (CommandResult, error) {
+	if feedback.Response.Kind == legacyTrackerAuthFeedbackKind ||
+		feedback.Response.Kind == legacyTrackerTwoFactorFeedbackKind {
+		return CommandResult{}, deprecatedAuthFeedbackError()
+	}
 	if err := feedback.Validate(); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow upload feedback: %w", err)
 	}
@@ -1565,13 +1644,6 @@ func (m *Module) SubmitUploadFeedback(
 	if err := validateCompositeFeedbackAction(action, response); err != nil {
 		return CommandResult{}, err
 	}
-	secretResult, err := m.executeCompositeSecretFeedback(ctx, action, feedback)
-	if err != nil {
-		return CommandResult{}, err
-	}
-	feedbackCommand.Response.AuthenticationNeedsTwoFactor = secretResult.AuthenticationNeedsTwoFactor
-	feedbackCommand.Response.AuthenticationChallengeID = secretResult.AuthenticationChallengeID
-	feedbackCommand.Response.AuthenticationSkipTracker = secretResult.AuthenticationSkipTracker
 	feedbackCommand.ExpectedRevision = current.Workflow.Revision
 	result, err := m.execute(ctx, ownerID, feedbackCommand)
 	if err != nil {
@@ -1624,140 +1696,7 @@ func validateCompositeFeedbackAction(action api.RequiredAction, response composi
 			}
 		}
 	}
-	if response.Kind == api.ReleaseWorkflowUploadFeedbackTwoFactor && len(action.Options) > 0 &&
-		!slices.ContainsFunc(action.Options, func(option api.RequiredActionOption) bool {
-			return option.Value == response.ChallengeID
-		}) {
-		return fmt.Errorf("%w: two-factor challenge does not match action", ErrInvalidTransition)
-	}
 	return nil
-}
-
-type compositeUploadSecretFeedbackResult struct {
-	AuthenticationNeedsTwoFactor bool
-	AuthenticationChallengeID    string
-	AuthenticationSkipTracker    bool
-}
-
-func (m *Module) executeCompositeSecretFeedback(
-	ctx context.Context,
-	action api.RequiredAction,
-	feedback api.ReleaseWorkflowUploadFeedback,
-) (compositeUploadSecretFeedbackResult, error) {
-	switch feedback.Response.Kind {
-	case api.ReleaseWorkflowUploadFeedbackTrackerAuthentication:
-		if m.uploadAuthenticator == nil {
-			return compositeUploadSecretFeedbackResult{}, fmt.Errorf(
-				"%w: tracker authentication feedback is unavailable",
-				ErrInvalidTransition,
-			)
-		}
-		status, err := m.compositeUploadAuthenticationStatus(ctx, action.TrackerID)
-		if err != nil {
-			return compositeUploadSecretFeedbackResult{}, err
-		}
-		if compositeUploadAuthReady(status) {
-			break
-		}
-		if action.Kind == api.RequiredActionProvideTwoFactor || !compositeUploadAuthRequiresAction(status) {
-			return compositeUploadSecretFeedbackResult{AuthenticationSkipTracker: true}, nil
-		}
-		status, err = m.uploadAuthenticator.Login(ctx, string(feedback.Response.TrackerAuthentication.TrackerID), api.TrackerAuthLoginRequest{})
-		if err != nil {
-			return compositeUploadSecretFeedbackResult{}, fmt.Errorf("release workflow authenticate tracker: %w", err)
-		}
-		if status.Needs2FA {
-			if strings.TrimSpace(status.ChallengeID) == "" {
-				return compositeUploadSecretFeedbackResult{AuthenticationSkipTracker: true}, nil
-			}
-			return compositeUploadSecretFeedbackResult{
-				AuthenticationNeedsTwoFactor: true,
-				AuthenticationChallengeID:    status.ChallengeID,
-			}, nil
-		}
-		if !compositeUploadAuthReady(status) {
-			return compositeUploadSecretFeedbackResult{AuthenticationSkipTracker: true}, nil
-		}
-	case api.ReleaseWorkflowUploadFeedbackTwoFactor:
-		if m.uploadAuthenticator == nil {
-			return compositeUploadSecretFeedbackResult{}, fmt.Errorf(
-				"%w: tracker two-factor feedback is unavailable",
-				ErrInvalidTransition,
-			)
-		}
-		status, err := m.compositeUploadAuthenticationStatus(ctx, action.TrackerID)
-		if err != nil {
-			return compositeUploadSecretFeedbackResult{}, err
-		}
-		if compositeUploadAuthReady(status) || !compositeUploadAuthRequiresAction(status) {
-			break
-		}
-		status, err = m.uploadAuthenticator.Submit2FA(
-			ctx,
-			feedback.Response.TwoFactor.ChallengeID,
-			feedback.Response.TwoFactor.Code,
-		)
-		if err != nil {
-			return compositeUploadSecretFeedbackResult{}, fmt.Errorf("release workflow submit tracker two-factor code: %w", err)
-		}
-		if !compositeUploadAuthReady(status) && compositeUploadAuthRequiresAction(status) {
-			return compositeUploadSecretFeedbackResult{}, fmt.Errorf(
-				"%w: tracker two-factor authentication still requires action",
-				ErrInvalidTransition,
-			)
-		}
-	case api.ReleaseWorkflowUploadFeedbackPlaylistSelection,
-		api.ReleaseWorkflowUploadFeedbackMetadataSelection,
-		api.ReleaseWorkflowUploadFeedbackRescanConfirmation,
-		api.ReleaseWorkflowUploadFeedbackTrackerInput,
-		api.ReleaseWorkflowUploadFeedbackQuestionnaire,
-		api.ReleaseWorkflowUploadFeedbackRuleAuthorization,
-		api.ReleaseWorkflowUploadFeedbackDuplicateReview,
-		api.ReleaseWorkflowUploadFeedbackTrackerApproval,
-		api.ReleaseWorkflowUploadFeedbackUploadApproval, //nolint:staticcheck // Retained v1 feedback needs no secret handling.
-		api.ReleaseWorkflowUploadFeedbackReprepare,
-		api.ReleaseWorkflowUploadFeedbackReconciliation:
-	}
-	_ = action
-	return compositeUploadSecretFeedbackResult{}, nil
-}
-
-func (m *Module) compositeUploadAuthenticationStatus(
-	ctx context.Context,
-	trackerID api.TrackerID,
-) (api.TrackerAuthStatus, error) {
-	statuses, err := m.uploadAuthenticator.ValidateMany(ctx, []string{string(trackerID)})
-	if err != nil {
-		return api.TrackerAuthStatus{}, fmt.Errorf("release workflow validate tracker authentication: %w", err)
-	}
-	if len(statuses) != 1 {
-		return api.TrackerAuthStatus{}, fmt.Errorf("release workflow validate tracker authentication: expected one status, got %d", len(statuses))
-	}
-	return statuses[0], nil
-}
-
-func compositeUploadAuthReady(status api.TrackerAuthStatus) bool {
-	if status.Needs2FA || strings.TrimSpace(status.LastError) != "" {
-		return false
-	}
-	switch strings.TrimSpace(status.State) {
-	case "configured", "has_cookies":
-		return true
-	default:
-		return false
-	}
-}
-
-func compositeUploadAuthRequiresAction(status api.TrackerAuthStatus) bool {
-	if status.Needs2FA {
-		return true
-	}
-	switch strings.TrimSpace(status.State) {
-	case "not_configured", "login_required", "encrypted_storage_unavailable":
-		return true
-	default:
-		return false
-	}
 }
 
 func (m *Module) applyCompositeUploadFeedback(
@@ -1848,27 +1787,9 @@ func (m *Module) applyCompositeUploadFeedback(
 	case api.ReleaseWorkflowUploadFeedbackRescanConfirmation:
 		state.Composite.Intent.Preparation.Controls.ConfirmBDMVRescan = true
 		state.Composite.Intent.Preparation.Force = true
-	case api.ReleaseWorkflowUploadFeedbackTrackerAuthentication:
-		if command.Response.AuthenticationNeedsTwoFactor {
-			state.Workflow.RequiredActions[index].Kind = api.RequiredActionProvideTwoFactor
-			state.Workflow.RequiredActions[index].Prompt = "Complete tracker two-factor authentication, then retry preflight."
-			state.Workflow.RequiredActions[index].AllowsFreeText = true
-			state.Workflow.RequiredActions[index].WorkflowRevision = nextRevision
-			state.Workflow.RequiredActions[index].Options = []api.RequiredActionOption{{
-				Value: command.Response.AuthenticationChallengeID,
-				Label: "Active tracker two-factor challenge",
-			}}
-			resolvedByCommand = true
-		} else {
-			if command.Response.AuthenticationSkipTracker &&
-				!slices.Contains(state.Composite.RemoveTrackers, command.Response.TrackerID) {
-				state.Composite.RemoveTrackers = append(state.Composite.RemoveTrackers, command.Response.TrackerID)
-				slices.Sort(state.Composite.RemoveTrackers)
-			}
-			invalidatePreflightAndDownstream(&state.Workflow)
-		}
-	case api.ReleaseWorkflowUploadFeedbackTwoFactor:
-		invalidatePreflightAndDownstream(&state.Workflow)
+	case legacyTrackerAuthFeedbackKind,
+		legacyTrackerTwoFactorFeedbackKind:
+		return CommandResult{}, deprecatedAuthFeedbackError()
 	case api.ReleaseWorkflowUploadFeedbackTrackerInput:
 		if command.Response.Projection != nil {
 			if state.Composite.Intent.ProjectionInstructions == nil {
@@ -1975,22 +1896,14 @@ func (m *Module) applyCompositeUploadFeedback(
 	return CommandResult{}, nil
 }
 
-// UploadFeedbackAuthenticator keeps secret authentication mutations outside durable feedback.
-type UploadFeedbackAuthenticator interface {
-	ValidateMany(context.Context, []string) ([]api.TrackerAuthStatus, error)
-	Login(context.Context, string, api.TrackerAuthLoginRequest) (api.TrackerAuthStatus, error)
-	Submit2FA(context.Context, string, string) (api.TrackerAuthStatus, error)
-}
-
-// WithUploadFeedbackAuthenticator installs private tracker auth feedback support.
-func WithUploadFeedbackAuthenticator(authenticator UploadFeedbackAuthenticator) Option {
-	return func(module *Module) error {
-		if authenticator == nil {
-			return errors.New("release workflow: upload feedback authenticator is required")
-		}
-		module.uploadAuthenticator = authenticator
-		return nil
-	}
+func deprecatedAuthFeedbackError() error {
+	cause := fmt.Errorf("%w: %s", ErrInvalidTransition, deprecatedAuthFeedbackMessage)
+	return api.NewOperationError(api.OperationFailure{
+		Code:      api.OperationFailureTrackerAuthRequired,
+		Operation: api.OperationKindUploadExecute,
+		Message:   deprecatedAuthFeedbackMessage,
+		Recovery:  api.OperationRecoveryAuthenticateTrackers,
+	}, cause)
 }
 
 func compositeUploadRecoveryValid(

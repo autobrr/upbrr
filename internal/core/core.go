@@ -316,7 +316,9 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		}
 		workflowPrivateResources = vault
 	}
-	workflowOptions := []releaseworkflow.Option{
+	e2eOptions := e2eReleaseWorkflowOptions()
+	workflowOptions := make([]releaseworkflow.Option, 0, 9+len(e2eOptions))
+	workflowOptions = append(workflowOptions,
 		releaseworkflow.WithTrackerProjectionBuilder(trackerWorkflowProjector),
 		releaseworkflow.WithTrackerPreflightBuilder(workflowPreflightBuilder{
 			auth:     services.TrackerAuth,
@@ -325,7 +327,7 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 			logger:   logger,
 			banned:   trackers.NewBannedGroupCheckerWithRegistry(cfg.MainSettings.DBPath, registry),
 		}),
-		releaseworkflow.WithDupeAssessmentBuilder(workflowDupeBuilder{service: services.Dupes}),
+		releaseworkflow.WithDupeAssessmentBuilder(workflowDupeBuilder{service: services.Dupes, logger: logger}),
 		releaseworkflow.WithMediaArtifactBuilder(workflowMediaArtifacts),
 		releaseworkflow.WithDescriptionBuilder(workflowDescriptionBuilder{
 			resolver: preparedFacts,
@@ -334,11 +336,8 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		releaseworkflow.WithUploadPlanBuilder(newWorkflowUploadPlanBuilder(preparedFacts, services.Trackers, services.Torrents, services.Clients)),
 		releaseworkflow.WithOperationErrorClassifier(classifyOperationError),
 		releaseworkflow.WithLogger(logger),
-	}
-	workflowOptions = append(workflowOptions, e2eReleaseWorkflowOptions()...)
-	if uploadAuthenticator, ok := services.TrackerAuth.(releaseworkflow.UploadFeedbackAuthenticator); ok {
-		workflowOptions = append(workflowOptions, releaseworkflow.WithUploadFeedbackAuthenticator(uploadAuthenticator))
-	}
+	)
+	workflowOptions = append(workflowOptions, e2eOptions...)
 	workflow, err := releaseworkflow.New(
 		workflowRepository,
 		workflowPrivateResources,

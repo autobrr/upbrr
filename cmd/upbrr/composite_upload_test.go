@@ -317,28 +317,28 @@ func TestCLIWorkflowProjectionOutputEnabledOnlyForDebugDetail(t *testing.T) {
 		{name: "warn", configured: "warn"},
 		{name: "error", configured: "error"},
 		{
-name: "debug configured",
- configured: "debug",
- want: true,
-},
+			name:       "debug configured",
+			configured: "debug",
+			want:       true,
+		},
 		{
-name: "trace override",
- configured: "info",
- override: "trace",
- want: true,
-},
+			name:       "trace override",
+			configured: "info",
+			override:   "trace",
+			want:       true,
+		},
 		{
-name: "debug mode fallback",
- configured: "info",
- debug: true,
- want: true,
-},
+			name:       "debug mode fallback",
+			configured: "info",
+			debug:      true,
+			want:       true,
+		},
 		{
-name: "explicit info overrides debug mode",
- configured: "trace",
- override: "info",
- debug: true,
-},
+			name:       "explicit info overrides debug mode",
+			configured: "trace",
+			override:   "info",
+			debug:      true,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -351,15 +351,15 @@ name: "explicit info overrides debug mode",
 	}
 }
 
-func TestCLICompositeUnavailableAuthSubmitsTrackerSkipFeedback(t *testing.T) {
+func TestCLICompositeLegacyAuthActionRequiresFreshAttempt(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name string
 		kind api.RequiredActionKind
 	}{
-		{name: "authentication", kind: api.RequiredActionAuthenticateTracker},
-		{name: "unfinished two-factor", kind: api.RequiredActionProvideTwoFactor},
+		{name: "authentication", kind: legacyTrackerAuthActionKind},
+		{name: "unfinished two-factor", kind: legacyTrackerTwoFactorActionKind},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -367,17 +367,6 @@ func TestCLICompositeUnavailableAuthSubmitsTrackerSkipFeedback(t *testing.T) {
 
 			session := &cliWorkflowSession{
 				intent: cliWorkflowIntent{interaction: api.InteractionModeInteractive},
-				trackerAuth: func(
-					_ context.Context,
-					_ *bufio.Reader,
-					_ config.Config,
-					_ api.InteractionMode,
-					_ []string,
-					_ api.MetadataPreview,
-					_ api.Logger,
-				) ([]string, error) {
-					return nil, nil
-				},
 			}
 			feedback, declined, err := session.collectCompositeUploadFeedback(
 				context.Background(),
@@ -391,14 +380,13 @@ func TestCLICompositeUnavailableAuthSubmitsTrackerSkipFeedback(t *testing.T) {
 					TrackerID:        "ALPHA",
 				},
 			)
-			if err != nil {
-				t.Fatalf("collect unavailable tracker auth feedback: %v", err)
+			if err == nil ||
+				!strings.Contains(err.Error(), "outside the upload workflow") ||
+				!strings.Contains(err.Error(), "fresh attempt") {
+				t.Fatalf("legacy tracker auth error = %v", err)
 			}
-			if declined ||
-				feedback.Response.Kind != api.ReleaseWorkflowUploadFeedbackTrackerAuthentication ||
-				feedback.Response.TrackerAuthentication == nil ||
-				feedback.Response.TrackerAuthentication.TrackerID != "ALPHA" {
-				t.Fatalf("unavailable tracker auth feedback = %#v declined=%t", feedback, declined)
+			if declined || feedback.Response.Kind != "" {
+				t.Fatalf("legacy tracker auth feedback = %#v declined=%t", feedback, declined)
 			}
 		})
 	}

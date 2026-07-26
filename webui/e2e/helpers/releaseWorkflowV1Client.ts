@@ -12,16 +12,26 @@ export type WorkflowV1Current = Readonly<{
       kind: string;
       trackerId?: string;
       workflowRevision: number;
+      options?: readonly Readonly<{ value: string; label: string }>[];
     }>[];
   }>;
   release?: Readonly<{ release: Readonly<{ Generation: number }> }>;
-  projections?: Readonly<{ status: string }>;
+  projections?: Readonly<{
+    status: string;
+    projections: readonly Readonly<{
+      trackerId: string;
+      readiness: string;
+      dupeReady: boolean;
+      uploadReady: boolean;
+    }>[];
+  }>;
   preflight?: Readonly<{
     status: string;
     results: readonly Readonly<{
       trackerId: string;
       state: string;
       authReady: boolean;
+      requiredActions?: readonly unknown[];
       failures?: readonly Readonly<{
         failure: Readonly<{ Code: string }>;
       }>[];

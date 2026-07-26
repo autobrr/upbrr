@@ -253,9 +253,13 @@ const (
 	RequiredActionSelectMetadata RequiredActionKind = "select_metadata"
 	// RequiredActionConfirmRescan requests permission for a destructive cache refresh.
 	RequiredActionConfirmRescan RequiredActionKind = "confirm_rescan"
-	// RequiredActionAuthenticateTracker requests tracker authentication.
+	// RequiredActionAuthenticateTracker is retained for v1 decoding compatibility.
+	//
+	// Deprecated: upload workflows no longer emit tracker-authentication actions.
 	RequiredActionAuthenticateTracker RequiredActionKind = "authenticate_tracker"
-	// RequiredActionProvideTwoFactor requests a tracker 2FA code through a private command.
+	// RequiredActionProvideTwoFactor is retained for v1 decoding compatibility.
+	//
+	// Deprecated: upload workflows no longer emit tracker two-factor actions.
 	RequiredActionProvideTwoFactor RequiredActionKind = "provide_two_factor"
 	// RequiredActionProvideTrackerInput requests tracker-specific projection input.
 	RequiredActionProvideTrackerInput RequiredActionKind = "provide_tracker_input"

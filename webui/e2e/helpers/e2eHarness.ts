@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -52,6 +52,7 @@ export type E2EWorkspace = {
   root: string;
   configPath: string;
   dbPath: string;
+  authCounterPath: string;
   sourcePath: string;
   screenshotPath: string;
   fake: FakeServer;
@@ -86,6 +87,7 @@ export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Pro
   const sourcePath = path.join(mediaDir, "E2E.Movie.2026.1080p.WEB-DL.DD5.1.H264-UPBRR.mkv");
   const screenshotPath = path.join(mediaDir, "shot-01.png");
   const dbPath = path.join(root, "upbrr-e2e.db");
+  const authCounterPath = path.join(root, "auth-counters.json");
   const configPath = path.join(root, "config.yaml");
   await writeFile(sourcePath, "e2e media fixture\n");
   await writeFile(screenshotPath, png1x1);
@@ -98,11 +100,13 @@ export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Pro
     UPBRR_E2E_IMAGE_URL: fake.url,
     UPBRR_E2E_CLIENT_URL: fake.url,
     UPBRR_E2E_SCREENSHOT_PATH: screenshotPath,
+    UPBRR_E2E_AUTH_COUNTER_PATH: authCounterPath,
   };
   return {
     root,
     configPath,
     dbPath,
+    authCounterPath,
     sourcePath,
     screenshotPath,
     fake,
@@ -112,6 +116,27 @@ export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Pro
       await rm(root, { recursive: true, force: true });
     },
   };
+}
+
+export type E2EAuthCounters = Readonly<{
+  capabilityCalls: number;
+  validationCalls: number;
+  loginAttempts: number;
+  validations: Readonly<Record<string, number>>;
+}>;
+
+/** Reads deterministic in-process auth fake counters without tracker network I/O. */
+export async function readE2EAuthCounters(workspace: E2EWorkspace): Promise<E2EAuthCounters> {
+  try {
+    return JSON.parse(await readFile(workspace.authCounterPath, "utf8")) as E2EAuthCounters;
+  } catch {
+    return {
+      capabilityCalls: 0,
+      validationCalls: 0,
+      loginAttempts: 0,
+      validations: {},
+    };
+  }
 }
 
 /** Adds a minimal parseable BDMV source without invoking any external disc tool. */

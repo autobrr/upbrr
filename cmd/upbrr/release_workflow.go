@@ -67,7 +67,6 @@ type cliWorkflowSession struct {
 	current        releaseworkflow.CommandResult
 	intent         cliWorkflowIntent
 	uploadRequest  api.Request
-	trackerAuth    cliTrackerAuthChecker
 	idempotencyRun string
 	intentSequence uint64
 	progressWriter io.Writer
@@ -673,55 +672,21 @@ func auditableProjectionPolicyDecision(decision api.TrackerPolicyDecision) bool 
 }
 
 func (s *cliWorkflowSession) collectContinuationActionAnswers(
-	ctx context.Context,
+	_ context.Context,
 	reader *bufio.Reader,
-	cfg config.Config,
-	logger api.Logger,
+	_ config.Config,
+	_ api.Logger,
 ) ([]api.RequiredActionAnswer, bool, error) {
-	authTrackers := make([]string, 0)
-	readyAuthTrackers := make([]string, 0)
-	for _, action := range s.current.Continuation.RequiredActions {
-		if action.Status == api.RequiredActionStatusPending &&
-			(action.Kind == api.RequiredActionAuthenticateTracker || action.Kind == api.RequiredActionProvideTwoFactor) &&
-			!slices.Contains(authTrackers, string(action.TrackerID)) {
-			authTrackers = append(authTrackers, string(action.TrackerID))
-		}
-	}
-	if len(authTrackers) > 0 && s.intent.interaction != api.InteractionModeUnattended {
-		ready, err := s.ensureTrackerAuthBeforeDupeCheck(
-			ctx,
-			reader,
-			cfg,
-			s.intent.interaction,
-			authTrackers,
-			cliWorkflowMetadataPreview(s.current),
-			logger,
-		)
-		if err != nil {
-			return nil, false, err
-		}
-		readyAuthTrackers = ready
-	}
-
 	answers := make([]api.RequiredActionAnswer, 0)
 	for _, action := range s.current.Continuation.RequiredActions {
 		if action.Status != api.RequiredActionStatusPending {
 			continue
 		}
 		switch action.Kind {
-		case api.RequiredActionAuthenticateTracker, api.RequiredActionProvideTwoFactor:
-			if s.intent.interaction == api.InteractionModeUnattended ||
-				!slices.ContainsFunc(readyAuthTrackers, func(trackerID string) bool {
-					return strings.EqualFold(strings.TrimSpace(trackerID), strings.TrimSpace(string(action.TrackerID)))
-				}) {
-				continue
-			}
-			confirmed := true
-			answers = append(answers, api.RequiredActionAnswer{
-				ActionID:         action.ID,
-				WorkflowRevision: s.current.Workflow.Revision,
-				Confirmed:        &confirmed,
-			})
+		case legacyTrackerAuthActionKind, legacyTrackerTwoFactorActionKind:
+			return nil, false, errors.New(
+				"upbrr: tracker authentication must be resolved outside the upload workflow; start a fresh attempt",
+			)
 		case api.RequiredActionAuthorizeRules:
 			if s.intent.interaction == api.InteractionModeUnattended {
 				continue

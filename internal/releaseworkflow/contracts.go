@@ -15,6 +15,13 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+const (
+	legacyTrackerAuthActionKind        = api.RequiredActionKind("authenticate_tracker")
+	legacyTrackerTwoFactorActionKind   = api.RequiredActionKind("provide_two_factor")
+	legacyTrackerAuthFeedbackKind      = api.ReleaseWorkflowUploadFeedbackKind("trackerAuthentication")
+	legacyTrackerTwoFactorFeedbackKind = api.ReleaseWorkflowUploadFeedbackKind("twoFactor")
+)
+
 // MediaArtifactContent is one owner-checked retained media stream.
 type MediaArtifactContent struct {
 	Body        io.ReadCloser

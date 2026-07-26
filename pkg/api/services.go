@@ -22,7 +22,7 @@ type ServiceSet struct {
 	Clients    ClientService
 	Filesystem FilesystemService
 	Dupes      DupeService
-	// TrackerAuth validates managed tracker sessions before duplicate checks.
+	// TrackerAuth validates tracker readiness at the shared upload-preflight boundary.
 	TrackerAuth TrackerAuthService
 	Screenshots ScreenshotService
 	// DVDMenus handles automatic capture and persisted disc-menu lifecycle operations.
@@ -98,8 +98,8 @@ func (s DuplicateSubject) CanonicalSeasonEpisode() (int, int) {
 	return s.SeasonInt, s.EpisodeInt
 }
 
-// TrackerAuthService exposes the batch auth operations needed before WebUI and
-// embedded-web duplicate checking.
+// TrackerAuthService exposes the batch auth operations needed by shared upload
+// preflight. Interactive auth changes remain outside release workflows.
 type TrackerAuthService interface {
 	// Capabilities returns the configured trackers whose auth workflows the
 	// service can classify.

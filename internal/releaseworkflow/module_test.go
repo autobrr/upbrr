@@ -1048,7 +1048,7 @@ func TestModuleUnattendedPreflightSkipsManualTrackerAndKeepsReadySibling(t *test
 			}
 			if projection.TrackerID == "ALPHA" {
 				action := api.RequiredAction{
-					Kind:   api.RequiredActionAuthenticateTracker,
+					Kind:   legacyTrackerAuthActionKind,
 					Prompt: "Authenticate this tracker.",
 				}
 				failure := api.WorkflowFailure{

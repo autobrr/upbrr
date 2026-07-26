@@ -28,6 +28,7 @@ type projectionDupeService interface {
 
 type workflowDupeBuilder struct {
 	service api.DupeService
+	logger  api.Logger
 }
 
 type workflowDupePrivateEvidence struct {
@@ -48,6 +49,9 @@ func (b workflowDupeBuilder) Build(
 	}
 	if b.service == nil {
 		return api.DupeAssessment{}, nil, errors.New("workflow duplicate check: service is required")
+	}
+	if b.logger == nil {
+		b.logger = api.NopLogger{}
 	}
 	if preflight.Status != api.StageStatusReady || !preflight.ExpiresAt.After(checkedAt) {
 		return api.DupeAssessment{}, nil, errors.New("workflow duplicate check: preflight is stale or not ready")
@@ -70,7 +74,15 @@ func (b workflowDupeBuilder) Build(
 		result, ok := preflightByTracker[projection.TrackerID]
 		if ok && projection.Readiness == api.ReadinessStatusReady && projection.DupeReady && result.State == api.TrackerPreflightStateReady {
 			eligibleProjections.Projections = append(eligibleProjections.Projections, projection)
+			continue
 		}
+		b.logger.Tracef(
+			"core: duplicate lane skipped tracker=%s readiness=%s preflight=%s dupe_ready=%t",
+			projection.TrackerID,
+			projection.Readiness,
+			result.State,
+			projection.DupeReady,
+		)
 	}
 	if len(eligibleProjections.Projections) == 0 {
 		return api.DupeAssessment{}, nil, errors.New("workflow duplicate check: no eligible trackers")

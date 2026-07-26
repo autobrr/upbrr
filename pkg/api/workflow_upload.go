@@ -403,16 +403,18 @@ func validateReleaseWorkflowUploadExternalIDs(ids ReleaseWorkflowUploadExternalI
 type ReleaseWorkflowUploadFeedbackKind string
 
 const (
-	ReleaseWorkflowUploadFeedbackPlaylistSelection     ReleaseWorkflowUploadFeedbackKind = "playlistSelection"
-	ReleaseWorkflowUploadFeedbackMetadataSelection     ReleaseWorkflowUploadFeedbackKind = "metadataSelection"
-	ReleaseWorkflowUploadFeedbackRescanConfirmation    ReleaseWorkflowUploadFeedbackKind = "rescanConfirmation"
+	ReleaseWorkflowUploadFeedbackPlaylistSelection  ReleaseWorkflowUploadFeedbackKind = "playlistSelection"
+	ReleaseWorkflowUploadFeedbackMetadataSelection  ReleaseWorkflowUploadFeedbackKind = "metadataSelection"
+	ReleaseWorkflowUploadFeedbackRescanConfirmation ReleaseWorkflowUploadFeedbackKind = "rescanConfirmation"
+	// Deprecated: tracker authentication must be resolved outside upload workflows.
 	ReleaseWorkflowUploadFeedbackTrackerAuthentication ReleaseWorkflowUploadFeedbackKind = "trackerAuthentication"
-	ReleaseWorkflowUploadFeedbackTwoFactor             ReleaseWorkflowUploadFeedbackKind = "twoFactor"
-	ReleaseWorkflowUploadFeedbackTrackerInput          ReleaseWorkflowUploadFeedbackKind = "trackerInput"
-	ReleaseWorkflowUploadFeedbackQuestionnaire         ReleaseWorkflowUploadFeedbackKind = "questionnaire"
-	ReleaseWorkflowUploadFeedbackRuleAuthorization     ReleaseWorkflowUploadFeedbackKind = "ruleAuthorization"
-	ReleaseWorkflowUploadFeedbackDuplicateReview       ReleaseWorkflowUploadFeedbackKind = "duplicateReview"
-	ReleaseWorkflowUploadFeedbackTrackerApproval       ReleaseWorkflowUploadFeedbackKind = "trackerApproval"
+	// Deprecated: tracker two-factor authentication must be resolved outside upload workflows.
+	ReleaseWorkflowUploadFeedbackTwoFactor         ReleaseWorkflowUploadFeedbackKind = "twoFactor"
+	ReleaseWorkflowUploadFeedbackTrackerInput      ReleaseWorkflowUploadFeedbackKind = "trackerInput"
+	ReleaseWorkflowUploadFeedbackQuestionnaire     ReleaseWorkflowUploadFeedbackKind = "questionnaire"
+	ReleaseWorkflowUploadFeedbackRuleAuthorization ReleaseWorkflowUploadFeedbackKind = "ruleAuthorization"
+	ReleaseWorkflowUploadFeedbackDuplicateReview   ReleaseWorkflowUploadFeedbackKind = "duplicateReview"
+	ReleaseWorkflowUploadFeedbackTrackerApproval   ReleaseWorkflowUploadFeedbackKind = "trackerApproval"
 	// Deprecated: final upload approval is no longer emitted by runtime workflows.
 	ReleaseWorkflowUploadFeedbackUploadApproval ReleaseWorkflowUploadFeedbackKind = "uploadApproval"
 	ReleaseWorkflowUploadFeedbackReprepare      ReleaseWorkflowUploadFeedbackKind = "reprepare"
@@ -485,14 +487,16 @@ type ReleaseWorkflowUploadTrackerApproval struct {
 	TrackerIDs []TrackerID `json:"trackerIds"`
 }
 
-// ReleaseWorkflowUploadTrackerAuthentication requests private authentication
-// revalidation for one tracker.
+// ReleaseWorkflowUploadTrackerAuthentication is retained for v1 decoding compatibility.
+//
+// Deprecated: tracker authentication must be resolved outside upload workflows.
 type ReleaseWorkflowUploadTrackerAuthentication struct {
 	TrackerID TrackerID `json:"trackerId"`
 }
 
-// ReleaseWorkflowUploadTwoFactor supplies private input for one active tracker
-// challenge. Code is consumed before durable feedback mutation.
+// ReleaseWorkflowUploadTwoFactor is retained for v1 decoding compatibility.
+//
+// Deprecated: tracker two-factor authentication must be resolved outside upload workflows.
 type ReleaseWorkflowUploadTwoFactor struct {
 	TrackerID   TrackerID `json:"trackerId"`
 	ChallengeID string    `json:"challengeId"`

@@ -6,6 +6,7 @@ import { expect, test } from "@playwright/test";
 import {
   createE2EWorkspace,
   e2eBinary,
+  readE2EAuthCounters,
   releaseWorkflowParityFixture,
   repoRoot,
 } from "./helpers/e2eHarness";
@@ -44,7 +45,7 @@ test("CLI full upload approves trackers before downstream work", async () => {
 
 test("CLI skips an auth-blocked tracker while uploading a ready sibling", async () => {
   const workspace = await createE2EWorkspace();
-  workspace.env.UPBRR_E2E_AUTH_REQUIRED_TRACKERS = "HDS";
+  workspace.env.UPBRR_E2E_AUTH_SCENARIOS = "HDS=validation_only_missing_cookies";
   try {
     const result = await runCLI(
       [
@@ -60,10 +61,22 @@ test("CLI skips an auth-blocked tracker while uploading a ready sibling", async 
       "y\ny\n",
     );
     expect(result.code, result.output).toBe(0);
-    expect(result.output).toContain("Skipping HDS before dupe check");
+    expect(result.output).not.toContain("Skipping HDS before dupe check");
     expect(result.output).not.toContain("tracker authentication remains incomplete");
+    expect(result.output).not.toMatch(
+      /(?:login|two-factor|2fa|cookie file)[^\r\n]*(?:\?\s*$|:\s*$)/im,
+    );
     expect(workspace.fake.counters.trackerUploads).toBe(1);
+    expect(workspace.fake.counters.clientSearches).toBe(
+      releaseWorkflowParityFixture.expectedClientSearches,
+    );
     expect(workspace.fake.counters.clientInjections).toBe(0);
+    expect(await readE2EAuthCounters(workspace)).toEqual({
+      capabilityCalls: 1,
+      validationCalls: 1,
+      loginAttempts: 0,
+      validations: { BTN: 1, HDS: 1 },
+    });
   } finally {
     await workspace.cleanup();
   }

@@ -6,13 +6,483 @@ package releaseworkflow
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestPersistentWorkflowRestartRetriesAuthBlockedProjectionOnce(t *testing.T) {
+	t.Parallel()
+
+	databasePath := filepath.Join(t.TempDir(), "auth-restart.sqlite")
+	repoA, err := db.Open(databasePath)
+	if err != nil {
+		t.Fatalf("open first repository: %v", err)
+	}
+	if err := repoA.Migrate(); err != nil {
+		_ = repoA.Close()
+		t.Fatalf("migrate first repository: %v", err)
+	}
+	persistentA, err := NewPersistentRepository(repoA)
+	if err != nil {
+		_ = repoA.Close()
+		t.Fatalf("new first persistent repository: %v", err)
+	}
+
+	var authReady atomic.Bool
+	var projectionBuilds atomic.Int32
+	var preflightBuilds atomic.Int32
+	projector := trackerProjectionBuilderFunc(func(
+		_ context.Context,
+		_ api.ReleaseSnapshot,
+		_ api.UploadSubject,
+		trackerIDs []api.TrackerID,
+		_ map[api.TrackerID]api.TrackerProjectionInstructions,
+		executionMode api.WorkflowExecutionMode,
+	) (
+		api.TrackerCatalogSnapshot,
+		api.TrackerRuntimeSnapshot,
+		api.TrackerSelection,
+		api.TrackerReleaseProjectionSet,
+		error,
+	) {
+		projectionBuilds.Add(1)
+		projections := make([]api.TrackerReleaseProjection, 0, len(trackerIDs))
+		for _, trackerID := range trackerIDs {
+			projections = append(projections, testProjection(t, trackerID, "Example.Release.2026."+string(trackerID)+"-GRP"))
+		}
+		return testCatalog(t), testRuntime(t), api.TrackerSelection{TrackerIDs: slices.Clone(trackerIDs)}, api.TrackerReleaseProjectionSet{
+			InputFingerprint:  testFingerprint(t, "auth-restart-projection"),
+			PolicyFingerprint: testFingerprint(t, "auth-restart-policy"),
+			ExecutionMode:     executionMode,
+			Projections:       projections,
+			Status:            api.StageStatusReady,
+		}, nil
+	})
+	preflight := trackerPreflightBuilderFunc(func(
+		_ context.Context,
+		_ api.UploadSubject,
+		_ api.TrackerCatalogSnapshot,
+		_ api.TrackerRuntimeSnapshot,
+		initial api.TrackerReleaseProjectionSet,
+		now time.Time,
+	) (api.TrackerPreflightAssessment, []api.TrackerReleaseProjection, error) {
+		preflightBuilds.Add(1)
+		results := make([]api.TrackerPreflightResult, 0, len(initial.Projections))
+		finalized := slices.Clone(initial.Projections)
+		for index, projection := range initial.Projections {
+			fingerprint, fingerprintErr := api.CanonicalWorkflowFingerprint(projection)
+			if fingerprintErr != nil {
+				return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("fingerprint auth restart projection: %w", fingerprintErr)
+			}
+			result := api.TrackerPreflightResult{
+				TrackerID:             projection.TrackerID,
+				State:                 api.TrackerPreflightStateReady,
+				AuthReady:             true,
+				ClaimsReady:           true,
+				BannedGroupsReady:     true,
+				RemoteMetadataReady:   true,
+				ConfigFingerprint:     projection.ConfigFingerprint,
+				ProjectionFingerprint: fingerprint,
+				AssessedAt:            now,
+				FreshUntil:            now.Add(time.Hour),
+			}
+			if projection.TrackerID == "BETA" && !authReady.Load() {
+				result.State = api.TrackerPreflightStateRetryable
+				result.AuthReady = false
+				result.Failures = []api.WorkflowFailure{{
+					Failure: api.OperationFailure{
+						Code:      api.OperationFailureTrackerAuthRequired,
+						Operation: api.OperationKindDuplicateCheck,
+						Message:   "Tracker authentication is not ready for this attempt.",
+						Recovery:  api.OperationRecoveryAuthenticateTrackers,
+					},
+					TrackerID: projection.TrackerID,
+				}}
+				finalized[index].Readiness = api.ReadinessStatusBlocked
+				finalized[index].DupeReady = false
+				finalized[index].UploadReady = false
+				finalized[index].Failures = slices.Clone(result.Failures)
+			}
+			results = append(results, result)
+		}
+		return api.TrackerPreflightAssessment{
+			InputFingerprint: testFingerprint(t, "auth-restart-preflight"),
+			Results:          results,
+			ExpiresAt:        now.Add(time.Hour),
+		}, finalized, nil
+	})
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	moduleA, err := New(
+		persistentA,
+		NewMemoryPrivateResourceStore(),
+		testPreparer(),
+		WithClock(fixedClock{now: now}),
+		WithIDGenerator(&sequenceIDGenerator{}),
+		WithProcessEpoch("epoch-auth-a"),
+		WithTrackerProjectionBuilder(projector),
+		WithTrackerPreflightBuilder(preflight),
+	)
+	if err != nil {
+		_ = repoA.Close()
+		t.Fatalf("new first module: %v", err)
+	}
+	result := executeCommand(t, moduleA, CreateWorkflowCommand{WorkflowID: "workflow-auth-restart"})
+	result = executeCommand(t, moduleA, PrepareReleaseCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Input: api.PrepareInput{
+			SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP"),
+		},
+	})
+	result = executeCommand(t, moduleA, ProjectTrackersCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		TrackerIDs:       []api.TrackerID{"ALPHA", "BETA"},
+		Instructions:     map[api.TrackerID]api.TrackerProjectionInstructions{},
+	})
+	result = executeCommand(t, moduleA, PreflightTrackersCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+	})
+	if result.Preflight == nil || result.Projections == nil ||
+		result.Preflight.Results[1].State != api.TrackerPreflightStateRetryable ||
+		result.Projections.Projections[1].Readiness != api.ReadinessStatusBlocked {
+		_ = repoA.Close()
+		t.Fatalf("epoch A auth-blocked result = %#v", result)
+	}
+	oldProjectionID := result.Projections.ID
+	oldPreflightID := result.Preflight.ID
+	if err := repoA.Close(); err != nil {
+		t.Fatalf("close first repository: %v", err)
+	}
+
+	authReady.Store(true)
+	repoB, err := db.Open(databasePath)
+	if err != nil {
+		t.Fatalf("reopen repository: %v", err)
+	}
+	t.Cleanup(func() { _ = repoB.Close() })
+	if err := repoB.Migrate(); err != nil {
+		t.Fatalf("migrate reopened repository: %v", err)
+	}
+	persistentB, err := NewPersistentRepository(repoB)
+	if err != nil {
+		t.Fatalf("new reopened persistent repository: %v", err)
+	}
+	moduleB, err := New(
+		persistentB,
+		NewMemoryPrivateResourceStore(),
+		testPreparer(),
+		WithClock(fixedClock{now: now.Add(time.Minute)}),
+		WithIDGenerator(&sequenceIDGenerator{next: 100}),
+		WithProcessEpoch("epoch-auth-b"),
+		WithTrackerProjectionBuilder(projector),
+		WithTrackerPreflightBuilder(preflight),
+	)
+	if err != nil {
+		t.Fatalf("new restarted module: %v", err)
+	}
+	recovered, err := moduleB.Current(context.Background(), testOwnerID, result.Workflow.ID)
+	if err != nil {
+		t.Fatalf("recover auth-blocked workflow: %v", err)
+	}
+	if recovered.Projections != nil || recovered.Preflight != nil ||
+		recovered.Selection == nil || recovered.ProjectionInstructions == nil ||
+		!slices.Equal(recovered.Selection.TrackerIDs, []api.TrackerID{"ALPHA", "BETA"}) {
+		t.Fatalf("recovered auth authority = %#v", recovered)
+	}
+	recoveredAgain, err := moduleB.Current(context.Background(), testOwnerID, result.Workflow.ID)
+	if err != nil {
+		t.Fatalf("repeat same-epoch recovery: %v", err)
+	}
+	if recoveredAgain.Workflow.Revision != recovered.Workflow.Revision {
+		t.Fatalf("same-epoch recovery revision = %d, want %d", recoveredAgain.Workflow.Revision, recovered.Workflow.Revision)
+	}
+
+	request := api.ContinueReleaseWorkflowRequest{
+		Authority: &api.WorkflowAuthority{
+			WorkflowID:       recovered.Workflow.ID,
+			ExpectedRevision: recovered.Workflow.Revision,
+		},
+		IdempotencyKey: "continue-auth-restart-project",
+		Goal:           api.WorkflowGoalTrackersAssessed,
+		Intent: api.WorkflowIntent{
+			TrackerIDs:             []api.TrackerID{"ALPHA", "BETA"},
+			ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
+		},
+	}
+	projecting, err := moduleB.Continue(context.Background(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("continue auth restart projection: %v", err)
+	}
+	if projecting.Operation == nil {
+		t.Fatalf("auth restart projection operation = %#v", projecting)
+	}
+	waitForWorkflowOperation(t, moduleB, recovered.Workflow.ID, projecting.Operation.ID, func(status api.WorkflowOperationStatus) bool {
+		return isTerminalProgressStatus(status.Status)
+	})
+	projected, err := moduleB.Current(context.Background(), testOwnerID, recovered.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load fresh projection: %v", err)
+	}
+	request.Authority.ExpectedRevision = projected.Workflow.Revision
+	request.IdempotencyKey = "continue-auth-restart-preflight"
+	preflighting, err := moduleB.Continue(context.Background(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("continue auth restart preflight: %v", err)
+	}
+	if preflighting.Operation == nil {
+		t.Fatalf("auth restart preflight operation = %#v", preflighting)
+	}
+	waitForWorkflowOperation(t, moduleB, recovered.Workflow.ID, preflighting.Operation.ID, func(status api.WorkflowOperationStatus) bool {
+		return isTerminalProgressStatus(status.Status)
+	})
+	fresh, err := moduleB.Current(context.Background(), testOwnerID, recovered.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load fresh preflight: %v", err)
+	}
+	if fresh.Preflight == nil || fresh.Projections == nil ||
+		len(fresh.Preflight.Results) != 2 ||
+		fresh.Preflight.Results[1].State != api.TrackerPreflightStateReady ||
+		fresh.Projections.Projections[1].Readiness != api.ReadinessStatusReady {
+		t.Fatalf("fresh auth projection = %#v", fresh)
+	}
+	if projectionBuilds.Load() != 2 || preflightBuilds.Load() != 2 {
+		t.Fatalf("restart build counts: projections=%d preflights=%d", projectionBuilds.Load(), preflightBuilds.Load())
+	}
+	retained, err := persistentB.Load(context.Background(), testOwnerID, recovered.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load retained auth history: %v", err)
+	}
+	if _, ok := retained.Projections[oldProjectionID]; !ok {
+		t.Fatalf("old auth-blocked projection %s was not retained", oldProjectionID)
+	}
+	if _, ok := retained.Preflights[oldPreflightID]; !ok {
+		t.Fatalf("old auth-blocked preflight %s was not retained", oldPreflightID)
+	}
+}
+
+func TestPersistentRestartHandlesLegacyAuthStateSafely(t *testing.T) {
+	t.Parallel()
+
+	databasePath := filepath.Join(t.TempDir(), "legacy-auth-restart.sqlite")
+	repoA, err := db.Open(databasePath)
+	if err != nil {
+		t.Fatalf("open first repository: %v", err)
+	}
+	if err := repoA.Migrate(); err != nil {
+		_ = repoA.Close()
+		t.Fatalf("migrate first repository: %v", err)
+	}
+	persistentA, err := NewPersistentRepository(repoA)
+	if err != nil {
+		_ = repoA.Close()
+		t.Fatalf("new first persistent repository: %v", err)
+	}
+	projector := trackerProjectionBuilderFunc(func(
+		_ context.Context,
+		_ api.ReleaseSnapshot,
+		_ api.UploadSubject,
+		trackerIDs []api.TrackerID,
+		_ map[api.TrackerID]api.TrackerProjectionInstructions,
+		executionMode api.WorkflowExecutionMode,
+	) (
+		api.TrackerCatalogSnapshot,
+		api.TrackerRuntimeSnapshot,
+		api.TrackerSelection,
+		api.TrackerReleaseProjectionSet,
+		error,
+	) {
+		projections := make([]api.TrackerReleaseProjection, 0, len(trackerIDs))
+		for _, trackerID := range trackerIDs {
+			projections = append(projections, testProjection(t, trackerID, "Example.Release.2026."+string(trackerID)+"-GRP"))
+		}
+		return testCatalog(t), testRuntime(t), api.TrackerSelection{TrackerIDs: slices.Clone(trackerIDs)}, api.TrackerReleaseProjectionSet{
+			InputFingerprint:  testFingerprint(t, "legacy-auth-projection"),
+			PolicyFingerprint: testFingerprint(t, "legacy-auth-policy"),
+			ExecutionMode:     executionMode,
+			Projections:       projections,
+			Status:            api.StageStatusReady,
+		}, nil
+	})
+	preflight := trackerPreflightBuilderFunc(func(
+		_ context.Context,
+		_ api.UploadSubject,
+		_ api.TrackerCatalogSnapshot,
+		_ api.TrackerRuntimeSnapshot,
+		initial api.TrackerReleaseProjectionSet,
+		now time.Time,
+	) (api.TrackerPreflightAssessment, []api.TrackerReleaseProjection, error) {
+		projection := initial.Projections[0]
+		fingerprint, fingerprintErr := api.CanonicalWorkflowFingerprint(projection)
+		if fingerprintErr != nil {
+			return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("fingerprint legacy auth projection: %w", fingerprintErr)
+		}
+		action := api.RequiredAction{
+			Kind:   legacyTrackerAuthActionKind,
+			Prompt: "Authenticate this tracker.",
+		}
+		result := api.TrackerPreflightResult{
+			TrackerID:             projection.TrackerID,
+			State:                 api.TrackerPreflightStateActionRequired,
+			AuthReady:             false,
+			ClaimsReady:           true,
+			BannedGroupsReady:     true,
+			RemoteMetadataReady:   true,
+			ConfigFingerprint:     projection.ConfigFingerprint,
+			ProjectionFingerprint: fingerprint,
+			RequiredActions:       []api.RequiredAction{action},
+			AssessedAt:            now,
+			FreshUntil:            now.Add(time.Hour),
+		}
+		finalized := slices.Clone(initial.Projections)
+		finalized[0].Readiness = api.ReadinessStatusBlocked
+		finalized[0].DupeReady = false
+		finalized[0].UploadReady = false
+		finalized[0].RequiredActions = []api.RequiredAction{action}
+		return api.TrackerPreflightAssessment{
+			InputFingerprint: testFingerprint(t, "legacy-auth-preflight"),
+			Results:          []api.TrackerPreflightResult{result},
+			ExpiresAt:        now.Add(time.Hour),
+		}, finalized, nil
+	})
+	now := time.Date(2026, time.July, 27, 13, 0, 0, 0, time.UTC)
+	moduleA, err := New(
+		persistentA,
+		NewMemoryPrivateResourceStore(),
+		testPreparer(),
+		WithClock(fixedClock{now: now}),
+		WithIDGenerator(&sequenceIDGenerator{}),
+		WithProcessEpoch("epoch-legacy-auth-a"),
+		WithTrackerProjectionBuilder(projector),
+		WithTrackerPreflightBuilder(preflight),
+	)
+	if err != nil {
+		_ = repoA.Close()
+		t.Fatalf("new first module: %v", err)
+	}
+	createLegacyAuthWorkflow := func(workflowID api.WorkflowID) CommandResult {
+		t.Helper()
+		result := executeCommand(t, moduleA, CreateWorkflowCommand{WorkflowID: workflowID})
+		result = executeCommand(t, moduleA, PrepareReleaseCommand{
+			WorkflowID:       result.Workflow.ID,
+			ExpectedRevision: result.Workflow.Revision,
+			Input: api.PrepareInput{
+				SourcePath: filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP"),
+			},
+		})
+		result = executeCommand(t, moduleA, ProjectTrackersCommand{
+			WorkflowID:       result.Workflow.ID,
+			ExpectedRevision: result.Workflow.Revision,
+			TrackerIDs:       []api.TrackerID{"ALPHA"},
+			Instructions:     map[api.TrackerID]api.TrackerProjectionInstructions{},
+		})
+		result = executeCommand(t, moduleA, PreflightTrackersCommand{
+			WorkflowID:       result.Workflow.ID,
+			ExpectedRevision: result.Workflow.Revision,
+			Interaction:      api.InteractionModeInteractive,
+		})
+		if result.Workflow.Status != api.WorkflowStatusBlocked ||
+			len(result.Workflow.RequiredActions) != 1 ||
+			result.Workflow.RequiredActions[0].Kind != legacyTrackerAuthActionKind {
+			t.Fatalf("legacy auth workflow = %#v", result)
+		}
+		return result
+	}
+	safe := createLegacyAuthWorkflow("workflow-legacy-auth-safe")
+	ambiguous := createLegacyAuthWorkflow("workflow-legacy-auth-ambiguous")
+	ambiguousState, err := persistentA.Load(context.Background(), testOwnerID, ambiguous.Workflow.ID)
+	if err != nil {
+		_ = repoA.Close()
+		t.Fatalf("load ambiguous legacy workflow: %v", err)
+	}
+	expectedRevision := ambiguousState.Workflow.Revision
+	ambiguousState.Workflow.Revision++
+	ambiguousState.Workflow.UpdatedAt = now.Add(time.Second)
+	for index := range ambiguousState.Workflow.RequiredActions {
+		ambiguousState.Workflow.RequiredActions[index].WorkflowRevision = ambiguousState.Workflow.Revision
+	}
+	ambiguousState.Composite = &compositeUploadSession{
+		Version:        1,
+		Goal:           api.WorkflowGoalUploaded,
+		RemoveTrackers: []api.TrackerID{"ALPHA"},
+	}
+	if err := ambiguousState.Workflow.Validate(); err != nil {
+		_ = repoA.Close()
+		t.Fatalf("validate ambiguous legacy workflow: %v", err)
+	}
+	if err := persistentA.Save(context.Background(), testOwnerID, expectedRevision, ambiguousState); err != nil {
+		_ = repoA.Close()
+		t.Fatalf("save ambiguous legacy workflow: %v", err)
+	}
+	if err := repoA.Close(); err != nil {
+		t.Fatalf("close first repository: %v", err)
+	}
+
+	repoB, err := db.Open(databasePath)
+	if err != nil {
+		t.Fatalf("reopen repository: %v", err)
+	}
+	t.Cleanup(func() { _ = repoB.Close() })
+	if err := repoB.Migrate(); err != nil {
+		t.Fatalf("migrate reopened repository: %v", err)
+	}
+	persistentB, err := NewPersistentRepository(repoB)
+	if err != nil {
+		t.Fatalf("new reopened persistent repository: %v", err)
+	}
+	moduleB, err := New(
+		persistentB,
+		NewMemoryPrivateResourceStore(),
+		testPreparer(),
+		WithClock(fixedClock{now: now.Add(time.Minute)}),
+		WithIDGenerator(&sequenceIDGenerator{next: 100}),
+		WithProcessEpoch("epoch-legacy-auth-b"),
+		WithTrackerProjectionBuilder(projector),
+		WithTrackerPreflightBuilder(preflight),
+	)
+	if err != nil {
+		t.Fatalf("new restarted module: %v", err)
+	}
+	recoveredSafe, err := moduleB.Current(context.Background(), testOwnerID, safe.Workflow.ID)
+	if err != nil {
+		t.Fatalf("recover safe legacy auth workflow: %v", err)
+	}
+	if recoveredSafe.Workflow.Status != api.WorkflowStatusActive ||
+		len(recoveredSafe.Workflow.RequiredActions) != 0 ||
+		recoveredSafe.Projections != nil ||
+		recoveredSafe.Preflight != nil ||
+		recoveredSafe.Selection == nil ||
+		!slices.Equal(recoveredSafe.Selection.TrackerIDs, []api.TrackerID{"ALPHA"}) {
+		t.Fatalf("safe legacy auth recovery = %#v", recoveredSafe)
+	}
+	recoveredAgain, err := moduleB.Current(context.Background(), testOwnerID, safe.Workflow.ID)
+	if err != nil {
+		t.Fatalf("repeat safe legacy auth recovery: %v", err)
+	}
+	if recoveredAgain.Workflow.Revision != recoveredSafe.Workflow.Revision {
+		t.Fatalf("same-epoch safe recovery revision = %d, want %d", recoveredAgain.Workflow.Revision, recoveredSafe.Workflow.Revision)
+	}
+
+	recoveredAmbiguous, err := moduleB.Current(context.Background(), testOwnerID, ambiguous.Workflow.ID)
+	if err != nil {
+		t.Fatalf("recover ambiguous legacy auth workflow: %v", err)
+	}
+	if recoveredAmbiguous.Workflow.Status != api.WorkflowStatusFailed ||
+		len(recoveredAmbiguous.Workflow.RequiredActions) != 0 ||
+		len(recoveredAmbiguous.Workflow.Failures) != 1 ||
+		!strings.Contains(recoveredAmbiguous.Workflow.Failures[0].Failure.Message, "fresh upload workflow") {
+		t.Fatalf("ambiguous legacy auth recovery = %#v", recoveredAmbiguous)
+	}
+}
 
 func TestPersistentWorkflowRestartPreservesTrackerApproval(t *testing.T) {
 	t.Parallel()

@@ -1877,6 +1877,9 @@ func TestCapabilitiesAdvertiseOnlySupportedManual2FA(t *testing.T) {
 		t.Fatalf("Capabilities: %v", err)
 	}
 	for _, cap := range caps {
+		if cap.SupportsAutoLogin && !cap.SupportsLogin {
+			t.Fatalf("%s advertises automatic login without explicit login support", cap.TrackerID)
+		}
 		switch cap.TrackerID {
 		case "MTV", "PTP":
 			if !cap.SupportsManual2FA {

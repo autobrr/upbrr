@@ -394,7 +394,7 @@ func TestWorkflowContinuationWaitsWhenAllLanesNeedAction(t *testing.T) {
 	current := continuationTestCurrent()
 	action := api.RequiredAction{
 		ID:               "action-auth",
-		Kind:             api.RequiredActionAuthenticateTracker,
+		Kind:             legacyTrackerAuthActionKind,
 		Status:           api.RequiredActionStatusPending,
 		WorkflowRevision: current.Workflow.Revision,
 		TrackerID:        "ALPHA",

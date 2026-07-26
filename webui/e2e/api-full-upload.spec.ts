@@ -5,6 +5,7 @@ import { expect, test } from "@playwright/test";
 import {
   createE2EAPIToken,
   createE2EWorkspace,
+  readE2EAuthCounters,
   releaseWorkflowParityFixture,
   startApp,
 } from "./helpers/e2eHarness";
@@ -260,7 +261,7 @@ test("debug composite performs client injection unless no-seed is explicit", asy
 
 test("strict composite skips an auth-blocked tracker while uploading a ready sibling", async () => {
   const workspace = await createE2EWorkspace();
-  workspace.env.UPBRR_E2E_AUTH_REQUIRED_TRACKERS = "HDS";
+  workspace.env.UPBRR_E2E_AUTH_SCENARIOS = "HDS=validation_only_missing_cookies";
   const app = await startApp(workspace);
   try {
     const apiToken = await createE2EAPIToken(workspace);
@@ -277,6 +278,41 @@ test("strict composite skips an auth-blocked tracker while uploading a ready sib
     });
     expect(started.status, await started.clone().text()).toBe(202);
     const approvalBlocked = await client.accepted(started);
+    const approval = pendingAction(approvalBlocked, "approve_trackers");
+    expect(approval.options).toEqual([
+      {
+        value: releaseWorkflowParityFixture.trackerID,
+        label: releaseWorkflowParityFixture.trackerID,
+      },
+    ]);
+    const deprecatedAuthFeedback = await client.raw(
+      `/uploads/${approvalBlocked.workflow.id}/feedback`,
+      {
+        method: "POST",
+        revision: approvalBlocked.workflow.revision,
+        idempotencyKey: "strict-auth-skip-deprecated-feedback",
+        body: {
+          action: {
+            id: approval.id,
+            workflowRevision: approvalBlocked.workflow.revision,
+          },
+          response: {
+            kind: "trackerAuthentication",
+            trackerAuthentication: { trackerId: "HDS" },
+          },
+        },
+      },
+    );
+    const deprecatedAuthPayload = (await deprecatedAuthFeedback.json()) as {
+      error?: string;
+      failure?: { Code?: string };
+    };
+    expect(deprecatedAuthFeedback.status).toBe(409);
+    expect(deprecatedAuthPayload).toMatchObject({
+      error:
+        "Tracker authentication must be resolved outside the upload workflow. Start a fresh attempt.",
+      failure: { Code: "tracker_auth_required" },
+    });
     const approvalFeedback = await submitTrackerApproval(
       client,
       approvalBlocked,
@@ -292,14 +328,94 @@ test("strict composite skips an auth-blocked tracker while uploading a ready sib
     ]);
     const authBlocked = completed.preflight?.results.find((result) => result.trackerId === "HDS");
     expect(authBlocked).toMatchObject({
-      state: "failed",
+      state: "retryable",
       authReady: false,
     });
+    expect(authBlocked?.requiredActions).toBeUndefined();
     expect(
       authBlocked?.failures?.some((failure) => failure.failure.Code === "tracker_auth_required"),
     ).toBe(true);
+    expect(
+      completed.projections?.projections.find((projection) => projection.trackerId === "HDS"),
+    ).toMatchObject({
+      readiness: "blocked",
+      dupeReady: false,
+      uploadReady: false,
+    });
     expect(completed.workflow.requiredActions).toBeUndefined();
     expect(workspace.fake.counters.trackerUploads).toBe(1);
+    expect(await readE2EAuthCounters(workspace)).toEqual({
+      capabilityCalls: 1,
+      validationCalls: 1,
+      loginAttempts: 0,
+      validations: { BTN: 1, HDS: 1 },
+    });
+  } finally {
+    await app.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("strict composite stops cleanly when every tracker is auth-blocked", async () => {
+  const workspace = await createE2EWorkspace();
+  workspace.env.UPBRR_E2E_AUTH_SCENARIOS = "HDS=validation_only_missing_cookies";
+  const app = await startApp(workspace);
+  try {
+    const apiToken = await createE2EAPIToken(workspace);
+    const client = new ReleaseWorkflowV1Client(app.url, apiToken);
+    const started = await client.raw("/uploads", {
+      method: "POST",
+      idempotencyKey: "strict-all-auth-blocked",
+      body: uploadBody(workspace.sourcePath, {
+        confirm: false,
+        mode: "upload",
+        noSeed: true,
+        trackerIDs: ["HDS"],
+      }),
+    });
+    expect(started.status, await started.clone().text()).toBe(202);
+
+    const accepted = (await started.json()) as { operation: WorkflowV1Operation };
+    const operation = await waitForTerminalOperation(
+      client,
+      accepted.operation.workflowId,
+      accepted.operation.id,
+    );
+    expect(operation.status).toBe("failed");
+    expect(operation.failures).toEqual([
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          Code: "no_eligible_trackers",
+          Recovery: "authenticate_trackers",
+        }),
+      }),
+    ]);
+    const current = await client.get(accepted.operation.workflowId);
+    expect(current.status, await current.clone().text()).toBe(200);
+    const blocked = (await current.json()) as WorkflowV1Current;
+    expect(blocked.workflow.status).toBe("failed");
+    expect(blocked.workflow.requiredActions).toBeUndefined();
+    expect(blocked.preflight?.results).toEqual([
+      expect.objectContaining({
+        trackerId: "HDS",
+        state: "retryable",
+        authReady: false,
+      }),
+    ]);
+    expect(blocked.dupes).toBeUndefined();
+    expect(blocked.media).toBeUndefined();
+    expect(blocked.descriptions).toBeUndefined();
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.clientSearches).toBe(
+      releaseWorkflowParityFixture.expectedClientSearches,
+    );
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+    expect(await readE2EAuthCounters(workspace)).toEqual({
+      capabilityCalls: 1,
+      validationCalls: 1,
+      loginAttempts: 0,
+      validations: { HDS: 1 },
+    });
   } finally {
     await app.stop();
     await workspace.cleanup();

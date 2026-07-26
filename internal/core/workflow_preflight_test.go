@@ -20,13 +20,13 @@ import (
 )
 
 type workflowPreflightAuthFake struct {
-	capabilities  []api.TrackerAuthCapability
-	statuses      []api.TrackerAuthStatus
-	capabilityErr error
-	validationErr error
+	capabilities    []api.TrackerAuthCapability
+	statuses        []api.TrackerAuthStatus
+	capabilityErr   error
+	validationErr   error
 	capabilityCalls *int
-	validateCalls *int
-	validatedIDs  *[]string
+	validateCalls   *int
+	validatedIDs    *[]string
 }
 
 type workflowAudioPolicyDefinition struct {
@@ -39,6 +39,30 @@ type workflowAudioPolicyDefinition struct {
 type workflowImageHostPolicyDefinition struct {
 	name   string
 	policy *trackerspkg.ImageHostPolicy
+}
+
+type workflowAuthDefinition struct {
+	name       string
+	capability api.TrackerAuthCapability
+}
+
+func (d workflowAuthDefinition) Name() string { return d.name }
+
+func (workflowAuthDefinition) DefaultBaseURL() string { return "https://auth.invalid" }
+
+func (workflowAuthDefinition) UploadContentMode() trackerspkg.UploadContentMode {
+	return trackerspkg.UploadContentModeDescription
+}
+
+func (workflowAuthDefinition) Prepare(
+	context.Context,
+	trackerspkg.PreparationInput,
+) (trackerspkg.TrackerPlan, *trackerspkg.PreparationFailure) {
+	return trackerspkg.TrackerPlan{}, nil
+}
+
+func (d workflowAuthDefinition) AuthCapability() api.TrackerAuthCapability {
+	return d.capability
 }
 
 func (d workflowImageHostPolicyDefinition) Name() string { return d.name }
@@ -184,7 +208,7 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		}
 	})
 
-	t.Run("two factor action", func(t *testing.T) {
+	t.Run("two factor blocked lane", func(t *testing.T) {
 		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{
 			capabilities: []api.TrackerAuthCapability{{TrackerID: "ALPHA", SupportsManual2FA: true}},
 			statuses: []api.TrackerAuthStatus{{
@@ -199,8 +223,14 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 			t.Fatalf("build action preflight: %v", err)
 		}
 		result := assessment.Results[0]
-		if result.State != api.TrackerPreflightStateActionRequired || len(result.RequiredActions) != 1 ||
-			result.RequiredActions[0].Kind != api.RequiredActionProvideTwoFactor || finalized[0].DupeReady {
+		if result.State != api.TrackerPreflightStateRetryable ||
+			len(result.RequiredActions) != 0 ||
+			len(result.Failures) != 1 ||
+			result.Failures[0].Failure.Code != api.OperationFailureTrackerAuthRequired ||
+			result.Failures[0].Failure.Recovery != api.OperationRecoveryAuthenticateTrackers ||
+			finalized[0].Readiness != api.ReadinessStatusBlocked ||
+			finalized[0].DupeReady ||
+			finalized[0].UploadReady {
 			t.Fatalf("2FA preflight = %#v/%#v", result, finalized[0])
 		}
 		payload, err := json.Marshal(struct {
@@ -239,6 +269,75 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		}
 	})
 
+	t.Run("missing static auth config blocks only configured lane", func(t *testing.T) {
+		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{
+			capabilities: []api.TrackerAuthCapability{{
+				TrackerID:      "ALPHA",
+				AuthKind:       "api_key",
+				RequiresAPIKey: true,
+			}},
+		}, registry: registry}
+		assessment, finalized, err := builder.Build(context.Background(), api.UploadSubject{}, catalog, runtime, projections, now)
+		if err != nil {
+			t.Fatalf("build missing static auth preflight: %v", err)
+		}
+		if assessment.Results[0].State != api.TrackerPreflightStateRetryable ||
+			len(assessment.Results[0].RequiredActions) != 0 ||
+			len(assessment.Results[0].Failures) != 1 ||
+			assessment.Results[0].Failures[0].Failure.Code != api.OperationFailureTrackerAuthRequired ||
+			finalized[0].Readiness != api.ReadinessStatusBlocked ||
+			finalized[0].DupeReady ||
+			finalized[0].UploadReady {
+			t.Fatalf("missing static auth preflight = %#v/%#v", assessment.Results[0], finalized[0])
+		}
+		if assessment.Results[1].State != api.TrackerPreflightStateReady ||
+			!finalized[1].DupeReady ||
+			!finalized[1].UploadReady {
+			t.Fatalf("missing static auth changed sibling = %#v/%#v", assessment.Results[1], finalized[1])
+		}
+	})
+
+	t.Run("capability failure blocks known auth lane only", func(t *testing.T) {
+		authRegistry := trackerspkg.NewRegistry()
+		if err := authRegistry.Register(workflowAuthDefinition{
+			name: "ALPHA",
+			capability: api.TrackerAuthCapability{
+				TrackerID:     "ALPHA",
+				AuthKind:      "cookies_login",
+				SupportsLogin: true,
+			},
+		}); err != nil {
+			t.Fatalf("register auth definition: %v", err)
+		}
+		validateCalls := 0
+		builder := workflowPreflightBuilder{
+			auth: workflowPreflightAuthFake{
+				capabilityErr: errors.New("capability service unavailable"),
+				validateCalls: &validateCalls,
+			},
+			registry: authRegistry,
+		}
+		assessment, finalized, err := builder.Build(context.Background(), api.UploadSubject{}, catalog, runtime, projections, now)
+		if err != nil {
+			t.Fatalf("build capability failure preflight: %v", err)
+		}
+		if validateCalls != 0 {
+			t.Fatalf("validation calls after capability failure = %d, want 0", validateCalls)
+		}
+		if assessment.Results[0].State != api.TrackerPreflightStateRetryable ||
+			len(assessment.Results[0].RequiredActions) != 0 ||
+			len(assessment.Results[0].Failures) != 1 ||
+			assessment.Results[0].Failures[0].Failure.Code != api.OperationFailureTrackerAuthRequired ||
+			finalized[0].Readiness != api.ReadinessStatusBlocked {
+			t.Fatalf("capability failure auth lane = %#v/%#v", assessment.Results[0], finalized[0])
+		}
+		if assessment.Results[1].State != api.TrackerPreflightStateReady ||
+			!finalized[1].DupeReady ||
+			!finalized[1].UploadReady {
+			t.Fatalf("capability failure changed sibling = %#v/%#v", assessment.Results[1], finalized[1])
+		}
+	})
+
 	t.Run("retryable", func(t *testing.T) {
 		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{
 			capabilities:  []api.TrackerAuthCapability{{TrackerID: "ALPHA", SupportsLogin: true}},
@@ -248,7 +347,11 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		if err != nil {
 			t.Fatalf("build retryable preflight: %v", err)
 		}
-		if assessment.Results[0].State != api.TrackerPreflightStateRetryable || finalized[0].DupeReady {
+		if assessment.Results[0].State != api.TrackerPreflightStateRetryable ||
+			len(assessment.Results[0].Failures) != 1 ||
+			assessment.Results[0].Failures[0].Failure.Code != api.OperationFailureTrackerAuthRequired ||
+			assessment.Results[0].Failures[0].Failure.Recovery != api.OperationRecoveryAuthenticateTrackers ||
+			finalized[0].DupeReady {
 			t.Fatalf("retryable preflight = %#v/%#v", assessment.Results[0], finalized[0])
 		}
 		payload, err := json.Marshal(assessment)
@@ -278,7 +381,8 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		if result.State != api.TrackerPreflightStateRetryable ||
 			len(result.RequiredActions) != 0 ||
 			len(result.Failures) != 1 ||
-			result.Failures[0].Failure.Recovery != api.OperationRecoveryRetry ||
+			result.Failures[0].Failure.Code != api.OperationFailureTrackerAuthRequired ||
+			result.Failures[0].Failure.Recovery != api.OperationRecoveryAuthenticateTrackers ||
 			finalized[0].Readiness != api.ReadinessStatusBlocked ||
 			finalized[0].DupeReady ||
 			finalized[0].UploadReady {
@@ -451,20 +555,20 @@ func TestWorkflowPreflightRejectsMissingPreparedResourceBeforeAuth(t *testing.T)
 		return result
 	}
 	projection := api.TrackerReleaseProjection{
-		TrackerID:                     "RESOURCE",
-		DisplayName:                   "RESOURCE",
-		CanonicalReleaseName:          "Example.Release.2026.1080p-GRP",
-		UploadReleaseName:             "Example.Release.2026.1080p-GRP",
-		DuplicateCriteria:             api.TrackerDuplicateCriteria{Name: "Example.Release.2026.1080p-GRP"},
-		InputFingerprint:              fingerprint("resource-input"),
-		CatalogFingerprint:            fingerprint("resource-catalog"),
-		ConfigFingerprint:             fingerprint("resource-config"),
-		ProjectorFingerprint:          fingerprint("resource-projector"),
-		CriteriaFingerprint:           fingerprint("resource-criteria"),
-		PreparedResourceFingerprint:   api.WorkflowFingerprint(resourceFingerprint),
-		Readiness:                     api.ReadinessStatusReady,
-		DupeReady:                     true,
-		UploadReady:                   true,
+		TrackerID:                   "RESOURCE",
+		DisplayName:                 "RESOURCE",
+		CanonicalReleaseName:        "Example.Release.2026.1080p-GRP",
+		UploadReleaseName:           "Example.Release.2026.1080p-GRP",
+		DuplicateCriteria:           api.TrackerDuplicateCriteria{Name: "Example.Release.2026.1080p-GRP"},
+		InputFingerprint:            fingerprint("resource-input"),
+		CatalogFingerprint:          fingerprint("resource-catalog"),
+		ConfigFingerprint:           fingerprint("resource-config"),
+		ProjectorFingerprint:        fingerprint("resource-projector"),
+		CriteriaFingerprint:         fingerprint("resource-criteria"),
+		PreparedResourceFingerprint: api.WorkflowFingerprint(resourceFingerprint),
+		Readiness:                   api.ReadinessStatusReady,
+		DupeReady:                   true,
+		UploadReady:                 true,
 	}
 	capabilityCalls := 0
 	validateCalls := 0

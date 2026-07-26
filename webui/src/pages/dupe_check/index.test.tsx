@@ -225,6 +225,83 @@ describe("DupeCheckPage", () => {
     expect(screen.queryByText(/0 match\(es\)/)).not.toBeInTheDocument();
   });
 
+  it("renders auth failure as retryable blocked lane evidence without an action card", () => {
+    const authFailure = {
+      failure: {
+        Code: "tracker_auth_required",
+        Operation: "duplicate_check",
+        Message:
+          "Tracker authentication is not ready for this attempt. Resolve authentication outside the upload workflow, then restart it.",
+        Recovery: "authenticate_trackers",
+      },
+      trackerId: "BETA",
+    };
+    renderPage(
+      facetFor({
+        status: "ready",
+        selectedTrackers: ["ALPHA", "BETA"],
+        projections: {
+          projections: [
+            {
+              trackerId: "ALPHA",
+              displayName: "Alpha",
+              uploadReleaseName: "Example.Release.2026.ALPHA-GRP",
+              readiness: "ready",
+            },
+            {
+              trackerId: "BETA",
+              displayName: "Beta",
+              uploadReleaseName: "Example.Release.2026.BETA-GRP",
+              readiness: "blocked",
+              dupeReady: false,
+              uploadReady: false,
+              failures: [authFailure],
+            },
+          ],
+        } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+        preflight: {
+          results: [
+            { trackerId: "ALPHA", state: "ready", authReady: true },
+            {
+              trackerId: "BETA",
+              state: "retryable",
+              authReady: false,
+              failures: [authFailure],
+            },
+          ],
+        } as unknown as NonNullable<DuplicatesFacet["view"]["preflight"]>,
+        assessment: {
+          results: [
+            {
+              trackerId: "ALPHA",
+              status: "completed",
+              decision: "no_match",
+              matches: [],
+            },
+            {
+              trackerId: "BETA",
+              status: "skipped",
+              decision: "skipped",
+              matches: [],
+              failures: [authFailure],
+            },
+          ],
+        } as unknown as NonNullable<DuplicatesFacet["view"]["assessment"]>,
+      }),
+      ["ALPHA", "BETA"],
+    );
+
+    expect(screen.getByText("Projection blocked")).toBeInTheDocument();
+    expect(screen.getByText("Preflight retryable")).toBeInTheDocument();
+    expect(
+      screen.getAllByText(
+        "Tracker authentication is not ready for this attempt. Resolve authentication outside the upload workflow, then restart it.",
+      ),
+    ).toHaveLength(1);
+    expect(screen.queryByText(/authenticate this tracker/i)).not.toBeInTheDocument();
+    expect(screen.getByText("Alpha")).toBeInTheDocument();
+  });
+
   it("strictly blocks in-client matches and keeps remote ignore decisions optional", () => {
     const setIgnored = vi.fn();
     renderPage(

@@ -22,8 +22,7 @@ import (
 const (
 	workflowPreflightFreshness      = 15 * time.Minute
 	dupeSkipCodeTrackerAuthNotReady = "tracker_auth_not_ready"
-	guiTrackerAuthRetryAction       = "configure tracker auth and retry"
-	remoteAuthUnavailableMessage    = "Tracker authentication could not be verified remotely. This tracker was skipped; retry preflight when it is available."
+	authBlockedPreflightMessage     = "Tracker authentication is not ready for this attempt. Resolve authentication outside the upload workflow, then restart it."
 )
 
 // workflowPreflightBuilder adapts live auth validation to the workflow's
@@ -35,42 +34,6 @@ type workflowPreflightBuilder struct {
 	registry *trackers.Registry
 	logger   api.Logger
 	banned   *trackers.BannedGroupChecker
-}
-
-// guiTrackerAuthSkipReason builds a redacted user-facing reason with a stable
-// recovery action.
-func guiTrackerAuthSkipReason(status api.TrackerAuthStatus) string {
-	message := strings.TrimSpace(redaction.RedactValue(status.Message, nil))
-	detail := strings.TrimSpace(redaction.RedactValue(status.LastError, nil))
-	reason := "tracker auth not ready"
-	switch {
-	case message != "" && detail != "" && !strings.EqualFold(message, detail):
-		reason += ": " + message + ": " + detail
-	case message != "":
-		reason += ": " + message
-	case detail != "":
-		reason += ": " + detail
-	case status.Needs2FA:
-		reason += ": manual 2FA required"
-	case strings.TrimSpace(redaction.RedactValue(status.State, nil)) != "":
-		reason += ": " + strings.TrimSpace(redaction.RedactValue(status.State, nil))
-	}
-	if strings.Contains(strings.ToLower(reason), guiTrackerAuthRetryAction) {
-		return reason
-	}
-	return reason + "; " + guiTrackerAuthRetryAction
-}
-
-func trackerAuthStatusRequiresAction(status api.TrackerAuthStatus) bool {
-	if status.Needs2FA {
-		return true
-	}
-	switch strings.TrimSpace(status.State) {
-	case trackerauth.StateNotConfigured, trackerauth.StateLoginRequired, trackerauth.StateEncryptedStorageUnavailable:
-		return true
-	default:
-		return false
-	}
 }
 
 func (b workflowPreflightBuilder) Build(
@@ -162,9 +125,22 @@ func (b workflowPreflightBuilder) Build(
 	var capabilityErr error
 	if hasReadyProjection {
 		capabilities, capabilityErr = b.auth.Capabilities(ctx)
+		if err := ctx.Err(); err != nil {
+			return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("tracker preflight: auth capabilities: %w", err)
+		}
 	}
 	knownCapabilities := make(map[api.TrackerID]api.TrackerAuthCapability, len(capabilities))
 	managed := make(map[api.TrackerID]struct{}, len(capabilities))
+	for _, projection := range initial.Projections {
+		capability, ok := b.registry.LookupAuthCapability(string(projection.TrackerID))
+		if !ok {
+			continue
+		}
+		knownCapabilities[projection.TrackerID] = capability
+		if trackerauth.IsManagedCapability(capability) {
+			managed[projection.TrackerID] = struct{}{}
+		}
+	}
 	for _, capability := range capabilities {
 		trackerID := api.TrackerID(strings.ToUpper(strings.TrimSpace(capability.TrackerID)))
 		knownCapabilities[trackerID] = capability
@@ -184,6 +160,9 @@ func (b workflowPreflightBuilder) Build(
 		if len(ids) > 0 {
 			values, err := b.auth.ValidateMany(ctx, ids)
 			validationErr = err
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("tracker preflight: auth validation: %w", ctxErr)
+			}
 			if err == nil && len(values) != len(ids) {
 				validationErr = fmt.Errorf("auth validation returned %d statuses for %d trackers", len(values), len(ids))
 			}
@@ -254,24 +233,20 @@ func (b workflowPreflightBuilder) Build(
 					api.OperationRecoveryCompletePrerequisite,
 				)}
 			}
-		} else if capabilityErr != nil {
-			setRetryablePreflight(&result, "Tracker readiness could not be checked. Retry preflight.")
+		} else if _, hasCapability := knownCapabilities[projection.TrackerID]; hasCapability && capabilityErr != nil {
+			setAuthBlockedPreflight(&result)
+			b.logAuthBlocked(projection.TrackerID, "capability_unavailable")
 		} else if _, ok := managed[projection.TrackerID]; ok {
 			if validationErr != nil {
-				setRetryablePreflight(&result, "Tracker authentication could not be checked. Retry preflight.")
+				setAuthBlockedPreflight(&result)
+				b.logAuthBlocked(projection.TrackerID, "validation_unavailable")
 			} else if status := statuses[projection.TrackerID]; !trackerauth.IsReadyStatus(status) {
-				if trackerAuthStatusRequiresAction(status) {
-					setAuthActionPreflight(&result, status)
-				} else {
-					setRetryablePreflight(&result, remoteAuthUnavailableMessage)
-				}
+				setAuthBlockedPreflight(&result)
+				b.logAuthBlocked(projection.TrackerID, status.State)
 			}
 		} else if _, hasCapability := knownCapabilities[projection.TrackerID]; hasCapability && !runtimeConfigured[projection.TrackerID] {
-			setAuthActionPreflight(&result, api.TrackerAuthStatus{
-				TrackerID: string(projection.TrackerID),
-				State:     trackerauth.StateLoginRequired,
-				Message:   "Tracker credentials are not configured.",
-			})
+			setAuthBlockedPreflight(&result)
+			b.logAuthBlocked(projection.TrackerID, trackerauth.StateNotConfigured)
 		}
 		trackerName := string(projection.TrackerID)
 		if result.State == api.TrackerPreflightStateReady {
@@ -471,28 +446,28 @@ func setRetryablePreflight(result *api.TrackerPreflightResult, message string) {
 	)}
 }
 
-func setAuthActionPreflight(result *api.TrackerPreflightResult, status api.TrackerAuthStatus) {
-	result.State = api.TrackerPreflightStateActionRequired
+func setAuthBlockedPreflight(result *api.TrackerPreflightResult) {
+	result.State = api.TrackerPreflightStateRetryable
 	result.AuthReady = false
-	kind := api.RequiredActionAuthenticateTracker
-	prompt := "Authenticate this tracker, then retry preflight."
-	allowsFreeText := false
-	if status.Needs2FA {
-		kind = api.RequiredActionProvideTwoFactor
-		prompt = "Complete tracker two-factor authentication, then retry preflight."
-		allowsFreeText = true
-	}
-	result.RequiredActions = []api.RequiredAction{{
-		Kind:           kind,
-		Prompt:         prompt,
-		AllowsFreeText: allowsFreeText,
-	}}
+	result.RequiredActions = nil
 	result.Failures = []api.WorkflowFailure{preflightFailure(
 		result.TrackerID,
 		api.OperationFailureTrackerAuthRequired,
-		guiTrackerAuthSkipReason(status),
+		authBlockedPreflightMessage,
 		api.OperationRecoveryAuthenticateTrackers,
 	)}
+}
+
+func (b workflowPreflightBuilder) logAuthBlocked(trackerID api.TrackerID, state string) {
+	state = strings.ToLower(strings.TrimSpace(redaction.RedactValue(state, nil)))
+	if state == "" {
+		state = "unknown"
+	}
+	b.logger.Warnf(
+		"core: tracker auth blocked tracker=%s state=%s decision=blocked",
+		trackerID,
+		state,
+	)
 }
 
 func setPolicyBlockedPreflight(result *api.TrackerPreflightResult, message string) {

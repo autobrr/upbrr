@@ -186,7 +186,6 @@ type Module struct {
 	mediaBuilder             MediaArtifactBuilder
 	descriptionBuilder       DescriptionBuilder
 	uploadPlanBuilder        UploadPlanBuilder
-	uploadAuthenticator      UploadFeedbackAuthenticator
 	operationErrorClassifier func(api.OperationKind, error) error
 	logger                   api.Logger
 	clock                    Clock
@@ -2200,7 +2199,8 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 	if state.ProcessEpoch == m.processEpoch {
 		return nil
 	}
-	if !workflowNeedsRestartRecovery(*state) {
+	authRetryRequired, obsoletePreflightActions := currentPreflightAuthRetry(*state)
+	if !workflowNeedsRestartRecovery(*state) && !authRetryRequired {
 		state.ProcessEpoch = m.processEpoch
 		return nil
 	}
@@ -2231,6 +2231,36 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 	}
 
 	workflow := &state.Workflow
+	legacyAuthAction := slices.ContainsFunc(workflow.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == legacyTrackerAuthActionKind || action.Kind == legacyTrackerTwoFactorActionKind
+	})
+	if state.Composite != nil &&
+		state.Composite.Version < compositeUploadSessionVersion &&
+		len(state.Composite.RemoveTrackers) > 0 &&
+		(authRetryRequired || legacyAuthAction) {
+		workflow.Revision = nextRevision
+		workflow.UpdatedAt = now
+		workflow.RequiredActions = nil
+		workflow.Status = api.WorkflowStatusFailed
+		workflow.Failures = []api.WorkflowFailure{{
+			Failure: api.OperationFailure{
+				Code:      api.OperationFailureStaleReview,
+				Operation: api.OperationKindUploadExecute,
+				Message:   "Legacy tracker exclusions cannot be safely attributed. Start a fresh upload workflow.",
+				Recovery:  api.OperationRecoveryNone,
+			},
+		}}
+		state.Composite.ActiveOperationID = ""
+		state.Composite.TerminalReason = "legacy_tracker_exclusions_require_fresh_workflow"
+		state.ProcessEpoch = m.processEpoch
+		if err := workflow.Validate(); err != nil {
+			return fmt.Errorf("release workflow legacy auth restart recovery validate: %w", err)
+		}
+		if err := m.repository.Save(ctx, ownerID, expected, *state); err != nil {
+			return fmt.Errorf("release workflow legacy auth restart recovery save: %w", err)
+		}
+		return nil
+	}
 	reconciliationPending := slices.ContainsFunc(workflow.RequiredActions, func(action api.RequiredAction) bool {
 		return action.Kind == api.RequiredActionReconcileSubmission && action.Status == api.RequiredActionStatusPending
 	})
@@ -2239,9 +2269,17 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 			return err
 		}
 	}
+	if authRetryRequired {
+		workflow.TrackerProjections = nil
+		workflow.TrackerPreflight = nil
+		invalidateDupeAndDownstream(workflow)
+	}
 	workflow.Revision = nextRevision
 	workflow.UpdatedAt = now
 	workflow.RequiredActions = slices.DeleteFunc(workflow.RequiredActions, func(action api.RequiredAction) bool {
+		if _, obsolete := obsoletePreflightActions[action.ID]; obsolete {
+			return true
+		}
 		switch action.Kind {
 		case api.RequiredActionReprepare:
 			return true
@@ -2255,12 +2293,13 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 		case api.RequiredActionSelectPlaylist,
 			api.RequiredActionSelectMetadata,
 			api.RequiredActionConfirmRescan,
-			api.RequiredActionAuthenticateTracker,
-			api.RequiredActionProvideTwoFactor,
 			api.RequiredActionProvideTrackerInput,
 			api.RequiredActionAnswerQuestionnaire,
 			api.RequiredActionAuthorizeRules:
 			return false
+		case legacyTrackerAuthActionKind,
+			legacyTrackerTwoFactorActionKind:
+			return true
 		}
 		return false
 	})
@@ -2273,6 +2312,11 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 		workflow.Status = api.WorkflowStatusActive
 	}
 	workflow.Failures = slices.DeleteFunc(workflow.Failures, func(failure api.WorkflowFailure) bool {
+		if authRetryRequired &&
+			(failure.Failure.Code == api.OperationFailureTrackerAuthRequired ||
+				failure.Failure.Code == api.OperationFailureNoEligibleTrackers) {
+			return true
+		}
 		if failure.Failure.Code == api.OperationFailureStaleReview {
 			return true
 		}
@@ -2289,6 +2333,35 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 		return fmt.Errorf("release workflow restart recovery save: %w", err)
 	}
 	return nil
+}
+
+func currentPreflightAuthRetry(state State) (bool, map[api.RequiredActionID]struct{}) {
+	actionIDs := make(map[api.RequiredActionID]struct{})
+	ref := state.Workflow.TrackerPreflight
+	if ref == nil {
+		return false, actionIDs
+	}
+	assessment, ok := state.Preflights[ref.ID]
+	if !ok || assessment.Revision != ref.Revision {
+		return false, actionIDs
+	}
+	authBlocked := false
+	for _, result := range assessment.Results {
+		for _, action := range result.RequiredActions {
+			if action.ID != "" {
+				actionIDs[action.ID] = struct{}{}
+			}
+			if action.Kind == legacyTrackerAuthActionKind || action.Kind == legacyTrackerTwoFactorActionKind {
+				authBlocked = true
+			}
+		}
+		if slices.ContainsFunc(result.Failures, func(failure api.WorkflowFailure) bool {
+			return failure.Failure.Code == api.OperationFailureTrackerAuthRequired
+		}) {
+			authBlocked = true
+		}
+	}
+	return authBlocked, actionIDs
 }
 
 func (m *Module) invalidateUnavailablePrivateAuthority(

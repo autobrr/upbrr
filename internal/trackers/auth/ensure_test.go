@@ -86,7 +86,7 @@ func TestEnsureSessionReturnsValidStoredSession(t *testing.T) {
 	}
 }
 
-func TestEnsureSessionAutoLoginFalseSkipsAdapterValidation(t *testing.T) {
+func TestEnsureSessionAutoLoginFalseStillValidatesStoredSession(t *testing.T) {
 	t.Parallel()
 
 	adapter := &fakeAdapter{
@@ -100,16 +100,15 @@ func TestEnsureSessionAutoLoginFalseSkipsAdapterValidation(t *testing.T) {
 	}
 	service := &Service{adapters: map[string]Adapter{"FAKE": adapter}, challenges: NewChallengeManager(defaultChallengeTTL)}
 
-	_, err := service.EnsureSession(context.Background(), EnsureRequest{TrackerID: "FAKE"})
-	if err == nil {
-		t.Fatal("expected auth required error")
+	session, err := service.EnsureSession(context.Background(), EnsureRequest{TrackerID: "FAKE"})
+	if err != nil {
+		t.Fatalf("EnsureSession: %v", err)
 	}
-	var authRequired *AuthRequiredError
-	if !errors.As(err, &authRequired) {
-		t.Fatalf("expected AuthRequiredError, got %v", err)
+	if session.State != SessionStateReady {
+		t.Fatalf("session state = %q, want %q", session.State, SessionStateReady)
 	}
-	if adapter.validateCalls != 0 || adapter.loginCalls != 0 || adapter.deleteCalls != 0 {
-		t.Fatalf("AutoLogin=false must not call adapter methods, got validate=%d login=%d delete=%d", adapter.validateCalls, adapter.loginCalls, adapter.deleteCalls)
+	if adapter.validateCalls != 1 || adapter.loginCalls != 0 || adapter.deleteCalls != 0 {
+		t.Fatalf("AutoLogin=false calls: validate=%d login=%d delete=%d", adapter.validateCalls, adapter.loginCalls, adapter.deleteCalls)
 	}
 }
 
@@ -117,7 +116,11 @@ func TestEnsureSessionDeletesConfirmedInvalidAndLogsIn(t *testing.T) {
 	t.Parallel()
 
 	adapter := &fakeAdapter{
-		capability: api.TrackerAuthCapability{TrackerID: "FAKE", SupportsLogin: true},
+		capability: api.TrackerAuthCapability{
+TrackerID: "FAKE",
+ SupportsLogin: true,
+ SupportsAutoLogin: true,
+},
 		validate: func() (Session, error) {
 			return Session{}, &ValidationError{
 				TrackerID:        "FAKE",
@@ -141,6 +144,110 @@ func TestEnsureSessionDeletesConfirmedInvalidAndLogsIn(t *testing.T) {
 	}
 	if adapter.deleteCalls == 0 {
 		t.Fatal("expected confirmed-invalid session to be deleted before login")
+	}
+	if adapter.validateCalls != 1 || adapter.loginCalls != 1 || adapter.deleteCalls != 1 {
+		t.Fatalf(
+			"automatic login calls: validate=%d login=%d delete=%d",
+			adapter.validateCalls,
+			adapter.loginCalls,
+			adapter.deleteCalls,
+		)
+	}
+}
+
+func TestEnsureSessionAutomaticLoginRequiresCapability(t *testing.T) {
+	t.Parallel()
+
+	adapter := &fakeAdapter{
+		capability: api.TrackerAuthCapability{TrackerID: "FAKE", SupportsLogin: true},
+		validate: func() (Session, error) {
+			return Session{}, &AuthRequiredError{TrackerID: "FAKE", Reason: "login required"}
+		},
+		login: func() (Session, error) {
+			return Session{TrackerID: "FAKE", State: SessionStateReady}, nil
+		},
+	}
+	service := &Service{adapters: map[string]Adapter{"FAKE": adapter}, challenges: NewChallengeManager(defaultChallengeTTL)}
+
+	_, err := service.EnsureSession(context.Background(), EnsureRequest{
+		TrackerID: "FAKE",
+		Config:    config.TrackerConfig{Username: "user", Password: "pass"},
+		AutoLogin: true,
+	})
+	var authRequired *AuthRequiredError
+	if !errors.As(err, &authRequired) {
+		t.Fatalf("automatic login without capability error = %v", err)
+	}
+	if adapter.validateCalls != 1 || adapter.loginCalls != 0 || adapter.deleteCalls != 0 {
+		t.Fatalf(
+			"unsupported automatic login calls: validate=%d login=%d delete=%d",
+			adapter.validateCalls,
+			adapter.loginCalls,
+			adapter.deleteCalls,
+		)
+	}
+}
+
+func TestEnsureSessionAutomaticLoginRequiresCredentials(t *testing.T) {
+	t.Parallel()
+
+	adapter := &fakeAdapter{
+		capability: api.TrackerAuthCapability{
+			TrackerID:         "FAKE",
+			SupportsLogin:     true,
+			SupportsAutoLogin: true,
+		},
+		validate: func() (Session, error) {
+			return Session{}, &ValidationError{
+				TrackerID:        "FAKE",
+				ConfirmedInvalid: true,
+				Err:              errors.New("expired"),
+			}
+		},
+		login: func() (Session, error) {
+			return Session{TrackerID: "FAKE", State: SessionStateReady}, nil
+		},
+	}
+	service := &Service{adapters: map[string]Adapter{"FAKE": adapter}, challenges: NewChallengeManager(defaultChallengeTTL)}
+
+	_, err := service.EnsureSession(context.Background(), EnsureRequest{TrackerID: "FAKE", AutoLogin: true})
+	var authRequired *AuthRequiredError
+	if !errors.As(err, &authRequired) {
+		t.Fatalf("automatic login without credentials error = %v", err)
+	}
+	if adapter.validateCalls != 1 || adapter.loginCalls != 0 || adapter.deleteCalls != 1 {
+		t.Fatalf(
+			"missing-credential calls: validate=%d login=%d delete=%d",
+			adapter.validateCalls,
+			adapter.loginCalls,
+			adapter.deleteCalls,
+		)
+	}
+}
+
+func TestEnsureSessionExplicitLoginAllowsManualOnlyCapability(t *testing.T) {
+	t.Parallel()
+
+	adapter := &fakeAdapter{
+		capability: api.TrackerAuthCapability{TrackerID: "FAKE", SupportsLogin: true},
+		validate: func() (Session, error) {
+			return Session{}, &AuthRequiredError{TrackerID: "FAKE", Reason: "login required"}
+		},
+		login: func() (Session, error) {
+			return Session{TrackerID: "FAKE", State: SessionStateReady}, nil
+		},
+	}
+	service := &Service{adapters: map[string]Adapter{"FAKE": adapter}, challenges: NewChallengeManager(defaultChallengeTTL)}
+
+	session, err := service.ensureSession(context.Background(), EnsureRequest{
+		TrackerID: "FAKE",
+		Config:    config.TrackerConfig{Username: "user", Password: "pass"},
+	}, ensureExplicitLogin)
+	if err != nil {
+		t.Fatalf("explicit login: %v", err)
+	}
+	if session.State != SessionStateReady || adapter.validateCalls != 1 || adapter.loginCalls != 1 {
+		t.Fatalf("explicit login session/calls = %#v/%d/%d", session, adapter.validateCalls, adapter.loginCalls)
 	}
 }
 

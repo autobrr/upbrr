@@ -255,7 +255,7 @@ func continuationIntentResolvesAction(intent api.WorkflowIntent, current Command
 		instruction, ok := intent.ProjectionInstructions[action.TrackerID]
 		return ok && len(instruction.Questionnaire) > 0
 	case api.RequiredActionSelectPlaylist, api.RequiredActionSelectMetadata, api.RequiredActionConfirmRescan,
-		api.RequiredActionAuthenticateTracker, api.RequiredActionProvideTwoFactor, api.RequiredActionAuthorizeRules,
+		legacyTrackerAuthActionKind, legacyTrackerTwoFactorActionKind, api.RequiredActionAuthorizeRules,
 		api.RequiredActionApproveTrackers,
 		api.RequiredActionApproveUpload, //nolint:staticcheck // Retained v1 actions cannot be satisfied by desired intent.
 		api.RequiredActionReprepare,
@@ -383,6 +383,11 @@ func planContinuationCommand(
 	}
 	if workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalTrackersAssessed) {
 		return nil, ""
+	}
+	if !slices.ContainsFunc(current.Projections.Projections, func(projection api.TrackerReleaseProjection) bool {
+		return projection.Readiness == api.ReadinessStatusReady && projection.DupeReady
+	}) {
+		return nil, "no-eligible-trackers"
 	}
 	requiredDuplicateChecks := normalizedDuplicateCheckOrdinal(request.Intent.DuplicateCheckCount)
 	dupesCurrent := current.Dupes != nil && current.Dupes.ProjectionSet.ID == current.Projections.ID &&
@@ -655,8 +660,8 @@ func continuationUnattendedSkipsTrackerAction(intent api.WorkflowIntent, action 
 		return false
 	}
 	switch action.Kind {
-	case api.RequiredActionAuthenticateTracker,
-		api.RequiredActionProvideTwoFactor,
+	case legacyTrackerAuthActionKind,
+		legacyTrackerTwoFactorActionKind,
 		api.RequiredActionProvideTrackerInput,
 		api.RequiredActionAnswerQuestionnaire,
 		api.RequiredActionAuthorizeRules:

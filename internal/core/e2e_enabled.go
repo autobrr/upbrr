@@ -8,6 +8,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -34,16 +36,18 @@ import (
 )
 
 const (
-	e2eEnabledEnv     = "UPBRR_E2E_FAKE_SERVICES"
-	e2eTrackerURLEnv  = "UPBRR_E2E_TRACKER_URL"
-	e2eImageURLEnv    = "UPBRR_E2E_IMAGE_URL"
-	e2eClientURLEnv   = "UPBRR_E2E_CLIENT_URL"
-	e2eShotPathEnv    = "UPBRR_E2E_SCREENSHOT_PATH"
-	e2eResolutionEnv  = "UPBRR_E2E_RESOLUTION"
-	e2eDuplicateEnv   = "UPBRR_E2E_DUPLICATE_TRACKERS"
-	e2eBlurayEnv      = "UPBRR_E2E_BLURAY_CANDIDATES"
-	e2eAuthNeededEnv  = "UPBRR_E2E_AUTH_REQUIRED_TRACKERS"
-	e2eClockOffsetEnv = "UPBRR_E2E_CLOCK_OFFSET"
+	e2eEnabledEnv      = "UPBRR_E2E_FAKE_SERVICES"
+	e2eTrackerURLEnv   = "UPBRR_E2E_TRACKER_URL"
+	e2eImageURLEnv     = "UPBRR_E2E_IMAGE_URL"
+	e2eClientURLEnv    = "UPBRR_E2E_CLIENT_URL"
+	e2eShotPathEnv     = "UPBRR_E2E_SCREENSHOT_PATH"
+	e2eResolutionEnv   = "UPBRR_E2E_RESOLUTION"
+	e2eDuplicateEnv    = "UPBRR_E2E_DUPLICATE_TRACKERS"
+	e2eBlurayEnv       = "UPBRR_E2E_BLURAY_CANDIDATES"
+	e2eAuthNeededEnv   = "UPBRR_E2E_AUTH_REQUIRED_TRACKERS"
+	e2eAuthScenarioEnv = "UPBRR_E2E_AUTH_SCENARIOS"
+	e2eAuthCounterEnv  = "UPBRR_E2E_AUTH_COUNTER_PATH"
+	e2eClockOffsetEnv  = "UPBRR_E2E_CLOCK_OFFSET"
 )
 
 // maybeApplyE2EServices replaces only missing runtime capabilities when both
@@ -525,57 +529,144 @@ func (s e2eDupeService) CheckWithAssessment(
 // e2eTrackerAuthService keeps fake-services runs isolated from tracker auth IO.
 type e2eTrackerAuthService struct{}
 
+const (
+	e2eAuthScenarioReady                   = "ready"
+	e2eAuthScenarioAutoLoginSucceeds       = "auto_login_succeeds"
+	e2eAuthScenarioAutoLoginRequired       = "auto_login_required"
+	e2eAuthScenarioManual2FA               = "manual_2fa"
+	e2eAuthScenarioParseFailure            = "parse_failure"
+	e2eAuthScenarioValidationOnlyNoCookies = "validation_only_missing_cookies"
+)
+
 // Capabilities enables deterministic managed-auth preflight only for trackers
 // selected by the e2e environment.
 func (e2eTrackerAuthService) Capabilities(context.Context) ([]api.TrackerAuthCapability, error) {
-	required := e2eTrackerSet(e2eAuthNeededEnv)
-	capabilities := make([]api.TrackerAuthCapability, 0, len(required))
-	for trackerID := range required {
-		capabilities = append(capabilities, api.TrackerAuthCapability{
-			TrackerID:     trackerID,
-			DisplayName:   trackerID,
-			AuthKind:      "credential_login",
-			SupportsLogin: true,
-		})
+	scenarios := e2eAuthScenarios()
+	trackerIDs := make([]string, 0, len(scenarios))
+	for trackerID := range scenarios {
+		trackerIDs = append(trackerIDs, trackerID)
 	}
+	slices.Sort(trackerIDs)
+	capabilities := make([]api.TrackerAuthCapability, 0, len(trackerIDs))
+	for _, trackerID := range trackerIDs {
+		scenario := scenarios[trackerID]
+		capability := api.TrackerAuthCapability{
+			TrackerID:   trackerID,
+			DisplayName: trackerID,
+			AuthKind:    "cookies",
+		}
+		switch scenario {
+		case e2eAuthScenarioReady, e2eAuthScenarioManual2FA, e2eAuthScenarioParseFailure:
+			capability.SupportsCookieFile = true
+		case e2eAuthScenarioAutoLoginSucceeds, e2eAuthScenarioAutoLoginRequired:
+			capability.AuthKind = "cookies_login"
+			capability.SupportsCookieFile = true
+			capability.SupportsLogin = true
+			capability.SupportsAutoLogin = true
+		case e2eAuthScenarioValidationOnlyNoCookies:
+			capability.SupportsCookieFile = true
+		default:
+			capability.SupportsCookieFile = true
+		}
+		if scenario == e2eAuthScenarioManual2FA {
+			capability.SupportsLogin = true
+			capability.SupportsAutoLogin = true
+			capability.SupportsManual2FA = true
+		}
+		capabilities = append(capabilities, capability)
+	}
+	recordE2EAuthCounters(true, nil, 0)
 	return capabilities, nil
 }
 
 // ValidateMany returns configured statuses without contacting trackers.
 func (e2eTrackerAuthService) ValidateMany(_ context.Context, trackerIDs []string) ([]api.TrackerAuthStatus, error) {
-	required := e2eTrackerSet(e2eAuthNeededEnv)
+	scenarios := e2eAuthScenarios()
 	statuses := make([]api.TrackerAuthStatus, 0, len(trackerIDs))
+	loginAttempts := 0
 	for _, trackerID := range trackerIDs {
 		normalized := strings.ToUpper(strings.TrimSpace(trackerID))
-		state := trackerauth.StateConfigured
-		if _, ok := required[normalized]; ok {
-			state = trackerauth.StateLoginRequired
-		}
-		statuses = append(statuses, api.TrackerAuthStatus{
+		status := api.TrackerAuthStatus{
 			TrackerID: normalized,
-			State:     state,
-		})
+			State:     trackerauth.StateConfigured,
+		}
+		switch scenarios[normalized] {
+		case e2eAuthScenarioAutoLoginSucceeds:
+			loginAttempts++
+		case e2eAuthScenarioAutoLoginRequired:
+			loginAttempts++
+			status.State = trackerauth.StateLoginRequired
+		case e2eAuthScenarioManual2FA:
+			loginAttempts++
+			status.State = trackerauth.StateLoginRequired
+			status.Needs2FA = true
+			status.ChallengeID = "synthetic-e2e-challenge"
+		case e2eAuthScenarioParseFailure:
+			status.LastError = "synthetic remote response parse failure"
+		case e2eAuthScenarioValidationOnlyNoCookies:
+			status.State = trackerauth.StateLoginRequired
+		}
+		statuses = append(statuses, status)
 	}
+	recordE2EAuthCounters(false, trackerIDs, loginAttempts)
 	return statuses, nil
 }
 
-func (service e2eTrackerAuthService) Login(
-	ctx context.Context,
-	trackerID string,
-	_ api.TrackerAuthLoginRequest,
-) (api.TrackerAuthStatus, error) {
-	statuses, err := service.ValidateMany(ctx, []string{trackerID})
-	if err != nil {
-		return api.TrackerAuthStatus{}, fmt.Errorf("e2e tracker auth login: %w", err)
+func e2eAuthScenarios() map[string]string {
+	scenarios := make(map[string]string)
+	for trackerID := range e2eTrackerSet(e2eAuthNeededEnv) {
+		scenarios[trackerID] = e2eAuthScenarioValidationOnlyNoCookies
 	}
-	if len(statuses) != 1 {
-		return api.TrackerAuthStatus{}, fmt.Errorf("e2e tracker auth login: expected one status, got %d", len(statuses))
+	for value := range strings.SplitSeq(os.Getenv(e2eAuthScenarioEnv), ",") {
+		trackerID, scenario, ok := strings.Cut(value, "=")
+		trackerID = strings.ToUpper(strings.TrimSpace(trackerID))
+		scenario = strings.ToLower(strings.TrimSpace(scenario))
+		if ok && trackerID != "" && scenario != "" {
+			scenarios[trackerID] = scenario
+		}
 	}
-	return statuses[0], nil
+	return scenarios
 }
 
-func (e2eTrackerAuthService) Submit2FA(context.Context, string, string) (api.TrackerAuthStatus, error) {
-	return api.TrackerAuthStatus{State: trackerauth.StateConfigured}, nil
+type e2eAuthCounterSnapshot struct {
+	CapabilityCalls int            `json:"capabilityCalls"`
+	ValidationCalls int            `json:"validationCalls"`
+	LoginAttempts   int            `json:"loginAttempts"`
+	Validations     map[string]int `json:"validations"`
+}
+
+var e2eAuthCounterMu sync.Mutex
+
+func recordE2EAuthCounters(capabilityCall bool, trackerIDs []string, loginAttempts int) {
+	path := strings.TrimSpace(os.Getenv(e2eAuthCounterEnv))
+	if path == "" {
+		return
+	}
+	e2eAuthCounterMu.Lock()
+	defer e2eAuthCounterMu.Unlock()
+	snapshot := e2eAuthCounterSnapshot{Validations: make(map[string]int)}
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &snapshot)
+	}
+	if snapshot.Validations == nil {
+		snapshot.Validations = make(map[string]int)
+	}
+	if capabilityCall {
+		snapshot.CapabilityCalls++
+	} else {
+		snapshot.ValidationCalls++
+		for _, trackerID := range trackerIDs {
+			trackerID = strings.ToUpper(strings.TrimSpace(trackerID))
+			if trackerID != "" {
+				snapshot.Validations[trackerID]++
+			}
+		}
+	}
+	snapshot.LoginAttempts += loginAttempts
+	data, err := json.Marshal(snapshot)
+	if err == nil {
+		_ = os.WriteFile(path, data, 0o600)
+	}
 }
 
 func e2eTrackerSet(environment string) map[string]struct{} {

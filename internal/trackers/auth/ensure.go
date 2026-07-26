@@ -10,9 +10,20 @@ import (
 	"strings"
 )
 
-// EnsureSession validates stored tracker auth, optionally attempts credential login, and returns the ready session or a typed auth error.
-// When AutoLogin is false, it returns [AuthRequiredError] without calling tracker adapter validation or login.
+type ensureLoginMode uint8
+
+const (
+	ensureAutomaticLogin ensureLoginMode = iota
+	ensureExplicitLogin
+)
+
+// EnsureSession validates stored tracker auth, optionally attempts capability-owned
+// automatic login, and returns the ready session or a typed auth error.
 func (s *Service) EnsureSession(ctx context.Context, req EnsureRequest) (Session, error) {
+	return s.ensureSession(ctx, req, ensureAutomaticLogin)
+}
+
+func (s *Service) ensureSession(ctx context.Context, req EnsureRequest, mode ensureLoginMode) (Session, error) {
 	if ctx == nil {
 		return Session{}, errors.New("tracker auth: context is required")
 	}
@@ -25,12 +36,18 @@ func (s *Service) EnsureSession(ctx context.Context, req EnsureRequest) (Session
 	if !ok {
 		return Session{}, newUnknownTrackerError(trackerID)
 	}
-	if !req.AutoLogin {
-		return Session{}, &AuthRequiredError{TrackerID: trackerID, Reason: "login required"}
-	}
+	capability := adapter.Capability()
+	s.logDebugf(
+		"tracker auth: resolution start tracker=%s automatic_login_requested=%t automatic_login_supported=%t explicit_login=%t",
+		trackerLogID(trackerID),
+		req.AutoLogin,
+		capability.SupportsAutoLogin,
+		mode == ensureExplicitLogin,
+	)
 
 	session, err := adapter.Validate(ctx, req.Config, req.DBPath)
 	if err == nil {
+		s.logDebugf("tracker auth: stored session validation tracker=%s decision=ready", trackerLogID(trackerID))
 		if strings.TrimSpace(session.State) == "" {
 			session.State = SessionStateReady
 		}
@@ -39,12 +56,14 @@ func (s *Service) EnsureSession(ctx context.Context, req EnsureRequest) (Session
 		}
 		return session, nil
 	}
+	s.logDebugf("tracker auth: stored session validation tracker=%s decision=not_ready", trackerLogID(trackerID))
 
 	if needs2FA, ok := asNeeds2FAError(err); ok {
 		return s.needs2FASession(ctx, trackerID, adapter, needs2FA)
 	}
 
-	if authRequired, ok := asAuthRequiredError(err); ok && !adapter.Capability().SupportsLogin {
+	authRequired, requiresAuth := asAuthRequiredError(err)
+	if requiresAuth && !capability.SupportsLogin {
 		return Session{}, authRequired
 	}
 
@@ -61,12 +80,28 @@ func (s *Service) EnsureSession(ctx context.Context, req EnsureRequest) (Session
 		}
 	}
 
-	capability := adapter.Capability()
-	if !capability.SupportsLogin {
+	allowLogin := false
+	switch mode {
+	case ensureAutomaticLogin:
+		allowLogin = req.AutoLogin && capability.SupportsAutoLogin
+	case ensureExplicitLogin:
+		allowLogin = capability.SupportsLogin
+	}
+	if !allowLogin {
+		if requiresAuth {
+			return Session{}, authRequired
+		}
 		if confirmedInvalid {
 			return Session{}, &AuthRequiredError{
 				TrackerID: trackerID,
 				Reason:    "stored session expired",
+				Err:       err,
+			}
+		}
+		if capability.SupportsLogin {
+			return Session{}, &AuthRequiredError{
+				TrackerID: trackerID,
+				Reason:    "automatic login unavailable",
 				Err:       err,
 			}
 		}
@@ -84,6 +119,7 @@ func (s *Service) EnsureSession(ctx context.Context, req EnsureRequest) (Session
 		}
 	}
 
+	s.logDebugf("tracker auth: login resolution tracker=%s decision=attempt", trackerLogID(trackerID))
 	session, loginErr := adapter.Login(ctx, req.Config, req.DBPath, req.Login)
 	if loginErr != nil {
 		if needs2FA, ok := asNeeds2FAError(loginErr); ok {

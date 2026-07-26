@@ -227,6 +227,11 @@ func TestContinuationPlannerAcceptsFinalizedProjectionSetBoundToPreflight(t *tes
 			Revision:         6,
 			Preflight:        &preflightRef,
 			InputFingerprint: testFingerprint(t, "projection-final"),
+			Projections: []api.TrackerReleaseProjection{{
+				TrackerID: "ALPHA",
+				Readiness: api.ReadinessStatusReady,
+				DupeReady: true,
+			}},
 		},
 		Preflight: &api.TrackerPreflightAssessment{
 			ID:            preflightRef.ID,
@@ -359,7 +364,7 @@ func TestContinuationPlannerReappliesPreflightForUnattendedManualActions(t *test
 				TrackerID: "ALPHA",
 				State:     api.TrackerPreflightStateActionRequired,
 				RequiredActions: []api.RequiredAction{{
-					Kind: api.RequiredActionAuthenticateTracker,
+					Kind: legacyTrackerAuthActionKind,
 				}},
 			}},
 		},
@@ -391,7 +396,7 @@ func TestUnattendedPreflightPolicySkipsOnlyManualTrackerLane(t *testing.T) {
 			TrackerID: "ALPHA",
 			State:     api.TrackerPreflightStateActionRequired,
 			RequiredActions: []api.RequiredAction{{
-				Kind: api.RequiredActionProvideTwoFactor,
+				Kind: legacyTrackerTwoFactorActionKind,
 			}},
 		},
 		{
@@ -406,7 +411,7 @@ func TestUnattendedPreflightPolicySkipsOnlyManualTrackerLane(t *testing.T) {
 			DupeReady:   false,
 			UploadReady: false,
 			RequiredActions: []api.RequiredAction{{
-				Kind: api.RequiredActionProvideTwoFactor,
+				Kind: legacyTrackerTwoFactorActionKind,
 			}},
 		},
 		{
@@ -430,6 +435,48 @@ func TestUnattendedPreflightPolicySkipsOnlyManualTrackerLane(t *testing.T) {
 	if assessment.Results[1].State != api.TrackerPreflightStateReady || finalized[1].Readiness != api.ReadinessStatusReady ||
 		!finalized[1].DupeReady || !finalized[1].UploadReady {
 		t.Fatalf("unattended BETA lane changed = %#v/%#v", assessment.Results[1], finalized[1])
+	}
+}
+
+func TestPreflightInteractionPolicyPreservesAuthBlockedLane(t *testing.T) {
+	t.Parallel()
+
+	for _, interaction := range []api.InteractionMode{
+		api.InteractionModeInteractive,
+		api.InteractionModeUnattended,
+		api.InteractionModeUnattendedConfirm,
+	} {
+		t.Run(string(interaction), func(t *testing.T) {
+			t.Parallel()
+			assessment := api.TrackerPreflightAssessment{Results: []api.TrackerPreflightResult{{
+				TrackerID: "ALPHA",
+				State:     api.TrackerPreflightStateRetryable,
+				Failures: []api.WorkflowFailure{{
+					Failure: api.OperationFailure{
+						Code:     api.OperationFailureTrackerAuthRequired,
+						Recovery: api.OperationRecoveryAuthenticateTrackers,
+					},
+				}},
+			}}}
+			finalized := []api.TrackerReleaseProjection{{
+				TrackerID:   "ALPHA",
+				Readiness:   api.ReadinessStatusBlocked,
+				DupeReady:   false,
+				UploadReady: false,
+			}}
+
+			applyPreflightInteractionPolicy(interaction, &assessment, finalized)
+
+			if assessment.Results[0].State != api.TrackerPreflightStateRetryable ||
+				len(assessment.Results[0].RequiredActions) != 0 ||
+				len(assessment.Results[0].Failures) != 1 ||
+				assessment.Results[0].Failures[0].Failure.Code != api.OperationFailureTrackerAuthRequired ||
+				finalized[0].Readiness != api.ReadinessStatusBlocked ||
+				finalized[0].DupeReady ||
+				finalized[0].UploadReady {
+				t.Fatalf("interaction %q changed auth lane: %#v/%#v", interaction, assessment.Results[0], finalized[0])
+			}
+		})
 	}
 }
 
@@ -644,6 +691,90 @@ func TestContinuationPlannerAdvancesRunnableSiblingPastPendingDupe(t *testing.T)
 	}
 }
 
+func TestContinuationPlannerPreservesAuthBlockedLaneWhileCheckingReadySibling(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
+	current := readyContinuationPlannerResult(t, now)
+	current.Selection.TrackerIDs = []api.TrackerID{"ALPHA", "BETA"}
+	current.Projections.Projections = append(current.Projections.Projections, api.TrackerReleaseProjection{
+		TrackerID:   "BETA",
+		Readiness:   api.ReadinessStatusBlocked,
+		DupeReady:   false,
+		UploadReady: false,
+	})
+	current.Preflight.Status = api.StageStatusReady
+	current.Preflight.Results = []api.TrackerPreflightResult{
+		{
+			TrackerID: "ALPHA",
+			State:     api.TrackerPreflightStateReady,
+		},
+		{
+			TrackerID: "BETA",
+			State:     api.TrackerPreflightStateRetryable,
+			Failures: []api.WorkflowFailure{{
+				Failure: api.OperationFailure{
+					Code:     api.OperationFailureTrackerAuthRequired,
+					Recovery: api.OperationRecoveryAuthenticateTrackers,
+				},
+			}},
+		},
+	}
+	current.Dupes = nil
+	request := api.ContinueReleaseWorkflowRequest{
+		IdempotencyKey: "continue-auth-blocked-sibling",
+		Goal:           api.WorkflowGoalUploaded,
+		Intent: api.WorkflowIntent{
+			TrackerIDs:             []api.TrackerID{"ALPHA", "BETA"},
+			ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
+		},
+	}
+
+	command, stage := planContinuationCommand(request, current, now)
+	if _, ok := command.(CheckDuplicatesCommand); !ok || stage != "check-duplicates" {
+		t.Fatalf("mixed auth plan: stage=%q command=%#v", stage, command)
+	}
+	if !slices.Equal(current.Selection.TrackerIDs, []api.TrackerID{"ALPHA", "BETA"}) {
+		t.Fatalf("selection changed: %v", current.Selection.TrackerIDs)
+	}
+}
+
+func TestContinuationPlannerStopsWhenEveryTrackerIsAuthBlocked(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
+	current := readyContinuationPlannerResult(t, now)
+	current.Projections.Status = api.StageStatusFailed
+	current.Projections.Projections[0].Readiness = api.ReadinessStatusBlocked
+	current.Projections.Projections[0].DupeReady = false
+	current.Projections.Projections[0].UploadReady = false
+	current.Preflight.Status = api.StageStatusFailed
+	current.Preflight.Results = []api.TrackerPreflightResult{{
+		TrackerID: "ALPHA",
+		State:     api.TrackerPreflightStateRetryable,
+		Failures: []api.WorkflowFailure{{
+			Failure: api.OperationFailure{
+				Code:     api.OperationFailureTrackerAuthRequired,
+				Recovery: api.OperationRecoveryAuthenticateTrackers,
+			},
+		}},
+	}}
+	current.Dupes = nil
+	request := api.ContinueReleaseWorkflowRequest{
+		IdempotencyKey: "continue-all-auth-blocked",
+		Goal:           api.WorkflowGoalUploaded,
+		Intent: api.WorkflowIntent{
+			TrackerIDs:             []api.TrackerID{"ALPHA"},
+			ProjectionInstructions: map[api.TrackerID]api.TrackerProjectionInstructions{},
+		},
+	}
+
+	command, stage := planContinuationCommand(request, current, now)
+	if command != nil || stage != "no-eligible-trackers" {
+		t.Fatalf("all auth blocked plan: stage=%q command=%#v", stage, command)
+	}
+}
+
 func TestDuplicateReviewBlocksWhenOtherLaneNeedsPreflightAction(t *testing.T) {
 	t.Parallel()
 
@@ -674,7 +805,7 @@ func TestDuplicateReviewBlocksWhenOtherLaneNeedsPreflightAction(t *testing.T) {
 					TrackerID: "BETA",
 					State:     api.TrackerPreflightStateActionRequired,
 					RequiredActions: []api.RequiredAction{{
-						Kind: api.RequiredActionAuthenticateTracker,
+						Kind: legacyTrackerAuthActionKind,
 					}},
 				},
 			},

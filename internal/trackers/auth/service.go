@@ -110,6 +110,13 @@ func (s *Service) logInfof(format string, args ...any) {
 	s.logger.Infof(format, args...)
 }
 
+func (s *Service) logDebugf(format string, args ...any) {
+	if s == nil || s.logger == nil {
+		return
+	}
+	s.logger.Debugf(format, args...)
+}
+
 func (s *Service) logTracef(format string, args ...any) {
 	if s == nil || s.logger == nil {
 		return
@@ -379,13 +386,13 @@ func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAu
 	}
 
 	if _, ok := s.adapterFor(spec.id); ok {
-		session, ensureErr := s.EnsureSession(ctx, EnsureRequest{
+		session, ensureErr := s.ensureSession(ctx, EnsureRequest{
 			TrackerID: spec.id,
 			Config:    trackerCfg,
 			DBPath:    s.cfg.MainSettings.DBPath,
 			AutoLogin: true,
 			Login:     req,
-		})
+		}, ensureExplicitLogin)
 		if ensureErr != nil {
 			applyEnsureErrorToStatus(&status, ensureErr)
 			if session.ChallengeID != "" {

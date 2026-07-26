@@ -34,7 +34,8 @@ type EnsureRequest struct {
 	Config config.TrackerConfig
 	// DBPath points at the application database used for encrypted cookie and state storage.
 	DBPath string
-	// AutoLogin allows EnsureSession to attempt credential login after a confirmed invalid stored session.
+	// AutoLogin allows EnsureSession to attempt credential login after validation
+	// only when the adapter advertises SupportsAutoLogin.
 	AutoLogin bool
 	// Login carries optional adapter-specific login input, such as a one-time 2FA code.
 	Login api.TrackerAuthLoginRequest

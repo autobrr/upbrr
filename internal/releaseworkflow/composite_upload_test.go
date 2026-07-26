@@ -5,8 +5,10 @@ package releaseworkflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -173,262 +175,41 @@ func TestMergeCompositeProjectionDefaultsPreservesTrackerSpecificValues(t *testi
 	}
 }
 
-func TestCompositeAuthenticationFeedbackTransitionsToTwoFactorWithoutPersistingCode(t *testing.T) {
+func TestSubmitUploadFeedbackRejectsDeprecatedAuthenticationKinds(t *testing.T) {
 	t.Parallel()
 
-	authenticator := &compositeUploadAuthTestFake{
-		validate: api.TrackerAuthStatus{
-			TrackerID: "ALPHA",
-			State:     "login_required",
+	tests := map[string]api.ReleaseWorkflowUploadFeedbackResponse{
+		"authentication": {
+			Kind: legacyTrackerAuthFeedbackKind,
 		},
-		login: api.TrackerAuthStatus{
-			TrackerID:   "ALPHA",
-			State:       "login_required",
-			Needs2FA:    true,
-			ChallengeID: "challenge-synthetic",
+		"two factor": {
+			Kind: legacyTrackerTwoFactorFeedbackKind,
 		},
 	}
-	module := &Module{uploadAuthenticator: authenticator}
-	secret, err := module.executeCompositeSecretFeedback(
-		context.Background(),
-		api.RequiredAction{TrackerID: "ALPHA"},
-		api.ReleaseWorkflowUploadFeedback{
-			Response: api.ReleaseWorkflowUploadFeedbackResponse{
-				Kind: api.ReleaseWorkflowUploadFeedbackTrackerAuthentication,
-				TrackerAuthentication: &api.ReleaseWorkflowUploadTrackerAuthentication{
-					TrackerID: "ALPHA",
-				},
-			},
-		},
-	)
-	if err != nil {
-		t.Fatalf("execute authentication feedback: %v", err)
-	}
-	if !secret.AuthenticationNeedsTwoFactor ||
-		secret.AuthenticationChallengeID != "challenge-synthetic" ||
-		authenticator.loginCalls != 1 {
-		t.Fatalf("secret authentication result = %#v calls=%d", secret, authenticator.loginCalls)
-	}
-
-	now := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
-	state := State{
-		Workflow: api.ReleaseWorkflow{
-			ID:       "workflow-auth",
-			Revision: 2,
-			Status:   api.WorkflowStatusBlocked,
-			RequiredActions: []api.RequiredAction{{
-				ID:               "action-auth",
-				Kind:             api.RequiredActionAuthenticateTracker,
-				Status:           api.RequiredActionStatusPending,
-				WorkflowRevision: 2,
-				TrackerID:        "ALPHA",
-			}},
-		},
-		Composite: &compositeUploadSession{
-			FeedbackReceipts: make(map[string]compositeUploadFeedbackReceipt),
-		},
-	}
-	_, err = module.applyCompositeUploadFeedback(
-		context.Background(),
-		testOwnerID,
-		&state,
-		3,
-		now,
-		applyCompositeUploadFeedbackCommand{
-			WorkflowID:       state.Workflow.ID,
-			ExpectedRevision: 2,
-			ActionID:         "action-auth",
-			IdempotencyKey:   "auth-to-two-factor",
-			Response: compositeUploadFeedbackResponse{
-				Kind:                         api.ReleaseWorkflowUploadFeedbackTrackerAuthentication,
-				TrackerID:                    "ALPHA",
-				AuthenticationNeedsTwoFactor: true,
-				AuthenticationChallengeID:    "challenge-synthetic",
-			},
-		},
-	)
-	if err != nil {
-		t.Fatalf("apply authentication feedback: %v", err)
-	}
-	action := state.Workflow.RequiredActions[0]
-	if action.Kind != api.RequiredActionProvideTwoFactor ||
-		action.WorkflowRevision != 3 ||
-		len(action.Options) != 1 ||
-		action.Options[0].Value != "challenge-synthetic" {
-		t.Fatalf("two-factor action = %#v", action)
-	}
-}
-
-func TestCompositeAuthenticationFeedbackSkipsUnfinishedTwoFactor(t *testing.T) {
-	t.Parallel()
-
-	authenticator := &compositeUploadAuthTestFake{
-		validate: api.TrackerAuthStatus{
-			TrackerID:   "ALPHA",
-			State:       "login_required",
-			Needs2FA:    true,
-			ChallengeID: "challenge-synthetic",
-		},
-	}
-	module := &Module{uploadAuthenticator: authenticator}
-	secret, err := module.executeCompositeSecretFeedback(
-		context.Background(),
-		api.RequiredAction{
-			Kind:      api.RequiredActionProvideTwoFactor,
-			TrackerID: "ALPHA",
-		},
-		api.ReleaseWorkflowUploadFeedback{
-			Response: api.ReleaseWorkflowUploadFeedbackResponse{
-				Kind: api.ReleaseWorkflowUploadFeedbackTrackerAuthentication,
-				TrackerAuthentication: &api.ReleaseWorkflowUploadTrackerAuthentication{
-					TrackerID: "ALPHA",
-				},
-			},
-		},
-	)
-	if err != nil {
-		t.Fatalf("skip unfinished two-factor feedback: %v", err)
-	}
-	if !secret.AuthenticationSkipTracker ||
-		secret.AuthenticationNeedsTwoFactor ||
-		secret.AuthenticationChallengeID != "" ||
-		authenticator.loginCalls != 0 {
-		t.Fatalf("unfinished two-factor result = %#v calls=%d", secret, authenticator.loginCalls)
-	}
-}
-
-func TestCompositeAuthenticationFeedbackSkipsRemoteValidationFailure(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name           string
-		validate       api.TrackerAuthStatus
-		login          api.TrackerAuthStatus
-		wantLoginCalls int
-		wantSkip       bool
-	}{
-		{
-			name: "validation unavailable",
-			validate: api.TrackerAuthStatus{
-				TrackerID: "ALPHA",
-				State:     "configured",
-				LastError: "remote validation unavailable",
-			},
-			wantSkip: true,
-		},
-		{
-			name: "login validation becomes unavailable",
-			validate: api.TrackerAuthStatus{
-				TrackerID: "ALPHA",
-				State:     "login_required",
-			},
-			login: api.TrackerAuthStatus{
-				TrackerID: "ALPHA",
-				State:     "configured",
-				LastError: "remote validation unavailable",
-			},
-			wantLoginCalls: 1,
-			wantSkip:       true,
-		},
-		{
-			name: "authentication remains required",
-			validate: api.TrackerAuthStatus{
-				TrackerID: "ALPHA",
-				State:     "login_required",
-			},
-			login: api.TrackerAuthStatus{
-				TrackerID: "ALPHA",
-				State:     "login_required",
-				LastError: "cookies unavailable",
-			},
-			wantLoginCalls: 1,
-			wantSkip:       true,
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
+	for name, response := range tests {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			authenticator := &compositeUploadAuthTestFake{
-				validate: test.validate,
-				login:    test.login,
-			}
-			module := &Module{uploadAuthenticator: authenticator}
-			secret, err := module.executeCompositeSecretFeedback(
+			module := &Module{}
+			_, err := module.SubmitUploadFeedback(
 				context.Background(),
-				api.RequiredAction{TrackerID: "ALPHA"},
+				testOwnerID,
+				"workflow-legacy-auth",
 				api.ReleaseWorkflowUploadFeedback{
-					Response: api.ReleaseWorkflowUploadFeedbackResponse{
-						Kind: api.ReleaseWorkflowUploadFeedbackTrackerAuthentication,
-						TrackerAuthentication: &api.ReleaseWorkflowUploadTrackerAuthentication{
-							TrackerID: "ALPHA",
-						},
+					Action: api.ReleaseWorkflowUploadActionIdentity{
+						ID:               "action-legacy-auth",
+						WorkflowRevision: 2,
 					},
+					Response:       response,
+					IdempotencyKey: "legacy-auth-feedback",
 				},
 			)
-			if err != nil {
-				t.Fatalf("execute unavailable authentication feedback: %v", err)
-			}
-			if secret.AuthenticationNeedsTwoFactor ||
-				secret.AuthenticationChallengeID != "" ||
-				secret.AuthenticationSkipTracker != test.wantSkip ||
-				authenticator.loginCalls != test.wantLoginCalls {
-				t.Fatalf("unavailable authentication result = %#v calls=%d", secret, authenticator.loginCalls)
+			if !errors.Is(err, ErrInvalidTransition) ||
+				!strings.Contains(err.Error(), "outside the upload workflow") ||
+				!strings.Contains(err.Error(), "fresh attempt") {
+				t.Fatalf("deprecated authentication feedback error = %v", err)
 			}
 		})
-	}
-}
-
-func TestCompositeAuthenticationFeedbackRemovesUnresolvedTracker(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
-	state := State{
-		Workflow: api.ReleaseWorkflow{
-			ID:       "workflow-auth-skip",
-			Revision: 2,
-			Status:   api.WorkflowStatusBlocked,
-			RequiredActions: []api.RequiredAction{{
-				ID:               "action-auth-skip",
-				Kind:             api.RequiredActionAuthenticateTracker,
-				Status:           api.RequiredActionStatusPending,
-				WorkflowRevision: 2,
-				TrackerID:        "ALPHA",
-			}},
-		},
-		Composite: &compositeUploadSession{
-			Intent: api.WorkflowIntent{
-				TrackerIDs: []api.TrackerID{"ALPHA", "BETA"},
-			},
-			FeedbackReceipts: make(map[string]compositeUploadFeedbackReceipt),
-		},
-	}
-	module := &Module{}
-	_, err := module.applyCompositeUploadFeedback(
-		context.Background(),
-		testOwnerID,
-		&state,
-		3,
-		now,
-		applyCompositeUploadFeedbackCommand{
-			WorkflowID:       state.Workflow.ID,
-			ExpectedRevision: 2,
-			ActionID:         "action-auth-skip",
-			IdempotencyKey:   "skip-unresolved-auth",
-			Response: compositeUploadFeedbackResponse{
-				Kind:                      api.ReleaseWorkflowUploadFeedbackTrackerAuthentication,
-				TrackerID:                 "ALPHA",
-				AuthenticationSkipTracker: true,
-			},
-		},
-	)
-	if err != nil {
-		t.Fatalf("apply unresolved authentication feedback: %v", err)
-	}
-	if !slices.Equal(state.Composite.RemoveTrackers, []api.TrackerID{"ALPHA"}) ||
-		len(state.Workflow.RequiredActions) != 0 ||
-		state.Workflow.Status != api.WorkflowStatusActive {
-		t.Fatalf("unresolved authentication state = %#v/%#v", state.Composite, state.Workflow)
 	}
 }
 
@@ -468,6 +249,47 @@ func TestCompositeUploadAllTrackersRemoved(t *testing.T) {
 				t.Fatalf("compositeUploadAllTrackersRemoved() = %t, want %t", got, tt.wantResult)
 			}
 		})
+	}
+}
+
+func TestCompositeUploadAllAuthBlockedTerminatesNoEligible(t *testing.T) {
+	t.Parallel()
+
+	module, repository, uploads := newCompositeUploadTestModule(t)
+	module.trackerPreflight = compositeUploadAuthBlockedPreflightBuilder(t)
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "composite-auth-blocked")
+	request.Trackers.Include = []api.TrackerID{"ALPHA"}
+
+	started, err := module.StartUpload(context.Background(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("start auth-blocked composite upload: %v", err)
+	}
+	current := waitCompositeUploadTestOperation(t, module, started)
+	if current.Operation == nil || current.Operation.Status != api.StageStatusFailed ||
+		len(current.Operation.Failures) != 1 ||
+		current.Operation.Failures[0].Failure.Code != api.OperationFailureNoEligibleTrackers ||
+		current.Operation.Failures[0].Failure.Recovery != api.OperationRecoveryAuthenticateTrackers {
+		t.Fatalf("auth-blocked composite operation = %#v", current.Operation)
+	}
+	if current.Workflow.Status != api.WorkflowStatusFailed ||
+		len(current.Workflow.RequiredActions) != 0 ||
+		len(current.Workflow.Failures) != 1 ||
+		current.Workflow.Failures[0].Failure.Code != api.OperationFailureNoEligibleTrackers {
+		t.Fatalf("auth-blocked composite workflow = %#v", current.Workflow)
+	}
+	if current.Dupes != nil || current.Media != nil || current.Descriptions != nil || current.UploadResult != nil || uploads.execution != nil {
+		t.Fatalf("auth-blocked composite reached downstream work = %#v", current)
+	}
+	if current.Selection == nil || !slices.Equal(current.Selection.TrackerIDs, []api.TrackerID{"ALPHA"}) {
+		t.Fatalf("auth-blocked composite selection = %#v", current.Selection)
+	}
+	state, err := repository.Load(context.Background(), testOwnerID, current.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load auth-blocked composite state: %v", err)
+	}
+	if state.Composite == nil || state.Composite.ActiveOperationID != "" ||
+		state.Composite.TerminalReason != "no_eligible_trackers" {
+		t.Fatalf("auth-blocked composite terminal session = %#v", state.Composite)
 	}
 }
 
@@ -514,36 +336,6 @@ func TestCompositeUploadTrackerRemovalUpdateIsIdempotent(t *testing.T) {
 	if !ok || stage != "project-trackers" || !slices.Equal(projection.TrackerIDs, []api.TrackerID{"BRAVO"}) {
 		t.Fatalf("tracker removal re-projection: stage=%q command=%#v", stage, command)
 	}
-}
-
-type compositeUploadAuthTestFake struct {
-	validate   api.TrackerAuthStatus
-	login      api.TrackerAuthStatus
-	loginCalls int
-}
-
-func (f *compositeUploadAuthTestFake) ValidateMany(
-	_ context.Context,
-	_ []string,
-) ([]api.TrackerAuthStatus, error) {
-	return []api.TrackerAuthStatus{f.validate}, nil
-}
-
-func (f *compositeUploadAuthTestFake) Login(
-	_ context.Context,
-	_ string,
-	_ api.TrackerAuthLoginRequest,
-) (api.TrackerAuthStatus, error) {
-	f.loginCalls++
-	return f.login, nil
-}
-
-func (*compositeUploadAuthTestFake) Submit2FA(
-	context.Context,
-	string,
-	string,
-) (api.TrackerAuthStatus, error) {
-	return api.TrackerAuthStatus{}, nil
 }
 
 func compositeUploadTestOperationCount(repository *MemoryRepository, workflowID api.WorkflowID) int {
@@ -695,6 +487,46 @@ func compositeUploadReadyPreflightBuilder(t *testing.T) TrackerPreflightBuilder 
 			return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("build composite upload test preflight: %w", err)
 		}
 		assessment.ExecutionMode = initial.ExecutionMode
+		return assessment, finalized, nil
+	})
+}
+
+func compositeUploadAuthBlockedPreflightBuilder(t *testing.T) TrackerPreflightBuilder {
+	t.Helper()
+	base := compositeUploadReadyPreflightBuilder(t)
+	return trackerPreflightBuilderFunc(func(
+		ctx context.Context,
+		subject api.UploadSubject,
+		catalog api.TrackerCatalogSnapshot,
+		runtime api.TrackerRuntimeSnapshot,
+		initial api.TrackerReleaseProjectionSet,
+		now time.Time,
+	) (api.TrackerPreflightAssessment, []api.TrackerReleaseProjection, error) {
+		assessment, finalized, err := base.Build(ctx, subject, catalog, runtime, initial, now)
+		if err != nil {
+			return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("build auth-blocked composite preflight: %w", err)
+		}
+		for index := range assessment.Results {
+			trackerID := assessment.Results[index].TrackerID
+			failure := api.WorkflowFailure{
+				Failure: api.OperationFailure{
+					Code:      api.OperationFailureTrackerAuthRequired,
+					Operation: api.OperationKindDuplicateCheck,
+					Message:   "Tracker authentication is not ready for this attempt.",
+					Recovery:  api.OperationRecoveryAuthenticateTrackers,
+				},
+				TrackerID: trackerID,
+			}
+			assessment.Results[index].State = api.TrackerPreflightStateRetryable
+			assessment.Results[index].AuthReady = false
+			assessment.Results[index].RequiredActions = nil
+			assessment.Results[index].Failures = []api.WorkflowFailure{failure}
+			finalized[index].Readiness = api.ReadinessStatusBlocked
+			finalized[index].DupeReady = false
+			finalized[index].UploadReady = false
+			finalized[index].RequiredActions = nil
+			finalized[index].Failures = []api.WorkflowFailure{failure}
+		}
 		return assessment, finalized, nil
 	})
 }

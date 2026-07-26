@@ -33,7 +33,7 @@ Check CLI builders, WebUI `/api/app/*` routes, browser request shapes, and TS ty
 
 - Canonical request and preparation contracts are single-source and operation inputs reference one exact `ReleaseRef` generation.
 - Keep prepared facts typed and reusable; do not add presentation correlation or workflow state to canonical inputs or facts.
-- Tracker auth capabilities/status/actions, questionnaire schemas/answers, and reviewed upload/search-name projections are backend-owned shared contracts. CLI and WebUI render/submit them; transport DTOs must not derive tracker-specific auth, taxonomy, description, media, questionnaire, or naming semantics.
+- Tracker auth capabilities/status/preflight failures, questionnaire schemas/answers, and reviewed upload/search-name projections are backend-owned shared contracts. Upload workflows do not resolve auth or accept auth/2FA feedback; retained v1 auth action/feedback shapes are decoding compatibility only. Transport DTOs must not derive tracker-specific auth, taxonomy, description, media, questionnaire, or naming semantics.
 - Auth requirement resolution stays internal and secret-free. Never add cookie values, API keys, passkeys, OTP secrets, auth keys, or HTTP clients to shared status/projection contracts.
 - WebUI transport injects progress correlation IDs and timestamps. Progress payloads must be frontend-safe; image-host updates are absolute snapshots for one host attempt.
 - Recovery decisions use structured `OperationFailure` codes/metadata, never error-message substring matching.
