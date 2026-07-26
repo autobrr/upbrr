@@ -108,17 +108,18 @@ func submitPreparedUpload(
 	}
 
 	urlValue := torrentURL + torrentID
+	announceURL := ""
 	if len(announces) > 0 {
-		if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announces[0], urlValue, sourceFlag); err != nil {
-			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-		}
+		announceURL = announces[0]
 	}
+	registeredPath := trackers.PersistReconstructedRegisteredTorrent(
+		req.Logger, "TL", state.torrentPath, artifactPath, announceURL, urlValue, sourceFlag,
+	)
 	return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{
 		Tracker:     "TL",
 		TorrentID:   torrentID,
 		TorrentURL:  urlValue,
-		DownloadURL: urlValue,
-		TorrentPath: artifactPath,
+		TorrentPath: registeredPath,
 	}}}, nil
 }
 

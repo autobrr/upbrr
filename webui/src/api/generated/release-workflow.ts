@@ -167,6 +167,11 @@ export type ClientInjectionOutcome = Readonly<{
   status: StageStatus;
 }>;
 
+export type ClientInjectionRetryRef = Readonly<{
+  result: UploadResultRef;
+  trackerIds: readonly TrackerID[];
+}>;
+
 export type ClientOverrides = Readonly<{
   Client?: string | null;
   ForceRecheck?: boolean | null;
@@ -1354,6 +1359,13 @@ export type ResetReleaseWorkflowDescriptionOverrideRequest = Readonly<{
   workflowId: WorkflowID;
 }>;
 
+export type RetryReleaseWorkflowClientInjectionRequest = Readonly<{
+  expectedRevision: WorkflowRevision;
+  idempotencyKey: string;
+  retry: ClientInjectionRetryRef;
+  workflowId: WorkflowID;
+}>;
+
 export type RetryReleaseWorkflowImageHostRequest = Readonly<{
   artifactIds: readonly PublicResourceID[];
   expectedRevision: WorkflowRevision;
@@ -2074,12 +2086,16 @@ export type UploadResultRef = Readonly<{
 }>;
 
 export type UploadTrackerResult = Readonly<{
+  clientFailureCode?: OperationFailureCode;
   clientInjected: boolean;
+  clientInjectionMessage?: string;
+  clientInjectionStatus?: StageStatus;
   crossSeeded: boolean;
   failures?: readonly WorkflowFailure[];
   remoteId?: string;
   remoteUrl?: string;
   status: StageStatus;
+  submissionStatus?: StageStatus;
   trackerId: TrackerID;
 }>;
 

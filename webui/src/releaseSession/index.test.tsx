@@ -489,6 +489,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
     dryRunUploads: async (current) => current,
     executeUploads: async (current) => current,
     retryFailedUploads: async (current) => current,
+    retryClientInjections: async (current) => current,
     cancel: async (workflowID) => workflowCurrent(workflowID, 2),
     invalidateTrackers: async (current) => current,
   };
@@ -513,6 +514,8 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
     resetDescriptionOverride: async (...args) =>
       remember(await configured.resetDescriptionOverride(...args)),
     retryFailedUploads: async (...args) => remember(await configured.retryFailedUploads(...args)),
+    retryClientInjections: async (...args) =>
+      remember(await configured.retryClientInjections(...args)),
     cancel: async (...args) => remember(await configured.cancel(...args)),
     invalidateTrackers: async (...args) => remember(await configured.invalidateTrackers(...args)),
   };

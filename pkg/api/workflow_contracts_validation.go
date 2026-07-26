@@ -1397,11 +1397,12 @@ func (s UploadResult) Validate() error {
 	if err := validateOptionalTrackerApprovalRef(s.TrackerApproval); err != nil {
 		return fmt.Errorf("upload result: %w", err)
 	}
-	if s.Status != StageStatusCompleted && s.Status != StageStatusFailed {
-		return errors.New("upload result must have completed or failed status")
+	if s.Status != StageStatusCompleted && s.Status != StageStatusPartial && s.Status != StageStatusFailed {
+		return errors.New("upload result must have completed, partial, or failed status")
 	}
 	seen := make(map[TrackerID]struct{}, len(s.Results))
-	failed := false
+	failedSubmission := false
+	failedClientInjection := false
 	for _, result := range s.Results {
 		id := normalizeTrackerID(result.TrackerID)
 		if id == "" {
@@ -1411,28 +1412,94 @@ func (s UploadResult) Validate() error {
 			return fmt.Errorf("upload result contains duplicate tracker %s", id)
 		}
 		seen[id] = struct{}{}
-		switch result.Status {
-		case StageStatusCompleted, StageStatusSkipped:
-			if len(result.Failures) > 0 {
-				return fmt.Errorf("%s upload tracker %s must not contain failures", result.Status, id)
+		submissionStatus := result.EffectiveSubmissionStatus()
+		clientStatus := result.EffectiveClientInjectionStatus()
+		if result.SubmissionStatus != "" || result.ClientInjectionStatus != "" {
+			if derived := result.DerivedStatus(); result.Status != derived {
+				return fmt.Errorf("upload tracker %s aggregate status %q does not match derived status %q", id, result.Status, derived)
 			}
-		case StageStatusFailed:
-			failed = true
+		}
+		switch submissionStatus {
+		case StageStatusCompleted:
+			switch clientStatus {
+			case StageStatusCompleted:
+				if !result.ClientInjected && !result.CrossSeeded {
+					return fmt.Errorf("upload tracker %s completed client injection without a success marker", id)
+				}
+				if len(result.Failures) > 0 || result.ClientFailureCode != "" {
+					return fmt.Errorf("upload tracker %s completed client injection cannot contain failures", id)
+				}
+			case StageStatusSkipped:
+				if result.ClientInjected || result.CrossSeeded {
+					return fmt.Errorf("upload tracker %s skipped client injection with a success marker", id)
+				}
+				if len(result.Failures) > 0 || result.ClientFailureCode != "" {
+					return fmt.Errorf("upload tracker %s skipped client injection cannot contain failures", id)
+				}
+			case StageStatusFailed:
+				failedClientInjection = true
+				if result.ClientFailureCode == "" || strings.TrimSpace(result.ClientInjectionMessage) == "" {
+					return fmt.Errorf("upload tracker %s failed client injection requires code and message", id)
+				}
+				if len(result.Failures) == 0 || !result.hasClientInjectionFailure() {
+					return fmt.Errorf("upload tracker %s failed client injection requires a client failure", id)
+				}
+				if slices.ContainsFunc(result.Failures, func(failure WorkflowFailure) bool {
+					return failure.Failure.Operation != OperationKindClientInjection
+				}) {
+					return fmt.Errorf("upload tracker %s completed submission cannot contain submission failures", id)
+				}
+			case StageStatusPending, StageStatusQueued, StageStatusReady, StageStatusBlocked, StageStatusStale, StageStatusPartial,
+				StageStatusRunning, StageStatusExecuted, StageStatusInterrupted, StageStatusCanceled, StageStatusUnavailable, "":
+				return fmt.Errorf("upload tracker %s has invalid client injection status %q", id, clientStatus)
+			default:
+				return fmt.Errorf("upload tracker %s has invalid client injection status %q", id, clientStatus)
+			}
+		case StageStatusFailed, StageStatusUnavailable:
+			failedSubmission = true
+			if clientStatus != StageStatusPending {
+				return fmt.Errorf("upload tracker %s failed submission must leave client injection pending", id)
+			}
 			if len(result.Failures) == 0 {
-				return fmt.Errorf("failed upload tracker %s requires failures", id)
+				return fmt.Errorf("failed upload tracker %s requires submission failures", id)
+			}
+			if result.ClientInjected || result.CrossSeeded || result.ClientFailureCode != "" ||
+				slices.ContainsFunc(result.Failures, func(failure WorkflowFailure) bool {
+					return failure.Failure.Operation == OperationKindClientInjection
+				}) {
+				return fmt.Errorf("failed upload tracker %s cannot contain client injection outcomes", id)
+			}
+		case StageStatusSkipped:
+			if clientStatus != StageStatusSkipped && clientStatus != StageStatusPending &&
+				clientStatus != StageStatusCompleted && clientStatus != StageStatusFailed {
+				return fmt.Errorf("skipped upload tracker %s has invalid client injection status %q", id, clientStatus)
+			}
+			if clientStatus == StageStatusFailed {
+				failedClientInjection = true
 			}
 		case StageStatusPending, StageStatusQueued, StageStatusReady, StageStatusBlocked, StageStatusStale, StageStatusPartial,
-			StageStatusRunning, StageStatusExecuted, StageStatusInterrupted, StageStatusCanceled, StageStatusUnavailable, "":
-			return fmt.Errorf("upload tracker %s has invalid status %q", id, result.Status)
+			StageStatusRunning, StageStatusExecuted, StageStatusInterrupted, StageStatusCanceled, "":
+			return fmt.Errorf("upload tracker %s has invalid submission status %q", id, submissionStatus)
 		default:
-			return fmt.Errorf("upload tracker %s has invalid status %q", id, result.Status)
+			return fmt.Errorf("upload tracker %s has invalid submission status %q", id, submissionStatus)
 		}
 	}
-	if s.Status == StageStatusCompleted && failed {
-		return errors.New("completed upload result cannot contain failed trackers")
-	}
-	if s.Status == StageStatusFailed && !failed {
-		return errors.New("failed upload result requires a failed tracker")
+	switch s.Status {
+	case StageStatusCompleted:
+		if failedSubmission || failedClientInjection {
+			return errors.New("completed upload result cannot contain failed trackers")
+		}
+	case StageStatusPartial:
+		if failedSubmission || !failedClientInjection {
+			return errors.New("partial upload result requires only a failed client injection")
+		}
+	case StageStatusFailed:
+		if !failedSubmission {
+			return errors.New("failed upload result requires a failed tracker submission")
+		}
+	case StageStatusPending, StageStatusQueued, StageStatusReady, StageStatusBlocked, StageStatusStale, StageStatusSkipped,
+		StageStatusRunning, StageStatusExecuted, StageStatusInterrupted, StageStatusCanceled, StageStatusUnavailable, "":
+		return fmt.Errorf("upload result has invalid status %q", s.Status)
 	}
 	return nil
 }

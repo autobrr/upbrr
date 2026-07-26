@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -115,8 +114,11 @@ func submitPreparedUpload(
 		torrentID := strings.TrimSpace(fmt.Sprint(decoded.Torrent.ID))
 		if torrentID != "" && artifactPath != "" {
 			if dlErr := downloadTrackerTorrent(ctx, baseURL+"/api/torrent/"+torrentID+"/download", apiKey, artifactPath); dlErr != nil {
+				trackers.LogRegisteredTorrentUnavailable(req.Logger, "SPD")
 				artifactPath = ""
 			}
+		} else if torrentID != "" {
+			trackers.LogRegisteredTorrentUnavailable(req.Logger, "SPD")
 		}
 		return api.UploadSummary{
 			Uploaded: 1,
@@ -256,20 +258,9 @@ func downloadTrackerTorrent(ctx context.Context, urlValue string, apiKey string,
 		return fmt.Errorf("trackers: SPD build torrent download request: %w", err)
 	}
 	httpReq.Header.Set("Authorization", strings.TrimSpace(apiKey))
-	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("trackers: SPD torrent download request: %w", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("trackers: SPD read torrent response: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(output), 0o700); err != nil {
-		return fmt.Errorf("trackers: SPD create torrent output dir: %w", err)
-	}
-	if err := os.WriteFile(output, body, 0o600); err != nil {
-		return fmt.Errorf("trackers: SPD write torrent output: %w", err)
+	client := &http.Client{Timeout: 20 * time.Second}
+	if err := trackers.DownloadRegisteredTorrent(ctx, client, httpReq, output); err != nil {
+		return fmt.Errorf("trackers: SPD registered torrent: %w", err)
 	}
 	return nil
 }

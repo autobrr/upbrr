@@ -112,11 +112,9 @@ func submitPreparedUpload(
 	torrentID := parseUploadID(finalURL, string(bodyBytes))
 	if resp.StatusCode == http.StatusOK && torrentID != "" {
 		torrentURL := baseURL + "/torrents-details.php?id=" + url.QueryEscape(torrentID)
-		if announceURL != "" {
-			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, torrentURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-			}
-		}
+		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
+			req.Logger, "ASC", state.torrentPath, artifactPath, announceURL, torrentURL, sourceFlag,
+		)
 		maybeAutoApprove(ctx, client, cookies, req.TrackerConfig, torrentID, req.Logger)
 		maybeSetInternal(ctx, client, cookies, req.TrackerConfig, req.Meta, torrentID, req.Logger)
 		return api.UploadSummary{
@@ -125,8 +123,7 @@ func submitPreparedUpload(
 				Tracker:     "ASC",
 				TorrentID:   torrentID,
 				TorrentURL:  torrentURL,
-				DownloadURL: torrentURL,
-				TorrentPath: artifactPath,
+				TorrentPath: registeredPath,
 			}},
 		}, nil
 	}

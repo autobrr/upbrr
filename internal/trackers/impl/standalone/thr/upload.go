@@ -99,17 +99,14 @@ func submitPreparedUpload(
 		if match := idPattern.FindStringSubmatch(finalURL); len(match) == 2 {
 			torrentID = match[1]
 		}
-		if announceURL != "" {
-			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, finalURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-			}
-		}
+		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
+			req.Logger, "THR", state.torrentPath, artifactPath, announceURL, finalURL, sourceFlag,
+		)
 		return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{
 			Tracker:     "THR",
 			TorrentID:   torrentID,
 			TorrentURL:  finalURL,
-			DownloadURL: finalURL,
-			TorrentPath: artifactPath,
+			TorrentPath: registeredPath,
 		}}}, nil
 	}
 

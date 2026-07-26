@@ -280,7 +280,15 @@ type DescriptionBuilder interface {
 // must submit already-prepared operations without rebuilding semantic payloads.
 type RetainedUploadExecution interface {
 	Execute(context.Context, []api.TrackerID) ([]api.UploadTrackerResult, error)
+	RegisteredArtifactAuthority() RegisteredArtifactAuthority
 	Release() error
+}
+
+// RegisteredArtifactAuthority retains private exact-torrent authority after a
+// successful tracker submission. It must never enter public workflow snapshots.
+type RegisteredArtifactAuthority struct {
+	ClientSubject api.ClientSubject
+	Torrents      map[api.TrackerID]api.TorrentResult
 }
 
 // UploadPlanBuildOptions controls side effects and execution policy for one
@@ -316,6 +324,11 @@ type UploadPlanBuilder interface {
 		UploadPlanBuildOptions,
 		time.Time,
 	) (api.UploadPlan, RetainedUploadExecution, error)
+	RetryClientInjections(
+		context.Context,
+		RegisteredArtifactAuthority,
+		[]api.TrackerID,
+	) ([]api.UploadTrackerResult, error)
 }
 
 // Repository atomically persists owner-scoped public workflow state.
@@ -959,6 +972,27 @@ func (c RetryFailedUploadsCommand) commandFingerprint() (api.WorkflowFingerprint
 		Retry            api.FailedTrackerRetryRef
 		NoSeed           bool
 	}{c.ExpectedRevision, c.Retry, c.NoSeed})
+}
+
+// RetryClientInjectionsCommand retries retained client effects without
+// rebuilding or resubmitting a tracker upload.
+type RetryClientInjectionsCommand struct {
+	WorkflowID       api.WorkflowID
+	ExpectedRevision api.WorkflowRevision
+	Retry            api.ClientInjectionRetryRef
+	IdempotencyKey   string
+}
+
+func (RetryClientInjectionsCommand) commandName() string { return "retry_client_injections" }
+func (RetryClientInjectionsCommand) userIntent()         {}
+func (RetryClientInjectionsCommand) operationKind() api.OperationKind {
+	return api.OperationKindClientInjection
+}
+func (c RetryClientInjectionsCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
+	return canonicalCommandFingerprint(struct {
+		ExpectedRevision api.WorkflowRevision
+		Retry            api.ClientInjectionRetryRef
+	}{c.ExpectedRevision, c.Retry})
 }
 
 // CancelWorkflowCommand terminates a workflow and releases all private authority.

@@ -7,11 +7,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -97,12 +95,16 @@ func submitPreparedUpload(
 	match := successPattern.FindStringSubmatch(result.FinalURL)
 	if len(match) >= 2 {
 		id := match[1]
-		artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "FL")
-		if err != nil {
-			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-		}
-		if err := downloadPersonalizedTorrent(ctx, client, id, artifactPath); err != nil {
-			return api.UploadSummary{}, err
+		artifactPath := ""
+		resolvedPath, pathErr := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "FL")
+		if pathErr == nil {
+			if downloadErr := downloadPersonalizedTorrent(ctx, client, id, resolvedPath); downloadErr == nil {
+				artifactPath = resolvedPath
+			} else {
+				trackers.LogRegisteredTorrentUnavailable(req.Logger, "FL")
+			}
+		} else {
+			trackers.LogRegisteredTorrentUnavailable(req.Logger, "FL")
 		}
 		return api.UploadSummary{
 			Uploaded: 1,
@@ -193,17 +195,8 @@ func downloadPersonalizedTorrent(ctx context.Context, client *http.Client, id st
 	if err != nil {
 		return fmt.Errorf("trackers: FL torrent download request build: %w", err)
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("trackers: FL torrent download request: %w", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("trackers: FL read torrent response: %w", err)
-	}
-	if err := os.WriteFile(outputPath, body, 0o600); err != nil {
-		return fmt.Errorf("trackers: FL write torrent output: %w", err)
+	if err := trackers.DownloadRegisteredTorrent(ctx, client, req, outputPath); err != nil {
+		return fmt.Errorf("trackers: FL registered torrent: %w", err)
 	}
 	return nil
 }

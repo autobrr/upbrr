@@ -33,6 +33,7 @@ const uploadFacet = (
   start: vi.fn(async () => true),
   cancel: vi.fn(async () => true),
   retry: vi.fn(async () => true),
+  retryClientInjection: vi.fn(async () => true),
   ...methods,
 });
 
@@ -93,14 +94,48 @@ describe("TrackerUploadPage", () => {
     } as unknown as NonNullable<UploadFacet["view"]["dryRunResult"]>;
     const result = {
       status: "failed",
-      results: [{ trackerId: "EXAMPLE", status: "failed" }],
+      results: [
+        {
+          trackerId: "EXAMPLE",
+          status: "failed",
+          submissionStatus: "failed",
+          clientInjectionStatus: "pending",
+        },
+      ],
     } as unknown as NonNullable<UploadFacet["view"]["result"]>;
     renderPage(uploadFacet({ dryRunStatus: "ready", dryRunResult, result }, { retry }));
 
     fireEvent.click(screen.getByRole("button", { name: "Expand Example Tracker" }));
     expect(screen.getByText("Example.Release.2026.1080p-GRP")).toBeInTheDocument();
     expect(screen.getByText("category: 1")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Retry failed" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry failed uploads" }));
     expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it("offers client-only retry for completed submissions", () => {
+    const retryClientInjection = vi.fn(async () => true);
+    const result = {
+      status: "partial",
+      results: [
+        {
+          trackerId: "EXAMPLE",
+          status: "partial",
+          submissionStatus: "completed",
+          clientInjectionStatus: "failed",
+          clientFailureCode: "client_injection",
+          clientInjectionMessage: "Exact-torrent client injection failed.",
+        },
+      ],
+    } as unknown as NonNullable<UploadFacet["view"]["result"]>;
+    renderPage(uploadFacet({ result }, { retryClientInjection }));
+
+    expect(screen.queryByRole("button", { name: "Retry failed uploads" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry client injection" }));
+    expect(retryClientInjection).toHaveBeenCalledOnce();
+    expect(
+      screen.getByText(
+        "Submission: completed · Client injection: failed · Exact-torrent client injection failed.",
+      ),
+    ).toBeInTheDocument();
   });
 });

@@ -124,17 +124,16 @@ func submitPreparedUpload(
 		groupID := strings.TrimSpace(matches[1])
 		torrentID := strings.TrimSpace(matches[2])
 		torrentURL := strings.TrimRight(state.baseURL, "/") + "/torrents.php?id=" + url.QueryEscape(groupID) + "&torrentid=" + url.QueryEscape(torrentID)
-		if err := trackers.WritePersonalizedTorrent(state.torrentPath, trackerTorrentPath, state.announceURL, torrentURL, "PTP"); err != nil {
-			return api.UploadSummary{}, fmt.Errorf("trackers: PTP write torrent artifact: %w", err)
-		}
+		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
+			req.Logger, "PTP", state.torrentPath, trackerTorrentPath, state.announceURL, torrentURL, "PTP",
+		)
 		return api.UploadSummary{
 			Uploaded: 1,
 			UploadedTorrents: []api.UploadedTorrent{{
 				Tracker:     "PTP",
 				TorrentID:   torrentID,
 				TorrentURL:  torrentURL,
-				DownloadURL: torrentURL,
-				TorrentPath: trackerTorrentPath,
+				TorrentPath: registeredPath,
 			}},
 		}, nil
 	}

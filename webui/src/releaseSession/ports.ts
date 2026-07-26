@@ -97,6 +97,13 @@ export type ReleaseWorkflowPorts = Readonly<{
     idempotencyKey: string,
     signal: AbortSignal,
   ): Promise<ReleaseWorkflowCurrent>;
+  retryClientInjections(
+    current: ReleaseWorkflowCurrent,
+    result: UploadResultRef,
+    trackerIDs: readonly string[],
+    idempotencyKey: string,
+    signal: AbortSignal,
+  ): Promise<ReleaseWorkflowCurrent>;
   cancel(
     workflowID: string,
     reason: string,

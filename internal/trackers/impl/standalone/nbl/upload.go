@@ -60,12 +60,13 @@ func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers
 		}
 	}
 	return trackers.NewPreparedOperation(preview, func(submitCtx context.Context) (api.UploadSummary, error) {
-		return submitPreparedUpload(submitCtx, state, body, contentType, announceURL, artifactPath)
+		return submitPreparedUpload(submitCtx, req.Logger, state, body, contentType, announceURL, artifactPath)
 	}, nil), nil
 }
 
 func submitPreparedUpload(
 	ctx context.Context,
+	logger api.Logger,
 	state uploadState,
 	body []byte,
 	contentType string,
@@ -96,20 +97,17 @@ func submitPreparedUpload(
 
 	torrentURL, torrentID := extractUploadLinkAndID(payload)
 
-	if announceURL != "" {
-		if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, torrentURL, "NBL"); err != nil {
-			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-		}
-	}
+	registeredPath := trackers.PersistReconstructedRegisteredTorrent(
+		logger, "NBL", state.torrentPath, artifactPath, announceURL, torrentURL, "NBL",
+	)
 
 	return api.UploadSummary{
 		Uploaded: 1,
 		UploadedTorrents: []api.UploadedTorrent{{
 			Tracker:     "NBL",
 			TorrentID:   torrentID,
-			DownloadURL: torrentURL,
 			TorrentURL:  torrentURL,
-			TorrentPath: artifactPath,
+			TorrentPath: registeredPath,
 		}},
 	}, nil
 }

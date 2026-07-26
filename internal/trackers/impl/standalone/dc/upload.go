@@ -65,31 +65,26 @@ func prepareUpload(ctx context.Context, req trackers.PreparationInput) (trackers
 	if err != nil {
 		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %w", err)
 	}
-	artifactPath := ""
-	announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL)
-	if announceURL != "" {
-		artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "DC")
-		if err != nil {
-			return trackers.PreparedOperation{}, fmt.Errorf("trackers: %w", err)
-		}
-	}
+	artifactPath, _ := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "DC")
 	apiKey := strings.TrimSpace(req.TrackerConfig.APIKey)
+	client := httpclient.New(httpclient.DefaultTimeout)
 	return trackers.NewPreparedOperation(preview, func(submitCtx context.Context) (api.UploadSummary, error) {
-		return submitPreparedUpload(submitCtx, req, state, body, contentType, apiKey, announceURL, artifactPath)
+		return submitPreparedUpload(submitCtx, req, body, contentType, client, baseURL, apiBaseURL, apiKey, artifactPath)
 	}, nil), nil
 }
 
 func submitPreparedUpload(
 	ctx context.Context,
 	req trackers.PreparationInput,
-	state uploadState,
 	body []byte,
 	contentType string,
+	client *http.Client,
+	siteBaseURL string,
+	apiURL string,
 	apiKey string,
-	announceURL string,
 	artifactPath string,
 ) (api.UploadSummary, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiBaseURL+"/upload", strings.NewReader(string(body)))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL+"/upload", strings.NewReader(string(body)))
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: DC request build: %w", err)
 	}
@@ -97,7 +92,7 @@ func submitPreparedUpload(
 	httpReq.Header.Set("User-Agent", "upbrr")
 	httpReq.Header.Set("X-Api-Key", apiKey)
 
-	result, err := commonhttp.ExecuteUpload(httpclient.New(httpclient.DefaultTimeout), httpReq, commonhttp.UploadExecutionOptions{Tracker: "DC"})
+	result, err := commonhttp.ExecuteUpload(client, httpReq, commonhttp.UploadExecutionOptions{Tracker: "DC"})
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: DC execute upload: %w", err)
 	}
@@ -112,23 +107,34 @@ func submitPreparedUpload(
 	}
 	torrentID := strings.TrimSpace(fmt.Sprint(decoded.ID))
 	if result.Success && torrentID != "" && torrentID != "<nil>" {
-		torrentURL := baseURL + "/torrent/" + torrentID + "/"
-		downloadURL := apiBaseURL + "/download/" + torrentID
-		if announceURL != "" {
-			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, torrentURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-			}
-		}
-		return api.UploadSummary{
+		torrentURL := siteBaseURL + "/torrent/" + torrentID + "/"
+		downloadURL := apiURL + "/download/" + torrentID
+		summary := api.UploadSummary{
 			Uploaded: 1,
 			UploadedTorrents: []api.UploadedTorrent{{
 				Tracker:     "DC",
 				TorrentID:   torrentID,
 				TorrentURL:  torrentURL,
 				DownloadURL: downloadURL,
-				TorrentPath: artifactPath,
 			}},
-		}, nil
+		}
+		if artifactPath == "" {
+			trackers.LogRegisteredTorrentUnavailable(req.Logger, "DC")
+			return summary, nil
+		}
+		downloadRequest, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+		if requestErr != nil {
+			trackers.LogRegisteredTorrentUnavailable(req.Logger, "DC")
+			return summary, nil
+		}
+		downloadRequest.Header.Set("User-Agent", "upbrr")
+		downloadRequest.Header.Set("X-Api-Key", apiKey)
+		if downloadErr := trackers.DownloadRegisteredTorrent(ctx, client, downloadRequest, artifactPath); downloadErr != nil {
+			trackers.LogRegisteredTorrentUnavailable(req.Logger, "DC")
+			return summary, nil
+		}
+		summary.UploadedTorrents[0].TorrentPath = artifactPath
+		return summary, nil
 	}
 
 	if _, artifactErr := commonhttp.WriteFailureArtifact(

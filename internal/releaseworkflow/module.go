@@ -360,6 +360,9 @@ func (m *Module) cleanupUncommittedResult(ownerID string, workflowID api.Workflo
 	if result.DryRun != nil {
 		m.private.Delete(ownerID, workflowID, uploadPlanPrivateResourceID(result.DryRun.ID))
 	}
+	if result.UploadResult != nil {
+		m.private.Delete(ownerID, workflowID, registeredArtifactAuthorityPrivateResourceID(result.UploadResult.ID))
+	}
 }
 
 func commandFinalizesMedia(command mutation) bool {
@@ -1028,7 +1031,7 @@ func operationResultForCommand(command Command, result CommandResult) (*api.Work
 		if result.DryRun != nil {
 			refID, revision = string(result.DryRun.ID), result.DryRun.Revision
 		}
-	case ExecuteUploadsCommand, RetryFailedUploadsCommand:
+	case ExecuteUploadsCommand, RetryFailedUploadsCommand, RetryClientInjectionsCommand:
 		kind = api.WorkflowOperationResultUpload
 		if result.UploadResult != nil {
 			refID, revision = string(result.UploadResult.ID), result.UploadResult.Revision
@@ -1100,7 +1103,7 @@ func terminalOperationStatus(command Command, result CommandResult) api.StageSta
 		if result.DryRun != nil {
 			stageStatus = result.DryRun.Status
 		}
-	case ExecuteUploadsCommand, RetryFailedUploadsCommand:
+	case ExecuteUploadsCommand, RetryFailedUploadsCommand, RetryClientInjectionsCommand:
 		stageStatus = api.StageStatusExecuted
 	}
 	switch stageStatus {
@@ -2646,6 +2649,8 @@ func commandTarget(command mutation) (api.WorkflowID, api.WorkflowRevision, stri
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case RetryFailedUploadsCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
+	case RetryClientInjectionsCommand:
+		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case CancelWorkflowCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case InvalidateTrackersCommand:
@@ -2715,6 +2720,8 @@ func (m *Module) apply(
 		return m.executeUploads(ctx, ownerID, state, nextRevision, now, typed)
 	case RetryFailedUploadsCommand:
 		return m.retryFailedUploads(ctx, ownerID, state, nextRevision, now, typed)
+	case RetryClientInjectionsCommand:
+		return m.retryClientInjections(ctx, ownerID, state, nextRevision, now, typed)
 	case CancelWorkflowCommand:
 		return m.cancelWorkflow(ctx, ownerID, state)
 	case InvalidateTrackersCommand:
@@ -5443,7 +5450,8 @@ func (m *Module) executeUploads(
 	}
 	results, executionErr := prepared.execution.Execute(ctx, trackerIDs)
 	results = completeUploadExecutionResults(prepared.plan.Trackers, results, executionErr, trackerIDs)
-	return m.publishUploadResult(state, nextRevision, now, prepared, results)
+	authority := prepared.execution.RegisteredArtifactAuthority()
+	return m.publishUploadResult(ownerID, state, nextRevision, now, prepared, results, authority)
 }
 
 func (m *Module) preparedUploadsForExecution(
@@ -5508,7 +5516,7 @@ func (m *Module) retryFailedUploads(
 	}
 	failed := make(map[api.TrackerID]struct{})
 	for _, result := range prior.Results {
-		if result.Status == api.StageStatusFailed {
+		if result.SubmissionRetryable() {
 			failed[api.TrackerID(strings.ToUpper(strings.TrimSpace(string(result.TrackerID))))] = struct{}{}
 		}
 	}
@@ -5548,7 +5556,133 @@ func (m *Module) retryFailedUploads(
 			merged = append(merged, result)
 		}
 	}
-	return m.publishUploadResult(state, nextRevision, now, prepared, merged)
+	authority := prepared.execution.RegisteredArtifactAuthority()
+	if priorAuthority, ok := m.registeredArtifactAuthority(ownerID, state.Workflow.ID, prior.ID, now); ok {
+		authority = mergeRegisteredArtifactAuthorities(priorAuthority, authority)
+	}
+	return m.publishUploadResult(ownerID, state, nextRevision, now, prepared, merged, authority)
+}
+
+func (m *Module) retryClientInjections(
+	ctx context.Context,
+	ownerID string,
+	state *State,
+	nextRevision api.WorkflowRevision,
+	now time.Time,
+	command RetryClientInjectionsCommand,
+) (CommandResult, error) {
+	prior, ok := state.UploadResults[command.Retry.Result.ID]
+	if !ok || prior.Revision != command.Retry.Result.Revision || !uploadResultMatchesCurrent(prior, state.Workflow) {
+		return CommandResult{}, fmt.Errorf("%w: prior upload result is stale", ErrInvalidTransition)
+	}
+	retryable := make(map[api.TrackerID]struct{})
+	for _, result := range prior.Results {
+		if result.ClientInjectionRetryable() {
+			retryable[api.TrackerID(strings.ToUpper(strings.TrimSpace(string(result.TrackerID))))] = struct{}{}
+		}
+	}
+	targets := make([]api.TrackerID, 0, len(command.Retry.TrackerIDs))
+	for _, trackerID := range command.Retry.TrackerIDs {
+		trackerID = api.TrackerID(strings.ToUpper(strings.TrimSpace(string(trackerID))))
+		if _, ok := retryable[trackerID]; !ok {
+			return CommandResult{}, fmt.Errorf(
+				"%w: tracker %s has no retryable client injection in the referenced upload result",
+				ErrInvalidTransition,
+				trackerID,
+			)
+		}
+		if !slices.Contains(targets, trackerID) {
+			targets = append(targets, trackerID)
+		}
+	}
+	if len(targets) == 0 {
+		return CommandResult{}, fmt.Errorf("%w: client injection retry targets are required", ErrInvalidTransition)
+	}
+	authority, ok := m.registeredArtifactAuthority(ownerID, state.Workflow.ID, prior.ID, now)
+	if !ok {
+		return CommandResult{}, api.NewOperationError(api.OperationFailure{
+			Code:      api.OperationFailureStaleResult,
+			Operation: api.OperationKindClientInjection,
+			Message:   "Registered tracker artifact authority is unavailable. The tracker upload will not be resubmitted.",
+			Recovery:  api.OperationRecoveryNone,
+		}, ErrPrivateResourceUnavailable)
+	}
+	retried, err := m.uploadPlanBuilder.RetryClientInjections(ctx, authority, targets)
+	if err != nil {
+		return CommandResult{}, fmt.Errorf("release workflow retry client injections: %w", err)
+	}
+	byTracker := make(map[api.TrackerID]api.UploadTrackerResult, len(retried))
+	for _, result := range retried {
+		byTracker[result.TrackerID] = result
+	}
+	merged := append([]api.UploadTrackerResult(nil), prior.Results...)
+	for index, result := range merged {
+		retryResult, exists := byTracker[result.TrackerID]
+		if !exists {
+			continue
+		}
+		result.ClientInjectionStatus = retryResult.ClientInjectionStatus
+		result.ClientInjectionMessage = retryResult.ClientInjectionMessage
+		result.ClientFailureCode = retryResult.ClientFailureCode
+		result.ClientInjected = retryResult.ClientInjected
+		result.Failures = slices.DeleteFunc(result.Failures, func(failure api.WorkflowFailure) bool {
+			return failure.Failure.Operation == api.OperationKindClientInjection
+		})
+		result.Failures = append(result.Failures, retryResult.Failures...)
+		result.Status = result.DerivedStatus()
+		merged[index] = result
+		delete(byTracker, result.TrackerID)
+	}
+	if len(byTracker) > 0 {
+		return CommandResult{}, errors.New("release workflow client injection retry returned an unrelated tracker")
+	}
+	prepared, err := preparedUploadsForRetriedResult(state, prior)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	return m.publishUploadResult(ownerID, state, nextRevision, now, prepared, merged, authority)
+}
+
+func (m *Module) registeredArtifactAuthority(
+	ownerID string,
+	workflowID api.WorkflowID,
+	resultID api.UploadResultID,
+	now time.Time,
+) (RegisteredArtifactAuthority, bool) {
+	value, err := m.private.Get(
+		ownerID,
+		workflowID,
+		registeredArtifactAuthorityPrivateResourceID(resultID),
+		now,
+	)
+	if err != nil {
+		return RegisteredArtifactAuthority{}, false
+	}
+	authority, ok := value.(RegisteredArtifactAuthority)
+	if !ok {
+		return RegisteredArtifactAuthority{}, false
+	}
+	return cloneRegisteredArtifactAuthority(authority), true
+}
+
+func preparedUploadsForRetriedResult(state *State, result api.UploadResult) (preparedUploads, error) {
+	projections, projectionsOK := state.Projections[result.ProjectionSet.ID]
+	dupes, dupesOK := state.Dupes[result.Dupes.ID]
+	media, mediaOK := state.Media[result.Media.ID]
+	descriptions, descriptionsOK := state.Descriptions[result.Descriptions.ID]
+	if !projectionsOK || !dupesOK || !mediaOK || !descriptionsOK {
+		return preparedUploads{}, fmt.Errorf("%w: upload result lineage is unavailable", ErrInvalidTransition)
+	}
+	return preparedUploads{
+		projections:  projections,
+		dupes:        dupes,
+		media:        media,
+		descriptions: descriptions,
+		plan: api.UploadPlan{
+			TrackerApproval:  result.TrackerApproval,
+			InputFingerprint: result.InputFingerprint,
+		},
+	}, nil
 }
 
 func uploadResultMatchesCurrent(result api.UploadResult, workflow api.ReleaseWorkflow) bool {
@@ -5582,8 +5716,10 @@ func completeUploadExecutionResults(
 		if len(selected) > 0 && tracker.Eligible {
 			if _, approved := selected[tracker.TrackerID]; !approved {
 				completed = append(completed, api.UploadTrackerResult{
-					TrackerID: tracker.TrackerID,
-					Status:    api.StageStatusSkipped,
+					TrackerID:             tracker.TrackerID,
+					Status:                api.StageStatusSkipped,
+					SubmissionStatus:      api.StageStatusSkipped,
+					ClientInjectionStatus: api.StageStatusSkipped,
 				})
 				continue
 			}
@@ -5592,13 +5728,17 @@ func completeUploadExecutionResults(
 			switch tracker.Status {
 			case api.StageStatusSkipped:
 				completed = append(completed, api.UploadTrackerResult{
-					TrackerID: tracker.TrackerID,
-					Status:    api.StageStatusSkipped,
+					TrackerID:             tracker.TrackerID,
+					Status:                api.StageStatusSkipped,
+					SubmissionStatus:      api.StageStatusSkipped,
+					ClientInjectionStatus: api.StageStatusSkipped,
 				})
 			case api.StageStatusBlocked:
 				completed = append(completed, api.UploadTrackerResult{
-					TrackerID: tracker.TrackerID,
-					Status:    api.StageStatusFailed,
+					TrackerID:             tracker.TrackerID,
+					Status:                api.StageStatusFailed,
+					SubmissionStatus:      api.StageStatusFailed,
+					ClientInjectionStatus: api.StageStatusPending,
 					Failures: []api.WorkflowFailure{{
 						Failure: api.OperationFailure{
 							Code:      api.OperationFailureInternal,
@@ -5620,8 +5760,10 @@ func completeUploadExecutionResults(
 			message = "Tracker upload failed. Review the tracker result and retry."
 		}
 		completed = append(completed, api.UploadTrackerResult{
-			TrackerID: tracker.TrackerID,
-			Status:    api.StageStatusFailed,
+			TrackerID:             tracker.TrackerID,
+			Status:                api.StageStatusFailed,
+			SubmissionStatus:      api.StageStatusFailed,
+			ClientInjectionStatus: api.StageStatusPending,
 			Failures: []api.WorkflowFailure{{
 				Failure: api.OperationFailure{
 					Code:      api.OperationFailureInternal,
@@ -5670,20 +5812,19 @@ func validateUploadExecutionTrackerIDs(
 }
 
 func (m *Module) publishUploadResult(
+	ownerID string,
 	state *State,
 	nextRevision api.WorkflowRevision,
 	now time.Time,
 	prepared preparedUploads,
 	results []api.UploadTrackerResult,
+	authority RegisteredArtifactAuthority,
 ) (CommandResult, error) {
 	id, err := m.newID("upload_result")
 	if err != nil {
 		return CommandResult{}, err
 	}
-	status := api.StageStatusCompleted
-	if slices.ContainsFunc(results, func(result api.UploadTrackerResult) bool { return result.Status == api.StageStatusFailed }) {
-		status = api.StageStatusFailed
-	}
+	status := derivedUploadResultStatus(results)
 	snapshot := api.UploadResult{
 		ID:               api.UploadResultID(id),
 		WorkflowID:       state.Workflow.ID,
@@ -5701,6 +5842,22 @@ func (m *Module) publishUploadResult(
 	if err := snapshot.Validate(); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow record upload result: %w", err)
 	}
+	if len(authority.Torrents) > 0 && slices.ContainsFunc(results, func(result api.UploadTrackerResult) bool {
+		return result.EffectiveClientInjectionStatus() == api.StageStatusFailed
+	}) {
+		if err := m.private.Put(
+			ownerID,
+			state.Workflow.ID,
+			registeredArtifactAuthorityPrivateResourceID(snapshot.ID),
+			cloneRegisteredArtifactAuthority(authority),
+			now.Add(workflowCommandTTL),
+		); err != nil {
+			m.logger.Warnf(
+				"releaseworkflow: registered artifact authority retention failed workflow=%s decision=unavailable",
+				state.Workflow.ID,
+			)
+		}
+	}
 	state.UploadResults[snapshot.ID] = snapshot
 	state.Workflow.UploadResult = &api.UploadResultRef{ID: snapshot.ID, Revision: snapshot.Revision}
 	state.Workflow.Status = api.WorkflowStatusCompleted
@@ -5717,7 +5874,7 @@ func (m *Module) publishUploadResult(
 			if failure.Failure.Operation == api.OperationKindClientInjection {
 				effectKind = api.WorkflowExternalEffectClientInjection
 				effectScopeID = failure.Resource
-				prompt = "Verify that the client injection did not complete before preparing and reviewing a replacement exact upload plan."
+				prompt = "Verify that the client injection did not complete before retrying the retained registered tracker artifact."
 			}
 			action, actionErr := m.newReconcileAction(
 				nextRevision,
@@ -5738,6 +5895,21 @@ func (m *Module) publishUploadResult(
 		state.Workflow.Status = api.WorkflowStatusBlocked
 	}
 	return CommandResult{UploadResult: &snapshot}, nil
+}
+
+func derivedUploadResultStatus(results []api.UploadTrackerResult) api.StageStatus {
+	if slices.ContainsFunc(results, func(result api.UploadTrackerResult) bool {
+		submission := result.EffectiveSubmissionStatus()
+		return submission == api.StageStatusFailed || submission == api.StageStatusUnavailable
+	}) {
+		return api.StageStatusFailed
+	}
+	if slices.ContainsFunc(results, func(result api.UploadTrackerResult) bool {
+		return result.EffectiveClientInjectionStatus() == api.StageStatusFailed
+	}) {
+		return api.StageStatusPartial
+	}
+	return api.StageStatusCompleted
 }
 
 func (m *Module) newReconcileAction(
@@ -5928,6 +6100,7 @@ func (m *Module) resolveAction(
 	now time.Time,
 	command ResolveActionCommand,
 ) (CommandResult, error) {
+	var resolvedUploadResult *api.UploadResult
 	if command.Answer.WorkflowRevision != command.ExpectedRevision {
 		return CommandResult{}, ErrRevisionConflict
 	}
@@ -5966,10 +6139,19 @@ func (m *Module) resolveAction(
 		if action.EffectKind == api.WorkflowExternalEffectImageHosting {
 			return m.resolveImageHostingAction(ctx, ownerID, state, nextRevision, now, action)
 		}
-		if state.Workflow.DryRun != nil {
-			m.private.Delete(ownerID, state.Workflow.ID, uploadPlanPrivateResourceID(state.Workflow.DryRun.ID))
+		if action.EffectKind == api.WorkflowExternalEffectClientInjection &&
+			strings.HasPrefix(action.EffectScopeID, "upload:") {
+			reconciled, err := m.reconcileClientInjectionResult(ownerID, state, nextRevision, now, action)
+			if err != nil {
+				return CommandResult{}, err
+			}
+			resolvedUploadResult = &reconciled
+		} else {
+			if state.Workflow.DryRun != nil {
+				m.private.Delete(ownerID, state.Workflow.ID, uploadPlanPrivateResourceID(state.Workflow.DryRun.ID))
+			}
+			invalidateUploadPlan(&state.Workflow)
 		}
-		invalidateUploadPlan(&state.Workflow)
 		if err := m.invalidateUnavailablePrivateAuthority(ownerID, &state.Workflow, now); err != nil {
 			return CommandResult{}, fmt.Errorf("release workflow reconcile private authority: %w", err)
 		}
@@ -5985,9 +6167,99 @@ func (m *Module) resolveAction(
 	}
 	state.Workflow.RequiredActions = slices.Delete(state.Workflow.RequiredActions, index, index+1)
 	if len(state.Workflow.RequiredActions) == 0 && state.Workflow.Status == api.WorkflowStatusBlocked {
-		state.Workflow.Status = api.WorkflowStatusActive
+		if state.Workflow.UploadResult != nil {
+			state.Workflow.Status = api.WorkflowStatusCompleted
+		} else {
+			state.Workflow.Status = api.WorkflowStatusActive
+		}
 	}
-	return CommandResult{}, nil
+	return CommandResult{UploadResult: resolvedUploadResult}, nil
+}
+
+func (m *Module) reconcileClientInjectionResult(
+	ownerID string,
+	state *State,
+	nextRevision api.WorkflowRevision,
+	now time.Time,
+	action api.RequiredAction,
+) (api.UploadResult, error) {
+	if state.Workflow.UploadResult == nil {
+		return api.UploadResult{}, fmt.Errorf("%w: reconciled upload result is unavailable", ErrInvalidTransition)
+	}
+	priorRef := *state.Workflow.UploadResult
+	prior, ok := state.UploadResults[priorRef.ID]
+	if !ok || prior.Revision != priorRef.Revision {
+		return api.UploadResult{}, fmt.Errorf("%w: reconciled upload result is stale", ErrInvalidTransition)
+	}
+	id, err := m.newID("upload_result")
+	if err != nil {
+		return api.UploadResult{}, err
+	}
+	authority, authorityAvailable := m.registeredArtifactAuthority(ownerID, state.Workflow.ID, prior.ID, now)
+	snapshot := prior
+	snapshot.ID = api.UploadResultID(id)
+	snapshot.Revision = nextRevision
+	snapshot.CreatedAt = now
+	snapshot.Results = append([]api.UploadTrackerResult(nil), prior.Results...)
+	updated := false
+	for index, result := range snapshot.Results {
+		if result.TrackerID != action.TrackerID {
+			continue
+		}
+		result.Failures = append([]api.WorkflowFailure(nil), result.Failures...)
+		failureUpdated := false
+		for failureIndex, failure := range result.Failures {
+			if failure.Failure.Code != api.OperationFailureUnknownOutcome ||
+				failure.Failure.Operation != api.OperationKindClientInjection ||
+				failure.Resource != action.EffectScopeID {
+				continue
+			}
+			failure.Failure.Code = api.OperationFailureClientInjection
+			failure.Failure.Message = "Client injection was confirmed incomplete and can be retried without resubmitting."
+			failure.Failure.Recovery = api.OperationRecoveryRetry
+			if !authorityAvailable {
+				failure.Failure.Code = api.OperationFailureMissingExactTorrent
+				failure.Failure.Message = "Registered tracker artifact authority is unavailable; tracker submission remains completed."
+				failure.Failure.Recovery = api.OperationRecoveryNone
+			}
+			result.Failures[failureIndex] = failure
+			failureUpdated = true
+		}
+		if !failureUpdated {
+			continue
+		}
+		result.ClientFailureCode = api.OperationFailureClientInjection
+		result.ClientInjectionMessage = "Client injection was confirmed incomplete and can be retried without resubmitting."
+		if !authorityAvailable {
+			result.ClientFailureCode = api.OperationFailureMissingExactTorrent
+			result.ClientInjectionMessage = "Registered tracker artifact authority is unavailable; tracker submission remains completed."
+		}
+		result.ClientInjectionStatus = api.StageStatusFailed
+		result.Status = result.DerivedStatus()
+		snapshot.Results[index] = result
+		updated = true
+	}
+	if !updated {
+		return api.UploadResult{}, fmt.Errorf("%w: reconciled client injection outcome is stale", ErrInvalidTransition)
+	}
+	snapshot.Status = derivedUploadResultStatus(snapshot.Results)
+	if err := snapshot.Validate(); err != nil {
+		return api.UploadResult{}, fmt.Errorf("release workflow reconcile client injection result: %w", err)
+	}
+	if authorityAvailable {
+		if err := m.private.Put(
+			ownerID,
+			state.Workflow.ID,
+			registeredArtifactAuthorityPrivateResourceID(snapshot.ID),
+			authority,
+			now.Add(workflowCommandTTL),
+		); err != nil {
+			return api.UploadResult{}, fmt.Errorf("release workflow retain reconciled client artifact authority: %w", err)
+		}
+	}
+	state.UploadResults[snapshot.ID] = snapshot
+	state.Workflow.UploadResult = &api.UploadResultRef{ID: snapshot.ID, Revision: snapshot.Revision}
+	return snapshot, nil
 }
 
 func (m *Module) resolveImageHostingAction(

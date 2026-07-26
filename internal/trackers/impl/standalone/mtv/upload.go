@@ -103,6 +103,15 @@ func prepareUploadAt(ctx context.Context, req trackers.PreparationInput, baseURL
 		return trackers.NewPreparedOperation(preview, nil, nil), nil
 	}
 
+	announceURL := strings.TrimSpace(req.TrackerConfig.AnnounceURL)
+	artifactPath := ""
+	if announceURL != "" {
+		artifactPath, err = trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "MTV")
+		if err != nil {
+			return trackers.PreparedOperation{}, fmt.Errorf("trackers: %w", err)
+		}
+	}
+
 	cookies, err := loadMTVCookies(ctx, req.Runtime.DBPath)
 	if err != nil {
 		cookies = nil
@@ -138,11 +147,31 @@ func prepareUploadAt(ctx context.Context, req trackers.PreparationInput, baseURL
 		return trackers.PreparedOperation{}, err
 	}
 	return trackers.NewPreparedOperation(preview, func(submitCtx context.Context) (api.UploadSummary, error) {
-		return submitPreparedUpload(submitCtx, uploadURL, client, body, contentType)
+		return submitPreparedUpload(
+			submitCtx,
+			uploadURL,
+			client,
+			body,
+			contentType,
+			req.Logger,
+			torrentPath,
+			artifactPath,
+			announceURL,
+		)
 	}, nil), nil
 }
 
-func submitPreparedUpload(ctx context.Context, uploadURL string, client *http.Client, body []byte, contentType string) (api.UploadSummary, error) {
+func submitPreparedUpload(
+	ctx context.Context,
+	uploadURL string,
+	client *http.Client,
+	body []byte,
+	contentType string,
+	logger api.Logger,
+	torrentPath string,
+	artifactPath string,
+	announceURL string,
+) (api.UploadSummary, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, bytes.NewReader(body))
 	if err != nil {
 		return api.UploadSummary{}, fmt.Errorf("trackers: MTV request build: %w", err)
@@ -170,7 +199,28 @@ func submitPreparedUpload(ctx context.Context, uploadURL string, client *http.Cl
 	}
 
 	if strings.Contains(finalURL, "torrents.php") {
-		return api.UploadSummary{Uploaded: 1}, nil
+		torrentID := ""
+		if resp.Request != nil && resp.Request.URL != nil {
+			torrentID = strings.TrimSpace(resp.Request.URL.Query().Get("id"))
+		}
+		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
+			logger,
+			"MTV",
+			torrentPath,
+			artifactPath,
+			announceURL,
+			finalURL,
+			"MTV",
+		)
+		return api.UploadSummary{
+			Uploaded: 1,
+			UploadedTorrents: []api.UploadedTorrent{{
+				Tracker:     "MTV",
+				TorrentID:   torrentID,
+				TorrentURL:  finalURL,
+				TorrentPath: registeredPath,
+			}},
+		}, nil
 	}
 
 	return api.UploadSummary{}, commonhttp.UploadHTTPErrorWithURL("MTV", resp.StatusCode, finalURL, bodyPreview)

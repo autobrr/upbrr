@@ -66,6 +66,45 @@ func TestPrivateArtifactVaultRestartIsolationIntegrityAndConsume(t *testing.T) {
 	}
 }
 
+func TestPrivateArtifactVaultRestartsRegisteredArtifactAuthority(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	vault, err := NewPrivateArtifactVault(root)
+	if err != nil {
+		t.Fatalf("new private artifact vault: %v", err)
+	}
+	now := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.UTC)
+	authority := RegisteredArtifactAuthority{
+		ClientSubject: api.ClientSubject{SourcePath: `C:\releases\Example.Release.2026.mkv`},
+		Torrents: map[api.TrackerID]api.TorrentResult{
+			"ALPHA": {
+				Tracker: "ALPHA",
+				Path:    `C:\state\tmp\Example.Release.2026\[alpha].Example.Release.2026.torrent`,
+			},
+		},
+	}
+	resourceID := registeredArtifactAuthorityPrivateResourceID("upload-result-1")
+	if err := vault.Put(testOwnerID, "workflow-registered", resourceID, authority, now.Add(time.Hour)); err != nil {
+		t.Fatalf("put registered artifact authority: %v", err)
+	}
+	vault.InvalidateAll()
+
+	restarted, err := NewPrivateArtifactVault(root)
+	if err != nil {
+		t.Fatalf("restart private artifact vault: %v", err)
+	}
+	value, err := restarted.Get(testOwnerID, "workflow-registered", resourceID, now)
+	if err != nil {
+		t.Fatalf("get registered artifact authority after restart: %v", err)
+	}
+	decoded, ok := value.(RegisteredArtifactAuthority)
+	if !ok || decoded.ClientSubject.SourcePath != authority.ClientSubject.SourcePath ||
+		decoded.Torrents["ALPHA"].Path != authority.Torrents["ALPHA"].Path {
+		t.Fatalf("decoded registered artifact authority = %#v", value)
+	}
+}
+
 func TestPrivateArtifactVaultDetectsDigestMismatchAndCleansExpiry(t *testing.T) {
 	t.Parallel()
 

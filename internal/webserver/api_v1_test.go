@@ -492,6 +492,7 @@ func TestAPIV1CommandRoutesDecodeSharedWorkflowRequests(t *testing.T) {
 		{"save description", http.MethodPost, []string{"workflow-1", "descriptions", "description-1", "groups", "group-1", "save"}, `{"override":{"descriptions":{"revision":1},"source":"synthetic"}}`, releaseworkflow.SaveDescriptionOverrideCommand{}},
 		{"reset description", http.MethodPost, []string{"workflow-1", "descriptions", "description-1", "groups", "group-1", "reset"}, `{"descriptions":{"revision":1}}`, releaseworkflow.ResetDescriptionOverrideCommand{}},
 		{"retry upload", http.MethodPost, []string{"workflow-1", "uploads", "result-1", "retry"}, `{"retry":{"result":{"revision":1},"trackerIds":["EXAMPLE"]}}`, releaseworkflow.RetryFailedUploadsCommand{}},
+		{"retry client injection", http.MethodPost, []string{"workflow-1", "uploads", "result-1", "client-injections", "retry"}, `{"retry":{"result":{"revision":1},"trackerIds":["EXAMPLE"]}}`, releaseworkflow.RetryClientInjectionsCommand{}},
 		{"cancel", http.MethodPost, []string{"workflow-1", "cancel"}, `{}`, releaseworkflow.CancelWorkflowCommand{}},
 	}
 

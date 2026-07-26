@@ -4,6 +4,7 @@
 package mtv
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +14,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/anacrolix/torrent/bencode"
+	"github.com/anacrolix/torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
@@ -348,6 +352,67 @@ func TestUploadPostsToRedirectedLoginHost(t *testing.T) {
 	}
 	if !postedCanonicalUpload {
 		t.Fatal("expected upload POST on redirected host")
+	}
+}
+
+func TestSubmitPreparedUploadPersistsMTVRegisteredArtifact(t *testing.T) {
+	t.Parallel()
+
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == mtvUploadPath:
+			http.Redirect(w, request, serverURL+"/torrents.php?id=321", http.StatusFound)
+		case request.Method == http.MethodGet && request.URL.Path == "/torrents.php":
+			_, _ = w.Write([]byte("ok"))
+		default:
+			http.NotFound(w, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	serverURL = server.URL
+
+	tempDir := t.TempDir()
+	torrentPath := filepath.Join(tempDir, "prepared.torrent")
+	if err := os.WriteFile(torrentPath, mtvTestTorrentPayload(t), 0o600); err != nil {
+		t.Fatalf("write prepared torrent: %v", err)
+	}
+	artifactPath := filepath.Join(tempDir, "registered.torrent")
+	announceURL := "https://tracker.example/announce"
+	summary, err := submitPreparedUpload(
+		context.Background(),
+		server.URL+mtvUploadPath,
+		server.Client(),
+		[]byte("payload"),
+		"application/octet-stream",
+		api.NopLogger{},
+		torrentPath,
+		artifactPath,
+		announceURL,
+	)
+	if err != nil {
+		t.Fatalf("submit MTV upload: %v", err)
+	}
+	if summary.Uploaded != 1 || len(summary.UploadedTorrents) != 1 {
+		t.Fatalf("MTV upload summary = %#v", summary)
+	}
+	artifact := summary.UploadedTorrents[0]
+	if artifact.Tracker != "MTV" || artifact.TorrentID != "321" || artifact.TorrentPath != artifactPath {
+		t.Fatalf("MTV registered artifact = %#v", artifact)
+	}
+	torrentMeta, err := metainfo.LoadFromFile(artifactPath)
+	if err != nil {
+		t.Fatalf("load MTV registered torrent: %v", err)
+	}
+	if torrentMeta.Announce != announceURL {
+		t.Fatal("MTV registered torrent announce did not match configured announce")
+	}
+	info, err := torrentMeta.UnmarshalInfo()
+	if err != nil {
+		t.Fatalf("decode MTV registered torrent info: %v", err)
+	}
+	if info.Source != "MTV" {
+		t.Fatalf("MTV source = %q, want MTV", info.Source)
 	}
 }
 
@@ -749,4 +814,23 @@ func writeMalformedChunkedResponse(w http.ResponseWriter) error {
 	}
 	_ = conn.Close()
 	return nil
+}
+
+func mtvTestTorrentPayload(t *testing.T) []byte {
+	t.Helper()
+
+	infoBytes, err := bencode.Marshal(metainfo.Info{
+		Name:        "Example.Release.2026.mkv",
+		PieceLength: 16 * 1024,
+		Pieces:      make([]byte, 20),
+		Length:      1,
+	})
+	if err != nil {
+		t.Fatalf("marshal MTV torrent info: %v", err)
+	}
+	var payload bytes.Buffer
+	if err := (&metainfo.MetaInfo{InfoBytes: infoBytes}).Write(&payload); err != nil {
+		t.Fatalf("write MTV torrent: %v", err)
+	}
+	return payload.Bytes()
 }

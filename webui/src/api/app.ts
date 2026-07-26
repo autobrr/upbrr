@@ -26,6 +26,7 @@ import type {
   RemoveReleaseWorkflowHostedImagesRequest,
   ReorderReleaseWorkflowMediaRequest,
   ResetReleaseWorkflowDescriptionOverrideRequest,
+  RetryReleaseWorkflowClientInjectionRequest,
   RetryReleaseWorkflowImageHostRequest,
   RetryReleaseWorkflowUploadRequest,
   SaveReleaseWorkflowDescriptionOverrideRequest,
@@ -162,6 +163,11 @@ export const releaseWorkflowClient = {
     }),
   retryFailedUploads: (command: RetryReleaseWorkflowUploadRequest, signal?: AbortSignal) =>
     requestApp<ReleaseWorkflowCurrent>("RetryReleaseWorkflowUpload", command, { signal }),
+  retryClientInjections: (
+    command: RetryReleaseWorkflowClientInjectionRequest,
+    signal?: AbortSignal,
+  ) =>
+    requestApp<ReleaseWorkflowCurrent>("RetryReleaseWorkflowClientInjection", command, { signal }),
   cancel: (command: CancelReleaseWorkflowRequest, signal?: AbortSignal) =>
     requestApp<ReleaseWorkflowCurrent>("CancelReleaseWorkflow", command, { signal }),
   invalidateTrackers: (command: InvalidateReleaseWorkflowTrackersRequest, signal?: AbortSignal) =>

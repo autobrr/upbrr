@@ -21,8 +21,6 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
-	paths "github.com/autobrr/upbrr/internal/pathing/layout"
-	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -198,28 +196,28 @@ func submitPreparedUpload(ctx context.Context, req trackers.PreparationInput, st
 	}
 
 	torrentID := strings.TrimSpace(matches[1])
+	downloadURL := buildHDBDownloadURL(state.uploadURL, req.Meta, torrentID, state.passkey)
 	trackerTorrentPath := ""
 	if torrentID != "" {
-		trackerTorrentPath, err = resolveTrackerTorrentPath(req.Meta, req.Runtime.DBPath, "HDB")
-		if err != nil {
-			return api.UploadSummary{}, err
-		}
-		if err := downloadPersonalizedTorrent(
-			ctx,
-			state.client,
-			state.uploadURL,
-			req.Meta,
-			trackerTorrentPath,
-			torrentID,
-			state.passkey,
-			state.cookies,
-		); err != nil &&
-			req.Logger != nil {
-			req.Logger.Warnf("trackers: HDB torrent redownload failed: %v", err)
+		resolvedPath, pathErr := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "HDB")
+		if pathErr == nil {
+			downloadErr := downloadPersonalizedTorrent(
+				ctx,
+				state.client,
+				downloadURL,
+				resolvedPath,
+				state.cookies,
+			)
+			if downloadErr == nil {
+				trackerTorrentPath = resolvedPath
+			} else {
+				trackers.LogRegisteredTorrentUnavailable(req.Logger, "HDB")
+			}
+		} else {
+			trackers.LogRegisteredTorrentUnavailable(req.Logger, "HDB")
 		}
 	}
 
-	downloadURL := buildHDBDownloadURL(state.uploadURL, req.Meta, torrentID, state.passkey)
 	return api.UploadSummary{
 		Uploaded: 1,
 		UploadedTorrents: []api.UploadedTorrent{{
@@ -336,38 +334,13 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
-func resolveTrackerTorrentPath(meta api.UploadSubject, dbPath string, tracker string) (string, error) {
-	if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
-		return "", errors.New("trackers: HDB tracker torrent path requires db path and source path")
-	}
-
-	tmpRoot, err := db.Subdir(dbPath, "tmp")
-	if err != nil {
-		return "", fmt.Errorf("trackers: HDB tmp root: %w", err)
-	}
-	tmpDir, base, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
-	if err != nil {
-		return "", fmt.Errorf("trackers: HDB tmp release dir: %w", err)
-	}
-	name := strings.ToLower(strings.TrimSpace(tracker))
-	name = strings.NewReplacer("/", "-", "\\", "-", " ", "-").Replace(name)
-	if name == "" {
-		name = "tracker"
-	}
-	return filepath.Join(tmpDir, base+"."+name+".torrent"), nil
-}
-
 func downloadPersonalizedTorrent(
 	ctx context.Context,
 	client *http.Client,
-	uploadURL string,
-	meta api.UploadSubject,
+	downloadURL string,
 	torrentPath string,
-	torrentID string,
-	passkey string,
 	cookies []*http.Cookie,
 ) error {
-	downloadURL := buildHDBDownloadURL(uploadURL, meta, torrentID, passkey)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return fmt.Errorf("trackers: HDB create personalized torrent request: %w", err)
@@ -376,26 +349,8 @@ func downloadPersonalizedTorrent(
 		req.AddCookie(cookie)
 	}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("trackers: HDB download personalized torrent: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("status %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("trackers: HDB read personalized torrent response: %w", err)
-	}
-	if len(body) == 0 {
-		return errors.New("empty torrent response")
-	}
-	if err := os.MkdirAll(filepath.Dir(torrentPath), 0o700); err != nil {
-		return fmt.Errorf("trackers: HDB create torrent output dir: %w", err)
-	}
-	if err := os.WriteFile(torrentPath, body, 0o600); err != nil {
-		return fmt.Errorf("trackers: HDB write torrent output: %w", err)
+	if err := trackers.DownloadRegisteredTorrent(ctx, client, req, torrentPath); err != nil {
+		return fmt.Errorf("trackers: HDB registered torrent: %w", err)
 	}
 	return nil
 }

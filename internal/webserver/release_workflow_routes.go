@@ -57,6 +57,12 @@ func (s *Server) registerReleaseWorkflowAppRoutes(mux *http.ServeMux) {
 	registerReleaseWorkflowCommand[api.SaveReleaseWorkflowDescriptionOverrideRequest](s, mux, "SaveReleaseWorkflowDescriptionOverride", false)
 	registerReleaseWorkflowCommand[api.ResetReleaseWorkflowDescriptionOverrideRequest](s, mux, "ResetReleaseWorkflowDescriptionOverride", false)
 	registerReleaseWorkflowCommand[api.RetryReleaseWorkflowUploadRequest](s, mux, "RetryReleaseWorkflowUpload", true)
+	registerReleaseWorkflowCommand[api.RetryReleaseWorkflowClientInjectionRequest](
+		s,
+		mux,
+		"RetryReleaseWorkflowClientInjection",
+		true,
+	)
 	registerReleaseWorkflowCommand[api.CancelReleaseWorkflowRequest](s, mux, "CancelReleaseWorkflow", false)
 	registerReleaseWorkflowCommand[api.InvalidateReleaseWorkflowTrackersRequest](s, mux, "InvalidateReleaseWorkflowTrackers", false)
 

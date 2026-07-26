@@ -123,17 +123,14 @@ func submitPreparedUpload(
 	dataURL := strings.TrimSpace(fmt.Sprint(decoded["data"]))
 	torrentID := path.Base(strings.TrimRight(dataURL, "/"))
 
-	if announceURL != "" {
-		if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, dataURL, sourceFlag); err != nil {
-			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-		}
-	}
+	registeredPath := trackers.PersistReconstructedRegisteredTorrent(
+		req.Logger, "TVC", state.torrentPath, artifactPath, announceURL, dataURL, sourceFlag,
+	)
 	return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{
 		Tracker:     "TVC",
 		TorrentID:   torrentID,
 		TorrentURL:  dataURL,
-		DownloadURL: dataURL,
-		TorrentPath: artifactPath,
+		TorrentPath: registeredPath,
 	}}}, nil
 }
 

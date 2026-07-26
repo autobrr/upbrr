@@ -99,17 +99,14 @@ func submitPreparedUpload(
 	if result.Success && len(match) >= 2 {
 		id := match[1]
 		tURL := torrentURL + id
-		if announceURL != "" {
-			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, tURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-			}
-		}
+		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
+			req.Logger, "FF", state.torrentPath, artifactPath, announceURL, tURL, sourceFlag,
+		)
 		return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{
 			Tracker:     "FF",
 			TorrentID:   id,
 			TorrentURL:  tURL,
-			DownloadURL: tURL,
-			TorrentPath: artifactPath,
+			TorrentPath: registeredPath,
 		}}}, nil
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "FF", "upload_failure", result.Preview, ".html")

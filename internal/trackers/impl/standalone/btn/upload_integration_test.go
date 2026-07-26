@@ -183,7 +183,7 @@ func TestBTNUploadEndToEndSuccess(t *testing.T) {
 			w.WriteHeader(http.StatusFound)
 		case r.URL.Path == "/torrents.php" && r.URL.Query().Get("action") == "download":
 			downloadCalls.Add(1)
-			_, _ = w.Write([]byte("d8:announce13:https://x.ee"))
+			_, _ = w.Write(btnRegisteredTorrentFixture())
 		case r.URL.Path == "/torrents.php":
 			_, _ = w.Write([]byte("ok"))
 		default:
@@ -314,7 +314,7 @@ func TestBTNUploadEndToEndSuccess(t *testing.T) {
 	}
 }
 
-func TestBTNUploadAnnounceURLWritesTorrentArtifact(t *testing.T) {
+func TestBTNUploadAnnounceURLStillUsesExactRegisteredTorrent(t *testing.T) {
 	t.Parallel()
 
 	var downloadCalls atomic.Int32
@@ -351,7 +351,7 @@ func TestBTNUploadAnnounceURLWritesTorrentArtifact(t *testing.T) {
 			w.WriteHeader(http.StatusFound)
 		case r.URL.Path == "/torrents.php" && r.URL.Query().Get("action") == "download":
 			downloadCalls.Add(1)
-			http.NotFound(w, r)
+			_, _ = w.Write(btnRegisteredTorrentFixture())
 		case r.URL.Path == "/rpc":
 			apiCalls.Add(1)
 			http.NotFound(w, r)
@@ -371,8 +371,8 @@ func TestBTNUploadAnnounceURLWritesTorrentArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upload failed: %v", err)
 	}
-	if downloadCalls.Load() != 0 {
-		t.Fatalf("expected no BTN torrent download calls, got %d", downloadCalls.Load())
+	if downloadCalls.Load() != 1 {
+		t.Fatalf("expected one BTN registered torrent download, got %d", downloadCalls.Load())
 	}
 	if apiCalls.Load() != 0 {
 		t.Fatalf("expected no API fallback calls, got %d", apiCalls.Load())
@@ -385,14 +385,15 @@ func TestBTNUploadAnnounceURLWritesTorrentArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read BTN artifact: %v", err)
 	}
-	if torrentMeta.Announce != "https://tracker.btn.example/announce/passkey" {
-		t.Fatal("expected BTN announce URL")
+	if torrentMeta.Announce != "https://old.example/announce" {
+		t.Fatal("expected exact tracker-returned announce URL")
 	}
-	if len(torrentMeta.AnnounceList) != 1 || len(torrentMeta.AnnounceList[0]) != 1 || torrentMeta.AnnounceList[0][0] != "https://tracker.btn.example/announce/passkey" {
-		t.Fatal("expected BTN announce-list")
+	if len(torrentMeta.AnnounceList) != 1 || len(torrentMeta.AnnounceList[0]) != 1 ||
+		torrentMeta.AnnounceList[0][0] != "https://old.example/announce" {
+		t.Fatal("expected exact tracker-returned announce-list")
 	}
-	if torrentMeta.Comment != summary.UploadedTorrents[0].TorrentURL {
-		t.Fatalf("expected torrent comment to reference BTN URL, got %q", torrentMeta.Comment)
+	if torrentMeta.Comment != "" {
+		t.Fatalf("expected tracker-returned torrent comment unchanged, got %q", torrentMeta.Comment)
 	}
 }
 
@@ -439,7 +440,7 @@ func TestBTNUploadUsesValidImportedCookiesWithoutCredentials(t *testing.T) {
 			w.Header().Set("Location", "/torrents.php?id=123&torrentid=456")
 			w.WriteHeader(http.StatusFound)
 		case r.URL.Path == "/torrents.php" && r.URL.Query().Get("action") == "download":
-			_, _ = w.Write([]byte("d8:announce13:https://x.ee"))
+			_, _ = w.Write(btnRegisteredTorrentFixture())
 		default:
 			http.NotFound(w, r)
 		}
@@ -1559,7 +1560,7 @@ func TestResolveSessionForTrackerAuthLoginMarksSubmitted2FARejected(t *testing.T
 	}
 }
 
-func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
+func TestBTNUploadPreservesRemoteIdentityWhenRegisteredTorrentDownloadFails(t *testing.T) {
 	t.Parallel()
 
 	var apiSearchCalls atomic.Int32
@@ -1620,7 +1621,7 @@ func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
 				http.NotFound(w, r)
 			}
 		case r.URL.Path == "/mock-download":
-			_, _ = w.Write([]byte("d8:announce13:https://x.ee"))
+			_, _ = w.Write(btnRegisteredTorrentFixture())
 		default:
 			http.NotFound(w, r)
 		}
@@ -1690,30 +1691,26 @@ func TestBTNUploadFallsBackToAPIResolution(t *testing.T) {
 	if len(summary.UploadedTorrents) != 1 {
 		t.Fatalf("expected one uploaded torrent, got %d", len(summary.UploadedTorrents))
 	}
-	if got := summary.UploadedTorrents[0].TorrentID; got != "779" {
-		t.Fatalf("expected summary fallback torrent id 779, got %q", got)
+	if got := summary.UploadedTorrents[0].TorrentID; got != "456" {
+		t.Fatalf("expected accepted remote torrent id 456, got %q", got)
 	}
-	if got := summary.UploadedTorrents[0].TorrentURL; !strings.Contains(got, "torrentid=779") || strings.Contains(got, "torrentid=456") {
-		t.Fatalf("expected summary URL to use fallback torrent id")
+	if got := summary.UploadedTorrents[0].TorrentURL; !strings.Contains(got, "torrentid=456") {
+		t.Fatalf("expected summary URL to retain accepted torrent id, got %q", got)
 	}
-	if got := summary.UploadedTorrents[0].DownloadURL; !strings.Contains(got, "torrentid=779") || strings.Contains(got, "torrentid=456") {
-		t.Fatalf("expected summary download URL to use fallback torrent id")
+	if got := summary.UploadedTorrents[0].DownloadURL; !strings.Contains(got, "action=download") || !strings.Contains(got, "id=456") {
+		t.Fatalf("expected summary download URL to retain accepted torrent id, got %q", got)
 	}
-	payload, err := os.ReadFile(summary.UploadedTorrents[0].TorrentPath)
-	if err != nil {
-		t.Fatalf("expected tracker torrent file: %v", err)
+	if summary.UploadedTorrents[0].TorrentPath != "" {
+		t.Fatalf("expected invalid registered torrent to be omitted, got %q", summary.UploadedTorrents[0].TorrentPath)
 	}
-	if len(payload) == 0 || payload[0] != 'd' {
-		t.Fatalf("expected bencode torrent payload from API fallback")
+	if apiSearchCalls.Load() != 0 {
+		t.Fatalf("expected no API identity replacement search, got %d", apiSearchCalls.Load())
 	}
-	if apiSearchCalls.Load() != 1 {
-		t.Fatalf("expected one API search call, got %d", apiSearchCalls.Load())
+	if apiDownloadCalls.Load() != 0 {
+		t.Fatalf("expected no API identity replacement download, got %d", apiDownloadCalls.Load())
 	}
-	if apiDownloadCalls.Load() != 1 {
-		t.Fatalf("expected one API download call, got %d", apiDownloadCalls.Load())
-	}
-	if got, _ := apiDownloadID.Load().(string); got != "779" {
-		t.Fatalf("expected exact API fallback torrent id 779, got %q", got)
+	if got, _ := apiDownloadID.Load().(string); got != "" {
+		t.Fatalf("expected no API download id, got %q", got)
 	}
 }
 
@@ -1857,7 +1854,7 @@ func TestBTNUploadFollowsIntermediateDetailPage(t *testing.T) {
 			`))
 		case r.URL.Path == "/torrents.php" && r.URL.Query().Get("action") == "download":
 			downloadCalls.Add(1)
-			_, _ = w.Write([]byte("d8:announce13:https://x.ee"))
+			_, _ = w.Write(btnRegisteredTorrentFixture())
 		case r.URL.Path == "/torrents.php" && r.URL.Query().Get("id") == "123":
 			detailCalls.Add(1)
 			_, _ = w.Write([]byte(`<a href="/torrents.php?id=123&amp;torrentid=456">Uploaded torrent</a>`))
@@ -1955,7 +1952,7 @@ func TestBTNUploadIntermediateFailureFallsBackToAPI(t *testing.T) {
 				http.NotFound(w, r)
 			}
 		case r.URL.Path == "/mock-download":
-			_, _ = w.Write([]byte("d8:announce13:https://x.ee"))
+			_, _ = w.Write(btnRegisteredTorrentFixture())
 		default:
 			http.NotFound(w, r)
 		}
@@ -2039,6 +2036,16 @@ func newBTNUploadTestRequest(t *testing.T) trackers.PreparationInput {
 func writeBTNTestTorrent(t *testing.T, torrentPath string) {
 	t.Helper()
 
+	payload := btnRegisteredTorrentFixture()
+	if err := os.MkdirAll(filepath.Dir(torrentPath), 0o700); err != nil {
+		t.Fatalf("create torrent dir: %v", err)
+	}
+	if err := os.WriteFile(torrentPath, payload, 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+}
+
+func btnRegisteredTorrentFixture() []byte {
 	infoBytes, err := bencode.Marshal(map[string]any{
 		"name":         "Example.Show.S01E01.mkv",
 		"length":       int64(1),
@@ -2046,25 +2053,18 @@ func writeBTNTestTorrent(t *testing.T, torrentPath string) {
 		"pieces":       strings.Repeat("\x00", 20),
 	})
 	if err != nil {
-		t.Fatalf("marshal torrent info: %v", err)
+		panic(err)
 	}
-	if err := os.MkdirAll(filepath.Dir(torrentPath), 0o700); err != nil {
-		t.Fatalf("create torrent dir: %v", err)
-	}
-	file, err := os.OpenFile(torrentPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		t.Fatalf("create torrent: %v", err)
-	}
-	defer file.Close()
-
+	var payload bytes.Buffer
 	torrentMeta := metainfo.MetaInfo{
 		Announce:     "https://old.example/announce",
 		AnnounceList: metainfo.AnnounceList{{"https://old.example/announce"}},
 		InfoBytes:    infoBytes,
 	}
-	if err := torrentMeta.Write(file); err != nil {
-		t.Fatalf("write torrent: %v", err)
+	if err := torrentMeta.Write(&payload); err != nil {
+		panic(err)
 	}
+	return payload.Bytes()
 }
 
 func writeBTNTestMediaInfo(t *testing.T, dir string, content string) string {

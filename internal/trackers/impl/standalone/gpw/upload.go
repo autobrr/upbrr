@@ -129,17 +129,14 @@ func submitPreparedUpload(
 	status := strings.ToLower(strings.TrimSpace(fmt.Sprint(decoded.Status)))
 	if (status == "success" || status == "ok" || status == "200") && id != "" {
 		tURL := torrentURL + id
-		if announceURL != "" {
-			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, tURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-			}
-		}
+		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
+			req.Logger, "GPW", state.torrentPath, artifactPath, announceURL, tURL, sourceFlag,
+		)
 		return api.UploadSummary{Uploaded: 1, UploadedTorrents: []api.UploadedTorrent{{
 			Tracker:     "GPW",
 			TorrentID:   id,
 			TorrentURL:  tURL,
-			DownloadURL: tURL,
-			TorrentPath: artifactPath,
+			TorrentPath: registeredPath,
 		}}}, nil
 	}
 	_, _ = commonhttp.WriteFailureArtifact(req.Meta, req.Runtime.DBPath, "GPW", "upload_failure", responsePreview, ".json")

@@ -130,11 +130,9 @@ func submitPreparedUpload(
 	torrentURL := strings.TrimRight(bhdBaseURL, "/") + "/details/" + torrentID
 	downloadURL := strings.TrimRight(bhdBaseURL, "/") + "/torrent/download/" + torrentID
 
-	if announceURL != "" {
-		if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, torrentURL, "BHD"); err != nil {
-			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-		}
-	}
+	registeredPath := trackers.PersistReconstructedRegisteredTorrent(
+		req.Logger, "BHD", state.torrentPath, artifactPath, announceURL, torrentURL, "BHD",
+	)
 
 	return api.UploadSummary{
 		Uploaded: 1,
@@ -143,7 +141,7 @@ func submitPreparedUpload(
 			TorrentID:   torrentID,
 			DownloadURL: downloadURL,
 			TorrentURL:  torrentURL,
-			TorrentPath: artifactPath,
+			TorrentPath: registeredPath,
 		}},
 	}, nil
 }

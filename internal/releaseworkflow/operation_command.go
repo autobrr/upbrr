@@ -75,6 +75,8 @@ func decodeDurableOperationCommand(payload []byte) (any, error) {
 		command = &ExecuteUploadsCommand{}
 	case (RetryFailedUploadsCommand{}).commandName():
 		command = &RetryFailedUploadsCommand{}
+	case (RetryClientInjectionsCommand{}).commandName():
+		command = &RetryClientInjectionsCommand{}
 	case (CompositeUploadCommand{}).commandName():
 		command = &CompositeUploadCommand{}
 	default:
@@ -118,6 +120,8 @@ func operationCommandValue(command Command) Command {
 	case *ExecuteUploadsCommand:
 		return *typed
 	case *RetryFailedUploadsCommand:
+		return *typed
+	case *RetryClientInjectionsCommand:
 		return *typed
 	case *CompositeUploadCommand:
 		return *typed

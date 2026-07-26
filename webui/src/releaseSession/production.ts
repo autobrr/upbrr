@@ -184,6 +184,16 @@ export const productionReleaseSessionPorts = (): ReleaseSessionPorts => ({
         },
         signal,
       ),
+    retryClientInjections: (current, result, trackerIDs, idempotencyKey, signal) =>
+      releaseWorkflowClient.retryClientInjections(
+        {
+          workflowId: current.workflow.id,
+          expectedRevision: current.workflow.revision,
+          retry: { result, trackerIds: [...trackerIDs] },
+          idempotencyKey,
+        },
+        signal,
+      ),
     cancel: async (workflowID, reason, idempotencyKey, signal) => {
       const current = await releaseWorkflowClient.current(workflowID, signal);
       return releaseWorkflowClient.cancel(

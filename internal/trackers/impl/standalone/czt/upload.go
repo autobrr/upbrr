@@ -20,15 +20,11 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/anacrolix/torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -206,7 +202,7 @@ func submitPreparedUpload(
 
 	if err := ctx.Err(); err != nil {
 		warnCZTLocalUploadFailure(req.Logger, "post-success cancellation", err)
-		return finalizeCZTUploadSummary(summary), nil
+		return summary, nil
 	}
 
 	// The endpoint returns the registered .torrent inline (base64), already
@@ -215,7 +211,7 @@ func submitPreparedUpload(
 	artifactPath, err := persistReturnedTorrent(req, parsed.TorrentB64)
 	if err != nil {
 		warnCZTLocalUploadFailure(req.Logger, "persist returned torrent", err)
-		return finalizeCZTUploadSummary(summary), nil
+		return summary, nil
 	}
 	if strings.TrimSpace(artifactPath) != "" {
 		summary.UploadedTorrents[0].TorrentPath = artifactPath
@@ -223,17 +219,20 @@ func submitPreparedUpload(
 
 	if err := ctx.Err(); err != nil {
 		warnCZTLocalUploadFailure(req.Logger, "post-success cancellation", err)
-		return finalizeCZTUploadSummary(summary), nil
+		return summary, nil
 	}
 
-	return finalizeCZTUploadSummary(summary), nil
+	return summary, nil
 }
 
 func warnCZTLocalUploadFailure(logger api.Logger, step string, err error) {
 	if logger == nil || err == nil {
 		return
 	}
-	logger.Warnf("trackers: CZT upload completed remotely but local %s failed: %v", step, err)
+	logger.Warnf(
+		"trackers: CZT upload completed remotely but local step failed step=%s artifact=registered_torrent decision=failed",
+		step,
+	)
 }
 
 // newCZTPostRequestContext lets an in-flight POST outlive caller cancellation
@@ -332,22 +331,6 @@ func cztUploadHTTPClientWithStartHook(client *http.Client, start func() error) *
 	out := *client
 	out.Transport = cztPostStartTransport{base: base, start: start}
 	return &out
-}
-
-// finalizeCZTUploadSummary drops uploaded rows that cannot be injected or
-// downloaded locally while preserving the accepted remote upload count.
-func finalizeCZTUploadSummary(summary api.UploadSummary) api.UploadSummary {
-	if len(summary.UploadedTorrents) == 0 {
-		return summary
-	}
-	out := summary.UploadedTorrents[:0]
-	for _, uploaded := range summary.UploadedTorrents {
-		if strings.TrimSpace(uploaded.TorrentPath) != "" || strings.TrimSpace(uploaded.DownloadURL) != "" {
-			out = append(out, uploaded)
-		}
-	}
-	summary.UploadedTorrents = out
-	return summary
 }
 
 func parseCZTUploadID(body []byte) (int, error) {
@@ -504,11 +487,8 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, requ
 	}, nil
 }
 
-// persistReturnedTorrent decodes the tracker-returned base64 torrent, verifies
-// it parses as metainfo, and writes the registered torrent artifact with user
-// read/write permissions only. Cleanup errors after replacement return the
-// artifact path with a non-nil error so callers can avoid reporting it as
-// successfully persisted.
+// persistReturnedTorrent decodes and atomically persists the exact
+// tracker-returned registered torrent through the shared artifact contract.
 func persistReturnedTorrent(req trackers.PreparationInput, b64 string) (string, error) {
 	if strings.TrimSpace(b64) == "" {
 		return "", errors.New("empty torrent_b64")
@@ -520,131 +500,12 @@ func persistReturnedTorrent(req trackers.PreparationInput, b64 string) (string, 
 	if len(decoded) == 0 {
 		return "", errors.New("decoded torrent_b64 is empty")
 	}
-	torrentMeta, err := metainfo.Load(bytes.NewReader(decoded))
-	if err != nil {
-		return "", fmt.Errorf("load returned torrent: %w", err)
-	}
-	if _, err := torrentMeta.UnmarshalInfo(); err != nil {
-		return "", fmt.Errorf("unmarshal returned torrent info: %w", err)
-	}
 	path, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, trackerName)
 	if err != nil {
 		return "", fmt.Errorf("resolve returned torrent path: %w", err)
 	}
-	if err := writeReturnedTorrent(path, decoded); err != nil {
-		var cleanupErr returnedTorrentCleanupError
-		if errors.As(err, &cleanupErr) {
-			return path, fmt.Errorf("write returned torrent: %w", err)
-		}
-		return "", fmt.Errorf("write returned torrent: %w", err)
-	}
-	return path, nil
-}
-
-// writeReturnedTorrent stages returned torrent bytes in the destination
-// directory before replacing the final artifact path, so a failed write does
-// not truncate an existing registered torrent.
-func writeReturnedTorrent(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	tmpFile, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("create temp returned torrent: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-	removeTemp := true
-	defer func() {
-		if removeTemp {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-
-	if err := tmpFile.Chmod(0o600); err != nil {
-		_ = tmpFile.Close()
-		return fmt.Errorf("chmod temp returned torrent: %w", err)
-	}
-	if _, err := tmpFile.Write(data); err != nil {
-		_ = tmpFile.Close()
-		return fmt.Errorf("write temp returned torrent: %w", err)
-	}
-	if err := tmpFile.Sync(); err != nil {
-		_ = tmpFile.Close()
-		return fmt.Errorf("sync temp returned torrent: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("close temp returned torrent: %w", err)
-	}
-	if err := replaceStagedReturnedTorrent(tmpPath, path); err != nil {
-		return err
-	}
-	removeTemp = false
-	return nil
-}
-
-// replaceStagedReturnedTorrent moves a staged torrent into place. Existing
-// artifacts are first moved to a temporary backup and restored if the final
-// rename fails.
-func replaceStagedReturnedTorrent(tmpPath string, outputPath string) error {
-	info, err := os.Stat(outputPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			if renameErr := os.Rename(tmpPath, outputPath); renameErr != nil {
-				return fmt.Errorf("rename staged returned torrent into place: %w", renameErr)
-			}
-			return nil
-		}
-		return fmt.Errorf("stat returned torrent: %w", err)
-	}
-	if info.IsDir() {
-		return fmt.Errorf("%s is a directory", outputPath)
-	}
-
-	backupPath, err := reserveReturnedTorrentBackupPath(filepath.Dir(outputPath), filepath.Base(outputPath)+".backup-*")
-	if err != nil {
-		return err
-	}
-	if err := os.Rename(outputPath, backupPath); err != nil {
-		_ = os.Remove(backupPath)
-		return fmt.Errorf("backup existing returned torrent: %w", err)
-	}
-	if err := os.Rename(tmpPath, outputPath); err != nil {
-		restoreErr := os.Rename(backupPath, outputPath)
-		if restoreErr != nil {
-			return errors.Join(err, fmt.Errorf("restore existing returned torrent: %w", restoreErr))
-		}
-		return fmt.Errorf("replace existing returned torrent: %w", err)
-	}
-	if err := removeReturnedTorrentBackup(backupPath); err != nil {
-		return returnedTorrentCleanupError{cause: fmt.Errorf("remove returned torrent backup: %w", err)}
-	}
-	return nil
-}
-
-type returnedTorrentCleanupError struct {
-	cause error
-}
-
-func (e returnedTorrentCleanupError) Error() string {
-	return e.cause.Error()
-}
-
-func (e returnedTorrentCleanupError) Unwrap() error {
-	return e.cause
-}
-
-var removeReturnedTorrentBackup = os.Remove
-
-// reserveReturnedTorrentBackupPath reserves and releases a same-directory path
-// suitable for temporarily holding the existing registered torrent.
-func reserveReturnedTorrentBackupPath(dir string, pattern string) (string, error) {
-	file, err := os.CreateTemp(dir, pattern)
-	if err != nil {
-		return "", fmt.Errorf("create temp returned torrent backup marker: %w", err)
-	}
-	path := file.Name()
-	closeErr := file.Close()
-	removeErr := os.Remove(path)
-	if closeErr != nil || removeErr != nil {
-		return "", errors.Join(closeErr, removeErr)
+	if err := trackers.PersistRegisteredTorrent(path, decoded); err != nil {
+		return "", fmt.Errorf("persist returned torrent: %w", err)
 	}
 	return path, nil
 }

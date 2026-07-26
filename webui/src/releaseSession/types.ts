@@ -286,6 +286,7 @@ export type UploadFacet = Readonly<{
   start(): Promise<boolean>;
   cancel(): Promise<boolean>;
   retry(): Promise<boolean>;
+  retryClientInjection(): Promise<boolean>;
 }>;
 
 /** Authoritative backend workflow state and intent-only transition methods. */
@@ -310,6 +311,7 @@ export type WorkflowFacet = Readonly<{
   dryRunUploads(): Promise<boolean>;
   executeUploads(): Promise<boolean>;
   retryFailedUploads(): Promise<boolean>;
+  retryClientInjections(): Promise<boolean>;
   invalidateTrackers(trackerIDs: readonly string[], reason: string): Promise<boolean>;
 }>;
 

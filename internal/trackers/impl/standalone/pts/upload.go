@@ -110,11 +110,9 @@ func submitPreparedUpload(
 	torrentID := parseUploadID(location, string(responseBody))
 	if (resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusSeeOther) && torrentID != "" {
 		tURL := baseURL + "/details.php?id=" + url.QueryEscape(torrentID)
-		if announceURL != "" {
-			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, tURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-			}
-		}
+		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
+			req.Logger, "PTS", state.torrentPath, artifactPath, announceURL, tURL, sourceFlag,
+		)
 		return api.UploadSummary{
 			Uploaded: 1,
 			UploadedTorrents: []api.UploadedTorrent{{
@@ -122,7 +120,7 @@ func submitPreparedUpload(
 				TorrentID:   torrentID,
 				TorrentURL:  tURL,
 				DownloadURL: baseURL + "/download.php?id=" + url.QueryEscape(torrentID),
-				TorrentPath: artifactPath,
+				TorrentPath: registeredPath,
 			}},
 		}, nil
 	}

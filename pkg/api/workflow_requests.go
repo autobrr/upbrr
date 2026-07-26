@@ -506,6 +506,27 @@ func (r RetryReleaseWorkflowUploadRequest) Validate() error {
 	return nil
 }
 
+// RetryReleaseWorkflowClientInjectionRequest retries only failed client
+// injection effects from an exact prior upload result.
+type RetryReleaseWorkflowClientInjectionRequest struct {
+	ReleaseWorkflowCommandContext
+	Retry ClientInjectionRetryRef `json:"retry"`
+}
+
+// Validate verifies exact workflow authority and explicit client-effect targets.
+func (r RetryReleaseWorkflowClientInjectionRequest) Validate() error {
+	if err := r.ReleaseWorkflowCommandContext.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(r.Retry.Result.ID)) == "" || r.Retry.Result.Revision == 0 {
+		return errors.New("exact prior upload result is required")
+	}
+	if len(r.Retry.TrackerIDs) == 0 {
+		return errors.New("at least one failed client injection tracker ID is required")
+	}
+	return validateOptionalWorkflowTrackerIDs(r.Retry.TrackerIDs)
+}
+
 // CancelReleaseWorkflowRequest cancels one workflow.
 type CancelReleaseWorkflowRequest struct {
 	ReleaseWorkflowCommandContext

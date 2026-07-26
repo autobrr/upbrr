@@ -102,11 +102,9 @@ func submitPreparedUpload(
 	if resp.StatusCode == http.StatusOK && groupID != "" {
 		torrentURL := buildTorrentURL(groupID, torrentID)
 		downloadURL := buildDownloadURL(torrentID, torrentURL)
-		if announceURL != "" {
-			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, torrentURL, arSourceFlag); err != nil {
-				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-			}
-		}
+		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
+			req.Logger, "AR", state.torrentPath, artifactPath, announceURL, torrentURL, arSourceFlag,
+		)
 		id := metautil.FirstNonEmptyTrimmed(torrentID, groupID)
 		return api.UploadSummary{
 			Uploaded: 1,
@@ -115,7 +113,7 @@ func submitPreparedUpload(
 				TorrentID:   id,
 				DownloadURL: downloadURL,
 				TorrentURL:  torrentURL,
-				TorrentPath: artifactPath,
+				TorrentPath: registeredPath,
 			}},
 		}, nil
 	}

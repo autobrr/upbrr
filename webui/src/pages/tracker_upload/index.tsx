@@ -23,7 +23,15 @@ export default function TrackerUploadPage({ facet }: Props) {
   );
   const uploadRunning = view.uploadStatus === "running";
   const failedTrackers = (view.result?.results || [])
-    .filter((result) => result.status === "failed")
+    .filter((result) => result.submissionStatus === "failed")
+    .map((result) => result.trackerId);
+  const clientInjectionFailures = (view.result?.results || [])
+    .filter(
+      (result) =>
+        result.submissionStatus === "completed" &&
+        result.clientInjectionStatus === "failed" &&
+        result.clientFailureCode === "client_injection",
+    )
     .map((result) => result.trackerId);
 
   const toggleTrackerDetails = (key: string) => {
@@ -142,7 +150,16 @@ export default function TrackerUploadPage({ facet }: Props) {
           ) : null}
           {failedTrackers.length ? (
             <button className="ghost" type="button" onClick={() => void facet.retry()}>
-              Retry failed
+              Retry failed uploads
+            </button>
+          ) : null}
+          {clientInjectionFailures.length ? (
+            <button
+              className="ghost"
+              type="button"
+              onClick={() => void facet.retryClientInjection()}
+            >
+              Retry client injection
             </button>
           ) : null}
         </div>
@@ -240,7 +257,18 @@ export default function TrackerUploadPage({ facet }: Props) {
               key={result.trackerId}
             >
               <span>{result.trackerId}</span>
-              <span className="muted">{result.status}</span>
+              <span
+                className={
+                  result.submissionStatus === "failed" || result.clientInjectionStatus === "failed"
+                    ? "error"
+                    : "muted"
+                }
+              >
+                Submission: {result.submissionStatus || result.status}
+                {" · "}
+                Client injection: {result.clientInjectionStatus || "unavailable"}
+                {result.clientInjectionMessage ? ` · ${result.clientInjectionMessage}` : ""}
+              </span>
             </div>
           ))}
         </section>

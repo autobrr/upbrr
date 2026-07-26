@@ -289,8 +289,9 @@ enqueue:
 // RetainedTrackerPreparation is one process-local view of a private prepared tracker operation.
 type RetainedTrackerPreparation struct {
 	Tracker string
-	// TorrentPath is the exact tracker artifact shared by preview injection and submission.
-	// It is execution authority, not a transport contract.
+	// TorrentPath is the exact prepared upload artifact used by preview/debug
+	// injection and tracker submission. Live post-submit injection must use the
+	// registered artifact returned by the tracker.
 	TorrentPath string
 	Preview     api.TrackerDryRunEntry
 	Failure     *TrackerFailure

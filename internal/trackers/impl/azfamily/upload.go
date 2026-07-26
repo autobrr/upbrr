@@ -98,7 +98,7 @@ func prepareUpload(ctx context.Context, site siteDefinition, req trackers.Prepar
 		}},
 	}
 	return trackers.NewPreparedOperation(preview, func(submitCtx context.Context) (api.UploadSummary, error) {
-		return submitPreparedUpload(submitCtx, site, state.client, task.RedirectURL, payload, trackerTorrentPath)
+		return submitPreparedUpload(submitCtx, site, state.client, task.RedirectURL, payload, trackerTorrentPath, req.Logger)
 	}, nil), nil
 }
 
@@ -109,6 +109,7 @@ func submitPreparedUpload(
 	redirectURL string,
 	payload url.Values,
 	trackerTorrentPath string,
+	logger api.Logger,
 ) (api.UploadSummary, error) {
 	resp, err := postForm(ctx, noRedirectClient(client), redirectURL, payload, map[string]string{
 		"Referer":    redirectURL,
@@ -130,8 +131,11 @@ func submitPreparedUpload(
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s upload failed: missing torrent id", site.Name)
 	}
 	downloadURL := strings.Replace(torrentURL, "/torrent/", "/download/torrent/", 1)
+	persistedPath := ""
 	if err := downloadTrackerTorrent(ctx, client, downloadURL, trackerTorrentPath); err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: %s personalized torrent download: %w", site.Name, err)
+		trackers.LogRegisteredTorrentUnavailable(logger, site.Name)
+	} else {
+		persistedPath = trackerTorrentPath
 	}
 	return api.UploadSummary{
 		Uploaded: 1,
@@ -140,7 +144,7 @@ func submitPreparedUpload(
 			TorrentID:   torrentID,
 			DownloadURL: downloadURL,
 			TorrentURL:  torrentURL,
-			TorrentPath: trackerTorrentPath,
+			TorrentPath: persistedPath,
 		}},
 	}, nil
 }
@@ -308,23 +312,8 @@ func downloadTrackerTorrent(ctx context.Context, client *http.Client, downloadUR
 		return fmt.Errorf("trackers: personalized torrent request build: %w", err)
 	}
 	req.Header.Set("User-Agent", azCookieUserAgent)
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("trackers: personalized torrent request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("status %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("trackers: read personalized torrent response: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-		return fmt.Errorf("trackers: create personalized torrent dir: %w", err)
-	}
-	if err := os.WriteFile(targetPath, body, 0o600); err != nil {
-		return fmt.Errorf("trackers: write personalized torrent: %w", err)
+	if err := trackers.DownloadRegisteredTorrent(ctx, client, req, targetPath); err != nil {
+		return fmt.Errorf("trackers: personalized registered torrent: %w", err)
 	}
 	return nil
 }

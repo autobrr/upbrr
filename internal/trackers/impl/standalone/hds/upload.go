@@ -108,11 +108,9 @@ func submitPreparedUpload(
 	if result.Success && len(match) >= 2 {
 		id := strings.TrimSpace(match[1])
 		tURL := torrentURL + id
-		if announceURL != "" {
-			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, tURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-			}
-		}
+		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
+			req.Logger, "HDS", state.torrentPath, artifactPath, announceURL, tURL, sourceFlag,
+		)
 		return api.UploadSummary{
 			Uploaded: 1,
 			UploadedTorrents: []api.UploadedTorrent{{
@@ -120,7 +118,7 @@ func submitPreparedUpload(
 				TorrentID:   id,
 				TorrentURL:  tURL,
 				DownloadURL: baseURL + "/download.php?id=" + id,
-				TorrentPath: artifactPath,
+				TorrentPath: registeredPath,
 			}},
 		}, nil
 	}

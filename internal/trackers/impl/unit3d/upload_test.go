@@ -4,6 +4,7 @@
 package unit3d
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -14,6 +15,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/anacrolix/torrent/bencode"
+	"github.com/anacrolix/torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -684,7 +688,10 @@ func TestBuildUnit3DDataUsesCanonicalCategoryWithParsedReleaseFacts(t *testing.T
 func TestParseUnit3DUploadArtifactDownloadURL(t *testing.T) {
 	t.Parallel()
 
-	artifact := parseUnit3DUploadArtifact("https://aither.cc", "https://aither.cc/torrent/download/374352.382")
+	artifact, err := parseUnit3DUploadArtifact("https://aither.cc", "https://aither.cc/torrent/download/374352.382")
+	if err != nil {
+		t.Fatalf("parse upload artifact: %v", err)
+	}
 	if artifact.TorrentID != "374352" {
 		t.Fatalf("expected torrent ID 374352, got %q", artifact.TorrentID)
 	}
@@ -699,7 +706,10 @@ func TestParseUnit3DUploadArtifactDownloadURL(t *testing.T) {
 func TestParseUnit3DUploadArtifactNumericID(t *testing.T) {
 	t.Parallel()
 
-	artifact := parseUnit3DUploadArtifact("https://aither.cc", "374352")
+	artifact, err := parseUnit3DUploadArtifact("https://aither.cc", "374352")
+	if err != nil {
+		t.Fatalf("parse upload artifact: %v", err)
+	}
 	if artifact.TorrentID != "374352" {
 		t.Fatalf("expected torrent ID 374352, got %q", artifact.TorrentID)
 	}
@@ -709,6 +719,101 @@ func TestParseUnit3DUploadArtifactNumericID(t *testing.T) {
 	if artifact.TorrentURL != "https://aither.cc/torrents/374352" {
 		t.Fatalf("unexpected torrent URL: %q", artifact.TorrentURL)
 	}
+}
+
+func TestParseUnit3DUploadArtifactRejectsOffOriginDownloadURL(t *testing.T) {
+	t.Parallel()
+
+	artifact, err := parseUnit3DUploadArtifact(
+		"https://tracker.example",
+		"https://other.example/torrent/download/374352",
+	)
+	if err == nil {
+		t.Fatal("expected off-origin registered torrent URL rejection")
+	}
+	if artifact.DownloadURL != "" {
+		t.Fatal("off-origin registered torrent URL was retained")
+	}
+}
+
+func TestSubmitUnit3DUploadDownloadsRegisteredTorrentWithAPIAuth(t *testing.T) {
+	t.Parallel()
+
+	registeredTorrent := unit3DRegisteredTorrentFixture(t)
+	var uploadAuthSeen atomic.Bool
+	var downloadAuthSeen atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/api/torrents/upload":
+			uploadAuthSeen.Store(request.Header.Get("Authorization") == "Bearer synthetic-api-key")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"success":true,"data":"/torrent/download/374352.382"}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/torrent/download/374352.382":
+			downloadAuthSeen.Store(request.Header.Get("Authorization") == "Bearer synthetic-api-key")
+			w.Header().Set("Content-Type", "application/x-bittorrent")
+			_, _ = w.Write(registeredTorrent)
+		default:
+			http.NotFound(w, request)
+		}
+	}))
+	defer server.Close()
+
+	tempDir := t.TempDir()
+	sourcePath := filepath.Join(tempDir, "Example.Release.2026.mkv")
+	if err := os.WriteFile(sourcePath, []byte("synthetic media"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	summary, err := submitUnit3DUpload(
+		context.Background(),
+		"EXAMPLE",
+		"Example.Release.2026.1080p-GRP",
+		"synthetic-api-key",
+		server.URL,
+		server.URL+"/api/torrents/upload",
+		"application/json",
+		"{}",
+		api.UploadSubject{SourcePath: sourcePath},
+		filepath.Join(tempDir, "state", "upbrr.db"),
+		api.NopLogger{},
+	)
+	if err != nil {
+		t.Fatalf("submit Unit3D upload: %v", err)
+	}
+	if !uploadAuthSeen.Load() || !downloadAuthSeen.Load() {
+		t.Fatalf("Unit3D API auth missing: upload=%t download=%t", uploadAuthSeen.Load(), downloadAuthSeen.Load())
+	}
+	if summary.Uploaded != 1 || len(summary.UploadedTorrents) != 1 ||
+		strings.TrimSpace(summary.UploadedTorrents[0].TorrentPath) == "" {
+		t.Fatalf("Unit3D upload summary = %#v", summary)
+	}
+	persisted, err := os.ReadFile(summary.UploadedTorrents[0].TorrentPath)
+	if err != nil {
+		t.Fatalf("read registered torrent: %v", err)
+	}
+	if !bytes.Equal(persisted, registeredTorrent) {
+		t.Fatal("Unit3D registered torrent bytes changed")
+	}
+}
+
+func unit3DRegisteredTorrentFixture(t *testing.T) []byte {
+	t.Helper()
+	infoBytes, err := bencode.Marshal(metainfo.Info{
+		Name:        "Example.Release.2026.mkv",
+		PieceLength: 16 * 1024,
+		Pieces:      make([]byte, 20),
+		Length:      1,
+	})
+	if err != nil {
+		t.Fatalf("marshal Unit3D torrent info: %v", err)
+	}
+	var payload bytes.Buffer
+	if err := (&metainfo.MetaInfo{
+		Announce:  "https://tracker.invalid/announce",
+		InfoBytes: infoBytes,
+	}).Write(&payload); err != nil {
+		t.Fatalf("write Unit3D torrent: %v", err)
+	}
+	return payload.Bytes()
 }
 
 func TestBuildUnit3DDataOmitsLegacyModQAliasForA4K(t *testing.T) {

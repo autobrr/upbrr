@@ -43,6 +43,8 @@ func submitUnit3DUpload(
 	uploadURL string,
 	contentType string,
 	payload string,
+	meta api.UploadSubject,
+	dbPath string,
 	logger api.Logger,
 ) (api.UploadSummary, error) {
 	logger.Infof("trackers: starting upload to %s for release: %s", trackerName, releaseName)
@@ -108,25 +110,44 @@ func submitUnit3DUpload(
 		return api.UploadSummary{}, err
 	}
 
-	artifact := parseUnit3DUploadArtifact(baseURL, result.Data)
+	artifact, artifactErr := parseUnit3DUploadArtifact(baseURL, result.Data)
 	artifact.Tracker = trackerName
 	if artifact.TorrentID != "" {
 		logger.Infof("trackers: %s upload succeeded - torrent ID: %s", trackerName, artifact.TorrentID)
 	} else {
 		logger.Infof("trackers: %s upload succeeded", trackerName)
 	}
-	if artifact.DownloadURL != "" {
-		logger.Infof("trackers: %s download URL: %s", trackerName, artifact.DownloadURL)
-	}
-	if artifact.TorrentURL != "" {
-		logger.Infof("trackers: %s torrent URL: %s", trackerName, artifact.TorrentURL)
-	}
 
-	summary := api.UploadSummary{Uploaded: 1}
-	if artifact.DownloadURL != "" {
-		summary.UploadedTorrents = append(summary.UploadedTorrents, artifact)
+	summary := api.UploadSummary{
+		Uploaded:         1,
+		UploadedTorrents: []api.UploadedTorrent{artifact},
 	}
-
+	if artifactErr != nil || artifact.DownloadURL == "" {
+		trackers.LogRegisteredTorrentUnavailable(logger, trackerName)
+		return summary, nil
+	}
+	artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(meta, dbPath, trackerName)
+	if err != nil {
+		trackers.LogRegisteredTorrentUnavailable(logger, trackerName)
+		return summary, nil
+	}
+	downloadRequest, err := http.NewRequestWithContext(reqCtx, http.MethodGet, artifact.DownloadURL, nil)
+	if err != nil {
+		trackers.LogRegisteredTorrentUnavailable(logger, trackerName)
+		return summary, nil
+	}
+	trackerdata.SetUnit3DAPIHeaders(downloadRequest, apiKey)
+	downloadRequest.Header.Set("User-Agent", "upbrr")
+	downloadClient := unit3DRegisteredTorrentClient(client, baseURL)
+	if err := trackers.DownloadRegisteredTorrent(reqCtx, downloadClient, downloadRequest, artifactPath); err != nil {
+		trackers.LogRegisteredTorrentUnavailable(logger, trackerName)
+		return summary, nil
+	}
+	summary.UploadedTorrents[0].TorrentPath = artifactPath
+	logger.Infof(
+		"trackers: registered artifact ready tracker=%s artifact=registered_torrent decision=downloaded",
+		trackerName,
+	)
 	return summary, nil
 }
 
@@ -165,7 +186,19 @@ func prepareUnit3DUpload(
 	releaseName := preview.ReleaseName
 	apiKey := strings.TrimSpace(req.TrackerConfig.APIKey)
 	return trackers.NewPreparedOperation(preview, func(submitCtx context.Context) (api.UploadSummary, error) {
-		return submitUnit3DUpload(submitCtx, trackerName, releaseName, apiKey, baseURL, uploadURL, contentType, payload, logger)
+		return submitUnit3DUpload(
+			submitCtx,
+			trackerName,
+			releaseName,
+			apiKey,
+			baseURL,
+			uploadURL,
+			contentType,
+			payload,
+			req.Meta,
+			req.Runtime.DBPath,
+			logger,
+		)
 	}, nil), nil
 }
 
@@ -183,41 +216,76 @@ func resolveUnit3DURLs(configuredBaseURL string) (string, string) {
 	return baseURL, strings.TrimRight(baseURL, "/") + "/api/torrents/upload"
 }
 
-func parseUnit3DUploadArtifact(baseURL, rawData string) api.UploadedTorrent {
+func parseUnit3DUploadArtifact(baseURL, rawData string) (api.UploadedTorrent, error) {
 	artifact := api.UploadedTorrent{}
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	data := strings.TrimSpace(rawData)
 	if data == "" {
-		return artifact
+		return artifact, errors.New("unit3d upload response omitted registered torrent authority")
 	}
 
 	if isNumericID(data) {
 		artifact.TorrentID = data
 		artifact.DownloadURL = base + "/torrent/download/" + data
 		artifact.TorrentURL = base + "/torrents/" + data
-		return artifact
+		return artifact, nil
 	}
 
-	downloadURL := data
-	if strings.HasPrefix(downloadURL, "/") && base != "" {
-		downloadURL = base + downloadURL
+	downloadURL, err := resolveUnit3DRegisteredTorrentURL(baseURL, data)
+	if err != nil {
+		return artifact, err
 	}
-	if strings.HasPrefix(strings.ToLower(downloadURL), "http://") || strings.HasPrefix(strings.ToLower(downloadURL), "https://") {
-		artifact.DownloadURL = downloadURL
-	} else if base != "" {
-		artifact.DownloadURL = base + "/" + strings.TrimLeft(downloadURL, "/")
-	}
+	artifact.DownloadURL = downloadURL
 
 	id := extractUnit3DTorrentID(downloadURL)
-	if id == "" {
-		id = extractUnit3DTorrentID(artifact.DownloadURL)
-	}
 	artifact.TorrentID = id
 	if artifact.TorrentID != "" && base != "" {
 		artifact.TorrentURL = base + "/torrents/" + artifact.TorrentID
 	}
 
-	return artifact
+	return artifact, nil
+}
+
+func resolveUnit3DRegisteredTorrentURL(baseURL string, rawURL string) (string, error) {
+	base, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil {
+		return "", fmt.Errorf("parse unit3d base url: %w", err)
+	}
+	if (base.Scheme != "http" && base.Scheme != "https") || strings.TrimSpace(base.Host) == "" {
+		return "", errors.New("unit3d base url must be an absolute HTTP(S) URL")
+	}
+	reference, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "", fmt.Errorf("parse unit3d registered torrent url: %w", err)
+	}
+	resolved := base.ResolveReference(reference)
+	if !sameUnit3DOrigin(base, resolved) {
+		return "", errors.New("unit3d registered torrent url is off-origin")
+	}
+	return resolved.String(), nil
+}
+
+func unit3DRegisteredTorrentClient(base *http.Client, baseURL string) *http.Client {
+	client := *base
+	client.CheckRedirect = func(request *http.Request, via []*http.Request) error {
+		origin, err := url.Parse(strings.TrimSpace(baseURL))
+		if err != nil || !sameUnit3DOrigin(origin, request.URL) {
+			return errors.New("unit3d registered torrent redirect is off-origin")
+		}
+		if len(via) >= 10 {
+			return errors.New("unit3d registered torrent stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &client
+}
+
+func sameUnit3DOrigin(left *url.URL, right *url.URL) bool {
+	return left != nil && right != nil &&
+		(left.Scheme == "http" || left.Scheme == "https") &&
+		strings.EqualFold(left.Scheme, right.Scheme) &&
+		strings.EqualFold(left.Host, right.Host) &&
+		strings.TrimSpace(left.Host) != ""
 }
 
 func extractUnit3DTorrentID(raw string) string {

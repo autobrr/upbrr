@@ -196,6 +196,13 @@ func CommandFromRequest(request any) (Command, error) {
 			NoSeed:           request.NoSeed,
 			IdempotencyKey:   request.IdempotencyKey,
 		}, nil
+	case api.RetryReleaseWorkflowClientInjectionRequest:
+		return RetryClientInjectionsCommand{
+			WorkflowID:       request.WorkflowID,
+			ExpectedRevision: request.ExpectedRevision,
+			Retry:            request.Retry,
+			IdempotencyKey:   request.IdempotencyKey,
+		}, nil
 	case api.CancelReleaseWorkflowRequest:
 		return CancelWorkflowCommand{
 			WorkflowID:       request.WorkflowID,

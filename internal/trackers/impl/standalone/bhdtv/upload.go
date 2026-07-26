@@ -104,12 +104,18 @@ func submitPreparedUpload(
 	if strings.TrimSpace(req.TrackerConfig.MyAnnounceURL) != "" {
 		artifactPath, err := trackers.ResolveTrackerTorrentArtifactPath(req.Meta, req.Runtime.DBPath, "BHDTV")
 		if err != nil {
-			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
+			trackers.LogRegisteredTorrentUnavailable(req.Logger, "BHDTV")
+		} else {
+			state.artifactPath = trackers.PersistReconstructedRegisteredTorrent(
+				req.Logger,
+				"BHDTV",
+				state.torrentPath,
+				artifactPath,
+				req.TrackerConfig.MyAnnounceURL,
+				viewURL,
+				sourceFlag,
+			)
 		}
-		if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, req.TrackerConfig.MyAnnounceURL, viewURL, sourceFlag); err != nil {
-			return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-		}
-		state.artifactPath = artifactPath
 	}
 
 	return api.UploadSummary{
@@ -117,7 +123,6 @@ func submitPreparedUpload(
 		UploadedTorrents: []api.UploadedTorrent{{
 			Tracker:     "BHDTV",
 			TorrentURL:  viewURL,
-			DownloadURL: viewURL,
 			TorrentPath: state.artifactPath,
 		}},
 	}, nil

@@ -13,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anacrolix/torrent/bencode"
+	"github.com/anacrolix/torrent/metainfo"
+
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -70,6 +73,7 @@ type workflowRetainedUploadServiceFake struct {
 	projections  []api.TrackerReleaseProjection
 	failures     map[api.TrackerID]trackers.TrackerFailure
 	torrentPaths map[api.TrackerID]string
+	results      []trackers.RetainedTrackerResult
 	subject      api.UploadSubject
 }
 
@@ -102,7 +106,10 @@ func (f *workflowRetainedUploadServiceFake) PrepareRetainedUploadPlan(
 		}
 		preparations = append(preparations, preparation)
 	}
-	return &workflowRetainedUploadPlanFake{preparations: preparations}, nil
+	return &workflowRetainedUploadPlanFake{
+		preparations: preparations,
+		results:      append([]trackers.RetainedTrackerResult(nil), f.results...),
+	}, nil
 }
 
 func TestSanitizeWorkflowUploadPreviewPreservesSemanticsWithoutSecretsOrPaths(t *testing.T) {
@@ -278,7 +285,8 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 		clients:  clientService,
 	}
 	projections := api.TrackerReleaseProjectionSet{
-		ReleaseRef: api.ReleaseRef{SourcePath: "C:\\media\\Example.Release.2026", Generation: 1},
+		ExecutionMode: api.WorkflowExecutionModeDebug,
+		ReleaseRef:    api.ReleaseRef{SourcePath: "C:\\media\\Example.Release.2026", Generation: 1},
 		Projections: []api.TrackerReleaseProjection{
 			{
 				TrackerID:         "ALPHA",
@@ -744,18 +752,14 @@ func TestWorkflowUploadExecutionDoesNotRepeatSuccessfulDryRunInjection(t *testin
 	}
 }
 
-func TestWorkflowUploadExecutionInjectsExactPreparedTrackerTorrent(t *testing.T) {
+func TestWorkflowUploadExecutionInjectsExactRegisteredTrackerTorrent(t *testing.T) {
 	t.Parallel()
 
 	clientService := &dryRunClientService{}
 	exactPath := filepath.Join(t.TempDir(), "prepared", "Example.Release.2026.ALPHA-GRP.torrent")
 	remotePath := filepath.Join(t.TempDir(), "downloaded", "must-not-drive-injection.torrent")
-	if err := os.MkdirAll(filepath.Dir(exactPath), 0o700); err != nil {
-		t.Fatalf("create exact torrent directory: %v", err)
-	}
-	if err := os.WriteFile(exactPath, []byte("exact tracker torrent"), 0o600); err != nil {
-		t.Fatalf("write exact tracker torrent: %v", err)
-	}
+	writeWorkflowRegisteredTorrent(t, exactPath, "prepared")
+	writeWorkflowRegisteredTorrent(t, remotePath, "registered")
 	execution := &workflowUploadExecution{
 		plan: &workflowRetainedUploadPlanFake{results: []trackers.RetainedTrackerResult{{
 			Tracker: "ALPHA",
@@ -766,16 +770,213 @@ func TestWorkflowUploadExecutionInjectsExactPreparedTrackerTorrent(t *testing.T)
 				}},
 			},
 		}}},
-		clients:      clientService,
-		torrentPaths: map[api.TrackerID]string{"ALPHA": exactPath},
+		clients: clientService,
 	}
 	results, err := execution.Execute(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("execute workflow upload: %v", err)
 	}
 	if len(results) != 1 || !results[0].ClientInjected || len(clientService.injections) != 1 ||
-		clientService.injections[0].Path != exactPath || clientService.injections[0].Path == remotePath {
-		t.Fatalf("exact tracker injection results=%#v injections=%#v", results, clientService.injections)
+		clientService.injections[0].Path != remotePath || clientService.injections[0].Path == exactPath {
+		t.Fatalf("registered tracker injection results=%#v injections=%#v", results, clientService.injections)
+	}
+	authority := execution.RegisteredArtifactAuthority()
+	if authority.Torrents["ALPHA"].Path != remotePath {
+		t.Fatalf("registered artifact authority = %#v", authority)
+	}
+}
+
+func TestWorkflowLiveReviewDefersInjectionUntilRegisteredTorrentExists(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	preparedPath := filepath.Join(tempDir, "prepared", "Example.Release.2026.ALPHA-GRP.torrent")
+	registeredPath := filepath.Join(tempDir, "registered", "[alpha].Example.Release.2026.ALPHA-GRP.torrent")
+	writeWorkflowRegisteredTorrent(t, preparedPath, "prepared")
+	writeWorkflowRegisteredTorrent(t, registeredPath, "registered")
+
+	clientService := &dryRunClientService{}
+	service := &workflowRetainedUploadServiceFake{
+		torrentPaths: map[api.TrackerID]string{"ALPHA": preparedPath},
+		results: []trackers.RetainedTrackerResult{{
+			Tracker: "ALPHA",
+			Summary: api.UploadSummary{
+				Uploaded: 1,
+				UploadedTorrents: []api.UploadedTorrent{{
+					Tracker:     "ALPHA",
+					TorrentPath: registeredPath,
+				}},
+			},
+		}},
+	}
+	builder := workflowUploadPlanBuilder{
+		resolver: &workflowDescriptionResolverFake{},
+		trackers: service,
+		clients:  clientService,
+	}
+	projections := api.TrackerReleaseProjectionSet{
+		ExecutionMode: api.WorkflowExecutionModeNormal,
+		ReleaseRef: api.ReleaseRef{
+			SourcePath: filepath.Join(tempDir, "Example.Release.2026"),
+			Generation: 1,
+		},
+		Projections: []api.TrackerReleaseProjection{{
+			TrackerID:         "ALPHA",
+			DisplayName:       "Alpha",
+			UploadReleaseName: "Example.Release.2026.ALPHA-GRP",
+			Readiness:         api.ReadinessStatusReady,
+			UploadReady:       true,
+		}},
+	}
+	dupes := api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+		TrackerID: "ALPHA",
+		Decision:  api.DupeDecisionNoMatch,
+		Status:    api.StageStatusCompleted,
+	}}}
+	media := api.MediaArtifactSet{
+		CaptureFingerprint: workflowTestFingerprint(t, "live-review-media"),
+	}
+	descriptions := api.DescriptionSet{
+		InputFingerprint: workflowTestFingerprint(t, "live-review-descriptions"),
+	}
+
+	plan, execution, err := builder.Build(
+		context.Background(),
+		projections,
+		dupes,
+		workflowDupePrivateEvidence{},
+		media,
+		workflowMediaPrivateArtifacts{},
+		descriptions,
+		api.DescriptionInstructions{Options: api.UploadOptions{SkipAutoTorrent: true}},
+		releaseworkflow.UploadPlanBuildOptions{DryRun: true},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("build live upload review: %v", err)
+	}
+	defer func() { _ = execution.Release() }()
+	if len(plan.Trackers) != 1 ||
+		plan.Trackers[0].ClientInjectionStatus != api.StageStatusSkipped ||
+		!strings.Contains(plan.Trackers[0].ClientInjectionMessage, "deferred") ||
+		len(clientService.injections) != 0 {
+		t.Fatalf("live review tracker=%#v injections=%#v", plan.Trackers, clientService.injections)
+	}
+
+	results, err := execution.Execute(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("execute live upload: %v", err)
+	}
+	if len(results) != 1 || !results[0].ClientInjected || len(clientService.injections) != 1 ||
+		clientService.injections[0].Path != registeredPath ||
+		clientService.injections[0].Path == preparedPath {
+		t.Fatalf("live upload results=%#v injections=%#v", results, clientService.injections)
+	}
+}
+
+func TestWorkflowUploadExecutionUsesRegisteredTorrentURLFallback(t *testing.T) {
+	t.Parallel()
+
+	clientService := &dryRunClientService{}
+	execution := &workflowUploadExecution{
+		plan: &workflowRetainedUploadPlanFake{results: []trackers.RetainedTrackerResult{{
+			Tracker: "ALPHA",
+			Summary: api.UploadSummary{UploadedTorrents: []api.UploadedTorrent{{
+				Tracker:     "ALPHA",
+				TorrentID:   "123",
+				DownloadURL: "https://tracker.invalid/torrent/download/123",
+			}}},
+		}}},
+		clients: clientService,
+	}
+	results, err := execution.Execute(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("execute workflow upload: %v", err)
+	}
+	if len(results) != 1 || !results[0].ClientInjected || len(clientService.injections) != 1 ||
+		clientService.injections[0].Path != "" ||
+		clientService.injections[0].URL != "https://tracker.invalid/torrent/download/123" {
+		t.Fatalf("registered URL injection results=%#v injections=%#v", results, clientService.injections)
+	}
+}
+
+func TestWorkflowUploadExecutionKeepsSubmissionSuccessWithoutExactArtifact(t *testing.T) {
+	t.Parallel()
+
+	clientService := &dryRunClientService{}
+	execution := &workflowUploadExecution{
+		plan: &workflowRetainedUploadPlanFake{results: []trackers.RetainedTrackerResult{{
+			Tracker: "ALPHA",
+			Summary: api.UploadSummary{UploadedTorrents: []api.UploadedTorrent{{
+				Tracker:   "BETA",
+				TorrentID: "123",
+			}}},
+		}}},
+		clients: clientService,
+	}
+	results, err := execution.Execute(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("execute workflow upload: %v", err)
+	}
+	if len(results) != 1 || results[0].SubmissionStatus != api.StageStatusCompleted ||
+		results[0].ClientInjectionStatus != api.StageStatusFailed ||
+		results[0].ClientFailureCode != api.OperationFailureMissingExactTorrent ||
+		results[0].Status != api.StageStatusPartial || len(clientService.injections) != 0 {
+		t.Fatalf("artifact-less upload results=%#v injections=%#v", results, clientService.injections)
+	}
+}
+
+func TestWorkflowUploadExecutionNoSeedSkipsRegisteredTorrentInjection(t *testing.T) {
+	t.Parallel()
+
+	clientService := &dryRunClientService{}
+	execution := &workflowUploadExecution{
+		plan: &workflowRetainedUploadPlanFake{results: []trackers.RetainedTrackerResult{{
+			Tracker: "ALPHA",
+			Summary: api.UploadSummary{UploadedTorrents: []api.UploadedTorrent{{
+				Tracker:     "ALPHA",
+				DownloadURL: "https://tracker.invalid/torrent/download/123",
+			}}},
+		}}},
+		clients: clientService,
+		noSeed:  true,
+	}
+	results, err := execution.Execute(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("execute workflow upload: %v", err)
+	}
+	if len(results) != 1 || results[0].SubmissionStatus != api.StageStatusCompleted ||
+		results[0].ClientInjectionStatus != api.StageStatusSkipped ||
+		results[0].Status != api.StageStatusCompleted || len(clientService.injections) != 0 {
+		t.Fatalf("no-seed upload results=%#v injections=%#v", results, clientService.injections)
+	}
+}
+
+func writeWorkflowRegisteredTorrent(t *testing.T, path string, source string) {
+	t.Helper()
+	infoBytes, err := bencode.Marshal(metainfo.Info{
+		Name:        "Example.Release.2026",
+		PieceLength: 16 * 1024,
+		Pieces:      make([]byte, 20),
+		Length:      1,
+		Source:      source,
+	})
+	if err != nil {
+		t.Fatalf("marshal test torrent info: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("create test torrent directory: %v", err)
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("create test torrent: %v", err)
+	}
+	if err := (&metainfo.MetaInfo{InfoBytes: infoBytes}).Write(file); err != nil {
+		_ = file.Close()
+		t.Fatalf("write test torrent: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close test torrent: %v", err)
 	}
 }
 

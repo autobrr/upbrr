@@ -741,6 +741,24 @@
           "status"
         ]
       },
+      "ClientInjectionRetryRef": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "$ref": "#/components/schemas/UploadResultRef"
+          },
+          "trackerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerID"
+            }
+          }
+        },
+        "required": [
+          "result",
+          "trackerIds"
+        ]
+      },
       "ClientOverrides": {
         "type": "object",
         "properties": {
@@ -5916,6 +5934,29 @@
           "workflowId"
         ]
       },
+      "RetryReleaseWorkflowClientInjectionRequest": {
+        "type": "object",
+        "properties": {
+          "expectedRevision": {
+            "$ref": "#/components/schemas/WorkflowRevision"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "retry": {
+            "$ref": "#/components/schemas/ClientInjectionRetryRef"
+          },
+          "workflowId": {
+            "$ref": "#/components/schemas/WorkflowID"
+          }
+        },
+        "required": [
+          "expectedRevision",
+          "idempotencyKey",
+          "retry",
+          "workflowId"
+        ]
+      },
       "RetryReleaseWorkflowImageHostRequest": {
         "type": "object",
         "properties": {
@@ -8666,8 +8707,17 @@
       "UploadTrackerResult": {
         "type": "object",
         "properties": {
+          "clientFailureCode": {
+            "$ref": "#/components/schemas/OperationFailureCode"
+          },
           "clientInjected": {
             "type": "boolean"
+          },
+          "clientInjectionMessage": {
+            "type": "string"
+          },
+          "clientInjectionStatus": {
+            "$ref": "#/components/schemas/StageStatus"
           },
           "crossSeeded": {
             "type": "boolean"
@@ -8685,6 +8735,9 @@
             "type": "string"
           },
           "status": {
+            "$ref": "#/components/schemas/StageStatus"
+          },
+          "submissionStatus": {
             "$ref": "#/components/schemas/StageStatus"
           },
           "trackerId": {
@@ -11831,6 +11884,125 @@
         "summary": "Invalidate tracker state",
         "tags": [
           "Workflow"
+        ]
+      }
+    },
+    "/workflows/{workflowId}/uploads/{resultId}/client-injections/retry": {
+      "post": {
+        "description": "Retries selected client injections from retained registered tracker artifacts without resubmitting tracker uploads.",
+        "operationId": "retryWorkflowClientInjections",
+        "parameters": [
+          {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
+            "in": "path",
+            "name": "workflowId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Route-bound prior upload-result identifier.",
+            "example": "result-example",
+            "in": "path",
+            "name": "resultId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "retry": {
+                    "$ref": "#/components/schemas/ClientInjectionRetryRef"
+                  }
+                },
+                "required": [
+                  "retry"
+                ]
+              }
+            }
+          },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseWorkflowCurrent"
+                }
+              }
+            },
+            "description": "Workflow state with the non-terminal client-injection retry attached.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "summary": "Retry failed client injections",
+        "tags": [
+          "Uploads"
         ]
       }
     },

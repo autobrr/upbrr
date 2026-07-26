@@ -1525,7 +1525,7 @@ export function ReleaseSessionProvider({
         const result = workflowView.current?.uploadResult;
         if (!result) return Promise.resolve(false);
         const trackerIDs = result.results
-          .filter((item) => item.status === "failed")
+          .filter((item) => item.submissionStatus === "failed")
           .map((item) => item.trackerId);
         if (trackerIDs.length === 0) return Promise.resolve(false);
         return runBackendWorkflow((current, commandID, signal) =>
@@ -1534,6 +1534,28 @@ export function ReleaseSessionProvider({
             { id: result.id, revision: result.revision },
             trackerIDs,
             state.uploadOptions.noSeed,
+            commandID,
+            signal,
+          ),
+        );
+      },
+      retryClientInjections: () => {
+        const result = workflowView.current?.uploadResult;
+        if (!result) return Promise.resolve(false);
+        const trackerIDs = result.results
+          .filter(
+            (item) =>
+              item.submissionStatus === "completed" &&
+              item.clientInjectionStatus === "failed" &&
+              item.clientFailureCode === "client_injection",
+          )
+          .map((item) => item.trackerId);
+        if (trackerIDs.length === 0) return Promise.resolve(false);
+        return runBackendWorkflow((current, commandID, signal) =>
+          activePorts.workflow.retryClientInjections(
+            current,
+            { id: result.id, revision: result.revision },
+            trackerIDs,
             commandID,
             signal,
           ),
@@ -1956,7 +1978,7 @@ export function ReleaseSessionProvider({
       retry: async () => {
         const result = workflowView.current?.uploadResult;
         const trackerIDs = (result?.results || [])
-          .filter((item) => item.status === "failed")
+          .filter((item) => item.submissionStatus === "failed")
           .map((item) => item.trackerId);
         if (!result || trackerIDs.length === 0) return false;
         return runBackendWorkflow((current, commandID, signal) =>
@@ -1965,6 +1987,27 @@ export function ReleaseSessionProvider({
             { id: result.id, revision: result.revision },
             trackerIDs,
             state.uploadOptions.noSeed,
+            commandID,
+            signal,
+          ),
+        );
+      },
+      retryClientInjection: async () => {
+        const result = workflowView.current?.uploadResult;
+        const trackerIDs = (result?.results || [])
+          .filter(
+            (item) =>
+              item.submissionStatus === "completed" &&
+              item.clientInjectionStatus === "failed" &&
+              item.clientFailureCode === "client_injection",
+          )
+          .map((item) => item.trackerId);
+        if (!result || trackerIDs.length === 0) return false;
+        return runBackendWorkflow((current, commandID, signal) =>
+          activePorts.workflow.retryClientInjections(
+            current,
+            { id: result.id, revision: result.revision },
+            trackerIDs,
             commandID,
             signal,
           ),

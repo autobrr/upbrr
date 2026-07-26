@@ -112,19 +112,16 @@ func submitPreparedUpload(
 		if id != "" && !strings.Contains(tURL, "details.php?id=") {
 			tURL = state.baseURL + "/details.php?id=" + id
 		}
-		if announceURL != "" {
-			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, tURL, "hd-torrents.org"); err != nil {
-				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-			}
-		}
+		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
+			req.Logger, "HDT", state.torrentPath, artifactPath, announceURL, tURL, "hd-torrents.org",
+		)
 		return api.UploadSummary{
 			Uploaded: 1,
 			UploadedTorrents: []api.UploadedTorrent{{
 				Tracker:     "HDT",
 				TorrentID:   id,
 				TorrentURL:  tURL,
-				DownloadURL: tURL,
-				TorrentPath: artifactPath,
+				TorrentPath: registeredPath,
 			}},
 		}, nil
 	}

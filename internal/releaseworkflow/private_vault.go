@@ -66,10 +66,11 @@ func NewPrivateArtifactVault(root string, codecs ...PrivateResourceCodec) (*Priv
 		entries:  make(map[privateResourceKey]privateResourceEntry),
 		consumed: make(map[privateResourceKey]struct{}),
 		codecs: map[string]func([]byte) (any, error){
-			privateResourceKindMediaPreview:     decodeMediaPreviewContent,
-			privateResourceKindStagedMedia:      decodeStagedMediaContent,
-			privateResourceKindDescriptions:     decodeDescriptionInstructions,
-			privateResourceKindOperationCommand: decodeDurableOperationCommand,
+			privateResourceKindMediaPreview:                decodeMediaPreviewContent,
+			privateResourceKindStagedMedia:                 decodeStagedMediaContent,
+			privateResourceKindDescriptions:                decodeDescriptionInstructions,
+			privateResourceKindOperationCommand:            decodeDurableOperationCommand,
+			privateResourceKindRegisteredArtifactAuthority: decodeRegisteredArtifactAuthority,
 		},
 	}
 	for _, codec := range codecs {

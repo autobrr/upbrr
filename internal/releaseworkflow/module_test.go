@@ -295,6 +295,10 @@ func (f *retainedUploadExecutionFake) Execute(_ context.Context, trackerIDs []ap
 	return results, nil
 }
 
+func (f *retainedUploadExecutionFake) RegisteredArtifactAuthority() RegisteredArtifactAuthority {
+	return RegisteredArtifactAuthority{}
+}
+
 func TestCompleteUploadExecutionResultsReportsSkippedAndBlockedTrackers(t *testing.T) {
 	t.Parallel()
 
@@ -414,11 +418,12 @@ func (f *retainedUploadExecutionFake) Release() error {
 }
 
 type uploadPlanBuilderFake struct {
-	testing   *testing.T
-	builds    int
-	options   []UploadPlanBuildOptions
-	execution *retainedUploadExecutionFake
-	failed    map[api.TrackerID]bool
+	testing       *testing.T
+	builds        int
+	options       []UploadPlanBuildOptions
+	execution     *retainedUploadExecutionFake
+	failed        map[api.TrackerID]bool
+	clientRetries int
 }
 
 func (f *uploadPlanBuilderFake) Fingerprint(
@@ -503,6 +508,26 @@ func (f *uploadPlanBuilderFake) Build(
 		Status:           api.StageStatusReady,
 		ExpiresAt:        now.Add(time.Hour),
 	}, f.execution, nil
+}
+
+func (f *uploadPlanBuilderFake) RetryClientInjections(
+	_ context.Context,
+	_ RegisteredArtifactAuthority,
+	trackerIDs []api.TrackerID,
+) ([]api.UploadTrackerResult, error) {
+	f.clientRetries++
+	results := make([]api.UploadTrackerResult, 0, len(trackerIDs))
+	for _, trackerID := range trackerIDs {
+		results = append(results, api.UploadTrackerResult{
+			TrackerID:              trackerID,
+			Status:                 api.StageStatusCompleted,
+			SubmissionStatus:       api.StageStatusCompleted,
+			ClientInjectionStatus:  api.StageStatusCompleted,
+			ClientInjectionMessage: "Client injection completed.",
+			ClientInjected:         true,
+		})
+	}
+	return results, nil
 }
 
 func (f *descriptionBuilderFake) Fingerprints(
@@ -1470,6 +1495,203 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 	})
 	if !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("repeat direct upload error = %v, want %v", err, ErrInvalidTransition)
+	}
+}
+
+func TestClientInjectionFailureCannotRetryTrackerSubmission(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	fingerprint := testFingerprint(t, "client-injection-only-failure")
+	prior := api.UploadResult{
+		ID:               "upload-result-1",
+		WorkflowID:       "workflow-client-retry",
+		Revision:         1,
+		ProjectionSet:    api.TrackerReleaseProjectionSetRef{ID: "projections-1", Revision: 1},
+		Dupes:            api.DupeAssessmentRef{ID: "dupes-1", Revision: 1},
+		Media:            api.MediaArtifactSetRef{ID: "media-1", Revision: 1},
+		Descriptions:     api.DescriptionSetRef{ID: "descriptions-1", Revision: 1},
+		InputFingerprint: fingerprint,
+		Results: []api.UploadTrackerResult{{
+			TrackerID:              "ALPHA",
+			Status:                 api.StageStatusPartial,
+			SubmissionStatus:       api.StageStatusCompleted,
+			ClientInjectionStatus:  api.StageStatusFailed,
+			ClientInjectionMessage: "Exact-torrent client injection failed.",
+			ClientFailureCode:      api.OperationFailureClientInjection,
+			RemoteID:               "123",
+			Failures: []api.WorkflowFailure{{
+				Failure: api.OperationFailure{
+					Code:      api.OperationFailureClientInjection,
+					Operation: api.OperationKindClientInjection,
+					Message:   "Exact-torrent client injection failed.",
+					Recovery:  api.OperationRecoveryRetry,
+				},
+				TrackerID: "ALPHA",
+				Resource:  "upload:ALPHA",
+			}},
+		}},
+		Status:    api.StageStatusPartial,
+		CreatedAt: now,
+	}
+	if err := prior.Validate(); err != nil {
+		t.Fatalf("validate prior client failure: %v", err)
+	}
+	state := State{
+		Workflow: api.ReleaseWorkflow{
+			ID:                 prior.WorkflowID,
+			Revision:           1,
+			TrackerProjections: &prior.ProjectionSet,
+			Dupes:              &prior.Dupes,
+			Media:              &prior.Media,
+			Descriptions:       &prior.Descriptions,
+			UploadResult:       &api.UploadResultRef{ID: prior.ID, Revision: prior.Revision},
+		},
+		UploadResults: map[api.UploadResultID]api.UploadResult{prior.ID: prior},
+	}
+	uploadPlans := &uploadPlanBuilderFake{testing: t}
+	module := &Module{uploadPlanBuilder: uploadPlans}
+	_, err := module.retryFailedUploads(
+		context.Background(),
+		testOwnerID,
+		&state,
+		2,
+		now.Add(time.Minute),
+		RetryFailedUploadsCommand{
+			Retry: api.FailedTrackerRetryRef{
+				Result:     *state.Workflow.UploadResult,
+				TrackerIDs: []api.TrackerID{"ALPHA"},
+			},
+		},
+	)
+	if !errors.Is(err, ErrInvalidTransition) || uploadPlans.builds != 0 {
+		t.Fatalf("client-only tracker retry error=%v builds=%d", err, uploadPlans.builds)
+	}
+}
+
+func TestRetryClientInjectionPreservesCompletedSubmission(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	fingerprint := testFingerprint(t, "retry-client-injection")
+	prior := api.UploadResult{
+		ID:               "upload-result-1",
+		WorkflowID:       "workflow-client-retry",
+		Revision:         1,
+		ProjectionSet:    api.TrackerReleaseProjectionSetRef{ID: "projections-1", Revision: 1},
+		Dupes:            api.DupeAssessmentRef{ID: "dupes-1", Revision: 1},
+		Media:            api.MediaArtifactSetRef{ID: "media-1", Revision: 1},
+		Descriptions:     api.DescriptionSetRef{ID: "descriptions-1", Revision: 1},
+		InputFingerprint: fingerprint,
+		Results: []api.UploadTrackerResult{{
+			TrackerID:              "ALPHA",
+			Status:                 api.StageStatusPartial,
+			SubmissionStatus:       api.StageStatusCompleted,
+			ClientInjectionStatus:  api.StageStatusFailed,
+			ClientInjectionMessage: "Exact-torrent client injection failed.",
+			ClientFailureCode:      api.OperationFailureClientInjection,
+			RemoteID:               "123",
+			Failures: []api.WorkflowFailure{{
+				Failure: api.OperationFailure{
+					Code:      api.OperationFailureClientInjection,
+					Operation: api.OperationKindClientInjection,
+					Message:   "Exact-torrent client injection failed.",
+					Recovery:  api.OperationRecoveryRetry,
+				},
+				TrackerID: "ALPHA",
+				Resource:  "upload:ALPHA",
+			}},
+		}},
+		Status:    api.StageStatusPartial,
+		CreatedAt: now,
+	}
+	if err := prior.Validate(); err != nil {
+		t.Fatalf("validate prior client failure: %v", err)
+	}
+	state := State{
+		Workflow: api.ReleaseWorkflow{
+			ID:                 prior.WorkflowID,
+			Revision:           1,
+			TrackerProjections: &prior.ProjectionSet,
+			Dupes:              &prior.Dupes,
+			Media:              &prior.Media,
+			Descriptions:       &prior.Descriptions,
+			UploadResult:       &api.UploadResultRef{ID: prior.ID, Revision: prior.Revision},
+		},
+		Projections: map[api.TrackerReleaseProjectionSetID]api.TrackerReleaseProjectionSet{
+			prior.ProjectionSet.ID: {ID: prior.ProjectionSet.ID, Revision: prior.ProjectionSet.Revision},
+		},
+		Dupes: map[api.DupeAssessmentID]api.DupeAssessment{
+			prior.Dupes.ID: {ID: prior.Dupes.ID, Revision: prior.Dupes.Revision},
+		},
+		Media: map[api.MediaArtifactSetID]api.MediaArtifactSet{
+			prior.Media.ID: {ID: prior.Media.ID, Revision: prior.Media.Revision},
+		},
+		Descriptions: map[api.DescriptionSetID]api.DescriptionSet{
+			prior.Descriptions.ID: {ID: prior.Descriptions.ID, Revision: prior.Descriptions.Revision},
+		},
+		UploadResults: map[api.UploadResultID]api.UploadResult{prior.ID: prior},
+	}
+	authority := RegisteredArtifactAuthority{
+		ClientSubject: api.ClientSubject{SourcePath: `C:\media\Example.Release.2026.1080p-GRP.mkv`},
+		Torrents: map[api.TrackerID]api.TorrentResult{
+			"ALPHA": {
+				Tracker: "ALPHA",
+				Path:    `C:\torrents\Example.Release.2026.1080p-GRP.ALPHA.torrent`,
+			},
+		},
+	}
+	privateStore := NewMemoryPrivateResourceStore()
+	if err := privateStore.Put(
+		testOwnerID,
+		prior.WorkflowID,
+		registeredArtifactAuthorityPrivateResourceID(prior.ID),
+		authority,
+		now.Add(time.Hour),
+	); err != nil {
+		t.Fatalf("retain registered artifact authority: %v", err)
+	}
+	uploadPlans := &uploadPlanBuilderFake{testing: t}
+	module := &Module{
+		private:           privateStore,
+		uploadPlanBuilder: uploadPlans,
+		logger:            api.NopLogger{},
+		ids:               &sequenceIDGenerator{},
+	}
+	result, err := module.retryClientInjections(
+		context.Background(),
+		testOwnerID,
+		&state,
+		2,
+		now.Add(time.Minute),
+		RetryClientInjectionsCommand{
+			Retry: api.ClientInjectionRetryRef{
+				Result:     *state.Workflow.UploadResult,
+				TrackerIDs: []api.TrackerID{"ALPHA"},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("retry client injection: %v", err)
+	}
+	if result.UploadResult == nil || result.UploadResult.Status != api.StageStatusCompleted ||
+		len(result.UploadResult.Results) != 1 {
+		t.Fatalf("client injection retry result = %#v", result.UploadResult)
+	}
+	trackerResult := result.UploadResult.Results[0]
+	if trackerResult.RemoteID != "123" ||
+		trackerResult.SubmissionStatus != api.StageStatusCompleted ||
+		trackerResult.ClientInjectionStatus != api.StageStatusCompleted ||
+		!trackerResult.ClientInjected ||
+		len(trackerResult.Failures) != 0 ||
+		uploadPlans.builds != 0 ||
+		uploadPlans.clientRetries != 1 {
+		t.Fatalf(
+			"client injection retry tracker result=%#v builds=%d retries=%d",
+			trackerResult,
+			uploadPlans.builds,
+			uploadPlans.clientRetries,
+		)
 	}
 }
 

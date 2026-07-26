@@ -161,11 +161,9 @@ func submitPreparedUpload(
 			return api.UploadSummary{}, errors.New("trackers: RTF upload succeeded but torrent id missing")
 		}
 		tURL := torrentURL + id
-		if announceURL != "" {
-			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, tURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-			}
-		}
+		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
+			req.Logger, "RTF", state.torrentPath, artifactPath, announceURL, tURL, sourceFlag,
+		)
 		return api.UploadSummary{
 			Uploaded: 1,
 			UploadedTorrents: []api.UploadedTorrent{{
@@ -173,7 +171,7 @@ func submitPreparedUpload(
 				TorrentID:   id,
 				TorrentURL:  tURL,
 				DownloadURL: downloadURL + id + "/download",
-				TorrentPath: artifactPath,
+				TorrentPath: registeredPath,
 			}},
 		}, nil
 	}

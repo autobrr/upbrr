@@ -77,7 +77,11 @@ func maybeApplyE2EServices(_ context.Context, services *api.ServiceSet, cfg conf
 		services.Torrents = e2eTorrentService{dbPath: cfg.MainSettings.DBPath}
 	}
 	if services.Trackers == nil {
-		services.Trackers = e2eTrackerService{endpoint: os.Getenv(e2eTrackerURLEnv), repo: repositories.Uploads()}
+		services.Trackers = e2eTrackerService{
+			endpoint: os.Getenv(e2eTrackerURLEnv),
+			dbPath:   cfg.MainSettings.DBPath,
+			repo:     repositories.Uploads(),
+		}
 	}
 	if services.Images == nil {
 		services.Images = e2eImageService{
@@ -681,6 +685,7 @@ func e2eTrackerSet(environment string) map[string]struct{} {
 
 type e2eTrackerService struct {
 	endpoint string
+	dbPath   string
 	repo     api.UploadLedgerRepository
 }
 
@@ -864,12 +869,12 @@ func (p *e2eRetainedUploadPlan) Release() error {
 }
 
 func (s e2eTrackerService) Upload(ctx context.Context, meta api.UploadSubject) (api.UploadSummary, error) {
-	trackers := meta.Trackers
-	if len(trackers) == 0 {
-		trackers = []string{"BTN"}
+	trackerNames := meta.Trackers
+	if len(trackerNames) == 0 {
+		trackerNames = []string{"BTN"}
 	}
 	summary := api.UploadSummary{}
-	for _, tracker := range trackers {
+	for _, tracker := range trackerNames {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
 		if name == "" {
 			continue
@@ -890,7 +895,22 @@ func (s e2eTrackerService) Upload(ctx context.Context, meta api.UploadSubject) (
 			}
 			return api.UploadSummary{}, err
 		}
-		artifactPath := meta.TorrentPath
+		artifactPath := ""
+		registeredPath, resolveErr := trackers.ResolveTrackerTorrentArtifactPath(meta, s.dbPath, name)
+		if resolveErr == nil {
+			downloadURL := strings.TrimRight(s.endpoint, "/") + "/download/e2e-123"
+			downloadRequest, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+			if requestErr == nil {
+				if downloadErr := trackers.DownloadRegisteredTorrent(
+					ctx,
+					&http.Client{Timeout: 30 * time.Second},
+					downloadRequest,
+					registeredPath,
+				); downloadErr == nil {
+					artifactPath = registeredPath
+				}
+			}
+		}
 		if s.repo != nil {
 			if err := s.repo.UpdateLatestUploadRecordStatus(ctx, meta.SourcePath, name, "uploaded"); err != nil {
 				return api.UploadSummary{}, fmt.Errorf("e2e tracker: update record: %w", err)

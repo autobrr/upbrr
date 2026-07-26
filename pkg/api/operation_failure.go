@@ -37,7 +37,7 @@ const (
 	OperationFailureStaleResult            OperationFailureCode = "stale_result"
 	OperationFailureMissingReview          OperationFailureCode = "missing_review"
 	OperationFailureMissingPreparedTracker OperationFailureCode = "missing_prepared_tracker_operation"
-	OperationFailureMissingExactTorrent    OperationFailureCode = "missing_exact_tracker_torrent"
+	OperationFailureMissingExactTorrent    OperationFailureCode = "missing_exact_torrent"
 	OperationFailureDryRunClientInjection  OperationFailureCode = "dry_run_client_injection_failed"
 	OperationFailureClientInjection        OperationFailureCode = "client_injection_failed"
 	OperationFailureImageHostUnavailable   OperationFailureCode = "image_host_unavailable"

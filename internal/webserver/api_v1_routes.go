@@ -220,7 +220,8 @@ func (s *Server) handleAPIV1WorkflowResource(w http.ResponseWriter, r *http.Requ
 	scope := APITokenScopeWorkflowWrite
 	if r.Method == http.MethodGet {
 		scope = APITokenScopeWorkflowRead
-	} else if len(segments) == 4 && segments[1] == "uploads" && segments[3] == "retry" {
+	} else if len(segments) == 4 && segments[1] == "uploads" && segments[3] == "retry" ||
+		len(segments) == 5 && segments[1] == "uploads" && segments[3] == "client-injections" && segments[4] == "retry" {
 		scope = APITokenScopeWorkflowExecute
 	}
 	principal, ok := s.authenticateAPIRequest(w, r, scope)
@@ -535,6 +536,14 @@ func (s *Server) apiV1WorkflowCommand(
 		return mapAPIV1WorkflowRequest(w, request)
 	case len(segments) == 4 && segments[1] == "uploads" && segments[3] == "retry":
 		var request api.RetryReleaseWorkflowUploadRequest
+		if !decodeAPIV1JSON(w, r, &request) {
+			return nil, false
+		}
+		request.ReleaseWorkflowCommandContext = commandContext
+		request.Retry.Result.ID = api.UploadResultID(segments[2])
+		return mapAPIV1WorkflowRequest(w, request)
+	case len(segments) == 5 && segments[1] == "uploads" && segments[3] == "client-injections" && segments[4] == "retry":
+		var request api.RetryReleaseWorkflowClientInjectionRequest
 		if !decodeAPIV1JSON(w, r, &request) {
 			return nil, false
 		}

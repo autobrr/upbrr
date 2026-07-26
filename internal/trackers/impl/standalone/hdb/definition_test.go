@@ -4,6 +4,7 @@
 package hdb
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -12,6 +13,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/anacrolix/torrent/bencode"
+	"github.com/anacrolix/torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -106,6 +110,7 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 
 	uploadSeen := false
 	downloadSeen := false
+	registeredTorrent := hdbRegisteredTorrentFixture(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/upload/upload":
@@ -149,7 +154,7 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 				return
 			}
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("reseed-torrent-bytes"))
+			_, _ = w.Write(registeredTorrent)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -211,8 +216,8 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read updated torrent: %v", err)
 	}
-	if string(updated) != "reseed-torrent-bytes" {
-		t.Fatalf("expected downloaded torrent bytes, got %q", string(updated))
+	if !bytes.Equal(updated, registeredTorrent) {
+		t.Fatal("downloaded torrent bytes differ from tracker response")
 	}
 	original, err := os.ReadFile(torrentPath)
 	if err != nil {
@@ -221,6 +226,27 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	if string(original) != "dummy" {
 		t.Fatalf("expected original torrent to remain unchanged, got %q", string(original))
 	}
+}
+
+func hdbRegisteredTorrentFixture(t *testing.T) []byte {
+	t.Helper()
+	infoBytes, err := bencode.Marshal(metainfo.Info{
+		Name:        "Example.Release.2026.mkv",
+		PieceLength: 16 * 1024,
+		Pieces:      make([]byte, 20),
+		Length:      1,
+	})
+	if err != nil {
+		t.Fatalf("marshal registered torrent info: %v", err)
+	}
+	var payload bytes.Buffer
+	if err := (&metainfo.MetaInfo{
+		Announce:  "https://tracker.invalid/announce",
+		InfoBytes: infoBytes,
+	}).Write(&payload); err != nil {
+		t.Fatalf("write registered torrent fixture: %v", err)
+	}
+	return payload.Bytes()
 }
 
 func TestDefinitionBuildUploadDryRunUsesProvidedAssets(t *testing.T) {

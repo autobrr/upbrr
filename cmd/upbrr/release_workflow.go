@@ -822,12 +822,18 @@ func printCLIWorkflowUploadResult(result *api.UploadResult) (int, error) {
 	}
 	uploaded := 0
 	failed := 0
+	clientFailed := 0
 	for _, tracker := range result.Results {
-		fmt.Printf("Upload %s: %s\n", tracker.TrackerID, tracker.Status)
-		switch tracker.Status {
+		submissionStatus := tracker.EffectiveSubmissionStatus()
+		clientStatus := tracker.EffectiveClientInjectionStatus()
+		fmt.Printf("Upload %s: submission=%s client-injection=%s\n", tracker.TrackerID, submissionStatus, clientStatus)
+		if tracker.ClientInjectionMessage != "" {
+			fmt.Printf("  client injection: %s\n", tracker.ClientInjectionMessage)
+		}
+		switch submissionStatus {
 		case api.StageStatusCompleted:
 			uploaded++
-		case api.StageStatusFailed:
+		case api.StageStatusFailed, api.StageStatusUnavailable:
 			failed++
 		case api.StageStatusPending,
 			api.StageStatusQueued,
@@ -839,11 +845,16 @@ func printCLIWorkflowUploadResult(result *api.UploadResult) (int, error) {
 			api.StageStatusRunning,
 			api.StageStatusExecuted,
 			api.StageStatusInterrupted,
-			api.StageStatusCanceled,
-			api.StageStatusUnavailable:
+			api.StageStatusCanceled:
+		}
+		if clientStatus == api.StageStatusFailed {
+			clientFailed++
 		}
 	}
 	fmt.Printf("Upload complete: %d tracker upload(s).\n", uploaded)
+	if clientFailed > 0 {
+		fmt.Printf("Client injection incomplete: %d tracker artifact(s); retry client injection without resubmitting.\n", clientFailed)
+	}
 	if failed > 0 {
 		return uploaded, fmt.Errorf("upbrr: %d tracker upload(s) failed", failed)
 	}

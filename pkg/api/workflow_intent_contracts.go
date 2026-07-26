@@ -134,3 +134,10 @@ type FailedTrackerRetryRef struct {
 	Result     UploadResultRef `json:"result"`
 	TrackerIDs []TrackerID     `json:"trackerIds"`
 }
+
+// ClientInjectionRetryRef targets failed client effects from one exact prior
+// result without granting tracker-submission authority.
+type ClientInjectionRetryRef struct {
+	Result     UploadResultRef `json:"result"`
+	TrackerIDs []TrackerID     `json:"trackerIds"`
+}

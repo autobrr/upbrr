@@ -117,19 +117,16 @@ func submitPreparedUpload(
 	id := metautil.FirstNonEmptyTrimmed(matchValue(match, 1), matchValue(match, 2))
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 && id != "" {
 		tURL := torrentURL + id
-		if announceURL != "" {
-			if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, tURL, sourceFlag); err != nil {
-				return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-			}
-		}
+		registeredPath := trackers.PersistReconstructedRegisteredTorrent(
+			req.Logger, "BJS", state.torrentPath, artifactPath, announceURL, tURL, sourceFlag,
+		)
 		return api.UploadSummary{
 			Uploaded: 1,
 			UploadedTorrents: []api.UploadedTorrent{{
 				Tracker:     "BJS",
 				TorrentID:   id,
 				TorrentURL:  tURL,
-				DownloadURL: tURL,
-				TorrentPath: artifactPath,
+				TorrentPath: registeredPath,
 			}},
 		}, nil
 	}

@@ -570,13 +570,17 @@ type UploadPlan struct {
 
 // UploadTrackerResult is one safe immutable tracker submission outcome.
 type UploadTrackerResult struct {
-	TrackerID      TrackerID         `json:"trackerId"`
-	Status         StageStatus       `json:"status"`
-	RemoteID       string            `json:"remoteId,omitempty"`
-	RemoteURL      string            `json:"remoteUrl,omitempty"`
-	ClientInjected bool              `json:"clientInjected"`
-	CrossSeeded    bool              `json:"crossSeeded"`
-	Failures       []WorkflowFailure `json:"failures,omitempty"`
+	TrackerID              TrackerID            `json:"trackerId"`
+	Status                 StageStatus          `json:"status"`
+	SubmissionStatus       StageStatus          `json:"submissionStatus,omitempty"`
+	ClientInjectionStatus  StageStatus          `json:"clientInjectionStatus,omitempty"`
+	ClientInjectionMessage string               `json:"clientInjectionMessage,omitempty"`
+	ClientFailureCode      OperationFailureCode `json:"clientFailureCode,omitempty"`
+	RemoteID               string               `json:"remoteId,omitempty"`
+	RemoteURL              string               `json:"remoteUrl,omitempty"`
+	ClientInjected         bool                 `json:"clientInjected"`
+	CrossSeeded            bool                 `json:"crossSeeded"`
+	Failures               []WorkflowFailure    `json:"failures,omitempty"`
 }
 
 // UploadResult retains terminal tracker outcomes bound to exact workflow inputs.

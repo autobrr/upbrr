@@ -124,19 +124,16 @@ func submitPreparedUpload(
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 && success {
 		if id != "" {
 			tURL := torrentURL + id
-			if announceURL != "" {
-				if err := trackers.WritePersonalizedTorrent(state.torrentPath, artifactPath, announceURL, tURL, sourceFlag); err != nil {
-					return api.UploadSummary{}, fmt.Errorf("trackers: %w", err)
-				}
-			}
+			registeredPath := trackers.PersistReconstructedRegisteredTorrent(
+				req.Logger, "IS", state.torrentPath, artifactPath, announceURL, tURL, sourceFlag,
+			)
 			return api.UploadSummary{
 				Uploaded: 1,
 				UploadedTorrents: []api.UploadedTorrent{{
 					Tracker:     "IS",
 					TorrentID:   id,
 					TorrentURL:  tURL,
-					DownloadURL: tURL,
-					TorrentPath: artifactPath,
+					TorrentPath: registeredPath,
 				}},
 			}, nil
 		}
