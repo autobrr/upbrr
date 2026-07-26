@@ -303,6 +303,71 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 	}
 }
 
+func TestCLICompositeDuplicateReviewPrintsMatchesAndSeparatesTrackers(t *testing.T) {
+	session := &cliWorkflowSession{
+		current: releaseworkflow.CommandResult{
+			Dupes: &api.DupeAssessment{
+				Results: []api.TrackerDupeAssessment{
+					{
+						TrackerID:         "ALPHA",
+						UploadReleaseName: "Example.Release.2026.1080p-GRP",
+						Matches: []api.DupeMatchProjection{
+							{
+								Name: "Example.Release.2026.1080p.WEB-DL-GRP",
+								Link: "https://alpha.example/torrents/123",
+							},
+							{Name: "Example.Release.2026.1080p.BluRay-GRP"},
+						},
+						Decision: api.DupeDecisionAccepted,
+					},
+					{
+						TrackerID:         "BETA",
+						UploadReleaseName: "Example.Release.2026.1080p-GRP",
+						Matches: []api.DupeMatchProjection{
+							{Name: "Example.Release.2026.1080p.Encode-GRP"},
+						},
+						Decision: api.DupeDecisionAccepted,
+					},
+				},
+			},
+		},
+	}
+	var feedbackByTracker []api.ReleaseWorkflowUploadFeedback
+	output := captureStdout(t, func() {
+		for _, trackerID := range []api.TrackerID{"ALPHA", "BETA"} {
+			feedback, declined, err := session.collectCompositeDuplicateFeedback(
+				bufio.NewReader(strings.NewReader("n\n")),
+				api.RequiredAction{TrackerID: trackerID},
+				api.ReleaseWorkflowUploadFeedback{},
+			)
+			if err != nil {
+				t.Fatalf("collect duplicate feedback for %s: %v", trackerID, err)
+			}
+			if declined {
+				t.Fatalf("duplicate feedback for %s was declined", trackerID)
+			}
+			feedbackByTracker = append(feedbackByTracker, feedback)
+		}
+	})
+
+	for _, expected := range []string{
+		"Dupe check ALPHA: upload_name=Example.Release.2026.1080p-GRP matches=2 decision=accepted",
+		"Duplicate matches:\n  1. Example.Release.2026.1080p.WEB-DL-GRP\n     Link: https://alpha.example/torrents/123\n  2. Example.Release.2026.1080p.BluRay-GRP",
+		"Upload to ALPHA despite duplicate evidence? [y/N]: \nDupe check BETA:",
+		"Duplicate matches:\n  1. Example.Release.2026.1080p.Encode-GRP",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("duplicate review output missing %q: %q", expected, output)
+		}
+	}
+	for index, trackerID := range []api.TrackerID{"ALPHA", "BETA"} {
+		review := feedbackByTracker[index].Response.DuplicateReview
+		if review == nil || review.TrackerID != trackerID || review.Decision != api.DupeDecisionAccepted {
+			t.Fatalf("duplicate feedback for %s = %#v", trackerID, feedbackByTracker[index])
+		}
+	}
+}
+
 func TestCLIWorkflowProjectionOutputEnabledOnlyForDebugDetail(t *testing.T) {
 	t.Parallel()
 

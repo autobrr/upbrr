@@ -458,10 +458,13 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 		len(result.Matches),
 		result.Decision,
 	)
+	printCLICompositeDupeMatches(result.Matches)
+	fmt.Println()
 	allow, err := promptYesNo(reader, fmt.Sprintf("Upload to %s despite duplicate evidence? [y/N]: ", result.TrackerID), false)
 	if err != nil {
 		return feedback, false, err
 	}
+	fmt.Println()
 	decision := api.DupeDecisionAccepted
 	if allow {
 		decision = api.DupeDecisionIgnored
@@ -474,6 +477,19 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 		},
 	}
 	return feedback, false, nil
+}
+
+func printCLICompositeDupeMatches(matches []api.DupeMatchProjection) {
+	if len(matches) == 0 {
+		return
+	}
+	fmt.Println("Duplicate matches:")
+	for index, match := range matches {
+		fmt.Printf("  %d. %s\n", index+1, strings.TrimSpace(match.Name))
+		if link := strings.TrimSpace(match.Link); link != "" {
+			fmt.Printf("     Link: %s\n", link)
+		}
+	}
 }
 
 func compositeCLIProjectionFromInstruction(
