@@ -18,6 +18,7 @@ const (
 	goalReasonWorkflowComplete     = "workflow_complete"
 	goalReasonPreparationRequired  = "preparation_required"
 	goalReasonTrackersRequired     = "trackers_required"
+	goalReasonMediaRequired        = "media_required"
 	goalReasonDescriptionsRequired = "descriptions_required"
 )
 
@@ -460,6 +461,19 @@ func goalAvailability(current CommandResult, goal api.WorkflowGoal) (bool, strin
 	case api.WorkflowGoalDescriptionsReady:
 		if current.Projections == nil {
 			return false, goalReasonTrackersRequired, "Select and assess trackers first."
+		}
+		if current.Media == nil {
+			return false, goalReasonMediaRequired, "Capture and select the required release images first."
+		}
+		if !stageSucceeded(current.Media.Status) {
+			for _, action := range current.Media.RequiredActions {
+				if action.Status == "" || action.Status == api.RequiredActionStatusPending {
+					if prompt := strings.TrimSpace(action.Prompt); prompt != "" {
+						return false, goalReasonMediaRequired, prompt
+					}
+				}
+			}
+			return false, goalReasonMediaRequired, "Required release images are not ready."
 		}
 	case api.WorkflowGoalUploadReviewed, api.WorkflowGoalDryRun, api.WorkflowGoalUploaded:
 		if current.Projections == nil {

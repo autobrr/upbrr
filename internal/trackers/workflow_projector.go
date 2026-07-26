@@ -296,7 +296,7 @@ func projectionIneligibleProgressMessage(projection api.TrackerReleaseProjection
 func applyWorkflowProjectionRequirements(
 	projection *api.TrackerReleaseProjection,
 	descriptor Descriptor,
-	subject api.UploadSubject,
+	_ api.UploadSubject,
 	cfg config.Config,
 ) {
 	if descriptor.UploadContentMode.UsesImages() {
@@ -304,9 +304,9 @@ func applyWorkflowProjectionRequirements(
 		if projection.Artifacts.ScreenshotCount <= 0 {
 			projection.Artifacts.ScreenshotCount = cfg.ScreenshotHandling.Screens
 		}
-		if strings.EqualFold(strings.TrimSpace(subject.DiscType), "DVD") {
-			projection.Artifacts.DVDMenuCount = cfg.ScreenshotHandling.ResolvedMaxMenuItems()
-		}
+	}
+	if descriptor.WorkflowMedia != nil {
+		projection.Artifacts.DVDMenuCount = max(projection.Artifacts.DVDMenuCount, descriptor.WorkflowMedia.DVDMenuCount)
 	}
 	projection.Artifacts.Description = descriptor.UploadContentMode.UsesDescription()
 	projection.Artifacts.ImageHosting = projection.Artifacts.ImageHosting || len(projection.Artifacts.AllowedImageHosts) > 0

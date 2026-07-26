@@ -6,6 +6,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { configClient, hostBrowser as hostBrowserClient } from "./api/app";
 import { isHostPathCaseInsensitive } from "./api/client";
 import { WorkflowOperationProgress } from "./components/WorkflowOperationProgress";
+import { WorkflowRequiredActions } from "./components/WorkflowRequiredActions";
 import BlurayCandidatesPage from "./pages/bluray_candidates";
 import DescriptionBuilderPage from "./pages/description_builder";
 import DupeCheckPage from "./pages/dupe_check";
@@ -65,6 +66,17 @@ type ActiveTab =
   | "settings"
   | "logging";
 type ThemeMode = "light" | "dark" | "auto";
+
+const releaseRouteTabs: Readonly<Record<ReleaseRoute, ActiveTab>> = {
+  input: "input",
+  trackerData: "tracker",
+  duplicates: "dupes",
+  screenshots: "screenshots",
+  menuImages: "menu_images",
+  uploadedImages: "upload_images",
+  descriptions: "description_builder",
+  upload: "upload",
+};
 type ConfigOpStatus = {
   type: "success" | "error" | "warning";
   title: string;
@@ -445,6 +457,10 @@ function AppShell() {
             </p>
           ) : null}
           <WorkflowOperationProgress operation={releaseSession.workflow.view.current?.operation} />
+          <WorkflowRequiredActions
+            continuation={releaseSession.workflow.view.current?.continuation}
+            onNavigate={(route) => openReleaseTab(releaseRouteTabs[route], route)}
+          />
           {activeTab === "settings" ? (
             <SettingsPage
               configData={configData}

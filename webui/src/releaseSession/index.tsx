@@ -1395,23 +1395,32 @@ export function ReleaseSessionProvider({
       },
       contentURL: workflowMediaURL(artifact.id),
     }));
-  const workflowUploadCandidates = (workflowMedia?.artifacts || [])
-    .filter(
-      (artifact) =>
-        artifact.selected && (artifact.kind === "screenshot" || artifact.kind === "dvd_menu"),
-    )
-    .map((artifact, index) => ({
-      image: {
-        artifactID: artifact.id,
-        index: artifact.index ?? index,
-        timestampSeconds: artifact.timestampSeconds || 0,
-        purpose: artifact.purpose as ScreenshotPurpose,
-        width: artifact.width || 0,
-        height: artifact.height || 0,
-        sizeBytes: artifact.sizeBytes || 0,
-      },
-      contentURL: workflowMediaURL(artifact.id),
-    }));
+  const workflowUploadCandidates = useMemo(() => {
+    const current = workflowView.current;
+    return (current?.media?.artifacts || [])
+      .filter(
+        (artifact) =>
+          artifact.selected && (artifact.kind === "screenshot" || artifact.kind === "dvd_menu"),
+      )
+      .map((artifact, index) => ({
+        image: {
+          artifactID: artifact.id,
+          index: artifact.index ?? index,
+          timestampSeconds: artifact.timestampSeconds || 0,
+          purpose: artifact.purpose as ScreenshotPurpose,
+          width: artifact.width || 0,
+          height: artifact.height || 0,
+          sizeBytes: artifact.sizeBytes || 0,
+        },
+        contentURL: current ? activePorts.workflow.mediaURL(current, artifact.id) : "",
+      }));
+  }, [activePorts.workflow, workflowView]);
+  useEffect(() => {
+    dispatch({
+      type: "workflow_upload_candidates_changed",
+      candidates: workflowUploadCandidates,
+    });
+  }, [workflowUploadCandidates]);
   const workflowUploadedImages = (workflowMedia?.artifacts || [])
     .filter((artifact) => artifact.kind === "hosted_image")
     .map((artifact) => ({

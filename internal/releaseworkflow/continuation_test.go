@@ -337,6 +337,56 @@ func TestWorkflowContinuationAdvertisesAndEnforcesDescriptionViability(t *testin
 	}
 }
 
+func TestWorkflowContinuationExplainsDescriptionMediaReadiness(t *testing.T) {
+	t.Parallel()
+
+	current := continuationTestCurrent()
+	availability := findGoalAvailability(
+		t,
+		projectWorkflowContinuation(current).AvailableGoals,
+		api.WorkflowGoalDescriptionsReady,
+	)
+	if availability.Available || availability.ReasonCode != goalReasonMediaRequired {
+		t.Fatalf("missing-media availability = %#v", availability)
+	}
+
+	prompt := "Capture the required menu images."
+	current.Media = &api.MediaArtifactSet{
+		Status: api.StageStatusBlocked,
+		RequiredActions: []api.RequiredAction{{
+			Kind:   api.RequiredActionProvideTrackerInput,
+			Status: api.RequiredActionStatusPending,
+			Prompt: prompt,
+		}},
+	}
+	availability = findGoalAvailability(
+		t,
+		projectWorkflowContinuation(current).AvailableGoals,
+		api.WorkflowGoalDescriptionsReady,
+	)
+	if availability.Available || availability.Reason != prompt {
+		t.Fatalf("blocked-media availability = %#v", availability)
+	}
+
+	current.Media = &api.MediaArtifactSet{
+		Status: api.StageStatusCompleted,
+		Artifacts: []api.MediaArtifact{{
+			ID: "screen",
+ Kind: api.MediaArtifactScreenshot,
+ Purpose: api.ScreenshotPurposeFinal,
+ Selected: true,
+		}},
+	}
+	availability = findGoalAvailability(
+		t,
+		projectWorkflowContinuation(current).AvailableGoals,
+		api.WorkflowGoalDescriptionsReady,
+	)
+	if !availability.Available {
+		t.Fatalf("normal media without menus should permit description continuation and hosting: %#v", availability)
+	}
+}
+
 func TestWorkflowContinuationWaitsWhenAllLanesNeedAction(t *testing.T) {
 	t.Parallel()
 

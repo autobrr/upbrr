@@ -41,11 +41,11 @@ func (b workflowDescriptionBuilder) Fingerprints(
 	if err != nil {
 		return "", "", err
 	}
-	exactScreenshots, exactUploads, err := resolveWorkflowExactMedia(privateMedia, media)
+	exactMedia, err := resolveWorkflowExactMedia(privateMedia, media)
 	if err != nil {
 		return "", "", err
 	}
-	return workflowDescriptionFingerprints(release, projections, media, instructions, subject, exactScreenshots, exactUploads)
+	return workflowDescriptionFingerprints(release, projections, media, instructions, subject, exactMedia)
 }
 
 func workflowDescriptionFingerprints(
@@ -54,8 +54,7 @@ func workflowDescriptionFingerprints(
 	media api.MediaArtifactSet,
 	instructions api.DescriptionInstructions,
 	subject api.UploadSubject,
-	exactScreenshots []api.ScreenshotImage,
-	exactUploads []api.UploadedImageLink,
+	exactMedia *api.ExactMediaAssets,
 ) (api.WorkflowFingerprint, api.WorkflowFingerprint, error) {
 	templateFingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		Template string
@@ -75,8 +74,7 @@ func workflowDescriptionFingerprints(
 		MediaCapture        api.WorkflowFingerprint
 		MediaRequirements   api.WorkflowFingerprint
 		Artifacts           []api.MediaArtifact
-		ExactScreenshots    []api.ScreenshotImage
-		ExactUploads        []api.UploadedImageLink
+		ExactMedia          *api.ExactMediaAssets
 		TargetTrackerIDs    []string
 		Instructions        api.DescriptionInstructions
 		TemplateFingerprint api.WorkflowFingerprint
@@ -91,8 +89,7 @@ func workflowDescriptionFingerprints(
 		MediaCapture:        media.CaptureFingerprint,
 		MediaRequirements:   media.RequirementsFingerprint,
 		Artifacts:           media.Artifacts,
-		ExactScreenshots:    exactScreenshots,
-		ExactUploads:        exactUploads,
+		ExactMedia:          exactMedia,
 		TargetTrackerIDs:    workflowProjectionTrackerNames(workflowDescriptionTargets(projections.Projections)),
 		Instructions:        instructions,
 		TemplateFingerprint: templateFingerprint,
@@ -122,7 +119,7 @@ func (b workflowDescriptionBuilder) Build(
 	if err != nil {
 		return api.DescriptionSet{}, err
 	}
-	exactScreenshots, exactUploads, err := resolveWorkflowExactMedia(privateMedia, media)
+	exactMedia, err := resolveWorkflowExactMedia(privateMedia, media)
 	if err != nil {
 		return api.DescriptionSet{}, err
 	}
@@ -132,14 +129,12 @@ func (b workflowDescriptionBuilder) Build(
 		media,
 		instructions,
 		subject,
-		exactScreenshots,
-		exactUploads,
+		exactMedia,
 	)
 	if err != nil {
 		return api.DescriptionSet{}, err
 	}
-	subject.ExactScreenshots = exactScreenshots
-	subject.ExactUploadedImages = exactUploads
+	subject.ExactMedia = exactMedia
 	skipUpload := true
 	subject.ImageHostOverrides.SkipUpload = &skipUpload
 	descriptionTargets := workflowDescriptionTargets(projections.Projections)
@@ -278,73 +273,147 @@ func (b workflowDescriptionBuilder) Build(
 	return snapshot, nil
 }
 
+type workflowExactLocalMedia struct {
+	artifact   api.MediaArtifact
+	screenshot api.ScreenshotImage
+	menu       api.DVDMenuCaptureImage
+}
+
 func resolveWorkflowExactMedia(
 	privateMedia any,
 	media api.MediaArtifactSet,
-) ([]api.ScreenshotImage, []api.UploadedImageLink, error) {
+) (*api.ExactMediaAssets, error) {
 	privateArtifacts, ok := privateMedia.(workflowMediaPrivateArtifacts)
 	if !ok {
-		return nil, nil, errors.New("workflow exact media: retained artifacts are incompatible")
+		return nil, errors.New("workflow exact media: retained artifacts are incompatible")
 	}
-	localArtifactCount := 0
-	for _, artifact := range media.Artifacts {
-		if artifact.Kind == api.MediaArtifactScreenshot || artifact.Kind == api.MediaArtifactDVDMenu {
-			localArtifactCount++
-		}
-	}
-	if len(privateArtifacts.Screenshots)+len(privateArtifacts.DVDMenus) != localArtifactCount {
-		return nil, nil, errors.New("workflow exact media: retained artifacts do not match public media")
-	}
-	exactScreenshots := selectedWorkflowMediaImages(privateArtifacts, media)
-	exactUploads := make([]api.UploadedImageLink, 0)
-	if len(privateArtifacts.HostedImages) > 0 {
-		for _, artifact := range media.Artifacts {
-			if artifact.Kind != api.MediaArtifactHostedImage || !artifact.Selected {
-				continue
-			}
-			if upload, exists := privateArtifacts.HostedImages[artifact.ID]; exists {
-				exactUploads = append(exactUploads, upload)
-			}
-		}
-		slices.SortFunc(exactUploads, func(left, right api.UploadedImageLink) int {
-			leftKey := strings.Join([]string{left.Host, left.UsageScope, left.ImgURL, left.RawURL, left.WebURL}, "\x00")
-			rightKey := strings.Join([]string{right.Host, right.UsageScope, right.ImgURL, right.RawURL, right.WebURL}, "\x00")
-			return strings.Compare(leftKey, rightKey)
-		})
-		return exactScreenshots, exactUploads, nil
-	}
-	return exactScreenshots, exactUploads, nil
-}
-
-func selectedWorkflowMediaImages(
-	privateArtifacts workflowMediaPrivateArtifacts,
-	media api.MediaArtifactSet,
-) []api.ScreenshotImage {
-	images := make([]api.ScreenshotImage, 0, len(media.Artifacts))
+	screenshots := make([]workflowExactLocalMedia, 0, len(privateArtifacts.Screenshots))
+	menus := make([]workflowExactLocalMedia, 0, len(privateArtifacts.DVDMenus))
+	sourceKinds := make(map[api.PublicResourceID]api.MediaArtifactKind)
+	sourceOrders := make(map[api.PublicResourceID]int)
+	selectedSources := make(map[api.PublicResourceID]struct{})
 	screenshotIndex, menuIndex := 0, 0
 	for _, artifact := range media.Artifacts {
-		var image api.ScreenshotImage
 		switch artifact.Kind {
 		case api.MediaArtifactScreenshot:
 			if screenshotIndex >= len(privateArtifacts.Screenshots) {
-				continue
+				return nil, errors.New("workflow exact media: retained screenshots do not match public media")
 			}
-			image = privateArtifacts.Screenshots[screenshotIndex]
+			image := privateArtifacts.Screenshots[screenshotIndex]
 			screenshotIndex++
+			if artifact.Purpose != api.ScreenshotPurposeFinal || image.Purpose != api.ScreenshotPurposeFinal {
+				return nil, errors.New("workflow exact media: normal screenshot has invalid purpose")
+			}
+			sourceKinds[artifact.ID] = artifact.Kind
+			sourceOrders[artifact.ID] = artifact.Order
+			if artifact.Selected {
+				selectedSources[artifact.ID] = struct{}{}
+				screenshots = append(screenshots, workflowExactLocalMedia{artifact: artifact, screenshot: image})
+			}
 		case api.MediaArtifactDVDMenu:
 			if menuIndex >= len(privateArtifacts.DVDMenus) {
-				continue
+				return nil, errors.New("workflow exact media: retained DVD menus do not match public media")
 			}
-			image = privateArtifacts.DVDMenus[menuIndex].ScreenshotImage
+			menu := privateArtifacts.DVDMenus[menuIndex]
 			menuIndex++
+			if artifact.Purpose != api.ScreenshotPurposeMenu || menu.Purpose != api.ScreenshotPurposeMenu {
+				return nil, errors.New("workflow exact media: DVD menu has invalid purpose")
+			}
+			sourceKinds[artifact.ID] = artifact.Kind
+			sourceOrders[artifact.ID] = artifact.Order
+			if artifact.Selected {
+				selectedSources[artifact.ID] = struct{}{}
+				menus = append(menus, workflowExactLocalMedia{artifact: artifact, menu: menu})
+			}
 		case api.MediaArtifactHostedImage:
-			continue
-		}
-		if artifact.Selected {
-			images = append(images, image)
 		}
 	}
-	return images
+	if screenshotIndex != len(privateArtifacts.Screenshots) || menuIndex != len(privateArtifacts.DVDMenus) {
+		return nil, errors.New("workflow exact media: retained artifacts do not match public media")
+	}
+	slices.SortStableFunc(screenshots, compareLocalMediaOrder)
+	slices.SortStableFunc(menus, compareLocalMediaOrder)
+	exact := &api.ExactMediaAssets{
+		Screenshots: make([]api.ScreenshotImage, 0, len(screenshots)),
+		DVDMenus:    make([]api.DVDMenuCaptureImage, 0, len(menus)),
+	}
+	for _, item := range screenshots {
+		exact.Screenshots = append(exact.Screenshots, item.screenshot)
+	}
+	for _, item := range menus {
+		exact.DVDMenus = append(exact.DVDMenus, item.menu)
+	}
+
+	type hostedMedia struct {
+		artifact    api.MediaArtifact
+		sourceOrder int
+		upload      api.UploadedImageLink
+		kind        api.MediaArtifactKind
+	}
+	hosted := make([]hostedMedia, 0, len(privateArtifacts.HostedImages))
+	for _, artifact := range media.Artifacts {
+		if artifact.Kind != api.MediaArtifactHostedImage || !artifact.Selected {
+			continue
+		}
+		upload, exists := privateArtifacts.HostedImages[artifact.ID]
+		if !exists {
+			return nil, errors.New("workflow exact media: hosted artifact content is unavailable")
+		}
+		sourceID, exists := privateArtifacts.HostedSources[artifact.ID]
+		if !exists {
+			return nil, errors.New("workflow exact media: hosted artifact source is unavailable")
+		}
+		if _, selected := selectedSources[sourceID]; !selected {
+			continue
+		}
+		kind, exists := sourceKinds[sourceID]
+		if !exists {
+			return nil, errors.New("workflow exact media: hosted artifact source is not local media")
+		}
+		expectedPurpose := api.ScreenshotPurposeFinal
+		if kind == api.MediaArtifactDVDMenu {
+			expectedPurpose = api.ScreenshotPurposeMenu
+		}
+		if artifact.Purpose != expectedPurpose {
+			return nil, errors.New("workflow exact media: hosted artifact purpose does not match its source channel")
+		}
+		hosted = append(hosted, hostedMedia{
+			artifact:    artifact,
+			sourceOrder: sourceOrders[sourceID],
+			upload:      upload,
+			kind:        kind,
+		})
+	}
+	slices.SortStableFunc(hosted, func(left, right hostedMedia) int {
+		if left.sourceOrder != right.sourceOrder {
+			return left.sourceOrder - right.sourceOrder
+		}
+		if left.artifact.Order != right.artifact.Order {
+			return left.artifact.Order - right.artifact.Order
+		}
+		return strings.Compare(string(left.artifact.ID), string(right.artifact.ID))
+	})
+	for _, item := range hosted {
+		switch item.kind {
+		case api.MediaArtifactScreenshot:
+			exact.ScreenshotUploads = append(exact.ScreenshotUploads, item.upload)
+		case api.MediaArtifactDVDMenu:
+			exact.DVDMenuUploads = append(exact.DVDMenuUploads, item.upload)
+		case api.MediaArtifactHostedImage:
+			return nil, errors.New("workflow exact media: hosted artifact cannot source another hosted artifact")
+		}
+	}
+	if err := exact.Validate(); err != nil {
+		return nil, fmt.Errorf("workflow exact media: %w", err)
+	}
+	return exact, nil
+}
+
+func compareLocalMediaOrder(left, right workflowExactLocalMedia) int {
+	if left.artifact.Order != right.artifact.Order {
+		return left.artifact.Order - right.artifact.Order
+	}
+	return strings.Compare(string(left.artifact.ID), string(right.artifact.ID))
 }
 
 func (b workflowDescriptionBuilder) resolveSubject(

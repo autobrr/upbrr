@@ -395,7 +395,7 @@ func (s *Service) BuildPreparation(ctx context.Context, subject api.DescriptionS
 			contentFailures = append(contentFailures, *failed.Failure)
 			continue
 		}
-		applyResolvedDescriptionScreenshots(ctx, meta, s.repo, preloaded, &assets, resolution.screenshots)
+		applyResolvedDescriptionScreenshots(ctx, tracker, meta, s.repo, preloaded, &assets, resolution.screenshots)
 		plan, failure := definition.Prepare(ctx, s.preparationInput(ctx, PreparationIntentDescriptionPreview, tracker, meta, trackerCfg, &assets))
 		if failure != nil {
 			s.logger.Errorf("trackers: preparation failed for %s: %v", tracker, failure)
@@ -489,19 +489,9 @@ func uploadSubjectForDescription(subject api.DescriptionSubject) api.UploadSubje
 		TrackerConfigOverrides: subject.TrackerConfig,
 		TrackerSiteOverrides:   subject.TrackerSite,
 		ImageHostOverrides:     subject.ImageHost,
-		ExactScreenshots:       cloneOptionalDescriptionSlice(subject.ExactScreenshots),
-		ExactUploadedImages:    cloneOptionalDescriptionSlice(subject.ExactUploadedImages),
+		ExactMedia:             subject.ExactMedia.Clone(),
 		TrackerData:            append([]api.TrackerMetadata(nil), subject.TrackerData...),
 	}
-}
-
-func cloneOptionalDescriptionSlice[T any](values []T) []T {
-	if values == nil {
-		return nil
-	}
-	cloned := make([]T, len(values))
-	copy(cloned, values)
-	return cloned
 }
 
 // preparationImageHostPreferences returns the first upload host each tracker

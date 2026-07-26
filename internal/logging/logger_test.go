@@ -168,3 +168,20 @@ func TestSanitizeMessageRedactsURLUserinfo(t *testing.T) {
 		t.Fatal("expected URL host and path preserved")
 	}
 }
+
+func TestSanitizeMessagePreservesFieldsAfterTerminalRedactedQuery(t *testing.T) {
+	t.Parallel()
+
+	input := "tracker=https://tracker.example/announce?passkey=secret state=ready count=4"
+	first := SanitizeMessage(input)
+	second := SanitizeMessage(first)
+	if strings.Contains(first, "secret") || strings.Contains(second, "secret") {
+		t.Fatal("expected tracker passkey redacted")
+	}
+	if first != second {
+		t.Fatalf("sanitization is not idempotent:\nfirst:  %q\nsecond: %q", first, second)
+	}
+	if !strings.Contains(second, "passkey=[REDACTED] state=ready count=4") {
+		t.Fatalf("structured suffix was not preserved: %q", second)
+	}
+}

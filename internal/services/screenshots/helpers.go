@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -59,6 +60,11 @@ type mediaInfoDoc struct {
 }
 
 var durationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|hours?|hrs?|h|minutes?|mins?|min|seconds?|secs?|sec|s)\b`)
+
+const (
+	dvdSegmentDurationToleranceSeconds = 5.0
+	mpegPSTimestampWrapSeconds         = float64(uint64(1)<<33) / 90000
+)
 
 // resolveVideoInfo selects timing metadata and the ffmpeg inputs used for
 // screenshot planning/capture. DVD releases keep ordered title-set segments so
@@ -818,14 +824,50 @@ func resolveDVDVideoSegmentTimings(
 	runner Runner,
 	cmdPath string,
 	segments []videoSegment,
+	titleDuration float64,
 	logger api.Logger,
 ) error {
 	logger = screenshotLogger(logger)
+	if len(segments) == 0 {
+		return nil
+	}
 	start := 0.0
 	for idx := range segments {
 		duration, err := probeVideoDuration(ctx, runner, cmdPath, segments[idx].SourcePath)
 		if err != nil {
 			return fmt.Errorf("screenshots: probe DVD segment %d duration: %w", idx+1, err)
+		}
+		if math.IsNaN(duration) || math.IsInf(duration, 0) || duration <= 0 {
+			return fmt.Errorf("screenshots: DVD segment %d has invalid duration", idx+1)
+		}
+		finalSegment := idx == len(segments)-1
+		if titleDuration > 0 {
+			remaining := titleDuration - start
+			if remaining <= 0 {
+				return fmt.Errorf("screenshots: DVD segment %d exceeds title duration", idx+1)
+			}
+			if !finalSegment {
+				if duration >= remaining {
+					return fmt.Errorf("screenshots: DVD segment %d consumes remaining title duration", idx+1)
+				}
+			} else {
+				difference := math.Abs(duration - remaining)
+				switch {
+				case difference <= dvdSegmentDurationToleranceSeconds:
+				case duration > remaining+dvdSegmentDurationToleranceSeconds &&
+					math.Abs(start+duration-mpegPSTimestampWrapSeconds) <= dvdSegmentDurationToleranceSeconds:
+					logger.Debugf(
+						"screenshots: DVD segment timing reconciled segment=%d decision=use_title_remainder probed_seconds=%.3f remaining_seconds=%.3f title_seconds=%.3f",
+						idx+1,
+						duration,
+						remaining,
+						titleDuration,
+					)
+					duration = remaining
+				default:
+					return fmt.Errorf("screenshots: DVD segment %d contradicts title duration", idx+1)
+				}
+			}
 		}
 		segments[idx].StartSeconds = start
 		segments[idx].DurationSeconds = duration
@@ -837,6 +879,9 @@ func resolveDVDVideoSegmentTimings(
 			segments[idx].DurationSeconds,
 			segments[idx].SourcePath,
 		)
+	}
+	if titleDuration > 0 && math.Abs(start-titleDuration) > dvdSegmentDurationToleranceSeconds {
+		return errors.New("screenshots: DVD segment durations contradict title duration")
 	}
 	return nil
 }

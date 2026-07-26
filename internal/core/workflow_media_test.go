@@ -11,10 +11,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -96,6 +98,9 @@ func (*workflowScreenshotFake) SaveFinalSelections(context.Context, api.Screensh
 type workflowDVDMenuFake struct {
 	captures int
 	deleted  []string
+	maxItems []int
+	result   *api.DVDMenuCaptureResult
+	err      error
 }
 
 func (f *workflowDVDMenuFake) Capture(
@@ -104,6 +109,13 @@ func (f *workflowDVDMenuFake) Capture(
 	maxItems int,
 ) (api.DVDMenuCaptureResult, error) {
 	f.captures++
+	f.maxItems = append(f.maxItems, maxItems)
+	if f.err != nil {
+		return api.DVDMenuCaptureResult{}, f.err
+	}
+	if f.result != nil {
+		return *f.result, nil
+	}
 	return api.DVDMenuCaptureResult{
 		Images: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{
 			Path:      "C:\\private\\menu.png",
@@ -130,7 +142,7 @@ func (*workflowDVDMenuFake) Capability(context.Context) (api.DVDMenuEngineInfo, 
 	return api.DVDMenuEngineInfo{}, nil
 }
 
-func TestWorkflowMediaBuilderAutomaticallyCapturesProjectionRequirements(t *testing.T) {
+func TestWorkflowMediaBuilderCapturesOnlyProjectedNormalScreenshots(t *testing.T) {
 	t.Parallel()
 
 	screenshots := &workflowScreenshotFake{root: t.TempDir()}
@@ -142,7 +154,7 @@ func TestWorkflowMediaBuilderAutomaticallyCapturesProjectionRequirements(t *test
 	}
 	projection := api.TrackerReleaseProjection{
 		TrackerID: "ALPHA",
-		Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1, DVDMenuCount: 2},
+		Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1},
 	}
 	projections := api.TrackerReleaseProjectionSet{
 		ID:          "projections-1",
@@ -160,12 +172,12 @@ func TestWorkflowMediaBuilderAutomaticallyCapturesProjectionRequirements(t *test
 	if err != nil {
 		t.Fatalf("build workflow media: %v", err)
 	}
-	if snapshot.Status != api.StageStatusCompleted || len(snapshot.Artifacts) != 2 ||
-		screenshots.plans != 1 || screenshots.captures != 1 || dvdMenus.captures != 1 {
+	if snapshot.Status != api.StageStatusCompleted || len(snapshot.Artifacts) != 1 ||
+		screenshots.plans != 1 || screenshots.captures != 1 || dvdMenus.captures != 0 {
 		t.Fatalf("media capture = %#v plans=%d screenshots=%d menus=%d", snapshot, screenshots.plans, screenshots.captures, dvdMenus.captures)
 	}
 	private, ok := privateArtifacts.(workflowMediaPrivateArtifacts)
-	if !ok || len(private.Screenshots) != 1 || len(private.DVDMenus) != 1 {
+	if !ok || len(private.Screenshots) != 1 || len(private.DVDMenus) != 0 {
 		t.Fatalf("private media artifacts = %#v", privateArtifacts)
 	}
 	payload, err := json.Marshal(snapshot)
@@ -184,6 +196,261 @@ func TestWorkflowMediaBuilderAutomaticallyCapturesProjectionRequirements(t *test
 	}
 	if changed.CaptureFingerprint == snapshot.CaptureFingerprint {
 		t.Fatal("media capture fingerprint ignored release generation")
+	}
+}
+
+func TestWorkflowMediaBuilderExplicitDVDMenuCaptureUsesCap(t *testing.T) {
+	t.Parallel()
+
+	dvdMenus := &workflowDVDMenuFake{}
+	builder := workflowMediaBuilder{
+		config:   config.Config{ScreenshotHandling: config.ScreenshotHandlingConfig{MaxMenuItems: 6}},
+		resolver: workflowMediaResolverFake{},
+		dvdMenus: dvdMenus,
+	}
+	snapshot, privateArtifacts, err := builder.Build(
+		context.Background(),
+		api.ReleaseRef{SourcePath: "C:\\releases\\Example.Release.2026", Generation: 1},
+		api.TrackerReleaseProjectionSet{ID: "projections-menu", Revision: 1},
+		api.MediaCaptureInstructions{
+			Purpose:         api.ScreenshotPurposeMenu,
+			CaptureDVDMenus: true,
+			MaxDVDMenuItems: 4,
+		},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("build explicit DVD menus: %v", err)
+	}
+	private, ok := privateArtifacts.(workflowMediaPrivateArtifacts)
+	if !ok {
+		t.Fatalf("private artifacts type = %T", privateArtifacts)
+	}
+	if snapshot.Status != api.StageStatusCompleted || len(snapshot.Artifacts) != 1 || len(private.DVDMenus) != 1 {
+		t.Fatalf("explicit menu capture = %#v private=%#v", snapshot, private)
+	}
+	if dvdMenus.captures != 1 || len(dvdMenus.maxItems) != 1 || dvdMenus.maxItems[0] != 4 {
+		t.Fatalf("menu calls=%d caps=%v", dvdMenus.captures, dvdMenus.maxItems)
+	}
+	if snapshot.Artifacts[0].Source != api.ScreenshotSelectionSourceDVDMenu {
+		t.Fatalf("automatic menu source = %q", snapshot.Artifacts[0].Source)
+	}
+}
+
+func TestWorkflowMediaBuilderDoesNotHideCaptureRequiredDVDMenus(t *testing.T) {
+	t.Parallel()
+
+	dvdMenus := &workflowDVDMenuFake{}
+	builder := workflowMediaBuilder{
+		resolver: workflowMediaResolverFake{},
+		dvdMenus: dvdMenus,
+	}
+	snapshot, _, err := builder.Build(
+		context.Background(),
+		api.ReleaseRef{SourcePath: "C:\\releases\\Example.Release.2026", Generation: 1},
+		api.TrackerReleaseProjectionSet{
+			ID:       "projections-required-menu",
+			Revision: 1,
+			Projections: []api.TrackerReleaseProjection{{
+				TrackerID: "SYNTHETIC",
+				Artifacts: api.TrackerArtifactRequirements{DVDMenuCount: 2},
+			}},
+		},
+		api.MediaCaptureInstructions{},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("build required DVD menus: %v", err)
+	}
+	if snapshot.Status != api.StageStatusBlocked || len(snapshot.RequiredActions) != 1 || dvdMenus.captures != 0 {
+		t.Fatalf("required menu result = %#v captures=%d", snapshot, dvdMenus.captures)
+	}
+}
+
+func TestWorkflowMediaBuilderMenuRecaptureReplacesAutomaticAndPreservesManual(t *testing.T) {
+	t.Parallel()
+
+	dvdMenus := &workflowDVDMenuFake{result: &api.DVDMenuCaptureResult{
+		Images: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{
+			Path:    "new-auto-menu.png",
+			Purpose: api.ScreenshotPurposeMenu,
+		}}},
+		Partial: true,
+		Warnings: []api.DVDMenuCaptureWarning{{
+			Code: "partial_coverage", Message: "Synthetic partial coverage.",
+		}},
+	}}
+	builder := workflowMediaBuilder{resolver: workflowMediaResolverFake{}, dvdMenus: dvdMenus}
+	existing := api.MediaArtifactSet{
+		CaptureFingerprint:      workflowTestFingerprint(t, "existing-media"),
+		RequirementsFingerprint: workflowTestFingerprint(t, "requirements"),
+		Status:                  api.StageStatusCompleted,
+		Artifacts: []api.MediaArtifact{
+			{
+				ID:       "screen",
+				Kind:     api.MediaArtifactScreenshot,
+				Purpose:  api.ScreenshotPurposeFinal,
+				Selected: true,
+				Order:    0,
+			},
+			{
+				ID:       "manual-menu",
+				Kind:     api.MediaArtifactDVDMenu,
+				Purpose:  api.ScreenshotPurposeMenu,
+				Selected: true,
+				Order:    1,
+				Source:   api.ScreenshotSelectionSourceMenu,
+			},
+			{
+				ID:       "auto-menu",
+				Kind:     api.MediaArtifactDVDMenu,
+				Purpose:  api.ScreenshotPurposeMenu,
+				Selected: true,
+				Order:    2,
+				Source:   api.ScreenshotSelectionSourceDVDMenu,
+			},
+			{
+				ID:       "hosted-auto",
+				Kind:     api.MediaArtifactHostedImage,
+				Purpose:  api.ScreenshotPurposeMenu,
+				Selected: true,
+				Order:    3,
+				Source:   "auto-menu",
+			},
+		},
+	}
+	retained := workflowMediaPrivateArtifacts{
+		Screenshots: []api.ScreenshotImage{{Path: "screen.png", Purpose: api.ScreenshotPurposeFinal}},
+		DVDMenus: []api.DVDMenuCaptureImage{
+			{ScreenshotImage: api.ScreenshotImage{Path: "manual-menu.png", Purpose: api.ScreenshotPurposeMenu}},
+			{ScreenshotImage: api.ScreenshotImage{Path: "old-auto-menu.png", Purpose: api.ScreenshotPurposeMenu}},
+		},
+		ArtifactImages: map[api.PublicResourceID]api.ScreenshotImage{
+			"screen":      {Path: "screen.png", Purpose: api.ScreenshotPurposeFinal},
+			"manual-menu": {Path: "manual-menu.png", Purpose: api.ScreenshotPurposeMenu},
+			"auto-menu":   {Path: "old-auto-menu.png", Purpose: api.ScreenshotPurposeMenu},
+		},
+		DVDMenuImages: map[api.PublicResourceID]api.DVDMenuCaptureImage{
+			"manual-menu": {ScreenshotImage: api.ScreenshotImage{Path: "manual-menu.png", Purpose: api.ScreenshotPurposeMenu}},
+			"auto-menu":   {ScreenshotImage: api.ScreenshotImage{Path: "old-auto-menu.png", Purpose: api.ScreenshotPurposeMenu}},
+		},
+		HostedImages: map[api.PublicResourceID]api.UploadedImageLink{
+			"hosted-auto": {ImagePath: "old-auto-menu.png", RawURL: "https://img.example/old-auto.png"},
+		},
+		HostedSources: map[api.PublicResourceID]api.PublicResourceID{"hosted-auto": "auto-menu"},
+		commitState:   &workflowMediaCommitState{},
+	}
+	var progress []api.WorkflowProgressUpdate
+	ctx := api.WithWorkflowProgressReporter(context.Background(), func(update api.WorkflowProgressUpdate) {
+		progress = append(progress, update)
+	})
+
+	combined, privateResult, err := builder.BuildIncremental(
+		ctx,
+		api.ReleaseRef{SourcePath: "C:\\releases\\Example.Release.2026", Generation: 1},
+		api.TrackerReleaseProjectionSet{ID: "projections-menu-refresh", Revision: 1},
+		api.MediaCaptureInstructions{
+			Purpose:         api.ScreenshotPurposeMenu,
+			CaptureDVDMenus: true,
+			MaxDVDMenuItems: 4,
+		},
+		&existing,
+		retained,
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("refresh automatic menus: %v", err)
+	}
+	if combined.Status != api.StageStatusCompleted {
+		t.Fatalf("partial optional menu capture blocked media: %#v", combined)
+	}
+	if !slices.ContainsFunc(progress, func(update api.WorkflowProgressUpdate) bool {
+		return update.ItemID == "dvd_menus" && update.Status == api.StageStatusPartial
+	}) {
+		t.Fatalf("partial menu diagnostics were not emitted: %#v", progress)
+	}
+	if countMediaArtifacts(combined.Artifacts, api.MediaArtifactScreenshot) != 1 ||
+		countMediaArtifacts(combined.Artifacts, api.MediaArtifactDVDMenu) != 2 ||
+		countMediaArtifacts(combined.Artifacts, api.MediaArtifactHostedImage) != 0 {
+		t.Fatalf("refreshed media = %#v", combined.Artifacts)
+	}
+	if !slices.ContainsFunc(combined.Artifacts, func(artifact api.MediaArtifact) bool {
+		return artifact.ID == "manual-menu" && artifact.Source == api.ScreenshotSelectionSourceMenu
+	}) {
+		t.Fatalf("manual menu was not preserved: %#v", combined.Artifacts)
+	}
+	if slices.ContainsFunc(combined.Artifacts, func(artifact api.MediaArtifact) bool {
+		return artifact.ID == "auto-menu" || artifact.ID == "hosted-auto"
+	}) {
+		t.Fatalf("old automatic menu revision remains: %#v", combined.Artifacts)
+	}
+	private, ok := privateResult.(workflowMediaPrivateArtifacts)
+	if !ok {
+		t.Fatalf("private result type = %T", privateResult)
+	}
+	if len(private.Screenshots) != 1 || private.Screenshots[0].Path != "screen.png" || len(private.DVDMenus) != 2 {
+		t.Fatalf("private refreshed media = %#v", private)
+	}
+}
+
+func TestWorkflowMediaBuilderOptionalMenuFailurePreservesReadyNormalMedia(t *testing.T) {
+	t.Parallel()
+
+	builder := workflowMediaBuilder{
+		resolver: workflowMediaResolverFake{},
+		dvdMenus: &workflowDVDMenuFake{err: errors.New("synthetic menu engine unavailable")},
+	}
+	existing := api.MediaArtifactSet{
+		CaptureFingerprint:      workflowTestFingerprint(t, "ready-normal-media"),
+		RequirementsFingerprint: workflowTestFingerprint(t, "requirements"),
+		Status:                  api.StageStatusCompleted,
+		Artifacts: []api.MediaArtifact{{
+			ID:       "screen",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
+		}},
+	}
+	retained := workflowMediaPrivateArtifacts{
+		Screenshots:    []api.ScreenshotImage{{Path: "screen.png", Purpose: api.ScreenshotPurposeFinal}},
+		ArtifactImages: map[api.PublicResourceID]api.ScreenshotImage{"screen": {Path: "screen.png", Purpose: api.ScreenshotPurposeFinal}},
+		commitState:    &workflowMediaCommitState{},
+	}
+	var progress []api.WorkflowProgressUpdate
+	ctx := api.WithWorkflowProgressReporter(context.Background(), func(update api.WorkflowProgressUpdate) {
+		progress = append(progress, update)
+	})
+
+	combined, privateResult, err := builder.BuildIncremental(
+		ctx,
+		api.ReleaseRef{SourcePath: "C:\\releases\\Example.Release.2026", Generation: 1},
+		api.TrackerReleaseProjectionSet{ID: "projections-optional-menu", Revision: 1},
+		api.MediaCaptureInstructions{
+			Purpose:         api.ScreenshotPurposeMenu,
+			CaptureDVDMenus: true,
+			MaxDVDMenuItems: 4,
+		},
+		&existing,
+		retained,
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("optional menu failure: %v", err)
+	}
+	if combined.Status != api.StageStatusCompleted || len(combined.Artifacts) != 1 || len(combined.Failures) != 1 {
+		t.Fatalf("optional menu failure poisoned ready media: %#v", combined)
+	}
+	if !slices.ContainsFunc(progress, func(update api.WorkflowProgressUpdate) bool {
+		return update.ItemID == "dvd_menus" && update.Status == api.StageStatusFailed
+	}) {
+		t.Fatalf("optional menu failure diagnostic was not emitted: %#v", progress)
+	}
+	private, ok := privateResult.(workflowMediaPrivateArtifacts)
+	if !ok {
+		t.Fatalf("private result type = %T", privateResult)
+	}
+	if len(private.Screenshots) != 1 || private.Screenshots[0].Path != "screen.png" {
+		t.Fatalf("ready normal media was not retained: %#v", private)
 	}
 }
 

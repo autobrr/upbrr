@@ -171,9 +171,6 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 	}
 
 	total := count
-	if strings.TrimSpace(meta.DiscType) != "" {
-		total = count + 1
-	}
 
 	tmpDir, _, err := paths.ReleaseTempDirFor(s.tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
@@ -318,7 +315,7 @@ func (s *Service) Capture(
 	if err != nil {
 		return api.ScreenshotResult{}, err
 	}
-	if err := resolveDVDVideoSegmentTimings(ctx, s.runner, cmd, info.Segments, s.logger); err != nil {
+	if err := resolveDVDVideoSegmentTimings(ctx, s.runner, cmd, info.Segments, info.DurationSeconds, s.logger); err != nil {
 		return api.ScreenshotResult{}, err
 	}
 
@@ -591,7 +588,7 @@ func (s *Service) PreviewFrame(ctx context.Context, meta api.ScreenshotSubject, 
 	if err != nil {
 		return api.ScreenshotPreview{}, err
 	}
-	if err := resolveDVDVideoSegmentTimings(ctx, s.runner, cmd, info.Segments, s.logger); err != nil {
+	if err := resolveDVDVideoSegmentTimings(ctx, s.runner, cmd, info.Segments, info.DurationSeconds, s.logger); err != nil {
 		return api.ScreenshotPreview{}, err
 	}
 	candidates := resolveSegmentCandidates(info, timestampSeconds)

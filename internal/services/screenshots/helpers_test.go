@@ -320,7 +320,7 @@ func TestResolveDVDVideoSegmentTimingsUsesMeasuredDurations(t *testing.T) {
 		{Stderr: []byte("Duration: 00:01:20.00, start: 0.000000, bitrate: 500 kb/s\n")},
 	}}
 
-	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, api.NopLogger{}); err != nil {
+	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, 0, api.NopLogger{}); err != nil {
 		t.Fatalf("resolve DVD segment timings: %v", err)
 	}
 	info := videoInfo{SourcePath: vobs[0].path, Segments: segments}
@@ -342,8 +342,41 @@ func TestResolveDVDVideoSegmentTimingsRejectsUnknownDuration(t *testing.T) {
 		Stderr: []byte("Duration: N/A, start: 0.000000, bitrate: N/A\n"),
 	}}}
 
-	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, api.NopLogger{}); err == nil {
+	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, 0, api.NopLogger{}); err == nil {
 		t.Fatal("expected unknown segment duration to fail instead of using file size")
+	}
+}
+
+func TestResolveDVDVideoSegmentTimingsReconcilesMPEGPSWrap(t *testing.T) {
+	segments := buildVideoSegments([]dvdTitleVOB{
+		{path: "VTS_01_1.VOB"},
+		{path: "VTS_01_2.VOB"},
+	})
+	titleDuration := 120.0
+	runner := &scriptedRunner{results: []CommandResult{
+		{Stderr: []byte("Duration: 00:00:20.00, start: 0.000000, bitrate: 4000 kb/s\n")},
+		{Stderr: []byte("Duration: 26:30:23.718, start: 0.000000, bitrate: 500 kb/s\n")},
+	}}
+
+	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, titleDuration, api.NopLogger{}); err != nil {
+		t.Fatalf("resolve DVD segment timings: %v", err)
+	}
+	if segments[1].StartSeconds != 20 || segments[1].DurationSeconds != 100 {
+		t.Fatalf("reconciled segments = %#v", segments)
+	}
+}
+
+func TestResolveDVDVideoSegmentTimingsRejectsNonFinalOverrun(t *testing.T) {
+	segments := buildVideoSegments([]dvdTitleVOB{
+		{path: "VTS_01_1.VOB"},
+		{path: "VTS_01_2.VOB"},
+	})
+	runner := &scriptedRunner{results: []CommandResult{{
+		Stderr: []byte("Duration: 00:02:00.00, start: 0.000000, bitrate: 4000 kb/s\n"),
+	}}}
+
+	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, 100, api.NopLogger{}); err == nil {
+		t.Fatal("expected non-final segment overrun to fail")
 	}
 }
 

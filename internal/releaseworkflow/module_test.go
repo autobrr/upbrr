@@ -2601,6 +2601,54 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 	}
 }
 
+func TestRefreshMutatedMediaStatusPreservesOnlyGenuineMediaActions(t *testing.T) {
+	t.Parallel()
+
+	projections := []api.TrackerReleaseProjection{{
+		TrackerID: "SYNTHETIC",
+		Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 1, DVDMenuCount: 1},
+	}}
+	snapshot := api.MediaArtifactSet{
+		Status: api.StageStatusCompleted,
+		Artifacts: []api.MediaArtifact{
+			{
+				ID: "screen",
+ Kind: api.MediaArtifactScreenshot,
+ Purpose: api.ScreenshotPurposeFinal,
+				Selected: true,
+			},
+			{
+				ID: "hosted-screen",
+ Kind: api.MediaArtifactHostedImage,
+ Purpose: api.ScreenshotPurposeFinal,
+				Selected: true,
+ Source: "screen",
+			},
+		},
+		RequiredActions: []api.RequiredAction{{
+			Kind:   api.RequiredActionProvideTrackerInput,
+			Prompt: "Stale media action.",
+		}},
+	}
+
+	refreshMutatedMediaStatus(&snapshot, projections)
+	if snapshot.Status != api.StageStatusBlocked || len(snapshot.RequiredActions) != 1 ||
+		snapshot.RequiredActions[0].Kind != api.RequiredActionProvideTrackerInput {
+		t.Fatalf("genuine missing menu action was not republished: %#v", snapshot)
+	}
+
+	snapshot.Artifacts = append(snapshot.Artifacts, api.MediaArtifact{
+		ID: "menu",
+ Kind: api.MediaArtifactDVDMenu,
+ Purpose: api.ScreenshotPurposeMenu,
+ Selected: true,
+	})
+	refreshMutatedMediaStatus(&snapshot, projections)
+	if snapshot.Status != api.StageStatusCompleted || len(snapshot.RequiredActions) != 0 {
+		t.Fatalf("satisfied media retained stale action: %#v", snapshot)
+	}
+}
+
 func waitForWorkflowOperation(
 	t *testing.T,
 	module *Module,

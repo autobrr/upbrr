@@ -297,25 +297,58 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 			{
 				ID:       "screenshot-1",
 				Kind:     api.MediaArtifactScreenshot,
+				Purpose:  api.ScreenshotPurposeFinal,
+				Selected: true,
+			},
+			{
+				ID:       "menu-1",
+				Kind:     api.MediaArtifactDVDMenu,
+				Purpose:  api.ScreenshotPurposeMenu,
 				Selected: true,
 			},
 			{
 				ID:       "hosted-1",
 				Kind:     api.MediaArtifactHostedImage,
+				Purpose:  api.ScreenshotPurposeFinal,
 				Selected: true,
+				Source:   "screenshot-1",
+			},
+			{
+				ID:       "hosted-menu-1",
+				Kind:     api.MediaArtifactHostedImage,
+				Purpose:  api.ScreenshotPurposeMenu,
+				Selected: true,
+				Source:   "menu-1",
 			},
 		},
 	}
 	exactScreenshotPath := filepath.Join(t.TempDir(), "screen.png")
+	exactMenuPath := filepath.Join(t.TempDir(), "menu.png")
 	exactUpload := api.UploadedImageLink{
 		ImagePath:  exactScreenshotPath,
 		Host:       "imgbox",
 		UsageScope: "global",
 		RawURL:     "https://img.example/exact-screen.png",
 	}
+	exactMenuUpload := api.UploadedImageLink{
+		ImagePath:  exactMenuPath,
+		Host:       "imgbox",
+		UsageScope: "global",
+		RawURL:     "https://img.example/exact-menu.png",
+	}
 	privateMedia := workflowMediaPrivateArtifacts{
-		Screenshots:  []api.ScreenshotImage{{Path: exactScreenshotPath}},
-		HostedImages: map[api.PublicResourceID]api.UploadedImageLink{"hosted-1": exactUpload},
+		Screenshots: []api.ScreenshotImage{{Path: exactScreenshotPath, Purpose: api.ScreenshotPurposeFinal}},
+		DVDMenus: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{
+			Path: exactMenuPath, Purpose: api.ScreenshotPurposeMenu,
+		}}},
+		HostedImages: map[api.PublicResourceID]api.UploadedImageLink{
+			"hosted-1":      exactUpload,
+			"hosted-menu-1": exactMenuUpload,
+		},
+		HostedSources: map[api.PublicResourceID]api.PublicResourceID{
+			"hosted-1":      "screenshot-1",
+			"hosted-menu-1": "menu-1",
+		},
 	}
 	descriptions := api.DescriptionSet{
 		ID:               "descriptions-1",
@@ -364,12 +397,18 @@ func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(
 	if service.subject.ImageHostOverrides.SkipUpload == nil || !*service.subject.ImageHostOverrides.SkipUpload {
 		t.Fatalf("retained preparation allowed hidden image upload: %#v", service.subject.ImageHostOverrides)
 	}
-	if len(service.subject.ExactScreenshots) != 1 || service.subject.ExactScreenshots[0].Path != exactScreenshotPath ||
-		len(service.subject.ExactUploadedImages) != 1 || service.subject.ExactUploadedImages[0].RawURL != exactUpload.RawURL {
+	if service.subject.ExactMedia == nil || len(service.subject.ExactMedia.Screenshots) != 1 ||
+		service.subject.ExactMedia.Screenshots[0].Path != exactScreenshotPath ||
+		len(service.subject.ExactMedia.ScreenshotUploads) != 1 ||
+		service.subject.ExactMedia.ScreenshotUploads[0].RawURL != exactUpload.RawURL ||
+		len(service.subject.ExactMedia.DVDMenus) != 1 ||
+		service.subject.ExactMedia.DVDMenus[0].Path != exactMenuPath ||
+		len(service.subject.ExactMedia.DVDMenuUploads) != 1 ||
+		service.subject.ExactMedia.DVDMenuUploads[0].RawURL != exactMenuUpload.RawURL {
 		t.Fatalf(
 			"retained preparation exact media screenshots=%#v uploads=%#v",
-			service.subject.ExactScreenshots,
-			service.subject.ExactUploadedImages,
+			service.subject.ExactMedia,
+			service.subject.ExactMedia,
 		)
 	}
 	if !plan.Trackers[0].Eligible || plan.Trackers[0].Status != api.StageStatusReady {

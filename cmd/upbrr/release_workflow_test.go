@@ -785,3 +785,23 @@ func TestCLIWorkflowMediaInstructionsUseAutomaticFramesWhenOverridesAbsent(t *te
 		t.Fatalf("media selections = %#v, want nil automatic selection", instructions.Selections)
 	}
 }
+
+func TestCLIWorkflowMediaInstructionsKeepDVDMenuCaptureIndependent(t *testing.T) {
+	t.Parallel()
+
+	normalOnly := cliWorkflowMediaInstructions(api.Request{
+		Options: api.UploadOptions{Screens: 4, CaptureDVDMenus: false},
+	})
+	if normalOnly.ScreenshotCount != 4 || normalOnly.CaptureDVDMenus ||
+		normalOnly.MaxDVDMenuItems != 0 || normalOnly.Selections != nil {
+		t.Fatalf("normal-only DVD media instructions = %#v", normalOnly)
+	}
+
+	withMenus := cliWorkflowMediaInstructions(api.Request{
+		Options: api.UploadOptions{Screens: 4, CaptureDVDMenus: true},
+	})
+	if withMenus.ScreenshotCount != 4 || !withMenus.CaptureDVDMenus ||
+		withMenus.MaxDVDMenuItems != 0 || withMenus.Selections != nil {
+		t.Fatalf("explicit DVD menu media instructions = %#v", withMenus)
+	}
+}

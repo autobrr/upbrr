@@ -142,6 +142,71 @@ const (
 	TrackerBlockReasonAudio TrackerBlockReason = "audio"
 )
 
+// ExactMediaAssets is one authoritative workflow-owned media revision.
+// Screenshots and DVD menus are independent channels, as are their hosted
+// variants.
+type ExactMediaAssets struct {
+	Screenshots       []ScreenshotImage
+	DVDMenus          []DVDMenuCaptureImage
+	ScreenshotUploads []UploadedImageLink
+	DVDMenuUploads    []UploadedImageLink
+}
+
+// Clone returns a detached exact-media bundle while preserving nil slices.
+func (a *ExactMediaAssets) Clone() *ExactMediaAssets {
+	if a == nil {
+		return nil
+	}
+	return &ExactMediaAssets{
+		Screenshots:       cloneOptionalSlice(a.Screenshots),
+		DVDMenus:          cloneOptionalSlice(a.DVDMenus),
+		ScreenshotUploads: cloneOptionalSlice(a.ScreenshotUploads),
+		DVDMenuUploads:    cloneOptionalSlice(a.DVDMenuUploads),
+	}
+}
+
+// Validate enforces the normal-screenshot and DVD-menu channel boundary.
+func (a *ExactMediaAssets) Validate() error {
+	if a == nil {
+		return nil
+	}
+	screenshotPaths := make(map[string]struct{}, len(a.Screenshots))
+	for _, image := range a.Screenshots {
+		if image.Purpose != ScreenshotPurposeFinal {
+			return fmt.Errorf("exact media screenshot has invalid purpose %q", image.Purpose)
+		}
+		if imagePath := strings.TrimSpace(image.Path); imagePath != "" {
+			screenshotPaths[imagePath] = struct{}{}
+		}
+	}
+	menuPaths := make(map[string]struct{}, len(a.DVDMenus))
+	for _, menu := range a.DVDMenus {
+		if menu.Purpose != ScreenshotPurposeMenu {
+			return fmt.Errorf("exact media DVD menu has invalid purpose %q", menu.Purpose)
+		}
+		if imagePath := strings.TrimSpace(menu.Path); imagePath != "" {
+			menuPaths[imagePath] = struct{}{}
+		}
+	}
+	if err := validateExactMediaUploads("screenshot", a.ScreenshotUploads, screenshotPaths); err != nil {
+		return err
+	}
+	return validateExactMediaUploads("DVD menu", a.DVDMenuUploads, menuPaths)
+}
+
+func validateExactMediaUploads(channel string, uploads []UploadedImageLink, allowedPaths map[string]struct{}) error {
+	for _, upload := range uploads {
+		imagePath := strings.TrimSpace(upload.ImagePath)
+		if imagePath == "" {
+			return fmt.Errorf("exact media %s upload path is required", channel)
+		}
+		if _, ok := allowedPaths[imagePath]; !ok {
+			return fmt.Errorf("exact media %s upload does not match its source channel", channel)
+		}
+	}
+	return nil
+}
+
 // TrackerSubject is the tracker module's operation-owned source, resource,
 // instruction, and prerequisite view. It excludes preparation diagnostics,
 // resolver evidence, cache freshness, and client-search implementation state.
@@ -228,10 +293,9 @@ type UploadSubject struct {
 	ReleaseNameClean            string
 	BlockedTrackers             map[string][]TrackerBlockReason
 	TrackerRuleFailures         map[string][]RuleFailure
-	// ExactScreenshots, when non-nil, constrain description/image preparation
-	// to the retained workflow-owned media set instead of repository discovery.
-	ExactScreenshots    []ScreenshotImage
-	ExactUploadedImages []UploadedImageLink
+	// ExactMedia, when non-nil, constrains description/image preparation to the
+	// retained workflow-owned revision instead of repository discovery.
+	ExactMedia *ExactMediaAssets
 }
 
 // RuleSubject contains only stable facts used by generic and tracker-specific
@@ -547,8 +611,7 @@ type DescriptionSubject struct {
 	TrackerSite           TrackerSiteOverrides
 	ImageHost             ImageHostOverrides
 	TrackerData           []TrackerMetadata
-	ExactScreenshots      []ScreenshotImage
-	ExactUploadedImages   []UploadedImageLink
+	ExactMedia            *ExactMediaAssets
 }
 
 // NewDescriptionSubject projects upload state into the description builder's
@@ -581,8 +644,7 @@ func NewDescriptionSubject(subject UploadSubject) DescriptionSubject {
 		TrackerSite:           subject.TrackerSiteOverrides,
 		ImageHost:             subject.ImageHostOverrides,
 		TrackerData:           append([]TrackerMetadata(nil), subject.TrackerData...),
-		ExactScreenshots:      cloneOptionalSlice(subject.ExactScreenshots),
-		ExactUploadedImages:   cloneOptionalSlice(subject.ExactUploadedImages),
+		ExactMedia:            subject.ExactMedia.Clone(),
 	}
 	cloned, err := clonePreparedValue(projected)
 	if err != nil {

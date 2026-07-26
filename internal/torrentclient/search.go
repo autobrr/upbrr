@@ -897,9 +897,19 @@ func fetchTorrentTrackers(
 
 func collectTrackerURLs(primary string, trackers []qbittorrent.TorrentTracker) []string {
 	urls := make([]string, 0, len(trackers)+1)
-	if strings.TrimSpace(primary) != "" {
-		urls = append(urls, primary)
+	seen := make(map[string]struct{}, len(trackers)+1)
+	appendURL := func(value string) {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return
+		}
+		if _, exists := seen[trimmed]; exists {
+			return
+		}
+		seen[trimmed] = struct{}{}
+		urls = append(urls, trimmed)
 	}
+	appendURL(primary)
 	for _, tracker := range trackers {
 		trimmed := strings.TrimSpace(tracker.Url)
 		if trimmed == "" {
@@ -908,7 +918,7 @@ func collectTrackerURLs(primary string, trackers []qbittorrent.TorrentTracker) [
 		if strings.HasPrefix(trimmed, "** [DHT]") || strings.HasPrefix(trimmed, "** [PeX]") || strings.HasPrefix(trimmed, "** [LSD]") {
 			continue
 		}
-		urls = append(urls, trimmed)
+		appendURL(trimmed)
 	}
 	return urls
 }

@@ -84,7 +84,7 @@ func (s *Service) prepareUploadContent(
 	if err != nil {
 		return failedPreparedUploadContent(tracker, mode, err)
 	}
-	applyResolvedDescriptionScreenshots(ctx, meta, s.repo, preloaded, &assets, resolution.screenshots)
+	applyResolvedDescriptionScreenshots(ctx, tracker, meta, s.repo, preloaded, &assets, resolution.screenshots)
 	return preparedUploadContent{
 		Mode:      mode,
 		State:     preparedUploadContentReady,
@@ -134,7 +134,10 @@ func resolveScreenshotAssets(
 	if err != nil {
 		return DescriptionAssets{}, err
 	}
-	menuImages, normalScreenshots := splitDescriptionScreenshots(ctx, meta, repo, preloaded, screenshots)
+	menuImages, normalScreenshots := exactDescriptionMedia(tracker, meta, screenshots)
+	if meta.ExactMedia == nil {
+		menuImages, normalScreenshots = splitDescriptionScreenshots(ctx, meta, repo, preloaded, screenshots)
+	}
 	return DescriptionAssets{
 		Screenshots: normalScreenshots,
 		MenuImages:  menuImages,

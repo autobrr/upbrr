@@ -29,4 +29,39 @@ describe("sessionReducer upload intent", () => {
     expect(state.questionnaireAnswers).toEqual({ EXAMPLE: { edition: "Extended" } });
     expect(state.uploadError).toBe("retryable failure");
   });
+
+  it("selects newly published media without reselecting known cleared candidates", () => {
+    const candidate = (artifactID: string, purpose: "final" | "menu") => ({
+      image: {
+        artifactID,
+        index: 0,
+        timestampSeconds: 0,
+        purpose,
+        width: 320,
+        height: 180,
+        sizeBytes: 128,
+      },
+      contentURL: `/media/${artifactID}`,
+    });
+    const screen = candidate("screen-1", "final");
+    const menu = candidate("menu-1", "menu");
+    let state = initialSessionState();
+
+    state = sessionReducer(state, {
+      type: "workflow_upload_candidates_changed",
+      candidates: [screen],
+    });
+    expect(state.uploadedImages.selectedArtifactIDs).toEqual(["screen-1"]);
+
+    state = sessionReducer(state, {
+      type: "upload_image_selected",
+      artifactID: "screen-1",
+      selected: false,
+    });
+    state = sessionReducer(state, {
+      type: "workflow_upload_candidates_changed",
+      candidates: [screen, menu],
+    });
+    expect(state.uploadedImages.selectedArtifactIDs).toEqual(["menu-1"]);
+  });
 });

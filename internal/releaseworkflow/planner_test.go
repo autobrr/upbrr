@@ -6,6 +6,7 @@ package releaseworkflow
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -132,7 +133,27 @@ func TestContinuationPlannerInsertsExactImageRequirementBarrier(t *testing.T) {
 		t.Fatalf("planned image barrier: stage=%q command=%#v", stage, command)
 	}
 
+	current.Media.ImageRequirementsPrepared = true
+	current.Media.Artifacts = append(current.Media.Artifacts, api.MediaArtifact{
+		ID:       "hosted-screen-plan",
+		Kind:     api.MediaArtifactHostedImage,
+		Purpose:  api.ScreenshotPurposeFinal,
+		Selected: true,
+		Source:   "screen-plan",
+	})
+	request.Intent.Descriptions = &api.DescriptionInstructions{TemplateVersion: "workflow-v1"}
+	command, stage = planContinuationCommand(request, current, now)
+	if _, ok := command.(GenerateDescriptionsCommand); !ok || stage != "generate-descriptions" {
+		t.Fatalf("planned descriptions after image hosting: stage=%q command=%#v", stage, command)
+	}
+	if slices.ContainsFunc(current.Media.Artifacts, func(artifact api.MediaArtifact) bool {
+		return artifact.Kind == api.MediaArtifactDVDMenu
+	}) {
+		t.Fatalf("optional DVD menu unexpectedly entered continuation media: %#v", current.Media.Artifacts)
+	}
+
 	request.Goal = api.WorkflowGoalMediaReady
+	request.Intent.Descriptions = nil
 	command, stage = planContinuationCommand(request, current, now)
 	if command != nil || stage != "" {
 		t.Fatalf("media-ready capture scheduled image hosting: stage=%q command=%#v", stage, command)
@@ -654,7 +675,7 @@ func TestDuplicateReviewBlocksWhenOtherLaneNeedsPreflightAction(t *testing.T) {
 	}
 }
 
-func TestContinuationPlannerDoesNotRecaptureFailedPublishedMedia(t *testing.T) {
+func TestContinuationPlannerRecapturesFailedMenuMediaWithoutExactOutcome(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC)
@@ -682,8 +703,46 @@ func TestContinuationPlannerDoesNotRecaptureFailedPublishedMedia(t *testing.T) {
 		},
 	}
 	command, stage := planContinuationCommand(request, current, now)
-	if command != nil || stage != "capture-media" {
+	if _, ok := command.(CaptureMediaCommand); !ok || stage != "capture-media" {
 		t.Fatalf("failed retained media plan: stage=%q command=%#v", stage, command)
+	}
+}
+
+func TestContinuationMenuFallbackRequiresPriorAutomaticCapture(t *testing.T) {
+	t.Parallel()
+
+	current := readyContinuationPlannerResult(t, time.Date(2026, time.July, 23, 1, 2, 3, 0, time.UTC))
+	current.Media = &api.MediaArtifactSet{
+		Status: api.StageStatusCompleted,
+		Artifacts: []api.MediaArtifact{{
+			ID:       "menu-retained",
+			Kind:     api.MediaArtifactDVDMenu,
+			Selected: true,
+			Source:   api.ScreenshotSelectionSourceDVDMenu,
+		}},
+	}
+	desired := &api.MediaCaptureInstructions{
+		Purpose:         api.ScreenshotPurposeMenu,
+		CaptureDVDMenus: true,
+		MaxDVDMenuItems: 6,
+	}
+	if !continuationMediaCaptureSatisfied(current, desired) {
+		t.Fatal("completed automatic menu capture was not retained below its cap")
+	}
+	request := api.ContinueReleaseWorkflowRequest{
+		Goal:   api.WorkflowGoalMediaReady,
+		Intent: api.WorkflowIntent{Media: desired},
+	}
+	if !continuationGoalReached(current, request) {
+		t.Fatal("completed automatic menu capture did not satisfy media goal")
+	}
+
+	current.Media.Artifacts[0].Source = api.ScreenshotSelectionSourceMenu
+	if continuationMediaCaptureSatisfied(current, desired) {
+		t.Fatal("manual menu incorrectly satisfied automatic menu capture intent")
+	}
+	if continuationGoalReached(current, request) {
+		t.Fatal("manual menu incorrectly satisfied automatic menu capture goal")
 	}
 }
 
@@ -715,5 +774,33 @@ func TestContinuationPlannerRecapturesRequestedMediaAfterArtifactsDeleted(t *tes
 	command, stage := planContinuationCommand(request, current, now)
 	if _, ok := command.(CaptureMediaCommand); !ok || stage != "capture-media" {
 		t.Fatalf("deleted media recapture plan: stage=%q command=%#v", stage, command)
+	}
+}
+
+func TestContinuationMediaIntentCanResolveItsPendingGlobalAction(t *testing.T) {
+	t.Parallel()
+
+	action := api.RequiredAction{
+		ID:     "action-media",
+		Kind:   api.RequiredActionProvideTrackerInput,
+		Status: api.RequiredActionStatusPending,
+	}
+	current := CommandResult{
+		Media: &api.MediaArtifactSet{RequiredActions: []api.RequiredAction{action}},
+	}
+	intent := api.WorkflowIntent{
+		Media: &api.MediaCaptureInstructions{
+			ScreenshotCount: 1,
+			Purpose:         api.ScreenshotPurposeFinal,
+		},
+	}
+
+	if !continuationIntentResolvesAction(intent, current, action) {
+		t.Fatal("exact media intent did not resolve its pending media action")
+	}
+	unrelated := action
+	unrelated.ID = "action-tracker"
+	if continuationIntentResolvesAction(intent, current, unrelated) {
+		t.Fatal("media intent resolved an unrelated global tracker action")
 	}
 }

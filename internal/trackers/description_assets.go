@@ -78,6 +78,7 @@ type preloadedDescriptionAssetData struct {
 	uploads               []api.UploadedImageLink
 	screenshotSlots       []api.ScreenshotSlot
 	screenshotSlotsLoaded bool
+	exactMedia            *api.ExactMediaAssets
 }
 
 func preloadedRegistry(preloaded *preloadedDescriptionAssetData) *Registry {
@@ -109,6 +110,7 @@ func clonePreloadedDescriptionAssetData(preloaded *preloadedDescriptionAssetData
 		uploads:               append([]api.UploadedImageLink(nil), preloaded.uploads...),
 		screenshotSlots:       cloneScreenshotSlots(preloaded.screenshotSlots),
 		screenshotSlotsLoaded: preloaded.screenshotSlotsLoaded,
+		exactMedia:            preloaded.exactMedia.Clone(),
 	}
 }
 
@@ -215,7 +217,14 @@ func resolveDescriptionAssets(
 	if err := ctx.Err(); err != nil {
 		return DescriptionAssets{}, fmt.Errorf("trackers: resolve description assets canceled: %w", err)
 	}
-	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
+	if meta.ExactMedia != nil && preloaded == nil {
+		var err error
+		preloaded, err = preloadUploadAssetData(ctx, meta, repo, registry)
+		if err != nil {
+			return DescriptionAssets{}, err
+		}
+	}
+	if (repo == nil || strings.TrimSpace(meta.SourcePath) == "") && meta.ExactMedia == nil {
 		description := meta.DescriptionOverride
 		final := false
 		if canonical := descriptionGroupFromPreparedMeta(meta, tracker, preloaded, registry); strings.TrimSpace(canonical) != "" {
@@ -243,7 +252,10 @@ func resolveDescriptionAssets(
 		logger.Tracef("trackers: description assets resolved desc_len=%d screenshots=%d", len(strings.TrimSpace(description)), len(screenshots))
 	}
 
-	menuImages, normalScreenshots := splitDescriptionScreenshots(ctx, meta, repo, preloaded, screenshots)
+	menuImages, normalScreenshots := exactDescriptionMedia(tracker, meta, screenshots)
+	if meta.ExactMedia == nil {
+		menuImages, normalScreenshots = splitDescriptionScreenshots(ctx, meta, repo, preloaded, screenshots)
+	}
 
 	description = sanitizeTrackerDescription(tracker, description)
 	hasDescription := strings.TrimSpace(description) != ""
@@ -259,6 +271,7 @@ func resolveDescriptionAssets(
 
 func applyResolvedDescriptionScreenshots(
 	ctx context.Context,
+	tracker string,
 	meta api.UploadSubject,
 	repo UploadPersistence,
 	preloaded *preloadedDescriptionAssetData,
@@ -274,7 +287,47 @@ func applyResolvedDescriptionScreenshots(
 		assets.Screenshots = nil
 		return
 	}
+	if meta.ExactMedia != nil {
+		assets.MenuImages, assets.Screenshots = exactDescriptionMedia(tracker, meta, screenshots)
+		return
+	}
 	assets.MenuImages, assets.Screenshots = splitResolvedDescriptionScreenshots(ctx, meta, repo, preloaded, assets.Slots, screenshots)
+}
+
+func exactDescriptionMedia(
+	tracker string,
+	meta api.UploadSubject,
+	screenshots []api.ScreenshotImage,
+) ([]api.ScreenshotImage, []api.ScreenshotImage) {
+	if meta.ExactMedia == nil {
+		return nil, screenshots
+	}
+	menuImages := make([]api.ScreenshotImage, 0, len(meta.ExactMedia.DVDMenus))
+	for _, menu := range meta.ExactMedia.DVDMenus {
+		image := menu.ScreenshotImage
+		if upload, ok := exactUploadedVariant(tracker, image.Path, meta.ExactMedia.DVDMenuUploads); ok {
+			image.Host = upload.Host
+			image.ImgURL = upload.ImgURL
+			image.RawURL = upload.RawURL
+			image.WebURL = upload.WebURL
+			image.UploadedAt = upload.UploadedAt
+		}
+		menuImages = append(menuImages, image)
+	}
+	return menuImages, screenshots
+}
+
+func exactUploadedVariant(tracker string, imagePath string, uploads []api.UploadedImageLink) (api.UploadedImageLink, bool) {
+	imagePath = strings.TrimSpace(imagePath)
+	preferredScopes := []string{trackerImageUsageScope(tracker), globalImageUsageScope}
+	for _, scope := range preferredScopes {
+		for _, upload := range uploads {
+			if strings.TrimSpace(upload.ImagePath) == imagePath && normalizeUsageScope(upload.UsageScope) == scope {
+				return upload, true
+			}
+		}
+	}
+	return api.UploadedImageLink{}, false
 }
 
 func splitResolvedDescriptionScreenshots(
@@ -712,6 +765,9 @@ func resolveDescriptionScreenshots(
 		}
 		return slots, images, nil
 	}
+	if meta.ExactMedia != nil {
+		return slots, nil, nil
+	}
 
 	urls := resolveTrackerImageURLs(ctx, tracker, meta, repo, logger, preloaded)
 	if logger != nil {
@@ -754,22 +810,29 @@ func preloadUploadAssetData(
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("trackers: preload upload assets canceled: %w", err)
 	}
-	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
+	hasRepository := repo != nil && strings.TrimSpace(meta.SourcePath) != ""
+	if !hasRepository && meta.ExactMedia == nil {
 		return nil, nil
 	}
 
 	preloaded := &preloadedDescriptionAssetData{registry: registry}
 
-	trackerRecords, err := repo.ListTrackerMetadataByPath(ctx, meta.SourcePath)
-	if err != nil {
-		return nil, fmt.Errorf("trackers: %w", err)
+	if hasRepository {
+		trackerRecords, err := repo.ListTrackerMetadataByPath(ctx, meta.SourcePath)
+		if err != nil {
+			return nil, fmt.Errorf("trackers: %w", err)
+		}
+		preloaded.trackerRecords = trackerRecords
 	}
-	preloaded.trackerRecords = trackerRecords
-	if meta.ExactScreenshots != nil {
-		preloaded.selections = make([]api.ScreenshotFinalSelection, 0, len(meta.ExactScreenshots))
-		preloaded.screenshotSlots = make([]api.ScreenshotSlot, 0, len(meta.ExactScreenshots))
-		allowedPaths := make(map[string]struct{}, len(meta.ExactScreenshots))
-		for index, image := range meta.ExactScreenshots {
+	if meta.ExactMedia != nil {
+		if err := meta.ExactMedia.Validate(); err != nil {
+			return nil, fmt.Errorf("trackers: invalid exact media: %w", err)
+		}
+		preloaded.exactMedia = meta.ExactMedia.Clone()
+		preloaded.selections = make([]api.ScreenshotFinalSelection, 0, len(meta.ExactMedia.Screenshots))
+		preloaded.screenshotSlots = make([]api.ScreenshotSlot, 0, len(meta.ExactMedia.Screenshots))
+		allowedPaths := make(map[string]struct{}, len(meta.ExactMedia.Screenshots))
+		for index, image := range meta.ExactMedia.Screenshots {
 			imagePath := strings.TrimSpace(image.Path)
 			if imagePath == "" {
 				continue
@@ -789,8 +852,7 @@ func preloadUploadAssetData(
 				RenderInScreenshots: true,
 			})
 		}
-		uploads := meta.ExactUploadedImages
-		for _, upload := range uploads {
+		for _, upload := range meta.ExactMedia.ScreenshotUploads {
 			if _, allowed := allowedPaths[strings.TrimSpace(upload.ImagePath)]; allowed {
 				preloaded.uploads = append(preloaded.uploads, upload)
 			}

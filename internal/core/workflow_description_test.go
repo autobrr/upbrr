@@ -106,20 +106,32 @@ func TestWorkflowDescriptionBuilderBindsProjectionMediaInputsAndImageFeedback(t 
 			{
 				ID:       "screen-1",
 				Kind:     api.MediaArtifactScreenshot,
+				Purpose:  api.ScreenshotPurposeFinal,
 				Selected: true,
 			},
 			{
 				ID:       "menu-1",
 				Kind:     api.MediaArtifactDVDMenu,
-				Selected: false,
+				Purpose:  api.ScreenshotPurposeMenu,
+				Selected: true,
 			},
 			{
 				ID:       "hosted-1",
 				Kind:     api.MediaArtifactHostedImage,
+				Purpose:  api.ScreenshotPurposeFinal,
 				Selected: true,
 				Source:   "screen-1",
 				Host:     "img.example",
 				URL:      "https://img.example/screen.png",
+			},
+			{
+				ID:       "hosted-menu-1",
+				Kind:     api.MediaArtifactHostedImage,
+				Purpose:  api.ScreenshotPurposeMenu,
+				Selected: true,
+				Source:   "menu-1",
+				Host:     "img.example",
+				URL:      "https://img.example/menu.png",
 			},
 		},
 	}
@@ -131,16 +143,27 @@ func TestWorkflowDescriptionBuilderBindsProjectionMediaInputsAndImageFeedback(t 
 		TemplateVersion: "v1",
 	}
 	privateMedia := workflowMediaPrivateArtifacts{
-		Screenshots: []api.ScreenshotImage{{Path: "C:\\private\\screen.png"}},
-		DVDMenus:    []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{Path: "C:\\private\\menu.png"}}},
+		Screenshots: []api.ScreenshotImage{{Path: "C:\\private\\screen.png", Purpose: api.ScreenshotPurposeFinal}},
+		DVDMenus: []api.DVDMenuCaptureImage{{ScreenshotImage: api.ScreenshotImage{
+			Path:    "C:\\private\\menu.png",
+			Purpose: api.ScreenshotPurposeMenu,
+		}}},
 		HostedImages: map[api.PublicResourceID]api.UploadedImageLink{
 			"hosted-1": {
 				ImagePath: "C:\\private\\screen.png",
 				Host:      "img.example",
 				RawURL:    "https://img.example/screen.png",
 			},
+			"hosted-menu-1": {
+				ImagePath: "C:\\private\\menu.png",
+				Host:      "img.example",
+				RawURL:    "https://img.example/menu.png",
+			},
 		},
-		HostedSources: map[api.PublicResourceID]api.PublicResourceID{"hosted-1": "screen-1"},
+		HostedSources: map[api.PublicResourceID]api.PublicResourceID{
+			"hosted-1":      "screen-1",
+			"hosted-menu-1": "menu-1",
+		},
 	}
 	snapshot, err := builder.Build(context.Background(), release, projections, media, privateMedia, instructions, time.Now())
 	if err != nil {
@@ -156,11 +179,17 @@ func TestWorkflowDescriptionBuilderBindsProjectionMediaInputsAndImageFeedback(t 
 	if len(service.trackers) != 2 || service.trackers[0] != "ALPHA" || service.trackers[1] != "BETA" {
 		t.Fatalf("description targets = %v", service.trackers)
 	}
-	if len(service.subject.ExactScreenshots) != 1 || service.subject.ExactScreenshots[0].Path != "C:\\private\\screen.png" {
-		t.Fatalf("exact description screenshots = %#v", service.subject.ExactScreenshots)
+	if service.subject.ExactMedia == nil || len(service.subject.ExactMedia.Screenshots) != 1 ||
+		service.subject.ExactMedia.Screenshots[0].Path != "C:\\private\\screen.png" {
+		t.Fatalf("exact description screenshots = %#v", service.subject.ExactMedia)
 	}
-	if len(service.subject.ExactUploadedImages) != 1 || service.subject.ExactUploadedImages[0].RawURL != "https://img.example/screen.png" {
-		t.Fatalf("exact hosted images = %#v", service.subject.ExactUploadedImages)
+	if len(service.subject.ExactMedia.ScreenshotUploads) != 1 ||
+		service.subject.ExactMedia.ScreenshotUploads[0].RawURL != "https://img.example/screen.png" {
+		t.Fatalf("exact hosted images = %#v", service.subject.ExactMedia)
+	}
+	if len(service.subject.ExactMedia.DVDMenus) != 1 || len(service.subject.ExactMedia.DVDMenuUploads) != 1 ||
+		service.subject.ExactMedia.DVDMenuUploads[0].RawURL != "https://img.example/menu.png" {
+		t.Fatalf("exact DVD menu images = %#v", service.subject.ExactMedia)
 	}
 	if service.subject.ImageHost.SkipUpload == nil || !*service.subject.ImageHost.SkipUpload {
 		t.Fatalf("description subject allowed hidden image upload: %#v", service.subject.ImageHost)
@@ -194,6 +223,113 @@ func TestWorkflowDescriptionBuilderBindsProjectionMediaInputsAndImageFeedback(t 
 	}
 	if hostedInput == snapshot.InputFingerprint {
 		t.Fatal("description fingerprint ignored exact hosted-image lineage")
+	}
+}
+
+func TestResolveWorkflowExactMediaKeepsChannelsAndHostedVariantsSeparate(t *testing.T) {
+	t.Parallel()
+
+	media := api.MediaArtifactSet{Artifacts: []api.MediaArtifact{
+		{
+ID: "screen-1",
+ Kind: api.MediaArtifactScreenshot,
+ Purpose: api.ScreenshotPurposeFinal,
+ Selected: true,
+ Order: 2,
+},
+		{
+ID: "menu-1",
+ Kind: api.MediaArtifactDVDMenu,
+ Purpose: api.ScreenshotPurposeMenu,
+ Selected: true,
+ Order: 1,
+},
+		{
+ID: "screen-2",
+ Kind: api.MediaArtifactScreenshot,
+ Purpose: api.ScreenshotPurposeFinal,
+ Selected: true,
+ Order: 0,
+},
+		{
+ID: "menu-2",
+ Kind: api.MediaArtifactDVDMenu,
+ Purpose: api.ScreenshotPurposeMenu,
+ Selected: true,
+ Order: 0,
+},
+		{
+ID: "screen-3",
+ Kind: api.MediaArtifactScreenshot,
+ Purpose: api.ScreenshotPurposeFinal,
+ Selected: true,
+ Order: 3,
+},
+		{
+ID: "screen-4",
+ Kind: api.MediaArtifactScreenshot,
+ Purpose: api.ScreenshotPurposeFinal,
+ Selected: true,
+ Order: 1,
+},
+		{
+			ID: "hosted-screen",
+ Kind: api.MediaArtifactHostedImage,
+ Purpose: api.ScreenshotPurposeFinal,
+			Selected: true,
+ Order: 6,
+ Source: "screen-2",
+		},
+		{
+			ID: "hosted-menu",
+ Kind: api.MediaArtifactHostedImage,
+ Purpose: api.ScreenshotPurposeMenu,
+			Selected: true,
+ Order: 7,
+ Source: "menu-2",
+		},
+	}}
+	private := workflowMediaPrivateArtifacts{
+		Screenshots: []api.ScreenshotImage{
+			{Path: "screen-1.png", Purpose: api.ScreenshotPurposeFinal},
+			{Path: "screen-2.png", Purpose: api.ScreenshotPurposeFinal},
+			{Path: "screen-3.png", Purpose: api.ScreenshotPurposeFinal},
+			{Path: "screen-4.png", Purpose: api.ScreenshotPurposeFinal},
+		},
+		DVDMenus: []api.DVDMenuCaptureImage{
+			{ScreenshotImage: api.ScreenshotImage{Path: "menu-1.png", Purpose: api.ScreenshotPurposeMenu}},
+			{ScreenshotImage: api.ScreenshotImage{Path: "menu-2.png", Purpose: api.ScreenshotPurposeMenu}},
+		},
+		HostedImages: map[api.PublicResourceID]api.UploadedImageLink{
+			"hosted-screen": {ImagePath: "screen-2.png", RawURL: "https://img.example/screen-2.png"},
+			"hosted-menu":   {ImagePath: "menu-2.png", RawURL: "https://img.example/menu-2.png"},
+		},
+		HostedSources: map[api.PublicResourceID]api.PublicResourceID{
+			"hosted-screen": "screen-2",
+			"hosted-menu":   "menu-2",
+		},
+	}
+
+	exact, err := resolveWorkflowExactMedia(private, media)
+	if err != nil {
+		t.Fatalf("resolve exact media: %v", err)
+	}
+	if len(exact.Screenshots) != 4 || len(exact.DVDMenus) != 2 ||
+		len(exact.ScreenshotUploads) != 1 || len(exact.DVDMenuUploads) != 1 {
+		t.Fatalf("exact channels = %#v", exact)
+	}
+	wantScreenshots := []string{"screen-2.png", "screen-4.png", "screen-1.png", "screen-3.png"}
+	for index, want := range wantScreenshots {
+		if exact.Screenshots[index].Path != want {
+			t.Fatalf("screenshot order = %#v", exact.Screenshots)
+		}
+	}
+	if exact.DVDMenus[0].Path != "menu-2.png" || exact.DVDMenus[1].Path != "menu-1.png" {
+		t.Fatalf("menu order = %#v", exact.DVDMenus)
+	}
+	if exact.ScreenshotUploads[0].RawURL != "https://img.example/screen-2.png" ||
+		exact.DVDMenuUploads[0].RawURL != "https://img.example/menu-2.png" {
+		t.Fatalf("hosted channels = %#v", exact)
 	}
 }
 

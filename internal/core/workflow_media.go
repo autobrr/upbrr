@@ -117,6 +117,7 @@ type workflowMediaPrivateArtifacts struct {
 	Screenshots       []api.ScreenshotImage
 	DVDMenus          []api.DVDMenuCaptureImage
 	ArtifactImages    map[api.PublicResourceID]api.ScreenshotImage
+	DVDMenuImages     map[api.PublicResourceID]api.DVDMenuCaptureImage
 	HostedImages      map[api.PublicResourceID]api.UploadedImageLink
 	HostedSources     map[api.PublicResourceID]api.PublicResourceID
 	screenshotService mediaScreenshotService
@@ -181,6 +182,7 @@ func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 		dvdMenuSubject:    a.dvdMenuSubject,
 		hostedRepository:  a.hostedRepository,
 		ArtifactImages:    cloneScreenshotImageMap(a.ArtifactImages),
+		DVDMenuImages:     cloneDVDMenuImageMap(a.DVDMenuImages),
 		HostedImages:      cloneUploadedImageMap(a.HostedImages),
 		HostedSources:     cloneHostedSourceMap(a.HostedSources),
 	}
@@ -215,6 +217,7 @@ func (a workflowMediaPrivateArtifacts) DeleteArtifacts(
 		if _, remove := deleted[artifact.ID]; remove {
 			pending = append(pending, workflowMediaPendingDelete{kind: artifact.Kind, path: image.Path})
 			delete(result.ArtifactImages, artifact.ID)
+			delete(result.DVDMenuImages, artifact.ID)
 			continue
 		}
 		switch artifact.Kind {
@@ -316,6 +319,9 @@ func indexWorkflowMediaArtifacts(a *workflowMediaPrivateArtifacts, snapshot api.
 	if a.ArtifactImages == nil {
 		a.ArtifactImages = make(map[api.PublicResourceID]api.ScreenshotImage)
 	}
+	if a.DVDMenuImages == nil {
+		a.DVDMenuImages = make(map[api.PublicResourceID]api.DVDMenuCaptureImage)
+	}
 	screenshotIndex, menuIndex := 0, 0
 	for _, artifact := range snapshot.Artifacts {
 		switch artifact.Kind {
@@ -327,6 +333,7 @@ func indexWorkflowMediaArtifacts(a *workflowMediaPrivateArtifacts, snapshot api.
 		case api.MediaArtifactDVDMenu:
 			if menuIndex < len(a.DVDMenus) {
 				a.ArtifactImages[artifact.ID] = a.DVDMenus[menuIndex].ScreenshotImage
+				a.DVDMenuImages[artifact.ID] = a.DVDMenus[menuIndex]
 			}
 			menuIndex++
 		case api.MediaArtifactHostedImage:
@@ -346,6 +353,12 @@ func cloneUploadedImageMap(values map[api.PublicResourceID]api.UploadedImageLink
 	return cloned
 }
 
+func cloneDVDMenuImageMap(values map[api.PublicResourceID]api.DVDMenuCaptureImage) map[api.PublicResourceID]api.DVDMenuCaptureImage {
+	cloned := make(map[api.PublicResourceID]api.DVDMenuCaptureImage, len(values))
+	maps.Copy(cloned, values)
+	return cloned
+}
+
 func cloneHostedSourceMap(values map[api.PublicResourceID]api.PublicResourceID) map[api.PublicResourceID]api.PublicResourceID {
 	cloned := make(map[api.PublicResourceID]api.PublicResourceID, len(values))
 	maps.Copy(cloned, values)
@@ -357,6 +370,7 @@ func cloneWorkflowMediaPrivateArtifacts(value workflowMediaPrivateArtifacts) wor
 		Screenshots:       append([]api.ScreenshotImage(nil), value.Screenshots...),
 		DVDMenus:          append([]api.DVDMenuCaptureImage(nil), value.DVDMenus...),
 		ArtifactImages:    cloneScreenshotImageMap(value.ArtifactImages),
+		DVDMenuImages:     cloneDVDMenuImageMap(value.DVDMenuImages),
 		HostedImages:      cloneUploadedImageMap(value.HostedImages),
 		HostedSources:     cloneHostedSourceMap(value.HostedSources),
 		screenshotService: value.screenshotService,
@@ -404,33 +418,24 @@ func (b workflowMediaBuilder) Build(
 	screenshotCount, dvdMenuCount := 0, 0
 	switch instructions.Purpose {
 	case api.ScreenshotPurposeMenu:
-		if instructions.CaptureDVDMenus {
-			dvdMenuCount = max(projectedDVDMenus, instructions.MaxDVDMenuItems)
-		}
 	case api.ScreenshotPurposeFinal:
 		if instructions.Selections != nil {
 			screenshotCount = len(instructions.Selections)
 		} else {
 			screenshotCount = max(projectedScreenshots, instructions.ScreenshotCount)
 		}
-		if instructions.CaptureDVDMenus {
-			dvdMenuCount = max(projectedDVDMenus, instructions.MaxDVDMenuItems)
-		}
 	case api.ScreenshotPurposePreview:
 		screenshotCount = max(projectedScreenshots, instructions.ScreenshotCount)
-		if instructions.CaptureDVDMenus || projectedDVDMenus > 0 {
-			dvdMenuCount = max(projectedDVDMenus, instructions.MaxDVDMenuItems)
-		}
 	default:
 		screenshotCount = max(projectedScreenshots, instructions.ScreenshotCount)
-		if instructions.CaptureDVDMenus || projectedDVDMenus > 0 {
-			dvdMenuCount = max(projectedDVDMenus, instructions.MaxDVDMenuItems)
+	}
+	if instructions.CaptureDVDMenus {
+		dvdMenuCount = instructions.MaxDVDMenuItems
+		if dvdMenuCount <= 0 {
+			dvdMenuCount = b.config.ScreenshotHandling.ResolvedMaxMenuItems()
 		}
 	}
-	if instructions.CaptureDVDMenus && dvdMenuCount == 0 {
-		dvdMenuCount = b.config.ScreenshotHandling.ResolvedMaxMenuItems()
-	}
-	if screenshotCount == 0 && dvdMenuCount == 0 {
+	if screenshotCount == 0 && dvdMenuCount == 0 && projectedDVDMenus == 0 {
 		api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
 			Phase:   "media",
 			ItemID:  "media",
@@ -442,6 +447,7 @@ func (b workflowMediaBuilder) Build(
 		snapshot.Status = api.StageStatusSkipped
 		return snapshot, workflowMediaPrivateArtifacts{
 			ArtifactImages: make(map[api.PublicResourceID]api.ScreenshotImage),
+			DVDMenuImages:  make(map[api.PublicResourceID]api.DVDMenuCaptureImage),
 			HostedImages:   make(map[api.PublicResourceID]api.UploadedImageLink),
 			HostedSources:  make(map[api.PublicResourceID]api.PublicResourceID),
 		}, nil
@@ -450,6 +456,7 @@ func (b workflowMediaBuilder) Build(
 		screenshotService: b.screenshots,
 		dvdMenuService:    b.dvdMenus,
 		ArtifactImages:    make(map[api.PublicResourceID]api.ScreenshotImage),
+		DVDMenuImages:     make(map[api.PublicResourceID]api.DVDMenuCaptureImage),
 		HostedImages:      make(map[api.PublicResourceID]api.UploadedImageLink),
 		HostedSources:     make(map[api.PublicResourceID]api.PublicResourceID),
 	}
@@ -551,6 +558,15 @@ func (b workflowMediaBuilder) Build(
 			Message: "Capturing DVD menus.",
 		})
 		if b.dvdMenus == nil {
+			api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
+				Phase:   "dvd_menus",
+				ItemID:  "dvd_menus",
+				Kind:    "media",
+				Label:   "DVD menus",
+				Status:  api.StageStatusFailed,
+				Total:   dvdMenuCount,
+				Message: "DVD menu capture service is unavailable.",
+			})
 			return failedMediaSnapshot(snapshot, "DVD menu capture service is unavailable."), privateArtifacts, nil
 		}
 		input := api.MediaPlanInput{Release: release}
@@ -565,38 +581,76 @@ func (b workflowMediaBuilder) Build(
 				if ctx.Err() != nil {
 					return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media DVD menu capture: %w", ctx.Err())
 				}
+				api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
+					Phase:   "dvd_menus",
+					ItemID:  "dvd_menus",
+					Kind:    "media",
+					Label:   "DVD menus",
+					Status:  api.StageStatusFailed,
+					Total:   dvdMenuCount,
+					Message: "DVD menu capture failed.",
+				})
 				return failedMediaSnapshot(snapshot, "DVD menu capture failed. Retry media capture."), privateArtifacts, nil
 			}
 			privateArtifacts.DVDMenus = append(privateArtifacts.DVDMenus, capture.Images...)
+			captureStatus := api.StageStatusCompleted
+			captureMessage := "DVD menu capture complete."
+			if capture.Partial || len(capture.Warnings) > 0 {
+				captureStatus = api.StageStatusPartial
+				captureMessage = "DVD menu capture completed with partial coverage."
+			}
 			api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
 				Phase:     "dvd_menus",
 				ItemID:    "dvd_menus",
 				Kind:      "media",
 				Label:     "DVD menus",
-				Status:    api.StageStatusCompleted,
+				Status:    captureStatus,
 				Completed: len(capture.Images),
 				Total:     dvdMenuCount,
-				Message:   "DVD menu capture complete.",
+				Message:   captureMessage,
 			})
 			base := len(snapshot.Artifacts)
 			for index, image := range capture.Images {
-				snapshot.Artifacts = append(snapshot.Artifacts, publicMediaArtifact(
+				artifact := publicMediaArtifact(
 					captureFingerprint,
 					"dvd-menu",
 					base+index,
 					api.MediaArtifactDVDMenu,
 					api.ScreenshotPurposeMenu,
 					image.ScreenshotImage,
-				))
-			}
-			if capture.Partial || len(capture.Warnings) > 0 {
-				snapshot.Status = api.StageStatusBlocked
-				snapshot.Failures = append(snapshot.Failures, mediaFailure("DVD menu capture was incomplete. Review and retry capture."))
+				)
+				artifact.Source = api.ScreenshotSelectionSourceDVDMenu
+				snapshot.Artifacts = append(snapshot.Artifacts, artifact)
 			}
 		}
 	}
 	indexWorkflowMediaArtifacts(&privateArtifacts, snapshot)
+	applyWorkflowMediaMinimums(&snapshot, projectedScreenshots, projectedDVDMenus)
 	return snapshot, privateArtifacts, nil
+}
+
+func applyWorkflowMediaMinimums(snapshot *api.MediaArtifactSet, requiredScreenshots, requiredMenus int) {
+	selectedScreenshots, selectedMenus := 0, 0
+	for _, artifact := range snapshot.Artifacts {
+		if !artifact.Selected {
+			continue
+		}
+		switch artifact.Kind {
+		case api.MediaArtifactScreenshot:
+			selectedScreenshots++
+		case api.MediaArtifactDVDMenu:
+			selectedMenus++
+		case api.MediaArtifactHostedImage:
+		}
+	}
+	if selectedScreenshots >= requiredScreenshots && selectedMenus >= requiredMenus {
+		return
+	}
+	snapshot.Status = api.StageStatusBlocked
+	snapshot.RequiredActions = append(snapshot.RequiredActions, api.RequiredAction{
+		Kind:   api.RequiredActionProvideTrackerInput,
+		Prompt: "Capture or select the required release images before continuing.",
+	})
 }
 
 func mergeWorkflowScreenshotImages(existing, captured []api.ScreenshotImage, limit int) []api.ScreenshotImage {
@@ -664,22 +718,6 @@ func (b workflowMediaBuilder) BuildIncremental(
 		instructions.Selections = filtered
 		instructions.ScreenshotCount = len(filtered)
 	}
-	if instructions.Purpose == api.ScreenshotPurposeMenu && existing != nil {
-		requested := instructions.MaxDVDMenuItems
-		if requested <= 0 {
-			_, requested = projectedMediaRequirements(projections.Projections)
-		}
-		existingMenus := 0
-		for _, artifact := range existing.Artifacts {
-			if artifact.Kind == api.MediaArtifactDVDMenu {
-				existingMenus++
-			}
-		}
-		if requested > 0 && existingMenus >= requested {
-			instructions.CaptureDVDMenus = false
-			instructions.MaxDVDMenuItems = 0
-		}
-	}
 	captured, privateCaptured, err := b.Build(ctx, release, projections, instructions, now)
 	if err != nil {
 		return api.MediaArtifactSet{}, nil, err
@@ -691,10 +729,20 @@ func (b workflowMediaBuilder) BuildIncremental(
 	if existing == nil {
 		return captured, capturedRetained, nil
 	}
+	_, projectedDVDMenus := projectedMediaRequirements(projections.Projections)
+	optionalMenuAttempt := instructions.CaptureDVDMenus && projectedDVDMenus == 0
+	capturedMenuCount := countMediaArtifacts(captured.Artifacts, api.MediaArtifactDVDMenu)
+	if optionalMenuAttempt && capturedMenuCount == 0 && len(captured.Failures) > 0 {
+		captured.Status = existing.Status
+		captured.RequiredActions = nil
+	}
 	combined := *existing
 	combined.Artifacts = append([]api.MediaArtifact(nil), existing.Artifacts...)
 	combined.HostAttempts = append([]api.HostedImageAttempt(nil), existing.HostAttempts...)
 	combined.FailedHosts = append([]string(nil), existing.FailedHosts...)
+	if instructions.CaptureDVDMenus && capturedMenuCount > 0 {
+		removeAutomaticDVDMenuArtifacts(&combined, &retained)
+	}
 	noOp := len(captured.Artifacts) == 0 && len(captured.Failures) == 0 && len(captured.RequiredActions) == 0
 	if noOp {
 		combined.Failures = append([]api.WorkflowFailure(nil), existing.Failures...)
@@ -722,15 +770,9 @@ func (b workflowMediaBuilder) BuildIncremental(
 	if !noOp {
 		combined.Status = captured.Status
 	}
-	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		Prior    api.WorkflowFingerprint
-		Captured api.WorkflowFingerprint
-	}{existing.CaptureFingerprint, captured.CaptureFingerprint})
-	if err != nil {
-		return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media incremental fingerprint: %w", err)
-	}
-	combined.CaptureFingerprint = fingerprint
+	combined.CaptureFingerprint = captured.CaptureFingerprint
 	maps.Copy(retained.ArtifactImages, capturedRetained.ArtifactImages)
+	maps.Copy(retained.DVDMenuImages, capturedRetained.DVDMenuImages)
 	if len(capturedRetained.Screenshots) > 0 {
 		retained.screenshotService = capturedRetained.screenshotService
 		retained.screenshotSubject = capturedRetained.screenshotSubject
@@ -741,6 +783,49 @@ func (b workflowMediaBuilder) BuildIncremental(
 	}
 	rebuildWorkflowMediaLocalSlices(&retained, combined)
 	return combined, retained, nil
+}
+
+func countMediaArtifacts(artifacts []api.MediaArtifact, kind api.MediaArtifactKind) int {
+	count := 0
+	for _, artifact := range artifacts {
+		if artifact.Kind == kind {
+			count++
+		}
+	}
+	return count
+}
+
+func removeAutomaticDVDMenuArtifacts(snapshot *api.MediaArtifactSet, retained *workflowMediaPrivateArtifacts) {
+	removed := make(map[api.PublicResourceID]struct{})
+	for _, artifact := range snapshot.Artifacts {
+		if artifact.Kind == api.MediaArtifactDVDMenu && artifact.Source == api.ScreenshotSelectionSourceDVDMenu {
+			removed[artifact.ID] = struct{}{}
+			if image, ok := retained.ArtifactImages[artifact.ID]; ok {
+				retained.commitState.pending = append(retained.commitState.pending, workflowMediaPendingDelete{
+					kind: api.MediaArtifactDVDMenu,
+					path: image.Path,
+				})
+			}
+		}
+	}
+	for artifactID, sourceID := range retained.HostedSources {
+		if _, remove := removed[sourceID]; remove {
+			removed[artifactID] = struct{}{}
+		}
+	}
+	if len(removed) == 0 {
+		return
+	}
+	snapshot.Artifacts = slices.DeleteFunc(snapshot.Artifacts, func(artifact api.MediaArtifact) bool {
+		_, remove := removed[artifact.ID]
+		return remove
+	})
+	for artifactID := range removed {
+		delete(retained.ArtifactImages, artifactID)
+		delete(retained.DVDMenuImages, artifactID)
+		delete(retained.HostedImages, artifactID)
+		delete(retained.HostedSources, artifactID)
+	}
 }
 
 func rebuildWorkflowMediaLocalSlices(a *workflowMediaPrivateArtifacts, snapshot api.MediaArtifactSet) {
@@ -755,7 +840,11 @@ func rebuildWorkflowMediaLocalSlices(a *workflowMediaPrivateArtifacts, snapshot 
 		case api.MediaArtifactScreenshot:
 			a.Screenshots = append(a.Screenshots, image)
 		case api.MediaArtifactDVDMenu:
-			a.DVDMenus = append(a.DVDMenus, api.DVDMenuCaptureImage{ScreenshotImage: image})
+			menu, ok := a.DVDMenuImages[artifact.ID]
+			if !ok {
+				menu = api.DVDMenuCaptureImage{ScreenshotImage: image}
+			}
+			a.DVDMenus = append(a.DVDMenus, menu)
 		case api.MediaArtifactHostedImage:
 		}
 	}
@@ -862,6 +951,7 @@ func (b workflowMediaBuilder) UploadImages(
 	}
 	images := make([]api.ScreenshotImage, 0, len(artifactIDs))
 	sourceByPath := make(map[string]api.PublicResourceID, len(artifactIDs))
+	sourcePurposeByPath := make(map[string]api.ScreenshotPurpose, len(artifactIDs))
 	for _, artifact := range snapshot.Artifacts {
 		if _, requested := selected[artifact.ID]; !requested {
 			continue
@@ -877,7 +967,9 @@ func (b workflowMediaBuilder) UploadImages(
 			return api.MediaArtifactSet{}, nil, nil, errors.New("workflow media artifact content is unavailable")
 		}
 		images = append(images, image)
-		sourceByPath[strings.ToLower(normalizedUploadImagePath(image.Path))] = artifact.ID
+		pathKey := strings.ToLower(normalizedUploadImagePath(image.Path))
+		sourceByPath[pathKey] = artifact.ID
+		sourcePurposeByPath[pathKey] = artifact.Purpose
 	}
 	if len(images) != len(artifactIDs) {
 		return api.MediaArtifactSet{}, nil, nil, errors.New("workflow media upload selection is incomplete")
@@ -1016,7 +1108,8 @@ func (b workflowMediaBuilder) UploadImages(
 			}
 		}
 		for index, link := range hostResult.Links {
-			sourceID := sourceByPath[strings.ToLower(normalizedUploadImagePath(link.ImagePath))]
+			pathKey := strings.ToLower(normalizedUploadImagePath(link.ImagePath))
+			sourceID := sourceByPath[pathKey]
 			if sourceID == "" {
 				continue
 			}
@@ -1029,7 +1122,7 @@ func (b workflowMediaBuilder) UploadImages(
 			artifact := api.MediaArtifact{
 				ID:        artifactID,
 				Kind:      api.MediaArtifactHostedImage,
-				Purpose:   api.ScreenshotPurposeFinal,
+				Purpose:   sourcePurposeByPath[pathKey],
 				Selected:  true,
 				Order:     len(snapshot.Artifacts),
 				Source:    string(sourceID),
@@ -1162,6 +1255,7 @@ func (b workflowMediaBuilder) mediaMutationBase(
 			Status:                  api.StageStatusCompleted,
 		}, workflowMediaPrivateArtifacts{
 			ArtifactImages:    make(map[api.PublicResourceID]api.ScreenshotImage),
+			DVDMenuImages:     make(map[api.PublicResourceID]api.DVDMenuCaptureImage),
 			HostedImages:      make(map[api.PublicResourceID]api.UploadedImageLink),
 			HostedSources:     make(map[api.PublicResourceID]api.PublicResourceID),
 			screenshotService: b.screenshots,

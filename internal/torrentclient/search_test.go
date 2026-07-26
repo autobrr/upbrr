@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1318,4 +1319,20 @@ func createTestFolderTorrent(t *testing.T, dir, folderName, fileName string, pie
 	}
 
 	return metaInfo.HashInfoBytes().String(), data
+}
+
+func TestCollectTrackerURLsStableDeduplicates(t *testing.T) {
+	t.Parallel()
+
+	primary := " https://tracker.example/announce "
+	got := collectTrackerURLs(primary, []qbittorrent.TorrentTracker{
+		{Url: "https://tracker.example/announce"},
+		{Url: "https://second.example/announce"},
+		{Url: " https://second.example/announce "},
+		{Url: "** [DHT] **"},
+	})
+	want := []string{"https://tracker.example/announce", "https://second.example/announce"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("tracker URLs = %#v, want %#v", got, want)
+	}
 }

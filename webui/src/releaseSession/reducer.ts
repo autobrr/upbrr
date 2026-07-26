@@ -227,6 +227,10 @@ export type SessionAction =
       changed?: boolean;
     }>
   | Readonly<{
+      type: "workflow_upload_candidates_changed";
+      candidates: readonly UploadedImageCandidate[];
+    }>
+  | Readonly<{
       type: "uploaded_images_progress_reset";
       sessionRevision: number;
       revision: number;
@@ -828,6 +832,33 @@ export const sessionReducer = (state: SessionState, action: SessionAction): Sess
           failedHosts: action.failedHosts ?? state.uploadedImages.failedHosts,
         },
       };
+    case "workflow_upload_candidates_changed": {
+      const available = new Set(
+        action.candidates.map((candidate) => candidate.image.artifactID).filter(Boolean),
+      );
+      const known = new Set(
+        (state.uploadedImages.value?.candidates || [])
+          .map((candidate) => candidate.image.artifactID)
+          .filter(Boolean),
+      );
+      const selected = new Set(
+        state.uploadedImages.selectedArtifactIDs.filter((artifactID) => available.has(artifactID)),
+      );
+      for (const artifactID of available) {
+        if (!known.has(artifactID)) selected.add(artifactID);
+      }
+      return {
+        ...state,
+        uploadedImages: {
+          ...state.uploadedImages,
+          value: {
+            candidates: action.candidates,
+            uploaded: state.uploadedImages.value?.uploaded || [],
+          },
+          selectedArtifactIDs: [...selected],
+        },
+      };
+    }
     case "uploaded_images_progress_reset":
       if (!workflowMatches(state, "uploadedImages", action.sessionRevision, action.revision))
         return state;

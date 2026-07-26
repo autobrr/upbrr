@@ -47,7 +47,7 @@ for (const scenario of [
     name: "mixed trackers expose the strictest shared content workflow",
     trackers: ["BTN", "ANT", "AITHER"],
     screenshots: true,
-    descriptions: true,
+    descriptions: false,
     upload: false,
   },
 ] as const) {
@@ -156,16 +156,16 @@ test("embedded web runs image upload, direct tracker upload, and history", async
     await expect(
       page.getByText("Select at least one tracker to run duplicate checking."),
     ).toBeVisible();
-    await page.getByRole("checkbox", { name: "FF" }).check();
+    await page.getByRole("checkbox", { name: "HDS" }).check();
     await runDuplicateCheck(page);
-    await expect(page.getByText("FF").first()).toBeVisible();
+    await expect(page.getByText("HDS").first()).toBeVisible();
     await expect(page.getByRole("button", { name: "Run dupe check" })).toBeEnabled();
     await expect(page.getByRole("button", { name: "Screenshots" })).toBeEnabled();
     await expect(page.getByRole("progressbar")).toHaveCount(0);
     await expect.poll(() => workspace.fake.counters.clientSearches).toBe(1);
     await page.reload();
     await page.getByRole("button", { name: "Dupe Check" }).click();
-    await expect(page.getByText("FF").first()).toBeVisible();
+    await expect(page.getByText("HDS").first()).toBeVisible();
     await expect(page.getByRole("button", { name: "Run dupe check" })).toBeEnabled();
 
     await page.getByRole("button", { name: "Screenshots" }).click();
@@ -232,7 +232,7 @@ test("embedded web runs image upload, direct tracker upload, and history", async
     await expect(
       page.getByText(releaseWorkflowParityFixture.releaseDisplayName).first(),
     ).toBeVisible();
-    await expect(page.getByText("FF").first()).toBeVisible();
+    await expect(page.getByText("HDS").first()).toBeVisible();
   } finally {
     await app?.stop();
     await workspace.cleanup();
@@ -325,10 +325,10 @@ test("embedded web tracks BDMV playlist preparation and opens duplicate checking
   }
 });
 
-test("embedded web captures DVD menus through the authoritative media command", async ({
+test("embedded DVD media keeps normal screenshots and optional menus independent", async ({
   page,
 }) => {
-  const workspace = await createE2EWorkspace();
+  const workspace = await createE2EWorkspace({ screenshotCount: 4 });
   let app: AppServer | undefined;
   try {
     const sourcePath = await createDVDSourceFixture(workspace);
@@ -336,12 +336,38 @@ test("embedded web captures DVD menus through the authoritative media command", 
     await fetchMetadata(page, app.url, sourcePath);
     await page.getByRole("button", { name: "Dupe Check" }).click();
     await page.getByRole("checkbox", { name: releaseWorkflowParityFixture.trackerID }).uncheck();
-    await page.getByRole("checkbox", { name: "ANT" }).check();
+    await page.getByRole("checkbox", { name: "HDS" }).check();
     await runDuplicateCheck(page);
-    await expect(page.getByText("ANT").first()).toBeVisible();
+    await expect(page.getByText("HDS").first()).toBeVisible();
+
+    await page.getByRole("button", { name: "Screenshots" }).click();
+    await expect(page.getByText(/^Frame Selection · 4 frames$/)).toBeVisible();
+    const screenshotCaptureResponse = page.waitForResponse((response) =>
+      response.url().includes("/api/app/ContinueReleaseWorkflow"),
+    );
+    await page.getByRole("button", { name: "Generate screenshots" }).click();
+    await expect((await screenshotCaptureResponse).ok()).toBe(true);
+    await expect(page.getByText("4 captured screenshot(s)")).toBeVisible();
+    await expect(page.getByAltText(/^Screenshot \d$/)).toHaveCount(4);
+    await expect(page.getByText("Action required")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Upload Images" }).click();
+    await expect(page.getByRole("button", { name: "Prepare required hosts (4)" })).toBeEnabled();
+    await page.getByRole("button", { name: "Prepare required hosts (4)" }).click();
+    await expect.poll(() => workspace.fake.counters.imageUploads).toBe(4);
+    await expect(page.getByText("4 saved")).toBeVisible();
 
     await page.getByRole("button", { name: "Menu Images" }).click();
     await expect(page.getByRole("button", { name: "Capture DVD menus" })).toBeVisible();
+    await expect(page.getByText("0 captured menu image(s)")).toBeVisible();
+
+    await page.getByRole("button", { name: "Descriptions" }).click();
+    await page.getByRole("button", { name: "Refresh descriptions" }).click();
+    await page.getByRole("button", { name: "Expand" }).click();
+    await expect(page.getByRole("textbox")).toHaveValue("E2E description fixture.");
+    await expect(page.getByText("Action required")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Menu Images" }).click();
     const captureResponse = page.waitForResponse((response) =>
       response.url().includes("/api/app/ContinueReleaseWorkflow"),
     );
@@ -349,6 +375,21 @@ test("embedded web captures DVD menus through the authoritative media command", 
     await expect((await captureResponse).ok()).toBe(true);
     await expect(page.getByRole("heading", { name: "Authoritative DVD menu set" })).toBeVisible();
     await expect(page.getByText("1 captured menu image(s)")).toBeVisible();
+
+    await page.getByRole("button", { name: "Screenshots" }).click();
+    await expect(page.getByText("4 captured screenshot(s)")).toBeVisible();
+    await expect(page.getByAltText(/^Screenshot \d$/)).toHaveCount(4);
+
+    await page.getByRole("button", { name: "Upload Images" }).click();
+    await page.getByRole("button", { name: /^Prepare required hosts \(\d+\)$/ }).click();
+    await expect.poll(() => workspace.fake.counters.imageUploads).toBe(5);
+    await expect(page.getByText("5 saved")).toBeVisible();
+
+    await page.getByRole("button", { name: "Descriptions" }).click();
+    await page.getByRole("button", { name: "Refresh descriptions" }).click();
+    await page.getByRole("button", { name: "Expand" }).click();
+    await expect(page.getByRole("textbox")).toHaveValue("E2E description fixture.");
+    await expect(page.getByText("Action required")).toHaveCount(0);
   } finally {
     await app?.stop();
     await workspace.cleanup();

@@ -163,7 +163,7 @@ func (m *Module) resolveContinuationAnswer(
 		if action.Kind == api.RequiredActionReprepare && request.Intent.Preparation != nil {
 			continue
 		}
-		if continuationIntentResolvesAction(request.Intent, action) {
+		if continuationIntentResolvesAction(request.Intent, current, action) {
 			continue
 		}
 		answerIndex := slices.IndexFunc(request.Answers, func(answer api.RequiredActionAnswer) bool {
@@ -194,12 +194,17 @@ func (m *Module) resolveContinuationAnswer(
 	return CommandResult{}, false, nil
 }
 
-func continuationIntentResolvesAction(intent api.WorkflowIntent, action api.RequiredAction) bool {
+func continuationIntentResolvesAction(intent api.WorkflowIntent, current CommandResult, action api.RequiredAction) bool {
 	switch action.Kind {
 	case api.RequiredActionReviewDuplicates:
 		decision, ok := intent.DuplicateDecisions[action.TrackerID]
 		return ok && decision != "" && decision != api.DupeDecisionPending
 	case api.RequiredActionProvideTrackerInput:
+		if action.TrackerID == "" && intent.Media != nil && current.Media != nil {
+			return slices.ContainsFunc(current.Media.RequiredActions, func(mediaAction api.RequiredAction) bool {
+				return mediaAction.ID == action.ID
+			})
+		}
 		_, ok := intent.ProjectionInstructions[action.TrackerID]
 		return ok
 	case api.RequiredActionAnswerQuestionnaire:
@@ -460,7 +465,7 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 	if err == nil && current.Media.CaptureFingerprint == expected {
 		return true
 	}
-	var screenshots, menus int
+	var screenshots, automaticMenus int
 	for _, artifact := range current.Media.Artifacts {
 		if !artifact.Selected {
 			continue
@@ -469,7 +474,9 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		case api.MediaArtifactScreenshot:
 			screenshots++
 		case api.MediaArtifactDVDMenu:
-			menus++
+			if artifact.Source == api.ScreenshotSelectionSourceDVDMenu {
+				automaticMenus++
+			}
 		case api.MediaArtifactHostedImage:
 		}
 	}
@@ -478,10 +485,7 @@ func continuationMediaCaptureSatisfied(current CommandResult, desired *api.Media
 		if !desired.CaptureDVDMenus {
 			return true
 		}
-		if desired.MaxDVDMenuItems > 0 {
-			return menus >= desired.MaxDVDMenuItems
-		}
-		return menus > 0
+		return automaticMenus > 0 && stageSucceeded(current.Media.Status)
 	case "", api.ScreenshotPurposeFinal:
 		required := desired.ScreenshotCount
 		if desired.Selections != nil {
@@ -637,7 +641,9 @@ func continuationGoalReached(current CommandResult, request api.ContinueReleaseW
 			normalizedDuplicateCheckOrdinal(current.Dupes.CheckOrdinal) >= normalizedDuplicateCheckOrdinal(request.Intent.DuplicateCheckCount) &&
 			duplicateIntentMatches(current.Dupes, request.Intent.DuplicateDecisions)
 	case api.WorkflowGoalMediaReady:
-		return mediaRequirementsPrepared(current.Media)
+		return current.Media != nil &&
+			stageSucceeded(current.Media.Status) &&
+			continuationMediaCaptureSatisfied(current, request.Intent.Media)
 	case api.WorkflowGoalDescriptionsReady:
 		return descriptionsHaveViableTracker(current.Descriptions)
 	case api.WorkflowGoalUploadReviewed, api.WorkflowGoalDryRun:

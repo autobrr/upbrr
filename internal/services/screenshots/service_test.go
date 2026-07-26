@@ -145,6 +145,78 @@ func TestPlanProbesDurationWhenMediaInfoUnavailable(t *testing.T) {
 	}
 }
 
+func TestPlanUsesRequestedNormalScreenshotCountForEverySourceKind(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name     string
+		discType string
+		build    func(*testing.T) (string, string)
+	}{
+		{
+			name: "file",
+			build: func(t *testing.T) (string, string) {
+				source := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+				if err := os.WriteFile(source, []byte("synthetic video"), 0o600); err != nil {
+					t.Fatalf("write file source: %v", err)
+				}
+				return source, ""
+			},
+		},
+		{
+			name:     "BDMV",
+			discType: "BDMV",
+			build: func(t *testing.T) (string, string) {
+				root := t.TempDir()
+				video := filepath.Join(root, "00001.m2ts")
+				if err := os.WriteFile(video, []byte("synthetic video"), 0o600); err != nil {
+					t.Fatalf("write BDMV source: %v", err)
+				}
+				return root, video
+			},
+		},
+		{
+			name:     "DVD",
+			discType: "DVD",
+			build: func(t *testing.T) (string, string) {
+				root := t.TempDir()
+				videoTS := filepath.Join(root, "VIDEO_TS")
+				if err := os.MkdirAll(videoTS, 0o700); err != nil {
+					t.Fatalf("create VIDEO_TS: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(videoTS, "VTS_01_1.VOB"), []byte("synthetic video"), 0o600); err != nil {
+					t.Fatalf("write DVD source: %v", err)
+				}
+				return root, ""
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			sourcePath, videoPath := testCase.build(t)
+			mediaInfoPath := filepath.Join(t.TempDir(), "mediainfo.json")
+			payload := []byte(`{"media":{"track":[{"@type":"General","Duration":"600"},{"@type":"Video","FrameRate":"24.000"}]}}`)
+			if err := os.WriteFile(mediaInfoPath, payload, 0o600); err != nil {
+				t.Fatalf("write mediainfo: %v", err)
+			}
+			service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), nil)
+			plan, err := service.Plan(context.Background(), api.ScreenshotSubject{
+				SourcePath:        sourcePath,
+				VideoPath:         videoPath,
+				DiscType:          testCase.discType,
+				MediaInfoJSONPath: mediaInfoPath,
+			}, 4)
+			if err != nil {
+				t.Fatalf("plan %s: %v", testCase.name, err)
+			}
+			if len(plan.SuggestedSelections) != 4 {
+				t.Fatalf("%s normal screenshot count = %d, want 4", testCase.name, len(plan.SuggestedSelections))
+			}
+		})
+	}
+}
+
 func TestPreviewFrameExcludesDVDMenuVOB(t *testing.T) {
 	root := t.TempDir()
 	videoTS := filepath.Join(root, "VIDEO_TS")

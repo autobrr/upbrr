@@ -241,4 +241,65 @@ describe("ScreenshotsPage", () => {
     expect(frameDetails).not.toHaveAttribute("open");
     vi.unstubAllGlobals();
   });
+
+  it("excludes DVD menus and hosted menu variants from normal screenshot counts", () => {
+    const base = facet();
+    const artifacts = [
+      ...Array.from({ length: 4 }, (_, index) => ({
+        id: `screen-${index + 1}`,
+        kind: "screenshot" as const,
+        purpose: "final" as const,
+        selected: true,
+        order: index,
+        url: `/media/screen-${index + 1}`,
+      })),
+      ...Array.from({ length: 2 }, (_, index) => ({
+        id: `menu-${index + 1}`,
+        kind: "dvd_menu" as const,
+        purpose: "menu" as const,
+        selected: true,
+        order: index + 4,
+        url: `/media/menu-${index + 1}`,
+      })),
+      {
+        id: "hosted-menu",
+        kind: "hosted_image" as const,
+        purpose: "menu" as const,
+        selected: true,
+        order: 6,
+        source: "menu-1",
+        url: "https://img.example.invalid/menu-1.png",
+      },
+    ];
+    const screenshots: ScreenshotsFacet = {
+      ...base,
+      view: {
+        ...base.view,
+        artifacts: {
+          ...base.view.artifacts!,
+          artifacts,
+        },
+        finalSelectionArtifactIDs: ["screen-1", "screen-2", "screen-3", "screen-4"],
+      },
+    };
+
+    render(
+      <ScreenshotsPage
+        facet={screenshots}
+        screenshotConfig={{ Screens: 4, ToneMap: false }}
+        updateScreenshotConfigValue={vi.fn()}
+        loadSettings={vi.fn()}
+        settingsLoading={false}
+        settingsDirty={false}
+        settingsSaved=""
+        settingsError=""
+        applyScreenshotSettings={vi.fn()}
+        setLightboxImage={vi.fn()}
+        setLightboxAlt={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("4 captured screenshot(s)")).toBeInTheDocument();
+    expect(screen.getAllByAltText(/^Screenshot \d$/)).toHaveLength(4);
+  });
 });

@@ -62,11 +62,11 @@ func screenshotSlotsFromSource(
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("trackers: load screenshot slots canceled: %w", err)
 	}
-	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
-		return nil, nil
-	}
 	if preloaded != nil && preloaded.screenshotSlotsLoaded {
 		return cloneScreenshotSlots(preloaded.screenshotSlots), nil
+	}
+	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
+		return nil, nil
 	}
 
 	slots, err := repo.ListScreenshotSlotsByPath(ctx, meta.SourcePath)

@@ -183,7 +183,9 @@ type TrackerDuplicateCriteria struct {
 
 // TrackerArtifactRequirements are backend-owned tracker artifact requirements.
 type TrackerArtifactRequirements struct {
-	ScreenshotCount   int      `json:"screenshotCount"`
+	// ScreenshotCount is the minimum number of selected normal screenshots.
+	ScreenshotCount int `json:"screenshotCount"`
+	// DVDMenuCount is a tracker-declared minimum, not an automatic-capture cap.
 	DVDMenuCount      int      `json:"dvdMenuCount"`
 	MediaInfo         bool     `json:"mediaInfo"`
 	BDInfo            bool     `json:"bdInfo"`
@@ -412,7 +414,8 @@ type MediaCaptureInstructions struct {
 	Purpose         ScreenshotPurpose     `json:"purpose"`
 	Selections      []ScreenshotSelection `json:"selections,omitempty"`
 	CaptureDVDMenus bool                  `json:"captureDvdMenus"`
-	MaxDVDMenuItems int                   `json:"maxDvdMenuItems,omitempty"`
+	// MaxDVDMenuItems caps an explicitly requested automatic menu capture.
+	MaxDVDMenuItems int `json:"maxDvdMenuItems,omitempty"`
 }
 
 // MediaArtifactSet retains generation- and projection-bound media results.

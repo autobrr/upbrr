@@ -875,7 +875,7 @@ type e2eImageService struct {
 }
 
 func (s e2eImageService) ListCandidates(_ context.Context, meta api.ImageHostingSubject) ([]api.ScreenshotImage, error) {
-	shot, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(meta.SourcePath))
+	shot, err := e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(meta.SourcePath), 1)
 	if err != nil {
 		return nil, err
 	}
@@ -962,34 +962,44 @@ type e2eScreenshotService struct {
 	repo     api.ScreenshotLifecycleRepository
 }
 
-func (s e2eScreenshotService) Plan(_ context.Context, meta api.ScreenshotSubject, _ int) (api.ScreenshotPlan, error) {
+func (s e2eScreenshotService) Plan(_ context.Context, meta api.ScreenshotSubject, count int) (api.ScreenshotPlan, error) {
+	selections := make([]api.ScreenshotSelection, 0, count)
+	for index := range count {
+		selections = append(selections, api.ScreenshotSelection{
+			Index:            index + 1,
+			TimestampSeconds: float64((index + 1) * 10),
+			Frame:            (index + 1) * 240,
+		})
+	}
 	return api.ScreenshotPlan{
-		SourcePath:      meta.SourcePath,
-		DurationSeconds: 120,
-		FrameRate:       24,
-		SuggestedSelections: []api.ScreenshotSelection{{
-			Index:            1,
-			TimestampSeconds: 10,
-			Frame:            240,
-		}},
+		SourcePath:          meta.SourcePath,
+		DurationSeconds:     120,
+		FrameRate:           24,
+		SuggestedSelections: selections,
 	}, nil
 }
 
 func (s e2eScreenshotService) Capture(
 	_ context.Context,
 	meta api.ScreenshotSubject,
-	_ []api.ScreenshotSelection,
+	selections []api.ScreenshotSelection,
 	purpose api.ScreenshotPurpose,
 ) (api.ScreenshotResult, error) {
-	shot, err := s.image(meta)
-	if err != nil {
-		return api.ScreenshotResult{}, err
+	images := make([]api.ScreenshotImage, 0, len(selections))
+	for _, selection := range selections {
+		shot, err := s.imageAt(meta, selection.Index)
+		if err != nil {
+			return api.ScreenshotResult{}, err
+		}
+		shot.Index = selection.Index
+		shot.TimestampSeconds = selection.TimestampSeconds
+		shot.Purpose = purpose
+		images = append(images, shot)
 	}
-	shot.Purpose = purpose
 	return api.ScreenshotResult{
 		SourcePath: meta.SourcePath,
 		Purpose:    purpose,
-		Images:     []api.ScreenshotImage{shot},
+		Images:     images,
 	}, nil
 }
 
@@ -1050,10 +1060,14 @@ func (s e2eScreenshotService) SaveFinalSelections(ctx context.Context, meta api.
 }
 
 func (s e2eScreenshotService) image(meta api.ScreenshotSubject) (api.ScreenshotImage, error) {
-	return e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(meta.SourcePath))
+	return s.imageAt(meta, 1)
 }
 
-func e2eManagedScreenshot(shotPath string, tmpRoot string, releaseName string) (api.ScreenshotImage, error) {
+func (s e2eScreenshotService) imageAt(meta api.ScreenshotSubject, index int) (api.ScreenshotImage, error) {
+	return e2eManagedScreenshot(s.shotPath, s.tmpRoot, filepath.Base(meta.SourcePath), index)
+}
+
+func e2eManagedScreenshot(shotPath string, tmpRoot string, releaseName string, index int) (api.ScreenshotImage, error) {
 	path := strings.TrimSpace(shotPath)
 	if path == "" {
 		return api.ScreenshotImage{}, errors.New("e2e screenshots: screenshot path is required")
@@ -1082,7 +1096,7 @@ func e2eManagedScreenshot(shotPath string, tmpRoot string, releaseName string) (
 	if err := os.MkdirAll(managedDir, 0o755); err != nil {
 		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: create managed dir: %w", err)
 	}
-	managedPath := filepath.Join(managedDir, "screenshot-1.png")
+	managedPath := filepath.Join(managedDir, fmt.Sprintf("screenshot-%d.png", index))
 	if err := os.WriteFile(managedPath, payload, 0o600); err != nil {
 		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: write managed screenshot: %w", err)
 	}
@@ -1091,8 +1105,8 @@ func e2eManagedScreenshot(shotPath string, tmpRoot string, releaseName string) (
 		return api.ScreenshotImage{}, fmt.Errorf("e2e screenshots: stat managed screenshot: %w", err)
 	}
 	return api.ScreenshotImage{
-		Index:            1,
-		TimestampSeconds: 10,
+		Index:            index,
+		TimestampSeconds: float64(index * 10),
 		Path:             managedPath,
 		Purpose:          api.ScreenshotPurposeFinal,
 		Width:            320,

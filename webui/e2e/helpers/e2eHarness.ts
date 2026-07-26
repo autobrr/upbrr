@@ -74,8 +74,12 @@ type StartAppOptions = {
   seed?: boolean;
 };
 
+type E2EWorkspaceOptions = {
+  screenshotCount?: number;
+};
+
 /** Creates an isolated E2E workspace with temp config, media fixtures, and fake services. */
-export async function createE2EWorkspace(): Promise<E2EWorkspace> {
+export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Promise<E2EWorkspace> {
   const root = await mkdtemp(path.join(tmpdir(), "upbrr-e2e-"));
   const mediaDir = path.join(root, "media");
   await mkdir(mediaDir, { recursive: true });
@@ -86,7 +90,7 @@ export async function createE2EWorkspace(): Promise<E2EWorkspace> {
   await writeFile(sourcePath, "e2e media fixture\n");
   await writeFile(screenshotPath, png1x1);
   const fake = await startFakeServer();
-  await writeFile(configPath, buildConfig(dbPath));
+  await writeFile(configPath, buildConfig(dbPath, options.screenshotCount));
   const env = {
     ...process.env,
     UPBRR_E2E_FAKE_SERVICES: "1",
@@ -308,7 +312,7 @@ export async function fetchMetadata(page: Page, appUrl: string, sourcePath: stri
   await page.keyboard.press("Escape");
 }
 
-function buildConfig(dbPath: string): string {
+function buildConfig(dbPath: string, screenshotCount = 1): string {
   const yamlPath = dbPath.replaceAll("\\", "\\\\");
   return `main_settings:
   tmdb_api: "e2e"
@@ -322,7 +326,7 @@ metadata:
   skip_auto_torrent: false
   keep_images: true
 screenshot_handling:
-  screens: 1
+  screens: ${Math.max(1, Math.trunc(screenshotCount))}
   min_successful_image_uploads: 1
   cutoff_screens: 1
 post_upload:

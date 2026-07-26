@@ -18,12 +18,26 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 		}},
 		SelectedBDMVPlaylists: []PlaylistInfo{{File: "00001.mpls"}},
 		ImageHostOverrides:    ImageHostOverrides{FailedHosts: []string{"imgbox"}},
+		ExactMedia: &ExactMediaAssets{
+			Screenshots: []ScreenshotImage{{
+				Path:    `C:\private\screen.png`,
+				Purpose: ScreenshotPurposeFinal,
+			}},
+			DVDMenus: []DVDMenuCaptureImage{{
+				ScreenshotImage: ScreenshotImage{
+					Path:    `C:\private\menu.png`,
+					Purpose: ScreenshotPurposeMenu,
+				},
+			}},
+		},
 	}
 	projected := NewDescriptionSubject(source)
 	projected.Release.Codec[0] = "changed"
 	projected.ProviderMetadata.TMDB.LocalizedTitles["en"] = "changed"
 	projected.SelectedBDMVPlaylists[0].File = "changed"
 	projected.ImageHost.FailedHosts[0] = "changed"
+	projected.ExactMedia.Screenshots[0].Path = "changed"
+	projected.ExactMedia.DVDMenus[0].Path = "changed"
 
 	if source.Release.Codec[0] != "H.265" {
 		t.Fatal("release facts share storage with description subject")
@@ -36,6 +50,43 @@ func TestNewDescriptionSubjectDetachesNestedFacts(t *testing.T) {
 	}
 	if source.ImageHostOverrides.FailedHosts[0] != "imgbox" {
 		t.Fatal("failed image hosts share storage with description subject")
+	}
+	if source.ExactMedia.Screenshots[0].Path != `C:\private\screen.png` ||
+		source.ExactMedia.DVDMenus[0].Path != `C:\private\menu.png` {
+		t.Fatal("exact media shares storage with description subject")
+	}
+}
+
+func TestExactMediaAssetsValidateRejectsCrossChannelPurposesAndUploads(t *testing.T) {
+	t.Parallel()
+
+	assets := ExactMediaAssets{
+		Screenshots: []ScreenshotImage{{
+			Path:    `C:\private\menu.png`,
+			Purpose: ScreenshotPurposeMenu,
+		}},
+	}
+	if err := assets.Validate(); err == nil {
+		t.Fatal("menu-purpose image entered exact screenshot channel")
+	}
+
+	assets = ExactMediaAssets{
+		Screenshots: []ScreenshotImage{{
+			Path:    `C:\private\screen.png`,
+			Purpose: ScreenshotPurposeFinal,
+		}},
+		DVDMenus: []DVDMenuCaptureImage{{
+			ScreenshotImage: ScreenshotImage{
+				Path:    `C:\private\menu.png`,
+				Purpose: ScreenshotPurposeMenu,
+			},
+		}},
+		ScreenshotUploads: []UploadedImageLink{{
+			ImagePath: `C:\private\menu.png`,
+		}},
+	}
+	if err := assets.Validate(); err == nil {
+		t.Fatal("menu upload entered exact screenshot upload channel")
 	}
 }
 

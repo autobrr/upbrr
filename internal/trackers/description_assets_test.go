@@ -428,7 +428,7 @@ func TestApplyResolvedDescriptionScreenshotsKeepsMenuImagesSeparate(t *testing.T
 		{Path: "/tmp/screen2.png", ImgURL: "https://img.example/screen2.png"},
 	}
 
-	applyResolvedDescriptionScreenshots(context.Background(), meta, repo, nil, &assets, resolved)
+	applyResolvedDescriptionScreenshots(context.Background(), "", meta, repo, nil, &assets, resolved)
 
 	if len(assets.MenuImages) != 1 || !strings.Contains(assets.MenuImages[0].ImgURL, "menu1.png") {
 		t.Fatalf("expected menu image to stay separate, got %#v", assets.MenuImages)
@@ -497,7 +497,7 @@ func TestDescriptionAssetsPreserveMenuClassificationAcrossRehost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve rehosted assets: %v", err)
 	}
-	applyResolvedDescriptionScreenshots(context.Background(), meta, repo, nil, &assets, resolution.screenshots)
+	applyResolvedDescriptionScreenshots(context.Background(), "", meta, repo, nil, &assets, resolution.screenshots)
 	assertScreenshotPaths(t, assets.MenuImages, paths[:2])
 	assertScreenshotPaths(t, assets.Screenshots, paths[2:])
 	for _, image := range append(append([]api.ScreenshotImage(nil), assets.MenuImages...), assets.Screenshots...) {
@@ -810,7 +810,7 @@ func TestResolveDescriptionAssetsClearsFinalWhenSanitizedDescriptionIsEmpty(t *t
 		t.Fatalf("expected empty sanitized final description to clear override flag")
 	}
 
-	applyResolvedDescriptionScreenshots(context.Background(), meta, nil, nil, &assets, []api.ScreenshotImage{{
+	applyResolvedDescriptionScreenshots(context.Background(), "", meta, nil, nil, &assets, []api.ScreenshotImage{{
 		ImgURL: "https://pixhost.example/1.png",
 		RawURL: "https://pixhost.example/raw-1.png",
 		Host:   "pixhost",
@@ -835,7 +835,7 @@ func TestApplyResolvedDescriptionScreenshotsDoesNotAppendFinalBuilderScreenshots
 		}},
 	}
 
-	applyResolvedDescriptionScreenshots(context.Background(), api.UploadSubject{SourcePath: sourcePath}, nil, nil, &assets, []api.ScreenshotImage{{
+	applyResolvedDescriptionScreenshots(context.Background(), "", api.UploadSubject{SourcePath: sourcePath}, nil, nil, &assets, []api.ScreenshotImage{{
 		ImgURL: "https://pixhost.example/1.png",
 		RawURL: "https://pixhost.example/raw-1.png",
 		Host:   "pixhost",
@@ -878,7 +878,7 @@ func TestApplyResolvedDescriptionScreenshotsPreservesFinalNonRenderableImages(t 
 		},
 	}
 
-	applyResolvedDescriptionScreenshots(context.Background(), api.UploadSubject{SourcePath: sourcePath}, nil, nil, &assets, []api.ScreenshotImage{{
+	applyResolvedDescriptionScreenshots(context.Background(), "", api.UploadSubject{SourcePath: sourcePath}, nil, nil, &assets, []api.ScreenshotImage{{
 		ImgURL: "https://pixhost.example/1.png",
 		RawURL: "https://pixhost.example/raw-1.png",
 		Host:   "pixhost",
@@ -1660,19 +1660,21 @@ func TestResolveDescriptionAssetsAttachesExactUploadedVariants(t *testing.T) {
 	imagePath := filepath.Join(t.TempDir(), "screen.png")
 	meta := api.UploadSubject{
 		SourcePath: sourcePath,
-		ExactScreenshots: []api.ScreenshotImage{{
-			Path:    imagePath,
-			Purpose: api.ScreenshotPurposeFinal,
-		}},
-		ExactUploadedImages: []api.UploadedImageLink{{
-			SourcePath: sourcePath,
-			ImagePath:  imagePath,
-			Host:       "pixhost",
-			UsageScope: "global",
-			ImgURL:     "https://img.example.invalid/thumb.png",
-			RawURL:     "https://img.example.invalid/screen.png",
-			WebURL:     "https://img.example.invalid/view",
-		}},
+		ExactMedia: &api.ExactMediaAssets{
+			Screenshots: []api.ScreenshotImage{{
+				Path:    imagePath,
+				Purpose: api.ScreenshotPurposeFinal,
+			}},
+			ScreenshotUploads: []api.UploadedImageLink{{
+				SourcePath: sourcePath,
+				ImagePath:  imagePath,
+				Host:       "pixhost",
+				UsageScope: "global",
+				ImgURL:     "https://img.example.invalid/thumb.png",
+				RawURL:     "https://img.example.invalid/screen.png",
+				WebURL:     "https://img.example.invalid/view",
+			}},
+		},
 	}
 	repo := &stubRepo{}
 	registry := descriptionAssetsTestRegistry(t)
@@ -1699,10 +1701,10 @@ func TestResolveDescriptionAssetsExactEmptyUploadsDoNotReadAmbientRepositoryStat
 	imagePath := filepath.Join(t.TempDir(), "screen.png")
 	meta := api.UploadSubject{
 		SourcePath: sourcePath,
-		ExactScreenshots: []api.ScreenshotImage{{
+		ExactMedia: &api.ExactMediaAssets{Screenshots: []api.ScreenshotImage{{
 			Path:    imagePath,
 			Purpose: api.ScreenshotPurposeFinal,
-		}},
+		}}},
 	}
 	repo := &stubRepo{uploads: []api.UploadedImageLink{{
 		SourcePath: sourcePath,
@@ -1724,6 +1726,89 @@ func TestResolveDescriptionAssetsExactEmptyUploadsDoNotReadAmbientRepositoryStat
 	}
 	if len(preloaded.uploads) != 0 {
 		t.Fatalf("exact empty uploads retained ambient variants: %#v", preloaded.uploads)
+	}
+}
+
+func TestResolveDescriptionAssetsKeepsExactScreenshotsAndMenusSeparate(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.DVD-GRP")
+	exact := &api.ExactMediaAssets{}
+	for index := range 4 {
+		imagePath := filepath.Join(t.TempDir(), fmt.Sprintf("screen-%d.png", index))
+		exact.Screenshots = append(exact.Screenshots, api.ScreenshotImage{
+			Path:    imagePath,
+			Purpose: api.ScreenshotPurposeFinal,
+		})
+		exact.ScreenshotUploads = append(exact.ScreenshotUploads, api.UploadedImageLink{
+			ImagePath:  imagePath,
+			UsageScope: globalImageUsageScope,
+			RawURL:     fmt.Sprintf("https://img.example.invalid/screen-%d.png", index),
+		})
+	}
+	for index := range 2 {
+		imagePath := filepath.Join(t.TempDir(), fmt.Sprintf("menu-%d.png", index))
+		exact.DVDMenus = append(exact.DVDMenus, api.DVDMenuCaptureImage{ScreenshotImage: api.ScreenshotImage{
+			Path:    imagePath,
+			Purpose: api.ScreenshotPurposeMenu,
+		}})
+		exact.DVDMenuUploads = append(exact.DVDMenuUploads, api.UploadedImageLink{
+			ImagePath:  imagePath,
+			UsageScope: globalImageUsageScope,
+			RawURL:     fmt.Sprintf("https://img.example.invalid/menu-%d.png", index),
+		})
+	}
+	meta := api.UploadSubject{SourcePath: sourcePath, ExactMedia: exact}
+	registry := descriptionAssetsTestRegistry(t)
+	preloaded, err := preloadDescriptionAssetData(context.Background(), meta, nil, registry)
+	if err != nil {
+		t.Fatalf("preload exact media: %v", err)
+	}
+	assets, err := resolveDescriptionAssets(context.Background(), "HHD", meta, nil, api.NopLogger{}, preloaded, registry)
+	if err != nil {
+		t.Fatalf("resolve exact media: %v", err)
+	}
+	if len(assets.Screenshots) != 4 || len(assets.Slots) != 4 || len(assets.MenuImages) != 2 {
+		t.Fatalf("exact channels screenshots=%d slots=%d menus=%d", len(assets.Screenshots), len(assets.Slots), len(assets.MenuImages))
+	}
+	for _, slot := range assets.Slots {
+		if slot.SourceKind == api.ScreenshotSelectionSourceMenu || slot.SourceKind == api.ScreenshotSelectionSourceDVDMenu {
+			t.Fatalf("menu entered normal screenshot slot: %#v", slot)
+		}
+	}
+	for index, menu := range assets.MenuImages {
+		if menu.Purpose != api.ScreenshotPurposeMenu || menu.RawURL != exact.DVDMenuUploads[index].RawURL {
+			t.Fatalf("exact menu %d = %#v", index, menu)
+		}
+	}
+}
+
+func TestResolveDescriptionAssetsExactEmptyIsAuthoritative(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{{
+			SourcePath: "/tmp/source",
+			ImagePath:  "/tmp/ambient.png",
+			Source:     string(api.ScreenshotPurposeFinal),
+		}},
+		uploads: []api.UploadedImageLink{{
+			ImagePath: "/tmp/ambient.png",
+			RawURL:    "https://img.example.invalid/ambient.png",
+		}},
+	}
+	meta := api.UploadSubject{SourcePath: "/tmp/source", ExactMedia: &api.ExactMediaAssets{}}
+	registry := descriptionAssetsTestRegistry(t)
+	preloaded, err := preloadDescriptionAssetData(context.Background(), meta, repo, registry)
+	if err != nil {
+		t.Fatalf("preload exact empty media: %v", err)
+	}
+	assets, err := resolveDescriptionAssets(context.Background(), "HHD", meta, repo, api.NopLogger{}, preloaded, registry)
+	if err != nil {
+		t.Fatalf("resolve exact empty media: %v", err)
+	}
+	if len(assets.Screenshots) != 0 || len(assets.Slots) != 0 || len(assets.MenuImages) != 0 {
+		t.Fatalf("exact empty media fell back to ambient state: %#v", assets)
 	}
 }
 
@@ -1860,7 +1945,7 @@ https://lostimg.cc/encode.png
 	slots := parseDescriptionImageSlots("/tmp/source", description)
 	appendSourceImageSlots(&slots, "/tmp/source", []api.ScreenshotImage{{Path: "/tmp/encode_01.png"}})
 	assets := DescriptionAssets{Description: description, Slots: slots}
-	applyResolvedDescriptionScreenshots(context.Background(), api.UploadSubject{SourcePath: "/tmp/source"}, nil, nil, &assets, []api.ScreenshotImage{
+	applyResolvedDescriptionScreenshots(context.Background(), "", api.UploadSubject{SourcePath: "/tmp/source"}, nil, nil, &assets, []api.ScreenshotImage{
 		{Path: "/tmp/source-copy.png", RawURL: "https://pixhost/source.png"},
 		{Path: "/tmp/encode_01.png", RawURL: "https://pixhost/encode-comparison.png"},
 		{Path: "/tmp/encode_01.png", RawURL: "https://pixhost/encode-normal.png"},
@@ -2529,7 +2614,7 @@ func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionIm
 	if err != nil {
 		t.Fatalf("resolve assets: %v", err)
 	}
-	applyResolvedDescriptionScreenshots(context.Background(), meta, repo, nil, &assets, resolution.screenshots)
+	applyResolvedDescriptionScreenshots(context.Background(), "", meta, repo, nil, &assets, resolution.screenshots)
 	if strings.Contains(assets.Description, imageBaseURL) {
 		t.Fatalf("expected comparison source URLs replaced, got %q", assets.Description)
 	}

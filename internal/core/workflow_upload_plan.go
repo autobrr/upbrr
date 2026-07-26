@@ -146,7 +146,7 @@ func (b workflowUploadPlanBuilder) Build(
 	if !ok {
 		return api.UploadPlan{}, nil, errors.New("workflow upload plan: duplicate evidence is incompatible")
 	}
-	exactScreenshots, exactUploads, err := resolveWorkflowExactMedia(privateMedia, media)
+	exactMedia, err := resolveWorkflowExactMedia(privateMedia, media)
 	if err != nil {
 		return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: %w", err)
 	}
@@ -255,8 +255,7 @@ func (b workflowUploadPlanBuilder) Build(
 	if err != nil {
 		return api.UploadPlan{}, nil, fmt.Errorf("workflow upload plan: resolve subject: %w", err)
 	}
-	subject.ExactScreenshots = exactScreenshots
-	subject.ExactUploadedImages = exactUploads
+	subject.ExactMedia = exactMedia
 	skipImageUpload := true
 	subject.ImageHostOverrides.SkipUpload = &skipImageUpload
 	applyWorkflowCrossSeeds(&subject, dupeEvidence, dupes)

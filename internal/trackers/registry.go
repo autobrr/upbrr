@@ -106,6 +106,9 @@ func (r *Registry) Register(def Definition) error {
 		if provider, ok := def.(UploadContentModeProvider); ok {
 			descriptor.UploadContentMode = provider.UploadContentMode()
 		}
+		if provider, ok := def.(WorkflowMediaRequirementsProvider); ok {
+			descriptor.WorkflowMedia = provider.WorkflowMediaRequirements()
+		}
 		descriptor.DataFactory, _ = def.(DataLookupFactory)
 		descriptor.ClaimFactory, _ = def.(ClaimCheckerFactory)
 		if provider, ok := def.(ClaimPolicyProvider); ok {
@@ -437,6 +440,13 @@ func (r *Registry) RegisterDescriptor(descriptor Descriptor) error {
 		}
 		descriptor.AuthCapability.TrackerID = name
 		descriptor.AuthCapability.Notes = append([]string(nil), descriptor.AuthCapability.Notes...)
+	}
+	if descriptor.WorkflowMedia != nil {
+		if descriptor.WorkflowMedia.DVDMenuCount < 0 {
+			return fmt.Errorf("trackers: definition %s has negative DVD menu requirement", name)
+		}
+		workflowMedia := *descriptor.WorkflowMedia
+		descriptor.WorkflowMedia = &workflowMedia
 	}
 	descriptor.Name = name
 	descriptor.DisplayName = strings.TrimSpace(descriptor.DisplayName)

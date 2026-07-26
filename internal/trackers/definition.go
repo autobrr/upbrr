@@ -552,6 +552,19 @@ type ClaimPolicyProvider interface {
 	ClaimPolicy() *ClaimPolicy
 }
 
+// WorkflowMediaRequirements declares genuine tracker-owned media minimums.
+// Capture preferences and global caps do not belong here.
+type WorkflowMediaRequirements struct {
+	// DVDMenuCount is the minimum selected DVD-menu image count.
+	DVDMenuCount int
+}
+
+// WorkflowMediaRequirementsProvider declares tracker-owned workflow media minimums.
+type WorkflowMediaRequirementsProvider interface {
+	// WorkflowMediaRequirements returns the tracker's explicit media minimums.
+	WorkflowMediaRequirements() *WorkflowMediaRequirements
+}
+
 // Descriptor binds a tracker definition to its optional capabilities.
 type Descriptor struct {
 	// Name is the stable normalized tracker identifier.
@@ -572,6 +585,8 @@ type Descriptor struct {
 	ReleaseNamePolicy ReleaseNamePolicyBinding
 	// UploadContentMode identifies the shared content object consumed before preparation.
 	UploadContentMode UploadContentMode
+	// WorkflowMedia contains explicit tracker-owned media minimums.
+	WorkflowMedia *WorkflowMediaRequirements
 	// Rules contains optional tracker-owned validation rules.
 	Rules *RuleSet
 	// Validation contains the versioned tracker-native validation policy.
