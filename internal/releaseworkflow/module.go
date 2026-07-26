@@ -186,6 +186,7 @@ type Module struct {
 	mediaBuilder             MediaArtifactBuilder
 	descriptionBuilder       DescriptionBuilder
 	uploadPlanBuilder        UploadPlanBuilder
+	uploadAuthenticator      UploadFeedbackAuthenticator
 	operationErrorClassifier func(api.OperationKind, error) error
 	logger                   api.Logger
 	clock                    Clock
@@ -323,6 +324,9 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	state.Workflow.Revision = nextRevision
 	state.Workflow.UpdatedAt = now
 	result.Workflow = state.Workflow
+	if operationID, _ := ctx.Value(operationExecutionContextKey{}).(api.WorkflowOperationID); operationID != "" {
+		m.checkpointCompositeStage(&state, operationID, command, nextRevision)
+	}
 	if err := state.Workflow.Validate(); err != nil {
 		m.cleanupUncommittedResult(ownerID, state.Workflow.ID, result)
 		return CommandResult{}, fmt.Errorf("release workflow validate transition: %w", err)
@@ -498,6 +502,20 @@ func (m *Module) Start(ctx context.Context, ownerID string, command Command) (ap
 		StartedAt:  now,
 		UpdatedAt:  now,
 	}
+	if composite, ok := compositeUploadCommandTarget(command); ok {
+		if state.Composite == nil || state.Composite.RequestFingerprint != composite.SessionFingerprint ||
+			state.Composite.ActiveOperationID != "" {
+			return api.WorkflowOperationStatus{}, ErrOperationConflict
+		}
+		state.Composite.ActiveOperationID = status.ID
+		state.Composite.LastOperationID = status.ID
+		state.Composite.TerminalReason = ""
+		if err := m.saveCompositeMetadata(ctx, ownerID, &state); err != nil {
+			return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow bind composite operation: %w", err)
+		}
+		status.Items = compositeUploadInitialItems()
+		status.Total = len(compositeUploadStages) * 100
+	}
 	commandResourceID := operationCommandResourceID(status.ID)
 	if err := m.private.Put(
 		ownerID,
@@ -506,6 +524,11 @@ func (m *Module) Start(ctx context.Context, ownerID string, command Command) (ap
 		durableOperationCommand{command: command},
 		now.Add(workflowCommandTTL),
 	); err != nil {
+		if state.Composite != nil && state.Composite.ActiveOperationID == status.ID {
+			state.Composite.ActiveOperationID = ""
+			state.Composite.TerminalReason = "start_failed"
+			_ = m.saveCompositeMetadata(ctx, ownerID, &state)
+		}
 		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow retain operation command: %w", err)
 	}
 	record, idempotent, err := m.operations.CreateOperation(ctx, api.ReleaseWorkflowOperationRecord{
@@ -520,6 +543,11 @@ func (m *Module) Start(ctx context.Context, ownerID string, command Command) (ap
 	})
 	if err != nil {
 		m.private.Delete(ownerID, workflowID, commandResourceID)
+		if state.Composite != nil && state.Composite.ActiveOperationID == status.ID {
+			state.Composite.ActiveOperationID = ""
+			state.Composite.TerminalReason = "start_failed"
+			_ = m.saveCompositeMetadata(ctx, ownerID, &state)
+		}
 		return api.WorkflowOperationStatus{}, fmt.Errorf("release workflow create operation: %w", err)
 	}
 	if idempotent {
@@ -763,16 +791,41 @@ func (m *Module) runOperation(
 		return
 	}
 	workerCtx := context.WithValue(ctx, operationExecutionContextKey{}, record.OperationID)
-	workerCtx, closeProgress := m.withOperationReporters(workerCtx, record.OwnerID, record.WorkflowID, record.OperationID)
-	result, err := m.Execute(workerCtx, ownerID, command)
+	closeProgress := func() {}
+	if _, composite := compositeUploadCommandTarget(command); composite {
+		workerCtx = api.WithWorkflowExternalEffectReporter(
+			workerCtx,
+			newDurableExternalEffectReporter(m, record.OwnerID, record.WorkflowID, record.OperationID),
+		)
+	} else {
+		workerCtx, closeProgress = m.withOperationReporters(workerCtx, record.OwnerID, record.WorkflowID, record.OperationID)
+	}
+	var (
+		result CommandResult
+		err    error
+	)
+	if composite, ok := compositeUploadCommandTarget(command); ok {
+		result, err = m.runCompositeUpload(workerCtx, ownerID, composite)
+	} else {
+		result, err = m.Execute(workerCtx, ownerID, command)
+	}
 	closeProgress()
 	stopLease()
 	terminalStatus := api.StageStatusFailed
 	var operationResult *api.WorkflowOperationResult
 	if err == nil {
-		terminalStatus = terminalOperationStatus(command, result)
-		operationResult, err = operationResultForCommand(command, result)
-		if err == nil && operationClaimsSuccessfulResult(api.WorkflowOperationStatus{Status: terminalStatus}) && operationResult == nil {
+		if _, composite := compositeUploadCommandTarget(command); composite {
+			terminalStatus = compositeUploadTerminalStatus(result)
+			operationResult = compositeUploadResult(result)
+		} else {
+			terminalStatus = terminalOperationStatus(command, result)
+			operationResult, err = operationResultForCommand(command, result)
+		}
+		requiresResult := operationClaimsSuccessfulResult(api.WorkflowOperationStatus{Status: terminalStatus})
+		if _, composite := compositeUploadCommandTarget(command); composite && terminalStatus == api.StageStatusPartial {
+			requiresResult = false
+		}
+		if err == nil && requiresResult && operationResult == nil {
 			err = fmt.Errorf("release workflow %s terminal result descriptor is missing", command.commandName())
 		}
 	}
@@ -811,8 +864,10 @@ func (m *Module) runOperation(
 			status.Status = terminalStatus
 			status.ResultRevision = result.Workflow.Revision
 			status.Result = operationResult
-			status.Progress = 100
-			status.Completed = max(status.Completed, status.Total)
+			if terminalStatus != api.StageStatusBlocked {
+				status.Progress = 100
+				status.Completed = max(status.Completed, status.Total)
+			}
 			switch status.Status {
 			case api.StageStatusBlocked:
 				status.Message = "Operation requires action."
@@ -1194,7 +1249,9 @@ func (m *Module) recoverOperationAfterLease(
 	}
 	receiptKey := commandReceiptKey(capsule.command.commandName(), idempotencyKey, fingerprint)
 	_, commandCommitted := state.Receipts[receiptKey]
-	if state.Workflow.Revision != current.ExpectedRevision && !commandCommitted {
+	composite, compositeCommand := compositeUploadCommandTarget(capsule.command)
+	compositeValid := compositeCommand && compositeUploadRecoveryValid(composite, current, state)
+	if state.Workflow.Revision != current.ExpectedRevision && !commandCommitted && !compositeValid {
 		return m.interruptRecoveredOperation(ctx, current, "The retained operation authority is stale.")
 	}
 	if err := m.durability.MarkOperationEffectsUnknown(
@@ -2370,6 +2427,10 @@ func (m *Module) create(
 	state := newState(ownerID, workflow)
 	state.ProcessEpoch = m.processEpoch
 	state.FactInstructions[facts.ID] = facts
+	state.Composite = command.Composite
+	if state.Composite != nil {
+		state.Composite.LastCommittedRevision = workflow.Revision
+	}
 	state, idempotent, err := m.repository.Create(ctx, ownerID, command.IdempotencyKey, fingerprint, state)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow create: %w", err)
@@ -2502,6 +2563,10 @@ func commandTarget(command mutation) (api.WorkflowID, api.WorkflowRevision, stri
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case ResolveActionCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
+	case CompositeUploadCommand:
+		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
+	case applyCompositeUploadFeedbackCommand:
+		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case CreateWorkflowCommand:
 		return "", 0, "", errors.New("release workflow create command has no existing target")
 	}
@@ -2518,7 +2583,7 @@ func (m *Module) apply(
 ) (CommandResult, error) {
 	switch typed := command.(type) {
 	case ReplaceFactInstructionsCommand:
-		return m.replaceFactInstructions(ownerID, state, nextRevision, now, typed)
+		return m.replaceFactInstructions(ctx, ownerID, state, nextRevision, now, typed)
 	case PrepareReleaseCommand:
 		return m.prepareRelease(ctx, ownerID, state, nextRevision, now, typed)
 	case ResetReleaseCommand:
@@ -2560,24 +2625,43 @@ func (m *Module) apply(
 	case RetryFailedUploadsCommand:
 		return m.retryFailedUploads(ctx, ownerID, state, nextRevision, now, typed)
 	case CancelWorkflowCommand:
-		return m.cancelWorkflow(ownerID, state)
+		return m.cancelWorkflow(ctx, ownerID, state)
 	case InvalidateTrackersCommand:
-		return m.invalidateTrackers(ownerID, state, nextRevision, now, typed)
+		return m.invalidateTrackers(ctx, ownerID, state, nextRevision, now, typed)
 	case ResolveActionCommand:
 		return m.resolveAction(ctx, ownerID, state, nextRevision, now, typed)
+	case applyCompositeUploadFeedbackCommand:
+		return m.applyCompositeUploadFeedback(ctx, ownerID, state, nextRevision, now, typed)
+	case CompositeUploadCommand:
+		return CommandResult{}, errors.New("release workflow composite command cannot update one workflow stage")
 	case CreateWorkflowCommand:
 		return CommandResult{}, errors.New("release workflow create command cannot update existing state")
 	}
 	return CommandResult{}, errors.New("release workflow unsupported command")
 }
 
-func (m *Module) cancelWorkflow(ownerID string, state *State) (CommandResult, error) {
+// invalidateWorkflowPrivateResources clears stale stage authority while
+// retaining the active operation's durable command capsule.
+func (m *Module) invalidateWorkflowPrivateResources(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+) {
+	operationID, _ := ctx.Value(operationExecutionContextKey{}).(api.WorkflowOperationID)
+	if operationID == "" {
+		m.private.InvalidateWorkflow(ownerID, workflowID)
+		return
+	}
+	m.private.InvalidateWorkflowExcept(ownerID, workflowID, operationCommandResourceID(operationID))
+}
+
+func (m *Module) cancelWorkflow(ctx context.Context, ownerID string, state *State) (CommandResult, error) {
 	switch state.Workflow.Status {
 	case api.WorkflowStatusCompleted, api.WorkflowStatusCanceled:
 		return CommandResult{}, fmt.Errorf("%w: terminal workflow cannot be canceled", ErrInvalidTransition)
 	case api.WorkflowStatusDraft, api.WorkflowStatusActive, api.WorkflowStatusBlocked, api.WorkflowStatusFailed:
 	}
-	m.private.InvalidateWorkflow(ownerID, state.Workflow.ID)
+	m.invalidateWorkflowPrivateResources(ctx, ownerID, state.Workflow.ID)
 	state.Workflow.Release = nil
 	state.Workflow.TrackerCatalog = nil
 	state.Workflow.TrackerRuntime = nil
@@ -2597,6 +2681,7 @@ func (m *Module) cancelWorkflow(ownerID string, state *State) (CommandResult, er
 }
 
 func (m *Module) replaceFactInstructions(
+	ctx context.Context,
 	ownerID string,
 	state *State,
 	nextRevision api.WorkflowRevision,
@@ -2627,7 +2712,7 @@ func (m *Module) replaceFactInstructions(
 	state.Workflow.Status = api.WorkflowStatusDraft
 	state.Workflow.RequiredActions = nil
 	state.Workflow.Failures = nil
-	m.private.InvalidateWorkflow(ownerID, state.Workflow.ID)
+	m.invalidateWorkflowPrivateResources(ctx, ownerID, state.Workflow.ID)
 	return CommandResult{FactInstructions: &snapshot}, nil
 }
 
@@ -2683,7 +2768,7 @@ func (m *Module) prepareRelease(
 	state.Workflow.Release = &api.ReleaseSnapshotRef{ID: snapshot.ID, Revision: snapshot.Revision}
 	if prior == nil || prior.ID != snapshot.ID || prior.Revision != snapshot.Revision {
 		invalidateTrackerAndDownstream(&state.Workflow)
-		m.private.InvalidateWorkflow(ownerID, state.Workflow.ID)
+		m.invalidateWorkflowPrivateResources(ctx, ownerID, state.Workflow.ID)
 	}
 	state.Workflow.Status = api.WorkflowStatusActive
 	state.Workflow.RequiredActions = nil
@@ -2791,7 +2876,7 @@ func (m *Module) replaceFactsAndPrepare(
 	now time.Time,
 	input api.PrepareInput,
 ) (CommandResult, error) {
-	factsResult, err := m.replaceFactInstructions(ownerID, state, nextRevision, now, ReplaceFactInstructionsCommand{
+	factsResult, err := m.replaceFactInstructions(ctx, ownerID, state, nextRevision, now, ReplaceFactInstructionsCommand{
 		Instructions: input.Instructions,
 	})
 	if err != nil {
@@ -2817,6 +2902,7 @@ func currentReleaseSnapshot(state *State) (api.ReleaseSnapshot, error) {
 }
 
 func (m *Module) setTrackerContext(
+	ctx context.Context,
 	ownerID string,
 	state *State,
 	nextRevision api.WorkflowRevision,
@@ -2882,7 +2968,7 @@ func (m *Module) setTrackerContext(
 	state.Workflow.TrackerRuntime = &api.TrackerRuntimeSnapshotRef{ID: runtime.ID, Revision: runtime.Revision}
 	state.Workflow.Selection = &api.TrackerSelectionRef{ID: selection.ID, Revision: selection.Revision}
 	invalidateProjectionAndDownstream(&state.Workflow)
-	m.private.InvalidateWorkflow(ownerID, state.Workflow.ID)
+	m.invalidateWorkflowPrivateResources(ctx, ownerID, state.Workflow.ID)
 	state.Workflow.Status = api.WorkflowStatusActive
 	return CommandResult{
 		Catalog:   &catalog,
@@ -2934,7 +3020,7 @@ func (m *Module) projectTrackers(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow build tracker projections: %w", err)
 	}
-	contextResult, err := m.setTrackerContext(ownerID, state, nextRevision, now, trackerContextPublication{
+	contextResult, err := m.setTrackerContext(ctx, ownerID, state, nextRevision, now, trackerContextPublication{
 		Catalog:   catalog,
 		Runtime:   runtime,
 		Selection: selection,
@@ -2966,7 +3052,7 @@ func (m *Module) projectTrackers(
 		Revision: instructionSnapshot.Revision,
 	}
 	projections.Instructions = state.Workflow.ProjectionInstructions
-	projectionResult, err := m.publishProjections(ownerID, state, nextRevision, now, projectionSetPublication{Snapshot: projections})
+	projectionResult, err := m.publishProjections(ctx, ownerID, state, nextRevision, now, projectionSetPublication{Snapshot: projections})
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -2980,6 +3066,7 @@ func (m *Module) projectTrackers(
 }
 
 func (m *Module) publishProjections(
+	ctx context.Context,
 	ownerID string,
 	state *State,
 	nextRevision api.WorkflowRevision,
@@ -3011,7 +3098,7 @@ func (m *Module) publishProjections(
 	state.Projections[snapshot.ID] = snapshot
 	state.Workflow.TrackerProjections = &api.TrackerReleaseProjectionSetRef{ID: snapshot.ID, Revision: snapshot.Revision}
 	invalidatePreflightAndDownstream(&state.Workflow)
-	m.private.InvalidateWorkflow(ownerID, state.Workflow.ID)
+	m.invalidateWorkflowPrivateResources(ctx, ownerID, state.Workflow.ID)
 	setWorkflowStageStatus(&state.Workflow, snapshot.Status, snapshot.RequiredActions, snapshot.Failures)
 	return CommandResult{Projections: &snapshot}, nil
 }
@@ -3103,7 +3190,7 @@ func (m *Module) preflightTrackers(
 	state.Workflow.TrackerPreflight = finalSet.Preflight
 	state.Workflow.TrackerProjections = &api.TrackerReleaseProjectionSetRef{ID: finalSet.ID, Revision: finalSet.Revision}
 	invalidateDupeAndDownstream(&state.Workflow)
-	m.private.InvalidateWorkflow(ownerID, state.Workflow.ID)
+	m.invalidateWorkflowPrivateResources(ctx, ownerID, state.Workflow.ID)
 	setWorkflowStageStatus(&state.Workflow, finalSet.Status, finalSet.RequiredActions, finalSet.Failures)
 	return CommandResult{Preflight: &assessment, Projections: &finalSet}, nil
 }
@@ -3648,7 +3735,7 @@ func (m *Module) captureMedia(
 	projections, projectionsOK := state.Projections[workflow.TrackerProjections.ID]
 	dupes, dupesOK := state.Dupes[workflow.Dupes.ID]
 	if !projectionsOK || !dupesOK || projections.Revision != workflow.TrackerProjections.Revision ||
-		dupes.Revision != workflow.Dupes.Revision || !dupes.ExpiresAt.After(now) || !dupesAllowContinuation(&dupes) {
+		dupes.Revision != workflow.Dupes.Revision || !dupes.ExpiresAt.After(now) || !dupesAllowContinuation(&projections, &dupes) {
 		return CommandResult{}, fmt.Errorf("%w: media dependencies are stale or unresolved", ErrInvalidTransition)
 	}
 	eligibleProjections := DownstreamEligibleProjections(projections, dupes)
@@ -4030,7 +4117,7 @@ func (m *Module) mediaExtensionContext(
 	dupes, dupesOK := state.Dupes[workflow.Dupes.ID]
 	if !releaseOK || !projectionsOK || !dupesOK || releaseSnapshot.Revision != workflow.Release.Revision ||
 		projections.Revision != workflow.TrackerProjections.Revision || dupes.Revision != workflow.Dupes.Revision ||
-		dupes.ProjectionSet != *workflow.TrackerProjections || !dupes.ExpiresAt.After(now) || !dupesAllowContinuation(&dupes) {
+		dupes.ProjectionSet != *workflow.TrackerProjections || !dupes.ExpiresAt.After(now) || !dupesAllowContinuation(&projections, &dupes) {
 		return api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.TrackerReleaseProjectionSet{}, nil, nil,
 			fmt.Errorf("%w: media dependencies are stale or unresolved", ErrInvalidTransition)
 	}
@@ -4328,6 +4415,9 @@ func (m *Module) publishMedia(
 	snapshot.ReleaseRef = api.ReleaseRef{SourcePath: release.Release.Source.SourcePath, Generation: release.Release.Generation}
 	snapshot.ProjectionSet = *workflow.TrackerProjections
 	snapshot.CreatedAt = now
+	if err := m.stampMediaActions(&snapshot, nextRevision, now); err != nil {
+		return CommandResult{}, err
+	}
 	if err := snapshot.Validate(); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow publish media: %w", err)
 	}
@@ -4337,6 +4427,23 @@ func (m *Module) publishMedia(
 	invalidateUploadPlan(&state.Workflow)
 	setWorkflowStageStatus(&state.Workflow, snapshot.Status, snapshot.RequiredActions, snapshot.Failures)
 	return CommandResult{Media: &snapshot}, nil
+}
+
+func (m *Module) stampMediaActions(snapshot *api.MediaArtifactSet, revision api.WorkflowRevision, now time.Time) error {
+	for index := range snapshot.RequiredActions {
+		action := &snapshot.RequiredActions[index]
+		if action.ID == "" {
+			id, err := m.newID("action")
+			if err != nil {
+				return err
+			}
+			action.ID = api.RequiredActionID(id)
+		}
+		action.Status = api.RequiredActionStatusPending
+		action.WorkflowRevision = revision
+		action.CreatedAt = now
+	}
+	return nil
 }
 
 func (m *Module) generateDescriptions(
@@ -4783,7 +4890,7 @@ func (m *Module) prepareUploads(
 		media.Revision != workflow.Media.Revision || descriptions.Revision != workflow.Descriptions.Revision ||
 		dupes.ProjectionSet != *workflow.TrackerProjections || media.ProjectionSet != *workflow.TrackerProjections ||
 		descriptions.ProjectionSet != *workflow.TrackerProjections || descriptions.Media == nil || *descriptions.Media != *workflow.Media ||
-		projections.Status != api.StageStatusReady || !dupesAllowContinuation(&dupes) || !dupes.ExpiresAt.After(now) ||
+		projections.Status != api.StageStatusReady || !dupesAllowContinuation(&projections, &dupes) || !dupes.ExpiresAt.After(now) ||
 		!stageSucceeded(media.Status) ||
 		!descriptionsHaveViableTracker(&descriptions) {
 		return preparedUploads{}, fmt.Errorf("%w: upload dependencies are stale or not ready", ErrInvalidTransition)
@@ -5366,6 +5473,7 @@ func (m *Module) newReconcileAction(
 }
 
 func (m *Module) invalidateTrackers(
+	ctx context.Context,
 	ownerID string,
 	state *State,
 	nextRevision api.WorkflowRevision,
@@ -5438,7 +5546,7 @@ func (m *Module) invalidateTrackers(
 	invalidateUploadPlan(&state.Workflow)
 	state.Workflow.Status = api.WorkflowStatusBlocked
 	state.Workflow.RequiredActions = append(state.Workflow.RequiredActions, action)
-	m.private.InvalidateWorkflow(ownerID, state.Workflow.ID)
+	m.invalidateWorkflowPrivateResources(ctx, ownerID, state.Workflow.ID)
 	return result, nil
 }
 

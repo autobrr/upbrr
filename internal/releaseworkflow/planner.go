@@ -353,14 +353,14 @@ func planContinuationCommand(
 		}, "decide-duplicates"
 	}
 	if !duplicateDecisionsComplete(current.Dupes) {
-		if !dupesAllowContinuation(current.Dupes) {
+		if !dupesAllowContinuation(current.Projections, current.Dupes) {
 			return nil, "decide-duplicates"
 		}
 	}
 	if workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalDuplicatesDecided) {
 		return nil, ""
 	}
-	if !dupesAllowContinuation(current.Dupes) {
+	if !dupesAllowContinuation(current.Projections, current.Dupes) {
 		return nil, ""
 	}
 	if current.Media == nil || !continuationMediaCaptureSatisfied(current, request.Intent.Media) {

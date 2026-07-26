@@ -32,6 +32,47 @@ func (b *Backend) continueReleaseWorkflow(
 	return result, nil
 }
 
+func (b *Backend) startReleaseWorkflowUpload(
+	ctx context.Context,
+	ownerID string,
+	request api.CreateReleaseWorkflowUploadRequest,
+) (releaseworkflow.CommandResult, error) {
+	runtime, err := b.requireRuntime()
+	if err != nil {
+		return releaseworkflow.CommandResult{}, err
+	}
+	workflowCore, err := runtime.releaseWorkflowCore()
+	if err != nil {
+		return releaseworkflow.CommandResult{}, err
+	}
+	result, err := workflowCore.StartReleaseWorkflowUpload(ctx, ownerID, request)
+	if err != nil {
+		return releaseworkflow.CommandResult{}, classifyReleaseWorkflowError(err)
+	}
+	return result, nil
+}
+
+func (b *Backend) submitReleaseWorkflowUploadFeedback(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	feedback api.ReleaseWorkflowUploadFeedback,
+) (releaseworkflow.CommandResult, error) {
+	runtime, err := b.requireRuntime()
+	if err != nil {
+		return releaseworkflow.CommandResult{}, err
+	}
+	workflowCore, err := runtime.releaseWorkflowCore()
+	if err != nil {
+		return releaseworkflow.CommandResult{}, err
+	}
+	result, err := workflowCore.SubmitReleaseWorkflowUploadFeedback(ctx, ownerID, workflowID, feedback)
+	if err != nil {
+		return releaseworkflow.CommandResult{}, classifyReleaseWorkflowError(err)
+	}
+	return result, nil
+}
+
 func (b *Backend) executeReleaseWorkflow(
 	ctx context.Context,
 	ownerID string,

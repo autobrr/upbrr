@@ -75,6 +75,8 @@ func decodeDurableOperationCommand(payload []byte) (any, error) {
 		command = &ExecuteUploadsCommand{}
 	case (RetryFailedUploadsCommand{}).commandName():
 		command = &RetryFailedUploadsCommand{}
+	case (CompositeUploadCommand{}).commandName():
+		command = &CompositeUploadCommand{}
 	default:
 		return nil, fmt.Errorf("unsupported release workflow operation command %q", envelope.Name)
 	}
@@ -116,6 +118,8 @@ func operationCommandValue(command Command) Command {
 	case *ExecuteUploadsCommand:
 		return *typed
 	case *RetryFailedUploadsCommand:
+		return *typed
+	case *CompositeUploadCommand:
 		return *typed
 	default:
 		return command

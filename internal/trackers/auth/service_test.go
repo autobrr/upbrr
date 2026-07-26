@@ -1232,6 +1232,26 @@ func TestStatusHDBPasskeyWithoutCookiesIsNotUploadReady(t *testing.T) {
 	}
 }
 
+func TestLoginHDBWithoutCredentialLoginReturnsStatus(t *testing.T) {
+	t.Parallel()
+
+	dbPath := newTrackerAuthTestDB(t)
+	service := newTestService(config.Config{
+		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
+		Trackers: config.TrackersConfig{
+			Trackers: map[string]config.TrackerConfig{"HDB": {Username: "user", Passkey: "passkey"}},
+		},
+	})
+
+	status, err := service.Login(context.Background(), "HDB", api.TrackerAuthLoginRequest{})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if status.State != StateLoginRequired || !strings.Contains(status.Message, "not supported") {
+		t.Fatalf("expected unsupported credential login status, got %#v", status)
+	}
+}
+
 func TestStatusMTVAPIKeyOnlyReportsUploadNotReady(t *testing.T) {
 	t.Parallel()
 

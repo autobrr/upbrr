@@ -361,3 +361,42 @@ func TestPointerFieldsAreOptionalAndNullable(t *testing.T) {
 		}
 	}
 }
+
+func TestCompositeUploadRoutesAndSchemasAreGenerated(t *testing.T) {
+	t.Parallel()
+
+	builder := buildContractSchemaBuilder()
+	paths := buildPaths(routeManifest(), builder)
+	create := operationAt(t, paths, "/uploads", "post")
+	feedback := operationAt(t, paths, "/uploads/{workflowId}/feedback", "post")
+	for name, operation := range map[string]map[string]any{
+		"create":   create,
+		"feedback": feedback,
+	} {
+		responses := requireType[map[string]any](t, operation["responses"])
+		if _, ok := responses["200"]; !ok {
+			t.Fatalf("%s composite route lacks 200 response", name)
+		}
+		if _, ok := responses["202"]; !ok {
+			t.Fatalf("%s composite route lacks 202 response", name)
+		}
+	}
+	createBody := requireType[map[string]any](t, create["requestBody"])
+	createContent := requireType[map[string]any](t, createBody["content"])
+	createJSON := requireType[map[string]any](t, createContent["application/json"])
+	examples := requireType[map[string]any](t, createJSON["examples"])
+	for _, name := range []string{"strictUnattended", "unattendedConfirm", "debugNoSeed", "duplicateAllowlist"} {
+		if _, ok := examples[name]; !ok {
+			t.Fatalf("composite create examples missing %s", name)
+		}
+	}
+	requestSchema := builder.schemas["CreateReleaseWorkflowUploadRequest"]
+	if requestSchema == nil || !slices.Contains(requestSchema.Required, "source") ||
+		!slices.Contains(requestSchema.Required, "unattended") {
+		t.Fatalf("composite request required fields = %#v", requestSchema)
+	}
+	kindSchema := builder.schemas["ReleaseWorkflowUploadFeedbackKind"]
+	if kindSchema == nil || len(kindSchema.Enum) != 12 {
+		t.Fatalf("composite feedback enum = %#v", kindSchema)
+	}
+}

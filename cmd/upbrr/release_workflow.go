@@ -26,6 +26,17 @@ const cliWorkflowOwnerID = "cli"
 // It deliberately excludes HTTP and every legacy operation-specific entrypoint.
 type cliReleaseWorkflowCore interface {
 	ContinueReleaseWorkflow(context.Context, string, api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error)
+	StartReleaseWorkflowUpload(
+		context.Context,
+		string,
+		api.CreateReleaseWorkflowUploadRequest,
+	) (releaseworkflow.CommandResult, error)
+	SubmitReleaseWorkflowUploadFeedback(
+		context.Context,
+		string,
+		api.WorkflowID,
+		api.ReleaseWorkflowUploadFeedback,
+	) (releaseworkflow.CommandResult, error)
 	CurrentReleaseWorkflow(context.Context, string, api.WorkflowID) (releaseworkflow.CommandResult, error)
 	ReleaseWorkflowOperation(
 		context.Context,
@@ -54,6 +65,7 @@ type cliWorkflowSession struct {
 	logger         api.Logger
 	current        releaseworkflow.CommandResult
 	intent         cliWorkflowIntent
+	uploadRequest  api.Request
 	idempotencyRun string
 	intentSequence uint64
 }
@@ -62,22 +74,11 @@ type cliWorkflowSession struct {
 // initial flag-to-workflow mapping. Later stages consume shared workflow DTOs,
 // not the broad legacy api.Request shape.
 type cliWorkflowIntent struct {
-	sourcePath               string
-	trackerIDs               []api.TrackerID
-	projectionInstructions   map[api.TrackerID]api.TrackerProjectionInstructions
-	trackerConfig            api.TrackerConfigOverrides
-	trackerSite              api.TrackerSiteOverrides
-	interaction              api.InteractionMode
-	doubleDupeCheck          bool
-	skipRemoteDupeCheck      bool
-	ignoreDupesFor           map[api.TrackerID]struct{}
-	hasManualDVDMenuPaths    bool
-	media                    api.MediaCaptureInstructions
-	description              api.DescriptionInstructions
-	descriptionOverrideURL   string
-	descriptionOverrideRaw   string
-	descriptionOverrideGroup string
-	noSeed                   bool
+	sourcePath    string
+	trackerConfig api.TrackerConfigOverrides
+	trackerSite   api.TrackerSiteOverrides
+	interaction   api.InteractionMode
+	noSeed        bool
 }
 
 func (s *cliWorkflowSession) nextIdempotencyKey(label string) string {
@@ -259,6 +260,7 @@ func newCLIWorkflowSession(
 		core:           coreSvc,
 		logger:         logger,
 		intent:         mapCLIWorkflowIntent(request),
+		uploadRequest:  request,
 		idempotencyRun: strings.ToLower(rand.Text()),
 	}
 	if err := session.continueUntilStable(ctx, api.ContinueReleaseWorkflowRequest{
@@ -282,44 +284,12 @@ func newCLIWorkflowSession(
 }
 
 func mapCLIWorkflowIntent(request api.Request) cliWorkflowIntent {
-	ignoreDupesFor := make(map[api.TrackerID]struct{}, len(request.IgnoreDupesFor))
-	for _, tracker := range request.IgnoreDupesFor {
-		trackerID := api.TrackerID(strings.ToUpper(strings.TrimSpace(tracker)))
-		if trackerID != "" {
-			ignoreDupesFor[trackerID] = struct{}{}
-		}
-	}
-	overrides := make([]api.DescriptionOverrideInput, 0, len(request.DescriptionGroups))
-	for _, group := range request.DescriptionGroups {
-		if source := strings.TrimSpace(group.RawDescription); source != "" {
-			overrides = append(overrides, api.DescriptionOverrideInput{GroupKey: group.GroupKey, Source: source})
-		}
-	}
 	return cliWorkflowIntent{
-		sourcePath:             strings.TrimSpace(request.SourcePath),
-		trackerIDs:             normalizeCLIWorkflowTrackerIDs(request.Trackers),
-		projectionInstructions: cliProjectionInstructions(request),
-		trackerConfig:          request.TrackerConfigOverrides,
-		trackerSite:            request.TrackerSiteOverrides,
-		interaction:            request.Options.InteractionMode,
-		doubleDupeCheck:        request.DoubleDupeCheck,
-		skipRemoteDupeCheck:    request.SkipDupeCheck,
-		ignoreDupesFor:         ignoreDupesFor,
-		hasManualDVDMenuPaths:  len(request.ScreenshotOverrides.MenuPaths) > 0,
-		media:                  cliWorkflowMediaInstructions(request),
-		description: api.DescriptionInstructions{
-			Overrides:     overrides,
-			Options:       request.Options,
-			ImageHost:     request.ImageHostOverrides,
-			TrackerConfig: request.TrackerConfigOverrides,
-			TrackerSite:   request.TrackerSiteOverrides,
-			Client:        request.ClientOverrides,
-			Torrent:       request.TorrentOverrides,
-		},
-		descriptionOverrideURL:   strings.TrimSpace(request.DescriptionOverrideURL),
-		descriptionOverrideRaw:   strings.TrimSpace(request.DescriptionOverrideRaw),
-		descriptionOverrideGroup: strings.TrimSpace(request.DescriptionOverrideGroup),
-		noSeed:                   request.Options.NoSeed,
+		sourcePath:    strings.TrimSpace(request.SourcePath),
+		trackerConfig: request.TrackerConfigOverrides,
+		trackerSite:   request.TrackerSiteOverrides,
+		interaction:   request.Options.InteractionMode,
+		noSeed:        request.Options.NoSeed,
 	}
 }
 
@@ -500,156 +470,10 @@ func (s *cliWorkflowSession) complete(
 	cfg config.Config,
 	logger api.Logger,
 ) (int, error) {
-	if s.intent.hasManualDVDMenuPaths {
-		return 0, errors.New("upbrr: manual DVD menu paths are not accepted by the retained workflow; use automatic menu capture")
+	if strings.TrimSpace(s.uploadRequest.SourcePath) == "" {
+		return 0, errors.New("upbrr: composite upload source is unavailable")
 	}
-	instructions := s.intent.projectionInstructions
-	if instructions == nil {
-		instructions = make(map[api.TrackerID]api.TrackerProjectionInstructions)
-	}
-	duplicateCheckCount := uint8(1)
-	if s.intent.doubleDupeCheck {
-		duplicateCheckCount = 2
-	}
-	goal := api.WorkflowGoalUploaded
-	if debug {
-		goal = api.WorkflowGoalDryRun
-	}
-	executionMode := api.WorkflowExecutionModeNormal
-	if debug {
-		executionMode = api.WorkflowExecutionModeDebug
-	}
-	request := api.ContinueReleaseWorkflowRequest{
-		Authority: &api.WorkflowAuthority{
-			WorkflowID:       s.current.Workflow.ID,
-			ExpectedRevision: s.current.Workflow.Revision,
-		},
-		IdempotencyKey: s.nextIdempotencyKey("complete"),
-		Goal:           goal,
-		Intent: api.WorkflowIntent{
-			Interaction:            s.intent.interaction,
-			ExecutionMode:          executionMode,
-			TrackerIDs:             append([]api.TrackerID(nil), s.intent.trackerIDs...),
-			ProjectionInstructions: instructions,
-			SkipRemoteDuplicates:   s.intent.skipRemoteDupeCheck,
-			DuplicateCheckCount:    duplicateCheckCount,
-			DuplicateDecisions:     make(map[api.TrackerID]api.DupeDecision),
-			Media:                  &s.intent.media,
-			NoSeed:                 s.intent.noSeed,
-		},
-	}
-	var (
-		projectionRevision api.WorkflowRevision
-		dupeRevision       api.WorkflowRevision
-	)
-	for range 64 {
-		if debug && s.current.DryRun != nil {
-			printCLIWorkflowDryRun(*s.current.DryRun, s.intent.noSeed)
-			return 0, nil
-		}
-		if !debug && s.current.UploadResult != nil {
-			return printCLIWorkflowUploadResult(s.current.UploadResult)
-		}
-		if s.current.Selection != nil && len(s.current.Selection.TrackerIDs) == 0 {
-			fmt.Printf("No trackers configured for %s\n", formatPathLabel(s.intent.sourcePath))
-			return 0, nil
-		}
-
-		intentChanged := false
-		if s.current.Projections != nil && s.current.Projections.Revision != projectionRevision {
-			projectionRevision = s.current.Projections.Revision
-			if s.current.Projections.Preflight != nil {
-				printCLIWorkflowProjections(s.current.Projections)
-			}
-			if s.current.Selection != nil {
-				intentChanged = ensureCLIWorkflowProjectionOverrides(
-					instructions,
-					s.current.Selection.TrackerIDs,
-					s.intent.trackerConfig,
-					s.intent.trackerSite,
-				)
-			}
-			questionnaireChanged, err := collectCLIWorkflowQuestionnaires(
-				reader,
-				s.intent.interaction,
-				s.current.Projections,
-				instructions,
-			)
-			if err != nil {
-				return 0, err
-			}
-			intentChanged = intentChanged || questionnaireChanged
-			request.Intent.ProjectionInstructions = instructions
-			descriptionInstructions, err := cliWorkflowDescriptionInstructions(s.intent, instructions, s.current.Projections)
-			if err != nil {
-				return 0, err
-			}
-			descriptionChanged, err := setCLIWorkflowDescriptionIntent(&request, descriptionInstructions)
-			if err != nil {
-				return 0, err
-			}
-			intentChanged = intentChanged || descriptionChanged
-		}
-
-		if s.current.Dupes != nil && s.current.Dupes.Revision != dupeRevision {
-			dupeRevision = s.current.Dupes.Revision
-			decisions, err := s.collectDuplicateDecisions(reader, debug)
-			if err != nil {
-				return 0, err
-			}
-			for trackerID, decision := range decisions {
-				if request.Intent.DuplicateDecisions[trackerID] != decision {
-					request.Intent.DuplicateDecisions[trackerID] = decision
-					intentChanged = true
-				}
-			}
-		}
-
-		answers, declined, err := s.collectContinuationActionAnswers(ctx, reader, cfg, logger)
-		if err != nil {
-			return 0, err
-		}
-		if declined {
-			return 0, nil
-		}
-		request.Answers = answers
-		if len(answers) > 0 {
-			intentChanged = true
-		}
-		if !debug && request.Approval == nil {
-			approval, declined, err := s.collectUploadApproval(reader)
-			if err != nil {
-				return 0, err
-			}
-			if declined {
-				return 0, nil
-			}
-			if approval != nil {
-				request.Approval = approval
-				intentChanged = true
-			}
-		}
-		if intentChanged {
-			request.IdempotencyKey = s.nextIdempotencyKey("continue")
-		}
-
-		priorRevision := s.current.Workflow.Revision
-		request.Authority = &api.WorkflowAuthority{
-			WorkflowID:       s.current.Workflow.ID,
-			ExpectedRevision: priorRevision,
-		}
-		if err := s.executeContinuation(ctx, request); err != nil {
-			return 0, err
-		}
-		if s.current.Workflow.Revision == priorRevision {
-			if cliWorkflowNoUploadCandidates(s.current.Continuation) {
-				fmt.Printf("No trackers selected for %s\n", formatPathLabel(s.intent.sourcePath))
-				return 0, nil
-			}
-			return 0, cliWorkflowContinuationError(s.current)
-		}
-	}
-	return 0, errors.New("upbrr: release workflow continuation exceeded the transition limit")
+	return s.completeComposite(ctx, debug, reader, cfg, logger)
 }
 
 func cliProjectionInstructions(request api.Request) map[api.TrackerID]api.TrackerProjectionInstructions {
@@ -787,27 +611,6 @@ func auditableProjectionPolicyDecision(decision api.TrackerPolicyDecision) bool 
 		strings.EqualFold(strings.TrimSpace(decision.Decision), "bypassed")
 }
 
-func setCLIWorkflowDescriptionIntent(
-	request *api.ContinueReleaseWorkflowRequest,
-	instructions api.DescriptionInstructions,
-) (bool, error) {
-	if request.Intent.Descriptions != nil {
-		currentFingerprint, err := api.CanonicalWorkflowFingerprint(*request.Intent.Descriptions)
-		if err != nil {
-			return false, fmt.Errorf("upbrr: fingerprint current description intent: %w", err)
-		}
-		nextFingerprint, err := api.CanonicalWorkflowFingerprint(instructions)
-		if err != nil {
-			return false, fmt.Errorf("upbrr: fingerprint next description intent: %w", err)
-		}
-		if currentFingerprint == nextFingerprint {
-			return false, nil
-		}
-	}
-	request.Intent.Descriptions = &instructions
-	return true, nil
-}
-
 func (s *cliWorkflowSession) collectContinuationActionAnswers(
 	ctx context.Context,
 	reader *bufio.Reader,
@@ -898,100 +701,6 @@ func (s *cliWorkflowSession) collectContinuationActionAnswers(
 	return answers, false, nil
 }
 
-func (s *cliWorkflowSession) collectDuplicateDecisions(
-	reader *bufio.Reader,
-	debug bool,
-) (map[api.TrackerID]api.DupeDecision, error) {
-	if s.current.Dupes == nil {
-		return nil, errors.New("upbrr: duplicate workflow produced no assessment")
-	}
-	decisions := make(map[api.TrackerID]api.DupeDecision)
-	for _, result := range s.current.Dupes.Results {
-		searchName := strings.TrimSpace(result.Criteria.Name)
-		if searchName != "" && searchName != strings.TrimSpace(result.UploadReleaseName) {
-			fmt.Printf(
-				"Dupe check %s: upload_name=%s search_name=%s matches=%d decision=%s\n",
-				result.TrackerID,
-				result.UploadReleaseName,
-				searchName,
-				len(result.Matches),
-				result.Decision,
-			)
-		} else {
-			fmt.Printf(
-				"Dupe check %s: upload_name=%s matches=%d decision=%s\n",
-				result.TrackerID,
-				result.UploadReleaseName,
-				len(result.Matches),
-				result.Decision,
-			)
-		}
-		if result.Decision != api.DupeDecisionPending {
-			continue
-		}
-		if _, ok := s.intent.ignoreDupesFor[result.TrackerID]; ok {
-			decisions[result.TrackerID] = api.DupeDecisionIgnored
-			continue
-		}
-		if debug || s.intent.interaction == api.InteractionModeUnattended {
-			decisions[result.TrackerID] = api.DupeDecisionAccepted
-			continue
-		}
-		allow, err := promptYesNo(reader, fmt.Sprintf("Upload to %s despite duplicate evidence? [y/N]: ", result.TrackerID), false)
-		if err != nil {
-			return nil, err
-		}
-		if allow {
-			decisions[result.TrackerID] = api.DupeDecisionIgnored
-		} else {
-			decisions[result.TrackerID] = api.DupeDecisionAccepted
-		}
-	}
-	return decisions, nil
-}
-
-func (s *cliWorkflowSession) collectUploadApproval(
-	reader *bufio.Reader,
-) (*api.UploadApproval, bool, error) {
-	if s.current.DryRun == nil {
-		return nil, false, nil
-	}
-	action := pendingCLIWorkflowAction(s.current.Continuation.RequiredActions, api.RequiredActionApproveUpload)
-	if action == nil {
-		return nil, false, nil
-	}
-	if s.intent.interaction != api.InteractionModeUnattended {
-		confirmed, err := promptYesNo(reader, "Execute tracker uploads? [y/N]: ", false)
-		if err != nil {
-			return nil, false, err
-		}
-		if !confirmed {
-			return nil, true, nil
-		}
-	}
-	return &api.UploadApproval{
-		ActionID: action.ID,
-		DryRun: api.UploadDryRunResultRef{
-			ID:       s.current.DryRun.ID,
-			Revision: s.current.DryRun.Revision,
-		},
-		InputFingerprint: s.current.DryRun.InputFingerprint,
-	}, false, nil
-}
-
-func cliWorkflowNoUploadCandidates(continuation api.WorkflowContinuation) bool {
-	if len(continuation.TrackerOutcomes) == 0 {
-		return false
-	}
-	for _, lane := range continuation.TrackerOutcomes {
-		if lane.Goal != api.WorkflowGoalTrackersAssessed ||
-			(lane.Disposition != api.WorkflowDispositionFailed && lane.Disposition != api.WorkflowDispositionCanceled) {
-			return false
-		}
-	}
-	return true
-}
-
 func cliWorkflowContinuationError(current releaseworkflow.CommandResult) error {
 	for _, lane := range current.Continuation.TrackerOutcomes {
 		if len(lane.Failures) > 0 {
@@ -1035,47 +744,6 @@ func cliWorkflowMediaInstructions(request api.Request) api.MediaCaptureInstructi
 		Selections:      selections,
 		CaptureDVDMenus: request.Options.CaptureDVDMenus,
 	}
-}
-
-func cliWorkflowDescriptionInstructions(
-	intent cliWorkflowIntent,
-	projectionInstructions map[api.TrackerID]api.TrackerProjectionInstructions,
-	projections *api.TrackerReleaseProjectionSet,
-) (api.DescriptionInstructions, error) {
-	if intent.descriptionOverrideURL != "" && intent.descriptionOverrideRaw == "" {
-		return api.DescriptionInstructions{}, errors.New("upbrr: URL-only description overrides must be resolved before workflow generation")
-	}
-	instructions := intent.description
-	instructions.Overrides = append([]api.DescriptionOverrideInput(nil), instructions.Overrides...)
-	if source := intent.descriptionOverrideRaw; source != "" {
-		groupKey := intent.descriptionOverrideGroup
-		if groupKey == "" && projections != nil {
-			for _, projection := range projections.Projections {
-				if projection.DescriptionGroup != "" {
-					groupKey = projection.DescriptionGroup
-					break
-				}
-			}
-		}
-		if groupKey == "" {
-			groupKey = "default"
-		}
-		instructions.Overrides = append(instructions.Overrides, api.DescriptionOverrideInput{GroupKey: groupKey, Source: source})
-	}
-	questionnaires := make(map[api.TrackerID]map[string]string, len(projectionInstructions))
-	for trackerID, projectionInstruction := range projectionInstructions {
-		answers := make(map[string]string, len(projectionInstruction.Questionnaire))
-		for key, answer := range projectionInstruction.Questionnaire {
-			if answer != nil {
-				answers[key] = *answer
-			}
-		}
-		if len(answers) > 0 {
-			questionnaires[trackerID] = answers
-		}
-	}
-	instructions.QuestionnaireAnswers = questionnaires
-	return instructions, nil
 }
 
 func printCLIWorkflowDryRun(result api.UploadDryRunResult, noSeed bool) {

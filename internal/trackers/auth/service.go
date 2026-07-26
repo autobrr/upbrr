@@ -365,7 +365,9 @@ func (s *Service) Login(ctx context.Context, trackerID string, req api.TrackerAu
 		return api.TrackerAuthStatus{}, err
 	}
 	if !spec.login {
-		return api.TrackerAuthStatus{}, fmt.Errorf("tracker auth: %s does not support credential login", spec.id)
+		status = s.statusForSpec(ctx, spec)
+		status.Message = "remote credential login is not supported for this tracker"
+		return status, nil
 	}
 	trackerCfg := mustTrackerConfig(s.cfg, spec.id)
 	status = s.statusForSpec(ctx, spec)

@@ -22,12 +22,41 @@ type cliWorkflowCoreFake struct {
 	commands       []releaseworkflow.Command
 	continuations  []api.ContinueReleaseWorkflowRequest
 	continueFn     func(api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error)
+	uploadRequests []api.CreateReleaseWorkflowUploadRequest
+	uploadFeedback []api.ReleaseWorkflowUploadFeedback
+	startUploadFn  func(api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error)
+	feedbackFn     func(api.ReleaseWorkflowUploadFeedback) (releaseworkflow.CommandResult, error)
 	operation      api.WorkflowOperationStatus
 	events         []api.WorkflowEvent
 	eventBatches   [][]api.WorkflowEvent
 	eventBatch     int
 	queueOperation bool
 	cancelCalls    int
+}
+
+func (f *cliWorkflowCoreFake) StartReleaseWorkflowUpload(
+	_ context.Context,
+	_ string,
+	request api.CreateReleaseWorkflowUploadRequest,
+) (releaseworkflow.CommandResult, error) {
+	f.uploadRequests = append(f.uploadRequests, request)
+	if f.startUploadFn != nil {
+		return f.startUploadFn(request)
+	}
+	return f.current, nil
+}
+
+func (f *cliWorkflowCoreFake) SubmitReleaseWorkflowUploadFeedback(
+	_ context.Context,
+	_ string,
+	_ api.WorkflowID,
+	feedback api.ReleaseWorkflowUploadFeedback,
+) (releaseworkflow.CommandResult, error) {
+	f.uploadFeedback = append(f.uploadFeedback, feedback)
+	if f.feedbackFn != nil {
+		return f.feedbackFn(feedback)
+	}
+	return f.current, nil
 }
 
 func (f *cliWorkflowCoreFake) ContinueReleaseWorkflow(
@@ -119,9 +148,9 @@ func TestPrintCLIWorkflowProjectionsIncludesAuditablePolicyDetails(t *testing.T)
 	output := captureStdout(t, func() {
 		printCLIWorkflowProjections(&api.TrackerReleaseProjectionSet{
 			Projections: []api.TrackerReleaseProjection{{
-				DisplayName:      "Example",
+				DisplayName:       "Example",
 				UploadReleaseName: "Example.Release.2026-GRP",
-				Readiness:        api.ReadinessStatusIneligible,
+				Readiness:         api.ReadinessStatusIneligible,
 				PolicyDecisions: []api.TrackerPolicyDecision{
 					{Code: "release_name_policy", Decision: "standalone/example/v1"},
 					{
@@ -592,7 +621,8 @@ func TestCLIWorkflowMapsProjectionAndExecutionInstructions(t *testing.T) {
 	client := "example-client"
 	maxPieceSize := 16
 	request := api.Request{
-		Trackers: []string{"btn"},
+		SourcePath: `C:\releases\Example.Release.2026.1080p-GRP`,
+		Trackers:   []string{"btn"},
 		TrackerQuestionnaireAnswers: map[string]map[string]string{
 			"btn": {"source": "web"},
 		},
@@ -602,84 +632,66 @@ func TestCLIWorkflowMapsProjectionAndExecutionInstructions(t *testing.T) {
 		}},
 		ClientOverrides:  api.ClientOverrides{Client: &client},
 		TorrentOverrides: api.TorrentOverrides{MaxPieceSizeMiB: &maxPieceSize},
-		Options:          api.UploadOptions{NoSeed: true, InteractionMode: api.InteractionModeUnattended},
+		Options: api.UploadOptions{
+			Screens:         0,
+			NoSeed:          true,
+			InteractionMode: api.InteractionModeUnattended,
+		},
 	}
-	intent := mapCLIWorkflowIntent(request)
-	projection := intent.projectionInstructions[api.TrackerID("BTN")]
-	if projection.TrackerConfig.Anon == nil || *projection.TrackerConfig.Anon ||
-		projection.TrackerSite.TIK.DiscType == nil || *projection.TrackerSite.TIK.DiscType != discType ||
-		projection.Questionnaire["source"] == nil || *projection.Questionnaire["source"] != "web" {
-		t.Fatalf("projection instructions = %#v", projection)
-	}
-	description, err := cliWorkflowDescriptionInstructions(intent, intent.projectionInstructions, nil)
+	mapped, err := mapCLICompositeUploadRequest(request, false, "projection-execution")
 	if err != nil {
-		t.Fatalf("description instructions: %v", err)
+		t.Fatalf("map composite request: %v", err)
 	}
-	if description.TrackerConfig.Anon == nil || *description.TrackerConfig.Anon ||
-		description.Client.Client == nil || *description.Client.Client != client ||
-		description.Torrent.MaxPieceSizeMiB == nil || *description.Torrent.MaxPieceSizeMiB != maxPieceSize ||
-		!description.Options.NoSeed {
-		t.Fatalf("execution instructions = %#v", description)
+	projection := mapped.Trackers.Projection[api.TrackerID("BTN")]
+	if projection.Questionnaire["source"] == nil || *projection.Questionnaire["source"] != "web" ||
+		mapped.Trackers.DefaultProjection == nil ||
+		mapped.Trackers.DefaultProjection.Config.Anon == nil || *mapped.Trackers.DefaultProjection.Config.Anon ||
+		mapped.Trackers.DefaultProjection.Site.TIK.DiscType == nil ||
+		*mapped.Trackers.DefaultProjection.Site.TIK.DiscType != discType {
+		t.Fatalf("projection instructions = %#v / %#v", projection, mapped.Trackers.DefaultProjection)
+	}
+	if mapped.Client.Selected == nil || *mapped.Client.Selected != client ||
+		mapped.Torrent.MaxPieceSizeMiB == nil || *mapped.Torrent.MaxPieceSizeMiB != maxPieceSize ||
+		mapped.Client.NoSeed == nil || !*mapped.Client.NoSeed {
+		t.Fatalf("execution instructions = %#v / %#v", mapped.Client, mapped.Torrent)
 	}
 }
 
-func TestCLIWorkflowCompletionSubmitsOneDesiredGoalWithDoubleDupeIntent(t *testing.T) {
+func TestCLIWorkflowCompletionUsesOneCompositeDebugRequest(t *testing.T) {
 	t.Parallel()
 
-	current := releaseworkflow.CommandResult{
-		Workflow: api.ReleaseWorkflow{ID: "workflow-centralized", Revision: 2},
-		Release: &api.ReleaseSnapshot{Release: api.PreparedRelease{
-			Generation: 1,
-			Source:     api.SourceManifest{SourcePath: "Example.Release.2026.1080p-GRP"},
-			Naming:     api.NamingFacts{ReleaseName: "Example.Release.2026.1080p-GRP"},
-		}},
-	}
-	coreSvc := &cliWorkflowCoreFake{current: current}
-	call := 0
-	coreSvc.continueFn = func(_ api.ContinueReleaseWorkflowRequest) (releaseworkflow.CommandResult, error) {
-		call++
-		next := coreSvc.current
-		next.Workflow.Revision++
-		if call == 1 {
-			next.Selection = &api.TrackerSelection{TrackerIDs: []api.TrackerID{"ALPHA"}}
-			next.Projections = &api.TrackerReleaseProjectionSet{
-				ID:       "projections-centralized",
-				Revision: next.Workflow.Revision,
-				Projections: []api.TrackerReleaseProjection{{
-					TrackerID:         "ALPHA",
-					DisplayName:       "Alpha",
-					UploadReleaseName: "Example.Release.2026.1080p-GRP",
-					Readiness:         api.ReadinessStatusReady,
-				}},
-			}
-		} else {
-			next.DryRun = &api.UploadDryRunResult{
-				ID:               "dry-run-centralized",
-				WorkflowID:       next.Workflow.ID,
-				Revision:         next.Workflow.Revision,
-				InputFingerprint: api.WorkflowFingerprint(strings.Repeat("1", 64)),
-			}
-		}
-		coreSvc.current = next
-		return next, nil
+	coreSvc := &cliWorkflowCoreFake{}
+	coreSvc.startUploadFn = func(_ api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error) {
+		return releaseworkflow.CommandResult{
+			Workflow: api.ReleaseWorkflow{
+				ID:       "workflow-centralized",
+				Revision: 10,
+				Status:   api.WorkflowStatusCompleted,
+			},
+			DryRun: &api.UploadDryRunResult{
+				ID:       "dry-run-centralized",
+				Revision: 10,
+				Status:   api.StageStatusCompleted,
+			},
+		}, nil
 	}
 	session := &cliWorkflowSession{
 		core:           coreSvc,
-		current:        current,
 		idempotencyRun: "centralized",
 		intent: cliWorkflowIntent{
-			sourcePath:      "Example.Release.2026.1080p-GRP",
-			trackerIDs:      []api.TrackerID{"ALPHA"},
-			doubleDupeCheck: true,
-			media: api.MediaCaptureInstructions{
-				ScreenshotCount: 2,
-				Purpose:         api.ScreenshotPurposeFinal,
-			},
-			description: api.DescriptionInstructions{
-				Options: api.UploadOptions{InteractionMode: api.InteractionModeUnattended, NoSeed: true},
-			},
+			sourcePath:  "Example.Release.2026.1080p-GRP",
 			interaction: api.InteractionModeUnattended,
 			noSeed:      true,
+		},
+		uploadRequest: api.Request{
+			SourcePath:      "Example.Release.2026.1080p-GRP",
+			Trackers:        []string{"ALPHA"},
+			DoubleDupeCheck: true,
+			Options: api.UploadOptions{
+				Screens:         2,
+				NoSeed:          true,
+				InteractionMode: api.InteractionModeUnattended,
+			},
 		},
 	}
 	if _, err := session.complete(
@@ -691,15 +703,15 @@ func TestCLIWorkflowCompletionSubmitsOneDesiredGoalWithDoubleDupeIntent(t *testi
 	); err != nil {
 		t.Fatalf("complete centralized workflow: %v", err)
 	}
-	if len(coreSvc.continuations) != 2 {
-		t.Fatalf("continuation calls = %d, want 2 backend-owned transitions", len(coreSvc.continuations))
+	if len(coreSvc.uploadRequests) != 1 || len(coreSvc.continuations) != 0 {
+		t.Fatalf("composite starts=%d granular continuations=%d", len(coreSvc.uploadRequests), len(coreSvc.continuations))
 	}
-	request := coreSvc.continuations[1]
-	if request.Goal != api.WorkflowGoalDryRun || request.Intent.Interaction != api.InteractionModeUnattended ||
-		request.Intent.DuplicateCheckCount != 2 ||
-		request.Intent.Media == nil || request.Intent.Descriptions == nil || !request.Intent.NoSeed ||
-		!slices.Equal(request.Intent.TrackerIDs, []api.TrackerID{"ALPHA"}) {
-		t.Fatalf("centralized completion intent = %#v", request)
+	request := coreSvc.uploadRequests[0]
+	if request.Execution.Mode != api.ReleaseWorkflowUploadModeDebug ||
+		request.Duplicates.CheckCount == nil || *request.Duplicates.CheckCount != 2 ||
+		request.Client.NoSeed == nil || !*request.Client.NoSeed ||
+		!slices.Equal(request.Trackers.Include, []api.TrackerID{"ALPHA"}) {
+		t.Fatalf("composite request = %#v", request)
 	}
 }
 

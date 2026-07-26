@@ -191,12 +191,35 @@ func (v *PrivateArtifactVault) Delete(ownerID string, workflowID api.WorkflowID,
 
 // InvalidateWorkflow removes every private resource owned by one workflow.
 func (v *PrivateArtifactVault) InvalidateWorkflow(ownerID string, workflowID api.WorkflowID) {
+	v.InvalidateWorkflowExcept(ownerID, workflowID)
+}
+
+// InvalidateWorkflowExcept removes workflow resources except explicitly
+// preserved IDs, including their durable payload and metadata.
+func (v *PrivateArtifactVault) InvalidateWorkflowExcept(
+	ownerID string,
+	workflowID api.WorkflowID,
+	preservedResourceIDs ...string,
+) {
 	ownerID = strings.TrimSpace(ownerID)
 	scopeDigest := privateScopeDigest(ownerID, workflowID)
+	preserved := make(map[privateResourceKey]struct{}, len(preservedResourceIDs))
+	preservedDigests := make(map[string]struct{}, len(preservedResourceIDs))
+	for _, resourceID := range preservedResourceIDs {
+		key, err := newPrivateResourceKey(ownerID, workflowID, resourceID)
+		if err != nil {
+			continue
+		}
+		preserved[key] = struct{}{}
+		preservedDigests[privateKeyDigest(key)] = struct{}{}
+	}
 	v.mu.Lock()
 	resources := make([]any, 0)
 	for key, entry := range v.entries {
 		if key.ownerID == ownerID && key.workflowID == workflowID {
+			if _, ok := preserved[key]; ok {
+				continue
+			}
 			resources = append(resources, entry.value)
 			delete(v.entries, key)
 			delete(v.consumed, key)
@@ -210,6 +233,9 @@ func (v *PrivateArtifactVault) InvalidateWorkflow(ownerID string, workflowID api
 		}
 		var metadata privateArtifactMetadata
 		if json.Unmarshal(payload, &metadata) != nil || metadata.ScopeDigest != scopeDigest {
+			continue
+		}
+		if _, ok := preservedDigests[metadata.KeyDigest]; ok {
 			continue
 		}
 		base := strings.TrimSuffix(metadataFile, ".json")

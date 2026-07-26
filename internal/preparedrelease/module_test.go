@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -123,6 +124,45 @@ func TestPrepareUsesExactCompatibilityAndPublishesConcreteAssessments(t *testing
 	}
 }
 
+func TestPrepareRequirePreparedRejectsMissingAndReusesCompatibleGeneration(t *testing.T) {
+	t.Parallel()
+
+	path := writePreparedTestFile(t, "required-source.mkv", "synthetic media")
+	collector := &recordingCollector{}
+	module := newTestModule(t, newMemoryStore(), collector)
+	required := api.PrepareInput{
+		SourcePath:      path,
+		Intent:          api.PreparationIntentUpload,
+		RequirePrepared: true,
+	}
+	if _, err := module.Prepare(context.Background(), required); err == nil ||
+		!strings.Contains(err.Error(), "compatible prepared generation is required") {
+		t.Fatalf("missing required prepared generation error = %v", err)
+	}
+	if collector.callCount() != 0 {
+		t.Fatalf("missing required generation invoked collector %d time(s)", collector.callCount())
+	}
+
+	allowed := required
+	allowed.RequirePrepared = false
+	prepared, err := module.Prepare(context.Background(), allowed)
+	if err != nil {
+		t.Fatalf("prepare compatible generation: %v", err)
+	}
+	reused, err := module.Prepare(context.Background(), required)
+	if err != nil {
+		t.Fatalf("reuse required generation: %v", err)
+	}
+	if reused.Release.Generation != prepared.Release.Generation || collector.callCount() != 1 {
+		t.Fatalf(
+			"required reuse generation=%d want=%d collector=%d",
+			reused.Release.Generation,
+			prepared.Release.Generation,
+			collector.callCount(),
+		)
+	}
+}
+
 func TestPrepareReportsCanonicalOwnerStagesAndReuse(t *testing.T) {
 	t.Parallel()
 	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
@@ -156,7 +196,7 @@ func TestPrepareReportsCanonicalOwnerStagesAndReuse(t *testing.T) {
 	}
 }
 
-func TestPrepareHydratesPersistedClientEvidenceOnceAfterRestart(t *testing.T) {
+func TestPrepareHydratesPersistedPrivateResourcesOnceAfterRestart(t *testing.T) {
 	t.Parallel()
 
 	path := writePreparedTestFile(t, "source.mkv", "synthetic media")
@@ -208,6 +248,13 @@ func TestPrepareHydratesPersistedClientEvidenceOnceAfterRestart(t *testing.T) {
 	}
 	if duplicate.TrackerIDs["ant"] != "hydrated-id" || duplicate.MatchedTrackers[0] != "ANT" {
 		t.Fatalf("private snapshot was aliased: %#v", duplicate)
+	}
+	screenshot, err := restarted.ResolveScreenshotSubject(context.Background(), api.MediaPlanInput{Release: ref})
+	if err != nil {
+		t.Fatalf("resolve hydrated screenshot subject: %v", err)
+	}
+	if screenshot.MediaInfoJSONPath != path {
+		t.Fatalf("hydrated screenshot MediaInfo path = %q, want %q", screenshot.MediaInfoJSONPath, path)
 	}
 }
 
@@ -663,14 +710,18 @@ func (c *clientEvidenceTestCollector) Collect(ctx context.Context, request prepa
 	return facts, nil
 }
 
-func (c *clientEvidenceTestCollector) HydrateClientEvidence(
-	context.Context,
-	preparationstate.Request,
-) (preparationstate.ClientEvidenceSnapshot, error) {
+func (c *clientEvidenceTestCollector) HydratePrivateResources(
+	_ context.Context,
+	request preparationstate.Request,
+) (CollectedResources, error) {
 	c.mu.Lock()
 	c.hydrates++
 	c.mu.Unlock()
-	return preparationstate.CloneClientEvidenceSnapshot(c.snapshot), nil
+	return CollectedResources{
+		SourcePath:        request.Manifest.SourcePath,
+		MediaInfoJSONPath: request.Manifest.SourcePath,
+		ClientEvidence:    preparationstate.CloneClientEvidenceSnapshot(c.snapshot),
+	}, nil
 }
 
 func (c *clientEvidenceTestCollector) collectCount() int { return c.base.callCount() }

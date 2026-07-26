@@ -8,198 +8,82 @@ import {
   releaseWorkflowParityFixture,
   startApp,
 } from "./helpers/e2eHarness";
-import { ReleaseWorkflowV1Client } from "./helpers/releaseWorkflowV1Client";
+import {
+  type WorkflowV1Current,
+  type WorkflowV1Operation,
+  ReleaseWorkflowV1Client,
+} from "./helpers/releaseWorkflowV1Client";
 
-test("HTTP-only client completes exact workflow and enforces authority", async () => {
+test("strict composite upload enforces contract authority and idempotency", async () => {
   const workspace = await createE2EWorkspace();
-  let app = await startApp(workspace);
+  const app = await startApp(workspace);
   try {
     const apiToken = await createE2EAPIToken(workspace);
     const openAPI = await fetch(new URL("api/v1/openapi.json", app.url));
     expect(openAPI.status).toBe(200);
     const schema = (await openAPI.json()) as { paths?: Record<string, unknown> };
     for (const path of [
-      "/workflows",
-      "/workflows/{workflowId}/prepare",
-      "/workflows/{workflowId}/trackers/project",
-      "/workflows/{workflowId}/duplicates/check",
-      "/workflows/{workflowId}/media/capture",
-      "/workflows/{workflowId}/descriptions/generate",
-      "/workflows/{workflowId}/uploads/dry-run",
-      "/workflows/{workflowId}/uploads/execute",
-      "/workflows/{workflowId}/uploads/{resultId}/retry",
+      "/uploads",
+      "/uploads/{workflowId}/feedback",
+      "/continuations",
+      "/workflows/{workflowId}",
+      "/workflows/{workflowId}/operations/{operationId}",
+      "/workflows/{workflowId}/operations/{operationId}/cancel",
     ]) {
       expect(schema.paths?.[path], `OpenAPI path ${path}`).toBeTruthy();
     }
+    expect(schema.paths?.["/workflows"], "retired stage workflow creation path").toBeUndefined();
 
-    const unauthenticated = await fetch(new URL("api/v1/workflows", app.url), {
+    const body = uploadBody(workspace.sourcePath, {
+      confirm: false,
+      mode: "upload",
+      noSeed: false,
+    });
+    const unauthenticated = await fetch(new URL("api/v1/uploads", app.url), {
       method: "POST",
       headers: { "Content-Type": "application/json", "Idempotency-Key": "unauthenticated" },
-      body: JSON.stringify({ instructions: {} }),
+      body: JSON.stringify(body),
     });
     expect(unauthenticated.status).toBe(401);
 
     const client = new ReleaseWorkflowV1Client(app.url, apiToken);
-    let current = await client.create();
-    const workflowID = current.workflow.id;
-
-    const stale = await client.raw(`/workflows/${workflowID}/prepare`, {
+    const started = await client.raw("/uploads", {
       method: "POST",
-      revision: current.workflow.revision + 10,
-      idempotencyKey: "stale-revision",
-      body: preparationBody(workspace.sourcePath),
+      idempotencyKey: "strict-full-upload",
+      body,
     });
-    expect(stale.status).toBe(409);
-
-    const invalidAction = await client.raw(`/workflows/${workflowID}/actions/missing-action`, {
-      method: "POST",
-      revision: current.workflow.revision,
-      idempotencyKey: "invalid-action",
-      body: { answer: { confirmed: true } },
-    });
-    expect(invalidAction.status).toBe(409);
-
-    current = await client.command("/prepare", preparationBody(workspace.sourcePath));
-    expect(current.release?.release.Generation).toBeGreaterThan(0);
-    current = await client.command("/trackers/project", {
-      trackerIds: [releaseWorkflowParityFixture.trackerID],
-      instructions: {},
-    });
-    expect(current.projections?.status).toBe("ready");
-    current = await client.command("/trackers/preflight");
-    expect(current.preflight?.status).toBe("ready");
-    current = await client.command("/duplicates/check", { skipRemote: false });
-    expect(current.dupes?.status).toBe("completed");
-    current = await client.command("/media/capture", {
-      instructions: {
-        screenshotCount: 0,
-        purpose: "final",
-        captureDvdMenus: false,
-      },
-    });
-    expect(["completed", "skipped"]).toContain(current.media?.status);
-    current = await client.command("/descriptions/generate", {
-      instructions: {
-        options: { NoSeed: true, InteractionMode: "unattended" },
-        imageHost: {},
-      },
-    });
-    expect(["completed", "skipped"]).toContain(current.descriptions?.status);
-    current = await client.command("/uploads/dry-run", { noSeed: false });
-    expect(current.dryRun?.status).toBe("completed");
-    expect(current.dryRun?.reports[0]).toMatchObject({
+    expect(started.status, await started.clone().text()).toBe(202);
+    const completed = await client.accepted(started);
+    expect(completed.uploadResult?.status).toBe("completed");
+    expect(completed.uploadResult?.results[0]).toMatchObject({
       trackerId: releaseWorkflowParityFixture.trackerID,
-      uploadReleaseName: expect.stringContaining(
-        releaseWorkflowParityFixture.releaseDisplayName.split(".1080p")[0],
-      ),
       status: "completed",
     });
-    expect(workspace.fake.counters.trackerUploads).toBe(0);
+    expect(workspace.fake.counters.trackerUploads).toBe(1);
     expect(workspace.fake.counters.clientInjections).toBe(1);
-    const dryRunRevision = current.workflow.revision;
-    const executionKey = "execute-direct-upload";
-    const executionPath = `/workflows/${workflowID}/uploads/execute`;
-    const executionBody = { noSeed: true };
-    const executed = await client.raw(executionPath, {
-      method: "POST",
-      revision: dryRunRevision,
-      idempotencyKey: executionKey,
-      body: executionBody,
-    });
-    expect(executed.status).toBe(202);
-    const executedPayload = JSON.stringify(await executed.clone().json());
-    expect(executedPayload.includes(apiToken)).toBe(false);
-    await client.accepted(executed);
-    expect(workspace.fake.counters.trackerUploads).toBe(
-      releaseWorkflowParityFixture.expectedTrackerUploads,
-    );
 
-    const idempotentReplay = await client.raw(executionPath, {
+    const replay = await client.raw("/uploads", {
       method: "POST",
-      revision: dryRunRevision,
-      idempotencyKey: executionKey,
-      body: executionBody,
+      idempotencyKey: "strict-full-upload",
+      body,
     });
-    expect(idempotentReplay.status).toBe(202);
-    const executedCurrent = await client.accepted(idempotentReplay);
+    expect(replay.status, await replay.clone().text()).toBe(200);
+    const replayed = (await replay.json()) as WorkflowV1Current;
+    expect(replayed.workflow.id).toBe(completed.workflow.id);
     expect(workspace.fake.counters.trackerUploads).toBe(1);
+    expect(workspace.fake.counters.clientInjections).toBe(1);
 
-    const unauthorizedReplay = await client.raw(executionPath, {
+    const conflictingReplay = await client.raw("/uploads", {
       method: "POST",
-      revision: executedCurrent.workflow.revision,
-      idempotencyKey: "execute-after-result",
-      body: executionBody,
+      idempotencyKey: "strict-full-upload",
+      body: uploadBody(workspace.sourcePath, { confirm: false, mode: "debug", noSeed: false }),
     });
-    expect(unauthorizedReplay.status).toBe(202);
-    await expect(client.accepted(unauthorizedReplay)).rejects.toThrow("workflow operation failed");
-    expect(workspace.fake.counters.trackerUploads).toBe(1);
+    expect(conflictingReplay.status).toBe(409);
 
-    const cancelClient = new ReleaseWorkflowV1Client(app.url, apiToken);
-    const cancelDraft = await cancelClient.create();
-    const canceled = await cancelClient.command("/cancel", { reason: "test cancellation" });
-    expect(cancelDraft.workflow.status).toBe("draft");
-    expect(canceled.workflow.status).toBe("canceled");
-
-    const restartClient = new ReleaseWorkflowV1Client(app.url, apiToken);
-    await restartClient.create();
-    await restartClient.command("/prepare", preparationBody(workspace.sourcePath));
-    await restartClient.command("/trackers/project", {
-      trackerIds: [releaseWorkflowParityFixture.trackerID],
-      instructions: {},
-    });
-    await restartClient.command("/trackers/preflight");
-    await restartClient.command("/duplicates/check", { skipRemote: false });
-    await restartClient.command("/media/capture", {
-      instructions: { screenshotCount: 0, purpose: "final", captureDvdMenus: false },
-    });
-    await restartClient.command("/descriptions/generate", {
-      instructions: {
-        options: { NoSeed: true, InteractionMode: "unattended" },
-        imageHost: {},
-      },
-    });
-    const beforeRestart = await restartClient.get();
-    expect(beforeRestart.status).toBe(200);
-    const beforeRestartCurrent = await beforeRestart.json();
-    const restartWorkflowID = beforeRestartCurrent.workflow.id as string;
-
-    await app.stop();
-    app = await startApp(workspace, { seed: false });
-    const afterRestartClient = new ReleaseWorkflowV1Client(app.url, apiToken);
-    const afterRestartResponse = await afterRestartClient.get(restartWorkflowID);
-    expect(afterRestartResponse.status).toBe(200);
-    const afterRestart = (await afterRestartResponse.json()) as {
-      workflow: {
-        revision: number;
-        status: string;
-        dryRun?: { id: string };
-        uploadResult?: { id: string };
-      };
-      release?: unknown;
-    };
-    expect(afterRestart.workflow.status).toBe("blocked");
-    expect(afterRestart.workflow.dryRun).toBeUndefined();
-    expect(afterRestart.workflow.uploadResult).toBeUndefined();
-    expect(afterRestart.release).toBeUndefined();
-
-    const restartExecution = await afterRestartClient.raw(
-      `/workflows/${restartWorkflowID}/uploads/execute`,
-      {
-        method: "POST",
-        revision: afterRestart.workflow.revision,
-        idempotencyKey: "execute-after-restart",
-        body: { noSeed: true },
-      },
-    );
-    expect(restartExecution.status).toBe(202);
-    await expect(afterRestartClient.accepted(restartExecution)).rejects.toThrow(
-      "workflow operation failed",
-    );
-
-    await app.stop();
     const crossOwnerToken = await createE2EAPIToken(workspace, "different-owner");
-    app = await startApp(workspace, { seed: false });
-    const crossOwner = await new ReleaseWorkflowV1Client(app.url, crossOwnerToken).get(workflowID);
+    const crossOwner = await new ReleaseWorkflowV1Client(app.url, crossOwnerToken).get(
+      completed.workflow.id,
+    );
     expect(crossOwner.status).toBe(404);
   } finally {
     await app.stop();
@@ -207,16 +91,335 @@ test("HTTP-only client completes exact workflow and enforces authority", async (
   }
 });
 
-function preparationBody(sourcePath: string) {
+test("confirm composite resolves duplicate and approval feedback after restart", async () => {
+  const workspace = await createE2EWorkspace();
+  workspace.env.UPBRR_E2E_DUPLICATE_TRACKERS = releaseWorkflowParityFixture.trackerID;
+  let app = await startApp(workspace);
+  try {
+    const apiToken = await createE2EAPIToken(workspace);
+    let client = new ReleaseWorkflowV1Client(app.url, apiToken);
+    const started = await client.raw("/uploads", {
+      method: "POST",
+      idempotencyKey: "confirm-duplicate-start",
+      body: uploadBody(workspace.sourcePath, { confirm: true, mode: "upload", noSeed: true }),
+    });
+    expect(started.status, await started.clone().text()).toBe(202);
+    let duplicateBlocked = await client.accepted(started);
+    let duplicateAction = pendingAction(duplicateBlocked, "review_duplicates");
+    expect(duplicateAction.trackerId).toBe(releaseWorkflowParityFixture.trackerID);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+
+    await app.stop();
+    app = await startApp(workspace, { seed: false });
+    client = new ReleaseWorkflowV1Client(app.url, apiToken);
+    const restartedResponse = await client.get(duplicateBlocked.workflow.id);
+    expect(restartedResponse.status).toBe(200);
+    duplicateBlocked = (await restartedResponse.json()) as WorkflowV1Current;
+    duplicateAction = pendingAction(duplicateBlocked, "review_duplicates");
+
+    const stale = await client.raw(`/uploads/${duplicateBlocked.workflow.id}/feedback`, {
+      method: "POST",
+      revision: duplicateBlocked.workflow.revision - 1,
+      idempotencyKey: "confirm-duplicate-stale",
+      body: {
+        action: {
+          id: duplicateAction.id,
+          workflowRevision: duplicateBlocked.workflow.revision - 1,
+        },
+        response: {
+          kind: "duplicateReview",
+          duplicateReview: {
+            trackerId: releaseWorkflowParityFixture.trackerID,
+            decision: "ignored",
+          },
+        },
+      },
+    });
+    expect(stale.status).toBe(409);
+
+    const duplicateFeedback = await client.raw(
+      `/uploads/${duplicateBlocked.workflow.id}/feedback`,
+      {
+        method: "POST",
+        revision: duplicateBlocked.workflow.revision,
+        idempotencyKey: "confirm-duplicate-ignore",
+        body: {
+          action: {
+            id: duplicateAction.id,
+            workflowRevision: duplicateBlocked.workflow.revision,
+          },
+          response: {
+            kind: "duplicateReview",
+            duplicateReview: {
+              trackerId: releaseWorkflowParityFixture.trackerID,
+              decision: "ignored",
+            },
+          },
+        },
+      },
+    );
+    expect(duplicateFeedback.status, await duplicateFeedback.clone().text()).toBe(202);
+    const approvalBlocked = await client.accepted(duplicateFeedback);
+    expect(approvalBlocked.dryRun?.status).toBe("completed");
+    const approval = pendingAction(approvalBlocked, "approve_upload");
+
+    const approvalFeedback = await client.raw(`/uploads/${approvalBlocked.workflow.id}/feedback`, {
+      method: "POST",
+      revision: approvalBlocked.workflow.revision,
+      idempotencyKey: "confirm-upload-approval",
+      body: {
+        action: {
+          id: approval.id,
+          workflowRevision: approvalBlocked.workflow.revision,
+        },
+        response: {
+          kind: "uploadApproval",
+          uploadApproval: { confirmed: true },
+        },
+      },
+    });
+    expect(approvalFeedback.status, await approvalFeedback.clone().text()).toBe(202);
+    const completed = await client.accepted(approvalFeedback);
+    expect(completed.uploadResult?.status).toBe("completed");
+    expect(workspace.fake.counters.trackerUploads).toBe(1);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+  } finally {
+    await app.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("debug composite performs client injection unless no-seed is explicit", async () => {
+  const workspace = await createE2EWorkspace();
+  const app = await startApp(workspace);
+  try {
+    const apiToken = await createE2EAPIToken(workspace);
+    const client = new ReleaseWorkflowV1Client(app.url, apiToken);
+
+    const withInjection = await client.raw("/uploads", {
+      method: "POST",
+      idempotencyKey: "debug-with-injection",
+      body: uploadBody(workspace.sourcePath, { confirm: false, mode: "debug", noSeed: false }),
+    });
+    expect(withInjection.status, await withInjection.clone().text()).toBe(202);
+    const first = await client.accepted(withInjection);
+    expect(first.dryRun?.status).toBe("completed");
+    expect(first.uploadResult).toBeUndefined();
+    expect(workspace.fake.counters.clientInjections).toBe(1);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+
+    const withoutInjection = await client.raw("/uploads", {
+      method: "POST",
+      idempotencyKey: "debug-without-injection",
+      body: uploadBody(workspace.sourcePath, { confirm: false, mode: "debug", noSeed: true }),
+    });
+    expect(withoutInjection.status, await withoutInjection.clone().text()).toBe(202);
+    const second = await client.accepted(withoutInjection);
+    expect(second.dryRun?.status).toBe("completed");
+    expect(second.uploadResult).toBeUndefined();
+    expect(workspace.fake.counters.clientInjections).toBe(1);
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+  } finally {
+    await app.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("strict composite skips an auth-blocked tracker while uploading a ready sibling", async () => {
+  const workspace = await createE2EWorkspace();
+  workspace.env.UPBRR_E2E_AUTH_REQUIRED_TRACKERS = "HDS";
+  const app = await startApp(workspace);
+  try {
+    const apiToken = await createE2EAPIToken(workspace);
+    const client = new ReleaseWorkflowV1Client(app.url, apiToken);
+    const started = await client.raw("/uploads", {
+      method: "POST",
+      idempotencyKey: "strict-auth-skip",
+      body: uploadBody(workspace.sourcePath, {
+        confirm: false,
+        mode: "upload",
+        noSeed: true,
+        trackerIDs: [releaseWorkflowParityFixture.trackerID, "HDS"],
+      }),
+    });
+    expect(started.status, await started.clone().text()).toBe(202);
+    const completed = await client.accepted(started);
+    expect(completed.uploadResult?.results).toEqual([
+      expect.objectContaining({
+        trackerId: releaseWorkflowParityFixture.trackerID,
+        status: "completed",
+      }),
+    ]);
+    const authBlocked = completed.preflight?.results.find((result) => result.trackerId === "HDS");
+    expect(authBlocked).toMatchObject({
+      state: "failed",
+      authReady: false,
+    });
+    expect(
+      authBlocked?.failures?.some((failure) => failure.failure.Code === "tracker_auth_required"),
+    ).toBe(true);
+    expect(completed.workflow.requiredActions).toBeUndefined();
+    expect(workspace.fake.counters.trackerUploads).toBe(1);
+  } finally {
+    await app.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("composite operation cancellation stops the active tracker stage", async () => {
+  const workspace = await createE2EWorkspace();
+  workspace.fake.delayTrackerUploads(3_000);
+  const app = await startApp(workspace);
+  try {
+    const apiToken = await createE2EAPIToken(workspace);
+    const client = new ReleaseWorkflowV1Client(app.url, apiToken);
+    const started = await client.raw("/uploads", {
+      method: "POST",
+      idempotencyKey: "cancel-active-upload",
+      body: uploadBody(workspace.sourcePath, { confirm: false, mode: "upload", noSeed: true }),
+    });
+    expect(started.status, await started.clone().text()).toBe(202);
+    const accepted = (await started.json()) as WorkflowV1Current;
+    expect(accepted.operation).toBeTruthy();
+    await waitForCounter(() => workspace.fake.counters.trackerUploads, 1);
+
+    const canceled = await client.raw(
+      `/workflows/${accepted.workflow.id}/operations/${accepted.operation!.id}/cancel`,
+      { method: "POST" },
+    );
+    expect(canceled.status, await canceled.clone().text()).toBe(200);
+    const operation = await waitForTerminalOperation(
+      client,
+      accepted.workflow.id,
+      accepted.operation!.id,
+    );
+    expect(operation.status).toBe("canceled");
+    const currentResponse = await client.get(accepted.workflow.id);
+    const current = (await currentResponse.json()) as WorkflowV1Current;
+    expect(current.uploadResult).toBeUndefined();
+  } finally {
+    await app.stop();
+    await workspace.cleanup();
+  }
+});
+
+test("restart stops at reconciliation after an uncertain client effect", async () => {
+  const workspace = await createE2EWorkspace();
+  workspace.fake.delayClientInjections(5_000);
+  let app = await startApp(workspace);
+  try {
+    const apiToken = await createE2EAPIToken(workspace);
+    let client = new ReleaseWorkflowV1Client(app.url, apiToken);
+    const started = await client.raw("/uploads", {
+      method: "POST",
+      idempotencyKey: "uncertain-client-effect",
+      body: uploadBody(workspace.sourcePath, { confirm: false, mode: "debug", noSeed: false }),
+    });
+    expect(started.status, await started.clone().text()).toBe(202);
+    const accepted = (await started.json()) as WorkflowV1Current;
+    expect(accepted.operation).toBeTruthy();
+    await waitForCounter(() => workspace.fake.counters.clientInjections, 1);
+
+    await app.crash();
+    workspace.fake.delayClientInjections(0);
+    workspace.env.UPBRR_E2E_CLOCK_OFFSET = "2m";
+    app = await startApp(workspace, { seed: false });
+    client = new ReleaseWorkflowV1Client(app.url, apiToken);
+    const recoveredOperation = await waitForTerminalOperation(
+      client,
+      accepted.workflow.id,
+      accepted.operation!.id,
+    );
+    const currentResponse = await client.get(accepted.workflow.id);
+    expect(currentResponse.status).toBe(200);
+    const current = (await currentResponse.json()) as WorkflowV1Current;
+    if (
+      !current.workflow.requiredActions?.some((action) => action.kind === "reconcile_submission")
+    ) {
+      throw new Error(
+        JSON.stringify(
+          {
+            recoveredOperation: {
+              status: recoveredOperation.status,
+              message: recoveredOperation.message,
+              failures: recoveredOperation.failures,
+            },
+            workflow: current.workflow,
+            dryRun: current.dryRun,
+            output: app.output(),
+          },
+          undefined,
+          2,
+        ),
+      );
+    }
+    const reconciliation = pendingAction(current, "reconcile_submission");
+    expect(reconciliation.trackerId).toBe(releaseWorkflowParityFixture.trackerID);
+    expect(current.workflow.status).toBe("blocked");
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
+  } finally {
+    await app.stop();
+    await workspace.cleanup();
+  }
+});
+
+function uploadBody(
+  sourcePath: string,
+  options: Readonly<{
+    confirm: boolean;
+    mode: "upload" | "debug";
+    noSeed: boolean;
+    trackerIDs?: readonly string[];
+  }>,
+) {
   return {
-    input: {
-      SourcePath: sourcePath,
-      Intent: "upload",
-      Instructions: {},
-      Policy: { KeepFolder: false, KeepImages: false, OnlyID: false },
-      Search: { Skip: false },
-      Controls: { Interaction: "unattended", ConfirmBDMVRescan: false },
-      Force: false,
+    source: { path: sourcePath },
+    unattended: { confirm: options.confirm },
+    execution: { mode: options.mode, preparedRelease: "allow" },
+    trackers: { include: options.trackerIDs ?? [releaseWorkflowParityFixture.trackerID] },
+    duplicates: { remoteCheck: true, checkCount: 1, onEvidence: "ask" },
+    media: {
+      screenshots: { count: 0 },
+      dvdMenus: { capture: false },
     },
+    client: { noSeed: options.noSeed },
   };
+}
+
+function pendingAction(current: WorkflowV1Current, kind: string) {
+  const action = current.workflow.requiredActions?.find((candidate) => candidate.kind === kind);
+  expect(action, `pending ${kind} action`).toBeTruthy();
+  return action!;
+}
+
+async function waitForCounter(read: () => number, minimum: number) {
+  const deadline = Date.now() + 10_000;
+  while (read() < minimum) {
+    if (Date.now() >= deadline) {
+      throw new Error(`counter did not reach ${minimum}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function waitForTerminalOperation(
+  client: ReleaseWorkflowV1Client,
+  workflowID: string,
+  operationID: string,
+): Promise<WorkflowV1Operation> {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const response = await client.raw(`/workflows/${workflowID}/operations/${operationID}`);
+    if (response.status === 429) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      continue;
+    }
+    expect(response.status, await response.clone().text()).toBe(200);
+    const operation = (await response.json()) as WorkflowV1Operation;
+    if (!["queued", "running"].includes(operation.status)) {
+      return operation;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`workflow operation ${operationID} did not finish`);
 }

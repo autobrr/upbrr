@@ -1,16 +1,32 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+/** Minimal retained workflow projection consumed by HTTP-only E2E scenarios. */
 export type WorkflowV1Current = Readonly<{
   workflow: Readonly<{
     id: string;
     revision: number;
     status: string;
-    requiredActions?: readonly Readonly<{ id: string; kind: string }>[];
+    requiredActions?: readonly Readonly<{
+      id: string;
+      kind: string;
+      trackerId?: string;
+      workflowRevision: number;
+    }>[];
   }>;
   release?: Readonly<{ release: Readonly<{ Generation: number }> }>;
   projections?: Readonly<{ status: string }>;
-  preflight?: Readonly<{ status: string }>;
+  preflight?: Readonly<{
+    status: string;
+    results: readonly Readonly<{
+      trackerId: string;
+      state: string;
+      authReady: boolean;
+      failures?: readonly Readonly<{
+        failure: Readonly<{ Code: string }>;
+      }>[];
+    }>[];
+  }>;
   dupes?: Readonly<{ status: string }>;
   media?: Readonly<{ status: string }>;
   descriptions?: Readonly<{ status: string }>;
@@ -30,9 +46,11 @@ export type WorkflowV1Current = Readonly<{
     status: string;
     results: readonly Readonly<{ trackerId: string; status: string }>[];
   }>;
+  operation?: WorkflowV1Operation;
 }>;
 
-type WorkflowV1Operation = Readonly<{
+/** Durable operation projection consumed by HTTP-only E2E polling. */
+export type WorkflowV1Operation = Readonly<{
   id: string;
   workflowId: string;
   status: string;
@@ -42,9 +60,8 @@ type WorkflowV1Operation = Readonly<{
 
 const activeOperationStatuses = new Set(["queued", "running"]);
 
+/** Strict HTTP-only E2E client for composite workflow requests and polling. */
 export class ReleaseWorkflowV1Client {
-  private readonly idempotencyPrefix = crypto.randomUUID();
-  private sequence = 0;
   current: WorkflowV1Current | null = null;
 
   constructor(
@@ -52,21 +69,14 @@ export class ReleaseWorkflowV1Client {
     private readonly token: string,
   ) {}
 
-  async create(instructions: object = {}): Promise<WorkflowV1Current> {
-    return this.mutate("/workflows", { instructions }, false);
-  }
-
-  async get(workflowID = this.requireCurrent().workflow.id): Promise<Response> {
+  /** Fetches one exact workflow projection without polling. */
+  async get(workflowID: string): Promise<Response> {
     return fetch(this.url(`/workflows/${workflowID}`), {
       headers: { Authorization: `Bearer ${this.token}` },
     });
   }
 
-  async command(path: string, body: object = {}): Promise<WorkflowV1Current> {
-    const workflow = this.requireCurrent().workflow;
-    return this.mutate(`/workflows/${workflow.id}${path}`, body, true);
-  }
-
+  /** Sends one authenticated v1 request with optional concurrency authority. */
   async raw(
     path: string,
     options: Readonly<{
@@ -90,6 +100,7 @@ export class ReleaseWorkflowV1Client {
     });
   }
 
+  /** Requires an accepted operation, polls it to success, then returns current state. */
   async accepted(response: Response): Promise<WorkflowV1Current> {
     const payload: unknown = await response.json();
     if (!response.ok) {
@@ -99,34 +110,6 @@ export class ReleaseWorkflowV1Client {
       throw new Error(`API ${response.status}: expected an accepted workflow operation`);
     }
     return this.awaitOperation(assertAcceptedWorkflowOperation(payload));
-  }
-
-  private async mutate(path: string, body: object | undefined, revisioned: boolean) {
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.token}`,
-      "Idempotency-Key": `e2e-${this.idempotencyPrefix}-${++this.sequence}`,
-    };
-    if (body !== undefined) {
-      headers["Content-Type"] = "application/json";
-    }
-    if (revisioned) {
-      headers["If-Match"] = `"${this.requireCurrent().workflow.revision}"`;
-    }
-    const response = await fetch(this.url(path), {
-      method: path.endsWith("/facts") ? "PUT" : "POST",
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const payload: unknown = await response.json();
-    if (!response.ok) {
-      throw new Error(`API ${response.status}: ${JSON.stringify(payload)}`);
-    }
-    if (response.status === 202) {
-      return this.awaitOperation(assertAcceptedWorkflowOperation(payload));
-    }
-    this.current = assertWorkflowCurrent(payload);
-    this.assertCurrentETag(response, this.current);
-    return this.current;
   }
 
   private async awaitOperation(initial: WorkflowV1Operation): Promise<WorkflowV1Current> {
@@ -149,7 +132,7 @@ export class ReleaseWorkflowV1Client {
     }
     if (["failed", "interrupted", "canceled"].includes(operation.status)) {
       throw new Error(
-        `workflow operation ${operation.status}: ${operation.message || JSON.stringify(operation.failures || [])}`,
+        `workflow operation ${operation.status}: ${operation.message || ""} ${JSON.stringify(operation.failures || [])}`,
       );
     }
     const response = await this.get(operation.workflowId);
@@ -167,11 +150,6 @@ export class ReleaseWorkflowV1Client {
     if (etag !== `"${current.workflow.revision}"`) {
       throw new Error(`ETag ${etag} does not match revision ${current.workflow.revision}`);
     }
-  }
-
-  private requireCurrent(): WorkflowV1Current {
-    if (!this.current) throw new Error("workflow has not been created");
-    return this.current;
   }
 
   private url(path: string) {

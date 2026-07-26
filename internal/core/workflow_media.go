@@ -484,6 +484,7 @@ func (b workflowMediaBuilder) Build(
 		}
 		privateArtifacts.screenshotSubject = subject
 		selections := append([]api.ScreenshotSelection(nil), instructions.Selections...)
+		var existingScreenshots []api.ScreenshotImage
 		if len(selections) == 0 {
 			plan, err := b.screenshots.Plan(ctx, subject, screenshotCount)
 			if err != nil {
@@ -493,11 +494,12 @@ func (b workflowMediaBuilder) Build(
 				return failedMediaSnapshot(snapshot, "Screenshot planning failed. Retry media capture."), privateArtifacts, nil
 			}
 			selections = append(selections, plan.SuggestedSelections...)
+			existingScreenshots = append(existingScreenshots, plan.ExistingScreenshots...)
 		}
 		if len(selections) > screenshotCount {
 			selections = selections[:screenshotCount]
 		}
-		if len(selections) == 0 {
+		if len(selections) == 0 && len(existingScreenshots) == 0 {
 			snapshot.Status = api.StageStatusBlocked
 			snapshot.RequiredActions = []api.RequiredAction{{
 				Kind:   api.RequiredActionProvideTrackerInput,
@@ -505,25 +507,29 @@ func (b workflowMediaBuilder) Build(
 			}}
 			return snapshot, privateArtifacts, nil
 		}
-		capture, err := b.screenshots.Capture(ctx, subject, selections, purpose)
-		if err != nil {
-			if ctx.Err() != nil {
-				return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media screenshot capture: %w", ctx.Err())
+		capture := api.ScreenshotResult{Purpose: purpose}
+		if len(selections) > 0 {
+			capture, err = b.screenshots.Capture(ctx, subject, selections, purpose)
+			if err != nil {
+				if ctx.Err() != nil {
+					return api.MediaArtifactSet{}, nil, fmt.Errorf("workflow media screenshot capture: %w", ctx.Err())
+				}
+				return failedMediaSnapshot(snapshot, "Screenshot capture failed. Retry media capture."), privateArtifacts, nil
 			}
-			return failedMediaSnapshot(snapshot, "Screenshot capture failed. Retry media capture."), privateArtifacts, nil
 		}
-		privateArtifacts.Screenshots = append(privateArtifacts.Screenshots, capture.Images...)
+		images := mergeWorkflowScreenshotImages(existingScreenshots, capture.Images, screenshotCount)
+		privateArtifacts.Screenshots = append(privateArtifacts.Screenshots, images...)
 		api.EmitWorkflowProgress(ctx, api.WorkflowProgressUpdate{
 			Phase:     "screenshots",
 			ItemID:    "screenshots",
 			Kind:      "media",
 			Label:     "Screenshots",
 			Status:    api.StageStatusCompleted,
-			Completed: len(capture.Images),
+			Completed: len(images),
 			Total:     screenshotCount,
 			Message:   "Screenshot capture complete.",
 		})
-		for index, image := range capture.Images {
+		for index, image := range images {
 			snapshot.Artifacts = append(
 				snapshot.Artifacts,
 				publicMediaArtifact(captureFingerprint, "screenshot", index, api.MediaArtifactScreenshot, purpose, image),
@@ -591,6 +597,37 @@ func (b workflowMediaBuilder) Build(
 	}
 	indexWorkflowMediaArtifacts(&privateArtifacts, snapshot)
 	return snapshot, privateArtifacts, nil
+}
+
+func mergeWorkflowScreenshotImages(existing, captured []api.ScreenshotImage, limit int) []api.ScreenshotImage {
+	images := make([]api.ScreenshotImage, 0, len(existing)+len(captured))
+	byIndex := make(map[int]int, cap(images))
+	appendImages := func(values []api.ScreenshotImage) {
+		for _, image := range values {
+			if existingIndex, ok := byIndex[image.Index]; ok {
+				images[existingIndex] = image
+				continue
+			}
+			byIndex[image.Index] = len(images)
+			images = append(images, image)
+		}
+	}
+	appendImages(existing)
+	appendImages(captured)
+	slices.SortStableFunc(images, func(left, right api.ScreenshotImage) int {
+		switch {
+		case left.Index < right.Index:
+			return -1
+		case left.Index > right.Index:
+			return 1
+		default:
+			return strings.Compare(left.Path, right.Path)
+		}
+	})
+	if limit > 0 && len(images) > limit {
+		images = images[:limit]
+	}
+	return images
 }
 
 func (b workflowMediaBuilder) BuildIncremental(
@@ -742,9 +779,13 @@ func (b workflowMediaBuilder) Attach(
 	}
 	contents := make([]menuImageContent, 0, len(attachments))
 	for _, attachment := range attachments {
-		if attachment.Attachment.Kind != api.MediaArtifactDVDMenu ||
-			attachment.Attachment.Purpose != api.ScreenshotPurposeMenu {
-			return api.MediaArtifactSet{}, nil, errors.New("workflow media attachment must be a DVD menu image")
+		switch {
+		case attachment.Attachment.Kind == api.MediaArtifactDVDMenu &&
+			attachment.Attachment.Purpose == api.ScreenshotPurposeMenu:
+		case attachment.Attachment.Kind == api.MediaArtifactScreenshot &&
+			attachment.Attachment.Purpose == api.ScreenshotPurposeFinal:
+		default:
+			return api.MediaArtifactSet{}, nil, errors.New("workflow media attachment must be a final screenshot or DVD menu image")
 		}
 		contents = append(contents, menuImageContent{
 			contentType: attachment.Content.ContentType,
@@ -761,21 +802,28 @@ func (b workflowMediaBuilder) Attach(
 	for _, image := range retained.ArtifactImages {
 		knownPaths[strings.ToLower(filepath.Clean(image.Path))] = struct{}{}
 	}
-	for _, image := range images {
+	for index, image := range images {
 		pathKey := strings.ToLower(filepath.Clean(image.Path))
 		if _, exists := knownPaths[pathKey]; exists {
 			continue
 		}
+		attachment := attachments[index].Attachment
+		source := "attached-screenshot"
+		selectionSource := "comparison"
+		if attachment.Kind == api.MediaArtifactDVDMenu {
+			source = "attached-dvd-menu"
+			selectionSource = api.ScreenshotSelectionSourceMenu
+		}
 		artifact := publicMediaArtifact(
 			snapshot.CaptureFingerprint,
-			"attached-dvd-menu",
+			source,
 			len(snapshot.Artifacts),
-			api.MediaArtifactDVDMenu,
-			api.ScreenshotPurposeMenu,
+			attachment.Kind,
+			attachment.Purpose,
 			image,
 		)
-		artifact.Order = len(snapshot.Artifacts)
-		artifact.Source = string(api.ScreenshotSelectionSourceMenu)
+		artifact.Order = attachment.Order
+		artifact.Source = selectionSource
 		snapshot.Artifacts = append(snapshot.Artifacts, artifact)
 		retained.ArtifactImages[artifact.ID] = image
 		knownPaths[pathKey] = struct{}{}

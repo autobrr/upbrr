@@ -352,12 +352,16 @@ type PrivateResourceStore interface {
 	Consume(ownerID string, workflowID api.WorkflowID, resourceID string, now time.Time) (any, error)
 	Delete(ownerID string, workflowID api.WorkflowID, resourceID string)
 	InvalidateWorkflow(ownerID string, workflowID api.WorkflowID)
+	// InvalidateWorkflowExcept invalidates one workflow while retaining named resources.
+	InvalidateWorkflowExcept(ownerID string, workflowID api.WorkflowID, preservedResourceIDs ...string)
 	InvalidateAll()
 }
 
 // Application is the compact adapter-facing workflow command/query surface.
 type Application interface {
 	Continue(context.Context, string, api.ContinueReleaseWorkflowRequest) (CommandResult, error)
+	StartUpload(context.Context, string, api.CreateReleaseWorkflowUploadRequest) (CommandResult, error)
+	SubmitUploadFeedback(context.Context, string, api.WorkflowID, api.ReleaseWorkflowUploadFeedback) (CommandResult, error)
 	Execute(context.Context, string, Command) (CommandResult, error)
 	Start(context.Context, string, Command) (api.WorkflowOperationStatus, error)
 	Workflow(context.Context, string, api.WorkflowID) (api.ReleaseWorkflow, error)
@@ -392,6 +396,7 @@ type State struct {
 	UploadResults          map[api.UploadResultID]api.UploadResult
 	Operations             map[api.WorkflowOperationID]api.WorkflowOperationStatus
 	Receipts               map[string]commandReceipt
+	Composite              *compositeUploadSession
 }
 
 type commandReceipt struct {
@@ -417,17 +422,26 @@ type Command interface {
 }
 
 // CreateWorkflowCommand creates fact instructions and a draft aggregate.
+// Composite, when set, installs retained composite state in the same mutation.
 type CreateWorkflowCommand struct {
-	WorkflowID     api.WorkflowID
-	Instructions   api.ReleaseFactInstructions
-	IdempotencyKey string
+	WorkflowID         api.WorkflowID
+	Instructions       api.ReleaseFactInstructions
+	IdempotencyKey     string
+	RequestFingerprint api.WorkflowFingerprint
+	Composite          *compositeUploadSession
 }
 
 func (CreateWorkflowCommand) commandName() string              { return "create" }
 func (CreateWorkflowCommand) userIntent()                      {}
 func (CreateWorkflowCommand) operationKind() api.OperationKind { return api.OperationKindUnknown }
 func (c CreateWorkflowCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
-	return canonicalCommandFingerprint(c.Instructions)
+	return canonicalCommandFingerprint(struct {
+		Instructions       api.ReleaseFactInstructions
+		RequestFingerprint api.WorkflowFingerprint
+	}{
+		Instructions:       c.Instructions,
+		RequestFingerprint: c.RequestFingerprint,
+	})
 }
 
 // ReplaceFactInstructionsCommand publishes a new instruction revision and invalidates all facts and downstream state.

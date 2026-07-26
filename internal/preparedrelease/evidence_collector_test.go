@@ -4,6 +4,7 @@
 package preparedrelease
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -12,6 +13,60 @@ import (
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+type privateResourcePipelineFake struct {
+	state preparationstate.State
+}
+
+func (f privateResourcePipelineFake) CollectPreparationEvidence(
+	context.Context,
+	preparationstate.Request,
+) (preparationstate.State, error) {
+	return f.state, nil
+}
+
+func (f privateResourcePipelineFake) HydratePrivateResources(
+	context.Context,
+	preparationstate.Request,
+) (preparationstate.State, error) {
+	return f.state, nil
+}
+
+func TestEvidenceCollectorHydratesPrivateResources(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := "Example.Release.2026.1080p-GRP.mkv"
+	collector, err := NewEvidenceCollector(privateResourcePipelineFake{state: preparationstate.State{
+		SourcePath:          sourcePath,
+		Paths:               []string{sourcePath},
+		VideoPath:           sourcePath,
+		MediaInfoJSONPath:   "MediaInfo.json",
+		MediaInfoTextPath:   "mediainfo.txt",
+		DescriptionTemplate: "template.txt",
+		ClientEvidence: preparationstate.ClientEvidenceSnapshot{
+			Disposition: preparationstate.ClientEvidenceDispositionSearched,
+			Result:      api.ClientSearchResult{InfoHash: "example-info-hash"},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("new evidence collector: %v", err)
+	}
+
+	resources, err := collector.HydratePrivateResources(context.Background(), preparationstate.Request{
+		Manifest: api.SourceManifest{SourcePath: sourcePath},
+	})
+	if err != nil {
+		t.Fatalf("hydrate private resources: %v", err)
+	}
+	if resources.SourcePath != sourcePath ||
+		resources.VideoPath != sourcePath ||
+		resources.MediaInfoJSONPath != "MediaInfo.json" ||
+		resources.MediaInfoTextPath != "mediainfo.txt" ||
+		resources.DescriptionTemplate != "template.txt" ||
+		resources.ClientEvidence.Result.InfoHash != "example-info-hash" {
+		t.Fatalf("hydrated resources = %#v", resources)
+	}
+}
 
 func TestMapLegacyFactsUsesTypedConcreteAssessments(t *testing.T) {
 	t.Parallel()

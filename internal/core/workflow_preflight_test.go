@@ -260,6 +260,35 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		}
 	})
 
+	t.Run("configured remote validation failure skips without action", func(t *testing.T) {
+		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{
+			capabilities: []api.TrackerAuthCapability{{TrackerID: "ALPHA", SupportsLogin: true}},
+			statuses: []api.TrackerAuthStatus{{
+				TrackerID: "ALPHA",
+				State:     trackerauth.StateConfigured,
+				Message:   "remote auth test failed",
+				LastError: "remote validation unavailable",
+			}},
+		}, registry: registry}
+		assessment, finalized, err := builder.Build(context.Background(), api.UploadSubject{}, catalog, runtime, projections, now)
+		if err != nil {
+			t.Fatalf("build unavailable auth preflight: %v", err)
+		}
+		result := assessment.Results[0]
+		if result.State != api.TrackerPreflightStateRetryable ||
+			len(result.RequiredActions) != 0 ||
+			len(result.Failures) != 1 ||
+			result.Failures[0].Failure.Recovery != api.OperationRecoveryRetry ||
+			finalized[0].Readiness != api.ReadinessStatusBlocked ||
+			finalized[0].DupeReady ||
+			finalized[0].UploadReady {
+			t.Fatalf("unavailable auth preflight = %#v/%#v", result, finalized[0])
+		}
+		if assessment.Results[1].State != api.TrackerPreflightStateReady || !finalized[1].DupeReady || !finalized[1].UploadReady {
+			t.Fatalf("unavailable auth changed sibling = %#v/%#v", assessment.Results[1], finalized[1])
+		}
+	})
+
 	t.Run("audio bloat policy", func(t *testing.T) {
 		policyRegistry := trackerspkg.NewRegistry()
 		if err := policyRegistry.Register(workflowAudioPolicyDefinition{

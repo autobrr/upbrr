@@ -86,6 +86,12 @@ func TestContinuationPlannerInsertsExactImageRequirementBarrier(t *testing.T) {
 			ID:               "projections-plan",
 			Revision:         3,
 			InputFingerprint: testFingerprint(t, "projection-input"),
+			Projections: []api.TrackerReleaseProjection{{
+				TrackerID:   "ALPHA",
+				Readiness:   api.ReadinessStatusReady,
+				DupeReady:   true,
+				UploadReady: true,
+			}},
 		},
 		Preflight: &api.TrackerPreflightAssessment{
 			ProjectionSet: api.TrackerReleaseProjectionSetRef{ID: "projections-plan", Revision: 3},
@@ -489,6 +495,12 @@ func readyContinuationPlannerResult(t *testing.T, now time.Time) CommandResult {
 			ID:               "projections-ready",
 			Revision:         3,
 			InputFingerprint: testFingerprint(t, "projection-ready"),
+			Projections: []api.TrackerReleaseProjection{{
+				TrackerID:   "ALPHA",
+				Readiness:   api.ReadinessStatusReady,
+				DupeReady:   true,
+				UploadReady: true,
+			}},
 		},
 		Preflight: &api.TrackerPreflightAssessment{
 			ProjectionSet: api.TrackerReleaseProjectionSetRef{ID: "projections-ready", Revision: 3},
@@ -524,8 +536,18 @@ func TestContinuationPlannerAdvancesRunnableSiblingPastPendingDupe(t *testing.T)
 			Status:           api.StageStatusReady,
 			InputFingerprint: testFingerprint(t, "projection-partial"),
 			Projections: []api.TrackerReleaseProjection{
-				{TrackerID: "ALPHA", Readiness: api.ReadinessStatusReady},
-				{TrackerID: "BETA", Readiness: api.ReadinessStatusReady},
+				{
+					TrackerID:   "ALPHA",
+					Readiness:   api.ReadinessStatusReady,
+					DupeReady:   true,
+					UploadReady: true,
+				},
+				{
+					TrackerID:   "BETA",
+					Readiness:   api.ReadinessStatusReady,
+					DupeReady:   true,
+					UploadReady: true,
+				},
 			},
 		},
 		Preflight: &api.TrackerPreflightAssessment{
@@ -567,6 +589,68 @@ func TestContinuationPlannerAdvancesRunnableSiblingPastPendingDupe(t *testing.T)
 	action := api.RequiredAction{TrackerID: "BETA"}
 	if continuationActionBlocksAllLanes(current, action) {
 		t.Fatal("pending BETA action blocked runnable ALPHA lane")
+	}
+}
+
+func TestDuplicateReviewBlocksWhenOtherLaneNeedsPreflightAction(t *testing.T) {
+	t.Parallel()
+
+	current := CommandResult{
+		Projections: &api.TrackerReleaseProjectionSet{
+			Projections: []api.TrackerReleaseProjection{
+				{
+					TrackerID:   "ALPHA",
+					Readiness:   api.ReadinessStatusReady,
+					DupeReady:   true,
+					UploadReady: true,
+				},
+				{
+					TrackerID:   "BETA",
+					Readiness:   api.ReadinessStatusBlocked,
+					DupeReady:   false,
+					UploadReady: false,
+				},
+			},
+		},
+		Preflight: &api.TrackerPreflightAssessment{
+			Results: []api.TrackerPreflightResult{
+				{
+					TrackerID: "ALPHA",
+					State:     api.TrackerPreflightStateReady,
+				},
+				{
+					TrackerID: "BETA",
+					State:     api.TrackerPreflightStateActionRequired,
+					RequiredActions: []api.RequiredAction{{
+						Kind: api.RequiredActionAuthenticateTracker,
+					}},
+				},
+			},
+		},
+		Dupes: &api.DupeAssessment{
+			Results: []api.TrackerDupeAssessment{
+				{
+					TrackerID: "ALPHA",
+					Status:    api.StageStatusCompleted,
+					Decision:  api.DupeDecisionAccepted,
+				},
+				{
+					TrackerID: "BETA",
+					Status:    api.StageStatusSkipped,
+					Decision:  api.DupeDecisionSkipped,
+				},
+			},
+		},
+	}
+	action := api.RequiredAction{
+		Kind:      api.RequiredActionReviewDuplicates,
+		TrackerID: "ALPHA",
+	}
+	if !continuationActionBlocksAllLanes(current, action) {
+		t.Fatal("duplicate review did not block when every sibling lane was unavailable")
+	}
+	if dupesAllowContinuation(current.Projections, current.Dupes) {
+		t.Fatal("blocked projection's skipped duplicate result allowed continuation")
 	}
 }
 

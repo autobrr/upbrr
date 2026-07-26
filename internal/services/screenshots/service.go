@@ -141,6 +141,29 @@ func (s *Service) Plan(ctx context.Context, meta api.ScreenshotSubject, count in
 	)
 
 	manualSelections := buildManualFrameSelections(meta.ManualFrames, plan.FrameRate)
+	if len(manualSelections) == 0 && plan.DurationSeconds <= 0 && len(info.Segments) == 0 {
+		if cmd, resolveErr := resolveFFmpeg(); resolveErr != nil {
+			s.logger.Debugf(
+				"screenshots: duration fallback unavailable input=%s err=%s",
+				info.SourcePath,
+				redaction.RedactValue(resolveErr.Error(), nil),
+			)
+		} else if duration, probeErr := probeVideoDuration(ctx, s.runner, cmd, info.SourcePath); probeErr != nil {
+			s.logger.Debugf(
+				"screenshots: duration fallback failed input=%s err=%s",
+				info.SourcePath,
+				redaction.RedactValue(probeErr.Error(), nil),
+			)
+		} else {
+			info.DurationSeconds = duration
+			plan.DurationSeconds = duration
+			s.logger.Debugf(
+				"screenshots: duration fallback resolved method=ffmpeg duration_seconds=%.3f input=%s",
+				duration,
+				info.SourcePath,
+			)
+		}
+	}
 	if len(manualSelections) == 0 && (plan.DurationSeconds <= 0 || plan.FrameRate <= 0) {
 		plan.RequiresManualFrames = true
 		s.logger.Debugf("screenshots: manual frames required reason=missing_timing duration_seconds=%.3f frame_rate=%.3f", plan.DurationSeconds, plan.FrameRate)

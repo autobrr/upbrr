@@ -316,10 +316,7 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		}
 		workflowPrivateResources = vault
 	}
-	workflow, err := releaseworkflow.New(
-		workflowRepository,
-		workflowPrivateResources,
-		workflowPreparer,
+	workflowOptions := []releaseworkflow.Option{
 		releaseworkflow.WithTrackerProjectionBuilder(trackerWorkflowProjector),
 		releaseworkflow.WithTrackerPreflightBuilder(workflowPreflightBuilder{
 			auth:     services.TrackerAuth,
@@ -337,6 +334,16 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		releaseworkflow.WithUploadPlanBuilder(newWorkflowUploadPlanBuilder(preparedFacts, services.Trackers, services.Torrents, services.Clients)),
 		releaseworkflow.WithOperationErrorClassifier(classifyOperationError),
 		releaseworkflow.WithLogger(logger),
+	}
+	workflowOptions = append(workflowOptions, e2eReleaseWorkflowOptions()...)
+	if uploadAuthenticator, ok := services.TrackerAuth.(releaseworkflow.UploadFeedbackAuthenticator); ok {
+		workflowOptions = append(workflowOptions, releaseworkflow.WithUploadFeedbackAuthenticator(uploadAuthenticator))
+	}
+	workflow, err := releaseworkflow.New(
+		workflowRepository,
+		workflowPrivateResources,
+		workflowPreparer,
+		workflowOptions...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("core: release workflow: %w", err)
@@ -364,6 +371,29 @@ func (c *Core) ContinueReleaseWorkflow(
 ) (releaseworkflow.CommandResult, error) {
 	result, err := c.workflow.Continue(ctx, ownerID, request)
 	return result, classifyOperationError(api.OperationKindUnknown, err)
+}
+
+// StartReleaseWorkflowUpload starts or idempotently replays one owner-scoped
+// durable composite upload.
+func (c *Core) StartReleaseWorkflowUpload(
+	ctx context.Context,
+	ownerID string,
+	request api.CreateReleaseWorkflowUploadRequest,
+) (releaseworkflow.CommandResult, error) {
+	result, err := c.workflow.StartUpload(ctx, ownerID, request)
+	return result, classifyOperationError(api.OperationKindUploadExecute, err)
+}
+
+// SubmitReleaseWorkflowUploadFeedback applies one exact required-action response
+// and starts the resumed composite operation.
+func (c *Core) SubmitReleaseWorkflowUploadFeedback(
+	ctx context.Context,
+	ownerID string,
+	workflowID api.WorkflowID,
+	feedback api.ReleaseWorkflowUploadFeedback,
+) (releaseworkflow.CommandResult, error) {
+	result, err := c.workflow.SubmitUploadFeedback(ctx, ownerID, workflowID, feedback)
+	return result, classifyOperationError(api.OperationKindUploadExecute, err)
 }
 
 // ExecuteReleaseWorkflow applies one owner-scoped typed workflow command.

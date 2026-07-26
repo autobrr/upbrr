@@ -363,7 +363,8 @@ func (b workflowDescriptionBuilder) resolveSubject(
 		baseGroup := strings.TrimSpace(strings.SplitN(override.GroupKey, "|", 2)[0])
 		trackersForGroup := make([]string, 0, len(descriptionTargets))
 		for _, projection := range descriptionTargets {
-			if strings.EqualFold(strings.TrimSpace(projection.DescriptionGroup), baseGroup) {
+			if strings.EqualFold(baseGroup, "default") ||
+				strings.EqualFold(strings.TrimSpace(projection.DescriptionGroup), baseGroup) {
 				trackersForGroup = append(trackersForGroup, string(projection.TrackerID))
 			}
 		}
@@ -443,7 +444,8 @@ func workflowDescriptionTrackerIDs(
 	}
 	baseGroup := strings.TrimSpace(strings.SplitN(entry.GroupKey, "|", 2)[0])
 	for _, projection := range projections {
-		if strings.EqualFold(strings.TrimSpace(projection.DescriptionGroup), baseGroup) {
+		if strings.EqualFold(baseGroup, "default") ||
+			strings.EqualFold(strings.TrimSpace(projection.DescriptionGroup), baseGroup) {
 			result = append(result, projection.TrackerID)
 		}
 	}

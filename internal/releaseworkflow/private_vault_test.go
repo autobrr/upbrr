@@ -83,11 +83,11 @@ func TestPrivateArtifactVaultDetectsDigestMismatchAndCleansExpiry(t *testing.T) 
 		key.workflowID,
 		key.resourceID,
 		MediaPreviewContent{
-Bytes: []byte("private-preview"),
- ContentType: "image/png",
- Width: 10,
- Height: 10,
-},
+			Bytes:       []byte("private-preview"),
+			ContentType: "image/png",
+			Width:       10,
+			Height:      10,
+		},
 		now.Add(time.Minute),
 	); err != nil {
 		t.Fatalf("put private preview: %v", err)
@@ -163,5 +163,74 @@ func TestPrivateArtifactVaultNonDurableReplacementCannotResurrectStaleAuthority(
 	}
 	if _, err := restarted.Get(testOwnerID, workflowID, resourceID, now); !errors.Is(err, ErrPrivateResourceUnavailable) {
 		t.Fatalf("stale durable artifact was resurrected: %v", err)
+	}
+}
+
+func TestPrivateArtifactVaultInvalidateWorkflowExceptPersistsPreservedResource(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	vault, err := NewPrivateArtifactVault(root)
+	if err != nil {
+		t.Fatalf("new private artifact vault: %v", err)
+	}
+	now := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
+	workflowID := api.WorkflowID("workflow-preserve")
+	preservedID := "operation-command:operation-1"
+	removedID := "preview:obsolete"
+	if err := vault.Put(
+		testOwnerID,
+		workflowID,
+		preservedID,
+		MediaPreviewContent{Bytes: []byte("preserved"), ContentType: "image/png"},
+		now.Add(time.Hour),
+	); err != nil {
+		t.Fatalf("put preserved private artifact: %v", err)
+	}
+	if err := vault.Put(
+		testOwnerID,
+		workflowID,
+		removedID,
+		MediaPreviewContent{Bytes: []byte("removed"), ContentType: "image/png"},
+		now.Add(time.Hour),
+	); err != nil {
+		t.Fatalf("put removable private artifact: %v", err)
+	}
+
+	vault.InvalidateWorkflowExcept(testOwnerID, workflowID, preservedID)
+	vault.InvalidateAll()
+	restarted, err := NewPrivateArtifactVault(root)
+	if err != nil {
+		t.Fatalf("restart private artifact vault: %v", err)
+	}
+	if _, err := restarted.Get(testOwnerID, workflowID, preservedID, now); err != nil {
+		t.Fatalf("get preserved private artifact after restart: %v", err)
+	}
+	if _, err := restarted.Get(testOwnerID, workflowID, removedID, now); !errors.Is(err, ErrPrivateResourceUnavailable) {
+		t.Fatalf("removed private artifact error=%v", err)
+	}
+}
+
+func TestMemoryPrivateResourceStoreInvalidateWorkflowExcept(t *testing.T) {
+	t.Parallel()
+
+	store := NewMemoryPrivateResourceStore()
+	now := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
+	workflowID := api.WorkflowID("workflow-memory-preserve")
+	preservedID := "operation-command:operation-1"
+	removedID := "preview:obsolete"
+	if err := store.Put(testOwnerID, workflowID, preservedID, "preserved", now.Add(time.Hour)); err != nil {
+		t.Fatalf("put preserved private resource: %v", err)
+	}
+	if err := store.Put(testOwnerID, workflowID, removedID, "removed", now.Add(time.Hour)); err != nil {
+		t.Fatalf("put removable private resource: %v", err)
+	}
+
+	store.InvalidateWorkflowExcept(testOwnerID, workflowID, preservedID)
+	if value, err := store.Get(testOwnerID, workflowID, preservedID, now); err != nil || value != "preserved" {
+		t.Fatalf("preserved private resource value=%v error=%v", value, err)
+	}
+	if _, err := store.Get(testOwnerID, workflowID, removedID, now); !errors.Is(err, ErrPrivateResourceUnavailable) {
+		t.Fatalf("removed private resource error=%v", err)
 	}
 }

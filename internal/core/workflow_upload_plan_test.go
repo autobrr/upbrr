@@ -204,6 +204,21 @@ func TestDryRunClientInjectionReportsAggregateTerminalProgress(t *testing.T) {
 	}
 }
 
+func TestWorkflowDryRunClientFailureRetainsReconciliationIdentity(t *testing.T) {
+	t.Parallel()
+
+	failure := workflowDryRunClientFailure(
+		"ALPHA",
+		api.OperationFailureUnknownOutcome,
+		"Client injection outcome is unknown.",
+	)
+	if failure.Failure.Operation != api.OperationKindClientInjection ||
+		failure.Failure.Recovery != api.OperationRecoveryConfirm ||
+		failure.Resource != "dry-run:ALPHA" {
+		t.Fatalf("unknown client effect failure = %#v", failure)
+	}
+}
+
 func TestWorkflowUploadPlanOmitsSkippedTrackersAndKeepsPreparationFailuresLocal(t *testing.T) {
 	t.Parallel()
 

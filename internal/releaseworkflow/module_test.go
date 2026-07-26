@@ -2906,6 +2906,24 @@ func TestResolveImageHostingReconciliationInvalidatesMissingPrivateMedia(t *test
 	}
 }
 
+func TestStampMediaActionsPublishesPendingActionIdentity(t *testing.T) {
+	t.Parallel()
+
+	module, _ := newTestModule(t, testPreparer())
+	now := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
+	snapshot := api.MediaArtifactSet{RequiredActions: []api.RequiredAction{{
+		Kind:   api.RequiredActionProvideTrackerInput,
+		Prompt: "Choose screenshot frames, then retry media capture.",
+	}}}
+	if err := module.stampMediaActions(&snapshot, 7, now); err != nil {
+		t.Fatalf("stamp media actions: %v", err)
+	}
+	action := snapshot.RequiredActions[0]
+	if action.ID == "" || action.Status != api.RequiredActionStatusPending || action.WorkflowRevision != 7 || action.CreatedAt != now {
+		t.Fatalf("stamped media action = %#v", action)
+	}
+}
+
 func newTestModule(t *testing.T, preparer ReleasePreparer, options ...Option) (*Module, *MemoryRepository) {
 	t.Helper()
 	repository := NewMemoryRepository()
@@ -3004,9 +3022,9 @@ func executeTestPublicationRaw(module *Module, publication any) (CommandResult, 
 	var result CommandResult
 	switch typed := publication.(type) {
 	case trackerContextPublication:
-		result, err = module.setTrackerContext(testOwnerID, &state, nextRevision, now, typed)
+		result, err = module.setTrackerContext(ctx, testOwnerID, &state, nextRevision, now, typed)
 	case projectionSetPublication:
-		result, err = module.publishProjections(testOwnerID, &state, nextRevision, now, typed)
+		result, err = module.publishProjections(ctx, testOwnerID, &state, nextRevision, now, typed)
 	case dupeAssessmentPublication:
 		result, err = module.publishDupes(testOwnerID, &state, nextRevision, now, typed)
 	}

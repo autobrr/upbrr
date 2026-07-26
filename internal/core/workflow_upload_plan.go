@@ -389,19 +389,10 @@ func (b workflowUploadPlanBuilder) Build(
 					tracker.ClientInjectionMessage = injectionMessage
 					tracker.ClientFailureCode = failureCode
 					if failureCode != "" {
-						recovery := api.OperationRecoveryRetry
-						if failureCode == api.OperationFailureMissingExactTorrent {
-							recovery = api.OperationRecoveryReprepare
-						}
-						tracker.Failures = append(tracker.Failures, api.WorkflowFailure{
-							Failure: api.OperationFailure{
-								Code:      failureCode,
-								Operation: api.OperationKindUploadDryRun,
-								Message:   injectionMessage,
-								Recovery:  recovery,
-							},
-							TrackerID: projection.TrackerID,
-						})
+						tracker.Failures = append(
+							tracker.Failures,
+							workflowDryRunClientFailure(projection.TrackerID, failureCode, injectionMessage),
+						)
 					}
 					if injected {
 						dryRunInjected[projection.TrackerID] = struct{}{}
@@ -488,6 +479,52 @@ func (b workflowUploadPlanBuilder) Build(
 		torrentPaths:   workflowPreparedTorrentPaths(preparationByTracker),
 		crossSeeds:     append([]api.UploadedTorrent(nil), subject.CrossSeedTorrents...),
 	}, nil
+}
+
+// workflowDryRunClientFailure preserves client-effect identity when an unknown
+// injection outcome requires explicit reconciliation.
+func workflowDryRunClientFailure(
+	trackerID api.TrackerID,
+	code api.OperationFailureCode,
+	message string,
+) api.WorkflowFailure {
+	operation := api.OperationKindUploadDryRun
+	recovery := api.OperationRecoveryRetry
+	resource := ""
+	switch code {
+	case api.OperationFailureMissingExactTorrent:
+		recovery = api.OperationRecoveryReprepare
+	case api.OperationFailureUnknownOutcome:
+		operation = api.OperationKindClientInjection
+		recovery = api.OperationRecoveryConfirm
+		resource = "dry-run:" + string(trackerID)
+	case api.OperationFailureInvalidInput,
+		api.OperationFailureInvalidSource,
+		api.OperationFailureConfirmationRequired,
+		api.OperationFailureStaleGeneration,
+		api.OperationFailureIncompatibleGeneration,
+		api.OperationFailureMissingPrerequisite,
+		api.OperationFailureTrackerAuthRequired,
+		api.OperationFailureNoEligibleTrackers,
+		api.OperationFailureStaleReview,
+		api.OperationFailureStaleResult,
+		api.OperationFailureMissingReview,
+		api.OperationFailureMissingPreparedTracker,
+		api.OperationFailureDryRunClientInjection,
+		api.OperationFailureClientInjection,
+		api.OperationFailureImageHostUnavailable,
+		api.OperationFailureInternal:
+	}
+	return api.WorkflowFailure{
+		Failure: api.OperationFailure{
+			Code:      code,
+			Operation: operation,
+			Message:   message,
+			Recovery:  recovery,
+		},
+		TrackerID: trackerID,
+		Resource:  resource,
+	}
 }
 
 func uploadPreparationProgressMessage(tracker api.UploadPlanTracker) string {

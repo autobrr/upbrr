@@ -54,6 +54,7 @@ var optionalWorkflowPortPattern = regexp.MustCompile(`\bworkflow\s*\?:`)
 var apiV1RouteRequestTypePattern = regexp.MustCompile(`^apiV1[A-Za-z0-9]*Request$`)
 
 var publicationCommandNames = map[string]struct{}{
+	"CompositeUploadCommand":       {},
 	"PublishDescriptionsCommand":   {},
 	"PublishDupeAssessmentCommand": {},
 	"PublishMediaArtifactsCommand": {},

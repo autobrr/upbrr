@@ -78,8 +78,8 @@ type CollectedResources struct {
 	ClientEvidence        preparationstate.ClientEvidenceSnapshot
 }
 
-type clientEvidenceHydrator interface {
-	HydrateClientEvidence(context.Context, preparationstate.Request) (preparationstate.ClientEvidenceSnapshot, error)
+type privateResourcesHydrator interface {
+	HydratePrivateResources(context.Context, preparationstate.Request) (CollectedResources, error)
 }
 
 // Module owns one current immutable generation and private envelope per
@@ -195,22 +195,22 @@ func (m *Module) Prepare(ctx context.Context, input api.PrepareInput) (api.Prepa
 	forceClientRefresh := input.Controls.ForceRecheck != nil && *input.Controls.ForceRecheck
 	if hasCurrent && reuseAllowed && !input.Force && !forceClientRefresh && current.Compatibility == compatibility {
 		if !m.hasPublishedGeneration(current.Source.SourcePath, current.Generation) {
-			hydrator, ok := m.collector.(clientEvidenceHydrator)
+			hydrator, ok := m.collector.(privateResourcesHydrator)
 			if !ok {
-				return api.PrepareResult{}, errors.New("prepared release: collector cannot hydrate private client evidence")
+				return api.PrepareResult{}, errors.New("prepared release: collector cannot hydrate private resources")
 			}
-			finish := api.BeginPreparationProgress(ctx, api.PreparationPhaseClientDiscovery, "Hydrating private client evidence.")
-			snapshot, hydrateErr := hydrator.HydrateClientEvidence(ctx, preparationstate.Request{
+			finish := api.BeginPreparationProgress(ctx, api.PreparationPhaseClientDiscovery, "Hydrating private prepared resources.")
+			resources, hydrateErr := hydrator.HydratePrivateResources(ctx, preparationstate.Request{
 				Input:    input,
 				Manifest: current.Source,
 				Layout:   layout,
 			})
 			finish(hydrateErr)
 			if hydrateErr != nil {
-				return api.PrepareResult{}, fmt.Errorf("prepared release: hydrate persisted client evidence: %w", hydrateErr)
+				return api.PrepareResult{}, fmt.Errorf("prepared release: hydrate persisted private resources: %w", hydrateErr)
 			}
 			owned := envelopeFromPersisted(current, input)
-			owned.resources.clientEvidence = preparationstate.CloneClientEvidenceSnapshot(snapshot)
+			owned.resources = mergePreparationResources(owned.resources, resourcesFromCollected(resources))
 			m.publish(owned)
 		}
 		api.EmitPreparationProgress(
@@ -219,6 +219,17 @@ func (m *Module) Prepare(ctx context.Context, input api.PrepareInput) (api.Prepa
 		)
 		skipReusedPreparationStages(ctx)
 		return cloneResult(api.PrepareResult{Release: current})
+	}
+	if input.RequirePrepared {
+		api.EmitPreparationProgress(
+			ctx,
+			api.NewPreparationProgressUpdate(
+				api.PreparationPhasePreparedCache,
+				api.PreparationProgressFailed,
+				"A compatible prepared generation is required.",
+			),
+		)
+		return api.PrepareResult{}, errors.New("prepared release: compatible prepared generation is required")
 	}
 	api.EmitPreparationProgress(
 		ctx,

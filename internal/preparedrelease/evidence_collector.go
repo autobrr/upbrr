@@ -24,8 +24,8 @@ type EvidencePipeline interface {
 	CollectPreparationEvidence(context.Context, preparationstate.Request) (preparationstate.State, error)
 }
 
-type clientEvidencePipeline interface {
-	HydrateClientEvidence(context.Context, preparationstate.Request) (preparationstate.ClientEvidenceSnapshot, error)
+type privateResourcesPipeline interface {
+	HydratePrivateResources(context.Context, preparationstate.Request) (preparationstate.State, error)
 }
 
 // EvidenceCollector adapts the existing evidence pipeline to canonical grouped
@@ -84,24 +84,27 @@ func (c *EvidenceCollector) Collect(
 	return mapCollectedFacts(meta), nil
 }
 
-// HydrateClientEvidence delegates the restart-only private evidence operation
-// without running the full metadata or canonical-identity pipeline.
-func (c *EvidenceCollector) HydrateClientEvidence(
+// HydratePrivateResources delegates restart-only reconstruction of local
+// preparation artifacts without rerunning canonical identity resolution.
+func (c *EvidenceCollector) HydratePrivateResources(
 	ctx context.Context,
 	request preparationstate.Request,
-) (preparationstate.ClientEvidenceSnapshot, error) {
+) (CollectedResources, error) {
 	if c == nil || c.pipeline == nil {
-		return preparationstate.ClientEvidenceSnapshot{}, errors.New("prepared release: evidence collector is not initialized")
+		return CollectedResources{}, errors.New("prepared release: evidence collector is not initialized")
 	}
-	pipeline, ok := c.pipeline.(clientEvidencePipeline)
+	pipeline, ok := c.pipeline.(privateResourcesPipeline)
 	if !ok {
-		return preparationstate.ClientEvidenceSnapshot{}, errors.New("prepared release: metadata pipeline cannot hydrate client evidence")
+		return CollectedResources{}, errors.New("prepared release: metadata pipeline cannot hydrate private resources")
 	}
-	snapshot, err := pipeline.HydrateClientEvidence(ctx, request)
+	state, err := pipeline.HydratePrivateResources(ctx, request)
 	if err != nil {
-		return preparationstate.ClientEvidenceSnapshot{}, fmt.Errorf("prepared release: hydrate client evidence: %w", err)
+		return CollectedResources{}, fmt.Errorf("prepared release: hydrate private resources: %w", err)
 	}
-	return preparationstate.CloneClientEvidenceSnapshot(snapshot), nil
+	if canonicalSourceKey(state.SourcePath) != canonicalSourceKey(request.Manifest.SourcePath) {
+		return CollectedResources{}, fmt.Errorf("prepared release: hydrated source differs from manifest: %w", internalerrors.ErrInvalidInput)
+	}
+	return collectedResources(state), nil
 }
 
 func applyBlurayFactInstruction(meta *preparationstate.State, releaseID string) error {
@@ -266,21 +269,25 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			Episode: meta.EpisodeInt,
 		},
 		Diagnostics: diagnostics,
-		Resources: CollectedResources{
-			SourcePath:            firstCollectedSourcePath(meta.Paths),
-			VideoPath:             meta.VideoPath,
-			FileList:              append([]string(nil), meta.FileList...),
-			MediaInfoJSONPath:     meta.MediaInfoJSONPath,
-			MediaInfoTextPath:     meta.MediaInfoTextPath,
-			DVDIFOPath:            meta.DVDIFOPath,
-			DVDVOBPath:            meta.DVDVOBPath,
-			DVDVOBMediaInfoJSON:   meta.DVDVOBMediaInfoJSON,
-			DVDVOBMediaInfoText:   meta.DVDVOBMediaInfoText,
-			SceneNFOPath:          meta.SceneNFOPath,
-			DescriptionTemplate:   meta.DescriptionTemplate,
-			SelectedBDMVPlaylists: clonePlaylists(meta.SelectedBDMVPlaylists),
-			ClientEvidence:        preparationstate.CloneClientEvidenceSnapshot(meta.ClientEvidence),
-		},
+		Resources:   collectedResources(meta),
+	}
+}
+
+func collectedResources(meta preparationstate.State) CollectedResources {
+	return CollectedResources{
+		SourcePath:            firstCollectedSourcePath(meta.Paths),
+		VideoPath:             meta.VideoPath,
+		FileList:              append([]string(nil), meta.FileList...),
+		MediaInfoJSONPath:     meta.MediaInfoJSONPath,
+		MediaInfoTextPath:     meta.MediaInfoTextPath,
+		DVDIFOPath:            meta.DVDIFOPath,
+		DVDVOBPath:            meta.DVDVOBPath,
+		DVDVOBMediaInfoJSON:   meta.DVDVOBMediaInfoJSON,
+		DVDVOBMediaInfoText:   meta.DVDVOBMediaInfoText,
+		SceneNFOPath:          meta.SceneNFOPath,
+		DescriptionTemplate:   meta.DescriptionTemplate,
+		SelectedBDMVPlaylists: clonePlaylists(meta.SelectedBDMVPlaylists),
+		ClientEvidence:        preparationstate.CloneClientEvidenceSnapshot(meta.ClientEvidence),
 	}
 }
 

@@ -33,6 +33,8 @@ type PrepareInput struct {
 	// Controls contains one-shot permissions excluded from compatibility.
 	Controls PreparationControls
 	Force    bool
+	// RequirePrepared rejects collection when no compatible prepared generation exists.
+	RequirePrepared bool
 }
 
 // ReleaseFactInstructions contains caller intent that can change finalized

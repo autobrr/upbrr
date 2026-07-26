@@ -188,6 +188,20 @@ export type ContinueReleaseWorkflowRequest = Readonly<{
   intent: WorkflowIntent;
 }>;
 
+export type CreateReleaseWorkflowUploadRequest = Readonly<{
+  client?: ReleaseWorkflowUploadClient;
+  descriptions?: ReleaseWorkflowUploadDescriptions;
+  duplicates?: ReleaseWorkflowUploadDuplicates;
+  execution?: ReleaseWorkflowUploadExecution;
+  imageHosting?: ReleaseWorkflowUploadImageHosting;
+  media?: ReleaseWorkflowUploadMedia;
+  preparation?: ReleaseWorkflowUploadPreparation;
+  source: ReleaseWorkflowUploadSource;
+  torrent?: ReleaseWorkflowUploadTorrent;
+  trackers?: ReleaseWorkflowUploadTrackers;
+  unattended: ReleaseWorkflowUploadUnattended | null;
+}>;
+
 export type DeleteReleaseWorkflowMediaRequest = Readonly<{
   artifactIds: readonly PublicResourceID[];
   expectedRevision: WorkflowRevision;
@@ -774,6 +788,7 @@ export type PrepareInput = Readonly<{
   Instructions: ReleaseFactInstructions;
   Intent: PreparationIntent;
   Policy: PreparationPolicy;
+  RequirePrepared: boolean;
   Search: ClientSearchPolicy;
   SourcePath: string;
 }>;
@@ -976,9 +991,282 @@ export type ReleaseWorkflowCurrent = Readonly<{
   workflow: ReleaseWorkflow;
 }>;
 
+export type ReleaseWorkflowDuplicateDisposition = "ask" | "block" | "upload";
+
 export type ReleaseWorkflowOperationRequest = Readonly<{
   operationId: WorkflowOperationID;
   workflowId: WorkflowID;
+}>;
+
+export type ReleaseWorkflowPreparedReleaseMode = "allow" | "require";
+
+export type ReleaseWorkflowUploadActionIdentity = Readonly<{
+  id: RequiredActionID;
+  workflowRevision: WorkflowRevision;
+}>;
+
+export type ReleaseWorkflowUploadClient = Readonly<{
+  forceRecheck?: boolean | null;
+  noSeed?: boolean | null;
+  qbitCategory?: string | null;
+  qbitTag?: string | null;
+  selected?: string | null;
+  skipAutoDiscovery?: boolean | null;
+}>;
+
+export type ReleaseWorkflowUploadClientSearch = Readonly<{
+  client?: string | null;
+  skip?: boolean | null;
+}>;
+
+export type ReleaseWorkflowUploadConfirmation = Readonly<{
+  confirmed: boolean;
+}>;
+
+export type ReleaseWorkflowUploadDVDMenus = Readonly<{
+  capture?: boolean | null;
+  maxItems?: number | null;
+  menuPaths?: readonly string[];
+}>;
+
+export type ReleaseWorkflowUploadDescriptionOverride = Readonly<{
+  file?: string | null;
+  groupKey: string;
+  inline?: string | null;
+  url?: string | null;
+}>;
+
+export type ReleaseWorkflowUploadDescriptions = Readonly<{
+  overrides?: readonly ReleaseWorkflowUploadDescriptionOverride[];
+  templateVersion?: string | null;
+}>;
+
+export type ReleaseWorkflowUploadDuplicateReview = Readonly<{
+  decision: DupeDecision;
+  trackerId?: TrackerID;
+}>;
+
+export type ReleaseWorkflowUploadDuplicates = Readonly<{
+  allowUpload?: readonly TrackerID[];
+  checkCount?: number | null;
+  onEvidence?: ReleaseWorkflowDuplicateDisposition;
+  remoteCheck?: boolean | null;
+}>;
+
+export type ReleaseWorkflowUploadExecution = Readonly<{
+  mode?: ReleaseWorkflowUploadMode;
+  preparedRelease?: ReleaseWorkflowPreparedReleaseMode;
+  runLogLevel?: string | null;
+}>;
+
+export type ReleaseWorkflowUploadExternalIDs = Readonly<{
+  imdb?: ReleaseWorkflowUploadStringID | null;
+  mal?: ReleaseWorkflowUploadNumericID | null;
+  tmdb?: ReleaseWorkflowUploadNumericID | null;
+  tvdb?: ReleaseWorkflowUploadNumericID | null;
+  tvmaze?: ReleaseWorkflowUploadNumericID | null;
+}>;
+
+export type ReleaseWorkflowUploadFacts = Readonly<{
+  category?: CanonicalCategory | null;
+  externalIds?: ReleaseWorkflowUploadExternalIDs;
+  metadata?: ReleaseWorkflowUploadMetadata;
+  playlist?: ReleaseWorkflowUploadPlaylist | null;
+  releaseName?: ReleaseWorkflowUploadReleaseName;
+  sourceLookup?: string | null;
+}>;
+
+export type ReleaseWorkflowUploadFeedback = Readonly<{
+  action: ReleaseWorkflowUploadActionIdentity;
+  response: ReleaseWorkflowUploadFeedbackResponse;
+}>;
+
+export type ReleaseWorkflowUploadFeedbackKind = "playlistSelection" | "metadataSelection" | "rescanConfirmation" | "trackerAuthentication" | "twoFactor" | "trackerInput" | "questionnaire" | "ruleAuthorization" | "duplicateReview" | "uploadApproval" | "reprepare" | "reconciliation";
+
+export type ReleaseWorkflowUploadFeedbackResponse = Readonly<{
+  duplicateReview?: ReleaseWorkflowUploadDuplicateReview | null;
+  kind: ReleaseWorkflowUploadFeedbackKind;
+  metadataSelection?: ReleaseWorkflowUploadMetadataSelection | null;
+  playlistSelection?: ReleaseWorkflowUploadPlaylistSelection | null;
+  questionnaire?: ReleaseWorkflowUploadQuestionnaire | null;
+  reconciliation?: ReleaseWorkflowUploadReconciliation | null;
+  reprepare?: ReleaseWorkflowUploadReprepare | null;
+  rescanConfirmation?: ReleaseWorkflowUploadConfirmation | null;
+  ruleAuthorization?: ReleaseWorkflowUploadConfirmation | null;
+  trackerAuthentication?: ReleaseWorkflowUploadTrackerAuthentication | null;
+  trackerInput?: ReleaseWorkflowUploadTrackerInput | null;
+  twoFactor?: ReleaseWorkflowUploadTwoFactor | null;
+  uploadApproval?: ReleaseWorkflowUploadConfirmation | null;
+}>;
+
+export type ReleaseWorkflowUploadImageHosting = Readonly<{
+  preferredHost?: string | null;
+  skipUpload?: boolean | null;
+}>;
+
+export type ReleaseWorkflowUploadMedia = Readonly<{
+  dvdMenus?: ReleaseWorkflowUploadDVDMenus;
+  screenshots?: ReleaseWorkflowUploadScreenshots;
+}>;
+
+export type ReleaseWorkflowUploadMetadata = Readonly<{
+  anime?: boolean | null;
+  commentary?: boolean | null;
+  distributor?: string | null;
+  originalLanguage?: string | null;
+  personalRelease?: boolean | null;
+  streamOptimized?: boolean | null;
+  webDv?: boolean | null;
+}>;
+
+export type ReleaseWorkflowUploadMetadataSelection = Readonly<{
+  facts?: ReleaseWorkflowUploadFacts | null;
+  selectedValues?: readonly string[];
+}>;
+
+export type ReleaseWorkflowUploadMode = "upload" | "debug";
+
+export type ReleaseWorkflowUploadNumericID = Readonly<{
+  value?: number | null;
+}>;
+
+export type ReleaseWorkflowUploadPlaylist = Readonly<{
+  selected: readonly string[];
+  useAll?: boolean;
+}>;
+
+export type ReleaseWorkflowUploadPlaylistSelection = Readonly<{
+  selected: readonly string[];
+  useAll?: boolean;
+}>;
+
+export type ReleaseWorkflowUploadPolicy = Readonly<{
+  keepFolder?: boolean | null;
+  keepImages?: boolean | null;
+  onlyId?: boolean | null;
+}>;
+
+export type ReleaseWorkflowUploadPreparation = Readonly<{
+  clientSearch?: ReleaseWorkflowUploadClientSearch;
+  confirmRescan?: boolean;
+  facts?: ReleaseWorkflowUploadFacts;
+  force?: boolean;
+  policy?: ReleaseWorkflowUploadPolicy;
+}>;
+
+export type ReleaseWorkflowUploadQuestionnaire = Readonly<{
+  answers: Readonly<Record<string, string | null>>;
+  trackerId: TrackerID;
+}>;
+
+export type ReleaseWorkflowUploadReconciliation = Readonly<{
+  selection: string;
+}>;
+
+export type ReleaseWorkflowUploadReleaseName = Readonly<{
+  category?: string | null;
+  daily?: string | null;
+  dualAudio?: boolean | null;
+  edition?: string | null;
+  episode?: string | null;
+  episodeTitle?: string | null;
+  manualYear?: number | null;
+  noAka?: boolean | null;
+  noDual?: boolean | null;
+  noDub?: boolean | null;
+  noEdition?: boolean | null;
+  noSeason?: boolean | null;
+  noTag?: boolean | null;
+  noYear?: boolean | null;
+  region?: string | null;
+  resolution?: string | null;
+  season?: string | null;
+  service?: string | null;
+  source?: string | null;
+  tag?: string | null;
+  type?: string | null;
+  useSeasonEpisode?: boolean | null;
+}>;
+
+export type ReleaseWorkflowUploadReprepare = Readonly<{
+  confirmed: boolean;
+  preparation?: ReleaseWorkflowUploadPreparation | null;
+}>;
+
+export type ReleaseWorkflowUploadScreenshots = Readonly<{
+  artifactIds?: readonly PublicResourceID[];
+  comparisonPaths?: readonly string[];
+  comparisonPrimaryIndex?: number | null;
+  count?: number | null;
+  frames?: readonly number[];
+}>;
+
+export type ReleaseWorkflowUploadSource = Readonly<{
+  path: string;
+}>;
+
+export type ReleaseWorkflowUploadStringID = Readonly<{
+  value?: string | null;
+}>;
+
+export type ReleaseWorkflowUploadTIKOptions = Readonly<{
+  asian?: boolean | null;
+  discType?: string | null;
+  foreign?: boolean | null;
+  opera?: boolean | null;
+}>;
+
+export type ReleaseWorkflowUploadTorrent = Readonly<{
+  infoHash?: string | null;
+  maxPieceSizeMiB?: number | null;
+  noHash?: boolean | null;
+  rehash?: boolean | null;
+}>;
+
+export type ReleaseWorkflowUploadTrackerAuthentication = Readonly<{
+  trackerId: TrackerID;
+}>;
+
+export type ReleaseWorkflowUploadTrackerConfig = Readonly<{
+  anon?: boolean | null;
+  channel?: string | null;
+  draft?: boolean | null;
+  modq?: boolean | null;
+}>;
+
+export type ReleaseWorkflowUploadTrackerInput = Readonly<{
+  projection: ReleaseWorkflowUploadTrackerProjection;
+  trackerId: TrackerID;
+}>;
+
+export type ReleaseWorkflowUploadTrackerProjection = Readonly<{
+  additionalNames?: Readonly<Record<string, string | null>>;
+  config?: ReleaseWorkflowUploadTrackerConfig;
+  questionnaire?: Readonly<Record<string, string | null>>;
+  site?: ReleaseWorkflowUploadTrackerSite;
+  uploadReleaseName?: WorkflowPatchstring;
+}>;
+
+export type ReleaseWorkflowUploadTrackerSite = Readonly<{
+  tik?: ReleaseWorkflowUploadTIKOptions;
+}>;
+
+export type ReleaseWorkflowUploadTrackers = Readonly<{
+  defaultProjection?: ReleaseWorkflowUploadTrackerProjection | null;
+  include?: readonly TrackerID[];
+  projection?: Readonly<Record<string, ReleaseWorkflowUploadTrackerProjection>>;
+  remove?: readonly TrackerID[];
+  sourceIds?: Readonly<Record<string, string>>;
+}>;
+
+export type ReleaseWorkflowUploadTwoFactor = Readonly<{
+  challengeId: string;
+  code: string;
+  trackerId: TrackerID;
+}>;
+
+export type ReleaseWorkflowUploadUnattended = Readonly<{
+  confirm?: boolean;
 }>;
 
 export type RemoveReleaseWorkflowHostedImagesRequest = Readonly<{
@@ -1852,6 +2140,9 @@ export type WorkflowOperationResult = Readonly<{
 }>;
 
 export type WorkflowOperationResultKind = string;
+
+export type WorkflowPatchstring = Readonly<{
+}>;
 
 export type WorkflowResourceID = string;
 

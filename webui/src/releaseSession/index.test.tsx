@@ -211,7 +211,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
           pendingPreparation.delete(progressKey);
           next = await activePorts.prepare(
             current,
-            request.intent.preparation as PrepareInput,
+            request.intent.preparation as unknown as PrepareInput,
             request.idempotencyKey,
             signal,
           );

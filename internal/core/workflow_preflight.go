@@ -23,6 +23,7 @@ const (
 	workflowPreflightFreshness      = 15 * time.Minute
 	dupeSkipCodeTrackerAuthNotReady = "tracker_auth_not_ready"
 	guiTrackerAuthRetryAction       = "configure tracker auth and retry"
+	remoteAuthUnavailableMessage    = "Tracker authentication could not be verified remotely. This tracker was skipped; retry preflight when it is available."
 )
 
 // workflowPreflightBuilder adapts live auth validation to the workflow's
@@ -58,6 +59,18 @@ func guiTrackerAuthSkipReason(status api.TrackerAuthStatus) string {
 		return reason
 	}
 	return reason + "; " + guiTrackerAuthRetryAction
+}
+
+func trackerAuthStatusRequiresAction(status api.TrackerAuthStatus) bool {
+	if status.Needs2FA {
+		return true
+	}
+	switch strings.TrimSpace(status.State) {
+	case trackerauth.StateNotConfigured, trackerauth.StateLoginRequired, trackerauth.StateEncryptedStorageUnavailable:
+		return true
+	default:
+		return false
+	}
 }
 
 func (b workflowPreflightBuilder) Build(
@@ -247,7 +260,11 @@ func (b workflowPreflightBuilder) Build(
 			if validationErr != nil {
 				setRetryablePreflight(&result, "Tracker authentication could not be checked. Retry preflight.")
 			} else if status := statuses[projection.TrackerID]; !trackerauth.IsReadyStatus(status) {
-				setAuthActionPreflight(&result, status)
+				if trackerAuthStatusRequiresAction(status) {
+					setAuthActionPreflight(&result, status)
+				} else {
+					setRetryablePreflight(&result, remoteAuthUnavailableMessage)
+				}
 			}
 		} else if _, hasCapability := knownCapabilities[projection.TrackerID]; hasCapability && !runtimeConfigured[projection.TrackerID] {
 			setAuthActionPreflight(&result, api.TrackerAuthStatus{

@@ -53,6 +53,7 @@ describe("productionReleaseSessionPorts", () => {
           Search: { Skip: false },
           Controls: { Interaction: "interactive", ConfirmBDMVRescan: true },
           Force: false,
+          RequirePrepared: false,
         },
       },
       idempotencyKey: "continue-1",

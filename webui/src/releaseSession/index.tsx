@@ -116,6 +116,7 @@ const workflowPrepareInput = (input: PrepareInput): WorkflowPrepareInput => ({
       : {}),
   },
   Force: input.Force,
+  RequirePrepared: false,
 });
 
 const workflowDescriptionScreenshotCount = (current: ReleaseWorkflowCurrent) =>

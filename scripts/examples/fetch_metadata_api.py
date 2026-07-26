@@ -44,7 +44,9 @@ def request_json(
     *,
     payload: dict[str, Any] | None = None,
     idempotency_key: str | None = None,
+    expected_revision: int | None = None,
 ) -> dict[str, Any]:
+    """Send one JSON request with optional mutation authority headers."""
     headers = {
         "Accept": "application/json",
         "Authorization": f"Bearer {token}",
@@ -55,6 +57,8 @@ def request_json(
         headers["Content-Type"] = "application/json"
     if idempotency_key is not None:
         headers["Idempotency-Key"] = idempotency_key
+    if expected_revision is not None:
+        headers["If-Match"] = f'"{expected_revision}"'
 
     request = Request(url, data=data, headers=headers, method=method)
     try:

@@ -246,7 +246,9 @@ func trackerLane(
 }
 
 func laneCanAdvance(lane api.TrackerLaneOutcome) bool {
-	return lane.Disposition != api.WorkflowDispositionFailed && lane.Disposition != api.WorkflowDispositionCanceled
+	return lane.Disposition != api.WorkflowDispositionFailed &&
+		lane.Disposition != api.WorkflowDispositionCanceled &&
+		lane.Disposition != api.WorkflowDispositionNeedsAction
 }
 
 func advanceLane(lane *api.TrackerLaneOutcome, goal api.WorkflowGoal) {
@@ -489,13 +491,11 @@ func workflowRequiresDescriptions(current CommandResult) bool {
 	})
 }
 
-func dupesAllowContinuation(dupes *api.DupeAssessment) bool {
-	if dupes == nil {
+func dupesAllowContinuation(projections *api.TrackerReleaseProjectionSet, dupes *api.DupeAssessment) bool {
+	if projections == nil || dupes == nil {
 		return false
 	}
-	return slices.ContainsFunc(dupes.Results, func(result api.TrackerDupeAssessment) bool {
-		return stageSucceeded(result.Status) && result.Decision != api.DupeDecisionPending && result.Decision != api.DupeDecisionAccepted
-	})
+	return len(DownstreamEligibleProjections(*projections, *dupes).Projections) > 0
 }
 
 func descriptionsHaveViableTracker(descriptions *api.DescriptionSet) bool {

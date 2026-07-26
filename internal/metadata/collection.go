@@ -55,6 +55,19 @@ func (s *Service) CollectPreparationEvidence(ctx context.Context, request prepar
 	})
 }
 
+// HydratePrivateResources reconstructs restart-only local artifacts and client
+// evidence without rerunning tracker, provider, or canonical identity stages.
+func (s *Service) HydratePrivateResources(
+	ctx context.Context,
+	request preparationstate.Request,
+) (preparationstate.State, error) {
+	state, err := s.collectSourceEvidence(ctx, request)
+	if err != nil {
+		return preparationstate.State{}, err
+	}
+	return s.collectClientEvidence(ctx, request.Input, state)
+}
+
 // collectPreparationStage brackets one collection step with advisory progress
 // while preserving the collector's state and error result unchanged.
 func collectPreparationStage(

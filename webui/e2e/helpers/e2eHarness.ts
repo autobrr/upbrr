@@ -43,6 +43,8 @@ type FakeCounters = {
 type FakeServer = {
   url: string;
   counters: FakeCounters;
+  delayTrackerUploads: (delayMs: number) => void;
+  delayClientInjections: (delayMs: number) => void;
   close: () => Promise<void>;
 };
 
@@ -61,6 +63,8 @@ export type AppServer = {
   url: string;
   output: () => string;
   stop: () => Promise<void>;
+  /** Kills the child without graceful shutdown to exercise restart recovery. */
+  crash: () => Promise<void>;
 };
 
 type StartAppOptions = {
@@ -207,6 +211,9 @@ async function startAppOnce(
     output: () => output.join(""),
     stop: async () => {
       await stopProcess(child);
+    },
+    crash: async () => {
+      await crashProcess(child);
     },
   };
 }
@@ -357,6 +364,8 @@ async function startFakeServer(): Promise<FakeServer> {
     clientSearches: 0,
     clientInjections: 0,
   };
+  let trackerUploadDelayMs = 0;
+  let clientInjectionDelayMs = 0;
   const server = createServer(async (req, res) => {
     if (req.method === "POST" && req.url === "/client-search") {
       counters.clientSearches++;
@@ -365,6 +374,7 @@ async function startFakeServer(): Promise<FakeServer> {
     }
     if (req.method === "POST" && req.url === "/client-inject") {
       counters.clientInjections++;
+      await delay(clientInjectionDelayMs);
       writeJSON(res, 200, { ok: true });
       return;
     }
@@ -372,6 +382,7 @@ async function startFakeServer(): Promise<FakeServer> {
       const body = await readBody(req);
       if (body.includes(Buffer.from('name="tracker"'))) {
         counters.trackerUploads++;
+        await delay(trackerUploadDelayMs);
       } else {
         counters.imageUploads++;
       }
@@ -393,8 +404,18 @@ async function startFakeServer(): Promise<FakeServer> {
   return {
     url: `http://127.0.0.1:${address.port}`,
     counters,
+    delayTrackerUploads: (delayMs) => {
+      trackerUploadDelayMs = Math.max(0, delayMs);
+    },
+    delayClientInjections: (delayMs) => {
+      clientInjectionDelayMs = Math.max(0, delayMs);
+    },
     close: () => closeServer(server),
   };
+}
+
+function delay(delayMs: number): Promise<void> {
+  return delayMs > 0 ? new Promise((resolve) => setTimeout(resolve, delayMs)) : Promise.resolve();
 }
 
 async function reserveLoopbackPort(): Promise<number> {
@@ -469,6 +490,16 @@ function stopProcess(child: ChildProcess): Promise<void> {
       resolve();
     });
     child.kill("SIGTERM");
+  });
+}
+
+function crashProcess(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    child.once("exit", () => resolve());
+    child.kill("SIGKILL");
   });
 }
 

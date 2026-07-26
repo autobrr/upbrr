@@ -36,9 +36,113 @@ func (s *Server) registerV1Routes(mux *http.ServeMux) {
 		}
 		s.serveReleaseWorkflowOpenAPI(w)
 	})
+	mux.HandleFunc("/api/v1/uploads", s.handleAPIV1UploadCreate)
+	mux.HandleFunc("/api/v1/uploads/", s.handleAPIV1UploadFeedback)
 	mux.HandleFunc("/api/v1/continuations", s.handleAPIV1WorkflowContinuation)
 	mux.HandleFunc("/api/v1/workflows", http.NotFound)
 	mux.HandleFunc("/api/v1/workflows/", s.handleAPIV1WorkflowResource)
+}
+
+func (s *Server) handleAPIV1UploadCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	principal, ok := s.authenticateAPIRequest(w, r, APITokenScopeWorkflowExecute)
+	if !ok {
+		return
+	}
+	idempotencyKey, ok := apiV1IdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	var request api.CreateReleaseWorkflowUploadRequest
+	if !decodeAPIV1JSON(w, r, &request) {
+		return
+	}
+	request.IdempotencyKey = idempotencyKey
+	if err := request.Validate(); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	requestContext, resolved, err := resolveAPIV1UploadInputs(r.Context(), request)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	result, err := s.backend.startReleaseWorkflowUpload(requestContext, principal.OwnerID, resolved)
+	if err != nil {
+		writeAPIV1WorkflowError(w, err)
+		return
+	}
+	writeAPIV1UploadResult(s, w, result)
+}
+
+func (s *Server) handleAPIV1UploadFeedback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	segments := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/uploads/"), "/"), "/")
+	if len(segments) != 2 || strings.TrimSpace(segments[0]) == "" || segments[1] != "feedback" {
+		http.NotFound(w, r)
+		return
+	}
+	principal, ok := s.authenticateAPIRequest(w, r, APITokenScopeWorkflowExecute)
+	if !ok {
+		return
+	}
+	idempotencyKey, ok := apiV1IdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	revision, ok := apiV1ExpectedRevision(w, r)
+	if !ok {
+		return
+	}
+	var feedback api.ReleaseWorkflowUploadFeedback
+	if !decodeAPIV1JSON(w, r, &feedback) {
+		return
+	}
+	feedback.IdempotencyKey = idempotencyKey
+	if feedback.Action.WorkflowRevision != revision {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "feedback action revision does not match If-Match"})
+		return
+	}
+	if err := feedback.Validate(); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	result, err := s.backend.submitReleaseWorkflowUploadFeedback(
+		r.Context(),
+		principal.OwnerID,
+		api.WorkflowID(segments[0]),
+		feedback,
+	)
+	if err != nil {
+		writeAPIV1WorkflowError(w, err)
+		return
+	}
+	writeAPIV1UploadResult(s, w, result)
+}
+
+func writeAPIV1UploadResult(s *Server, w http.ResponseWriter, result releaseworkflow.CommandResult) {
+	status := http.StatusOK
+	if result.Operation != nil && !apiV1WorkflowOperationTerminal(result.Operation.Status) {
+		status = http.StatusAccepted
+	}
+	basePath := s.externalBasePath()
+	w.Header().Set("Location", joinBasePath(basePath, "/api/v1/workflows/"+string(result.Workflow.ID)))
+	if result.Operation != nil {
+		w.Header().Set(
+			"Operation-Location",
+			joinBasePath(
+				basePath,
+				"/api/v1/workflows/"+string(result.Workflow.ID)+"/operations/"+string(result.Operation.ID),
+			),
+		)
+	}
+	writeAPIV1WorkflowResult(w, status, result)
 }
 
 func (s *Server) handleAPIV1WorkflowContinuation(w http.ResponseWriter, r *http.Request) {

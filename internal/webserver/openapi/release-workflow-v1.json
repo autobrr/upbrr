@@ -852,6 +852,55 @@
           "intent"
         ]
       },
+      "CreateReleaseWorkflowUploadRequest": {
+        "type": "object",
+        "properties": {
+          "client": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadClient"
+          },
+          "descriptions": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadDescriptions"
+          },
+          "duplicates": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadDuplicates"
+          },
+          "execution": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadExecution"
+          },
+          "imageHosting": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadImageHosting"
+          },
+          "media": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadMedia"
+          },
+          "preparation": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadPreparation"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadSource"
+          },
+          "torrent": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadTorrent"
+          },
+          "trackers": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadTrackers"
+          },
+          "unattended": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadUnattended"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "source",
+          "unattended"
+        ]
+      },
       "DeleteReleaseWorkflowMediaRequest": {
         "type": "object",
         "properties": {
@@ -3041,6 +3090,9 @@
           "Policy": {
             "$ref": "#/components/schemas/PreparationPolicy"
           },
+          "RequirePrepared": {
+            "type": "boolean"
+          },
           "Search": {
             "$ref": "#/components/schemas/ClientSearchPolicy"
           },
@@ -3054,6 +3106,7 @@
           "Instructions",
           "Intent",
           "Policy",
+          "RequirePrepared",
           "Search",
           "SourcePath"
         ]
@@ -4086,6 +4139,14 @@
           "workflow"
         ]
       },
+      "ReleaseWorkflowDuplicateDisposition": {
+        "type": "string",
+        "enum": [
+          "ask",
+          "block",
+          "upload"
+        ]
+      },
       "ReleaseWorkflowOperationRequest": {
         "type": "object",
         "properties": {
@@ -4100,6 +4161,1422 @@
           "operationId",
           "workflowId"
         ]
+      },
+      "ReleaseWorkflowPreparedReleaseMode": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "require"
+        ]
+      },
+      "ReleaseWorkflowUploadActionIdentity": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/RequiredActionID"
+          },
+          "workflowRevision": {
+            "$ref": "#/components/schemas/WorkflowRevision"
+          }
+        },
+        "required": [
+          "id",
+          "workflowRevision"
+        ]
+      },
+      "ReleaseWorkflowUploadClient": {
+        "type": "object",
+        "properties": {
+          "forceRecheck": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "noSeed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "qbitCategory": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "qbitTag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "skipAutoDiscovery": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReleaseWorkflowUploadClientSearch": {
+        "type": "object",
+        "properties": {
+          "client": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "skip": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReleaseWorkflowUploadConfirmation": {
+        "type": "object",
+        "properties": {
+          "confirmed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "confirmed"
+        ]
+      },
+      "ReleaseWorkflowUploadDVDMenus": {
+        "type": "object",
+        "properties": {
+          "capture": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "maxItems": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "menuPaths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ReleaseWorkflowUploadDescriptionOverride": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "groupKey": {
+            "type": "string"
+          },
+          "inline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "groupKey"
+        ]
+      },
+      "ReleaseWorkflowUploadDescriptions": {
+        "type": "object",
+        "properties": {
+          "overrides": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseWorkflowUploadDescriptionOverride"
+            }
+          },
+          "templateVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReleaseWorkflowUploadDuplicateReview": {
+        "type": "object",
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/DupeDecision"
+          },
+          "trackerId": {
+            "$ref": "#/components/schemas/TrackerID"
+          }
+        },
+        "required": [
+          "decision"
+        ]
+      },
+      "ReleaseWorkflowUploadDuplicates": {
+        "type": "object",
+        "properties": {
+          "allowUpload": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerID"
+            }
+          },
+          "checkCount": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "onEvidence": {
+            "$ref": "#/components/schemas/ReleaseWorkflowDuplicateDisposition"
+          },
+          "remoteCheck": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReleaseWorkflowUploadExecution": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadMode"
+          },
+          "preparedRelease": {
+            "$ref": "#/components/schemas/ReleaseWorkflowPreparedReleaseMode"
+          },
+          "runLogLevel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReleaseWorkflowUploadExternalIDs": {
+        "type": "object",
+        "properties": {
+          "imdb": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadStringID"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadNumericID"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tmdb": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadNumericID"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tvdb": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadNumericID"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tvmaze": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadNumericID"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReleaseWorkflowUploadFacts": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanonicalCategory"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "externalIds": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadExternalIDs"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadMetadata"
+          },
+          "playlist": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadPlaylist"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "releaseName": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadReleaseName"
+          },
+          "sourceLookup": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReleaseWorkflowUploadFeedback": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadActionIdentity"
+          },
+          "response": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadFeedbackResponse"
+          }
+        },
+        "required": [
+          "action",
+          "response"
+        ]
+      },
+      "ReleaseWorkflowUploadFeedbackKind": {
+        "type": "string",
+        "enum": [
+          "playlistSelection",
+          "metadataSelection",
+          "rescanConfirmation",
+          "trackerAuthentication",
+          "twoFactor",
+          "trackerInput",
+          "questionnaire",
+          "ruleAuthorization",
+          "duplicateReview",
+          "uploadApproval",
+          "reprepare",
+          "reconciliation"
+        ]
+      },
+      "ReleaseWorkflowUploadFeedbackResponse": {
+        "type": "object",
+        "properties": {
+          "duplicateReview": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadDuplicateReview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadFeedbackKind"
+          },
+          "metadataSelection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadMetadataSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "playlistSelection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadPlaylistSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "questionnaire": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadQuestionnaire"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reconciliation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadReconciliation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reprepare": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadReprepare"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rescanConfirmation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadConfirmation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ruleAuthorization": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadConfirmation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "trackerAuthentication": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadTrackerAuthentication"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "trackerInput": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadTrackerInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "twoFactor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadTwoFactor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "uploadApproval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadConfirmation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "ReleaseWorkflowUploadImageHosting": {
+        "type": "object",
+        "properties": {
+          "preferredHost": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "skipUpload": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReleaseWorkflowUploadMedia": {
+        "type": "object",
+        "properties": {
+          "dvdMenus": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadDVDMenus"
+          },
+          "screenshots": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadScreenshots"
+          }
+        }
+      },
+      "ReleaseWorkflowUploadMetadata": {
+        "type": "object",
+        "properties": {
+          "anime": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "commentary": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "distributor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "originalLanguage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "personalRelease": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "streamOptimized": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "webDv": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReleaseWorkflowUploadMetadataSelection": {
+        "type": "object",
+        "properties": {
+          "facts": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadFacts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selectedValues": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ReleaseWorkflowUploadMode": {
+        "type": "string",
+        "enum": [
+          "upload",
+          "debug"
+        ]
+      },
+      "ReleaseWorkflowUploadNumericID": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReleaseWorkflowUploadPlaylist": {
+        "type": "object",
+        "properties": {
+          "selected": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "useAll": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "selected"
+        ]
+      },
+      "ReleaseWorkflowUploadPlaylistSelection": {
+        "type": "object",
+        "properties": {
+          "selected": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "useAll": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "selected"
+        ]
+      },
+      "ReleaseWorkflowUploadPolicy": {
+        "type": "object",
+        "properties": {
+          "keepFolder": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "keepImages": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "onlyId": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReleaseWorkflowUploadPreparation": {
+        "type": "object",
+        "properties": {
+          "clientSearch": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadClientSearch"
+          },
+          "confirmRescan": {
+            "type": "boolean"
+          },
+          "facts": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadFacts"
+          },
+          "force": {
+            "type": "boolean"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadPolicy"
+          }
+        }
+      },
+      "ReleaseWorkflowUploadQuestionnaire": {
+        "type": "object",
+        "properties": {
+          "answers": {
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "trackerId": {
+            "$ref": "#/components/schemas/TrackerID"
+          }
+        },
+        "required": [
+          "answers",
+          "trackerId"
+        ]
+      },
+      "ReleaseWorkflowUploadReconciliation": {
+        "type": "object",
+        "properties": {
+          "selection": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "selection"
+        ]
+      },
+      "ReleaseWorkflowUploadReleaseName": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "daily": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dualAudio": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "edition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "episode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "episodeTitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "manualYear": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "noAka": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "noDual": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "noDub": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "noEdition": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "noSeason": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "noTag": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "noYear": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "service": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "useSeasonEpisode": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReleaseWorkflowUploadReprepare": {
+        "type": "object",
+        "properties": {
+          "confirmed": {
+            "type": "boolean"
+          },
+          "preparation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadPreparation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "confirmed"
+        ]
+      },
+      "ReleaseWorkflowUploadScreenshots": {
+        "type": "object",
+        "properties": {
+          "artifactIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicResourceID"
+            }
+          },
+          "comparisonPaths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "comparisonPrimaryIndex": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "frames": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "ReleaseWorkflowUploadSource": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "ReleaseWorkflowUploadStringID": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReleaseWorkflowUploadTIKOptions": {
+        "type": "object",
+        "properties": {
+          "asian": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "discType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "foreign": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "opera": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReleaseWorkflowUploadTorrent": {
+        "type": "object",
+        "properties": {
+          "infoHash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "maxPieceSizeMiB": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "noHash": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rehash": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReleaseWorkflowUploadTrackerAuthentication": {
+        "type": "object",
+        "properties": {
+          "trackerId": {
+            "$ref": "#/components/schemas/TrackerID"
+          }
+        },
+        "required": [
+          "trackerId"
+        ]
+      },
+      "ReleaseWorkflowUploadTrackerConfig": {
+        "type": "object",
+        "properties": {
+          "anon": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "draft": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "modq": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReleaseWorkflowUploadTrackerInput": {
+        "type": "object",
+        "properties": {
+          "projection": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadTrackerProjection"
+          },
+          "trackerId": {
+            "$ref": "#/components/schemas/TrackerID"
+          }
+        },
+        "required": [
+          "projection",
+          "trackerId"
+        ]
+      },
+      "ReleaseWorkflowUploadTrackerProjection": {
+        "type": "object",
+        "properties": {
+          "additionalNames": {
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "config": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadTrackerConfig"
+          },
+          "questionnaire": {
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "site": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadTrackerSite"
+          },
+          "uploadReleaseName": {
+            "$ref": "#/components/schemas/WorkflowPatchstring"
+          }
+        }
+      },
+      "ReleaseWorkflowUploadTrackerSite": {
+        "type": "object",
+        "properties": {
+          "tik": {
+            "$ref": "#/components/schemas/ReleaseWorkflowUploadTIKOptions"
+          }
+        }
+      },
+      "ReleaseWorkflowUploadTrackers": {
+        "type": "object",
+        "properties": {
+          "defaultProjection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadTrackerProjection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerID"
+            }
+          },
+          "projection": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ReleaseWorkflowUploadTrackerProjection"
+            }
+          },
+          "remove": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerID"
+            }
+          },
+          "sourceIds": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ReleaseWorkflowUploadTwoFactor": {
+        "type": "object",
+        "properties": {
+          "challengeId": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "trackerId": {
+            "$ref": "#/components/schemas/TrackerID"
+          }
+        },
+        "required": [
+          "challengeId",
+          "code",
+          "trackerId"
+        ]
+      },
+      "ReleaseWorkflowUploadUnattended": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "type": "boolean"
+          }
+        }
       },
       "RemoveReleaseWorkflowHostedImagesRequest": {
         "type": "object",
@@ -7410,6 +8887,9 @@
       "WorkflowOperationResultKind": {
         "type": "string"
       },
+      "WorkflowPatchstring": {
+        "type": "object"
+      },
       "WorkflowResourceID": {
         "type": "string"
       },
@@ -7633,6 +9113,383 @@
         "summary": "Get raw OpenAPI contract",
         "tags": [
           "Operations"
+        ]
+      }
+    },
+    "/uploads": {
+      "post": {
+        "description": "Creates one owner-scoped workflow and drives it toward an upload or debug dry-run behind one durable operation.",
+        "operationId": "createWorkflowUpload",
+        "parameters": [
+          {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "debugNoSeed": {
+                  "summary": "Debug dry-run without client injection",
+                  "value": {
+                    "client": {
+                      "noSeed": true
+                    },
+                    "execution": {
+                      "mode": "debug"
+                    },
+                    "source": {
+                      "path": "D:\\Example Release 2026"
+                    },
+                    "unattended": {
+                      "confirm": false
+                    }
+                  }
+                },
+                "duplicateAllowlist": {
+                  "summary": "Explicit duplicate-evidence upload authority",
+                  "value": {
+                    "duplicates": {
+                      "allowUpload": [
+                        "EXAMPLE"
+                      ],
+                      "onEvidence": "block"
+                    },
+                    "source": {
+                      "path": "D:\\Example Release 2026"
+                    },
+                    "unattended": {
+                      "confirm": false
+                    }
+                  }
+                },
+                "strictUnattended": {
+                  "summary": "Strict unattended upload",
+                  "value": {
+                    "execution": {
+                      "mode": "upload"
+                    },
+                    "source": {
+                      "path": "D:\\Example Release 2026"
+                    },
+                    "trackers": {
+                      "include": [
+                        "EXAMPLE"
+                      ]
+                    },
+                    "unattended": {
+                      "confirm": false
+                    }
+                  }
+                },
+                "unattendedConfirm": {
+                  "summary": "Upload requiring feedback before execution",
+                  "value": {
+                    "duplicates": {
+                      "onEvidence": "ask"
+                    },
+                    "source": {
+                      "path": "D:\\Example Release 2026"
+                    },
+                    "unattended": {
+                      "confirm": true
+                    }
+                  }
+                }
+              },
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "client": {
+                    "$ref": "#/components/schemas/ReleaseWorkflowUploadClient"
+                  },
+                  "descriptions": {
+                    "$ref": "#/components/schemas/ReleaseWorkflowUploadDescriptions"
+                  },
+                  "duplicates": {
+                    "$ref": "#/components/schemas/ReleaseWorkflowUploadDuplicates"
+                  },
+                  "execution": {
+                    "$ref": "#/components/schemas/ReleaseWorkflowUploadExecution"
+                  },
+                  "imageHosting": {
+                    "$ref": "#/components/schemas/ReleaseWorkflowUploadImageHosting"
+                  },
+                  "media": {
+                    "$ref": "#/components/schemas/ReleaseWorkflowUploadMedia"
+                  },
+                  "preparation": {
+                    "$ref": "#/components/schemas/ReleaseWorkflowUploadPreparation"
+                  },
+                  "source": {
+                    "$ref": "#/components/schemas/ReleaseWorkflowUploadSource"
+                  },
+                  "torrent": {
+                    "$ref": "#/components/schemas/ReleaseWorkflowUploadTorrent"
+                  },
+                  "trackers": {
+                    "$ref": "#/components/schemas/ReleaseWorkflowUploadTrackers"
+                  },
+                  "unattended": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/ReleaseWorkflowUploadUnattended"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "source",
+                  "unattended"
+                ]
+              }
+            }
+          },
+          "description": "Idempotency-Key is supplied in the header. The body contains one typed, single-source upload specification.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseWorkflowCurrent"
+                }
+              }
+            },
+            "description": "An idempotent replay returned an already terminal composite upload.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseWorkflowCurrent"
+                }
+              }
+            },
+            "description": "Composite upload accepted with a non-terminal operation attached.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "summary": "Start a composite upload",
+        "tags": [
+          "Uploads"
+        ]
+      }
+    },
+    "/uploads/{workflowId}/feedback": {
+      "post": {
+        "description": "Resolves one exact pending action and starts one new composite operation when more work can proceed.",
+        "operationId": "submitWorkflowUploadFeedback",
+        "parameters": [
+          {
+            "description": "Owner-scoped workflow identifier.",
+            "example": "workflow-example",
+            "in": "path",
+            "name": "workflowId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optimistic workflow revision authority. Send the current ETag value returned by a workflow response.",
+            "example": "\"1\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "One stable key per logical mutation. Reuse it only when retrying that same logical request.",
+            "example": "example-command-001",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "duplicateReview": {
+                  "summary": "Allow upload despite duplicate evidence",
+                  "value": {
+                    "action": {
+                      "id": "action-example",
+                      "workflowRevision": 14
+                    },
+                    "response": {
+                      "duplicateReview": {
+                        "decision": "ignored",
+                        "trackerId": "EXAMPLE"
+                      },
+                      "kind": "duplicateReview"
+                    }
+                  }
+                },
+                "uploadApproval": {
+                  "summary": "Confirm exact server-side upload approval",
+                  "value": {
+                    "action": {
+                      "id": "action-example",
+                      "workflowRevision": 18
+                    },
+                    "response": {
+                      "kind": "uploadApproval",
+                      "uploadApproval": {
+                        "confirmed": true
+                      }
+                    }
+                  }
+                }
+              },
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "$ref": "#/components/schemas/ReleaseWorkflowUploadActionIdentity"
+                  },
+                  "response": {
+                    "$ref": "#/components/schemas/ReleaseWorkflowUploadFeedbackResponse"
+                  }
+                },
+                "required": [
+                  "action",
+                  "response"
+                ]
+              }
+            }
+          },
+          "description": "Top-level workflowId, expectedRevision, and idempotencyKey are supplied by the route and headers. Route-bound nested IDs are server supplied; compatibility values remain accepted but are ignored.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseWorkflowCurrent"
+                }
+              }
+            },
+            "description": "Feedback replay returned an already terminal composite upload.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseWorkflowCurrent"
+                }
+              }
+            },
+            "description": "Feedback accepted and composite processing resumed or remains blocked for another action.",
+            "headers": {
+              "ETag": {
+                "description": "Quoted authoritative workflow revision for the next If-Match header.",
+                "example": "\"1\"",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "summary": "Submit composite upload feedback",
+        "tags": [
+          "Uploads"
         ]
       }
     },

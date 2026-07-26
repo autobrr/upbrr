@@ -129,6 +129,9 @@ func (r *MemoryRepository) Save(ctx context.Context, ownerID string, expected ap
 	if current.Workflow.Revision != expected {
 		return ErrRevisionConflict
 	}
+	if cloned.Workflow.Revision != expected+1 {
+		return errors.New("release workflow: revision must advance by one")
+	}
 	cloned.OwnerID = current.OwnerID
 	r.states[state.Workflow.ID] = cloned
 	return nil
@@ -828,17 +831,40 @@ func (s *MemoryPrivateResourceStore) getLocked(key privateResourceKey, now time.
 
 // InvalidateWorkflow removes every private resource owned by one workflow.
 func (s *MemoryPrivateResourceStore) InvalidateWorkflow(ownerID string, workflowID api.WorkflowID) {
+	s.InvalidateWorkflowExcept(ownerID, workflowID)
+}
+
+// InvalidateWorkflowExcept removes workflow resources except explicitly
+// preserved IDs, including their existing expiry or consumed state.
+func (s *MemoryPrivateResourceStore) InvalidateWorkflowExcept(
+	ownerID string,
+	workflowID api.WorkflowID,
+	preservedResourceIDs ...string,
+) {
 	ownerID = strings.TrimSpace(ownerID)
+	preserved := make(map[privateResourceKey]struct{}, len(preservedResourceIDs))
+	for _, resourceID := range preservedResourceIDs {
+		key, err := newPrivateResourceKey(ownerID, workflowID, resourceID)
+		if err == nil {
+			preserved[key] = struct{}{}
+		}
+	}
 	s.mu.Lock()
 	resources := make([]any, 0)
 	for key, entry := range s.entries {
 		if key.ownerID == ownerID && key.workflowID == workflowID {
+			if _, ok := preserved[key]; ok {
+				continue
+			}
 			resources = append(resources, entry.value)
 			delete(s.entries, key)
 		}
 	}
 	for key := range s.consumed {
 		if key.ownerID == ownerID && key.workflowID == workflowID {
+			if _, ok := preserved[key]; ok {
+				continue
+			}
 			delete(s.consumed, key)
 		}
 	}

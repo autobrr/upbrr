@@ -257,6 +257,198 @@ func TestAPIV1RejectsOversizedAndUnknownRequestBodiesBeforeExecution(t *testing.
 	}
 }
 
+type apiV1CompositeUploadCoreFake struct {
+	ReleaseWorkflowCapability
+	startOwner   string
+	startRequest api.CreateReleaseWorkflowUploadRequest
+	feedback     api.ReleaseWorkflowUploadFeedback
+	feedbackID   api.WorkflowID
+}
+
+func (f *apiV1CompositeUploadCoreFake) StartReleaseWorkflowUpload(
+	_ context.Context,
+	ownerID string,
+	request api.CreateReleaseWorkflowUploadRequest,
+) (releaseworkflow.CommandResult, error) {
+	f.startOwner = ownerID
+	f.startRequest = request
+	return releaseworkflow.CommandResult{
+		Workflow: api.ReleaseWorkflow{
+			ID:       "workflow-upload",
+			Revision: 1,
+			Status:   api.WorkflowStatusActive,
+		},
+		Operation: &api.WorkflowOperationStatus{
+			ID:         "operation-upload",
+			WorkflowID: "workflow-upload",
+			Revision:   1,
+			Status:     api.StageStatusQueued,
+		},
+	}, nil
+}
+
+func (f *apiV1CompositeUploadCoreFake) SubmitReleaseWorkflowUploadFeedback(
+	_ context.Context,
+	_ string,
+	workflowID api.WorkflowID,
+	feedback api.ReleaseWorkflowUploadFeedback,
+) (releaseworkflow.CommandResult, error) {
+	f.feedbackID = workflowID
+	f.feedback = feedback
+	return releaseworkflow.CommandResult{
+		Workflow: api.ReleaseWorkflow{
+			ID:       workflowID,
+			Revision: feedback.Action.WorkflowRevision + 1,
+			Status:   api.WorkflowStatusCompleted,
+		},
+		Operation: &api.WorkflowOperationStatus{
+			ID:         "operation-feedback",
+			WorkflowID: workflowID,
+			Revision:   feedback.Action.WorkflowRevision + 1,
+			Status:     api.StageStatusCompleted,
+		},
+	}, nil
+}
+
+func TestAPIV1CompositeUploadCreateAndFeedbackContracts(t *testing.T) {
+	t.Parallel()
+
+	store, err := newAPITokenStore([]APITokenCredential{{
+		Token:   apiV1TestToken,
+		OwnerID: "uploader",
+		Scopes:  []APITokenScope{APITokenScopeWorkflowExecute},
+	}})
+	if err != nil {
+		t.Fatalf("new upload token store: %v", err)
+	}
+	coreFake := &apiV1CompositeUploadCoreFake{}
+	server := &Server{
+		backend: &Backend{
+			capabilities: CoreCapabilities{ReleaseWorkflow: coreFake},
+		},
+		apiTokens:      store,
+		generalLimiter: newFixedWindowLimiter(100, time.Minute),
+		cliCfg:         CLIConfig{BaseURL: "/upbrr"},
+	}
+	mux := http.NewServeMux()
+	server.registerV1Routes(mux)
+
+	create := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/api/v1/uploads",
+		strings.NewReader(`{"source":{"path":"D:\\Example Release 2026"},"unattended":{"confirm":false},"execution":{"mode":"debug"}}`),
+	)
+	create.Header.Set("Authorization", "Bearer "+apiV1TestToken)
+	create.Header.Set("Idempotency-Key", "upload-create-1")
+	createResponse := httptest.NewRecorder()
+	mux.ServeHTTP(createResponse, create)
+	if createResponse.Code != http.StatusAccepted {
+		t.Fatalf("composite create status=%d body=%s", createResponse.Code, createResponse.Body.String())
+	}
+	if coreFake.startOwner != "api:uploader" || coreFake.startRequest.IdempotencyKey != "upload-create-1" ||
+		coreFake.startRequest.Execution.Mode != api.ReleaseWorkflowUploadModeDebug {
+		t.Fatalf("composite create mapping = owner=%q request=%#v", coreFake.startOwner, coreFake.startRequest)
+	}
+	if got := createResponse.Header().Get("Location"); got != "/upbrr/api/v1/workflows/workflow-upload" {
+		t.Fatalf("composite create Location = %q", got)
+	}
+	if got := createResponse.Header().Get("Operation-Location"); got !=
+		"/upbrr/api/v1/workflows/workflow-upload/operations/operation-upload" {
+		t.Fatalf("composite create Operation-Location = %q", got)
+	}
+	if got := createResponse.Header().Get("ETag"); got != `"1"` {
+		t.Fatalf("composite create ETag = %q", got)
+	}
+
+	feedback := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/api/v1/uploads/workflow-upload/feedback",
+		strings.NewReader(
+			`{"action":{"id":"action-example","workflowRevision":7},"response":{"kind":"uploadApproval","uploadApproval":{"confirmed":true}}}`,
+		),
+	)
+	feedback.Header.Set("Authorization", "Bearer "+apiV1TestToken)
+	feedback.Header.Set("Idempotency-Key", "upload-feedback-1")
+	feedback.Header.Set("If-Match", `"7"`)
+	feedbackResponse := httptest.NewRecorder()
+	mux.ServeHTTP(feedbackResponse, feedback)
+	if feedbackResponse.Code != http.StatusOK {
+		t.Fatalf("composite feedback status=%d body=%s", feedbackResponse.Code, feedbackResponse.Body.String())
+	}
+	if coreFake.feedbackID != "workflow-upload" || coreFake.feedback.IdempotencyKey != "upload-feedback-1" ||
+		coreFake.feedback.Response.Kind != api.ReleaseWorkflowUploadFeedbackUploadApproval {
+		t.Fatalf("composite feedback mapping = id=%q feedback=%#v", coreFake.feedbackID, coreFake.feedback)
+	}
+	if got := feedbackResponse.Header().Get("ETag"); got != `"8"` {
+		t.Fatalf("composite feedback ETag = %q", got)
+	}
+}
+
+func TestAPIV1CompositeUploadRejectsMissingAuthorityAndUnknownFields(t *testing.T) {
+	t.Parallel()
+
+	store, err := newAPITokenStore([]APITokenCredential{{
+		Token:   apiV1TestToken,
+		OwnerID: "uploader",
+		Scopes:  []APITokenScope{APITokenScopeWorkflowExecute},
+	}})
+	if err != nil {
+		t.Fatalf("new upload token store: %v", err)
+	}
+	server := &Server{
+		apiTokens:      store,
+		generalLimiter: newFixedWindowLimiter(100, time.Minute),
+	}
+	mux := http.NewServeMux()
+	server.registerV1Routes(mux)
+
+	missingKey := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/api/v1/uploads",
+		strings.NewReader(`{"source":{"path":"D:\\Example Release 2026"},"unattended":{}}`),
+	)
+	missingKey.Header.Set("Authorization", "Bearer "+apiV1TestToken)
+	missingKeyResponse := httptest.NewRecorder()
+	mux.ServeHTTP(missingKeyResponse, missingKey)
+	if missingKeyResponse.Code != http.StatusBadRequest {
+		t.Fatalf("missing upload idempotency status = %d", missingKeyResponse.Code)
+	}
+
+	unknown := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/api/v1/uploads",
+		strings.NewReader(`{"source":{"path":"D:\\Example Release 2026"},"unattended":{},"unsafe":true}`),
+	)
+	unknown.Header.Set("Authorization", "Bearer "+apiV1TestToken)
+	unknown.Header.Set("Idempotency-Key", "upload-unknown")
+	unknownResponse := httptest.NewRecorder()
+	mux.ServeHTTP(unknownResponse, unknown)
+	if unknownResponse.Code != http.StatusBadRequest {
+		t.Fatalf("unknown upload field status = %d", unknownResponse.Code)
+	}
+
+	stale := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/api/v1/uploads/workflow-upload/feedback",
+		strings.NewReader(
+			`{"action":{"id":"action-example","workflowRevision":7},"response":{"kind":"uploadApproval","uploadApproval":{"confirmed":true}}}`,
+		),
+	)
+	stale.Header.Set("Authorization", "Bearer "+apiV1TestToken)
+	stale.Header.Set("Idempotency-Key", "upload-stale")
+	stale.Header.Set("If-Match", `"6"`)
+	staleResponse := httptest.NewRecorder()
+	mux.ServeHTTP(staleResponse, stale)
+	if staleResponse.Code != http.StatusConflict {
+		t.Fatalf("stale upload feedback status = %d", staleResponse.Code)
+	}
+}
+
 func TestAPIV1AppliesGeneralRateLimitBeforeAuthentication(t *testing.T) {
 	t.Parallel()
 

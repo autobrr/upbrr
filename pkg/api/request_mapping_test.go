@@ -109,7 +109,9 @@ func TestMapPreparationRequestPreservesSingleSourceIntent(t *testing.T) {
 func TestPrepareInputMappingFieldDispositionIsExplicit(t *testing.T) {
 	t.Parallel()
 
-	assertFieldNames(t, reflect.TypeFor[PrepareInput](), []string{"SourcePath", "Intent", "Instructions", "Policy", "Search", "Controls", "Force"})
+	assertFieldNames(t, reflect.TypeFor[PrepareInput](), []string{
+		"SourcePath", "Intent", "Instructions", "Policy", "Search", "Controls", "Force", "RequirePrepared",
+	})
 	assertFieldNames(t, reflect.TypeFor[ReleaseFactInstructions](), []string{
 		"Identity", "Category", "ReleaseName", "Metadata", "SourceLookup", "BlurayReleaseID", "Playlist", "TrackerIDs",
 	})

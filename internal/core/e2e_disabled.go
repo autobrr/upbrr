@@ -9,9 +9,14 @@ import (
 	"context"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func maybeApplyE2EServices(context.Context, *api.ServiceSet, config.Config, api.RepositoryCapabilities, api.Logger) error {
+	return nil
+}
+
+func e2eReleaseWorkflowOptions() []releaseworkflow.Option {
 	return nil
 }

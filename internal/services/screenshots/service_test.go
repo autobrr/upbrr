@@ -115,6 +115,36 @@ func TestPlanUsesManualFrameOverridesWithoutDuration(t *testing.T) {
 	}
 }
 
+func TestPlanProbesDurationWhenMediaInfoUnavailable(t *testing.T) {
+	sourceRoot := t.TempDir()
+	sourcePath := filepath.Join(sourceRoot, "Example.Release.2026.1080p-GRP.mkv")
+	if err := os.WriteFile(sourcePath, []byte("synthetic video"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	tmpRoot := t.TempDir()
+	ffmpegRoot := t.TempDir()
+	if err := writeTestBundledFFmpeg(ffmpegRoot); err != nil {
+		t.Fatalf("write bundled ffmpeg: %v", err)
+	}
+	t.Chdir(ffmpegRoot)
+
+	runner := &scriptedRunner{results: []CommandResult{{
+		Stderr:   []byte("Duration: 00:10:00.000, start: 0.000000, bitrate: 1000 kb/s"),
+		ExitCode: 0,
+	}}}
+	service := NewService(config.Config{}, api.NopLogger{}, tmpRoot, runner)
+	plan, err := service.Plan(context.Background(), api.ScreenshotSubject{SourcePath: sourcePath}, 4)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if plan.RequiresManualFrames || plan.DurationSeconds != 600 || len(plan.SuggestedSelections) != 4 {
+		t.Fatalf("expected probed automatic plan, got %#v", plan)
+	}
+	if len(runner.calls) != 1 || ffmpegInputArg(runner.calls[0].args) != sourcePath {
+		t.Fatalf("duration probe calls = %#v", runner.calls)
+	}
+}
+
 func TestPreviewFrameExcludesDVDMenuVOB(t *testing.T) {
 	root := t.TempDir()
 	videoTS := filepath.Join(root, "VIDEO_TS")

@@ -36,6 +36,7 @@ func (workflowMediaResolverFake) ResolveDVDMenuSubject(
 
 type workflowScreenshotFake struct {
 	root     string
+	plan     *api.ScreenshotPlan
 	plans    int
 	captures int
 	deleted  []string
@@ -47,6 +48,9 @@ func (f *workflowScreenshotFake) Plan(
 	int,
 ) (api.ScreenshotPlan, error) {
 	f.plans++
+	if f.plan != nil {
+		return *f.plan, nil
+	}
 	return api.ScreenshotPlan{SuggestedSelections: []api.ScreenshotSelection{{Index: 1, TimestampSeconds: 60}}}, nil
 }
 
@@ -242,6 +246,126 @@ func TestWorkflowMediaBuilderRepeatedCaptureIsNoOp(t *testing.T) {
 		if second.Artifacts[index].ID != first.Artifacts[index].ID {
 			t.Fatalf("artifact %d changed across no-op capture: before=%q after=%q", index, first.Artifacts[index].ID, second.Artifacts[index].ID)
 		}
+	}
+}
+
+func TestWorkflowMediaBuilderRetainsMatchingExistingScreenshots(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	existing := api.ScreenshotImage{
+		Index:            1,
+		TimestampSeconds: 600,
+		Path:             filepath.Join(root, "existing.png"),
+		Purpose:          api.ScreenshotPurposeFinal,
+		Width:            1920,
+		Height:           1080,
+		SizeBytes:        1234,
+	}
+	screenshots := &workflowScreenshotFake{
+		root: root,
+		plan: &api.ScreenshotPlan{
+			SuggestedSelections: []api.ScreenshotSelection{
+				{Index: 2, TimestampSeconds: 1200},
+				{Index: 3, TimestampSeconds: 1800},
+				{Index: 4, TimestampSeconds: 2400},
+			},
+			ExistingScreenshots: []api.ScreenshotImage{existing},
+		},
+	}
+	builder := workflowMediaBuilder{
+		resolver:    workflowMediaResolverFake{},
+		screenshots: screenshots,
+	}
+	projections := api.TrackerReleaseProjectionSet{
+		ID:       "projections-existing",
+		Revision: 4,
+		Projections: []api.TrackerReleaseProjection{{
+			TrackerID: "ALPHA",
+			Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 4},
+		}},
+	}
+	snapshot, retained, err := builder.Build(
+		context.Background(),
+		api.ReleaseRef{SourcePath: filepath.Join(root, "Example.Release.2026.1080p-GRP.mkv"), Generation: 1},
+		projections,
+		api.MediaCaptureInstructions{Purpose: api.ScreenshotPurposeFinal, ScreenshotCount: 4},
+		time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatalf("build workflow media with existing screenshot: %v", err)
+	}
+	privateArtifacts, ok := retained.(workflowMediaPrivateArtifacts)
+	if !ok {
+		t.Fatalf("private media artifacts = %#v", retained)
+	}
+	if snapshot.Status != api.StageStatusCompleted || len(snapshot.Artifacts) != 4 || len(privateArtifacts.Screenshots) != 4 ||
+		screenshots.captures != 1 {
+		t.Fatalf(
+			"media capture = %#v private_screenshots=%d captures=%d",
+			snapshot,
+			len(privateArtifacts.Screenshots),
+			screenshots.captures,
+		)
+	}
+	if privateArtifacts.Screenshots[0].Path != existing.Path {
+		t.Fatalf("existing screenshot was not retained: %#v", privateArtifacts.Screenshots)
+	}
+}
+
+func TestWorkflowMediaBuilderUsesOnlyExistingScreenshotsWithoutCapture(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	existing := make([]api.ScreenshotImage, 4)
+	for index := range existing {
+		existing[index] = api.ScreenshotImage{
+			Index:            index + 1,
+			TimestampSeconds: float64((index + 1) * 600),
+			Path:             filepath.Join(root, fmt.Sprintf("existing-%d.png", index+1)),
+			Purpose:          api.ScreenshotPurposeFinal,
+			Width:            1920,
+			Height:           1080,
+			SizeBytes:        1234,
+		}
+	}
+	screenshots := &workflowScreenshotFake{
+		root: root,
+		plan: &api.ScreenshotPlan{ExistingScreenshots: existing},
+	}
+	builder := workflowMediaBuilder{
+		resolver:    workflowMediaResolverFake{},
+		screenshots: screenshots,
+	}
+	snapshot, retained, err := builder.Build(
+		context.Background(),
+		api.ReleaseRef{SourcePath: filepath.Join(root, "Example.Release.2026.1080p-GRP.mkv"), Generation: 1},
+		api.TrackerReleaseProjectionSet{
+			ID:       "projections-existing-only",
+			Revision: 4,
+			Projections: []api.TrackerReleaseProjection{{
+				TrackerID: "ALPHA",
+				Artifacts: api.TrackerArtifactRequirements{ScreenshotCount: 4},
+			}},
+		},
+		api.MediaCaptureInstructions{Purpose: api.ScreenshotPurposeFinal, ScreenshotCount: 4},
+		time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatalf("build workflow media from existing screenshots: %v", err)
+	}
+	privateArtifacts, ok := retained.(workflowMediaPrivateArtifacts)
+	if !ok {
+		t.Fatalf("private media artifacts = %#v", retained)
+	}
+	if snapshot.Status != api.StageStatusCompleted || len(snapshot.Artifacts) != 4 || len(privateArtifacts.Screenshots) != 4 ||
+		screenshots.captures != 0 {
+		t.Fatalf(
+			"existing media = %#v private_screenshots=%d captures=%d",
+			snapshot,
+			len(privateArtifacts.Screenshots),
+			screenshots.captures,
+		)
 	}
 }
 

@@ -64,6 +64,7 @@ const (
 	errorProfileJSONMutation          errorProfile = "json-mutation"
 	errorProfileMultipartMutation     errorProfile = "multipart-mutation"
 	errorProfileContinuation          errorProfile = "continuation"
+	errorProfileUploadCreate          errorProfile = "upload-create"
 	errorProfileOperationCancellation errorProfile = "operation-cancellation"
 )
 
@@ -187,6 +188,8 @@ func buildContractSchemaBuilder() *schemaBuilder {
 
 func contractRoots() []reflect.Type {
 	values := []any{
+		api.CreateReleaseWorkflowUploadRequest{},
+		api.ReleaseWorkflowUploadFeedback{},
 		api.ContinueReleaseWorkflowRequest{},
 		api.GetReleaseWorkflowRequest{},
 		api.ReleaseWorkflowOperationRequest{},
@@ -222,6 +225,124 @@ func routeManifest() []route {
 	current := reflect.TypeFor[api.ReleaseWorkflowCurrent]()
 	operation := reflect.TypeFor[api.WorkflowOperationStatus]()
 	return []route{
+		{
+			Path:        "/uploads",
+			Method:      http.MethodPost,
+			OperationID: "createWorkflowUpload",
+			Tag:         "Uploads",
+			Summary:     "Start a composite upload",
+			Description: "Creates one owner-scoped workflow and drives it toward an upload or debug dry-run behind one durable operation.",
+			Request:     reflect.TypeFor[api.CreateReleaseWorkflowUploadRequest](),
+			RequestExamples: map[string]requestExample{
+				"strictUnattended": {
+					Summary: "Strict unattended upload",
+					Value: map[string]any{
+						"source":     map[string]any{"path": `D:\Example Release 2026`},
+						"unattended": map[string]any{"confirm": false},
+						"execution":  map[string]any{"mode": "upload"},
+						"trackers":   map[string]any{"include": []string{"EXAMPLE"}},
+					},
+				},
+				"unattendedConfirm": {
+					Summary: "Upload requiring feedback before execution",
+					Value: map[string]any{
+						"source":     map[string]any{"path": `D:\Example Release 2026`},
+						"unattended": map[string]any{"confirm": true},
+						"duplicates": map[string]any{"onEvidence": "ask"},
+					},
+				},
+				"debugNoSeed": {
+					Summary: "Debug dry-run without client injection",
+					Value: map[string]any{
+						"source":     map[string]any{"path": `D:\Example Release 2026`},
+						"unattended": map[string]any{"confirm": false},
+						"execution":  map[string]any{"mode": "debug"},
+						"client":     map[string]any{"noSeed": true},
+					},
+				},
+				"duplicateAllowlist": {
+					Summary: "Explicit duplicate-evidence upload authority",
+					Value: map[string]any{
+						"source":     map[string]any{"path": `D:\Example Release 2026`},
+						"unattended": map[string]any{"confirm": false},
+						"duplicates": map[string]any{
+							"onEvidence":  "block",
+							"allowUpload": []string{"EXAMPLE"},
+						},
+					},
+				},
+			},
+			Success: []successResponse{
+				{
+					Status:      "200",
+					Description: "An idempotent replay returned an already terminal composite upload.",
+					Response:    current,
+					ETag:        true,
+				},
+				{
+					Status:      "202",
+					Description: "Composite upload accepted with a non-terminal operation attached.",
+					Response:    current,
+					ETag:        true,
+				},
+			},
+			Errors: errorProfileUploadCreate,
+		},
+		{
+			Path:        "/uploads/{workflowId}/feedback",
+			Method:      http.MethodPost,
+			OperationID: "submitWorkflowUploadFeedback",
+			Tag:         "Uploads",
+			Summary:     "Submit composite upload feedback",
+			Description: "Resolves one exact pending action and starts one new composite operation when more work can proceed.",
+			Request:     reflect.TypeFor[api.ReleaseWorkflowUploadFeedback](),
+			RequestExamples: map[string]requestExample{
+				"duplicateReview": {
+					Summary: "Allow upload despite duplicate evidence",
+					Value: map[string]any{
+						"action": map[string]any{
+							"id":               "action-example",
+							"workflowRevision": 14,
+						},
+						"response": map[string]any{
+							"kind": "duplicateReview",
+							"duplicateReview": map[string]any{
+								"trackerId": "EXAMPLE",
+								"decision":  "ignored",
+							},
+						},
+					},
+				},
+				"uploadApproval": {
+					Summary: "Confirm exact server-side upload approval",
+					Value: map[string]any{
+						"action": map[string]any{
+							"id":               "action-example",
+							"workflowRevision": 18,
+						},
+						"response": map[string]any{
+							"kind":           "uploadApproval",
+							"uploadApproval": map[string]any{"confirmed": true},
+						},
+					},
+				},
+			},
+			Success: []successResponse{
+				{
+					Status:      "200",
+					Description: "Feedback replay returned an already terminal composite upload.",
+					Response:    current,
+					ETag:        true,
+				},
+				{
+					Status:      "202",
+					Description: "Feedback accepted and composite processing resumed or remains blocked for another action.",
+					Response:    current,
+					ETag:        true,
+				},
+			},
+			Errors: errorProfileJSONMutation,
+		},
 		{
 			Path:        "/continuations",
 			Method:      http.MethodPost,
@@ -602,7 +723,7 @@ func routeParameters(item route) []any {
 			"schema":      map[string]any{"type": "string"},
 		})
 	}
-	if item.Errors == errorProfileJSONMutation || item.Errors == errorProfileContinuation {
+	if item.Errors == errorProfileJSONMutation || item.Errors == errorProfileContinuation || item.Errors == errorProfileUploadCreate {
 		parameters = append(parameters, map[string]any{
 			"name":        "Idempotency-Key",
 			"in":          "header",
@@ -689,6 +810,9 @@ func pathParameterMetadata(name string) (string, string) {
 }
 
 func requestBodyDescription(item route) string {
+	if item.Errors == errorProfileUploadCreate {
+		return "Idempotency-Key is supplied in the header. The body contains one typed, single-source upload specification."
+	}
 	if item.Errors == errorProfileContinuation {
 		return "Idempotency-Key is supplied in the header. authority is optional when starting a workflow and required when continuing one."
 	}
@@ -698,7 +822,7 @@ func requestBodyDescription(item route) string {
 func projectedRequestSchema(builder *schemaBuilder, item route) *schema {
 	projected := cloneSchema(builder.schemas[schemaName(item.Request)])
 	omitted := []string{"workflowId", "expectedRevision", "idempotencyKey"}
-	if item.Errors == errorProfileContinuation {
+	if item.Errors == errorProfileContinuation || item.Errors == errorProfileUploadCreate {
 		omitted = []string{"idempotencyKey"}
 	}
 	for _, name := range omitted {
@@ -827,7 +951,7 @@ func errorReferences(profile errorProfile) []errorReference {
 			{Status: "429", Component: "TooManyRequests"},
 			{Status: "500", Component: "InternalServerError"},
 		}
-	case errorProfileContinuation:
+	case errorProfileContinuation, errorProfileUploadCreate:
 		return []errorReference{
 			{Status: "400", Component: "BadRequest"},
 			{Status: "401", Component: "Unauthorized"},
@@ -950,6 +1074,23 @@ func newSchemaBuilder() *schemaBuilder {
 		owners:   make(map[string]reflect.Type),
 		visiting: make(map[reflect.Type]bool),
 		enums: map[reflect.Type][]any{
+			reflect.TypeFor[api.ReleaseWorkflowUploadMode]():           stringValues("upload", "debug"),
+			reflect.TypeFor[api.ReleaseWorkflowPreparedReleaseMode]():  stringValues("allow", "require"),
+			reflect.TypeFor[api.ReleaseWorkflowDuplicateDisposition](): stringValues("ask", "block", "upload"),
+			reflect.TypeFor[api.ReleaseWorkflowUploadFeedbackKind](): stringValues(
+				"playlistSelection",
+				"metadataSelection",
+				"rescanConfirmation",
+				"trackerAuthentication",
+				"twoFactor",
+				"trackerInput",
+				"questionnaire",
+				"ruleAuthorization",
+				"duplicateReview",
+				"uploadApproval",
+				"reprepare",
+				"reconciliation",
+			),
 			reflect.TypeFor[api.WorkflowStatus](): stringValues("draft", "active", "blocked", "completed", "canceled", "failed"),
 			reflect.TypeFor[api.StageStatus](): stringValues(
 				"pending",
@@ -1001,6 +1142,13 @@ func (b *schemaBuilder) ensureNamed(value reflect.Type) {
 }
 
 func (b *schemaBuilder) definition(value reflect.Type) *schema {
+	if value == reflect.TypeFor[api.CreateReleaseWorkflowUploadRequest]() {
+		result := &schema{Type: "object", Properties: map[string]*schema{}}
+		b.addFields(result, value)
+		result.Required = append(result.Required, "unattended")
+		sort.Strings(result.Required)
+		return result
+	}
 	if value == reflect.TypeFor[api.TrackerProjectionInstructions]() {
 		stringOrNull := func() *schema {
 			return &schema{AnyOf: []*schema{{Type: "string"}, {Type: "null"}}}

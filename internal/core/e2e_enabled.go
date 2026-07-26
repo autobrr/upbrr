@@ -25,6 +25,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/internal/redaction"
+	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
@@ -33,14 +34,16 @@ import (
 )
 
 const (
-	e2eEnabledEnv    = "UPBRR_E2E_FAKE_SERVICES"
-	e2eTrackerURLEnv = "UPBRR_E2E_TRACKER_URL"
-	e2eImageURLEnv   = "UPBRR_E2E_IMAGE_URL"
-	e2eClientURLEnv  = "UPBRR_E2E_CLIENT_URL"
-	e2eShotPathEnv   = "UPBRR_E2E_SCREENSHOT_PATH"
-	e2eResolutionEnv = "UPBRR_E2E_RESOLUTION"
-	e2eDuplicateEnv  = "UPBRR_E2E_DUPLICATE_TRACKERS"
-	e2eBlurayEnv     = "UPBRR_E2E_BLURAY_CANDIDATES"
+	e2eEnabledEnv     = "UPBRR_E2E_FAKE_SERVICES"
+	e2eTrackerURLEnv  = "UPBRR_E2E_TRACKER_URL"
+	e2eImageURLEnv    = "UPBRR_E2E_IMAGE_URL"
+	e2eClientURLEnv   = "UPBRR_E2E_CLIENT_URL"
+	e2eShotPathEnv    = "UPBRR_E2E_SCREENSHOT_PATH"
+	e2eResolutionEnv  = "UPBRR_E2E_RESOLUTION"
+	e2eDuplicateEnv   = "UPBRR_E2E_DUPLICATE_TRACKERS"
+	e2eBlurayEnv      = "UPBRR_E2E_BLURAY_CANDIDATES"
+	e2eAuthNeededEnv  = "UPBRR_E2E_AUTH_REQUIRED_TRACKERS"
+	e2eClockOffsetEnv = "UPBRR_E2E_CLOCK_OFFSET"
 )
 
 // maybeApplyE2EServices replaces only missing runtime capabilities when both
@@ -102,6 +105,22 @@ func maybeApplyE2EServices(_ context.Context, services *api.ServiceSet, cfg conf
 func isE2EEnabled() bool {
 	value := strings.TrimSpace(os.Getenv(e2eEnabledEnv))
 	return value == "1" || strings.EqualFold(value, "true")
+}
+
+type e2eWorkflowClock struct {
+	offset time.Duration
+}
+
+func (c e2eWorkflowClock) Now() time.Time {
+	return time.Now().UTC().Add(c.offset)
+}
+
+func e2eReleaseWorkflowOptions() []releaseworkflow.Option {
+	offset, err := time.ParseDuration(strings.TrimSpace(os.Getenv(e2eClockOffsetEnv)))
+	if err != nil || offset == 0 {
+		return nil
+	}
+	return []releaseworkflow.Option{releaseworkflow.WithClock(e2eWorkflowClock{offset: offset})}
 }
 
 // e2eMetadataService supplies deterministic preparation evidence under the
@@ -186,6 +205,7 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 		if err != nil {
 			return preparationstate.State{}, fmt.Errorf("e2e metadata: discover client evidence: %w", err)
 		}
+		meta.ClientEvidence = e2eClientEvidenceSnapshot(input, evidence)
 		meta.InfoHash = evidence.InfoHash
 		meta.DiscoveredTorrentPath = evidence.TorrentPath
 		meta.TrackerIDs = evidence.TrackerIDs
@@ -255,6 +275,80 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 		api.NewPreparationProgressUpdate(api.PreparationPhaseSourceEvidence, api.PreparationProgressCompleted, "Synthetic source evidence complete."),
 	)
 	return meta, nil
+}
+
+// HydrateClientEvidence rebuilds restart-only private client evidence without
+// rerunning the complete synthetic metadata pipeline.
+func (s e2eMetadataService) HydrateClientEvidence(
+	ctx context.Context,
+	request preparationstate.Request,
+) (preparationstate.ClientEvidenceSnapshot, error) {
+	files := make([]string, 0, len(request.Manifest.Entries))
+	for _, entry := range request.Manifest.Entries {
+		if entry.Type == api.SourceEntryTypeFile || entry.Type == api.SourceEntryTypePlaylist {
+			files = append(files, entry.Path)
+		}
+	}
+	if s.clients == nil {
+		return e2eClientEvidenceSnapshot(
+			request.Input,
+			clientdiscovery.Evidence{Disposition: clientdiscovery.DispositionUnavailable},
+		), nil
+	}
+	discType := strings.TrimSpace(request.Layout.DiscType)
+	if discType == "" {
+		discType = request.Manifest.Classification.DiscType
+	}
+	evidence, err := s.clients.Discover(ctx, clientdiscovery.SearchInput{
+		SourcePath:   request.Manifest.SourcePath,
+		FileList:     files,
+		DiscType:     discType,
+		Policy:       request.Input.Search,
+		ForceRecheck: request.Input.Controls.ForceRecheck,
+	})
+	if err != nil {
+		return preparationstate.ClientEvidenceSnapshot{}, fmt.Errorf("e2e metadata: hydrate client evidence: %w", err)
+	}
+	return e2eClientEvidenceSnapshot(request.Input, evidence), nil
+}
+
+func (s e2eMetadataService) HydratePrivateResources(
+	ctx context.Context,
+	request preparationstate.Request,
+) (preparationstate.State, error) {
+	return s.CollectPreparationEvidence(ctx, request)
+}
+
+func e2eClientEvidenceSnapshot(
+	input api.PrepareInput,
+	evidence clientdiscovery.Evidence,
+) preparationstate.ClientEvidenceSnapshot {
+	disposition := preparationstate.ClientEvidenceDispositionUnknown
+	switch evidence.Disposition {
+	case clientdiscovery.DispositionSearched:
+		disposition = preparationstate.ClientEvidenceDispositionSearched
+	case clientdiscovery.DispositionSkipped:
+		disposition = preparationstate.ClientEvidenceDispositionSkipped
+	case clientdiscovery.DispositionUnavailable:
+		disposition = preparationstate.ClientEvidenceDispositionUnavailable
+	}
+	forced := input.Controls.ForceRecheck != nil && *input.Controls.ForceRecheck &&
+		disposition == preparationstate.ClientEvidenceDispositionSearched
+	return preparationstate.CloneClientEvidenceSnapshot(preparationstate.ClientEvidenceSnapshot{
+		Disposition:   disposition,
+		Policy:        input.Search,
+		ForcedRecheck: forced,
+		Result: api.ClientSearchResult{
+			InfoHash:            evidence.InfoHash,
+			TorrentPath:         evidence.TorrentPath,
+			TrackerIDs:          evidence.TrackerIDs,
+			FoundTrackerMatch:   evidence.FoundTrackerMatch,
+			TorrentComments:     evidence.TorrentComments,
+			PieceSizeConstraint: evidence.PieceSizeConstraint,
+			FoundPreferredPiece: evidence.FoundPreferredPiece,
+			MatchedTrackers:     evidence.MatchedTrackers,
+		},
+	})
 }
 
 func e2eBlurayMetadata(sourcePath string) *api.BlurayMetadata {
@@ -391,12 +485,7 @@ type e2eDupeService struct {
 }
 
 func (e2eDupeService) Check(_ context.Context, meta api.DuplicateSubject, trackers []string) (api.DupeCheckSummary, error) {
-	duplicateTrackers := make(map[string]struct{})
-	for _, tracker := range strings.Split(os.Getenv(e2eDuplicateEnv), ",") {
-		if name := strings.ToUpper(strings.TrimSpace(tracker)); name != "" {
-			duplicateTrackers[name] = struct{}{}
-		}
-	}
+	duplicateTrackers := e2eTrackerSet(e2eDuplicateEnv)
 	results := make([]api.DupeCheckResult, 0, len(trackers))
 	for _, tracker := range trackers {
 		name := strings.ToUpper(strings.TrimSpace(tracker))
@@ -436,18 +525,48 @@ func (s e2eDupeService) CheckWithAssessment(
 // e2eTrackerAuthService keeps fake-services runs isolated from tracker auth IO.
 type e2eTrackerAuthService struct{}
 
-// Capabilities disables managed-auth preflight in fake-services runs.
+// Capabilities enables deterministic managed-auth preflight only for trackers
+// selected by the e2e environment.
 func (e2eTrackerAuthService) Capabilities(context.Context) ([]api.TrackerAuthCapability, error) {
-	return nil, nil
+	required := e2eTrackerSet(e2eAuthNeededEnv)
+	capabilities := make([]api.TrackerAuthCapability, 0, len(required))
+	for trackerID := range required {
+		capabilities = append(capabilities, api.TrackerAuthCapability{
+			TrackerID:     trackerID,
+			DisplayName:   trackerID,
+			AuthKind:      "credential_login",
+			SupportsLogin: true,
+		})
+	}
+	return capabilities, nil
 }
 
 // ValidateMany returns configured statuses without contacting trackers.
 func (e2eTrackerAuthService) ValidateMany(_ context.Context, trackerIDs []string) ([]api.TrackerAuthStatus, error) {
+	required := e2eTrackerSet(e2eAuthNeededEnv)
 	statuses := make([]api.TrackerAuthStatus, 0, len(trackerIDs))
 	for _, trackerID := range trackerIDs {
-		statuses = append(statuses, api.TrackerAuthStatus{TrackerID: strings.ToUpper(strings.TrimSpace(trackerID)), State: trackerauth.StateConfigured})
+		normalized := strings.ToUpper(strings.TrimSpace(trackerID))
+		state := trackerauth.StateConfigured
+		if _, ok := required[normalized]; ok {
+			state = trackerauth.StateLoginRequired
+		}
+		statuses = append(statuses, api.TrackerAuthStatus{
+			TrackerID: normalized,
+			State:     state,
+		})
 	}
 	return statuses, nil
+}
+
+func e2eTrackerSet(environment string) map[string]struct{} {
+	result := make(map[string]struct{})
+	for tracker := range strings.SplitSeq(os.Getenv(environment), ",") {
+		if tracker = strings.ToUpper(strings.TrimSpace(tracker)); tracker != "" {
+			result[tracker] = struct{}{}
+		}
+	}
+	return result
 }
 
 type e2eTrackerService struct {
