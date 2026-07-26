@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -385,6 +386,25 @@ func (p *RetainedUploadPlan) Preparations() []RetainedTrackerPreparation {
 
 // Execute consumes all retained tracker plans without rebuilding payloads.
 func (p *RetainedUploadPlan) Execute(ctx context.Context) ([]RetainedTrackerResult, error) {
+	return p.execute(ctx, nil)
+}
+
+// ExecuteSelected consumes only the named retained tracker plans without
+// rebuilding payloads. Unselected plans are released without submission.
+func (p *RetainedUploadPlan) ExecuteSelected(
+	ctx context.Context,
+	trackerIDs []string,
+) ([]RetainedTrackerResult, error) {
+	if len(trackerIDs) == 0 {
+		return nil, fmt.Errorf("%w: selected trackers are required", ErrPlanNotSubmittable)
+	}
+	return p.execute(ctx, trackerIDs)
+}
+
+func (p *RetainedUploadPlan) execute(
+	ctx context.Context,
+	trackerIDs []string,
+) ([]RetainedTrackerResult, error) {
 	if p == nil || p.service == nil {
 		return nil, ErrPlanNotSubmittable
 	}
@@ -397,18 +417,24 @@ func (p *RetainedUploadPlan) Execute(ctx context.Context) ([]RetainedTrackerResu
 		p.mu.Unlock()
 		return nil, ErrPlanAlreadyUsed
 	}
+	selectedSlots, unselectedSlots, err := selectRetainedTrackerPlanSlots(p.slots, trackerIDs)
+	if err != nil {
+		p.mu.Unlock()
+		return nil, err
+	}
 	p.executed = true
 	p.mu.Unlock()
 
-	p.service.createPendingRecords(ctx, p.meta, p.slots)
-	p.service.submitTrackerPlans(ctx, p.meta, p.slots)
-	p.service.releaseTrackerPlans(p.slots)
+	p.service.releaseTrackerPlans(unselectedSlots)
+	p.service.createPendingRecords(ctx, p.meta, selectedSlots)
+	p.service.submitTrackerPlans(ctx, p.meta, selectedSlots)
+	p.service.releaseTrackerPlans(selectedSlots)
 	p.mu.Lock()
 	p.released = true
 	p.mu.Unlock()
 
-	results := make([]RetainedTrackerResult, 0, len(p.slots))
-	for _, slot := range p.slots {
+	results := make([]RetainedTrackerResult, 0, len(selectedSlots))
+	for _, slot := range selectedSlots {
 		result := RetainedTrackerResult{Tracker: slot.tracker, Summary: slot.summary}
 		if slot.failure != nil {
 			failure := *slot.failure
@@ -416,10 +442,49 @@ func (p *RetainedUploadPlan) Execute(ctx context.Context) ([]RetainedTrackerResu
 		}
 		results = append(results, result)
 	}
-	if err := ctx.Err(); err != nil && trackerPlansCanceled(p.slots) {
+	if err := ctx.Err(); err != nil && trackerPlansCanceled(selectedSlots) {
 		return results, fmt.Errorf("trackers: retained upload execution: %w", err)
 	}
 	return results, nil
+}
+
+func selectRetainedTrackerPlanSlots(
+	slots []trackerPlanSlot,
+	trackerIDs []string,
+) ([]trackerPlanSlot, []trackerPlanSlot, error) {
+	if len(trackerIDs) == 0 {
+		return append([]trackerPlanSlot(nil), slots...), nil, nil
+	}
+	requested := make(map[string]struct{}, len(trackerIDs))
+	for _, trackerID := range trackerIDs {
+		trackerID = normalizeTrackerName(trackerID)
+		if trackerID == "" {
+			return nil, nil, fmt.Errorf("%w: selected tracker is empty", ErrPlanNotSubmittable)
+		}
+		if _, duplicate := requested[trackerID]; duplicate {
+			return nil, nil, fmt.Errorf("%w: selected tracker %s is duplicated", ErrPlanNotSubmittable, trackerID)
+		}
+		requested[trackerID] = struct{}{}
+	}
+	selected := make([]trackerPlanSlot, 0, len(requested))
+	unselected := make([]trackerPlanSlot, 0, len(slots)-len(requested))
+	for _, slot := range slots {
+		if _, exists := requested[normalizeTrackerName(slot.tracker)]; exists {
+			selected = append(selected, slot)
+			delete(requested, normalizeTrackerName(slot.tracker))
+		} else {
+			unselected = append(unselected, slot)
+		}
+	}
+	if len(requested) > 0 {
+		missing := make([]string, 0, len(requested))
+		for trackerID := range requested {
+			missing = append(missing, trackerID)
+		}
+		slices.Sort(missing)
+		return nil, nil, fmt.Errorf("%w: selected tracker plans are unavailable: %s", ErrPlanNotSubmittable, strings.Join(missing, ", "))
+	}
+	return selected, unselected, nil
 }
 
 // Release invalidates unconsumed retained plans and frees adapter resources.

@@ -5191,8 +5191,12 @@ func (m *Module) executeUploads(
 		return CommandResult{}, err
 	}
 	defer func() { _ = prepared.Release() }()
-	results, executionErr := prepared.execution.Execute(ctx)
-	results = completeUploadExecutionResults(prepared.plan.Trackers, results, executionErr)
+	trackerIDs, err := validateUploadExecutionTrackerIDs(prepared.plan.Trackers, command.TrackerIDs)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	results, executionErr := prepared.execution.Execute(ctx, trackerIDs)
+	results = completeUploadExecutionResults(prepared.plan.Trackers, results, executionErr, trackerIDs)
 	return m.publishUploadResult(state, nextRevision, now, prepared, results)
 }
 
@@ -5278,8 +5282,8 @@ func (m *Module) retryFailedUploads(
 		return CommandResult{}, err
 	}
 	defer func() { _ = prepared.execution.Release() }()
-	retried, executionErr := prepared.execution.Execute(ctx)
-	retried = completeUploadExecutionResults(prepared.plan.Trackers, retried, executionErr)
+	retried, executionErr := prepared.execution.Execute(ctx, nil)
+	retried = completeUploadExecutionResults(prepared.plan.Trackers, retried, executionErr, nil)
 	byTracker := make(map[api.TrackerID]api.UploadTrackerResult, len(retried))
 	for _, result := range retried {
 		byTracker[result.TrackerID] = result
@@ -5310,16 +5314,30 @@ func completeUploadExecutionResults(
 	trackers []api.UploadPlanTracker,
 	results []api.UploadTrackerResult,
 	executionErr error,
+	selectedTrackerIDs []api.TrackerID,
 ) []api.UploadTrackerResult {
 	byTracker := make(map[api.TrackerID]api.UploadTrackerResult, len(results))
 	for _, result := range results {
 		byTracker[result.TrackerID] = result
+	}
+	selected := make(map[api.TrackerID]struct{}, len(selectedTrackerIDs))
+	for _, trackerID := range selectedTrackerIDs {
+		selected[trackerID] = struct{}{}
 	}
 	completed := make([]api.UploadTrackerResult, 0, len(trackers))
 	for _, tracker := range trackers {
 		if result, ok := byTracker[tracker.TrackerID]; ok {
 			completed = append(completed, result)
 			continue
+		}
+		if len(selected) > 0 && tracker.Eligible {
+			if _, approved := selected[tracker.TrackerID]; !approved {
+				completed = append(completed, api.UploadTrackerResult{
+					TrackerID: tracker.TrackerID,
+					Status:    api.StageStatusSkipped,
+				})
+				continue
+			}
 		}
 		if !tracker.Eligible {
 			switch tracker.Status {
@@ -5367,6 +5385,39 @@ func completeUploadExecutionResults(
 		})
 	}
 	return completed
+}
+
+func validateUploadExecutionTrackerIDs(
+	trackers []api.UploadPlanTracker,
+	requested []api.TrackerID,
+) ([]api.TrackerID, error) {
+	if len(requested) == 0 {
+		return nil, nil
+	}
+	eligible := make(map[api.TrackerID]struct{}, len(trackers))
+	for _, tracker := range trackers {
+		if tracker.Eligible && tracker.Status == api.StageStatusReady {
+			eligible[tracker.TrackerID] = struct{}{}
+		}
+	}
+	selected := make(map[api.TrackerID]struct{}, len(requested))
+	for _, trackerID := range requested {
+		trackerID = api.TrackerID(strings.ToUpper(strings.TrimSpace(string(trackerID))))
+		if _, exists := eligible[trackerID]; !exists {
+			return nil, fmt.Errorf("%w: tracker %s is not eligible in the retained upload plan", ErrInvalidTransition, trackerID)
+		}
+		if _, duplicate := selected[trackerID]; duplicate {
+			return nil, fmt.Errorf("%w: tracker %s appears more than once in the upload selection", ErrInvalidTransition, trackerID)
+		}
+		selected[trackerID] = struct{}{}
+	}
+	normalized := make([]api.TrackerID, 0, len(selected))
+	for _, tracker := range trackers {
+		if _, exists := selected[tracker.TrackerID]; exists {
+			normalized = append(normalized, tracker.TrackerID)
+		}
+	}
+	return normalized, nil
 }
 
 func (m *Module) publishUploadResult(

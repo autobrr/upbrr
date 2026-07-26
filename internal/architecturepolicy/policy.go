@@ -383,7 +383,7 @@ func checkWorkflowGuards(path string, relative string) ([]Violation, error) {
 			add(0, "upload plan must retain the finalized projection upload name")
 		}
 	case "internal/releaseworkflow/module.go":
-		if found := strings.Contains(text, "prepared.execution.Execute(ctx)"); !found {
+		if found := strings.Contains(text, "prepared.execution.Execute(ctx, trackerIDs)"); !found {
 			add(0, "direct upload must execute private preparation returned by the same command")
 		}
 	case "webui/src/releaseSession/index.tsx":

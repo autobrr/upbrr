@@ -4184,6 +4184,23 @@
           "workflowRevision"
         ]
       },
+      "ReleaseWorkflowUploadApproval": {
+        "type": "object",
+        "properties": {
+          "confirmed": {
+            "type": "boolean"
+          },
+          "trackerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerID"
+            }
+          }
+        },
+        "required": [
+          "confirmed"
+        ]
+      },
       "ReleaseWorkflowUploadClient": {
         "type": "object",
         "properties": {
@@ -4697,7 +4714,7 @@
           "uploadApproval": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/ReleaseWorkflowUploadConfirmation"
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadApproval"
               },
               {
                 "type": "null"

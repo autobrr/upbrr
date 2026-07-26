@@ -260,6 +260,72 @@ func TestRetainedUploadPlanExecutesExactReviewedProjectionWithoutRepreparing(t *
 	}
 }
 
+func TestRetainedUploadPlanExecutesOnlyApprovedTrackers(t *testing.T) {
+	t.Parallel()
+
+	var alphaPrepared atomic.Int32
+	var alphaSubmitted atomic.Int32
+	var betaPrepared atomic.Int32
+	var betaSubmitted atomic.Int32
+	registry := NewRegistry()
+	for _, definition := range []Definition{
+		retainedProjectionDefinition{
+			name:      "ALPHA",
+			prepared:  &alphaPrepared,
+			submitted: &alphaSubmitted,
+			input:     make(chan PreparationInput, 1),
+		},
+		retainedProjectionDefinition{
+			name:      "BETA",
+			prepared:  &betaPrepared,
+			submitted: &betaSubmitted,
+			input:     make(chan PreparationInput, 1),
+		},
+	} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register retained definition: %v", err)
+		}
+	}
+	service := NewServiceWithRegistry(config.Config{}, nil, nil, registry)
+	retained, err := service.PrepareRetainedUploadPlan(
+		context.Background(),
+		api.UploadSubject{SourcePath: "Example.Release.2026", ReleaseName: "Example.Release.2026-GRP"},
+		[]api.TrackerReleaseProjection{
+			{
+				TrackerID:         "ALPHA",
+				UploadReleaseName: "Example.Release.2026.ALPHA-GRP",
+				Readiness:         api.ReadinessStatusReady,
+				UploadReady:       true,
+			},
+			{
+				TrackerID:         "BETA",
+				UploadReleaseName: "Example.Release.2026.BETA-GRP",
+				Readiness:         api.ReadinessStatusReady,
+				UploadReady:       true,
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("prepare retained upload plan: %v", err)
+	}
+	results, err := retained.ExecuteSelected(context.Background(), []string{"BETA"})
+	if err != nil {
+		t.Fatalf("execute selected retained upload plan: %v", err)
+	}
+	if alphaPrepared.Load() != 1 || betaPrepared.Load() != 1 ||
+		alphaSubmitted.Load() != 0 || betaSubmitted.Load() != 1 ||
+		len(results) != 1 || results[0].Tracker != "BETA" {
+		t.Fatalf(
+			"selected retained execution = %#v prepared=%d/%d submitted=%d/%d",
+			results,
+			alphaPrepared.Load(),
+			betaPrepared.Load(),
+			alphaSubmitted.Load(),
+			betaSubmitted.Load(),
+		)
+	}
+}
+
 func TestRetainedUploadPlanRejectsStaleReleaseNamePolicyTrackerLocally(t *testing.T) {
 	t.Parallel()
 

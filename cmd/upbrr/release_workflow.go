@@ -588,8 +588,17 @@ func printCLIWorkflowProjections(projections *api.TrackerReleaseProjectionSet) {
 	}
 	fmt.Println()
 	fmt.Println("Tracker projections")
-	for _, projection := range projections.Projections {
-		fmt.Printf("- %s: %s (readiness=%s)\n", projection.DisplayName, projection.UploadReleaseName, projection.Readiness)
+	for index, projection := range projections.Projections {
+		if index > 0 {
+			fmt.Println()
+		}
+		if cliWorkflowTrackerNameChanged(projection.CanonicalReleaseName, projection.UploadReleaseName) {
+			fmt.Printf("- %s: RENAMED (readiness=%s)\n", projection.DisplayName, projection.Readiness)
+			fmt.Printf("  original: %s\n", projection.CanonicalReleaseName)
+			fmt.Printf("  upload:   %s\n", projection.UploadReleaseName)
+		} else {
+			fmt.Printf("- %s: %s (readiness=%s)\n", projection.DisplayName, projection.UploadReleaseName, projection.Readiness)
+		}
 		for _, decision := range projection.PolicyDecisions {
 			if !auditableProjectionPolicyDecision(decision) {
 				continue
@@ -607,6 +616,28 @@ func printCLIWorkflowProjections(projections *api.TrackerReleaseProjectionSet) {
 			)
 		}
 	}
+}
+
+func cliWorkflowTrackerNameChanged(canonical string, upload string) bool {
+	canonical = strings.TrimSpace(canonical)
+	upload = strings.TrimSpace(upload)
+	return canonical != "" && upload != "" && canonical != upload
+}
+
+func cliWorkflowProjectionForTracker(
+	projections *api.TrackerReleaseProjectionSet,
+	trackerID api.TrackerID,
+) *api.TrackerReleaseProjection {
+	if projections == nil {
+		return nil
+	}
+	index := slices.IndexFunc(projections.Projections, func(projection api.TrackerReleaseProjection) bool {
+		return projection.TrackerID == trackerID
+	})
+	if index < 0 {
+		return nil
+	}
+	return &projections.Projections[index]
 }
 
 func auditableProjectionPolicyDecision(decision api.TrackerPolicyDecision) bool {
@@ -750,7 +781,11 @@ func cliWorkflowMediaInstructions(request api.Request) api.MediaCaptureInstructi
 	}
 }
 
-func printCLIWorkflowDryRun(result api.UploadDryRunResult, noSeed bool) {
+func printCLIWorkflowDryRun(
+	result api.UploadDryRunResult,
+	noSeed bool,
+	projections *api.TrackerReleaseProjectionSet,
+) {
 	fmt.Println()
 	fmt.Println("Upload dry run")
 	if noSeed {
@@ -758,8 +793,18 @@ func printCLIWorkflowDryRun(result api.UploadDryRunResult, noSeed bool) {
 	} else {
 		fmt.Println("Debug mode: tracker uploads are disabled; client injection was attempted for each ready tracker.")
 	}
-	for _, report := range result.Reports {
-		fmt.Printf("- %s: %s status=%s\n", report.DisplayName, report.UploadReleaseName, report.Status)
+	for index, report := range result.Reports {
+		if index > 0 {
+			fmt.Println()
+		}
+		projection := cliWorkflowProjectionForTracker(projections, report.TrackerID)
+		if projection != nil && cliWorkflowTrackerNameChanged(projection.CanonicalReleaseName, report.UploadReleaseName) {
+			fmt.Printf("- %s: RENAMED status=%s\n", report.DisplayName, report.Status)
+			fmt.Printf("  original: %s\n", projection.CanonicalReleaseName)
+			fmt.Printf("  upload:   %s\n", report.UploadReleaseName)
+		} else {
+			fmt.Printf("- %s: %s status=%s\n", report.DisplayName, report.UploadReleaseName, report.Status)
+		}
 		if report.ClientInjection.Status != "" {
 			fmt.Printf("  client injection: %s: %s\n", report.ClientInjection.Status, report.ClientInjection.Message)
 		}

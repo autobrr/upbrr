@@ -6,6 +6,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -210,13 +211,33 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 				Status:          api.WorkflowStatusBlocked,
 				RequiredActions: []api.RequiredAction{action},
 			},
-			DryRun: &api.UploadDryRunResult{ID: "dry-run-composite", Revision: 7},
+			DryRun: &api.UploadDryRunResult{
+				ID:       "dry-run-composite",
+				Revision: 7,
+				Reports: []api.TrackerDryRunReport{
+					{
+						TrackerID:         "ALPHA",
+						DisplayName:       "Alpha",
+						UploadReleaseName: "Example.Release.2026.ALPHA-GRP",
+						Status:            api.StageStatusCompleted,
+					},
+					{
+						TrackerID:         "BETA",
+						DisplayName:       "Beta",
+						UploadReleaseName: "Example.Release.2026.BETA-GRP",
+						Status:            api.StageStatusCompleted,
+					},
+				},
+				SucceededCount: 2,
+			},
 		}, nil
 	}
 	coreSvc.feedbackFn = func(feedback api.ReleaseWorkflowUploadFeedback) (releaseworkflow.CommandResult, error) {
 		if feedback.Response.Kind != api.ReleaseWorkflowUploadFeedbackUploadApproval ||
 			feedback.Action.ID != action.ID ||
-			feedback.Action.WorkflowRevision != action.WorkflowRevision {
+			feedback.Action.WorkflowRevision != action.WorkflowRevision ||
+			feedback.Response.UploadApproval == nil ||
+			!slices.Equal(feedback.Response.UploadApproval.TrackerIDs, []api.TrackerID{"ALPHA"}) {
 			t.Fatalf("approval feedback = %#v", feedback)
 		}
 		return releaseworkflow.CommandResult{
@@ -245,7 +266,7 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 	_, err := session.complete(
 		context.Background(),
 		false,
-		bufio.NewReader(strings.NewReader("y\n")),
+		bufio.NewReader(strings.NewReader("y\nn\n")),
 		config.Config{},
 		api.NopLogger{},
 	)

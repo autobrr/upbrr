@@ -272,7 +272,7 @@ type DescriptionBuilder interface {
 // RetainedUploadExecution is private single-use execution authority. Execute
 // must submit already-prepared operations without rebuilding semantic payloads.
 type RetainedUploadExecution interface {
-	Execute(context.Context) ([]api.UploadTrackerResult, error)
+	Execute(context.Context, []api.TrackerID) ([]api.UploadTrackerResult, error)
 	Release() error
 }
 
@@ -891,6 +891,7 @@ type ExecuteUploadsCommand struct {
 	WorkflowID       api.WorkflowID
 	ExpectedRevision api.WorkflowRevision
 	NoSeed           bool
+	TrackerIDs       []api.TrackerID
 	IdempotencyKey   string
 }
 
@@ -903,7 +904,8 @@ func (c ExecuteUploadsCommand) commandFingerprint() (api.WorkflowFingerprint, er
 	return canonicalCommandFingerprint(struct {
 		ExpectedRevision api.WorkflowRevision
 		NoSeed           bool
-	}{c.ExpectedRevision, c.NoSeed})
+		TrackerIDs       []api.TrackerID
+	}{c.ExpectedRevision, c.NoSeed, c.TrackerIDs})
 }
 
 // RetryFailedUploadsCommand retries only failed trackers from one exact prior result.

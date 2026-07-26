@@ -53,7 +53,7 @@ func (s *cliWorkflowSession) completeComposite(
 			printCLIWorkflowProjections(s.current.Projections)
 		}
 		if debug && s.current.DryRun != nil {
-			printCLIWorkflowDryRun(*s.current.DryRun, s.intent.noSeed)
+			printCLIWorkflowDryRun(*s.current.DryRun, s.intent.noSeed, s.current.Projections)
 			return 0, nil
 		}
 		if !debug && s.current.UploadResult != nil {
@@ -229,12 +229,7 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 	case api.RequiredActionReviewDuplicates:
 		return s.collectCompositeDuplicateFeedback(reader, action, feedback)
 	case api.RequiredActionApproveUpload:
-		return compositeCLIConfirmationFeedback(
-			reader,
-			action,
-			feedback,
-			api.ReleaseWorkflowUploadFeedbackUploadApproval,
-		)
+		return s.collectCompositeUploadApproval(reader, feedback)
 	case api.RequiredActionReprepare:
 		return compositeCLIConfirmationFeedback(
 			reader,
@@ -268,11 +263,7 @@ func compositeCLIConfirmationFeedback(
 	feedback api.ReleaseWorkflowUploadFeedback,
 	kind api.ReleaseWorkflowUploadFeedbackKind,
 ) (api.ReleaseWorkflowUploadFeedback, bool, error) {
-	prompt := action.Prompt + " [y/N]: "
-	if action.Kind == api.RequiredActionApproveUpload {
-		prompt = "Execute tracker uploads? [y/N]: "
-	}
-	confirmed, err := promptYesNo(reader, prompt, false)
+	confirmed, err := promptYesNo(reader, action.Prompt+" [y/N]: ", false)
 	if err != nil {
 		return feedback, false, err
 	}
@@ -286,8 +277,6 @@ func compositeCLIConfirmationFeedback(
 		feedback.Response.RescanConfirmation = confirmation
 	case api.ReleaseWorkflowUploadFeedbackRuleAuthorization:
 		feedback.Response.RuleAuthorization = confirmation
-	case api.ReleaseWorkflowUploadFeedbackUploadApproval:
-		feedback.Response.UploadApproval = confirmation
 	case api.ReleaseWorkflowUploadFeedbackReprepare:
 		feedback.Response.Reprepare = &api.ReleaseWorkflowUploadReprepare{Confirmed: true}
 	case api.ReleaseWorkflowUploadFeedbackPlaylistSelection,
@@ -297,8 +286,55 @@ func compositeCLIConfirmationFeedback(
 		api.ReleaseWorkflowUploadFeedbackTrackerInput,
 		api.ReleaseWorkflowUploadFeedbackQuestionnaire,
 		api.ReleaseWorkflowUploadFeedbackDuplicateReview,
+		api.ReleaseWorkflowUploadFeedbackUploadApproval,
 		api.ReleaseWorkflowUploadFeedbackReconciliation:
 		return feedback, false, fmt.Errorf("upbrr: unsupported confirmation feedback %s", kind)
+	}
+	return feedback, false, nil
+}
+
+func (s *cliWorkflowSession) collectCompositeUploadApproval(
+	reader *bufio.Reader,
+	feedback api.ReleaseWorkflowUploadFeedback,
+) (api.ReleaseWorkflowUploadFeedback, bool, error) {
+	if s.current.DryRun == nil {
+		return feedback, false, errors.New("upbrr: exact upload review is unavailable")
+	}
+	approved := make([]api.TrackerID, 0, s.current.DryRun.SucceededCount)
+	prompted := 0
+	for _, report := range s.current.DryRun.Reports {
+		if report.Status != api.StageStatusCompleted {
+			continue
+		}
+		if prompted > 0 {
+			fmt.Println()
+		}
+		prompted++
+		tracker := strings.TrimSpace(report.DisplayName)
+		if tracker == "" {
+			tracker = string(report.TrackerID)
+		}
+		prompt := fmt.Sprintf("Upload to %s as %q? [y/N]: ", tracker, report.UploadReleaseName)
+		confirmed, err := promptYesNo(reader, prompt, false)
+		if err != nil {
+			return feedback, false, err
+		}
+		if confirmed {
+			approved = append(approved, report.TrackerID)
+		}
+	}
+	if prompted == 0 {
+		return feedback, false, errors.New("upbrr: exact upload review contains no ready tracker uploads")
+	}
+	if len(approved) == 0 {
+		return feedback, true, nil
+	}
+	feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{
+		Kind: api.ReleaseWorkflowUploadFeedbackUploadApproval,
+		UploadApproval: &api.ReleaseWorkflowUploadApproval{
+			Confirmed:  true,
+			TrackerIDs: approved,
+		},
 	}
 	return feedback, false, nil
 }

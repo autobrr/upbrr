@@ -136,8 +136,30 @@ func TestReleaseWorkflowUploadFeedbackRequiresMatchingDiscriminatedMember(t *tes
 		t.Fatal("feedback accepted a mismatched discriminator")
 	}
 	ambiguous := valid
-	ambiguous.Response.UploadApproval = &ReleaseWorkflowUploadConfirmation{Confirmed: true}
+	ambiguous.Response.UploadApproval = &ReleaseWorkflowUploadApproval{Confirmed: true}
 	if err := ambiguous.Validate(); err == nil {
 		t.Fatal("feedback accepted multiple response members")
+	}
+}
+
+func TestReleaseWorkflowUploadFeedbackRejectsDuplicateApprovalTrackers(t *testing.T) {
+	t.Parallel()
+
+	feedback := ReleaseWorkflowUploadFeedback{
+		Action: ReleaseWorkflowUploadActionIdentity{
+			ID:               "action-approval",
+			WorkflowRevision: 2,
+		},
+		Response: ReleaseWorkflowUploadFeedbackResponse{
+			Kind: ReleaseWorkflowUploadFeedbackUploadApproval,
+			UploadApproval: &ReleaseWorkflowUploadApproval{
+				Confirmed:  true,
+				TrackerIDs: []TrackerID{"alpha", "ALPHA"},
+			},
+		},
+		IdempotencyKey: "approval-duplicate-trackers",
+	}
+	if err := feedback.Validate(); err == nil {
+		t.Fatal("upload approval accepted duplicate normalized tracker IDs")
 	}
 }

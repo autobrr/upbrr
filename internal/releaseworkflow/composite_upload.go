@@ -39,6 +39,7 @@ type compositeUploadSession struct {
 	Cursor                string                                      `json:"cursor,omitempty"`
 	ApprovedDryRun        *api.UploadDryRunResultRef                  `json:"approvedDryRun,omitempty"`
 	ApprovedFingerprint   api.WorkflowFingerprint                     `json:"approvedFingerprint,omitempty"`
+	ApprovedTrackerIDs    []api.TrackerID                             `json:"approvedTrackerIds,omitempty"`
 	FeedbackSequence      uint64                                      `json:"feedbackSequence,omitempty"`
 	FeedbackReceipts      map[string]compositeUploadFeedbackReceipt   `json:"feedbackReceipts,omitempty"`
 	TerminalReason        string                                      `json:"terminalReason,omitempty"`
@@ -132,6 +133,7 @@ type compositeUploadFeedbackResponse struct {
 	Projection                   *api.ReleaseWorkflowUploadTrackerProjection
 	Questionnaire                map[string]*string
 	DuplicateDecision            api.DupeDecision
+	TrackerIDs                   []api.TrackerID
 	Facts                        *api.ReleaseWorkflowUploadFacts
 	Preparation                  *api.ReleaseWorkflowUploadPreparation
 	Reconciliation               string
@@ -707,6 +709,7 @@ func clearStaleCompositeApproval(
 ) *api.UploadDryRunResultRef {
 	if session.ApprovedDryRun == nil || workflow.DryRun == nil || *session.ApprovedDryRun != *workflow.DryRun {
 		session.ApprovedFingerprint = ""
+		session.ApprovedTrackerIDs = nil
 		return nil
 	}
 	return session.ApprovedDryRun
@@ -853,13 +856,15 @@ func (m *Module) runCompositeUpload(
 			}
 			return m.Current(ctx, ownerID, command.WorkflowID)
 		}
-		if _, execute := next.(ExecuteUploadsCommand); execute {
+		if executeCommand, execute := next.(ExecuteUploadsCommand); execute {
 			if !compositeUploadApproved(current, session) {
 				if err := m.ensureCompositeApprovalAction(ctx, ownerID, current, operationID); err != nil {
 					return CommandResult{}, err
 				}
 				continue
 			}
+			executeCommand.TrackerIDs = append([]api.TrackerID(nil), session.ApprovedTrackerIDs...)
+			next = executeCommand
 		}
 		m.reportCompositeStage(ctx, ownerID, command.WorkflowID, operationID, current, stage, api.StageStatusRunning, 0)
 		if _, err := m.execute(ctx, ownerID, next); err != nil {
@@ -1244,6 +1249,40 @@ func compositeUploadApproved(current CommandResult, session *compositeUploadSess
 		session.ApprovedFingerprint == current.DryRun.InputFingerprint
 }
 
+func compositeApprovedUploadTrackerIDs(
+	dryRun api.UploadDryRunResult,
+	requested []api.TrackerID,
+) ([]api.TrackerID, error) {
+	ready := make(map[api.TrackerID]struct{}, dryRun.SucceededCount)
+	for _, report := range dryRun.Reports {
+		if report.Status == api.StageStatusCompleted {
+			ready[normalizeCompositeTrackerID(report.TrackerID)] = struct{}{}
+		}
+	}
+	if len(ready) == 0 {
+		return nil, fmt.Errorf("%w: exact upload review contains no ready tracker uploads", ErrInvalidTransition)
+	}
+	selected := ready
+	if len(requested) > 0 {
+		selected = make(map[api.TrackerID]struct{}, len(requested))
+		for _, trackerID := range requested {
+			trackerID = normalizeCompositeTrackerID(trackerID)
+			if _, exists := ready[trackerID]; !exists {
+				return nil, fmt.Errorf("%w: tracker %s is not ready in the exact upload review", ErrInvalidTransition, trackerID)
+			}
+			selected[trackerID] = struct{}{}
+		}
+	}
+	approved := make([]api.TrackerID, 0, len(selected))
+	for _, report := range dryRun.Reports {
+		trackerID := normalizeCompositeTrackerID(report.TrackerID)
+		if _, exists := selected[trackerID]; exists {
+			approved = append(approved, trackerID)
+		}
+	}
+	return approved, nil
+}
+
 func (m *Module) ensureCompositeApprovalAction(
 	ctx context.Context,
 	ownerID string,
@@ -1280,11 +1319,16 @@ func (m *Module) ensureCompositeApprovalAction(
 			state.Workflow.Status = api.WorkflowStatusBlocked
 			state.Workflow.RequiredActions = append(state.Workflow.RequiredActions, action)
 		} else {
+			approvedTrackerIDs, approvalErr := compositeApprovedUploadTrackerIDs(*current.DryRun, nil)
+			if approvalErr != nil {
+				return approvalErr
+			}
 			state.Composite.ApprovedDryRun = &api.UploadDryRunResultRef{
 				ID:       current.DryRun.ID,
 				Revision: current.DryRun.Revision,
 			}
 			state.Composite.ApprovedFingerprint = current.DryRun.InputFingerprint
+			state.Composite.ApprovedTrackerIDs = approvedTrackerIDs
 		}
 		if err := m.saveCompositeMetadata(ctx, ownerID, &state); err != nil {
 			return fmt.Errorf("release workflow save upload approval authority: %w", err)
@@ -1517,6 +1561,7 @@ func normalizedCompositeFeedback(feedback api.ReleaseWorkflowUploadFeedback) com
 		response.DuplicateDecision = feedback.Response.DuplicateReview.Decision
 	case api.ReleaseWorkflowUploadFeedbackUploadApproval:
 		response.Confirmed = feedback.Response.UploadApproval.Confirmed
+		response.TrackerIDs = normalizeContinuationTrackerIDs(feedback.Response.UploadApproval.TrackerIDs)
 	case api.ReleaseWorkflowUploadFeedbackReprepare:
 		response.Confirmed = feedback.Response.Reprepare.Confirmed
 		response.Preparation = feedback.Response.Reprepare.Preparation
@@ -1932,8 +1977,13 @@ func (m *Module) applyCompositeUploadFeedback(
 			return CommandResult{}, fmt.Errorf("%w: exact upload review is unavailable", ErrRevisionConflict)
 		}
 		dryRun := state.DryRuns[state.Workflow.DryRun.ID]
+		approvedTrackerIDs, err := compositeApprovedUploadTrackerIDs(dryRun, command.Response.TrackerIDs)
+		if err != nil {
+			return CommandResult{}, err
+		}
 		state.Composite.ApprovedDryRun = &api.UploadDryRunResultRef{ID: dryRun.ID, Revision: dryRun.Revision}
 		state.Composite.ApprovedFingerprint = dryRun.InputFingerprint
+		state.Composite.ApprovedTrackerIDs = approvedTrackerIDs
 	case api.ReleaseWorkflowUploadFeedbackReprepare:
 		if command.Response.Preparation != nil {
 			instructions, err := compositeUploadFactInstructions(command.Response.Preparation.Facts, nil)

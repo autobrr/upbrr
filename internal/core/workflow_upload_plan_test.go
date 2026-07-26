@@ -47,6 +47,23 @@ func (f *workflowRetainedUploadPlanFake) Execute(context.Context) ([]trackers.Re
 	return append([]trackers.RetainedTrackerResult(nil), f.results...), nil
 }
 
+func (f *workflowRetainedUploadPlanFake) ExecuteSelected(
+	_ context.Context,
+	trackerIDs []string,
+) ([]trackers.RetainedTrackerResult, error) {
+	selected := make(map[string]struct{}, len(trackerIDs))
+	for _, trackerID := range trackerIDs {
+		selected[strings.ToUpper(strings.TrimSpace(trackerID))] = struct{}{}
+	}
+	results := make([]trackers.RetainedTrackerResult, 0, len(trackerIDs))
+	for _, result := range f.results {
+		if _, exists := selected[strings.ToUpper(strings.TrimSpace(result.Tracker))]; exists {
+			results = append(results, result)
+		}
+	}
+	return results, nil
+}
+
 func (*workflowRetainedUploadPlanFake) Release() error { return nil }
 
 type workflowRetainedUploadServiceFake struct {
@@ -701,7 +718,7 @@ func TestWorkflowUploadExecutionDoesNotRepeatSuccessfulDryRunInjection(t *testin
 		clients:        clientService,
 		dryRunInjected: map[api.TrackerID]struct{}{"ALPHA": {}},
 	}
-	results, err := execution.Execute(context.Background())
+	results, err := execution.Execute(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("execute workflow upload: %v", err)
 	}
@@ -735,7 +752,7 @@ func TestWorkflowUploadExecutionInjectsExactPreparedTrackerTorrent(t *testing.T)
 		clients:      clientService,
 		torrentPaths: map[api.TrackerID]string{"ALPHA": exactPath},
 	}
-	results, err := execution.Execute(context.Background())
+	results, err := execution.Execute(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("execute workflow upload: %v", err)
 	}

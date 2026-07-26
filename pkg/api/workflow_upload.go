@@ -443,7 +443,7 @@ type ReleaseWorkflowUploadFeedbackResponse struct {
 	Questionnaire         *ReleaseWorkflowUploadQuestionnaire         `json:"questionnaire,omitempty"`
 	RuleAuthorization     *ReleaseWorkflowUploadConfirmation          `json:"ruleAuthorization,omitempty"`
 	DuplicateReview       *ReleaseWorkflowUploadDuplicateReview       `json:"duplicateReview,omitempty"`
-	UploadApproval        *ReleaseWorkflowUploadConfirmation          `json:"uploadApproval,omitempty"`
+	UploadApproval        *ReleaseWorkflowUploadApproval              `json:"uploadApproval,omitempty"`
 	Reprepare             *ReleaseWorkflowUploadReprepare             `json:"reprepare,omitempty"`
 	Reconciliation        *ReleaseWorkflowUploadReconciliation        `json:"reconciliation,omitempty"`
 }
@@ -464,6 +464,13 @@ type ReleaseWorkflowUploadMetadataSelection struct {
 // ReleaseWorkflowUploadConfirmation positively acknowledges a gated action.
 type ReleaseWorkflowUploadConfirmation struct {
 	Confirmed bool `json:"confirmed"`
+}
+
+// ReleaseWorkflowUploadApproval authorizes an exact subset of the reviewed tracker operations.
+// An omitted tracker list preserves whole-plan approval for non-CLI callers.
+type ReleaseWorkflowUploadApproval struct {
+	Confirmed  bool        `json:"confirmed"`
+	TrackerIDs []TrackerID `json:"trackerIds,omitempty"`
 }
 
 // ReleaseWorkflowUploadTrackerAuthentication requests private authentication
@@ -583,6 +590,17 @@ func (f ReleaseWorkflowUploadFeedback) Validate() error {
 	case ReleaseWorkflowUploadFeedbackUploadApproval:
 		if !f.Response.UploadApproval.Confirmed {
 			return errors.New("upload approval feedback requires confirmation")
+		}
+		seen := make(map[TrackerID]struct{}, len(f.Response.UploadApproval.TrackerIDs))
+		for _, trackerID := range f.Response.UploadApproval.TrackerIDs {
+			trackerID = normalizeTrackerID(trackerID)
+			if trackerID == "" {
+				return errors.New("upload approval tracker IDs must not be empty")
+			}
+			if _, duplicate := seen[trackerID]; duplicate {
+				return fmt.Errorf("upload approval contains duplicate tracker %s", trackerID)
+			}
+			seen[trackerID] = struct{}{}
 		}
 	case ReleaseWorkflowUploadFeedbackReprepare:
 		if !f.Response.Reprepare.Confirmed {

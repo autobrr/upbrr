@@ -134,13 +134,56 @@ func TestPrintCLIWorkflowDryRunIncludesClientOutcome(t *testing.T) {
 				},
 				Warnings: []string{"Synthetic warning."},
 			},
-		}}, false)
+		}}, false, nil)
 	})
 	if !strings.Contains(output, "status=completed") ||
 		!strings.Contains(output, "client injection was attempted for each ready tracker") ||
 		!strings.Contains(output, "client injection: completed: Client injection completed.") ||
 		!strings.Contains(output, "warning: Synthetic warning.") {
 		t.Fatalf("upload dry-run output = %q", output)
+	}
+}
+
+func TestPrintCLIWorkflowDryRunSeparatesTrackersAndHighlightsRenames(t *testing.T) {
+	output := captureStdout(t, func() {
+		printCLIWorkflowDryRun(
+			api.UploadDryRunResult{Reports: []api.TrackerDryRunReport{
+				{
+					TrackerID:         "ALPHA",
+					DisplayName:       "Alpha",
+					UploadReleaseName: "Example.Release.2026-GRP",
+					Status:            api.StageStatusCompleted,
+				},
+				{
+					TrackerID:         "BETA",
+					DisplayName:       "Beta",
+					UploadReleaseName: "Example.Release.2026.RENAMED-GRP",
+					Status:            api.StageStatusCompleted,
+				},
+			}},
+			true,
+			&api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{
+				{
+					TrackerID:            "ALPHA",
+					CanonicalReleaseName: "Example.Release.2026-GRP",
+					UploadReleaseName:    "Example.Release.2026-GRP",
+				},
+				{
+					TrackerID:            "BETA",
+					CanonicalReleaseName: "Example.Release.2026-GRP",
+					UploadReleaseName:    "Example.Release.2026.RENAMED-GRP",
+				},
+			}},
+		)
+	})
+	for _, expected := range []string{
+		"- Alpha: Example.Release.2026-GRP status=completed\n\n- Beta: RENAMED status=completed",
+		"  original: Example.Release.2026-GRP",
+		"  upload:   Example.Release.2026.RENAMED-GRP",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("upload dry-run output missing %q: %q", expected, output)
+		}
 	}
 }
 
@@ -178,6 +221,36 @@ func TestPrintCLIWorkflowProjectionsIncludesAuditablePolicyDetails(t *testing.T)
 	}
 	if strings.Contains(output, "release_name_policy") {
 		t.Fatalf("tracker projection output included non-diagnostic policy provenance: %q", output)
+	}
+}
+
+func TestPrintCLIWorkflowProjectionsSeparatesTrackersAndHighlightsRenames(t *testing.T) {
+	output := captureStdout(t, func() {
+		printCLIWorkflowProjections(&api.TrackerReleaseProjectionSet{
+			Projections: []api.TrackerReleaseProjection{
+				{
+					DisplayName:          "Alpha",
+					CanonicalReleaseName: "Example.Release.2026-GRP",
+					UploadReleaseName:    "Example.Release.2026-GRP",
+					Readiness:            api.ReadinessStatusReady,
+				},
+				{
+					DisplayName:          "Beta",
+					CanonicalReleaseName: "Example.Release.2026-GRP",
+					UploadReleaseName:    "Example.Release.2026.RENAMED-GRP",
+					Readiness:            api.ReadinessStatusReady,
+				},
+			},
+		})
+	})
+	for _, expected := range []string{
+		"- Alpha: Example.Release.2026-GRP (readiness=ready)\n\n- Beta: RENAMED (readiness=ready)",
+		"  original: Example.Release.2026-GRP",
+		"  upload:   Example.Release.2026.RENAMED-GRP",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("tracker projection output missing %q: %q", expected, output)
+		}
 	}
 }
 

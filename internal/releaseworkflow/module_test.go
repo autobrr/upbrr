@@ -257,13 +257,18 @@ type retainedUploadExecutionFake struct {
 	executions int
 	releases   int
 	trackers   []api.TrackerID
+	selected   []api.TrackerID
 	failed     map[api.TrackerID]bool
 }
 
-func (f *retainedUploadExecutionFake) Execute(context.Context) ([]api.UploadTrackerResult, error) {
+func (f *retainedUploadExecutionFake) Execute(_ context.Context, trackerIDs []api.TrackerID) ([]api.UploadTrackerResult, error) {
 	f.executions++
+	f.selected = append([]api.TrackerID(nil), trackerIDs...)
 	results := make([]api.UploadTrackerResult, 0, len(f.trackers))
 	for _, trackerID := range f.trackers {
+		if len(trackerIDs) > 0 && !slices.Contains(trackerIDs, trackerID) {
+			continue
+		}
 		if f.failed[trackerID] {
 			results = append(results, api.UploadTrackerResult{
 				TrackerID: trackerID,
@@ -304,6 +309,7 @@ func TestCompleteUploadExecutionResultsReportsSkippedAndBlockedTrackers(t *testi
 			{TrackerID: "GAMMA", Status: api.StageStatusBlocked},
 		},
 		[]api.UploadTrackerResult{{TrackerID: "ALPHA", Status: api.StageStatusCompleted}},
+		nil,
 		nil,
 	)
 	if len(completed) != 3 || completed[0].TrackerID != "ALPHA" || completed[0].Status != api.StageStatusCompleted ||
@@ -2612,17 +2618,17 @@ func TestRefreshMutatedMediaStatusPreservesOnlyGenuineMediaActions(t *testing.T)
 		Status: api.StageStatusCompleted,
 		Artifacts: []api.MediaArtifact{
 			{
-				ID: "screen",
- Kind: api.MediaArtifactScreenshot,
- Purpose: api.ScreenshotPurposeFinal,
+				ID:       "screen",
+				Kind:     api.MediaArtifactScreenshot,
+				Purpose:  api.ScreenshotPurposeFinal,
 				Selected: true,
 			},
 			{
-				ID: "hosted-screen",
- Kind: api.MediaArtifactHostedImage,
- Purpose: api.ScreenshotPurposeFinal,
+				ID:       "hosted-screen",
+				Kind:     api.MediaArtifactHostedImage,
+				Purpose:  api.ScreenshotPurposeFinal,
 				Selected: true,
- Source: "screen",
+				Source:   "screen",
 			},
 		},
 		RequiredActions: []api.RequiredAction{{
@@ -2638,10 +2644,10 @@ func TestRefreshMutatedMediaStatusPreservesOnlyGenuineMediaActions(t *testing.T)
 	}
 
 	snapshot.Artifacts = append(snapshot.Artifacts, api.MediaArtifact{
-		ID: "menu",
- Kind: api.MediaArtifactDVDMenu,
- Purpose: api.ScreenshotPurposeMenu,
- Selected: true,
+		ID:       "menu",
+		Kind:     api.MediaArtifactDVDMenu,
+		Purpose:  api.ScreenshotPurposeMenu,
+		Selected: true,
 	})
 	refreshMutatedMediaStatus(&snapshot, projections)
 	if snapshot.Status != api.StageStatusCompleted || len(snapshot.RequiredActions) != 0 {

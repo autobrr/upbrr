@@ -97,8 +97,9 @@ func TestCompositeUploadConfirmFeedbackResumesWithServerApproval(t *testing.T) {
 		},
 		Response: api.ReleaseWorkflowUploadFeedbackResponse{
 			Kind: api.ReleaseWorkflowUploadFeedbackUploadApproval,
-			UploadApproval: &api.ReleaseWorkflowUploadConfirmation{
-				Confirmed: true,
+			UploadApproval: &api.ReleaseWorkflowUploadApproval{
+				Confirmed:  true,
+				TrackerIDs: []api.TrackerID{"ALPHA"},
 			},
 		},
 		IdempotencyKey: "confirm-upload",
@@ -111,8 +112,16 @@ func TestCompositeUploadConfirmFeedbackResumesWithServerApproval(t *testing.T) {
 	if completed.UploadResult == nil || completed.Operation == nil || completed.Operation.Status != api.StageStatusExecuted {
 		t.Fatalf("confirmed composite result = %#v", completed)
 	}
-	if uploads.execution == nil || uploads.execution.executions != 1 {
+	if uploads.execution == nil || uploads.execution.executions != 1 ||
+		!slices.Equal(uploads.execution.selected, []api.TrackerID{"ALPHA"}) {
 		t.Fatalf("confirmed composite executions = %#v", uploads.execution)
+	}
+	if len(completed.UploadResult.Results) != 2 ||
+		completed.UploadResult.Results[0].TrackerID != "ALPHA" ||
+		completed.UploadResult.Results[0].Status != api.StageStatusCompleted ||
+		completed.UploadResult.Results[1].TrackerID != "BETA" ||
+		completed.UploadResult.Results[1].Status != api.StageStatusSkipped {
+		t.Fatalf("confirmed composite tracker results = %#v", completed.UploadResult.Results)
 	}
 	replayed, err := module.SubmitUploadFeedback(context.Background(), testOwnerID, blocked.Workflow.ID, feedback)
 	if err != nil {

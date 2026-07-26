@@ -1005,6 +1005,11 @@ export type ReleaseWorkflowUploadActionIdentity = Readonly<{
   workflowRevision: WorkflowRevision;
 }>;
 
+export type ReleaseWorkflowUploadApproval = Readonly<{
+  confirmed: boolean;
+  trackerIds?: readonly TrackerID[];
+}>;
+
 export type ReleaseWorkflowUploadClient = Readonly<{
   forceRecheck?: boolean | null;
   noSeed?: boolean | null;
@@ -1096,7 +1101,7 @@ export type ReleaseWorkflowUploadFeedbackResponse = Readonly<{
   trackerAuthentication?: ReleaseWorkflowUploadTrackerAuthentication | null;
   trackerInput?: ReleaseWorkflowUploadTrackerInput | null;
   twoFactor?: ReleaseWorkflowUploadTwoFactor | null;
-  uploadApproval?: ReleaseWorkflowUploadConfirmation | null;
+  uploadApproval?: ReleaseWorkflowUploadApproval | null;
 }>;
 
 export type ReleaseWorkflowUploadImageHosting = Readonly<{

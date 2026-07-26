@@ -33,6 +33,7 @@ type workflowRetainedUploadService interface {
 type workflowRetainedUploadPlan interface {
 	Preparations() []trackers.RetainedTrackerPreparation
 	Execute(context.Context) ([]trackers.RetainedTrackerResult, error)
+	ExecuteSelected(context.Context, []string) ([]trackers.RetainedTrackerResult, error)
 	Release() error
 }
 
@@ -771,7 +772,10 @@ func workflowClientInjectionFingerprint(
 	return fingerprint, nil
 }
 
-func (e *workflowUploadExecution) Execute(ctx context.Context) ([]api.UploadTrackerResult, error) {
+func (e *workflowUploadExecution) Execute(
+	ctx context.Context,
+	trackerIDs []api.TrackerID,
+) ([]api.UploadTrackerResult, error) {
 	if e == nil {
 		return nil, nil
 	}
@@ -780,7 +784,15 @@ func (e *workflowUploadExecution) Execute(ctx context.Context) ([]api.UploadTrac
 		err     error
 	)
 	if e.plan != nil {
-		results, err = e.plan.Execute(ctx)
+		if len(trackerIDs) == 0 {
+			results, err = e.plan.Execute(ctx)
+		} else {
+			selected := make([]string, 0, len(trackerIDs))
+			for _, trackerID := range trackerIDs {
+				selected = append(selected, string(trackerID))
+			}
+			results, err = e.plan.ExecuteSelected(ctx, selected)
+		}
 	}
 	public := make([]api.UploadTrackerResult, 0, len(results))
 	for _, result := range results {
