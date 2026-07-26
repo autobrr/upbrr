@@ -23,9 +23,17 @@ const (
 )
 
 func projectWorkflowContinuation(current CommandResult) api.WorkflowContinuation {
+	return projectWorkflowContinuationForState(current, nil, time.Time{})
+}
+
+func projectWorkflowContinuationForState(
+	current CommandResult,
+	state *State,
+	now time.Time,
+) api.WorkflowContinuation {
 	lanes := projectTrackerLaneOutcomes(current)
 	lifecycle, disposition := reduceWorkflowOutcome(current, lanes)
-	actions := projectContinuationRequiredActions(current)
+	actions := projectContinuationRequiredActions(current, state, now)
 	if len(actions) > len(current.Workflow.RequiredActions) && lifecycle != api.OperationLifecycleQueued &&
 		lifecycle != api.OperationLifecycleRunning {
 		lifecycle = api.OperationLifecycleWaiting
@@ -44,31 +52,22 @@ func projectWorkflowContinuation(current CommandResult) api.WorkflowContinuation
 	}
 }
 
-func projectContinuationRequiredActions(current CommandResult) []api.RequiredAction {
+func projectContinuationRequiredActions(
+	current CommandResult,
+	state *State,
+	now time.Time,
+) []api.RequiredAction {
 	actions := append([]api.RequiredAction(nil), current.Workflow.RequiredActions...)
-	if current.DryRun == nil || current.UploadResult != nil ||
-		!slices.ContainsFunc(current.DryRun.Reports, func(report api.TrackerDryRunReport) bool {
-			return report.Status == api.StageStatusCompleted
-		}) {
+	if state == nil {
 		return actions
 	}
-	actionID := uploadApprovalActionID(current.DryRun.ID)
-	if slices.ContainsFunc(actions, func(action api.RequiredAction) bool { return action.ID == actionID }) {
+	action, _, err := projectedTrackerApprovalAction(state, now)
+	if err != nil || action == nil ||
+		slices.ContainsFunc(actions, func(candidate api.RequiredAction) bool { return candidate.ID == action.ID }) {
 		return actions
 	}
-	actions = append(actions, api.RequiredAction{
-		ID:               actionID,
-		Kind:             api.RequiredActionApproveUpload,
-		Status:           api.RequiredActionStatusPending,
-		WorkflowRevision: current.Workflow.Revision,
-		Prompt:           "Approve submission of the exact reviewed tracker operations.",
-		CreatedAt:        current.DryRun.CreatedAt,
-	})
+	actions = append(actions, *action)
 	return actions
-}
-
-func uploadApprovalActionID(dryRunID api.UploadDryRunResultID) api.RequiredActionID {
-	return api.RequiredActionID("approve-upload-" + string(dryRunID))
 }
 
 func projectTrackerLaneOutcomes(current CommandResult) []api.TrackerLaneOutcome {
@@ -223,14 +222,15 @@ func projectTrackerLaneOutcomes(current CommandResult) []api.TrackerLaneOutcome 
 
 func exactRefs(workflow api.ReleaseWorkflow) api.WorkflowExactRefs {
 	return api.WorkflowExactRefs{
-		Release:      workflow.Release,
-		Projections:  workflow.TrackerProjections,
-		Preflight:    workflow.TrackerPreflight,
-		Dupes:        workflow.Dupes,
-		Media:        workflow.Media,
-		Descriptions: workflow.Descriptions,
-		DryRun:       workflow.DryRun,
-		UploadResult: workflow.UploadResult,
+		Release:         workflow.Release,
+		Projections:     workflow.TrackerProjections,
+		Preflight:       workflow.TrackerPreflight,
+		Dupes:           workflow.Dupes,
+		TrackerApproval: workflow.TrackerApproval,
+		Media:           workflow.Media,
+		Descriptions:    workflow.Descriptions,
+		DryRun:          workflow.DryRun,
+		UploadResult:    workflow.UploadResult,
 	}
 }
 

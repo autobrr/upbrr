@@ -52,6 +52,9 @@ type TrackerPreflightAssessmentID string
 // DupeAssessmentID identifies one immutable duplicate assessment.
 type DupeAssessmentID string
 
+// TrackerApprovalSnapshotID identifies one immutable post-dupe tracker approval.
+type TrackerApprovalSnapshotID string
+
 // MediaArtifactSetID identifies one immutable media-artifact set.
 type MediaArtifactSetID string
 
@@ -134,6 +137,12 @@ type TrackerPreflightAssessmentRef struct {
 type DupeAssessmentRef struct {
 	ID       DupeAssessmentID `json:"id"`
 	Revision WorkflowRevision `json:"revision"`
+}
+
+// TrackerApprovalSnapshotRef references one exact post-dupe tracker approval.
+type TrackerApprovalSnapshotRef struct {
+	ID       TrackerApprovalSnapshotID `json:"id"`
+	Revision WorkflowRevision          `json:"revision"`
 }
 
 // MediaArtifactSetRef references one exact media-artifact revision.
@@ -256,7 +265,11 @@ const (
 	RequiredActionAuthorizeRules RequiredActionKind = "authorize_rules"
 	// RequiredActionReviewDuplicates requests duplicate acceptance or rejection.
 	RequiredActionReviewDuplicates RequiredActionKind = "review_duplicates"
+	// RequiredActionApproveTrackers requests one exact post-dupe tracker subset.
+	RequiredActionApproveTrackers RequiredActionKind = "approve_trackers"
 	// RequiredActionApproveUpload requests approval of the retained upload plan.
+	//
+	// Deprecated: upload approval is no longer emitted by runtime workflows.
 	RequiredActionApproveUpload RequiredActionKind = "approve_upload"
 	// RequiredActionReprepare requests a fresh generation after invalidation or restart.
 	RequiredActionReprepare RequiredActionKind = "reprepare"

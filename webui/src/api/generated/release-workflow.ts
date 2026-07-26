@@ -181,11 +181,13 @@ export type ClientSearchPolicy = Readonly<{
 
 export type ContinueReleaseWorkflowRequest = Readonly<{
   answers?: readonly RequiredActionAnswer[];
+  /** @deprecated */
   approval?: UploadApproval | null;
   authority?: WorkflowAuthority | null;
   goal: WorkflowGoal;
   idempotencyKey: string;
   intent: WorkflowIntent;
+  trackerApproval?: TrackerApproval | null;
 }>;
 
 export type CreateReleaseWorkflowUploadRequest = Readonly<{
@@ -247,6 +249,7 @@ export type DescriptionSet = Readonly<{
   revision: WorkflowRevision;
   status: StageStatus;
   templateFingerprint: WorkflowFingerprint;
+  trackerApproval?: TrackerApprovalSnapshotRef | null;
   trackerResults?: readonly DescriptionTrackerResult[];
   workflowId: WorkflowID;
 }>;
@@ -563,6 +566,7 @@ export type MediaArtifactSet = Readonly<{
   requirementsFingerprint: WorkflowFingerprint;
   revision: WorkflowRevision;
   status: StageStatus;
+  trackerApproval?: TrackerApprovalSnapshotRef | null;
   workflowId: WorkflowID;
 }>;
 
@@ -964,6 +968,7 @@ export type ReleaseWorkflow = Readonly<{
   revision: WorkflowRevision;
   selection?: TrackerSelectionRef | null;
   status: WorkflowStatus;
+  trackerApproval?: TrackerApprovalSnapshotRef | null;
   trackerCatalog?: TrackerCatalogSnapshotRef | null;
   trackerPreflight?: TrackerPreflightAssessmentRef | null;
   trackerProjections?: TrackerReleaseProjectionSetRef | null;
@@ -987,6 +992,7 @@ export type ReleaseWorkflowCurrent = Readonly<{
   release?: ReleaseSnapshot | null;
   runtime?: TrackerRuntimeSnapshot | null;
   selection?: TrackerSelection | null;
+  trackerApproval?: TrackerApprovalSnapshot | null;
   uploadResult?: UploadResult | null;
   workflow: ReleaseWorkflow;
 }>;
@@ -1005,6 +1011,7 @@ export type ReleaseWorkflowUploadActionIdentity = Readonly<{
   workflowRevision: WorkflowRevision;
 }>;
 
+/** @deprecated */
 export type ReleaseWorkflowUploadApproval = Readonly<{
   confirmed: boolean;
   trackerIds?: readonly TrackerID[];
@@ -1086,7 +1093,7 @@ export type ReleaseWorkflowUploadFeedback = Readonly<{
   response: ReleaseWorkflowUploadFeedbackResponse;
 }>;
 
-export type ReleaseWorkflowUploadFeedbackKind = "playlistSelection" | "metadataSelection" | "rescanConfirmation" | "trackerAuthentication" | "twoFactor" | "trackerInput" | "questionnaire" | "ruleAuthorization" | "duplicateReview" | "uploadApproval" | "reprepare" | "reconciliation";
+export type ReleaseWorkflowUploadFeedbackKind = "playlistSelection" | "metadataSelection" | "rescanConfirmation" | "trackerAuthentication" | "twoFactor" | "trackerInput" | "questionnaire" | "ruleAuthorization" | "duplicateReview" | "trackerApproval" | "uploadApproval" | "reprepare" | "reconciliation";
 
 export type ReleaseWorkflowUploadFeedbackResponse = Readonly<{
   duplicateReview?: ReleaseWorkflowUploadDuplicateReview | null;
@@ -1098,9 +1105,11 @@ export type ReleaseWorkflowUploadFeedbackResponse = Readonly<{
   reprepare?: ReleaseWorkflowUploadReprepare | null;
   rescanConfirmation?: ReleaseWorkflowUploadConfirmation | null;
   ruleAuthorization?: ReleaseWorkflowUploadConfirmation | null;
+  trackerApproval?: ReleaseWorkflowUploadTrackerApproval | null;
   trackerAuthentication?: ReleaseWorkflowUploadTrackerAuthentication | null;
   trackerInput?: ReleaseWorkflowUploadTrackerInput | null;
   twoFactor?: ReleaseWorkflowUploadTwoFactor | null;
+  /** @deprecated */
   uploadApproval?: ReleaseWorkflowUploadApproval | null;
 }>;
 
@@ -1226,6 +1235,11 @@ export type ReleaseWorkflowUploadTorrent = Readonly<{
   maxPieceSizeMiB?: number | null;
   noHash?: boolean | null;
   rehash?: boolean | null;
+}>;
+
+export type ReleaseWorkflowUploadTrackerApproval = Readonly<{
+  confirmed: boolean;
+  trackerIds: readonly TrackerID[];
 }>;
 
 export type ReleaseWorkflowUploadTrackerAuthentication = Readonly<{
@@ -1578,6 +1592,35 @@ export type TorrentOverrides = Readonly<{
   MaxPieceSizeMiB?: number | null;
   NoHash?: boolean | null;
   Rehash?: boolean | null;
+}>;
+
+export type TrackerApproval = Readonly<{
+  actionId: RequiredActionID;
+  dupes: DupeAssessmentRef;
+  inputFingerprint: WorkflowFingerprint;
+  trackerIds: readonly TrackerID[];
+}>;
+
+export type TrackerApprovalSnapshot = Readonly<{
+  approvedTrackerIds: readonly TrackerID[];
+  candidateTrackerIds: readonly TrackerID[];
+  createdAt: string;
+  dupes: DupeAssessmentRef;
+  id: TrackerApprovalSnapshotID;
+  inputFingerprint: WorkflowFingerprint;
+  preflight: TrackerPreflightAssessmentRef;
+  projectionSet: TrackerReleaseProjectionSetRef;
+  release: ReleaseSnapshotRef;
+  revision: WorkflowRevision;
+  selection: TrackerSelectionRef;
+  workflowId: WorkflowID;
+}>;
+
+export type TrackerApprovalSnapshotID = string;
+
+export type TrackerApprovalSnapshotRef = Readonly<{
+  id: TrackerApprovalSnapshotID;
+  revision: WorkflowRevision;
 }>;
 
 export type TrackerArtifactRequirements = Readonly<{
@@ -1943,6 +1986,7 @@ export type TrackerTaxonomyValue = Readonly<{
 
 export type UniqueIDStatus = string;
 
+/** @deprecated */
 export type UploadApproval = Readonly<{
   actionId: RequiredActionID;
   dryRun: UploadDryRunResultRef;
@@ -1964,6 +2008,8 @@ export type UploadDryRunResult = Readonly<{
   skippedCount: number;
   status: StageStatus;
   succeededCount: number;
+  trackerApproval?: TrackerApprovalSnapshotRef | null;
+  trackerIds: readonly TrackerID[];
   workflowId: WorkflowID;
 }>;
 
@@ -2016,6 +2062,7 @@ export type UploadResult = Readonly<{
   results: readonly UploadTrackerResult[];
   revision: WorkflowRevision;
   status: StageStatus;
+  trackerApproval?: TrackerApprovalSnapshotRef | null;
   workflowId: WorkflowID;
 }>;
 
@@ -2085,6 +2132,7 @@ export type WorkflowExactRefs = Readonly<{
   preflight?: TrackerPreflightAssessmentRef | null;
   projections?: TrackerReleaseProjectionSetRef | null;
   release?: ReleaseSnapshotRef | null;
+  trackerApproval?: TrackerApprovalSnapshotRef | null;
   uploadResult?: UploadResultRef | null;
 }>;
 
@@ -2118,6 +2166,7 @@ export type WorkflowIntent = Readonly<{
   projectionInstructions?: Readonly<Record<string, TrackerProjectionInstructions>>;
   skipRemoteDuplicates?: boolean;
   trackerIds?: readonly TrackerID[];
+  uploadTrackerIds?: readonly TrackerID[];
 }>;
 
 export type WorkflowMediaSelection = Readonly<{

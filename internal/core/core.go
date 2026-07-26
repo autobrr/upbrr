@@ -441,7 +441,8 @@ func releaseWorkflowOperation(command releaseworkflow.Command) api.OperationKind
 		return api.OperationKindDescription
 	case releaseworkflow.ExecuteUploadsCommand, releaseworkflow.RetryFailedUploadsCommand:
 		return api.OperationKindUploadExecute
-	case releaseworkflow.CancelWorkflowCommand:
+	case releaseworkflow.ApproveTrackersCommand,
+		releaseworkflow.CancelWorkflowCommand:
 		return api.OperationKindUnknown
 	default:
 		return api.OperationKindUploadDryRun

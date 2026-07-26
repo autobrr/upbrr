@@ -6,7 +6,6 @@ package releaseworkflow
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -31,8 +30,9 @@ func (m *Module) Continue(
 			instructions = &request.Intent.Preparation.Instructions
 		}
 		created, err := m.Execute(ctx, ownerID, CreateWorkflowCommand{
-			Instructions:   *instructions,
-			IdempotencyKey: continuationIdempotencyKey(request.IdempotencyKey, "create", 0),
+			Instructions:        *instructions,
+			IdempotencyKey:      continuationIdempotencyKey(request.IdempotencyKey, "create", 0),
+			TrackerDecisionMode: trackerDecisionModeFromContext(ctx, TrackerDecisionModePostDupeGate),
 		})
 		if err != nil {
 			return CommandResult{}, err
@@ -51,8 +51,16 @@ func (m *Module) Continue(
 	if current.Workflow.Revision != authority.ExpectedRevision {
 		return CommandResult{}, ErrRevisionConflict
 	}
+	state, err := m.repository.Load(ctx, ownerID, authority.WorkflowID)
+	if err != nil {
+		return CommandResult{}, fmt.Errorf("release workflow continue load tracker decision policy: %w", err)
+	}
+	trackerDecisionMode := normalizeTrackerDecisionMode(state.TrackerDecisionMode)
 	if err := m.acceptContinuationIntent(ctx, ownerID, authority.WorkflowID, request); err != nil {
 		return CommandResult{}, err
+	}
+	if request.Approval != nil { //nolint:staticcheck // Reject retained v1 authority explicitly.
+		return CommandResult{}, fmt.Errorf("%w: final upload approval is no longer accepted", ErrInvalidTransition)
 	}
 	if current.Operation != nil && !isTerminalProgressStatus(current.Operation.Status) {
 		return current, nil
@@ -81,8 +89,35 @@ func (m *Module) Continue(
 	if updated, handled, factsErr := m.reconcileContinuationFacts(ctx, ownerID, request, current); handled || factsErr != nil {
 		return updated, factsErr
 	}
-	if updated, handled, answerErr := m.resolveContinuationAnswer(ctx, ownerID, request, current); handled || answerErr != nil {
+	if updated, handled, answerErr := m.resolveContinuationAnswer(
+		ctx,
+		ownerID,
+		request,
+		current,
+		trackerDecisionMode,
+	); handled || answerErr != nil {
 		return updated, answerErr
+	}
+	if request.TrackerApproval != nil {
+		result, approveErr := m.Execute(ctx, ownerID, ApproveTrackersCommand{
+			WorkflowID:       current.Workflow.ID,
+			ExpectedRevision: current.Workflow.Revision,
+			Approval:         *request.TrackerApproval,
+			IdempotencyKey: continuationIdempotencyKey(
+				request.IdempotencyKey,
+				"approve-trackers",
+				current.Workflow.Revision,
+			),
+		})
+		if approveErr != nil {
+			return CommandResult{}, approveErr
+		}
+		return m.Current(ctx, ownerID, result.Workflow.ID)
+	}
+	if slices.ContainsFunc(current.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionApproveTrackers && action.Status == api.RequiredActionStatusPending
+	}) {
+		return current, nil
 	}
 	if continuationGoalReached(current, request) {
 		return current, nil
@@ -91,14 +126,6 @@ func (m *Module) Continue(
 	command, stage := planContinuationCommand(request, current, m.clock.Now().UTC())
 	if command == nil {
 		return current, nil
-	}
-	if _, ok := command.(ExecuteUploadsCommand); ok {
-		if request.Approval == nil {
-			return current, nil
-		}
-		if err := validateContinuationApproval(request.Approval, current); err != nil {
-			return CommandResult{}, fmt.Errorf("%w: %w", ErrRevisionConflict, err)
-		}
 	}
 	if decision, ok := command.(DecideDuplicatesCommand); ok {
 		result, executeErr := m.Execute(ctx, ownerID, decision)
@@ -152,6 +179,7 @@ func (m *Module) resolveContinuationAnswer(
 	ownerID string,
 	request api.ContinueReleaseWorkflowRequest,
 	current CommandResult,
+	trackerDecisionMode TrackerDecisionMode,
 ) (CommandResult, bool, error) {
 	for _, action := range current.Workflow.RequiredActions {
 		if action.Status != api.RequiredActionStatusPending {
@@ -170,7 +198,11 @@ func (m *Module) resolveContinuationAnswer(
 			return answer.ActionID == action.ID
 		})
 		if answerIndex < 0 {
-			if continuationActionBlocksAllLanes(current, action) {
+			if action.Kind == api.RequiredActionReviewDuplicates &&
+				continuationHasDupeDecisionUpdate(request.Intent, current.Dupes) {
+				continue
+			}
+			if continuationActionBlocksAllLanesForMode(current, action, trackerDecisionMode) {
 				return current, true, nil
 			}
 			continue
@@ -194,6 +226,18 @@ func (m *Module) resolveContinuationAnswer(
 	return CommandResult{}, false, nil
 }
 
+func continuationHasDupeDecisionUpdate(intent api.WorkflowIntent, dupes *api.DupeAssessment) bool {
+	if dupes == nil {
+		return false
+	}
+	return slices.ContainsFunc(dupes.Results, func(result api.TrackerDupeAssessment) bool {
+		decision, exists := intent.DuplicateDecisions[result.TrackerID]
+		return exists &&
+			(decision == api.DupeDecisionAccepted || decision == api.DupeDecisionIgnored) &&
+			decision != result.Decision
+	})
+}
+
 func continuationIntentResolvesAction(intent api.WorkflowIntent, current CommandResult, action api.RequiredAction) bool {
 	switch action.Kind {
 	case api.RequiredActionReviewDuplicates:
@@ -212,7 +256,10 @@ func continuationIntentResolvesAction(intent api.WorkflowIntent, current Command
 		return ok && len(instruction.Questionnaire) > 0
 	case api.RequiredActionSelectPlaylist, api.RequiredActionSelectMetadata, api.RequiredActionConfirmRescan,
 		api.RequiredActionAuthenticateTracker, api.RequiredActionProvideTwoFactor, api.RequiredActionAuthorizeRules,
-		api.RequiredActionApproveUpload, api.RequiredActionReprepare, api.RequiredActionReconcileSubmission:
+		api.RequiredActionApproveTrackers,
+		api.RequiredActionApproveUpload, //nolint:staticcheck // Retained v1 actions cannot be satisfied by desired intent.
+		api.RequiredActionReprepare,
+		api.RequiredActionReconcileSubmission:
 		return false
 	}
 	return false
@@ -225,6 +272,18 @@ func continuationActionBlocksAllLanes(current CommandResult, action api.Required
 	return !slices.ContainsFunc(projectTrackerLaneOutcomes(current), func(lane api.TrackerLaneOutcome) bool {
 		return lane.TrackerID != action.TrackerID && laneCanAdvance(lane)
 	})
+}
+
+func continuationActionBlocksAllLanesForMode(
+	current CommandResult,
+	action api.RequiredAction,
+	mode TrackerDecisionMode,
+) bool {
+	if normalizeTrackerDecisionMode(mode) == TrackerDecisionModePostDupeGate &&
+		action.Kind == api.RequiredActionReviewDuplicates {
+		return true
+	}
+	return continuationActionBlocksAllLanes(current, action)
 }
 
 func (m *Module) reconcileContinuationFacts(
@@ -412,11 +471,17 @@ func planContinuationCommand(
 	if workflowGoalRank(request.Goal) <= workflowGoalRank(api.WorkflowGoalDescriptionsReady) {
 		return nil, ""
 	}
-	if current.DryRun == nil || current.DryRun.NoSeed != request.Intent.NoSeed {
+	if current.DryRun == nil || current.DryRun.NoSeed != request.Intent.NoSeed ||
+		(len(request.Intent.UploadTrackerIDs) > 0 &&
+			!slices.Equal(
+				normalizeContinuationTrackerIDs(current.DryRun.TrackerIDs),
+				normalizeContinuationTrackerIDs(request.Intent.UploadTrackerIDs),
+			)) {
 		return DryRunUploadsCommand{
 			WorkflowID:       workflowID,
 			ExpectedRevision: revision,
 			NoSeed:           request.Intent.NoSeed,
+			TrackerIDs:       append([]api.TrackerID(nil), request.Intent.UploadTrackerIDs...),
 			IdempotencyKey:   key("review-uploads"),
 		}, "review-uploads"
 	}
@@ -427,6 +492,7 @@ func planContinuationCommand(
 		WorkflowID:       workflowID,
 		ExpectedRevision: revision,
 		NoSeed:           request.Intent.NoSeed,
+		TrackerIDs:       append([]api.TrackerID(nil), request.Intent.UploadTrackerIDs...),
 		IdempotencyKey:   key("execute-uploads"),
 	}, "execute-uploads"
 }
@@ -599,7 +665,8 @@ func continuationUnattendedSkipsTrackerAction(intent api.WorkflowIntent, action 
 		api.RequiredActionSelectMetadata,
 		api.RequiredActionConfirmRescan,
 		api.RequiredActionReviewDuplicates,
-		api.RequiredActionApproveUpload,
+		api.RequiredActionApproveTrackers,
+		api.RequiredActionApproveUpload, //nolint:staticcheck // Retained v1 action remains a global blocker.
 		api.RequiredActionReprepare,
 		api.RequiredActionReconcileSubmission:
 		return false
@@ -647,7 +714,12 @@ func continuationGoalReached(current CommandResult, request api.ContinueReleaseW
 	case api.WorkflowGoalDescriptionsReady:
 		return descriptionsHaveViableTracker(current.Descriptions)
 	case api.WorkflowGoalUploadReviewed, api.WorkflowGoalDryRun:
-		return current.DryRun != nil && current.DryRun.NoSeed == request.Intent.NoSeed
+		return current.DryRun != nil && current.DryRun.NoSeed == request.Intent.NoSeed &&
+			(len(request.Intent.UploadTrackerIDs) == 0 ||
+				slices.Equal(
+					normalizeContinuationTrackerIDs(current.DryRun.TrackerIDs),
+					normalizeContinuationTrackerIDs(request.Intent.UploadTrackerIDs),
+				))
 	case api.WorkflowGoalUploaded:
 		return current.UploadResult != nil
 	default:
@@ -690,18 +762,6 @@ func duplicateIntentMatches(dupes *api.DupeAssessment, decisions map[api.Tracker
 
 func continuationIdempotencyKey(base, stage string, revision api.WorkflowRevision) string {
 	return fmt.Sprintf("%s:%s:%d", strings.TrimSpace(base), stage, revision)
-}
-
-func validateContinuationApproval(approval *api.UploadApproval, current CommandResult) error {
-	if approval == nil || current.DryRun == nil {
-		return errors.New("exact upload approval is required")
-	}
-	if approval.ActionID != uploadApprovalActionID(current.DryRun.ID) || approval.DryRun.ID != current.DryRun.ID ||
-		approval.DryRun.Revision != current.DryRun.Revision ||
-		approval.InputFingerprint != current.DryRun.InputFingerprint {
-		return errors.New("upload approval is stale")
-	}
-	return nil
 }
 
 func duplicateDecisionsComplete(dupes *api.DupeAssessment) bool {

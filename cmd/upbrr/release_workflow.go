@@ -67,6 +67,7 @@ type cliWorkflowSession struct {
 	current        releaseworkflow.CommandResult
 	intent         cliWorkflowIntent
 	uploadRequest  api.Request
+	trackerAuth    cliTrackerAuthChecker
 	idempotencyRun string
 	intentSequence uint64
 	progressWriter io.Writer
@@ -582,22 +583,26 @@ func collectCLIWorkflowQuestionnaires(
 	return changed, nil
 }
 
-func printCLIWorkflowProjections(projections *api.TrackerReleaseProjectionSet) {
+func printCLIWorkflowProjections(
+	projections *api.TrackerReleaseProjectionSet,
+	dupes *api.DupeAssessment,
+) {
 	if projections == nil {
 		return
 	}
 	fmt.Println()
 	fmt.Println("Tracker projections")
 	for index, projection := range projections.Projections {
+		readiness := cliWorkflowProjectionReadiness(projection, dupes)
 		if index > 0 {
 			fmt.Println()
 		}
 		if cliWorkflowTrackerNameChanged(projection.CanonicalReleaseName, projection.UploadReleaseName) {
-			fmt.Printf("- %s: RENAMED (readiness=%s)\n", projection.DisplayName, projection.Readiness)
+			fmt.Printf("- %s: RENAMED (readiness=%s)\n", projection.DisplayName, readiness)
 			fmt.Printf("  original: %s\n", projection.CanonicalReleaseName)
 			fmt.Printf("  upload:   %s\n", projection.UploadReleaseName)
 		} else {
-			fmt.Printf("- %s: %s (readiness=%s)\n", projection.DisplayName, projection.UploadReleaseName, projection.Readiness)
+			fmt.Printf("- %s: %s (readiness=%s)\n", projection.DisplayName, projection.UploadReleaseName, readiness)
 		}
 		for _, decision := range projection.PolicyDecisions {
 			if !auditableProjectionPolicyDecision(decision) {
@@ -616,6 +621,27 @@ func printCLIWorkflowProjections(projections *api.TrackerReleaseProjectionSet) {
 			)
 		}
 	}
+}
+
+func cliWorkflowProjectionReadiness(
+	projection api.TrackerReleaseProjection,
+	dupes *api.DupeAssessment,
+) api.ReadinessStatus {
+	if dupes == nil {
+		return projection.Readiness
+	}
+	for _, result := range dupes.Results {
+		if result.TrackerID != projection.TrackerID {
+			continue
+		}
+		if slices.ContainsFunc(result.Matches, func(match api.DupeMatchProjection) bool {
+			return strings.EqualFold(strings.TrimSpace(match.Reason), "in_client")
+		}) {
+			return api.ReadinessStatusBlocked
+		}
+		break
+	}
+	return projection.Readiness
 }
 
 func cliWorkflowTrackerNameChanged(canonical string, upload string) bool {
@@ -653,6 +679,7 @@ func (s *cliWorkflowSession) collectContinuationActionAnswers(
 	logger api.Logger,
 ) ([]api.RequiredActionAnswer, bool, error) {
 	authTrackers := make([]string, 0)
+	readyAuthTrackers := make([]string, 0)
 	for _, action := range s.current.Continuation.RequiredActions {
 		if action.Status == api.RequiredActionStatusPending &&
 			(action.Kind == api.RequiredActionAuthenticateTracker || action.Kind == api.RequiredActionProvideTwoFactor) &&
@@ -661,7 +688,7 @@ func (s *cliWorkflowSession) collectContinuationActionAnswers(
 		}
 	}
 	if len(authTrackers) > 0 && s.intent.interaction != api.InteractionModeUnattended {
-		ready, err := ensureCLITrackerAuthBeforeDupeCheckWithLogger(
+		ready, err := s.ensureTrackerAuthBeforeDupeCheck(
 			ctx,
 			reader,
 			cfg,
@@ -673,9 +700,7 @@ func (s *cliWorkflowSession) collectContinuationActionAnswers(
 		if err != nil {
 			return nil, false, err
 		}
-		if len(ready) != len(authTrackers) {
-			return nil, false, errors.New("upbrr: tracker authentication remains incomplete")
-		}
+		readyAuthTrackers = ready
 	}
 
 	answers := make([]api.RequiredActionAnswer, 0)
@@ -685,7 +710,10 @@ func (s *cliWorkflowSession) collectContinuationActionAnswers(
 		}
 		switch action.Kind {
 		case api.RequiredActionAuthenticateTracker, api.RequiredActionProvideTwoFactor:
-			if s.intent.interaction == api.InteractionModeUnattended {
+			if s.intent.interaction == api.InteractionModeUnattended ||
+				!slices.ContainsFunc(readyAuthTrackers, func(trackerID string) bool {
+					return strings.EqualFold(strings.TrimSpace(trackerID), strings.TrimSpace(string(action.TrackerID)))
+				}) {
 				continue
 			}
 			confirmed := true
@@ -727,8 +755,10 @@ func (s *cliWorkflowSession) collectContinuationActionAnswers(
 				SelectedValues:   []string{api.RequiredActionReconcileNotCompleted},
 			})
 		case api.RequiredActionProvideTrackerInput, api.RequiredActionAnswerQuestionnaire, api.RequiredActionReviewDuplicates,
-			api.RequiredActionApproveUpload:
+			api.RequiredActionApproveUpload: //nolint:staticcheck // Retained v1 actions are resolved only by legacy authority.
 			// Desired intent or exact upload approval resolves these actions.
+		case api.RequiredActionApproveTrackers:
+			return nil, false, errors.New("upbrr: post-dupe tracker approval requires the composite upload flow")
 		case api.RequiredActionSelectPlaylist, api.RequiredActionSelectMetadata, api.RequiredActionConfirmRescan, api.RequiredActionReprepare:
 			return nil, false, fmt.Errorf("upbrr: release workflow requires action %s: %s", action.Kind, action.Prompt)
 		}

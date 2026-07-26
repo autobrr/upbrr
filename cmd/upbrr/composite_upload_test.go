@@ -193,51 +193,52 @@ func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 }
 
 func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
-	t.Parallel()
-
 	action := api.RequiredAction{
 		ID:               "action-approval",
-		Kind:             api.RequiredActionApproveUpload,
+		Kind:             api.RequiredActionApproveTrackers,
 		Status:           api.RequiredActionStatusPending,
 		WorkflowRevision: 7,
-		Prompt:           "Approve exact upload.",
+		Prompt:           "Select trackers.",
+		Options: []api.RequiredActionOption{
+			{Value: "ALPHA", Label: "Alpha"},
+			{Value: "BETA", Label: "Beta"},
+		},
 	}
 	coreSvc := &cliWorkflowCoreFake{}
 	coreSvc.startUploadFn = func(api.CreateReleaseWorkflowUploadRequest) (releaseworkflow.CommandResult, error) {
 		return releaseworkflow.CommandResult{
 			Workflow: api.ReleaseWorkflow{
-				ID:              "workflow-composite",
-				Revision:        7,
-				Status:          api.WorkflowStatusBlocked,
-				RequiredActions: []api.RequiredAction{action},
-			},
-			DryRun: &api.UploadDryRunResult{
-				ID:       "dry-run-composite",
+				ID:       "workflow-composite",
 				Revision: 7,
-				Reports: []api.TrackerDryRunReport{
+				Status:   api.WorkflowStatusBlocked,
+			},
+			Continuation: api.WorkflowContinuation{RequiredActions: []api.RequiredAction{action}},
+			Projections: &api.TrackerReleaseProjectionSet{
+				Projections: []api.TrackerReleaseProjection{
 					{
 						TrackerID:         "ALPHA",
 						DisplayName:       "Alpha",
 						UploadReleaseName: "Example.Release.2026.ALPHA-GRP",
-						Status:            api.StageStatusCompleted,
 					},
 					{
 						TrackerID:         "BETA",
 						DisplayName:       "Beta",
 						UploadReleaseName: "Example.Release.2026.BETA-GRP",
-						Status:            api.StageStatusCompleted,
 					},
 				},
-				SucceededCount: 2,
 			},
+			Dupes: &api.DupeAssessment{Results: []api.TrackerDupeAssessment{
+				{TrackerID: "ALPHA", Decision: api.DupeDecisionNoMatch},
+				{TrackerID: "BETA", Decision: api.DupeDecisionNoMatch},
+			}},
 		}, nil
 	}
 	coreSvc.feedbackFn = func(feedback api.ReleaseWorkflowUploadFeedback) (releaseworkflow.CommandResult, error) {
-		if feedback.Response.Kind != api.ReleaseWorkflowUploadFeedbackUploadApproval ||
+		if feedback.Response.Kind != api.ReleaseWorkflowUploadFeedbackTrackerApproval ||
 			feedback.Action.ID != action.ID ||
 			feedback.Action.WorkflowRevision != action.WorkflowRevision ||
-			feedback.Response.UploadApproval == nil ||
-			!slices.Equal(feedback.Response.UploadApproval.TrackerIDs, []api.TrackerID{"ALPHA"}) {
+			feedback.Response.TrackerApproval == nil ||
+			!slices.Equal(feedback.Response.TrackerApproval.TrackerIDs, []api.TrackerID{"ALPHA"}) {
 			t.Fatalf("approval feedback = %#v", feedback)
 		}
 		return releaseworkflow.CommandResult{
@@ -263,15 +264,33 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 			},
 		},
 	}
-	_, err := session.complete(
-		context.Background(),
-		false,
-		bufio.NewReader(strings.NewReader("y\nn\n")),
-		config.Config{},
-		api.NopLogger{},
+	var (
+		completeErr error
+		output      string
 	)
+	output = captureStdout(t, func() {
+		_, completeErr = session.complete(
+			context.Background(),
+			false,
+			bufio.NewReader(strings.NewReader("y\nn\n")),
+			config.Config{Logging: config.LoggingConfig{Level: "info"}},
+			api.NopLogger{},
+		)
+	})
+	err := completeErr
 	if err != nil {
 		t.Fatalf("complete composite upload: %v", err)
+	}
+	if strings.Contains(output, "Tracker projections") {
+		t.Fatalf("INFO output included tracker projections: %q", output)
+	}
+	for _, prompt := range []string{
+		`Use Alpha as "Example.Release.2026.ALPHA-GRP"? [y/N]:`,
+		`Use Beta as "Example.Release.2026.BETA-GRP"? [y/N]:`,
+	} {
+		if !strings.Contains(output, prompt) {
+			t.Fatalf("INFO output missing tracker approval prompt %q", prompt)
+		}
 	}
 	if len(coreSvc.uploadRequests) != 1 || len(coreSvc.uploadFeedback) != 1 ||
 		len(coreSvc.continuations) != 0 {
@@ -281,6 +300,107 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 			len(coreSvc.uploadFeedback),
 			len(coreSvc.continuations),
 		)
+	}
+}
+
+func TestCLIWorkflowProjectionOutputEnabledOnlyForDebugDetail(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		configured string
+		override   string
+		debug      bool
+		want       bool
+	}{
+		{name: "info", configured: "info"},
+		{name: "warn", configured: "warn"},
+		{name: "error", configured: "error"},
+		{
+name: "debug configured",
+ configured: "debug",
+ want: true,
+},
+		{
+name: "trace override",
+ configured: "info",
+ override: "trace",
+ want: true,
+},
+		{
+name: "debug mode fallback",
+ configured: "info",
+ debug: true,
+ want: true,
+},
+		{
+name: "explicit info overrides debug mode",
+ configured: "trace",
+ override: "info",
+ debug: true,
+},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := cliWorkflowProjectionOutputEnabled(test.configured, test.override, test.debug); got != test.want {
+				t.Fatalf("projection output enabled = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestCLICompositeUnavailableAuthSubmitsTrackerSkipFeedback(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		kind api.RequiredActionKind
+	}{
+		{name: "authentication", kind: api.RequiredActionAuthenticateTracker},
+		{name: "unfinished two-factor", kind: api.RequiredActionProvideTwoFactor},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			session := &cliWorkflowSession{
+				intent: cliWorkflowIntent{interaction: api.InteractionModeInteractive},
+				trackerAuth: func(
+					_ context.Context,
+					_ *bufio.Reader,
+					_ config.Config,
+					_ api.InteractionMode,
+					_ []string,
+					_ api.MetadataPreview,
+					_ api.Logger,
+				) ([]string, error) {
+					return nil, nil
+				},
+			}
+			feedback, declined, err := session.collectCompositeUploadFeedback(
+				context.Background(),
+				nil,
+				config.Config{},
+				api.NopLogger{},
+				api.RequiredAction{
+					ID:               "action-auth-skip",
+					Kind:             test.kind,
+					WorkflowRevision: 4,
+					TrackerID:        "ALPHA",
+				},
+			)
+			if err != nil {
+				t.Fatalf("collect unavailable tracker auth feedback: %v", err)
+			}
+			if declined ||
+				feedback.Response.Kind != api.ReleaseWorkflowUploadFeedbackTrackerAuthentication ||
+				feedback.Response.TrackerAuthentication == nil ||
+				feedback.Response.TrackerAuthentication.TrackerID != "ALPHA" {
+				t.Fatalf("unavailable tracker auth feedback = %#v declined=%t", feedback, declined)
+			}
+		})
 	}
 }
 

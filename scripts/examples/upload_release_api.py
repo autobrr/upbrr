@@ -371,13 +371,14 @@ def build_feedback(action: dict[str, Any]) -> dict[str, Any]:
             "kind": "duplicateReview",
             "duplicateReview": duplicate_review,
         }
-    elif kind == "approve_upload":
-        require_confirmation(
-            "Approve the exact retained tracker operations for submission?"
-        )
+    elif kind == "approve_trackers":
+        selected, _ = select_action_options(action, multiple=True)
         response = {
-            "kind": "uploadApproval",
-            "uploadApproval": {"confirmed": True},
+            "kind": "trackerApproval",
+            "trackerApproval": {
+                "confirmed": True,
+                "trackerIds": selected,
+            },
         }
     elif kind == "reprepare":
         require_confirmation("Force a fresh prepared generation?")

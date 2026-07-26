@@ -14,6 +14,110 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+func TestPersistentWorkflowRestartPreservesTrackerApproval(t *testing.T) {
+	t.Parallel()
+
+	databasePath := filepath.Join(t.TempDir(), "tracker-approval.sqlite")
+	repoA, err := db.Open(databasePath)
+	if err != nil {
+		t.Fatalf("open first repository: %v", err)
+	}
+	if err := repoA.Migrate(); err != nil {
+		_ = repoA.Close()
+		t.Fatalf("migrate first repository: %v", err)
+	}
+	persistentA, err := NewPersistentRepository(repoA)
+	if err != nil {
+		_ = repoA.Close()
+		t.Fatalf("new first persistent repository: %v", err)
+	}
+
+	now := time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC)
+	workflowID := api.WorkflowID("workflow-tracker-approval-restart")
+	approval := api.TrackerApprovalSnapshot{
+		ID:                  "tracker-approval-restart",
+		WorkflowID:          workflowID,
+		Revision:            8,
+		Release:             api.ReleaseSnapshotRef{ID: "release-restart", Revision: 2},
+		Selection:           api.TrackerSelectionRef{ID: "selection-restart", Revision: 3},
+		ProjectionSet:       api.TrackerReleaseProjectionSetRef{ID: "projections-restart", Revision: 4},
+		Preflight:           api.TrackerPreflightAssessmentRef{ID: "preflight-restart", Revision: 5},
+		Dupes:               api.DupeAssessmentRef{ID: "dupes-restart", Revision: 6},
+		CandidateTrackerIDs: []api.TrackerID{"ALPHA", "BETA"},
+		ApprovedTrackerIDs:  []api.TrackerID{"BETA"},
+		InputFingerprint:    testFingerprint(t, "tracker-approval-restart"),
+		CreatedAt:           now,
+	}
+	if err := approval.Validate(); err != nil {
+		_ = repoA.Close()
+		t.Fatalf("validate tracker approval: %v", err)
+	}
+	approvalRef := api.TrackerApprovalSnapshotRef{ID: approval.ID, Revision: approval.Revision}
+	state := State{
+		OwnerID:             testOwnerID,
+		TrackerDecisionMode: TrackerDecisionModePostDupeGate,
+		Workflow: api.ReleaseWorkflow{
+			ID:              workflowID,
+			Revision:        approval.Revision,
+			TrackerApproval: &approvalRef,
+			Status:          api.WorkflowStatusActive,
+			CreatedAt:       now.Add(-time.Minute),
+			UpdatedAt:       now,
+		},
+		TrackerApprovals: map[api.TrackerApprovalSnapshotID]api.TrackerApprovalSnapshot{
+			approval.ID: approval,
+		},
+	}
+	if _, _, err := persistentA.Create(
+		context.Background(),
+		testOwnerID,
+		"create-tracker-approval-restart",
+		testFingerprint(t, "create-tracker-approval-restart"),
+		state,
+	); err != nil {
+		_ = repoA.Close()
+		t.Fatalf("create workflow with tracker approval: %v", err)
+	}
+	if err := repoA.Close(); err != nil {
+		t.Fatalf("close first repository: %v", err)
+	}
+
+	repoB, err := db.Open(databasePath)
+	if err != nil {
+		t.Fatalf("reopen repository: %v", err)
+	}
+	t.Cleanup(func() { _ = repoB.Close() })
+	if err := repoB.Migrate(); err != nil {
+		t.Fatalf("migrate reopened repository: %v", err)
+	}
+	persistentB, err := NewPersistentRepository(repoB)
+	if err != nil {
+		t.Fatalf("new reopened persistent repository: %v", err)
+	}
+	loaded, err := persistentB.Load(context.Background(), testOwnerID, workflowID)
+	if err != nil {
+		t.Fatalf("load restarted workflow: %v", err)
+	}
+	if loaded.TrackerDecisionMode != TrackerDecisionModePostDupeGate {
+		t.Fatalf("restarted tracker decision mode = %q", loaded.TrackerDecisionMode)
+	}
+	if loaded.Workflow.TrackerApproval == nil || *loaded.Workflow.TrackerApproval != approvalRef {
+		t.Fatalf("restarted workflow tracker approval = %#v", loaded.Workflow.TrackerApproval)
+	}
+	retained, ok := loaded.TrackerApprovals[approval.ID]
+	if !ok {
+		t.Fatalf("restarted tracker approval %s is missing", approval.ID)
+	}
+	if retained.InputFingerprint != approval.InputFingerprint ||
+		len(retained.CandidateTrackerIDs) != 2 ||
+		retained.CandidateTrackerIDs[0] != "ALPHA" ||
+		retained.CandidateTrackerIDs[1] != "BETA" ||
+		len(retained.ApprovedTrackerIDs) != 1 ||
+		retained.ApprovedTrackerIDs[0] != "BETA" {
+		t.Fatalf("restarted tracker approval = %#v", retained)
+	}
+}
+
 func TestPersistentWorkflowRestartPreservesSafePreparedRelease(t *testing.T) {
 	t.Parallel()
 
@@ -347,5 +451,35 @@ func TestPersistentWorkflowSuccessfulOperationReplayRetainsValidResultAfterResta
 		replayed.Result.Kind != api.WorkflowOperationResultRelease || replayed.ResultRevision != 2 ||
 		len(replayed.Failures) != 0 {
 		t.Fatalf("valid replay = %#v", replayed)
+	}
+}
+
+func TestNormalizeStateMigratesLegacySurfacePolicyAndFinalApproval(t *testing.T) {
+	t.Parallel()
+
+	legacyComposite := State{
+		Workflow: api.ReleaseWorkflow{
+			Status: api.WorkflowStatusBlocked,
+			RequiredActions: []api.RequiredAction{{
+				Kind:   api.RequiredActionApproveUpload, //nolint:staticcheck // Construct retained v1 state.
+				Status: api.RequiredActionStatusPending,
+			}},
+		},
+		Composite: &compositeUploadSession{},
+	}
+	normalizeState(&legacyComposite)
+	if legacyComposite.TrackerDecisionMode != TrackerDecisionModePostDupeGate {
+		t.Fatalf("legacy composite tracker decision mode = %q", legacyComposite.TrackerDecisionMode)
+	}
+	if len(legacyComposite.Workflow.RequiredActions) != 0 ||
+		legacyComposite.Workflow.Status != api.WorkflowStatusActive ||
+		legacyComposite.Workflow.TrackerApproval != nil {
+		t.Fatalf("legacy composite final approval migration = %#v", legacyComposite.Workflow)
+	}
+
+	legacyNonComposite := State{}
+	normalizeState(&legacyNonComposite)
+	if legacyNonComposite.TrackerDecisionMode != TrackerDecisionModeWebUIControls {
+		t.Fatalf("legacy non-composite tracker decision mode = %q", legacyNonComposite.TrackerDecisionMode)
 	}
 }

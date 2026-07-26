@@ -1288,7 +1288,10 @@ export function ReleaseSessionProvider({
       continueBackendGoal(
         current,
         "dry_run",
-        { noSeed: state.uploadOptions.noSeed },
+        {
+          noSeed: state.uploadOptions.noSeed,
+          uploadTrackerIds: [...state.selectedTrackers],
+        },
         commandID,
         signal,
       ),
@@ -1307,30 +1310,26 @@ export function ReleaseSessionProvider({
         current = await continueBackendGoal(
           current,
           "dry_run",
-          { noSeed: state.uploadOptions.noSeed },
+          {
+            noSeed: state.uploadOptions.noSeed,
+            uploadTrackerIds: [...state.selectedTrackers],
+          },
           `${commandID}-review`,
           controller.signal,
         );
       }
-      const approvalAction = current.continuation.requiredActions?.find(
-        (action) => action.kind === "approve_upload" && action.status === "pending",
-      );
-      if (!current.dryRun || !approvalAction) {
-        throw new Error("Exact upload approval action is unavailable.");
+      if (!current.dryRun) {
+        throw new Error("Exact upload dry run is unavailable.");
       }
       const uploaded = await continueBackendGoal(
         current,
         "uploaded",
-        { noSeed: state.uploadOptions.noSeed },
+        {
+          noSeed: state.uploadOptions.noSeed,
+          uploadTrackerIds: [...state.selectedTrackers],
+        },
         `${commandID}-execute`,
         controller.signal,
-        {
-          approval: {
-            actionId: approvalAction.id,
-            dryRun: { id: current.dryRun.id, revision: current.dryRun.revision },
-            inputFingerprint: current.dryRun.inputFingerprint,
-          },
-        },
       );
       releaseWorkflowController(controller);
       if (controller.signal.aborted) return false;
@@ -1513,7 +1512,10 @@ export function ReleaseSessionProvider({
           continueBackendGoal(
             current,
             "dry_run",
-            { noSeed: state.uploadOptions.noSeed },
+            {
+              noSeed: state.uploadOptions.noSeed,
+              uploadTrackerIds: [...state.selectedTrackers],
+            },
             commandID,
             signal,
           ),

@@ -177,6 +177,7 @@ func CommandFromRequest(request any) (Command, error) {
 			WorkflowID:       request.WorkflowID,
 			ExpectedRevision: request.ExpectedRevision,
 			NoSeed:           request.NoSeed,
+			TrackerIDs:       append([]api.TrackerID(nil), request.TrackerIDs...),
 			IdempotencyKey:   request.IdempotencyKey,
 		}, nil
 	case api.UploadReleaseWorkflowRequest:
@@ -184,6 +185,7 @@ func CommandFromRequest(request any) (Command, error) {
 			WorkflowID:       request.WorkflowID,
 			ExpectedRevision: request.ExpectedRevision,
 			NoSeed:           request.NoSeed,
+			TrackerIDs:       append([]api.TrackerID(nil), request.TrackerIDs...),
 			IdempotencyKey:   request.IdempotencyKey,
 		}, nil
 	case api.RetryReleaseWorkflowUploadRequest:

@@ -36,6 +36,38 @@ func TestTrackerProjectionInstructionsSchemaPreservesTriStateFields(t *testing.T
 	}
 }
 
+func TestLegacyUploadApprovalSchemasAreDeprecated(t *testing.T) {
+	t.Parallel()
+
+	builder := buildContractSchemaBuilder()
+	for _, name := range []string{"UploadApproval", "ReleaseWorkflowUploadApproval"} {
+		if definition := builder.schemas[name]; definition == nil || !definition.Deprecated {
+			t.Fatalf("legacy schema %s deprecation = %#v", name, definition)
+		}
+	}
+	for schemaName, propertyName := range map[string]string{
+		"ContinueReleaseWorkflowRequest":          "approval",
+		"ReleaseWorkflowUploadFeedbackResponse": "uploadApproval",
+	} {
+		definition := builder.schemas[schemaName]
+		if definition == nil || definition.Properties[propertyName] == nil ||
+			!definition.Properties[propertyName].Deprecated {
+			t.Fatalf("legacy property %s.%s deprecation = %#v", schemaName, propertyName, definition)
+		}
+	}
+	generated := string(generateTypeScript(builder.schemas))
+	for _, declaration := range []string{
+		"/** @deprecated */\nexport type UploadApproval",
+		"/** @deprecated */\nexport type ReleaseWorkflowUploadApproval",
+		"/** @deprecated */\n  approval?: UploadApproval",
+		"/** @deprecated */\n  uploadApproval?: ReleaseWorkflowUploadApproval",
+	} {
+		if !strings.Contains(generated, declaration) {
+			t.Fatalf("generated TypeScript missing %q", declaration)
+		}
+	}
+}
+
 func TestRouteManifestDeclaresEveryPathParameter(t *testing.T) {
 	t.Parallel()
 
@@ -396,7 +428,7 @@ func TestCompositeUploadRoutesAndSchemasAreGenerated(t *testing.T) {
 		t.Fatalf("composite request required fields = %#v", requestSchema)
 	}
 	kindSchema := builder.schemas["ReleaseWorkflowUploadFeedbackKind"]
-	if kindSchema == nil || len(kindSchema.Enum) != 12 {
+	if kindSchema == nil || len(kindSchema.Enum) != 13 {
 		t.Fatalf("composite feedback enum = %#v", kindSchema)
 	}
 }

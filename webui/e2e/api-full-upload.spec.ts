@@ -53,7 +53,16 @@ test("strict composite upload enforces contract authority and idempotency", asyn
       body,
     });
     expect(started.status, await started.clone().text()).toBe(202);
-    const completed = await client.accepted(started);
+    const approvalBlocked = await client.accepted(started);
+    expect(approvalBlocked.operation?.status).toBe("blocked");
+    expect(approvalBlocked.media).toBeUndefined();
+    const approvalFeedback = await submitTrackerApproval(
+      client,
+      approvalBlocked,
+      "strict-full-upload-approval",
+      [releaseWorkflowParityFixture.trackerID],
+    );
+    const completed = await client.accepted(approvalFeedback);
     expect(completed.uploadResult?.status).toBe("completed");
     expect(completed.uploadResult?.results[0]).toMatchObject({
       trackerId: releaseWorkflowParityFixture.trackerID,
@@ -160,21 +169,31 @@ test("confirm composite resolves duplicate and approval feedback after restart",
     );
     expect(duplicateFeedback.status, await duplicateFeedback.clone().text()).toBe(202);
     const approvalBlocked = await client.accepted(duplicateFeedback);
-    expect(approvalBlocked.dryRun?.status).toBe("completed");
-    const approval = pendingAction(approvalBlocked, "approve_upload");
+    expect(approvalBlocked.media).toBeUndefined();
+    expect(approvalBlocked.dryRun).toBeUndefined();
+    const approval = pendingAction(approvalBlocked, "approve_trackers");
+    expect(approval.options).toEqual([
+      {
+        value: releaseWorkflowParityFixture.trackerID,
+        label: releaseWorkflowParityFixture.trackerID,
+      },
+    ]);
 
     const approvalFeedback = await client.raw(`/uploads/${approvalBlocked.workflow.id}/feedback`, {
       method: "POST",
       revision: approvalBlocked.workflow.revision,
-      idempotencyKey: "confirm-upload-approval",
+      idempotencyKey: "confirm-tracker-approval",
       body: {
         action: {
           id: approval.id,
           workflowRevision: approvalBlocked.workflow.revision,
         },
         response: {
-          kind: "uploadApproval",
-          uploadApproval: { confirmed: true },
+          kind: "trackerApproval",
+          trackerApproval: {
+            confirmed: true,
+            trackerIds: [releaseWorkflowParityFixture.trackerID],
+          },
         },
       },
     });
@@ -202,7 +221,14 @@ test("debug composite performs client injection unless no-seed is explicit", asy
       body: uploadBody(workspace.sourcePath, { confirm: false, mode: "debug", noSeed: false }),
     });
     expect(withInjection.status, await withInjection.clone().text()).toBe(202);
-    const first = await client.accepted(withInjection);
+    const firstBlocked = await client.accepted(withInjection);
+    const firstApproval = await submitTrackerApproval(
+      client,
+      firstBlocked,
+      "debug-with-injection-approval",
+      [releaseWorkflowParityFixture.trackerID],
+    );
+    const first = await client.accepted(firstApproval);
     expect(first.dryRun?.status).toBe("completed");
     expect(first.uploadResult).toBeUndefined();
     expect(workspace.fake.counters.clientInjections).toBe(1);
@@ -214,7 +240,14 @@ test("debug composite performs client injection unless no-seed is explicit", asy
       body: uploadBody(workspace.sourcePath, { confirm: false, mode: "debug", noSeed: true }),
     });
     expect(withoutInjection.status, await withoutInjection.clone().text()).toBe(202);
-    const second = await client.accepted(withoutInjection);
+    const secondBlocked = await client.accepted(withoutInjection);
+    const secondApproval = await submitTrackerApproval(
+      client,
+      secondBlocked,
+      "debug-without-injection-approval",
+      [releaseWorkflowParityFixture.trackerID],
+    );
+    const second = await client.accepted(secondApproval);
     expect(second.dryRun?.status).toBe("completed");
     expect(second.uploadResult).toBeUndefined();
     expect(workspace.fake.counters.clientInjections).toBe(1);
@@ -243,7 +276,14 @@ test("strict composite skips an auth-blocked tracker while uploading a ready sib
       }),
     });
     expect(started.status, await started.clone().text()).toBe(202);
-    const completed = await client.accepted(started);
+    const approvalBlocked = await client.accepted(started);
+    const approvalFeedback = await submitTrackerApproval(
+      client,
+      approvalBlocked,
+      "strict-auth-skip-approval",
+      [releaseWorkflowParityFixture.trackerID],
+    );
+    const completed = await client.accepted(approvalFeedback);
     expect(completed.uploadResult?.results).toEqual([
       expect.objectContaining({
         trackerId: releaseWorkflowParityFixture.trackerID,
@@ -266,6 +306,47 @@ test("strict composite skips an auth-blocked tracker while uploading a ready sib
   }
 });
 
+test("public approval subset excludes unapproved tracker requirements and upload", async () => {
+  const workspace = await createE2EWorkspace();
+  const app = await startApp(workspace);
+  try {
+    const apiToken = await createE2EAPIToken(workspace);
+    const client = new ReleaseWorkflowV1Client(app.url, apiToken);
+    const started = await client.raw("/uploads", {
+      method: "POST",
+      idempotencyKey: "approval-subset",
+      body: uploadBody(workspace.sourcePath, {
+        confirm: false,
+        mode: "upload",
+        noSeed: true,
+        trackerIDs: [releaseWorkflowParityFixture.trackerID, "HDS"],
+      }),
+    });
+    expect(started.status, await started.clone().text()).toBe(202);
+    const approvalBlocked = await client.accepted(started);
+    expect(approvalBlocked.media).toBeUndefined();
+    const approvalFeedback = await submitTrackerApproval(
+      client,
+      approvalBlocked,
+      "approval-subset-feedback",
+      [releaseWorkflowParityFixture.trackerID],
+      [releaseWorkflowParityFixture.trackerID, "HDS"],
+    );
+    const completed = await client.accepted(approvalFeedback);
+    expect(completed.uploadResult?.results).toEqual([
+      expect.objectContaining({
+        trackerId: releaseWorkflowParityFixture.trackerID,
+        status: "completed",
+      }),
+    ]);
+    expect(workspace.fake.counters.imageUploads).toBe(0);
+    expect(workspace.fake.counters.trackerUploads).toBe(1);
+  } finally {
+    await app.stop();
+    await workspace.cleanup();
+  }
+});
+
 test("composite operation cancellation stops the active tracker stage", async () => {
   const workspace = await createE2EWorkspace();
   workspace.fake.delayTrackerUploads(3_000);
@@ -279,7 +360,14 @@ test("composite operation cancellation stops the active tracker stage", async ()
       body: uploadBody(workspace.sourcePath, { confirm: false, mode: "upload", noSeed: true }),
     });
     expect(started.status, await started.clone().text()).toBe(202);
-    const accepted = (await started.json()) as WorkflowV1Current;
+    const approvalBlocked = await client.accepted(started);
+    const approvalFeedback = await submitTrackerApproval(
+      client,
+      approvalBlocked,
+      "cancel-active-upload-approval",
+      [releaseWorkflowParityFixture.trackerID],
+    );
+    const accepted = (await approvalFeedback.json()) as WorkflowV1Current;
     expect(accepted.operation).toBeTruthy();
     await waitForCounter(() => workspace.fake.counters.trackerUploads, 1);
 
@@ -316,7 +404,14 @@ test("restart stops at reconciliation after an uncertain client effect", async (
       body: uploadBody(workspace.sourcePath, { confirm: false, mode: "debug", noSeed: false }),
     });
     expect(started.status, await started.clone().text()).toBe(202);
-    const accepted = (await started.json()) as WorkflowV1Current;
+    const approvalBlocked = await client.accepted(started);
+    const approvalFeedback = await submitTrackerApproval(
+      client,
+      approvalBlocked,
+      "uncertain-client-effect-approval",
+      [releaseWorkflowParityFixture.trackerID],
+    );
+    const accepted = (await approvalFeedback.json()) as WorkflowV1Current;
     expect(accepted.operation).toBeTruthy();
     await waitForCounter(() => workspace.fake.counters.clientInjections, 1);
 
@@ -390,6 +485,37 @@ function pendingAction(current: WorkflowV1Current, kind: string) {
   const action = current.workflow.requiredActions?.find((candidate) => candidate.kind === kind);
   expect(action, `pending ${kind} action`).toBeTruthy();
   return action!;
+}
+
+async function submitTrackerApproval(
+  client: ReleaseWorkflowV1Client,
+  current: WorkflowV1Current,
+  idempotencyKey: string,
+  trackerIDs: readonly string[],
+  candidateTrackerIDs: readonly string[] = trackerIDs,
+) {
+  const approval = pendingAction(current, "approve_trackers");
+  expect(approval.options?.map((option) => option.value)).toEqual(candidateTrackerIDs);
+  const response = await client.raw(`/uploads/${current.workflow.id}/feedback`, {
+    method: "POST",
+    revision: current.workflow.revision,
+    idempotencyKey,
+    body: {
+      action: {
+        id: approval.id,
+        workflowRevision: current.workflow.revision,
+      },
+      response: {
+        kind: "trackerApproval",
+        trackerApproval: {
+          confirmed: true,
+          trackerIds: trackerIDs,
+        },
+      },
+    },
+  });
+  expect(response.status, await response.clone().text()).toBe(202);
+  return response;
 }
 
 async function waitForCounter(read: () => number, minimum: number) {

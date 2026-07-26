@@ -21,6 +21,31 @@ type cliTrackerAuthService interface {
 	Submit2FA(context.Context, string, string) (api.TrackerAuthStatus, error)
 }
 
+type cliTrackerAuthChecker func(
+	context.Context,
+	*bufio.Reader,
+	config.Config,
+	api.InteractionMode,
+	[]string,
+	api.MetadataPreview,
+	api.Logger,
+) ([]string, error)
+
+func (s *cliWorkflowSession) ensureTrackerAuthBeforeDupeCheck(
+	ctx context.Context,
+	reader *bufio.Reader,
+	cfg config.Config,
+	interaction api.InteractionMode,
+	trackerNames []string,
+	preview api.MetadataPreview,
+	logger api.Logger,
+) ([]string, error) {
+	if s.trackerAuth != nil {
+		return s.trackerAuth(ctx, reader, cfg, interaction, trackerNames, preview, logger)
+	}
+	return ensureCLITrackerAuthBeforeDupeCheckWithLogger(ctx, reader, cfg, interaction, trackerNames, preview, logger)
+}
+
 func ensureCLITrackerAuthBeforeDupeCheckWithLogger(
 	ctx context.Context,
 	reader *bufio.Reader,

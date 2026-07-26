@@ -179,6 +179,23 @@ func TestWorkflowUploadPlanFingerprintChangesWithReviewedDependency(t *testing.T
 	if first == changed {
 		t.Fatal("upload plan fingerprint ignored duplicate revision")
 	}
+	options := releaseworkflow.UploadPlanBuildOptions{
+		TrackerIDs:           []api.TrackerID{"ALPHA"},
+		TrackerApproval:      &api.TrackerApprovalSnapshotRef{ID: "approval-1", Revision: 5},
+		AuthorityFingerprint: workflowTestFingerprint(t, "approval-authority"),
+	}
+	authorityFirst, err := builder.Fingerprint(context.Background(), projections, dupes, media, descriptions, options)
+	if err != nil {
+		t.Fatalf("fingerprint authorized upload plan: %v", err)
+	}
+	options.AuthorityFingerprint = workflowTestFingerprint(t, "changed-approval-authority")
+	authorityChanged, err := builder.Fingerprint(context.Background(), projections, dupes, media, descriptions, options)
+	if err != nil {
+		t.Fatalf("fingerprint changed upload authority: %v", err)
+	}
+	if authorityFirst == authorityChanged {
+		t.Fatal("upload plan fingerprint ignored tracker authority")
+	}
 }
 
 func TestDryRunClientInjectionReportsAggregateTerminalProgress(t *testing.T) {

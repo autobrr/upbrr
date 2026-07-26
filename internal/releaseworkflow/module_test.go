@@ -319,7 +319,7 @@ func TestCompleteUploadExecutionResultsReportsSkippedAndBlockedTrackers(t *testi
 	}
 }
 
-func TestValidateUploadPlanBuildAllowsSkippedTrackersToBeOmitted(t *testing.T) {
+func TestValidateUploadPlanBuildRequiresExactDownstreamTrackerSet(t *testing.T) {
 	t.Parallel()
 
 	inputFingerprint := testFingerprint(t, "upload-plan-subset")
@@ -344,10 +344,14 @@ func TestValidateUploadPlanBuildAllowsSkippedTrackersToBeOmitted(t *testing.T) {
 		}},
 	}
 
-	if err := validateUploadPlanBuild(projections, inputFingerprint, plan); err != nil {
-		t.Fatalf("validate upload-plan subset: %v", err)
+	if err := validateUploadPlanBuild(projections, inputFingerprint, plan); err == nil {
+		t.Fatal("validate upload plan accepted an omitted downstream tracker")
 	}
-	plan.Trackers[0].TrackerID = "GAMMA"
+	plan.Trackers = append(plan.Trackers, api.UploadPlanTracker{
+		TrackerID:         "GAMMA",
+		UploadReleaseName: "Example.Release.2026.GAMMA-GRP",
+		DescriptionGroup:  "unit3d",
+	})
 	if err := validateUploadPlanBuild(projections, inputFingerprint, plan); err == nil {
 		t.Fatal("validate upload plan accepted an unselected tracker")
 	}
@@ -1352,7 +1356,7 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 		IdempotencyKey:   "upload-dry-run",
 	}
 	dryRun := executeCommand(t, module, dryRunCommand)
-	if dryRun.DryRun == nil || dryRun.DryRun.Status != api.StageStatusCompleted || len(dryRun.DryRun.Reports) != 2 ||
+	if dryRun.DryRun == nil || dryRun.DryRun.Status != api.StageStatusCompleted || len(dryRun.DryRun.Reports) != 1 ||
 		dryRun.DryRun.Reports[0].ClientInjection.Status != api.StageStatusSkipped || uploadPlans.builds != 1 {
 		t.Fatalf("direct dry run = %#v builds=%d", dryRun.DryRun, uploadPlans.builds)
 	}
@@ -1437,8 +1441,7 @@ func TestModuleDuplicateAssessmentIsRetainedAndDecisionsDoNotRepeatSearch(t *tes
 	}
 	retried := executeCommand(t, module, retry)
 	if retried.UploadResult == nil || retried.UploadResult.Status != api.StageStatusCompleted ||
-		len(retried.UploadResult.Results) != 2 || retried.UploadResult.Results[0].TrackerID != "ALPHA" ||
-		retried.UploadResult.Results[1].TrackerID != "BETA" ||
+		len(retried.UploadResult.Results) != 1 || retried.UploadResult.Results[0].TrackerID != "ALPHA" ||
 		uploadPlans.builds != 3 || uploadPlans.execution.executions != 1 ||
 		len(uploadPlans.options[2].TrackerIDs) != 1 || uploadPlans.options[2].TrackerIDs[0] != "ALPHA" {
 		t.Fatalf("failed-only retry = %#v builds=%d options=%#v", retried, uploadPlans.builds, uploadPlans.options)

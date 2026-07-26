@@ -4,6 +4,7 @@
 package releaseworkflow
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -371,10 +372,10 @@ func TestWorkflowContinuationExplainsDescriptionMediaReadiness(t *testing.T) {
 	current.Media = &api.MediaArtifactSet{
 		Status: api.StageStatusCompleted,
 		Artifacts: []api.MediaArtifact{{
-			ID: "screen",
- Kind: api.MediaArtifactScreenshot,
- Purpose: api.ScreenshotPurposeFinal,
- Selected: true,
+			ID:       "screen",
+			Kind:     api.MediaArtifactScreenshot,
+			Purpose:  api.ScreenshotPurposeFinal,
+			Selected: true,
 		}},
 	}
 	availability = findGoalAvailability(
@@ -408,7 +409,7 @@ func TestWorkflowContinuationWaitsWhenAllLanesNeedAction(t *testing.T) {
 	}
 }
 
-func TestWorkflowContinuationAdvertisesExactUploadApproval(t *testing.T) {
+func TestWorkflowContinuationDoesNotAdvertiseFinalUploadApproval(t *testing.T) {
 	t.Parallel()
 
 	current := continuationTestCurrent()
@@ -422,14 +423,10 @@ func TestWorkflowContinuationAdvertisesExactUploadApproval(t *testing.T) {
 		}},
 	}
 	continuation := projectWorkflowContinuation(current)
-	if continuation.Lifecycle != api.OperationLifecycleWaiting ||
-		continuation.Disposition != api.WorkflowDispositionPartial || len(continuation.RequiredActions) != 1 {
-		t.Fatalf("approval continuation = %#v", continuation)
-	}
-	action := continuation.RequiredActions[0]
-	if action.ID != uploadApprovalActionID(current.DryRun.ID) || action.Kind != api.RequiredActionApproveUpload ||
-		action.WorkflowRevision != current.Workflow.Revision {
-		t.Fatalf("upload approval action = %#v", action)
+	if slices.ContainsFunc(continuation.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionApproveUpload //nolint:staticcheck // Verify retained v1 action is absent.
+	}) {
+		t.Fatalf("obsolete upload approval action = %#v", continuation.RequiredActions)
 	}
 }
 

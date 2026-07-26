@@ -1709,6 +1709,9 @@ func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.Wor
 	if ref := state.Workflow.Dupes; ref != nil {
 		result.Dupes = currentSnapshot(state.Dupes, ref.ID)
 	}
+	if ref := state.Workflow.TrackerApproval; ref != nil {
+		result.TrackerApproval = currentSnapshot(state.TrackerApprovals, ref.ID)
+	}
 	if ref := state.Workflow.Media; ref != nil {
 		result.Media = currentSnapshot(state.Media, ref.ID)
 		if err := m.finalizeRetainedMedia(ctx, ownerID, workflowID, result.Media, false); err != nil {
@@ -1742,7 +1745,11 @@ func (m *Module) Current(ctx context.Context, ownerID string, workflowID api.Wor
 	} else if !errors.Is(operationErr, ErrWorkflowNotFound) {
 		return CommandResult{}, fmt.Errorf("release workflow current operation query: %w", operationErr)
 	}
-	result.Continuation = projectWorkflowContinuation(result)
+	result.Continuation = projectWorkflowContinuationForState(result, &state, m.clock.Now().UTC())
+	result.Workflow.RequiredActions = append(
+		[]api.RequiredAction(nil),
+		result.Continuation.RequiredActions...,
+	)
 	events, eventsErr := m.durability.LoadEvents(ctx, ownerID, workflowID, 0, 1000)
 	if eventsErr != nil {
 		return CommandResult{}, fmt.Errorf("release workflow load retained events: %w", eventsErr)
@@ -1803,10 +1810,14 @@ func (m *Module) MediaPlan(
 		return api.MediaPlan{}, fmt.Errorf("%w: media plan dependencies are stale", ErrInvalidTransition)
 	}
 	now := m.clock.Now().UTC()
+	targets, err := resolveDownstreamTrackerSet(&state, nil, downstreamStageMedia, now)
+	if err != nil {
+		return api.MediaPlan{}, err
+	}
 	plan, err := planner.Plan(ctx, api.ReleaseRef{
 		SourcePath: release.Release.Source.SourcePath,
 		Generation: release.Release.Generation,
-	}, projections, now)
+	}, targets.Projections(), now)
 	if err != nil {
 		return api.MediaPlan{}, fmt.Errorf("release workflow build media plan: %w", err)
 	}
@@ -2236,8 +2247,9 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 			return true
 		case api.RequiredActionReviewDuplicates:
 			return workflow.Dupes == nil
-		case api.RequiredActionApproveUpload:
-			return workflow.DryRun == nil
+		case api.RequiredActionApproveTrackers,
+			api.RequiredActionApproveUpload: //nolint:staticcheck // Remove retained v1 action during restart.
+			return true
 		case api.RequiredActionReconcileSubmission:
 			return workflow.UploadResult == nil && workflow.Media == nil
 		case api.RequiredActionSelectPlaylist,
@@ -2426,6 +2438,7 @@ func (m *Module) create(
 	}
 	state := newState(ownerID, workflow)
 	state.ProcessEpoch = m.processEpoch
+	state.TrackerDecisionMode = normalizeTrackerDecisionMode(command.TrackerDecisionMode)
 	state.FactInstructions[facts.ID] = facts
 	state.Composite = command.Composite
 	if state.Composite != nil {
@@ -2459,6 +2472,7 @@ func newState(ownerID string, workflow api.ReleaseWorkflow) State {
 		Projections:            make(map[api.TrackerReleaseProjectionSetID]api.TrackerReleaseProjectionSet),
 		Preflights:             make(map[api.TrackerPreflightAssessmentID]api.TrackerPreflightAssessment),
 		Dupes:                  make(map[api.DupeAssessmentID]api.DupeAssessment),
+		TrackerApprovals:       make(map[api.TrackerApprovalSnapshotID]api.TrackerApprovalSnapshot),
 		Media:                  make(map[api.MediaArtifactSetID]api.MediaArtifactSet),
 		Descriptions:           make(map[api.DescriptionSetID]api.DescriptionSet),
 		DryRuns:                make(map[api.UploadDryRunResultID]api.UploadDryRunResult),
@@ -2531,6 +2545,8 @@ func commandTarget(command mutation) (api.WorkflowID, api.WorkflowRevision, stri
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case DecideDuplicatesCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
+	case ApproveTrackersCommand:
+		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case CaptureMediaCommand:
 		return typed.WorkflowID, typed.ExpectedRevision, typed.IdempotencyKey, nil
 	case SetMediaSelectionCommand:
@@ -2598,6 +2614,8 @@ func (m *Module) apply(
 		return m.checkDuplicates(ctx, ownerID, state, nextRevision, now, typed)
 	case DecideDuplicatesCommand:
 		return m.decideDuplicates(ownerID, state, nextRevision, now, typed)
+	case ApproveTrackersCommand:
+		return m.approveTrackers(state, nextRevision, now, typed)
 	case CaptureMediaCommand:
 		return m.captureMedia(ctx, ownerID, state, nextRevision, now, typed)
 	case SetMediaSelectionCommand:
@@ -2670,6 +2688,7 @@ func (m *Module) cancelWorkflow(ctx context.Context, ownerID string, state *Stat
 	state.Workflow.TrackerProjections = nil
 	state.Workflow.TrackerPreflight = nil
 	state.Workflow.Dupes = nil
+	state.Workflow.TrackerApproval = nil
 	state.Workflow.Media = nil
 	state.Workflow.Descriptions = nil
 	state.Workflow.DryRun = nil
@@ -3548,6 +3567,87 @@ func (m *Module) decideDuplicates(
 	return result, nil
 }
 
+func (m *Module) approveTrackers(
+	state *State,
+	nextRevision api.WorkflowRevision,
+	now time.Time,
+	command ApproveTrackersCommand,
+) (CommandResult, error) {
+	if normalizeTrackerDecisionMode(state.TrackerDecisionMode) != TrackerDecisionModePostDupeGate {
+		return CommandResult{}, fmt.Errorf("%w: tracker approval is unavailable for this workflow", ErrInvalidTransition)
+	}
+	action, actionFingerprint, err := projectedTrackerApprovalAction(state, now)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	eligible, dupes, candidateIDs, err := trackerApprovalCandidates(state, now)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if action == nil || command.Approval.ActionID != action.ID ||
+		state.Workflow.Dupes == nil || command.Approval.Dupes != *state.Workflow.Dupes ||
+		command.Approval.InputFingerprint != dupes.InputFingerprint {
+		return CommandResult{}, fmt.Errorf("%w: tracker approval action is stale", ErrRevisionConflict)
+	}
+	requested := make(map[api.TrackerID]struct{}, len(command.Approval.TrackerIDs))
+	for _, trackerID := range command.Approval.TrackerIDs {
+		trackerID = normalizeDownstreamTrackerID(trackerID)
+		if trackerID == "" {
+			return CommandResult{}, fmt.Errorf("%w: tracker approval ID is required", ErrInvalidTransition)
+		}
+		if _, duplicate := requested[trackerID]; duplicate {
+			return CommandResult{}, fmt.Errorf("%w: tracker approval contains duplicate tracker %s", ErrInvalidTransition, trackerID)
+		}
+		if !slices.Contains(candidateIDs, trackerID) {
+			return CommandResult{}, fmt.Errorf("%w: tracker %s is not an approval candidate", ErrInvalidTransition, trackerID)
+		}
+		requested[trackerID] = struct{}{}
+	}
+	if len(requested) == 0 {
+		return CommandResult{}, fmt.Errorf("%w: tracker approval requires at least one tracker", ErrInvalidTransition)
+	}
+	approvedIDs := make([]api.TrackerID, 0, len(requested))
+	for _, projection := range eligible.Projections {
+		if _, approved := requested[projection.TrackerID]; approved {
+			approvedIDs = append(approvedIDs, projection.TrackerID)
+		}
+	}
+	id, err := m.newID("tracker_approval")
+	if err != nil {
+		return CommandResult{}, err
+	}
+	approvalFingerprint, err := trackerApprovalFingerprint(actionFingerprint, candidateIDs, approvedIDs)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	snapshot := api.TrackerApprovalSnapshot{
+		ID:                  api.TrackerApprovalSnapshotID(id),
+		WorkflowID:          state.Workflow.ID,
+		Revision:            nextRevision,
+		Release:             *state.Workflow.Release,
+		Selection:           *state.Workflow.Selection,
+		ProjectionSet:       *state.Workflow.TrackerProjections,
+		Preflight:           *state.Workflow.TrackerPreflight,
+		Dupes:               api.DupeAssessmentRef{ID: dupes.ID, Revision: dupes.Revision},
+		CandidateTrackerIDs: append([]api.TrackerID(nil), candidateIDs...),
+		ApprovedTrackerIDs:  approvedIDs,
+		InputFingerprint:    approvalFingerprint,
+		CreatedAt:           now,
+	}
+	if err := snapshot.Validate(); err != nil {
+		return CommandResult{}, fmt.Errorf("release workflow approve trackers: %w", err)
+	}
+	state.TrackerApprovals[snapshot.ID] = snapshot
+	state.Workflow.TrackerApproval = &api.TrackerApprovalSnapshotRef{ID: snapshot.ID, Revision: snapshot.Revision}
+	state.Workflow.Media = nil
+	state.Workflow.Descriptions = nil
+	invalidateUploadPlan(&state.Workflow)
+	state.Workflow.RequiredActions = nil
+	state.Workflow.Failures = nil
+	state.Workflow.Status = api.WorkflowStatusActive
+	return CommandResult{TrackerApproval: &snapshot}, nil
+}
+
 func strictDupeResult(result api.TrackerDupeAssessment) bool {
 	return slices.ContainsFunc(result.Matches, func(match api.DupeMatchProjection) bool {
 		return strings.EqualFold(strings.TrimSpace(match.Reason), "in_client")
@@ -3691,6 +3791,7 @@ func (m *Module) publishDupes(
 	}
 	state.Dupes[snapshot.ID] = snapshot
 	state.Workflow.Dupes = &api.DupeAssessmentRef{ID: snapshot.ID, Revision: snapshot.Revision}
+	state.Workflow.TrackerApproval = nil
 	state.Workflow.Media = nil
 	state.Workflow.Descriptions = nil
 	invalidateUploadPlan(&state.Workflow)
@@ -3738,10 +3839,13 @@ func (m *Module) captureMedia(
 		dupes.Revision != workflow.Dupes.Revision || !dupes.ExpiresAt.After(now) || !dupesAllowContinuation(&projections, &dupes) {
 		return CommandResult{}, fmt.Errorf("%w: media dependencies are stale or unresolved", ErrInvalidTransition)
 	}
-	eligibleProjections := DownstreamEligibleProjections(projections, dupes)
+	targets, err := resolveDownstreamTrackerSet(state, nil, downstreamStageMedia, now)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	eligibleProjections := targets.Projections()
 	var priorMedia *api.MediaArtifactSet
 	var priorPrivate any
-	var err error
 	if workflow.Media != nil {
 		media, ok := state.Media[workflow.Media.ID]
 		if !ok || media.Revision != workflow.Media.Revision {
@@ -3783,6 +3887,7 @@ func (m *Module) captureMedia(
 	if len(snapshot.Failures) == 0 {
 		refreshMutatedMediaStatus(&snapshot, eligibleProjections.Projections)
 	}
+	snapshot.TrackerApproval = targets.TrackerApproval()
 	result, err := m.publishMedia(ownerID, state, nextRevision, now, mediaArtifactsPublication{Snapshot: snapshot})
 	if err != nil {
 		return CommandResult{}, err
@@ -4149,7 +4254,11 @@ func (m *Module) mediaExtensionContext(
 		SourcePath: releaseSnapshot.Release.Source.SourcePath,
 		Generation: releaseSnapshot.Release.Generation,
 	}
-	return release, projections, DownstreamEligibleProjections(projections, dupes), snapshot, retained, nil
+	targets, err := resolveDownstreamTrackerSet(state, nil, downstreamStageMedia, now)
+	if err != nil {
+		return api.ReleaseRef{}, api.TrackerReleaseProjectionSet{}, api.TrackerReleaseProjectionSet{}, nil, nil, err
+	}
+	return release, projections, targets.Projections(), snapshot, retained, nil
 }
 
 func validateMediaRequirementsFingerprint(snapshot api.MediaArtifactSet, projections api.TrackerReleaseProjectionSet) error {
@@ -4260,8 +4369,13 @@ func (m *Module) publishMediaMutation(
 		dupes.Revision != state.Workflow.Dupes.Revision {
 		return CommandResult{}, fmt.Errorf("%w: media dependencies are stale", ErrInvalidTransition)
 	}
-	eligible := DownstreamEligibleProjections(projections, dupes)
+	targets, err := resolveDownstreamTrackerSet(state, nil, downstreamStageMedia, now)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	eligible := targets.Projections()
 	refreshMutatedMediaStatus(&snapshot, eligible.Projections)
+	snapshot.TrackerApproval = targets.TrackerApproval()
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		Prior                     api.WorkflowFingerprint
 		Artifacts                 []api.MediaArtifact
@@ -4306,6 +4420,11 @@ func (m *Module) publishMediaReplacement(
 	snapshot api.MediaArtifactSet,
 	resource RetainedMediaResource,
 ) (CommandResult, error) {
+	targets, err := resolveDownstreamTrackerSet(state, nil, downstreamStageMedia, now)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	snapshot.TrackerApproval = targets.TrackerApproval()
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		Prior                     api.WorkflowFingerprint
 		Artifacts                 []api.MediaArtifact
@@ -4473,7 +4592,11 @@ func (m *Module) generateDescriptions(
 		(media.Status != api.StageStatusCompleted && media.Status != api.StageStatusSkipped) {
 		return CommandResult{}, fmt.Errorf("%w: description dependencies are stale or not ready", ErrInvalidTransition)
 	}
-	descriptionProjections := DownstreamEligibleProjectionsAfterMedia(projections, dupes, media)
+	targets, err := resolveDownstreamTrackerSet(state, nil, downstreamStageDescriptions, now)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	descriptionProjections := targets.Projections()
 	privateMedia, err := m.private.Get(ownerID, workflow.ID, mediaPrivateResourceID(media.ID), now)
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow load media artifacts for descriptions: %w", err)
@@ -4512,6 +4635,7 @@ func (m *Module) generateDescriptions(
 	if snapshot.InputFingerprint != inputFingerprint || snapshot.TemplateFingerprint != templateFingerprint {
 		return CommandResult{}, errors.New("release workflow build descriptions: dependency fingerprint mismatch")
 	}
+	snapshot.TrackerApproval = targets.TrackerApproval()
 	if err := validateDescriptionBuild(descriptionProjections, snapshot); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow build descriptions: %w", err)
 	}
@@ -4620,7 +4744,11 @@ func (m *Module) mutateDescriptionOverride(
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow load media artifacts for description override: %w", err)
 	}
-	descriptionProjections := DownstreamEligibleProjectionsAfterMedia(projections, dupes, media)
+	targets, err := resolveDownstreamTrackerSet(state, nil, downstreamStageDescriptions, now)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	descriptionProjections := targets.Projections()
 	rebuilt, err := m.descriptionBuilder.Build(
 		ctx,
 		projections.ReleaseRef,
@@ -4649,6 +4777,7 @@ func (m *Module) mutateDescriptionOverride(
 	updated.Descriptions[targetIndex] = *rebuiltTarget
 	updated.InputFingerprint = rebuilt.InputFingerprint
 	updated.TemplateFingerprint = rebuilt.TemplateFingerprint
+	updated.TrackerApproval = targets.TrackerApproval()
 	targetTrackers := make(map[api.TrackerID]struct{}, len(rebuiltTarget.TrackerIDs))
 	for _, trackerID := range rebuiltTarget.TrackerIDs {
 		targetTrackers[trackerID] = struct{}{}
@@ -4850,6 +4979,7 @@ type preparedUploads struct {
 	dupes        api.DupeAssessment
 	media        api.MediaArtifactSet
 	descriptions api.DescriptionSet
+	trackerIDs   []api.TrackerID
 	plan         api.UploadPlan
 	execution    RetainedUploadExecution
 	dryRun       bool
@@ -4895,6 +5025,18 @@ func (m *Module) prepareUploads(
 		!descriptionsHaveViableTracker(&descriptions) {
 		return preparedUploads{}, fmt.Errorf("%w: upload dependencies are stale or not ready", ErrInvalidTransition)
 	}
+	targets, err := resolveDownstreamTrackerSet(state, options.TrackerIDs, downstreamStageUpload, now)
+	if err != nil {
+		return preparedUploads{}, err
+	}
+	if !trackerApprovalRefsEqual(media.TrackerApproval, targets.TrackerApproval()) ||
+		!trackerApprovalRefsEqual(descriptions.TrackerApproval, targets.TrackerApproval()) {
+		return preparedUploads{}, fmt.Errorf("%w: upload tracker authority lineage is stale", ErrInvalidTransition)
+	}
+	projections = targets.Projections()
+	options.TrackerIDs = targets.TrackerIDs()
+	options.TrackerApproval = targets.TrackerApproval()
+	options.AuthorityFingerprint = targets.authority
 	inputFingerprint, err := m.uploadPlanBuilder.Fingerprint(ctx, projections, dupes, media, descriptions, options)
 	if err != nil {
 		return preparedUploads{}, fmt.Errorf("release workflow fingerprint upload execution: %w", err)
@@ -4929,6 +5071,7 @@ func (m *Module) prepareUploads(
 	if execution == nil {
 		return preparedUploads{}, errors.New("release workflow prepare uploads: retained execution is required")
 	}
+	plan.TrackerApproval = options.TrackerApproval
 	if err := validateUploadPlanBuild(projections, inputFingerprint, plan); err != nil {
 		_ = execution.Release()
 		return preparedUploads{}, fmt.Errorf("release workflow prepare uploads: %w", err)
@@ -4938,10 +5081,18 @@ func (m *Module) prepareUploads(
 		dupes:        dupes,
 		media:        media,
 		descriptions: descriptions,
+		trackerIDs:   targets.TrackerIDs(),
 		plan:         plan,
 		execution:    execution,
 		dryRun:       options.DryRun,
 	}, nil
+}
+
+func trackerApprovalRefsEqual(left, right *api.TrackerApprovalSnapshotRef) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func validateUploadPlanBuild(
@@ -4952,18 +5103,24 @@ func validateUploadPlanBuild(
 	if plan.InputFingerprint != inputFingerprint {
 		return errors.New("input fingerprint mismatch")
 	}
+	if len(plan.Trackers) != len(projections.Projections) {
+		return errors.New("upload plan must contain one tracker result per downstream projection")
+	}
 	projectionByTracker := make(map[api.TrackerID]api.TrackerReleaseProjection, len(projections.Projections))
 	for _, projection := range projections.Projections {
 		projectionByTracker[projection.TrackerID] = projection
 	}
 	seen := make(map[api.TrackerID]struct{}, len(plan.Trackers))
-	for _, tracker := range plan.Trackers {
+	for index, tracker := range plan.Trackers {
 		projection, ok := projectionByTracker[tracker.TrackerID]
 		if !ok {
 			return fmt.Errorf("upload plan includes unselected tracker %s", tracker.TrackerID)
 		}
 		if _, ok := seen[tracker.TrackerID]; ok {
 			return fmt.Errorf("upload plan contains duplicate tracker %s", tracker.TrackerID)
+		}
+		if tracker.TrackerID != projections.Projections[index].TrackerID {
+			return errors.New("upload plan tracker order does not match downstream authority")
 		}
 		seen[tracker.TrackerID] = struct{}{}
 		if tracker.UploadReleaseName != projection.UploadReleaseName || tracker.Taxonomy != projection.Taxonomy ||
@@ -4982,7 +5139,17 @@ func (m *Module) dryRunUploads(
 	now time.Time,
 	command DryRunUploadsCommand,
 ) (CommandResult, error) {
-	prepared, err := m.prepareUploads(ctx, ownerID, state, UploadPlanBuildOptions{DryRun: true, NoSeed: command.NoSeed}, now)
+	prepared, err := m.prepareUploads(
+		ctx,
+		ownerID,
+		state,
+		UploadPlanBuildOptions{
+			DryRun:     true,
+			NoSeed:     command.NoSeed,
+			TrackerIDs: command.TrackerIDs,
+		},
+		now,
+	)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -5004,10 +5171,12 @@ func (m *Module) dryRunUploads(
 		Revision:         nextRevision,
 		ProjectionSet:    api.TrackerReleaseProjectionSetRef{ID: prepared.projections.ID, Revision: prepared.projections.Revision},
 		Dupes:            api.DupeAssessmentRef{ID: prepared.dupes.ID, Revision: prepared.dupes.Revision},
+		TrackerApproval:  prepared.plan.TrackerApproval,
 		Media:            api.MediaArtifactSetRef{ID: prepared.media.ID, Revision: prepared.media.Revision},
 		Descriptions:     api.DescriptionSetRef{ID: prepared.descriptions.ID, Revision: prepared.descriptions.Revision},
 		InputFingerprint: prepared.plan.InputFingerprint,
 		NoSeed:           command.NoSeed,
+		TrackerIDs:       append([]api.TrackerID(nil), prepared.trackerIDs...),
 		Reports:          reports,
 		SucceededCount:   succeededCount,
 		FailedCount:      failedCount,
@@ -5186,12 +5355,16 @@ func (m *Module) executeUploads(
 	if state.Workflow.UploadResult != nil {
 		return CommandResult{}, fmt.Errorf("%w: upload already has a retained result; retry failed trackers or change workflow inputs", ErrInvalidTransition)
 	}
-	prepared, err := m.preparedUploadsForExecution(ctx, ownerID, state, command.NoSeed, now)
+	prepared, err := m.preparedUploadsForExecution(ctx, ownerID, state, command.NoSeed, command.TrackerIDs, now)
 	if err != nil {
 		return CommandResult{}, err
 	}
 	defer func() { _ = prepared.Release() }()
-	trackerIDs, err := validateUploadExecutionTrackerIDs(prepared.plan.Trackers, command.TrackerIDs)
+	requestedTrackerIDs := command.TrackerIDs
+	if len(requestedTrackerIDs) == 0 {
+		requestedTrackerIDs = prepared.trackerIDs
+	}
+	trackerIDs, err := validateUploadExecutionTrackerIDs(prepared.plan.Trackers, requestedTrackerIDs)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -5205,10 +5378,11 @@ func (m *Module) preparedUploadsForExecution(
 	ownerID string,
 	state *State,
 	noSeed bool,
+	trackerIDs []api.TrackerID,
 	now time.Time,
 ) (preparedUploads, error) {
 	if state.Workflow.DryRun == nil {
-		return m.prepareUploads(ctx, ownerID, state, UploadPlanBuildOptions{NoSeed: noSeed}, now)
+		return m.prepareUploads(ctx, ownerID, state, UploadPlanBuildOptions{NoSeed: noSeed, TrackerIDs: trackerIDs}, now)
 	}
 	value, err := m.private.Consume(
 		ownerID,
@@ -5232,6 +5406,7 @@ func (m *Module) preparedUploadsForExecution(
 	if !prepared.dryRun || !prepared.plan.ExpiresAt.After(now) ||
 		state.Workflow.TrackerProjections == nil || prepared.plan.ProjectionSet != *state.Workflow.TrackerProjections ||
 		state.Workflow.Dupes == nil || prepared.plan.Dupes != *state.Workflow.Dupes ||
+		!trackerApprovalRefsEqual(prepared.plan.TrackerApproval, state.Workflow.TrackerApproval) ||
 		state.Workflow.Media == nil || prepared.plan.Media == nil || *prepared.plan.Media != *state.Workflow.Media ||
 		state.Workflow.Descriptions == nil || prepared.plan.Descriptions == nil || *prepared.plan.Descriptions != *state.Workflow.Descriptions {
 		_ = prepared.Release()
@@ -5282,8 +5457,8 @@ func (m *Module) retryFailedUploads(
 		return CommandResult{}, err
 	}
 	defer func() { _ = prepared.execution.Release() }()
-	retried, executionErr := prepared.execution.Execute(ctx, nil)
-	retried = completeUploadExecutionResults(prepared.plan.Trackers, retried, executionErr, nil)
+	retried, executionErr := prepared.execution.Execute(ctx, prepared.trackerIDs)
+	retried = completeUploadExecutionResults(prepared.plan.Trackers, retried, executionErr, prepared.trackerIDs)
 	byTracker := make(map[api.TrackerID]api.UploadTrackerResult, len(retried))
 	for _, result := range retried {
 		byTracker[result.TrackerID] = result
@@ -5306,6 +5481,7 @@ func (m *Module) retryFailedUploads(
 func uploadResultMatchesCurrent(result api.UploadResult, workflow api.ReleaseWorkflow) bool {
 	return workflow.TrackerProjections != nil && result.ProjectionSet == *workflow.TrackerProjections &&
 		workflow.Dupes != nil && result.Dupes == *workflow.Dupes &&
+		trackerApprovalRefsEqual(result.TrackerApproval, workflow.TrackerApproval) &&
 		workflow.Media != nil && result.Media == *workflow.Media &&
 		workflow.Descriptions != nil && result.Descriptions == *workflow.Descriptions
 }
@@ -5441,6 +5617,7 @@ func (m *Module) publishUploadResult(
 		Revision:         nextRevision,
 		ProjectionSet:    api.TrackerReleaseProjectionSetRef{ID: prepared.projections.ID, Revision: prepared.projections.Revision},
 		Dupes:            api.DupeAssessmentRef{ID: prepared.dupes.ID, Revision: prepared.dupes.Revision},
+		TrackerApproval:  prepared.plan.TrackerApproval,
 		Media:            api.MediaArtifactSetRef{ID: prepared.media.ID, Revision: prepared.media.Revision},
 		Descriptions:     api.DescriptionSetRef{ID: prepared.descriptions.ID, Revision: prepared.descriptions.Revision},
 		InputFingerprint: prepared.plan.InputFingerprint,
@@ -5592,6 +5769,7 @@ func (m *Module) invalidateTrackers(
 			return CommandResult{}, err
 		}
 	}
+	state.Workflow.TrackerApproval = nil
 	state.Workflow.Media = nil
 	state.Workflow.Descriptions = nil
 	invalidateUploadPlan(&state.Workflow)
@@ -5834,6 +6012,7 @@ func invalidatePreflightAndDownstream(workflow *api.ReleaseWorkflow) {
 
 func invalidateDupeAndDownstream(workflow *api.ReleaseWorkflow) {
 	workflow.Dupes = nil
+	workflow.TrackerApproval = nil
 	workflow.Media = nil
 	workflow.Descriptions = nil
 	invalidateUploadPlan(workflow)

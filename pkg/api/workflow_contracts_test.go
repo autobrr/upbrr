@@ -291,6 +291,7 @@ func TestDirectUploadContractsValidateExactLineageAndTerminalOutcomes(t *testing
 		Media:            lineage.media,
 		Descriptions:     lineage.descriptions,
 		InputFingerprint: fingerprint,
+		TrackerIDs:       []TrackerID{"ALPHA"},
 		Reports: []TrackerDryRunReport{{
 			TrackerID:           "ALPHA",
 			UploadReleaseName:   "Example.Release.2026.1080p-GRP",
@@ -306,6 +307,11 @@ func TestDirectUploadContractsValidateExactLineageAndTerminalOutcomes(t *testing
 	}
 	if err := dryRun.Validate(); err != nil {
 		t.Fatalf("validate direct dry run: %v", err)
+	}
+	missingTargets := dryRun
+	missingTargets.TrackerIDs = nil
+	if err := missingTargets.Validate(); err == nil || !strings.Contains(err.Error(), "target tracker IDs") {
+		t.Fatalf("expected missing target tracker rejection, got %v", err)
 	}
 	unsafeDryRun := dryRun
 	unsafeDryRun.Reports = append([]TrackerDryRunReport(nil), dryRun.Reports...)

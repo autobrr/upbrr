@@ -412,9 +412,11 @@ const (
 	ReleaseWorkflowUploadFeedbackQuestionnaire         ReleaseWorkflowUploadFeedbackKind = "questionnaire"
 	ReleaseWorkflowUploadFeedbackRuleAuthorization     ReleaseWorkflowUploadFeedbackKind = "ruleAuthorization"
 	ReleaseWorkflowUploadFeedbackDuplicateReview       ReleaseWorkflowUploadFeedbackKind = "duplicateReview"
-	ReleaseWorkflowUploadFeedbackUploadApproval        ReleaseWorkflowUploadFeedbackKind = "uploadApproval"
-	ReleaseWorkflowUploadFeedbackReprepare             ReleaseWorkflowUploadFeedbackKind = "reprepare"
-	ReleaseWorkflowUploadFeedbackReconciliation        ReleaseWorkflowUploadFeedbackKind = "reconciliation"
+	ReleaseWorkflowUploadFeedbackTrackerApproval       ReleaseWorkflowUploadFeedbackKind = "trackerApproval"
+	// Deprecated: final upload approval is no longer emitted by runtime workflows.
+	ReleaseWorkflowUploadFeedbackUploadApproval ReleaseWorkflowUploadFeedbackKind = "uploadApproval"
+	ReleaseWorkflowUploadFeedbackReprepare      ReleaseWorkflowUploadFeedbackKind = "reprepare"
+	ReleaseWorkflowUploadFeedbackReconciliation ReleaseWorkflowUploadFeedbackKind = "reconciliation"
 )
 
 // ReleaseWorkflowUploadActionIdentity binds feedback to exact current action authority.
@@ -443,9 +445,11 @@ type ReleaseWorkflowUploadFeedbackResponse struct {
 	Questionnaire         *ReleaseWorkflowUploadQuestionnaire         `json:"questionnaire,omitempty"`
 	RuleAuthorization     *ReleaseWorkflowUploadConfirmation          `json:"ruleAuthorization,omitempty"`
 	DuplicateReview       *ReleaseWorkflowUploadDuplicateReview       `json:"duplicateReview,omitempty"`
-	UploadApproval        *ReleaseWorkflowUploadApproval              `json:"uploadApproval,omitempty"`
-	Reprepare             *ReleaseWorkflowUploadReprepare             `json:"reprepare,omitempty"`
-	Reconciliation        *ReleaseWorkflowUploadReconciliation        `json:"reconciliation,omitempty"`
+	TrackerApproval       *ReleaseWorkflowUploadTrackerApproval       `json:"trackerApproval,omitempty"`
+	// Deprecated: retained for v1 decoding compatibility.
+	UploadApproval *ReleaseWorkflowUploadApproval       `json:"uploadApproval,omitempty"`
+	Reprepare      *ReleaseWorkflowUploadReprepare      `json:"reprepare,omitempty"`
+	Reconciliation *ReleaseWorkflowUploadReconciliation `json:"reconciliation,omitempty"`
 }
 
 // ReleaseWorkflowUploadPlaylistSelection replaces retained playlist selection.
@@ -468,9 +472,17 @@ type ReleaseWorkflowUploadConfirmation struct {
 
 // ReleaseWorkflowUploadApproval authorizes an exact subset of the reviewed tracker operations.
 // An omitted tracker list preserves whole-plan approval for non-CLI callers.
+//
+// Deprecated: final upload approval is no longer emitted by runtime workflows.
 type ReleaseWorkflowUploadApproval struct {
 	Confirmed  bool        `json:"confirmed"`
 	TrackerIDs []TrackerID `json:"trackerIds,omitempty"`
+}
+
+// ReleaseWorkflowUploadTrackerApproval authorizes an explicit post-dupe tracker subset.
+type ReleaseWorkflowUploadTrackerApproval struct {
+	Confirmed  bool        `json:"confirmed"`
+	TrackerIDs []TrackerID `json:"trackerIds"`
 }
 
 // ReleaseWorkflowUploadTrackerAuthentication requests private authentication
@@ -540,6 +552,7 @@ func (f ReleaseWorkflowUploadFeedback) Validate() error {
 		{ReleaseWorkflowUploadFeedbackQuestionnaire, f.Response.Questionnaire != nil},
 		{ReleaseWorkflowUploadFeedbackRuleAuthorization, f.Response.RuleAuthorization != nil},
 		{ReleaseWorkflowUploadFeedbackDuplicateReview, f.Response.DuplicateReview != nil},
+		{ReleaseWorkflowUploadFeedbackTrackerApproval, f.Response.TrackerApproval != nil},
 		{ReleaseWorkflowUploadFeedbackUploadApproval, f.Response.UploadApproval != nil},
 		{ReleaseWorkflowUploadFeedbackReprepare, f.Response.Reprepare != nil},
 		{ReleaseWorkflowUploadFeedbackReconciliation, f.Response.Reconciliation != nil},
@@ -586,6 +599,24 @@ func (f ReleaseWorkflowUploadFeedback) Validate() error {
 	case ReleaseWorkflowUploadFeedbackRuleAuthorization:
 		if !f.Response.RuleAuthorization.Confirmed {
 			return errors.New("rule authorization feedback requires confirmation")
+		}
+	case ReleaseWorkflowUploadFeedbackTrackerApproval:
+		if !f.Response.TrackerApproval.Confirmed {
+			return errors.New("tracker approval feedback requires confirmation")
+		}
+		if len(f.Response.TrackerApproval.TrackerIDs) == 0 {
+			return errors.New("tracker approval feedback requires at least one tracker ID")
+		}
+		seen := make(map[TrackerID]struct{}, len(f.Response.TrackerApproval.TrackerIDs))
+		for _, trackerID := range f.Response.TrackerApproval.TrackerIDs {
+			trackerID = normalizeTrackerID(trackerID)
+			if trackerID == "" {
+				return errors.New("tracker approval tracker IDs must not be empty")
+			}
+			if _, duplicate := seen[trackerID]; duplicate {
+				return fmt.Errorf("tracker approval contains duplicate tracker %s", trackerID)
+			}
+			seen[trackerID] = struct{}{}
 		}
 	case ReleaseWorkflowUploadFeedbackUploadApproval:
 		if !f.Response.UploadApproval.Confirmed {

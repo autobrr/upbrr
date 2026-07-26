@@ -115,10 +115,12 @@ type UploadDryRunResult struct {
 	Revision         WorkflowRevision               `json:"revision"`
 	ProjectionSet    TrackerReleaseProjectionSetRef `json:"projectionSet"`
 	Dupes            DupeAssessmentRef              `json:"dupes"`
+	TrackerApproval  *TrackerApprovalSnapshotRef    `json:"trackerApproval,omitempty"`
 	Media            MediaArtifactSetRef            `json:"media"`
 	Descriptions     DescriptionSetRef              `json:"descriptions"`
 	InputFingerprint WorkflowFingerprint            `json:"inputFingerprint"`
 	NoSeed           bool                           `json:"noSeed"`
+	TrackerIDs       []TrackerID                    `json:"trackerIds"`
 	Reports          []TrackerDryRunReport          `json:"reports"`
 	SucceededCount   int                            `json:"succeededCount"`
 	FailedCount      int                            `json:"failedCount"`

@@ -70,6 +70,11 @@ func TestContinueWorkflowRequestRequiresTypedGoalAndAuthority(t *testing.T) {
 		t.Fatalf("unknown continuation interaction error = %v", err)
 	}
 	begin.Intent.Interaction = InteractionModeUnattended
+	begin.Intent.UploadTrackerIDs = []TrackerID{"alpha", "ALPHA"}
+	if err := begin.Validate(); err == nil || !strings.Contains(err.Error(), "more than once") {
+		t.Fatalf("duplicate upload tracker error = %v", err)
+	}
+	begin.Intent.UploadTrackerIDs = nil
 	begin.Goal = "adapter_owned_stage"
 	if err := begin.Validate(); err == nil || !strings.Contains(err.Error(), "unsupported workflow goal") {
 		t.Fatalf("unknown continuation goal error = %v", err)

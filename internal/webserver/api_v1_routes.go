@@ -173,7 +173,14 @@ func (s *Server) handleAPIV1WorkflowContinuation(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	result, err := s.backend.continueReleaseWorkflow(r.Context(), principal.OwnerID, request)
+	result, err := s.backend.continueReleaseWorkflow(
+		releaseworkflow.WithTrackerDecisionMode(
+			r.Context(),
+			releaseworkflow.TrackerDecisionModePostDupeGate,
+		),
+		principal.OwnerID,
+		request,
+	)
 	if err != nil {
 		writeAPIV1WorkflowError(w, err)
 		return

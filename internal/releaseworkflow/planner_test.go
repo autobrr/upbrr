@@ -72,6 +72,52 @@ func TestContinueBeginsAndAdvancesThroughCentralPlanner(t *testing.T) {
 	}
 }
 
+func TestContinueCreationPersistsTrustedTrackerDecisionMode(t *testing.T) {
+	t.Parallel()
+
+	request := api.ContinueReleaseWorkflowRequest{
+		IdempotencyKey: "continue-mode",
+		Goal:           api.WorkflowGoalPrepared,
+		Intent: api.WorkflowIntent{
+			Preparation: &api.PrepareInput{
+				SourcePath: "C:\\releases\\Example.Release.2026.1080p-GRP",
+				Instructions: api.ReleaseFactInstructions{
+					SourceLookup: "Example Release 2026",
+				},
+			},
+		},
+	}
+	publicModule, publicRepository := newTestModule(t, testPreparer())
+	publicCurrent, err := publicModule.Continue(context.Background(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("create public continuation: %v", err)
+	}
+	publicState, err := publicRepository.Load(context.Background(), testOwnerID, publicCurrent.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load public continuation: %v", err)
+	}
+	if publicState.TrackerDecisionMode != TrackerDecisionModePostDupeGate {
+		t.Fatalf("public continuation tracker mode = %q", publicState.TrackerDecisionMode)
+	}
+
+	appModule, appRepository := newTestModule(t, testPreparer())
+	appCurrent, err := appModule.Continue(
+		WithTrackerDecisionMode(context.Background(), TrackerDecisionModeWebUIControls),
+		testOwnerID,
+		request,
+	)
+	if err != nil {
+		t.Fatalf("create app continuation: %v", err)
+	}
+	appState, err := appRepository.Load(context.Background(), testOwnerID, appCurrent.Workflow.ID)
+	if err != nil {
+		t.Fatalf("load app continuation: %v", err)
+	}
+	if appState.TrackerDecisionMode != TrackerDecisionModeWebUIControls {
+		t.Fatalf("app continuation tracker mode = %q", appState.TrackerDecisionMode)
+	}
+}
+
 func TestContinuationPlannerInsertsExactImageRequirementBarrier(t *testing.T) {
 	t.Parallel()
 
@@ -387,28 +433,6 @@ func TestUnattendedPreflightPolicySkipsOnlyManualTrackerLane(t *testing.T) {
 	}
 }
 
-func TestContinuationApprovalBindsExactReviewedDryRun(t *testing.T) {
-	t.Parallel()
-
-	current := CommandResult{DryRun: &api.UploadDryRunResult{
-		ID:               "dry-run-approved",
-		Revision:         9,
-		InputFingerprint: testFingerprint(t, "approved-dry-run"),
-	}}
-	approval := &api.UploadApproval{
-		ActionID:         uploadApprovalActionID(current.DryRun.ID),
-		DryRun:           api.UploadDryRunResultRef{ID: current.DryRun.ID, Revision: current.DryRun.Revision},
-		InputFingerprint: current.DryRun.InputFingerprint,
-	}
-	if err := validateContinuationApproval(approval, current); err != nil {
-		t.Fatalf("validate exact approval: %v", err)
-	}
-	approval.InputFingerprint = testFingerprint(t, "stale-dry-run")
-	if err := validateContinuationApproval(approval, current); err == nil {
-		t.Fatal("stale upload approval was accepted")
-	}
-}
-
 func TestContinuationPlannerReconcilesChangedDuplicateDecision(t *testing.T) {
 	t.Parallel()
 
@@ -610,6 +634,13 @@ func TestContinuationPlannerAdvancesRunnableSiblingPastPendingDupe(t *testing.T)
 	action := api.RequiredAction{TrackerID: "BETA"}
 	if continuationActionBlocksAllLanes(current, action) {
 		t.Fatal("pending BETA action blocked runnable ALPHA lane")
+	}
+	action.Kind = api.RequiredActionReviewDuplicates
+	if !continuationActionBlocksAllLanesForMode(current, action, TrackerDecisionModePostDupeGate) {
+		t.Fatal("gated duplicate review did not block all runnable lanes")
+	}
+	if continuationActionBlocksAllLanesForMode(current, action, TrackerDecisionModeWebUIControls) {
+		t.Fatal("WebUI duplicate review blocked runnable sibling lane")
 	}
 }
 

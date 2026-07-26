@@ -4,6 +4,7 @@
 package releaseworkflow
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -28,7 +29,8 @@ func TestCommandFromRequestMapsDirectUploadExactly(t *testing.T) {
 			ExpectedRevision: 7,
 			IdempotencyKey:   "upload-1",
 		},
-		NoSeed: true,
+		NoSeed:     true,
+		TrackerIDs: []api.TrackerID{"ALPHA"},
 	}
 
 	mapped, err := CommandFromRequest(request)
@@ -40,7 +42,8 @@ func TestCommandFromRequestMapsDirectUploadExactly(t *testing.T) {
 		t.Fatalf("command type = %T, want ExecuteUploadsCommand", mapped)
 	}
 	if command.WorkflowID != request.WorkflowID || command.ExpectedRevision != request.ExpectedRevision ||
-		command.IdempotencyKey != request.IdempotencyKey || command.NoSeed != request.NoSeed {
+		command.IdempotencyKey != request.IdempotencyKey || command.NoSeed != request.NoSeed ||
+		!slices.Equal(command.TrackerIDs, request.TrackerIDs) {
 		t.Fatalf("command = %#v, request = %#v", command, request)
 	}
 }

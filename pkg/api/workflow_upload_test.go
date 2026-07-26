@@ -151,8 +151,8 @@ func TestReleaseWorkflowUploadFeedbackRejectsDuplicateApprovalTrackers(t *testin
 			WorkflowRevision: 2,
 		},
 		Response: ReleaseWorkflowUploadFeedbackResponse{
-			Kind: ReleaseWorkflowUploadFeedbackUploadApproval,
-			UploadApproval: &ReleaseWorkflowUploadApproval{
+			Kind: ReleaseWorkflowUploadFeedbackTrackerApproval,
+			TrackerApproval: &ReleaseWorkflowUploadTrackerApproval{
 				Confirmed:  true,
 				TrackerIDs: []TrackerID{"alpha", "ALPHA"},
 			},
@@ -160,6 +160,6 @@ func TestReleaseWorkflowUploadFeedbackRejectsDuplicateApprovalTrackers(t *testin
 		IdempotencyKey: "approval-duplicate-trackers",
 	}
 	if err := feedback.Validate(); err == nil {
-		t.Fatal("upload approval accepted duplicate normalized tracker IDs")
+		t.Fatal("tracker approval accepted duplicate normalized tracker IDs")
 	}
 }

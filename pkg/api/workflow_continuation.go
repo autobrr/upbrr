@@ -84,6 +84,7 @@ type WorkflowIntent struct {
 	Media                  *MediaCaptureInstructions                   `json:"media,omitempty"`
 	MediaSelection         *WorkflowMediaSelection                     `json:"mediaSelection,omitempty"`
 	Descriptions           *DescriptionInstructions                    `json:"descriptions,omitempty"`
+	UploadTrackerIDs       []TrackerID                                 `json:"uploadTrackerIds,omitempty"`
 	NoSeed                 bool                                        `json:"noSeed,omitempty"`
 }
 
@@ -93,20 +94,32 @@ type WorkflowMediaSelection struct {
 }
 
 // UploadApproval binds submission permission to one exact reviewed dry run.
+//
+// Deprecated: final upload approval is no longer required by runtime workflows.
 type UploadApproval struct {
 	ActionID         RequiredActionID      `json:"actionId"`
 	DryRun           UploadDryRunResultRef `json:"dryRun"`
 	InputFingerprint WorkflowFingerprint   `json:"inputFingerprint"`
 }
 
+// TrackerApproval binds one explicit non-empty tracker subset to exact post-dupe evidence.
+type TrackerApproval struct {
+	ActionID         RequiredActionID    `json:"actionId"`
+	Dupes            DupeAssessmentRef   `json:"dupes"`
+	InputFingerprint WorkflowFingerprint `json:"inputFingerprint"`
+	TrackerIDs       []TrackerID         `json:"trackerIds"`
+}
+
 // ContinueReleaseWorkflowRequest reconciles typed desired state toward one goal.
 type ContinueReleaseWorkflowRequest struct {
-	Authority      *WorkflowAuthority     `json:"authority,omitempty"`
-	IdempotencyKey string                 `json:"idempotencyKey"`
-	Goal           WorkflowGoal           `json:"goal"`
-	Intent         WorkflowIntent         `json:"intent"`
-	Answers        []RequiredActionAnswer `json:"answers,omitempty"`
-	Approval       *UploadApproval        `json:"approval,omitempty"`
+	Authority       *WorkflowAuthority     `json:"authority,omitempty"`
+	IdempotencyKey  string                 `json:"idempotencyKey"`
+	Goal            WorkflowGoal           `json:"goal"`
+	Intent          WorkflowIntent         `json:"intent"`
+	Answers         []RequiredActionAnswer `json:"answers,omitempty"`
+	TrackerApproval *TrackerApproval       `json:"trackerApproval,omitempty"`
+	// Deprecated: final upload approval is no longer required by runtime workflows.
+	Approval *UploadApproval `json:"approval,omitempty"`
 }
 
 // Validate verifies request identity and typed desired-state shape.
@@ -139,6 +152,9 @@ func (r ContinueReleaseWorkflowRequest) Validate() error {
 			return errors.New("tracker ID is required")
 		}
 	}
+	if err := validateOptionalWorkflowTrackerIDs(r.Intent.UploadTrackerIDs); err != nil {
+		return fmt.Errorf("upload trackers: %w", err)
+	}
 	if r.Intent.DuplicateCheckCount > 2 {
 		return errors.New("duplicate check count cannot exceed two")
 	}
@@ -166,6 +182,31 @@ func (r ContinueReleaseWorkflowRequest) Validate() error {
 		}
 		if err := validateWorkflowFingerprint(r.Approval.InputFingerprint); err != nil {
 			return fmt.Errorf("upload approval: %w", err)
+		}
+	}
+	if r.TrackerApproval != nil {
+		if strings.TrimSpace(string(r.TrackerApproval.ActionID)) == "" {
+			return errors.New("tracker approval action ID is required")
+		}
+		if strings.TrimSpace(string(r.TrackerApproval.Dupes.ID)) == "" || r.TrackerApproval.Dupes.Revision == 0 {
+			return errors.New("tracker approval requires an exact duplicate assessment")
+		}
+		if err := validateWorkflowFingerprint(r.TrackerApproval.InputFingerprint); err != nil {
+			return fmt.Errorf("tracker approval: %w", err)
+		}
+		if len(r.TrackerApproval.TrackerIDs) == 0 {
+			return errors.New("tracker approval requires at least one tracker ID")
+		}
+		seen := make(map[TrackerID]struct{}, len(r.TrackerApproval.TrackerIDs))
+		for _, trackerID := range r.TrackerApproval.TrackerIDs {
+			normalized := TrackerID(strings.ToUpper(strings.TrimSpace(string(trackerID))))
+			if normalized == "" {
+				return errors.New("tracker approval tracker ID is required")
+			}
+			if _, duplicate := seen[normalized]; duplicate {
+				return fmt.Errorf("tracker approval tracker %s appears more than once", normalized)
+			}
+			seen[normalized] = struct{}{}
 		}
 	}
 	return nil
@@ -215,14 +256,15 @@ type GoalAvailability struct {
 
 // WorkflowExactRefs binds a lane projection to retained immutable products.
 type WorkflowExactRefs struct {
-	Release      *ReleaseSnapshotRef             `json:"release,omitempty"`
-	Projections  *TrackerReleaseProjectionSetRef `json:"projections,omitempty"`
-	Preflight    *TrackerPreflightAssessmentRef  `json:"preflight,omitempty"`
-	Dupes        *DupeAssessmentRef              `json:"dupes,omitempty"`
-	Media        *MediaArtifactSetRef            `json:"media,omitempty"`
-	Descriptions *DescriptionSetRef              `json:"descriptions,omitempty"`
-	DryRun       *UploadDryRunResultRef          `json:"dryRun,omitempty"`
-	UploadResult *UploadResultRef                `json:"uploadResult,omitempty"`
+	Release         *ReleaseSnapshotRef             `json:"release,omitempty"`
+	Projections     *TrackerReleaseProjectionSetRef `json:"projections,omitempty"`
+	Preflight       *TrackerPreflightAssessmentRef  `json:"preflight,omitempty"`
+	Dupes           *DupeAssessmentRef              `json:"dupes,omitempty"`
+	TrackerApproval *TrackerApprovalSnapshotRef     `json:"trackerApproval,omitempty"`
+	Media           *MediaArtifactSetRef            `json:"media,omitempty"`
+	Descriptions    *DescriptionSetRef              `json:"descriptions,omitempty"`
+	DryRun          *UploadDryRunResultRef          `json:"dryRun,omitempty"`
+	UploadResult    *UploadResultRef                `json:"uploadResult,omitempty"`
 }
 
 // TrackerLaneOutcome is the canonical current result for one selected tracker.

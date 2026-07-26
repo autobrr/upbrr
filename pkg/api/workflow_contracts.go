@@ -378,6 +378,22 @@ type DupeAssessment struct {
 	ExpiresAt        time.Time                      `json:"expiresAt" ts_type:"string"`
 }
 
+// TrackerApprovalSnapshot is durable exact tracker authority for gated workflows.
+type TrackerApprovalSnapshot struct {
+	ID                  TrackerApprovalSnapshotID      `json:"id"`
+	WorkflowID          WorkflowID                     `json:"workflowId"`
+	Revision            WorkflowRevision               `json:"revision"`
+	Release             ReleaseSnapshotRef             `json:"release"`
+	Selection           TrackerSelectionRef            `json:"selection"`
+	ProjectionSet       TrackerReleaseProjectionSetRef `json:"projectionSet"`
+	Preflight           TrackerPreflightAssessmentRef  `json:"preflight"`
+	Dupes               DupeAssessmentRef              `json:"dupes"`
+	CandidateTrackerIDs []TrackerID                    `json:"candidateTrackerIds"`
+	ApprovedTrackerIDs  []TrackerID                    `json:"approvedTrackerIds"`
+	InputFingerprint    WorkflowFingerprint            `json:"inputFingerprint"`
+	CreatedAt           time.Time                      `json:"createdAt" ts_type:"string"`
+}
+
 // MediaArtifactKind classifies one safe retained media artifact.
 type MediaArtifactKind string
 
@@ -426,6 +442,7 @@ type MediaArtifactSet struct {
 	Release                   ReleaseSnapshotRef             `json:"release"`
 	ReleaseRef                ReleaseRef                     `json:"releaseRef"`
 	ProjectionSet             TrackerReleaseProjectionSetRef `json:"projectionSet"`
+	TrackerApproval           *TrackerApprovalSnapshotRef    `json:"trackerApproval,omitempty"`
 	CaptureFingerprint        WorkflowFingerprint            `json:"captureFingerprint"`
 	RequirementsFingerprint   WorkflowFingerprint            `json:"requirementsFingerprint"`
 	Artifacts                 []MediaArtifact                `json:"artifacts"`
@@ -483,6 +500,7 @@ type DescriptionSet struct {
 	Release             ReleaseSnapshotRef             `json:"release"`
 	ReleaseRef          ReleaseRef                     `json:"releaseRef"`
 	ProjectionSet       TrackerReleaseProjectionSetRef `json:"projectionSet"`
+	TrackerApproval     *TrackerApprovalSnapshotRef    `json:"trackerApproval,omitempty"`
 	Media               *MediaArtifactSetRef           `json:"media,omitempty"`
 	InputFingerprint    WorkflowFingerprint            `json:"inputFingerprint"`
 	TemplateFingerprint WorkflowFingerprint            `json:"templateFingerprint"`
@@ -539,6 +557,7 @@ type UploadPlan struct {
 	ReleaseRef       ReleaseRef                     `json:"releaseRef"`
 	ProjectionSet    TrackerReleaseProjectionSetRef `json:"projectionSet"`
 	Dupes            DupeAssessmentRef              `json:"dupes"`
+	TrackerApproval  *TrackerApprovalSnapshotRef    `json:"trackerApproval,omitempty"`
 	Media            *MediaArtifactSetRef           `json:"media,omitempty"`
 	Descriptions     *DescriptionSetRef             `json:"descriptions,omitempty"`
 	InputFingerprint WorkflowFingerprint            `json:"inputFingerprint"`
@@ -567,6 +586,7 @@ type UploadResult struct {
 	Revision         WorkflowRevision               `json:"revision"`
 	ProjectionSet    TrackerReleaseProjectionSetRef `json:"projectionSet"`
 	Dupes            DupeAssessmentRef              `json:"dupes"`
+	TrackerApproval  *TrackerApprovalSnapshotRef    `json:"trackerApproval,omitempty"`
 	Media            MediaArtifactSetRef            `json:"media"`
 	Descriptions     DescriptionSetRef              `json:"descriptions"`
 	InputFingerprint WorkflowFingerprint            `json:"inputFingerprint"`
@@ -588,6 +608,7 @@ type ReleaseWorkflow struct {
 	TrackerProjections     *TrackerReleaseProjectionSetRef          `json:"trackerProjections,omitempty"`
 	TrackerPreflight       *TrackerPreflightAssessmentRef           `json:"trackerPreflight,omitempty"`
 	Dupes                  *DupeAssessmentRef                       `json:"dupes,omitempty"`
+	TrackerApproval        *TrackerApprovalSnapshotRef              `json:"trackerApproval,omitempty"`
 	Media                  *MediaArtifactSetRef                     `json:"media,omitempty"`
 	Descriptions           *DescriptionSetRef                       `json:"descriptions,omitempty"`
 	DryRun                 *UploadDryRunResultRef                   `json:"dryRun,omitempty"`
@@ -612,6 +633,7 @@ type ReleaseWorkflowCurrent struct {
 	Projections            *TrackerReleaseProjectionSet          `json:"projections,omitempty"`
 	Preflight              *TrackerPreflightAssessment           `json:"preflight,omitempty"`
 	Dupes                  *DupeAssessment                       `json:"dupes,omitempty"`
+	TrackerApproval        *TrackerApprovalSnapshot              `json:"trackerApproval,omitempty"`
 	Media                  *MediaArtifactSet                     `json:"media,omitempty"`
 	Descriptions           *DescriptionSet                       `json:"descriptions,omitempty"`
 	DryRun                 *UploadDryRunResult                   `json:"dryRun,omitempty"`

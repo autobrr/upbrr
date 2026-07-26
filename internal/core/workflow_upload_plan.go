@@ -97,27 +97,31 @@ func (b workflowUploadPlanBuilder) Fingerprint(
 	options releaseworkflow.UploadPlanBuildOptions,
 ) (api.WorkflowFingerprint, error) {
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
-		ProjectionSet api.TrackerReleaseProjectionSetRef
-		Projection    api.WorkflowFingerprint
-		Dupes         api.DupeAssessmentRef
-		DupeInput     api.WorkflowFingerprint
-		Media         api.MediaArtifactSetRef
-		MediaCapture  api.WorkflowFingerprint
-		Descriptions  api.DescriptionSetRef
-		Description   api.WorkflowFingerprint
-		NoSeed        bool
-		TrackerIDs    []api.TrackerID
+		ProjectionSet   api.TrackerReleaseProjectionSetRef
+		Projection      api.WorkflowFingerprint
+		Dupes           api.DupeAssessmentRef
+		DupeInput       api.WorkflowFingerprint
+		Media           api.MediaArtifactSetRef
+		MediaCapture    api.WorkflowFingerprint
+		Descriptions    api.DescriptionSetRef
+		Description     api.WorkflowFingerprint
+		NoSeed          bool
+		TrackerIDs      []api.TrackerID
+		TrackerApproval *api.TrackerApprovalSnapshotRef
+		Authority       api.WorkflowFingerprint
 	}{
-		ProjectionSet: api.TrackerReleaseProjectionSetRef{ID: projections.ID, Revision: projections.Revision},
-		Projection:    projections.InputFingerprint,
-		Dupes:         api.DupeAssessmentRef{ID: dupes.ID, Revision: dupes.Revision},
-		DupeInput:     dupes.InputFingerprint,
-		Media:         api.MediaArtifactSetRef{ID: media.ID, Revision: media.Revision},
-		MediaCapture:  media.CaptureFingerprint,
-		Descriptions:  api.DescriptionSetRef{ID: descriptions.ID, Revision: descriptions.Revision},
-		Description:   descriptions.InputFingerprint,
-		NoSeed:        options.NoSeed,
-		TrackerIDs:    append([]api.TrackerID(nil), options.TrackerIDs...),
+		ProjectionSet:   api.TrackerReleaseProjectionSetRef{ID: projections.ID, Revision: projections.Revision},
+		Projection:      projections.InputFingerprint,
+		Dupes:           api.DupeAssessmentRef{ID: dupes.ID, Revision: dupes.Revision},
+		DupeInput:       dupes.InputFingerprint,
+		Media:           api.MediaArtifactSetRef{ID: media.ID, Revision: media.Revision},
+		MediaCapture:    media.CaptureFingerprint,
+		Descriptions:    api.DescriptionSetRef{ID: descriptions.ID, Revision: descriptions.Revision},
+		Description:     descriptions.InputFingerprint,
+		NoSeed:          options.NoSeed,
+		TrackerIDs:      append([]api.TrackerID(nil), options.TrackerIDs...),
+		TrackerApproval: options.TrackerApproval,
+		Authority:       options.AuthorityFingerprint,
 	})
 	if err != nil {
 		return "", fmt.Errorf("workflow upload plan fingerprint: %w", err)
@@ -230,6 +234,7 @@ func (b workflowUploadPlanBuilder) Build(
 		InputFingerprint: inputFingerprint,
 		ProjectionSet:    api.TrackerReleaseProjectionSetRef{ID: projections.ID, Revision: projections.Revision},
 		Dupes:            api.DupeAssessmentRef{ID: dupes.ID, Revision: dupes.Revision},
+		TrackerApproval:  options.TrackerApproval,
 		Media:            &api.MediaArtifactSetRef{ID: media.ID, Revision: media.Revision},
 		Descriptions:     &api.DescriptionSetRef{ID: descriptions.ID, Revision: descriptions.Revision},
 		Status:           api.StageStatusSkipped,

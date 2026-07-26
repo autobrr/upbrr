@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -373,6 +374,19 @@ func mapPersistentRepositoryError(err error) error {
 }
 
 func normalizeState(state *State) {
+	if state.TrackerDecisionMode == "" && state.Composite != nil {
+		state.TrackerDecisionMode = TrackerDecisionModePostDupeGate
+	} else {
+		state.TrackerDecisionMode = normalizeTrackerDecisionMode(state.TrackerDecisionMode)
+	}
+	state.Workflow.RequiredActions = slices.DeleteFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionApproveUpload //nolint:staticcheck // Migrate retained v1 final-approval actions.
+	})
+	if state.Workflow.Status == api.WorkflowStatusBlocked &&
+		len(state.Workflow.RequiredActions) == 0 &&
+		len(state.Workflow.Failures) == 0 {
+		state.Workflow.Status = api.WorkflowStatusActive
+	}
 	if state.FactInstructions == nil {
 		state.FactInstructions = make(map[api.ReleaseFactInstructionSnapshotID]api.ReleaseFactInstructionSnapshot)
 	}
@@ -399,6 +413,9 @@ func normalizeState(state *State) {
 	}
 	if state.Dupes == nil {
 		state.Dupes = make(map[api.DupeAssessmentID]api.DupeAssessment)
+	}
+	if state.TrackerApprovals == nil {
+		state.TrackerApprovals = make(map[api.TrackerApprovalSnapshotID]api.TrackerApprovalSnapshot)
 	}
 	if state.Media == nil {
 		state.Media = make(map[api.MediaArtifactSetID]api.MediaArtifactSet)

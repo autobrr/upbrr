@@ -159,10 +159,11 @@ func (m *Module) StartUpload(
 		return CommandResult{}, fmt.Errorf("release workflow normalize upload: %w", err)
 	}
 	created, err := m.Execute(ctx, ownerID, CreateWorkflowCommand{
-		Instructions:       instructions,
-		IdempotencyKey:     request.IdempotencyKey,
-		RequestFingerprint: session.RequestFingerprint,
-		Composite:          session,
+		Instructions:        instructions,
+		IdempotencyKey:      request.IdempotencyKey,
+		RequestFingerprint:  session.RequestFingerprint,
+		TrackerDecisionMode: TrackerDecisionModePostDupeGate,
+		Composite:           session,
 	})
 	if err != nil {
 		return CommandResult{}, err
@@ -856,16 +857,6 @@ func (m *Module) runCompositeUpload(
 			}
 			return m.Current(ctx, ownerID, command.WorkflowID)
 		}
-		if executeCommand, execute := next.(ExecuteUploadsCommand); execute {
-			if !compositeUploadApproved(current, session) {
-				if err := m.ensureCompositeApprovalAction(ctx, ownerID, current, operationID); err != nil {
-					return CommandResult{}, err
-				}
-				continue
-			}
-			executeCommand.TrackerIDs = append([]api.TrackerID(nil), session.ApprovedTrackerIDs...)
-			next = executeCommand
-		}
 		m.reportCompositeStage(ctx, ownerID, command.WorkflowID, operationID, current, stage, api.StageStatusRunning, 0)
 		if _, err := m.execute(ctx, ownerID, next); err != nil {
 			return CommandResult{}, fmt.Errorf("release workflow composite %s: %w", stage, err)
@@ -970,8 +961,8 @@ func compositeUploadPendingAction(
 	current CommandResult,
 	session *compositeUploadSession,
 ) *api.RequiredAction {
-	for index := range current.Workflow.RequiredActions {
-		action := &current.Workflow.RequiredActions[index]
+	for index := range current.Continuation.RequiredActions {
+		action := &current.Continuation.RequiredActions[index]
 		if action.Status != api.RequiredActionStatusPending {
 			continue
 		}
@@ -983,10 +974,8 @@ func compositeUploadPendingAction(
 				continue
 			}
 		}
-		if action.Kind == api.RequiredActionApproveUpload && !session.Confirm {
-			continue
-		}
-		if action.TrackerID != "" && !continuationActionBlocksAllLanes(current, *action) {
+		if action.TrackerID != "" &&
+			!continuationActionBlocksAllLanesForMode(current, *action, TrackerDecisionModePostDupeGate) {
 			continue
 		}
 		return action
@@ -1242,101 +1231,6 @@ func (m *Module) updateCompositeIntent(
 	return nil
 }
 
-func compositeUploadApproved(current CommandResult, session *compositeUploadSession) bool {
-	return current.DryRun != nil && session.ApprovedDryRun != nil &&
-		session.ApprovedDryRun.ID == current.DryRun.ID &&
-		session.ApprovedDryRun.Revision == current.DryRun.Revision &&
-		session.ApprovedFingerprint == current.DryRun.InputFingerprint
-}
-
-func compositeApprovedUploadTrackerIDs(
-	dryRun api.UploadDryRunResult,
-	requested []api.TrackerID,
-) ([]api.TrackerID, error) {
-	ready := make(map[api.TrackerID]struct{}, dryRun.SucceededCount)
-	for _, report := range dryRun.Reports {
-		if report.Status == api.StageStatusCompleted {
-			ready[normalizeCompositeTrackerID(report.TrackerID)] = struct{}{}
-		}
-	}
-	if len(ready) == 0 {
-		return nil, fmt.Errorf("%w: exact upload review contains no ready tracker uploads", ErrInvalidTransition)
-	}
-	selected := ready
-	if len(requested) > 0 {
-		selected = make(map[api.TrackerID]struct{}, len(requested))
-		for _, trackerID := range requested {
-			trackerID = normalizeCompositeTrackerID(trackerID)
-			if _, exists := ready[trackerID]; !exists {
-				return nil, fmt.Errorf("%w: tracker %s is not ready in the exact upload review", ErrInvalidTransition, trackerID)
-			}
-			selected[trackerID] = struct{}{}
-		}
-	}
-	approved := make([]api.TrackerID, 0, len(selected))
-	for _, report := range dryRun.Reports {
-		trackerID := normalizeCompositeTrackerID(report.TrackerID)
-		if _, exists := selected[trackerID]; exists {
-			approved = append(approved, trackerID)
-		}
-	}
-	return approved, nil
-}
-
-func (m *Module) ensureCompositeApprovalAction(
-	ctx context.Context,
-	ownerID string,
-	current CommandResult,
-	operationID api.WorkflowOperationID,
-) error {
-	if current.DryRun == nil {
-		return fmt.Errorf("%w: exact upload review is required", ErrInvalidTransition)
-	}
-	if !slices.ContainsFunc(current.Workflow.RequiredActions, func(action api.RequiredAction) bool {
-		return action.Kind == api.RequiredActionApproveUpload && action.Status == api.RequiredActionStatusPending
-	}) {
-		lock := m.commandLock(strings.TrimSpace(ownerID) + "\x00" + string(current.Workflow.ID))
-		lock.Lock()
-		defer lock.Unlock()
-		state, err := m.repository.Load(ctx, ownerID, current.Workflow.ID)
-		if err != nil {
-			return fmt.Errorf("release workflow load upload approval action: %w", err)
-		}
-		if state.Workflow.Revision != current.Workflow.Revision || state.Composite == nil ||
-			state.Composite.ActiveOperationID != operationID {
-			return ErrRevisionConflict
-		}
-		if state.Composite.Confirm {
-			actionIndex := slices.IndexFunc(current.Continuation.RequiredActions, func(action api.RequiredAction) bool {
-				return action.Kind == api.RequiredActionApproveUpload &&
-					action.Status == api.RequiredActionStatusPending &&
-					action.ID == uploadApprovalActionID(current.DryRun.ID)
-			})
-			if actionIndex < 0 {
-				return fmt.Errorf("%w: exact upload approval action is unavailable", ErrInvalidTransition)
-			}
-			action := current.Continuation.RequiredActions[actionIndex]
-			state.Workflow.Status = api.WorkflowStatusBlocked
-			state.Workflow.RequiredActions = append(state.Workflow.RequiredActions, action)
-		} else {
-			approvedTrackerIDs, approvalErr := compositeApprovedUploadTrackerIDs(*current.DryRun, nil)
-			if approvalErr != nil {
-				return approvalErr
-			}
-			state.Composite.ApprovedDryRun = &api.UploadDryRunResultRef{
-				ID:       current.DryRun.ID,
-				Revision: current.DryRun.Revision,
-			}
-			state.Composite.ApprovedFingerprint = current.DryRun.InputFingerprint
-			state.Composite.ApprovedTrackerIDs = approvedTrackerIDs
-		}
-		if err := m.saveCompositeMetadata(ctx, ownerID, &state); err != nil {
-			return fmt.Errorf("release workflow save upload approval authority: %w", err)
-		}
-	}
-	return nil
-}
-
 var compositeUploadStages = []struct {
 	ID    string
 	Label string
@@ -1448,7 +1342,7 @@ func compositeUploadInitialItems() []api.WorkflowOperationItem {
 }
 
 func compositeUploadTerminalStatus(result CommandResult) api.StageStatus {
-	if slices.ContainsFunc(result.Workflow.RequiredActions, func(action api.RequiredAction) bool {
+	if slices.ContainsFunc(result.Continuation.RequiredActions, func(action api.RequiredAction) bool {
 		return action.Status == api.RequiredActionStatusPending
 	}) {
 		return api.StageStatusBlocked
@@ -1461,7 +1355,7 @@ func compositeUploadTerminalStatus(result CommandResult) api.StageStatus {
 	}
 	terminalProjection := result
 	terminalProjection.Operation = nil
-	disposition := projectWorkflowContinuation(terminalProjection).Disposition
+	disposition := terminalProjection.Continuation.Disposition
 	switch disposition {
 	case api.WorkflowDispositionNeedsAction:
 		return api.StageStatusBlocked
@@ -1521,8 +1415,10 @@ func compositeUploadFeedbackActionKind(kind api.ReleaseWorkflowUploadFeedbackKin
 		return api.RequiredActionAuthorizeRules
 	case api.ReleaseWorkflowUploadFeedbackDuplicateReview:
 		return api.RequiredActionReviewDuplicates
-	case api.ReleaseWorkflowUploadFeedbackUploadApproval:
-		return api.RequiredActionApproveUpload
+	case api.ReleaseWorkflowUploadFeedbackTrackerApproval:
+		return api.RequiredActionApproveTrackers
+	case api.ReleaseWorkflowUploadFeedbackUploadApproval: //nolint:staticcheck // Map retained v1 feedback for explicit rejection.
+		return api.RequiredActionApproveUpload //nolint:staticcheck // Retained v1 action mapping.
 	case api.ReleaseWorkflowUploadFeedbackReprepare:
 		return api.RequiredActionReprepare
 	case api.ReleaseWorkflowUploadFeedbackReconciliation:
@@ -1559,9 +1455,14 @@ func normalizedCompositeFeedback(feedback api.ReleaseWorkflowUploadFeedback) com
 	case api.ReleaseWorkflowUploadFeedbackDuplicateReview:
 		response.TrackerID = normalizeCompositeTrackerID(feedback.Response.DuplicateReview.TrackerID)
 		response.DuplicateDecision = feedback.Response.DuplicateReview.Decision
-	case api.ReleaseWorkflowUploadFeedbackUploadApproval:
-		response.Confirmed = feedback.Response.UploadApproval.Confirmed
-		response.TrackerIDs = normalizeContinuationTrackerIDs(feedback.Response.UploadApproval.TrackerIDs)
+	case api.ReleaseWorkflowUploadFeedbackTrackerApproval:
+		response.Confirmed = feedback.Response.TrackerApproval.Confirmed
+		response.TrackerIDs = normalizeContinuationTrackerIDs(feedback.Response.TrackerApproval.TrackerIDs)
+	case api.ReleaseWorkflowUploadFeedbackUploadApproval: //nolint:staticcheck // Normalize retained v1 feedback before explicit rejection.
+		response.Confirmed = feedback.Response.UploadApproval.Confirmed //nolint:staticcheck // Retained v1 decoding compatibility.
+		response.TrackerIDs = normalizeContinuationTrackerIDs(
+			feedback.Response.UploadApproval.TrackerIDs, //nolint:staticcheck // Retained v1 decoding compatibility.
+		)
 	case api.ReleaseWorkflowUploadFeedbackReprepare:
 		response.Confirmed = feedback.Response.Reprepare.Confirmed
 		response.Preparation = feedback.Response.Reprepare.Preparation
@@ -1645,13 +1546,13 @@ func (m *Module) SubmitUploadFeedback(
 	if current.Workflow.Revision != feedback.Action.WorkflowRevision {
 		return CommandResult{}, ErrRevisionConflict
 	}
-	actionIndex := slices.IndexFunc(current.Workflow.RequiredActions, func(action api.RequiredAction) bool {
+	actionIndex := slices.IndexFunc(current.Continuation.RequiredActions, func(action api.RequiredAction) bool {
 		return action.ID == feedback.Action.ID && action.Status == api.RequiredActionStatusPending
 	})
 	if actionIndex < 0 {
 		return CommandResult{}, fmt.Errorf("%w: upload feedback action is stale", ErrRevisionConflict)
 	}
-	action := current.Workflow.RequiredActions[actionIndex]
+	action := current.Continuation.RequiredActions[actionIndex]
 	if action.WorkflowRevision != current.Workflow.Revision {
 		return CommandResult{}, fmt.Errorf("%w: upload feedback action revision is stale", ErrRevisionConflict)
 	}
@@ -1714,6 +1615,15 @@ func validateCompositeFeedbackAction(action api.RequiredAction, response composi
 			}
 		}
 	}
+	if len(response.TrackerIDs) > 0 && len(action.Options) > 0 {
+		for _, trackerID := range response.TrackerIDs {
+			if !slices.ContainsFunc(action.Options, func(option api.RequiredActionOption) bool {
+				return option.Value == string(trackerID)
+			}) {
+				return fmt.Errorf("%w: feedback tracker %s is not available", ErrInvalidTransition, trackerID)
+			}
+		}
+	}
 	if response.Kind == api.ReleaseWorkflowUploadFeedbackTwoFactor && len(action.Options) > 0 &&
 		!slices.ContainsFunc(action.Options, func(option api.RequiredActionOption) bool {
 			return option.Value == response.ChallengeID
@@ -1746,10 +1656,10 @@ func (m *Module) executeCompositeSecretFeedback(
 		if err != nil {
 			return compositeUploadSecretFeedbackResult{}, err
 		}
-		if compositeUploadAuthReady(status) || !compositeUploadAuthRequiresAction(status) {
-			if compositeUploadAuthReady(status) {
-				break
-			}
+		if compositeUploadAuthReady(status) {
+			break
+		}
+		if action.Kind == api.RequiredActionProvideTwoFactor || !compositeUploadAuthRequiresAction(status) {
 			return compositeUploadSecretFeedbackResult{AuthenticationSkipTracker: true}, nil
 		}
 		status, err = m.uploadAuthenticator.Login(ctx, string(feedback.Response.TrackerAuthentication.TrackerID), api.TrackerAuthLoginRequest{})
@@ -1803,7 +1713,8 @@ func (m *Module) executeCompositeSecretFeedback(
 		api.ReleaseWorkflowUploadFeedbackQuestionnaire,
 		api.ReleaseWorkflowUploadFeedbackRuleAuthorization,
 		api.ReleaseWorkflowUploadFeedbackDuplicateReview,
-		api.ReleaseWorkflowUploadFeedbackUploadApproval,
+		api.ReleaseWorkflowUploadFeedbackTrackerApproval,
+		api.ReleaseWorkflowUploadFeedbackUploadApproval, //nolint:staticcheck // Retained v1 feedback needs no secret handling.
 		api.ReleaseWorkflowUploadFeedbackReprepare,
 		api.ReleaseWorkflowUploadFeedbackReconciliation:
 	}
@@ -1863,10 +1774,24 @@ func (m *Module) applyCompositeUploadFeedback(
 	index := slices.IndexFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
 		return action.ID == command.ActionID && action.Status == api.RequiredActionStatusPending
 	})
-	if index < 0 {
+	var (
+		action api.RequiredAction
+	)
+	switch {
+	case index >= 0:
+		action = state.Workflow.RequiredActions[index]
+	case command.Response.Kind == api.ReleaseWorkflowUploadFeedbackTrackerApproval:
+		projected, _, err := projectedTrackerApprovalAction(state, now)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		if projected == nil || projected.ID != command.ActionID {
+			return CommandResult{}, fmt.Errorf("%w: upload feedback action is stale", ErrRevisionConflict)
+		}
+		action = *projected
+	default:
 		return CommandResult{}, fmt.Errorf("%w: upload feedback action is stale", ErrRevisionConflict)
 	}
-	action := state.Workflow.RequiredActions[index]
 	resolvedByCommand := false
 	if action.Kind == api.RequiredActionReconcileSubmission {
 		if _, err := m.resolveAction(ctx, ownerID, state, nextRevision, now, ResolveActionCommand{
@@ -1972,18 +1897,26 @@ func (m *Module) applyCompositeUploadFeedback(
 			trackerID = action.TrackerID
 		}
 		state.Composite.Intent.DuplicateDecisions[trackerID] = command.Response.DuplicateDecision
-	case api.ReleaseWorkflowUploadFeedbackUploadApproval:
-		if state.Workflow.DryRun == nil {
-			return CommandResult{}, fmt.Errorf("%w: exact upload review is unavailable", ErrRevisionConflict)
+	case api.ReleaseWorkflowUploadFeedbackTrackerApproval:
+		if state.Workflow.Dupes == nil {
+			return CommandResult{}, fmt.Errorf("%w: duplicate assessment is unavailable", ErrRevisionConflict)
 		}
-		dryRun := state.DryRuns[state.Workflow.DryRun.ID]
-		approvedTrackerIDs, err := compositeApprovedUploadTrackerIDs(dryRun, command.Response.TrackerIDs)
-		if err != nil {
+		if _, err := m.approveTrackers(state, nextRevision, now, ApproveTrackersCommand{
+			WorkflowID:       command.WorkflowID,
+			ExpectedRevision: command.ExpectedRevision,
+			Approval: api.TrackerApproval{
+				ActionID:         action.ID,
+				Dupes:            *state.Workflow.Dupes,
+				InputFingerprint: state.Dupes[state.Workflow.Dupes.ID].InputFingerprint,
+				TrackerIDs:       append([]api.TrackerID(nil), command.Response.TrackerIDs...),
+			},
+			IdempotencyKey: command.IdempotencyKey,
+		}); err != nil {
 			return CommandResult{}, err
 		}
-		state.Composite.ApprovedDryRun = &api.UploadDryRunResultRef{ID: dryRun.ID, Revision: dryRun.Revision}
-		state.Composite.ApprovedFingerprint = dryRun.InputFingerprint
-		state.Composite.ApprovedTrackerIDs = approvedTrackerIDs
+		resolvedByCommand = true
+	case api.ReleaseWorkflowUploadFeedbackUploadApproval: //nolint:staticcheck // Reject retained v1 feedback explicitly.
+		return CommandResult{}, fmt.Errorf("%w: final upload approval is no longer accepted", ErrInvalidTransition)
 	case api.ReleaseWorkflowUploadFeedbackReprepare:
 		if command.Response.Preparation != nil {
 			instructions, err := compositeUploadFactInstructions(command.Response.Preparation.Facts, nil)

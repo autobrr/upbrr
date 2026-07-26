@@ -559,6 +559,25 @@ func (e2eTrackerAuthService) ValidateMany(_ context.Context, trackerIDs []string
 	return statuses, nil
 }
 
+func (service e2eTrackerAuthService) Login(
+	ctx context.Context,
+	trackerID string,
+	_ api.TrackerAuthLoginRequest,
+) (api.TrackerAuthStatus, error) {
+	statuses, err := service.ValidateMany(ctx, []string{trackerID})
+	if err != nil {
+		return api.TrackerAuthStatus{}, fmt.Errorf("e2e tracker auth login: %w", err)
+	}
+	if len(statuses) != 1 {
+		return api.TrackerAuthStatus{}, fmt.Errorf("e2e tracker auth login: expected one status, got %d", len(statuses))
+	}
+	return statuses[0], nil
+}
+
+func (e2eTrackerAuthService) Submit2FA(context.Context, string, string) (api.TrackerAuthStatus, error) {
+	return api.TrackerAuthStatus{State: trackerauth.StateConfigured}, nil
+}
+
 func e2eTrackerSet(environment string) map[string]struct{} {
 	result := make(map[string]struct{})
 	for tracker := range strings.SplitSeq(os.Getenv(environment), ",") {
@@ -683,6 +702,43 @@ func (p *e2eRetainedUploadPlan) Execute(ctx context.Context) ([]trackers.Retaine
 	if p == nil {
 		return nil, errors.New("e2e tracker: retained plan is unavailable")
 	}
+	trackerIDs := make([]string, 0, len(p.preparations))
+	for _, preparation := range p.preparations {
+		trackerIDs = append(trackerIDs, preparation.Tracker)
+	}
+	return p.ExecuteSelected(ctx, trackerIDs)
+}
+
+func (p *e2eRetainedUploadPlan) ExecuteSelected(
+	ctx context.Context,
+	trackerIDs []string,
+) ([]trackers.RetainedTrackerResult, error) {
+	if p == nil {
+		return nil, errors.New("e2e tracker: retained plan is unavailable")
+	}
+	preparationByTracker := make(map[string]trackers.RetainedTrackerPreparation, len(p.preparations))
+	for _, preparation := range p.preparations {
+		preparationByTracker[strings.ToUpper(strings.TrimSpace(preparation.Tracker))] = preparation
+	}
+	selected := make([]trackers.RetainedTrackerPreparation, 0, len(trackerIDs))
+	selectedNames := make([]string, 0, len(trackerIDs))
+	seen := make(map[string]struct{}, len(trackerIDs))
+	for _, trackerID := range trackerIDs {
+		name := strings.ToUpper(strings.TrimSpace(trackerID))
+		preparation, exists := preparationByTracker[name]
+		if name == "" || !exists {
+			return nil, fmt.Errorf("e2e tracker: retained plan does not contain tracker %q", trackerID)
+		}
+		if _, duplicate := seen[name]; duplicate {
+			return nil, fmt.Errorf("e2e tracker: retained plan tracker %s is duplicated", name)
+		}
+		seen[name] = struct{}{}
+		selected = append(selected, preparation)
+		selectedNames = append(selectedNames, name)
+	}
+	if len(selected) == 0 {
+		return nil, errors.New("e2e tracker: retained plan selection is empty")
+	}
 	p.mu.Lock()
 	if p.released || p.executed {
 		p.mu.Unlock()
@@ -690,15 +746,17 @@ func (p *e2eRetainedUploadPlan) Execute(ctx context.Context) ([]trackers.Retaine
 	}
 	p.executed = true
 	p.mu.Unlock()
-	summary, err := p.service.Upload(ctx, p.subject)
+	subject := p.subject
+	subject.Trackers = selectedNames
+	summary, err := p.service.Upload(ctx, subject)
 	p.mu.Lock()
 	p.released = true
 	p.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
-	results := make([]trackers.RetainedTrackerResult, 0, len(p.preparations))
-	for _, preparation := range p.preparations {
+	results := make([]trackers.RetainedTrackerResult, 0, len(selected))
+	for _, preparation := range selected {
 		results = append(results, trackers.RetainedTrackerResult{Tracker: preparation.Tracker, Summary: summary})
 	}
 	return results, nil

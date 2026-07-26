@@ -209,7 +209,7 @@ func TestPrintCLIWorkflowProjectionsIncludesAuditablePolicyDetails(t *testing.T)
 					},
 				},
 			}},
-		})
+		}, nil)
 	})
 	for _, expected := range []string{
 		"code=unsupported_source decision=ineligible blocking=true reason=Example does not support the release source.",
@@ -241,7 +241,7 @@ func TestPrintCLIWorkflowProjectionsSeparatesTrackersAndHighlightsRenames(t *tes
 					Readiness:            api.ReadinessStatusReady,
 				},
 			},
-		})
+		}, nil)
 	})
 	for _, expected := range []string{
 		"- Alpha: Example.Release.2026-GRP (readiness=ready)\n\n- Beta: RENAMED (readiness=ready)",
@@ -251,6 +251,42 @@ func TestPrintCLIWorkflowProjectionsSeparatesTrackersAndHighlightsRenames(t *tes
 		if !strings.Contains(output, expected) {
 			t.Fatalf("tracker projection output missing %q: %q", expected, output)
 		}
+	}
+}
+
+func TestPrintCLIWorkflowProjectionsMarksInClientTrackerBlocked(t *testing.T) {
+	output := captureStdout(t, func() {
+		printCLIWorkflowProjections(
+			&api.TrackerReleaseProjectionSet{
+				Projections: []api.TrackerReleaseProjection{
+					{
+						TrackerID:         "ALPHA",
+						DisplayName:       "Alpha",
+						UploadReleaseName: "Example.Release.2026.ALPHA-GRP",
+						Readiness:         api.ReadinessStatusReady,
+					},
+					{
+						TrackerID:         "BETA",
+						DisplayName:       "Beta",
+						UploadReleaseName: "Example.Release.2026.BETA-GRP",
+						Readiness:         api.ReadinessStatusReady,
+					},
+				},
+			},
+			&api.DupeAssessment{Results: []api.TrackerDupeAssessment{
+				{
+					TrackerID: "BETA",
+					Matches: []api.DupeMatchProjection{{
+						Name:   "Example.Release.2026.BETA-GRP",
+						Reason: "in_client",
+					}},
+				},
+			}},
+		)
+	})
+	if !strings.Contains(output, "- Alpha: Example.Release.2026.ALPHA-GRP (readiness=ready)") ||
+		!strings.Contains(output, "- Beta: Example.Release.2026.BETA-GRP (readiness=blocked)") {
+		t.Fatalf("post-dupe tracker projection readiness output = %q", output)
 	}
 }
 
@@ -834,6 +870,46 @@ func TestCLIWorkflowUnattendedDefersManualTrackerInputsToCentralPolicy(t *testin
 	}
 	if declined || len(answers) != 0 {
 		t.Fatalf("unattended tracker action answers = %#v declined=%t", answers, declined)
+	}
+}
+
+func TestCLIWorkflowInteractiveLeavesUnreadyTrackerActionLaneLocal(t *testing.T) {
+	t.Parallel()
+
+	session := cliWorkflowSession{
+		intent: cliWorkflowIntent{interaction: api.InteractionModeInteractive},
+		current: releaseworkflow.CommandResult{
+			Workflow: api.ReleaseWorkflow{Revision: 3},
+			Continuation: api.WorkflowContinuation{RequiredActions: []api.RequiredAction{{
+				ID:        "authenticate-alpha",
+				Kind:      api.RequiredActionAuthenticateTracker,
+				Status:    api.RequiredActionStatusPending,
+				TrackerID: "ALPHA",
+			}}},
+		},
+		trackerAuth: func(
+			_ context.Context,
+			_ *bufio.Reader,
+			_ config.Config,
+			_ api.InteractionMode,
+			_ []string,
+			_ api.MetadataPreview,
+			_ api.Logger,
+		) ([]string, error) {
+			return nil, nil
+		},
+	}
+	answers, declined, err := session.collectContinuationActionAnswers(
+		context.Background(),
+		nil,
+		config.Config{},
+		api.NopLogger{},
+	)
+	if err != nil {
+		t.Fatalf("collect unready tracker action: %v", err)
+	}
+	if declined || len(answers) != 0 {
+		t.Fatalf("unready tracker action answers = %#v declined=%t", answers, declined)
 	}
 }
 

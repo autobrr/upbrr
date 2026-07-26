@@ -817,6 +817,7 @@
             }
           },
           "approval": {
+            "deprecated": true,
             "anyOf": [
               {
                 "$ref": "#/components/schemas/UploadApproval"
@@ -844,6 +845,16 @@
           },
           "intent": {
             "$ref": "#/components/schemas/WorkflowIntent"
+          },
+          "trackerApproval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrackerApproval"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -1067,6 +1078,16 @@
           },
           "templateFingerprint": {
             "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "trackerApproval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrackerApprovalSnapshotRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "trackerResults": {
             "type": "array",
@@ -2233,6 +2254,16 @@
           },
           "status": {
             "$ref": "#/components/schemas/StageStatus"
+          },
+          "trackerApproval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrackerApprovalSnapshotRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "workflowId": {
             "$ref": "#/components/schemas/WorkflowID"
@@ -3921,6 +3952,16 @@
           "status": {
             "$ref": "#/components/schemas/WorkflowStatus"
           },
+          "trackerApproval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrackerApprovalSnapshotRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "trackerCatalog": {
             "anyOf": [
               {
@@ -4120,6 +4161,16 @@
               }
             ]
           },
+          "trackerApproval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrackerApprovalSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "uploadResult": {
             "anyOf": [
               {
@@ -4186,6 +4237,7 @@
       },
       "ReleaseWorkflowUploadApproval": {
         "type": "object",
+        "deprecated": true,
         "properties": {
           "confirmed": {
             "type": "boolean"
@@ -4590,6 +4642,7 @@
           "questionnaire",
           "ruleAuthorization",
           "duplicateReview",
+          "trackerApproval",
           "uploadApproval",
           "reprepare",
           "reconciliation"
@@ -4681,6 +4734,16 @@
               }
             ]
           },
+          "trackerApproval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseWorkflowUploadTrackerApproval"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "trackerAuthentication": {
             "anyOf": [
               {
@@ -4712,6 +4775,7 @@
             ]
           },
           "uploadApproval": {
+            "deprecated": true,
             "anyOf": [
               {
                 "$ref": "#/components/schemas/ReleaseWorkflowUploadApproval"
@@ -5409,6 +5473,24 @@
             ]
           }
         }
+      },
+      "ReleaseWorkflowUploadTrackerApproval": {
+        "type": "object",
+        "properties": {
+          "confirmed": {
+            "type": "boolean"
+          },
+          "trackerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerID"
+            }
+          }
+        },
+        "required": [
+          "confirmed",
+          "trackerIds"
+        ]
       },
       "ReleaseWorkflowUploadTrackerAuthentication": {
         "type": "object",
@@ -6825,6 +6907,111 @@
           }
         }
       },
+      "TrackerApproval": {
+        "type": "object",
+        "properties": {
+          "actionId": {
+            "$ref": "#/components/schemas/RequiredActionID"
+          },
+          "dupes": {
+            "$ref": "#/components/schemas/DupeAssessmentRef"
+          },
+          "inputFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "trackerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerID"
+            }
+          }
+        },
+        "required": [
+          "actionId",
+          "dupes",
+          "inputFingerprint",
+          "trackerIds"
+        ]
+      },
+      "TrackerApprovalSnapshot": {
+        "type": "object",
+        "properties": {
+          "approvedTrackerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerID"
+            }
+          },
+          "candidateTrackerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerID"
+            }
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "dupes": {
+            "$ref": "#/components/schemas/DupeAssessmentRef"
+          },
+          "id": {
+            "$ref": "#/components/schemas/TrackerApprovalSnapshotID"
+          },
+          "inputFingerprint": {
+            "$ref": "#/components/schemas/WorkflowFingerprint"
+          },
+          "preflight": {
+            "$ref": "#/components/schemas/TrackerPreflightAssessmentRef"
+          },
+          "projectionSet": {
+            "$ref": "#/components/schemas/TrackerReleaseProjectionSetRef"
+          },
+          "release": {
+            "$ref": "#/components/schemas/ReleaseSnapshotRef"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/WorkflowRevision"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/TrackerSelectionRef"
+          },
+          "workflowId": {
+            "$ref": "#/components/schemas/WorkflowID"
+          }
+        },
+        "required": [
+          "approvedTrackerIds",
+          "candidateTrackerIds",
+          "createdAt",
+          "dupes",
+          "id",
+          "inputFingerprint",
+          "preflight",
+          "projectionSet",
+          "release",
+          "revision",
+          "selection",
+          "workflowId"
+        ]
+      },
+      "TrackerApprovalSnapshotID": {
+        "type": "string"
+      },
+      "TrackerApprovalSnapshotRef": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/TrackerApprovalSnapshotID"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/WorkflowRevision"
+          }
+        },
+        "required": [
+          "id",
+          "revision"
+        ]
+      },
       "TrackerArtifactRequirements": {
         "type": "object",
         "properties": {
@@ -8166,6 +8353,7 @@
       },
       "UploadApproval": {
         "type": "object",
+        "deprecated": true,
         "properties": {
           "actionId": {
             "$ref": "#/components/schemas/RequiredActionID"
@@ -8231,6 +8419,22 @@
           "succeededCount": {
             "type": "integer"
           },
+          "trackerApproval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrackerApprovalSnapshotRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "trackerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerID"
+            }
+          },
           "workflowId": {
             "$ref": "#/components/schemas/WorkflowID"
           }
@@ -8250,6 +8454,7 @@
           "skippedCount",
           "status",
           "succeededCount",
+          "trackerIds",
           "workflowId"
         ]
       },
@@ -8411,6 +8616,16 @@
           },
           "status": {
             "$ref": "#/components/schemas/StageStatus"
+          },
+          "trackerApproval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrackerApprovalSnapshotRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "workflowId": {
             "$ref": "#/components/schemas/WorkflowID"
@@ -8690,6 +8905,16 @@
               }
             ]
           },
+          "trackerApproval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrackerApprovalSnapshotRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "uploadResult": {
             "anyOf": [
               {
@@ -8819,6 +9044,12 @@
             "type": "boolean"
           },
           "trackerIds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackerID"
+            }
+          },
+          "uploadTrackerIds": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/TrackerID"
@@ -9011,6 +9242,7 @@
                     }
                   },
                   "approval": {
+                    "deprecated": true,
                     "anyOf": [
                       {
                         "$ref": "#/components/schemas/UploadApproval"
@@ -9035,6 +9267,16 @@
                   },
                   "intent": {
                     "$ref": "#/components/schemas/WorkflowIntent"
+                  },
+                  "trackerApproval": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/TrackerApproval"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -9401,17 +9643,20 @@
                     }
                   }
                 },
-                "uploadApproval": {
-                  "summary": "Confirm exact server-side upload approval",
+                "trackerApproval": {
+                  "summary": "Approve exact post-dupe trackers",
                   "value": {
                     "action": {
                       "id": "action-example",
-                      "workflowRevision": 18
+                      "workflowRevision": 14
                     },
                     "response": {
-                      "kind": "uploadApproval",
-                      "uploadApproval": {
-                        "confirmed": true
+                      "kind": "trackerApproval",
+                      "trackerApproval": {
+                        "confirmed": true,
+                        "trackerIds": [
+                          "EXAMPLE"
+                        ]
                       }
                     }
                   }

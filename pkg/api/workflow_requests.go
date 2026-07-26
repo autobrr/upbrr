@@ -443,23 +443,46 @@ func (r ResetReleaseWorkflowDescriptionOverrideRequest) Validate() error {
 // DryRunReleaseWorkflowRequest prepares safe reports without tracker submission.
 type DryRunReleaseWorkflowRequest struct {
 	ReleaseWorkflowCommandContext
-	NoSeed bool `json:"noSeed"`
+	NoSeed     bool        `json:"noSeed"`
+	TrackerIDs []TrackerID `json:"trackerIds,omitempty"`
 }
 
 // Validate verifies exact workflow authority.
 func (r DryRunReleaseWorkflowRequest) Validate() error {
-	return r.ReleaseWorkflowCommandContext.Validate()
+	if err := r.ReleaseWorkflowCommandContext.Validate(); err != nil {
+		return err
+	}
+	return validateOptionalWorkflowTrackerIDs(r.TrackerIDs)
 }
 
 // UploadReleaseWorkflowRequest directly prepares and executes eligible trackers.
 type UploadReleaseWorkflowRequest struct {
 	ReleaseWorkflowCommandContext
-	NoSeed bool `json:"noSeed"`
+	NoSeed     bool        `json:"noSeed"`
+	TrackerIDs []TrackerID `json:"trackerIds,omitempty"`
 }
 
 // Validate verifies exact workflow authority.
 func (r UploadReleaseWorkflowRequest) Validate() error {
-	return r.ReleaseWorkflowCommandContext.Validate()
+	if err := r.ReleaseWorkflowCommandContext.Validate(); err != nil {
+		return err
+	}
+	return validateOptionalWorkflowTrackerIDs(r.TrackerIDs)
+}
+
+func validateOptionalWorkflowTrackerIDs(trackerIDs []TrackerID) error {
+	seen := make(map[TrackerID]struct{}, len(trackerIDs))
+	for _, trackerID := range trackerIDs {
+		trackerID = TrackerID(strings.ToUpper(strings.TrimSpace(string(trackerID))))
+		if trackerID == "" {
+			return errors.New("tracker ID is required")
+		}
+		if _, duplicate := seen[trackerID]; duplicate {
+			return fmt.Errorf("tracker %s appears more than once", trackerID)
+		}
+		seen[trackerID] = struct{}{}
+	}
+	return nil
 }
 
 // RetryReleaseWorkflowUploadRequest retries failed trackers from an exact prior result.

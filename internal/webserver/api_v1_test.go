@@ -366,7 +366,7 @@ func TestAPIV1CompositeUploadCreateAndFeedbackContracts(t *testing.T) {
 		http.MethodPost,
 		"/api/v1/uploads/workflow-upload/feedback",
 		strings.NewReader(
-			`{"action":{"id":"action-example","workflowRevision":7},"response":{"kind":"uploadApproval","uploadApproval":{"confirmed":true}}}`,
+			`{"action":{"id":"action-example","workflowRevision":7},"response":{"kind":"trackerApproval","trackerApproval":{"confirmed":true,"trackerIds":["EXAMPLE"]}}}`,
 		),
 	)
 	feedback.Header.Set("Authorization", "Bearer "+apiV1TestToken)
@@ -378,7 +378,7 @@ func TestAPIV1CompositeUploadCreateAndFeedbackContracts(t *testing.T) {
 		t.Fatalf("composite feedback status=%d body=%s", feedbackResponse.Code, feedbackResponse.Body.String())
 	}
 	if coreFake.feedbackID != "workflow-upload" || coreFake.feedback.IdempotencyKey != "upload-feedback-1" ||
-		coreFake.feedback.Response.Kind != api.ReleaseWorkflowUploadFeedbackUploadApproval {
+		coreFake.feedback.Response.Kind != api.ReleaseWorkflowUploadFeedbackTrackerApproval {
 		t.Fatalf("composite feedback mapping = id=%q feedback=%#v", coreFake.feedbackID, coreFake.feedback)
 	}
 	if got := feedbackResponse.Header().Get("ETag"); got != `"8"` {
@@ -436,7 +436,7 @@ func TestAPIV1CompositeUploadRejectsMissingAuthorityAndUnknownFields(t *testing.
 		http.MethodPost,
 		"/api/v1/uploads/workflow-upload/feedback",
 		strings.NewReader(
-			`{"action":{"id":"action-example","workflowRevision":7},"response":{"kind":"uploadApproval","uploadApproval":{"confirmed":true}}}`,
+			`{"action":{"id":"action-example","workflowRevision":7},"response":{"kind":"trackerApproval","trackerApproval":{"confirmed":true,"trackerIds":["EXAMPLE"]}}}`,
 		),
 	)
 	stale.Header.Set("Authorization", "Bearer "+apiV1TestToken)

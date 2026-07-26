@@ -32,7 +32,14 @@ func (s *Server) registerReleaseWorkflowAppRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		result, err := s.backend.continueReleaseWorkflow(r.Context(), current.ID, request)
+		result, err := s.backend.continueReleaseWorkflow(
+			releaseworkflow.WithTrackerDecisionMode(
+				r.Context(),
+				releaseworkflow.TrackerDecisionModeWebUIControls,
+			),
+			current.ID,
+			request,
+		)
 		if err != nil {
 			writeAppError(w, err)
 			return

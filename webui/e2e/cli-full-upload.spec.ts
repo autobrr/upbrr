@@ -10,7 +10,66 @@ import {
   repoRoot,
 } from "./helpers/e2eHarness";
 
-test("CLI full upload uses local fake services and records an upload", async () => {
+test("CLI full upload approves trackers before downstream work", async () => {
+  const workspace = await createE2EWorkspace();
+  try {
+    const result = await runCLI(
+      [
+        "--config",
+        workspace.configPath,
+        "--trackers",
+        releaseWorkflowParityFixture.trackerID,
+        "--no-seed",
+        "--unattended_confirm",
+        workspace.sourcePath,
+      ],
+      workspace.env,
+      "y\ny\n",
+    );
+    expect(result.code, result.output).toBe(0);
+    expect(result.output).toContain("Duplicate check:");
+    expect(result.output).toMatch(/Use .* as .*\? \[y\/N\]:/);
+    expect(result.output).toMatch(/uploaded|complete|Upload/i);
+    expect(workspace.fake.counters.trackerUploads).toBe(
+      releaseWorkflowParityFixture.expectedTrackerUploads,
+    );
+    expect(workspace.fake.counters.clientSearches).toBe(
+      releaseWorkflowParityFixture.expectedClientSearches,
+    );
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
+test("CLI skips an auth-blocked tracker while uploading a ready sibling", async () => {
+  const workspace = await createE2EWorkspace();
+  workspace.env.UPBRR_E2E_AUTH_REQUIRED_TRACKERS = "HDS";
+  try {
+    const result = await runCLI(
+      [
+        "--config",
+        workspace.configPath,
+        "--trackers",
+        `${releaseWorkflowParityFixture.trackerID},HDS`,
+        "--no-seed",
+        "--unattended_confirm",
+        workspace.sourcePath,
+      ],
+      workspace.env,
+      "y\ny\n",
+    );
+    expect(result.code, result.output).toBe(0);
+    expect(result.output).toContain("Skipping HDS before dupe check");
+    expect(result.output).not.toContain("tracker authentication remains incomplete");
+    expect(workspace.fake.counters.trackerUploads).toBe(1);
+    expect(workspace.fake.counters.clientInjections).toBe(0);
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
+test("CLI strict unattended stops before downstream work", async () => {
   const workspace = await createE2EWorkspace();
   try {
     const result = await runCLI(
@@ -25,14 +84,11 @@ test("CLI full upload uses local fake services and records an upload", async () 
       ],
       workspace.env,
     );
-    expect(result.code, result.output).toBe(0);
-    expect(result.output).toMatch(/uploaded|complete|Upload/i);
-    expect(workspace.fake.counters.trackerUploads).toBe(
-      releaseWorkflowParityFixture.expectedTrackerUploads,
+    expect(result.code, result.output).not.toBe(0);
+    expect(result.output).toContain(
+      "strict unattended upload requires global action approve_trackers",
     );
-    expect(workspace.fake.counters.clientSearches).toBe(
-      releaseWorkflowParityFixture.expectedClientSearches,
-    );
+    expect(workspace.fake.counters.trackerUploads).toBe(0);
     expect(workspace.fake.counters.clientInjections).toBe(0);
   } finally {
     await workspace.cleanup();
@@ -49,10 +105,11 @@ test("CLI debug injects into the client by default", async () => {
         "--trackers",
         releaseWorkflowParityFixture.trackerID,
         "--debug",
-        "--unattended",
+        "--unattended_confirm",
         workspace.sourcePath,
       ],
       workspace.env,
+      "y\ny\n",
     );
     expect(debug.code, debug.output).toBe(0);
     expect(debug.output).toContain("client injection was attempted for each ready tracker");
@@ -74,10 +131,11 @@ test("CLI debug -ns skips client injection", async () => {
         releaseWorkflowParityFixture.trackerID,
         "--debug",
         "-ns",
-        "--unattended",
+        "--unattended_confirm",
         workspace.sourcePath,
       ],
       workspace.env,
+      "y\ny\n",
     );
     expect(noSeed.code, noSeed.output).toBe(0);
     expect(noSeed.output).toContain("tracker uploads and client injection are disabled");
@@ -91,17 +149,19 @@ test("CLI debug -ns skips client injection", async () => {
 function runCLI(
   args: string[],
   env: NodeJS.ProcessEnv,
+  input = "",
 ): Promise<{ code: number | null; output: string }> {
   return new Promise((resolve) => {
     const child = spawn(e2eBinary, args, {
       cwd: repoRoot,
       env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
     const chunks: string[] = [];
     child.stdout?.on("data", (chunk) => chunks.push(String(chunk)));
     child.stderr?.on("data", (chunk) => chunks.push(String(chunk)));
+    child.stdin?.end(input);
     child.on("close", (code) => resolve({ code, output: chunks.join("") }));
   });
 }

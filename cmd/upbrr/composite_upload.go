@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/uploadinput"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -46,11 +47,17 @@ func (s *cliWorkflowSession) completeComposite(
 	}
 	s.current = current
 
+	printProjections := cliWorkflowProjectionOutputEnabled(
+		cfg.Logging.Level,
+		s.uploadRequest.Options.RunLogLevel,
+		debug,
+	)
 	var projectionRevision api.WorkflowRevision
 	for range 64 {
-		if s.current.Projections != nil && s.current.Projections.Revision != projectionRevision {
+		if printProjections && s.current.Projections != nil && s.current.Dupes != nil &&
+			s.current.Projections.Revision != projectionRevision {
 			projectionRevision = s.current.Projections.Revision
-			printCLIWorkflowProjections(s.current.Projections)
+			printCLIWorkflowProjections(s.current.Projections, s.current.Dupes)
 		}
 		if debug && s.current.DryRun != nil {
 			printCLIWorkflowDryRun(*s.current.DryRun, s.intent.noSeed, s.current.Projections)
@@ -64,7 +71,7 @@ func (s *cliWorkflowSession) completeComposite(
 			return 0, nil
 		}
 
-		action := firstPendingCLICompositeAction(s.current.Workflow.RequiredActions)
+		action := firstPendingCLICompositeAction(s.current.Continuation.RequiredActions)
 		if action == nil {
 			return 0, cliWorkflowContinuationError(s.current)
 		}
@@ -91,6 +98,11 @@ func (s *cliWorkflowSession) completeComposite(
 		s.current = next
 	}
 	return 0, errors.New("upbrr: composite upload exceeded the transition limit")
+}
+
+func cliWorkflowProjectionOutputEnabled(configured string, runOverride string, debug bool) bool {
+	level, err := logging.ParseLevel(logging.ResolveEffectiveLevel(configured, runOverride, debug))
+	return err == nil && level >= logging.LevelDebug
 }
 
 func resolveCLICompositeUploadInputs(
@@ -181,7 +193,7 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 			api.ReleaseWorkflowUploadFeedbackRescanConfirmation,
 		)
 	case api.RequiredActionAuthenticateTracker, api.RequiredActionProvideTwoFactor:
-		ready, err := ensureCLITrackerAuthBeforeDupeCheckWithLogger(
+		ready, err := s.ensureTrackerAuthBeforeDupeCheck(
 			ctx,
 			reader,
 			cfg,
@@ -193,10 +205,7 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 		if err != nil {
 			return feedback, false, err
 		}
-		if len(ready) != 1 {
-			return feedback, false, errors.New("upbrr: tracker authentication remains incomplete")
-		}
-		if action.Kind == api.RequiredActionAuthenticateTracker {
+		if action.Kind == api.RequiredActionAuthenticateTracker || len(ready) != 1 {
 			feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{
 				Kind: api.ReleaseWorkflowUploadFeedbackTrackerAuthentication,
 				TrackerAuthentication: &api.ReleaseWorkflowUploadTrackerAuthentication{
@@ -228,8 +237,10 @@ func (s *cliWorkflowSession) collectCompositeUploadFeedback(
 		)
 	case api.RequiredActionReviewDuplicates:
 		return s.collectCompositeDuplicateFeedback(reader, action, feedback)
-	case api.RequiredActionApproveUpload:
-		return s.collectCompositeUploadApproval(reader, feedback)
+	case api.RequiredActionApproveTrackers:
+		return s.collectCompositeTrackerApproval(reader, logger, action, feedback)
+	case api.RequiredActionApproveUpload: //nolint:staticcheck // Reject retained v1 actions explicitly.
+		return feedback, false, errors.New("upbrr: obsolete final upload approval requires a fresh workflow continuation")
 	case api.RequiredActionReprepare:
 		return compositeCLIConfirmationFeedback(
 			reader,
@@ -286,52 +297,87 @@ func compositeCLIConfirmationFeedback(
 		api.ReleaseWorkflowUploadFeedbackTrackerInput,
 		api.ReleaseWorkflowUploadFeedbackQuestionnaire,
 		api.ReleaseWorkflowUploadFeedbackDuplicateReview,
-		api.ReleaseWorkflowUploadFeedbackUploadApproval,
+		api.ReleaseWorkflowUploadFeedbackTrackerApproval,
+		api.ReleaseWorkflowUploadFeedbackUploadApproval, //nolint:staticcheck // Reject retained v1 feedback explicitly.
 		api.ReleaseWorkflowUploadFeedbackReconciliation:
 		return feedback, false, fmt.Errorf("upbrr: unsupported confirmation feedback %s", kind)
 	}
 	return feedback, false, nil
 }
 
-func (s *cliWorkflowSession) collectCompositeUploadApproval(
+func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 	reader *bufio.Reader,
+	logger api.Logger,
+	action api.RequiredAction,
 	feedback api.ReleaseWorkflowUploadFeedback,
 ) (api.ReleaseWorkflowUploadFeedback, bool, error) {
-	if s.current.DryRun == nil {
-		return feedback, false, errors.New("upbrr: exact upload review is unavailable")
+	if s.current.Projections == nil || s.current.Dupes == nil {
+		return feedback, false, errors.New("upbrr: post-dupe tracker review is unavailable")
 	}
-	approved := make([]api.TrackerID, 0, s.current.DryRun.SucceededCount)
-	prompted := 0
-	for _, report := range s.current.DryRun.Reports {
-		if report.Status != api.StageStatusCompleted {
-			continue
+	projectionByTracker := make(map[api.TrackerID]api.TrackerReleaseProjection, len(s.current.Projections.Projections))
+	for _, projection := range s.current.Projections.Projections {
+		projectionByTracker[projection.TrackerID] = projection
+	}
+	dupeByTracker := make(map[api.TrackerID]api.TrackerDupeAssessment, len(s.current.Dupes.Results))
+	for _, result := range s.current.Dupes.Results {
+		dupeByTracker[result.TrackerID] = result
+	}
+	approved := make([]api.TrackerID, 0, len(action.Options))
+	for index, option := range action.Options {
+		trackerID := api.TrackerID(strings.ToUpper(strings.TrimSpace(option.Value)))
+		projection, ok := projectionByTracker[trackerID]
+		if !ok {
+			return feedback, false, fmt.Errorf("upbrr: tracker approval candidate %s has no current projection", trackerID)
 		}
-		if prompted > 0 {
+		if index > 0 {
 			fmt.Println()
 		}
-		prompted++
-		tracker := strings.TrimSpace(report.DisplayName)
+		tracker := strings.TrimSpace(projection.DisplayName)
 		if tracker == "" {
-			tracker = string(report.TrackerID)
+			tracker = string(trackerID)
 		}
-		prompt := fmt.Sprintf("Upload to %s as %q? [y/N]: ", tracker, report.UploadReleaseName)
+		dupe := dupeByTracker[trackerID]
+		fmt.Printf("Tracker: %s (%s)\n", tracker, trackerID)
+		fmt.Printf("Upload name: %q\n", projection.UploadReleaseName)
+		fmt.Printf("Duplicate check: decision=%s matches=%d\n", dupe.Decision, len(dupe.Matches))
+		fmt.Printf(
+			"Requirements: screenshots=%d dvd_menus=%d image_hosting=%t descriptions=%t\n",
+			projection.Artifacts.ScreenshotCount,
+			projection.Artifacts.DVDMenuCount,
+			projection.Artifacts.ImageHosting,
+			projection.Artifacts.Description,
+		)
+		if logger != nil {
+			logger.Debugf(
+				"tracker approval: tracker=%s screenshots=%d dvd_menus=%d image_hosting=%t descriptions=%t",
+				trackerID,
+				projection.Artifacts.ScreenshotCount,
+				projection.Artifacts.DVDMenuCount,
+				projection.Artifacts.ImageHosting,
+				projection.Artifacts.Description,
+			)
+		}
+		prompt := fmt.Sprintf("Use %s as %q? [y/N]: ", tracker, projection.UploadReleaseName)
 		confirmed, err := promptYesNo(reader, prompt, false)
 		if err != nil {
 			return feedback, false, err
 		}
 		if confirmed {
-			approved = append(approved, report.TrackerID)
+			approved = append(approved, trackerID)
 		}
 	}
-	if prompted == 0 {
-		return feedback, false, errors.New("upbrr: exact upload review contains no ready tracker uploads")
+	if len(action.Options) == 0 {
+		return feedback, false, errors.New("upbrr: post-dupe tracker review contains no candidates")
 	}
 	if len(approved) == 0 {
 		return feedback, true, nil
 	}
+	if logger != nil {
+		logger.Infof("tracker approval: decision=approve count=%d candidates=%d", len(approved), len(action.Options))
+	}
 	feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{
-		Kind: api.ReleaseWorkflowUploadFeedbackUploadApproval,
-		UploadApproval: &api.ReleaseWorkflowUploadApproval{
+		Kind: api.ReleaseWorkflowUploadFeedbackTrackerApproval,
+		TrackerApproval: &api.ReleaseWorkflowUploadTrackerApproval{
 			Confirmed:  true,
 			TrackerIDs: approved,
 		},

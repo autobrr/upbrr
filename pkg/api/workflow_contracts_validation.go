@@ -786,6 +786,71 @@ func (s DupeAssessment) Validate() error {
 	return nil
 }
 
+// Clone returns a detached tracker-approval snapshot.
+func (s TrackerApprovalSnapshot) Clone() (TrackerApprovalSnapshot, error) {
+	return cloneWorkflowValue(s)
+}
+
+// Validate verifies exact post-dupe lineage and explicit candidate/approved sets.
+func (s TrackerApprovalSnapshot) Validate() error {
+	if err := validateSnapshotIdentity(string(s.ID), s.Revision, s.CreatedAt); err != nil {
+		return fmt.Errorf("tracker approval: %w", err)
+	}
+	if err := validateWorkflowIdentity(s.WorkflowID, s.Revision); err != nil {
+		return fmt.Errorf("tracker approval: %w", err)
+	}
+	for _, ref := range []struct {
+		id       string
+		revision WorkflowRevision
+		label    string
+	}{
+		{string(s.Release.ID), s.Release.Revision, "release"},
+		{string(s.Selection.ID), s.Selection.Revision, "tracker selection"},
+		{string(s.ProjectionSet.ID), s.ProjectionSet.Revision, "tracker projections"},
+		{string(s.Preflight.ID), s.Preflight.Revision, "tracker preflight"},
+		{string(s.Dupes.ID), s.Dupes.Revision, "duplicate assessment"},
+	} {
+		if err := validateTypedRef(ref.id, ref.revision, ref.label); err != nil {
+			return fmt.Errorf("tracker approval: %w", err)
+		}
+	}
+	if err := validateWorkflowFingerprint(s.InputFingerprint); err != nil {
+		return fmt.Errorf("tracker approval input: %w", err)
+	}
+	if len(s.CandidateTrackerIDs) == 0 || len(s.ApprovedTrackerIDs) == 0 {
+		return errors.New("tracker approval requires non-empty candidate and approved tracker IDs")
+	}
+	candidates := make(map[TrackerID]int, len(s.CandidateTrackerIDs))
+	for index, trackerID := range s.CandidateTrackerIDs {
+		trackerID = normalizeTrackerID(trackerID)
+		if trackerID == "" {
+			return errors.New("tracker approval candidate ID is required")
+		}
+		if _, duplicate := candidates[trackerID]; duplicate {
+			return fmt.Errorf("tracker approval contains duplicate candidate %s", trackerID)
+		}
+		candidates[trackerID] = index
+	}
+	approved := make(map[TrackerID]struct{}, len(s.ApprovedTrackerIDs))
+	priorCandidateIndex := -1
+	for _, trackerID := range s.ApprovedTrackerIDs {
+		trackerID = normalizeTrackerID(trackerID)
+		candidateIndex, candidate := candidates[trackerID]
+		if !candidate {
+			return fmt.Errorf("tracker approval includes non-candidate tracker %s", trackerID)
+		}
+		if candidateIndex <= priorCandidateIndex {
+			return errors.New("tracker approval IDs must preserve candidate order")
+		}
+		if _, duplicate := approved[trackerID]; duplicate {
+			return fmt.Errorf("tracker approval contains duplicate approved tracker %s", trackerID)
+		}
+		approved[trackerID] = struct{}{}
+		priorCandidateIndex = candidateIndex
+	}
+	return nil
+}
+
 // Clone returns a detached media-artifact set.
 func (s MediaArtifactSet) Clone() (MediaArtifactSet, error) { return cloneWorkflowValue(s) }
 
@@ -801,6 +866,9 @@ func (s MediaArtifactSet) Validate() error {
 		return fmt.Errorf("media artifacts: %w", err)
 	}
 	if err := validateTypedRef(s.ProjectionSet.ID, s.ProjectionSet.Revision, "tracker projections"); err != nil {
+		return fmt.Errorf("media artifacts: %w", err)
+	}
+	if err := validateOptionalTrackerApprovalRef(s.TrackerApproval); err != nil {
 		return fmt.Errorf("media artifacts: %w", err)
 	}
 	if strings.TrimSpace(s.ReleaseRef.SourcePath) == "" || s.ReleaseRef.Generation == 0 {
@@ -880,6 +948,9 @@ func (s DescriptionSet) Validate() error {
 		return fmt.Errorf("description set: %w", err)
 	}
 	if err := validateTypedRef(s.ProjectionSet.ID, s.ProjectionSet.Revision, "tracker projections"); err != nil {
+		return fmt.Errorf("description set: %w", err)
+	}
+	if err := validateOptionalTrackerApprovalRef(s.TrackerApproval); err != nil {
 		return fmt.Errorf("description set: %w", err)
 	}
 	if strings.TrimSpace(s.ReleaseRef.SourcePath) == "" || s.ReleaseRef.Generation == 0 {
@@ -993,6 +1064,9 @@ func (s UploadPlan) Validate() error {
 	}
 	if strings.TrimSpace(s.ReleaseRef.SourcePath) == "" || s.ReleaseRef.Generation == 0 {
 		return errors.New("upload plan requires an exact release ref")
+	}
+	if err := validateOptionalTrackerApprovalRef(s.TrackerApproval); err != nil {
+		return fmt.Errorf("upload plan: %w", err)
 	}
 	if s.Media == nil || s.Descriptions == nil {
 		return errors.New("upload plan requires exact media and description refs")
@@ -1162,17 +1236,43 @@ func (s UploadDryRunResult) Validate() error {
 	if err := validateWorkflowFingerprint(s.InputFingerprint); err != nil {
 		return fmt.Errorf("upload dry run input: %w", err)
 	}
+	if err := validateOptionalTrackerApprovalRef(s.TrackerApproval); err != nil {
+		return fmt.Errorf("upload dry run: %w", err)
+	}
+	if len(s.TrackerIDs) == 0 {
+		return errors.New("upload dry run requires target tracker IDs")
+	}
+	targets := make(map[TrackerID]struct{}, len(s.TrackerIDs))
+	for _, trackerID := range s.TrackerIDs {
+		trackerID = normalizeTrackerID(trackerID)
+		if trackerID == "" {
+			return errors.New("upload dry run tracker ID is required")
+		}
+		if _, duplicate := targets[trackerID]; duplicate {
+			return fmt.Errorf("upload dry run contains duplicate target tracker %s", trackerID)
+		}
+		targets[trackerID] = struct{}{}
+	}
 	seen := make(map[TrackerID]struct{}, len(s.Reports))
+	if len(s.Reports) != len(s.TrackerIDs) {
+		return errors.New("upload dry run requires one report per target tracker")
+	}
 	failed := false
 	succeeded := false
 	skipped := false
 	succeededCount := 0
 	failedCount := 0
 	skippedCount := 0
-	for _, report := range s.Reports {
+	for index, report := range s.Reports {
 		id := normalizeTrackerID(report.TrackerID)
 		if id == "" || strings.TrimSpace(report.UploadReleaseName) == "" {
 			return errors.New("upload dry-run report requires tracker id and upload release name")
+		}
+		if _, targeted := targets[id]; !targeted {
+			return fmt.Errorf("upload dry run report includes untargeted tracker %s", id)
+		}
+		if id != normalizeTrackerID(s.TrackerIDs[index]) {
+			return errors.New("upload dry run report order does not match target tracker order")
 		}
 		if _, ok := seen[id]; ok {
 			return fmt.Errorf("upload dry run contains duplicate tracker %s", id)
@@ -1294,6 +1394,9 @@ func (s UploadResult) Validate() error {
 	if err := validateWorkflowFingerprint(s.InputFingerprint); err != nil {
 		return fmt.Errorf("upload result input: %w", err)
 	}
+	if err := validateOptionalTrackerApprovalRef(s.TrackerApproval); err != nil {
+		return fmt.Errorf("upload result: %w", err)
+	}
 	if s.Status != StageStatusCompleted && s.Status != StageStatusFailed {
 		return errors.New("upload result must have completed or failed status")
 	}
@@ -1334,6 +1437,16 @@ func (s UploadResult) Validate() error {
 	return nil
 }
 
+func validateOptionalTrackerApprovalRef(ref *TrackerApprovalSnapshotRef) error {
+	if ref == nil {
+		return nil
+	}
+	if err := validateTypedRef(ref.ID, ref.Revision, "tracker approval"); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Clone returns a detached release workflow aggregate.
 func (w ReleaseWorkflow) Clone() (ReleaseWorkflow, error) { return cloneWorkflowValue(w) }
 
@@ -1359,6 +1472,10 @@ func (w ReleaseWorkflow) Validate() error {
 	}
 	if w.Dupes != nil && (w.TrackerProjections == nil || w.Selection == nil) {
 		return errors.New("dupe assessment requires tracker projections and selection")
+	}
+	if w.TrackerApproval != nil && (w.Release == nil || w.Selection == nil || w.TrackerProjections == nil ||
+		w.TrackerPreflight == nil || w.Dupes == nil) {
+		return errors.New("tracker approval requires exact post-dupe dependencies")
 	}
 	if (w.Media != nil || w.Descriptions != nil) && w.TrackerProjections == nil {
 		return errors.New("media and descriptions require tracker projections")

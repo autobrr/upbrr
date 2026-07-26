@@ -157,12 +157,14 @@ type WorkflowStageFixtures = Readonly<{
   dryRunUploads(
     current: ReleaseWorkflowCurrent,
     noSeed: boolean,
+    trackerIDs: readonly string[],
     idempotencyKey: string,
     signal: AbortSignal,
   ): Promise<ReleaseWorkflowCurrent>;
   executeUploads(
     current: ReleaseWorkflowCurrent,
     noSeed: boolean,
+    trackerIDs: readonly string[],
     idempotencyKey: string,
     signal: AbortSignal,
   ): Promise<ReleaseWorkflowCurrent>;
@@ -286,28 +288,19 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
           next = await activePorts.dryRunUploads(
             current,
             request.intent.noSeed || false,
+            request.intent.uploadTrackerIds || [],
             request.idempotencyKey,
             signal,
           );
           if (!next.dryRun) {
             const revision = Math.max(next.workflow.revision, current.workflow.revision + 1);
-            const action = {
-              id: `${workflowID}-approve-upload`,
-              kind: "approve_upload",
-              prompt: "Approve exact upload.",
-              status: "pending",
-              workflowRevision: revision,
-              createdAt: "2026-07-20T00:00:00Z",
-            };
             next = {
               ...next,
               workflow: {
                 ...next.workflow,
                 revision,
                 dryRun: { id: `${workflowID}-dry-run`, revision },
-                requiredActions: [action],
               },
-              continuation: { ...next.continuation, requiredActions: [action] },
               dryRun: {
                 id: `${workflowID}-dry-run`,
                 workflowId: workflowID,
@@ -318,6 +311,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
                 descriptions: { id: `${workflowID}-descriptions`, revision: 1 },
                 inputFingerprint: "2".repeat(64),
                 noSeed: request.intent.noSeed || false,
+                trackerIds: request.intent.uploadTrackerIds || [],
                 reports: [],
                 succeededCount: 0,
                 failedCount: 0,
@@ -334,6 +328,7 @@ const workflowPorts = (overrides: Partial<TestWorkflowPorts> = {}): TestWorkflow
           next = await activePorts.executeUploads(
             current,
             request.intent.noSeed || false,
+            request.intent.uploadTrackerIds || [],
             request.idempotencyKey,
             signal,
           );
@@ -675,6 +670,7 @@ describe("useReleaseSession", () => {
     expect(dryRunUploads).toHaveBeenCalledWith(
       expect.objectContaining({ workflow: expect.objectContaining({ id: workflowID }) }),
       true,
+      [],
       expect.any(String),
       expect.any(AbortSignal),
     );
@@ -707,6 +703,7 @@ describe("useReleaseSession", () => {
     expect(executeUploads).toHaveBeenCalledWith(
       expect.objectContaining({ workflow: expect.objectContaining({ id: workflowID }) }),
       false,
+      [],
       expect.any(String),
       expect.any(AbortSignal),
     );
@@ -1219,6 +1216,7 @@ describe("useReleaseSession", () => {
         workflow: expect.objectContaining({ id: "workflow-browser-flow" }),
       }),
       false,
+      ["AITHER"],
       expect.any(String),
       expect.any(AbortSignal),
     );
@@ -1793,6 +1791,7 @@ describe("useReleaseSession", () => {
           descriptions: { id: "descriptions-1", revision: 1 },
           inputFingerprint: "1".repeat(64),
           noSeed,
+          trackerIds: ["AITHER"],
           reports: [],
           succeededCount: 0,
           failedCount: 0,
@@ -1814,6 +1813,7 @@ describe("useReleaseSession", () => {
     expect(dryRunUploads).toHaveBeenCalledWith(
       expect.anything(),
       false,
+      ["AITHER"],
       expect.any(String),
       expect.any(AbortSignal),
     );

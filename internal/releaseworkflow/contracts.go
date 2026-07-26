@@ -279,9 +279,11 @@ type RetainedUploadExecution interface {
 // UploadPlanBuildOptions controls side effects and execution policy for one
 // retained upload preparation.
 type UploadPlanBuildOptions struct {
-	DryRun     bool
-	NoSeed     bool
-	TrackerIDs []api.TrackerID
+	DryRun               bool
+	NoSeed               bool
+	TrackerIDs           []api.TrackerID
+	TrackerApproval      *api.TrackerApprovalSnapshotRef
+	AuthorityFingerprint api.WorkflowFingerprint
 }
 
 // UploadPlanBuilder creates the public review projection and the exact private
@@ -380,6 +382,7 @@ type Application interface {
 type State struct {
 	OwnerID                string
 	ProcessEpoch           string
+	TrackerDecisionMode    TrackerDecisionMode
 	Workflow               api.ReleaseWorkflow
 	FactInstructions       map[api.ReleaseFactInstructionSnapshotID]api.ReleaseFactInstructionSnapshot
 	Releases               map[api.ReleaseSnapshotID]api.ReleaseSnapshot
@@ -390,6 +393,7 @@ type State struct {
 	Projections            map[api.TrackerReleaseProjectionSetID]api.TrackerReleaseProjectionSet
 	Preflights             map[api.TrackerPreflightAssessmentID]api.TrackerPreflightAssessment
 	Dupes                  map[api.DupeAssessmentID]api.DupeAssessment
+	TrackerApprovals       map[api.TrackerApprovalSnapshotID]api.TrackerApprovalSnapshot
 	Media                  map[api.MediaArtifactSetID]api.MediaArtifactSet
 	Descriptions           map[api.DescriptionSetID]api.DescriptionSet
 	DryRuns                map[api.UploadDryRunResultID]api.UploadDryRunResult
@@ -424,11 +428,12 @@ type Command interface {
 // CreateWorkflowCommand creates fact instructions and a draft aggregate.
 // Composite, when set, installs retained composite state in the same mutation.
 type CreateWorkflowCommand struct {
-	WorkflowID         api.WorkflowID
-	Instructions       api.ReleaseFactInstructions
-	IdempotencyKey     string
-	RequestFingerprint api.WorkflowFingerprint
-	Composite          *compositeUploadSession
+	WorkflowID          api.WorkflowID
+	Instructions        api.ReleaseFactInstructions
+	IdempotencyKey      string
+	RequestFingerprint  api.WorkflowFingerprint
+	TrackerDecisionMode TrackerDecisionMode
+	Composite           *compositeUploadSession
 }
 
 func (CreateWorkflowCommand) commandName() string              { return "create" }
@@ -436,11 +441,13 @@ func (CreateWorkflowCommand) userIntent()                      {}
 func (CreateWorkflowCommand) operationKind() api.OperationKind { return api.OperationKindUnknown }
 func (c CreateWorkflowCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
 	return canonicalCommandFingerprint(struct {
-		Instructions       api.ReleaseFactInstructions
-		RequestFingerprint api.WorkflowFingerprint
+		Instructions        api.ReleaseFactInstructions
+		RequestFingerprint  api.WorkflowFingerprint
+		TrackerDecisionMode TrackerDecisionMode
 	}{
-		Instructions:       c.Instructions,
-		RequestFingerprint: c.RequestFingerprint,
+		Instructions:        c.Instructions,
+		RequestFingerprint:  c.RequestFingerprint,
+		TrackerDecisionMode: normalizeTrackerDecisionMode(c.TrackerDecisionMode),
 	})
 }
 
@@ -622,6 +629,21 @@ type DecideDuplicatesCommand struct {
 	ExpectedRevision api.WorkflowRevision
 	Decisions        map[api.TrackerID]api.DupeDecision
 	IdempotencyKey   string
+}
+
+// ApproveTrackersCommand publishes exact post-dupe tracker authority.
+type ApproveTrackersCommand struct {
+	WorkflowID       api.WorkflowID
+	ExpectedRevision api.WorkflowRevision
+	Approval         api.TrackerApproval
+	IdempotencyKey   string
+}
+
+func (ApproveTrackersCommand) commandName() string              { return "approve_trackers" }
+func (ApproveTrackersCommand) userIntent()                      {}
+func (ApproveTrackersCommand) operationKind() api.OperationKind { return api.OperationKindUnknown }
+func (c ApproveTrackersCommand) commandFingerprint() (api.WorkflowFingerprint, error) {
+	return canonicalCommandFingerprint(c.Approval)
 }
 
 func (DecideDuplicatesCommand) commandName() string              { return "decide_duplicates" }
@@ -873,6 +895,7 @@ type DryRunUploadsCommand struct {
 	WorkflowID       api.WorkflowID
 	ExpectedRevision api.WorkflowRevision
 	NoSeed           bool
+	TrackerIDs       []api.TrackerID
 	IdempotencyKey   string
 }
 
@@ -883,7 +906,8 @@ func (c DryRunUploadsCommand) commandFingerprint() (api.WorkflowFingerprint, err
 	return canonicalCommandFingerprint(struct {
 		ExpectedRevision api.WorkflowRevision
 		NoSeed           bool
-	}{c.ExpectedRevision, c.NoSeed})
+		TrackerIDs       []api.TrackerID
+	}{c.ExpectedRevision, c.NoSeed, c.TrackerIDs})
 }
 
 // ExecuteUploadsCommand directly prepares and executes eligible trackers.
