@@ -330,7 +330,7 @@ func (s *Service) injectWatchFolder(ctx context.Context, name, folder, torrentPa
 	default:
 	}
 
-	logger.Infof("clients: copied torrent to watch folder path=%s", destPath)
+	logger.Debugf("clients: copied torrent to watch folder path=%s", destPath)
 	return nil
 }
 
@@ -444,13 +444,12 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 			return fmt.Errorf("clients: %s qbit add torrent file: %w", name, err)
 		}
 
-		logger.Infof(
-			"clients: added torrent file to qbit client=%s tracker=%s linked=%t qbit_hash_check=%t source=%s",
+		logger.Debugf(
+			"clients: added torrent file to qbit client=%s tracker=%s linked=%t qbit_hash_check=%t",
 			name,
 			logTracker(torrent.Tracker),
 			staging.Linked,
 			!options.SkipHashCheck,
-			meta.SourcePath,
 		)
 		return nil
 	}
@@ -461,13 +460,12 @@ func (s *Service) injectQbit(ctx context.Context, name string, client config.Tor
 			s.cleanupFailedLinkStaging(ctx, name, torrent.Tracker, staging)
 			return fmt.Errorf("clients: %s qbit add torrent URL: %w", name, err)
 		}
-		logger.Infof(
-			"clients: added tracker torrent URL to qbit client=%s tracker=%s linked=%t qbit_hash_check=%t source=%s",
+		logger.Debugf(
+			"clients: added tracker torrent URL to qbit client=%s tracker=%s linked=%t qbit_hash_check=%t",
 			name,
 			logTracker(torrent.Tracker),
 			staging.Linked,
 			!options.SkipHashCheck,
-			meta.SourcePath,
 		)
 		return nil
 	}

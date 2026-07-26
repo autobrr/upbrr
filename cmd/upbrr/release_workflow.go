@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -68,6 +69,7 @@ type cliWorkflowSession struct {
 	uploadRequest  api.Request
 	idempotencyRun string
 	intentSequence uint64
+	progressWriter io.Writer
 }
 
 // cliWorkflowIntent is the detached CLI adapter input retained after the
@@ -158,6 +160,7 @@ func (s *cliWorkflowSession) waitForOperation(
 	ctx context.Context,
 	operation api.WorkflowOperationStatus,
 ) (api.WorkflowOperationStatus, error) {
+	printCLIWorkflowProgress(s.progressWriter, operation.Operation)
 	var eventLogState cliWorkflowEventLogState
 	if err := s.logNewOperationEvents(ctx, operation, &eventLogState); err != nil {
 		return api.WorkflowOperationStatus{}, err
@@ -262,6 +265,7 @@ func newCLIWorkflowSession(
 		intent:         mapCLIWorkflowIntent(request),
 		uploadRequest:  request,
 		idempotencyRun: strings.ToLower(rand.Text()),
+		progressWriter: os.Stdout,
 	}
 	if err := session.continueUntilStable(ctx, api.ContinueReleaseWorkflowRequest{
 		IdempotencyKey: session.nextIdempotencyKey("prepare"),

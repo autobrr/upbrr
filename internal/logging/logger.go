@@ -270,7 +270,8 @@ func (l *Logger) writeSanitized(level Level, label string, formatted string) {
 }
 
 // SanitizeMessage redacts secrets and replaces local filesystem paths in
-// user-shareable log or terminal output with stable labels. Paths under known
+// user-shareable log or terminal output with stable labels. Exact save_path
+// field values remain visible for client-path diagnostics. Paths under known
 // app DB tmp/cache/log directories keep only their .upbrr-relative suffix;
 // other local paths become [local path].
 func SanitizeMessage(message string) string {
@@ -287,7 +288,11 @@ func SanitizeMessage(message string) string {
 		}
 		if isWindowsDrivePathStart(message, index) || isUNCPathStart(message, index) || isUnixLocalPathStart(message, index) {
 			end := localPathEnd(message, index)
-			builder.WriteString(localPathLogLabel(message[index:end]))
+			if isSavePathFieldValue(message, index) {
+				builder.WriteString(message[index:end])
+			} else {
+				builder.WriteString(localPathLogLabel(message[index:end]))
+			}
 			index = end
 			continue
 		}
@@ -295,6 +300,15 @@ func SanitizeMessage(message string) string {
 		index++
 	}
 	return builder.String()
+}
+
+func isSavePathFieldValue(message string, index int) bool {
+	const field = "save_path="
+	fieldEnd := index
+	if fieldEnd > 0 && (message[fieldEnd-1] == '"' || message[fieldEnd-1] == '\'') {
+		fieldEnd--
+	}
+	return fieldEnd >= len(field) && message[fieldEnd-len(field):fieldEnd] == field
 }
 
 func isWindowsDrivePathStart(value string, index int) bool {

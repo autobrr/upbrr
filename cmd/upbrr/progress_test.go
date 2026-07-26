@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -146,7 +147,7 @@ func TestCLIUploadProgressIgnoresNonTorrentTasks(t *testing.T) {
 	}
 }
 
-func TestCLIWorkflowProgressUsesStructuredLoggerAndWarningLevel(t *testing.T) {
+func TestCLIWorkflowProgressUsesDebugLogger(t *testing.T) {
 	logger := &cliProgressTestLogger{}
 	var state cliWorkflowLogState
 	logCLIWorkflowOperation(logger, api.WorkflowOperationStatus{
@@ -169,13 +170,13 @@ func TestCLIWorkflowProgressUsesStructuredLoggerAndWarningLevel(t *testing.T) {
 
 	entries := logger.snapshot()
 	if len(entries) != 2 ||
-		!strings.Contains(entries[0], "INFO: workflow: command=check_duplicates phase=dupes state=running progress=0 completed=2 total=4") ||
-		!strings.Contains(entries[1], "WARN: workflow: command=check_duplicates phase=dupes state=blocked progress=100 completed=4 total=4") {
+		!strings.Contains(entries[0], "DEBUG: workflow: command=check_duplicates phase=dupes state=running progress=0 completed=2 total=4") ||
+		!strings.Contains(entries[1], "DEBUG: workflow: command=check_duplicates phase=dupes state=blocked progress=100 completed=4 total=4") {
 		t.Fatalf("workflow log entries = %#v", entries)
 	}
 }
 
-func TestCLIWorkflowProgressRendersCanonicalScopedEventSeverity(t *testing.T) {
+func TestCLIWorkflowProgressRendersCanonicalScopedEventsAtDebug(t *testing.T) {
 	logger := &cliProgressTestLogger{}
 	var state cliWorkflowEventLogState
 	events := []api.WorkflowEvent{
@@ -212,8 +213,22 @@ func TestCLIWorkflowProgressRendersCanonicalScopedEventSeverity(t *testing.T) {
 	logCLIWorkflowEvents(logger, events, &state)
 	logCLIWorkflowEvents(logger, events, &state)
 	entries := logger.snapshot()
-	if len(entries) != 2 || !strings.HasPrefix(entries[0], "WARN: ") || !strings.Contains(entries[0], "scope=host") ||
-		!strings.HasPrefix(entries[1], "ERROR: ") || !strings.Contains(entries[1], "scope=tracker") {
+	if len(entries) != 2 || !strings.HasPrefix(entries[0], "DEBUG: ") || !strings.Contains(entries[0], "scope=host") ||
+		!strings.HasPrefix(entries[1], "DEBUG: ") || !strings.Contains(entries[1], "scope=tracker") {
 		t.Fatalf("canonical workflow event logs = %#v", entries)
+	}
+}
+
+func TestCLIWorkflowProgressPrintsOnlyTopLevelOperations(t *testing.T) {
+	var output bytes.Buffer
+
+	printCLIWorkflowProgress(&output, api.OperationKindPreparation)
+	printCLIWorkflowProgress(&output, api.OperationKindDuplicateCheck)
+	printCLIWorkflowProgress(&output, api.OperationKindUploadDryRun)
+	printCLIWorkflowProgress(&output, api.OperationKindUploadExecute)
+
+	const expected = "Preparing release...\nPreparing tracker uploads...\nPreparing tracker uploads...\n"
+	if output.String() != expected {
+		t.Fatalf("CLI workflow progress = %q, want %q", output.String(), expected)
 	}
 }

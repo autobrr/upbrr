@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -153,24 +155,7 @@ func logCLIWorkflowOperation(logger api.Logger, operation api.WorkflowOperationS
 	}
 	*state = next
 	format := "workflow: command=%s phase=%s state=%s progress=%d completed=%d total=%d message=%s"
-	switch operation.Status {
-	case api.StageStatusBlocked,
-		api.StageStatusCanceled,
-		api.StageStatusFailed,
-		api.StageStatusPartial,
-		api.StageStatusInterrupted,
-		api.StageStatusStale,
-		api.StageStatusUnavailable:
-		logger.Warnf(format, command, phase, operation.Status, operation.Progress, operation.Completed, operation.Total, message)
-	case api.StageStatusCompleted,
-		api.StageStatusExecuted,
-		api.StageStatusPending,
-		api.StageStatusQueued,
-		api.StageStatusReady,
-		api.StageStatusRunning,
-		api.StageStatusSkipped:
-		logger.Infof(format, command, phase, operation.Status, operation.Progress, operation.Completed, operation.Total, message)
-	}
+	logger.Debugf(format, command, phase, operation.Status, operation.Progress, operation.Completed, operation.Total, message)
 }
 
 func logCLIWorkflowEvents(logger api.Logger, events []api.WorkflowEvent, state *cliWorkflowEventLogState) {
@@ -201,17 +186,24 @@ func logCLIWorkflowEvents(logger api.Logger, events []api.WorkflowEvent, state *
 			message,
 		}
 		if logger != nil {
-			switch event.Severity {
-			case api.WorkflowEventSeverityError:
-				logger.Errorf(format, args...)
-			case api.WorkflowEventSeverityWarn:
-				logger.Warnf(format, args...)
-			case api.WorkflowEventSeverityInfo:
-				logger.Infof(format, args...)
-			case api.WorkflowEventSeverityDebug:
-				logger.Debugf(format, args...)
-			}
+			logger.Debugf(format, args...)
 		}
 		state.lastSequence = event.Sequence
+	}
+}
+
+func printCLIWorkflowProgress(output io.Writer, operation api.OperationKind) {
+	if output == nil {
+		return
+	}
+	message := ""
+	if operation == api.OperationKindPreparation {
+		message = "Preparing release..."
+	}
+	if operation == api.OperationKindUploadDryRun || operation == api.OperationKindUploadExecute {
+		message = "Preparing tracker uploads..."
+	}
+	if message != "" {
+		_, _ = fmt.Fprintln(output, message)
 	}
 }
