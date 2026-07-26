@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -69,6 +70,9 @@ func TestServiceCreateAuthenticateListAndRevoke(t *testing.T) {
 	}
 	if created.Token == "" || created.Record.ID == "" {
 		t.Fatal("created token or token ID is empty")
+	}
+	if !strings.HasPrefix(created.Record.ID, tokenIDPrefix) {
+		t.Fatal("created token ID does not have the CLI-safe prefix")
 	}
 	stored := repository.records[created.Record.ID]
 	if got := sha256.Sum256([]byte(created.Token)); stored.TokenHash != got {

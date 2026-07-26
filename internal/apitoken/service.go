@@ -21,6 +21,7 @@ const (
 	minimumTokenLength = 24
 	maximumNameLength  = 100
 	maximumOwnerLength = 100
+	tokenIDPrefix      = "tok_"
 )
 
 // Scope is one independently grantable public API permission.
@@ -175,10 +176,11 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (Created, error
 	if err != nil {
 		return Created{}, fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
-	id, err := randomValue(12)
+	idSuffix, err := randomValue(12)
 	if err != nil {
 		return Created{}, fmt.Errorf("generate API token id: %w", err)
 	}
+	id := tokenIDPrefix + idSuffix
 	secret, err := randomValue(32)
 	if err != nil {
 		return Created{}, fmt.Errorf("generate API token: %w", err)
