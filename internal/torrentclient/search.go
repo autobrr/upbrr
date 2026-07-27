@@ -29,7 +29,7 @@ import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 
-	"github.com/anacrolix/torrent/metainfo"
+	"github.com/autobrr/go-torrent/metainfo"
 
 	qbittorrent "github.com/autobrr/go-qbittorrent"
 )
@@ -1540,7 +1540,7 @@ func validateTorrentData(meta api.ClientSubject, hash string, data []byte, const
 	}
 
 	pieceSize := info.PieceLength
-	pieces := info.NumPieces()
+	pieces := len(info.Pieces) / metainfo.HashSize
 	if pieceSize <= 0 || pieces <= 0 {
 		return torrentDataValidation{
 			pieceSize: pieceSize,
@@ -1635,7 +1635,7 @@ func torrentPathContainsSourceBase(path string, base string) bool {
 }
 
 func buildTorrentFileList(info metainfo.Info) []string {
-	files := info.UpvertedFiles()
+	files := torrentV1Files(info)
 	if len(files) == 0 {
 		return nil
 	}
@@ -1651,6 +1651,16 @@ func buildTorrentFileList(info metainfo.Info) []string {
 		result = append(result, filepath.Join(full...))
 	}
 	return result
+}
+
+func torrentV1Files(info metainfo.Info) []metainfo.FileInfo {
+	if !info.HasV1() {
+		return nil
+	}
+	if len(info.Files) != 0 {
+		return info.Files
+	}
+	return []metainfo.FileInfo{{Length: info.Length}}
 }
 
 // invalidPieceConstraints reports metadata limits that prevent saving an

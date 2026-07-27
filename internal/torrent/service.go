@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anacrolix/torrent/metainfo"
+	"github.com/autobrr/go-torrent/metainfo"
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
@@ -739,9 +739,12 @@ func expectedTorrentName(meta api.TorrentSubject) (string, bool, error) {
 }
 
 func torrentContentPaths(info metainfo.Info) []contentFile {
-	files := info.UpvertedFiles()
-	if len(files) == 0 {
+	if !info.HasV1() {
 		return nil
+	}
+	files := info.Files
+	if len(files) == 0 {
+		files = []metainfo.FileInfo{{Length: info.Length}}
 	}
 	result := make([]contentFile, 0, len(files))
 	for _, file := range files {
