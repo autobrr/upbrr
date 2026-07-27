@@ -14,9 +14,10 @@ func Profile() unit3d.Profile {
 		Rules:        Rules(),
 		BannedGroups: BannedGroups(),
 		Site: unit3d.SiteProfile{
-			BuildName:        buildName,
-			BuildNameVersion: "v1",
-			ResolveTypeID:    typeID,
+			BuildName:              buildName,
+			BuildNameVersion:       "v1",
+			ResolveTypeID:          typeID,
+			ApplyAdditionalPayload: additionalPayload,
 		},
 		DupePolicy: &trackers.DupePolicy{
 			AllowSizeVariance1080: true,
