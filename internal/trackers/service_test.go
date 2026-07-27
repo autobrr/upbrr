@@ -448,6 +448,7 @@ type recordedStatusContext struct {
 	status      string
 	ctxErr      error
 	hasDeadline bool
+	checkedAt   time.Time
 	deadline    time.Time
 }
 
@@ -461,6 +462,7 @@ func (r *recordingStatusContextRepo) UpdateLatestUploadRecordStatus(ctx context.
 		status:      status,
 		ctxErr:      ctx.Err(),
 		hasDeadline: hasDeadline,
+		checkedAt:   time.Now(),
 		deadline:    deadline,
 	}
 
@@ -2225,8 +2227,9 @@ func TestUploadCancellationFinalizesPendingWithCleanupContext(t *testing.T) {
 		if !update.hasDeadline {
 			t.Fatalf("expected cleanup context for %s to have a deadline", tracker)
 		}
-		if until := time.Until(update.deadline); until <= 0 || until > uploadRecordFinalizationTimeout {
-			t.Fatalf("expected cleanup deadline within %s for %s, got %s", uploadRecordFinalizationTimeout, tracker, until)
+		if !update.deadline.After(update.checkedAt) ||
+			update.deadline.After(update.checkedAt.Add(uploadRecordFinalizationTimeout)) {
+			t.Fatalf("expected active cleanup deadline within %s for %s", uploadRecordFinalizationTimeout, tracker)
 		}
 	}
 }
@@ -2265,8 +2268,9 @@ func TestUploadLateCancellationUsesCleanupContextForStatusWrites(t *testing.T) {
 	if !update.hasDeadline {
 		t.Fatal("expected cleanup context to have a deadline")
 	}
-	if until := time.Until(update.deadline); until <= 0 || until > uploadRecordFinalizationTimeout {
-		t.Fatalf("expected cleanup deadline within %s, got %s", uploadRecordFinalizationTimeout, until)
+	if !update.deadline.After(update.checkedAt) ||
+		update.deadline.After(update.checkedAt.Add(uploadRecordFinalizationTimeout)) {
+		t.Fatalf("expected active cleanup deadline within %s", uploadRecordFinalizationTimeout)
 	}
 }
 
