@@ -39,7 +39,10 @@ func Profile() standalone.Profile {
 			}},
 		},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
-			TrackerURLPatterns: []string{"tracker.anthelion.me"}, WorkingTrackerID: "1",
+			TrackerURLPatterns: []string{"tracker.anthelion.me"},
+			CommentURLPatterns: []string{"anthelion.me/torrents.php"},
+			DetailIDPattern:    `(?i)[?&]torrentid=(\d+)`,
+			WorkingTrackerID:   "1",
 		},
 	}
 }

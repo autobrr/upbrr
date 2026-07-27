@@ -931,6 +931,7 @@ func extractTrackerMatchesWithPatterns(
 	patterns map[string]trackerPattern,
 ) ([]api.TrackerMatch, bool) {
 	matches := make([]api.TrackerMatch, 0)
+	resolvedIDs := make(map[string]struct{})
 	trackerFound := false
 	lowerComment := strings.ToLower(comment)
 
@@ -947,6 +948,7 @@ func extractTrackerMatchesWithPatterns(
 			continue
 		}
 		matches = append(matches, api.TrackerMatch{ID: trackerID, TrackerID: match[1]})
+		resolvedIDs[trackerID] = struct{}{}
 		trackerFound = true
 	}
 
@@ -954,6 +956,9 @@ func extractTrackerMatchesWithPatterns(
 		for _, trackerID := range trackerIDExtractionOrder(priority, patterns) {
 			pattern := patterns[trackerID]
 			if pattern.workingTrackerID == "" || !trackerURLsMatch(trackerURLs, pattern.trackerURLs) {
+				continue
+			}
+			if _, resolved := resolvedIDs[trackerID]; resolved {
 				continue
 			}
 			matches = append(matches, api.TrackerMatch{ID: trackerID, TrackerID: pattern.workingTrackerID})

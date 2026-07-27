@@ -892,6 +892,44 @@ func TestExtractTrackerMatchesIncludesPatternsOutsidePriority(t *testing.T) {
 	}
 }
 
+func TestExtractTrackerMatchesPrefersANTCommentID(t *testing.T) {
+	t.Parallel()
+
+	matches, found := extractTrackerMatchesWithPatterns(
+		"https://anthelion.me/torrents.php?torrentid=12345",
+		[]string{"https://tracker.anthelion.me/redacted/announce"},
+		true,
+		[]string{"ant"},
+		buildTrackerIDPatterns(trackerPatternRegistry(t)),
+	)
+
+	if !found {
+		t.Fatal("expected ANT tracker match")
+	}
+	if len(matches) != 1 || matches[0].ID != "ant" || matches[0].TrackerID != "12345" {
+		t.Fatalf("expected ANT comment tracker id 12345, got %#v", matches)
+	}
+}
+
+func TestExtractTrackerMatchesFallsBackToANTWorkingID(t *testing.T) {
+	t.Parallel()
+
+	matches, found := extractTrackerMatchesWithPatterns(
+		"",
+		[]string{"https://tracker.anthelion.me/redacted/announce"},
+		true,
+		[]string{"ant"},
+		buildTrackerIDPatterns(trackerPatternRegistry(t)),
+	)
+
+	if !found {
+		t.Fatal("expected ANT tracker match")
+	}
+	if len(matches) != 1 || matches[0].ID != "ant" || matches[0].TrackerID != "1" {
+		t.Fatalf("expected ANT working tracker fallback id 1, got %#v", matches)
+	}
+}
+
 func TestTorrentMatchesMetaAllowsSymbolDrift(t *testing.T) {
 	t.Parallel()
 
