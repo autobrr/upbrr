@@ -1219,7 +1219,7 @@ describe("useReleaseSession", () => {
         workflow: expect.objectContaining({ id: "workflow-browser-flow" }),
       }),
       false,
-      ["AITHER"],
+      [],
       expect.any(String),
       expect.any(AbortSignal),
     );
@@ -1774,7 +1774,7 @@ describe("useReleaseSession", () => {
     await act(() => command);
   });
 
-  it("runs dry run directly without a description-save or review gate", async () => {
+  it("lets the backend resolve dry-run trackers from current downstream authority", async () => {
     const dryRunUploads = vi.fn(async (current: ReleaseWorkflowCurrent, noSeed: boolean) => {
       const revision = current.workflow.revision + 1;
       return {
@@ -1816,7 +1816,7 @@ describe("useReleaseSession", () => {
     expect(dryRunUploads).toHaveBeenCalledWith(
       expect.anything(),
       false,
-      ["AITHER"],
+      [],
       expect.any(String),
       expect.any(AbortSignal),
     );

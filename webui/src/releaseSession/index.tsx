@@ -1282,19 +1282,13 @@ export function ReleaseSessionProvider({
     return completed;
   };
 
+  // Selected trackers are pre-dupe UI state; retained backend evidence owns the exact downstream set.
+  const backendResolvedUploadIntent = () => ({ noSeed: state.uploadOptions.noSeed });
+
   const runDryRun = async (): Promise<boolean> => {
     if (!workflowView.current) return false;
     return runBackendWorkflow((current, commandID, signal) =>
-      continueBackendGoal(
-        current,
-        "dry_run",
-        {
-          noSeed: state.uploadOptions.noSeed,
-          uploadTrackerIds: [...state.selectedTrackers],
-        },
-        commandID,
-        signal,
-      ),
+      continueBackendGoal(current, "dry_run", backendResolvedUploadIntent(), commandID, signal),
     );
   };
 
@@ -1310,10 +1304,7 @@ export function ReleaseSessionProvider({
         current = await continueBackendGoal(
           current,
           "dry_run",
-          {
-            noSeed: state.uploadOptions.noSeed,
-            uploadTrackerIds: [...state.selectedTrackers],
-          },
+          backendResolvedUploadIntent(),
           `${commandID}-review`,
           controller.signal,
         );
@@ -1324,10 +1315,7 @@ export function ReleaseSessionProvider({
       const uploaded = await continueBackendGoal(
         current,
         "uploaded",
-        {
-          noSeed: state.uploadOptions.noSeed,
-          uploadTrackerIds: [...state.selectedTrackers],
-        },
+        backendResolvedUploadIntent(),
         `${commandID}-execute`,
         controller.signal,
       );
@@ -1509,16 +1497,7 @@ export function ReleaseSessionProvider({
         ),
       dryRunUploads: () =>
         runBackendWorkflow((current, commandID, signal) =>
-          continueBackendGoal(
-            current,
-            "dry_run",
-            {
-              noSeed: state.uploadOptions.noSeed,
-              uploadTrackerIds: [...state.selectedTrackers],
-            },
-            commandID,
-            signal,
-          ),
+          continueBackendGoal(current, "dry_run", backendResolvedUploadIntent(), commandID, signal),
         ),
       executeUploads: () => executeExactUpload(),
       retryFailedUploads: () => {
