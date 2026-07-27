@@ -151,7 +151,10 @@ func (d *Definition) prepareDescription(ctx context.Context, req trackers.Prepar
 		assets = trackers.DescriptionAssets{}
 	}
 
-	description := buildDescription(assets.Description)
+	description := strings.TrimSpace(assets.Description)
+	if !assets.Final {
+		description = buildDescription(assets.Description)
+	}
 	return trackers.DescriptionResult{
 		Group:       "azfamily",
 		Description: description,

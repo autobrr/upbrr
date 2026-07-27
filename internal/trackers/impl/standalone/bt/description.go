@@ -13,6 +13,9 @@ import (
 )
 
 func buildDescription(req trackers.PreparationInput, assets trackers.DescriptionAssets) string {
+	if assets.Final {
+		return strings.TrimSpace(assets.Description)
+	}
 	meta := req.Meta
 	var parts []string
 

@@ -3,6 +3,17 @@
 
 package api
 
+import "strings"
+
+// Source returns the preferred editable BBCode source for the group. Legacy
+// callers that only populate Description remain supported.
+func (g DescriptionBuilderGroup) Source() string {
+	if strings.TrimSpace(g.RawDescription) != "" {
+		return g.RawDescription
+	}
+	return g.Description
+}
+
 // CloneDescriptionBuilderGroups deep-copies the reference-typed fields used by
 // DescriptionBuilderGroup so callers can safely reuse cached or queued values.
 func CloneDescriptionBuilderGroups(groups []DescriptionBuilderGroup) []DescriptionBuilderGroup {

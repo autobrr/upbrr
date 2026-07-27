@@ -212,6 +212,9 @@ func fetchRichEpisode(ctx context.Context, client *tmdb.Client, tmdbID, season, 
 }
 
 func buildDescription(ctx context.Context, meta api.UploadSubject, cfg config.Config, assets trackers.DescriptionAssets, layoutID string) string {
+	if assets.Final {
+		return strings.TrimSpace(assets.Description)
+	}
 	if assets.Override && strings.TrimSpace(assets.Description) != "" {
 		return strings.TrimSpace(assets.Description)
 	}

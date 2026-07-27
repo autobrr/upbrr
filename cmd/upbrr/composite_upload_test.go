@@ -41,8 +41,8 @@ func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 		SkipDupeAsActual: true,
 		DoubleDupeCheck:  true,
 		DescriptionGroups: []api.DescriptionBuilderGroup{{
-			GroupKey:       "unit3d",
-			RawDescription: "Synthetic tracker description.",
+			GroupKey:    "unit3d",
+			Description: "Synthetic tracker description.",
 		}},
 		DescriptionOverrideURL:   "https://example.test/description.txt",
 		DescriptionOverrideGroup: "default",
@@ -181,6 +181,8 @@ func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 		t.Fatalf("media mapping = %#v", mapped.Media)
 	}
 	if len(mapped.Descriptions.Overrides) != 2 ||
+		mapped.Descriptions.Overrides[0].Inline == nil ||
+		*mapped.Descriptions.Overrides[0].Inline != "Synthetic tracker description." ||
 		mapped.Descriptions.Overrides[1].URL == nil ||
 		*mapped.Descriptions.Overrides[1].URL != "https://example.test/description.txt" {
 		t.Fatalf("description mapping = %#v", mapped.Descriptions)

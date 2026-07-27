@@ -785,14 +785,15 @@ func TestResolveDescriptionAssetsUsesCompositeGroupOverride(t *testing.T) {
 	}
 }
 
-func TestResolveDescriptionAssetsClearsFinalWhenSanitizedDescriptionIsEmpty(t *testing.T) {
+func TestResolveDescriptionAssetsPreservesFinalDescriptionThatSanitizerWouldEmpty(t *testing.T) {
 	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	finalDescription := "[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]"
 	meta := api.UploadSubject{
 		SourcePath: sourcePath,
 		DescriptionGroups: []api.DescriptionBuilderGroup{{
 			GroupKey:       "unit3d",
 			Trackers:       []string{"AITHER"},
-			RawDescription: "[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]",
+			RawDescription: finalDescription,
 		}},
 	}
 
@@ -800,14 +801,14 @@ func TestResolveDescriptionAssetsClearsFinalWhenSanitizedDescriptionIsEmpty(t *t
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if assets.Description != "" {
-		t.Fatalf("expected empty sanitized description, got %q", assets.Description)
+	if assets.Description != finalDescription {
+		t.Fatalf("expected final description preserved, got %q", assets.Description)
 	}
-	if assets.Final {
-		t.Fatalf("expected empty sanitized final description to clear final flag")
+	if !assets.Final {
+		t.Fatal("expected final description flag preserved")
 	}
-	if assets.Override {
-		t.Fatalf("expected empty sanitized final description to clear override flag")
+	if !assets.Override {
+		t.Fatal("expected final override flag preserved")
 	}
 
 	applyResolvedDescriptionScreenshots(context.Background(), "", meta, nil, nil, &assets, []api.ScreenshotImage{{
@@ -815,8 +816,8 @@ func TestResolveDescriptionAssetsClearsFinalWhenSanitizedDescriptionIsEmpty(t *t
 		RawURL: "https://pixhost.example/raw-1.png",
 		Host:   "pixhost",
 	}})
-	if len(assets.Screenshots) != 1 {
-		t.Fatalf("expected screenshots preserved for empty final description, got %#v", assets.Screenshots)
+	if len(assets.Screenshots) != 0 {
+		t.Fatalf("expected screenshots not appended to final description, got %#v", assets.Screenshots)
 	}
 }
 
@@ -1419,16 +1420,18 @@ func TestSanitizeTrackerDescriptionKeepsMalformedUNIT3DBoldTags(t *testing.T) {
 	}
 }
 
-func TestResolveDescriptionAssetsStripsKnownBotSignaturesFromDescriptionGroups(t *testing.T) {
+func TestResolveDescriptionAssetsPreservesFinalDescriptionGroups(t *testing.T) {
+	finalDescription := strings.Join([]string{
+		"Body",
+		"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
+		"[right]Created by Upload Assistant[/right]",
+		"[right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/right]",
+	}, "\n\n")
 	meta := api.UploadSubject{
 		DescriptionGroups: []api.DescriptionBuilderGroup{{
-			GroupKey: "unit3d",
-			Trackers: []string{"AITHER"},
-			RawDescription: strings.Join([]string{
-				"Body",
-				"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
-				"[right]Created by Upload Assistant[/right]",
-			}, "\n\n"),
+			GroupKey:       "unit3d",
+			Trackers:       []string{"AITHER"},
+			RawDescription: finalDescription,
 		}},
 	}
 
@@ -1436,8 +1439,25 @@ func TestResolveDescriptionAssetsStripsKnownBotSignaturesFromDescriptionGroups(t
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if assets.Description != "Body" {
-		t.Fatalf("expected bot signatures removed from prepared group, got %q", assets.Description)
+	if assets.Description != finalDescription {
+		t.Fatalf("expected final prepared group preserved, got %q", assets.Description)
+	}
+	if !assets.Final || !assets.Override {
+		t.Fatalf("expected final override assets, got %#v", assets)
+	}
+
+	meta.DescriptionGroups[0].Description = meta.DescriptionGroups[0].RawDescription
+	meta.DescriptionGroups[0].RawDescription = ""
+	meta.SourcePath = filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
+	assets, err = ResolveDescriptionAssets(context.Background(), "AITHER", meta, &stubRepo{}, api.NopLogger{}, descriptionAssetsTestRegistry(t))
+	if err != nil {
+		t.Fatalf("resolve persisted-source assets: %v", err)
+	}
+	if assets.Description != finalDescription {
+		t.Fatalf("expected persisted-source final group preserved, got %q", assets.Description)
+	}
+	if !assets.Final || !assets.Override {
+		t.Fatalf("expected persisted-source final override assets, got %#v", assets)
 	}
 }
 

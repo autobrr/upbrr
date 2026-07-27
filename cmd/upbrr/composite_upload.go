@@ -566,7 +566,7 @@ func mapCLICompositeUploadRequest(
 	}
 	descriptions := make([]api.ReleaseWorkflowUploadDescriptionOverride, 0, len(request.DescriptionGroups)+1)
 	for _, group := range request.DescriptionGroups {
-		source := group.RawDescription
+		source := group.Source()
 		if strings.TrimSpace(group.GroupKey) != "" && strings.TrimSpace(source) != "" {
 			descriptions = append(descriptions, api.ReleaseWorkflowUploadDescriptionOverride{
 				GroupKey: strings.TrimSpace(group.GroupKey),

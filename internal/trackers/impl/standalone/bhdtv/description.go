@@ -24,6 +24,9 @@ func resolveInlineDescription(meta api.UploadSubject) string {
 }
 
 func buildDescription(assets trackers.DescriptionAssets) string {
+	if assets.Final {
+		return strings.TrimSpace(assets.Description)
+	}
 	base := strings.ReplaceAll(strings.TrimSpace(assets.Description), "[img=250]", "[img=250x250]")
 	parts := make([]string, 0, 1+len(assets.Screenshots))
 	if base != "" {

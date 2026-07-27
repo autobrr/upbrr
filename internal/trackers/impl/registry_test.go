@@ -104,6 +104,46 @@ func TestNewRegistryIncludesHDB(t *testing.T) {
 	}
 }
 
+func TestDescriptionDefinitionsPreserveFinalReviewedDescription(t *testing.T) {
+	t.Parallel()
+
+	registry := MustNewRegistry()
+	const finalDescription = "Reviewed body\n\n[right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/right]"
+
+	for _, tracker := range registry.Names() {
+		mode, ok := registry.LookupUploadContentMode(tracker)
+		if !ok || mode != trackers.UploadContentModeDescription {
+			continue
+		}
+		definition, ok := registry.Lookup(tracker)
+		if !ok {
+			t.Fatalf("description definition missing tracker=%s", tracker)
+		}
+		t.Run(tracker, func(t *testing.T) {
+			plan, failure := definition.Prepare(context.Background(), trackers.PreparationInput{
+				Intent:  trackers.PreparationIntentDescriptionPreview,
+				Tracker: tracker,
+				Assets: &trackers.DescriptionAssets{
+					Description: finalDescription,
+					Final:       true,
+				},
+			})
+			if failure != nil {
+				t.Fatalf("prepare final description: %v", failure)
+			}
+			defer func() {
+				if err := plan.Release(); err != nil {
+					t.Fatalf("release description plan: %v", err)
+				}
+			}()
+
+			if got := plan.Description().Description; got != finalDescription {
+				t.Fatalf("final description changed:\nwant %q\ngot  %q", finalDescription, got)
+			}
+		})
+	}
+}
+
 func TestRegistryProjectsARAndMTVNamesBeforeDuplicateChecking(t *testing.T) {
 	t.Parallel()
 

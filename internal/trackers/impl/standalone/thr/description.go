@@ -13,6 +13,9 @@ import (
 )
 
 func buildDescription(meta api.UploadSubject, assets trackers.DescriptionAssets) string {
+	if assets.Final {
+		return strings.TrimSpace(assets.Description)
+	}
 	parts := []string{
 		"[quote=Info]",
 		"Name: " + strings.TrimSpace(metautil.FirstNonEmptyTrimmed(meta.Release.Title, meta.ReleaseName)),

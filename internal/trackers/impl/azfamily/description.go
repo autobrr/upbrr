@@ -44,5 +44,8 @@ func buildDescriptionFromAssets(_ context.Context, req trackers.PreparationInput
 	if err != nil {
 		return ""
 	}
+	if assets.Final {
+		return strings.TrimSpace(assets.Description)
+	}
 	return buildDescription(assets.Description)
 }

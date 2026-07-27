@@ -14,6 +14,9 @@ import (
 )
 
 func buildDescription(meta api.UploadSubject, assets trackers.DescriptionAssets) string {
+	if assets.Final {
+		return strings.TrimSpace(assets.Description)
+	}
 	parts := make([]string, 0, 4)
 	if info := commonhttp.ReadOptionalFile(strings.TrimSpace(meta.MediaInfoTextPath)); strings.TrimSpace(info) != "" {
 		parts = append(parts, info)

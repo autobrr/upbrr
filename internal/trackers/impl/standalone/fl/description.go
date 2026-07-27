@@ -12,6 +12,9 @@ import (
 )
 
 func buildDescription(assets trackers.DescriptionAssets) string {
+	if assets.Final {
+		return strings.TrimSpace(assets.Description)
+	}
 	return finalizeDescription(strings.TrimSpace(assets.Description))
 }
 

@@ -29,7 +29,8 @@ type DescriptionAssets struct {
 	Slots []api.ScreenshotSlot
 	// Override reports that Description came from a saved user override.
 	Override bool
-	// Final reports that screenshot selection has been finalized.
+	// Final reports that Description is reviewed tracker-ready output. Consumers
+	// may rewrite selected image-slot URLs but must not sanitize or rebuild it.
 	Final bool
 }
 
@@ -231,7 +232,11 @@ func resolveDescriptionAssets(
 			description = canonical
 			final = true
 		}
-		description = sanitizeTrackerDescription(tracker, description)
+		if final {
+			description = strings.TrimSpace(description)
+		} else {
+			description = sanitizeTrackerDescription(tracker, description)
+		}
 		hasDescription := strings.TrimSpace(description) != ""
 		return DescriptionAssets{
 			Description: description,
@@ -257,7 +262,11 @@ func resolveDescriptionAssets(
 		menuImages, normalScreenshots = splitDescriptionScreenshots(ctx, meta, repo, preloaded, screenshots)
 	}
 
-	description = sanitizeTrackerDescription(tracker, description)
+	if final {
+		description = strings.TrimSpace(description)
+	} else {
+		description = sanitizeTrackerDescription(tracker, description)
+	}
 	hasDescription := strings.TrimSpace(description) != ""
 	return DescriptionAssets{
 		Description: description,
@@ -698,9 +707,10 @@ func preparedDescriptionGroupLookups(
 	trackerDescriptions := make(map[string]string)
 	ambiguousTrackers := make(map[string]struct{})
 	for _, group := range groups {
+		source := group.Source()
 		normalizedGroupKey := strings.TrimSpace(group.GroupKey)
 		if normalizedGroupKey != "" {
-			groupDescriptions[strings.ToUpper(normalizedGroupKey)] = group.RawDescription
+			groupDescriptions[strings.ToUpper(normalizedGroupKey)] = source
 		}
 		for _, candidate := range group.Trackers {
 			normalizedTracker := strings.ToUpper(strings.TrimSpace(candidate))
@@ -711,12 +721,12 @@ func preparedDescriptionGroupLookups(
 				continue
 			}
 			if existing, ok := trackerDescriptions[normalizedTracker]; ok &&
-				!strings.EqualFold(strings.TrimSpace(existing), strings.TrimSpace(group.RawDescription)) {
+				!strings.EqualFold(strings.TrimSpace(existing), strings.TrimSpace(source)) {
 				delete(trackerDescriptions, normalizedTracker)
 				ambiguousTrackers[normalizedTracker] = struct{}{}
 				continue
 			}
-			trackerDescriptions[normalizedTracker] = group.RawDescription
+			trackerDescriptions[normalizedTracker] = source
 		}
 	}
 
