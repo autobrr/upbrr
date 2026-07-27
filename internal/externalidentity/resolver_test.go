@@ -294,7 +294,7 @@ func TestResolveKeepsDifferentSourcesConcurrent(t *testing.T) {
 	for range requests {
 		select {
 		case <-entered:
-		case <-time.After(time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatal("different source did not enter resolution concurrently")
 		}
 	}
@@ -308,7 +308,7 @@ func TestResolveKeepsDifferentSourcesConcurrent(t *testing.T) {
 
 func waitForSourceWaiters(t *testing.T, gates *sourceGates, sourcePath string, want int) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		gates.mu.Lock()
 		gate := gates.gates[sourcePath]

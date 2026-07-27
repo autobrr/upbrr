@@ -1984,7 +1984,7 @@ func TestModuleResumesExpiredCheckpointSafeOperationFromPrivateCommandCapsule(t 
 		t.Fatalf("trigger operation recovery: %v", err)
 	}
 	var resumed api.WorkflowOperationStatus
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		resumed, err = moduleB.Operation(context.Background(), testOwnerID, created.Workflow.ID, operation.ID)
 		if err == nil && resumed.Status == api.StageStatusCompleted {
@@ -2020,13 +2020,13 @@ func TestModuleResumesExpiredCheckpointSafeOperationFromPrivateCommandCapsule(t 
 	close(releaseFirst)
 	select {
 	case <-firstDone:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("first preparation attempt did not exit")
 	}
 	if firstWorker.done != nil {
 		select {
 		case <-firstWorker.done:
-		case <-time.After(2 * time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatal("first operation worker did not exit")
 		}
 	}

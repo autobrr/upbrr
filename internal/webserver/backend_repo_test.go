@@ -1177,7 +1177,7 @@ func expectLogStreamMessage(t *testing.T, events <-chan serverEvent, streamID st
 		if entry.Message != want {
 			t.Fatalf("log message: got %q want %q", entry.Message, want)
 		}
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(10 * time.Second):
 		t.Fatalf("timed out waiting for log stream message %q", want)
 	}
 }

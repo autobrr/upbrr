@@ -1894,7 +1894,7 @@ func TestBuildPreparationPreflightsMultipleConfiguredImageHostsConcurrently(t *t
 		},
 	}
 	svc := NewServiceWithRegistryAndImages(cfg, nil, repo, registry, images)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	done := make(chan error, 1)

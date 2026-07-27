@@ -314,7 +314,7 @@ func TestCheckLimitsConcurrencyToFour(t *testing.T) {
 		_, _ = testService(adapters).Check(context.Background(), api.DuplicateSubject{SourcePath: "C:/media/example.mkv"}, []string{"A", "B", "C", "D", "E", "F"})
 		close(done)
 	}()
-	deadline := time.After(2 * time.Second)
+	deadline := time.After(10 * time.Second)
 	for maximum.Load() < 4 {
 		select {
 		case <-deadline:

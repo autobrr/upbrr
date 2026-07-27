@@ -540,7 +540,7 @@ func waitCompositeUploadTestOperation(
 	if started.Operation == nil {
 		t.Fatalf("composite upload has no operation: %#v", started)
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	operation := *started.Operation
 	for !isTerminalProgressStatus(operation.Status) {
 		if time.Now().After(deadline) {

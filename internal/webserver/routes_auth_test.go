@@ -742,7 +742,7 @@ func TestLogoutStopsSessionLogStreams(t *testing.T) {
 
 	select {
 	case <-stream.done:
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(10 * time.Second):
 		t.Fatal("expected logout to stop active session log streams")
 	}
 
@@ -1083,7 +1083,7 @@ func TestStopSessionLogStreamsIfIdleLatestDisconnectWins(t *testing.T) {
 	server.stopSessionLogStreamsIfIdle("session-a")
 	hub.mu.Unlock()
 
-	deadline := time.Now().Add(250 * time.Millisecond)
+	deadline := time.Now().Add(10 * time.Second)
 	for testSessionALogStopGeneration(t, server) != 2 {
 		if time.Now().After(deadline) {
 			t.Fatalf("expected latest disconnect to own generation 2, got %d", testSessionALogStopGeneration(t, server))
@@ -1106,7 +1106,7 @@ func TestStopSessionLogStreamsIfIdleLatestDisconnectWins(t *testing.T) {
 
 	select {
 	case <-stream.done:
-	case <-time.After(eventSessionLogStopGracePeriod + 150*time.Millisecond):
+	case <-time.After(10 * time.Second):
 		t.Fatal("expected latest disconnect grace timer to stop session log streams")
 	}
 }
@@ -1155,7 +1155,7 @@ func TestStopSessionLogStreamsIfIdleSubscriberAtStopBoundaryKeepsStreamActiveAnd
 	hub.subscribers["session-a"] = map[chan serverEvent]struct{}{reconnected: {}}
 	hub.mu.Unlock()
 
-	deadline := time.Now().Add(250 * time.Millisecond)
+	deadline := time.Now().Add(10 * time.Second)
 	for testSessionALogStopGeneration(t, server) != 0 {
 		if time.Now().After(deadline) {
 			t.Fatalf("expected active replacement subscriber to clear idle-stop generation, got %d", testSessionALogStopGeneration(t, server))

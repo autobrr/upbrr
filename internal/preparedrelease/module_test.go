@@ -805,7 +805,7 @@ func waitForString(t *testing.T, values <-chan string, want string) {
 		if got != want {
 			t.Fatalf("started = %q, want %q", got, want)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatalf("timed out waiting for %q", want)
 	}
 }

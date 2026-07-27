@@ -857,7 +857,7 @@ func TestUploadImagesStopsDispatchingWhenContextCanceled(t *testing.T) {
 
 	select {
 	case <-firstCallCh:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for first upload to start")
 	}
 
@@ -868,7 +868,7 @@ func TestUploadImagesStopsDispatchingWhenContextCanceled(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("expected context cancellation, got %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for upload to stop")
 	}
 

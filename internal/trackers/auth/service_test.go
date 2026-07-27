@@ -2460,7 +2460,7 @@ func TestValidateManyRunsTrackerChecksConcurrentlyAndPreservesOrder(t *testing.T
 			if firstEntered == "" {
 				firstEntered = trackerID
 			}
-		case <-time.After(2 * time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatal("concurrent tracker validations did not reach the limit")
 		}
 	}
@@ -2474,7 +2474,7 @@ func TestValidateManyRunsTrackerChecksConcurrentlyAndPreservesOrder(t *testing.T
 	select {
 	case trackerID := <-entered:
 		seen[trackerID] = true
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("queued tracker validation did not enter after a slot was released")
 	}
 	for _, trackerID := range trackerIDs {

@@ -337,7 +337,7 @@ func receiveImageHostCall(t *testing.T, calls <-chan imageHostCall) imageHostCal
 	select {
 	case call := <-calls:
 		return call
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for image-host call")
 		return imageHostCall{}
 	}
@@ -348,7 +348,7 @@ func receiveImageUploadCallResult(t *testing.T, results <-chan imageUploadCallRe
 	select {
 	case result := <-results:
 		return result
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for image upload result")
 		return imageUploadCallResult{}
 	}

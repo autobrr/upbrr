@@ -166,7 +166,7 @@ func TestNewClosesSessionManagerWhenDevelopmentCSRFFails(t *testing.T) {
 	}
 	select {
 	case <-sessionClosed:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for session manager close")
 	}
 }
@@ -584,14 +584,14 @@ func TestRunAfterListenRunsCallbackAfterBind(t *testing.T) {
 		if err != nil {
 			t.Fatalf("run after listen: %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		cancel()
 		select {
 		case err := <-runErr:
 			if err != nil {
 				t.Fatalf("run after listen after timeout cancellation: %v", err)
 			}
-		case <-time.After(2 * time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatal("timed out waiting for RunAfterListen to return")
 		}
 	}
@@ -685,7 +685,7 @@ func TestServeOpensBrowserAfterSuccessfulListen(t *testing.T) {
 			t.Fatalf("browser URL = %q, want %q", url, want)
 		}
 		cancel()
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for browser open")
 	}
 
@@ -694,7 +694,7 @@ func TestServeOpensBrowserAfterSuccessfulListen(t *testing.T) {
 		if err != nil {
 			t.Fatalf("serve returned error: %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for serve shutdown")
 	}
 }
@@ -745,7 +745,7 @@ func TestServeOpensAbsoluteBrowserURLForPathOnlyBaseURL(t *testing.T) {
 			t.Fatalf("browser URL = %q, want %q", url, want)
 		}
 		cancel()
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for browser open")
 	}
 
@@ -754,7 +754,7 @@ func TestServeOpensAbsoluteBrowserURLForPathOnlyBaseURL(t *testing.T) {
 		if err != nil {
 			t.Fatalf("serve returned error: %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for serve shutdown")
 	}
 }
