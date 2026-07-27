@@ -38,8 +38,9 @@ pnpm --dir webui exec playwright show-report
 - Web UI E2E uses the embedded app as source of truth, not Vite.
 - Use isolated temp workspace per test: config YAML, SQLite DB, media/torrent/screenshot fixtures.
 - Use local fake tracker/image-host/torrent/metadata services only.
-- Fake-service scenarios should cover backend-issued auth challenges/2FA continuation, questionnaire schemas/answers, reviewed upload/search names, and tracker-lane isolation when one lane is blocked.
-- Assert that an auth/questionnaire failure blocks only the affected tracker while other runnable lanes continue; never implement tracker semantics in the fake frontend.
+- Fake-service scenarios should cover auth-blocked preflight lanes, questionnaire schemas/answers, reviewed upload/search names, WebUI stage controls, CLI/composite post-dupe tracker approval, and tracker-lane isolation when one lane is blocked.
+- Exercise login and 2FA only through the dedicated Tracker Auth surface; upload workflows must not issue or accept auth/2FA continuation feedback.
+- Assert that auth/questionnaire failure blocks only the affected tracker while other runnable lanes continue. Across continuation and restart, assert downstream work uses the exact approved or stage-controlled tracker subset. Never implement tracker semantics in the fake frontend.
 - No real tracker, image host, torrent client, TMDB, or credentials in E2E.
 - Service seams must be test-only or config/test fixture driven; production defaults stay unchanged.
 - Process manager must clean up `dist/upbrr-e2e.exe serve --config <temp>\config.yaml --dev-no-auth`.

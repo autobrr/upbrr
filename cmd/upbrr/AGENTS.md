@@ -19,6 +19,7 @@ Add touched service/tracker/internal packages to focused `go test` runs.
 - Questionnaire modules never prompt or inspect CLI flags. They return central typed questionnaire actions; CLI owns presentation and interaction policy.
 - `--unattended` / `--ua`: no prompts. Tracker-scoped manual prerequisites must skip that tracker and continue viable lanes. Auth-blocked lanes remain blocked for every interaction mode. Workflow-global missing data or ambiguity that prevents safe continuation must return a clear error.
 - `--unattended_confirm` / `--uac`: unattended defaults plus required confirmation/manual prompts are allowed.
+- Post-dupe tracker approval is workflow-global. Show candidate duplicate evidence and reviewed upload names, then require an explicit non-empty tracker subset. Strict unattended mode must stop with a clear error instead of prompting or auto-approving; `--uac` may prompt. Do not ask the obsolete final upload approval.
 - Code/tests should use `api.InteractionModeUnattended` for no-prompt behavior and `api.InteractionModeUnattendedConfirm` only when prompts are expected.
 - Error text for no-prompt failures should say `unattended`; mention `unattended_confirm`/`--uac` only when telling users how to opt into prompts.
 - Preserve unattended safety: no hidden prompts/confirms or ambiguous fallthrough.

@@ -38,20 +38,20 @@ AvistaZ-family (`azfamily`) trackers are intentionally out of scope.
 
 Tracker filenames are architecture boundaries:
 
-| File | Owns |
-| --- | --- |
-| `profile.go` / `definition.go` | identity, endpoint, family, static capabilities, policy bindings, callback wiring |
-| `name.go` | pure, versioned upload/search-name policy |
-| `auth.go` / `auth_*.go` | tracker-local login/session validation, CSRF/auth-key extraction, cookie selection, typed failures |
-| `taxonomy.go` | pure category/type/source/codec/resolution/audio/language/tag/flag mapping |
-| `rules.go` | declarative release rules and release-eligibility policy |
-| `validation.go` | side-effect-free payload constructibility and prepared-resource checks over `api.TrackerValidationSubject` |
-| `description.go` | description preparation/composition and tracker-specific markup |
-| `bbcode.go` | tracker-local markup primitives used by `description.go` |
-| `media.go` | MediaInfo/BDInfo/NFO selection, reads, parsing, normalized technical facts |
-| `questionnaire.go` | schema, stable answer keys, defaults, normalization, validation |
-| `payload.go` | payload-only field/file encoding when a separate module is justified |
-| `upload.go` | prepare/submit/preview orchestration, transport/response handling, immutable prepared state |
+| File                           | Owns                                                                                                       |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `profile.go` / `definition.go` | identity, endpoint, family, static capabilities, policy bindings, callback wiring                          |
+| `name.go`                      | pure, versioned upload/search-name policy                                                                  |
+| `auth.go` / `auth_*.go`        | tracker-local login/session validation, CSRF/auth-key extraction, cookie selection, typed failures         |
+| `taxonomy.go`                  | pure category/type/source/codec/resolution/audio/language/tag/flag mapping                                 |
+| `rules.go`                     | declarative release rules and release-eligibility policy                                                   |
+| `validation.go`                | side-effect-free payload constructibility and prepared-resource checks over `api.TrackerValidationSubject` |
+| `description.go`               | description preparation/composition and tracker-specific markup                                            |
+| `bbcode.go`                    | tracker-local markup primitives used by `description.go`                                                   |
+| `media.go`                     | MediaInfo/BDInfo/NFO selection, reads, parsing, normalized technical facts                                 |
+| `questionnaire.go`             | schema, stable answer keys, defaults, normalization, validation                                            |
+| `payload.go`                   | payload-only field/file encoding when a separate module is justified                                       |
+| `upload.go`                    | prepare/submit/preview orchestration, transport/response handling, immutable prepared state                |
 
 `upload.go` may call every semantic module, but it must not declare auth, naming, taxonomy,
 validation/constructibility, description, technical-media, or questionnaire algorithms. Static
@@ -97,6 +97,14 @@ owns status/import/validate/login/2FA/delete coordination across CLI, API, and W
 - Hybrid modes must be explicit. For example, API-upload and cookie-form upload can resolve to
   different requirement alternatives without tracker-name branches in generic code.
 
+### Torrent-identity contract
+
+For `TorrentIdentityPolicy`, use `TrackerURLPatterns` for announces and `CommentURLPatterns` plus a
+capturing `DetailIDPattern` for concrete tracker detail IDs. A concrete comment-derived ID is
+authoritative. `WorkingTrackerID` is only a stable synthetic fallback when a working announce is
+sufficient; it must not replace an extracted detail ID. Test both the concrete and fallback paths
+when declaring both.
+
 ## Fast file checklist
 
 A standard Unit3D addition normally changes:
@@ -128,11 +136,11 @@ A standalone addition normally changes:
 `trackers.UploadContentMode` tells generic preparation which tracker-scoped content object the
 adapter consumes. Choose by protocol behavior, not tracker identity:
 
-| Mode | Use when | Adapter input | Failure scope |
-| --- | --- | --- | --- |
-| `none` | The adapter builds its payload without shared descriptions or selected images | `PreparationInput.Assets` is `nil` | Shared content cannot block the tracker |
-| `screenshots` | The adapter consumes selected screenshots/menu images but no shared description | Ready screenshot assets, which may be empty | A failed screenshot object blocks only that tracker |
-| `description` | The adapter consumes the full shared description plus its image assets | Ready aggregate description assets, which may contain empty text | A failed description object or required image substep blocks only that tracker |
+| Mode          | Use when                                                                        | Adapter input                                                    | Failure scope                                                                  |
+| ------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `none`        | The adapter builds its payload without shared descriptions or selected images   | `PreparationInput.Assets` is `nil`                               | Shared content cannot block the tracker                                        |
+| `screenshots` | The adapter consumes selected screenshots/menu images but no shared description | Ready screenshot assets, which may be empty                      | A failed screenshot object blocks only that tracker                            |
+| `description` | The adapter consumes the full shared description plus its image assets          | Ready aggregate description assets, which may contain empty text | A failed description object or required image substep blocks only that tracker |
 
 Ready-empty content is valid and differs from failed content. Generic coordinators never infer a
 failure from empty text or zero selected images.
@@ -664,6 +672,24 @@ preview but cannot submit. Upload submits the captured state once. A submit clos
 short-lived CSRF token, but must not rebuild canonical fields, rerun image uploads, or reread
 mutable prepared-release inputs. `Release` owns temporary resources and is exact-once.
 
+#### Preserve registered torrent authority
+
+After confirmed remote success, return one `api.UploadedTorrent` per successful tracker upload in
+`api.UploadSummary.UploadedTorrents`. Populate:
+
+- `Tracker` and the concrete `TorrentID` when available.
+- `TorrentURL` with the direct tracker detail page, not the download endpoint.
+- `TorrentPath` with the retained registered torrent. Prefer downloading and validating the exact
+  tracker-returned metainfo through `trackers.DownloadRegisteredTorrent`.
+- `DownloadURL` when the authenticated registered-torrent endpoint is available. Treat it as
+  private authority: never expose it in previews, public history, logs, or diagnostics.
+
+Use `trackers.PersistReconstructedRegisteredTorrent` only when the protocol makes reconstruction
+deterministic after confirmed success. A registered-artifact download or persistence failure must
+use `trackers.LogRegisteredTorrentUnavailable` and leave the successful remote upload successful.
+Client injection consumes this registered authority; never substitute the pre-upload prepared
+torrent as if it were tracker-registered.
+
 ### 4. Keep category/type handling local
 
 Map the standalone protocol's categories, types, resolutions, sources, codecs, audio/languages,
@@ -730,26 +756,26 @@ protocol-specific pure mapping or complex validation.
 
 Declare static capabilities directly in `standalone.Profile`:
 
-| Profile field             | Typical supporting file | Purpose                                      |
-| ------------------------- | ----------------------- | -------------------------------------------- |
-| `AuthCapability`          | `auth.go`               | Declares API-key, passkey, cookie, login/2FA |
-| `AuthResolver`            | `auth.go`               | Validates or refreshes remote auth           |
-| `AuthPolicy`              | `profile.go`            | Auth coordinator semantics                   |
-| `AuthStateManager`        | `auth.go`               | Cleans tracker-owned persisted auth state    |
-| `Rules`                   | `rules.go`              | Release eligibility                          |
+| Profile field             | Typical supporting file      | Purpose                                           |
+| ------------------------- | ---------------------------- | ------------------------------------------------- |
+| `AuthCapability`          | `auth.go`                    | Declares API-key, passkey, cookie, login/2FA      |
+| `AuthResolver`            | `auth.go`                    | Validates or refreshes remote auth                |
+| `AuthPolicy`              | `profile.go`                 | Auth coordinator semantics                        |
+| `AuthStateManager`        | `auth.go`                    | Cleans tracker-owned persisted auth state         |
+| `Rules`                   | `rules.go`                   | Release eligibility                               |
 | `ValidationPolicy`        | `rules.go` / `validation.go` | Versioned eligibility/constructibility validation |
-| `MetadataPolicy`          | `profile.go`            | Required canonical/provider metadata         |
-| `ArtifactPolicy`          | `profile.go`            | Torrent size and piece-size limits           |
-| `UploadArtifactPolicy`    | `profile.go`            | Source/announce personalization              |
-| `BannedGroups` / policy   | `banned_groups.go`      | Static or dynamic blacklists                 |
-| `DupePolicy`              | `dupe.go`               | Candidate comparison semantics               |
-| `AudioPolicy`             | `profile.go`            | Multi-language/bloat constraints             |
-| `ImageHostPolicy`         | `profile.go`            | Allowed/private image hosts                  |
-| `TorrentIdentityPolicy`   | `profile.go`            | Announce/comment identity and reuse behavior |
-| `LocalizedMetadataLocale` | `profile.go`            | Locale-specific tracker rendering            |
-| `DescriptionGroup`        | `profile.go`            | Saved description override group             |
-| `DataPolicy`              | `profile.go`            | Lookup cooldown/defer behavior                |
-| `ClaimPolicy`             | `profile.go`            | Active-claim orchestration                    |
+| `MetadataPolicy`          | `profile.go`                 | Required canonical/provider metadata              |
+| `ArtifactPolicy`          | `profile.go`                 | Torrent size and piece-size limits                |
+| `UploadArtifactPolicy`    | `profile.go`                 | Source/announce personalization                   |
+| `BannedGroups` / policy   | `banned_groups.go`           | Static or dynamic blacklists                      |
+| `DupePolicy`              | `dupe.go`                    | Candidate comparison semantics                    |
+| `AudioPolicy`             | `profile.go`                 | Multi-language/bloat constraints                  |
+| `ImageHostPolicy`         | `profile.go`                 | Allowed/private image hosts                       |
+| `TorrentIdentityPolicy`   | `profile.go`                 | Announce/comment identity and reuse behavior      |
+| `LocalizedMetadataLocale` | `profile.go`                 | Locale-specific tracker rendering                 |
+| `DescriptionGroup`        | `profile.go`                 | Saved description override group                  |
+| `DataPolicy`              | `profile.go`                 | Lookup cooldown/defer behavior                    |
+| `ClaimPolicy`             | `profile.go`                 | Active-claim orchestration                        |
 
 Implement only capabilities the tracker needs. If new behavior cannot be expressed by an existing
 typed capability, extend the shared profile/registry contract; do not
@@ -804,6 +830,8 @@ At minimum, cover:
 - release-name projection/version and principal payload use of the reviewed name
 - bounded response handling and sanitized diagnostics
 - torrent artifact and image-host behavior when declared
+- successful `UploadedTorrents` identity, direct tracker-page URL, registered artifact
+  download/reconstruction, and post-submit artifact-failure semantics
 
 ## Validation checklist
 

@@ -43,6 +43,7 @@ pnpm --dir webui run build
 - Release workflow pages consume `useReleaseSession` facets; they do not import production API clients to coordinate release operations directly.
 - `src/releaseSession` owns active release state, workflow operation intents, durable polling, and progress projection. Views render facet state instead of subscribing independently.
 - Render backend-provided tracker auth capabilities/status/actions, questionnaire schemas/defaults, and reviewed upload/search names. Submit user answers/actions through shared contracts.
+- Existing backend stage controls are authoritative for WebUI tracker selection. Preserve their exact tracker subset through downstream preparation and upload; do not add the CLI/composite post-dupe approval gate or widen the set in frontend state.
 - Do not derive tracker-specific auth readiness, taxonomy, descriptions, media facts, questionnaire fields, or release-name transformations in frontend code.
 - Production workflow transport is mandatory. Do not add release Job clients, optional workflow ports, or fallback orchestration.
 - Facets expose declarative state and intent methods, not React setters, dispatch functions, or refs.
