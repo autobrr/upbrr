@@ -67,11 +67,14 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$branch"
 
+          # @upgrade preserves a current pseudo-version when it is newer than
+          # the latest release tag while still advancing to newer releases.
           go get \
-            github.com/autobrr/go-bdinfo@latest \
-            github.com/autobrr/go-mediainfo@latest \
-            github.com/autobrr/go-qbittorrent@latest \
-            github.com/autobrr/mkbrr@latest
+            github.com/autobrr/go-bdinfo@upgrade \
+            github.com/autobrr/go-mediainfo@upgrade \
+            github.com/autobrr/go-qbittorrent@upgrade \
+            github.com/autobrr/go-torrent@upgrade \
+            github.com/autobrr/mkbrr@upgrade
 
           rls_version="$(
             git ls-remote --tags --refs https://github.com/autobrr/rls.git 'v*' \
@@ -87,6 +90,11 @@ jobs:
 
           go mod edit -replace="github.com/moistari/rls=github.com/autobrr/rls@${rls_version}"
           go mod tidy
+
+          if go list -m github.com/anacrolix/torrent >/dev/null 2>&1; then
+            echo "github.com/anacrolix/torrent was reintroduced" >&2
+            exit 1
+          fi
 
           if git diff --quiet -- go.mod go.sum; then
             echo "No autobrr dependency updates found"
@@ -109,11 +117,12 @@ jobs:
         run: |
           body_file="$(mktemp)"
           cat > "$body_file" <<'BODY'
-          Updates autobrr Go modules to latest available versions:
+          Updates autobrr Go modules without downgrading newer pseudo-versions:
 
           - github.com/autobrr/go-bdinfo
           - github.com/autobrr/go-mediainfo
           - github.com/autobrr/go-qbittorrent
+          - github.com/autobrr/go-torrent
           - github.com/autobrr/mkbrr
           - github.com/autobrr/rls
 
