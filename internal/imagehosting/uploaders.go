@@ -623,9 +623,6 @@ func (u *onlyImageUploader) Upload(ctx context.Context, imagePath string) (uploa
 	if err != nil {
 		return uploadResult{}, err
 	}
-	if status != http.StatusOK {
-		return uploadResult{}, fmt.Errorf("onlyimage upload failed with status %d", status)
-	}
 
 	var response struct {
 		StatusCode int `json:"status_code"`
@@ -651,13 +648,22 @@ func (u *onlyImageUploader) Upload(ctx context.Context, imagePath string) (uploa
 		StatusText string `json:"status_txt"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
+		if status != http.StatusOK {
+			return uploadResult{}, fmt.Errorf("onlyimage upload failed with status %d", status)
+		}
 		return uploadResult{}, fmt.Errorf("onlyimage invalid response: %w", err)
 	}
-	if response.StatusCode != http.StatusOK || (response.Success.Code != 0 && response.Success.Code != http.StatusOK) {
-		message := safeResponseMessage(response.Error.Message)
+	message := safeResponseMessage(response.Error.Message)
+	if message == "" {
+		message = safeResponseMessage(response.StatusText)
+	}
+	if status != http.StatusOK {
 		if message == "" {
-			message = safeResponseMessage(response.StatusText)
+			return uploadResult{}, fmt.Errorf("onlyimage upload failed with status %d", status)
 		}
+		return uploadResult{}, fmt.Errorf("onlyimage upload failed: %s", message)
+	}
+	if response.StatusCode != http.StatusOK || (response.Success.Code != 0 && response.Success.Code != http.StatusOK) {
 		if message == "" {
 			message = "onlyimage upload failed"
 		}

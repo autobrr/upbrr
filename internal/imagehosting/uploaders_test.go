@@ -742,7 +742,7 @@ func TestOnlyImageUploaderRejectsV11Failure(t *testing.T) {
 	client := &http.Client{
 		Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 			return &http.Response{
-				StatusCode: http.StatusOK,
+				StatusCode: http.StatusBadRequest,
 				Header:     make(http.Header),
 				Body: io.NopCloser(strings.NewReader(`{
 					"status_code": 400,
