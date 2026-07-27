@@ -30,6 +30,7 @@ func Profile() standalone.Profile {
 			func(meta api.UploadSubject, _ config.TrackerConfig) string { return resolveSearchName(meta) },
 		),
 		NewDuplicateAdapter: newDuplicateAdapter,
+		Rules:               &trackers.RuleSet{RequireTVOnly: true},
 		BannedGroups:        bannedGroups(),
 		DataPolicy:          &trackers.DataLookupPolicy{DeferWhenCollectingImages: true},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{

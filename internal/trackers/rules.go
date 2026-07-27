@@ -79,7 +79,7 @@ func EvaluateTrackerValidationWithRegistry(
 	return append(failures, custom...), nil
 }
 
-func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta api.RuleSubject, logger api.Logger) ([]api.RuleFailure, error) {
+func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta api.RuleSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("trackers: evaluate rules: %w", err)
 	}
@@ -151,15 +151,19 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 	}
 	if rules.RequireMovieOnly || rules.RequireTVOnly {
 		category := resolveCategory(meta)
-		if category != "" {
-			if rules.RequireMovieOnly && category != "movie" {
-				addStrict("require_movie_only", fmt.Sprintf("category %s is not movie", category))
+		if rules.RequireMovieOnly && category != "movie" {
+			reason := "movie category required"
+			if category != "" {
+				reason = fmt.Sprintf("category %s is not movie", category)
 			}
-			if rules.RequireTVOnly && category != "tv" {
-				addStrict("require_tv_only", fmt.Sprintf("category %s is not tv", category))
+			addStrict("require_movie_only", reason)
+		}
+		if rules.RequireTVOnly && category != "tv" {
+			reason := "TV category required"
+			if category != "" {
+				reason = fmt.Sprintf("category %s is not tv", category)
 			}
-		} else if logger != nil {
-			logger.Debugf("trackers: %s rule category check skipped (missing category)", name)
+			addStrict("require_tv_only", reason)
 		}
 	}
 

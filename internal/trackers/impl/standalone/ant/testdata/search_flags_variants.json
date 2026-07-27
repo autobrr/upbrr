@@ -1,0 +1,10 @@
+{
+  "item": [
+    {"fileName": "Example.Release.2026.DV-GRP.mkv", "resolution": "2160p", "size": 1001, "fileCount": 1, "flags": ["DV"], "files": [{"name": "Example.Release.2026.DV-GRP.mkv"}], "guid": "https://example.invalid/torrents/201"},
+    {"fileName": "Example.Release.2026.HDR-GRP.mkv", "resolution": "2160p", "size": 1002, "fileCount": 1, "flags": ["HDR10"], "files": [{"name": "Example.Release.2026.HDR-GRP.mkv"}], "guid": "https://example.invalid/torrents/202"},
+    {"fileName": "Example.Release.2026.DV.HDR-GRP.mkv", "resolution": "2160p", "size": 1003, "fileCount": 1, "flags": ["DV", "HDR10"], "files": [{"name": "Example.Release.2026.DV.HDR-GRP.mkv"}], "guid": "https://example.invalid/torrents/203"},
+    {"fileName": "Example.Release.2026.Empty-GRP.mkv", "resolution": "2160p", "size": 1004, "fileCount": 1, "flags": [], "files": [{"name": "Example.Release.2026.Empty-GRP.mkv"}], "guid": "https://example.invalid/torrents/204"},
+    {"fileName": "Example.Release.2026.Missing-GRP.mkv", "resolution": "2160p", "size": 1005, "fileCount": 1, "files": [{"name": "Example.Release.2026.Missing-GRP.mkv"}], "guid": "https://example.invalid/torrents/205"},
+    {"fileName": "Example.Release.2026.Unknown-GRP.mkv", "resolution": "2160p", "size": 1006, "fileCount": 1, "flags": ["FUTURE_HDR"], "files": [{"name": "Example.Release.2026.Unknown-GRP.mkv"}], "guid": "https://example.invalid/torrents/206"}
+  ]
+}

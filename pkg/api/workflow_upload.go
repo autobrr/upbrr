@@ -295,6 +295,9 @@ func (r CreateReleaseWorkflowUploadRequest) Validate() error {
 	if err := validateReleaseWorkflowUploadTrackerIDs(r.Trackers); err != nil {
 		return err
 	}
+	if !r.Unattended.Confirm && len(r.Trackers.Include) == 0 {
+		return errors.New("strict unattended upload requires at least one explicitly included tracker")
+	}
 	if r.Duplicates.CheckCount != nil && (*r.Duplicates.CheckCount < 1 || *r.Duplicates.CheckCount > 2) {
 		return errors.New("duplicate check count must be one or two")
 	}

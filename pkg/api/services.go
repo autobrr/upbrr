@@ -21,7 +21,7 @@ type ServiceSet struct {
 	Torrents   TorrentService
 	Clients    ClientService
 	Filesystem FilesystemService
-	Dupes      DupeService
+	Dupes      ProjectionDupeService
 	// TrackerAuth validates tracker readiness at the shared upload-preflight boundary.
 	TrackerAuth TrackerAuthService
 	Screenshots ScreenshotService
@@ -49,8 +49,28 @@ type FilesystemService interface {
 	ValidatePaths(ctx context.Context, paths []string) ([]string, error)
 }
 
-type DupeService interface {
-	Check(ctx context.Context, subject DuplicateSubject, trackers []string) (DupeCheckSummary, error)
+// ProjectionDupeCheckOptions controls projection-bound duplicate execution.
+type ProjectionDupeCheckOptions struct {
+	SkipRemote         bool
+	BypassBannedGroups bool
+}
+
+// DupeAssessmentEvidence is private retained duplicate authority. Public
+// workflow state receives only sanitized candidate projections.
+type DupeAssessmentEvidence interface {
+	Apply(*DuplicateSubject)
+	MarshalBinary() ([]byte, error)
+}
+
+// ProjectionDupeService checks one exact tracker projection set and returns
+// private retained evidence separately from its safe public summary.
+type ProjectionDupeService interface {
+	CheckProjectionSet(
+		context.Context,
+		DuplicateSubject,
+		TrackerReleaseProjectionSet,
+		ProjectionDupeCheckOptions,
+	) (DupeCheckSummary, DupeAssessmentEvidence, error)
 }
 
 // DuplicateSubject is the duplicate module's source-scoped read model. It
@@ -74,6 +94,7 @@ type DuplicateSubject struct {
 	Source               string
 	Tag                  string
 	HDR                  string
+	HDRFacts             HDRFacts
 	UHD                  string
 	VideoEncode          string
 	VideoCodec           string
@@ -274,6 +295,7 @@ type UploadSubject struct {
 	Type                        string
 	UHD                         string
 	HDR                         string
+	HDRFacts                    HDRFacts
 	Distributor                 string
 	Region                      string
 	VideoCodec                  string

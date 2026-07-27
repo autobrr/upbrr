@@ -321,7 +321,13 @@ func (s *cliWorkflowSession) collectCompositeTrackerApproval(
 		dupe := dupeByTracker[trackerID]
 		fmt.Printf("Tracker: %s (%s)\n", tracker, trackerID)
 		fmt.Printf("Upload name: %q\n", projection.UploadReleaseName)
-		fmt.Printf("Duplicate check: decision=%s matches=%d\n", dupe.Decision, len(dupe.Matches))
+		fmt.Printf(
+			"Duplicate check: decision=%s candidates=%d search_complete=%t policy=%s\n",
+			dupe.Decision,
+			len(dupe.Matches),
+			dupe.Search.Complete,
+			emptyCLIValue(dupe.PolicyID),
+		)
 		fmt.Printf(
 			"Requirements: screenshots=%d dvd_menus=%d image_hosting=%t descriptions=%t\n",
 			projection.Artifacts.ScreenshotCount,
@@ -452,15 +458,22 @@ func (s *cliWorkflowSession) collectCompositeDuplicateFeedback(
 	}
 	result := s.current.Dupes.Results[resultIndex]
 	fmt.Printf(
-		"Dupe check %s: upload_name=%s matches=%d decision=%s\n",
+		"Dupe check %s: upload_name=%s candidates=%d decision=%s search_complete=%t pages=%d policy=%s\n",
 		result.TrackerID,
 		result.UploadReleaseName,
 		len(result.Matches),
 		result.Decision,
+		result.Search.Complete,
+		result.Search.Pages,
+		emptyCLIValue(result.PolicyID),
 	)
 	printCLICompositeDupeMatches(result.Matches)
 	fmt.Println()
-	allow, err := promptYesNo(reader, fmt.Sprintf("Upload to %s despite duplicate evidence? [y/N]: ", result.TrackerID), false)
+	prompt := fmt.Sprintf("Upload to %s despite duplicate evidence? [y/N]: ", result.TrackerID)
+	if cliDupeRequiresRiskAcknowledgement(result) {
+		prompt = fmt.Sprintf("Acknowledge incomplete/manual policy evidence and upload to %s? [y/N]: ", result.TrackerID)
+	}
+	allow, err := promptYesNo(reader, prompt, false)
 	if err != nil {
 		return feedback, false, err
 	}
@@ -483,13 +496,62 @@ func printCLICompositeDupeMatches(matches []api.DupeMatchProjection) {
 	if len(matches) == 0 {
 		return
 	}
-	fmt.Println("Duplicate matches:")
+	fmt.Println("Duplicate candidates:")
 	for index, match := range matches {
 		fmt.Printf("  %d. %s\n", index+1, strings.TrimSpace(match.Name))
+		fmt.Printf(
+			"     Relation: %s  Evidence: %s/%s\n",
+			emptyCLIValue(string(match.Relation)),
+			emptyCLIValue(string(match.EvidenceStatus)),
+			emptyCLIValue(string(match.HDR.Origin)),
+		)
+		if len(match.Reasons) > 0 {
+			reasons := make([]string, 0, len(match.Reasons))
+			for _, reason := range match.Reasons {
+				if code := strings.TrimSpace(reason.Code); code != "" {
+					reasons = append(reasons, code)
+				}
+			}
+			if len(reasons) > 0 {
+				fmt.Printf("     Reasons: %s\n", strings.Join(reasons, ","))
+			}
+		} else if reason := strings.TrimSpace(match.Reason); reason != "" {
+			fmt.Printf("     Reason: %s\n", reason)
+		}
+		if len(match.HDR.Formats) > 0 {
+			formats := make([]string, len(match.HDR.Formats))
+			for index, format := range match.HDR.Formats {
+				formats[index] = string(format)
+			}
+			fmt.Printf("     HDR: %s\n", strings.Join(formats, "+"))
+		}
 		if link := strings.TrimSpace(match.Link); link != "" {
 			fmt.Printf("     Link: %s\n", link)
 		}
 	}
+}
+
+func cliDupeRequiresRiskAcknowledgement(result api.TrackerDupeAssessment) bool {
+	if result.Search.Pages > 0 && !result.Search.Complete {
+		return true
+	}
+	return slices.ContainsFunc(result.Matches, func(match api.DupeMatchProjection) bool {
+		switch match.Relation {
+		case api.DupeRelationSameSlot, api.DupeRelationProposedTrumps, api.DupeRelationManualReview,
+			api.DupeRelationInsufficientEvidence:
+			return true
+		case "", api.DupeRelationExactDuplicate, api.DupeRelationExistingPreferred, api.DupeRelationCoexists:
+			return false
+		}
+		return false
+	})
+}
+
+func emptyCLIValue(value string) string {
+	if value = strings.TrimSpace(value); value != "" {
+		return value
+	}
+	return "none"
 }
 
 func compositeCLIProjectionFromInstruction(

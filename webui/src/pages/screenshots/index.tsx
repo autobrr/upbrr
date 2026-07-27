@@ -43,6 +43,7 @@ export default function ScreenshotsPage({
   useEffect(() => {
     if (
       view.status !== "running" &&
+      view.status !== "error" &&
       !view.plan &&
       (view.workflowMode || Boolean(view.staleReason))
     ) {

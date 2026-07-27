@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -20,8 +21,9 @@ import (
 const mtvTorznabEndpoint = "https://www.morethantv.me/api/torznab"
 
 type dupeSearcher struct {
-	cfg  config.Config
-	http *http.Client
+	cfg      config.Config
+	http     *http.Client
+	maxPages int
 }
 
 // newDuplicateAdapter returns a duplicate-search adapter bound to one immutable dependency set.
@@ -30,7 +32,17 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	httpClient := deps.HTTPClient()
 	logger := deps.Logger()
 	_ = logger
-	return &dupeSearcher{cfg: cfg, http: httpClient}
+	searcher := &dupeSearcher{
+		cfg:      cfg,
+		http:     httpClient,
+		maxPages: 100,
+	}
+	if registry := deps.Registry(); registry != nil {
+		if policy, ok := registry.LookupDupePolicy(deps.Tracker()); ok && policy.SearchScope.MaxPages > 0 {
+			searcher.maxPages = policy.SearchScope.MaxPages
+		}
+	}
+	return searcher
 }
 
 func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dupe.AdapterResult {
@@ -59,68 +71,182 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		params.Set("q", query)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, mtvTorznabEndpoint, nil)
-	if err != nil {
-		return dupe.Failed(dupe.FailureRequest, "MTV search failed", fmt.Errorf("build MTV request: %w", err))
+	const pageLimit = 100
+	maxPages := h.maxPages
+	if maxPages <= 0 {
+		maxPages = 100
 	}
-	req.URL.RawQuery = params.Encode()
+	entries := make([]api.DupeEntry, 0)
+	offset := 0
+	complete := false
+	pages := 0
+	for pages < maxPages {
+		pageParams := cloneMTVValues(params)
+		if offset > 0 {
+			pageParams.Set("offset", strconv.Itoa(offset))
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, mtvTorznabEndpoint, nil)
+		if err != nil {
+			return dupe.Failed(dupe.FailureRequest, "MTV search failed", fmt.Errorf("build MTV request: %w", err))
+		}
+		req.URL.RawQuery = pageParams.Encode()
 
-	resp, err := h.http.Do(req)
-	if err != nil {
-		return dupe.Failed(dupe.FailureRequest, "MTV search failed", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return dupe.Failed(dupe.FailureResponseStatus, "MTV search failed", nil)
-	}
-
-	var payload mtvRSS
-	if err := xml.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return dupe.Failed(dupe.FailureResponseParse, "MTV response parse failed", err)
-	}
-
-	entries := make([]api.DupeEntry, 0, len(payload.Channel.Items))
-	for _, item := range payload.Channel.Items {
-		title := strings.TrimSpace(item.Title)
-		if title == "" {
-			continue
+		resp, err := h.http.Do(req)
+		if err != nil {
+			return dupe.Failed(dupe.FailureRequest, "MTV search failed", err)
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			resp.Body.Close()
+			return dupe.Failed(dupe.FailureResponseStatus, "MTV search failed", nil)
 		}
 
-		fileCount := parsePositiveInt(item.Files)
-		sizeBytes := parsePositiveInt64(item.Size)
-		for _, attr := range item.allAttrs() {
-			name := strings.ToLower(strings.TrimSpace(attr.Name))
-			value := strings.TrimSpace(attr.Value)
-			switch {
-			case fileCount == 0 && (name == "files" || name == "file_count" || name == "filecount"):
-				fileCount = parsePositiveInt(value)
-			case sizeBytes == 0 && name == "size":
-				sizeBytes = parsePositiveInt64(value)
+		var payload mtvRSS
+		decodeErr := xml.NewDecoder(resp.Body).Decode(&payload)
+		resp.Body.Close()
+		if decodeErr != nil {
+			return dupe.Failed(dupe.FailureResponseParse, "MTV response parse failed", decodeErr)
+		}
+		pages++
+		for _, item := range payload.Channel.Items {
+			if entry, ok := mtvDupeEntry(item); ok {
+				entries = append(entries, entry)
 			}
 		}
+		total := payload.Channel.Response.Total
+		responseOffset := payload.Channel.Response.Offset
+		if responseOffset == 0 && offset > 0 {
+			responseOffset = offset
+		}
+		nextOffset := responseOffset + len(payload.Channel.Items)
+		switch {
+		case total > 0 && nextOffset >= total:
+			complete = true
+		case total > nextOffset && nextOffset > offset:
+			offset = nextOffset
+			continue
+		case total > nextOffset:
+			// Advertised results remain but the endpoint made no progress.
+		case total == 0 && len(payload.Channel.Items) == pageLimit && nextOffset > offset:
+			offset = nextOffset
+			continue
+		case len(payload.Channel.Items) < pageLimit:
+			complete = true
+		}
+		break
+	}
+	warnings := []string(nil)
+	if !complete {
+		warnings = []string{"MTV search result is truncated or lacks complete pagination evidence"}
+	}
+	return dupe.ResolvedWithSearch(entries, warnings, dupe.SearchEvidence{
+		Complete: complete,
+		Pages:    pages,
+		Scope:    "work_identity",
+		Warnings: warnings,
+	})
+}
 
-		guid := strings.TrimSpace(item.GUID)
-		download := strings.TrimSpace(item.Link)
-		if download == "" {
-			download = strings.TrimSpace(item.Enclosure.URL)
-		}
-
-		entry := api.DupeEntry{
-			Name:      title,
-			Files:     []string{title},
-			FileCount: fileCount,
-			ID:        guid,
-			Link:      guid,
-			Download:  strings.ReplaceAll(download, "&amp;", "&"),
-		}
-		if sizeBytes > 0 {
-			entry.SizeKnown = true
-			entry.SizeBytes = sizeBytes
-		}
-		entries = append(entries, entry)
+func mtvDupeEntry(item mtvItem) (api.DupeEntry, bool) {
+	title := strings.TrimSpace(item.Title)
+	if title == "" {
+		return api.DupeEntry{}, false
 	}
 
-	return dupe.Resolved(entries, nil)
+	fileCount := parsePositiveInt(item.Files)
+	sizeBytes := parsePositiveInt64(item.Size)
+	attributes := make(map[string]string)
+	var hdrFlags []string
+	hdrFieldPresent := false
+	for _, attr := range item.allAttrs() {
+		name := strings.ToLower(strings.TrimSpace(attr.Name))
+		value := strings.TrimSpace(attr.Value)
+		if name == "" {
+			continue
+		}
+		isHDRField := name == "hdr" || name == "dolbyvision" || name == "dv"
+		hdrFieldPresent = hdrFieldPresent || isHDRField
+		if value == "" {
+			continue
+		}
+		attributes[name] = value
+		switch {
+		case fileCount == 0 && (name == "files" || name == "file_count" || name == "filecount"):
+			fileCount = parsePositiveInt(value)
+		case sizeBytes == 0 && name == "size":
+			sizeBytes = parsePositiveInt64(value)
+		case isHDRField:
+			hdrFlags = appendUniqueMTVFlags(hdrFlags, mtvHDRFlags(value)...)
+		}
+	}
+
+	guid := strings.TrimSpace(item.GUID)
+	download := strings.TrimSpace(item.Link)
+	if download == "" {
+		download = strings.TrimSpace(item.Enclosure.URL)
+	}
+	entry := api.DupeEntry{
+		Name:         title,
+		FileCount:    fileCount,
+		ID:           guid,
+		Link:         guid,
+		Download:     strings.ReplaceAll(download, "&amp;", "&"),
+		Res:          attributes["resolution"],
+		Type:         attributes["type"],
+		Source:       attributes["source"],
+		Category:     attributes["category"],
+		Codec:        attributes["codec"],
+		Attributes:   attributes,
+		Flags:        hdrFlags,
+		FlagsPresent: hdrFieldPresent,
+	}
+	if len(hdrFlags) > 0 {
+		entry.HDR = dupe.NormalizeTrackerHDRFlags("MTV", hdrFlags, true, false)
+	}
+	if sizeBytes > 0 {
+		entry.SizeKnown = true
+		entry.SizeBytes = sizeBytes
+	}
+	return entry, true
+}
+
+func mtvHDRFlags(value string) []string {
+	upper := strings.ToUpper(strings.TrimSpace(value))
+	var flags []string
+	if strings.Contains(upper, "DOLBY VISION") || strings.Contains(upper, "DOVI") || mtvTokenPresent(upper, "DV") {
+		flags = append(flags, "DV")
+	}
+	if strings.Contains(upper, "HDR10+") || strings.Contains(upper, "HDR10PLUS") {
+		flags = append(flags, "HDR10+")
+	} else if strings.Contains(upper, "HDR10") || mtvTokenPresent(upper, "HDR") {
+		flags = append(flags, "HDR10")
+	}
+	if mtvTokenPresent(upper, "HLG") {
+		flags = append(flags, "HLG")
+	}
+	return flags
+}
+
+func mtvTokenPresent(value string, token string) bool {
+	return slices.Contains(strings.FieldsFunc(value, func(r rune) bool {
+		return r == '.' || r == ' ' || r == '_' || r == '-' || r == ',' || r == '|' || r == '/' || r == '+'
+	}), token)
+}
+
+func appendUniqueMTVFlags(flags []string, values ...string) []string {
+	for _, value := range values {
+		if !slices.Contains(flags, value) {
+			flags = append(flags, value)
+		}
+	}
+	return flags
+}
+
+func cloneMTVValues(values url.Values) url.Values {
+	cloned := make(url.Values, len(values))
+	for key, entries := range values {
+		cloned[key] = append([]string(nil), entries...)
+	}
+	return cloned
 }
 
 // isMTVTVCategory reports whether MTV torznab searches may use a TVDB ID query.
@@ -168,7 +294,13 @@ type mtvRSS struct {
 }
 
 type mtvChannel struct {
-	Items []mtvItem `xml:"item"`
+	Items    []mtvItem         `xml:"item"`
+	Response mtvSearchResponse `xml:"response"`
+}
+
+type mtvSearchResponse struct {
+	Offset int `xml:"offset,attr"`
+	Total  int `xml:"total,attr"`
 }
 
 type mtvItem struct {

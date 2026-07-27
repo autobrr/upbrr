@@ -22,10 +22,11 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 			}
 			meta := standalone.UploadSubjectForValidation(subject)
 			failures := make([]api.RuleFailure, 0, 2)
-			if _, err := meta.Identity.RequireCategory(); err != nil {
+			category, categoryErr := meta.Identity.RequireCategory()
+			if categoryErr != nil || category != api.CanonicalCategoryMovie {
 				failures = append(failures, trackers.NewRuleFailure(
 					"unsupported_category",
-					"PTP requires a canonical movie or TV-pack category",
+					"PTP requires a canonical movie category",
 					api.RuleDispositionStrict,
 				))
 			}

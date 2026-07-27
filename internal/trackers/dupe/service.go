@@ -42,9 +42,6 @@ type CheckOptions struct {
 	// BypassBannedGroups classifies a known banned-group gate as explicitly
 	// bypassed without refreshing dynamic policy or invoking the tracker adapter.
 	BypassBannedGroups bool
-	// Projections binds each search to exact tracker-local criteria. Nil keeps
-	// the temporary legacy compatibility path.
-	Projections map[string]api.TrackerReleaseProjection
 }
 
 // CheckProjectionSet searches only dupe-ready projections from one exact set.
@@ -52,22 +49,26 @@ func (s *Service) CheckProjectionSet(
 	ctx context.Context,
 	meta api.DuplicateSubject,
 	projectionSet api.TrackerReleaseProjectionSet,
-	options CheckOptions,
-) (api.DupeCheckSummary, Assessment, error) {
+	projectionOptions api.ProjectionDupeCheckOptions,
+) (api.DupeCheckSummary, api.DupeAssessmentEvidence, error) {
 	if err := projectionSet.Validate(); err != nil {
 		return api.DupeCheckSummary{}, EmptyAssessment(), fmt.Errorf("dupechecking: projection set: %w", err)
 	}
-	options.Projections = make(map[string]api.TrackerReleaseProjection, len(projectionSet.Projections))
+	options := CheckOptions{
+		SkipRemote:         projectionOptions.SkipRemote,
+		BypassBannedGroups: projectionOptions.BypassBannedGroups,
+	}
+	projections := make(map[string]api.TrackerReleaseProjection, len(projectionSet.Projections))
 	trackers := make([]string, 0, len(projectionSet.Projections))
 	for _, projection := range projectionSet.Projections {
 		if projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady {
 			continue
 		}
 		tracker := normalizeTracker(string(projection.TrackerID))
-		options.Projections[tracker] = projection
+		projections[tracker] = projection
 		trackers = append(trackers, tracker)
 	}
-	return s.CheckWithAssessment(ctx, meta, trackers, options)
+	return s.checkWithAssessment(ctx, meta, trackers, options, projections)
 }
 
 // Service coordinates bounded duplicate checks through tracker-bound adapters.
@@ -78,7 +79,6 @@ type Service struct {
 	banned   *trackerspkg.BannedGroupChecker
 	registry *trackerspkg.Registry
 	adapters map[string]Adapter
-	filter   func([]api.DupeEntry, api.DuplicateSubject, string, config.Config, api.Logger) ([]api.DupeEntry, api.DupeMatch)
 	initErr  error
 
 	cancelWarningThreshold time.Duration
@@ -100,9 +100,6 @@ func NewServiceWithRegistry(cfg config.Config, logger api.Logger, registry *trac
 		registry:               registry,
 		adapters:               make(map[string]Adapter),
 		cancelWarningThreshold: duplicateCancelWarningThreshold,
-	}
-	service.filter = func(entries []api.DupeEntry, meta api.DuplicateSubject, tracker string, _ config.Config, _ api.Logger) ([]api.DupeEntry, api.DupeMatch) {
-		return filterDupes(entries, meta, tracker, registry)
 	}
 	if registry == nil {
 		service.initErr = errors.New("dupechecking: tracker registry is nil")
@@ -149,6 +146,16 @@ func (s *Service) CheckWithAssessment(
 	trackerNames []string,
 	options CheckOptions,
 ) (api.DupeCheckSummary, Assessment, error) {
+	return s.checkWithAssessment(ctx, meta, trackerNames, options, nil)
+}
+
+func (s *Service) checkWithAssessment(
+	ctx context.Context,
+	meta api.DuplicateSubject,
+	trackerNames []string,
+	options CheckOptions,
+	projections map[string]api.TrackerReleaseProjection,
+) (api.DupeCheckSummary, Assessment, error) {
 	summary := api.DupeCheckSummary{SourcePath: meta.SourcePath}
 	if strings.TrimSpace(meta.SourcePath) == "" {
 		return summary, EmptyAssessment(), errors.New("dupechecking: missing source path")
@@ -194,7 +201,7 @@ func (s *Service) CheckWithAssessment(
 					Message:    "searching",
 					Total:      total,
 				})
-				trackerMeta, projectionErr := duplicateSubjectForProjection(meta, job.tracker, options.Projections)
+				trackerMeta, projectionErr := duplicateSubjectForProjection(meta, job.tracker, projections)
 				if projectionErr != nil {
 					checkedAt := time.Now().UTC()
 					result := notRunPublicResult(job.tracker, NotRunMissingMetadata, projectionErr.Error(), checkedAt)
@@ -315,6 +322,20 @@ func duplicateSubjectForProjection(
 		}
 	}
 	meta.ReleaseName = name
+	target := projection.DuplicateTarget
+	meta.HDRFacts = cloneHDRFacts(target.HDR)
+	if value := strings.TrimSpace(target.Type); value != "" {
+		meta.Type = value
+	}
+	if value := strings.TrimSpace(target.Source); value != "" {
+		meta.Source = value
+	}
+	if value := strings.TrimSpace(target.VideoCodec); value != "" {
+		meta.VideoCodec = value
+	}
+	if value := strings.TrimSpace(target.VideoEncode); value != "" {
+		meta.VideoEncode = value
+	}
 	if value := strings.TrimSpace(criteria.Type.Label); value != "" {
 		meta.Type = value
 	}
@@ -345,6 +366,10 @@ func decorateProjectionResult(result *api.DupeCheckResult, projection *api.Track
 	result.ProjectionFingerprint = projection.ProjectorFingerprint
 	result.CriteriaFingerprint = projection.CriteriaFingerprint
 	result.ProjectionStatus = projection.Readiness
+	result.PolicyID = projection.DuplicatePolicyID
+	result.PolicyFingerprint = projection.DuplicatePolicyFingerprint
+	result.TargetFingerprint = projection.DuplicateTargetFingerprint
+	result.SearchFingerprint = projection.DuplicateSearchFingerprint
 }
 
 func (s *Service) warnOnSlowCancellation(ctx context.Context, workersDone <-chan struct{}, done chan<- struct{}, sourcePath string) {
@@ -401,9 +426,23 @@ func (s *Service) checkTracker(
 	if containsTracker(meta.MatchedTrackers, tracker) {
 		match := api.DupeMatch{MatchedReason: "in_client"}
 		result = api.DupeCheckResult{
-			Tracker:   tracker,
-			HasDupes:  true,
-			Match:     match,
+			Tracker:  tracker,
+			HasDupes: true,
+			Evaluations: []api.DupeCandidateEvaluation{{
+				Name:     strings.TrimSpace(meta.ReleaseName),
+				Relation: api.DupeRelationExactDuplicate,
+				Reasons: []api.DupeReason{{
+					Code:    "in_client",
+					Message: "Matching torrent is already present in the configured client.",
+				}},
+				HDR:            cloneHDRFacts(meta.HDRFacts),
+				EvidenceStatus: meta.HDRFacts.Status,
+			}},
+			Search: api.DupeSearchEvidence{
+				Complete:       true,
+				CandidateCount: 1,
+				Scope:          "local_client",
+			},
 			Status:    "completed",
 			CheckedAt: checkedAt,
 		}
@@ -464,6 +503,7 @@ func (s *Service) checkTracker(
 		result = failedPublicResult(tracker, FailureInternal, "duplicate adapter unavailable", checkedAt)
 		return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionFailed, FailureInternal, false, api.DupeMatch{}, nil), false
 	}
+	s.logger.Infof("dupechecking: search tracker=%s state=start", tracker)
 	adapterResult := adapter.Search(ctx, cloneDuplicateSubject(meta))
 	if err := adapterResult.cause(); err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && ctx.Err() != nil {
 		return api.DupeCheckResult{}, assessmentEntry{}, true
@@ -484,29 +524,48 @@ func (s *Service) projectAdapterResult(
 		return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionFailed, FailureInternal, false, api.DupeMatch{}, nil)
 	case DispositionResolved:
 		raw := trimEntries(adapterResult.Entries())
-		filter := s.filter
-		if filter == nil {
-			filter = FilterDupes
+		candidates := make([]TrackerCandidate, len(raw))
+		for index, rawCandidate := range raw {
+			candidates[index] = NormalizeCandidate(rawCandidate, tracker)
 		}
-		filtered, match := filter(raw, meta, tracker, s.cfg, s.logger)
+		policy := s.duplicatePolicy(tracker, meta)
+		search := adapterResult.SearchEvidence()
+		evaluation := Evaluate(duplicateTargetForEvaluation(meta), candidates, policy, search)
+		match := evaluationMatch(evaluation)
+		hasDupes := evaluation.Blocks || evaluation.RequiresAction
 		result := api.DupeCheckResult{
-			Tracker:   tracker,
-			Raw:       publicEntries(raw),
-			Filtered:  publicEntries(filtered),
-			HasDupes:  len(filtered) > 0,
-			Match:     publicMatch(match),
-			Notes:     cloneNotes(adapterResult.Notes()),
-			Status:    "completed",
-			CheckedAt: checkedAt,
+			Tracker:     tracker,
+			HasDupes:    hasDupes,
+			Notes:       cloneNotes(adapterResult.Notes()),
+			Status:      "completed",
+			CheckedAt:   checkedAt,
+			PolicyID:    policy.ID,
+			Evaluations: publicCandidateEvaluations(evaluation),
+			Search: api.DupeSearchEvidence{
+				Complete:       search.Complete,
+				Pages:          search.Pages,
+				CandidateCount: len(candidates),
+				Scope:          search.Scope,
+				Warnings:       cloneNotes(search.Warnings),
+			},
 		}
-		s.logger.Tracef(
-			"dupechecking: checked tracker=%s source=%s raw=%d filtered=%d dupes=%t",
+		s.logger.Infof(
+			"dupechecking: search tracker=%s state=completed candidates=%d complete=%t action=%t",
 			tracker,
-			meta.SourcePath,
-			len(raw),
-			len(filtered),
-			result.HasDupes,
+			len(candidates),
+			search.Complete,
+			hasDupes,
 		)
+		s.logger.Debugf("dupechecking: search tracker=%s pages=%d scope=%s", tracker, search.Pages, search.Scope)
+		for _, candidate := range evaluation.Candidates {
+			s.logger.Tracef(
+				"dupechecking: evaluation tracker=%s candidate_id=%s relation=%s evidence=%s",
+				tracker,
+				candidate.Candidate.ID,
+				candidate.Relation,
+				candidate.Candidate.HDR.Status,
+			)
+		}
 		entry := newAssessmentEntry(meta, s.cfg, tracker, DispositionResolved, "", result.HasDupes, match, raw)
 		return result, entry
 	case DispositionNotRun:
@@ -547,6 +606,72 @@ func (s *Service) projectAdapterResult(
 		result := failedPublicResult(tracker, FailureInternal, "duplicate adapter returned invalid result", checkedAt)
 		return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionFailed, FailureInternal, false, api.DupeMatch{}, nil)
 	}
+}
+
+func (s *Service) duplicatePolicy(tracker string, meta api.DuplicateSubject) trackerspkg.DupePolicy {
+	var policy trackerspkg.DupePolicy
+	if s != nil && s.registry != nil {
+		policy, _ = s.registry.LookupDupePolicy(tracker)
+	}
+	if strings.TrimSpace(policy.ID) == "" {
+		if meta.Projection != nil && strings.TrimSpace(meta.Projection.DuplicatePolicyID) != "" {
+			policy.ID = meta.Projection.DuplicatePolicyID
+		} else {
+			policy.ID = strings.ToLower(normalizeTracker(tracker)) + "/duplicate/v1"
+		}
+	}
+	if policy.SearchScope.MaxPages <= 0 {
+		policy.SearchScope.MaxPages = 100
+	}
+	return policy
+}
+
+func duplicateTargetForEvaluation(meta api.DuplicateSubject) api.TrackerDuplicateTarget {
+	if meta.Projection != nil {
+		return meta.Projection.DuplicateTarget
+	}
+	return api.TrackerDuplicateTarget{
+		Names:       append([]string(nil), meta.ReleaseName, meta.Filename),
+		Category:    string(meta.Identity.Category),
+		Type:        meta.Type,
+		Source:      meta.Source,
+		Resolution:  meta.Release.Resolution,
+		VideoCodec:  meta.VideoCodec,
+		VideoEncode: meta.VideoEncode,
+		HDR:         cloneHDRFacts(meta.HDRFacts),
+		Edition:     strings.Join(meta.Release.Edition, " "),
+		Region:      meta.Release.Region,
+		Group:       meta.Tag,
+		Season:      meta.SeasonInt,
+		Episode:     meta.EpisodeInt,
+		Date:        meta.DailyEpisodeDate,
+		Pack:        meta.TVPack,
+		SizeBytes:   meta.SourceSize,
+		FileNames:   append([]string(nil), meta.FileList...),
+	}
+}
+
+func evaluationMatch(evaluation Evaluation) api.DupeMatch {
+	for _, candidate := range evaluation.Candidates {
+		if candidate.Relation == api.DupeRelationCoexists {
+			continue
+		}
+		reason := string(candidate.Relation)
+		if len(candidate.Reasons) > 0 && strings.TrimSpace(candidate.Reasons[0].Code) != "" {
+			reason = candidate.Reasons[0].Code
+		}
+		return api.DupeMatch{
+			MatchedID:       candidate.Candidate.ID,
+			MatchedName:     candidate.Candidate.Name,
+			MatchedLink:     candidate.Candidate.DetailsLink,
+			MatchedDownload: candidate.Candidate.privateDownload,
+			MatchedReason:   reason,
+		}
+	}
+	if evaluation.RequiresAction && !evaluation.Complete {
+		return api.DupeMatch{MatchedReason: "incomplete_search"}
+	}
+	return api.DupeMatch{}
 }
 
 func containsTracker(trackers []string, tracker string) bool {
@@ -600,26 +725,6 @@ func sanitizeSafeMessage(message string, fallback string) string {
 		return fallback
 	}
 	return message
-}
-
-func publicEntries(entries []api.DupeEntry) []api.DupeEntry {
-	out := cloneEntries(entries)
-	for idx := range out {
-		out[idx].Download = ""
-		out[idx].Link = sanitizePublicURL(out[idx].Link)
-	}
-	return out
-}
-
-func publicMatch(match api.DupeMatch) api.DupeMatch {
-	match.MatchedDownload = ""
-	match.MatchedLink = sanitizePublicURL(match.MatchedLink)
-	match.SeasonPackLink = sanitizePublicURL(match.SeasonPackLink)
-	match.MatchedEpisodeIDs = append([]api.DupeEpisodeMatch(nil), match.MatchedEpisodeIDs...)
-	for idx := range match.MatchedEpisodeIDs {
-		match.MatchedEpisodeIDs[idx].Link = sanitizePublicURL(match.MatchedEpisodeIDs[idx].Link)
-	}
-	return match
 }
 
 func sanitizePublicURL(value string) string {
@@ -701,10 +806,20 @@ func dupeProgressMessage(result api.DupeCheckResult) string {
 		return sanitizeSafeMessage(result.SkipReason, "duplicate policy bypassed")
 	default:
 		if result.HasDupes {
-			return fmt.Sprintf("%d dupes found", len(result.Filtered))
+			return fmt.Sprintf("%d candidates require attention", actionableCandidateCount(result.Evaluations))
 		}
 		return "no dupes found"
 	}
+}
+
+func actionableCandidateCount(candidates []api.DupeCandidateEvaluation) int {
+	count := 0
+	for _, candidate := range candidates {
+		if candidate.Relation != api.DupeRelationCoexists {
+			count++
+		}
+	}
+	return count
 }
 
 func panicFailureMessage(recovered any) string {

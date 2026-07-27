@@ -29,11 +29,21 @@ func Profile() standalone.Profile {
 		AudioPolicy:          &trackers.AudioPolicy{BlockEnglishOriginalWithForeign: true},
 		ImageHostPolicy:      &trackers.ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb", "pixhost", "bhd", "bam"}},
 		DupePolicy: &trackers.DupePolicy{
-			MatchAggregateSize:    true,
-			NormalizeDDPlusName:   true,
-			SDMatchesHD:           true,
-			CompareDVDResolution:  true,
-			AllowSizeVariance1080: true,
+			ID: "bhd/duplicate/v1",
+			SearchScope: trackers.DupeSearchScope{
+				IncludeEpisodes:    true,
+				IncludeSeasonPacks: true,
+				MaxPages:           100,
+			},
+			RequiredEvidence: trackers.DupeEvidenceRequirements{HDR: true},
+			SlotDimensions: []trackers.DupeDimension{
+				trackers.DupeDimensionType,
+				trackers.DupeDimensionSource,
+				trackers.DupeDimensionResolution,
+				trackers.DupeDimensionHDR,
+			},
+			SizeVariancePercent:     20,
+			SizeVarianceResolutions: []string{"1080p"},
 		},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,

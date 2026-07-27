@@ -28,7 +28,7 @@ func Profile() standalone.Profile {
 			return prepareUploadAt(ctx, req, ptpBaseURL)
 		},
 		NewDuplicateAdapter: func(deps dupe.Dependencies) dupe.Adapter { return newDuplicateAdapterAt(deps, ptpBaseURL) },
-		Rules:               &trackers.RuleSet{RequireMovieUnlessTVPack: true},
+		Rules:               &trackers.RuleSet{RequireMovieOnly: true},
 		ValidationPolicy:    validationPolicy(),
 		BannedGroups:        bannedGroups(),
 		DataPolicy:          &trackers.DataLookupPolicy{Cooldown: time.Minute},

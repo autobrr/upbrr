@@ -20,7 +20,9 @@ func Profile() unit3d.Profile {
 			ApplyAdditionalPayload: additionalPayload,
 		},
 		DupePolicy: &trackers.DupePolicy{
-			AllowSizeVariance1080: true,
+			ID:                      "oe/duplicate/v1",
+			SizeVariancePercent:     20,
+			SizeVarianceResolutions: []string{"1080p"},
 		},
 		ImageHost: &trackers.ImageHostPolicy{
 			AllowedHosts: []string{"imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"},

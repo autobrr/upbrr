@@ -24,6 +24,9 @@ type persistedWorkflowDupeEvidence struct {
 }
 
 func (e workflowDupePrivateEvidence) MarshalPrivateResource() (string, []byte, error) {
+	if e.Assessment == nil {
+		return "", nil, errors.New("marshal workflow duplicate assessment: evidence is unavailable")
+	}
 	assessment, err := e.Assessment.MarshalBinary()
 	if err != nil {
 		return "", nil, fmt.Errorf("marshal workflow duplicate assessment: %w", err)

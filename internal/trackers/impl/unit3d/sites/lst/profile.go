@@ -19,8 +19,14 @@ func Profile() unit3d.Profile {
 			ApplyAdditionalPayload: additionalPayload,
 		},
 		DupePolicy: &trackers.DupePolicy{
-			TrackTrumpableID:     true,
-			MatchDVDReleaseGroup: true,
+			ID: "lst/duplicate/v1",
+			SearchScope: trackers.DupeSearchScope{
+				IncludeEpisodes:    true,
+				IncludeSeasonPacks: true,
+				MaxPages:           100,
+			},
+			RequiredEvidence: trackers.DupeEvidenceRequirements{HDR: true},
+			SlotDimensions:   []trackers.DupeDimension{trackers.DupeDimensionType, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
 		},
 		BannedPolicy: &trackers.BannedGroupPolicy{
 			EndpointPath:  "/api/bannedReleaseGroups",

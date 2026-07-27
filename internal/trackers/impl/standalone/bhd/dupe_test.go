@@ -171,12 +171,8 @@ func TestBHDSearchUsesExternalIDs(t *testing.T) {
 			} else if got := bhdStringFromAny(payload["categories"]); got != tc.wantCategory {
 				t.Fatalf("expected category %q, got %q", tc.wantCategory, got)
 			}
-			if tc.wantNilType {
-				if value, ok := payload["types"]; !ok || value != nil {
-					t.Fatalf("expected nil type filter, got %#v", value)
-				}
-			} else if got := bhdStringFromAny(payload["types"]); got != tc.wantType {
-				t.Fatalf("expected type %q, got %q", tc.wantType, got)
+			if value, ok := payload["types"]; !ok || value != nil {
+				t.Fatalf("expected policy-safe nil type filter, got %#v", value)
 			}
 		})
 	}

@@ -1244,7 +1244,7 @@ func workflowQuestionnaireAnswers(input map[api.TrackerID]map[string]string) map
 }
 
 func applyWorkflowCrossSeeds(subject *api.UploadSubject, evidence workflowDupePrivateEvidence, dupes api.DupeAssessment) {
-	if subject == nil {
+	if subject == nil || evidence.Assessment == nil {
 		return
 	}
 	duplicateSubject := api.DuplicateSubject{}

@@ -141,6 +141,9 @@ func (r *Registry) Register(def Definition) error {
 		if provider, ok := def.(DupePolicyProvider); ok {
 			descriptor.DupePolicy = provider.DupePolicy()
 		}
+		if descriptor.DupePolicy == nil {
+			descriptor.DupePolicy = compatibilityDupePolicy(descriptor.Name)
+		}
 		if provider, ok := def.(AudioPolicyProvider); ok {
 			descriptor.AudioPolicy = provider.AudioPolicy()
 		}
@@ -173,6 +176,23 @@ func (r *Registry) Register(def Definition) error {
 		}
 	}
 	return r.RegisterDescriptor(descriptor)
+}
+
+func compatibilityDupePolicy(tracker string) *DupePolicy {
+	return &DupePolicy{
+		ID: strings.ToLower(strings.TrimSpace(tracker)) + "/duplicate-compat/v1",
+		SearchScope: DupeSearchScope{
+			IncludeEpisodes:    true,
+			IncludeSeasonPacks: true,
+			MaxPages:           100,
+		},
+		ManualReviewRules: []DupeRule{{
+			ID:                 "policy_evidence_unavailable",
+			Relation:           "manual_review",
+			ReasonCode:         "tracker_policy_not_evidence_backed",
+			RequiresManualStep: true,
+		}},
+	}
 }
 
 // LookupTorrentIdentityPolicy returns tracker-owned torrent-client identity behavior.
@@ -347,7 +367,31 @@ func (r *Registry) LookupDupePolicy(tracker string) (DupePolicy, bool) {
 	if !ok || descriptor.DupePolicy == nil {
 		return DupePolicy{}, false
 	}
-	return *descriptor.DupePolicy, true
+	return cloneDupePolicy(*descriptor.DupePolicy), true
+}
+
+func cloneDupePolicy(policy DupePolicy) DupePolicy {
+	policy.SlotDimensions = append([]DupeDimension(nil), policy.SlotDimensions...)
+	policy.CoexistenceRules = cloneDupeRules(policy.CoexistenceRules)
+	policy.PrecedenceRules = cloneDupeRules(policy.PrecedenceRules)
+	policy.ManualReviewRules = cloneDupeRules(policy.ManualReviewRules)
+	policy.SizeVarianceResolutions = append([]string(nil), policy.SizeVarianceResolutions...)
+	policy.SizeVarianceTypes = append([]string(nil), policy.SizeVarianceTypes...)
+	return policy
+}
+
+func cloneDupeRules(rules []DupeRule) []DupeRule {
+	result := make([]DupeRule, len(rules))
+	for index, rule := range rules {
+		rule.Conditions = make([]DupeCondition, len(rule.Conditions))
+		for conditionIndex, condition := range rule.Conditions {
+			condition.TargetValues = append([]string(nil), condition.TargetValues...)
+			condition.CandidateValues = append([]string(nil), condition.CandidateValues...)
+			rule.Conditions[conditionIndex] = condition
+		}
+		result[index] = rule
+	}
+	return result
 }
 
 // LookupUploadArtifactPolicy returns tracker torrent personalization fields.

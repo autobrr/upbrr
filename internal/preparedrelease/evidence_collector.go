@@ -239,6 +239,7 @@ func mapCollectedFacts(meta preparationstate.State) CollectedFacts {
 			Type:              meta.Type,
 			UHD:               meta.UHD,
 			HDR:               meta.HDR,
+			HDRFacts:          meta.HDRFacts,
 			Distributor:       meta.Distributor,
 			Region:            meta.Region,
 			VideoCodec:        meta.VideoCodec,

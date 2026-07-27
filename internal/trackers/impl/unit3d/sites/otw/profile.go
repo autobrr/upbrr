@@ -17,7 +17,14 @@ func Profile() unit3d.Profile {
 			ResolveTypeID: typeID,
 		},
 		DupePolicy: &trackers.DupePolicy{
-			RejectEpisodeResolutionMismatch: true,
+			ID: "otw/duplicate/v1",
+			SearchScope: trackers.DupeSearchScope{
+				IncludeEpisodes:    true,
+				IncludeSeasonPacks: true,
+				MaxPages:           100,
+			},
+			RequiredEvidence: trackers.DupeEvidenceRequirements{HDR: true, Resolution: true},
+			SlotDimensions:   []trackers.DupeDimension{trackers.DupeDimensionType, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
 		},
 	}
 }

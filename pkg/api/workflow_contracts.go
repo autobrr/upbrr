@@ -181,6 +181,32 @@ type TrackerDuplicateCriteria struct {
 	Date        string               `json:"date,omitempty"`
 }
 
+// TrackerDuplicateTarget is the projection-bound proposed release used only
+// for local duplicate policy evaluation.
+type TrackerDuplicateTarget struct {
+	Names       []string `json:"names,omitempty"`
+	Category    string   `json:"category,omitempty"`
+	Type        string   `json:"type,omitempty"`
+	Source      string   `json:"source,omitempty"`
+	Provider    string   `json:"provider,omitempty"`
+	Resolution  string   `json:"resolution,omitempty"`
+	Container   string   `json:"container,omitempty"`
+	VideoCodec  string   `json:"videoCodec,omitempty"`
+	VideoEncode string   `json:"videoEncode,omitempty"`
+	HDR         HDRFacts `json:"hdr"`
+	Edition     string   `json:"edition,omitempty"`
+	Region      string   `json:"region,omitempty"`
+	ThreeD      string   `json:"threeD,omitempty"`
+	Group       string   `json:"group,omitempty"`
+	Repack      string   `json:"repack,omitempty"`
+	Season      int      `json:"season,omitempty"`
+	Episode     int      `json:"episode,omitempty"`
+	Date        string   `json:"date,omitempty"`
+	Pack        bool     `json:"pack"`
+	SizeBytes   int64    `json:"sizeBytes,omitempty"`
+	FileNames   []string `json:"fileNames,omitempty"`
+}
+
 // TrackerArtifactRequirements are backend-owned tracker artifact requirements.
 type TrackerArtifactRequirements struct {
 	// ScreenshotCount is the minimum number of selected normal screenshots.
@@ -228,6 +254,13 @@ type TrackerReleaseProjection struct {
 	Taxonomy                    TrackerTaxonomy                   `json:"taxonomy"`
 	ProviderIDs                 []TrackerProviderID               `json:"providerIds,omitempty"`
 	DuplicateCriteria           TrackerDuplicateCriteria          `json:"duplicateCriteria"`
+	DuplicateTarget             TrackerDuplicateTarget            `json:"duplicateTarget"`
+	DuplicatePolicyID           string                            `json:"duplicatePolicyId"`
+	DuplicatePolicyFingerprint  WorkflowFingerprint               `json:"duplicatePolicyFingerprint"`
+	DuplicateTargetFingerprint  WorkflowFingerprint               `json:"duplicateTargetFingerprint"`
+	DuplicateSearchFingerprint  WorkflowFingerprint               `json:"duplicateSearchFingerprint"`
+	NamingPolicyID              string                            `json:"namingPolicyId"`
+	NamingFingerprint           WorkflowFingerprint               `json:"namingFingerprint"`
 	PolicyDecisions             []TrackerPolicyDecision           `json:"policyDecisions,omitempty"`
 	Artifacts                   TrackerArtifactRequirements       `json:"artifacts"`
 	DescriptionGroup            string                            `json:"descriptionGroup,omitempty"`
@@ -336,12 +369,34 @@ const (
 
 // DupeMatchProjection is sanitized duplicate evidence safe for public clients.
 type DupeMatchProjection struct {
-	ID        string   `json:"id,omitempty"`
-	Name      string   `json:"name"`
-	Link      string   `json:"link,omitempty"`
-	SizeBytes int64    `json:"sizeBytes,omitempty"`
-	Flags     []string `json:"flags,omitempty"`
-	Reason    string   `json:"reason,omitempty"`
+	ID             string            `json:"id,omitempty"`
+	Name           string            `json:"name"`
+	Link           string            `json:"link,omitempty"`
+	SizeBytes      int64             `json:"sizeBytes,omitempty"`
+	Flags          []string          `json:"flags,omitempty"`
+	Reason         string            `json:"reason,omitempty"`
+	Relation       DupeRelation      `json:"relation,omitempty"`
+	Reasons        []DupeReason      `json:"reasons,omitempty"`
+	HDR            HDRFacts          `json:"hdr"`
+	Category       string            `json:"category,omitempty"`
+	Type           string            `json:"type,omitempty"`
+	Resolution     string            `json:"resolution,omitempty"`
+	Source         string            `json:"source,omitempty"`
+	Codec          string            `json:"codec,omitempty"`
+	Container      string            `json:"container,omitempty"`
+	Provider       string            `json:"provider,omitempty"`
+	Group          string            `json:"group,omitempty"`
+	Edition        string            `json:"edition,omitempty"`
+	Region         string            `json:"region,omitempty"`
+	ThreeD         string            `json:"threeD,omitempty"`
+	Repack         string            `json:"repack,omitempty"`
+	Season         int               `json:"season,omitempty"`
+	Episode        int               `json:"episode,omitempty"`
+	Date           string            `json:"date,omitempty"`
+	Pack           bool              `json:"pack"`
+	Internal       bool              `json:"internal"`
+	Trumpable      bool              `json:"trumpable"`
+	EvidenceStatus HDREvidenceStatus `json:"evidenceStatus,omitempty"`
 }
 
 // TrackerDupeAssessment is one retained projection-bound duplicate result.
@@ -351,6 +406,12 @@ type TrackerDupeAssessment struct {
 	ProjectionFingerprint WorkflowFingerprint      `json:"projectionFingerprint"`
 	CriteriaFingerprint   WorkflowFingerprint      `json:"criteriaFingerprint"`
 	Criteria              TrackerDuplicateCriteria `json:"criteria"`
+	TargetFingerprint     WorkflowFingerprint      `json:"targetFingerprint"`
+	SearchFingerprint     WorkflowFingerprint      `json:"searchFingerprint"`
+	PolicyID              string                   `json:"policyId"`
+	PolicyFingerprint     WorkflowFingerprint      `json:"policyFingerprint"`
+	EvidenceFingerprint   WorkflowFingerprint      `json:"evidenceFingerprint,omitempty"`
+	Search                DupeSearchEvidence       `json:"search"`
 	Matches               []DupeMatchProjection    `json:"matches,omitempty"`
 	Decision              DupeDecision             `json:"decision"`
 	Status                StageStatus              `json:"status"`

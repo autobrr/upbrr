@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -248,6 +249,122 @@ func TestSearchTorrentsCBRIncludesPendingAndFiltersTMDB(t *testing.T) {
 	if entries[1].ID != "202" || entries[1].SizeBytes != 456 || entries[1].Files[0] != "pending.mkv" {
 		t.Fatalf("unexpected pending fields: %#v", entries[1])
 	}
+}
+
+func TestSearchTorrentsWithEvidenceConsumesAdvertisedFinalPage(t *testing.T) {
+	t.Parallel()
+
+	var pages []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		pages = append(pages, page)
+		w.Header().Set("Content-Type", "application/json")
+		switch page {
+		case "1":
+			_, _ = w.Write([]byte(
+				`{"data":[{"id":1,"attributes":{"name":"Example.Release.2026.1080p.WEB-DL-GRP"}}],"meta":{"current_page":1,"last_page":2}}`,
+			))
+		case "2":
+			_, _ = w.Write([]byte(
+				`{"data":[{"id":2,"attributes":{"name":"Example.Release.2026.2160p.WEB-DL-GRP"}}],"meta":{"current_page":2,"last_page":2}}`,
+			))
+		default:
+			http.Error(w, "unexpected page", http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := newUnit3DSearchTestClient(t, server, "AITHER")
+	params := url.Values{"perPage": []string{"1"}}
+	result, err := client.SearchTorrentsWithEvidenceBound(context.Background(), "AITHER", params, false, 10)
+	if err != nil {
+		t.Fatalf("search torrents: %v", err)
+	}
+	if !result.Complete || result.Pages != 2 || len(result.Entries) != 2 ||
+		result.Entries[1].Name != "Example.Release.2026.2160p.WEB-DL-GRP" {
+		t.Fatalf("paginated result = %#v", result)
+	}
+	if len(pages) != 2 || pages[0] != "1" || pages[1] != "2" {
+		t.Fatalf("requested pages = %#v", pages)
+	}
+}
+
+func TestSearchTorrentsWithEvidenceFailsClosedAtPolicyBound(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(
+			w,
+			`{"data":[{"id":%s,"attributes":{"name":"Example.Release.2026.Page.%s-GRP"}}],"meta":{"current_page":%s,"last_page":3}}`,
+			page,
+			page,
+			page,
+		)
+	}))
+	t.Cleanup(server.Close)
+
+	client := newUnit3DSearchTestClient(t, server, "AITHER")
+	result, err := client.SearchTorrentsWithEvidenceBound(
+		context.Background(),
+		"AITHER",
+		url.Values{"perPage": []string{"1"}},
+		false,
+		2,
+	)
+	if err != nil {
+		t.Fatalf("search torrents: %v", err)
+	}
+	if result.Complete || result.Pages != 2 || len(result.Entries) != 2 ||
+		result.Warning != "Unit3D search reached pagination safety bound" {
+		t.Fatalf("bounded result = %#v", result)
+	}
+}
+
+func TestSearchTorrentsWithEvidenceTreatsCapacityWithoutMetaAsIncomplete(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(
+			`{"data":[{"id":1,"attributes":{"name":"Example.Release.2026.1080p.WEB-DL-GRP"}}]}`,
+		))
+	}))
+	t.Cleanup(server.Close)
+
+	client := newUnit3DSearchTestClient(t, server, "AITHER")
+	result, err := client.SearchTorrentsWithEvidenceBound(
+		context.Background(),
+		"AITHER",
+		url.Values{"perPage": []string{"1"}},
+		false,
+		10,
+	)
+	if err != nil {
+		t.Fatalf("search torrents: %v", err)
+	}
+	if result.Complete || result.Pages != 1 ||
+		result.Warning != "Unit3D search response omitted pagination metadata at page capacity" {
+		t.Fatalf("metadata-free result = %#v", result)
+	}
+}
+
+func newUnit3DSearchTestClient(t *testing.T, server *httptest.Server, tracker string) *Client {
+	t.Helper()
+	base, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse test server URL: %v", err)
+	}
+	baseURL := "https://" + strings.ToLower(tracker) + ".example"
+	return NewClientWithRegistry(
+		config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			tracker: {APIKey: "secret"},
+		}}},
+		api.NopLogger{},
+		&http.Client{Transport: rewriteHostTransport{base: base, rt: server.Client().Transport}},
+		testUnit3DRegistry(t, tracker, baseURL),
+	)
 }
 
 func TestTorrentInfoUsesBearerAuthorization(t *testing.T) {

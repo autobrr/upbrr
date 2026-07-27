@@ -5,7 +5,7 @@ package rf
 
 import "github.com/autobrr/upbrr/internal/trackers"
 
-// Rules strictly rejects known non-movie categories; its adult-content failure
+// Rules strictly requires a movie category; its adult-content failure
 // remains waivable.
 func Rules() *trackers.RuleSet {
 	return &trackers.RuleSet{

@@ -5,10 +5,13 @@ package webserver
 
 import (
 	"bytes"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 //go:embed openapi/release-workflow-v1.json
@@ -48,6 +51,74 @@ func releaseWorkflowOpenAPIDocument(basePath string) ([]byte, error) {
 		return nil, fmt.Errorf("encode base-path OpenAPI document: %w", err)
 	}
 	return append(adjusted, '\n'), nil
+}
+
+func releaseWorkflowUploadOptionSchemaHash() (string, error) {
+	var document struct {
+		Components struct {
+			Schemas map[string]any `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(releaseWorkflowOpenAPI, &document); err != nil {
+		return "", fmt.Errorf("decode upload option schema: %w", err)
+	}
+	const root = "CreateReleaseWorkflowUploadRequest"
+	if document.Components.Schemas[root] == nil {
+		return "", fmt.Errorf("upload option schema %s is unavailable", root)
+	}
+	selected := make(map[string]any)
+	pending := []string{root}
+	for len(pending) > 0 {
+		name := pending[0]
+		pending = pending[1:]
+		if _, exists := selected[name]; exists {
+			continue
+		}
+		value, exists := document.Components.Schemas[name]
+		if !exists {
+			return "", fmt.Errorf("upload option schema reference %s is unavailable", name)
+		}
+		selected[name] = value
+		for _, ref := range releaseWorkflowSchemaReferences(value) {
+			if _, exists := selected[ref]; !exists {
+				pending = append(pending, ref)
+			}
+		}
+	}
+	payload, err := json.Marshal(selected)
+	if err != nil {
+		return "", fmt.Errorf("encode upload option schema: %w", err)
+	}
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func releaseWorkflowSchemaReferences(value any) []string {
+	references := make([]string, 0)
+	var visit func(any)
+	visit = func(current any) {
+		switch typed := current.(type) {
+		case map[string]any:
+			for key, child := range typed {
+				if key == "$ref" {
+					if ref, ok := child.(string); ok {
+						const prefix = "#/components/schemas/"
+						if name := strings.TrimPrefix(ref, prefix); name != ref && name != "" {
+							references = append(references, name)
+						}
+					}
+					continue
+				}
+				visit(child)
+			}
+		case []any:
+			for _, child := range typed {
+				visit(child)
+			}
+		}
+	}
+	visit(value)
+	return references
 }
 
 func serveReleaseWorkflowSwaggerUI(w http.ResponseWriter) {

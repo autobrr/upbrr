@@ -169,6 +169,7 @@ type MediaFacts struct {
 	Type              string
 	UHD               string
 	HDR               string
+	HDRFacts          HDRFacts
 	Distributor       string
 	Region            string
 	VideoCodec        string

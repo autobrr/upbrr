@@ -1047,6 +1047,9 @@ func compositeUploadPendingAction(
 		if !session.Confirm && continuationUnattendedSkipsTrackerAction(session.Intent, *action) {
 			continue
 		}
+		if !session.Confirm && compositeStrictTrackerApprovalAllowed(session, *action) {
+			continue
+		}
 		if action.Kind == api.RequiredActionReviewDuplicates {
 			if _, decided := session.Intent.DuplicateDecisions[action.TrackerID]; decided {
 				continue
@@ -1135,7 +1138,7 @@ func (m *Module) applyCompositeAutomaticPolicy(
 		}
 	}
 	if len(decisions) == 0 {
-		return false, nil
+		return m.applyCompositeStrictTrackerApproval(ctx, ownerID, current, session)
 	}
 	return true, m.updateCompositeIntent(ctx, ownerID, current.Workflow.ID, current.Workflow.Revision, operationID, func(intent *api.WorkflowIntent) {
 		if intent.DuplicateDecisions == nil {
@@ -1143,6 +1146,68 @@ func (m *Module) applyCompositeAutomaticPolicy(
 		}
 		maps.Copy(intent.DuplicateDecisions, decisions)
 	})
+}
+
+func compositeStrictTrackerApprovalAllowed(
+	session *compositeUploadSession,
+	action api.RequiredAction,
+) bool {
+	if session == nil || session.Confirm || action.Kind != api.RequiredActionApproveTrackers ||
+		action.Status != api.RequiredActionStatusPending || len(session.Intent.TrackerIDs) == 0 ||
+		len(action.Options) == 0 {
+		return false
+	}
+	included := normalizeContinuationTrackerIDs(session.Intent.TrackerIDs)
+	return !slices.ContainsFunc(action.Options, func(option api.RequiredActionOption) bool {
+		trackerID := normalizeCompositeTrackerID(api.TrackerID(option.Value))
+		return trackerID == "" || !slices.Contains(included, trackerID)
+	})
+}
+
+func (m *Module) applyCompositeStrictTrackerApproval(
+	ctx context.Context,
+	ownerID string,
+	current CommandResult,
+	session *compositeUploadSession,
+) (bool, error) {
+	if session == nil || session.Confirm || current.Workflow.TrackerApproval != nil ||
+		current.Dupes == nil || current.Workflow.Dupes == nil {
+		return false, nil
+	}
+	actionIndex := slices.IndexFunc(current.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+		return compositeStrictTrackerApprovalAllowed(session, action)
+	})
+	if actionIndex < 0 {
+		return false, nil
+	}
+	action := current.Continuation.RequiredActions[actionIndex]
+	trackerIDs := make([]api.TrackerID, 0, len(action.Options))
+	for _, option := range action.Options {
+		trackerID := normalizeCompositeTrackerID(api.TrackerID(option.Value))
+		if trackerID != "" && !slices.Contains(trackerIDs, trackerID) {
+			trackerIDs = append(trackerIDs, trackerID)
+		}
+	}
+	if len(trackerIDs) == 0 {
+		return false, nil
+	}
+	if _, err := m.execute(ctx, ownerID, ApproveTrackersCommand{
+		WorkflowID:       current.Workflow.ID,
+		ExpectedRevision: current.Workflow.Revision,
+		Approval: api.TrackerApproval{
+			ActionID:         action.ID,
+			Dupes:            *current.Workflow.Dupes,
+			InputFingerprint: current.Dupes.InputFingerprint,
+			TrackerIDs:       trackerIDs,
+		},
+		IdempotencyKey: compositeUploadOperationKey(
+			string(session.RequestFingerprint)+":strict-tracker-approval",
+			uint64(current.Workflow.Revision),
+		),
+	}); err != nil {
+		return false, fmt.Errorf("release workflow persist strict tracker authority: %w", err)
+	}
+	return true, nil
 }
 
 func compositeUploadTrackerRemovalUpdate(

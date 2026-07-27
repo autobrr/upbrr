@@ -353,10 +353,10 @@ func TestCLICompositeDuplicateReviewPrintsMatchesAndSeparatesTrackers(t *testing
 	})
 
 	for _, expected := range []string{
-		"Dupe check ALPHA: upload_name=Example.Release.2026.1080p-GRP matches=2 decision=accepted",
-		"Duplicate matches:\n  1. Example.Release.2026.1080p.WEB-DL-GRP\n     Link: https://alpha.example/torrents/123\n  2. Example.Release.2026.1080p.BluRay-GRP",
+		"Dupe check ALPHA: upload_name=Example.Release.2026.1080p-GRP candidates=2 decision=accepted search_complete=false pages=0 policy=none",
+		"Duplicate candidates:\n  1. Example.Release.2026.1080p.WEB-DL-GRP\n     Relation: none  Evidence: none/none\n     Link: https://alpha.example/torrents/123\n  2. Example.Release.2026.1080p.BluRay-GRP",
 		"Upload to ALPHA despite duplicate evidence? [y/N]: \nDupe check BETA:",
-		"Duplicate matches:\n  1. Example.Release.2026.1080p.Encode-GRP",
+		"Duplicate candidates:\n  1. Example.Release.2026.1080p.Encode-GRP",
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("duplicate review output missing %q: %q", expected, output)

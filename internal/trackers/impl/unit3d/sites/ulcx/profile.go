@@ -22,7 +22,16 @@ func Profile() unit3d.Profile {
 			BuildNameVersion: "v1",
 		},
 		DupePolicy: &trackers.DupePolicy{
-			AllowSizeVariance1080: true,
+			ID: "ulcx/duplicate/v1",
+			SearchScope: trackers.DupeSearchScope{
+				IncludeEpisodes:    true,
+				IncludeSeasonPacks: true,
+				MaxPages:           100,
+			},
+			RequiredEvidence:        trackers.DupeEvidenceRequirements{HDR: true},
+			SlotDimensions:          []trackers.DupeDimension{trackers.DupeDimensionType, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
+			SizeVariancePercent:     20,
+			SizeVarianceResolutions: []string{"1080p"},
 		},
 	}
 }

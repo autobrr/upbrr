@@ -154,6 +154,31 @@ func TestPrepareAdapterRejectsPayloadSemanticsThatDifferFromReviewedProjection(t
 	}
 }
 
+func TestDuplicateTargetFingerprintIncludesHDRProvenance(t *testing.T) {
+	t.Parallel()
+
+	subject := api.UploadSubject{
+		HDRFacts: api.HDRFacts{
+			Formats: []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10},
+			Origin:  api.HDREvidenceMediaInfo,
+			Status:  api.HDREvidenceComplete,
+		},
+	}
+	first, err := api.CanonicalWorkflowFingerprint(duplicateTarget(subject))
+	if err != nil {
+		t.Fatalf("first target fingerprint: %v", err)
+	}
+	subject.HDRFacts.Origin = api.HDREvidenceContentFilename
+	subject.HDRFacts.Status = api.HDREvidencePartial
+	second, err := api.CanonicalWorkflowFingerprint(duplicateTarget(subject))
+	if err != nil {
+		t.Fatalf("second target fingerprint: %v", err)
+	}
+	if first == second {
+		t.Fatal("target fingerprint ignored HDR evidence provenance")
+	}
+}
+
 func TestApplyProjectionRuleFailuresHonorsExplicitDebugWaivers(t *testing.T) {
 	t.Parallel()
 

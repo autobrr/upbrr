@@ -214,20 +214,20 @@ func TestUnit3DPayloadCallbacksRejectKnownInvalidFacts(t *testing.T) {
 		rule    string
 	}{
 		{
-tracker: "ACM",
- subject: api.TrackerValidationSubject{Region: "North America"},
- rule: "unsupported_region",
-},
+			tracker: "ACM",
+			subject: api.TrackerValidationSubject{Region: "North America"},
+			rule:    "unsupported_region",
+		},
 		{
-tracker: "LST",
- subject: api.TrackerValidationSubject{Edition: "Unknown Edition"},
- rule: "unsupported_edition",
-},
+			tracker: "LST",
+			subject: api.TrackerValidationSubject{Edition: "Unknown Edition"},
+			rule:    "unsupported_edition",
+		},
 		{
-tracker: "SHRI",
- subject: api.TrackerValidationSubject{DiscType: "DVD"},
- rule: "region_required",
-},
+			tracker: "SHRI",
+			subject: api.TrackerValidationSubject{DiscType: "DVD"},
+			rule:    "region_required",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.tracker, func(t *testing.T) {
@@ -391,19 +391,22 @@ func TestEvaluateRulesLUMESkipsContainerRuleForDisc(t *testing.T) {
 func TestEvaluateRulesPTPRequiresMovieForNonPackTV(t *testing.T) {
 	meta := api.RuleSubject{Identity: api.ExternalIdentity{Category: "tv"}}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "PTP", meta)
-	if len(failures) != 1 {
-		t.Fatalf("expected 1 failure, got %#v", failures)
-	}
-	if failures[0].Rule != "require_movie_only" {
-		t.Fatalf("unexpected rule key: %s", failures[0].Rule)
+	for _, rule := range []string{"require_movie_only", "unsupported_category"} {
+		failure, ok := findRuleFailure(failures, rule)
+		if !ok || failure.Disposition != api.RuleDispositionStrict {
+			t.Fatalf("expected strict %s failure, got %#v", rule, failures)
+		}
 	}
 }
 
-func TestEvaluateRulesPTPAllowsTVPacks(t *testing.T) {
+func TestEvaluateRulesPTPRejectsTVPacks(t *testing.T) {
 	meta := api.RuleSubject{Identity: api.ExternalIdentity{Category: "tv"}, TVPack: true}
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "PTP", meta)
-	if len(failures) != 0 {
-		t.Fatalf("expected no failures, got %#v", failures)
+	for _, rule := range []string{"require_movie_only", "unsupported_category"} {
+		failure, ok := findRuleFailure(failures, rule)
+		if !ok || failure.Disposition != api.RuleDispositionStrict {
+			t.Fatalf("expected strict %s failure, got %#v", rule, failures)
+		}
 	}
 }
 
@@ -423,6 +426,95 @@ func TestEvaluateRulesANTAllowsMovie(t *testing.T) {
 	failures := evaluateNonMetadataRulesForTest(context.Background(), "ANT", meta)
 	if len(failures) != 0 {
 		t.Fatalf("expected no failures, got %#v", failures)
+	}
+}
+
+func TestEvaluateRulesRequestedStrictCategoryTrackers(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		tracker      string
+		category     api.CanonicalCategory
+		expectedRule string
+	}{
+		{
+			tracker:      "ANT",
+			category:     api.CanonicalCategoryTV,
+			expectedRule: "require_movie_only",
+		},
+		{
+			tracker:      "PTP",
+			category:     api.CanonicalCategoryTV,
+			expectedRule: "require_movie_only",
+		},
+		{
+			tracker:      "RF",
+			category:     api.CanonicalCategoryTV,
+			expectedRule: "require_movie_only",
+		},
+		{
+			tracker:      "BTN",
+			category:     api.CanonicalCategoryMovie,
+			expectedRule: "require_tv_only",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.tracker, func(t *testing.T) {
+			t.Parallel()
+			meta := api.RuleSubject{
+				Identity:    api.ExternalIdentity{Category: test.category},
+				Assessments: encodeAssessments(api.EncodeSettingsStatusPresent),
+			}
+			failures := evaluateNonMetadataRulesForTest(context.Background(), test.tracker, meta)
+			failure, ok := findRuleFailure(failures, test.expectedRule)
+			if !ok {
+				t.Fatalf("expected %s failure, got %#v", test.expectedRule, failures)
+			}
+			if failure.Disposition != api.RuleDispositionStrict {
+				t.Fatalf("%s disposition = %q, want strict", test.expectedRule, failure.Disposition)
+			}
+		})
+	}
+}
+
+func TestEvaluateRulesStrictCategoryTrackersRejectMissingCategory(t *testing.T) {
+	t.Parallel()
+
+	for tracker, expectedRule := range map[string]string{
+		"ANT": "require_movie_only",
+		"BTN": "require_tv_only",
+		"PTP": "require_movie_only",
+		"RF":  "require_movie_only",
+	} {
+		t.Run(tracker, func(t *testing.T) {
+			t.Parallel()
+			meta := withConstructibleTrackerFactsForTest(api.RuleSubject{
+				Assessments: encodeAssessments(api.EncodeSettingsStatusPresent),
+			})
+			meta.Identity.Category = ""
+			registry := impl.MustNewRegistry()
+			failures, err := trackers.EvaluateRulesWithRegistry(context.Background(), registry, tracker, meta, api.NopLogger{})
+			if err != nil {
+				t.Fatalf("evaluate rules: %v", err)
+			}
+			failure, ok := findRuleFailure(failures, expectedRule)
+			if !ok || failure.Disposition != api.RuleDispositionStrict {
+				t.Fatalf("expected strict %s failure, got %#v", expectedRule, failures)
+			}
+		})
+	}
+}
+
+func TestPTPConstructibilityRejectsTVPackCategory(t *testing.T) {
+	t.Parallel()
+
+	failures := validationPolicyFailuresForTest(t, "PTP", api.TrackerValidationSubject{
+		Identity: api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+		TVPack:   true,
+	})
+	failure, ok := findRuleFailure(failures, "unsupported_category")
+	if !ok || failure.Disposition != api.RuleDispositionStrict {
+		t.Fatalf("expected strict PTP category failure, got %#v", failures)
 	}
 }
 

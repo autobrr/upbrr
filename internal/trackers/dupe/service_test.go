@@ -5,6 +5,7 @@ package dupe
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -39,12 +40,9 @@ func (bannedGroupDefinition) Prepare(
 
 func testService(adapters map[string]Adapter) *Service {
 	return &Service{
-		cfg:      adaptersConfig(adapters),
-		logger:   api.NopLogger{},
-		adapters: adapters,
-		filter: func(entries []api.DupeEntry, _ api.DuplicateSubject, _ string, _ config.Config, _ api.Logger) ([]api.DupeEntry, api.DupeMatch) {
-			return cloneEntries(entries), api.DupeMatch{}
-		},
+		cfg:                    adaptersConfig(adapters),
+		logger:                 api.NopLogger{},
+		adapters:               adapters,
 		cancelWarningThreshold: time.Second,
 	}
 }
@@ -197,7 +195,7 @@ func TestCheckProjectionSetUsesExactCriteriaAndProjectsUploadName(t *testing.T) 
 	summary, _, err := service.CheckProjectionSet(context.Background(), api.DuplicateSubject{
 		SourcePath:  projectionSet.ReleaseRef.SourcePath,
 		ReleaseName: projectionSet.Projections[0].CanonicalReleaseName,
-	}, projectionSet, CheckOptions{})
+	}, projectionSet, api.ProjectionDupeCheckOptions{})
 	if err != nil {
 		t.Fatalf("check projection set: %v", err)
 	}
@@ -380,9 +378,12 @@ func TestPublicProjectionBlanksPrivateDownloadsAndSanitizesURLQueries(t *testing
 	service := testService(map[string]Adapter{
 		"A": AdapterFunc(func(context.Context, api.DuplicateSubject) AdapterResult {
 			return Resolved([]api.DupeEntry{{
-				Name:     "Example.Release.2026.1080p-GRP",
-				Link:     "https://user@tracker.example/torrents.php?id=44&torrentid=55&token=secret#private",
-				Download: "https://tracker.example/download/1?passkey=secret",
+				Name:        "Example.Release.2026.1080p-GRP",
+				Link:        "https://user@tracker.example/torrents.php?id=44&torrentid=55&token=secret#private",
+				Download:    "https://tracker.example/download/1?passkey=secret",
+				Attributes:  map[string]string{"authkey": "secret"},
+				BDInfo:      "private tracker payload",
+				Description: "private description",
 			}}, nil)
 		}),
 	})
@@ -390,8 +391,20 @@ func TestPublicProjectionBlanksPrivateDownloadsAndSanitizesURLQueries(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := summary.Results[0].Raw[0]
-	if entry.Download != "" || entry.Link != "https://tracker.example/torrents.php?id=44&torrentid=55" {
+	if len(summary.Results[0].Evaluations) != 1 {
+		t.Fatalf("public evaluations = %#v", summary.Results[0].Evaluations)
+	}
+	entry := summary.Results[0].Evaluations[0]
+	if entry.Link != "https://tracker.example/torrents.php?id=44&torrentid=55" {
 		t.Fatalf("private URL leaked: %#v", entry)
+	}
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatalf("marshal summary: %v", err)
+	}
+	for _, secret := range []string{"passkey=secret", "authkey", "private tracker payload", "private description"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("private protocol payload leaked: %s", encoded)
+		}
 	}
 }

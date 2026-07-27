@@ -309,12 +309,49 @@ export type DupeAssessmentRef = Readonly<{
 export type DupeDecision = string;
 
 export type DupeMatchProjection = Readonly<{
+  category?: string;
+  codec?: string;
+  container?: string;
+  date?: string;
+  edition?: string;
+  episode?: number;
+  evidenceStatus?: HDREvidenceStatus;
   flags?: readonly string[];
+  group?: string;
+  hdr: HDRFacts;
   id?: string;
+  internal: boolean;
   link?: string;
   name: string;
+  pack: boolean;
+  provider?: string;
   reason?: string;
+  reasons?: readonly DupeReason[];
+  region?: string;
+  relation?: DupeRelation;
+  repack?: string;
+  resolution?: string;
+  season?: number;
   sizeBytes?: number;
+  source?: string;
+  threeD?: string;
+  trumpable: boolean;
+  type?: string;
+}>;
+
+export type DupeReason = Readonly<{
+  code: string;
+  message?: string;
+}>;
+
+export type DupeRelation = string;
+
+export type DupeSearchEvidence = Readonly<{
+  candidateCount: number;
+  complete: boolean;
+  pages: number;
+  scope?: string;
+  warnings?: readonly string[];
 }>;
 
 export type EncodeSettingsStatus = string;
@@ -403,6 +440,22 @@ export type GoalAvailability = Readonly<{
   reason?: string;
   reasonCode?: string;
 }>;
+
+export type HDREvidenceOrigin = string;
+
+export type HDREvidenceStatus = string;
+
+export type HDRFacts = Readonly<{
+  contradictions?: readonly string[];
+  dolbyVisionProfile?: string;
+  fallbackFormats?: readonly HDRFormat[];
+  formats?: readonly HDRFormat[];
+  origin: HDREvidenceOrigin;
+  sourceFields?: readonly string[];
+  status: HDREvidenceStatus;
+}>;
+
+export type HDRFormat = string;
 
 export type HostedImageAttempt = Readonly<{
   artifactIds: readonly PublicResourceID[];
@@ -615,6 +668,7 @@ export type MediaFacts = Readonly<{
   Distributor: string;
   Edition: string;
   HDR: string;
+  HDRFacts: HDRFacts;
   HasEncodeSettings: boolean;
   MediaInfoUniqueID: string;
   Region: string;
@@ -980,6 +1034,45 @@ export type ReleaseWorkflow = Readonly<{
   trackerRuntime?: TrackerRuntimeSnapshotRef | null;
   updatedAt: string;
   uploadResult?: UploadResultRef | null;
+}>;
+
+export type ReleaseWorkflowCapabilities = Readonly<{
+  apiVersion: string;
+  applicationVersion: string;
+  features: ReleaseWorkflowCapabilityFeatures;
+  imageHosts: readonly ReleaseWorkflowCapabilityResource[];
+  ownerId: string;
+  scopes: readonly string[];
+  torrentClients: readonly ReleaseWorkflowCapabilityResource[];
+  trackers: readonly ReleaseWorkflowCapabilityTracker[];
+  uploadOptionSchemaHash: string;
+}>;
+
+export type ReleaseWorkflowCapabilityFeatures = Readonly<{
+  compositeUpload: boolean;
+  strictEligibleTrackerContinuation: boolean;
+  typedFeedback: boolean;
+}>;
+
+export type ReleaseWorkflowCapabilityField = Readonly<{
+  activation: boolean;
+  key: string;
+  yamlKey: string;
+}>;
+
+export type ReleaseWorkflowCapabilityResource = Readonly<{
+  configured: boolean;
+  displayName: string;
+  id: string;
+}>;
+
+export type ReleaseWorkflowCapabilityTracker = Readonly<{
+  capabilities: TrackerCapabilityDescriptor;
+  configFields?: readonly ReleaseWorkflowCapabilityField[];
+  configured: boolean;
+  default: boolean;
+  displayName: string;
+  id: TrackerID;
 }>;
 
 export type ReleaseWorkflowCurrent = Readonly<{
@@ -1735,12 +1828,18 @@ export type TrackerDupeAssessment = Readonly<{
   criteria: TrackerDuplicateCriteria;
   criteriaFingerprint: WorkflowFingerprint;
   decision: DupeDecision;
+  evidenceFingerprint?: WorkflowFingerprint;
   failures?: readonly WorkflowFailure[];
   freshUntil: string;
   matches?: readonly DupeMatchProjection[];
+  policyFingerprint: WorkflowFingerprint;
+  policyId: string;
   projectionFingerprint: WorkflowFingerprint;
   requiredActions?: readonly RequiredAction[];
+  search: DupeSearchEvidence;
+  searchFingerprint: WorkflowFingerprint;
   status: StageStatus;
+  targetFingerprint: WorkflowFingerprint;
   trackerId: TrackerID;
   uploadReleaseName: string;
 }>;
@@ -1757,6 +1856,30 @@ export type TrackerDuplicateCriteria = Readonly<{
   season?: number;
   source: TrackerTaxonomyValue;
   type: TrackerTaxonomyValue;
+}>;
+
+export type TrackerDuplicateTarget = Readonly<{
+  category?: string;
+  container?: string;
+  date?: string;
+  edition?: string;
+  episode?: number;
+  fileNames?: readonly string[];
+  group?: string;
+  hdr: HDRFacts;
+  names?: readonly string[];
+  pack: boolean;
+  provider?: string;
+  region?: string;
+  repack?: string;
+  resolution?: string;
+  season?: number;
+  sizeBytes?: number;
+  source?: string;
+  threeD?: string;
+  type?: string;
+  videoCodec?: string;
+  videoEncode?: string;
 }>;
 
 export type TrackerID = string;
@@ -1891,9 +2014,16 @@ export type TrackerReleaseProjection = Readonly<{
   displayName: string;
   dupeReady: boolean;
   duplicateCriteria: TrackerDuplicateCriteria;
+  duplicatePolicyFingerprint: WorkflowFingerprint;
+  duplicatePolicyId: string;
+  duplicateSearchFingerprint: WorkflowFingerprint;
+  duplicateTarget: TrackerDuplicateTarget;
+  duplicateTargetFingerprint: WorkflowFingerprint;
   failures?: readonly WorkflowFailure[];
   inputFingerprint: WorkflowFingerprint;
   metadataLocale?: string;
+  namingFingerprint: WorkflowFingerprint;
+  namingPolicyId: string;
   policyDecisions?: readonly TrackerPolicyDecision[];
   preparedResourceFingerprint?: WorkflowFingerprint;
   projectorFingerprint: WorkflowFingerprint;
@@ -2211,8 +2341,7 @@ export type WorkflowOperationResult = Readonly<{
 
 export type WorkflowOperationResultKind = string;
 
-export type WorkflowPatchstring = Readonly<{
-}>;
+export type WorkflowPatchstring = string | null;
 
 export type WorkflowResourceID = string;
 

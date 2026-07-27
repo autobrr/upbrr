@@ -423,30 +423,151 @@ type UploadArtifactPolicyProvider interface {
 
 // DupePolicy declares tracker-specific duplicate comparison semantics.
 type DupePolicy struct {
-	// DolbyVisionImpliesHDR treats Dolby Vision candidates as HDR during matching.
-	DolbyVisionImpliesHDR bool
-	// MatchAggregateSize compares aggregate file size rather than a single-file size.
-	MatchAggregateSize bool
-	// ContainsFilenameMatch permits containment-based filename comparison.
-	ContainsFilenameMatch bool
-	// NormalizeMTVName applies MTV-specific release-name normalization.
-	NormalizeMTVName bool
-	// TrackTrumpableID preserves a matched tracker ID for trumpability checks.
-	TrackTrumpableID bool
-	// MatchDVDReleaseGroup includes DVD release-group identity in matching.
-	MatchDVDReleaseGroup bool
-	// RequireReleaseGroup rejects candidates without a comparable release group.
-	RequireReleaseGroup bool
-	// RejectEpisodeResolutionMismatch blocks episode candidates at a different resolution.
-	RejectEpisodeResolutionMismatch bool
-	// NormalizeDDPlusName normalizes Dolby Digital Plus naming variants.
-	NormalizeDDPlusName bool
-	// SDMatchesHD permits standard-definition metadata to match high-definition candidates.
-	SDMatchesHD bool
-	// CompareDVDResolution includes DVD resolution in candidate comparison.
-	CompareDVDResolution bool
-	// AllowSizeVariance1080 enables the tracker-specific 1080p size tolerance.
-	AllowSizeVariance1080 bool
+	// ID is the stable versioned comparison-policy identifier.
+	ID string
+	// SearchScope declares which remote dimensions are safe to narrow and how
+	// many pages may be consumed before search becomes incomplete.
+	SearchScope DupeSearchScope
+	// RequiredEvidence identifies facts that must be complete before an
+	// automatic same-slot decision is safe.
+	RequiredEvidence DupeEvidenceRequirements
+	// SlotDimensions are compared to establish tracker slot membership.
+	SlotDimensions []DupeDimension
+	// HDRSlotMode declares how normalized HDR facts map to tracker slots.
+	HDRSlotMode DupeHDRSlotMode
+	// CoexistenceRules are evaluated before directional precedence.
+	CoexistenceRules []DupeRule
+	// PrecedenceRules express directional existing/proposed preferences.
+	PrecedenceRules []DupeRule
+	// ManualReviewRules identify subjective or staff-owned decisions.
+	ManualReviewRules []DupeRule
+	// SizeVariancePercent permits coexistence when absolute size difference is
+	// at least this percentage of the larger release.
+	SizeVariancePercent float64
+	// SizeVarianceResolutions limits size coexistence to named resolution slots.
+	SizeVarianceResolutions []string
+	// SizeVarianceTypes limits size coexistence to named release types.
+	SizeVarianceTypes []string
+}
+
+// DupeSearchScope defines policy-safe remote narrowing and completion bounds.
+type DupeSearchScope struct {
+	AllowTypeNarrowing       bool
+	AllowResolutionNarrowing bool
+	IncludeEpisodes          bool
+	IncludeSeasonPacks       bool
+	MaxPages                 int
+}
+
+// DupeEvidenceRequirements identifies critical normalized candidate facts.
+type DupeEvidenceRequirements struct {
+	HDR        bool
+	Size       bool
+	Files      bool
+	Type       bool
+	Source     bool
+	Resolution bool
+	Codec      bool
+	Container  bool
+	Provider   bool
+	Group      bool
+	Edition    bool
+	Region     bool
+	ThreeD     bool
+	Repack     bool
+}
+
+// DupeDimension identifies one structural comparison axis.
+type DupeDimension string
+
+const (
+	DupeDimensionType       DupeDimension = "type"
+	DupeDimensionSource     DupeDimension = "source"
+	DupeDimensionResolution DupeDimension = "resolution"
+	DupeDimensionCodec      DupeDimension = "codec"
+	DupeDimensionContainer  DupeDimension = "container"
+	DupeDimensionHDR        DupeDimension = "hdr"
+	DupeDimensionEdition    DupeDimension = "edition"
+	DupeDimensionRegion     DupeDimension = "region"
+	DupeDimensionThreeD     DupeDimension = "3d"
+	DupeDimensionProvider   DupeDimension = "provider"
+	DupeDimensionGroup      DupeDimension = "group"
+	DupeDimensionPack       DupeDimension = "pack"
+	DupeDimensionSeason     DupeDimension = "season"
+	DupeDimensionEpisode    DupeDimension = "episode"
+	DupeDimensionDate       DupeDimension = "date"
+)
+
+// DupeHDRSlotMode identifies one tracker HDR slot taxonomy.
+type DupeHDRSlotMode string
+
+const (
+	// DupeHDRSlotModeExact preserves every normalized HDR format as a distinct
+	// comparison fact.
+	DupeHDRSlotModeExact DupeHDRSlotMode = ""
+	// DupeHDRSlotModeGeneric groups formats into SDR, HDR, DV, and DV+HDR.
+	DupeHDRSlotModeGeneric DupeHDRSlotMode = "sdr_hdr_dv"
+)
+
+// DupeCondition is one fact predicate inside a directional rule. Conditions
+// are ANDed so policies can express compound tracker slots without custom
+// evaluator branches.
+type DupeCondition struct {
+	Dimension        DupeDimension
+	TargetValues     []string
+	CandidateValues  []string
+	ValuesEqual      bool
+	ValuesDifferent  bool
+	RequiresComplete bool
+}
+
+// DupeRule is one declarative directional comparison rule.
+type DupeRule struct {
+	ID                 string
+	Conditions         []DupeCondition
+	Relation           string
+	ReasonCode         string
+	RequiresManualStep bool
+}
+
+// SeasonPackPrecedenceRules returns opt-in directional season-pack rules.
+// Tracker profiles must select these explicitly; no global pack assumption is
+// applied by the evaluator.
+func SeasonPackPrecedenceRules() []DupeRule {
+	return []DupeRule{
+		{
+			ID:       "existing_season_pack",
+			Relation: "existing_preferred",
+			Conditions: []DupeCondition{
+				{
+					Dimension:        DupeDimensionSeason,
+					ValuesEqual:      true,
+					RequiresComplete: true,
+				},
+				{
+					Dimension:       DupeDimensionPack,
+					TargetValues:    []string{"false"},
+					CandidateValues: []string{"true"},
+				},
+			},
+		},
+		{
+			ID:       "proposed_season_pack",
+			Relation: "proposed_trumps",
+			Conditions: []DupeCondition{
+				{
+					Dimension:        DupeDimensionSeason,
+					ValuesEqual:      true,
+					RequiresComplete: true,
+				},
+				{
+					Dimension:       DupeDimensionPack,
+					TargetValues:    []string{"true"},
+					CandidateValues: []string{"false"},
+				},
+			},
+		},
+	}
 }
 
 // DupePolicyProvider declares tracker-owned duplicate comparison policy.

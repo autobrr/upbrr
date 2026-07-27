@@ -41,7 +41,26 @@ func Profile() standalone.Profile {
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "MTV"},
 		AudioPolicy:          &trackers.AudioPolicy{BlockEnglishOriginalWithForeign: true},
 		ImageHostPolicy:      &trackers.ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb"}},
-		DupePolicy:           &trackers.DupePolicy{ContainsFilenameMatch: true, NormalizeMTVName: true},
+		DupePolicy: &trackers.DupePolicy{
+			ID: "mtv/duplicate/v1",
+			SearchScope: trackers.DupeSearchScope{
+				IncludeEpisodes:    true,
+				IncludeSeasonPacks: true,
+				MaxPages:           100,
+			},
+			RequiredEvidence: trackers.DupeEvidenceRequirements{
+				HDR:        true,
+				Files:      true,
+				Resolution: true,
+			},
+			SlotDimensions: []trackers.DupeDimension{
+				trackers.DupeDimensionResolution,
+				trackers.DupeDimensionSource,
+				trackers.DupeDimensionHDR,
+				trackers.DupeDimensionPack,
+			},
+			PrecedenceRules: trackers.SeasonPackPrecedenceRules(),
+		},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
 			TrackerURLPatterns: []string{"tracker.morethantv"}, SearchPreference: trackers.TorrentSearchPreferenceSmallPieces,
 		},

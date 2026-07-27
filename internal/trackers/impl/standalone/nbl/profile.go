@@ -25,6 +25,17 @@ func Profile() standalone.Profile {
 		Rules:               rules(),
 		ValidationPolicy:    validationPolicy(),
 		BannedGroups:        bannedGroups(),
+		DupePolicy: &trackers.DupePolicy{
+			ID: "nbl/duplicate/v1",
+			SearchScope: trackers.DupeSearchScope{
+				IncludeEpisodes:    true,
+				IncludeSeasonPacks: true,
+				MaxPages:           100,
+			},
+			RequiredEvidence: trackers.DupeEvidenceRequirements{HDR: true},
+			SlotDimensions:   []trackers.DupeDimension{trackers.DupeDimensionHDR},
+			HDRSlotMode:      trackers.DupeHDRSlotModeGeneric,
+		},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{

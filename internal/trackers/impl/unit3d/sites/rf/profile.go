@@ -19,7 +19,19 @@ func Profile() unit3d.Profile {
 			ResolveResolutionID: resolutionID,
 		},
 		DupePolicy: &trackers.DupePolicy{
-			RequireReleaseGroup: true,
+			ID: "rf/duplicate/v1",
+			SearchScope: trackers.DupeSearchScope{
+				IncludeEpisodes:    true,
+				IncludeSeasonPacks: true,
+				MaxPages:           100,
+			},
+			RequiredEvidence: trackers.DupeEvidenceRequirements{HDR: true, Group: true},
+			SlotDimensions: []trackers.DupeDimension{
+				trackers.DupeDimensionType,
+				trackers.DupeDimensionResolution,
+				trackers.DupeDimensionHDR,
+				trackers.DupeDimensionGroup,
+			},
 		},
 		ImageHost: &trackers.ImageHostPolicy{
 			ConditionalHost:        "reelflix",

@@ -26,7 +26,6 @@ func Profile() standalone.Profile {
 		NewDuplicateAdapter:  newDuplicateAdapter,
 		ValidationPolicy:     validationPolicy(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: sourceFlag},
-		DupePolicy:           &trackers.DupePolicy{ContainsFilenameMatch: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
 			TrackerURLPatterns: []string{"peer.retroflix"},
 			CommentURLPatterns: []string{defaultBaseURL},

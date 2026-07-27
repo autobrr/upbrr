@@ -358,4 +358,131 @@ describe("DupeCheckPage", () => {
     fireEvent.click(optional);
     expect(setIgnored).toHaveBeenCalledWith("REMOTE", true);
   });
+
+  it("renders per-candidate relations and uses distinct incomplete-evidence acknowledgement", () => {
+    const setIgnored = vi.fn();
+    renderPage(
+      facetFor(
+        {
+          status: "ready",
+          assessment: {
+            results: [
+              {
+                trackerId: "EXAMPLE",
+                uploadReleaseName: "Example.Release.2026.2160p-GRP",
+                decision: "pending",
+                status: "blocked",
+                policyId: "example/duplicate/v1",
+                search: {
+                  complete: false,
+                  pages: 2,
+                  candidateCount: 2,
+                  warnings: ["Tracker result limit prevented a complete search."],
+                },
+                matches: [
+                  {
+                    id: "1",
+                    name: "Example.Release.2026.2160p.DV.HDR-GRP",
+                    relation: "proposed_trumps",
+                    reasons: [{ code: "broader_hdr_compatibility" }],
+                    hdr: {
+                      formats: ["dolby_vision", "hdr10"],
+                      origin: "tracker_api",
+                      status: "complete",
+                    },
+                    evidenceStatus: "complete",
+                    pack: false,
+                    internal: false,
+                    trumpable: false,
+                  },
+                  {
+                    id: "2",
+                    name: "Example.Release.2026.2160p.Unknown-GRP",
+                    relation: "insufficient_evidence",
+                    reasons: [{ code: "candidate_hdr_missing" }],
+                    hdr: { origin: "unknown", status: "missing" },
+                    evidenceStatus: "missing",
+                    pack: false,
+                    internal: false,
+                    trumpable: false,
+                  },
+                ],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["assessment"]>,
+          projections: {
+            projections: [
+              {
+                trackerId: "EXAMPLE",
+                displayName: "Example",
+                uploadReleaseName: "Example.Release.2026.2160p-GRP",
+                readiness: "ready",
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+          preflight: {
+            results: [{ trackerId: "EXAMPLE", state: "ready" }],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["preflight"]>,
+        },
+        { setIgnored },
+      ),
+    );
+
+    expect(screen.getByText("Search incomplete · 2 page(s)")).toBeInTheDocument();
+    expect(screen.getByText("proposed trumps")).toBeInTheDocument();
+    expect(screen.getByText("insufficient evidence")).toBeInTheDocument();
+    expect(screen.getByText(/HDR: dolby vision \+ hdr10/)).toBeInTheDocument();
+    expect(
+      screen.getByText("Tracker result limit prevented a complete search."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Ignore dupes for EXAMPLE" })).toBeNull();
+    const acknowledge = screen.getByRole("switch", {
+      name: "Acknowledge dupe risk for EXAMPLE",
+    });
+    fireEvent.click(acknowledge);
+    expect(setIgnored).toHaveBeenCalledWith("EXAMPLE", true);
+  });
+
+  it("allows explicit risk acknowledgement when an incomplete search returns no candidates", () => {
+    const setIgnored = vi.fn();
+    renderPage(
+      facetFor(
+        {
+          status: "ready",
+          assessment: {
+            results: [
+              {
+                trackerId: "EXAMPLE",
+                uploadReleaseName: "Example.Release.2026.2160p-GRP",
+                decision: "pending",
+                status: "blocked",
+                search: { complete: false, pages: 2, candidateCount: 0 },
+                matches: [],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["assessment"]>,
+          projections: {
+            projections: [
+              {
+                trackerId: "EXAMPLE",
+                displayName: "Example",
+                uploadReleaseName: "Example.Release.2026.2160p-GRP",
+                readiness: "ready",
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+          preflight: {
+            results: [{ trackerId: "EXAMPLE", state: "ready" }],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["preflight"]>,
+        },
+        { setIgnored },
+      ),
+    );
+
+    const acknowledge = screen.getByRole("switch", {
+      name: "Acknowledge dupe risk for EXAMPLE",
+    });
+    fireEvent.click(acknowledge);
+    expect(setIgnored).toHaveBeenCalledWith("EXAMPLE", true);
+  });
 });

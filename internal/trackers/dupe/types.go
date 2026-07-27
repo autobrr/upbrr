@@ -181,20 +181,47 @@ func (f AdapterFunc) Search(ctx context.Context, meta api.DuplicateSubject) Adap
 type adapterResultData struct {
 	disposition Disposition
 	entries     []api.DupeEntry
+	search      SearchEvidence
 	notes       []string
 	code        string
 	safeMessage string
 	cause       error
 }
 
+// SearchEvidence records whether an adapter exhausted the policy-relevant
+// remote result space.
+type SearchEvidence struct {
+	Complete bool
+	Pages    int
+	Scope    string
+	Warnings []string
+}
+
 // AdapterResult is an immutable, constructor-created tracker protocol outcome.
 type AdapterResult struct{ data *adapterResultData }
 
-// Resolved constructs a successful adapter outcome.
+// Resolved constructs a successful compatibility-adapter outcome whose remote
+// result space is not proven complete. Evidence-backed adapters must use
+// ResolvedWithSearch explicitly.
 func Resolved(entries []api.DupeEntry, notes []string) AdapterResult {
+	return ResolvedWithSearch(entries, notes, SearchEvidence{
+		Pages:    1,
+		Warnings: []string{"adapter search completeness is not evidenced"},
+	})
+}
+
+// ResolvedWithSearch constructs a successful adapter outcome with explicit
+// search completion evidence.
+func ResolvedWithSearch(entries []api.DupeEntry, notes []string, search SearchEvidence) AdapterResult {
+	if search.Pages < 0 {
+		search.Pages = 0
+	}
+	search.Scope = strings.TrimSpace(search.Scope)
+	search.Warnings = cloneNotes(search.Warnings)
 	return AdapterResult{data: &adapterResultData{
 		disposition: DispositionResolved,
 		entries:     cloneEntries(entries),
+		search:      search,
 		notes:       cloneNotes(notes),
 	}}
 }
@@ -233,6 +260,16 @@ func (r AdapterResult) Entries() []api.DupeEntry {
 		return nil
 	}
 	return cloneEntries(r.data.entries)
+}
+
+// SearchEvidence returns a defensive copy of search completion evidence.
+func (r AdapterResult) SearchEvidence() SearchEvidence {
+	if r.data == nil {
+		return SearchEvidence{}
+	}
+	search := r.data.search
+	search.Warnings = cloneNotes(search.Warnings)
+	return search
 }
 
 // Notes returns display-only notes.
@@ -294,6 +331,11 @@ func cloneEntries(entries []api.DupeEntry) []api.DupeEntry {
 	for idx, entry := range entries {
 		entry.Files = append([]string(nil), entry.Files...)
 		entry.Flags = append([]string(nil), entry.Flags...)
+		entry.HDR.Formats = append([]api.HDRFormat(nil), entry.HDR.Formats...)
+		entry.HDR.FallbackFormats = append([]api.HDRFormat(nil), entry.HDR.FallbackFormats...)
+		entry.HDR.SourceFields = append([]string(nil), entry.HDR.SourceFields...)
+		entry.HDR.Contradictions = append([]string(nil), entry.HDR.Contradictions...)
+		entry.Attributes = maps.Clone(entry.Attributes)
 		out[idx] = entry
 	}
 	return out

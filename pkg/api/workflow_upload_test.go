@@ -22,6 +22,7 @@ func TestReleaseWorkflowUploadRequestRoundTripPreservesPresence(t *testing.T) {
 			Mode:            ReleaseWorkflowUploadModeDebug,
 			PreparedRelease: ReleaseWorkflowPreparedReleaseRequire,
 		},
+		Trackers: ReleaseWorkflowUploadTrackers{Include: []TrackerID{"EXAMPLE"}},
 		Preparation: ReleaseWorkflowUploadPreparation{
 			Facts: ReleaseWorkflowUploadFacts{
 				ExternalIDs: ReleaseWorkflowUploadExternalIDs{
@@ -64,6 +65,7 @@ func TestReleaseWorkflowUploadRequestValidation(t *testing.T) {
 	valid := CreateReleaseWorkflowUploadRequest{
 		Source:         ReleaseWorkflowUploadSource{Path: `D:\Example Release 2026`},
 		Unattended:     &ReleaseWorkflowUploadUnattended{},
+		Trackers:       ReleaseWorkflowUploadTrackers{Include: []TrackerID{"EXAMPLE"}},
 		IdempotencyKey: "upload-1",
 	}
 	tests := []struct {
@@ -72,6 +74,7 @@ func TestReleaseWorkflowUploadRequestValidation(t *testing.T) {
 	}{
 		{"missing source", func(request *CreateReleaseWorkflowUploadRequest) { request.Source.Path = "" }},
 		{"missing unattended", func(request *CreateReleaseWorkflowUploadRequest) { request.Unattended = nil }},
+		{"strict missing tracker include", func(request *CreateReleaseWorkflowUploadRequest) { request.Trackers.Include = nil }},
 		{"bad mode", func(request *CreateReleaseWorkflowUploadRequest) { request.Execution.Mode = "unsafe" }},
 		{"tracker overlap", func(request *CreateReleaseWorkflowUploadRequest) {
 			request.Trackers.Include = []TrackerID{"alpha"}

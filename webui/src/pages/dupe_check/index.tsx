@@ -13,6 +13,7 @@ import type { TrackerUploadItem } from "../../types";
 import { handleExternalLinkClick } from "../../utils/externalLinks";
 import type {
   DupeAssessment,
+  DupeMatchProjection,
   TrackerPreflightAssessment,
   TrackerReleaseProjectionSet,
 } from "../../api/generated/release-workflow";
@@ -39,6 +40,56 @@ const uniqueFailureMessages = (failures: readonly { failure: { Message: string }
 const hasInClientMatch = (result: DupeAssessment["results"][number] | undefined) =>
   Boolean(result?.matches?.some((match) => match.reason?.trim().toLowerCase() === "in_client"));
 
+const reviewRelations = new Set([
+  "same_slot",
+  "proposed_trumps",
+  "manual_review",
+  "insufficient_evidence",
+]);
+
+const relationLabel = (relation: string | undefined) =>
+  relation ? relation.replaceAll("_", " ") : "candidate";
+
+const relationTone = (relation: string | undefined): "neutral" | "info" | "danger" => {
+  switch (relation) {
+    case "coexists":
+      return "info";
+    case "proposed_trumps":
+      return "neutral";
+    default:
+      return "danger";
+  }
+};
+
+const hdrSummary = (match: DupeMatchProjection) => {
+  const formats = match.hdr?.formats?.map((format) => format.replaceAll("_", " ")) || [];
+  const profile = match.hdr?.dolbyVisionProfile ? `profile ${match.hdr.dolbyVisionProfile}` : "";
+  return [formats.join(" + "), profile].filter(Boolean).join(" · ");
+};
+
+const candidateFacts = (match: DupeMatchProjection) =>
+  [
+    match.type,
+    match.source,
+    match.provider,
+    match.resolution,
+    match.codec,
+    match.container,
+    match.edition,
+    match.region,
+    match.threeD,
+    match.repack,
+    match.date,
+    match.pack ? "season pack" : "",
+  ].filter((value): value is string => Boolean(value));
+
+const requiresRiskAcknowledgement = (result: DupeAssessment["results"][number] | undefined) =>
+  Boolean(
+    result &&
+    ((Boolean(result.search?.pages) && result.search?.complete === false) ||
+      result.matches?.some((match) => reviewRelations.has(match.relation || ""))),
+  );
+
 const workflowDupeSummary = (
   result: DupeAssessment["results"][number] | undefined,
   searchBlocked: boolean,
@@ -54,13 +105,15 @@ const workflowDupeSummary = (
   const count = result.matches?.length || 0;
   switch (result.decision) {
     case "accepted":
-      return `${count} match(es) · upload blocked`;
+      return `${count} candidate(s) · upload blocked`;
     case "ignored":
-      return `${count} match(es) · duplicate override enabled`;
+      return `${count} candidate(s) · policy risk acknowledged`;
     case "pending":
-      return `${count} match(es) · review optional`;
+      return `${count} candidate(s) · review required`;
     case "no_match":
-      return "0 match(es) · no duplicate found";
+      return count
+        ? `${count} candidate(s) · no blocking duplicate`
+        : "0 candidates · no duplicate found";
     case "skipped":
       return "Duplicate search skipped.";
   }
@@ -151,10 +204,11 @@ function WorkflowDupeAssessmentView({
           (projection && projection.readiness !== "ready") ||
           (readiness && readiness.state !== "ready"),
         );
+        const riskAcknowledgement = requiresRiskAcknowledgement(result);
         const canOverride = Boolean(
           result &&
           !inClient &&
-          result.matches?.length &&
+          (riskAcknowledgement || result.matches?.length) &&
           ["pending", "accepted", "ignored"].includes(result.decision),
         );
         const matches = Array.from(
@@ -183,6 +237,12 @@ function WorkflowDupeAssessmentView({
                   {ruleStatus.length ? `${ruleStatus.length} blocking rule(s)` : "Rules ready"}
                 </Badge>
                 {inClient ? <Badge tone="danger">In client</Badge> : null}
+                {result?.search?.pages ? (
+                  <Badge tone={result.search.complete ? "info" : "danger"}>
+                    Search {result.search.complete ? "complete" : "incomplete"} ·{" "}
+                    {result.search.pages} page(s)
+                  </Badge>
+                ) : null}
               </div>
             </div>
             <div className="grid gap-1 text-sm">
@@ -201,7 +261,17 @@ function WorkflowDupeAssessmentView({
                 </p>
               ) : null}
               <p className="muted">{workflowDupeSummary(result, searchBlocked, inClient)}</p>
+              {result?.policyId ? <p className="muted text-xs">Policy: {result.policyId}</p> : null}
             </div>
+            {result?.search?.warnings?.length ? (
+              <div className="grid gap-1 text-sm">
+                {result.search.warnings.map((warning) => (
+                  <p className="error" key={warning}>
+                    {warning}
+                  </p>
+                ))}
+              </div>
+            ) : null}
             {failureMessages.length ? (
               <div className="grid gap-1 text-sm">
                 {failureMessages.map((message) => (
@@ -212,31 +282,72 @@ function WorkflowDupeAssessmentView({
               </div>
             ) : null}
             {matches.length ? (
-              <div className="flex flex-wrap gap-2 text-sm">
-                {matches.map((match) =>
-                  match.link ? (
-                    <a
-                      className="tracker-link"
-                      href={match.link}
-                      key={match.id || match.name}
-                      onAuxClick={handleExternalLinkClick}
-                      onClick={handleExternalLinkClick}
-                      rel="noreferrer"
-                      target="_blank"
+              <div className="grid gap-2 text-sm">
+                {matches.map((match) => {
+                  const facts = candidateFacts(match);
+                  const hdr = hdrSummary(match);
+                  return (
+                    <div
+                      className="rounded border border-[var(--border)] bg-black/10 p-2"
+                      key={`${match.id || ""}-${match.name}-${match.relation || ""}`}
                     >
-                      {match.name}
-                    </a>
-                  ) : (
-                    <span key={match.id || match.name}>{match.name}</span>
-                  ),
-                )}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone={relationTone(match.relation)}>
+                          {relationLabel(match.relation)}
+                        </Badge>
+                        {match.link ? (
+                          <a
+                            className="tracker-link break-all"
+                            href={match.link}
+                            onAuxClick={handleExternalLinkClick}
+                            onClick={handleExternalLinkClick}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            {match.name}
+                          </a>
+                        ) : (
+                          <span className="break-all">{match.name}</span>
+                        )}
+                      </div>
+                      {facts.length ? <p className="muted mt-1">{facts.join(" · ")}</p> : null}
+                      {hdr || match.evidenceStatus || match.hdr?.origin ? (
+                        <p className="muted mt-1 text-xs">
+                          HDR: {hdr || "unknown"} · evidence{" "}
+                          {match.evidenceStatus || match.hdr?.status || "missing"}
+                          {match.hdr?.origin ? ` (${match.hdr.origin})` : ""}
+                        </p>
+                      ) : null}
+                      {(match.reasons || []).map((reason) => (
+                        <p className="muted mt-1 text-xs" key={reason.code}>
+                          {reason.code}
+                          {reason.message ? ` — ${reason.message}` : ""}
+                        </p>
+                      ))}
+                    </div>
+                  );
+                })}
               </div>
+            ) : null}
+            {riskAcknowledgement ? (
+              <p className="error text-sm">
+                Automatic clearance is unavailable. Review candidate relations and incomplete
+                evidence before acknowledging tracker policy risk.
+              </p>
             ) : null}
             {canOverride ? (
               <label className="inline-flex items-center gap-2 text-xs font-semibold">
-                <span>Ignore duplicate match</span>
+                <span>
+                  {riskAcknowledgement
+                    ? "Acknowledge tracker policy risk"
+                    : "Ignore duplicate match"}
+                </span>
                 <Switch
-                  aria-label={`Ignore dupes for ${trackerID}`}
+                  aria-label={
+                    riskAcknowledgement
+                      ? `Acknowledge dupe risk for ${trackerID}`
+                      : `Ignore dupes for ${trackerID}`
+                  }
                   checked={result?.decision === "ignored" || ignoredTrackers.has(trackerID)}
                   onChange={(event) => setIgnored(trackerID, event.target.checked)}
                 />

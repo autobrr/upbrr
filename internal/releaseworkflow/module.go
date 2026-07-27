@@ -3756,7 +3756,11 @@ func validateDupeBuild(projections api.TrackerReleaseProjectionSet, snapshot api
 			return fmt.Errorf("fingerprint duplicate criteria %s: %w", projection.TrackerID, err)
 		}
 		if result.UploadReleaseName != projection.UploadReleaseName || criteriaFingerprint != projection.CriteriaFingerprint ||
-			result.ProjectionFingerprint != fingerprint || result.CriteriaFingerprint != projection.CriteriaFingerprint {
+			result.ProjectionFingerprint != fingerprint || result.CriteriaFingerprint != projection.CriteriaFingerprint ||
+			result.TargetFingerprint != projection.DuplicateTargetFingerprint ||
+			result.SearchFingerprint != projection.DuplicateSearchFingerprint ||
+			result.PolicyID != projection.DuplicatePolicyID ||
+			result.PolicyFingerprint != projection.DuplicatePolicyFingerprint {
 			return fmt.Errorf("duplicate assessment lineage mismatch for tracker %s", projection.TrackerID)
 		}
 	}

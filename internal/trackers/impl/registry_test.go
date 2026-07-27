@@ -348,7 +348,7 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 	if _, ok := registry.LookupMetadataPolicy("ANT"); !ok {
 		t.Fatal("expected ANT tracker-owned metadata policy")
 	}
-	if policy, ok := registry.LookupDupePolicy("ANT"); !ok || !policy.DolbyVisionImpliesHDR {
+	if policy, ok := registry.LookupDupePolicy("ANT"); !ok || policy.ID != "ant/duplicate/v1" || !policy.RequiredEvidence.HDR {
 		t.Fatalf("ANT dupe policy = %#v, %t", policy, ok)
 	}
 }
@@ -372,6 +372,9 @@ func TestNewRegistryMigrationInventoryClassifiesEveryBuiltIn(t *testing.T) {
 		if descriptor.ReleaseNamePolicy.Resolver == nil || strings.TrimSpace(descriptor.ReleaseNamePolicy.ID) == "" ||
 			strings.TrimSpace(descriptor.ProjectorVersion) == "" {
 			t.Fatalf("%s versioned release projector missing", name)
+		}
+		if policy, ok := registry.LookupDupePolicy(name); !ok || strings.TrimSpace(policy.ID) == "" {
+			t.Fatalf("%s versioned duplicate policy missing", name)
 		}
 
 		var namingAndTaxonomyOwner string
@@ -555,7 +558,7 @@ func TestNewRegistryIncludesBHDPolicies(t *testing.T) {
 	if groups, ok := registry.LookupBannedGroups("BHD"); !ok || !slices.Contains(groups, "TGS") {
 		t.Fatalf("BHD banned groups = %#v, %t", groups, ok)
 	}
-	if policy, ok := registry.LookupDupePolicy("BHD"); !ok || !policy.MatchAggregateSize || !policy.NormalizeDDPlusName {
+	if policy, ok := registry.LookupDupePolicy("BHD"); !ok || policy.ID != "bhd/duplicate/v1" || policy.SizeVariancePercent != 20 {
 		t.Fatalf("BHD dupe policy = %#v, %t", policy, ok)
 	}
 	if definition, ok := registry.Lookup("BHD"); !ok {

@@ -172,6 +172,7 @@ type State struct {
 	Type                           string
 	UHD                            string
 	HDR                            string
+	HDRFacts                       api.HDRFacts
 	Distributor                    string
 	Region                         string
 	VideoCodec                     string

@@ -26,7 +26,22 @@ func Profile() standalone.Profile {
 		ArtifactPolicy:       &trackers.ArtifactPolicy{MaxPieceSizeMiB: 128, MaxTorrentBytes: 250 << 10},
 		BannedGroups:         bannedGroups(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "ANT"},
-		DupePolicy:           &trackers.DupePolicy{DolbyVisionImpliesHDR: true},
+		DupePolicy: &trackers.DupePolicy{
+			ID: "ant/duplicate/v1",
+			SearchScope: trackers.DupeSearchScope{
+				IncludeEpisodes:    true,
+				IncludeSeasonPacks: true,
+				MaxPages:           100,
+			},
+			RequiredEvidence: trackers.DupeEvidenceRequirements{HDR: true},
+			SlotDimensions: []trackers.DupeDimension{
+				trackers.DupeDimensionType,
+				trackers.DupeDimensionSource,
+				trackers.DupeDimensionResolution,
+				trackers.DupeDimensionCodec,
+				trackers.DupeDimensionHDR,
+			},
+		},
 		AudioPolicy: &trackers.AudioPolicy{
 			AllowedLanguages: []string{"english"}, BlockEnglishOriginalWithForeign: true,
 		},

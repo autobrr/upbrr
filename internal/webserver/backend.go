@@ -258,6 +258,141 @@ func (b *Backend) GetApplicationInfo() (api.ApplicationInfo, error) {
 	return CurrentApplicationInfo(context.Background(), rt.capabilities.DiagnosticProbe), nil
 }
 
+// GetReleaseWorkflowCapabilities returns authenticated, non-secret integration
+// metadata for composite-workflow API clients.
+func (b *Backend) GetReleaseWorkflowCapabilities(
+	ownerID string,
+	scopes []string,
+	uploadOptionSchemaHash string,
+) (api.ReleaseWorkflowCapabilities, error) {
+	if b == nil {
+		return api.ReleaseWorkflowCapabilities{}, errors.New("backend not initialized")
+	}
+	registry, err := trackerimpl.NewRegistry()
+	if err != nil {
+		return api.ReleaseWorkflowCapabilities{}, fmt.Errorf("webserver: tracker registry: %w", err)
+	}
+	descriptors, err := registry.CatalogDescriptors()
+	if err != nil {
+		return api.ReleaseWorkflowCapabilities{}, fmt.Errorf("webserver: tracker descriptors: %w", err)
+	}
+	catalog, err := b.ListTrackerCatalog()
+	if err != nil {
+		return api.ReleaseWorkflowCapabilities{}, err
+	}
+	catalogByName := make(map[string]api.TrackerCatalogEntry, len(catalog.Entries))
+	for _, entry := range catalog.Entries {
+		catalogByName[strings.ToUpper(strings.TrimSpace(entry.Name))] = entry
+	}
+	trackerCapabilities := make([]api.ReleaseWorkflowCapabilityTracker, 0, len(descriptors))
+	for _, descriptor := range descriptors {
+		entry, ok := catalogByName[strings.ToUpper(strings.TrimSpace(string(descriptor.TrackerID)))]
+		if !ok {
+			continue
+		}
+		fields := make([]api.ReleaseWorkflowCapabilityField, len(entry.Fields))
+		for index, field := range entry.Fields {
+			fields[index] = api.ReleaseWorkflowCapabilityField{
+				Key:        field.Key,
+				YAMLKey:    field.YAMLKey,
+				Activation: field.Activation,
+			}
+		}
+		trackerCapabilities = append(trackerCapabilities, api.ReleaseWorkflowCapabilityTracker{
+			ID:           descriptor.TrackerID,
+			DisplayName:  descriptor.DisplayName,
+			Configured:   entry.Configured,
+			Default:      entry.Default,
+			Capabilities: descriptor.Capabilities,
+			ConfigFields: fields,
+		})
+	}
+
+	cfg := b.currentConfig()
+	clientNames := make([]string, 0, len(cfg.TorrentClients))
+	for name := range cfg.TorrentClients {
+		if name = strings.TrimSpace(name); name != "" {
+			clientNames = append(clientNames, name)
+		}
+	}
+	slices.SortFunc(clientNames, func(left, right string) int {
+		return strings.Compare(strings.ToLower(left), strings.ToLower(right))
+	})
+	torrentClients := make([]api.ReleaseWorkflowCapabilityResource, 0, len(clientNames))
+	for _, name := range clientNames {
+		torrentClients = append(torrentClients, api.ReleaseWorkflowCapabilityResource{
+			ID:          name,
+			DisplayName: name,
+			Configured:  true,
+		})
+	}
+	imageHosts := make([]api.ReleaseWorkflowCapabilityResource, 0)
+	for _, host := range imagehostpolicy.KnownUploadHosts() {
+		imageHosts = append(imageHosts, api.ReleaseWorkflowCapabilityResource{
+			ID:          host,
+			DisplayName: host,
+			Configured:  releaseWorkflowImageHostConfigured(cfg.ImageHosting, host),
+		})
+	}
+	appInfo := api.CurrentApplicationInfo()
+	return api.ReleaseWorkflowCapabilities{
+		ApplicationVersion: appInfo.Version,
+		APIVersion:         api.ReleaseWorkflowAPIVersion,
+		OwnerID:            strings.TrimSpace(ownerID),
+		Scopes:             append([]string(nil), scopes...),
+		Features: api.ReleaseWorkflowCapabilityFeatures{
+			CompositeUpload:                   true,
+			TypedFeedback:                     true,
+			StrictEligibleTrackerContinuation: true,
+		},
+		UploadOptionSchemaHash: strings.TrimSpace(uploadOptionSchemaHash),
+		Trackers:               trackerCapabilities,
+		TorrentClients:         torrentClients,
+		ImageHosts:             imageHosts,
+	}, nil
+}
+
+func releaseWorkflowImageHostConfigured(cfg config.ImageHostingConfig, host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if cfg.HostEnabled(host) {
+		return true
+	}
+	for _, selected := range []string{cfg.Host1, cfg.Host2, cfg.Host3, cfg.Host4, cfg.Host5, cfg.Host6} {
+		if strings.EqualFold(strings.TrimSpace(selected), host) {
+			return true
+		}
+	}
+	switch host {
+	case "dalexni":
+		return strings.TrimSpace(cfg.DalexniAPI) != ""
+	case "imgbb":
+		return strings.TrimSpace(cfg.ImgBBAPI) != ""
+	case "lensdump":
+		return strings.TrimSpace(cfg.LensdumpAPI) != ""
+	case "lostimg":
+		return strings.TrimSpace(cfg.LostimgAPI) != ""
+	case "onlyimage":
+		return strings.TrimSpace(cfg.OnlyImageAPI) != ""
+	case "passtheimage":
+		return strings.TrimSpace(cfg.PassTheImageAPI) != ""
+	case "ptscreens":
+		return strings.TrimSpace(cfg.PTScreensAPI) != ""
+	case "reelflix":
+		return strings.TrimSpace(cfg.ReelflixAPI) != ""
+	case "seedpool_cdn":
+		return strings.TrimSpace(cfg.SeedpoolCDNAPI) != ""
+	case "sharex":
+		return strings.TrimSpace(cfg.ShareXURL) != "" && strings.TrimSpace(cfg.ShareXAPIKey) != ""
+	case "utppm":
+		return strings.TrimSpace(cfg.UTPPMAPI) != ""
+	case "zipline":
+		return strings.TrimSpace(cfg.ZiplineURL) != "" && strings.TrimSpace(cfg.ZiplineAPIKey) != ""
+	case "hdb", "imgbox", "pixhost", "thr":
+		return true
+	}
+	return false
+}
+
 // ExportConfig returns the exportable config, using plaintext secrets only
 // when auth material for the exported snapshot's DB path explicitly allows
 // unencrypted export.

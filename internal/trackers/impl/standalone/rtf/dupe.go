@@ -261,134 +261,16 @@ func buildRTFDownloadLink(id string) string {
 
 func isRTFContentOldEnough(meta api.DuplicateSubject, now time.Time) bool {
 	cutoff := now.UTC().AddDate(0, 0, -rtfAgeGraceDays)
-	if date, ok := rtfReferenceDate(meta); ok {
+	evidence := youngestRTFReleaseEvidence(meta.Release, meta.ProviderMetadata)
+	if date, ok := evidence.exactDate(); ok {
 		return !date.After(cutoff)
 	}
-	year := rtfReferenceYear(meta)
-	if year == 0 {
+	if evidence.year == 0 {
 		return true
 	}
 	// Year-based fallback is intentionally looser than the date-based check
 	// because month/day precision is unavailable when only year is known.
-	return now.UTC().Year()-year > 9
-}
-
-func rtfReferenceDate(meta api.DuplicateSubject) (time.Time, bool) {
-	category := rtfCategory(meta)
-	switch category {
-	case "MOVIE":
-		return rtfMovieReleaseDate(meta)
-	case "TV":
-		return rtfMostRecentTVDate(meta)
-	default:
-		if date, ok := rtfMovieReleaseDate(meta); ok {
-			return date, true
-		}
-		return rtfMostRecentTVDate(meta)
-	}
-}
-
-func rtfMovieReleaseDate(meta api.DuplicateSubject) (time.Time, bool) {
-	if meta.ProviderMetadata.TMDB == nil {
-		return time.Time{}, false
-	}
-	return parseRTFDate(meta.ProviderMetadata.TMDB.ReleaseDate)
-}
-
-func rtfMostRecentTVDate(meta api.DuplicateSubject) (time.Time, bool) {
-	candidates := make([]time.Time, 0, 8)
-	if meta.ProviderMetadata.TMDB != nil {
-		if date, ok := parseRTFDate(meta.ProviderMetadata.TMDB.LastAirDate); ok {
-			candidates = append(candidates, date)
-		}
-		if date, ok := parseRTFDate(meta.ProviderMetadata.TMDB.FirstAirDate); ok {
-			candidates = append(candidates, date)
-		}
-	}
-	if meta.ProviderMetadata.TVmaze != nil {
-		if date, ok := parseRTFDate(meta.ProviderMetadata.TVmaze.Premiered); ok {
-			candidates = append(candidates, date)
-		}
-	}
-	if meta.ProviderMetadata.IMDB != nil {
-		for _, episode := range meta.ProviderMetadata.IMDB.Episodes {
-			if date, ok := rtfEpisodeDate(episode); ok {
-				candidates = append(candidates, date)
-			}
-		}
-	}
-	if len(candidates) == 0 {
-		return time.Time{}, false
-	}
-	latest := candidates[0]
-	for _, candidate := range candidates[1:] {
-		if candidate.After(latest) {
-			latest = candidate
-		}
-	}
-	return latest, true
-}
-
-func rtfEpisodeDate(episode api.IMDBEpisode) (time.Time, bool) {
-	if episode.ReleaseDate.Year > 0 {
-		month := episode.ReleaseDate.Month
-		if month <= 0 {
-			month = 1
-		}
-		day := episode.ReleaseDate.Day
-		if day <= 0 {
-			day = 1
-		}
-		return time.Date(episode.ReleaseDate.Year, time.Month(month), day, 0, 0, 0, 0, time.UTC), true
-	}
-	if episode.ReleaseYear > 0 {
-		return time.Date(episode.ReleaseYear, time.January, 1, 0, 0, 0, 0, time.UTC), true
-	}
-	return time.Time{}, false
-}
-
-func parseRTFDate(raw string) (time.Time, bool) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return time.Time{}, false
-	}
-	for _, layout := range []string{"2006-01-02", time.RFC3339} {
-		parsed, err := time.Parse(layout, value)
-		if err != nil {
-			continue
-		}
-		return time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.UTC), true
-	}
-	return time.Time{}, false
-}
-
-func rtfReferenceYear(meta api.DuplicateSubject) int {
-	if date, ok := rtfReferenceDate(meta); ok {
-		return date.Year()
-	}
-	if meta.Release.Year > 0 {
-		return meta.Release.Year
-	}
-	if meta.ProviderMetadata.TMDB != nil && meta.ProviderMetadata.TMDB.Year > 0 {
-		return meta.ProviderMetadata.TMDB.Year
-	}
-	if meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Year > 0 {
-		return meta.ProviderMetadata.IMDB.Year
-	}
-	if meta.ProviderMetadata.TVmaze != nil {
-		if date, ok := parseRTFDate(meta.ProviderMetadata.TVmaze.Premiered); ok {
-			return date.Year()
-		}
-	}
-	return 0
-}
-
-func rtfCategory(meta api.DuplicateSubject) string {
-	category, err := meta.Identity.RequireCategory()
-	if err != nil {
-		return ""
-	}
-	return strings.ToUpper(string(category))
+	return now.UTC().Year()-evidence.year > 9
 }
 
 func rtfJSONRequest(

@@ -21,10 +21,19 @@ func Profile() unit3d.Profile {
 			ApplyAdditionalPayload: additionalPayload,
 		},
 		DupePolicy: &trackers.DupePolicy{
-			TrackTrumpableID:      true,
-			MatchDVDReleaseGroup:  true,
-			SDMatchesHD:           true,
-			AllowSizeVariance1080: true,
+			ID: "aither/duplicate/v1",
+			SearchScope: trackers.DupeSearchScope{
+				IncludeEpisodes:    true,
+				IncludeSeasonPacks: true,
+				MaxPages:           100,
+			},
+			RequiredEvidence: trackers.DupeEvidenceRequirements{HDR: true},
+			SlotDimensions: []trackers.DupeDimension{
+				trackers.DupeDimensionType,
+				trackers.DupeDimensionResolution,
+				trackers.DupeDimensionHDR,
+			},
+			SizeVariancePercent: 20,
 		},
 		BannedPolicy: &trackers.BannedGroupPolicy{
 			EndpointPath:  "/api/blacklists/releasegroups",

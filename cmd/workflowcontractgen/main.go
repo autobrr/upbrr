@@ -132,7 +132,7 @@ func generate() ([]byte, []byte, error) {
 		"openapi": "3.1.0",
 		"info": map[string]any{
 			"title":       "upbrr Release Workflow API",
-			"version":     "1.0.0",
+			"version":     api.ReleaseWorkflowAPIVersion,
 			"description": "Owner-scoped, revisioned release workflow commands and retained state.",
 		},
 		"servers":  []any{map[string]any{"url": "/api/v1"}},
@@ -244,6 +244,21 @@ func routeManifest() []route {
 	operation := reflect.TypeFor[api.WorkflowOperationStatus]()
 	return []route{
 		{
+			Path:        "/capabilities",
+			Method:      http.MethodGet,
+			OperationID: "getReleaseWorkflowCapabilities",
+			Tag:         "Operations",
+			Summary:     "Get authenticated integration capabilities",
+			Description: "Returns token owner/scopes, supported features, upload schema compatibility, and non-secret configured resource choices.",
+			Success: jsonSuccess(
+				"200",
+				"Authenticated non-secret integration capability metadata.",
+				reflect.TypeFor[api.ReleaseWorkflowCapabilities](),
+				false,
+			),
+			Errors: errorProfileAuthenticatedRead,
+		},
+		{
 			Path:        "/uploads",
 			Method:      http.MethodPost,
 			OperationID: "createWorkflowUpload",
@@ -275,6 +290,7 @@ func routeManifest() []route {
 						"source":     map[string]any{"path": `D:\Example Release 2026`},
 						"unattended": map[string]any{"confirm": false},
 						"execution":  map[string]any{"mode": "debug"},
+						"trackers":   map[string]any{"include": []string{"EXAMPLE"}},
 						"client":     map[string]any{"noSeed": true},
 					},
 				},
@@ -283,6 +299,7 @@ func routeManifest() []route {
 					Value: map[string]any{
 						"source":     map[string]any{"path": `D:\Example Release 2026`},
 						"unattended": map[string]any{"confirm": false},
+						"trackers":   map[string]any{"include": []string{"EXAMPLE"}},
 						"duplicates": map[string]any{
 							"onEvidence":  "block",
 							"allowUpload": []string{"EXAMPLE"},
@@ -1175,6 +1192,9 @@ func (b *schemaBuilder) ensureNamed(value reflect.Type) {
 }
 
 func (b *schemaBuilder) definition(value reflect.Type) *schema {
+	if value == reflect.TypeFor[api.WorkflowPatch[string]]() {
+		return &schema{AnyOf: []*schema{{Type: "string"}, {Type: "null"}}}
+	}
 	if value == reflect.TypeFor[api.CreateReleaseWorkflowUploadRequest]() {
 		result := &schema{Type: "object", Properties: map[string]*schema{}}
 		b.addFields(result, value)

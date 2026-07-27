@@ -51,7 +51,6 @@ func Profile() standalone.Profile {
 			},
 		},
 		UploadArtifactPolicy:  &trackers.UploadArtifactPolicy{Source: arSourceFlag},
-		DupePolicy:            &trackers.DupePolicy{ContainsFilenameMatch: true},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{TrackerURLPatterns: []string{"tracker.alpharatio"}},
 		AuthCapability: &api.TrackerAuthCapability{
 			TrackerID:          "AR",
