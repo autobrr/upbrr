@@ -376,12 +376,12 @@ func TestCheckCancellationWaitsForStartedAdapterAndReturnsCompletedEvidence(t *t
 	}
 }
 
-func TestPublicProjectionBlanksPrivateDownloadsAndURLQueries(t *testing.T) {
+func TestPublicProjectionBlanksPrivateDownloadsAndSanitizesURLQueries(t *testing.T) {
 	service := testService(map[string]Adapter{
 		"A": AdapterFunc(func(context.Context, api.DuplicateSubject) AdapterResult {
 			return Resolved([]api.DupeEntry{{
 				Name:     "Example.Release.2026.1080p-GRP",
-				Link:     "https://tracker.example/torrents/1?token=secret",
+				Link:     "https://user@tracker.example/torrents.php?id=44&torrentid=55&token=secret#private",
 				Download: "https://tracker.example/download/1?passkey=secret",
 			}}, nil)
 		}),
@@ -391,7 +391,7 @@ func TestPublicProjectionBlanksPrivateDownloadsAndURLQueries(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry := summary.Results[0].Raw[0]
-	if entry.Download != "" || entry.Link != "https://tracker.example/torrents/1" {
+	if entry.Download != "" || entry.Link != "https://tracker.example/torrents.php?id=44&torrentid=55" {
 		t.Fatalf("private URL leaked: %#v", entry)
 	}
 }

@@ -202,6 +202,9 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	if result.UploadedTorrents[0].TorrentID != "123" {
 		t.Fatalf("expected torrent id 123, got %q", result.UploadedTorrents[0].TorrentID)
 	}
+	if result.UploadedTorrents[0].TorrentURL != server.URL+"/details.php?id=123&uploaded=1" {
+		t.Fatal("expected direct HDB torrent page URL")
+	}
 	if !uploadSeen {
 		t.Fatal("expected upload endpoint to be called")
 	}

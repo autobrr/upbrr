@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -659,6 +660,7 @@ func (s *Service) submitTrackerPlans(ctx context.Context, meta api.UploadSubject
 				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "failed", slot.failure.Message)
 			} else {
 				slot.summary = summary
+				s.logUploadedTorrentURLs(slot.tracker, summary)
 				s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "uploaded")
 				emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "completed", "Tracker upload complete")
 			}
@@ -688,6 +690,51 @@ enqueue:
 		s.updateUploadRecord(ctx, meta.SourcePath, slot.tracker, "canceled")
 		emitTrackerPlanProgress(ctx, meta.SourcePath, slot.tracker, "tracker_upload", "canceled", "Upload canceled")
 	}
+}
+
+func (s *Service) logUploadedTorrentURLs(fallbackTracker string, summary api.UploadSummary) {
+	for _, uploaded := range summary.UploadedTorrents {
+		torrentURL := sanitizeTorrentPageURLForLog(uploaded.TorrentURL)
+		if torrentURL == "" {
+			continue
+		}
+		tracker := strings.TrimSpace(uploaded.Tracker)
+		if tracker == "" {
+			tracker = fallbackTracker
+		}
+		s.logger.Infof("trackers: %s torrent URL: %s", tracker, torrentURL)
+	}
+}
+
+func sanitizeTorrentPageURLForLog(value string) string {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return ""
+	}
+
+	publicQuery := url.Values{}
+	for key, values := range parsed.Query() {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "hash", "id", "torrentid":
+			publicQuery[key] = append([]string(nil), values...)
+		case "page":
+			for _, queryValue := range values {
+				if strings.EqualFold(strings.TrimSpace(queryValue), "torrent-details") {
+					publicQuery[key] = append(publicQuery[key], queryValue)
+				}
+			}
+		case "uploaded":
+			for _, queryValue := range values {
+				if strings.TrimSpace(queryValue) == "1" {
+					publicQuery[key] = append(publicQuery[key], queryValue)
+				}
+			}
+		}
+	}
+	parsed.RawQuery = publicQuery.Encode()
+	parsed.Fragment = ""
+	parsed.User = nil
+	return parsed.String()
 }
 
 func (s *Service) releaseTrackerPlans(slots []trackerPlanSlot) {

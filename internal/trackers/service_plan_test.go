@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -164,6 +165,24 @@ type retainedProjectionDefinition struct {
 	artifactPolicy *UploadArtifactPolicy
 }
 
+type planInfoLogger struct {
+	api.NopLogger
+	mu    sync.Mutex
+	infos []string
+}
+
+func (l *planInfoLogger) Infof(format string, args ...any) {
+	l.mu.Lock()
+	l.infos = append(l.infos, fmt.Sprintf(format, args...))
+	l.mu.Unlock()
+}
+
+func (l *planInfoLogger) containsInfo(value string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Contains(l.infos, value)
+}
+
 func (d retainedProjectionDefinition) Name() string { return d.name }
 
 func (retainedProjectionDefinition) UploadContentMode() UploadContentMode {
@@ -257,6 +276,91 @@ func TestRetainedUploadPlanExecutesExactReviewedProjectionWithoutRepreparing(t *
 	}
 	if _, err := retained.Execute(context.Background()); !errors.Is(err, ErrPlanReleased) && !errors.Is(err, ErrPlanAlreadyUsed) {
 		t.Fatalf("second retained execution error = %v", err)
+	}
+}
+
+func TestRetainedUploadPlanLogsReturnedTorrentPageURL(t *testing.T) {
+	t.Parallel()
+
+	var prepared atomic.Int32
+	var submitted atomic.Int32
+	logger := &planInfoLogger{}
+	registry := NewRegistry()
+	if err := registry.Register(retainedProjectionDefinition{
+		name:      "EXAMPLE",
+		prepared:  &prepared,
+		submitted: &submitted,
+		input:     make(chan PreparationInput, 1),
+	}); err != nil {
+		t.Fatalf("register retained definition: %v", err)
+	}
+	service := NewServiceWithRegistry(config.Config{}, logger, nil, registry)
+	retained, err := service.PrepareRetainedUploadPlan(
+		context.Background(),
+		api.UploadSubject{SourcePath: "Example.Release.2026"},
+		[]api.TrackerReleaseProjection{{
+			TrackerID:         "EXAMPLE",
+			UploadReleaseName: "Example.Release.2026.1080p-GRP",
+			Readiness:         api.ReadinessStatusReady,
+			UploadReady:       true,
+		}},
+	)
+	if err != nil {
+		t.Fatalf("prepare retained upload plan: %v", err)
+	}
+	if _, err := retained.Execute(context.Background()); err != nil {
+		t.Fatalf("execute retained upload plan: %v", err)
+	}
+	if !logger.containsInfo("trackers: EXAMPLE torrent URL: https://tracker.example.invalid/torrents/123") {
+		t.Fatal("retained upload did not log returned torrent page URL")
+	}
+}
+
+func TestSanitizeTorrentPageURLForLog(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{
+			name:  "group and torrent identifiers",
+			value: "https://user@tracker.example.invalid/torrents.php?id=44&torrentid=55&token=private#fragment",
+			want:  "https://tracker.example.invalid/torrents.php?id=44&torrentid=55",
+		},
+		{
+			name:  "torrent details page selector",
+			value: "https://tracker.example.invalid/index.php?page=torrent-details&id=77",
+			want:  "https://tracker.example.invalid/index.php?id=77&page=torrent-details",
+		},
+		{
+			name:  "torrent hash identifier",
+			value: "https://tracker.example.invalid/details.php?hash=0123456789abcdef0123456789abcdef01234567",
+			want:  "https://tracker.example.invalid/details.php?hash=0123456789abcdef0123456789abcdef01234567",
+		},
+		{
+			name:  "upload redirect identifier",
+			value: "https://tracker.example.invalid/details.php?uploaded=1&id=88",
+			want:  "https://tracker.example.invalid/details.php?id=88&uploaded=1",
+		},
+		{
+			name:  "unsupported scheme",
+			value: "ftp://tracker.example.invalid/torrents/123",
+			want:  "",
+		},
+		{
+			name:  "relative URL",
+			value: "/torrents/123",
+			want:  "",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if sanitizeTorrentPageURLForLog(test.value) != test.want {
+				t.Fatal("unexpected sanitized torrent page URL")
+			}
+		})
 	}
 }
 

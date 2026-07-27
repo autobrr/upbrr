@@ -631,7 +631,14 @@ func sanitizePublicURL(value string) string {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return ""
 	}
-	parsed.RawQuery = ""
+	publicQuery := url.Values{}
+	for key, values := range parsed.Query() {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "id", "torrentid":
+			publicQuery[key] = append([]string(nil), values...)
+		}
+	}
+	parsed.RawQuery = publicQuery.Encode()
 	parsed.Fragment = ""
 	parsed.User = nil
 	return parsed.String()

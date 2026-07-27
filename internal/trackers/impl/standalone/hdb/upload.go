@@ -224,6 +224,7 @@ func submitPreparedUpload(ctx context.Context, req trackers.PreparationInput, st
 			Tracker:     "HDB",
 			TorrentID:   torrentID,
 			DownloadURL: downloadURL,
+			TorrentURL:  finalURL,
 			TorrentPath: trackerTorrentPath,
 		}},
 	}, nil
