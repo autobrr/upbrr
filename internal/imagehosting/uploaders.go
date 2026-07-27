@@ -617,16 +617,9 @@ func (u *onlyImageUploader) Upload(ctx context.Context, imagePath string) (uploa
 	if strings.TrimSpace(u.apiKey) == "" {
 		return uploadResult{}, errors.New("image hosting: onlyimage api key missing")
 	}
-	encoded, err := readBase64(imagePath)
-	if err != nil {
-		return uploadResult{}, err
-	}
-
-	form := url.Values{}
-	form.Set("image", encoded)
 	headers := map[string]string{"X-API-Key": strings.TrimSpace(u.apiKey)}
 
-	body, status, err := postForm(ctx, u.client, "https://onlyimage.org/api/1/upload", form, headers)
+	body, status, err := postMultipart(ctx, u.client, "https://onlyimage.org/api/1/upload", nil, "source", imagePath, headers)
 	if err != nil {
 		return uploadResult{}, err
 	}
@@ -635,28 +628,60 @@ func (u *onlyImageUploader) Upload(ctx context.Context, imagePath string) (uploa
 	}
 
 	var response struct {
-		Success bool `json:"success"`
-		Data    struct {
+		StatusCode int `json:"status_code"`
+		Success    struct {
+			Code int `json:"code"`
+		} `json:"success"`
+		Image struct {
 			Image struct {
 				URL string `json:"url"`
 			} `json:"image"`
 			Medium struct {
 				URL string `json:"url"`
 			} `json:"medium"`
+			Thumb struct {
+				URL string `json:"url"`
+			} `json:"thumb"`
+			URL       string `json:"url"`
 			URLViewer string `json:"url_viewer"`
-		} `json:"data"`
+		} `json:"image"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+		StatusText string `json:"status_txt"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
 		return uploadResult{}, fmt.Errorf("onlyimage invalid response: %w", err)
 	}
-	if !response.Success {
+	if response.StatusCode != http.StatusOK || (response.Success.Code != 0 && response.Success.Code != http.StatusOK) {
+		message := safeResponseMessage(response.Error.Message)
+		if message == "" {
+			message = safeResponseMessage(response.StatusText)
+		}
+		if message == "" {
+			message = "onlyimage upload failed"
+		}
+		return uploadResult{}, fmt.Errorf("onlyimage upload failed: %s", message)
+	}
+	rawURL := strings.TrimSpace(response.Image.URL)
+	if rawURL == "" {
+		rawURL = strings.TrimSpace(response.Image.Image.URL)
+	}
+	if rawURL == "" {
 		return uploadResult{}, errors.New("onlyimage upload failed")
+	}
+	imgURL := strings.TrimSpace(response.Image.Medium.URL)
+	if imgURL == "" {
+		imgURL = strings.TrimSpace(response.Image.Thumb.URL)
+	}
+	if imgURL == "" {
+		imgURL = rawURL
 	}
 
 	return uploadResult{
-		ImgURL: response.Data.Medium.URL,
-		RawURL: response.Data.Image.URL,
-		WebURL: response.Data.URLViewer,
+		ImgURL: imgURL,
+		RawURL: rawURL,
+		WebURL: response.Image.URLViewer,
 	}, nil
 }
 

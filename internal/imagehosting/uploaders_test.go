@@ -660,6 +660,105 @@ func TestPixhostUploaderPostsCurrentDomain(t *testing.T) {
 	}
 }
 
+func TestOnlyImageUploaderUsesV11Contract(t *testing.T) {
+	imagePath := filepath.Join(t.TempDir(), "shot.png")
+	if err := os.WriteFile(imagePath, []byte("synthetic image"), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() != "https://onlyimage.org/api/1/upload" {
+				t.Fatalf("unexpected request URL: %s", req.URL.String())
+			}
+			if req.Header.Get("X-Api-Key") != "secret" {
+				t.Fatal("expected X-API-Key")
+			}
+			mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+			if err != nil {
+				t.Fatalf("parse media type: %v", err)
+			}
+			if mediaType != "multipart/form-data" {
+				t.Fatalf("unexpected media type: %s", mediaType)
+			}
+			reader := multipartReader(t, req, params["boundary"])
+			part, err := reader.NextPart()
+			if err != nil {
+				t.Fatalf("read source part: %v", err)
+			}
+			if part.FormName() != "source" || part.FileName() != "shot.png" {
+				t.Fatal("expected source file field")
+			}
+			payload, err := io.ReadAll(part)
+			if err != nil {
+				t.Fatalf("read source payload: %v", err)
+			}
+			if string(payload) != "synthetic image" {
+				t.Fatal("unexpected source payload")
+			}
+			if _, err := reader.NextPart(); !errors.Is(err, io.EOF) {
+				t.Fatalf("expected end of multipart request: %v", err)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+					"status_code": 200,
+					"success": {"message": "file uploaded", "code": 200},
+					"image": {
+						"url": "https://onlyimage.example.invalid/images/shot.png",
+						"image": {"url": "https://onlyimage.example.invalid/images/shot.png"},
+						"medium": {"url": null},
+						"thumb": {"url": "https://onlyimage.example.invalid/images/shot.th.png"},
+						"url_viewer": "https://onlyimage.example.invalid/image/shot"
+					},
+					"status_txt": "OK"
+				}`)),
+			}, nil
+		}),
+	}
+
+	result, err := (&onlyImageUploader{apiKey: "secret", client: client}).Upload(context.Background(), imagePath)
+	if err != nil {
+		t.Fatalf("Upload returned error: %v", err)
+	}
+	if result.ImgURL != "https://onlyimage.example.invalid/images/shot.th.png" {
+		t.Fatalf("unexpected img URL: %q", result.ImgURL)
+	}
+	if result.RawURL != "https://onlyimage.example.invalid/images/shot.png" {
+		t.Fatalf("unexpected raw URL: %q", result.RawURL)
+	}
+	if result.WebURL != "https://onlyimage.example.invalid/image/shot" {
+		t.Fatalf("unexpected web URL: %q", result.WebURL)
+	}
+}
+
+func TestOnlyImageUploaderRejectsV11Failure(t *testing.T) {
+	imagePath := filepath.Join(t.TempDir(), "shot.png")
+	if err := os.WriteFile(imagePath, []byte("synthetic image"), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+					"status_code": 400,
+					"error": {"message": "invalid source"},
+					"status_txt": "Bad Request"
+				}`)),
+			}, nil
+		}),
+	}
+
+	_, err := (&onlyImageUploader{apiKey: "secret", client: client}).Upload(context.Background(), imagePath)
+	if err == nil || !strings.Contains(err.Error(), "invalid source") {
+		t.Fatal("expected OnlyImage rejection")
+	}
+}
+
 func TestReelflixUploaderPostsSourceWithAPIKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	imagePath := filepath.Join(tmpDir, "shot.png")
