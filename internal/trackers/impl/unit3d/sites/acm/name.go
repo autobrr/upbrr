@@ -49,7 +49,11 @@ func buildACMName(meta api.UploadSubject) string {
 		}
 	}
 
-	return strings.TrimSpace(strings.Join(strings.Fields(name), " ")) + acmSubtitleTag(acmSubtitleCodesFor(meta))
+	name = strings.TrimSpace(strings.Join(strings.Fields(name), " "))
+	if unit3d.IsDiscType(meta.DiscType) {
+		return name
+	}
+	return name + acmSubtitleTag(acmSubtitleCodesFor(meta))
 }
 
 func resolveACMTitle(meta api.UploadSubject) string {

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -44,6 +45,200 @@ func testService(adapters map[string]Adapter) *Service {
 		logger:                 api.NopLogger{},
 		adapters:               adapters,
 		cancelWarningThreshold: time.Second,
+	}
+}
+
+type recordingDupeLogger struct {
+	debug []string
+	info  []string
+	trace []string
+}
+
+func (l *recordingDupeLogger) Tracef(format string, args ...any) {
+	l.trace = append(l.trace, fmt.Sprintf(format, args...))
+}
+
+func (l *recordingDupeLogger) Debugf(format string, args ...any) {
+	l.debug = append(l.debug, fmt.Sprintf(format, args...))
+}
+
+func (l *recordingDupeLogger) Infof(format string, args ...any) {
+	l.info = append(l.info, fmt.Sprintf(format, args...))
+}
+
+func (*recordingDupeLogger) Warnf(string, ...any) {}
+
+func (*recordingDupeLogger) Errorf(string, ...any) {}
+
+func TestProjectAdapterResultDebugLogsEveryCandidateEvaluation(t *testing.T) {
+	logger := &recordingDupeLogger{}
+	service := testService(nil)
+	service.logger = logger
+	candidateHDR := api.HDRFacts{
+		Origin: api.HDREvidenceUnknown,
+		Status: api.HDREvidenceMissing,
+	}
+	result, _ := service.projectAdapterResult("BHD", api.DuplicateSubject{
+		HDRFacts: api.HDRFacts{
+			Formats: []api.HDRFormat{api.HDRFormatHDR10},
+			Origin:  api.HDREvidenceMediaInfo,
+			Status:  api.HDREvidenceComplete,
+		},
+	}, ResolvedWithSearch([]api.DupeEntry{
+		{
+			ID:       "candidate-1",
+			Name:     "Example.Release.2026.1080p.WEB-DL-GRP",
+			Type:     "WEB-DL",
+			Res:      "1080p",
+			HDR:      candidateHDR,
+			Provider: "EXAMPLE",
+		},
+		{
+			ID:   "candidate-2",
+			Name: "Example.Release.2026.1080p.WEB-DL-OTHER",
+			Type: "WEB-DL",
+			Res:  "1080p",
+			HDR:  candidateHDR,
+		},
+	}, nil, SearchEvidence{Complete: true, Pages: 1}), time.Now().UTC())
+
+	if len(result.Evaluations) != 2 {
+		t.Fatalf("candidate evaluations = %d, want 2", len(result.Evaluations))
+	}
+	var candidateLogs []string
+	for _, entry := range logger.debug {
+		if strings.Contains(entry, "dupechecking: candidate ") {
+			candidateLogs = append(candidateLogs, entry)
+		}
+	}
+	if len(candidateLogs) != 2 {
+		t.Fatalf("candidate debug logs = %d, want 2", len(candidateLogs))
+	}
+	if !strings.Contains(candidateLogs[0], `tracker=BHD candidate_id="candidate-1" relation=same_slot`) ||
+		!strings.Contains(candidateLogs[0], `winning_rule=bhd/duplicate/v1/same_slot`) ||
+		!strings.Contains(candidateLogs[0], `kind=web_dl class=web source_family=web`) ||
+		!strings.Contains(candidateLogs[0], `name="Example.Release.2026.1080p.WEB-DL-GRP"`) ||
+		!strings.Contains(candidateLogs[0], `facts="WEB-DL · EXAMPLE · 1080p"`) ||
+		!strings.Contains(candidateLogs[0], `hdr_status=missing`) ||
+		!strings.Contains(candidateLogs[0], `hdr="unknown" hdr_origin=unknown`) ||
+		!strings.Contains(candidateLogs[0], `reasons="same_tracker_slot — Candidate occupies the same tracker slot and requires review."`) {
+		t.Fatalf("first candidate debug log missing evaluation evidence: %q", candidateLogs[0])
+	}
+	if !strings.Contains(candidateLogs[1], `candidate_id="candidate-2"`) ||
+		!strings.Contains(candidateLogs[1], `name="Example.Release.2026.1080p.WEB-DL-OTHER"`) {
+		t.Fatalf("second candidate debug log missing candidate identity: %q", candidateLogs[1])
+	}
+	if len(logger.trace) != 0 {
+		t.Fatalf("candidate evaluations unexpectedly logged at trace: %#v", logger.trace)
+	}
+}
+
+func TestProjectAdapterResultIncompleteEmptySearchIsNotCandidateEvidence(t *testing.T) {
+	t.Parallel()
+
+	logger := &recordingDupeLogger{}
+	service := testService(nil)
+	service.logger = logger
+	result, entry := service.projectAdapterResult(
+		"AR",
+		api.DuplicateSubject{},
+		ResolvedWithSearch(nil, nil, SearchEvidence{
+			Complete: false,
+			Pages:    1,
+			Warnings: []string{"adapter search completeness is not evidenced"},
+		}),
+		time.Now().UTC(),
+	)
+	if result.HasDupes {
+		t.Fatalf("incomplete empty search reported dupes: %#v", result)
+	}
+	if entry.verdict != VerdictBlocked || entry.match.MatchedReason != "incomplete_search" {
+		t.Fatalf("incomplete empty assessment = %#v", entry)
+	}
+	if got := dupeProgressMessage(result); got != "search incomplete; review required" {
+		t.Fatalf("incomplete search progress = %q", got)
+	}
+	if len(logger.info) != 1 ||
+		!strings.Contains(logger.info[0], "candidates=0 complete=false candidate_action=false review_required=true") {
+		t.Fatalf("incomplete search outcome log = %#v", logger.info)
+	}
+}
+
+func TestCheckTrackerLogsLocalClientOutcome(t *testing.T) {
+	t.Parallel()
+
+	logger := &recordingDupeLogger{}
+	service := testService(nil)
+	service.logger = logger
+	result, _, canceled := service.checkTracker(
+		context.Background(),
+		api.DuplicateSubject{
+			ReleaseName:     "Example.Release.2026.1080p.WEB-DL-GRP",
+			MatchedTrackers: []string{"HDB"},
+		},
+		"HDB",
+		CheckOptions{},
+	)
+	if canceled || !result.HasDupes || len(logger.info) != 1 {
+		t.Fatalf("local-client result=%#v canceled=%t logs=%#v", result, canceled, logger.info)
+	}
+	if !strings.Contains(
+		logger.info[0],
+		"tracker=HDB state=completed source=local_client candidates=1 complete=true candidate_action=true review_required=true",
+	) {
+		t.Fatalf("local-client log = %q", logger.info[0])
+	}
+}
+
+func TestCandidateLogIncludesOnlyDecisiveDeduplicatedEvidence(t *testing.T) {
+	t.Parallel()
+
+	logger := &recordingDupeLogger{}
+	service := testService(nil)
+	service.logger = logger
+	service.logCandidateEvaluation("OTW", CandidateEvaluation{
+		Candidate:   TrackerCandidate{ID: "candidate-1", Name: "Example.Release.2026.1080p.WEB-DL-GRP"},
+		Relation:    api.DupeRelationCoexists,
+		WinningRule: GeneralPolicyID + "/media_class",
+		Findings: []RuleFinding{
+			{
+				RuleID:      GeneralPolicyID + "/media_class",
+				Status:      RuleFindingMatched,
+				Compared:    []string{"media_class", "resolution", "media_class"},
+				Priority:    findingPriorityGeneral,
+				Specificity: 1,
+			},
+			{
+				RuleID:   "otw/duplicate/v2/slot",
+				Status:   RuleFindingDisproved,
+				Compared: []string{"pack=equal", "pack=equal"},
+				Missing:  []string{"target_season", "target_season"},
+				Priority: findingPriorityTrackerMatched,
+			},
+			{
+				RuleID:   "policy_evidence_unavailable",
+				Status:   RuleFindingMatched,
+				Priority: findingPriorityFallback,
+			},
+		},
+	})
+	if len(logger.debug) != 1 {
+		t.Fatalf("candidate logs = %#v", logger.debug)
+	}
+	logLine := logger.debug[0]
+	for _, value := range []string{
+		`compared="media_class | resolution"`,
+		`missing=""`,
+		`matched="general/duplicate/v2/media_class"`,
+	} {
+		if !strings.Contains(logLine, value) {
+			t.Fatalf("candidate log missing %q: %q", value, logLine)
+		}
+	}
+	for _, value := range []string{"pack=equal", "target_season", "policy_evidence_unavailable"} {
+		if strings.Contains(logLine, value) {
+			t.Fatalf("candidate log includes non-decisive %q: %q", value, logLine)
+		}
 	}
 }
 

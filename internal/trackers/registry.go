@@ -186,12 +186,12 @@ func compatibilityDupePolicy(tracker string) *DupePolicy {
 			IncludeSeasonPacks: true,
 			MaxPages:           100,
 		},
-		ManualReviewRules: []DupeRule{{
+		SameSlotFallback: &DupeRule{
 			ID:                 "policy_evidence_unavailable",
 			Relation:           "manual_review",
 			ReasonCode:         "tracker_policy_not_evidence_backed",
 			RequiresManualStep: true,
-		}},
+		},
 	}
 }
 
@@ -377,14 +377,19 @@ func cloneDupePolicy(policy DupePolicy) DupePolicy {
 	policy.ManualReviewRules = cloneDupeRules(policy.ManualReviewRules)
 	policy.SizeVarianceResolutions = append([]string(nil), policy.SizeVarianceResolutions...)
 	policy.SizeVarianceTypes = append([]string(nil), policy.SizeVarianceTypes...)
+	if policy.SameSlotFallback != nil {
+		fallback := cloneDupeRules([]DupeRule{*policy.SameSlotFallback})
+		policy.SameSlotFallback = &fallback[0]
+	}
 	return policy
 }
 
 func cloneDupeRules(rules []DupeRule) []DupeRule {
 	result := make([]DupeRule, len(rules))
 	for index, rule := range rules {
-		rule.Conditions = make([]DupeCondition, len(rule.Conditions))
-		for conditionIndex, condition := range rule.Conditions {
+		conditions := rule.Conditions
+		rule.Conditions = make([]DupeCondition, len(conditions))
+		for conditionIndex, condition := range conditions {
 			condition.TargetValues = append([]string(nil), condition.TargetValues...)
 			condition.CandidateValues = append([]string(nil), condition.CandidateValues...)
 			rule.Conditions[conditionIndex] = condition
@@ -612,8 +617,60 @@ func (r *Registry) RegisterDescriptor(descriptor Descriptor) error {
 		}
 		descriptor.ImageHost = &policy
 	}
+	if descriptor.DupePolicy != nil {
+		policy := cloneDupePolicy(*descriptor.DupePolicy)
+		if err := validateDupePolicy(policy); err != nil {
+			return fmt.Errorf("trackers: definition %s has invalid duplicate policy: %w", name, err)
+		}
+		descriptor.DupePolicy = &policy
+	}
 	r.descriptors[name] = descriptor
 	return nil
+}
+
+func validateDupePolicy(policy DupePolicy) error {
+	if strings.TrimSpace(policy.ID) == "" {
+		return errors.New("policy ID is empty")
+	}
+	isCompatibility := strings.Contains(strings.ToLower(policy.ID), "/duplicate-compat/")
+	if !isCompatibility && (len(policy.SlotDimensions) > 0 || len(policy.CoexistenceRules) > 0 ||
+		len(policy.PrecedenceRules) > 0 || policy.SizeVariancePercent > 0) {
+		if strings.TrimSpace(policy.EvidenceID) == "" {
+			return errors.New("automatic policy has no evidence ID")
+		}
+	}
+	seenRuleIDs := make(map[string]struct{})
+	groups := [][]DupeRule{policy.CoexistenceRules, policy.PrecedenceRules, policy.ManualReviewRules}
+	if policy.SameSlotFallback != nil {
+		groups = append(groups, []DupeRule{*policy.SameSlotFallback})
+	}
+	for _, rules := range groups {
+		for _, rule := range rules {
+			ruleID := strings.TrimSpace(rule.ID)
+			if ruleID == "" {
+				return errors.New("rule ID is empty")
+			}
+			if _, exists := seenRuleIDs[ruleID]; exists {
+				return fmt.Errorf("duplicate rule ID %q", ruleID)
+			}
+			seenRuleIDs[ruleID] = struct{}{}
+			if strings.TrimSpace(rule.Relation) == "" && !rule.RequiresManualStep {
+				return fmt.Errorf("rule %q has no relation", ruleID)
+			}
+			if !rule.RequiresManualStep && !isCompatibility &&
+				strings.TrimSpace(firstPolicyEvidenceID(rule.EvidenceID, policy.EvidenceID)) == "" {
+				return fmt.Errorf("automatic rule %q has no evidence ID", ruleID)
+			}
+		}
+	}
+	return nil
+}
+
+func firstPolicyEvidenceID(ruleEvidenceID string, policyEvidenceID string) string {
+	if value := strings.TrimSpace(ruleEvidenceID); value != "" {
+		return value
+	}
+	return strings.TrimSpace(policyEvidenceID)
 }
 
 func normalizePolicyPatterns(patterns []string) []string {

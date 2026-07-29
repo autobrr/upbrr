@@ -12,7 +12,6 @@ import (
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
 
-	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -49,7 +48,6 @@ func resolveUploadName(meta api.UploadSubject) string {
 	} else {
 		name = pathutil.Base(meta.SourcePath)
 	}
-	name = stripEpisodeTitle(name, meta.EpisodeTitle, btnEpisodeTitleFilename(meta))
 	name = cleanAndNormalizeBTNName(name)
 	name = applyBTNNoGroupSuffix(name, meta)
 	codec := mapCodec(meta, nil)
@@ -88,20 +86,6 @@ func resolveSearchName(meta api.UploadSubject) string {
 	return resolveUploadName(meta)
 }
 
-func stripEpisodeTitle(name string, episodeTitle string, filename string) string {
-	if episodeTitle == "" || name == "" {
-		return name
-	}
-	if metautil.ReleaseNameContainsEpisodeTitle(filename, episodeTitle) {
-		return name
-	}
-	return metautil.RemoveEpisodeTitleFromReleaseName(name, episodeTitle)
-}
-
-func btnEpisodeTitleFilename(meta api.UploadSubject) string {
-	return metautil.FirstNonEmptyTrimmed(meta.Filename, pathutil.Base(meta.SourcePath))
-}
-
 func applyBTNNoGroupSuffix(name string, meta api.UploadSubject) string {
 	tag := strings.TrimSpace(strings.TrimPrefix(meta.Tag, "-"))
 	if tag != "" && !isNoGroupTag(tag) {
@@ -121,8 +105,7 @@ func selectedBTNReleaseNameNoTag(name string, meta api.UploadSubject) bool {
 	if strings.TrimSpace(meta.ReleaseName) != "" || strings.TrimSpace(meta.ReleaseNameNoTag) == "" {
 		return false
 	}
-	candidate := stripEpisodeTitle(strings.TrimSpace(meta.ReleaseNameNoTag), meta.EpisodeTitle, btnEpisodeTitleFilename(meta))
-	candidate = cleanAndNormalizeBTNName(candidate)
+	candidate := cleanAndNormalizeBTNName(strings.TrimSpace(meta.ReleaseNameNoTag))
 	return strings.TrimSpace(name) == candidate
 }
 

@@ -3191,6 +3191,9 @@ func (m *Module) publishProjections(
 	snapshot.Runtime = *workflow.TrackerRuntime
 	snapshot.Selection = *workflow.Selection
 	snapshot.CreatedAt = now
+	if err := m.stampProjectionActions(&snapshot, nextRevision, now); err != nil {
+		return CommandResult{}, err
+	}
 	if err := snapshot.Validate(); err != nil {
 		return CommandResult{}, fmt.Errorf("release workflow publish projections: %w", err)
 	}
@@ -3403,6 +3406,34 @@ func validatePreflightBuild(
 			return fmt.Errorf("finalized projection dependency mismatch for tracker %s", projection.TrackerID)
 		}
 	}
+	return nil
+}
+
+func (m *Module) stampProjectionActions(
+	snapshot *api.TrackerReleaseProjectionSet,
+	revision api.WorkflowRevision,
+	now time.Time,
+) error {
+	actions := make([]api.RequiredAction, 0)
+	for projectionIndex := range snapshot.Projections {
+		projection := &snapshot.Projections[projectionIndex]
+		for actionIndex := range projection.RequiredActions {
+			action := &projection.RequiredActions[actionIndex]
+			if action.ID == "" {
+				id, err := m.newID("action")
+				if err != nil {
+					return err
+				}
+				action.ID = api.RequiredActionID(id)
+			}
+			action.Status = api.RequiredActionStatusPending
+			action.WorkflowRevision = revision
+			action.TrackerID = projection.TrackerID
+			action.CreatedAt = now
+			actions = append(actions, *action)
+		}
+	}
+	snapshot.RequiredActions = actions
 	return nil
 }
 

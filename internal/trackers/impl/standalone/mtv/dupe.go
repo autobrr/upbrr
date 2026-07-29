@@ -200,7 +200,7 @@ func mtvDupeEntry(item mtvItem) (api.DupeEntry, bool) {
 		FlagsPresent: hdrFieldPresent,
 	}
 	if len(hdrFlags) > 0 {
-		entry.HDR = dupe.NormalizeTrackerHDRFlags("MTV", hdrFlags, true, false)
+		entry.HDR = dupe.NormalizeTrackerHDRFlags(hdrFlags, true, false)
 	}
 	if sizeBytes > 0 {
 		entry.SizeKnown = true

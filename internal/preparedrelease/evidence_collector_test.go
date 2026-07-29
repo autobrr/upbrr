@@ -135,6 +135,27 @@ func TestMapLegacyFactsUsesTypedConcreteAssessments(t *testing.T) {
 	}
 }
 
+func TestMapCollectedFactsPreservesGeneratedReleaseNameVariants(t *testing.T) {
+	t.Parallel()
+
+	variants := api.GeneratedReleaseNameVariants{
+		IncludeEpisodeTitle: api.ReleaseNameVariant{
+			NameNoTag: "Example.Show.S01E02.Example.Episode.1080p.WEB-DL",
+			Name:      "Example.Show.S01E02.Example.Episode.1080p.WEB-DL-GRP",
+			CleanName: "Example Show S01E02 Example Episode 1080p WEB-DL-GRP",
+		},
+		OmitEpisodeTitle: api.ReleaseNameVariant{
+			NameNoTag: "Example.Show.S01E02.1080p.WEB-DL",
+			Name:      "Example.Show.S01E02.1080p.WEB-DL-GRP",
+			CleanName: "Example Show S01E02 1080p WEB-DL-GRP",
+		},
+	}
+	facts := mapCollectedFacts(preparationstate.State{GeneratedReleaseNames: variants})
+	if facts.Naming.GeneratedReleaseNames != variants {
+		t.Fatalf("collected variants = %#v, want %#v", facts.Naming.GeneratedReleaseNames, variants)
+	}
+}
+
 func TestApplyBlurayFactInstructionSelectsCandidateBeforePublication(t *testing.T) {
 	t.Parallel()
 	meta := preparationstate.State{

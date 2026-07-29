@@ -5,12 +5,8 @@ package sp
 
 import "github.com/autobrr/upbrr/internal/trackers"
 
-// Rules strictly requires a known resolution of at least 1080p; its
-// adult-content failure remains waivable.
+// Rules leaves evidence-backed content and resolution exceptions to the
+// versioned validation policy.
 func Rules() *trackers.RuleSet {
-	return &trackers.RuleSet{
-		BlockAdult:    true,
-		AdultMessage:  "Porn is not allowed",
-		MinResolution: "1080p",
-	}
+	return &trackers.RuleSet{}
 }

@@ -424,10 +424,31 @@ func (s *stubTVDB) GetByExternalID(_ context.Context, _, _ string, tvMovie bool)
 }
 
 func (s *stubTVDB) GetSeriesMetadata(_ context.Context, seriesID int) (tvdb.SeriesMetadata, error) {
+	result := s.seriesMetadata
 	if s.seriesMetadata.TVDBID != 0 || s.seriesMetadata.Name != "" {
-		return s.seriesMetadata, nil
+		if result.NameDisambiguation.Status == "" {
+			seriesYear := result.Year
+			if seriesYear == 0 {
+				seriesYear = result.SeriesYear
+			}
+			result.NameDisambiguation = tvdb.NameDisambiguation{
+				CanonicalName: result.NameEnglish,
+				SeriesYear:    seriesYear,
+				Status:        api.MetadataEvidenceStatusUnavailable,
+				Source:        "test",
+			}
+		}
+		return result, nil
 	}
-	return tvdb.SeriesMetadata{TVDBID: seriesID, Name: s.name}, nil
+	return tvdb.SeriesMetadata{
+		TVDBID: seriesID,
+		Name:   s.name,
+		NameDisambiguation: tvdb.NameDisambiguation{
+			CanonicalName: s.name,
+			Status:        api.MetadataEvidenceStatusUnavailable,
+			Source:        "test",
+		},
+	}, nil
 }
 
 func (s *stubTVDB) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int, language string) (tvdb.SeriesMetadata, error) {
@@ -1277,8 +1298,16 @@ func TestResolveExternalIDsUsesStoredFreshData(t *testing.T) {
 			SourcePath: "/media/file.mkv",
 			TMDB:       &api.TMDBMetadata{TMDBID: 42, Title: "Example"},
 			IMDB:       &api.IMDBMetadata{IMDBID: 24, Title: "Example"},
-			TVDB:       &api.TVDBMetadata{TVDBID: 12, Name: "Example"},
-			TVmaze:     &api.TVmazeMetadata{TVmazeID: 55, Name: "Example"},
+			TVDB: &api.TVDBMetadata{
+				TVDBID: 12,
+				Name:   "Example",
+				NameDisambiguation: api.TVDBNameDisambiguation{
+					CanonicalName: "Example",
+					Status:        api.MetadataEvidenceStatusPartial,
+					Source:        "test",
+				},
+			},
+			TVmaze: &api.TVmazeMetadata{TVmazeID: 55, Name: "Example"},
 		},
 	}
 
@@ -2832,6 +2861,127 @@ func TestMapTVDBMetadataAPIYearDoesNotBecomeNamingYear(t *testing.T) {
 	}
 	if mapped.YearSource != "first_aired" {
 		t.Fatalf("expected first_aired year source, got %q", mapped.YearSource)
+	}
+}
+
+func TestMapTVDBMetadataCarriesNameDisambiguation(t *testing.T) {
+	mapped := mapTVDBMetadata(987650001, "", tvdb.SeriesMetadata{
+		TVDBID:      987650001,
+		Name:        "Example Series",
+		NameEnglish: "Example Series",
+		Year:        2026,
+		NameDisambiguation: tvdb.NameDisambiguation{
+			CanonicalName:         "Example Series",
+			SeriesYear:            2026,
+			Locale:                "US",
+			SameNameSeries:        2,
+			SameNameAndYearSeries: 1,
+			IncludeYear:           true,
+			IncludeLocale:         true,
+			Status:                api.MetadataEvidenceStatusPartial,
+			Source:                "tvdb_v4_search_unpaged",
+		},
+	})
+
+	if mapped == nil {
+		t.Fatal("expected mapped metadata")
+	}
+	if mapped.Year != 2026 || mapped.YearFromAlias {
+		t.Fatalf("year compatibility = year=%d alias=%t", mapped.Year, mapped.YearFromAlias)
+	}
+	if mapped.NameDisambiguation.Status != api.MetadataEvidenceStatusPartial ||
+		mapped.NameDisambiguation.SameNameSeries != 2 ||
+		mapped.NameDisambiguation.SameNameAndYearSeries != 1 ||
+		!mapped.NameDisambiguation.IncludeYear ||
+		!mapped.NameDisambiguation.IncludeLocale ||
+		mapped.NameDisambiguation.Locale != "US" {
+		t.Fatalf("unexpected mapped disambiguation: %+v", mapped.NameDisambiguation)
+	}
+}
+
+func TestMergeTVDBMetadataDoesNotInventLegacyDisambiguation(t *testing.T) {
+	target := &api.TVDBMetadata{
+		TVDBID: 987650001,
+		Name:   "Stored Example Series",
+		Year:   2026,
+	}
+	incoming := &api.TVDBMetadata{
+		TVDBID:      987650001,
+		NameEnglish: "Example Series",
+		Year:        2026,
+	}
+
+	mergeTVDBMetadata(target, incoming)
+
+	if target.NameDisambiguation.Status != "" ||
+		target.NameDisambiguation.IncludeYear ||
+		target.NameDisambiguation.IncludeLocale {
+		t.Fatalf("legacy merge invented disambiguation: %+v", target.NameDisambiguation)
+	}
+	if usableTVDBMetadata(target, 987650001) {
+		t.Fatal("legacy metadata without explicit evidence must be refreshed")
+	}
+}
+
+func TestMergeTVDBMetadataReplacesDisambiguationAtomically(t *testing.T) {
+	target := &api.TVDBMetadata{
+		TVDBID: 987650001,
+		Name:   "Example Series",
+		NameDisambiguation: api.TVDBNameDisambiguation{
+			CanonicalName: "Old Example",
+			IncludeYear:   true,
+			Status:        api.MetadataEvidenceStatusUnavailable,
+			Source:        "old",
+		},
+	}
+	incoming := &api.TVDBMetadata{
+		TVDBID: 987650001,
+		NameDisambiguation: api.TVDBNameDisambiguation{
+			CanonicalName:         "Example Series",
+			SeriesYear:            2026,
+			Locale:                "JP",
+			SameNameSeries:        1,
+			SameNameAndYearSeries: 1,
+			IncludeYear:           true,
+			IncludeLocale:         true,
+			Status:                api.MetadataEvidenceStatusPartial,
+			Source:                "tvdb_v4_search_unpaged",
+		},
+	}
+
+	mergeTVDBMetadata(target, incoming)
+
+	if target.NameDisambiguation != incoming.NameDisambiguation {
+		t.Fatalf("disambiguation = %+v, want %+v", target.NameDisambiguation, incoming.NameDisambiguation)
+	}
+	if !usableTVDBMetadata(target, 987650001) {
+		t.Fatal("metadata with explicit evidence should be reusable")
+	}
+}
+
+func TestUsableTVDBMetadataRequiresReusableDisambiguationEvidence(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		status api.MetadataEvidenceStatus
+		want   bool
+	}{
+		{status: api.MetadataEvidenceStatusComplete, want: true},
+		{status: api.MetadataEvidenceStatusPartial, want: true},
+		{status: api.MetadataEvidenceStatusUnavailable},
+		{status: api.MetadataEvidenceStatusContradictory},
+		{},
+	} {
+		metadata := &api.TVDBMetadata{
+			TVDBID:      987650001,
+			NameEnglish: "Example Series",
+			NameDisambiguation: api.TVDBNameDisambiguation{
+				Status: test.status,
+			},
+		}
+		if got := usableTVDBMetadata(metadata, metadata.TVDBID); got != test.want {
+			t.Fatalf("usable status %q = %t, want %t", test.status, got, test.want)
+		}
 	}
 }
 

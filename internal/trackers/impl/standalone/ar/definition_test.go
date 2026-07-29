@@ -67,9 +67,11 @@ func TestDefinitionBuildUploadDryRunBlockedWithoutPoster(t *testing.T) {
 	if err := os.WriteFile(torrentPath, []byte("dummy"), 0o600); err != nil {
 		t.Fatalf("write torrent: %v", err)
 	}
+	confirmedName := "Movie"
 
 	entry, err := prepareDryRun(context.Background(), trackers.PreparationInput{
-		Tracker: "AR",
+		Tracker:             "AR",
+		RequestedUploadName: &confirmedName,
 		Meta: api.UploadSubject{
 			SourcePath:  filepath.Join(tmp, "Movie.mkv"),
 			TorrentPath: torrentPath,

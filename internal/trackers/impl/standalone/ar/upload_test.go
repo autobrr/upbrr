@@ -22,14 +22,14 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestResolveARNameAddsNoGRP(t *testing.T) {
+func TestResolveARNameUsesSourceFilenameWithoutExtension(t *testing.T) {
 	t.Parallel()
 
 	got := resolveARName(api.UploadSubject{
 		SourcePath: "C:/data/My Movie (2024).mkv",
 		Release:    api.ReleaseInfo{Title: "My Movie", Year: 2024},
 	})
-	if got != "My.Movie.2024-NoGRP" {
+	if got != "My Movie (2024)" {
 		t.Fatalf("unexpected AR name %q", got)
 	}
 }
@@ -38,9 +38,10 @@ func TestResolveARNameUsesSceneName(t *testing.T) {
 	t.Parallel()
 
 	got := resolveARName(api.UploadSubject{
-		Scene:     true,
-		SceneName: "Scene.Release-GRP",
-		Tag:       "-GRP",
+		Scene:        true,
+		SceneName:    "Scene.Release-GRP",
+		SceneRenamed: true,
+		Tag:          "-GRP",
 	})
 	if got != "Scene.Release-GRP" {
 		t.Fatalf("expected scene name, got %q", got)

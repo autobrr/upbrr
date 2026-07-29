@@ -34,6 +34,11 @@ func TestAssessmentSeparatesDispositionFromUploadVerdict(t *testing.T) {
 			Match:       api.DupeMatch{MatchedReason: "in_client"},
 		},
 		{
+			Tracker:     "INCOMPLETE",
+			Disposition: DispositionResolved,
+			Match:       api.DupeMatch{MatchedReason: "incomplete_search"},
+		},
+		{
 			Tracker:     "NOTRUN",
 			Disposition: DispositionNotRun,
 			Code:        NotRunMissingCredentials,
@@ -49,6 +54,7 @@ func TestAssessmentSeparatesDispositionFromUploadVerdict(t *testing.T) {
 		"CANDIDATE":         VerdictBlocked,
 		"CLIENT":            VerdictBlocked,
 		"CLIENT_STRUCTURAL": VerdictBlocked,
+		"INCOMPLETE":        VerdictBlocked,
 		"NOTRUN":            VerdictBlocked,
 		"FAILED":            VerdictBlocked,
 	}

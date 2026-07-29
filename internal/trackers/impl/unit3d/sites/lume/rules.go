@@ -4,13 +4,7 @@
 package lume
 
 import (
-	"context"
-	"fmt"
-	"strings"
-
 	"github.com/autobrr/upbrr/internal/trackers"
-	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
-	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // Rules strictly requires valid MediaInfo encode settings and enforces LUME's
@@ -29,35 +23,4 @@ func Rules() *trackers.RuleSet {
 			ApplyIfNonDisc: true,
 		},
 	}
-}
-
-// ValidationPolicy returns LUME's tracker-specific constructibility checks.
-func ValidationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{ID: "unit3d-lume-constructibility-v1", Check: checkRequirements}
-}
-
-func checkRequirements(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("context canceled: %w", err)
-	}
-	failures := make([]api.RuleFailure, 0, 2)
-	if !unit3d.IsDiscType(meta.DiscType) && !strings.EqualFold(strings.TrimSpace(meta.Container), "mkv") {
-		failures = append(failures, trackers.NewRuleFailure("container", "LUME only allows MKV containers for non-disc uploads.", api.RuleDispositionStrict))
-	}
-	if unit3d.IsDiscType(meta.DiscType) {
-		return failures, nil
-	}
-	resolution := unit3d.RuleResolution(unit3d.ValidationRuleSubject(meta))
-	if resolution == "" {
-		failures = append(failures, trackers.NewRuleFailure("resolution_required", "LUME requires a known resolution", api.RuleDispositionStrict))
-		return failures, nil
-	}
-	if unit3d.ResolutionBelow(resolution, "720p") {
-		failures = append(failures, trackers.NewRuleFailure(
-			"min_resolution",
-			"LUME only allows SD releases when the content does not have a higher resolution release.",
-			api.RuleDispositionStrict,
-		))
-	}
-	return failures, nil
 }

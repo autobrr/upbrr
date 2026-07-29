@@ -74,7 +74,6 @@ func TestReleaseWorkflowUploadRequestValidation(t *testing.T) {
 	}{
 		{"missing source", func(request *CreateReleaseWorkflowUploadRequest) { request.Source.Path = "" }},
 		{"missing unattended", func(request *CreateReleaseWorkflowUploadRequest) { request.Unattended = nil }},
-		{"strict missing tracker include", func(request *CreateReleaseWorkflowUploadRequest) { request.Trackers.Include = nil }},
 		{"bad mode", func(request *CreateReleaseWorkflowUploadRequest) { request.Execution.Mode = "unsafe" }},
 		{"tracker overlap", func(request *CreateReleaseWorkflowUploadRequest) {
 			request.Trackers.Include = []TrackerID{"alpha"}
@@ -110,6 +109,11 @@ func TestReleaseWorkflowUploadRequestValidation(t *testing.T) {
 	}
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid upload request: %v", err)
+	}
+	inherited := valid
+	inherited.Trackers.Include = nil
+	if err := inherited.Validate(); err != nil {
+		t.Fatalf("upload request inheriting default trackers: %v", err)
 	}
 }
 

@@ -16,7 +16,7 @@ import {
 } from "./helpers/releaseWorkflowV1Client";
 
 test("strict composite upload enforces contract authority and idempotency", async () => {
-  const workspace = await createE2EWorkspace();
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
   const app = await startApp(workspace);
   try {
     const apiToken = await createE2EAPIToken(workspace);
@@ -102,7 +102,7 @@ test("strict composite upload enforces contract authority and idempotency", asyn
 });
 
 test("confirm composite resolves duplicate and approval feedback after restart", async () => {
-  const workspace = await createE2EWorkspace();
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
   workspace.env.UPBRR_E2E_DUPLICATE_TRACKERS = releaseWorkflowParityFixture.trackerID;
   let app = await startApp(workspace);
   try {
@@ -210,7 +210,7 @@ test("confirm composite resolves duplicate and approval feedback after restart",
 });
 
 test("debug composite performs client injection unless no-seed is explicit", async () => {
-  const workspace = await createE2EWorkspace();
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
   const app = await startApp(workspace);
   try {
     const apiToken = await createE2EAPIToken(workspace);
@@ -260,7 +260,7 @@ test("debug composite performs client injection unless no-seed is explicit", asy
 });
 
 test("strict composite skips an auth-blocked tracker while uploading a ready sibling", async () => {
-  const workspace = await createE2EWorkspace();
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
   workspace.env.UPBRR_E2E_AUTH_SCENARIOS = "HDS=validation_only_missing_cookies";
   const app = await startApp(workspace);
   try {
@@ -357,7 +357,7 @@ test("strict composite skips an auth-blocked tracker while uploading a ready sib
 });
 
 test("strict composite stops cleanly when every tracker is auth-blocked", async () => {
-  const workspace = await createE2EWorkspace();
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
   workspace.env.UPBRR_E2E_AUTH_SCENARIOS = "HDS=validation_only_missing_cookies";
   const app = await startApp(workspace);
   try {
@@ -423,7 +423,7 @@ test("strict composite stops cleanly when every tracker is auth-blocked", async 
 });
 
 test("public approval subset excludes unapproved tracker requirements and upload", async () => {
-  const workspace = await createE2EWorkspace();
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
   const app = await startApp(workspace);
   try {
     const apiToken = await createE2EAPIToken(workspace);
@@ -464,7 +464,7 @@ test("public approval subset excludes unapproved tracker requirements and upload
 });
 
 test("composite operation cancellation stops the active tracker stage", async () => {
-  const workspace = await createE2EWorkspace();
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
   workspace.fake.delayTrackerUploads(3_000);
   const app = await startApp(workspace);
   try {
@@ -508,7 +508,7 @@ test("composite operation cancellation stops the active tracker stage", async ()
 });
 
 test("restart stops at reconciliation after an uncertain client effect", async () => {
-  const workspace = await createE2EWorkspace();
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
   workspace.fake.delayClientInjections(5_000);
   let app = await startApp(workspace);
   try {

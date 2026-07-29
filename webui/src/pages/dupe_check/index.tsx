@@ -14,6 +14,7 @@ import { handleExternalLinkClick } from "../../utils/externalLinks";
 import type {
   DupeAssessment,
   DupeMatchProjection,
+  TrackerPolicyDecision,
   TrackerPreflightAssessment,
   TrackerReleaseProjectionSet,
 } from "../../api/generated/release-workflow";
@@ -27,15 +28,116 @@ type Props = {
   trackerIconSrcByName: TrackerIconCache;
 };
 
-const uniqueFailureMessages = (failures: readonly { failure: { Message: string } }[]): string[] => {
+const uniqueFailureMessages = (
+  failures: readonly { failure: { Message: string } }[],
+  excludedMessages: ReadonlySet<string> = new Set(),
+): string[] => {
   const seen = new Set<string>();
   return failures.flatMap((failure) => {
     const message = failure.failure.Message.trim();
-    if (!message || seen.has(message)) return [];
+    if (!message || seen.has(message) || excludedMessages.has(message)) return [];
     seen.add(message);
     return [message];
   });
 };
+
+type PolicyDecisionGroup = "strict" | "waivable" | "advisory";
+
+/** Keeps explicit rule outcomes and legacy blockers while hiding policy provenance entries. */
+const auditablePolicyDecision = (decision: TrackerPolicyDecision) =>
+  Boolean(decision.disposition) ||
+  decision.blocking ||
+  ["ineligible", "bypassed"].includes(decision.decision.trim().toLowerCase());
+
+const policyDecisionGroup = (decision: TrackerPolicyDecision): PolicyDecisionGroup => {
+  switch (decision.disposition) {
+    case "strict":
+    case "waivable":
+    case "advisory":
+      return decision.disposition;
+    default:
+      return decision.blocking ? "strict" : "advisory";
+  }
+};
+
+const policyDecisionGroups = (decisions: readonly TrackerPolicyDecision[]) => ({
+  strict: decisions.filter((decision) => policyDecisionGroup(decision) === "strict"),
+  waivable: decisions.filter((decision) => policyDecisionGroup(decision) === "waivable"),
+  advisory: decisions.filter((decision) => policyDecisionGroup(decision) === "advisory"),
+});
+
+const evidenceStatusText = (status: string | undefined) => {
+  const normalized = status?.trim().toLowerCase();
+  switch (normalized) {
+    case "complete":
+      return "Evidence complete";
+    case "partial":
+      return "Evidence partial · manual review needed";
+    case "unavailable":
+      return "Evidence unavailable · prerequisite/action needed";
+    case "contradictory":
+      return "Evidence contradictory · manual review needed";
+    default:
+      return normalized ? `Evidence ${normalized.replaceAll("_", " ")}` : "Evidence not reported";
+  }
+};
+
+const policyReason = (decision: TrackerPolicyDecision) =>
+  decision.message?.trim() || decision.code.replaceAll("_", " ");
+
+function PolicyDecisionGroups({
+  decisions,
+}: Readonly<{ decisions: readonly TrackerPolicyDecision[] }>) {
+  const groups = policyDecisionGroups(decisions);
+  const presentation: readonly {
+    id: PolicyDecisionGroup;
+    label: string;
+    tone: "neutral" | "info" | "danger";
+  }[] = [
+    { id: "strict", label: "Strict blockers", tone: "danger" },
+    { id: "waivable", label: "Manual review / waivable", tone: "neutral" },
+    { id: "advisory", label: "Advisories", tone: "info" },
+  ];
+
+  return (
+    <div aria-label="Tracker policy decisions" className="grid gap-2">
+      {presentation.map((group) => {
+        const groupDecisions = groups[group.id];
+        if (!groupDecisions.length) return null;
+        return (
+          <section
+            aria-label={group.label}
+            className="rounded border border-[var(--border)] bg-black/10 p-2"
+            key={group.id}
+          >
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <p className="label">{group.label}</p>
+              <Badge tone={group.tone}>{groupDecisions.length}</Badge>
+            </div>
+            <ul className="m-0 grid list-none gap-1 p-0">
+              {groupDecisions.map((decision, index) => (
+                <li
+                  className="rounded border border-white/10 bg-white/5 px-2 py-1.5 text-sm"
+                  key={`${decision.code}-${decision.decision}-${index}`}
+                >
+                  <p className="font-semibold">{policyReason(decision)}</p>
+                  <p className="muted text-xs">
+                    Rule {decision.code} · {evidenceStatusText(decision.evidenceStatus)}
+                  </p>
+                  {decision.evidenceStatus?.trim().toLowerCase() === "unavailable" ? (
+                    <p className="muted text-xs">
+                      Provide missing metadata or evidence before relying on this decision.
+                    </p>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
 
 const hasInClientMatch = (result: DupeAssessment["results"][number] | undefined) =>
   Boolean(result?.matches?.some((match) => match.reason?.trim().toLowerCase() === "in_client"));
@@ -90,6 +192,9 @@ const requiresRiskAcknowledgement = (result: DupeAssessment["results"][number] |
       result.matches?.some((match) => reviewRelations.has(match.relation || ""))),
   );
 
+const actionMatches = (result: DupeAssessment["results"][number] | undefined) =>
+  (result?.matches || []).filter((match) => match.relation !== "coexists");
+
 const workflowDupeSummary = (
   result: DupeAssessment["results"][number] | undefined,
   searchBlocked: boolean,
@@ -102,7 +207,7 @@ const workflowDupeSummary = (
   if (!result) return "Duplicate search has not run.";
   if (result.status === "failed") return "Duplicate search failed.";
   if (inClient) return "In client · upload blocked";
-  const count = result.matches?.length || 0;
+  const count = actionMatches(result).length;
   switch (result.decision) {
     case "accepted":
       return `${count} candidate(s) · upload blocked`;
@@ -191,14 +296,21 @@ function WorkflowDupeAssessmentView({
         const projection = projectionsByTracker.get(trackerID);
         const readiness = preflightByTracker.get(trackerID);
         const canonicalName = projection?.canonicalReleaseName || "";
-        const ruleStatus = (projection?.policyDecisions || []).filter(
-          (decision) => decision.blocking,
+        const policyDecisions = (projection?.policyDecisions || []).filter(auditablePolicyDecision);
+        const ruleGroups = policyDecisionGroups(policyDecisions);
+        const policyMessages = new Set(
+          policyDecisions
+            .map((decision) => decision.message?.trim())
+            .filter((message): message is string => Boolean(message)),
         );
-        const failureMessages = uniqueFailureMessages([
-          ...(projection?.failures || []),
-          ...(readiness?.failures || []),
-          ...(result?.failures || []),
-        ]);
+        const failureMessages = uniqueFailureMessages(
+          [
+            ...(projection?.failures || []),
+            ...(readiness?.failures || []),
+            ...(result?.failures || []),
+          ],
+          policyMessages,
+        );
         const inClient = hasInClientMatch(result);
         const searchBlocked = Boolean(
           (projection && projection.readiness !== "ready") ||
@@ -208,12 +320,12 @@ function WorkflowDupeAssessmentView({
         const canOverride = Boolean(
           result &&
           !inClient &&
-          (riskAcknowledgement || result.matches?.length) &&
+          (riskAcknowledgement || actionMatches(result).length) &&
           ["pending", "accepted", "ignored"].includes(result.decision),
         );
         const matches = Array.from(
           new Map(
-            (result?.matches || []).map((match) => [
+            actionMatches(result).map((match) => [
               `${match.id || ""}\u0000${match.name}\u0000${match.reason || ""}`,
               match,
             ]),
@@ -233,9 +345,16 @@ function WorkflowDupeAssessmentView({
                 <Badge tone={readiness?.state === "ready" ? "info" : "danger"}>
                   Preflight {readiness?.state || "not run"}
                 </Badge>
-                <Badge tone={ruleStatus.length ? "danger" : "info"}>
-                  {ruleStatus.length ? `${ruleStatus.length} blocking rule(s)` : "Rules ready"}
-                </Badge>
+                {ruleGroups.strict.length ? (
+                  <Badge tone="danger">{ruleGroups.strict.length} strict</Badge>
+                ) : null}
+                {ruleGroups.waivable.length ? (
+                  <Badge tone="neutral">{ruleGroups.waivable.length} manual review</Badge>
+                ) : null}
+                {ruleGroups.advisory.length ? (
+                  <Badge tone="info">{ruleGroups.advisory.length} advisory</Badge>
+                ) : null}
+                {policyDecisions.length ? null : <Badge tone="info">Rules ready</Badge>}
                 {inClient ? <Badge tone="danger">In client</Badge> : null}
                 {result?.search?.pages ? (
                   <Badge tone={result.search.complete ? "info" : "danger"}>
@@ -281,6 +400,7 @@ function WorkflowDupeAssessmentView({
                 ))}
               </div>
             ) : null}
+            {policyDecisions.length ? <PolicyDecisionGroups decisions={policyDecisions} /> : null}
             {matches.length ? (
               <div className="grid gap-2 text-sm">
                 {matches.map((match) => {
@@ -380,6 +500,19 @@ export default function DupeCheckPage({
   const trackerSelectionRequired = selectedTrackers.size === 0;
   const dupeLoading = view.status === "running";
   const hideTrackerNames = faviconOnly && useFavicons;
+  const releaseNameConfirmations = (projections?.projections || []).filter(
+    (projection) =>
+      selectedTrackers.has(projection.trackerId) &&
+      projection.policyDecisions?.some(
+        (decision) =>
+          decision.code === "release_name_confirmation" &&
+          decision.decision === "confirmation_required",
+      ),
+  );
+  const releaseNameConfirmationInvalid = releaseNameConfirmations.some(
+    (projection) =>
+      !(view.releaseNameOverrides[projection.trackerId] ?? projection.uploadReleaseName).trim(),
+  );
 
   return (
     <section className="flex flex-col gap-3">
@@ -435,6 +568,34 @@ export default function DupeCheckPage({
         ) : null}
       </section>
 
+      {releaseNameConfirmations.length ? (
+        <section className="panel grid gap-3 py-3" aria-label="Release name confirmation">
+          <div>
+            <p className="label">Release names</p>
+            <h2>Confirm non-scene tracker names</h2>
+            <p className="muted text-sm">
+              Confirm the source folder or filename, or enter the exact tracker release name.
+            </p>
+          </div>
+          {releaseNameConfirmations.map((projection) => (
+            <label className="grid gap-1" key={`release-name-${projection.trackerId}`}>
+              <span className="font-semibold">
+                {projection.displayName || projection.trackerId}
+              </span>
+              <input
+                aria-label={`Release name for ${projection.trackerId}`}
+                value={
+                  view.releaseNameOverrides[projection.trackerId] ?? projection.uploadReleaseName
+                }
+                onChange={(event) =>
+                  facet.confirmReleaseName(projection.trackerId, event.target.value)
+                }
+              />
+            </label>
+          ))}
+        </section>
+      ) : null}
+
       <section className="panel flex flex-wrap items-center justify-between gap-3 py-3">
         <div className="min-w-0">
           <p className="label">Source path</p>
@@ -470,9 +631,18 @@ export default function DupeCheckPage({
           variant="primary"
           type="button"
           onClick={() => void facet.run()}
-          disabled={dupeLoading || !sourcePath.trim() || trackerSelectionRequired}
+          disabled={
+            dupeLoading ||
+            !sourcePath.trim() ||
+            trackerSelectionRequired ||
+            releaseNameConfirmationInvalid
+          }
         >
-          {dupeLoading ? `Checking ${view.completed}/${view.total || "?"}...` : "Run dupe check"}
+          {dupeLoading
+            ? `Checking ${view.completed}/${view.total || "?"}...`
+            : releaseNameConfirmations.length
+              ? "Confirm names & run dupe check"
+              : "Run dupe check"}
         </Button>
       </section>
 

@@ -139,11 +139,13 @@ export type DuplicatesFacet = Readonly<{
     total: number;
     ignoredTrackers: readonly string[];
     selectedTrackers: readonly string[];
+    releaseNameOverrides: Readonly<Record<string, string>>;
     error: string;
   }>;
   run(): Promise<boolean>;
   cancel(): Promise<boolean>;
   chooseTrackers(trackers: readonly string[]): void;
+  confirmReleaseName(tracker: string, value: string): void;
   setIgnored(tracker: string, ignored: boolean): void;
 }>;
 

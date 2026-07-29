@@ -23,12 +23,14 @@ const facetFor = (
     total: 0,
     ignoredTrackers: [],
     selectedTrackers: ["EXAMPLE"],
+    releaseNameOverrides: {},
     error: "",
     ...view,
   },
   run: vi.fn(async () => true),
   cancel: vi.fn(async () => true),
   chooseTrackers: vi.fn(),
+  confirmReleaseName: vi.fn(),
   setIgnored: vi.fn(),
   ...commands,
 });
@@ -49,6 +51,43 @@ describe("DupeCheckPage", () => {
     renderPage(facetFor({}, { run }));
 
     fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("requires confirmation or editing of projected non-scene release names", () => {
+    const run = vi.fn(async () => true);
+    const confirmReleaseName = vi.fn();
+    renderPage(
+      facetFor(
+        {
+          selectedTrackers: ["AR"],
+          projections: {
+            projections: [
+              {
+                trackerId: "AR",
+                displayName: "AR",
+                uploadReleaseName: "Example.Release.2026-GRP",
+                policyDecisions: [
+                  {
+                    code: "release_name_confirmation",
+                    decision: "confirmation_required",
+                    blocking: true,
+                  },
+                ],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+        },
+        { run, confirmReleaseName },
+      ),
+      ["AR"],
+    );
+
+    const input = screen.getByRole("textbox", { name: "Release name for AR" });
+    expect(input).toHaveValue("Example.Release.2026-GRP");
+    fireEvent.change(input, { target: { value: "Example.Release.2026.EDIT-GRP" } });
+    expect(confirmReleaseName).toHaveBeenCalledWith("AR", "Example.Release.2026.EDIT-GRP");
+    fireEvent.click(screen.getByRole("button", { name: "Confirm names & run dupe check" }));
     expect(run).toHaveBeenCalledOnce();
   });
 
@@ -223,6 +262,72 @@ describe("DupeCheckPage", () => {
       screen.getByText("Duplicate search not run because this tracker is blocked."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/0 match\(es\)/)).not.toBeInTheDocument();
+  });
+
+  it("separates strict, manual-review, and advisory policy evidence", () => {
+    renderPage(
+      facetFor({
+        status: "ready",
+        projections: {
+          projections: [
+            {
+              trackerId: "EXAMPLE",
+              displayName: "Example Tracker",
+              uploadReleaseName: "Example.Release.2026.1080p-GRP",
+              readiness: "ineligible",
+              policyDecisions: [
+                {
+                  code: "release_name_policy",
+                  decision: "standalone/example/v2",
+                  blocking: false,
+                },
+                {
+                  code: "container_support",
+                  decision: "ineligible",
+                  blocking: true,
+                  disposition: "strict",
+                  evidenceStatus: "complete",
+                  message: "Selected container is not accepted.",
+                },
+                {
+                  code: "release_identity",
+                  decision: "ineligible",
+                  blocking: true,
+                  disposition: "waivable",
+                  evidenceStatus: "partial",
+                  message: "Release identity needs manual confirmation.",
+                },
+                {
+                  code: "metadata_poster",
+                  decision: "advisory",
+                  blocking: false,
+                  disposition: "advisory",
+                  evidenceStatus: "unavailable",
+                  message: "Poster metadata is not available.",
+                },
+              ],
+            },
+          ],
+        } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+      }),
+    );
+
+    expect(screen.getByText("Strict blockers")).toBeInTheDocument();
+    expect(screen.getByText("Manual review / waivable")).toBeInTheDocument();
+    expect(screen.getByText("Advisories")).toBeInTheDocument();
+    expect(screen.getByText("1 advisory")).toBeInTheDocument();
+    expect(screen.queryByText("release name policy")).not.toBeInTheDocument();
+    expect(screen.getByText("Selected container is not accepted.")).toBeInTheDocument();
+    expect(screen.getByText("Evidence complete", { exact: false })).toBeInTheDocument();
+    expect(
+      screen.getByText("Evidence partial · manual review needed", { exact: false }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Evidence unavailable · prerequisite/action needed", { exact: false }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Provide missing metadata or evidence before relying on this decision."),
+    ).toBeInTheDocument();
   });
 
   it("renders auth failure as retryable blocked lane evidence without an action card", () => {
@@ -441,6 +546,54 @@ describe("DupeCheckPage", () => {
     });
     fireEvent.click(acknowledge);
     expect(setIgnored).toHaveBeenCalledWith("EXAMPLE", true);
+  });
+
+  it("keeps proven coexistence out of the default action list and candidate count", () => {
+    renderPage(
+      facetFor({
+        status: "ready",
+        assessment: {
+          results: [
+            {
+              trackerId: "EXAMPLE",
+              uploadReleaseName: "Example.Release.2026.1080p.WEB-DL-GRP",
+              decision: "no_match",
+              status: "completed",
+              search: { complete: true, pages: 1, candidateCount: 1 },
+              matches: [
+                {
+                  id: "1",
+                  name: "Example.Release.2026.2160p.Remux-GRP",
+                  relation: "coexists",
+                  reasons: [{ code: "different_resolution" }],
+                  resolution: "2160p",
+                  pack: false,
+                  internal: false,
+                  trumpable: false,
+                },
+              ],
+            },
+          ],
+        } as unknown as NonNullable<DuplicatesFacet["view"]["assessment"]>,
+        projections: {
+          projections: [
+            {
+              trackerId: "EXAMPLE",
+              displayName: "Example",
+              uploadReleaseName: "Example.Release.2026.1080p.WEB-DL-GRP",
+              readiness: "ready",
+            },
+          ],
+        } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+        preflight: {
+          results: [{ trackerId: "EXAMPLE", state: "ready" }],
+        } as unknown as NonNullable<DuplicatesFacet["view"]["preflight"]>,
+      }),
+    );
+
+    expect(screen.getByText("0 candidates · no duplicate found")).toBeInTheDocument();
+    expect(screen.queryByText("Example.Release.2026.2160p.Remux-GRP")).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Ignore dupes for EXAMPLE" })).toBeNull();
   });
 
   it("allows explicit risk acknowledgement when an incomplete search returns no candidates", () => {

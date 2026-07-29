@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
@@ -106,7 +107,11 @@ func TestLoginAndFetchAntiCsrfTokenDoesNotOverwriteCookiesWhenTokenMissing(t *te
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == ptpUploadPath {
-			_, _ = w.Write([]byte("<html>logged out</html>"))
+			http.Redirect(w, r, "/login.php", http.StatusFound)
+			return
+		}
+		if r.URL.Path == "/login.php" {
+			_, _ = w.Write([]byte(`<form><input name="username"><input name="password"></form>`))
 			return
 		}
 		if r.URL.Path != "/ajax.php" || r.URL.RawQuery != "action=login" {
@@ -189,7 +194,9 @@ func TestLoginAndFetchAntiCsrfTokenRejectsEmptyJarWithoutReplacingCookies(t *tes
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == ptpUploadPath:
-			_, _ = w.Write([]byte("<html>logged out</html>"))
+			http.Redirect(w, r, "/login.php", http.StatusFound)
+		case r.URL.Path == "/login.php":
+			_, _ = w.Write([]byte(`<form><input name="username"><input name="password"></form>`))
 		case r.URL.Path == "/ajax.php" && r.URL.RawQuery == "action=login":
 			_, _ = w.Write([]byte(`{"Result":"Ok","AntiCsrfToken":"token"}`))
 		default:
@@ -276,7 +283,14 @@ func TestResolveSessionForTrackerAuthLoginMarksSubmitted2FARejected(t *testing.T
 	}
 	loginRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/ajax.php" || r.URL.RawQuery != "action=login" {
+		switch {
+		case r.URL.Path == ptpUploadPath:
+			http.Redirect(w, r, "/login.php", http.StatusFound)
+			return
+		case r.URL.Path == "/login.php":
+			_, _ = w.Write([]byte(`<form><input name="username"><input name="password"></form>`))
+			return
+		case r.URL.Path != "/ajax.php" || r.URL.RawQuery != "action=login":
 			http.NotFound(w, r)
 			return
 		}
@@ -315,7 +329,14 @@ func TestResolveSessionForTrackerAuthLoginPreCodeFailureIsNotSubmitted2FARejecte
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/ajax.php" || r.URL.RawQuery != "action=login" {
+		switch {
+		case r.URL.Path == ptpUploadPath:
+			http.Redirect(w, r, "/login.php", http.StatusFound)
+			return
+		case r.URL.Path == "/login.php":
+			_, _ = w.Write([]byte(`<form><input name="username"><input name="password"></form>`))
+			return
+		case r.URL.Path != "/ajax.php" || r.URL.RawQuery != "action=login":
 			http.NotFound(w, r)
 			return
 		}
@@ -354,7 +375,9 @@ func TestResolveSessionForTrackerAuthLoginMissing2FACodePreservesCookies(t *test
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == ptpUploadPath:
-			_, _ = w.Write([]byte("<html>logged out</html>"))
+			http.Redirect(w, r, "/login.php", http.StatusFound)
+		case r.URL.Path == "/login.php":
+			_, _ = w.Write([]byte(`<form><input name="username"><input name="password"></form>`))
 		case r.URL.Path == "/ajax.php" && r.URL.RawQuery == "action=login":
 			http.SetCookie(w, &http.Cookie{
 				Name:  "session",
@@ -382,6 +405,76 @@ func TestResolveSessionForTrackerAuthLoginMissing2FACodePreservesCookies(t *test
 	}
 	if values["session"] != "existing" {
 		t.Fatalf("missing 2FA code must preserve stored cookies, got %#v", values)
+	}
+}
+
+func TestResolveSessionForTrackerAuthDoesNotLoginDuringTrackerOutage(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := newPTPAuthDB(t)
+	if err := cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "PTP", map[string]string{"session": "existing"}); err != nil {
+		t.Fatalf("SaveTrackerCookieMap: %v", err)
+	}
+	var loginRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == ptpUploadPath:
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("<html>maintenance</html>"))
+		case r.URL.Path == "/ajax.php" && r.URL.RawQuery == "action=login":
+			loginRequests.Add(1)
+			http.Error(w, "unexpected login", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	err := resolveSessionForTrackerAuthAt(ctx, config.TrackerConfig{
+		Username:    "user",
+		Password:    "pass",
+		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
+	}, dbPath, server.URL)
+	if err == nil || !strings.Contains(err.Error(), "status=503 response_kind=html") {
+		t.Fatalf("expected safe tracker-unavailable error, got %v", err)
+	}
+	if loginRequests.Load() != 0 {
+		t.Fatalf("tracker outage triggered %d credential login request(s)", loginRequests.Load())
+	}
+	values, loadErr := loadCookies(ctx, dbPath)
+	if loadErr != nil {
+		t.Fatalf("loadCookies: %v", loadErr)
+	}
+	if values["session"] != "existing" {
+		t.Fatalf("tracker outage must preserve stored cookies, got %#v", values)
+	}
+}
+
+func TestLoginAndFetchAntiCsrfTokenClassifiesHTMLResponseWithoutDecodeNoise(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ajax.php" || r.URL.RawQuery != "action=login" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<html>temporary outage</html>"))
+	}))
+	t.Cleanup(server.Close)
+
+	_, _, err := resolveSession(context.Background(), config.TrackerConfig{
+		Username:    "user",
+		Password:    "pass",
+		AnnounceURL: "https://please.passthepopcorn.me/passkey/announce",
+	}, filepath.Join(t.TempDir(), "upbrr.db"), server.URL, api.NopLogger{})
+	if err == nil || !strings.Contains(err.Error(), "status=200 response_kind=html") {
+		t.Fatalf("expected safe HTML-response classification, got %v", err)
+	}
+	if strings.Contains(err.Error(), "invalid character") || strings.Contains(err.Error(), "temporary outage") {
+		t.Fatalf("HTML-response error exposed parser or remote-body detail: %v", err)
 	}
 }
 

@@ -347,8 +347,7 @@ func TestWorkflowDupeOutcomeIncompleteSearchWithoutCandidatesRequiresReview(t *t
 
 	target := api.TrackerDupeAssessment{TrackerID: "EXAMPLE"}
 	setWorkflowDupeOutcome(&target, api.DupeCheckResult{
-		Status:   "completed",
-		HasDupes: true,
+		Status: "completed",
 		Search: api.DupeSearchEvidence{
 			Complete: false,
 			Pages:    2,

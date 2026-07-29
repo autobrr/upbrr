@@ -30,6 +30,20 @@ var (
 // category/format combinations return an empty name while preserving the
 // applicable missing-field hints; a nil logger is accepted.
 func BuildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.ReleaseNameResult {
+	included := buildReleaseName(req, logger)
+	omittedRequest := req
+	if !req.ManualEpisodeTitle {
+		omittedRequest.EpisodeTitle = ""
+	}
+	omitted := buildReleaseName(omittedRequest, api.NopLogger{})
+	included.GeneratedVariants = api.GeneratedReleaseNameVariants{
+		IncludeEpisodeTitle: releaseNameVariant(included),
+		OmitEpisodeTitle:    releaseNameVariant(omitted),
+	}
+	return included
+}
+
+func buildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.ReleaseNameResult {
 	if logger == nil {
 		logger = api.NopLogger{}
 	}
@@ -90,6 +104,9 @@ func BuildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 		hybrid = "Hybrid"
 	}
 
+	if category == "TV" && !req.ManualEpisodeTitle && episode == "" && !req.ManualDate {
+		episodeTitle = ""
+	}
 	if req.ManualDate {
 		season = ""
 		episode = ""
@@ -316,6 +333,14 @@ func BuildReleaseName(req api.ReleaseNameRequest, logger api.Logger) api.Release
 	}
 }
 
+func releaseNameVariant(result api.ReleaseNameResult) api.ReleaseNameVariant {
+	return api.ReleaseNameVariant{
+		NameNoTag: result.NameNoTag,
+		Name:      result.Name,
+		CleanName: result.CleanName,
+	}
+}
+
 // releaseNameRequestFromMeta converts prepared metadata into the naming input,
 // omitting TV-pack season titles that are stored in EpisodeTitle only as scoped
 // metadata fallback text.
@@ -412,8 +437,8 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 
 	dailyDate := strings.TrimSpace(meta.DailyEpisodeDate)
 	manualDate := strings.EqualFold(category, "TV") && dailyDate != "" && !meta.TVPack
-	episodeTitle := strings.TrimSpace(meta.EpisodeTitle)
-	if meta.TVPack {
+	episodeTitle := preferredGeneratedEpisodeTitle(meta)
+	if meta.TVPack || strings.TrimSpace(meta.EpisodeStr) == "" {
 		episodeTitle = ""
 	} else if titleIdentityKey(episodeTitle) != "" {
 		episodeTitleKey := titleIdentityKey(episodeTitle)
@@ -453,6 +478,29 @@ func releaseNameRequestFromMeta(meta preparationstate.State, logger api.Logger) 
 		ManualDate:    manualDate,
 		TMDBDateMatch: meta.TMDBDateMatch,
 	}
+}
+
+func preferredGeneratedEpisodeTitle(meta preparationstate.State) string {
+	parsed := strings.TrimSpace(meta.EpisodeTitle)
+	tvdb := meta.ProviderMetadata.TVDB
+	if !namingProviderMetadataCurrent(meta) || tvdb == nil || meta.Identity.TVDBID <= 0 || tvdb.TVDBID != meta.Identity.TVDBID {
+		return parsed
+	}
+	if tvdb.EpisodeSeason > 0 && meta.SeasonInt > 0 && tvdb.EpisodeSeason != meta.SeasonInt {
+		return parsed
+	}
+	if tvdb.EpisodeNumber > 0 && meta.EpisodeInt > 0 && tvdb.EpisodeNumber != meta.EpisodeInt {
+		return parsed
+	}
+	if english := strings.TrimSpace(tvdb.EpisodeNameEnglish); english != "" {
+		return english
+	}
+	original := strings.TrimSpace(tvdb.EpisodeName)
+	if original != "" && !isGenericEpisodeTitle(original) &&
+		(strings.TrimSpace(tvdb.OriginalLanguage) == "" || isEnglishLanguage(tvdb.OriginalLanguage)) {
+		return original
+	}
+	return parsed
 }
 
 // resolveReleaseNameTitle selects naming fields from current matching provider

@@ -20,6 +20,7 @@ func Profile() standalone.Profile {
 		AuthCapability:       authcontract.APIKeyCapability("ANT"),
 		PrepareDescription:   prepareDescription,
 		PrepareUpload:        prepareUpload,
+		ReleaseNamePolicy:    trackers.SimpleSubjectReleaseNamePolicy("standalone/ant/v1", resolveUploadName),
 		NewDuplicateAdapter:  newDuplicateAdapter,
 		Rules:                &trackers.RuleSet{RequireMovieOnly: true},
 		ValidationPolicy:     validationPolicy(),
@@ -27,13 +28,13 @@ func Profile() standalone.Profile {
 		BannedGroups:         bannedGroups(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "ANT"},
 		DupePolicy: &trackers.DupePolicy{
-			ID: "ant/duplicate/v1",
+			ID:         "ant/duplicate/v2",
+			EvidenceID: "ant-dupes-trumping",
 			SearchScope: trackers.DupeSearchScope{
 				IncludeEpisodes:    true,
 				IncludeSeasonPacks: true,
 				MaxPages:           100,
 			},
-			RequiredEvidence: trackers.DupeEvidenceRequirements{HDR: true},
 			SlotDimensions: []trackers.DupeDimension{
 				trackers.DupeDimensionType,
 				trackers.DupeDimensionSource,
@@ -41,6 +42,8 @@ func Profile() standalone.Profile {
 				trackers.DupeDimensionCodec,
 				trackers.DupeDimensionHDR,
 			},
+			HDRPartialMode:       trackers.DupeHDRPartialGenericMarker,
+			HDRCompatibilityMode: trackers.DupeHDRCompatibilityDirectional,
 		},
 		AudioPolicy: &trackers.AudioPolicy{
 			AllowedLanguages: []string{"english"}, BlockEnglishOriginalWithForeign: true,

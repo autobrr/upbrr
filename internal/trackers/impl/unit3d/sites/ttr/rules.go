@@ -30,6 +30,9 @@ func checkSubtitleOnly(ctx context.Context, meta api.TrackerValidationSubject, _
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context canceled: %w", err)
 	}
+	if unit3d.IsDiscType(meta.DiscType) {
+		return nil, nil
+	}
 	if !unit3d.ContainsRuleValue(unit3d.NormalizeRuleValues(meta.Release.Language), []string{"spanish", "es", "spa"}) {
 		return []api.RuleFailure{trackers.NewRuleFailure(
 			"spanish_track_required",

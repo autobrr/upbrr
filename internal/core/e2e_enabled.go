@@ -49,6 +49,7 @@ const (
 	e2eAuthScenarioEnv = "UPBRR_E2E_AUTH_SCENARIOS"
 	e2eAuthCounterEnv  = "UPBRR_E2E_AUTH_COUNTER_PATH"
 	e2eClockOffsetEnv  = "UPBRR_E2E_CLOCK_OFFSET"
+	e2eMediaKindEnv    = "UPBRR_E2E_MEDIA_KIND"
 )
 
 // maybeApplyE2EServices replaces only missing runtime capabilities when both
@@ -163,6 +164,26 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 	if resolution == "" {
 		resolution = "1080p"
 	}
+	releaseName := "E2E.Movie.2026.1080p.WEB-DL.DD5.1.H264-UPBRR"
+	releaseNameNoTag := "E2E.Movie.2026.1080p.WEB-DL.DD5.1.H264"
+	releaseNameClean := "E2E Movie 2026 1080p WEB-DL DD5.1 H264"
+	title := "E2E Movie"
+	category := api.CategoryMovie
+	canonicalCategory := api.CanonicalCategoryMovie
+	tvdbID := 0
+	season := 0
+	episode := 0
+	if strings.EqualFold(strings.TrimSpace(os.Getenv(e2eMediaKindEnv)), "tv") {
+		releaseName = "E2E.Show.2026.S01E01.1080p.WEB-DL.DD5.1.H264-UPBRR"
+		releaseNameNoTag = "E2E.Show.2026.S01E01.1080p.WEB-DL.DD5.1.H264"
+		releaseNameClean = "E2E Show 2026 S01E01 1080p WEB-DL DD5.1 H264"
+		title = "E2E Show"
+		category = api.CategoryTV
+		canonicalCategory = api.CanonicalCategoryTV
+		tvdbID = 2001
+		season = 1
+		episode = 1
+	}
 	meta := preparationstate.State{
 		SourcePath: sourcePath,
 		Paths:      []string{sourcePath},
@@ -173,9 +194,9 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 			KeepImages:      input.Policy.KeepImages,
 			InteractionMode: input.Controls.Interaction,
 		},
-		ReleaseName:              "E2E.Movie.2026.1080p.WEB-DL.DD5.1.H264-UPBRR",
-		ReleaseNameNoTag:         "E2E.Movie.2026.1080p.WEB-DL.DD5.1.H264",
-		ReleaseNameClean:         "E2E Movie 2026 1080p WEB-DL DD5.1 H264",
+		ReleaseName:              releaseName,
+		ReleaseNameNoTag:         releaseNameNoTag,
+		ReleaseNameClean:         releaseNameClean,
 		Filename:                 filepath.Base(sourcePath),
 		Tag:                      "-UPBRR",
 		Type:                     "WEBDL",
@@ -190,14 +211,16 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 		MediaInfoUniqueID:        "e2e-unique-id",
 		MediaInfoUniqueIDPresent: true,
 		Release: api.ReleaseInfo{
-			Category:   string(api.CategoryMovie),
+			Category:   string(category),
 			Type:       "WEBDL",
-			Title:      "E2E Movie",
+			Title:      title,
 			Year:       2026,
 			Source:     "WEB-DL",
 			Resolution: resolution,
 			Ext:        ".mkv",
 			Group:      "UPBRR",
+			Season:     season,
+			Episode:    episode,
 		},
 		DescriptionTemplate: "E2E description fixture.",
 	}
@@ -236,21 +259,43 @@ func (s e2eMetadataService) CollectPreparationEvidence(ctx context.Context, requ
 		SourcePath: sourcePath,
 		TMDBID:     1001,
 		IMDBID:     1234567,
-		Category:   api.CanonicalCategoryMovie,
+		TVDBID:     tvdbID,
+		Category:   canonicalCategory,
 	}
 	meta.ProviderMetadata = api.SourceScopedMetadata{
 		SourcePath: sourcePath,
 		TMDB: &api.TMDBMetadata{
 			TMDBID:           1001,
 			IMDBID:           1234567,
-			Category:         string(api.CategoryMovie),
-			Title:            "E2E Movie",
-			OriginalTitle:    "E2E Movie",
+			TVDBID:           tvdbID,
+			Category:         string(category),
+			Title:            title,
+			OriginalTitle:    title,
 			Year:             2026,
 			ReleaseDate:      "2026-01-02",
 			OriginalLanguage: "en",
 			Overview:         "Deterministic E2E metadata fixture.",
 		},
+	}
+	if tvdbID > 0 {
+		meta.ProviderMetadata.TVDB = &api.TVDBMetadata{
+			TVDBID:                 tvdbID,
+			Name:                   title,
+			NameEnglish:            title,
+			Overview:               "Deterministic E2E metadata fixture.",
+			OverviewEnglish:        "Deterministic E2E metadata fixture.",
+			FirstAired:             "2026-01-02",
+			Year:                   2026,
+			OriginalLanguage:       "eng",
+			HasEnglish:             true,
+			EpisodeSeason:          season,
+			EpisodeNumber:          episode,
+			EpisodeName:            "Example Episode",
+			EpisodeNameEnglish:     "Example Episode",
+			EpisodeOverview:        "Deterministic E2E episode fixture.",
+			EpisodeOverviewEnglish: "Deterministic E2E episode fixture.",
+			EpisodeAired:           "2026-01-02",
+		}
 	}
 	if value := strings.TrimSpace(os.Getenv(e2eBlurayEnv)); value == "1" || strings.EqualFold(value, "true") {
 		meta.ProviderMetadata.Bluray = e2eBlurayMetadata(sourcePath)
@@ -585,7 +630,7 @@ func applyE2EDupeScenario(result *api.DupeCheckResult, scenario string) {
 				}),
 		}
 		result.HasDupes = true
-	case "mixed":
+	case "mixed", "mixed_incomplete":
 		result.Evaluations = []api.DupeCandidateEvaluation{
 			e2eDupeCandidate("e2e-coexists-1", "Example.Release.2026.1080p.SDR-GRP", api.DupeRelationCoexists, "distinct_hdr_slot",
 				api.HDRFacts{
@@ -608,6 +653,11 @@ func applyE2EDupeScenario(result *api.DupeCheckResult, scenario string) {
 		result.Search.Pages = 2
 		result.Search.Warnings = []string{"Synthetic search stopped at the configured page bound."}
 		result.HasDupes = true
+	}
+	if scenario == "mixed_incomplete" {
+		result.Search.Complete = false
+		result.Search.Pages = 2
+		result.Search.Warnings = []string{"Synthetic search stopped at the configured page bound."}
 	}
 	result.Search.CandidateCount = len(result.Evaluations)
 }

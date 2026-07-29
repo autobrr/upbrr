@@ -150,7 +150,7 @@ func TestApplyReleaseNameOverrides(t *testing.T) {
 	}
 }
 
-func TestReleaseNameRequestFromMetaDefaultsToDailyForTVEpisode(t *testing.T) {
+func TestReleaseNameRequestFromMetaDefaultsToDailyWithoutEpisodeTitle(t *testing.T) {
 	meta := preparationstate.State{
 		Identity:         api.ExternalIdentity{Category: "TV"},
 		Release:          api.ReleaseInfo{Title: "Example Show", Resolution: "1080p"},
@@ -170,8 +170,8 @@ func TestReleaseNameRequestFromMetaDefaultsToDailyForTVEpisode(t *testing.T) {
 	if req.DailyDate != "2025-11-10" {
 		t.Fatalf("expected daily date in request, got %q", req.DailyDate)
 	}
-	if req.EpisodeTitle != "Episode Title" {
-		t.Fatalf("expected episode title preserved, got %q", req.EpisodeTitle)
+	if req.EpisodeTitle != "" {
+		t.Fatalf("expected daily episode title omitted, got %q", req.EpisodeTitle)
 	}
 }
 
@@ -234,6 +234,152 @@ func TestReleaseNameRequestFromMetaTVPackOmitsSeasonTitle(t *testing.T) {
 	}
 	if !containsAll(result.NameNoTag, []string{"Example Spy Show", "S01", "MGMP", "WEB-DL"}) {
 		t.Fatalf("expected tv pack name to keep season and service tokens, got %q", result.NameNoTag)
+	}
+}
+
+func TestBuildReleaseNameGeneratedEpisodeVariants(t *testing.T) {
+	t.Parallel()
+
+	result := BuildReleaseName(api.ReleaseNameRequest{
+		Category:     "TV",
+		Type:         "WEBDL",
+		Title:        "Example Show",
+		Season:       "S01",
+		Episode:      "E02",
+		EpisodeTitle: "Example Episode",
+		Resolution:   "1080p",
+		Service:      "EXM",
+		Audio:        "AAC 2.0",
+		VideoEncode:  "H.264",
+		Tag:          "-GRP",
+	}, api.NopLogger{})
+
+	included := result.GeneratedVariants.IncludeEpisodeTitle
+	omitted := result.GeneratedVariants.OmitEpisodeTitle
+	if !strings.Contains(included.Name, "Example Episode") || strings.Contains(omitted.Name, "Example Episode") {
+		t.Fatalf("generated episode variants = %#v", result.GeneratedVariants)
+	}
+	if result.Name != included.Name || included.Name == omitted.Name {
+		t.Fatalf("canonical generated variant = %#v", result)
+	}
+}
+
+func TestBuildReleaseNameManualEpisodeTitleOverridesRemainAuthoritative(t *testing.T) {
+	t.Parallel()
+
+	base := api.ReleaseNameRequest{
+		Category:    "TV",
+		Type:        "WEBDL",
+		Title:       "Example Show",
+		Season:      "S01",
+		Episode:     "E02",
+		Resolution:  "1080p",
+		Service:     "EXM",
+		Audio:       "AAC 2.0",
+		VideoEncode: "H.264",
+		Tag:         "-GRP",
+	}
+	for _, test := range []struct {
+		name     string
+		override string
+		want     string
+	}{
+		{
+			name:     "blank",
+			override: "",
+			want:     "",
+		},
+		{
+			name:     "nonblank",
+			override: "Manual Episode",
+			want:     "Manual Episode",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			request := applyReleaseNameOverrides(
+				base,
+				api.ReleaseNameOverrides{EpisodeTitle: &test.override},
+				api.NopLogger{},
+			)
+			result := BuildReleaseName(request, api.NopLogger{})
+			included := result.GeneratedVariants.IncludeEpisodeTitle.Name
+			omitted := result.GeneratedVariants.OmitEpisodeTitle.Name
+			if included != omitted {
+				t.Fatalf("manual override variants differ: %#v", result.GeneratedVariants)
+			}
+			if test.want == "" && strings.Contains(included, "Manual Episode") {
+				t.Fatalf("blank manual override rendered a title: %q", included)
+			}
+			if test.want != "" && !strings.Contains(included, test.want) {
+				t.Fatalf("manual override missing from %q", included)
+			}
+		})
+	}
+}
+
+func TestReleaseNameRequestFromMetaPrefersPreparedEnglishEpisodeTitle(t *testing.T) {
+	t.Parallel()
+
+	meta := preparationstate.State{
+		Identity: api.ExternalIdentity{Category: "TV", TVDBID: 22},
+		ProviderMetadata: api.SourceScopedMetadata{
+			TVDB: &api.TVDBMetadata{
+				TVDBID:             22,
+				NameEnglish:        "Example Show",
+				OriginalLanguage:   "ja",
+				EpisodeSeason:      1,
+				EpisodeNumber:      2,
+				EpisodeName:        "Original Episode",
+				EpisodeNameEnglish: "English Episode",
+			},
+		},
+		Release:      api.ReleaseInfo{Title: "Parsed Show"},
+		Type:         "WEBDL",
+		SeasonInt:    1,
+		EpisodeInt:   2,
+		SeasonStr:    "S01",
+		EpisodeStr:   "E02",
+		EpisodeTitle: "Parsed Episode",
+	}
+	request := releaseNameRequestFromMeta(meta, api.NopLogger{})
+	if request.EpisodeTitle != "English Episode" {
+		t.Fatalf("episode title = %q, want prepared English title", request.EpisodeTitle)
+	}
+
+	meta.ProviderMetadata.TVDB.EpisodeNameEnglish = ""
+	request = releaseNameRequestFromMeta(meta, api.NopLogger{})
+	if request.EpisodeTitle != "Parsed Episode" {
+		t.Fatalf("non-English original replaced parsed title: %q", request.EpisodeTitle)
+	}
+
+	meta.ProviderMetadata.TVDB.OriginalLanguage = "en"
+	request = releaseNameRequestFromMeta(meta, api.NopLogger{})
+	if request.EpisodeTitle != "Original Episode" {
+		t.Fatalf("accepted original episode title = %q", request.EpisodeTitle)
+	}
+}
+
+func TestBuildReleaseNameDailyDateAppearsOnce(t *testing.T) {
+	t.Parallel()
+
+	result := BuildReleaseName(api.ReleaseNameRequest{
+		Category:     "TV",
+		Type:         "WEBDL",
+		Title:        "Example Daily Show",
+		EpisodeTitle: "2026-07-27",
+		DailyDate:    "2026-07-27",
+		ManualDate:   true,
+		Resolution:   "1080p",
+		Service:      "EXM",
+		Audio:        "AAC 2.0",
+		VideoEncode:  "H.264",
+	}, api.NopLogger{})
+	if strings.Count(result.Name, "2026-07-27") != 1 {
+		t.Fatalf("daily date duplicated in %q", result.Name)
+	}
+	if result.GeneratedVariants.IncludeEpisodeTitle != result.GeneratedVariants.OmitEpisodeTitle {
+		t.Fatalf("daily generated variants differ: %#v", result.GeneratedVariants)
 	}
 }
 

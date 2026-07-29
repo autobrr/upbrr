@@ -160,14 +160,32 @@ func TestDefinitionBuildUploadDryRunPrerequisiteMessagesIncludeAction(t *testing
 				TrackerConfig: config.TrackerConfig{APIKey: "token"},
 				Meta: api.UploadSubject{
 					ReleaseName: "Example.Release.2026.1080p-GRP",
+					Identity:    api.ExternalIdentity{IMDBID: 1234567},
 					Type:        "ENCODE",
 					Source:      "BLURAY",
 					Container:   "mkv",
 				},
-				Logger:        api.NopLogger{},
+				Logger: api.NopLogger{},
 			},
 			wantCause:  "required_provider_id",
 			wantAction: "canonical TMDB ID",
+		},
+		{
+			name: "missing imdb id",
+			req: trackers.PreparationInput{
+				Tracker:       "BHD",
+				TrackerConfig: config.TrackerConfig{APIKey: "token"},
+				Meta: api.UploadSubject{
+					ReleaseName: "Example.Release.2026.1080p-GRP",
+					Identity:    api.ExternalIdentity{TMDBID: 987650001},
+					Type:        "ENCODE",
+					Source:      "BLURAY",
+					Container:   "mkv",
+				},
+				Logger: api.NopLogger{},
+			},
+			wantCause:  "missing imdb id",
+			wantAction: "set an IMDb id",
 		},
 		{
 			name: "missing mediainfo text",
@@ -176,7 +194,7 @@ func TestDefinitionBuildUploadDryRunPrerequisiteMessagesIncludeAction(t *testing
 				TrackerConfig: config.TrackerConfig{APIKey: "token"},
 				Meta: api.UploadSubject{
 					ReleaseName: "Example.Release.2026.1080p-GRP",
-					Identity:    api.ExternalIdentity{TMDBID: 123},
+					Identity:    api.ExternalIdentity{TMDBID: 987650001, IMDBID: 1234567},
 					Type:        "ENCODE",
 					Source:      "BLURAY",
 					Container:   "mkv",
@@ -226,7 +244,11 @@ func TestDefinitionBuildUploadDryRunRejectsInvalidContainer(t *testing.T) {
 			SourcePath:        filepath.Join(tmp, "Movie.avi"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
-			Identity:          api.ExternalIdentity{TMDBID: 123, Category: "MOVIE"},
+			Identity:          api.ExternalIdentity{
+TMDBID: 987650001,
+ IMDBID: 1234567,
+ Category: "MOVIE",
+},
 			Type:              "REMUX",
 			Source:            "BLURAY",
 			Container:         "avi",
@@ -281,7 +303,11 @@ func TestDefinitionBuildUploadDryRunRejectsInvalidSource(t *testing.T) {
 			SourcePath:        filepath.Join(tmp, "Example.mkv"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
-			Identity:          api.ExternalIdentity{TMDBID: 123, Category: "MOVIE"},
+			Identity:          api.ExternalIdentity{
+TMDBID: 987650001,
+ IMDBID: 1234567,
+ Category: "MOVIE",
+},
 			Release:           api.ReleaseInfo{Resolution: "1080p"},
 			Type:              "WEBDL",
 			Source:            "CAM",
@@ -295,7 +321,7 @@ func TestDefinitionBuildUploadDryRunRejectsInvalidSource(t *testing.T) {
 	}
 }
 
-func TestUploadRetriesInvalidIMDb(t *testing.T) {
+func TestUploadDoesNotRetryInvalidIMDb(t *testing.T) {
 	tmp := t.TempDir()
 	mediaInfoPath := filepath.Join(tmp, "MEDIAINFO.txt")
 	torrentPath := filepath.Join(tmp, "Movie.torrent")
@@ -340,19 +366,11 @@ func TestUploadRetriesInvalidIMDb(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if calls == 1 {
-			if imdbID != "456" {
-				t.Errorf("expected first imdb_id 456, got %q", imdbID)
-				return
-			}
-			_, _ = fmt.Fprint(w, `{"status_code":0,"status_message":"Invalid imdb_id"}`)
+		if imdbID != "456" {
+			t.Errorf("expected imdb_id 456, got %q", imdbID)
 			return
 		}
-		if imdbID != "1" {
-			t.Errorf("expected retried imdb_id 1, got %q", imdbID)
-			return
-		}
-		_, _ = fmt.Fprint(w, `{"status_code":1,"status_message":"https://beyond-hd.me/torrent/download/example.7890.torrent"}`)
+		_, _ = fmt.Fprint(w, `{"status_code":0,"status_message":"Invalid imdb_id"}`)
 	}))
 	defer server.Close()
 
@@ -360,7 +378,7 @@ func TestUploadRetriesInvalidIMDb(t *testing.T) {
 	bhdBaseURL = server.URL
 	defer func() { bhdBaseURL = originalBaseURL }()
 
-	summary, err := New().submit(context.Background(), trackers.PreparationInput{
+	_, err := New().submit(context.Background(), trackers.PreparationInput{
 		Tracker: "BHD",
 		Meta: api.UploadSubject{
 			SourcePath:        filepath.Join(tmp, "Movie.mkv"),
@@ -381,17 +399,11 @@ func TestUploadRetriesInvalidIMDb(t *testing.T) {
 		Runtime:       trackers.PreparationRuntimeFromConfig(config.Config{}),
 		Logger:        api.NopLogger{},
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected invalid IMDb upload error")
 	}
-	if calls != 2 {
-		t.Fatalf("expected 2 upload attempts, got %d", calls)
-	}
-	if summary.Uploaded != 1 {
-		t.Fatalf("expected one upload, got %d", summary.Uploaded)
-	}
-	if len(summary.UploadedTorrents) != 1 || summary.UploadedTorrents[0].TorrentID != "7890" {
-		t.Fatalf("unexpected uploaded torrents: %+v", summary.UploadedTorrents)
+	if calls != 1 {
+		t.Fatalf("expected one upload attempt, got %d", calls)
 	}
 }
 

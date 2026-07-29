@@ -3,6 +3,7 @@ package otw
 import (
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 // Profile returns OTW's disc and DVDRip type mapping together with duplicate
@@ -13,18 +14,36 @@ func Profile() unit3d.Profile {
 		BaseURL:          "https://oldtoons.world",
 		ValidationPolicy: ValidationPolicy(),
 		BannedGroups:     BannedGroups(),
+		MetadataPolicy: &trackers.TrackerMetadataPolicy{
+			RequireKnownCategory: true,
+			Requirements: []trackers.MetadataRequirement{{
+				Scope: trackers.MetadataScopeAny,
+				AnyOf: []trackers.MetadataField{
+					trackers.MetadataFieldTMDB,
+					trackers.MetadataFieldIMDB,
+					trackers.MetadataFieldTVDB,
+				},
+				Disposition: api.RuleDispositionStrict,
+			}},
+		},
 		Site: unit3d.SiteProfile{
-			ResolveTypeID: typeID,
+			BuildName:        buildName,
+			BuildNameVersion: "v2",
+			ResolveTypeID:    typeID,
 		},
 		DupePolicy: &trackers.DupePolicy{
-			ID: "otw/duplicate/v1",
+			ID:         "otw/duplicate/v2",
+			EvidenceID: "otw-rules-naming",
 			SearchScope: trackers.DupeSearchScope{
 				IncludeEpisodes:    true,
 				IncludeSeasonPacks: true,
 				MaxPages:           100,
 			},
-			RequiredEvidence: trackers.DupeEvidenceRequirements{HDR: true, Resolution: true},
-			SlotDimensions:   []trackers.DupeDimension{trackers.DupeDimensionType, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
+			SlotDimensions: []trackers.DupeDimension{trackers.DupeDimensionType, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
+			PrecedenceRules: append(
+				trackers.SeasonPackPrecedenceRules("otw-rules-naming"),
+				trackers.DirectionalMediaKindRules("otw-rules-naming", "web_dl", "web_rip")...,
+			),
 		},
 	}
 }

@@ -12,10 +12,18 @@ import (
 )
 
 func resolveUploadName(meta api.UploadSubject) string {
+	if meta.Scene {
+		if sceneName := strings.TrimSpace(meta.SceneName); sceneName != "" {
+			return sceneName
+		}
+	}
 	return metautil.FirstNonEmptyTrimmed(meta.ReleaseName, meta.ReleaseNameNoTag, meta.Filename, pathutil.Base(meta.SourcePath))
 }
 
 func resolveSearchName(meta api.UploadSubject) string {
+	if meta.Scene && strings.TrimSpace(meta.SceneName) != "" {
+		return resolveUploadName(meta)
+	}
 	if meta.Identity.TVmazeID != 0 || meta.Identity.IMDBID != 0 {
 		return resolveUploadName(meta)
 	}

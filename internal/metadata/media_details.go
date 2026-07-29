@@ -595,6 +595,7 @@ func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 	meta.ReleaseNameNoTag = nameResult.NameNoTag
 	meta.ReleaseName = nameResult.Name
 	meta.ReleaseNameClean = nameResult.CleanName
+	meta.GeneratedReleaseNames = nameResult.GeneratedVariants
 	meta.ReleaseNameMissing = append([]string{}, nameResult.MissingFields...)
 	if logger != nil && nameResult.Name != "" {
 		logger.Tracef("metadata: release name resolved %q", nameResult.Name)
@@ -638,6 +639,9 @@ func resolveAudioBloatPolicyWithRegistry(
 	candidateTrackers []string,
 	registry *trackers.Registry,
 ) (map[string][]string, map[string][]string) {
+	if trackers.IsDiscType(meta.DiscType) {
+		return nil, nil
+	}
 	original := canonicalAudioLanguage(originalAudioLanguage(meta))
 	if original == "" || original == "unknown" {
 		return nil, nil

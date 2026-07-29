@@ -446,6 +446,10 @@ func (s *Service) checkTracker(
 			Status:    "completed",
 			CheckedAt: checkedAt,
 		}
+		s.logger.Infof(
+			"dupechecking: search tracker=%s state=completed source=local_client candidates=1 complete=true candidate_action=true review_required=true",
+			tracker,
+		)
 		return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionResolved, "", true, match, nil), false
 	}
 	if options.SkipRemote {
@@ -532,7 +536,7 @@ func (s *Service) projectAdapterResult(
 		search := adapterResult.SearchEvidence()
 		evaluation := Evaluate(duplicateTargetForEvaluation(meta), candidates, policy, search)
 		match := evaluationMatch(evaluation)
-		hasDupes := evaluation.Blocks || evaluation.RequiresAction
+		hasDupes := evaluation.Blocks || hasActionableCandidateEvaluations(evaluation.Candidates)
 		result := api.DupeCheckResult{
 			Tracker:     tracker,
 			HasDupes:    hasDupes,
@@ -550,21 +554,24 @@ func (s *Service) projectAdapterResult(
 			},
 		}
 		s.logger.Infof(
-			"dupechecking: search tracker=%s state=completed candidates=%d complete=%t action=%t",
+			"dupechecking: search tracker=%s state=completed candidates=%d complete=%t candidate_action=%t review_required=%t",
 			tracker,
 			len(candidates),
 			search.Complete,
 			hasDupes,
+			hasDupes || evaluation.RequiresAction,
 		)
-		s.logger.Debugf("dupechecking: search tracker=%s pages=%d scope=%s", tracker, search.Pages, search.Scope)
+		s.logTargetEvaluation(tracker, policy, evaluation.TargetFacts, search)
+		s.logger.Debugf(
+			"dupechecking: search tracker=%s pages=%d complete=%t scope=%s warnings=%q",
+			tracker,
+			search.Pages,
+			search.Complete,
+			dupeCandidateLogValue(search.Scope),
+			dupeCandidateLogValues(search.Warnings),
+		)
 		for _, candidate := range evaluation.Candidates {
-			s.logger.Tracef(
-				"dupechecking: evaluation tracker=%s candidate_id=%s relation=%s evidence=%s",
-				tracker,
-				candidate.Candidate.ID,
-				candidate.Relation,
-				candidate.Candidate.HDR.Status,
-			)
+			s.logCandidateEvaluation(tracker, candidate)
 		}
 		entry := newAssessmentEntry(meta, s.cfg, tracker, DispositionResolved, "", result.HasDupes, match, raw)
 		return result, entry
@@ -606,6 +613,208 @@ func (s *Service) projectAdapterResult(
 		result := failedPublicResult(tracker, FailureInternal, "duplicate adapter returned invalid result", checkedAt)
 		return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionFailed, FailureInternal, false, api.DupeMatch{}, nil)
 	}
+}
+
+func (s *Service) logCandidateEvaluation(tracker string, evaluation CandidateEvaluation) {
+	candidate := evaluation.Candidate
+	findings := decisiveCandidateFindings(evaluation)
+	hdr := candidateHDRLogValue(evaluation.Facts.HDR)
+	if hdr == "" {
+		hdr = "unknown"
+	}
+	evidence := evaluation.Facts.HDR.Status
+	if evidence == "" {
+		evidence = api.HDREvidenceMissing
+	}
+	s.logger.Debugf(
+		"dupechecking: candidate tracker=%s candidate_id=%q relation=%s winning_rule=%s kind=%s class=%s source_family=%s resolution=%s "+
+			"hdr_status=%s compared=%q missing=%q matched=%q indeterminate=%q name=%q facts=%q hdr=%q hdr_origin=%s reasons=%q",
+		tracker,
+		dupeCandidateLogValue(candidate.ID),
+		evaluation.Relation,
+		dupeCandidateLogValue(evaluation.WinningRule),
+		evaluation.Facts.MediaKind,
+		evaluation.Facts.MediaClass,
+		evaluation.Facts.SourceFamily,
+		dupeCandidateLogValue(evaluation.Facts.Resolution.Value),
+		evidence,
+		dupeFindingValues(findings, func(finding RuleFinding) []string { return finding.Compared }),
+		dupeFindingValues(findings, func(finding RuleFinding) []string {
+			return append(append([]string(nil), finding.Missing...), finding.Contradictions...)
+		}),
+		dupeFindingRuleIDs(findings, RuleFindingMatched),
+		dupeFindingRuleIDs(findings, RuleFindingIndeterminate),
+		dupeCandidateLogValue(candidate.Name),
+		dupeCandidateFactsLogValue(candidate),
+		hdr,
+		evaluation.Facts.HDR.Origin,
+		dupeCandidateReasonsLogValue(evaluation.Reasons),
+	)
+}
+
+func (s *Service) logTargetEvaluation(
+	tracker string,
+	policy trackerspkg.DupePolicy,
+	facts normalizedFacts,
+	search SearchEvidence,
+) {
+	hdrStatus := facts.HDR.Status
+	if hdrStatus == "" {
+		hdrStatus = api.HDREvidenceMissing
+	}
+	s.logger.Debugf(
+		//logpolicy:allow normalized target facts are required DEBUG decision diagnostics, not step-by-step flow
+		"dupechecking: target tracker=%s general_policy=%s tracker_policy=%s kind=%s class=%s source_family=%s source=%s resolution=%s hdr_status=%s scope=%s",
+		tracker,
+		GeneralPolicyID,
+		dupeCandidateLogValue(policy.ID),
+		facts.MediaKind,
+		facts.MediaClass,
+		facts.SourceFamily,
+		dupeCandidateLogValue(facts.Source.Value),
+		dupeCandidateLogValue(facts.Resolution.Value),
+		hdrStatus,
+		dupeCandidateLogValue(search.Scope),
+	)
+}
+
+func dupeFindingValues(findings []RuleFinding, values func(RuleFinding) []string) string {
+	var result []string
+	seen := make(map[string]struct{})
+	for _, finding := range findings {
+		for _, value := range values(finding) {
+			if value = dupeCandidateLogValue(value); value != "" {
+				if _, ok := seen[value]; ok {
+					continue
+				}
+				seen[value] = struct{}{}
+				result = append(result, value)
+			}
+		}
+	}
+	return strings.Join(result, " | ")
+}
+
+func decisiveCandidateFindings(evaluation CandidateEvaluation) []RuleFinding {
+	applicable := make([]RuleFinding, 0, len(evaluation.Findings))
+	var priority, specificity int
+	haveRank := false
+	for _, finding := range evaluation.Findings {
+		if finding.Status != RuleFindingMatched && finding.Status != RuleFindingIndeterminate {
+			continue
+		}
+		applicable = append(applicable, finding)
+		if finding.RuleID == evaluation.WinningRule {
+			priority, specificity, haveRank = finding.Priority, finding.Specificity, true
+		}
+	}
+	if !haveRank {
+		for _, finding := range applicable {
+			if !haveRank || finding.Priority > priority || finding.Priority == priority && finding.Specificity > specificity {
+				priority, specificity, haveRank = finding.Priority, finding.Specificity, true
+			}
+		}
+	}
+	if !haveRank {
+		return nil
+	}
+	result := make([]RuleFinding, 0, len(applicable))
+	for _, finding := range applicable {
+		if finding.Priority == priority && finding.Specificity == specificity {
+			result = append(result, finding)
+		}
+	}
+	return result
+}
+
+func dupeFindingRuleIDs(findings []RuleFinding, status RuleFindingStatus) string {
+	values := make([]string, 0, len(findings))
+	seen := make(map[string]struct{}, len(findings))
+	for _, finding := range findings {
+		value := dupeCandidateLogValue(finding.RuleID)
+		if finding.Status != status || value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+	return strings.Join(values, " | ")
+}
+
+func dupeCandidateFactsLogValue(candidate TrackerCandidate) string {
+	values := []string{
+		candidate.Type,
+		candidate.Source,
+		candidate.Provider,
+		candidate.Resolution,
+		candidate.Codec,
+		candidate.Container,
+		candidate.Edition,
+		candidate.Region,
+		candidate.ThreeD,
+		candidate.Repack,
+		candidate.Date,
+	}
+	if candidate.Pack {
+		values = append(values, "season pack")
+	}
+	facts := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = dupeCandidateLogValue(value); value != "" {
+			facts = append(facts, value)
+		}
+	}
+	return strings.Join(facts, " · ")
+}
+
+func candidateHDRLogValue(hdr api.HDRFacts) string {
+	parts := make([]string, 0, 2)
+	if len(hdr.Formats) > 0 {
+		formats := make([]string, 0, len(hdr.Formats))
+		for _, format := range hdr.Formats {
+			formats = append(formats, strings.ReplaceAll(string(format), "_", " "))
+		}
+		parts = append(parts, strings.Join(formats, " + "))
+	}
+	if profile := dupeCandidateLogValue(hdr.DolbyVisionProfile); profile != "" {
+		parts = append(parts, "profile "+profile)
+	}
+	return strings.Join(parts, " · ")
+}
+
+func dupeCandidateReasonsLogValue(reasons []api.DupeReason) string {
+	values := make([]string, 0, len(reasons))
+	for _, reason := range reasons {
+		code := dupeCandidateLogValue(reason.Code)
+		message := dupeCandidateLogValue(reason.Message)
+		switch {
+		case code != "" && message != "":
+			values = append(values, code+" — "+message)
+		case code != "":
+			values = append(values, code)
+		case message != "":
+			values = append(values, message)
+		}
+	}
+	return strings.Join(values, " | ")
+}
+
+func dupeCandidateLogValues(values []string) string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = dupeCandidateLogValue(value); value != "" {
+			result = append(result, value)
+		}
+	}
+	return strings.Join(result, " | ")
+}
+
+func dupeCandidateLogValue(value string) string {
+	value = redaction.RedactValue(strings.TrimSpace(value), nil)
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func (s *Service) duplicatePolicy(tracker string, meta api.DuplicateSubject) trackerspkg.DupePolicy {
@@ -672,6 +881,15 @@ func evaluationMatch(evaluation Evaluation) api.DupeMatch {
 		return api.DupeMatch{MatchedReason: "incomplete_search"}
 	}
 	return api.DupeMatch{}
+}
+
+func hasActionableCandidateEvaluations(candidates []CandidateEvaluation) bool {
+	for _, candidate := range candidates {
+		if candidate.Relation != api.DupeRelationCoexists {
+			return true
+		}
+	}
+	return false
 }
 
 func containsTracker(trackers []string, tracker string) bool {
@@ -805,6 +1023,12 @@ func dupeProgressMessage(result api.DupeCheckResult) string {
 	case "bypassed":
 		return sanitizeSafeMessage(result.SkipReason, "duplicate policy bypassed")
 	default:
+		if !result.Search.Complete {
+			if count := actionableCandidateCount(result.Evaluations); count > 0 {
+				return fmt.Sprintf("search incomplete; %d candidates require attention", count)
+			}
+			return "search incomplete; review required"
+		}
 		if result.HasDupes {
 			return fmt.Sprintf("%d candidates require attention", actionableCandidateCount(result.Evaluations))
 		}

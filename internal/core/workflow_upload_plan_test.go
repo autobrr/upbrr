@@ -155,9 +155,10 @@ func TestWorkflowUploadPlanFingerprintChangesWithReviewedDependency(t *testing.T
 
 	builder := workflowUploadPlanBuilder{}
 	projections := api.TrackerReleaseProjectionSet{
-		ID:               "projections-1",
-		Revision:         1,
-		InputFingerprint: workflowTestFingerprint(t, "projection"),
+		ID:                "projections-1",
+		Revision:          1,
+		InputFingerprint:  workflowTestFingerprint(t, "projection"),
+		PolicyFingerprint: workflowTestFingerprint(t, "projection-policy"),
 	}
 	dupes := api.DupeAssessment{
 		ID:               "dupes-1",
@@ -177,6 +178,22 @@ func TestWorkflowUploadPlanFingerprintChangesWithReviewedDependency(t *testing.T
 	first, err := builder.Fingerprint(context.Background(), projections, dupes, media, descriptions, releaseworkflow.UploadPlanBuildOptions{})
 	if err != nil {
 		t.Fatalf("fingerprint upload plan: %v", err)
+	}
+	policyChangedProjections := projections
+	policyChangedProjections.PolicyFingerprint = workflowTestFingerprint(t, "changed-projection-policy")
+	policyChanged, err := builder.Fingerprint(
+		context.Background(),
+		policyChangedProjections,
+		dupes,
+		media,
+		descriptions,
+		releaseworkflow.UploadPlanBuildOptions{},
+	)
+	if err != nil {
+		t.Fatalf("fingerprint changed projection policy: %v", err)
+	}
+	if first == policyChanged {
+		t.Fatal("upload plan fingerprint ignored projection policy")
 	}
 	dupes.Revision++
 	changed, err := builder.Fingerprint(context.Background(), projections, dupes, media, descriptions, releaseworkflow.UploadPlanBuildOptions{})

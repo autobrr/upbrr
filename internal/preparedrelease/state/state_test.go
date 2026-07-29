@@ -4,10 +4,41 @@
 package preparationstate
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestStateGeneratedReleaseNamesSurviveJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	original := State{
+		GeneratedReleaseNames: api.GeneratedReleaseNameVariants{
+			IncludeEpisodeTitle: api.ReleaseNameVariant{
+				NameNoTag: "Example.Show.S01E02.Example.Episode.1080p.WEB-DL",
+				Name:      "Example.Show.S01E02.Example.Episode.1080p.WEB-DL-GRP",
+				CleanName: "Example Show S01E02 Example Episode 1080p WEB-DL-GRP",
+			},
+			OmitEpisodeTitle: api.ReleaseNameVariant{
+				NameNoTag: "Example.Show.S01E02.1080p.WEB-DL",
+				Name:      "Example.Show.S01E02.1080p.WEB-DL-GRP",
+				CleanName: "Example Show S01E02 1080p WEB-DL-GRP",
+			},
+		},
+	}
+	payload, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal state: %v", err)
+	}
+	var restored State
+	if err := json.Unmarshal(payload, &restored); err != nil {
+		t.Fatalf("unmarshal state: %v", err)
+	}
+	if restored.GeneratedReleaseNames != original.GeneratedReleaseNames {
+		t.Fatalf("restored variants = %#v, want %#v", restored.GeneratedReleaseNames, original.GeneratedReleaseNames)
+	}
+}
 
 func TestSeasonEpisodeHelpers(t *testing.T) {
 	t.Parallel()

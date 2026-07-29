@@ -12,7 +12,7 @@ import {
 } from "./helpers/e2eHarness";
 
 test("CLI full upload approves trackers before downstream work", async () => {
-  const workspace = await createE2EWorkspace();
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
   try {
     const result = await runCLI(
       [
@@ -44,7 +44,7 @@ test("CLI full upload approves trackers before downstream work", async () => {
 });
 
 test("CLI skips an auth-blocked tracker while uploading a ready sibling", async () => {
-  const workspace = await createE2EWorkspace();
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
   workspace.env.UPBRR_E2E_AUTH_SCENARIOS = "HDS=validation_only_missing_cookies";
   try {
     const result = await runCLI(
@@ -83,7 +83,7 @@ test("CLI skips an auth-blocked tracker while uploading a ready sibling", async 
 });
 
 test("CLI strict unattended stops before downstream work", async () => {
-  const workspace = await createE2EWorkspace();
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
   try {
     const result = await runCLI(
       [
@@ -109,7 +109,7 @@ test("CLI strict unattended stops before downstream work", async () => {
 });
 
 test("CLI debug injects into the client by default", async () => {
-  const workspace = await createE2EWorkspace();
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
   try {
     const debug = await runCLI(
       [
@@ -134,7 +134,7 @@ test("CLI debug injects into the client by default", async () => {
 });
 
 test("CLI debug -ns skips client injection", async () => {
-  const workspace = await createE2EWorkspace();
+  const workspace = await createE2EWorkspace({ mediaKind: "tv" });
   try {
     const noSeed = await runCLI(
       [

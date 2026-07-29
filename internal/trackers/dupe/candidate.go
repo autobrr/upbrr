@@ -52,7 +52,7 @@ type TrackerCandidate struct {
 
 // NormalizeCandidate converts one adapter entry without exposing private
 // download evidence to public evaluation projections.
-func NormalizeCandidate(entry api.DupeEntry, tracker string) TrackerCandidate {
+func NormalizeCandidate(entry api.DupeEntry, _ string) TrackerCandidate {
 	candidate := TrackerCandidate{
 		ID:              strings.TrimSpace(entry.ID),
 		Name:            strings.TrimSpace(entry.Name),
@@ -86,18 +86,20 @@ func NormalizeCandidate(entry api.DupeEntry, tracker string) TrackerCandidate {
 		candidate.FileCount = len(candidate.Files)
 	}
 	if candidate.HDR.Status == "" {
-		candidate.HDR = NormalizeTrackerHDRFlags(tracker, entry.Flags, entry.FlagsPresent, entry.FlagsComplete)
+		candidate.HDR = NormalizeTrackerHDRFlags(entry.Flags, entry.FlagsPresent, entry.FlagsComplete)
 	}
 	enrichCandidateCoordinatesFromTitle(&candidate)
-	if strings.EqualFold(strings.TrimSpace(tracker), "MTV") {
-		enrichMTVCandidateFromTitle(&candidate)
+	if candidate.HDR.Status == api.HDREvidenceMissing {
+		if titleHDR := hdrFactsFromCandidateTitle(candidate.Name); titleHDR.Status != api.HDREvidenceMissing {
+			candidate.HDR = titleHDR
+		}
 	}
 	return candidate
 }
 
 // NormalizeTrackerHDRFlags maps fixture-backed tracker flags while preserving
 // partial and missing evidence semantics.
-func NormalizeTrackerHDRFlags(tracker string, flags []string, present bool, complete bool) api.HDRFacts {
+func NormalizeTrackerHDRFlags(flags []string, present bool, complete bool) api.HDRFacts {
 	facts := api.HDRFacts{
 		Origin: api.HDREvidenceTrackerAPI,
 		Status: api.HDREvidencePartial,
@@ -123,9 +125,6 @@ func NormalizeTrackerHDRFlags(tracker string, flags []string, present bool, comp
 		}
 	}
 	switch {
-	case strings.EqualFold(strings.TrimSpace(tracker), "ANT") && len(facts.Formats) > 0:
-		// ANT's HDR10 flag is a generic tracker HDR marker.
-		facts.Status = api.HDREvidencePartial
 	case complete && present && len(flags) == 0:
 		facts.Formats = []api.HDRFormat{api.HDRFormatSDR}
 		facts.Status = api.HDREvidenceComplete
@@ -159,22 +158,6 @@ func enrichCandidateCoordinatesFromTitle(candidate *TrackerCandidate) {
 		if match := candidateDailyDatePattern.FindStringSubmatch(candidate.Name); len(match) == 4 {
 			candidate.Date = strings.Join(match[1:], "-")
 		}
-	}
-}
-
-func enrichMTVCandidateFromTitle(candidate *TrackerCandidate) {
-	if candidate == nil {
-		return
-	}
-	if candidate.Resolution == "" {
-		candidate.Resolution = candidateResolutionPattern.FindString(candidate.Name)
-	}
-	if candidate.HDR.Status != "" && candidate.HDR.Status != api.HDREvidenceMissing {
-		return
-	}
-	facts := hdrFactsFromCandidateTitle(candidate.Name)
-	if facts.Status != api.HDREvidenceMissing {
-		candidate.HDR = facts
 	}
 }
 

@@ -20,7 +20,7 @@ const minimumContentAgeReason = "content must be at least 10 years old"
 // validationPolicy strictly blocks content newer than RTF's ten-year
 // eligibility cutoff and adult-classified releases.
 func validationPolicy() trackers.ValidationPolicyBinding {
-	return trackers.ValidationPolicyBinding{ID: "standalone-rtf-constructibility-v1", Check: checkRules}
+	return trackers.ValidationPolicyBinding{ID: "standalone-rtf-constructibility-v2", Check: checkRules}
 }
 
 func checkRules(ctx context.Context, meta api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
@@ -51,12 +51,42 @@ func checkRules(ctx context.Context, meta api.TrackerValidationSubject, _ api.Lo
 }
 
 func minimumContentAgeViolation(meta api.TrackerValidationSubject, now time.Time) bool {
-	limit := now.UTC().AddDate(-10, 0, 3)
-	evidence := youngestRTFReleaseEvidence(meta.Release, meta.ProviderMetadata)
+	return rtfContentAgeEligibility(meta.Release, meta.ProviderMetadata, now) != rtfAgeEligible
+}
+
+type rtfAgeEligibilityVerdict string
+
+const (
+	rtfAgeEligible                  rtfAgeEligibilityVerdict = "eligible"
+	rtfAgeIneligibleMissingEvidence rtfAgeEligibilityVerdict = "missing_evidence"
+	rtfAgeIneligibleBoundaryYear    rtfAgeEligibilityVerdict = "boundary_year"
+	rtfAgeIneligibleTooNew          rtfAgeEligibilityVerdict = "too_new"
+)
+
+func rtfContentAgeEligibility(
+	release api.ReleaseInfo,
+	metadata api.SourceScopedMetadata,
+	now time.Time,
+) rtfAgeEligibilityVerdict {
+	cutoff := now.UTC().AddDate(-10, 0, 0)
+	evidence := youngestRTFReleaseEvidence(release, metadata)
 	if releaseDate, ok := evidence.exactDate(); ok {
-		return releaseDate.After(limit)
+		if releaseDate.After(cutoff) {
+			return rtfAgeIneligibleTooNew
+		}
+		return rtfAgeEligible
 	}
-	return evidence.year > limit.Year()
+
+	switch {
+	case evidence.year == 0:
+		return rtfAgeIneligibleMissingEvidence
+	case evidence.year < cutoff.Year():
+		return rtfAgeEligible
+	case evidence.year == cutoff.Year():
+		return rtfAgeIneligibleBoundaryYear
+	default:
+		return rtfAgeIneligibleTooNew
+	}
 }
 
 type rtfReleaseAgeEvidence struct {
@@ -68,6 +98,7 @@ func (e *rtfReleaseAgeEvidence) addDate(value time.Time) {
 	if value.IsZero() {
 		return
 	}
+	value = value.UTC()
 	date := time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC)
 	if e.date.IsZero() || date.After(e.date) {
 		e.date = date
@@ -166,7 +197,7 @@ func parseRTFDate(raw string) (time.Time, bool) {
 		if err != nil {
 			continue
 		}
-		return time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.UTC), true
+		return parsed, true
 	}
 	return time.Time{}, false
 }

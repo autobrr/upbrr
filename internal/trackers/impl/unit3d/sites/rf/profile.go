@@ -9,23 +9,24 @@ import (
 // mappings, required release-group dupe policy, and optional owned image host.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		Name:    "RF",
-		BaseURL: "https://reelflix.cc",
-		Rules:   Rules(),
+		Name:             "RF",
+		BaseURL:          "https://reelflix.cc",
+		Rules:            Rules(),
+		ValidationPolicy: ValidationPolicy(),
 		Site: unit3d.SiteProfile{
 			BuildName:           buildName,
-			BuildNameVersion:    "v1",
+			BuildNameVersion:    "v2",
 			ResolveTypeID:       typeID,
 			ResolveResolutionID: resolutionID,
 		},
 		DupePolicy: &trackers.DupePolicy{
-			ID: "rf/duplicate/v1",
+			ID:         "rf/duplicate/v2",
+			EvidenceID: "rf-rules",
 			SearchScope: trackers.DupeSearchScope{
 				IncludeEpisodes:    true,
 				IncludeSeasonPacks: true,
 				MaxPages:           100,
 			},
-			RequiredEvidence: trackers.DupeEvidenceRequirements{HDR: true, Group: true},
 			SlotDimensions: []trackers.DupeDimension{
 				trackers.DupeDimensionType,
 				trackers.DupeDimensionResolution,

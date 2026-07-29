@@ -846,6 +846,8 @@ export type RuleFailure = {
   Reason: string;
   /** Empty legacy values are waivable; unknown non-empty values fail closed. */
   Disposition?: "advisory" | "waivable" | "strict" | string;
+  /** Completeness of the backend evidence supporting this rule result. */
+  evidenceStatus?: "complete" | "partial" | "unavailable" | "contradictory" | string;
 };
 
 export type DupeEntry = {

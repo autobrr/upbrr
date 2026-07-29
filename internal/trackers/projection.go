@@ -475,6 +475,30 @@ func (r *Registry) ProjectRelease(
 		projection.DupeReady = false
 		projection.UploadReady = false
 	}
+	if failure == nil &&
+		projection.Readiness == api.ReadinessStatusReady &&
+		releaseNameConfirmationRequired(input, descriptor.ReleaseNamePolicy) {
+		trackerName := strings.TrimSpace(projection.DisplayName)
+		if trackerName == "" {
+			trackerName = strings.TrimSpace(descriptor.Name)
+		}
+		projection.PolicyDecisions = append(projection.PolicyDecisions, api.TrackerPolicyDecision{
+			Code:     releaseNameConfirmationCode,
+			Decision: "confirmation_required",
+			Blocking: true,
+			Message:  fmt.Sprintf("Confirm the non-scene release name for %s.", trackerName),
+		})
+		projection.RequiredActions = append(projection.RequiredActions, api.RequiredAction{
+			Kind:           api.RequiredActionProvideTrackerInput,
+			TrackerID:      projection.TrackerID,
+			Prompt:         fmt.Sprintf("Confirm or edit the non-scene release name for %s.", trackerName),
+			Options:        []api.RequiredActionOption{{Value: projection.UploadReleaseName, Label: projection.UploadReleaseName}},
+			AllowsFreeText: true,
+		})
+		projection.Readiness = api.ReadinessStatusBlocked
+		projection.DupeReady = false
+		projection.UploadReady = false
+	}
 	return projection, failure
 }
 
@@ -575,10 +599,12 @@ func ApplyProjectionRuleFailures(
 			})
 		}
 		projection.PolicyDecisions = append(projection.PolicyDecisions, api.TrackerPolicyDecision{
-			Code:     strings.TrimSpace(failure.Rule),
-			Decision: decision,
-			Blocking: blocking,
-			Message:  strings.TrimSpace(failure.Reason),
+			Code:           strings.TrimSpace(failure.Rule),
+			Decision:       decision,
+			Blocking:       blocking,
+			Message:        strings.TrimSpace(failure.Reason),
+			Disposition:    disposition,
+			EvidenceStatus: failure.EvidenceStatus,
 		})
 	}
 }

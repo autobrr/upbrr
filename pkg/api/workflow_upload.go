@@ -71,6 +71,7 @@ type ReleaseWorkflowUploadExecution struct {
 }
 
 // ReleaseWorkflowUploadTrackers contains normalized tracker selection and projection intent.
+// An empty Include list selects the server's configured default trackers.
 type ReleaseWorkflowUploadTrackers struct {
 	Include           []TrackerID                                          `json:"include,omitempty"`
 	Remove            []TrackerID                                          `json:"remove,omitempty"`
@@ -294,9 +295,6 @@ func (r CreateReleaseWorkflowUploadRequest) Validate() error {
 	}
 	if err := validateReleaseWorkflowUploadTrackerIDs(r.Trackers); err != nil {
 		return err
-	}
-	if !r.Unattended.Confirm && len(r.Trackers.Include) == 0 {
-		return errors.New("strict unattended upload requires at least one explicitly included tracker")
 	}
 	if r.Duplicates.CheckCount != nil && (*r.Duplicates.CheckCount < 1 || *r.Duplicates.CheckCount > 2) {
 		return errors.New("duplicate check count must be one or two")

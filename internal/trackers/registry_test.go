@@ -155,3 +155,47 @@ func TestRegistryRuleCapability(t *testing.T) {
 		t.Fatalf("rules = %#v, ok=%t", got, ok)
 	}
 }
+
+func TestValidateDupePolicyRequiresEvidenceIDForAutomaticRules(t *testing.T) {
+	t.Parallel()
+
+	policy := DupePolicy{
+		ID:             "example/duplicate/v2",
+		SlotDimensions: []DupeDimension{DupeDimensionResolution},
+	}
+	if err := validateDupePolicy(policy); err == nil || !strings.Contains(err.Error(), "evidence ID") {
+		t.Fatalf("missing traceability error = %v", err)
+	}
+	policy.EvidenceID = "example-rules"
+	if err := validateDupePolicy(policy); err != nil {
+		t.Fatalf("evidence-backed policy rejected: %v", err)
+	}
+}
+
+func TestCompatibilityDupePolicyUsesSameSlotFallback(t *testing.T) {
+	t.Parallel()
+
+	policy := compatibilityDupePolicy("EXAMPLE")
+	if len(policy.ManualReviewRules) != 0 || policy.SameSlotFallback == nil ||
+		policy.SameSlotFallback.ReasonCode != "tracker_policy_not_evidence_backed" {
+		t.Fatalf("compatibility policy = %#v", policy)
+	}
+}
+
+func TestCloneDupePolicyPreservesRuleConditions(t *testing.T) {
+	t.Parallel()
+
+	policy := cloneDupePolicy(DupePolicy{PrecedenceRules: []DupeRule{{
+		ID: "example",
+		Conditions: []DupeCondition{{
+			Dimension:       DupeDimensionType,
+			TargetValues:    []string{"WEB-DL"},
+			CandidateValues: []string{"WEBRip"},
+		}},
+	}}})
+	condition := policy.PrecedenceRules[0].Conditions[0]
+	if condition.Dimension != DupeDimensionType || len(condition.TargetValues) != 1 ||
+		len(condition.CandidateValues) != 1 {
+		t.Fatalf("cloned condition = %#v", condition)
+	}
+}

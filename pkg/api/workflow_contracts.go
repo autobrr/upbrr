@@ -242,24 +242,34 @@ type TrackerPolicyDecision struct {
 	Decision string `json:"decision"`
 	Blocking bool   `json:"blocking"`
 	Message  string `json:"message,omitempty"`
+	// Disposition is the backend-owned execution effect of a failed rule.
+	Disposition RuleDisposition `json:"disposition,omitempty"`
+	// EvidenceStatus states how completely the backend could evaluate the rule.
+	EvidenceStatus MetadataEvidenceStatus `json:"evidenceStatus,omitempty"`
 }
 
 // TrackerReleaseProjection is one exact tracker-local interpretation of a release.
 type TrackerReleaseProjection struct {
-	TrackerID                   TrackerID                         `json:"trackerId"`
-	DisplayName                 string                            `json:"displayName"`
-	CanonicalReleaseName        string                            `json:"canonicalReleaseName"`
-	UploadReleaseName           string                            `json:"uploadReleaseName"`
-	AdditionalNames             []TrackerReleaseName              `json:"additionalNames,omitempty"`
-	Taxonomy                    TrackerTaxonomy                   `json:"taxonomy"`
-	ProviderIDs                 []TrackerProviderID               `json:"providerIds,omitempty"`
-	DuplicateCriteria           TrackerDuplicateCriteria          `json:"duplicateCriteria"`
-	DuplicateTarget             TrackerDuplicateTarget            `json:"duplicateTarget"`
-	DuplicatePolicyID           string                            `json:"duplicatePolicyId"`
-	DuplicatePolicyFingerprint  WorkflowFingerprint               `json:"duplicatePolicyFingerprint"`
-	DuplicateTargetFingerprint  WorkflowFingerprint               `json:"duplicateTargetFingerprint"`
-	DuplicateSearchFingerprint  WorkflowFingerprint               `json:"duplicateSearchFingerprint"`
-	NamingPolicyID              string                            `json:"namingPolicyId"`
+	TrackerID                  TrackerID                `json:"trackerId"`
+	DisplayName                string                   `json:"displayName"`
+	CanonicalReleaseName       string                   `json:"canonicalReleaseName"`
+	UploadReleaseName          string                   `json:"uploadReleaseName"`
+	AdditionalNames            []TrackerReleaseName     `json:"additionalNames,omitempty"`
+	Taxonomy                   TrackerTaxonomy          `json:"taxonomy"`
+	ProviderIDs                []TrackerProviderID      `json:"providerIds,omitempty"`
+	DuplicateCriteria          TrackerDuplicateCriteria `json:"duplicateCriteria"`
+	DuplicateTarget            TrackerDuplicateTarget   `json:"duplicateTarget"`
+	DuplicatePolicyID          string                   `json:"duplicatePolicyId"`
+	DuplicatePolicyFingerprint WorkflowFingerprint      `json:"duplicatePolicyFingerprint"`
+	DuplicateTargetFingerprint WorkflowFingerprint      `json:"duplicateTargetFingerprint"`
+	DuplicateSearchFingerprint WorkflowFingerprint      `json:"duplicateSearchFingerprint"`
+	NamingPolicyID             string                   `json:"namingPolicyId"`
+	// NamingElementPolicyVersion identifies the shared structural policy
+	// applied before the tracker-local naming policy.
+	NamingElementPolicyVersion string `json:"namingElementPolicyVersion"`
+	// EpisodeTitleMode records the normalized structural decision included in
+	// NamingFingerprint.
+	EpisodeTitleMode            EpisodeTitleMode                  `json:"episodeTitleMode"`
 	NamingFingerprint           WorkflowFingerprint               `json:"namingFingerprint"`
 	PolicyDecisions             []TrackerPolicyDecision           `json:"policyDecisions,omitempty"`
 	Artifacts                   TrackerArtifactRequirements       `json:"artifacts"`

@@ -421,22 +421,42 @@ func TestOperationSubjectsUseExactGenerationAndDetachedFacts(t *testing.T) {
 	t.Parallel()
 
 	path := writePreparedTestFile(t, "source.mkv", "source")
-	module := newTestModule(t, newMemoryStore(), &recordingCollector{})
+	store := newMemoryStore()
+	module := newTestModule(t, store, &recordingCollector{})
 	prepared, err := module.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ref := api.ReleaseRef{SourcePath: path, Generation: prepared.Release.Generation}
 	upload, err := module.ResolveUploadSubject(context.Background(), api.UploadSubjectInput{
-		Release:  ref,
-		Trackers: []string{"AITHER"},
-		Options:  api.UploadOptions{KeepImages: true},
+		Release:                ref,
+		Trackers:               []string{"AITHER"},
+		DescriptionOverride:    "Manual description.",
+		DescriptionGroupsFinal: true,
+		Options:                api.UploadOptions{KeepImages: true},
 	})
 	if err != nil {
 		t.Fatalf("ResolveUploadSubject() error = %v", err)
 	}
 	if upload.SourcePath != path || upload.ReleaseName != "Example.Release.2026.1080p-GRP" || len(upload.Trackers) != 1 {
 		t.Fatalf("upload subject = %#v", upload)
+	}
+	if upload.DescriptionOverride != "Manual description." || !upload.DescriptionGroupsFinal {
+		t.Fatalf("upload description evidence = %#v", upload)
+	}
+	if upload.GeneratedReleaseNames.OmitEpisodeTitle.Name != "Example.Show.S01E02.1080p.WEB-DL-GRP" {
+		t.Fatalf("upload generated variants = %#v", upload.GeneratedReleaseNames)
+	}
+	persisted, err := store.LoadPreparedRelease(context.Background(), path)
+	if err != nil {
+		t.Fatalf("load persisted release: %v", err)
+	}
+	if persisted.Naming.GeneratedReleaseNames != upload.GeneratedReleaseNames {
+		t.Fatalf(
+			"persisted generated variants = %#v, upload variants %#v",
+			persisted.Naming.GeneratedReleaseNames,
+			upload.GeneratedReleaseNames,
+		)
 	}
 	if upload.Assessments.MediaInfoUniqueID != api.UniqueIDStatusPresent ||
 		upload.Assessments.MediaInfoEncodeSettings != api.EncodeSettingsStatusMissing {
@@ -687,6 +707,14 @@ func (c *recordingCollector) Collect(_ context.Context, request preparationstate
 		Naming: api.NamingFacts{
 			Filename:    filepath.Base(request.Manifest.SourcePath),
 			ReleaseName: "Example.Release.2026.1080p-GRP",
+			GeneratedReleaseNames: api.GeneratedReleaseNameVariants{
+				IncludeEpisodeTitle: api.ReleaseNameVariant{
+					Name: "Example.Show.S01E02.Example.Episode.1080p.WEB-DL-GRP",
+				},
+				OmitEpisodeTitle: api.ReleaseNameVariant{
+					Name: "Example.Show.S01E02.1080p.WEB-DL-GRP",
+				},
+			},
 		},
 		Assessments: api.ReleaseAssessments{
 			MediaInfoUniqueID:       api.UniqueIDStatusPresent,

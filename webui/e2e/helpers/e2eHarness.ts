@@ -77,6 +77,7 @@ type StartAppOptions = {
 
 type E2EWorkspaceOptions = {
   screenshotCount?: number;
+  mediaKind?: "movie" | "tv";
 };
 
 /** Creates an isolated E2E workspace with temp config, media fixtures, and fake services. */
@@ -84,7 +85,12 @@ export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Pro
   const root = await mkdtemp(path.join(tmpdir(), "upbrr-e2e-"));
   const mediaDir = path.join(root, "media");
   await mkdir(mediaDir, { recursive: true });
-  const sourcePath = path.join(mediaDir, "E2E.Movie.2026.1080p.WEB-DL.DD5.1.H264-UPBRR.mkv");
+  const mediaKind = options.mediaKind ?? "movie";
+  const sourceName =
+    mediaKind === "tv"
+      ? "E2E.Show.2026.S01E01.1080p.WEB-DL.DD5.1.H264-UPBRR.mkv"
+      : "E2E.Movie.2026.1080p.WEB-DL.DD5.1.H264-UPBRR.mkv";
+  const sourcePath = path.join(mediaDir, sourceName);
   const screenshotPath = path.join(mediaDir, "shot-01.png");
   const dbPath = path.join(root, "upbrr-e2e.db");
   const authCounterPath = path.join(root, "auth-counters.json");
@@ -101,6 +107,7 @@ export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Pro
     UPBRR_E2E_CLIENT_URL: fake.url,
     UPBRR_E2E_SCREENSHOT_PATH: screenshotPath,
     UPBRR_E2E_AUTH_COUNTER_PATH: authCounterPath,
+    UPBRR_E2E_MEDIA_KIND: mediaKind,
   };
   return {
     root,

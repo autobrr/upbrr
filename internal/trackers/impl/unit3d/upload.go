@@ -353,13 +353,17 @@ func buildUploadDryRunUnit3D(
 	profiles ...SiteProfile,
 ) (api.TrackerDryRunEntry, error) {
 	profile := firstSiteProfile(profiles)
-	var nameFailure *trackers.PreparationFailure
-	req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, NewWithProfile(Profile{
-		Name: req.Tracker,
-		Site: profile,
-	}).ReleaseNamePolicy())
-	if nameFailure != nil {
-		return api.TrackerDryRunEntry{}, nameFailure
+	// Definition.Prepare already revalidates retained projections with the
+	// complete site policy. Direct helper callers still need a safe fallback.
+	if req.Projection == nil {
+		var nameFailure *trackers.PreparationFailure
+		req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, NewWithProfile(Profile{
+			Name: req.Tracker,
+			Site: profile,
+		}).ReleaseNamePolicy())
+		if nameFailure != nil {
+			return api.TrackerDryRunEntry{}, nameFailure
+		}
 	}
 	select {
 	case <-ctx.Done():

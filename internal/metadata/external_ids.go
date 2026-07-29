@@ -411,6 +411,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 
 	tmdbLogoFetchAttempted := false
 	anilistFetchAttempted := false
+	tvdbMetadataFetchAttempted := false
 	shouldFetchTMDBMetadata := func() bool {
 		if tmdbClient == nil || ids.TMDBID == 0 {
 			return false
@@ -424,7 +425,8 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		return imdbClient != nil && ids.IMDBID != 0 && !usableIMDBMetadata(metadata.IMDB, ids.IMDBID)
 	}
 	shouldFetchTVDBMetadata := func() bool {
-		return tvdbClient != nil && shouldUseTVDBForCategory(meta, ids) && ids.TVDBID != 0 && !usableTVDBMetadata(metadata.TVDB, ids.TVDBID)
+		return tvdbClient != nil && shouldUseTVDBForCategory(meta, ids) && ids.TVDBID != 0 &&
+			!tvdbMetadataFetchAttempted && !usableTVDBMetadata(metadata.TVDB, ids.TVDBID)
 	}
 	shouldFetchTVmazeMetadata := func() bool {
 		return tvmazeClient != nil && isTVForTVmaze() && ids.TVmazeID != 0 && !usableTVmazeMetadata(metadata.TVmaze, ids.TVmazeID)
@@ -459,6 +461,10 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			anilistFetchAttempted = true
 		}
 		fetchIMDB := shouldFetchIMDBMetadata()
+		fetchTVDB := shouldFetchTVDBMetadata()
+		if fetchTVDB {
+			tvdbMetadataFetchAttempted = true
+		}
 		lookupTVDB := shouldUseTVDBForCategory(meta, ids) && !overrideTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0)
 		lookupTVmaze := isTVForTVmaze() && (shouldFetchTVmazeMetadata() || (!overrideTVmaze && ids.TVmazeID == 0 && (ids.IMDBID != 0 || ids.TVDBID != 0)))
 
@@ -659,7 +665,8 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			}
 		}
 
-		if shouldUseTVDBForCategory(meta, ids) && ids.TVDBID != 0 {
+		if shouldUseTVDBForCategory(meta, ids) && ids.TVDBID != 0 && (fetchTVDB || fetchedTVDBID != 0) {
+			tvdbMetadataFetchAttempted = true
 			tvdbSeries, err := tvdbClient.GetSeriesMetadataWithLanguage(ctx, ids.TVDBID, "")
 			if err != nil {
 				tvdbSeries, err = tvdbClient.GetSeriesMetadata(ctx, ids.TVDBID)
@@ -915,7 +922,14 @@ func usableIMDBMetadata(metadata *api.IMDBMetadata, imdbID int) bool {
 
 func usableTVDBMetadata(metadata *api.TVDBMetadata, tvdbID int) bool {
 	return metadata != nil && tvdbID > 0 && metadata.TVDBID == tvdbID &&
-		(strings.TrimSpace(metadata.NameEnglish) != "" || strings.TrimSpace(metadata.Name) != "")
+		(strings.TrimSpace(metadata.NameEnglish) != "" || strings.TrimSpace(metadata.Name) != "") &&
+		reusableMetadataEvidenceStatus(metadata.NameDisambiguation.Status)
+}
+
+// reusableMetadataEvidenceStatus admits evidence that can support positive
+// naming decisions. Unavailable or contradictory snapshots must be refetched.
+func reusableMetadataEvidenceStatus(status api.MetadataEvidenceStatus) bool {
+	return status == api.MetadataEvidenceStatusComplete || status == api.MetadataEvidenceStatusPartial
 }
 
 func usableTVmazeMetadata(metadata *api.TVmazeMetadata, tvmazeID int) bool {
@@ -1765,7 +1779,7 @@ func mapTVDBMetadata(tvdbID int, fallbackName string, details tvdb.SeriesMetadat
 	if id == 0 {
 		return nil
 	}
-	year := parseYearFromDate(details.FirstAired)
+	year := metautil.FirstInt(details.Year, parseYearFromDate(details.FirstAired))
 	yearFromAlias := false
 	yearSource := "first_aired"
 	yearConfidence := ""
@@ -1792,16 +1806,27 @@ func mapTVDBMetadata(tvdbID int, fallbackName string, details tvdb.SeriesMetadat
 	}
 
 	return &api.TVDBMetadata{
-		TVDBID:           id,
-		Name:             name,
-		Overview:         strings.TrimSpace(details.Overview),
-		NameEnglish:      strings.TrimSpace(details.NameEnglish),
-		OverviewEnglish:  strings.TrimSpace(details.OverviewEnglish),
-		FirstAired:       strings.TrimSpace(details.FirstAired),
-		Year:             year,
-		YearFromAlias:    yearFromAlias,
-		YearSource:       yearSource,
-		YearConfidence:   yearConfidence,
+		TVDBID:          id,
+		Name:            name,
+		Overview:        strings.TrimSpace(details.Overview),
+		NameEnglish:     strings.TrimSpace(details.NameEnglish),
+		OverviewEnglish: strings.TrimSpace(details.OverviewEnglish),
+		FirstAired:      strings.TrimSpace(details.FirstAired),
+		Year:            year,
+		YearFromAlias:   yearFromAlias,
+		YearSource:      yearSource,
+		YearConfidence:  yearConfidence,
+		NameDisambiguation: api.TVDBNameDisambiguation{
+			CanonicalName:         strings.TrimSpace(details.NameDisambiguation.CanonicalName),
+			SeriesYear:            details.NameDisambiguation.SeriesYear,
+			Locale:                strings.TrimSpace(details.NameDisambiguation.Locale),
+			SameNameSeries:        details.NameDisambiguation.SameNameSeries,
+			SameNameAndYearSeries: details.NameDisambiguation.SameNameAndYearSeries,
+			IncludeYear:           details.NameDisambiguation.IncludeYear,
+			IncludeLocale:         details.NameDisambiguation.IncludeLocale,
+			Status:                details.NameDisambiguation.Status,
+			Source:                strings.TrimSpace(details.NameDisambiguation.Source),
+		},
 		Type:             strings.TrimSpace(details.Type),
 		Status:           strings.TrimSpace(details.Status),
 		Network:          strings.TrimSpace(details.Network),
@@ -1903,6 +1928,9 @@ func mergeTVDBMetadata(target *api.TVDBMetadata, incoming *api.TVDBMetadata) {
 			target.YearConfidence = incoming.YearConfidence
 		}
 	}
+	if validMetadataEvidenceStatus(incoming.NameDisambiguation.Status) {
+		target.NameDisambiguation = incoming.NameDisambiguation
+	}
 	if strings.TrimSpace(target.Type) == "" {
 		target.Type = incoming.Type
 	}
@@ -1931,6 +1959,18 @@ func mergeTVDBMetadata(target *api.TVDBMetadata, incoming *api.TVDBMetadata) {
 		target.Episodes = append([]api.TVDBEpisodeMetadata(nil), incoming.Episodes...)
 	}
 	target.HasEnglish = tvdbHasEnglishContent(target)
+}
+
+func validMetadataEvidenceStatus(status api.MetadataEvidenceStatus) bool {
+	switch status {
+	case api.MetadataEvidenceStatusComplete,
+		api.MetadataEvidenceStatusPartial,
+		api.MetadataEvidenceStatusUnavailable,
+		api.MetadataEvidenceStatusContradictory:
+		return true
+	default:
+		return false
+	}
 }
 
 func mapTVmazeMetadata(result tvmaze.SearchResult) *api.TVmazeMetadata {

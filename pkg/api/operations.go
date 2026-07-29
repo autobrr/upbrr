@@ -20,15 +20,21 @@ type DuplicateCheckInput struct {
 
 // UploadSubjectInput contains workflow upload choices for one exact prepared generation.
 type UploadSubjectInput struct {
-	Release                ReleaseRef
-	Trackers               []string
-	IgnoreDupesFor         []string
-	SkipDuplicateCheck     bool
-	SkipDuplicateAsActual  bool
-	DoubleDuplicateCheck   bool
-	QuestionnaireAnswers   map[string]map[string]string
-	TrackerIDOverrides     map[string]string
-	DescriptionGroups      []DescriptionBuilderGroup
+	Release               ReleaseRef
+	Trackers              []string
+	IgnoreDupesFor        []string
+	SkipDuplicateCheck    bool
+	SkipDuplicateAsActual bool
+	DoubleDuplicateCheck  bool
+	QuestionnaireAnswers  map[string]map[string]string
+	TrackerIDOverrides    map[string]string
+	DescriptionGroups     []DescriptionBuilderGroup
+	// DescriptionOverride is explicit description text supplied directly by
+	// the caller, before tracker-scoped group selection.
+	DescriptionOverride string
+	// DescriptionGroupsFinal reports that DescriptionGroups contains retained
+	// workflow output and no later description stage can add required content.
+	DescriptionGroupsFinal bool
 	TrackerConfigOverrides TrackerConfigOverrides
 	TrackerSiteOverrides   TrackerSiteOverrides
 	ClientOverrides        ClientOverrides

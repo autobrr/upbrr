@@ -966,3 +966,22 @@ func TestContinuationMediaIntentCanResolveItsPendingGlobalAction(t *testing.T) {
 		t.Fatal("media intent resolved an unrelated global tracker action")
 	}
 }
+
+func TestStrictUnattendedSkipsTrackerReleaseNameConfirmation(t *testing.T) {
+	t.Parallel()
+
+	action := api.RequiredAction{
+		Kind:      api.RequiredActionProvideTrackerInput,
+		TrackerID: "AR",
+	}
+	if !continuationUnattendedSkipsTrackerAction(api.WorkflowIntent{
+		Interaction: api.InteractionModeUnattended,
+	}, action) {
+		t.Fatal("strict unattended mode did not skip tracker-scoped release-name confirmation")
+	}
+	if continuationUnattendedSkipsTrackerAction(api.WorkflowIntent{
+		Interaction: api.InteractionModeUnattendedConfirm,
+	}, action) {
+		t.Fatal("unattended-confirm mode skipped interactive release-name confirmation")
+	}
+}

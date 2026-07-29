@@ -219,12 +219,12 @@ func nblDupeEntries(items []nblSearchItem) []api.DupeEntry {
 func nblHDRFacts(tags *[]string, name string) (api.HDRFacts, []string, bool) {
 	if tags != nil {
 		flags := nblHDRFlags(*tags, false)
-		facts := dupe.NormalizeTrackerHDRFlags("NBL", flags, true, true)
+		facts := dupe.NormalizeTrackerHDRFlags(flags, true, true)
 		facts.SourceFields = []string{"tags"}
 		return facts, flags, true
 	}
 	flags := nblHDRFlags([]string{name}, true)
-	facts := dupe.NormalizeTrackerHDRFlags("NBL", flags, false, false)
+	facts := dupe.NormalizeTrackerHDRFlags(flags, false, false)
 	if facts.Status != api.HDREvidenceMissing {
 		facts.Origin = api.HDREvidenceTrackerTitle
 		facts.SourceFields = []string{"title"}

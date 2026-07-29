@@ -120,6 +120,37 @@ func (g *sequenceIDGenerator) NewID(prefix string) (string, error) {
 	return fmt.Sprintf("%s-%d", prefix, g.next), nil
 }
 
+func TestStampProjectionActionsPublishesDurableActionIdentity(t *testing.T) {
+	t.Parallel()
+
+	module := &Module{ids: &sequenceIDGenerator{}}
+	now := time.Date(2026, time.July, 28, 20, 0, 0, 0, time.UTC)
+	snapshot := api.TrackerReleaseProjectionSet{
+		RequiredActions: []api.RequiredAction{{Kind: api.RequiredActionProvideTrackerInput}},
+		Projections: []api.TrackerReleaseProjection{{
+			TrackerID: "AR",
+			RequiredActions: []api.RequiredAction{{
+				Kind:           api.RequiredActionProvideTrackerInput,
+				Prompt:         "Confirm release name.",
+				AllowsFreeText: true,
+			}},
+		}},
+	}
+	if err := module.stampProjectionActions(&snapshot, 7, now); err != nil {
+		t.Fatalf("stamp projection actions: %v", err)
+	}
+	if len(snapshot.RequiredActions) != 1 || len(snapshot.Projections[0].RequiredActions) != 1 {
+		t.Fatalf("stamped actions = %#v", snapshot)
+	}
+	projectionAction := snapshot.Projections[0].RequiredActions[0]
+	snapshotAction := snapshot.RequiredActions[0]
+	if projectionAction.ID == "" || snapshotAction.ID != projectionAction.ID ||
+		projectionAction.TrackerID != "AR" || projectionAction.WorkflowRevision != 7 ||
+		projectionAction.Status != api.RequiredActionStatusPending || !projectionAction.CreatedAt.Equal(now) {
+		t.Fatalf("projection action = %#v, snapshot action = %#v", projectionAction, snapshotAction)
+	}
+}
+
 type trackerProjectionBuilderFunc func(
 	context.Context,
 	api.ReleaseSnapshot,

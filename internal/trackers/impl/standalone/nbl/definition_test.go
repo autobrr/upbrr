@@ -19,7 +19,7 @@ func TestProfileDeclaresNBLHDRDupeSlots(t *testing.T) {
 	t.Parallel()
 
 	policy := Profile().DupePolicy
-	if policy == nil || policy.ID != "nbl/duplicate/v1" || !policy.RequiredEvidence.HDR ||
+	if policy == nil || policy.ID != "nbl/duplicate/v2" || policy.EvidenceID != "nbl-uploading-overview" ||
 		!slices.Contains(policy.SlotDimensions, trackers.DupeDimensionHDR) ||
 		policy.SearchScope.MaxPages != 100 ||
 		policy.HDRSlotMode != trackers.DupeHDRSlotModeGeneric {

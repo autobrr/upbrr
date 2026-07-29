@@ -611,11 +611,21 @@ func printCLIWorkflowProjections(
 			if reason == "" {
 				reason = "none"
 			}
+			disposition := strings.TrimSpace(string(decision.Disposition))
+			if disposition == "" {
+				disposition = "unspecified"
+			}
+			evidenceStatus := strings.TrimSpace(string(decision.EvidenceStatus))
+			if evidenceStatus == "" {
+				evidenceStatus = "unspecified"
+			}
 			fmt.Printf(
-				"  policy: code=%s decision=%s blocking=%t reason=%s\n",
+				"  policy: code=%s decision=%s blocking=%t disposition=%s evidence=%s reason=%s\n",
 				strings.TrimSpace(decision.Code),
 				strings.TrimSpace(decision.Decision),
 				decision.Blocking,
+				disposition,
+				evidenceStatus,
 				reason,
 			)
 		}
@@ -665,7 +675,13 @@ func cliWorkflowProjectionForTracker(
 	return &projections.Projections[index]
 }
 
+// auditableProjectionPolicyDecision keeps explicit rule outcomes and legacy
+// blocking decisions while suppressing non-diagnostic provenance entries.
 func auditableProjectionPolicyDecision(decision api.TrackerPolicyDecision) bool {
+	switch decision.Disposition {
+	case api.RuleDispositionStrict, api.RuleDispositionWaivable, api.RuleDispositionAdvisory:
+		return true
+	}
 	return decision.Blocking ||
 		strings.EqualFold(strings.TrimSpace(decision.Decision), "ineligible") ||
 		strings.EqualFold(strings.TrimSpace(decision.Decision), "bypassed")

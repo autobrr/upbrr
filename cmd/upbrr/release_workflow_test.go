@@ -197,23 +197,33 @@ func TestPrintCLIWorkflowProjectionsIncludesAuditablePolicyDetails(t *testing.T)
 				PolicyDecisions: []api.TrackerPolicyDecision{
 					{Code: "release_name_policy", Decision: "standalone/example/v1"},
 					{
-						Code:     "unsupported_source",
-						Decision: "ineligible",
-						Blocking: true,
-						Message:  "Example does not support the release source.",
+						Code:           "unsupported_source",
+						Decision:       "ineligible",
+						Blocking:       true,
+						Message:        "Example does not support the release source.",
+						Disposition:    api.RuleDispositionStrict,
+						EvidenceStatus: api.MetadataEvidenceStatusComplete,
 					},
 					{
 						Code:     "banned_group",
 						Decision: "bypassed",
 						Message:  "Debug mode bypassed tracker banned-group policy.",
 					},
+					{
+						Code:           "metadata_poster",
+						Decision:       "advisory",
+						Message:        "Poster metadata is unavailable.",
+						Disposition:    api.RuleDispositionAdvisory,
+						EvidenceStatus: api.MetadataEvidenceStatusUnavailable,
+					},
 				},
 			}},
 		}, nil)
 	})
 	for _, expected := range []string{
-		"code=unsupported_source decision=ineligible blocking=true reason=Example does not support the release source.",
-		"code=banned_group decision=bypassed blocking=false reason=Debug mode bypassed tracker banned-group policy.",
+		"code=unsupported_source decision=ineligible blocking=true disposition=strict evidence=complete reason=Example does not support the release source.",
+		"code=banned_group decision=bypassed blocking=false disposition=unspecified evidence=unspecified reason=Debug mode bypassed tracker banned-group policy.",
+		"code=metadata_poster decision=advisory blocking=false disposition=advisory evidence=unavailable reason=Poster metadata is unavailable.",
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("tracker projection output missing %q: %q", expected, output)

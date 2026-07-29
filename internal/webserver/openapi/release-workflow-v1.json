@@ -1509,6 +1509,9 @@
           "Year"
         ]
       },
+      "EpisodeTitleMode": {
+        "type": "string"
+      },
       "ExternalIDOverrides": {
         "type": "object",
         "properties": {
@@ -1721,6 +1724,21 @@
           "timestampSeconds",
           "workflowId",
           "workflowRevision"
+        ]
+      },
+      "GeneratedReleaseNameVariants": {
+        "type": "object",
+        "properties": {
+          "IncludeEpisodeTitle": {
+            "$ref": "#/components/schemas/ReleaseNameVariant"
+          },
+          "OmitEpisodeTitle": {
+            "$ref": "#/components/schemas/ReleaseNameVariant"
+          }
+        },
+        "required": [
+          "IncludeEpisodeTitle",
+          "OmitEpisodeTitle"
         ]
       },
       "GetReleaseWorkflowMediaPlanRequest": {
@@ -2742,6 +2760,9 @@
       "MediaPlanID": {
         "type": "string"
       },
+      "MetadataEvidenceStatus": {
+        "type": "string"
+      },
       "MetadataOverrides": {
         "type": "object",
         "properties": {
@@ -2883,6 +2904,9 @@
           "Filename": {
             "type": "string"
           },
+          "GeneratedReleaseNames": {
+            "$ref": "#/components/schemas/GeneratedReleaseNameVariants"
+          },
           "Genre": {
             "type": "string"
           },
@@ -2969,6 +2993,7 @@
           "Editions",
           "Extension",
           "Filename",
+          "GeneratedReleaseNames",
           "Genre",
           "Group",
           "HDR",
@@ -3434,6 +3459,28 @@
           "timestampSeconds",
           "workflowId"
         ]
+      },
+      "ProviderAvailabilityEvidence": {
+        "type": "object",
+        "properties": {
+          "Provider": {
+            "$ref": "#/components/schemas/IdentityProvider"
+          },
+          "Source": {
+            "type": "string"
+          },
+          "Status": {
+            "$ref": "#/components/schemas/ProviderAvailabilityStatus"
+          }
+        },
+        "required": [
+          "Provider",
+          "Source",
+          "Status"
+        ]
+      },
+      "ProviderAvailabilityStatus": {
+        "type": "string"
       },
       "ProviderDisplay": {
         "type": "object",
@@ -3961,6 +4008,25 @@
             ]
           }
         }
+      },
+      "ReleaseNameVariant": {
+        "type": "object",
+        "properties": {
+          "CleanName": {
+            "type": "string"
+          },
+          "Name": {
+            "type": "string"
+          },
+          "NameNoTag": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "CleanName",
+          "Name",
+          "NameNoTag"
+        ]
       },
       "ReleaseRef": {
         "type": "object",
@@ -6336,6 +6402,9 @@
           "workflowId"
         ]
       },
+      "RuleDisposition": {
+        "type": "string"
+      },
       "SaveReleaseWorkflowDescriptionOverrideRequest": {
         "type": "object",
         "properties": {
@@ -6541,6 +6610,12 @@
               }
             ]
           },
+          "ProviderAvailability": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderAvailabilityEvidence"
+            }
+          },
           "SourcePath": {
             "type": "string"
           },
@@ -6580,6 +6655,7 @@
         },
         "required": [
           "Generation",
+          "ProviderAvailability",
           "SourcePath",
           "UpdatedAt"
         ]
@@ -7032,6 +7108,9 @@
           "Name": {
             "type": "string"
           },
+          "NameDisambiguation": {
+            "$ref": "#/components/schemas/TVDBNameDisambiguation"
+          },
           "NameEnglish": {
             "type": "string"
           },
@@ -7090,6 +7169,7 @@
           "Genres",
           "HasEnglish",
           "Name",
+          "NameDisambiguation",
           "NameEnglish",
           "Network",
           "OriginalCountry",
@@ -7104,6 +7184,49 @@
           "YearConfidence",
           "YearFromAlias",
           "YearSource"
+        ]
+      },
+      "TVDBNameDisambiguation": {
+        "type": "object",
+        "properties": {
+          "CanonicalName": {
+            "type": "string"
+          },
+          "IncludeLocale": {
+            "type": "boolean"
+          },
+          "IncludeYear": {
+            "type": "boolean"
+          },
+          "Locale": {
+            "type": "string"
+          },
+          "SameNameAndYearSeries": {
+            "type": "integer"
+          },
+          "SameNameSeries": {
+            "type": "integer"
+          },
+          "SeriesYear": {
+            "type": "integer"
+          },
+          "Source": {
+            "type": "string"
+          },
+          "Status": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          }
+        },
+        "required": [
+          "CanonicalName",
+          "IncludeLocale",
+          "IncludeYear",
+          "Locale",
+          "SameNameAndYearSeries",
+          "SameNameSeries",
+          "SeriesYear",
+          "Source",
+          "Status"
         ]
       },
       "TVmazeMetadata": {
@@ -8005,6 +8128,12 @@
           "decision": {
             "type": "string"
           },
+          "disposition": {
+            "$ref": "#/components/schemas/RuleDisposition"
+          },
+          "evidenceStatus": {
+            "$ref": "#/components/schemas/MetadataEvidenceStatus"
+          },
           "message": {
             "type": "string"
           }
@@ -8432,6 +8561,9 @@
           "duplicateTargetFingerprint": {
             "$ref": "#/components/schemas/WorkflowFingerprint"
           },
+          "episodeTitleMode": {
+            "$ref": "#/components/schemas/EpisodeTitleMode"
+          },
           "failures": {
             "type": "array",
             "items": {
@@ -8442,6 +8574,9 @@
             "$ref": "#/components/schemas/WorkflowFingerprint"
           },
           "metadataLocale": {
+            "type": "string"
+          },
+          "namingElementPolicyVersion": {
             "type": "string"
           },
           "namingFingerprint": {
@@ -8510,7 +8645,9 @@
           "duplicateSearchFingerprint",
           "duplicateTarget",
           "duplicateTargetFingerprint",
+          "episodeTitleMode",
           "inputFingerprint",
+          "namingElementPolicyVersion",
           "namingFingerprint",
           "namingPolicyId",
           "projectorFingerprint",

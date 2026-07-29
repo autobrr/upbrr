@@ -374,6 +374,8 @@ export type EpisodeFacts = Readonly<{
   Year: number;
 }>;
 
+export type EpisodeTitleMode = string;
+
 export type ExternalIDOverrides = Readonly<{
   IMDBID?: number | null;
   MALID?: number | null;
@@ -424,6 +426,11 @@ export type FramePreview = Readonly<{
   timestampSeconds: number;
   workflowId: WorkflowID;
   workflowRevision: WorkflowRevision;
+}>;
+
+export type GeneratedReleaseNameVariants = Readonly<{
+  IncludeEpisodeTitle: ReleaseNameVariant;
+  OmitEpisodeTitle: ReleaseNameVariant;
 }>;
 
 export type GetReleaseWorkflowMediaPlanRequest = Readonly<{
@@ -703,6 +710,8 @@ export type MediaPlan = Readonly<{
 
 export type MediaPlanID = string;
 
+export type MetadataEvidenceStatus = string;
+
 export type MetadataOverrides = Readonly<{
   Anime?: boolean | null;
   Commentary?: boolean | null;
@@ -731,6 +740,7 @@ export type NamingFacts = Readonly<{
   Editions: readonly string[];
   Extension: string;
   Filename: string;
+  GeneratedReleaseNames: GeneratedReleaseNameVariants;
   Genre: string;
   Group: string;
   HDR: readonly string[];
@@ -885,6 +895,14 @@ export type PreviewReleaseWorkflowFrameRequest = Readonly<{
   workflowId: WorkflowID;
 }>;
 
+export type ProviderAvailabilityEvidence = Readonly<{
+  Provider: IdentityProvider;
+  Source: string;
+  Status: ProviderAvailabilityStatus;
+}>;
+
+export type ProviderAvailabilityStatus = string;
+
 export type ProviderDisplay = Readonly<{
   Details: ProviderDisplayDetails;
   DisplayID: string;
@@ -985,6 +1003,12 @@ export type ReleaseNameOverrides = Readonly<{
   Tag?: string | null;
   Type?: string | null;
   UseSeasonEpisode?: boolean | null;
+}>;
+
+export type ReleaseNameVariant = Readonly<{
+  CleanName: string;
+  Name: string;
+  NameNoTag: string;
 }>;
 
 export type ReleaseRef = Readonly<{
@@ -1476,6 +1500,8 @@ export type RetryReleaseWorkflowUploadRequest = Readonly<{
   workflowId: WorkflowID;
 }>;
 
+export type RuleDisposition = string;
+
 export type SaveReleaseWorkflowDescriptionOverrideRequest = Readonly<{
   expectedRevision: WorkflowRevision;
   idempotencyKey: string;
@@ -1531,6 +1557,7 @@ export type SourceScopedMetadata = Readonly<{
   Bluray?: BlurayMetadata | null;
   Generation: PreparedGeneration;
   IMDB?: IMDBMetadata | null;
+  ProviderAvailability: readonly ProviderAvailabilityEvidence[];
   SourcePath: string;
   TMDB?: TMDBMetadata | null;
   TVDB?: TVDBMetadata | null;
@@ -1646,6 +1673,7 @@ export type TVDBMetadata = Readonly<{
   Genres: string;
   HasEnglish: boolean;
   Name: string;
+  NameDisambiguation: TVDBNameDisambiguation;
   NameEnglish: string;
   Network: string;
   OriginalCountry: string;
@@ -1660,6 +1688,18 @@ export type TVDBMetadata = Readonly<{
   YearConfidence: string;
   YearFromAlias: boolean;
   YearSource: string;
+}>;
+
+export type TVDBNameDisambiguation = Readonly<{
+  CanonicalName: string;
+  IncludeLocale: boolean;
+  IncludeYear: boolean;
+  Locale: string;
+  SameNameAndYearSeries: number;
+  SameNameSeries: number;
+  SeriesYear: number;
+  Source: string;
+  Status: MetadataEvidenceStatus;
 }>;
 
 export type TVmazeMetadata = Readonly<{
@@ -1900,6 +1940,8 @@ export type TrackerPolicyDecision = Readonly<{
   blocking: boolean;
   code: string;
   decision: string;
+  disposition?: RuleDisposition;
+  evidenceStatus?: MetadataEvidenceStatus;
   message?: string;
 }>;
 
@@ -2019,9 +2061,11 @@ export type TrackerReleaseProjection = Readonly<{
   duplicateSearchFingerprint: WorkflowFingerprint;
   duplicateTarget: TrackerDuplicateTarget;
   duplicateTargetFingerprint: WorkflowFingerprint;
+  episodeTitleMode: EpisodeTitleMode;
   failures?: readonly WorkflowFailure[];
   inputFingerprint: WorkflowFingerprint;
   metadataLocale?: string;
+  namingElementPolicyVersion: string;
   namingFingerprint: WorkflowFingerprint;
   namingPolicyId: string;
   policyDecisions?: readonly TrackerPolicyDecision[];

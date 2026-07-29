@@ -228,7 +228,7 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 		addStrict("require_scene_nfo", "scene release missing NFO")
 	}
 
-	if rules.RequireAudioLanguages && len(meta.AudioLanguages) == 0 {
+	if rules.RequireAudioLanguages && !isDiscType(meta.DiscType) && len(meta.AudioLanguages) == 0 {
 		addStrict("require_audio_languages", "missing audio language data")
 	}
 
@@ -261,7 +261,7 @@ func evaluateValidationPolicy(
 	}
 	normalized := make([]api.RuleFailure, 0, len(failures))
 	for _, failure := range failures {
-		normalized = append(normalized, NewRuleFailure(failure.Rule, failure.Reason, failure.Disposition))
+		normalized = append(normalized, NormalizeRuleFailure(failure))
 	}
 	return normalized, nil
 }
@@ -359,8 +359,9 @@ func detectResolution(value string) string {
 }
 
 func isDiscType(value string) bool {
-	switch strings.ToUpper(strings.TrimSpace(value)) {
-	case "BDMV", "DVD", "HDDVD":
+	normalized := strings.NewReplacer(" ", "", "-", "", "_", "").Replace(strings.ToUpper(strings.TrimSpace(value)))
+	switch normalized {
+	case "BDMV", "BLURAY", "DVD", "HDDVD":
 		return true
 	default:
 		return false
@@ -500,17 +501,25 @@ func evaluateLanguageRule(meta api.RuleSubject, rule *LanguageRule) (bool, strin
 	if rule == nil {
 		return true, ""
 	}
-	if rule.ApplyIfNonBDMV && strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-		return true, ""
-	}
-	if rule.ApplyIfNonDisc && isDiscType(meta.DiscType) {
-		return true, ""
-	}
-
 	audioLanguages := normalizeStrings(meta.AudioLanguages)
 	subLanguages := normalizeStrings(meta.SubtitleLanguages)
 	required := normalizeStrings(rule.Languages)
 	if len(required) == 0 {
+		return true, ""
+	}
+	if isDiscType(meta.DiscType) {
+		if len(audioLanguages) == 0 && len(subLanguages) == 0 {
+			return false, "missing disc language data"
+		}
+		if containsAny(audioLanguages, required) || containsAny(subLanguages, required) {
+			return true, ""
+		}
+		return false, "disc requires audio or subtitles in " + strings.Join(required, ", ")
+	}
+	if rule.ApplyIfNonBDMV && strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
+		return true, ""
+	}
+	if rule.ApplyIfNonDisc && isDiscType(meta.DiscType) {
 		return true, ""
 	}
 

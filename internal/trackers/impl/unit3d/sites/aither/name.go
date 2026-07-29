@@ -23,7 +23,7 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 	resolution, videoCodec, videoEncode := unit3d.Resolution(meta), strings.TrimSpace(meta.VideoCodec), strings.TrimSpace(meta.VideoEncode)
 	nameType, source, audio := strings.ToUpper(strings.TrimSpace(meta.Type)), strings.TrimSpace(meta.Source), strings.TrimSpace(meta.Audio)
 	languages := append([]string{}, meta.Release.Language...)
-	if len(languages) > 0 && !unit3d.HasEnglishLanguage(languages) {
+	if !unit3d.IsDiscType(meta.DiscType) && len(languages) > 0 && !unit3d.HasEnglishLanguage(languages) {
 		foreign := strings.ToUpper(strings.TrimSpace(languages[0]))
 		if nameType == "REMUX" && isDVDSource(source) && meta.Release.Year > 0 {
 			year := strconv.Itoa(meta.Release.Year)

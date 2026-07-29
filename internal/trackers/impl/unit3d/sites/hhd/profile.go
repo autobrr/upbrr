@@ -11,27 +11,22 @@ import (
 // Profile returns HHD's Unit3D site manifest.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		Name:         "HHD",
-		BaseURL:      "https://homiehelpdesk.net",
-		Rules:        Rules(),
-		BannedGroups: BannedGroups(),
+		Name:             "HHD",
+		BaseURL:          "https://homiehelpdesk.net",
+		Rules:            Rules(),
+		ValidationPolicy: validationPolicy(),
+		BannedGroups:     BannedGroups(),
 		Site: unit3d.SiteProfile{
 			BuildName:        buildName,
-			BuildNameVersion: "v1",
+			BuildNameVersion: "v2",
 		},
 		DupePolicy: &trackers.DupePolicy{
-			ID: "hhd/duplicate/v1",
+			ID:         "hhd/duplicate/v2",
+			EvidenceID: "hhd-rules-naming",
 			SearchScope: trackers.DupeSearchScope{
 				IncludeEpisodes:    true,
 				IncludeSeasonPacks: true,
 				MaxPages:           100,
-			},
-			RequiredEvidence: trackers.DupeEvidenceRequirements{
-				HDR:        true,
-				Type:       true,
-				Resolution: true,
-				Codec:      true,
-				Provider:   true,
 			},
 			SlotDimensions: []trackers.DupeDimension{
 				trackers.DupeDimensionProvider,
@@ -39,18 +34,20 @@ func Profile() unit3d.Profile {
 				trackers.DupeDimensionCodec,
 				trackers.DupeDimensionHDR,
 			},
-			PrecedenceRules: hhdDupePrecedenceRules(),
+			PrecedenceRules: hhdDupePrecedenceRules("hhd-rules-naming"),
 		},
 	}
 }
 
-func hhdDupePrecedenceRules() []trackers.DupeRule {
-	rules := trackers.SeasonPackPrecedenceRules()
+func hhdDupePrecedenceRules(evidenceID string) []trackers.DupeRule {
+	rules := trackers.SeasonPackPrecedenceRules(evidenceID)
 	return append(rules,
 		trackers.DupeRule{
-			ID:         "proposed_webdl_over_webrip",
-			Relation:   "proposed_trumps",
-			ReasonCode: "proposed_webdl_over_webrip",
+			ID:               "proposed_webdl_over_webrip",
+			EvidenceID:       evidenceID,
+			Relation:         "proposed_trumps",
+			ReasonCode:       "proposed_webdl_over_webrip",
+			OverridesGeneral: true,
 			Conditions: []trackers.DupeCondition{
 				{
 					Dimension:       trackers.DupeDimensionType,
@@ -80,9 +77,11 @@ func hhdDupePrecedenceRules() []trackers.DupeRule {
 			},
 		},
 		trackers.DupeRule{
-			ID:         "existing_webdl_over_webrip",
-			Relation:   "existing_preferred",
-			ReasonCode: "existing_webdl_over_webrip",
+			ID:               "existing_webdl_over_webrip",
+			EvidenceID:       evidenceID,
+			Relation:         "existing_preferred",
+			ReasonCode:       "existing_webdl_over_webrip",
+			OverridesGeneral: true,
 			Conditions: []trackers.DupeCondition{
 				{
 					Dimension:       trackers.DupeDimensionType,

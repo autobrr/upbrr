@@ -418,6 +418,23 @@ func (s *cliWorkflowSession) collectCompositeTrackerFeedback(
 		return feedback, false, err
 	}
 	instruction := instructions[action.TrackerID]
+	if action.Kind == api.RequiredActionProvideTrackerInput && action.AllowsFreeText && len(action.Options) > 0 {
+		proposed := strings.TrimSpace(action.Options[0].Value)
+		if proposed == "" {
+			return feedback, false, fmt.Errorf("upbrr: release-name confirmation for %s has no proposed name", action.TrackerID)
+		}
+		fmt.Println()
+		fmt.Println(action.Prompt)
+		answer, promptErr := promptLine(reader, fmt.Sprintf("Release name [%s]: ", proposed))
+		if promptErr != nil {
+			return feedback, false, promptErr
+		}
+		if answer == "" {
+			answer = proposed
+		}
+		instruction.UploadReleaseName = api.WorkflowPatch[string]{Present: true, Value: answer}
+		instructions[action.TrackerID] = instruction
+	}
 	projection := compositeCLIProjectionFromInstruction(instruction)
 	if action.Kind == api.RequiredActionProvideTrackerInput {
 		feedback.Response = api.ReleaseWorkflowUploadFeedbackResponse{

@@ -20,7 +20,7 @@ func Profile() standalone.Profile {
 		AuthCapability:       authcontract.APIKeyCapability("BHD"),
 		PrepareDescription:   prepareDescription,
 		PrepareUpload:        prepareUpload,
-		ReleaseNamePolicy:    trackers.SimpleSubjectReleaseNamePolicy("standalone/bhd/v1", resolveUploadName),
+		ReleaseNamePolicy:    trackers.SimpleSubjectReleaseNamePolicy("standalone/bhd/v2", resolveUploadName),
 		NewDuplicateAdapter:  newDuplicateAdapter,
 		Rules:                rules(),
 		ValidationPolicy:     validationPolicy(),
@@ -29,13 +29,13 @@ func Profile() standalone.Profile {
 		AudioPolicy:          &trackers.AudioPolicy{BlockEnglishOriginalWithForeign: true},
 		ImageHostPolicy:      &trackers.ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb", "pixhost", "bhd", "bam"}},
 		DupePolicy: &trackers.DupePolicy{
-			ID: "bhd/duplicate/v1",
+			ID:         "bhd/duplicate/v2",
+			EvidenceID: "bhd-upload-rules",
 			SearchScope: trackers.DupeSearchScope{
 				IncludeEpisodes:    true,
 				IncludeSeasonPacks: true,
 				MaxPages:           100,
 			},
-			RequiredEvidence: trackers.DupeEvidenceRequirements{HDR: true},
 			SlotDimensions: []trackers.DupeDimension{
 				trackers.DupeDimensionType,
 				trackers.DupeDimensionSource,
@@ -47,11 +47,18 @@ func Profile() standalone.Profile {
 		},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
-			Requirements: []trackers.MetadataRequirement{{
-				Scope:       trackers.MetadataScopeMovie,
-				AnyOf:       []trackers.MetadataField{trackers.MetadataFieldIMDB},
-				Disposition: api.RuleDispositionStrict,
-			}},
+			Requirements: []trackers.MetadataRequirement{
+				{
+					Scope:       trackers.MetadataScopeAny,
+					AnyOf:       []trackers.MetadataField{trackers.MetadataFieldIMDBIDOnly},
+					Disposition: api.RuleDispositionStrict,
+				},
+				{
+					Scope:       trackers.MetadataScopeAny,
+					AnyOf:       []trackers.MetadataField{trackers.MetadataFieldTMDBIDOnly},
+					Disposition: api.RuleDispositionStrict,
+				},
+			},
 		},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
 			TrackerURLPatterns: []string{"https://beyond-hd.me", "tracker.beyond-hd.me"},

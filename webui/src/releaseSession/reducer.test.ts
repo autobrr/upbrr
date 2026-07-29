@@ -30,6 +30,22 @@ describe("sessionReducer upload intent", () => {
     expect(state.uploadError).toBe("retryable failure");
   });
 
+  it("retains confirmed tracker names until the source changes", () => {
+    let state = initialSessionState();
+    state = sessionReducer(state, {
+      type: "release_name_confirmed",
+      tracker: " ar ",
+      value: "Example.Release.2026-GRP",
+    });
+    expect(state.releaseNameOverrides).toEqual({ AR: "Example.Release.2026-GRP" });
+
+    state = sessionReducer(state, {
+      type: "source_selected",
+      sourcePath: "C:\\media\\Different.Release.2026",
+    });
+    expect(state.releaseNameOverrides).toEqual({});
+  });
+
   it("selects newly published media without reselecting known cleared candidates", () => {
     const candidate = (artifactID: string, purpose: "final" | "menu") => ({
       image: {

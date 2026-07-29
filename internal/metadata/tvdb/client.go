@@ -21,6 +21,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/redaction"
@@ -29,6 +34,9 @@ import (
 
 const (
 	defaultBaseURL = "https://api4.thetvdb.com/v4"
+	// nameDisambiguationSource records that TVDB v4 search is one unpaged
+	// request whose response does not prove result completeness.
+	nameDisambiguationSource = "tvdb_v4_search_unpaged"
 	// maxTVDBResponseBodyBytes bounds TVDB metadata responses before status
 	// detail formatting or JSON decode.
 	maxTVDBResponseBodyBytes = 16 << 20
@@ -40,6 +48,7 @@ var (
 	yearPattern             = regexp.MustCompile(`(?:19|20)\d{2}`)
 	nonAlphaNumSpacePattern = regexp.MustCompile(`[^a-z0-9 ]+`)
 	multiSpacePattern       = regexp.MustCompile(`\s+`)
+	trailingNameYearPattern = regexp.MustCompile(`[\p{Z}\s\p{P}]+(?:19|20)\d{2}[\)\]\}]?\s*$`)
 )
 
 const (
@@ -94,6 +103,21 @@ type Client struct {
 
 	mu        sync.Mutex
 	authToken string
+
+	disambiguationMu    sync.Mutex
+	disambiguationCache map[nameDisambiguationCacheKey]nameDisambiguationCacheEntry
+}
+
+type nameDisambiguationCacheKey struct {
+	seriesID     int
+	canonicalKey string
+	seriesYear   int
+	country      string
+}
+
+type nameDisambiguationCacheEntry struct {
+	evidence    NameDisambiguation
+	resultCount int
 }
 
 // Option configures a Client during construction and runs in caller order.
@@ -400,6 +424,7 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 	metadata.SeriesYear = seriesMeta.year
 	metadata.SeriesYearSource = seriesMeta.yearSource
 	metadata.SeriesYearConfidence = seriesMeta.yearConfidence
+	metadata.Year = selectedTVDBSeriesYear(resp.Data, seriesMeta)
 
 	if metadata.Name == "" && len(resp.Data.Aliases) > 0 {
 		metadata.Name = strings.TrimSpace(resp.Data.Aliases[0].Name)
@@ -419,15 +444,17 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 		}
 	}
 	metadata.HasEnglish = strings.TrimSpace(metadata.NameEnglish) != "" || strings.TrimSpace(metadata.OverviewEnglish) != ""
+	metadata.NameDisambiguation = c.seriesNameDisambiguation(ctx, metadata)
 
 	if c.logger != nil {
 		c.logger.Tracef(
-			"tvdb: series metadata loaded series_id=%d language=%q name=%q first_aired=%q api_year=%d series_year=%d series_year_source=%q series_year_confidence=%q name_english=%q slug=%q",
+			"tvdb: series metadata loaded series_id=%d language=%q name=%q first_aired=%q api_year=%d selected_year=%d series_year=%d series_year_source=%q series_year_confidence=%q name_english=%q slug=%q",
 			seriesID,
 			normalizeLanguageParam(language),
 			metadata.Name,
 			metadata.FirstAired,
 			int(resp.Data.Year),
+			metadata.Year,
 			metadata.SeriesYear,
 			metadata.SeriesYearSource,
 			metadata.SeriesYearConfidence,
@@ -523,8 +550,12 @@ func (c *Client) searchSeries(ctx context.Context, filename, year string) ([]Ser
 	if err := c.getJSON(ctx, "/search", params, &resp); err != nil {
 		return nil, err
 	}
-	results := make([]SeriesSearchResult, 0, len(resp.Data))
-	for _, item := range resp.Data {
+	return mapSeriesSearchResults(resp.Data), nil
+}
+
+func mapSeriesSearchResults(values []seriesResult) []SeriesSearchResult {
+	results := make([]SeriesSearchResult, 0, len(values))
+	for _, item := range values {
 		results = append(results, SeriesSearchResult{
 			TVDBID:  item.TVDBID,
 			Name:    item.Name,
@@ -532,7 +563,242 @@ func (c *Client) searchSeries(ctx context.Context, filename, year string) ([]Ser
 			Aliases: mapAliases(item.Aliases),
 		})
 	}
-	return results, nil
+	return results
+}
+
+func (c *Client) seriesNameDisambiguation(ctx context.Context, metadata SeriesMetadata) NameDisambiguation {
+	canonicalName := canonicalTVDBSeriesName(metadata.NameEnglish)
+	fallbackYear := metadata.SeriesYear > 0 && explicitSeriesYearSource(metadata.SeriesYearSource)
+	if canonicalName == "" {
+		return NameDisambiguation{
+			SeriesYear:  metadata.Year,
+			IncludeYear: fallbackYear,
+			Status:      api.MetadataEvidenceStatusUnavailable,
+			Source:      nameDisambiguationSource,
+		}
+	}
+
+	cacheKey := nameDisambiguationCacheKey{
+		seriesID:     metadata.TVDBID,
+		canonicalKey: normalizeTVDBSeriesName(canonicalName),
+		seriesYear:   metadata.Year,
+		country:      cases.Fold().String(norm.NFKC.String(strings.TrimSpace(metadata.OriginalCountry))),
+	}
+	if cached, ok := c.cachedNameDisambiguation(cacheKey); ok {
+		c.logNameDisambiguation(metadata.TVDBID, cacheKey.canonicalKey, cached.resultCount, cached.evidence, true)
+		return cached.evidence
+	}
+
+	results, err := c.searchSeries(ctx, canonicalName, "")
+	evidence := buildNameDisambiguation(metadata.TVDBID, canonicalName, metadata.Year, metadata.OriginalCountry, fallbackYear, results, err)
+	if err != nil {
+		if c.logger != nil {
+			c.logger.Debugf("tvdb: name disambiguation search failed series_id=%d query=%q", metadata.TVDBID, cacheKey.canonicalKey)
+		}
+	} else {
+		c.cacheNameDisambiguation(cacheKey, nameDisambiguationCacheEntry{evidence: evidence, resultCount: len(results)})
+	}
+	c.logNameDisambiguation(metadata.TVDBID, cacheKey.canonicalKey, len(results), evidence, false)
+	return evidence
+}
+
+func (c *Client) cachedNameDisambiguation(key nameDisambiguationCacheKey) (nameDisambiguationCacheEntry, bool) {
+	c.disambiguationMu.Lock()
+	defer c.disambiguationMu.Unlock()
+	entry, ok := c.disambiguationCache[key]
+	return entry, ok
+}
+
+func (c *Client) cacheNameDisambiguation(key nameDisambiguationCacheKey, entry nameDisambiguationCacheEntry) {
+	c.disambiguationMu.Lock()
+	defer c.disambiguationMu.Unlock()
+	if c.disambiguationCache == nil {
+		c.disambiguationCache = make(map[nameDisambiguationCacheKey]nameDisambiguationCacheEntry)
+	}
+	c.disambiguationCache[key] = entry
+}
+
+func (c *Client) logNameDisambiguation(seriesID int, query string, resultCount int, evidence NameDisambiguation, cacheHit bool) {
+	if c.logger == nil {
+		return
+	}
+	c.logger.Tracef(
+		"tvdb: name disambiguation series_id=%d query=%q result_count=%d same_name=%d same_year=%d include_year=%t include_locale=%t status=%s source=%s cache_hit=%t",
+		seriesID,
+		query,
+		resultCount,
+		evidence.SameNameSeries,
+		evidence.SameNameAndYearSeries,
+		evidence.IncludeYear,
+		evidence.IncludeLocale,
+		evidence.Status,
+		evidence.Source,
+		cacheHit,
+	)
+}
+
+type disambiguationCandidate struct {
+	names []string
+	years map[int]struct{}
+}
+
+// buildNameDisambiguation derives only positive collision facts from TVDB's
+// unpaged general-name search. Negative results remain partial, search failures
+// retain only explicit year fallback, and conflicting candidate years become
+// contradictory evidence.
+func buildNameDisambiguation(
+	selectedID int,
+	canonicalName string,
+	selectedYear int,
+	originalCountry string,
+	fallbackYear bool,
+	results []SeriesSearchResult,
+	searchErr error,
+) NameDisambiguation {
+	evidence := NameDisambiguation{
+		CanonicalName: canonicalTVDBSeriesName(canonicalName),
+		SeriesYear:    selectedYear,
+		Status:        api.MetadataEvidenceStatusPartial,
+		Source:        nameDisambiguationSource,
+	}
+	if searchErr != nil {
+		evidence.IncludeYear = fallbackYear
+		evidence.Status = api.MetadataEvidenceStatusUnavailable
+		return evidence
+	}
+
+	selectedKey := normalizeTVDBSeriesName(canonicalName)
+	candidates := make(map[int]*disambiguationCandidate)
+	for _, result := range results {
+		if result.TVDBID == 0 || result.TVDBID == selectedID {
+			continue
+		}
+		candidate, ok := candidates[result.TVDBID]
+		if !ok {
+			candidate = &disambiguationCandidate{years: make(map[int]struct{})}
+			candidates[result.TVDBID] = candidate
+		}
+		candidate.names = append(candidate.names, result.Name)
+		for _, alias := range result.Aliases {
+			if isEnglishCode(alias.Language) {
+				candidate.names = append(candidate.names, alias.Name)
+			}
+		}
+		if year := parseTVDBSeriesYear(result.Year); year > 0 {
+			candidate.years[year] = struct{}{}
+		}
+	}
+
+	contradictory := false
+	for _, candidate := range candidates {
+		if !slices.ContainsFunc(candidate.names, func(name string) bool {
+			return normalizeTVDBSeriesName(name) == selectedKey
+		}) {
+			continue
+		}
+		evidence.SameNameSeries++
+		switch len(candidate.years) {
+		case 0:
+			continue
+		case 1:
+			if selectedYear > 0 {
+				if _, ok := candidate.years[selectedYear]; ok {
+					evidence.SameNameAndYearSeries++
+				}
+			}
+		default:
+			contradictory = true
+		}
+	}
+
+	evidence.IncludeYear = evidence.SameNameSeries > 0
+	evidence.IncludeLocale = evidence.SameNameAndYearSeries > 0
+	if evidence.IncludeLocale {
+		evidence.Locale, _ = normalizeTVDBCountryLocale(originalCountry)
+	}
+	if contradictory {
+		evidence.Status = api.MetadataEvidenceStatusContradictory
+	}
+	return evidence
+}
+
+func selectedTVDBSeriesYear(data seriesExtendedDataResponse, metadata seriesMetadataFields) int {
+	if metadata.year > 0 && strings.TrimSpace(metadata.yearSource) != "" {
+		return metadata.year
+	}
+	if data.Year > 0 {
+		return int(data.Year)
+	}
+	return parseTVDBSeriesYear(data.FirstAired)
+}
+
+func explicitSeriesYearSource(source string) bool {
+	switch strings.TrimSpace(source) {
+	case seriesYearSourceTranslationName, seriesYearSourceTranslationAlias, seriesYearSourceExtendedAlias:
+		return true
+	default:
+		return false
+	}
+}
+
+func parseTVDBSeriesYear(value string) int {
+	yearText := yearPattern.FindString(strings.TrimSpace(value))
+	if yearText == "" {
+		return 0
+	}
+	year, err := strconv.Atoi(yearText)
+	if err != nil {
+		return 0
+	}
+	return year
+}
+
+func canonicalTVDBSeriesName(value string) string {
+	trimmed := strings.TrimSpace(value)
+	trimmed = trailingNameYearPattern.ReplaceAllString(trimmed, "")
+	return strings.Join(strings.Fields(trimmed), " ")
+}
+
+func normalizeTVDBSeriesName(value string) string {
+	folded := cases.Fold().String(norm.NFKC.String(canonicalTVDBSeriesName(value)))
+	var normalized strings.Builder
+	pendingSpace := false
+	for _, char := range folded {
+		if unicode.IsLetter(char) || unicode.IsDigit(char) || unicode.IsMark(char) {
+			if pendingSpace && normalized.Len() > 0 {
+				normalized.WriteByte(' ')
+			}
+			normalized.WriteRune(char)
+			pendingSpace = false
+			continue
+		}
+		pendingSpace = normalized.Len() > 0
+	}
+	return normalized.String()
+}
+
+func normalizeTVDBCountryLocale(value string) (string, bool) {
+	country := strings.ToLower(strings.TrimSpace(value))
+	switch country {
+	case "united states", "united states of america":
+		country = "US"
+	case "united kingdom", "great britain", "uk":
+		country = "GB"
+	default:
+		country = strings.ToUpper(country)
+	}
+	region, err := language.ParseRegion(country)
+	if err != nil {
+		return "", false
+	}
+	locale := region.String()
+	if len(locale) != 2 {
+		return "", false
+	}
+	if locale == "GB" {
+		return "UK", true
+	}
+	return locale, true
 }
 
 func selectBestSeries(results []SeriesSearchResult, year string) int {

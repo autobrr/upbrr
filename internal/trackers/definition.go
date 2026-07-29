@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
@@ -125,6 +126,7 @@ type ReleaseNameInput struct {
 	Subject       api.UploadSubject
 	TrackerConfig config.TrackerConfig
 	RequestedName *string
+	ElementPolicy api.ReleaseNameElementPolicy
 }
 
 // ResolvedReleaseNames contains tracker-facing principal and secondary names.
@@ -138,10 +140,23 @@ type ResolvedReleaseNames struct {
 // ReleaseNamePolicy resolves tracker-facing names without I/O or mutable state.
 type ReleaseNamePolicy func(ReleaseNameInput) (ResolvedReleaseNames, error)
 
+// ReleaseNameConfirmationMode declares when an automatically resolved upload
+// name must be explicitly reviewed.
+type ReleaseNameConfirmationMode string
+
+const (
+	// ReleaseNameConfirmationNone accepts automatic names without review.
+	ReleaseNameConfirmationNone ReleaseNameConfirmationMode = ""
+	// ReleaseNameConfirmationNonScene requires review for non-scene releases.
+	ReleaseNameConfirmationNonScene ReleaseNameConfirmationMode = "non_scene"
+)
+
 // ReleaseNamePolicyBinding identifies one versioned naming implementation.
 type ReleaseNamePolicyBinding struct {
-	ID       string
-	Resolver ReleaseNamePolicy
+	ID           string
+	Elements     api.ReleaseNameElementPolicy
+	Confirmation ReleaseNameConfirmationMode
+	Resolver     ReleaseNamePolicy
 }
 
 // ReleaseNamePolicyProvider declares tracker-owned release-name behavior.
@@ -425,16 +440,24 @@ type UploadArtifactPolicyProvider interface {
 type DupePolicy struct {
 	// ID is the stable versioned comparison-policy identifier.
 	ID string
+	// EvidenceID identifies the policy evidence backing automatic
+	// tracker-specific behavior.
+	EvidenceID string
 	// SearchScope declares which remote dimensions are safe to narrow and how
 	// many pages may be consumed before search becomes incomplete.
 	SearchScope DupeSearchScope
-	// RequiredEvidence identifies facts that must be complete before an
-	// automatic same-slot decision is safe.
-	RequiredEvidence DupeEvidenceRequirements
 	// SlotDimensions are compared to establish tracker slot membership.
 	SlotDimensions []DupeDimension
 	// HDRSlotMode declares how normalized HDR facts map to tracker slots.
 	HDRSlotMode DupeHDRSlotMode
+	// HDRPartialMode declares how partial tracker HDR evidence is interpreted.
+	HDRPartialMode DupeHDRPartialMode
+	// HDRCompatibilityMode enables a source-backed directional compatibility
+	// hierarchy instead of treating every distinct HDR set as coexistence.
+	HDRCompatibilityMode DupeHDRCompatibilityMode
+	// RequireDolbyVisionProfile keeps same-format Dolby Vision decisions
+	// indeterminate until both profiles are known.
+	RequireDolbyVisionProfile bool
 	// CoexistenceRules are evaluated before directional precedence.
 	CoexistenceRules []DupeRule
 	// PrecedenceRules express directional existing/proposed preferences.
@@ -448,6 +471,9 @@ type DupePolicy struct {
 	SizeVarianceResolutions []string
 	// SizeVarianceTypes limits size coexistence to named release types.
 	SizeVarianceTypes []string
+	// SameSlotFallback is applied only after exact, content, general,
+	// tracker-overlay, and size findings are resolved.
+	SameSlotFallback *DupeRule
 }
 
 // DupeSearchScope defines policy-safe remote narrowing and completion bounds.
@@ -459,43 +485,29 @@ type DupeSearchScope struct {
 	MaxPages                 int
 }
 
-// DupeEvidenceRequirements identifies critical normalized candidate facts.
-type DupeEvidenceRequirements struct {
-	HDR        bool
-	Size       bool
-	Files      bool
-	Type       bool
-	Source     bool
-	Resolution bool
-	Codec      bool
-	Container  bool
-	Provider   bool
-	Group      bool
-	Edition    bool
-	Region     bool
-	ThreeD     bool
-	Repack     bool
-}
-
 // DupeDimension identifies one structural comparison axis.
 type DupeDimension string
 
 const (
-	DupeDimensionType       DupeDimension = "type"
-	DupeDimensionSource     DupeDimension = "source"
-	DupeDimensionResolution DupeDimension = "resolution"
-	DupeDimensionCodec      DupeDimension = "codec"
-	DupeDimensionContainer  DupeDimension = "container"
-	DupeDimensionHDR        DupeDimension = "hdr"
-	DupeDimensionEdition    DupeDimension = "edition"
-	DupeDimensionRegion     DupeDimension = "region"
-	DupeDimensionThreeD     DupeDimension = "3d"
-	DupeDimensionProvider   DupeDimension = "provider"
-	DupeDimensionGroup      DupeDimension = "group"
-	DupeDimensionPack       DupeDimension = "pack"
-	DupeDimensionSeason     DupeDimension = "season"
-	DupeDimensionEpisode    DupeDimension = "episode"
-	DupeDimensionDate       DupeDimension = "date"
+	DupeDimensionType         DupeDimension = "type"
+	DupeDimensionSource       DupeDimension = "source"
+	DupeDimensionMediaKind    DupeDimension = "media_kind"
+	DupeDimensionMediaClass   DupeDimension = "media_class"
+	DupeDimensionSourceFamily DupeDimension = "source_family"
+	DupeDimensionResolution   DupeDimension = "resolution"
+	DupeDimensionCodec        DupeDimension = "codec"
+	DupeDimensionContainer    DupeDimension = "container"
+	DupeDimensionHDR          DupeDimension = "hdr"
+	DupeDimensionEdition      DupeDimension = "edition"
+	DupeDimensionRegion       DupeDimension = "region"
+	DupeDimensionThreeD       DupeDimension = "3d"
+	DupeDimensionProvider     DupeDimension = "provider"
+	DupeDimensionGroup        DupeDimension = "group"
+	DupeDimensionRepack       DupeDimension = "repack"
+	DupeDimensionPack         DupeDimension = "pack"
+	DupeDimensionSeason       DupeDimension = "season"
+	DupeDimensionEpisode      DupeDimension = "episode"
+	DupeDimensionDate         DupeDimension = "date"
 )
 
 // DupeHDRSlotMode identifies one tracker HDR slot taxonomy.
@@ -507,6 +519,28 @@ const (
 	DupeHDRSlotModeExact DupeHDRSlotMode = ""
 	// DupeHDRSlotModeGeneric groups formats into SDR, HDR, DV, and DV+HDR.
 	DupeHDRSlotModeGeneric DupeHDRSlotMode = "sdr_hdr_dv"
+)
+
+// DupeHDRPartialMode identifies tracker-backed semantics for partial HDR facts.
+type DupeHDRPartialMode string
+
+const (
+	// DupeHDRPartialReject requires complete HDR facts for an HDR slot.
+	DupeHDRPartialReject DupeHDRPartialMode = ""
+	// DupeHDRPartialGenericMarker treats a partial generic HDR marker as
+	// indeterminate when it overlaps another HDR slot.
+	DupeHDRPartialGenericMarker DupeHDRPartialMode = "generic_marker"
+	// DupeHDRPartialExplicitTitle permits explicit title-derived formats to
+	// participate in comparison while retaining partial provenance.
+	DupeHDRPartialExplicitTitle DupeHDRPartialMode = "explicit_title"
+)
+
+// DupeHDRCompatibilityMode identifies directional HDR compatibility handling.
+type DupeHDRCompatibilityMode string
+
+const (
+	DupeHDRCompatibilityNone        DupeHDRCompatibilityMode = ""
+	DupeHDRCompatibilityDirectional DupeHDRCompatibilityMode = "directional"
 )
 
 // DupeCondition is one fact predicate inside a directional rule. Conditions
@@ -524,20 +558,32 @@ type DupeCondition struct {
 // DupeRule is one declarative directional comparison rule.
 type DupeRule struct {
 	ID                 string
+	EvidenceID         string
 	Conditions         []DupeCondition
 	Relation           string
 	ReasonCode         string
 	RequiresManualStep bool
+	// Priority overrides the default tracker-rule priority when non-zero.
+	Priority int
+	// OverridesGeneral allows an indeterminate rule whose known prerequisites
+	// match to shadow a lower-priority general coexistence finding.
+	OverridesGeneral bool
 }
 
 // SeasonPackPrecedenceRules returns opt-in directional season-pack rules.
 // Tracker profiles must select these explicitly; no global pack assumption is
 // applied by the evaluator.
-func SeasonPackPrecedenceRules() []DupeRule {
+func SeasonPackPrecedenceRules(evidenceIDs ...string) []DupeRule {
+	evidenceID := ""
+	if len(evidenceIDs) > 0 {
+		evidenceID = strings.TrimSpace(evidenceIDs[0])
+	}
 	return []DupeRule{
 		{
-			ID:       "existing_season_pack",
-			Relation: "existing_preferred",
+			ID:               "existing_season_pack",
+			EvidenceID:       evidenceID,
+			Relation:         "existing_preferred",
+			OverridesGeneral: true,
 			Conditions: []DupeCondition{
 				{
 					Dimension:        DupeDimensionSeason,
@@ -552,8 +598,10 @@ func SeasonPackPrecedenceRules() []DupeRule {
 			},
 		},
 		{
-			ID:       "proposed_season_pack",
-			Relation: "proposed_trumps",
+			ID:               "proposed_season_pack",
+			EvidenceID:       evidenceID,
+			Relation:         "proposed_trumps",
+			OverridesGeneral: true,
 			Conditions: []DupeCondition{
 				{
 					Dimension:        DupeDimensionSeason,
@@ -564,6 +612,52 @@ func SeasonPackPrecedenceRules() []DupeRule {
 					Dimension:       DupeDimensionPack,
 					TargetValues:    []string{"true"},
 					CandidateValues: []string{"false"},
+				},
+			},
+		},
+	}
+}
+
+// DirectionalMediaKindRules returns bidirectional precedence for two
+// canonical media kinds at the same known resolution.
+func DirectionalMediaKindRules(evidenceID string, preferred string, trumped string) []DupeRule {
+	preferred = strings.TrimSpace(preferred)
+	trumped = strings.TrimSpace(trumped)
+	baseID := strings.ReplaceAll(preferred+"_over_"+trumped, "-", "_")
+	return []DupeRule{
+		{
+			ID:               "proposed_" + baseID,
+			EvidenceID:       strings.TrimSpace(evidenceID),
+			Relation:         "proposed_trumps",
+			OverridesGeneral: true,
+			Conditions: []DupeCondition{
+				{
+					Dimension:       DupeDimensionMediaKind,
+					TargetValues:    []string{preferred},
+					CandidateValues: []string{trumped},
+				},
+				{
+					Dimension:        DupeDimensionResolution,
+					ValuesEqual:      true,
+					RequiresComplete: true,
+				},
+			},
+		},
+		{
+			ID:               "existing_" + baseID,
+			EvidenceID:       strings.TrimSpace(evidenceID),
+			Relation:         "existing_preferred",
+			OverridesGeneral: true,
+			Conditions: []DupeCondition{
+				{
+					Dimension:       DupeDimensionMediaKind,
+					TargetValues:    []string{trumped},
+					CandidateValues: []string{preferred},
+				},
+				{
+					Dimension:        DupeDimensionResolution,
+					ValuesEqual:      true,
+					RequiresComplete: true,
 				},
 			},
 		},

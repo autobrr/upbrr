@@ -67,11 +67,15 @@ func (b workflowDupeBuilder) Build(
 			continue
 		}
 		b.logger.Tracef(
-			"core: duplicate lane skipped tracker=%s readiness=%s preflight=%s dupe_ready=%t",
+			"core: duplicate lane skipped tracker=%s readiness=%s preflight=%s dupe_ready=%t policy_codes=%q failure_codes=%q recoveries=%q required_actions=%q",
 			projection.TrackerID,
 			projection.Readiness,
 			result.State,
 			projection.DupeReady,
+			blockingPolicyDecisionLogValues(projection.PolicyDecisions),
+			workflowFailureLogValues(result.Failures, func(failure api.OperationFailure) string { return string(failure.Code) }),
+			workflowFailureLogValues(result.Failures, func(failure api.OperationFailure) string { return string(failure.Recovery) }),
+			requiredActionLogValues(result.RequiredActions),
 		)
 	}
 	if len(eligibleProjections.Projections) == 0 {
@@ -179,6 +183,43 @@ func (b workflowDupeBuilder) Build(
 		Results:          results,
 		ExpiresAt:        freshUntil,
 	}, workflowDupePrivateEvidence{Summary: summary, Assessment: assessment}, nil
+}
+
+func blockingPolicyDecisionLogValues(decisions []api.TrackerPolicyDecision) string {
+	values := make([]string, 0, len(decisions))
+	for _, decision := range decisions {
+		if decision.Blocking {
+			values = appendUniqueLogValue(values, decision.Code)
+		}
+	}
+	slices.Sort(values)
+	return strings.Join(values, ",")
+}
+
+func workflowFailureLogValues(failures []api.WorkflowFailure, value func(api.OperationFailure) string) string {
+	values := make([]string, 0, len(failures))
+	for _, failure := range failures {
+		values = appendUniqueLogValue(values, value(failure.Failure))
+	}
+	slices.Sort(values)
+	return strings.Join(values, ",")
+}
+
+func requiredActionLogValues(actions []api.RequiredAction) string {
+	values := make([]string, 0, len(actions))
+	for _, action := range actions {
+		values = appendUniqueLogValue(values, string(action.Kind))
+	}
+	slices.Sort(values)
+	return strings.Join(values, ",")
+}
+
+func appendUniqueLogValue(values []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" || slices.Contains(values, value) {
+		return values
+	}
+	return append(values, value)
 }
 
 func hasWorkflowDupeExtendedLineage(result api.TrackerDupeAssessment) bool {

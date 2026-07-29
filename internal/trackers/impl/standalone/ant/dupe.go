@@ -174,7 +174,7 @@ func antDupeEntries(payload map[string]any, _ string) []api.DupeEntry {
 			}
 		}
 		entry.FlagsComplete = false
-		entry.HDR = dupe.NormalizeTrackerHDRFlags("ANT", entry.Flags, entry.FlagsPresent, false)
+		entry.HDR = dupe.NormalizeTrackerHDRFlags(entry.Flags, entry.FlagsPresent, false)
 		entries = append(entries, entry)
 	}
 	return entries

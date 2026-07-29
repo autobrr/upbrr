@@ -5,6 +5,7 @@ package ar
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -24,6 +25,18 @@ func adapterEvidence(result dupe.AdapterResult) ([]api.DupeEntry, []string, erro
 type arRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f arRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+type dupeCaptureLogger struct {
+	debug []string
+}
+
+func (l *dupeCaptureLogger) Tracef(string, ...any) {}
+func (l *dupeCaptureLogger) Infof(string, ...any)  {}
+func (l *dupeCaptureLogger) Warnf(string, ...any)  {}
+func (l *dupeCaptureLogger) Errorf(string, ...any) {}
+func (l *dupeCaptureLogger) Debugf(format string, args ...any) {
+	l.debug = append(l.debug, fmt.Sprintf(format, args...))
+}
 
 func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 	t.Parallel()
@@ -63,19 +76,20 @@ func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 				t.Fatal("expected cookie header to include session token")
 			}
 
-			body := `{"status":"success","response":{"results":[{"groupName":"Movie.Title.2023.1080p.BluRay-GRP","size":123456789,"fileCount":1,"groupId":44,"torrentId":55}]}}`
+			body := `{"status":"success","response":{"currentPage":1,"pages":1,"results":[{"groupName":"Movie.Title.2023.1080p.BluRay-GRP","size":123456789,"fileCount":1,"groupId":44,"torrentId":55}]}}`
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(strings.NewReader(body)),
-				Header:     make(http.Header),
+				Header:     http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
 			}, nil
 		}),
 	}
+	logger := &dupeCaptureLogger{}
 
 	handler := dupe.NewAdapter(New(), "AR",
 		config.Config{
 			MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(tmpDir, "ua.db")},
-		}, client, api.NopLogger{})
+		}, client, logger)
 
 	meta := api.DuplicateSubject{
 		Release: api.ReleaseInfo{Title: "Movie Title", Year: 2023},
@@ -83,7 +97,8 @@ func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 			DuplicateCriteria: api.TrackerDuplicateCriteria{Name: "Exact Projected Query"},
 		},
 	}
-	entries, notes, err := adapterEvidence(handler.Search(context.Background(), meta))
+	result := handler.Search(context.Background(), meta)
+	entries, notes, err := adapterEvidence(result)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -115,12 +130,50 @@ func TestARHandlerSearchParsesResultsWithCookieFile(t *testing.T) {
 	if entry.Download != "https://alpharatio.cc/torrents.php?action=download&id=55" {
 		t.Fatalf("unexpected download %q", entry.Download)
 	}
+	search := result.SearchEvidence()
+	if !search.Complete || search.Pages != 1 || search.Scope != "work_identity" || len(search.Warnings) != 0 {
+		t.Fatalf("unexpected search evidence: %#v", search)
+	}
+	logs := strings.Join(logger.debug, "\n")
+	if !strings.Contains(logs, `AR search request method=GET action=browse searchstr="Exact Projected Query"`) {
+		t.Fatalf("missing safe AR request diagnostics: %q", logs)
+	}
+	if !strings.Contains(
+		logs,
+		`AR search response status_code=200 content_type="application/json" api_status=success current_page=1 pages=1 raw_results=1 accepted_results=1 complete=true decision=completed`,
+	) {
+		t.Fatalf("missing safe AR response diagnostics: %q", logs)
+	}
 }
 
-func TestARSearchQueryDirectFallbackIncludesYear(t *testing.T) {
+func TestARSearchEvidenceTreatsEmptyResultSetAsComplete(t *testing.T) {
 	t.Parallel()
 
-	if got := arSearchQuery(api.DuplicateSubject{Release: api.ReleaseInfo{Title: "Movie Title", Year: 2023}}); got != "Movie Title 2023" {
+	search := arSearchEvidence(0, 0, 0)
+	if !search.Complete || search.Pages != 1 || search.Scope != "work_identity" || len(search.Warnings) != 0 {
+		t.Fatalf("unexpected empty search evidence: %#v", search)
+	}
+}
+
+func TestARSearchEvidenceRequiresReviewForAdditionalPages(t *testing.T) {
+	t.Parallel()
+
+	search := arSearchEvidence(1, 2, 2)
+	if search.Complete || search.Pages != 1 || search.Scope != "work_identity" || len(search.Warnings) != 1 {
+		t.Fatalf("unexpected paginated search evidence: %#v", search)
+	}
+}
+
+func TestARSearchQueryDirectFallbackPrefersProviderTitle(t *testing.T) {
+	t.Parallel()
+
+	got := arSearchQuery(api.DuplicateSubject{
+		Release: api.ReleaseInfo{Title: "EXAMPLE DISC EDITION", Year: 2026},
+		ProviderMetadata: api.SourceScopedMetadata{
+			TMDB: &api.TMDBMetadata{Title: "Example Release", Year: 2026},
+		},
+	})
+	if got != "Example Release 2026" {
 		t.Fatalf("fallback query = %q", got)
 	}
 }

@@ -4,6 +4,7 @@
 package dupe
 
 import (
+	"slices"
 	"testing"
 
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
@@ -36,8 +37,8 @@ func TestEvaluateRetainsDistinctCandidateRelations(t *testing.T) {
 		},
 	}
 	evaluation := Evaluate(target, candidates, trackerspkg.DupePolicy{
-		ID:               "example/duplicate/v1",
-		RequiredEvidence: trackerspkg.DupeEvidenceRequirements{HDR: true},
+		ID:             "example/duplicate/v2",
+		SlotDimensions: []trackerspkg.DupeDimension{trackerspkg.DupeDimensionHDR},
 	}, SearchEvidence{Complete: true, Pages: 1})
 
 	if len(evaluation.Candidates) != 3 {
@@ -59,8 +60,9 @@ func TestEvaluateANTGenericHDRIsInsufficientForHDR10Plus(t *testing.T) {
 	target := api.TrackerDuplicateTarget{HDR: testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10Plus)}
 	candidate := TrackerCandidate{HDR: testHDR(api.HDREvidencePartial, api.HDRFormatHDR10)}
 	evaluation := Evaluate(target, []TrackerCandidate{candidate}, trackerspkg.DupePolicy{
-		ID:               "ant/duplicate/v1",
-		RequiredEvidence: trackerspkg.DupeEvidenceRequirements{HDR: true},
+		ID:             "ant/duplicate/v2",
+		SlotDimensions: []trackerspkg.DupeDimension{trackerspkg.DupeDimensionHDR},
+		HDRPartialMode: trackerspkg.DupeHDRPartialGenericMarker,
 	}, SearchEvidence{Complete: true})
 
 	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationInsufficientEvidence {
@@ -75,8 +77,9 @@ func TestEvaluateANTPartialGenericHDRDoesNotConfirmSameSlot(t *testing.T) {
 		api.TrackerDuplicateTarget{HDR: testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10)},
 		[]TrackerCandidate{{HDR: testHDR(api.HDREvidencePartial, api.HDRFormatHDR10)}},
 		trackerspkg.DupePolicy{
-			ID:               "ant/duplicate/v1",
-			RequiredEvidence: trackerspkg.DupeEvidenceRequirements{HDR: true},
+			ID:             "ant/duplicate/v2",
+			SlotDimensions: []trackerspkg.DupeDimension{trackerspkg.DupeDimensionHDR},
+			HDRPartialMode: trackerspkg.DupeHDRPartialGenericMarker,
 		},
 		SearchEvidence{Complete: true},
 	)
@@ -89,9 +92,9 @@ func TestEvaluateNBLUsesCoarseSDRHDRDVSlots(t *testing.T) {
 	t.Parallel()
 
 	policy := trackerspkg.DupePolicy{
-		ID:               "nbl/duplicate/v1",
-		RequiredEvidence: trackerspkg.DupeEvidenceRequirements{HDR: true},
-		HDRSlotMode:      trackerspkg.DupeHDRSlotModeGeneric,
+		ID:             "nbl/duplicate/v2",
+		SlotDimensions: []trackerspkg.DupeDimension{trackerspkg.DupeDimensionHDR},
+		HDRSlotMode:    trackerspkg.DupeHDRSlotModeGeneric,
 	}
 	tests := []struct {
 		name      string
@@ -151,8 +154,9 @@ func TestEvaluateMTVHDRCompatibilityIsDirectional(t *testing.T) {
 	t.Parallel()
 
 	policy := trackerspkg.DupePolicy{
-		ID:               "mtv/duplicate/v1",
-		RequiredEvidence: trackerspkg.DupeEvidenceRequirements{HDR: true},
+		ID:                   "mtv/duplicate/v2",
+		SlotDimensions:       []trackerspkg.DupeDimension{trackerspkg.DupeDimensionHDR},
+		HDRCompatibilityMode: trackerspkg.DupeHDRCompatibilityDirectional,
 	}
 	hdr10Candidate := TrackerCandidate{HDR: testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10)}
 
@@ -183,8 +187,8 @@ func TestEvaluateRequiredPartialHDRFailsClosedOutsideProvenTitlePolicy(t *testin
 		api.TrackerDuplicateTarget{HDR: testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10)},
 		[]TrackerCandidate{{HDR: testHDR(api.HDREvidencePartial, api.HDRFormatHDR10)}},
 		trackerspkg.DupePolicy{
-			ID:               "bhd/duplicate/v1",
-			RequiredEvidence: trackerspkg.DupeEvidenceRequirements{HDR: true},
+			ID:             "bhd/duplicate/v2",
+			SlotDimensions: []trackerspkg.DupeDimension{trackerspkg.DupeDimensionHDR},
 		},
 		SearchEvidence{Complete: true},
 	)
@@ -200,8 +204,9 @@ func TestEvaluateLUMEDolbyVisionProfileEvidence(t *testing.T) {
 	targetHDR := testHDR(api.HDREvidenceComplete, api.HDRFormatDolbyVision)
 	targetHDR.DolbyVisionProfile = "5"
 	policy := trackerspkg.DupePolicy{
-		ID:               "lume/duplicate/v1",
-		RequiredEvidence: trackerspkg.DupeEvidenceRequirements{HDR: true},
+		ID:                        "lume/duplicate/v2",
+		SlotDimensions:            []trackerspkg.DupeDimension{trackerspkg.DupeDimensionHDR},
+		RequireDolbyVisionProfile: true,
 	}
 
 	evaluation := Evaluate(
@@ -238,11 +243,7 @@ func TestEvaluateCriticalEvidenceAndStructuralSlotsPrecedeDirectionalHDR(t *test
 		Status:          api.HDREvidenceComplete,
 	}
 	policy := trackerspkg.DupePolicy{
-		ID: "lume/duplicate/v1",
-		RequiredEvidence: trackerspkg.DupeEvidenceRequirements{
-			HDR:      true,
-			Provider: true,
-		},
+		ID: "lume/duplicate/v2",
 		SlotDimensions: []trackerspkg.DupeDimension{
 			trackerspkg.DupeDimensionProvider,
 			trackerspkg.DupeDimensionHDR,
@@ -261,6 +262,7 @@ func TestEvaluateCriticalEvidenceAndStructuralSlotsPrecedeDirectionalHDR(t *test
 	}
 
 	candidate.Provider = ""
+	candidate.HDR = targetHDR
 	evaluation = Evaluate(target, []TrackerCandidate{candidate}, policy, SearchEvidence{Complete: true})
 	if got := evaluation.Candidates[0]; got.Relation != api.DupeRelationInsufficientEvidence ||
 		got.Reasons[0].Code != "candidate_provider_missing" {
@@ -268,7 +270,7 @@ func TestEvaluateCriticalEvidenceAndStructuralSlotsPrecedeDirectionalHDR(t *test
 	}
 }
 
-func TestEvaluateMTVMissingFilesPrecedesDirectionalHDR(t *testing.T) {
+func TestEvaluateMTVMissingResolutionPrecedesDirectionalHDR(t *testing.T) {
 	t.Parallel()
 
 	targetHDR := api.HDRFacts{
@@ -278,17 +280,21 @@ func TestEvaluateMTVMissingFilesPrecedesDirectionalHDR(t *testing.T) {
 		Status:          api.HDREvidenceComplete,
 	}
 	evaluation := Evaluate(
-		api.TrackerDuplicateTarget{FileNames: []string{"Example.Release.2026.mkv"}, HDR: targetHDR},
-		[]TrackerCandidate{{HDR: testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10)}},
+		api.TrackerDuplicateTarget{
+			FileNames:  []string{"Example.Release.2026.mkv"},
+			Resolution: "1080p",
+			HDR:        targetHDR,
+		},
+		[]TrackerCandidate{{HDR: targetHDR}},
 		trackerspkg.DupePolicy{
-			ID:               "mtv/duplicate/v1",
-			RequiredEvidence: trackerspkg.DupeEvidenceRequirements{HDR: true, Files: true},
+			ID:             "mtv/duplicate/v2",
+			SlotDimensions: []trackerspkg.DupeDimension{trackerspkg.DupeDimensionResolution, trackerspkg.DupeDimensionHDR},
 		},
 		SearchEvidence{Complete: true},
 	)
 	if got := evaluation.Candidates[0]; got.Relation != api.DupeRelationInsufficientEvidence ||
-		got.Reasons[0].Code != "candidate_files_missing" {
-		t.Fatalf("missing MTV files relation = %#v", got)
+		got.Reasons[0].Code != "candidate_resolution_missing" {
+		t.Fatalf("missing MTV resolution relation = %#v", got)
 	}
 }
 
@@ -419,7 +425,7 @@ func TestEvaluateEpisodeIdentitySeparatesUnrelatedCandidates(t *testing.T) {
 			target:    api.TrackerDuplicateTarget{Season: 1, Episode: 2},
 			candidate: TrackerCandidate{},
 			want:      api.DupeRelationInsufficientEvidence,
-			reason:    "candidate_season_missing",
+			reason:    "candidate_content_scope_missing",
 		},
 		{
 			name:      "different daily episode",
@@ -496,7 +502,7 @@ func TestEvaluateRequiredTargetEvidenceFailsClosed(t *testing.T) {
 	evaluation := Evaluate(
 		api.TrackerDuplicateTarget{},
 		[]TrackerCandidate{{Provider: "Example Provider"}},
-		trackerspkg.DupePolicy{RequiredEvidence: trackerspkg.DupeEvidenceRequirements{Provider: true}},
+		trackerspkg.DupePolicy{SlotDimensions: []trackerspkg.DupeDimension{trackerspkg.DupeDimensionProvider}},
 		SearchEvidence{Complete: true},
 	)
 	if got := evaluation.Candidates[0]; got.Relation != api.DupeRelationInsufficientEvidence ||
@@ -509,8 +515,9 @@ func TestEvaluateCompoundDirectionalRule(t *testing.T) {
 	t.Parallel()
 
 	policy := trackerspkg.DupePolicy{PrecedenceRules: []trackerspkg.DupeRule{{
-		ID:       "proposed_webdl_over_webrip",
-		Relation: "proposed_trumps",
+		ID:               "proposed_webdl_over_webrip",
+		Relation:         "proposed_trumps",
+		OverridesGeneral: true,
 		Conditions: []trackerspkg.DupeCondition{
 			{
 				Dimension:       trackerspkg.DupeDimensionType,
@@ -547,21 +554,20 @@ func TestEvaluateCompoundDirectionalRule(t *testing.T) {
 	evaluation = Evaluate(target, []TrackerCandidate{{
 		Type: "WEBRip", Resolution: "1080p",
 	}}, policy, SearchEvidence{Complete: true})
-	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationSameSlot {
+	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationInsufficientEvidence {
 		t.Fatalf("incomplete compound relation = %q", got)
 	}
 }
 
-func TestNormalizeCandidateUsesTitleHDRForMTVOnly(t *testing.T) {
+func TestNormalizeCandidateUsesExplicitTitleHDRAsPartialEvidence(t *testing.T) {
 	t.Parallel()
 
 	entry := api.DupeEntry{Name: "Example.Release.2026.DV.HDR10+.2160p-GRP"}
-	if candidate := NormalizeCandidate(entry, "ANT"); candidate.HDR.Status != api.HDREvidenceMissing {
-		t.Fatalf("ANT title became HDR evidence: %#v", candidate.HDR)
-	}
-	candidate := NormalizeCandidate(entry, "MTV")
-	if candidate.HDR.Origin != api.HDREvidenceTrackerTitle || candidate.HDR.Status != api.HDREvidencePartial {
-		t.Fatalf("MTV title HDR evidence = %#v", candidate.HDR)
+	for _, tracker := range []string{"ANT", "MTV"} {
+		candidate := NormalizeCandidate(entry, tracker)
+		if candidate.HDR.Origin != api.HDREvidenceTrackerTitle || candidate.HDR.Status != api.HDREvidencePartial {
+			t.Fatalf("%s title HDR evidence = %#v", tracker, candidate.HDR)
+		}
 	}
 }
 
@@ -575,8 +581,8 @@ func TestNormalizeCandidateUsesTitleCoordinatesForAllTrackers(t *testing.T) {
 	if candidate.Season != 1 || candidate.Episode != 2 || candidate.Date != "2026-07-27" {
 		t.Fatalf("candidate coordinates = %#v", candidate)
 	}
-	if candidate.HDR.Status != api.HDREvidenceMissing || candidate.Resolution != "" {
-		t.Fatalf("non-MTV title became media evidence: %#v", candidate)
+	if candidate.HDR.Status != api.HDREvidencePartial || candidate.Resolution != "" {
+		t.Fatalf("title media evidence = %#v", candidate)
 	}
 
 	candidate = NormalizeCandidate(
@@ -585,6 +591,413 @@ func TestNormalizeCandidateUsesTitleCoordinatesForAllTrackers(t *testing.T) {
 	)
 	if candidate.Episode != 2 {
 		t.Fatalf("candidate episode = %d", candidate.Episode)
+	}
+}
+
+func TestNormalizeCandidatePrefersSpecificTitleMediaKindOverGenericEncodeType(t *testing.T) {
+	t.Parallel()
+
+	candidate := NormalizeCandidate(api.DupeEntry{
+		Name: "Example.Release.2026.1080p.AMZN.WEBRip.DD+5.1.x265-GRP",
+		Type: "x265 Encode",
+		Res:  "1080p",
+	}, "OE")
+	facts := normalizeCandidateFacts(candidate)
+	if facts.MediaKind != mediaKindWEBRip || facts.MediaClass != mediaClassEncode || facts.SourceFamily != sourceFamilyWEB {
+		t.Fatalf("generic encode overrode title media facts: candidate=%#v facts=%#v", candidate, facts)
+	}
+}
+
+func TestNormalizeWebDLAndWEBRipKeepDistinctMediaClasses(t *testing.T) {
+	t.Parallel()
+
+	webDL := normalizeCandidateFacts(TrackerCandidate{Type: "WEB-DL"})
+	webRip := normalizeCandidateFacts(TrackerCandidate{Type: "WEBRip"})
+	if webDL.MediaKind != mediaKindWEBDL || webDL.MediaClass != mediaClassWEB || webDL.SourceFamily != sourceFamilyWEB {
+		t.Fatalf("WEB-DL facts = %#v", webDL)
+	}
+	if webRip.MediaKind != mediaKindWEBRip || webRip.MediaClass != mediaClassEncode || webRip.SourceFamily != sourceFamilyWEB {
+		t.Fatalf("WEBRip facts = %#v", webRip)
+	}
+
+	evaluation := Evaluate(
+		api.TrackerDuplicateTarget{Type: "WEB-DL", Resolution: "1080p"},
+		[]TrackerCandidate{{Type: "WEBRip", Resolution: "1080p"}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{Complete: true},
+	).Candidates[0]
+	if evaluation.Relation != api.DupeRelationCoexists || evaluation.Reasons[0].Code != "media_class_differs" {
+		t.Fatalf("WEB-DL versus WEBRip evaluation = %#v", evaluation)
+	}
+}
+
+func TestNormalizeBareSceneWEBAsWebDL(t *testing.T) {
+	t.Parallel()
+
+	candidate := NormalizeCandidate(
+		api.DupeEntry{Name: "Example.Release.2026.1080p.WEB.H264-GRP"},
+		"AR",
+	)
+	facts := normalizeCandidateFacts(candidate)
+	if facts.MediaKind != mediaKindWEBDL || facts.MediaClass != mediaClassWEB || facts.SourceFamily != sourceFamilyWEB {
+		t.Fatalf("bare WEB facts = %#v", facts)
+	}
+
+	titleWord := NormalizeCandidate(
+		api.DupeEntry{Name: "Example.Web.2026.1080p.BluRay.x264-GRP"},
+		"AR",
+	)
+	titleFacts := normalizeCandidateFacts(titleWord)
+	if titleFacts.MediaKind == mediaKindWEBDL || titleFacts.SourceFamily == sourceFamilyWEB {
+		t.Fatalf("title word WEB was treated as source marker: %#v", titleFacts)
+	}
+}
+
+func TestEvaluateGeneralStructurePrecedesIrrelevantMissingHDR(t *testing.T) {
+	t.Parallel()
+
+	policy := trackerspkg.DupePolicy{
+		ID:             "example/duplicate/v2",
+		SlotDimensions: []trackerspkg.DupeDimension{trackerspkg.DupeDimensionResolution, trackerspkg.DupeDimensionHDR},
+	}
+	target := api.TrackerDuplicateTarget{
+		Type:       "WEB-DL",
+		Resolution: "1080p",
+		HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10),
+	}
+	for _, test := range []struct {
+		name      string
+		candidate TrackerCandidate
+		reason    string
+	}{
+		{
+			name: "lower resolution web",
+			candidate: TrackerCandidate{
+				Type:       "WEB-DL",
+				Resolution: "720p",
+				HDR:        api.HDRFacts{Origin: api.HDREvidenceUnknown, Status: api.HDREvidenceMissing},
+			},
+			reason: "resolution_differs",
+		},
+		{
+			name: "sd full disc",
+			candidate: TrackerCandidate{
+				Type:       "DISC",
+				Source:     "DVD",
+				Resolution: "480i",
+				HDR:        api.HDRFacts{Origin: api.HDREvidenceUnknown, Status: api.HDREvidenceMissing},
+			},
+			reason: "media_class_differs",
+		},
+		{
+			name: "same resolution remux",
+			candidate: TrackerCandidate{
+				Type:       "REMUX",
+				Source:     "BluRay",
+				Resolution: "1080p",
+				HDR:        api.HDRFacts{Origin: api.HDREvidenceUnknown, Status: api.HDREvidenceMissing},
+			},
+			reason: "media_class_differs",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := Evaluate(target, []TrackerCandidate{test.candidate}, policy, SearchEvidence{Complete: true}).Candidates[0]
+			if got.Relation != api.DupeRelationCoexists || got.Reasons[0].Code != test.reason {
+				t.Fatalf("general structural relation = %#v", got)
+			}
+		})
+	}
+}
+
+func TestEvaluateCompatibilityFallbackRunsOnlyForUnresolvedSameSlot(t *testing.T) {
+	t.Parallel()
+
+	policy := trackerspkg.DupePolicy{
+		ID: "ras/duplicate-compat/v1",
+		SameSlotFallback: &trackerspkg.DupeRule{
+			ID:                 "policy_evidence_unavailable",
+			Relation:           "manual_review",
+			ReasonCode:         "tracker_policy_not_evidence_backed",
+			RequiresManualStep: true,
+		},
+	}
+	target := api.TrackerDuplicateTarget{Type: "WEB-DL", Resolution: "1080p"}
+	different := Evaluate(
+		target,
+		[]TrackerCandidate{{Type: "WEB-DL", Resolution: "720p"}},
+		policy,
+		SearchEvidence{Complete: true},
+	).Candidates[0]
+	if different.Relation != api.DupeRelationCoexists || different.Reasons[0].Code != "resolution_differs" {
+		t.Fatalf("different compatibility slot = %#v", different)
+	}
+	same := Evaluate(
+		target,
+		[]TrackerCandidate{{Type: "WEB-DL", Resolution: "1080p"}},
+		policy,
+		SearchEvidence{Complete: true},
+	).Candidates[0]
+	if same.Relation != api.DupeRelationManualReview || same.Reasons[0].Code != "tracker_policy_not_evidence_backed" {
+		t.Fatalf("same compatibility slot = %#v", same)
+	}
+}
+
+func TestEvaluateOEPolicyDoesNotInventHDRRequirement(t *testing.T) {
+	t.Parallel()
+
+	got := Evaluate(
+		api.TrackerDuplicateTarget{
+			Type:       "ENCODE",
+			Resolution: "1080p",
+			HDR:        testHDR(api.HDREvidenceComplete, api.HDRFormatHDR10),
+		},
+		[]TrackerCandidate{{
+			Type:       "ENCODE",
+			Resolution: "1080p",
+			HDR:        api.HDRFacts{Origin: api.HDREvidenceUnknown, Status: api.HDREvidenceMissing},
+		}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{Complete: true},
+	).Candidates[0]
+	if got.Relation != api.DupeRelationSameSlot || got.Reasons[0].Code == "candidate_hdr_missing" {
+		t.Fatalf("OE-like relation = %#v", got)
+	}
+}
+
+func TestEvaluateTrackerRuleMissingEvidenceOnlyWhenViable(t *testing.T) {
+	t.Parallel()
+
+	rule := trackerspkg.DupeRule{
+		ID:               "conditional_cross_resolution",
+		EvidenceID:       "synthetic-rule",
+		Relation:         "existing_preferred",
+		OverridesGeneral: true,
+		Conditions: []trackerspkg.DupeCondition{
+			{
+				Dimension:       trackerspkg.DupeDimensionResolution,
+				TargetValues:    []string{"1080p"},
+				CandidateValues: []string{"720p"},
+			},
+			{
+				Dimension:        trackerspkg.DupeDimensionProvider,
+				ValuesEqual:      true,
+				RequiresComplete: true,
+			},
+		},
+	}
+	policy := trackerspkg.DupePolicy{ID: "example/duplicate/v2", PrecedenceRules: []trackerspkg.DupeRule{rule}}
+	target := api.TrackerDuplicateTarget{Resolution: "1080p", Provider: "Example"}
+	candidate := TrackerCandidate{Resolution: "720p"}
+	got := Evaluate(target, []TrackerCandidate{candidate}, policy, SearchEvidence{Complete: true}).Candidates[0]
+	if got.Relation != api.DupeRelationInsufficientEvidence || got.WinningRule != rule.ID {
+		t.Fatalf("viable missing rule = %#v", got)
+	}
+
+	rule.Conditions[0].TargetValues = []string{"2160p"}
+	policy.PrecedenceRules = []trackerspkg.DupeRule{rule}
+	got = Evaluate(target, []TrackerCandidate{candidate}, policy, SearchEvidence{Complete: true}).Candidates[0]
+	if got.Relation != api.DupeRelationCoexists || got.Reasons[0].Code != "resolution_differs" {
+		t.Fatalf("disproved missing rule = %#v", got)
+	}
+}
+
+func TestEvaluateRuleOrderDoesNotChangeResolution(t *testing.T) {
+	t.Parallel()
+
+	rules := []trackerspkg.DupeRule{
+		{
+			ID:         "existing_webdl",
+			EvidenceID: "synthetic-rules",
+			Relation:   "existing_preferred",
+			Conditions: []trackerspkg.DupeCondition{{
+				Dimension:       trackerspkg.DupeDimensionType,
+				TargetValues:    []string{"WEBRip"},
+				CandidateValues: []string{"WEB-DL"},
+			}},
+		},
+		{
+			ID:         "unrelated_remux",
+			EvidenceID: "synthetic-rules",
+			Relation:   "proposed_trumps",
+			Conditions: []trackerspkg.DupeCondition{{
+				Dimension:       trackerspkg.DupeDimensionType,
+				TargetValues:    []string{"REMUX"},
+				CandidateValues: []string{"ENCODE"},
+			}},
+		},
+	}
+	target := api.TrackerDuplicateTarget{Type: "WEBRip", Resolution: "1080p"}
+	candidate := TrackerCandidate{Type: "WEB-DL", Resolution: "1080p"}
+	first := Evaluate(
+		target,
+		[]TrackerCandidate{candidate},
+		trackerspkg.DupePolicy{ID: "example/duplicate/v2", PrecedenceRules: rules},
+		SearchEvidence{Complete: true},
+	).Candidates[0]
+	slices.Reverse(rules)
+	second := Evaluate(
+		target,
+		[]TrackerCandidate{candidate},
+		trackerspkg.DupePolicy{ID: "example/duplicate/v2", PrecedenceRules: rules},
+		SearchEvidence{Complete: true},
+	).Candidates[0]
+	if first.Relation != api.DupeRelationExistingPreferred || first.Relation != second.Relation ||
+		first.WinningRule != second.WinningRule {
+		t.Fatalf("order-dependent results: first=%#v second=%#v", first, second)
+	}
+}
+
+func TestEvaluateEqualSpecificityConflictRequiresManualReview(t *testing.T) {
+	t.Parallel()
+
+	condition := trackerspkg.DupeCondition{
+		Dimension:       trackerspkg.DupeDimensionType,
+		TargetValues:    []string{"WEB-DL"},
+		CandidateValues: []string{"WEBRip"},
+	}
+	policy := trackerspkg.DupePolicy{
+		ID: "example/duplicate/v2",
+		PrecedenceRules: []trackerspkg.DupeRule{
+			{
+				ID:         "existing_preferred",
+				EvidenceID: "synthetic-rules",
+				Relation:   "existing_preferred",
+				Conditions: []trackerspkg.DupeCondition{condition},
+			},
+			{
+				ID:         "proposed_preferred",
+				EvidenceID: "synthetic-rules",
+				Relation:   "proposed_trumps",
+				Conditions: []trackerspkg.DupeCondition{condition},
+			},
+		},
+	}
+	got := Evaluate(
+		api.TrackerDuplicateTarget{Type: "WEB-DL"},
+		[]TrackerCandidate{{Type: "WEBRip"}},
+		policy,
+		SearchEvidence{Complete: true},
+	).Candidates[0]
+	if got.Relation != api.DupeRelationManualReview || got.Reasons[0].Code != "policy_conflict" ||
+		len(got.MatchedRules) < 2 {
+		t.Fatalf("conflicting rules = %#v", got)
+	}
+}
+
+func TestEvaluateSameTitleDoesNotOverrideStructuredFileMismatch(t *testing.T) {
+	t.Parallel()
+
+	got := Evaluate(
+		api.TrackerDuplicateTarget{
+			Names:     []string{"Example.Release.2026.1080p-GRP"},
+			FileNames: []string{"Example.Release.2026.mkv"},
+		},
+		[]TrackerCandidate{{
+			Name:      "Example.Release.2026.1080p-GRP",
+			Files:     []string{"Different.File.mkv"},
+			FileCount: 1,
+		}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{Complete: true},
+	).Candidates[0]
+	if got.Relation == api.DupeRelationExactDuplicate {
+		t.Fatalf("file mismatch classified exact: %#v", got)
+	}
+}
+
+func TestEvaluatePartialCandidateFileSetIsNotExact(t *testing.T) {
+	t.Parallel()
+
+	got := Evaluate(
+		api.TrackerDuplicateTarget{FileNames: []string{"Example.Release.2026.mkv"}},
+		[]TrackerCandidate{{
+			Files:     []string{"Example.Release.2026.mkv"},
+			FileCount: 2,
+		}},
+		trackerspkg.DupePolicy{},
+		SearchEvidence{Complete: true},
+	).Candidates[0]
+	if got.Relation == api.DupeRelationExactDuplicate {
+		t.Fatalf("partial file set classified exact: %#v", got)
+	}
+}
+
+func TestNormalizeFactsPreservesTitleProvenanceAndContradictions(t *testing.T) {
+	t.Parallel()
+
+	titleOnly := normalizeCandidateFacts(TrackerCandidate{Name: "Example.Release.2026.2160p-GRP"})
+	if titleOnly.Resolution.Status != FactPartial || titleOnly.Resolution.Origin != FactOriginTrackerTitle {
+		t.Fatalf("title-only resolution = %#v", titleOnly.Resolution)
+	}
+	contradictory := normalizeCandidateFacts(TrackerCandidate{
+		Name:       "Example.Release.2026.2160p-GRP",
+		Resolution: "1080p",
+	})
+	if contradictory.Resolution.Status != FactContradictory ||
+		!slices.Contains(contradictory.Resolution.Contradictions, "2160p") {
+		t.Fatalf("contradictory resolution = %#v", contradictory.Resolution)
+	}
+}
+
+func TestNormalizeContentScopeRanges(t *testing.T) {
+	t.Parallel()
+
+	target := normalizeTargetFacts(api.TrackerDuplicateTarget{Names: []string{"Example.Show.S01E01-E03.1080p-GRP"}})
+	overlap := normalizeCandidateFacts(TrackerCandidate{Name: "Example.Show.S01E03.1080p-GRP"})
+	disjoint := normalizeCandidateFacts(TrackerCandidate{Name: "Example.Show.S01E04-E06.1080p-GRP"})
+	if got := compareContentScopes(target.Content, overlap.Content); got != contentOverlaps {
+		t.Fatalf("overlap = %q", got)
+	}
+	if got := compareContentScopes(target.Content, disjoint.Content); got != contentDefinitelyDisjoint {
+		t.Fatalf("disjoint = %q", got)
+	}
+
+	for _, test := range []struct {
+		name      string
+		target    contentScope
+		candidate contentScope
+		want      contentOverlap
+	}{
+		{
+			name:      "different seasons",
+			target:    normalizeTargetFacts(api.TrackerDuplicateTarget{Season: 1, Episode: 1}).Content,
+			candidate: normalizeCandidateFacts(TrackerCandidate{Season: 2, Episode: 1}).Content,
+			want:      contentDefinitelyDisjoint,
+		},
+		{
+			name:      "season pack contains episode",
+			target:    normalizeTargetFacts(api.TrackerDuplicateTarget{Season: 1, Pack: true}).Content,
+			candidate: normalizeCandidateFacts(TrackerCandidate{Season: 1, Episode: 2}).Content,
+			want:      contentOverlaps,
+		},
+		{
+			name:      "complete series contains season",
+			target:    normalizeTargetFacts(api.TrackerDuplicateTarget{Names: []string{"Example.Show.Complete.Series-GRP"}, Pack: true}).Content,
+			candidate: normalizeCandidateFacts(TrackerCandidate{Season: 2, Pack: true}).Content,
+			want:      contentOverlaps,
+		},
+		{
+			name:      "unknown pack range",
+			target:    normalizeTargetFacts(api.TrackerDuplicateTarget{Pack: true}).Content,
+			candidate: normalizeCandidateFacts(TrackerCandidate{Season: 2, Episode: 1}).Content,
+			want:      contentUnknown,
+		},
+		{
+			name:      "special versus regular season",
+			target:    normalizeTargetFacts(api.TrackerDuplicateTarget{Season: 0, Episode: 1}).Content,
+			candidate: normalizeCandidateFacts(TrackerCandidate{Season: 1, Episode: 1}).Content,
+			want:      contentDefinitelyDisjoint,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := compareContentScopes(test.target, test.candidate); got != test.want {
+				t.Fatalf("content overlap = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

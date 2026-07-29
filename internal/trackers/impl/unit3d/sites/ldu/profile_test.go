@@ -21,3 +21,21 @@ func TestBuildNameUsesFirstParseableLanguages(t *testing.T) {
 		t.Fatalf("name = %q", got)
 	}
 }
+
+func TestBuildNameDoesNotAddLanguageMarkersToDiscs(t *testing.T) {
+	t.Parallel()
+
+	meta := api.UploadSubject{
+		DiscType:          "BDMV",
+		ReleaseName:       "Example Release 2026 1080p BluRay AVC-GRP",
+		AudioLanguages:    []string{"Japanese"},
+		SubtitleLanguages: []string{"English"},
+		ProviderMetadata: api.SourceScopedMetadata{
+			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+		},
+	}
+	got := Profile().Site.BuildName(meta, config.TrackerConfig{})
+	if strings.Contains(got, "[JPN]") || strings.Contains(got, "[Subs ENG]") {
+		t.Fatalf("disc name added language markers: %q", got)
+	}
+}

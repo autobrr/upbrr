@@ -5,9 +5,11 @@ package lume
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -15,6 +17,11 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 	name := strings.TrimSpace(meta.ReleaseName)
 	if name == "" {
 		name = strings.TrimSpace(meta.ReleaseNameNoTag)
+	}
+	name = strings.Join(strings.Fields(name), " ")
+	name = applyLumeTVDBDisambiguation(name, meta)
+	if !isLumeFullDisc(meta) {
+		name = removeLumeNameElement(name, meta.Edition)
 	}
 	if meta.HDRFacts.Status != "" && meta.HDRFacts.Status != api.HDREvidenceMissing {
 		name = replaceLumeHDR(name, meta.HDR, lumeHDR(meta.HDRFacts))
@@ -24,6 +31,98 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 		return strings.EqualFold(field, "Hybrid") || strings.EqualFold(field, "Hi10P")
 	})
 	return strings.Join(fields, " ")
+}
+
+func applyLumeTVDBDisambiguation(name string, meta api.UploadSubject) string {
+	if unit3d.Category(meta) != "TV" || meta.ProviderMetadata.TVDB == nil {
+		return name
+	}
+	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
+	title, alternateAndLocale, tail, ok := splitLumeTVName(name, meta, evidence)
+	if !ok {
+		return name
+	}
+	parts := []string{title, alternateAndLocale}
+	if evidence.IncludeYear && evidence.SeriesYear > 0 {
+		parts = append(parts, strconv.Itoa(evidence.SeriesYear))
+	}
+	parts = append(parts, tail)
+	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
+}
+
+func splitLumeTVName(name string, meta api.UploadSubject, evidence api.TVDBNameDisambiguation) (string, string, string, bool) {
+	title := strings.Join(strings.Fields(evidence.CanonicalName), " ")
+	if title == "" || len(name) < len(title) || !strings.EqualFold(name[:len(title)], title) ||
+		len(name) > len(title) && name[len(title)] != ' ' {
+		return "", "", "", false
+	}
+	remainder := strings.TrimSpace(name[len(title):])
+	remainder = trimLumeLeadingYear(remainder, evidence.SeriesYear)
+	tailStart := findLumeTVTailStart(remainder, meta)
+	if tailStart < 0 {
+		return "", "", "", false
+	}
+	return title, strings.TrimSpace(remainder[:tailStart]), strings.TrimSpace(remainder[tailStart:]), true
+}
+
+func trimLumeLeadingYear(value string, year int) string {
+	if year <= 0 {
+		return value
+	}
+	token := strconv.Itoa(year)
+	if value == token {
+		return ""
+	}
+	if strings.HasPrefix(value, token+" ") {
+		return strings.TrimSpace(value[len(token):])
+	}
+	return value
+}
+
+func findLumeTVTailStart(value string, meta api.UploadSubject) int {
+	candidates := []string{
+		strings.TrimSpace(meta.SeasonStr + meta.EpisodeStr),
+		meta.SeasonStr,
+		meta.DailyEpisodeDate,
+		unit3d.Resolution(meta),
+	}
+	best := -1
+	for _, candidate := range candidates {
+		if index := findLumeNameElement(value, candidate); index >= 0 && (best < 0 || index < best) {
+			best = index
+		}
+	}
+	return best
+}
+
+func removeLumeNameElement(name string, element string) string {
+	element = strings.Join(strings.Fields(element), " ")
+	index := findLumeLastNameElement(name, element)
+	if index < 0 {
+		return name
+	}
+	return strings.TrimSpace(name[:index] + " " + name[index+len(element):])
+}
+
+func isLumeFullDisc(meta api.UploadSubject) bool {
+	nameType := strings.TrimSpace(meta.Type)
+	return strings.EqualFold(nameType, "DISC") || nameType == "" && unit3d.IsDiscType(meta.DiscType)
+}
+
+func findLumeNameElement(value string, element string) int {
+	element = strings.Join(strings.Fields(element), " ")
+	if element == "" {
+		return -1
+	}
+	return strings.Index(" "+value+" ", " "+element+" ")
+}
+
+func findLumeLastNameElement(value string, element string) int {
+	element = strings.Join(strings.Fields(element), " ")
+	if element == "" {
+		return -1
+	}
+	return strings.LastIndex(" "+value+" ", " "+element+" ")
 }
 
 func replaceLumeHDR(name string, current string, replacement string) string {

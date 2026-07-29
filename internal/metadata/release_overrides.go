@@ -143,6 +143,7 @@ func applyReleaseNameOverrides(req api.ReleaseNameRequest, overrides api.Release
 	}
 	if overrides.EpisodeTitle != nil {
 		req.EpisodeTitle = strings.TrimSpace(*overrides.EpisodeTitle)
+		req.ManualEpisodeTitle = true
 	}
 	if overrides.ManualYear != nil {
 		req.ManualYear = *overrides.ManualYear

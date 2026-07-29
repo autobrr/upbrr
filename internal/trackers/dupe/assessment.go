@@ -264,7 +264,7 @@ func newAssessmentEntry(
 }
 
 func defaultVerdict(entry assessmentEntry) Verdict {
-	if entry.disposition == DispositionResolved && !entry.hasDupes && entry.match.MatchedReason != "in_client" {
+	if entry.disposition == DispositionResolved && !entry.hasDupes && strings.TrimSpace(entry.match.MatchedReason) == "" {
 		return VerdictClear
 	}
 	return VerdictBlocked

@@ -86,4 +86,22 @@ describe("WorkflowRequiredActions", () => {
     );
     expect(screen.queryByText("Action required")).not.toBeInTheDocument();
   });
+
+  it("routes tracker release-name input to duplicate review", () => {
+    const navigate = vi.fn();
+    render(
+      <WorkflowRequiredActions
+        continuation={continuation([
+          action({
+            kind: "provide_tracker_input",
+            prompt: "Confirm the tracker release name.",
+          }),
+        ])}
+        onNavigate={navigate}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Review tracker release name" }));
+    expect(navigate).toHaveBeenCalledWith("duplicates");
+  });
 });

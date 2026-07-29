@@ -11,28 +11,33 @@ import (
 // Profile returns AITHER's Unit3D site manifest.
 func Profile() unit3d.Profile {
 	return unit3d.Profile{
-		Name:        "AITHER",
-		BaseURL:     "https://aither.cc",
-		Rules:       Rules(),
-		AudioPolicy: AudioPolicy(),
+		Name:             "AITHER",
+		BaseURL:          "https://aither.cc",
+		Rules:            Rules(),
+		ValidationPolicy: ValidationPolicy(),
+		AudioPolicy:      AudioPolicy(),
 		Site: unit3d.SiteProfile{
 			BuildName:              buildName,
 			BuildNameVersion:       "v1",
 			ApplyAdditionalPayload: additionalPayload,
 		},
 		DupePolicy: &trackers.DupePolicy{
-			ID: "aither/duplicate/v1",
+			ID:         "aither/duplicate/v2",
+			EvidenceID: "aither-slots-trumping",
 			SearchScope: trackers.DupeSearchScope{
 				IncludeEpisodes:    true,
 				IncludeSeasonPacks: true,
 				MaxPages:           100,
 			},
-			RequiredEvidence: trackers.DupeEvidenceRequirements{HDR: true},
 			SlotDimensions: []trackers.DupeDimension{
 				trackers.DupeDimensionType,
 				trackers.DupeDimensionResolution,
 				trackers.DupeDimensionHDR,
 			},
+			PrecedenceRules: append(
+				trackers.SeasonPackPrecedenceRules("aither-slots-trumping"),
+				trackers.DirectionalMediaKindRules("aither-slots-trumping", "web_dl", "web_rip")...,
+			),
 			SizeVariancePercent: 20,
 		},
 		BannedPolicy: &trackers.BannedGroupPolicy{

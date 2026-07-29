@@ -49,7 +49,7 @@ type preparedUploadState struct {
 func uploadAt(ctx context.Context, req trackers.PreparationInput, baseURL string, httpClient *http.Client) (api.UploadSummary, error) {
 	req.Intent = trackers.PreparationIntentUpload
 	var nameFailure *trackers.PreparationFailure
-	req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, trackers.CanonicalReleaseNamePolicy())
+	req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, Profile().ReleaseNamePolicy)
 	if nameFailure != nil {
 		return api.UploadSummary{}, nameFailure
 	}

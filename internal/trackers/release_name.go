@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/autobrr/upbrr/internal/config"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -20,11 +21,44 @@ const (
 	releaseNamePolicySceneFirstV1 = "standalone/scene-first/v1"
 	releaseNamePolicyDecisionCode = "release_name_policy"
 	releaseNameInstructionCode    = "release_name_instruction"
+	releaseNameConfirmationCode   = "release_name_confirmation"
 )
 
 // NewReleaseNamePolicy binds a pure resolver to a stable versioned identifier.
 func NewReleaseNamePolicy(id string, resolver ReleaseNamePolicy) ReleaseNamePolicyBinding {
-	return ReleaseNamePolicyBinding{ID: strings.TrimSpace(id), Resolver: resolver}
+	return ReleaseNamePolicyBinding{
+		ID: strings.TrimSpace(id),
+		Elements: api.ReleaseNameElementPolicy{
+			Version: api.ReleaseNameElementPolicyVersionV1,
+		},
+		Resolver: resolver,
+	}
+}
+
+// WithReleaseNameElementPolicy binds a versioned shared element policy before
+// tracker-specific release-name formatting.
+func WithReleaseNameElementPolicy(
+	binding ReleaseNamePolicyBinding,
+	policy api.ReleaseNameElementPolicy,
+) ReleaseNamePolicyBinding {
+	binding.Elements = policy
+	return binding
+}
+
+// WithEpisodeTitleMode is the v1 binding seam for an evidenced tracker-local
+// episode-title exception.
+func WithEpisodeTitleMode(binding ReleaseNamePolicyBinding, mode api.EpisodeTitleMode) ReleaseNamePolicyBinding {
+	return WithReleaseNameElementPolicy(binding, api.ReleaseNameElementPolicy{
+		Version:          api.ReleaseNameElementPolicyVersionV1,
+		EpisodeTitleMode: mode,
+	})
+}
+
+// WithNonSceneReleaseNameConfirmation requires explicit review of automatic
+// non-scene names while allowing evidenced scene names unchanged.
+func WithNonSceneReleaseNameConfirmation(binding ReleaseNamePolicyBinding) ReleaseNamePolicyBinding {
+	binding.Confirmation = ReleaseNameConfirmationNonScene
+	return binding
 }
 
 // SubjectReleaseNamePolicy adapts a subject/config naming function to the
@@ -147,6 +181,7 @@ func releaseNamePolicySubject(input ReleaseNameInput) (api.UploadSubject, error)
 	subject.ReleaseNameNoTag = ""
 	subject.SceneName = ""
 	subject.Filename = ""
+	subject.GeneratedReleaseNames = api.GeneratedReleaseNameVariants{}
 	return subject, nil
 }
 
@@ -177,17 +212,37 @@ func validateReleaseNamePolicy(binding ReleaseNamePolicyBinding) error {
 	if binding.Resolver == nil {
 		return fmt.Errorf("release-name policy %q has no resolver", binding.ID)
 	}
+	if _, err := normalizedReleaseNameElementPolicy(binding.Elements); err != nil {
+		return fmt.Errorf("release-name policy %q element policy: %w", binding.ID, err)
+	}
+	switch binding.Confirmation {
+	case ReleaseNameConfirmationNone, ReleaseNameConfirmationNonScene:
+	default:
+		return fmt.Errorf("release-name policy %q has unsupported confirmation mode %q", binding.ID, binding.Confirmation)
+	}
 	return nil
+}
+
+func releaseNameConfirmationRequired(input PreparationInput, binding ReleaseNamePolicyBinding) bool {
+	return binding.Confirmation == ReleaseNameConfirmationNonScene &&
+		!input.Meta.Scene &&
+		input.RequestedUploadName == nil
 }
 
 func resolveReleaseNames(input PreparationInput, binding ReleaseNamePolicyBinding) (ResolvedReleaseNames, error) {
 	if err := validateReleaseNamePolicy(binding); err != nil {
 		return ResolvedReleaseNames{}, err
 	}
+	elementPolicy, err := normalizedReleaseNameElementPolicy(binding.Elements)
+	if err != nil {
+		return ResolvedReleaseNames{}, err
+	}
+	subject := applyReleaseNameElementPolicy(input.Meta, input.RequestedUploadName, elementPolicy)
 	resolved, err := binding.Resolver(ReleaseNameInput{
-		Subject:       input.Meta,
+		Subject:       subject,
 		TrackerConfig: input.TrackerConfig,
 		RequestedName: input.RequestedUploadName,
+		ElementPolicy: elementPolicy,
 	})
 	if err != nil {
 		return ResolvedReleaseNames{}, fmt.Errorf("resolve release names with %s: %w", binding.ID, err)
@@ -211,6 +266,58 @@ func resolveReleaseNames(input PreparationInput, binding ReleaseNamePolicyBindin
 		})
 	}
 	return resolved, nil
+}
+
+func normalizedReleaseNameElementPolicy(policy api.ReleaseNameElementPolicy) (api.ReleaseNameElementPolicy, error) {
+	normalized := policy.Normalized()
+	if normalized.Version == "" {
+		return api.ReleaseNameElementPolicy{}, errors.New("version is empty")
+	}
+	if !strings.Contains(normalized.Version, "/v") {
+		return api.ReleaseNameElementPolicy{}, fmt.Errorf("version %q is not versioned", normalized.Version)
+	}
+	switch normalized.EpisodeTitleMode {
+	case api.EpisodeTitleModeInclude, api.EpisodeTitleModeOmit:
+		return normalized, nil
+	case api.EpisodeTitleModeUnspecified:
+		return api.ReleaseNameElementPolicy{}, errors.New("episode-title mode did not normalize")
+	default:
+		return api.ReleaseNameElementPolicy{}, fmt.Errorf("episode-title mode %q is unsupported", normalized.EpisodeTitleMode)
+	}
+}
+
+func applyReleaseNameElementPolicy(
+	subject api.UploadSubject,
+	requestedName *string,
+	policy api.ReleaseNameElementPolicy,
+) api.UploadSubject {
+	if requestedName != nil || policy.EpisodeTitleMode != api.EpisodeTitleModeOmit {
+		return subject
+	}
+	included := subject.GeneratedReleaseNames.IncludeEpisodeTitle
+	omitted := subject.GeneratedReleaseNames.OmitEpisodeTitle
+	if !subjectUsesGeneratedReleaseName(subject, included) || strings.TrimSpace(omitted.Name) == "" {
+		return subject
+	}
+	if sceneName := strings.TrimSpace(subject.SceneName); sceneName != "" &&
+		sceneName == strings.TrimSpace(subject.ReleaseName) {
+		return subject
+	}
+	subject.ReleaseName = omitted.Name
+	subject.ReleaseNameNoTag = omitted.NameNoTag
+	subject.ReleaseNameClean = omitted.CleanName
+	return subject
+}
+
+func subjectUsesGeneratedReleaseName(subject api.UploadSubject, generated api.ReleaseNameVariant) bool {
+	switch {
+	case strings.TrimSpace(subject.ReleaseName) != "":
+		return strings.TrimSpace(subject.ReleaseName) == strings.TrimSpace(generated.Name)
+	case strings.TrimSpace(subject.ReleaseNameNoTag) != "":
+		return strings.TrimSpace(subject.ReleaseNameNoTag) == strings.TrimSpace(generated.NameNoTag)
+	default:
+		return false
+	}
 }
 
 func validateResolvedReleaseName(label, value string) error {
@@ -275,6 +382,9 @@ func appendReleaseNameProvenance(
 		Code:     releaseNamePolicyDecisionCode,
 		Decision: binding.ID,
 	})
+	elementPolicy := binding.Elements.Normalized()
+	projection.NamingElementPolicyVersion = elementPolicy.Version
+	projection.EpisodeTitleMode = elementPolicy.EpisodeTitleMode
 	instruction := api.TrackerPolicyDecision{
 		Code:     releaseNameInstructionCode,
 		Decision: "automatic",
@@ -324,6 +434,9 @@ func releaseNameProjectionFingerprint(
 	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
 		Policy           api.WorkflowFingerprint
 		PolicyID         string
+		ElementVersion   string
+		EpisodeTitleMode api.EpisodeTitleMode
+		Confirmation     ReleaseNameConfirmationMode
 		ProjectorVersion string
 		Config           api.WorkflowFingerprint
 		RequestedPresent bool
@@ -334,6 +447,9 @@ func releaseNameProjectionFingerprint(
 	}{
 		Policy:           policyFingerprint,
 		PolicyID:         descriptor.ReleaseNamePolicy.ID,
+		ElementVersion:   descriptor.ReleaseNamePolicy.Elements.Normalized().Version,
+		EpisodeTitleMode: descriptor.ReleaseNamePolicy.Elements.Normalized().EpisodeTitleMode,
+		Confirmation:     descriptor.ReleaseNamePolicy.Confirmation,
 		ProjectorVersion: descriptor.ProjectorVersion,
 		Config:           projection.ConfigFingerprint,
 		RequestedPresent: requestedPresent,
@@ -359,6 +475,14 @@ func PrepareInputWithReleaseNamePolicy(
 		return input, nil
 	}
 	if input.Projection == nil {
+		if releaseNameConfirmationRequired(input, binding) {
+			return input, NewPreparationFailure(
+				input.Tracker,
+				releaseNameConfirmationCode,
+				"tracker release name requires confirmation",
+				nil,
+			)
+		}
 		projection := pureReleaseProjection(input)
 		resolved, err := resolveReleaseNames(input, binding)
 		if err != nil {
@@ -385,7 +509,7 @@ func PrepareInputWithReleaseNamePolicy(
 		)
 	}
 	resolved, err := resolveReleaseNames(input, binding)
-	if err == nil && releaseNamesMatchProjection(input, resolved, *reviewed) {
+	if err == nil && releaseNamesMatchProjection(input, binding, resolved, *reviewed) {
 		return input, nil
 	}
 	cause := err
@@ -400,12 +524,20 @@ func PrepareInputWithReleaseNamePolicy(
 	)
 }
 
-func releaseNamesMatchProjection(input PreparationInput, resolved ResolvedReleaseNames, projection api.TrackerReleaseProjection) bool {
+func releaseNamesMatchProjection(
+	input PreparationInput,
+	binding ReleaseNamePolicyBinding,
+	resolved ResolvedReleaseNames,
+	projection api.TrackerReleaseProjection,
+) bool {
 	expected := pureReleaseProjection(input)
 	applyResolvedReleaseNames(&expected, resolved)
+	elementPolicy := binding.Elements.Normalized()
 	return expected.UploadReleaseName == strings.TrimSpace(projection.UploadReleaseName) &&
 		expected.DuplicateCriteria.Name == strings.TrimSpace(projection.DuplicateCriteria.Name) &&
-		slices.Equal(expected.AdditionalNames, normalizeReleaseNames(projection.AdditionalNames))
+		slices.Equal(expected.AdditionalNames, normalizeReleaseNames(projection.AdditionalNames)) &&
+		elementPolicy.Version == strings.TrimSpace(projection.NamingElementPolicyVersion) &&
+		elementPolicy.EpisodeTitleMode == api.NormalizeEpisodeTitleMode(projection.EpisodeTitleMode)
 }
 
 // ReviewedUploadName returns the exact reviewed principal name for payload construction.
@@ -435,4 +567,47 @@ func canonicalSourceBaseName(subject api.UploadSubject) string {
 	}
 	base := filepath.Base(source)
 	return strings.TrimSuffix(base, filepath.Ext(base))
+}
+
+// SourceReleaseName returns the source folder or filename exactly, removing an
+// extension only when retained subject facts identify the source as a file.
+func SourceReleaseName(subject api.UploadSubject) string {
+	sourceBase := strings.TrimSpace(pathutil.Base(subject.SourcePath))
+	name := sourceBase
+	filenameFallback := false
+	if name == "" {
+		name = strings.TrimSpace(pathutil.Base(subject.Filename))
+		filenameFallback = true
+	}
+	if name == "" {
+		return ""
+	}
+	extension := filepath.Ext(name)
+	if extension == "" {
+		return name
+	}
+	if filenameFallback || sourceReleasePathIsFile(subject, name, extension) {
+		return strings.TrimSpace(strings.TrimSuffix(name, extension))
+	}
+	return name
+}
+
+func sourceReleasePathIsFile(subject api.UploadSubject, sourceBase, extension string) bool {
+	for _, candidate := range []string{subject.VideoPath, subject.Filename} {
+		if candidateBase := strings.TrimSpace(pathutil.Base(candidate)); candidateBase != "" &&
+			strings.EqualFold(candidateBase, sourceBase) {
+			return true
+		}
+	}
+	extension = strings.TrimPrefix(extension, ".")
+	releaseExtension := strings.TrimPrefix(strings.TrimSpace(subject.Release.Ext), ".")
+	if releaseExtension != "" && strings.EqualFold(extension, releaseExtension) {
+		return true
+	}
+	switch strings.ToLower(extension) {
+	case "avi", "evo", "iso", "m2ts", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "mts", "ts", "vob", "webm", "wmv":
+		return true
+	default:
+		return false
+	}
 }

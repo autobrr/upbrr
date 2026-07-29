@@ -32,6 +32,7 @@ const (
 	OperationFailureIncompatibleGeneration OperationFailureCode = "incompatible_generation"
 	OperationFailureMissingPrerequisite    OperationFailureCode = "missing_prerequisite"
 	OperationFailureTrackerAuthRequired    OperationFailureCode = "tracker_auth_required"
+	OperationFailureTrackerAuthUnavailable OperationFailureCode = "tracker_auth_unavailable"
 	OperationFailureNoEligibleTrackers     OperationFailureCode = "no_eligible_trackers"
 	OperationFailureStaleReview            OperationFailureCode = "stale_review"
 	OperationFailureStaleResult            OperationFailureCode = "stale_result"

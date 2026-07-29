@@ -19,17 +19,21 @@ func Profile() unit3d.Profile {
 		BannedGroups:     BannedGroups(),
 		Site: unit3d.SiteProfile{
 			BuildName:        buildName,
-			BuildNameVersion: "v1",
+			BuildNameVersion: "v2",
 		},
 		DupePolicy: &trackers.DupePolicy{
-			ID: "ulcx/duplicate/v1",
+			ID:         "ulcx/duplicate/v2",
+			EvidenceID: "ulcx-upload-rules",
 			SearchScope: trackers.DupeSearchScope{
 				IncludeEpisodes:    true,
 				IncludeSeasonPacks: true,
 				MaxPages:           100,
 			},
-			RequiredEvidence:        trackers.DupeEvidenceRequirements{HDR: true},
-			SlotDimensions:          []trackers.DupeDimension{trackers.DupeDimensionType, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
+			SlotDimensions: []trackers.DupeDimension{trackers.DupeDimensionType, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
+			PrecedenceRules: append(
+				trackers.SeasonPackPrecedenceRules("ulcx-upload-rules"),
+				trackers.DirectionalMediaKindRules("ulcx-upload-rules", "web_dl", "web_rip")...,
+			),
 			SizeVariancePercent:     20,
 			SizeVarianceResolutions: []string{"1080p"},
 		},

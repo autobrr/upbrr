@@ -11,22 +11,9 @@ import (
 )
 
 func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
-	return addNoGroup(meta, "NoGroup")
-}
-
-func addNoGroup(meta api.UploadSubject, suffix string) string {
 	name := strings.TrimSpace(meta.ReleaseName)
 	if name == "" {
 		name = strings.TrimSpace(meta.ReleaseNameNoTag)
 	}
-	name = strings.TrimSpace(strings.Join(strings.Fields(name), " "))
-	tag := strings.TrimSpace(strings.TrimPrefix(meta.Tag, "-"))
-	if tag != "" && !strings.EqualFold(tag, "nogrp") && !strings.EqualFold(tag, "nogroup") && !strings.EqualFold(tag, "unknown") &&
-		!strings.EqualFold(tag, "-unk-") {
-		return name
-	}
-	if name == "" || strings.HasSuffix(strings.ToUpper(name), "-"+strings.ToUpper(suffix)) {
-		return name
-	}
-	return name + "-" + suffix
+	return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
 }

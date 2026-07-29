@@ -663,18 +663,43 @@ export function ReleaseSessionProvider({
     setWorkflowView((current) => ({ ...current, status: "running", error: "", failure: null }));
     const commandID = `workflow-dupes-${Date.now().toString(36)}-${workflowView.current.workflow.revision.toString(36)}`;
     try {
-      const projectionInstructions = Object.fromEntries(
-        state.selectedTrackers.map((tracker) => [
-          tracker,
-          {
-            questionnaire: Object.fromEntries(
-              Object.entries(state.questionnaireAnswers[tracker] || {}).map(([key, value]) => [
-                key,
-                value,
-              ]),
-            ),
-          },
+      const currentProjectionByTracker = new Map(
+        (workflowView.current.projections?.projections || []).map((projection) => [
+          projection.trackerId,
+          projection,
         ]),
+      );
+      const projectionInstructions = Object.fromEntries(
+        state.selectedTrackers.map((tracker) => {
+          const projection = currentProjectionByTracker.get(tracker);
+          const confirmationRequired = projection?.policyDecisions?.some(
+            (decision) =>
+              decision.code === "release_name_confirmation" &&
+              decision.decision === "confirmation_required",
+          );
+          const confirmedName =
+            state.releaseNameOverrides[tracker] ??
+            (confirmationRequired ? projection?.uploadReleaseName : undefined);
+          if (
+            confirmationRequired &&
+            state.releaseNameOverrides[tracker] === undefined &&
+            confirmedName !== undefined
+          ) {
+            dispatch({ type: "release_name_confirmed", tracker, value: confirmedName });
+          }
+          return [
+            tracker,
+            {
+              questionnaire: Object.fromEntries(
+                Object.entries(state.questionnaireAnswers[tracker] || {}).map(([key, value]) => [
+                  key,
+                  value,
+                ]),
+              ),
+              ...(confirmedName !== undefined ? { uploadReleaseName: confirmedName } : {}),
+            },
+          ];
+        }),
       );
       const current = await continueBackendGoal(
         workflowView.current,
@@ -1659,6 +1684,7 @@ export function ReleaseSessionProvider({
           state.selectedTrackers.length,
         ignoredTrackers: state.ignoredDupesFor,
         selectedTrackers: state.selectedTrackers,
+        releaseNameOverrides: state.releaseNameOverrides,
         error:
           workflowView.failure?.Message ||
           state.duplicatesError ||
@@ -1696,6 +1722,8 @@ export function ReleaseSessionProvider({
         return completed;
       },
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),
+      confirmReleaseName: (tracker, value) =>
+        dispatch({ type: "release_name_confirmed", tracker, value }),
       cancel: async () => {
         if (!workflowView.current) return false;
         return cancelBackendWorkflow("duplicate check canceled");

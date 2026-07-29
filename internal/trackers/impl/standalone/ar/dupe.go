@@ -15,6 +15,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -75,6 +76,12 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 	for _, cookie := range cookies {
 		req.AddCookie(cookie)
 	}
+	if h.logger != nil {
+		h.logger.Debugf(
+			"dupechecking: AR search request method=GET action=browse searchstr=%q",
+			query,
+		)
+	}
 
 	resp, err := h.http.Do(req)
 	if err != nil {
@@ -84,9 +91,14 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		return dupe.Failed(dupe.FailureRequest, "AR request failed", err)
 	}
 	defer resp.Body.Close()
+	contentType := arResponseContentType(resp)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if h.logger != nil {
-			h.logger.Debugf("dupechecking: AR returned status %d", resp.StatusCode)
+			h.logger.Debugf(
+				"dupechecking: AR search response status_code=%d content_type=%q decision=reject_non_success",
+				resp.StatusCode,
+				contentType,
+			)
 		}
 		return dupe.Failed(dupe.FailureResponseStatus, "AR search returned non-success status", nil)
 	}
@@ -94,11 +106,28 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 	var payload arResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		if h.logger != nil {
-			h.logger.Debugf("dupechecking: AR response decode failed: %v", err)
+			h.logger.Debugf(
+				"dupechecking: AR search response status_code=%d content_type=%q decision=decode_failed error=%v",
+				resp.StatusCode,
+				contentType,
+				redaction.RedactValue(err.Error(), nil),
+			)
 		}
 		return dupe.Failed(dupe.FailureResponseParse, "AR response decode failed", err)
 	}
 	if !strings.EqualFold(strings.TrimSpace(payload.Status), "success") {
+		if h.logger != nil {
+			h.logger.Debugf(
+				"dupechecking: AR search response status_code=%d content_type=%q api_status=%q current_page=%d pages=%d "+
+					"raw_results=%d accepted_results=0 decision=reject_api_status",
+				resp.StatusCode,
+				contentType,
+				strings.TrimSpace(payload.Status),
+				payload.Response.CurrentPage,
+				payload.Response.Pages,
+				len(payload.Response.Results),
+			)
+		}
 		return dupe.Failed(dupe.FailureResponseStatus, "AR API returned non-success status", nil)
 	}
 
@@ -128,8 +157,58 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		}
 		entries = append(entries, entry)
 	}
+	search := arSearchEvidence(
+		payload.Response.CurrentPage,
+		payload.Response.Pages,
+		len(payload.Response.Results),
+	)
+	if h.logger != nil {
+		h.logger.Debugf(
+			"dupechecking: AR search response status_code=%d content_type=%q api_status=success current_page=%d pages=%d "+
+				"raw_results=%d accepted_results=%d complete=%t decision=completed",
+			resp.StatusCode,
+			contentType,
+			payload.Response.CurrentPage,
+			payload.Response.Pages,
+			len(payload.Response.Results),
+			len(entries),
+			search.Complete,
+		)
+	}
 
-	return dupe.Resolved(entries, nil)
+	return dupe.ResolvedWithSearch(entries, search.Warnings, search)
+}
+
+func arSearchEvidence(currentPage int, totalPages int, resultCount int) dupe.SearchEvidence {
+	search := dupe.SearchEvidence{
+		Pages: 1,
+		Scope: "work_identity",
+	}
+	switch {
+	case currentPage == 0 && totalPages == 0 && resultCount == 0:
+		search.Complete = true
+	case currentPage > 0 && currentPage == totalPages:
+		search.Complete = true
+	case currentPage > 0 && totalPages > currentPage:
+		search.Warnings = []string{"AR search has additional result pages"}
+	default:
+		search.Warnings = []string{"AR search pagination evidence is inconsistent"}
+	}
+	return search
+}
+
+func arResponseContentType(resp *http.Response) string {
+	if resp == nil {
+		return "unknown"
+	}
+	contentType := strings.TrimSpace(strings.SplitN(resp.Header.Get("Content-Type"), ";", 2)[0])
+	if contentType == "" {
+		return "unspecified"
+	}
+	if len(contentType) > 64 {
+		return "other"
+	}
+	return strings.ToLower(contentType)
 }
 
 func (h dupeSearcher) resolveCookies(ctx context.Context) ([]*http.Cookie, string, error) {
@@ -182,37 +261,15 @@ func arSearchQuery(meta api.DuplicateSubject) string {
 	if meta.Projection != nil {
 		return dupe.ProjectedSearchName(meta)
 	}
-	title := strings.TrimSpace(meta.Release.Title)
-	if title == "" && meta.ProviderMetadata.TMDB != nil {
-		title = strings.TrimSpace(meta.ProviderMetadata.TMDB.Title)
-	}
-	if title == "" && meta.ProviderMetadata.IMDB != nil {
-		title = strings.TrimSpace(meta.ProviderMetadata.IMDB.Title)
-	}
-	if title == "" {
-		title = strings.TrimSpace(meta.ReleaseName)
-	}
-	if title == "" {
-		return ""
-	}
-
-	year := meta.Release.Year
-	if year == 0 && meta.ProviderMetadata.TMDB != nil && meta.ProviderMetadata.TMDB.Year > 0 {
-		year = meta.ProviderMetadata.TMDB.Year
-	}
-	if year == 0 && meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Year > 0 {
-		year = meta.ProviderMetadata.IMDB.Year
-	}
-	if year > 0 {
-		return strings.TrimSpace(title + " " + strconv.Itoa(year))
-	}
-	return title
+	return resolveARSearchNameFields(meta.Release, meta.ReleaseName, meta.ProviderMetadata)
 }
 
 type arResponse struct {
 	Status   string `json:"status"`
 	Response struct {
-		Results []struct {
+		CurrentPage int `json:"currentPage"`
+		Pages       int `json:"pages"`
+		Results     []struct {
 			GroupName string `json:"groupName"`
 			Size      int64  `json:"size"`
 			FileCount int    `json:"fileCount"`

@@ -168,7 +168,7 @@ func TestRegistryProjectsARAndMTVNamesBeforeDuplicateChecking(t *testing.T) {
 					Year:  2026,
 				},
 			},
-			wantUpload:    "Example.Release.2026",
+			wantUpload:    "Example Release 2026",
 			wantDuplicate: "Example Release 2026",
 		},
 		{
@@ -262,6 +262,20 @@ func TestRegistryProjectsVersionedReleaseNamesForEveryBuiltIn(t *testing.T) {
 			if strings.TrimSpace(projection.UploadReleaseName) == "" || strings.TrimSpace(projection.DuplicateCriteria.Name) == "" {
 				t.Fatalf("projected names = upload %q, search %q", projection.UploadReleaseName, projection.DuplicateCriteria.Name)
 			}
+			wantEpisodeTitleMode := api.EpisodeTitleModeInclude
+			if name == "HDB" {
+				wantEpisodeTitleMode = api.EpisodeTitleModeOmit
+			}
+			if projection.NamingElementPolicyVersion != api.ReleaseNameElementPolicyVersionV1 ||
+				projection.EpisodeTitleMode != wantEpisodeTitleMode {
+				t.Fatalf(
+					"element policy = version %q mode %q, want version %q mode %q",
+					projection.NamingElementPolicyVersion,
+					projection.EpisodeTitleMode,
+					api.ReleaseNameElementPolicyVersionV1,
+					wantEpisodeTitleMode,
+				)
+			}
 			if !slices.ContainsFunc(projection.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
 				return decision.Code == "release_name_policy" && decision.Decision == descriptor.ReleaseNamePolicy.ID
 			}) {
@@ -348,7 +362,8 @@ func TestNewRegistryCapabilityInventory(t *testing.T) {
 	if _, ok := registry.LookupMetadataPolicy("ANT"); !ok {
 		t.Fatal("expected ANT tracker-owned metadata policy")
 	}
-	if policy, ok := registry.LookupDupePolicy("ANT"); !ok || policy.ID != "ant/duplicate/v1" || !policy.RequiredEvidence.HDR {
+	if policy, ok := registry.LookupDupePolicy("ANT"); !ok || policy.ID != "ant/duplicate/v2" ||
+		policy.EvidenceID != "ant-dupes-trumping" {
 		t.Fatalf("ANT dupe policy = %#v, %t", policy, ok)
 	}
 }
@@ -508,13 +523,23 @@ func TestNewRegistryOwnsMetadataPolicies(t *testing.T) {
 	}
 
 	mtvPolicy, ok := registry.LookupMetadataPolicy("MTV")
-	if !ok || len(mtvPolicy.Requirements) != 1 {
-		t.Fatalf("MTV metadata policy = %#v, %t; want one requirement", mtvPolicy, ok)
+	if !ok || len(mtvPolicy.Requirements) != 4 {
+		t.Fatalf("MTV metadata policy = %#v, %t; want four requirements", mtvPolicy, ok)
 	}
-	mtvRequirement := mtvPolicy.Requirements[0]
-	wantFields := []trackers.MetadataField{trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB, trackers.MetadataFieldTVDB}
-	if mtvRequirement.Scope != trackers.MetadataScopeAny || !slices.Equal(mtvRequirement.AnyOf, wantFields) {
-		t.Errorf("MTV metadata requirement = %#v; want any of %#v", mtvRequirement, wantFields)
+	wantRequirements := []struct {
+		scope  trackers.MetadataScope
+		fields []trackers.MetadataField
+	}{
+		{scope: trackers.MetadataScopeMovie, fields: []trackers.MetadataField{trackers.MetadataFieldTMDB, trackers.MetadataFieldIMDB}},
+		{scope: trackers.MetadataScopeTV, fields: []trackers.MetadataField{trackers.MetadataFieldTVDB}},
+		{scope: trackers.MetadataScopeTV, fields: []trackers.MetadataField{trackers.MetadataFieldTVDBTitle}},
+		{scope: trackers.MetadataScopeTV, fields: []trackers.MetadataField{trackers.MetadataFieldTVDBDisambiguation}},
+	}
+	for index, want := range wantRequirements {
+		got := mtvPolicy.Requirements[index]
+		if got.Scope != want.scope || got.Disposition != api.RuleDispositionStrict || !slices.Equal(got.AnyOf, want.fields) {
+			t.Errorf("MTV metadata requirement %d = %#v; want scope=%q fields=%#v strict", index, got, want.scope, want.fields)
+		}
 	}
 }
 
@@ -558,7 +583,7 @@ func TestNewRegistryIncludesBHDPolicies(t *testing.T) {
 	if groups, ok := registry.LookupBannedGroups("BHD"); !ok || !slices.Contains(groups, "TGS") {
 		t.Fatalf("BHD banned groups = %#v, %t", groups, ok)
 	}
-	if policy, ok := registry.LookupDupePolicy("BHD"); !ok || policy.ID != "bhd/duplicate/v1" || policy.SizeVariancePercent != 20 {
+	if policy, ok := registry.LookupDupePolicy("BHD"); !ok || policy.ID != "bhd/duplicate/v2" || policy.SizeVariancePercent != 20 {
 		t.Fatalf("BHD dupe policy = %#v, %t", policy, ok)
 	}
 	if definition, ok := registry.Lookup("BHD"); !ok {

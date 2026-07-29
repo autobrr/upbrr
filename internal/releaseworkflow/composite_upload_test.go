@@ -15,7 +15,7 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestCompositeUploadStrictUnattendedContinuesWithEligibleTrackers(t *testing.T) {
+func TestCompositeUploadStrictUnattendedStopsForTrackerApproval(t *testing.T) {
 	t.Parallel()
 
 	module, repository, uploads := newCompositeUploadTestModule(t)
@@ -25,21 +25,16 @@ func TestCompositeUploadStrictUnattendedContinuesWithEligibleTrackers(t *testing
 		t.Fatalf("start composite upload: %v", err)
 	}
 	current := waitCompositeUploadTestOperation(t, module, started)
-	if current.UploadResult == nil || current.DryRun == nil || current.Media == nil || current.Operation == nil {
-		t.Fatalf("composite upload result = %#v", current)
+	if current.Operation == nil || current.Operation.Status != api.StageStatusBlocked ||
+		current.UploadResult != nil || current.DryRun != nil || current.Media != nil || uploads.execution != nil {
+		t.Fatalf("strict unattended composite result = %#v; execution=%#v", current, uploads.execution)
 	}
-	if current.Operation.Status != api.StageStatusExecuted || uploads.execution == nil {
-		t.Fatalf("composite upload operation/execution = %#v/%#v", current.Operation, uploads.execution)
-	}
-	if slices.ContainsFunc(current.Continuation.RequiredActions, func(action api.RequiredAction) bool {
-		return action.Kind == api.RequiredActionApproveTrackers
-	}) {
-		t.Fatalf("composite retained tracker approval action = %#v", current.Continuation.RequiredActions)
-	}
-	if slices.ContainsFunc(current.Workflow.RequiredActions, func(action api.RequiredAction) bool {
-		return action.Kind == api.RequiredActionApproveTrackers
-	}) {
-		t.Fatalf("public composite retained tracker approval action = %#v", current.Workflow.RequiredActions)
+	action := pendingCompositeTrackerApproval(t, current)
+	if !slices.Equal(
+		[]string{action.Options[0].Value, action.Options[1].Value},
+		[]string{"ALPHA", "BETA"},
+	) {
+		t.Fatalf("strict unattended tracker approval options = %#v", action.Options)
 	}
 	state, err := repository.Load(context.Background(), testOwnerID, current.Workflow.ID)
 	if err != nil {
@@ -48,9 +43,37 @@ func TestCompositeUploadStrictUnattendedContinuesWithEligibleTrackers(t *testing
 	if count := compositeUploadTestOperationCount(repository, current.Workflow.ID); count != 1 {
 		t.Fatalf("composite upload created %d operations, want one", count)
 	}
-	if state.Composite == nil || state.Composite.ActiveOperationID != "" || state.Composite.TerminalReason != "goal_reached" ||
-		state.Workflow.TrackerApproval == nil {
+	if state.Composite == nil || state.Composite.ActiveOperationID != "" ||
+		state.Composite.TerminalReason != "feedback_required" || state.Workflow.TrackerApproval != nil {
 		t.Fatalf("composite terminal session = %#v", state.Composite)
+	}
+}
+
+func TestCompositeUploadStrictUnattendedInheritsDefaultTrackers(t *testing.T) {
+	t.Parallel()
+
+	module, _, uploads := newCompositeUploadTestModule(t)
+	request := compositeUploadTestRequest(false, api.ReleaseWorkflowUploadModeUpload, "composite-default-trackers")
+	request.Trackers.Include = nil
+
+	started, err := module.StartUpload(context.Background(), testOwnerID, request)
+	if err != nil {
+		t.Fatalf("start composite upload: %v", err)
+	}
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	current := approveCompositeUploadTrackers(
+		t,
+		module,
+		blocked,
+		[]api.TrackerID{"ALPHA", "BETA"},
+		"approve-default-trackers",
+	)
+	if current.Operation == nil || current.Operation.Status != api.StageStatusExecuted || uploads.execution == nil {
+		t.Fatalf("default tracker upload operation/execution = %#v/%#v", current.Operation, uploads.execution)
+	}
+	if current.TrackerApproval == nil ||
+		!slices.Equal(current.TrackerApproval.ApprovedTrackerIDs, []api.TrackerID{"ALPHA", "BETA"}) {
+		t.Fatalf("default tracker authority = %#v", current.TrackerApproval)
 	}
 }
 
@@ -63,7 +86,14 @@ func TestCompositeUploadStrictDebugContinuesWithEligibleTrackers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start composite debug upload: %v", err)
 	}
-	current := waitCompositeUploadTestOperation(t, module, started)
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	current := approveCompositeUploadTrackers(
+		t,
+		module,
+		blocked,
+		[]api.TrackerID{"ALPHA", "BETA"},
+		"approve-debug-trackers",
+	)
 	if current.DryRun == nil || current.Media == nil || current.UploadResult != nil || current.Operation == nil ||
 		current.Operation.Status != api.StageStatusCompleted {
 		t.Fatalf(
@@ -78,8 +108,8 @@ func TestCompositeUploadStrictDebugContinuesWithEligibleTrackers(t *testing.T) {
 	if uploads.execution == nil || uploads.execution.executions != 0 {
 		t.Fatalf("debug upload execution plan = %#v", uploads.execution)
 	}
-	if count := compositeUploadTestOperationCount(repository, current.Workflow.ID); count != 1 {
-		t.Fatalf("composite debug created %d operations, want one", count)
+	if count := compositeUploadTestOperationCount(repository, current.Workflow.ID); count != 2 {
+		t.Fatalf("composite debug created %d operations, want start plus approval resume", count)
 	}
 }
 
@@ -305,7 +335,14 @@ func TestCompositeUploadStrictExcludesAuthBlockedSibling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start partially auth-blocked composite upload: %v", err)
 	}
-	current := waitCompositeUploadTestOperation(t, module, started)
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	current := approveCompositeUploadTrackers(
+		t,
+		module,
+		blocked,
+		[]api.TrackerID{"ALPHA"},
+		"approve-auth-filtered-trackers",
+	)
 	if current.Operation == nil || current.Operation.Status != api.StageStatusExecuted ||
 		current.UploadResult == nil || uploads.execution == nil ||
 		!slices.Equal(uploads.execution.selected, []api.TrackerID{"ALPHA"}) {
@@ -333,7 +370,14 @@ func TestCompositeUploadStrictExcludesDuplicateBlockedSibling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start duplicate-blocked composite upload: %v", err)
 	}
-	current := waitCompositeUploadTestOperation(t, module, started)
+	blocked := waitCompositeUploadTestOperation(t, module, started)
+	current := approveCompositeUploadTrackers(
+		t,
+		module,
+		blocked,
+		[]api.TrackerID{"ALPHA"},
+		"approve-dupe-filtered-trackers",
+	)
 	if current.Operation == nil || current.Operation.Status != api.StageStatusExecuted ||
 		current.UploadResult == nil || uploads.execution == nil ||
 		!slices.Equal(uploads.execution.selected, []api.TrackerID{"ALPHA"}) {
@@ -407,6 +451,46 @@ func compositeUploadTestOperationCount(repository *MemoryRepository, workflowID 
 	return count
 }
 
+func pendingCompositeTrackerApproval(t *testing.T, current CommandResult) api.RequiredAction {
+	t.Helper()
+	actionIndex := slices.IndexFunc(current.Continuation.RequiredActions, func(action api.RequiredAction) bool {
+		return action.Kind == api.RequiredActionApproveTrackers && action.Status == api.RequiredActionStatusPending
+	})
+	if actionIndex < 0 {
+		t.Fatalf("composite tracker approval action = %#v", current.Continuation.RequiredActions)
+	}
+	return current.Continuation.RequiredActions[actionIndex]
+}
+
+func approveCompositeUploadTrackers(
+	t *testing.T,
+	module *Module,
+	current CommandResult,
+	trackerIDs []api.TrackerID,
+	idempotencyKey string,
+) CommandResult {
+	t.Helper()
+	action := pendingCompositeTrackerApproval(t, current)
+	resumed, err := module.SubmitUploadFeedback(context.Background(), testOwnerID, current.Workflow.ID, api.ReleaseWorkflowUploadFeedback{
+		Action: api.ReleaseWorkflowUploadActionIdentity{
+			ID:               action.ID,
+			WorkflowRevision: current.Workflow.Revision,
+		},
+		Response: api.ReleaseWorkflowUploadFeedbackResponse{
+			Kind: api.ReleaseWorkflowUploadFeedbackTrackerApproval,
+			TrackerApproval: &api.ReleaseWorkflowUploadTrackerApproval{
+				Confirmed:  true,
+				TrackerIDs: trackerIDs,
+			},
+		},
+		IdempotencyKey: idempotencyKey,
+	})
+	if err != nil {
+		t.Fatalf("submit composite tracker approval: %v", err)
+	}
+	return waitCompositeUploadTestOperation(t, module, resumed)
+}
+
 func compositeUploadTestRequest(
 	confirm bool,
 	mode api.ReleaseWorkflowUploadMode,
@@ -441,6 +525,9 @@ func newCompositeUploadTestModule(
 		api.TrackerReleaseProjectionSet,
 		error,
 	) {
+		if len(trackerIDs) == 0 {
+			trackerIDs = []api.TrackerID{"ALPHA", "BETA"}
+		}
 		catalog := testCatalog(t)
 		catalog.Trackers = slices.DeleteFunc(catalog.Trackers, func(descriptor api.TrackerCatalogDescriptor) bool {
 			return !slices.Contains(trackerIDs, descriptor.TrackerID)

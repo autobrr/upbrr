@@ -305,6 +305,64 @@ func TestCLICompleteUsesCompositeStartAndFeedback(t *testing.T) {
 	}
 }
 
+func TestCLICompositeTrackerFeedbackConfirmsOrEditsReleaseName(t *testing.T) {
+	const proposed = "Example.Release.2026-GRP"
+	action := api.RequiredAction{
+		Kind:             api.RequiredActionProvideTrackerInput,
+		TrackerID:        "AR",
+		Prompt:           "Confirm or edit the non-scene release name for AR.",
+		Options:          []api.RequiredActionOption{{Value: proposed, Label: proposed}},
+		AllowsFreeText:   true,
+		WorkflowRevision: 4,
+	}
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "confirm proposed",
+			input: "\n",
+			want:  proposed,
+		},
+		{
+			name:  "edit proposed",
+			input: "Example.Release.2026.EDIT-GRP\n",
+			want:  "Example.Release.2026.EDIT-GRP",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			session := &cliWorkflowSession{
+				intent: cliWorkflowIntent{interaction: api.InteractionModeUnattendedConfirm},
+				uploadRequest: api.Request{
+					Trackers: []string{"AR"},
+				},
+				current: releaseworkflow.CommandResult{
+					Projections: &api.TrackerReleaseProjectionSet{
+						Projections: []api.TrackerReleaseProjection{{TrackerID: "AR"}},
+					},
+				},
+			}
+			feedback, declined, err := session.collectCompositeTrackerFeedback(
+				bufio.NewReader(strings.NewReader(test.input)),
+				action,
+				api.ReleaseWorkflowUploadFeedback{},
+			)
+			if err != nil {
+				t.Fatalf("collect tracker feedback: %v", err)
+			}
+			if declined || feedback.Response.TrackerInput == nil {
+				t.Fatalf("tracker feedback = %#v, declined=%t", feedback, declined)
+			}
+			patch := feedback.Response.TrackerInput.Projection.UploadReleaseName
+			if !patch.Present || patch.Reset || patch.Value != test.want {
+				t.Fatalf("release-name patch = %#v, want %q", patch, test.want)
+			}
+		})
+	}
+}
+
 func TestCLICompositeDuplicateReviewPrintsMatchesAndSeparatesTrackers(t *testing.T) {
 	session := &cliWorkflowSession{
 		current: releaseworkflow.CommandResult{

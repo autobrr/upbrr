@@ -31,6 +31,8 @@ type Profile struct {
 	BaseURL string
 	// Site contains optional site-specific payload callbacks.
 	Site SiteProfile
+	// ReleaseNamePolicy overrides the generic site BuildName policy.
+	ReleaseNamePolicy trackers.ReleaseNamePolicyBinding
 	// Rules contains site-specific release validation requirements.
 	Rules *trackers.RuleSet
 	// ValidationPolicy contains optional site-specific validation composed with
@@ -206,6 +208,9 @@ func (d *Definition) TrackerFamily() trackers.Family { return trackers.FamilyUni
 
 // ReleaseNamePolicy returns the versioned Unit3D site naming policy.
 func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {
+	if d.profile.ReleaseNamePolicy.Resolver != nil {
+		return d.profile.ReleaseNamePolicy
+	}
 	if d.profile.Site.BuildName != nil {
 		version := strings.TrimSpace(d.profile.Site.BuildNameVersion)
 		if version == "" {

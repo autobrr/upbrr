@@ -94,6 +94,40 @@ func TestEditionFromMetaMultiPlaylistAggregatesIMDbMatches(t *testing.T) {
 	}
 }
 
+func TestRebuildReleaseNamePersistsGeneratedEpisodeVariants(t *testing.T) {
+	t.Parallel()
+
+	meta := preparationstate.State{
+		Identity:     api.ExternalIdentity{Category: api.CanonicalCategoryTV},
+		Type:         "WEBDL",
+		Source:       "WEB",
+		Service:      "EXM",
+		Audio:        "AAC 2.0",
+		VideoEncode:  "H.264",
+		Tag:          "-GRP",
+		SeasonInt:    1,
+		EpisodeInt:   2,
+		SeasonStr:    "S01",
+		EpisodeStr:   "E02",
+		EpisodeTitle: "Example Episode",
+		Release: api.ReleaseInfo{
+			Title:      "Example Show",
+			Resolution: "1080p",
+		},
+	}
+
+	RebuildReleaseName(&meta, api.NopLogger{})
+
+	included := meta.GeneratedReleaseNames.IncludeEpisodeTitle
+	omitted := meta.GeneratedReleaseNames.OmitEpisodeTitle
+	if meta.ReleaseName != included.Name || included.Name == omitted.Name {
+		t.Fatalf("generated release names = current %q variants %#v", meta.ReleaseName, meta.GeneratedReleaseNames)
+	}
+	if !strings.Contains(included.Name, "Example Episode") || strings.Contains(omitted.Name, "Example Episode") {
+		t.Fatalf("generated episode variants = %#v", meta.GeneratedReleaseNames)
+	}
+}
+
 func TestEditionFromMetaMultiPlaylistDeduplicatesMatches(t *testing.T) {
 	meta := preparationstate.State{
 		DiscType: "BDMV",
@@ -1304,5 +1338,25 @@ func TestResolveAudioBloatPolicyWarnsButDoesNotBlockNonEnglishOriginal(t *testin
 	}
 	if got := warned["SPD"]; len(got) != 1 || got[0] != "French" {
 		t.Fatalf("expected SPD warning for French bloat, got %#v", warned)
+	}
+}
+
+func TestResolveAudioBloatPolicyExemptsDiscContent(t *testing.T) {
+	t.Parallel()
+
+	for _, discType := range []string{"DVD", "BDMV", "Blu-Ray", "HD DVD"} {
+		t.Run(discType, func(t *testing.T) {
+			t.Parallel()
+			blocked, warned := resolveAudioBloatPolicyWithRegistry(preparationstate.State{
+				DiscType:       discType,
+				AudioLanguages: []string{"English", "French", "Spanish"},
+				ProviderMetadata: api.SourceScopedMetadata{
+					TMDB: &api.TMDBMetadata{OriginalLanguage: "en"},
+				},
+			}, []string{"ANT", "BHD", "AITHER"}, antRuleRegistry(t))
+			if blocked != nil || warned != nil {
+				t.Fatalf("%s disc audio policy blocked=%#v warned=%#v", discType, blocked, warned)
+			}
+		})
 	}
 }

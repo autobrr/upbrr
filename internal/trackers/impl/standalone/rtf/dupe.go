@@ -24,7 +24,6 @@ const (
 	rtfTorrentEndpoint = "https://retroflix.club/api/torrent"
 	rtfLoginEndpoint   = "https://retroflix.club/api/login"
 	rtfBrowsePrefix    = "https://retroflix.club/browse/t/"
-	rtfAgeGraceDays    = 365*10 + 3
 )
 
 type dupeSearcher struct {
@@ -55,7 +54,7 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		return dupe.Failed(dupe.FailureInternal, "RTF handler misconfigured: no HTTP client", nil)
 	}
 	if !isRTFContentOldEnough(meta, time.Now().UTC()) {
-		return dupe.NotRun(dupe.NotRunUnsupportedContent, "RTF requires content older than 10 years", nil)
+		return dupe.NotRun(dupe.NotRunUnsupportedContent, "RTF requires content at least 10 years old", nil)
 	}
 
 	params, ok := buildRTFSearchParams(meta)
@@ -260,17 +259,7 @@ func buildRTFDownloadLink(id string) string {
 }
 
 func isRTFContentOldEnough(meta api.DuplicateSubject, now time.Time) bool {
-	cutoff := now.UTC().AddDate(0, 0, -rtfAgeGraceDays)
-	evidence := youngestRTFReleaseEvidence(meta.Release, meta.ProviderMetadata)
-	if date, ok := evidence.exactDate(); ok {
-		return !date.After(cutoff)
-	}
-	if evidence.year == 0 {
-		return true
-	}
-	// Year-based fallback is intentionally looser than the date-based check
-	// because month/day precision is unavailable when only year is known.
-	return now.UTC().Year()-evidence.year > 9
+	return rtfContentAgeEligibility(meta.Release, meta.ProviderMetadata, now) == rtfAgeEligible
 }
 
 func rtfJSONRequest(
