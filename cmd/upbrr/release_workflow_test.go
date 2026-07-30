@@ -858,6 +858,43 @@ func TestCLIWorkflowUnattendedDefersQuestionnaireToCentralPolicy(t *testing.T) {
 	}
 }
 
+func TestCLIWorkflowContinuationErrorIncludesInteractionMode(t *testing.T) {
+	t.Parallel()
+
+	for _, interaction := range []api.InteractionMode{
+		api.InteractionModeUnattended,
+		api.InteractionModeUnattendedConfirm,
+	} {
+		t.Run(string(interaction), func(t *testing.T) {
+			t.Parallel()
+
+			actionErr := cliWorkflowContinuationError(releaseworkflow.CommandResult{
+				Continuation: api.WorkflowContinuation{RequiredActions: []api.RequiredAction{{
+					Kind:   api.RequiredActionReviewDuplicates,
+					Prompt: "Review duplicate evidence.",
+				}}},
+			}, interaction)
+			if !strings.Contains(actionErr.Error(), "interaction="+string(interaction)) ||
+				!strings.Contains(actionErr.Error(), string(api.RequiredActionReviewDuplicates)) ||
+				!strings.Contains(actionErr.Error(), "Review duplicate evidence.") {
+				t.Fatalf("action continuation error = %v", actionErr)
+			}
+
+			progressErr := cliWorkflowContinuationError(releaseworkflow.CommandResult{
+				Continuation: api.WorkflowContinuation{
+					Lifecycle:   api.OperationLifecycleWaiting,
+					Disposition: api.WorkflowDispositionNeedsAction,
+				},
+			}, interaction)
+			if !strings.Contains(progressErr.Error(), "interaction="+string(interaction)) ||
+				!strings.Contains(progressErr.Error(), "made no progress") ||
+				!strings.Contains(progressErr.Error(), "lifecycle=waiting") {
+				t.Fatalf("no-progress continuation error = %v", progressErr)
+			}
+		})
+	}
+}
+
 func TestCLIWorkflowLegacyAuthActionsRequireFreshAttempt(t *testing.T) {
 	t.Parallel()
 

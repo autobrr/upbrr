@@ -28,31 +28,31 @@ func TestBuildNameAppliesYUSTVDBDisambiguationMatrix(t *testing.T) {
 		want     string
 	}{
 		{
-name: "unique",
- evidence: api.TVDBNameDisambiguation{CanonicalName: "Example Series", SeriesYear: 2026},
- want: "Example Series AKA Example Original S01E02 Example Episode 1080p WEB-DL H.265-GRP",
-},
+			name:     "unique",
+			evidence: api.TVDBNameDisambiguation{CanonicalName: "Example Series", SeriesYear: 2026},
+			want:     "Example Series AKA Example Original S01E02 Example Episode 1080p WEB-DL H.265-GRP",
+		},
 		{
-name: "different year",
- evidence: api.TVDBNameDisambiguation{
-CanonicalName: "Example Series",
- SeriesYear: 2026,
- IncludeYear: true,
-},
- want: "Example Series AKA Example Original 2026 S01E02 Example Episode 1080p WEB-DL H.265-GRP",
-},
+			name: "different year",
+			evidence: api.TVDBNameDisambiguation{
+				CanonicalName: "Example Series",
+				SeriesYear:    2026,
+				IncludeYear:   true,
+			},
+			want: "Example Series AKA Example Original 2026 S01E02 Example Episode 1080p WEB-DL H.265-GRP",
+		},
 		{
-name: "same year",
- evidence: api.TVDBNameDisambiguation{
-CanonicalName: "Example Series",
- SeriesYear: 2026,
- Locale: "US",
- IncludeYear: true,
- IncludeLocale: true,
- Status: api.MetadataEvidenceStatusPartial,
-},
- want: "Example Series AKA Example Original US 2026 S01E02 Example Episode 1080p WEB-DL H.265-GRP",
-},
+			name: "same year",
+			evidence: api.TVDBNameDisambiguation{
+				CanonicalName: "Example Series",
+				SeriesYear:    2026,
+				Locale:        "US",
+				IncludeYear:   true,
+				IncludeLocale: true,
+				Status:        api.MetadataEvidenceStatusPartial,
+			},
+			want: "Example Series AKA Example Original US 2026 S01E02 Example Episode 1080p WEB-DL H.265-GRP",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -81,6 +81,55 @@ func TestBuildNameUsesYUSTMDBMovieYear(t *testing.T) {
 	const want = "Example Release AKA Example Original 2026 1080p BluRay x265-GRP"
 	if got := buildName(meta, config.TrackerConfig{}); got != want {
 		t.Fatalf("YUS movie name = %q, want %q", got, want)
+	}
+}
+
+func TestApplyYUSTVDBDisambiguationRejectsStaleSource(t *testing.T) {
+	t.Parallel()
+
+	const original = "Example Series 2026 AKA Example Original S01E02 Example Episode 1080p WEB-DL H.265-GRP"
+	meta := yusTVNameSubject(api.TVDBNameDisambiguation{
+		CanonicalName: "Example Series",
+		SeriesYear:    2026,
+		IncludeYear:   true,
+	})
+	meta.SourcePath = "current-source"
+	meta.Identity.SourcePath = "current-source"
+	meta.Identity.Generation = 3
+	meta.ProviderMetadata.SourcePath = "stale-source"
+	meta.ProviderMetadata.Generation = 3
+
+	if got := applyYUSTVDBDisambiguation(original, meta); got != original {
+		t.Fatalf("stale YUS TVDB metadata changed name: %q", got)
+	}
+}
+
+func TestApplyYUSTMDBMovieYearRejectsStaleGeneration(t *testing.T) {
+	t.Parallel()
+
+	const original = "Example Release AKA Example Original 2025 1080p BluRay x265-GRP"
+	meta := api.UploadSubject{
+		SourcePath:  "current-source",
+		ReleaseName: original,
+		Identity: api.ExternalIdentity{
+			SourcePath: "current-source",
+			Generation: 3,
+			Category:   api.CanonicalCategoryMovie,
+		},
+		Release: api.ReleaseInfo{
+			Category:   "MOVIE",
+			Year:       2025,
+			Resolution: "1080p",
+		},
+		ProviderMetadata: api.SourceScopedMetadata{
+			SourcePath: "current-source",
+			Generation: 2,
+			TMDB:       &api.TMDBMetadata{Year: 2026},
+		},
+	}
+
+	if got := applyYUSTMDBMovieYear(original, meta); got != original {
+		t.Fatalf("stale YUS TMDB metadata changed name: %q", got)
 	}
 }
 

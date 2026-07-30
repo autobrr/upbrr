@@ -29,31 +29,31 @@ func TestBuildNameAppliesULCXTVDBDisambiguationMatrix(t *testing.T) {
 		want     string
 	}{
 		{
-name: "unique",
- evidence: api.TVDBNameDisambiguation{CanonicalName: "Example Series", SeriesYear: 2026},
- want: "Example Series AKA Example Original S01E02 Example Episode 1080p WEB-DL H.265-GRP",
-},
+			name:     "unique",
+			evidence: api.TVDBNameDisambiguation{CanonicalName: "Example Series", SeriesYear: 2026},
+			want:     "Example Series AKA Example Original S01E02 Example Episode 1080p WEB-DL H.265-GRP",
+		},
 		{
-name: "different year",
- evidence: api.TVDBNameDisambiguation{
-CanonicalName: "Example Series",
- SeriesYear: 2026,
- IncludeYear: true,
-},
- want: "Example Series AKA Example Original 2026 S01E02 Example Episode 1080p WEB-DL H.265-GRP",
-},
+			name: "different year",
+			evidence: api.TVDBNameDisambiguation{
+				CanonicalName: "Example Series",
+				SeriesYear:    2026,
+				IncludeYear:   true,
+			},
+			want: "Example Series AKA Example Original 2026 S01E02 Example Episode 1080p WEB-DL H.265-GRP",
+		},
 		{
-name: "same year locale omits year",
- evidence: api.TVDBNameDisambiguation{
-CanonicalName: "Example Series",
- SeriesYear: 2026,
- Locale: "US",
- IncludeYear: true,
- IncludeLocale: true,
- Status: api.MetadataEvidenceStatusPartial,
-},
- want: "Example Series AKA Example Original US S01E02 Example Episode 1080p WEB-DL H.265-GRP",
-},
+			name: "same year locale omits year",
+			evidence: api.TVDBNameDisambiguation{
+				CanonicalName: "Example Series",
+				SeriesYear:    2026,
+				Locale:        "US",
+				IncludeYear:   true,
+				IncludeLocale: true,
+				Status:        api.MetadataEvidenceStatusPartial,
+			},
+			want: "Example Series AKA Example Original US S01E02 Example Episode 1080p WEB-DL H.265-GRP",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -93,6 +93,26 @@ func TestBuildNameAppliesULCXEditionDistributorAndX265Rules(t *testing.T) {
 	const discWant = "Example Release 2026 1080p Criterion USA Blu-ray AVC-GRP"
 	if got := buildName(disc, config.TrackerConfig{}); got != discWant {
 		t.Fatalf("ULCX disc name = %q, want %q", got, discWant)
+	}
+}
+
+func TestApplyULCXTVDBDisambiguationRejectsStaleGeneration(t *testing.T) {
+	t.Parallel()
+
+	const original = "Example Series 2026 AKA Example Original S01E02 Example Episode 1080p WEB-DL H.265-GRP"
+	meta := ulcxTVNameSubject(api.TVDBNameDisambiguation{
+		CanonicalName: "Example Series",
+		SeriesYear:    2026,
+		IncludeYear:   true,
+	})
+	meta.SourcePath = "current-source"
+	meta.Identity.SourcePath = "current-source"
+	meta.Identity.Generation = 3
+	meta.ProviderMetadata.SourcePath = "current-source"
+	meta.ProviderMetadata.Generation = 2
+
+	if got := applyULCXTVDBDisambiguation(original, meta); got != original {
+		t.Fatalf("stale ULCX TVDB metadata changed name: %q", got)
 	}
 }
 

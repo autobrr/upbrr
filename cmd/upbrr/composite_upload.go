@@ -80,7 +80,7 @@ func (s *cliWorkflowSession) completeComposite(
 
 		action := firstPendingCLICompositeAction(s.current.Continuation.RequiredActions)
 		if action == nil {
-			return 0, cliWorkflowContinuationError(s.current)
+			return 0, cliWorkflowContinuationError(s.current, s.intent.interaction)
 		}
 		feedback, declined, feedbackErr := s.collectCompositeUploadFeedback(ctx, reader, cfg, logger, *action)
 		if feedbackErr != nil {

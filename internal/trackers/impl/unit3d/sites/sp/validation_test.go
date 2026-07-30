@@ -59,6 +59,42 @@ func TestSPEvidencePolicyPassViolationAndMissingEvidence(t *testing.T) {
 			wantDisposition: api.RuleDispositionAdvisory,
 			wantStatus:      api.MetadataEvidenceStatusUnavailable,
 		},
+		{
+			name: "current provider adult classification is strict",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Release.Genre = ""
+				subject.Identity.SourcePath = subject.SourcePath
+				subject.Identity.Generation = 2
+				subject.ProviderMetadata.SourcePath = subject.SourcePath
+				subject.ProviderMetadata.Generation = 2
+				subject.ProviderMetadata.TMDB.Genres = "Adult"
+			},
+			wantRule:        "sp_block_adult",
+			wantDisposition: api.RuleDispositionStrict,
+			wantStatus:      api.MetadataEvidenceStatusComplete,
+		},
+		{
+			name: "stale provider source cannot block adult content",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Release.Genre = ""
+				subject.Identity.SourcePath = subject.SourcePath
+				subject.Identity.Generation = 2
+				subject.ProviderMetadata.SourcePath = "stale-source"
+				subject.ProviderMetadata.Generation = 2
+				subject.ProviderMetadata.TMDB.Genres = "Adult"
+			},
+		},
+		{
+			name: "stale provider generation cannot block adult content",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.Release.Genre = ""
+				subject.Identity.SourcePath = subject.SourcePath
+				subject.Identity.Generation = 2
+				subject.ProviderMetadata.SourcePath = subject.SourcePath
+				subject.ProviderMetadata.Generation = 1
+				subject.ProviderMetadata.TMDB.Genres = "Adult"
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

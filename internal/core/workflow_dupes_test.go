@@ -357,6 +357,16 @@ func TestWorkflowDupeOutcomeIncompleteSearchWithoutCandidatesRequiresReview(t *t
 		len(target.RequiredActions) != 1 {
 		t.Fatalf("incomplete empty search outcome = %#v", target)
 	}
+	action := target.RequiredActions[0]
+	if action.Kind != api.RequiredActionReviewDuplicates ||
+		action.Status != api.RequiredActionStatusPending ||
+		action.TrackerID != target.TrackerID ||
+		action.Prompt != "Review incomplete, same-slot, or proposed-trump duplicate evidence and acknowledge tracker policy risk." ||
+		len(action.Options) != 2 ||
+		action.Options[0] != (api.RequiredActionOption{Value: string(api.DupeDecisionAccepted), Label: "Treat as duplicate"}) ||
+		action.Options[1] != (api.RequiredActionOption{Value: string(api.DupeDecisionIgnored), Label: "Acknowledge risk and continue"}) {
+		t.Fatalf("incomplete empty search action = %#v", action)
+	}
 }
 
 func TestWorkflowDupeBuilderSearchesReadySiblingAndRetainsAuthBlockedRow(t *testing.T) {

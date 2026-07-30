@@ -38,6 +38,28 @@ type failOnceSaveRepository struct {
 	saves int
 }
 
+type failOncePutPrivateResourceStore struct {
+	PrivateResourceStore
+	failed bool
+}
+
+func (s *failOncePutPrivateResourceStore) Put(
+	ownerID string,
+	workflowID api.WorkflowID,
+	resourceID string,
+	value any,
+	expiresAt time.Time,
+) error {
+	if !s.failed {
+		s.failed = true
+		return errors.New("synthetic private resource put failure")
+	}
+	if err := s.PrivateResourceStore.Put(ownerID, workflowID, resourceID, value, expiresAt); err != nil {
+		return fmt.Errorf("delegate private resource put: %w", err)
+	}
+	return nil
+}
+
 func (r *failOnceSaveRepository) Save(
 	ctx context.Context,
 	ownerID string,
@@ -1162,6 +1184,29 @@ func TestModuleReviewsTrackerReleaseNameWithoutRepeatingDupeSearch(t *testing.T)
 	action := result.Workflow.RequiredActions[0]
 	confirmed := true
 	reviewedNameValue := reviewedName
+	module.private = &failOncePutPrivateResourceStore{PrivateResourceStore: module.private}
+	_, err = module.Execute(context.Background(), testOwnerID, ResolveActionCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Answer: api.RequiredActionAnswer{
+			ActionID:         action.ID,
+			WorkflowRevision: result.Workflow.Revision,
+			TextValue:        &reviewedNameValue,
+			Confirmed:        &confirmed,
+		},
+		IdempotencyKey: "review-tracker-name-private-put-failure",
+	})
+	if err == nil || !strings.Contains(err.Error(), "retain duplicate evidence after name review") {
+		t.Fatalf("expected duplicate evidence replacement failure, got %v", err)
+	}
+	if _, err := module.private.Get(
+		testOwnerID,
+		result.Workflow.ID,
+		dupePrivateResourceID(priorDupeRef.ID),
+		module.clock.Now().UTC(),
+	); err != nil {
+		t.Fatalf("prior duplicate evidence lost after replacement failure: %v", err)
+	}
 	result = executeCommand(t, module, ResolveActionCommand{
 		WorkflowID:       result.Workflow.ID,
 		ExpectedRevision: result.Workflow.Revision,
@@ -3597,7 +3642,7 @@ func executeTestPublicationRaw(module *Module, publication any) (CommandResult, 
 	case projectionSetPublication:
 		result, err = module.publishProjections(ctx, testOwnerID, &state, nextRevision, now, typed)
 	case dupeAssessmentPublication:
-		result, err = module.publishDupes(testOwnerID, &state, nextRevision, now, typed)
+		result, err = module.publishDupes(&state, nextRevision, now, typed)
 	}
 	if err != nil {
 		return CommandResult{}, err

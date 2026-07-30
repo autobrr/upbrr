@@ -481,6 +481,27 @@ type SourceScopedMetadata struct {
 	UpdatedAt            time.Time `ts_type:"string"`
 }
 
+// IsCurrentFor reports whether provider metadata belongs to the current source
+// and prepared generation. Blank source scopes preserve legacy metadata, but
+// explicit source mismatches and generation mismatches are rejected.
+func (m SourceScopedMetadata) IsCurrentFor(sourcePath string, identity ExternalIdentity) bool {
+	return sourceScopedPathMatches(identity.SourcePath, sourcePath) &&
+		sourceScopedPathMatches(m.SourcePath, sourcePath) &&
+		preparedGenerationMatches(m.Generation, identity.Generation)
+}
+
+func sourceScopedPathMatches(scopedPath string, currentPath string) bool {
+	scopedPath = strings.TrimSpace(scopedPath)
+	return scopedPath == "" || strings.EqualFold(scopedPath, strings.TrimSpace(currentPath))
+}
+
+func preparedGenerationMatches(scoped PreparedGeneration, current PreparedGeneration) bool {
+	if scoped == 0 && current == 0 {
+		return true
+	}
+	return scoped > 0 && scoped == current
+}
+
 // ProviderAvailabilityStatus records the result of checking whether a provider
 // has an entry for the current source. Missing evidence remains distinct from a
 // completed lookup that found no entry.

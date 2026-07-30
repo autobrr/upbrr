@@ -137,6 +137,9 @@ func spAdultContentFailures(subject api.TrackerValidationSubject) []api.RuleFail
 
 func spClassificationValues(subject api.TrackerValidationSubject) []string {
 	values := []string{subject.Release.Genre}
+	if !subject.ProviderMetadata.IsCurrentFor(subject.SourcePath, subject.Identity) {
+		return values
+	}
 	if metadata := subject.ProviderMetadata.TMDB; metadata != nil {
 		values = append(values, metadata.Genres, metadata.Keywords)
 	}

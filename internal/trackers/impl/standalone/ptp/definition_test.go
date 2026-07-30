@@ -281,8 +281,8 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.RequestURI() {
-		case ptpLoginPath:
+		switch {
+		case r.URL.RequestURI() == ptpLoginPath:
 			if err := r.ParseForm(); err != nil {
 				t.Errorf("parse login: %v", err)
 				return
@@ -300,6 +300,8 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 				"Result":        "Ok",
 				"AntiCsrfToken": "csrf-token",
 			})
+		case r.Method == http.MethodGet && r.URL.Path == ptpUploadPath:
+			_, _ = w.Write([]byte(`<div data-AntiCsrfToken="csrf-token"></div>`))
 		default:
 			switch r.URL.Path {
 			case ptpUploadPath:
@@ -423,6 +425,10 @@ func TestLoginAndFetchAntiCsrfTokenHandles2FA(t *testing.T) {
 	secondLogin := false
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == ptpUploadPath {
+			_, _ = w.Write([]byte(`<div data-AntiCsrfToken="csrf-token"></div>`))
+			return
+		}
 		if r.URL.RequestURI() != ptpLoginPath {
 			w.WriteHeader(http.StatusNotFound)
 			return

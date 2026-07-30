@@ -342,6 +342,9 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 		m.cleanupUncommittedResult(ownerID, state.Workflow.ID, result)
 		return CommandResult{}, fmt.Errorf("release workflow save: %w", err)
 	}
+	if result.Dupes != nil {
+		m.cleanupSupersededDupeResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
+	}
 	if result.Media != nil {
 		m.cleanupSupersededMediaResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
 	}
@@ -354,6 +357,9 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 }
 
 func (m *Module) cleanupUncommittedResult(ownerID string, workflowID api.WorkflowID, result CommandResult) {
+	if result.Dupes != nil {
+		m.private.Delete(ownerID, workflowID, dupePrivateResourceID(result.Dupes.ID))
+	}
 	if result.Media != nil {
 		m.private.Delete(ownerID, workflowID, mediaPrivateResourceID(result.Media.ID))
 	}
@@ -399,6 +405,23 @@ func (m *Module) finalizeRetainedMedia(
 		return fmt.Errorf("release workflow finalize media mutation: %w", err)
 	}
 	return nil
+}
+
+func (m *Module) cleanupSupersededDupeResources(
+	ownerID string,
+	workflowID api.WorkflowID,
+	prior api.ReleaseWorkflow,
+	current api.ReleaseWorkflow,
+) {
+	if prior.Dupes != nil && (current.Dupes == nil || *prior.Dupes != *current.Dupes) {
+		m.private.Delete(ownerID, workflowID, dupePrivateResourceID(prior.Dupes.ID))
+	}
+	if prior.Media != nil && (current.Media == nil || *prior.Media != *current.Media) {
+		m.private.Delete(ownerID, workflowID, mediaPrivateResourceID(prior.Media.ID))
+	}
+	if prior.Descriptions != nil && (current.Descriptions == nil || *prior.Descriptions != *current.Descriptions) {
+		m.private.Delete(ownerID, workflowID, descriptionPrivateResourceID(prior.Descriptions.ID))
+	}
 }
 
 func (m *Module) cleanupSupersededMediaResources(
@@ -3583,7 +3606,7 @@ func (m *Module) checkDuplicates(
 		return CommandResult{}, err
 	}
 	snapshot.Status = dupeStageStatus(snapshot.Results)
-	result, err := m.publishDupes(ownerID, state, nextRevision, now, dupeAssessmentPublication{Snapshot: snapshot})
+	result, err := m.publishDupes(state, nextRevision, now, dupeAssessmentPublication{Snapshot: snapshot})
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -3662,7 +3685,7 @@ func (m *Module) decideDuplicates(
 		return CommandResult{}, err
 	}
 	snapshot.Status = dupeStageStatus(snapshot.Results)
-	result, err := m.publishDupes(ownerID, state, nextRevision, now, dupeAssessmentPublication{Snapshot: snapshot})
+	result, err := m.publishDupes(state, nextRevision, now, dupeAssessmentPublication{Snapshot: snapshot})
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -3867,16 +3890,12 @@ func collectDupeFailures(results []api.TrackerDupeAssessment) []api.WorkflowFail
 func dupePrivateResourceID(id api.DupeAssessmentID) string { return "dupe:" + string(id) }
 
 func (m *Module) publishDupes(
-	ownerID string,
 	state *State,
 	nextRevision api.WorkflowRevision,
 	now time.Time,
 	command dupeAssessmentPublication,
 ) (CommandResult, error) {
 	workflow := state.Workflow
-	priorDupes := workflow.Dupes
-	priorMedia := workflow.Media
-	priorDescriptions := workflow.Descriptions
 	if workflow.Release == nil || workflow.Selection == nil || workflow.TrackerProjections == nil || workflow.TrackerPreflight == nil {
 		return CommandResult{}, fmt.Errorf("%w: duplicate assessment dependencies are incomplete", ErrInvalidTransition)
 	}
@@ -3912,15 +3931,6 @@ func (m *Module) publishDupes(
 	state.Workflow.Media = nil
 	state.Workflow.Descriptions = nil
 	invalidateUploadPlan(&state.Workflow)
-	if priorDupes != nil {
-		m.private.Delete(ownerID, state.Workflow.ID, dupePrivateResourceID(priorDupes.ID))
-	}
-	if priorMedia != nil {
-		m.private.Delete(ownerID, state.Workflow.ID, mediaPrivateResourceID(priorMedia.ID))
-	}
-	if priorDescriptions != nil {
-		m.private.Delete(ownerID, state.Workflow.ID, descriptionPrivateResourceID(priorDescriptions.ID))
-	}
 	actions := append([]api.RequiredAction(nil), projections.RequiredActions...)
 	actions = append(actions, collectDupeActions(snapshot.Results)...)
 	setWorkflowStageStatus(&state.Workflow, snapshot.Status, actions, collectDupeFailures(snapshot.Results))

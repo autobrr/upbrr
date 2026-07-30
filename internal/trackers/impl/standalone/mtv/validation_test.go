@@ -95,6 +95,58 @@ func TestMTVValidationPolicyVersion(t *testing.T) {
 	}
 }
 
+func TestMTVAdultContentValidationUsesCurrentMetadata(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		mutate   func(*api.TrackerValidationSubject)
+		wantRule string
+	}{
+		{
+			name: "current provider adult classification blocks",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.ProviderMetadata.TVDB.Genres = "Adult"
+			},
+			wantRule: "mtv_block_adult",
+		},
+		{
+			name: "non-adult classification passes",
+		},
+		{
+			name: "stale provider adult classification does not block",
+			mutate: func(subject *api.TrackerValidationSubject) {
+				subject.ProviderMetadata.SourcePath = "stale-source"
+				subject.ProviderMetadata.TVDB.Genres = "Adult"
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			subject := mtvPassingSubject()
+			if test.mutate != nil {
+				test.mutate(&subject)
+			}
+			failures := mtvAdultContentFailures(subject)
+			if test.wantRule == "" {
+				if len(failures) != 0 {
+					t.Fatalf("unexpected adult-content failures: %#v", failures)
+				}
+				return
+			}
+			requireMTVValidationFailure(
+				t,
+				failures,
+				test.wantRule,
+				api.RuleDispositionStrict,
+				api.MetadataEvidenceStatusComplete,
+			)
+		})
+	}
+}
+
 func TestMTVFullDVDAllowsRequiredDiscStructureFiles(t *testing.T) {
 	t.Parallel()
 

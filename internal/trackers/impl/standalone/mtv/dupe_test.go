@@ -51,6 +51,7 @@ func TestMTVHandlerUsesIMDBPriorityAndParsesXML(t *testing.T) {
 			body := `<?xml version="1.0" encoding="UTF-8"?>
 <rss xmlns:torznab="http://torznab.com/schemas/2015/feed">
   <channel>
+    <response offset="0" total="2" />
     <item>
       <title>Example.Release.1080p.WEB-DL.DDP5.1.H.264-GRP</title>
       <files>3</files>
@@ -149,7 +150,7 @@ func TestMTVHandlerUsesExactProjectedTitleQuery(t *testing.T) {
 			if got := query.Get("imdbid"); got != "" {
 				t.Fatalf("imdbid should be empty, got %q", got)
 			}
-			body := `<rss><channel></channel></rss>`
+			body := `<rss><channel><response offset="0" total="0" /></channel></rss>`
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(strings.NewReader(body)),
@@ -185,7 +186,7 @@ func TestMTVHandlerUsesExactProjectedTitleQuery(t *testing.T) {
 	}
 }
 
-func TestMTVHandlerPaginatesFullPageWithoutAdvertisedTotal(t *testing.T) {
+func TestMTVHandlerPaginatesUsingAdvertisedOffsets(t *testing.T) {
 	t.Parallel()
 
 	calls := 0
@@ -205,6 +206,7 @@ func TestMTVHandlerPaginatesFullPageWithoutAdvertisedTotal(t *testing.T) {
 			}
 			var body strings.Builder
 			body.WriteString("<rss><channel>")
+			fmt.Fprintf(&body, `<response offset="%d" total="101" />`, (calls-1)*100)
 			for index := range count {
 				fmt.Fprintf(&body, "<item><title>Example.Release.%03d.1080p-GRP</title></item>", index+(calls-1)*100)
 			}
@@ -237,6 +239,59 @@ func TestMTVHandlerPaginatesFullPageWithoutAdvertisedTotal(t *testing.T) {
 	}
 }
 
+func TestMTVHandlerReportsIncompletePaginationMetadata(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		response string
+	}{
+		{name: "omitted response"},
+		{name: "omitted attributes", response: "<response />"},
+		{name: "inconsistent offset", response: `<response offset="1" total="100" />`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			calls := 0
+			client := &http.Client{
+				Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					calls++
+					var body strings.Builder
+					body.WriteString("<rss><channel>")
+					body.WriteString(test.response)
+					for index := range 100 {
+						fmt.Fprintf(&body, "<item><title>Example.Release.%03d.1080p-GRP</title></item>", index)
+					}
+					body.WriteString("</channel></rss>")
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(body.String())),
+						Header:     make(http.Header),
+					}, nil
+				}),
+			}
+			handler := dupe.NewAdapter(New(), "MTV", config.Config{
+				Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+					"MTV": {APIKey: "token"},
+				}},
+			}, client, api.NopLogger{})
+
+			result := handler.Search(context.Background(), api.DuplicateSubject{
+				Identity: api.ExternalIdentity{IMDBID: 123456},
+			})
+			if err := result.Cause(); err != nil {
+				t.Fatalf("search: %v", err)
+			}
+			evidence := result.SearchEvidence()
+			if calls != 1 || evidence.Complete || evidence.Pages != 1 || len(evidence.Warnings) != 1 {
+				t.Fatalf("calls=%d search evidence=%#v", calls, evidence)
+			}
+		})
+	}
+}
+
 func TestCleanMTVSearchTitleDirectFallback(t *testing.T) {
 	t.Parallel()
 
@@ -255,7 +310,7 @@ func TestMTVHandlerSkipsTVDBForMovie(t *testing.T) {
 			if got := query.Get("tvdbid"); got != "" {
 				t.Fatalf("tvdbid should be empty for movie category, got %q", got)
 			}
-			body := `<rss><channel></channel></rss>`
+			body := `<rss><channel><response offset="0" total="0" /></channel></rss>`
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(strings.NewReader(body)),
@@ -299,7 +354,7 @@ func TestMTVHandlerUsesTVDBForTV(t *testing.T) {
 			if got := query.Get("q"); got != "" {
 				t.Fatalf("q should be empty when tvdbid is present, got %q", got)
 			}
-			body := `<rss><channel></channel></rss>`
+			body := `<rss><channel><response offset="0" total="0" /></channel></rss>`
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(strings.NewReader(body)),

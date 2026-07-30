@@ -24,7 +24,8 @@ func TestMTVTorznabFixtureKeepsTitleSeparateFromFiles(t *testing.T) {
 	if err := xml.Unmarshal(payloadBytes, &payload); err != nil {
 		t.Fatalf("decode fixture: %v", err)
 	}
-	if payload.Channel.Response.Total != 2 || len(payload.Channel.Items) != 2 {
+	if payload.Channel.Response == nil || payload.Channel.Response.Total == nil ||
+		*payload.Channel.Response.Total != 2 || len(payload.Channel.Items) != 2 {
 		t.Fatalf("pagination/items = %#v", payload.Channel)
 	}
 	entry, ok := mtvDupeEntry(payload.Channel.Items[0])
@@ -39,5 +40,21 @@ func TestMTVTorznabFixtureKeepsTitleSeparateFromFiles(t *testing.T) {
 	}
 	if !slices.Equal(entry.HDR.Formats, []api.HDRFormat{api.HDRFormatDolbyVision, api.HDRFormatHDR10Plus}) {
 		t.Fatalf("MTV combined HDR formats = %#v", entry.HDR)
+	}
+
+	second, ok := mtvDupeEntry(payload.Channel.Items[1])
+	if !ok {
+		t.Fatal("second fixture entry was not normalized")
+	}
+	if second.Name != "Example.Show.S01E02.2160p.WEB-DL-GRP" ||
+		!second.SizeKnown ||
+		second.SizeBytes != 1002 ||
+		second.FileCount != 1 ||
+		second.Category != "5000" ||
+		second.Res != "" ||
+		second.Source != "" ||
+		second.FlagsPresent ||
+		len(second.Files) != 0 {
+		t.Fatalf("second normalized entry = %#v", second)
 	}
 }

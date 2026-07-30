@@ -323,9 +323,10 @@ func setWorkflowDupeOutcome(target *api.TrackerDupeAssessment, result api.DupeCh
 		target.Decision = api.DupeDecisionPending
 		target.Status = api.StageStatusBlocked
 		target.RequiredActions = []api.RequiredAction{{
-			Kind:   api.RequiredActionReviewDuplicates,
-			Status: api.RequiredActionStatusPending,
-			Prompt: "Review incomplete, same-slot, or proposed-trump duplicate evidence and acknowledge tracker policy risk.",
+			Kind:      api.RequiredActionReviewDuplicates,
+			Status:    api.RequiredActionStatusPending,
+			TrackerID: target.TrackerID,
+			Prompt:    "Review incomplete, same-slot, or proposed-trump duplicate evidence and acknowledge tracker policy risk.",
 			Options: []api.RequiredActionOption{
 				{Value: string(api.DupeDecisionAccepted), Label: "Treat as duplicate"},
 				{Value: string(api.DupeDecisionIgnored), Label: "Acknowledge risk and continue"},

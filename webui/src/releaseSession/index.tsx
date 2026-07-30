@@ -1762,9 +1762,12 @@ export function ReleaseSessionProvider({
         const inClient = result.matches?.some(
           (match) => match.reason?.trim().toLowerCase() === "in_client",
         );
+        const hasReviewableEvidence =
+          Boolean(result.matches?.length) ||
+          (Boolean(result.search?.pages) && result.search?.complete === false);
         const canOverride =
           !inClient &&
-          Boolean(result.matches?.length) &&
+          hasReviewableEvidence &&
           ["pending", "accepted", "ignored"].includes(result.decision);
         if (!canOverride) return;
         dispatch({ type: "dupe_ignore_changed", tracker: normalizedTracker, ignored });

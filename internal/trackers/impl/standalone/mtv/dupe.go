@@ -71,7 +71,6 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		params.Set("q", query)
 	}
 
-	const pageLimit = 100
 	maxPages := h.maxPages
 	if maxPages <= 0 {
 		maxPages = 100
@@ -112,25 +111,24 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 				entries = append(entries, entry)
 			}
 		}
-		total := payload.Channel.Response.Total
-		responseOffset := payload.Channel.Response.Offset
-		if responseOffset == 0 && offset > 0 {
-			responseOffset = offset
+		response := payload.Channel.Response
+		if response == nil || response.Offset == nil || response.Total == nil {
+			break
+		}
+		total := *response.Total
+		responseOffset := *response.Offset
+		if responseOffset < 0 || total < 0 || responseOffset != offset {
+			break
 		}
 		nextOffset := responseOffset + len(payload.Channel.Items)
 		switch {
-		case total > 0 && nextOffset >= total:
+		case total == 0 && len(payload.Channel.Items) == 0:
 			complete = true
-		case total > nextOffset && nextOffset > offset:
+		case nextOffset == total:
+			complete = true
+		case len(payload.Channel.Items) > 0 && nextOffset < total:
 			offset = nextOffset
 			continue
-		case total > nextOffset:
-			// Advertised results remain but the endpoint made no progress.
-		case total == 0 && len(payload.Channel.Items) == pageLimit && nextOffset > offset:
-			offset = nextOffset
-			continue
-		case len(payload.Channel.Items) < pageLimit:
-			complete = true
 		}
 		break
 	}
@@ -294,13 +292,13 @@ type mtvRSS struct {
 }
 
 type mtvChannel struct {
-	Items    []mtvItem         `xml:"item"`
-	Response mtvSearchResponse `xml:"response"`
+	Items    []mtvItem          `xml:"item"`
+	Response *mtvSearchResponse `xml:"response"`
 }
 
 type mtvSearchResponse struct {
-	Offset int `xml:"offset,attr"`
-	Total  int `xml:"total,attr"`
+	Offset *int `xml:"offset,attr"`
+	Total  *int `xml:"total,attr"`
 }
 
 type mtvItem struct {

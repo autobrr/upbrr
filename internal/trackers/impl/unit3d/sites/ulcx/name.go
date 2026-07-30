@@ -32,7 +32,9 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 }
 
 func applyULCXTVDBDisambiguation(name string, meta api.UploadSubject) string {
-	if unit3d.Category(meta) != "TV" || meta.ProviderMetadata.TVDB == nil {
+	if unit3d.Category(meta) != "TV" ||
+		!meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) ||
+		meta.ProviderMetadata.TVDB == nil {
 		return name
 	}
 	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation

@@ -206,7 +206,7 @@ func (m *Module) reviewTrackerReleaseName(
 		ID:       finalized.ID,
 		Revision: finalized.Revision,
 	}
-	result, err := m.publishDupes(ownerID, state, nextRevision, now, dupeAssessmentPublication{Snapshot: rebasedDupes})
+	result, err := m.publishDupes(state, nextRevision, now, dupeAssessmentPublication{Snapshot: rebasedDupes})
 	if err != nil {
 		return CommandResult{}, err
 	}

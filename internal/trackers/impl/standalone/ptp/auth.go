@@ -90,6 +90,9 @@ func resolveSessionLogin(
 			return nil, "", tokenErr
 		}
 	}
+	if err != nil && !errors.Is(err, cookiepkg.ErrTrackerCookiesNotFound) {
+		return nil, "", err
+	}
 	return loginAndFetchAntiCsrfToken(ctx, trackerConfig, dbPath, baseURL, logger, login)
 }
 
@@ -237,6 +240,10 @@ func loginAndFetchAntiCsrfToken(
 	if token == "" {
 		return nil, "", errors.New("trackers: PTP login missing anti csrf token")
 	}
+	token, err = requestAntiCsrfToken(ctx, client, baseURL)
+	if err != nil {
+		return nil, "", fmt.Errorf("trackers: PTP verify login session: %w", err)
+	}
 	if err := saveCookies(ctx, dbPath, client, baseURL); err != nil {
 		return nil, "", fmt.Errorf("trackers: PTP persist login cookies: %w", err)
 	}
@@ -285,7 +292,15 @@ func requestAntiCsrfToken(ctx context.Context, client *http.Client, baseURL stri
 			ptpAuthResponseKind(resp, body),
 		)
 	}
-	return strings.TrimSpace(matches[1]), nil
+	token := strings.TrimSpace(matches[1])
+	if token == "" {
+		return "", fmt.Errorf(
+			"trackers: PTP upload page unavailable status=%d response_kind=%s",
+			resp.StatusCode,
+			ptpAuthResponseKind(resp, body),
+		)
+	}
+	return token, nil
 }
 
 func decodePTPAuthResponse(resp *http.Response, stage string) (map[string]any, error) {

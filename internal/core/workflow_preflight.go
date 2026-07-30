@@ -24,6 +24,9 @@ const (
 	workflowPreflightFreshness      = 15 * time.Minute
 	dupeSkipCodeTrackerAuthNotReady = "tracker_auth_not_ready"
 	authBlockedPreflightMessage     = "Tracker authentication is not ready for this attempt. Resolve authentication outside the upload workflow, then restart it."
+	authTwoFactorPreflightMessage   = "Tracker authentication requires two-factor completion in Tracker Auth. Complete it outside the upload workflow, then restart this attempt."
+	authStoragePreflightMessage     = "Encrypted cookie storage is unavailable. Create web-auth.json, then retry tracker authentication and restart this upload workflow."
+	authUnavailablePreflightMessage = "Tracker authentication could not be validated because the tracker is temporarily unavailable."
 )
 
 // workflowPreflightBuilder adapts live auth validation to the workflow's
@@ -247,13 +250,24 @@ func (b workflowPreflightBuilder) Build(
 					setAuthUnavailablePreflight(&result)
 					b.logAuthUnavailable(projection.TrackerID, status.State, "remote_validation_unavailable")
 				} else {
-					setAuthBlockedPreflight(&result)
-					b.logAuthBlocked(projection.TrackerID, status.State, trackerAuthBlockedReason(status))
+					setAuthBlockedPreflight(&result, status)
+					b.logAuthBlocked(
+						projection.TrackerID,
+						status.State,
+						trackerAuthBlockedReason(status),
+						result.Failures[0].Failure.Recovery,
+					)
 				}
 			}
 		} else if _, hasCapability := knownCapabilities[projection.TrackerID]; hasCapability && !runtimeConfigured[projection.TrackerID] {
-			setAuthBlockedPreflight(&result)
-			b.logAuthBlocked(projection.TrackerID, trackerauth.StateNotConfigured, "not_configured")
+			status := api.TrackerAuthStatus{State: trackerauth.StateNotConfigured}
+			setAuthBlockedPreflight(&result, status)
+			b.logAuthBlocked(
+				projection.TrackerID,
+				status.State,
+				"not_configured",
+				result.Failures[0].Failure.Recovery,
+			)
 		}
 		trackerName := string(projection.TrackerID)
 		if result.State == api.TrackerPreflightStateReady {
@@ -484,15 +498,24 @@ func setRetryablePreflight(result *api.TrackerPreflightResult, message string) {
 	)}
 }
 
-func setAuthBlockedPreflight(result *api.TrackerPreflightResult) {
+func setAuthBlockedPreflight(result *api.TrackerPreflightResult, status api.TrackerAuthStatus) {
+	message := authBlockedPreflightMessage
+	recovery := api.OperationRecoveryAuthenticateTrackers
+	switch {
+	case status.Needs2FA:
+		message = authTwoFactorPreflightMessage
+	case strings.TrimSpace(status.State) == trackerauth.StateEncryptedStorageUnavailable:
+		message = authStoragePreflightMessage
+		recovery = api.OperationRecoveryCompletePrerequisite
+	}
 	result.State = api.TrackerPreflightStateRetryable
 	result.AuthReady = false
 	result.RequiredActions = nil
 	result.Failures = []api.WorkflowFailure{preflightFailure(
 		result.TrackerID,
 		api.OperationFailureTrackerAuthRequired,
-		authBlockedPreflightMessage,
-		api.OperationRecoveryAuthenticateTrackers,
+		message,
+		recovery,
 	)}
 }
 
@@ -503,7 +526,7 @@ func setAuthUnavailablePreflight(result *api.TrackerPreflightResult) {
 	result.Failures = []api.WorkflowFailure{preflightFailure(
 		result.TrackerID,
 		api.OperationFailureTrackerAuthUnavailable,
-		"Tracker authentication could not be validated because the tracker is temporarily unavailable.",
+		authUnavailablePreflightMessage,
 		api.OperationRecoveryRetry,
 	)}
 }
@@ -525,6 +548,8 @@ func trackerAuthBlockedReason(status api.TrackerAuthStatus) string {
 	switch {
 	case status.Needs2FA:
 		return "two_factor_required"
+	case strings.TrimSpace(status.State) == trackerauth.StateEncryptedStorageUnavailable:
+		return "encrypted_storage_unavailable"
 	case strings.TrimSpace(status.LastError) != "":
 		return "remote_validation_failed"
 	case strings.TrimSpace(status.State) == "":
@@ -551,7 +576,12 @@ func (b workflowPreflightBuilder) logAuthUnavailable(trackerID api.TrackerID, st
 	)
 }
 
-func (b workflowPreflightBuilder) logAuthBlocked(trackerID api.TrackerID, state string, reason string) {
+func (b workflowPreflightBuilder) logAuthBlocked(
+	trackerID api.TrackerID,
+	state string,
+	reason string,
+	recovery api.OperationRecovery,
+) {
 	state = strings.ToLower(strings.TrimSpace(redaction.RedactValue(state, nil)))
 	if state == "" {
 		state = "unknown"
@@ -561,10 +591,11 @@ func (b workflowPreflightBuilder) logAuthBlocked(trackerID api.TrackerID, state 
 		reason = "unknown"
 	}
 	b.logger.Warnf(
-		"core: tracker auth blocked tracker=%s state=%s reason=%s decision=blocked recovery=authenticate_trackers",
+		"core: tracker auth blocked tracker=%s state=%s reason=%s decision=blocked recovery=%s",
 		trackerID,
 		state,
 		reason,
+		recovery,
 	)
 }
 

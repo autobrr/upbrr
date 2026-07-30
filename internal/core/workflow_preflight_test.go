@@ -259,6 +259,8 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 			len(result.Failures) != 1 ||
 			result.Failures[0].Failure.Code != api.OperationFailureTrackerAuthRequired ||
 			result.Failures[0].Failure.Recovery != api.OperationRecoveryAuthenticateTrackers ||
+			!strings.Contains(result.Failures[0].Failure.Message, "two-factor") ||
+			!strings.Contains(result.Failures[0].Failure.Message, "Tracker Auth") ||
 			finalized[0].Readiness != api.ReadinessStatusBlocked ||
 			finalized[0].DupeReady ||
 			finalized[0].UploadReady {
@@ -273,6 +275,35 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		}
 		if strings.Contains(string(payload), "secret-value") {
 			t.Fatalf("preflight exposed secret: %s", payload)
+		}
+	})
+
+	t.Run("encrypted storage blocker preserves repair guidance", func(t *testing.T) {
+		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{
+			capabilities: []api.TrackerAuthCapability{{TrackerID: "ALPHA", SupportsLogin: true}},
+			statuses: []api.TrackerAuthStatus{{
+				TrackerID:        "ALPHA",
+				State:            trackerauth.StateEncryptedStorageUnavailable,
+				EncryptedStorage: false,
+				Message:          "encrypted cookie storage unavailable; create web-auth.json before importing cookies",
+			}},
+		}, registry: registry}
+		assessment, finalized, err := builder.Build(context.Background(), api.UploadSubject{}, catalog, runtime, projections, now)
+		if err != nil {
+			t.Fatalf("build encrypted storage preflight: %v", err)
+		}
+		result := assessment.Results[0]
+		if result.State != api.TrackerPreflightStateRetryable ||
+			len(result.RequiredActions) != 0 ||
+			len(result.Failures) != 1 ||
+			result.Failures[0].Failure.Code != api.OperationFailureTrackerAuthRequired ||
+			result.Failures[0].Failure.Recovery != api.OperationRecoveryCompletePrerequisite ||
+			!strings.Contains(result.Failures[0].Failure.Message, "Encrypted cookie storage") ||
+			!strings.Contains(result.Failures[0].Failure.Message, "web-auth.json") ||
+			finalized[0].Readiness != api.ReadinessStatusBlocked ||
+			finalized[0].DupeReady ||
+			finalized[0].UploadReady {
+			t.Fatalf("encrypted storage preflight = %#v/%#v", result, finalized[0])
 		}
 	})
 
@@ -316,6 +347,7 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 			len(assessment.Results[0].RequiredActions) != 0 ||
 			len(assessment.Results[0].Failures) != 1 ||
 			assessment.Results[0].Failures[0].Failure.Code != api.OperationFailureTrackerAuthRequired ||
+			assessment.Results[0].Failures[0].Failure.Message != authBlockedPreflightMessage ||
 			finalized[0].Readiness != api.ReadinessStatusBlocked ||
 			finalized[0].DupeReady ||
 			finalized[0].UploadReady {
@@ -360,6 +392,7 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 			len(assessment.Results[0].Failures) != 1 ||
 			assessment.Results[0].Failures[0].Failure.Code != api.OperationFailureTrackerAuthUnavailable ||
 			assessment.Results[0].Failures[0].Failure.Recovery != api.OperationRecoveryRetry ||
+			assessment.Results[0].Failures[0].Failure.Message != authUnavailablePreflightMessage ||
 			finalized[0].Readiness != api.ReadinessStatusBlocked {
 			t.Fatalf("capability failure auth lane = %#v/%#v", assessment.Results[0], finalized[0])
 		}
@@ -383,6 +416,7 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 			len(assessment.Results[0].Failures) != 1 ||
 			assessment.Results[0].Failures[0].Failure.Code != api.OperationFailureTrackerAuthUnavailable ||
 			assessment.Results[0].Failures[0].Failure.Recovery != api.OperationRecoveryRetry ||
+			assessment.Results[0].Failures[0].Failure.Message != authUnavailablePreflightMessage ||
 			finalized[0].DupeReady {
 			t.Fatalf("retryable preflight = %#v/%#v", assessment.Results[0], finalized[0])
 		}
@@ -420,6 +454,7 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 			len(result.Failures) != 1 ||
 			result.Failures[0].Failure.Code != api.OperationFailureTrackerAuthUnavailable ||
 			result.Failures[0].Failure.Recovery != api.OperationRecoveryRetry ||
+			result.Failures[0].Failure.Message != authUnavailablePreflightMessage ||
 			finalized[0].Readiness != api.ReadinessStatusBlocked ||
 			finalized[0].DupeReady ||
 			finalized[0].UploadReady {

@@ -132,21 +132,7 @@ func matchingMTVTVDBMetadata(meta api.UploadSubject) bool {
 }
 
 func mtvProviderMetadataCurrent(meta api.UploadSubject) bool {
-	return mtvSourceMatches(meta.Identity.SourcePath, meta.SourcePath) &&
-		mtvSourceMatches(meta.ProviderMetadata.SourcePath, meta.SourcePath) &&
-		mtvGenerationMatches(meta.ProviderMetadata.Generation, meta.Identity.Generation)
-}
-
-func mtvSourceMatches(scopedPath, currentPath string) bool {
-	scopedPath = strings.TrimSpace(scopedPath)
-	return scopedPath == "" || strings.EqualFold(scopedPath, strings.TrimSpace(currentPath))
-}
-
-func mtvGenerationMatches(scoped, current api.PreparedGeneration) bool {
-	if scoped == 0 && current == 0 {
-		return true
-	}
-	return scoped > 0 && scoped == current
+	return meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity)
 }
 
 func mtvTVYear(meta api.UploadSubject) string {

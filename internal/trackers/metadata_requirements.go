@@ -331,9 +331,7 @@ func matchingMetadataPoster(meta api.RuleSubject) bool {
 }
 
 func providerMetadataCurrent(meta api.RuleSubject) bool {
-	return sourceMatches(meta.Identity.SourcePath, meta.SourcePath) &&
-		sourceMatches(meta.ProviderMetadata.SourcePath, meta.SourcePath) &&
-		generationMatches(meta.ProviderMetadata.Generation, meta.Identity.Generation)
+	return meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity)
 }
 
 // sourceMatches preserves legacy unscoped canonical identity while rejecting
@@ -342,13 +340,6 @@ func providerMetadataCurrent(meta api.RuleSubject) bool {
 func sourceMatches(scopedPath, currentPath string) bool {
 	trimmed := strings.TrimSpace(scopedPath)
 	return trimmed == "" || strings.EqualFold(trimmed, strings.TrimSpace(currentPath))
-}
-
-func generationMatches(scoped, current api.PreparedGeneration) bool {
-	if scoped == 0 && current == 0 {
-		return true
-	}
-	return scoped > 0 && scoped == current
 }
 
 // metadataFieldList formats alternative field names for a rule-result reason.

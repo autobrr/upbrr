@@ -32,7 +32,8 @@ func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
 }
 
 func applyYUSTVDBDisambiguation(name string, meta api.UploadSubject) string {
-	if meta.ProviderMetadata.TVDB == nil {
+	if !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) ||
+		meta.ProviderMetadata.TVDB == nil {
 		return name
 	}
 	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
@@ -97,7 +98,8 @@ func findYUSTVTailStart(value string, meta api.UploadSubject) int {
 }
 
 func applyYUSTMDBMovieYear(name string, meta api.UploadSubject) string {
-	if meta.ProviderMetadata.TMDB == nil || meta.ProviderMetadata.TMDB.Year <= 0 ||
+	if !meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) ||
+		meta.ProviderMetadata.TMDB == nil || meta.ProviderMetadata.TMDB.Year <= 0 ||
 		meta.Release.Year <= 0 || meta.ProviderMetadata.TMDB.Year == meta.Release.Year {
 		return name
 	}

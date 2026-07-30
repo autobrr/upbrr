@@ -132,6 +132,57 @@ func TestNormalizeCanonicalCategory(t *testing.T) {
 	}
 }
 
+func TestSourceScopedMetadataIsCurrentFor(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		metadata   SourceScopedMetadata
+		sourcePath string
+		identity   ExternalIdentity
+		want       bool
+	}{
+		{
+			name:       "matching source and generation",
+			metadata:   SourceScopedMetadata{SourcePath: `C:\media\Example.Release.2026.mkv`, Generation: 3},
+			sourcePath: `c:\MEDIA\Example.Release.2026.mkv`,
+			identity:   ExternalIdentity{SourcePath: `C:\media\Example.Release.2026.mkv`, Generation: 3},
+			want:       true,
+		},
+		{
+			name:       "legacy unscoped metadata",
+			sourcePath: `C:\media\Example.Release.2026.mkv`,
+			want:       true,
+		},
+		{
+			name:       "stale metadata source",
+			metadata:   SourceScopedMetadata{SourcePath: `C:\media\Old.Release.mkv`, Generation: 3},
+			sourcePath: `C:\media\Example.Release.2026.mkv`,
+			identity:   ExternalIdentity{SourcePath: `C:\media\Example.Release.2026.mkv`, Generation: 3},
+		},
+		{
+			name:       "stale identity source",
+			metadata:   SourceScopedMetadata{SourcePath: `C:\media\Example.Release.2026.mkv`, Generation: 3},
+			sourcePath: `C:\media\Example.Release.2026.mkv`,
+			identity:   ExternalIdentity{SourcePath: `C:\media\Old.Release.mkv`, Generation: 3},
+		},
+		{
+			name:       "stale generation",
+			metadata:   SourceScopedMetadata{SourcePath: `C:\media\Example.Release.2026.mkv`, Generation: 2},
+			sourcePath: `C:\media\Example.Release.2026.mkv`,
+			identity:   ExternalIdentity{SourcePath: `C:\media\Example.Release.2026.mkv`, Generation: 3},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := test.metadata.IsCurrentFor(test.sourcePath, test.identity); got != test.want {
+				t.Fatalf("IsCurrentFor() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 func assertMissingRequirement(t *testing.T, err error, requirement RequirementKind, provider IdentityProvider) {
 	t.Helper()
 	var missing *MissingRequirementError
