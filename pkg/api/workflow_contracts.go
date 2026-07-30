@@ -250,20 +250,25 @@ type TrackerPolicyDecision struct {
 
 // TrackerReleaseProjection is one exact tracker-local interpretation of a release.
 type TrackerReleaseProjection struct {
-	TrackerID                  TrackerID                `json:"trackerId"`
-	DisplayName                string                   `json:"displayName"`
-	CanonicalReleaseName       string                   `json:"canonicalReleaseName"`
-	UploadReleaseName          string                   `json:"uploadReleaseName"`
-	AdditionalNames            []TrackerReleaseName     `json:"additionalNames,omitempty"`
-	Taxonomy                   TrackerTaxonomy          `json:"taxonomy"`
-	ProviderIDs                []TrackerProviderID      `json:"providerIds,omitempty"`
-	DuplicateCriteria          TrackerDuplicateCriteria `json:"duplicateCriteria"`
-	DuplicateTarget            TrackerDuplicateTarget   `json:"duplicateTarget"`
-	DuplicatePolicyID          string                   `json:"duplicatePolicyId"`
-	DuplicatePolicyFingerprint WorkflowFingerprint      `json:"duplicatePolicyFingerprint"`
-	DuplicateTargetFingerprint WorkflowFingerprint      `json:"duplicateTargetFingerprint"`
-	DuplicateSearchFingerprint WorkflowFingerprint      `json:"duplicateSearchFingerprint"`
-	NamingPolicyID             string                   `json:"namingPolicyId"`
+	TrackerID            TrackerID                `json:"trackerId"`
+	DisplayName          string                   `json:"displayName"`
+	CanonicalReleaseName string                   `json:"canonicalReleaseName"`
+	UploadReleaseName    string                   `json:"uploadReleaseName"`
+	AdditionalNames      []TrackerReleaseName     `json:"additionalNames,omitempty"`
+	Taxonomy             TrackerTaxonomy          `json:"taxonomy"`
+	ProviderIDs          []TrackerProviderID      `json:"providerIds,omitempty"`
+	DuplicateCriteria    TrackerDuplicateCriteria `json:"duplicateCriteria"`
+	// DuplicateTarget is the proposed release consumed by local duplicate policy.
+	DuplicateTarget TrackerDuplicateTarget `json:"duplicateTarget"`
+	// DuplicatePolicyID identifies the tracker policy used for duplicate evaluation.
+	DuplicatePolicyID string `json:"duplicatePolicyId"`
+	// DuplicatePolicyFingerprint binds the policy inputs to this projection.
+	DuplicatePolicyFingerprint WorkflowFingerprint `json:"duplicatePolicyFingerprint"`
+	// DuplicateTargetFingerprint binds the proposed-release fields to this projection.
+	DuplicateTargetFingerprint WorkflowFingerprint `json:"duplicateTargetFingerprint"`
+	// DuplicateSearchFingerprint identifies the normalized search request.
+	DuplicateSearchFingerprint WorkflowFingerprint `json:"duplicateSearchFingerprint"`
+	NamingPolicyID             string              `json:"namingPolicyId"`
 	// NamingElementPolicyVersion identifies the shared structural policy
 	// applied before the tracker-local naming policy.
 	NamingElementPolicyVersion string `json:"namingElementPolicyVersion"`
@@ -416,19 +421,25 @@ type TrackerDupeAssessment struct {
 	ProjectionFingerprint WorkflowFingerprint      `json:"projectionFingerprint"`
 	CriteriaFingerprint   WorkflowFingerprint      `json:"criteriaFingerprint"`
 	Criteria              TrackerDuplicateCriteria `json:"criteria"`
-	TargetFingerprint     WorkflowFingerprint      `json:"targetFingerprint"`
-	SearchFingerprint     WorkflowFingerprint      `json:"searchFingerprint"`
-	PolicyID              string                   `json:"policyId"`
-	PolicyFingerprint     WorkflowFingerprint      `json:"policyFingerprint"`
-	EvidenceFingerprint   WorkflowFingerprint      `json:"evidenceFingerprint,omitempty"`
-	Search                DupeSearchEvidence       `json:"search"`
-	Matches               []DupeMatchProjection    `json:"matches,omitempty"`
-	Decision              DupeDecision             `json:"decision"`
-	Status                StageStatus              `json:"status"`
-	RequiredActions       []RequiredAction         `json:"requiredActions,omitempty"`
-	Failures              []WorkflowFailure        `json:"failures,omitempty"`
-	CheckedAt             time.Time                `json:"checkedAt" ts_type:"string"`
-	FreshUntil            time.Time                `json:"freshUntil" ts_type:"string"`
+	// TargetFingerprint binds the assessment to the proposed duplicate target.
+	TargetFingerprint WorkflowFingerprint `json:"targetFingerprint"`
+	// SearchFingerprint binds the assessment to the normalized search request.
+	SearchFingerprint WorkflowFingerprint `json:"searchFingerprint"`
+	// PolicyID identifies the duplicate policy that produced this result.
+	PolicyID string `json:"policyId"`
+	// PolicyFingerprint binds the assessment to the policy inputs.
+	PolicyFingerprint WorkflowFingerprint `json:"policyFingerprint"`
+	// EvidenceFingerprint identifies the retained search/evaluation evidence.
+	EvidenceFingerprint WorkflowFingerprint `json:"evidenceFingerprint,omitempty"`
+	// Search records safe completion and warning state for the tracker search.
+	Search          DupeSearchEvidence    `json:"search"`
+	Matches         []DupeMatchProjection `json:"matches,omitempty"`
+	Decision        DupeDecision          `json:"decision"`
+	Status          StageStatus           `json:"status"`
+	RequiredActions []RequiredAction      `json:"requiredActions,omitempty"`
+	Failures        []WorkflowFailure     `json:"failures,omitempty"`
+	CheckedAt       time.Time             `json:"checkedAt" ts_type:"string"`
+	FreshUntil      time.Time             `json:"freshUntil" ts_type:"string"`
 }
 
 // DupeAssessment retains duplicate results for exact projection and preflight revisions.

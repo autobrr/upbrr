@@ -1051,11 +1051,13 @@ type unit3dPendingSearchItem struct {
 	Flags        presentStringSlice `json:"flags"`
 }
 
+// presentStringSlice distinguishes omitted flag fields from explicit null or empty values.
 type presentStringSlice struct {
 	Values  []string
 	Present bool
 }
 
+// UnmarshalJSON marks the field present; JSON null preserves a nil value.
 func (s *presentStringSlice) UnmarshalJSON(data []byte) error {
 	s.Present = true
 	if string(data) == "null" {

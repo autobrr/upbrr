@@ -22,6 +22,8 @@ var (
 	azNoGroupPattern      = regexp.MustCompile(`(?i)-(?:nogrp|nogroup|unknown|unk)`)
 )
 
+// editName applies the site's naming policy only to generated names; explicit
+// scene names and caller-provided names remain authoritative.
 func editName(site siteDefinition, meta api.UploadSubject) string {
 	name := selectedReleaseName(meta)
 	if site.Name == "AZ" || site.Name == "CZ" {
@@ -74,6 +76,8 @@ func isGeneratedReleaseName(meta api.UploadSubject, name string) bool {
 	return false
 }
 
+// editGeneratedName rebuilds the title/year/season prefix while preserving the
+// generated release's technical suffix.
 func editGeneratedName(site siteDefinition, meta api.UploadSubject, name string) string {
 	title := avistaZEnglishTitle(meta)
 	if site.Name == "CZ" {
@@ -154,6 +158,8 @@ func avistaZEnglishTitle(meta api.UploadSubject) string {
 	return strings.TrimSpace(meta.Release.Title)
 }
 
+// cinemaZTitle selects an English or transliterated title for CinemaZ routing,
+// falling back to the original title when no safe alternative is available.
 func cinemaZTitle(meta api.UploadSubject) string {
 	if title := cinemaZEnglishCountryAKA(meta.ProviderMetadata.IMDB); title != "" {
 		return title
@@ -431,6 +437,8 @@ func transliterateCinemaZTitle(value string) string {
 	return strings.Join(strings.Fields(result.String()), " ")
 }
 
+// resolveSearchName returns the canonical AZ-family search key used for dupe
+// lookup, independent of the upload display name.
 func resolveSearchName(meta api.UploadSubject) string {
 	if title := strings.TrimSpace(meta.Release.Title); title != "" {
 		return title

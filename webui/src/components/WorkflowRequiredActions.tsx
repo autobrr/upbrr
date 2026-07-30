@@ -32,7 +32,7 @@ function actionScope(action: RequiredAction): string {
   return "Workflow action";
 }
 
-/** Durable pending actions projected by the backend workflow continuation. */
+/** Shows pending workflow actions not owned by the per-tracker duplicate-review cards. */
 export function WorkflowRequiredActions({
   continuation,
   onNavigate,

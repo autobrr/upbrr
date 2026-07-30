@@ -23,7 +23,8 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 	}
 }
 
-// checkRequirements enforces deterministic release requirements from rules sections 2-6.
+// checkRequirements evaluates MTV's deterministic package, media, and asset
+// constraints from prepared evidence without I/O or mutation.
 func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context canceled: %w", err)

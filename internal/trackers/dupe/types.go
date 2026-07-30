@@ -30,23 +30,36 @@ const (
 
 // Stable not-run codes.
 const (
-	NotRunUserRequested       = "user_requested"
-	NotRunBannedGroup         = "banned_group"
-	NotRunAuthNotReady        = "auth_not_ready"
-	NotRunMissingCredentials  = "missing_credentials"
-	NotRunMissingMetadata     = "missing_metadata"
-	NotRunUnsupportedContent  = "unsupported_content"
+	// NotRunUserRequested indicates that the caller explicitly skipped the search.
+	NotRunUserRequested = "user_requested"
+	// NotRunBannedGroup indicates a policy-blocked release group.
+	NotRunBannedGroup = "banned_group"
+	// NotRunAuthNotReady indicates that tracker authentication is not usable.
+	NotRunAuthNotReady = "auth_not_ready"
+	// NotRunMissingCredentials indicates required tracker credentials are absent.
+	NotRunMissingCredentials = "missing_credentials"
+	// NotRunMissingMetadata indicates required metadata was unavailable.
+	NotRunMissingMetadata = "missing_metadata"
+	// NotRunUnsupportedContent indicates the tracker does not support the content.
+	NotRunUnsupportedContent = "unsupported_content"
+	// NotRunManualCheckRequired indicates that policy requires manual review.
 	NotRunManualCheckRequired = "manual_check_required"
-	NotRunNotImplemented      = "not_implemented"
+	// NotRunNotImplemented indicates that this tracker operation is unavailable.
+	NotRunNotImplemented = "not_implemented"
 )
 
 // Stable failure codes.
 const (
-	FailureRequest        = "request"
+	// FailureRequest indicates a request could not be completed.
+	FailureRequest = "request"
+	// FailureAuthentication indicates tracker authentication failed.
 	FailureAuthentication = "authentication"
+	// FailureResponseStatus indicates the tracker returned an unusable status.
 	FailureResponseStatus = "response_status"
-	FailureResponseParse  = "response_parse"
-	FailureInternal       = "internal"
+	// FailureResponseParse indicates the tracker response was malformed.
+	FailureResponseParse = "response_parse"
+	// FailureInternal indicates an internal adapter failure.
+	FailureInternal = "internal"
 )
 
 var validNotRunCodes = map[string]struct{}{

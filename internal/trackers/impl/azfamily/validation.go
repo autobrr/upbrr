@@ -69,6 +69,8 @@ func azUploadSubject(subject api.TrackerValidationSubject) api.UploadSubject {
 	}
 }
 
+// validateAZEvidence enforces site-specific package, media, language, and
+// prepared-asset predicates from the validation evidence snapshot.
 func validateAZEvidence(site siteDefinition, subject api.TrackerValidationSubject) []api.RuleFailure {
 	failures := make([]api.RuleFailure, 0, 8)
 	failures = append(failures, trackers.ValidatePackageExtensions(

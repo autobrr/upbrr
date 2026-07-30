@@ -5,7 +5,7 @@ import type { Operation as WorkflowOperationStatus } from "../api/generated/rele
 
 const visibleStatuses = new Set(["queued", "running", "blocked", "failed", "interrupted"]);
 
-/** Route-independent durable release-workflow progress. */
+/** Shows durable progress except for duplicate checks, which render on their owning route. */
 export function WorkflowOperationProgress({
   operation,
 }: Readonly<{ operation?: WorkflowOperationStatus | null }>) {

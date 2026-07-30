@@ -86,6 +86,8 @@ func checkRequirements(ctx context.Context, meta api.TrackerValidationSubject, _
 	return failures, nil
 }
 
+// bhdRequiredAssetFailures reports advisory evidence gaps separately from
+// strict asset requirement violations.
 func bhdRequiredAssetFailures(meta api.TrackerValidationSubject) []api.RuleFailure {
 	if meta.AssetFacts.Status != api.MetadataEvidenceStatusComplete {
 		return []api.RuleFailure{trackers.NewEvidenceRuleFailure(

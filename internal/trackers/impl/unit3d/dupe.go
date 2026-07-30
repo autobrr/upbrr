@@ -40,6 +40,8 @@ func (d *Definition) NewDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	return searcher
 }
 
+// Search queries the site's bounded evidence scope and preserves completeness
+// and pagination metadata for downstream duplicate decisions.
 func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dupe.AdapterResult {
 	tracker := s.trackerID
 	if strings.TrimSpace(trackerdata.TrackerAPIKey(s.cfg, tracker)) == "" {

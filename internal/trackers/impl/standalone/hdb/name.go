@@ -20,6 +20,8 @@ func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 	)
 }
 
+// resolveReleaseNames returns HDB's upload/search projections and rejects stale
+// provider metadata instead of mixing it with the current prepared generation.
 func resolveReleaseNames(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 	meta := input.Subject
 	if exact := exactHDBReleaseName(meta); exact != "" {

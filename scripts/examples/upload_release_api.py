@@ -486,7 +486,7 @@ def upload_release(
     poll_interval: float,
     timeout: float,
 ) -> dict[str, Any]:
-    """Create, poll, answer, and resume one composite upload."""
+    """Validate server capabilities, then create and drive one composite upload."""
     capabilities = request_json("GET", capabilities_url(api_url), token)
     api_version = capabilities.get("apiVersion")
     features = capabilities.get("features")

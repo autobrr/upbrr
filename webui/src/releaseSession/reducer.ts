@@ -93,6 +93,7 @@ export type SessionState = Readonly<{
   selectedTrackers: readonly string[];
   trackerSelectionTouched: boolean;
   ignoredDupesFor: readonly string[];
+  /** Tracker-name edits retained for the active prepared source. */
   releaseNameOverrides: Readonly<Record<string, string>>;
   questionnaireAnswers: Readonly<Record<string, Readonly<Record<string, string>>>>;
   uploadOptions: UploadRunOptions;

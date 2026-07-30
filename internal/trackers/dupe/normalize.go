@@ -19,9 +19,13 @@ const GeneralPolicyID = "general/duplicate/v2"
 type FactStatus string
 
 const (
-	FactComplete      FactStatus = "complete"
-	FactPartial       FactStatus = "partial"
-	FactMissing       FactStatus = "missing"
+	// FactComplete indicates the normalized value is fully evidenced.
+	FactComplete FactStatus = "complete"
+	// FactPartial indicates only partial evidence supports the normalized value.
+	FactPartial FactStatus = "partial"
+	// FactMissing indicates no usable evidence supports the normalized value.
+	FactMissing FactStatus = "missing"
+	// FactContradictory indicates available evidence conflicts.
 	FactContradictory FactStatus = "contradictory"
 )
 
@@ -29,12 +33,18 @@ const (
 type FactOrigin string
 
 const (
-	FactOriginTargetMedia   FactOrigin = "target_media"
-	FactOriginTrackerAPI    FactOrigin = "tracker_api"
-	FactOriginTrackerTitle  FactOrigin = "tracker_title"
-	FactOriginContentName   FactOrigin = "content_name"
+	// FactOriginTargetMedia identifies prepared target media evidence.
+	FactOriginTargetMedia FactOrigin = "target_media"
+	// FactOriginTrackerAPI identifies tracker API evidence.
+	FactOriginTrackerAPI FactOrigin = "tracker_api"
+	// FactOriginTrackerTitle identifies tracker-title evidence.
+	FactOriginTrackerTitle FactOrigin = "tracker_title"
+	// FactOriginContentName identifies release/content-name evidence.
+	FactOriginContentName FactOrigin = "content_name"
+	// FactOriginTrackerPolicy identifies tracker-policy evidence.
 	FactOriginTrackerPolicy FactOrigin = "tracker_policy"
-	FactOriginUnknown       FactOrigin = "unknown"
+	// FactOriginUnknown identifies an unclassified evidence source.
+	FactOriginUnknown FactOrigin = "unknown"
 )
 
 // Fact preserves a normalized value and its provenance without raw protocol
@@ -51,9 +61,13 @@ type Fact struct {
 type DimensionComparison string
 
 const (
-	DimensionEqual         DimensionComparison = "equal"
-	DimensionDifferent     DimensionComparison = "different"
-	DimensionUnknown       DimensionComparison = "unknown"
+	// DimensionEqual indicates both sides have the same known value.
+	DimensionEqual DimensionComparison = "equal"
+	// DimensionDifferent indicates both sides have different known values.
+	DimensionDifferent DimensionComparison = "different"
+	// DimensionUnknown indicates the comparison lacks sufficient evidence.
+	DimensionUnknown DimensionComparison = "unknown"
+	// DimensionNotApplicable indicates this dimension does not apply.
 	DimensionNotApplicable DimensionComparison = "not_applicable"
 )
 

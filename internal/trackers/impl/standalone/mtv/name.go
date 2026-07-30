@@ -11,6 +11,8 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// resolveUploadName preserves explicit scene names and applies MTV's generated
+// title, season, source, and group normalization to derived names.
 func resolveUploadName(meta api.UploadSubject) string {
 	if meta.Scene {
 		if sceneName := strings.TrimSpace(meta.SceneName); sceneName != "" {
@@ -79,6 +81,8 @@ func cleanName(value string) string {
 	return strings.Trim(strings.TrimSpace(value), ".")
 }
 
+// resolveSearchName derives the stable duplicate-search name from the same
+// source-scoped metadata used by MTV upload naming.
 func resolveSearchName(meta api.UploadSubject) string {
 	if meta.Scene && strings.TrimSpace(meta.SceneName) != "" {
 		return resolveUploadName(meta)

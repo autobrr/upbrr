@@ -19,9 +19,13 @@ import (
 type RuleFindingStatus string
 
 const (
-	RuleFindingMatched       RuleFindingStatus = "matched"
-	RuleFindingDisproved     RuleFindingStatus = "disproved"
+	// RuleFindingMatched indicates that the rule's relation was established.
+	RuleFindingMatched RuleFindingStatus = "matched"
+	// RuleFindingDisproved indicates that the rule was disproved by evidence.
+	RuleFindingDisproved RuleFindingStatus = "disproved"
+	// RuleFindingIndeterminate indicates insufficient evidence to decide.
 	RuleFindingIndeterminate RuleFindingStatus = "indeterminate"
+	// RuleFindingNotApplicable indicates that the rule does not apply.
 	RuleFindingNotApplicable RuleFindingStatus = "not_applicable"
 )
 

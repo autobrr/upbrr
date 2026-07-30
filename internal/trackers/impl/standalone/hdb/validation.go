@@ -23,8 +23,8 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 	}
 }
 
-// checkRequirements enforces upload, naming/title, torrent-content, and
-// MediaInfo/BDInfo requirements.
+// checkRequirements validates HDB upload constructibility from immutable
+// evidence and reports incomplete prepared evidence as advisory failures.
 func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject, _ api.Logger) ([]api.RuleFailure, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context canceled: %w", err)

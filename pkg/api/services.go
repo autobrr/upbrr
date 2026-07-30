@@ -54,7 +54,9 @@ type FilesystemService interface {
 
 // ProjectionDupeCheckOptions controls projection-bound duplicate execution.
 type ProjectionDupeCheckOptions struct {
-	SkipRemote         bool
+	// SkipRemote limits evaluation to local/client evidence when true.
+	SkipRemote bool
+	// BypassBannedGroups allows debug-mode callers to bypass banned-group policy.
 	BypassBannedGroups bool
 }
 

@@ -327,7 +327,7 @@ function WorkflowDupeAssessmentView({
   );
 }
 
-/** Presents exact workflow-owned per-tracker duplicate outcomes and selection controls. */
+/** Presents per-tracker duplicate evidence, policy acknowledgements, and release-name review. */
 export default function DupeCheckPage({
   facet,
   sourcePath,

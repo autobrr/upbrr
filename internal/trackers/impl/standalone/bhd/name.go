@@ -19,6 +19,8 @@ var (
 	bhdAudioChannelPattern  = regexp.MustCompile(`^(.+?)(\d+(?:\.\d+){1,2})$`)
 )
 
+// resolveUploadName preserves explicit names and normalizes generated BHD
+// names using provider title, media, disc, and group rules.
 func resolveUploadName(meta api.UploadSubject) string {
 	if sceneName := strings.TrimSpace(meta.SceneName); sceneName != "" {
 		return sceneName
@@ -65,6 +67,8 @@ func isBHDGeneratedReleaseName(meta api.UploadSubject, name string) bool {
 	return false
 }
 
+// applyBHDTitlePolicy replaces generated title/year elements with authoritative
+// provider metadata while retaining the technical suffix.
 func applyBHDTitlePolicy(name string, meta api.UploadSubject) string {
 	if isBHDTV(meta) {
 		return applyBHDTVTitlePolicy(name, meta)

@@ -77,10 +77,11 @@ type StartAppOptions = {
 
 type E2EWorkspaceOptions = {
   screenshotCount?: number;
+  /** Selects the fake metadata and source-name shape; defaults to a movie. */
   mediaKind?: "movie" | "tv";
 };
 
-/** Creates an isolated E2E workspace with temp config, media fixtures, and fake services. */
+/** Creates an isolated E2E workspace with temp config, selected media fixture, and fake services. */
 export async function createE2EWorkspace(options: E2EWorkspaceOptions = {}): Promise<E2EWorkspace> {
   const root = await mkdtemp(path.join(tmpdir(), "upbrr-e2e-"));
   const mediaDir = path.join(root, "media");

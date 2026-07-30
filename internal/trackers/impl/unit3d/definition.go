@@ -117,6 +117,8 @@ func (d *Definition) MetadataPolicy() *trackers.TrackerMetadataPolicy {
 	}
 }
 
+// cloneMetadataPolicy deep-copies mutable requirement slices so callers cannot
+// alter the compiled profile through a returned policy.
 func cloneMetadataPolicy(policy *trackers.TrackerMetadataPolicy) *trackers.TrackerMetadataPolicy {
 	if policy == nil {
 		return nil
