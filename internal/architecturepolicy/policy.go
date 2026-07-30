@@ -586,8 +586,18 @@ func checkAdHocIMDbFormatCall(call *ast.CallExpr, add func(token.Pos, string)) {
 		owner := selectedTypeName(selector.X)
 		name := selector.Sel.Name
 		switch {
-		case owner == "fmt" && (name == "Sprintf" || strings.HasPrefix(name, "Print")):
-			if imdbFormatLiteral(call) || directIMDbArgument(call.Args) {
+		case owner == "fmt" && (name == "Sprintf" || name == "Fprintf" || strings.HasPrefix(name, "Print")):
+			formatIndex := 0
+			formatValues := call.Args
+			if name == "Fprintf" {
+				formatIndex = 1
+				if len(call.Args) > 2 {
+					formatValues = call.Args[2:]
+				} else {
+					formatValues = nil
+				}
+			}
+			if imdbFormatLiteral(call, formatIndex) || directIMDbArgument(formatValues) {
 				add(call.Pos(), "numeric IMDb formatting belongs to internal/providerid")
 			}
 		case owner == "strconv" && (name == "Itoa" || name == "FormatInt") && directIMDbArgument(call.Args):
@@ -601,11 +611,11 @@ func checkAdHocIMDbFormatCall(call *ast.CallExpr, add func(token.Pos, string)) {
 	}
 }
 
-func imdbFormatLiteral(call *ast.CallExpr) bool {
-	if len(call.Args) == 0 {
+func imdbFormatLiteral(call *ast.CallExpr, index int) bool {
+	if len(call.Args) <= index {
 		return false
 	}
-	literal, ok := call.Args[0].(*ast.BasicLit)
+	literal, ok := call.Args[index].(*ast.BasicLit)
 	return ok && literal.Kind == token.STRING && imdbGoFormatPattern.MatchString(strings.Trim(literal.Value, "`\""))
 }
 

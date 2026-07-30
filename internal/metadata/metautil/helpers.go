@@ -49,7 +49,11 @@ func NormalizeIMDbID(value string) string {
 	if trimmed == "" || trimmed == "0" {
 		return ""
 	}
-	id, err := strconv.Atoi(strings.TrimPrefix(trimmed, "tt"))
+	numeric := trimmed
+	if len(numeric) >= len("tt") && strings.EqualFold(numeric[:len("tt")], "tt") {
+		numeric = numeric[len("tt"):]
+	}
+	id, err := strconv.Atoi(numeric)
 	if err != nil {
 		return trimmed
 	}

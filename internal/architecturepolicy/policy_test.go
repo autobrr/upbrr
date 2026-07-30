@@ -63,6 +63,21 @@ func TestCheckRepositoryRejectsAdHocGoIMDbFormatting(t *testing.T) {
 	assertViolationContains(t, violations, "numeric IMDb formatting belongs to internal/providerid")
 }
 
+func TestCheckRepositoryRejectsAdHocGoIMDbFprintf(t *testing.T) {
+	root := t.TempDir()
+	writePolicyFixture(
+		t,
+		root,
+		"internal/example/format.go",
+		"package example\nimport (\"fmt\"; \"io\")\ntype Identity struct { IMDBID int }\nfunc padded(w io.Writer, identity Identity) { fmt.Fprintf(w, \"%07d\", identity.IMDBID) }\n",
+	)
+	violations, err := CheckRepository(root)
+	if err != nil {
+		t.Fatalf("check repository: %v", err)
+	}
+	assertViolationContains(t, violations, "numeric IMDb formatting belongs to internal/providerid")
+}
+
 func TestCheckRepositoryRejectsAdHocFrontendIMDbFormatting(t *testing.T) {
 	root := t.TempDir()
 	writePolicyFixture(

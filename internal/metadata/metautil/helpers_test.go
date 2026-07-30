@@ -11,6 +11,8 @@ func TestNormalizeIMDbIDPadsValidNumericForms(t *testing.T) {
 	for input, want := range map[string]string{
 		"456":       "tt0000456",
 		"tt456":     "tt0000456",
+		"TT456":     "tt0000456",
+		"Tt456":     "tt0000456",
 		"12345678":  "tt12345678",
 		"malformed": "malformed",
 		"0":         "",
