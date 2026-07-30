@@ -353,7 +353,7 @@ func (r *Registry) ProjectRelease(
 			Blocking: true,
 			Message:  failure.Message(),
 		})
-	} else if resolvedNames, resolveErr := resolveReleaseNames(input, descriptor.ReleaseNamePolicy); resolveErr != nil {
+	} else if resolvedNames, resolveErr := resolveProjectedReleaseNames(input, descriptor.ReleaseNamePolicy); resolveErr != nil {
 		code := "name_policy"
 		if input.RequestedUploadName != nil && strings.TrimSpace(*input.RequestedUploadName) == "" {
 			code = "name_instruction"
@@ -477,36 +477,42 @@ func (r *Registry) ProjectRelease(
 	}
 	if failure == nil &&
 		projection.Readiness == api.ReadinessStatusReady &&
-		releaseNameConfirmationRequired(input, descriptor.ReleaseNamePolicy) {
+		releaseNameConfirmationApplies(input, descriptor.ReleaseNamePolicy) {
 		trackerName := strings.TrimSpace(projection.DisplayName)
 		if trackerName == "" {
 			trackerName = strings.TrimSpace(descriptor.Name)
 		}
-		projection.PolicyDecisions = append(projection.PolicyDecisions, api.TrackerPolicyDecision{
-			Code:     releaseNameConfirmationCode,
-			Decision: "confirmation_required",
-			Blocking: true,
-			Message:  fmt.Sprintf("Confirm the non-scene release name for %s.", trackerName),
-		})
-		projection.RequiredActions = append(projection.RequiredActions, api.RequiredAction{
-			Kind:           api.RequiredActionProvideTrackerInput,
-			TrackerID:      projection.TrackerID,
-			Prompt:         fmt.Sprintf("Confirm or edit the non-scene release name for %s.", trackerName),
-			Options:        []api.RequiredActionOption{{Value: projection.UploadReleaseName, Label: projection.UploadReleaseName}},
-			AllowsFreeText: true,
-		})
-		projection.Readiness = api.ReadinessStatusBlocked
-		projection.DupeReady = false
-		projection.UploadReady = false
+		if releaseNameConfirmationRequired(input, descriptor.ReleaseNamePolicy) {
+			projection.PolicyDecisions = append(projection.PolicyDecisions, api.TrackerPolicyDecision{
+				Code:     releaseNameConfirmationCode,
+				Decision: "confirmation_required",
+				Blocking: false,
+				Message:  fmt.Sprintf("Confirm the non-scene release name for %s.", trackerName),
+			})
+			projection.RequiredActions = append(projection.RequiredActions, api.RequiredAction{
+				Kind:           api.RequiredActionProvideTrackerInput,
+				TrackerID:      projection.TrackerID,
+				Prompt:         fmt.Sprintf("Confirm or edit the non-scene release name for %s.", trackerName),
+				Options:        []api.RequiredActionOption{{Value: projection.UploadReleaseName, Label: projection.UploadReleaseName}},
+				AllowsFreeText: true,
+			})
+			projection.UploadReady = false
+		} else {
+			projection.PolicyDecisions = append(projection.PolicyDecisions, api.TrackerPolicyDecision{
+				Code:     releaseNameConfirmationCode,
+				Decision: "confirmed",
+				Blocking: false,
+				Message:  fmt.Sprintf("Non-scene release name confirmed for %s.", trackerName),
+			})
+		}
 	}
 	return projection, failure
 }
 
 func projectionDuplicateNames(projection api.TrackerReleaseProjection) []string {
-	values := make([]string, 0, 3+len(projection.AdditionalNames))
+	values := make([]string, 0, 2+len(projection.AdditionalNames))
 	values = append(values,
 		projection.CanonicalReleaseName,
-		projection.UploadReleaseName,
 		projection.DuplicateCriteria.Name,
 	)
 	for _, additional := range projection.AdditionalNames {

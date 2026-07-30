@@ -31,6 +31,7 @@ const facetFor = (
   cancel: vi.fn(async () => true),
   chooseTrackers: vi.fn(),
   confirmReleaseName: vi.fn(),
+  acknowledgeReleaseName: vi.fn(async () => true),
   setIgnored: vi.fn(),
   ...commands,
 });
@@ -54,13 +55,24 @@ describe("DupeCheckPage", () => {
     expect(run).toHaveBeenCalledOnce();
   });
 
-  it("requires confirmation or editing of projected non-scene release names", () => {
+  it("keeps name review in the tracker card without blocking duplicate checking", () => {
     const run = vi.fn(async () => true);
     const confirmReleaseName = vi.fn();
+    const acknowledgeReleaseName = vi.fn(async () => true);
     renderPage(
       facetFor(
         {
           selectedTrackers: ["AR"],
+          assessment: {
+            results: [
+              {
+                trackerId: "AR",
+                status: "completed",
+                decision: "no_match",
+                matches: [],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["assessment"]>,
           projections: {
             projections: [
               {
@@ -71,24 +83,73 @@ describe("DupeCheckPage", () => {
                   {
                     code: "release_name_confirmation",
                     decision: "confirmation_required",
-                    blocking: true,
+                    blocking: false,
                   },
                 ],
               },
             ],
           } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
         },
-        { run, confirmReleaseName },
+        { acknowledgeReleaseName, run, confirmReleaseName },
       ),
       ["AR"],
     );
 
+    expect(screen.queryByLabelText("Release name confirmation")).not.toBeInTheDocument();
     const input = screen.getByRole("textbox", { name: "Release name for AR" });
     expect(input).toHaveValue("Example.Release.2026-GRP");
     fireEvent.change(input, { target: { value: "Example.Release.2026.EDIT-GRP" } });
     expect(confirmReleaseName).toHaveBeenCalledWith("AR", "Example.Release.2026.EDIT-GRP");
-    fireEvent.click(screen.getByRole("button", { name: "Confirm names & run dupe check" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Confirm release name for AR" }));
+    expect(acknowledgeReleaseName).toHaveBeenCalledWith("AR", true);
+    expect(run).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Run dupe check" }));
     expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("allows a confirmed tracker name to be toggled back off", () => {
+    const acknowledgeReleaseName = vi.fn(async () => true);
+    renderPage(
+      facetFor(
+        {
+          selectedTrackers: ["AR"],
+          assessment: {
+            results: [
+              {
+                trackerId: "AR",
+                status: "completed",
+                decision: "no_match",
+                matches: [],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["assessment"]>,
+          projections: {
+            projections: [
+              {
+                trackerId: "AR",
+                displayName: "AR",
+                uploadReleaseName: "Example.Release.2026-GRP",
+                policyDecisions: [
+                  {
+                    code: "release_name_confirmation",
+                    decision: "confirmed",
+                    blocking: false,
+                  },
+                ],
+              },
+            ],
+          } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+        },
+        { acknowledgeReleaseName },
+      ),
+      ["AR"],
+    );
+
+    const toggle = screen.getByRole("switch", { name: "Confirm release name for AR" });
+    expect(toggle).toBeChecked();
+    expect(toggle).toBeEnabled();
+    fireEvent.click(toggle);
+    expect(acknowledgeReleaseName).toHaveBeenCalledWith("AR", false);
   });
 
   it("owns tracker selection and blocks execution while selection is empty", () => {
@@ -115,7 +176,7 @@ describe("DupeCheckPage", () => {
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
 
-  it("renders exactly one layout-owned progress region with safe recovery detail", () => {
+  it("keeps duplicate operation progress out of the persistent release layout", () => {
     const operation: WorkflowOperationStatus = {
       id: "operation-1",
       workflowId: "workflow-1",
@@ -190,14 +251,13 @@ describe("DupeCheckPage", () => {
       </>,
     );
 
-    expect(screen.getAllByRole("progressbar")).toHaveLength(1);
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(
-      screen.getByText("Tracker duplicate checking is temporarily unavailable."),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Recovery: retry operation.")).toBeInTheDocument();
+      screen.queryByText("Tracker duplicate checking is temporarily unavailable."),
+    ).not.toBeInTheDocument();
   });
 
-  it("shows exact upload names and deduplicated blockers without false zero matches", () => {
+  it("shows one concise tracker blocker without projection detail", () => {
     renderPage(
       facetFor({
         status: "ready",
@@ -253,18 +313,16 @@ describe("DupeCheckPage", () => {
       }),
     );
 
-    expect(screen.getByText("Example Release 2026 1080p-GRP")).toBeInTheDocument();
-    expect(screen.getByText("Example.Release.2026.1080p-GRP")).toBeInTheDocument();
-    expect(screen.getByText("Example Release 2026")).toBeInTheDocument();
-    expect(screen.getByText("Preflight action_required")).toBeInTheDocument();
+    expect(screen.getByText("Example Tracker")).toBeInTheDocument();
+    expect(screen.getByText("Blocked")).toBeInTheDocument();
     expect(screen.getAllByText("Category TV is not movie.")).toHaveLength(1);
-    expect(
-      screen.getByText("Duplicate search not run because this tracker is blocked."),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/0 match\(es\)/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Projection ineligible")).not.toBeInTheDocument();
+    expect(screen.queryByText("Preflight action_required")).not.toBeInTheDocument();
+    expect(screen.queryByText("Example Release 2026 1080p-GRP")).not.toBeInTheDocument();
+    expect(screen.queryByText("Example.Release.2026.1080p-GRP")).not.toBeInTheDocument();
   });
 
-  it("separates strict, manual-review, and advisory policy evidence", () => {
+  it("keeps only blocking policy reasons in compact tracker details", () => {
     renderPage(
       facetFor({
         status: "ready",
@@ -312,22 +370,12 @@ describe("DupeCheckPage", () => {
       }),
     );
 
-    expect(screen.getByText("Strict blockers")).toBeInTheDocument();
-    expect(screen.getByText("Manual review / waivable")).toBeInTheDocument();
-    expect(screen.getByText("Advisories")).toBeInTheDocument();
-    expect(screen.getByText("1 advisory")).toBeInTheDocument();
-    expect(screen.queryByText("release name policy")).not.toBeInTheDocument();
     expect(screen.getByText("Selected container is not accepted.")).toBeInTheDocument();
-    expect(screen.getByText("Evidence complete", { exact: false })).toBeInTheDocument();
-    expect(
-      screen.getByText("Evidence partial · manual review needed", { exact: false }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Evidence unavailable · prerequisite/action needed", { exact: false }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Provide missing metadata or evidence before relying on this decision."),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Release identity needs manual confirmation.")).toBeInTheDocument();
+    expect(screen.queryByText("Strict blockers")).not.toBeInTheDocument();
+    expect(screen.queryByText("Advisories")).not.toBeInTheDocument();
+    expect(screen.queryByText("Poster metadata is not available.")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Evidence complete/)).not.toBeInTheDocument();
   });
 
   it("renders auth failure as retryable blocked lane evidence without an action card", () => {
@@ -396,8 +444,7 @@ describe("DupeCheckPage", () => {
       ["ALPHA", "BETA"],
     );
 
-    expect(screen.getByText("Projection blocked")).toBeInTheDocument();
-    expect(screen.getByText("Preflight retryable")).toBeInTheDocument();
+    expect(screen.getByText("Blocked")).toBeInTheDocument();
     expect(
       screen.getAllByText(
         "Tracker authentication is not ready for this attempt. Resolve authentication outside the upload workflow, then restart it.",
@@ -454,7 +501,9 @@ describe("DupeCheckPage", () => {
       ["AITHER", "REMOTE"],
     );
 
-    expect(screen.getByText("In client · upload blocked")).toBeInTheDocument();
+    expect(screen.getByText("In client")).toBeInTheDocument();
+    expect(screen.getByText("Already in client: Strict match")).toBeInTheDocument();
+    expect(screen.queryByText("Strict match")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("checkbox", { name: "Ignore dupes for AITHER" }),
     ).not.toBeInTheDocument();
@@ -533,10 +582,10 @@ describe("DupeCheckPage", () => {
       ),
     );
 
-    expect(screen.getByText("Search incomplete · 2 page(s)")).toBeInTheDocument();
     expect(screen.getByText("proposed trumps")).toBeInTheDocument();
     expect(screen.getByText("insufficient evidence")).toBeInTheDocument();
-    expect(screen.getByText(/HDR: dolby vision \+ hdr10/)).toBeInTheDocument();
+    expect(screen.queryByText(/HDR:/)).not.toBeInTheDocument();
+    expect(screen.queryByText("broader_hdr_compatibility")).not.toBeInTheDocument();
     expect(
       screen.getByText("Tracker result limit prevented a complete search."),
     ).toBeInTheDocument();
@@ -591,7 +640,7 @@ describe("DupeCheckPage", () => {
       }),
     );
 
-    expect(screen.getByText("0 candidates · no duplicate found")).toBeInTheDocument();
+    expect(screen.getByText("No dupes")).toBeInTheDocument();
     expect(screen.queryByText("Example.Release.2026.2160p.Remux-GRP")).not.toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: "Ignore dupes for EXAMPLE" })).toBeNull();
   });

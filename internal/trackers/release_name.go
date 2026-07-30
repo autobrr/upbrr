@@ -224,9 +224,28 @@ func validateReleaseNamePolicy(binding ReleaseNamePolicyBinding) error {
 }
 
 func releaseNameConfirmationRequired(input PreparationInput, binding ReleaseNamePolicyBinding) bool {
-	return binding.Confirmation == ReleaseNameConfirmationNonScene &&
-		!input.Meta.Scene &&
+	return releaseNameConfirmationApplies(input, binding) &&
 		input.RequestedUploadName == nil
+}
+
+func releaseNameConfirmationApplies(input PreparationInput, binding ReleaseNamePolicyBinding) bool {
+	return binding.Confirmation == ReleaseNameConfirmationNonScene && !input.Meta.Scene
+}
+
+func resolveProjectedReleaseNames(input PreparationInput, binding ReleaseNamePolicyBinding) (ResolvedReleaseNames, error) {
+	resolved, err := resolveReleaseNames(input, binding)
+	if err != nil || input.RequestedUploadName == nil {
+		return resolved, err
+	}
+	automaticInput := input
+	automaticInput.RequestedUploadName = nil
+	automatic, err := resolveReleaseNames(automaticInput, binding)
+	if err != nil {
+		return ResolvedReleaseNames{}, err
+	}
+	resolved.Duplicate = automatic.Duplicate
+	resolved.Additional = automatic.Additional
+	return resolved, nil
 }
 
 func resolveReleaseNames(input PreparationInput, binding ReleaseNamePolicyBinding) (ResolvedReleaseNames, error) {
@@ -484,7 +503,7 @@ func PrepareInputWithReleaseNamePolicy(
 			)
 		}
 		projection := pureReleaseProjection(input)
-		resolved, err := resolveReleaseNames(input, binding)
+		resolved, err := resolveProjectedReleaseNames(input, binding)
 		if err != nil {
 			return input, NewPreparationFailure(input.Tracker, "name_policy", "tracker release-name policy failed", err)
 		}
@@ -508,7 +527,7 @@ func PrepareInputWithReleaseNamePolicy(
 			nil,
 		)
 	}
-	resolved, err := resolveReleaseNames(input, binding)
+	resolved, err := resolveProjectedReleaseNames(input, binding)
 	if err == nil && releaseNamesMatchProjection(input, binding, resolved, *reviewed) {
 		return input, nil
 	}

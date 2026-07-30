@@ -208,6 +208,37 @@ func TestWorkflowPreflightBuilderSuccessActionRetryExpiryAndSecretExclusion(t *t
 		}
 	})
 
+	t.Run("upload name review does not block duplicate preflight", func(t *testing.T) {
+		uploadPending := projections
+		uploadPending.Projections = append([]api.TrackerReleaseProjection(nil), projections.Projections...)
+		uploadPending.Projections[0].UploadReady = false
+		uploadPending.Projections[0].RequiredActions = []api.RequiredAction{{
+			Kind:      api.RequiredActionProvideTrackerInput,
+			TrackerID: "ALPHA",
+			Prompt:    "Confirm the tracker release name.",
+		}}
+		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{}, registry: registry}
+		assessment, finalized, err := builder.Build(
+			context.Background(),
+			api.UploadSubject{},
+			catalog,
+			runtime,
+			uploadPending,
+			now,
+		)
+		if err != nil {
+			t.Fatalf("build upload-pending preflight: %v", err)
+		}
+		if assessment.Results[0].State != api.TrackerPreflightStateReady ||
+			len(assessment.Results[0].RequiredActions) != 1 ||
+			finalized[0].Readiness != api.ReadinessStatusReady ||
+			!finalized[0].DupeReady ||
+			finalized[0].UploadReady ||
+			len(finalized[0].RequiredActions) != 1 {
+			t.Fatalf("upload-pending preflight = %#v/%#v", assessment.Results[0], finalized[0])
+		}
+	})
+
 	t.Run("two factor blocked lane", func(t *testing.T) {
 		builder := workflowPreflightBuilder{auth: workflowPreflightAuthFake{
 			capabilities: []api.TrackerAuthCapability{{TrackerID: "ALPHA", SupportsManual2FA: true}},

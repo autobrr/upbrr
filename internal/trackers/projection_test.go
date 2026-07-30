@@ -174,7 +174,7 @@ func TestRegistryProjectionAppliesAndFingerprintsEpisodeTitleOmitPolicy(t *testi
 	}
 }
 
-func TestRegistryProjectionRequiresAndClearsNonSceneNameConfirmation(t *testing.T) {
+func TestRegistryProjectionRequiresNonSceneUploadNameConfirmationWithoutBlockingDupes(t *testing.T) {
 	t.Parallel()
 
 	registry := NewRegistry()
@@ -212,9 +212,9 @@ func TestRegistryProjectionRequiresAndClearsNonSceneNameConfirmation(t *testing.
 
 	const proposed = "Example.Release.2026-GRP"
 	blocked := project(api.UploadSubject{ReleaseName: proposed}, nil)
-	if blocked.Readiness != api.ReadinessStatusBlocked || blocked.DupeReady || blocked.UploadReady ||
+	if blocked.Readiness != api.ReadinessStatusReady || !blocked.DupeReady || blocked.UploadReady ||
 		len(blocked.RequiredActions) != 1 {
-		t.Fatalf("blocked projection = %#v", blocked)
+		t.Fatalf("upload-pending projection = %#v", blocked)
 	}
 	action := blocked.RequiredActions[0]
 	if action.Kind != api.RequiredActionProvideTrackerInput || action.TrackerID != "EXAMPLE" ||
@@ -224,16 +224,32 @@ func TestRegistryProjectionRequiresAndClearsNonSceneNameConfirmation(t *testing.
 	if !slices.ContainsFunc(blocked.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
 		return decision.Code == releaseNameConfirmationCode &&
 			decision.Decision == "confirmation_required" &&
-			decision.Blocking
+			!decision.Blocking
 	}) {
 		t.Fatalf("confirmation policy decision missing: %#v", blocked.PolicyDecisions)
 	}
 
-	confirmedName := proposed
+	const reviewed = "Example.Release.2026.REVIEWED-GRP"
+	confirmedName := reviewed
 	confirmed := project(api.UploadSubject{ReleaseName: proposed}, &confirmedName)
 	if confirmed.Readiness != api.ReadinessStatusReady || !confirmed.DupeReady || !confirmed.UploadReady ||
-		len(confirmed.RequiredActions) != 0 || confirmed.UploadReleaseName != proposed {
+		len(confirmed.RequiredActions) != 0 || confirmed.UploadReleaseName != reviewed {
 		t.Fatalf("confirmed projection = %#v", confirmed)
+	}
+	if confirmed.CriteriaFingerprint != blocked.CriteriaFingerprint ||
+		confirmed.DuplicateTargetFingerprint != blocked.DuplicateTargetFingerprint ||
+		confirmed.DuplicateSearchFingerprint != blocked.DuplicateSearchFingerprint ||
+		confirmed.DuplicatePolicyFingerprint != blocked.DuplicatePolicyFingerprint ||
+		confirmed.DuplicateCriteria.Name != blocked.DuplicateCriteria.Name ||
+		!slices.Equal(confirmed.DuplicateTarget.Names, blocked.DuplicateTarget.Names) {
+		t.Fatalf("reviewed upload name changed duplicate semantics: pending=%#v confirmed=%#v", blocked, confirmed)
+	}
+	if !slices.ContainsFunc(confirmed.PolicyDecisions, func(decision api.TrackerPolicyDecision) bool {
+		return decision.Code == releaseNameConfirmationCode &&
+			decision.Decision == "confirmed" &&
+			!decision.Blocking
+	}) {
+		t.Fatalf("confirmed policy decision missing: %#v", confirmed.PolicyDecisions)
 	}
 
 	const sceneName = "Example Release [SCENE].2026-GRP"

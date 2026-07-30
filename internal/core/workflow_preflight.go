@@ -217,12 +217,12 @@ func (b workflowPreflightBuilder) Build(
 			RemoteMetadataReady:   true,
 			ConfigFingerprint:     projection.ConfigFingerprint,
 			ProjectionFingerprint: projectionFingerprint,
+			RequiredActions:       append([]api.RequiredAction(nil), projection.RequiredActions...),
 			AssessedAt:            assessedAt,
 			FreshUntil:            freshUntil,
 		}
 		if projection.Readiness != api.ReadinessStatusReady || !projection.DupeReady {
 			result.State = api.TrackerPreflightStateFailed
-			result.RequiredActions = append([]api.RequiredAction(nil), projection.RequiredActions...)
 			result.Failures = append([]api.WorkflowFailure(nil), projection.Failures...)
 			if len(result.RequiredActions) > 0 {
 				result.State = api.TrackerPreflightStateActionRequired

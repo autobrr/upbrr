@@ -677,16 +677,11 @@ export function ReleaseSessionProvider({
               decision.code === "release_name_confirmation" &&
               decision.decision === "confirmation_required",
           );
-          const confirmedName =
-            state.releaseNameOverrides[tracker] ??
-            (confirmationRequired ? projection?.uploadReleaseName : undefined);
-          if (
-            confirmationRequired &&
-            state.releaseNameOverrides[tracker] === undefined &&
-            confirmedName !== undefined
-          ) {
-            dispatch({ type: "release_name_confirmed", tracker, value: confirmedName });
-          }
+          const retainedName =
+            workflowView.current?.projectionInstructions?.instructions[tracker]?.uploadReleaseName;
+          const confirmedName = confirmationRequired
+            ? undefined
+            : (state.releaseNameOverrides[tracker] ?? retainedName ?? undefined);
           return [
             tracker,
             {
@@ -1662,13 +1657,14 @@ export function ReleaseSessionProvider({
     },
     duplicates: {
       view: {
-        status: duplicateStartPending
-          ? "running"
-          : duplicatesReady
-            ? "ready"
-            : workflowDupeAssessment?.status === "failed"
-              ? "error"
-              : "idle",
+        status:
+          duplicateStartPending || workflowView.status === "running"
+            ? "running"
+            : duplicatesReady
+              ? "ready"
+              : workflowDupeAssessment?.status === "failed"
+                ? "error"
+                : "idle",
         assessment: duplicateAssessmentCurrent ? workflowDupeAssessment : null,
         projections: duplicateAssessmentCurrent ? workflowView.current?.projections || null : null,
         preflight: duplicateAssessmentCurrent ? workflowView.current?.preflight || null : null,
@@ -1685,12 +1681,7 @@ export function ReleaseSessionProvider({
         ignoredTrackers: state.ignoredDupesFor,
         selectedTrackers: state.selectedTrackers,
         releaseNameOverrides: state.releaseNameOverrides,
-        error:
-          workflowView.failure?.Message ||
-          state.duplicatesError ||
-          workflowDupeAssessment?.results.flatMap((result) => result.failures || [])[0]?.failure
-            .Message ||
-          "",
+        error: workflowView.failure?.Message || state.duplicatesError || "",
       },
       run: async () => {
         dispatch({ type: "job_command_started", kind: "duplicates" });
@@ -1724,6 +1715,40 @@ export function ReleaseSessionProvider({
       chooseTrackers: (trackers) => dispatch({ type: "trackers_chosen", trackers }),
       confirmReleaseName: (tracker, value) =>
         dispatch({ type: "release_name_confirmed", tracker, value }),
+      acknowledgeReleaseName: async (tracker, acknowledged) => {
+        const normalizedTracker = tracker.trim().toUpperCase();
+        const current = workflowView.current;
+        const projection = current?.projections?.projections.find(
+          (candidate) => candidate.trackerId === normalizedTracker,
+        );
+        const action = [
+          ...(current?.workflow.requiredActions || []),
+          ...(projection?.requiredActions || []),
+        ].find(
+          (candidate) =>
+            candidate.kind === "provide_tracker_input" &&
+            candidate.trackerId === normalizedTracker &&
+            candidate.status === (acknowledged ? "pending" : "resolved"),
+        );
+        const releaseName = (
+          state.releaseNameOverrides[normalizedTracker] ??
+          projection?.uploadReleaseName ??
+          ""
+        ).trim();
+        if (!current || !projection || !action || (acknowledged && !releaseName)) return false;
+        return runBackendWorkflow((latest, commandID, signal) =>
+          continueBackendGoal(latest, "duplicates_decided", {}, commandID, signal, {
+            answers: [
+              {
+                actionId: action.id,
+                workflowRevision: latest.workflow.revision,
+                ...(acknowledged ? { textValue: releaseName } : {}),
+                confirmed: acknowledged,
+              },
+            ],
+          }),
+        );
+      },
       cancel: async () => {
         if (!workflowView.current) return false;
         return cancelBackendWorkflow("duplicate check canceled");

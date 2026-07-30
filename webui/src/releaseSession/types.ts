@@ -146,6 +146,7 @@ export type DuplicatesFacet = Readonly<{
   cancel(): Promise<boolean>;
   chooseTrackers(trackers: readonly string[]): void;
   confirmReleaseName(tracker: string, value: string): void;
+  acknowledgeReleaseName(tracker: string, acknowledged: boolean): Promise<boolean>;
   setIgnored(tracker: string, ignored: boolean): void;
 }>;
 

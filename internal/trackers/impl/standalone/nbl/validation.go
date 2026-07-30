@@ -30,10 +30,12 @@ func checkEvidenceRules(ctx context.Context, subject api.TrackerValidationSubjec
 			BlockArchives: true,
 		},
 	)...)
-	failures = append(failures, trackers.ValidateMediaOnlyPackage(
-		subject.PackageFacts,
-		nblEvidencePolicy("nbl_media_only"),
-	)...)
+	if !trackers.IsDiscType(subject.DiscType) {
+		failures = append(failures, trackers.ValidateMediaOnlyPackage(
+			subject.PackageFacts,
+			nblEvidencePolicy("nbl_media_only"),
+		)...)
+	}
 	if !subject.TVPack {
 		failures = append(failures, trackers.ValidateSingleFileFolder(
 			subject.PackageFacts,

@@ -64,6 +64,20 @@ func TestNBLRejectsEpisodeFolderAndScreenshots(t *testing.T) {
 	)
 }
 
+func TestNBLDoesNotApplyMediaOnlyPackageRuleToDiscs(t *testing.T) {
+	t.Parallel()
+
+	subject := nblPassingSubject()
+	subject.DiscType = "DVD"
+	subject.PackageFacts.KnownFileCount = 3
+	subject.PackageFacts.MediaFileCount = 1
+	for _, failure := range evaluateNBLEvidence(t, subject) {
+		if failure.Rule == "nbl_media_only" {
+			t.Fatalf("disc package received media-only failure: %+v", failure)
+		}
+	}
+}
+
 func TestNBLValidationPolicyVersion(t *testing.T) {
 	t.Parallel()
 

@@ -9,7 +9,7 @@ const visibleStatuses = new Set(["queued", "running", "blocked", "failed", "inte
 export function WorkflowOperationProgress({
   operation,
 }: Readonly<{ operation?: WorkflowOperationStatus | null }>) {
-  if (!operation) return null;
+  if (!operation || operation.operation === "duplicate_check") return null;
 
   const events = operation.events || [];
   const scopedEvents = events.filter(

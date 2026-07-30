@@ -7,9 +7,7 @@ import type { ReleaseRoute } from "../releaseSession/types";
 const actionRoutes: Readonly<Record<string, ReleaseRoute>> = {
   answer_questionnaire: "upload",
   confirm_rescan: "input",
-  provide_tracker_input: "duplicates",
   reprepare: "input",
-  review_duplicates: "duplicates",
   select_metadata: "input",
   select_playlist: "input",
 };
@@ -17,12 +15,14 @@ const actionRoutes: Readonly<Record<string, ReleaseRoute>> = {
 const actionLabels: Readonly<Record<string, string>> = {
   answer_questionnaire: "Answer tracker questions",
   confirm_rescan: "Review source",
-  provide_tracker_input: "Review tracker release name",
   reprepare: "Review source",
-  review_duplicates: "Review duplicates",
   select_metadata: "Review metadata",
   select_playlist: "Select playlist",
 };
+
+const actionOwnedByDupeCard = (action: RequiredAction) =>
+  action.kind === "review_duplicates" ||
+  (action.kind === "provide_tracker_input" && Boolean(action.trackerId));
 
 function actionScope(action: RequiredAction): string {
   if (action.trackerId) return `Tracker: ${action.trackerId}`;
@@ -41,7 +41,7 @@ export function WorkflowRequiredActions({
   onNavigate: (route: ReleaseRoute) => void;
 }>) {
   const actions = (continuation?.requiredActions || []).filter(
-    (action) => action.status === "pending",
+    (action) => action.status === "pending" && !actionOwnedByDupeCard(action),
   );
   if (!actions.length) return null;
 

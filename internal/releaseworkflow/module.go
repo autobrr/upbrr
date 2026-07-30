@@ -2309,7 +2309,7 @@ func (m *Module) recoverAfterRestart(ctx context.Context, ownerID string, state 
 	for index := range workflow.RequiredActions {
 		workflow.RequiredActions[index].WorkflowRevision = nextRevision
 	}
-	if len(workflow.RequiredActions) > 0 {
+	if hasPendingRequiredAction(workflow.RequiredActions) {
 		workflow.Status = api.WorkflowStatusBlocked
 	} else {
 		workflow.Status = api.WorkflowStatusActive
@@ -3426,7 +3426,9 @@ func (m *Module) stampProjectionActions(
 				}
 				action.ID = api.RequiredActionID(id)
 			}
-			action.Status = api.RequiredActionStatusPending
+			if action.Status != api.RequiredActionStatusResolved {
+				action.Status = api.RequiredActionStatusPending
+			}
 			action.WorkflowRevision = revision
 			action.TrackerID = projection.TrackerID
 			action.CreatedAt = now
@@ -3519,7 +3521,7 @@ func finalizedProjectionStatus(
 	if readyCount > 0 {
 		return api.StageStatusReady
 	}
-	if len(actions) > 0 {
+	if hasPendingRequiredAction(actions) {
 		return api.StageStatusBlocked
 	}
 	_ = failures
@@ -3919,7 +3921,9 @@ func (m *Module) publishDupes(
 	if priorDescriptions != nil {
 		m.private.Delete(ownerID, state.Workflow.ID, descriptionPrivateResourceID(priorDescriptions.ID))
 	}
-	setWorkflowStageStatus(&state.Workflow, snapshot.Status, collectDupeActions(snapshot.Results), collectDupeFailures(snapshot.Results))
+	actions := append([]api.RequiredAction(nil), projections.RequiredActions...)
+	actions = append(actions, collectDupeActions(snapshot.Results)...)
+	setWorkflowStageStatus(&state.Workflow, snapshot.Status, actions, collectDupeFailures(snapshot.Results))
 	return CommandResult{Dupes: &snapshot}, nil
 }
 
@@ -5926,7 +5930,7 @@ func (m *Module) publishUploadResult(
 			state.Workflow.Failures = append(state.Workflow.Failures, failure)
 		}
 	}
-	if len(state.Workflow.RequiredActions) > 0 {
+	if hasPendingRequiredAction(state.Workflow.RequiredActions) {
 		state.Workflow.Status = api.WorkflowStatusBlocked
 	}
 	return CommandResult{UploadResult: &snapshot}, nil
@@ -6139,6 +6143,13 @@ func (m *Module) resolveAction(
 	if command.Answer.WorkflowRevision != command.ExpectedRevision {
 		return CommandResult{}, ErrRevisionConflict
 	}
+	var currentProjections *api.TrackerReleaseProjectionSet
+	if state.Workflow.TrackerProjections != nil {
+		currentProjections = currentSnapshot(state.Projections, state.Workflow.TrackerProjections.ID)
+	}
+	if action, ok := releaseNameConfirmationAction(currentProjections, command.Answer.ActionID); ok {
+		return m.reviewTrackerReleaseName(ctx, ownerID, state, nextRevision, now, action, command.Answer)
+	}
 	index := slices.IndexFunc(state.Workflow.RequiredActions, func(action api.RequiredAction) bool {
 		return action.ID == command.Answer.ActionID && action.Status == api.RequiredActionStatusPending
 	})
@@ -6201,7 +6212,7 @@ func (m *Module) resolveAction(
 		})
 	}
 	state.Workflow.RequiredActions = slices.Delete(state.Workflow.RequiredActions, index, index+1)
-	if len(state.Workflow.RequiredActions) == 0 && state.Workflow.Status == api.WorkflowStatusBlocked {
+	if !hasPendingRequiredAction(state.Workflow.RequiredActions) && state.Workflow.Status == api.WorkflowStatusBlocked {
 		if state.Workflow.UploadResult != nil {
 			state.Workflow.Status = api.WorkflowStatusCompleted
 		} else {
@@ -6359,7 +6370,7 @@ func finishUnavailableImageHostingReconciliation(workflow *api.ReleaseWorkflow, 
 			failure.Failure.Operation == api.OperationKindImageHosting &&
 			failure.Resource == action.EffectScopeID
 	})
-	if len(workflow.RequiredActions) == 0 && workflow.Status == api.WorkflowStatusBlocked {
+	if !hasPendingRequiredAction(workflow.RequiredActions) && workflow.Status == api.WorkflowStatusBlocked {
 		workflow.Status = api.WorkflowStatusActive
 	}
 }
@@ -6411,7 +6422,7 @@ func setWorkflowStageStatus(
 ) {
 	workflow.RequiredActions = append([]api.RequiredAction(nil), actions...)
 	workflow.Failures = append([]api.WorkflowFailure(nil), failures...)
-	if len(actions) > 0 {
+	if hasPendingRequiredAction(actions) {
 		workflow.Status = api.WorkflowStatusBlocked
 		return
 	}
@@ -6432,6 +6443,12 @@ func setWorkflowStageStatus(
 		api.StageStatusUnavailable:
 		workflow.Status = api.WorkflowStatusActive
 	}
+}
+
+func hasPendingRequiredAction(actions []api.RequiredAction) bool {
+	return slices.ContainsFunc(actions, func(action api.RequiredAction) bool {
+		return action.Status == "" || action.Status == api.RequiredActionStatusPending
+	})
 }
 
 func cloneCommandResult(result CommandResult) (CommandResult, error) {
