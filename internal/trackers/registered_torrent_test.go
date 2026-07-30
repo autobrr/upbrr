@@ -13,7 +13,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/anacrolix/torrent/metainfo"
+	"github.com/autobrr/go-torrent/metainfo"
 )
 
 func TestPersistRegisteredTorrentPreservesExactBytes(t *testing.T) {
@@ -69,21 +69,21 @@ func TestDownloadRegisteredTorrentEnforcesStatusAndSize(t *testing.T) {
 		body   []byte
 	}{
 		{
-name: "non-success",
- status: http.StatusUnauthorized,
- body: []byte("denied"),
-},
+			name:   "non-success",
+			status: http.StatusUnauthorized,
+			body:   []byte("denied"),
+		},
 		{name: "empty", status: http.StatusOK},
 		{
-name: "invalid",
- status: http.StatusOK,
- body: []byte("<html>invalid</html>"),
-},
+			name:   "invalid",
+			status: http.StatusOK,
+			body:   []byte("<html>invalid</html>"),
+		},
 		{
-name: "oversized",
- status: http.StatusOK,
- body: bytes.Repeat([]byte{'x'}, RegisteredTorrentMaxBytes+1),
-},
+			name:   "oversized",
+			status: http.StatusOK,
+			body:   bytes.Repeat([]byte{'x'}, RegisteredTorrentMaxBytes+1),
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

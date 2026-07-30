@@ -8,12 +8,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/anacrolix/torrent/bencode"
-	"github.com/anacrolix/torrent/metainfo"
+	"github.com/autobrr/go-torrent/bencode"
+	"github.com/autobrr/go-torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -36,7 +35,6 @@ func TestResolveUploadTorrentBasePathWritesCleanBaseCopy(t *testing.T) {
 		CreatedBy:    "mkbrr using Upload Assistant",
 		Encoding:     "UTF-8",
 		UrlList:      metainfo.UrlList{"https://webseed.example/file"},
-		PieceLayers:  map[string]string{"root": "layer"},
 		InfoBytes:    testInfoBytes(t, "BHD"),
 	})
 
@@ -64,10 +62,6 @@ func TestResolveUploadTorrentBasePathWritesCleanBaseCopy(t *testing.T) {
 	if len(cleaned.UrlList) != 0 {
 		t.Fatalf("expected url-list cleared, got %#v", cleaned.UrlList)
 	}
-	expectedPieceLayers := map[string]string{"root": "layer"}
-	if !reflect.DeepEqual(cleaned.PieceLayers, expectedPieceLayers) {
-		t.Fatalf("expected piece layers preserved, got %#v", cleaned.PieceLayers)
-	}
 	assertInfoSource(t, cleaned, "")
 	assertInfoSourceKeyAbsent(t, cleaned)
 	if cleaned.Comment != "upbrr" {
@@ -80,9 +74,6 @@ func TestResolveUploadTorrentBasePathWritesCleanBaseCopy(t *testing.T) {
 	original := readTestMetaInfo(t, dirtyTorrentPath)
 	if original.Comment != "Created by Upload Assistant" {
 		t.Fatalf("expected original unchanged, got %q", original.Comment)
-	}
-	if !reflect.DeepEqual(original.PieceLayers, expectedPieceLayers) {
-		t.Fatalf("expected original piece layers unchanged, got %#v", original.PieceLayers)
 	}
 	assertInfoSource(t, original, "BHD")
 }
@@ -152,23 +143,18 @@ func TestResolveUploadTorrentBasePathFallsBackToExplicitCandidateWhenCleanCopyIn
 	}
 }
 
-func TestWriteUploadTorrentPreservesPieceLayers(t *testing.T) {
+func TestWriteUploadTorrentCleansTrackerFields(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "source.torrent")
 	outputPath := filepath.Join(tmp, "out", "clean.torrent")
-	expectedPieceLayers := map[string]string{
-		"root-a": "layer-a",
-		"root-b": "layer-b",
-	}
 	writeTestMetaInfo(t, sourcePath, metainfo.MetaInfo{
 		Announce:     "https://tracker.example/announce",
 		AnnounceList: metainfo.AnnounceList{{"https://tracker.example/announce"}},
 		Nodes:        []metainfo.Node{"127.0.0.1:6881"},
 		Comment:      "Created by Upload Assistant",
 		UrlList:      metainfo.UrlList{"https://webseed.example/file"},
-		PieceLayers:  expectedPieceLayers,
 		InfoBytes:    testInfoBytes(t, "BHD"),
 	})
 
@@ -177,9 +163,6 @@ func TestWriteUploadTorrentPreservesPieceLayers(t *testing.T) {
 	}
 
 	cleaned := readTestMetaInfo(t, outputPath)
-	if !reflect.DeepEqual(cleaned.PieceLayers, expectedPieceLayers) {
-		t.Fatalf("expected piece layers preserved, got %#v", cleaned.PieceLayers)
-	}
 	if cleaned.Announce != "" {
 		t.Fatal("expected announce cleared")
 	}
@@ -201,9 +184,6 @@ func TestWriteUploadTorrentPreservesPieceLayers(t *testing.T) {
 	original := readTestMetaInfo(t, sourcePath)
 	if original.Comment != "Created by Upload Assistant" {
 		t.Fatalf("expected original comment unchanged, got %q", original.Comment)
-	}
-	if !reflect.DeepEqual(original.PieceLayers, expectedPieceLayers) {
-		t.Fatalf("expected original piece layers unchanged, got %#v", original.PieceLayers)
 	}
 	assertInfoSource(t, original, "BHD")
 }
@@ -247,7 +227,6 @@ func TestWritePersonalizedTorrentSetsTrackerFields(t *testing.T) {
 		AnnounceList: metainfo.AnnounceList{{"https://old.example/announce"}},
 		Comment:      "Created by Upload Assistant",
 		UrlList:      metainfo.UrlList{"https://webseed.example/file"},
-		PieceLayers:  map[string]string{"root": "layer"},
 		InfoBytes:    testInfoBytes(t, "BHD"),
 	})
 
@@ -270,10 +249,6 @@ func TestWritePersonalizedTorrentSetsTrackerFields(t *testing.T) {
 	}
 	if len(updated.UrlList) != 0 {
 		t.Fatalf("expected url-list cleared, got %#v", updated.UrlList)
-	}
-	expectedPieceLayers := map[string]string{"root": "layer"}
-	if !reflect.DeepEqual(updated.PieceLayers, expectedPieceLayers) {
-		t.Fatalf("expected piece layers preserved, got %#v", updated.PieceLayers)
 	}
 	assertInfoSource(t, updated, "PTP")
 }

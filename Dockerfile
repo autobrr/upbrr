@@ -45,7 +45,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
         CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" GOARM="$goarm" \
             go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.buildIdentifier=${BUILD_ID}" -o /out/upbrr ./cmd/upbrr
 
-FROM alpine:3.23
+FROM alpine:3.24
 
 # fontconfig + a font are required by ffmpeg's drawtext filter (screenshot frame
 # overlays); without them capture fails with "Cannot find a valid font for the

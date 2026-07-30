@@ -13,7 +13,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/anacrolix/torrent/metainfo"
+	"github.com/autobrr/go-torrent/metainfo"
 
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -82,8 +82,8 @@ func buildTorrentLinkPlan(ctx context.Context, torrentPath string, meta api.Clie
 		return torrentLinkPlan{}, errors.New("no regular source files available for injected torrent")
 	}
 
-	plan := torrentLinkPlan{root: root, torrentIsMulti: info.IsDir()}
-	for _, torrentFile := range info.UpvertedFiles() {
+	plan := torrentLinkPlan{root: root, torrentIsMulti: len(info.Files) != 0}
+	for _, torrentFile := range torrentV1Files(info) {
 		if err := torrentLinkPlanContextError(ctx); err != nil {
 			return torrentLinkPlan{}, err
 		}
