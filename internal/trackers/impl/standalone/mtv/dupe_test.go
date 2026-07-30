@@ -36,7 +36,7 @@ func TestMTVHandlerUsesIMDBPriorityAndParsesXML(t *testing.T) {
 			assertQueryParam(t, query, "t", "search")
 			assertQueryParam(t, query, "apikey", "token")
 			assertQueryParam(t, query, "limit", "100")
-			assertQueryParam(t, query, "imdbid", "tt123456")
+			assertQueryParam(t, query, "imdbid", "tt0123456")
 			if got := query.Get("tmdbid"); got != "" {
 				t.Fatalf("tmdbid should be empty when imdbid is present, got %q", got)
 			}

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -81,7 +82,7 @@ func projectPreparedReleaseDisplay(release api.PreparedRelease) (api.PreparedRel
 			api.IdentityProviderIMDB,
 			identity.IMDBID,
 			identity.Provenance.IMDB,
-			fmt.Sprintf("https://www.imdb.com/title/tt%07d", identity.IMDBID),
+			providerid.IMDb(identity.IMDBID).URL(),
 			summary,
 			api.ProviderDisplayDetails{IMDB: value},
 		))
@@ -178,7 +179,7 @@ func providerDisplay(
 ) api.ProviderDisplay {
 	displayID := strconv.Itoa(id)
 	if provider == api.IdentityProviderIMDB {
-		displayID = fmt.Sprintf("tt%07d", id)
+		displayID = providerid.IMDb(id).Prefixed()
 	}
 	return api.ProviderDisplay{
 		Provider:         provider,

@@ -31,6 +31,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/tvdb"
 	"github.com/autobrr/upbrr/internal/metadata/tvmaze"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -1415,10 +1416,7 @@ func identityProvenance(origin string) api.IdentityProvenance {
 }
 
 func formatIMDbID(value int) string {
-	if value <= 0 {
-		return ""
-	}
-	return fmt.Sprintf("tt%07d", value)
+	return providerid.IMDb(value).Prefixed()
 }
 
 func formatOptionalInt(value int) string {

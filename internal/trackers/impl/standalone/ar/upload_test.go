@@ -47,6 +47,14 @@ func TestResolveARNameUsesSceneName(t *testing.T) {
 	}
 }
 
+func TestResolveTagsPadsIMDbID(t *testing.T) {
+	t.Parallel()
+
+	if got := resolveTags(api.UploadSubject{Identity: api.ExternalIdentity{IMDBID: 456}}); got != "tt0000456" {
+		t.Fatalf("expected padded IMDb tag, got %q", got)
+	}
+}
+
 type captureLogger struct {
 	warnings []string
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -593,7 +594,7 @@ func resolveBackdrop(meta api.UploadSubject) string {
 
 func resolveIMDbText(meta api.UploadSubject) string {
 	if meta.Identity.IMDBID > 0 {
-		return fmt.Sprintf("tt%07d", meta.Identity.IMDBID)
+		return providerid.IMDb(meta.Identity.IMDBID).Prefixed()
 	}
 	return ""
 }

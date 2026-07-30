@@ -34,7 +34,7 @@ func TestDupeSearcherSendsAPIKeyHeader(t *testing.T) {
 		for key, want := range map[string]string{
 			"t":    "search",
 			"o":    "json",
-			"tmdb": "123",
+			"imdb": "0000456",
 		} {
 			if got := query.Get(key); got != want {
 				t.Fatalf("query %s = %q, want %q", key, got, want)
@@ -56,7 +56,10 @@ func TestDupeSearcherSendsAPIKeyHeader(t *testing.T) {
 
 	cfg := config.Config{Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{"ANT": {APIKey: "token"}}}}
 	searcher := dupe.NewAdapter(New(), "ANT", cfg, client, api.NopLogger{})
-	entries, notes, err := adapterEvidence(searcher.Search(context.Background(), api.DuplicateSubject{Identity: api.ExternalIdentity{TMDBID: 123}, Release: api.ReleaseInfo{Resolution: "1080p"}}))
+	entries, notes, err := adapterEvidence(searcher.Search(context.Background(), api.DuplicateSubject{
+		Identity: api.ExternalIdentity{IMDBID: 456},
+		Release:  api.ReleaseInfo{Resolution: "1080p"},
+	}))
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -131,7 +132,7 @@ func buildRTFSearchParams(meta api.DuplicateSubject) (url.Values, bool) {
 	params := url.Values{}
 	params.Set("includingDead", "1")
 	if meta.Identity.IMDBID != 0 {
-		params.Set("imdbId", fmt.Sprintf("tt%07d", meta.Identity.IMDBID))
+		params.Set("imdbId", providerid.IMDb(meta.Identity.IMDBID).Prefixed())
 		return params, true
 	}
 	query := cleanRTFSearchTitle(meta)

@@ -25,6 +25,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -272,7 +273,7 @@ func lookupGroupID(ctx context.Context, baseURL string, trackerConfig config.Tra
 		"User-Agent": ptpUserAgent,
 	}
 	values := url.Values{}
-	values.Set("imdb", fmt.Sprintf("tt%07d", meta.Identity.IMDBID))
+	values.Set("imdb", providerid.IMDb(meta.Identity.IMDBID).Digits())
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+ptpTorrentPath+"?"+values.Encode(), nil)
 	if err != nil {
 		return "", fmt.Errorf("trackers: PTP build group lookup request: %w", err)
@@ -346,7 +347,7 @@ func buildUploadFields(meta api.UploadSubject, description string, groupID strin
 	if meta.Identity.IMDBID == 0 {
 		fields["imdb"] = "0"
 	} else {
-		fields["imdb"] = fmt.Sprintf("%07d", meta.Identity.IMDBID)
+		fields["imdb"] = providerid.IMDb(meta.Identity.IMDBID).Digits()
 	}
 	if groupID != "" {
 		fields["groupid"] = groupID

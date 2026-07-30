@@ -8,10 +8,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -40,7 +40,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	case meta.Identity.TVmazeID != 0:
 		searchTerm["tvmaze"] = meta.Identity.TVmazeID
 	case meta.Identity.IMDBID != 0:
-		searchTerm["imdb"] = strconv.Itoa(meta.Identity.IMDBID)
+		searchTerm["imdb"] = providerid.IMDb(meta.Identity.IMDBID).Decimal()
 	default:
 		searchTerm["series"] = dupe.ProjectedSearchName(meta)
 		if meta.Projection == nil {

@@ -22,6 +22,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -405,7 +406,7 @@ func resolveIMDbID(meta api.UploadSubject) string {
 	if meta.Identity.IMDBID > 0 {
 		// BHD rejects unpadded six-digit IDs; IMDb IDs are zero-padded
 		// to at least seven digits.
-		return fmt.Sprintf("%07d", meta.Identity.IMDBID)
+		return providerid.IMDb(meta.Identity.IMDBID).Digits()
 	}
 	return "0"
 }

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -294,14 +295,11 @@ func normalizeIMDbRemote(value string) string {
 	if trimmed == "" || trimmed == "0" {
 		return ""
 	}
-	if strings.HasPrefix(trimmed, "tt") {
-		return trimmed
-	}
-	id, err := strconv.Atoi(trimmed)
+	id, err := strconv.Atoi(strings.TrimPrefix(trimmed, "tt"))
 	if err != nil {
 		return trimmed
 	}
-	return fmt.Sprintf("tt%07d", id)
+	return providerid.IMDb(id).Prefixed()
 }
 
 // GetByExternalID tries IMDb before TMDB and returns the first series match. When

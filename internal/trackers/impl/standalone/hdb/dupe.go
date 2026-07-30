@@ -7,12 +7,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -60,7 +60,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	}
 	searchMethod := "id"
 	if meta.Identity.IMDBID != 0 {
-		payload["imdb"] = map[string]any{"id": fmt.Sprintf("%07d", meta.Identity.IMDBID)}
+		payload["imdb"] = map[string]any{"id": providerid.IMDb(meta.Identity.IMDBID).Digits()}
 	} else if isHDBDupeTVCategory(meta) && meta.Identity.TVDBID != 0 {
 		payload["tvdb"] = map[string]any{"id": meta.Identity.TVDBID}
 	}

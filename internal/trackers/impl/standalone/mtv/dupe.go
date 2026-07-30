@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -46,7 +47,7 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 
 	switch {
 	case meta.Identity.IMDBID != 0:
-		params.Set("imdbid", "tt"+strconv.Itoa(meta.Identity.IMDBID))
+		params.Set("imdbid", providerid.IMDb(meta.Identity.IMDBID).Prefixed())
 	case meta.Identity.TMDBID != 0:
 		params.Set("tmdbid", strconv.Itoa(meta.Identity.TMDBID))
 	case isMTVTVCategory(meta) && meta.Identity.TVDBID != 0:

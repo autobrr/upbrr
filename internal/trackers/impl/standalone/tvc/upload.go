@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -175,6 +176,10 @@ func prepareUploadState(_ context.Context, req trackers.PreparationInput) (uploa
 	if nameErr != nil {
 		return uploadState{}, fmt.Errorf("trackers: TVC release name: %w", nameErr)
 	}
+	imdbID := providerid.IMDb(req.Meta.Identity.IMDBID).Digits()
+	if imdbID == "" {
+		imdbID = "0"
+	}
 
 	fields := map[string]string{
 		"name":             releaseName,
@@ -184,7 +189,7 @@ func prepareUploadState(_ context.Context, req trackers.PreparationInput) (uploa
 		"category_id":      resolveCategory(req.Meta),
 		"type":             resolveResolution(req.Meta),
 		"tmdb":             strconv.Itoa(req.Meta.Identity.TMDBID),
-		"imdb":             strconv.Itoa(req.Meta.Identity.IMDBID),
+		"imdb":             imdbID,
 		"mal":              strconv.Itoa(req.Meta.Identity.MALID),
 		"igdb":             "0",
 		"anonymous":        boolNum(req.TrackerConfig.Anon),

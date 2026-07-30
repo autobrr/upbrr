@@ -16,6 +16,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -72,7 +73,7 @@ func (h dupeSearcher) lookupMediaCode(ctx context.Context, site azDupeSiteDef, c
 	term := lookupAZDupeTitle(meta)
 	imdb := ""
 	if meta.Identity.IMDBID != 0 {
-		imdb = fmt.Sprintf("tt%07d", meta.Identity.IMDBID)
+		imdb = providerid.IMDb(meta.Identity.IMDBID).Prefixed()
 	}
 	category, err := meta.Identity.RequireCategory()
 	if err != nil {

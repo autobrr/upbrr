@@ -14,6 +14,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/internal/uploadinput"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -723,7 +724,7 @@ func compositeCLIExternalIDs(ids api.ExternalIDOverrides) api.ReleaseWorkflowUpl
 	if ids.IMDBID != nil {
 		value := ""
 		if *ids.IMDBID > 0 {
-			value = fmt.Sprintf("tt%d", *ids.IMDBID)
+			value = providerid.IMDb(*ids.IMDBID).Prefixed()
 		}
 		result.IMDB = &api.ReleaseWorkflowUploadStringID{Value: &value}
 	}

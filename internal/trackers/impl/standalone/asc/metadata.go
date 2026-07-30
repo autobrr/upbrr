@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -152,7 +153,7 @@ func resolveTrailer(meta api.UploadSubject) string {
 
 func resolveIMDbIDText(meta api.UploadSubject) string {
 	if meta.Identity.IMDBID > 0 {
-		return fmt.Sprintf("tt%07d", meta.Identity.IMDBID)
+		return providerid.IMDb(meta.Identity.IMDBID).Prefixed()
 	}
 	return ""
 }

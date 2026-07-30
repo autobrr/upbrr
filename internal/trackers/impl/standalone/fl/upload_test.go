@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,8 +18,39 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
+	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestPrepareUploadStatePadsIMDbID(t *testing.T) {
+	t.Parallel()
+
+	torrentPath := filepath.Join(t.TempDir(), "release.torrent")
+	if err := os.WriteFile(torrentPath, []byte("torrent"), 0o600); err != nil {
+		t.Fatalf("write torrent: %v", err)
+	}
+	state, _, err := prepareUploadState(context.Background(), trackers.PreparationInput{
+		Tracker: "FL",
+		Meta: api.UploadSubject{
+			TorrentPath: torrentPath,
+			Identity:    api.ExternalIdentity{IMDBID: 456},
+		},
+		Projection: &api.TrackerReleaseProjection{
+			TrackerID:         "FL",
+			UploadReleaseName: "Example.Release.2026.1080p-GRP",
+			Readiness:         api.ReadinessStatusReady,
+			UploadReady:       true,
+		},
+		TrackerConfig: config.TrackerConfig{Username: "user", Password: "password"},
+		Runtime:       trackers.PreparationRuntime{DBPath: filepath.Join(t.TempDir(), "upbrr.db")},
+	}, true)
+	if err != nil {
+		t.Fatalf("prepare upload state: %v", err)
+	}
+	if got := state.fields["imdbid"]; got != "0000456" {
+		t.Fatalf("expected padded imdbid, got %q", got)
+	}
+}
 
 func TestResolveCookiesReturnsLoginPageReadError(t *testing.T) {
 	ctx := context.Background()

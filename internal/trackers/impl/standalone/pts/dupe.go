@@ -5,7 +5,6 @@ package pts
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -52,7 +52,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	}
 	req.URL.RawQuery = url.Values{
 		"incldead":    {"1"},
-		"search":      {fmt.Sprintf("tt%07d", meta.Identity.IMDBID)},
+		"search":      {providerid.IMDb(meta.Identity.IMDBID).Prefixed()},
 		"search_area": {"4"},
 	}.Encode()
 	req.Header.Set("User-Agent", "upbrr")

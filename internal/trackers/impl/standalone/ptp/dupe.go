@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -46,7 +47,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing imdb id for PTP dupe search", nil)
 	}
 	headers := map[string]string{"ApiUser": apiUser, "ApiKey": apiKey}
-	groupPayload, err := s.get(ctx, url.Values{"imdb": {"tt" + strconv.Itoa(meta.Identity.IMDBID)}}, headers)
+	groupPayload, err := s.get(ctx, url.Values{"imdb": {providerid.IMDb(meta.Identity.IMDBID).Digits()}}, headers)
 	if err != nil || len(groupPayload) == 0 {
 		return dupe.Failed(dupe.FailureRequest, "PTP group search failed", err)
 	}

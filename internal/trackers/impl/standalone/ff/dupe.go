@@ -5,7 +5,6 @@ package ff
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -16,6 +15,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -50,7 +50,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	if err != nil {
 		return dupe.NotRun(dupe.NotRunMissingCredentials, "missing valid FF cookies", nil)
 	}
-	query := fmt.Sprintf("tt%07d", meta.Identity.IMDBID)
+	query := providerid.IMDb(meta.Identity.IMDBID).Prefixed()
 	if meta.Anime {
 		query = dupe.ProjectedSearchName(meta)
 		if meta.Projection == nil {

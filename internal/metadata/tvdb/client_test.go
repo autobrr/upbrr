@@ -122,6 +122,11 @@ func TestNormalizeIMDbRemote(t *testing.T) {
 			want:  "tt1234567",
 		},
 		{
+			name:  "short_prefix_pads",
+			value: "tt123",
+			want:  "tt0000123",
+		},
+		{
 			name:  "upper_prefix",
 			value: "TT1234567",
 			want:  "tt1234567",

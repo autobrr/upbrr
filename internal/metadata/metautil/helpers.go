@@ -4,13 +4,13 @@
 package metautil
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/moistari/rls"
 
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	"github.com/autobrr/upbrr/internal/providerid"
 )
 
 // ParsedRelease is the subset of basename parser output used by metadata
@@ -49,14 +49,11 @@ func NormalizeIMDbID(value string) string {
 	if trimmed == "" || trimmed == "0" {
 		return ""
 	}
-	if strings.HasPrefix(trimmed, "tt") {
-		return trimmed
-	}
-	id, err := strconv.Atoi(trimmed)
+	id, err := strconv.Atoi(strings.TrimPrefix(trimmed, "tt"))
 	if err != nil {
 		return trimmed
 	}
-	return fmt.Sprintf("tt%07d", id)
+	return providerid.IMDb(id).Prefixed()
 }
 
 // ParseIMDbNumeric accepts a trimmed numeric or tt-prefixed ID and returns zero

@@ -18,6 +18,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -56,7 +57,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 			return dupe.NotRun(dupe.NotRunMissingMetadata, "missing IMDb ID for IS movie dupe search", nil)
 		}
 		params.Set("search_type", "t_genre")
-		params.Set("keywords", fmt.Sprintf("tt%07d", meta.Identity.IMDBID))
+		params.Set("keywords", providerid.IMDb(meta.Identity.IMDBID).Prefixed())
 	} else {
 		query := dupe.ProjectedSearchName(meta)
 		if meta.Projection == nil {

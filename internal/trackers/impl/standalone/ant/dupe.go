@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -46,7 +47,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	case meta.Identity.TMDBID != 0:
 		params.Set("tmdb", strconv.Itoa(meta.Identity.TMDBID))
 	case meta.Identity.IMDBID != 0:
-		params.Set("imdb", strconv.Itoa(meta.Identity.IMDBID))
+		params.Set("imdb", providerid.IMDb(meta.Identity.IMDBID).Digits())
 	default:
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing tmdb/imdb id for ANT dupe search", nil)
 	}

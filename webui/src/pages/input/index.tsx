@@ -39,6 +39,7 @@ import {
   externalIdentityDraftFromIdentity,
 } from "../../utils/canonicalIdentity";
 import { emptyExternalIdentity } from "../../utils/canonicalIdentity";
+import { formatIMDbID } from "../../utils/providerId";
 
 const compactInputClass =
   "h-8 rounded-md border border-white/10 bg-slate-950/45 px-2.5 text-sm text-[var(--text)] outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent-2)] focus:ring-2 focus:ring-[rgba(53,194,193,0.18)]";
@@ -47,7 +48,7 @@ const formatProvider = (value: string) => value.toUpperCase();
 
 const formatID = (provider: string, id: number) => {
   if (!id) return "";
-  if (provider === "imdb") return `tt${id.toString().padStart(7, "0")}`;
+  if (provider === "imdb") return formatIMDbID(id);
   return id.toString();
 };
 
@@ -992,7 +993,7 @@ export default function InputPage(props: Props) {
     const identity = externalIdentityDraftFromIdentity(preview.Identity);
     const nextIDs: IDEdits = {
       tmdb: identity.TMDBID ? String(identity.TMDBID) : "",
-      imdb: identity.IMDBID ? `tt${String(identity.IMDBID).padStart(7, "0")}` : "",
+      imdb: formatIMDbID(identity.IMDBID),
       tvdb: identity.TVDBID ? String(identity.TVDBID) : "",
       tvmaze: identity.TVmazeID ? String(identity.TVmazeID) : "",
       mal: identity.MALID ? String(identity.MALID) : "",
@@ -1159,10 +1160,13 @@ export default function InputPage(props: Props) {
   }, [path]);
 
   const orderedIdentityProviders = useMemo(() => {
-    const fetchedProviders = new Set<string>(providerDisplays.map((item) => item.Provider));
-    return filterAndOrderIdentityProviders(externalIDInfo).filter((item) =>
-      fetchedProviders.has(item.Provider),
+    const displays = new Map<string, ProviderDisplay>(
+      providerDisplays.map((item) => [item.Provider, item]),
     );
+    return filterAndOrderIdentityProviders(externalIDInfo).flatMap((item) => {
+      const display = displays.get(item.Provider);
+      return display ? [{ ...item, DisplayID: display.DisplayID }] : [];
+    });
   }, [externalIDInfo, providerDisplays]);
 
   const selectedProvider =
@@ -1229,7 +1233,7 @@ export default function InputPage(props: Props) {
       markIDTouched("tmdb");
       return;
     }
-    setIdEdits((prev) => ({ ...prev, imdb: `tt${candidate.ID.toString().padStart(7, "0")}` }));
+    setIdEdits((prev) => ({ ...prev, imdb: formatIMDbID(candidate.ID) }));
     markIDTouched("imdb");
   };
 
@@ -2131,7 +2135,7 @@ export default function InputPage(props: Props) {
                   onClick={() => selectProvider(item.Provider)}
                 >
                   <span className="id-label">{formatProvider(item.Provider)}</span>
-                  <span className="id-value">{formatID(item.Provider, item.ID)}</span>
+                  <span className="id-value">{item.DisplayID}</span>
                   <span className="id-source">Source: {item.Source}</span>
                 </button>
               ))

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
 	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
@@ -551,6 +552,10 @@ func buildUnit3DData(req trackers.PreparationInput, name, description, mediainfo
 		return nil, fmt.Errorf("trackers: Unit3D category: %w", err)
 	}
 	category := resolveUnit3DCategory(meta)
+	imdbID := providerid.IMDb(meta.Identity.IMDBID).Digits()
+	if imdbID == "" {
+		imdbID = "0"
+	}
 	data := map[string]string{
 		"name":             name,
 		"description":      description,
@@ -560,7 +565,7 @@ func buildUnit3DData(req trackers.PreparationInput, name, description, mediainfo
 		"type_id":          typeID,
 		"resolution_id":    resolveUnit3DResolutionIDForTracker(req.Tracker, meta, profile),
 		"tmdb":             formatOptionalInt(meta.Identity.TMDBID),
-		"imdb":             formatOptionalInt(meta.Identity.IMDBID),
+		"imdb":             imdbID,
 		"mal":              formatOptionalInt(meta.Identity.MALID),
 		"igdb":             "0",
 		"anonymous":        boolFlag(req.TrackerConfig.Anon),

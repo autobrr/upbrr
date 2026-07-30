@@ -16,6 +16,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -213,7 +214,7 @@ func imdbForLookup(meta api.DuplicateSubject) string {
 	if meta.Identity.IMDBID == 0 {
 		return ""
 	}
-	return fmt.Sprintf("tt%07d", meta.Identity.IMDBID)
+	return providerid.IMDb(meta.Identity.IMDBID).Prefixed()
 }
 func trackerBaseURL(_ config.Config, _ string, fallback string) string {
 	return strings.TrimRight(fallback, "/")
