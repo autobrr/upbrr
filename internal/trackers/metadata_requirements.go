@@ -55,8 +55,8 @@ type MetadataRequirement struct {
 	Scope MetadataScope
 	// AnyOf is satisfied when at least one listed field is present and current.
 	AnyOf []MetadataField
-	// Severity defaults to blocking when empty or unrecognized.
-	Severity api.RuleFailureSeverity
+	// Disposition defaults to waivable for legacy empty values.
+	Disposition api.RuleDisposition
 }
 
 // TrackerMetadataPolicy defines declarative metadata requirements for a tracker.
@@ -67,71 +67,16 @@ type TrackerMetadataPolicy struct {
 	Requirements []MetadataRequirement
 }
 
-// trackerMetadataPolicies maps normalized tracker names to their required
-// provider evidence; requirements within one entry are cumulative.
-var trackerMetadataPolicies = map[string]TrackerMetadataPolicy{
-	"PTP": {Requirements: []MetadataRequirement{{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldIMDBIDOnly}, Severity: api.RuleFailureSeverityWarning}}},
-	"HDB": {RequireKnownCategory: true, Requirements: []MetadataRequirement{
-		{Scope: MetadataScopeMovie, AnyOf: []MetadataField{MetadataFieldIMDBIDOnly}},
-		{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldIMDBIDOnly, MetadataFieldTVDBIDOnly}},
-	}},
-	"NBL": {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldTVmaze}}}},
-	"ANT": {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeMovie, AnyOf: []MetadataField{MetadataFieldTMDB}}}},
-	"BHD": {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeMovie, AnyOf: []MetadataField{MetadataFieldIMDB}}}},
-	"MTV": {RequireKnownCategory: true, Requirements: []MetadataRequirement{
-		{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB}},
-		{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldTVDBTitle}},
-	}},
-	"BTN": {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldIMDB, MetadataFieldTVDB}}}},
-	"AR": {RequireKnownCategory: true, Requirements: []MetadataRequirement{
-		{Scope: MetadataScopeMovie, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB}},
-		{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB, MetadataFieldTVDB}},
-		{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldPoster}},
-	}},
-	"SPD": {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB}}}},
-	"THR": {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB}}}},
-	"TVC": {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB}}}},
-	"TL":  {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldTMDB, MetadataFieldIMDB}}}},
-	"BJS": {RequireKnownCategory: true, Requirements: []MetadataRequirement{{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldTMDB}}}},
-	"AZ":  multiIDMetadataPolicy(),
-	"CZ":  multiIDMetadataPolicy(),
-	"PHD": multiIDMetadataPolicy(),
-	"CZT": {Requirements: []MetadataRequirement{{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldIMDBIDOnly}}}},
-}
-
-// multiIDMetadataPolicy returns the shared movie and TV policy for trackers
-// that accept several provider identifiers.
-func multiIDMetadataPolicy() TrackerMetadataPolicy {
-	return TrackerMetadataPolicy{RequireKnownCategory: true, Requirements: []MetadataRequirement{
-		{Scope: MetadataScopeMovie, AnyOf: []MetadataField{MetadataFieldTMDBIDOnly, MetadataFieldIMDBIDOnly}},
-		{Scope: MetadataScopeTV, AnyOf: []MetadataField{MetadataFieldTMDBIDOnly, MetadataFieldIMDBIDOnly, MetadataFieldTVDBIDOnly}},
-	}}
-}
-
-// MetadataPolicyFor returns an independent copy of a tracker's metadata policy.
-// Tracker names are case-insensitive and whitespace-trimmed. Known Unit3D
-// trackers without an explicit policy require a current TMDB ID.
-func MetadataPolicyFor(tracker string) (TrackerMetadataPolicy, bool) {
-	name := strings.ToUpper(strings.TrimSpace(tracker))
-	policy, ok := trackerMetadataPolicies[name]
-	if !ok && IsUnit3DTracker(name) {
-		policy = TrackerMetadataPolicy{Requirements: []MetadataRequirement{{Scope: MetadataScopeAny, AnyOf: []MetadataField{MetadataFieldTMDB}}}}
-		ok = true
-	}
-	if !ok {
-		return TrackerMetadataPolicy{}, false
-	}
+func cloneMetadataPolicy(policy TrackerMetadataPolicy) TrackerMetadataPolicy {
 	policy.Requirements = slices.Clone(policy.Requirements)
 	for i := range policy.Requirements {
 		policy.Requirements[i].AnyOf = slices.Clone(policy.Requirements[i].AnyOf)
 	}
-	return policy, true
+	return policy
 }
 
-// evaluateMetadataRequirements returns policy results and whether the tracker
-// has a metadata policy. An evaluated policy may produce a non-nil empty slice.
-func evaluateMetadataRequirements(tracker string, meta api.PreparedMetadata) ([]api.RuleFailure, bool) {
-	policy, ok := MetadataPolicyFor(tracker)
+func evaluateMetadataRequirementsWithRegistry(registry *Registry, tracker string, meta api.RuleSubject) ([]api.RuleFailure, bool) {
+	policy, ok := registry.LookupMetadataPolicy(tracker)
 	if !ok {
 		return nil, false
 	}
@@ -139,9 +84,9 @@ func evaluateMetadataRequirements(tracker string, meta api.PreparedMetadata) ([]
 	category := MetadataScope(strings.ToLower(strings.TrimSpace(resolveCategory(meta))))
 	if policy.RequireKnownCategory && category != MetadataScopeMovie && category != MetadataScopeTV {
 		return []api.RuleFailure{{
-			Rule:     "require_metadata_category",
-			Reason:   "missing category required to select tracker metadata requirements",
-			Severity: api.RuleFailureSeverityBlocking,
+			Rule:        "require_metadata_category",
+			Reason:      "missing category required to select tracker metadata requirements",
+			Disposition: metadataCategoryDisposition(policy),
 		}}, true
 	}
 
@@ -153,7 +98,7 @@ func evaluateMetadataRequirements(tracker string, meta api.PreparedMetadata) ([]
 		if metadataRequirementPresent(requirement.AnyOf, meta) {
 			continue
 		}
-		severity := api.NormalizeRuleFailureSeverity(requirement.Severity)
+		disposition := api.NormalizeRuleDisposition(requirement.Disposition)
 		rule := "require_metadata_id"
 		reason := "missing required " + metadataFieldList(requirement.AnyOf)
 		switch {
@@ -163,17 +108,40 @@ func evaluateMetadataRequirements(tracker string, meta api.PreparedMetadata) ([]
 		case slices.Contains(requirement.AnyOf, MetadataFieldPoster):
 			rule = "require_metadata_poster"
 			reason = "missing required metadata poster"
-		case severity == api.RuleFailureSeverityWarning:
+		case disposition == api.RuleDispositionAdvisory:
 			reason = "missing recommended IMDb ID; PTP upload remains allowed"
 		}
-		failures = append(failures, api.RuleFailure{Rule: rule, Reason: reason, Severity: severity})
+		failures = append(failures, api.RuleFailure{
+			Rule:        rule,
+			Reason:      reason,
+			Disposition: disposition,
+		})
 	}
 	return failures, true
 }
 
+// metadataCategoryDisposition prevents a waivable missing-category result from
+// bypassing a category-scoped strict metadata requirement.
+func metadataCategoryDisposition(policy TrackerMetadataPolicy) api.RuleDisposition {
+	if len(policy.Requirements) == 0 {
+		return api.RuleDispositionWaivable
+	}
+	disposition := api.RuleDispositionAdvisory
+	for _, requirement := range policy.Requirements {
+		requirementDisposition := api.NormalizeRuleDisposition(requirement.Disposition)
+		if requirementDisposition == api.RuleDispositionStrict {
+			return api.RuleDispositionStrict
+		}
+		if requirementDisposition == api.RuleDispositionWaivable {
+			disposition = api.RuleDispositionWaivable
+		}
+	}
+	return disposition
+}
+
 // metadataRequirementPresent reports whether any alternative field satisfies
 // a requirement.
-func metadataRequirementPresent(fields []MetadataField, meta api.PreparedMetadata) bool {
+func metadataRequirementPresent(fields []MetadataField, meta api.RuleSubject) bool {
 	for _, field := range fields {
 		if metadataFieldPresent(field, meta) {
 			return true
@@ -184,17 +152,17 @@ func metadataRequirementPresent(fields []MetadataField, meta api.PreparedMetadat
 
 // metadataFieldPresent accepts only IDs and provider data scoped to the current
 // source; an empty scope remains compatible with legacy unscoped metadata.
-func metadataFieldPresent(field MetadataField, meta api.PreparedMetadata) bool {
-	idsCurrent := sourceMatches(meta.ExternalIDs.SourcePath, meta.SourcePath)
+func metadataFieldPresent(field MetadataField, meta api.RuleSubject) bool {
+	idsCurrent := sourceMatches(meta.Identity.SourcePath, meta.SourcePath)
 	switch field {
 	case MetadataFieldTMDBIDOnly:
-		return idsCurrent && meta.ExternalIDs.TMDBID > 0
+		return idsCurrent && meta.Identity.TMDBID > 0
 	case MetadataFieldIMDBIDOnly:
-		return idsCurrent && meta.ExternalIDs.IMDBID > 0
+		return idsCurrent && meta.Identity.IMDBID > 0
 	case MetadataFieldTVDBIDOnly:
-		return idsCurrent && meta.ExternalIDs.TVDBID > 0
+		return idsCurrent && meta.Identity.TVDBID > 0
 	case MetadataFieldTVmazeIDOnly:
-		return idsCurrent && meta.ExternalIDs.TVmazeID > 0
+		return idsCurrent && meta.Identity.TVmazeID > 0
 	case MetadataFieldTMDB:
 		return matchingTMDBMetadata(meta)
 	case MetadataFieldIMDB:
@@ -211,57 +179,57 @@ func metadataFieldPresent(field MetadataField, meta api.PreparedMetadata) bool {
 	return false
 }
 
-func matchingTMDBMetadata(meta api.PreparedMetadata) bool {
-	value := meta.ExternalMetadata.TMDB
-	return providerMetadataCurrent(meta) && value != nil && meta.ExternalIDs.TMDBID > 0 &&
-		value.TMDBID == meta.ExternalIDs.TMDBID && strings.TrimSpace(value.Title) != ""
+func matchingTMDBMetadata(meta api.RuleSubject) bool {
+	value := meta.ProviderMetadata.TMDB
+	return providerMetadataCurrent(meta) && value != nil && meta.Identity.TMDBID > 0 &&
+		value.TMDBID == meta.Identity.TMDBID && strings.TrimSpace(value.Title) != ""
 }
 
-func matchingIMDBMetadata(meta api.PreparedMetadata) bool {
-	value := meta.ExternalMetadata.IMDB
-	return providerMetadataCurrent(meta) && value != nil && meta.ExternalIDs.IMDBID > 0 &&
-		value.IMDBID == meta.ExternalIDs.IMDBID && strings.TrimSpace(value.Title) != ""
+func matchingIMDBMetadata(meta api.RuleSubject) bool {
+	value := meta.ProviderMetadata.IMDB
+	return providerMetadataCurrent(meta) && value != nil && meta.Identity.IMDBID > 0 &&
+		value.IMDBID == meta.Identity.IMDBID && strings.TrimSpace(value.Title) != ""
 }
 
-func matchingTVDBMetadata(meta api.PreparedMetadata) bool {
-	value := meta.ExternalMetadata.TVDB
-	return providerMetadataCurrent(meta) && value != nil && meta.ExternalIDs.TVDBID > 0 &&
-		value.TVDBID == meta.ExternalIDs.TVDBID &&
+func matchingTVDBMetadata(meta api.RuleSubject) bool {
+	value := meta.ProviderMetadata.TVDB
+	return providerMetadataCurrent(meta) && value != nil && meta.Identity.TVDBID > 0 &&
+		value.TVDBID == meta.Identity.TVDBID &&
 		(strings.TrimSpace(value.NameEnglish) != "" || strings.TrimSpace(value.Name) != "")
 }
 
-func matchingTVmazeMetadata(meta api.PreparedMetadata) bool {
-	value := meta.ExternalMetadata.TVmaze
-	return providerMetadataCurrent(meta) && value != nil && meta.ExternalIDs.TVmazeID > 0 &&
-		value.TVmazeID == meta.ExternalIDs.TVmazeID && strings.TrimSpace(value.Name) != ""
+func matchingTVmazeMetadata(meta api.RuleSubject) bool {
+	value := meta.ProviderMetadata.TVmaze
+	return providerMetadataCurrent(meta) && value != nil && meta.Identity.TVmazeID > 0 &&
+		value.TVmazeID == meta.Identity.TVmazeID && strings.TrimSpace(value.Name) != ""
 }
 
 // matchingMetadataPoster reports whether any current matching provider snapshot
 // supplies poster artwork, independently of the provider used for identity.
-func matchingMetadataPoster(meta api.PreparedMetadata) bool {
+func matchingMetadataPoster(meta api.RuleSubject) bool {
 	if !providerMetadataCurrent(meta) {
 		return false
 	}
-	if value := meta.ExternalMetadata.TMDB; value != nil && meta.ExternalIDs.TMDBID > 0 &&
-		value.TMDBID == meta.ExternalIDs.TMDBID && strings.TrimSpace(value.Poster) != "" {
+	if value := meta.ProviderMetadata.TMDB; value != nil && meta.Identity.TMDBID > 0 &&
+		value.TMDBID == meta.Identity.TMDBID && strings.TrimSpace(value.Poster) != "" {
 		return true
 	}
-	if value := meta.ExternalMetadata.IMDB; value != nil && meta.ExternalIDs.IMDBID > 0 &&
-		value.IMDBID == meta.ExternalIDs.IMDBID && strings.TrimSpace(value.Cover) != "" {
+	if value := meta.ProviderMetadata.IMDB; value != nil && meta.Identity.IMDBID > 0 &&
+		value.IMDBID == meta.Identity.IMDBID && strings.TrimSpace(value.Cover) != "" {
 		return true
 	}
-	if value := meta.ExternalMetadata.TVDB; value != nil && meta.ExternalIDs.TVDBID > 0 &&
-		value.TVDBID == meta.ExternalIDs.TVDBID && strings.TrimSpace(value.Poster) != "" {
+	if value := meta.ProviderMetadata.TVDB; value != nil && meta.Identity.TVDBID > 0 &&
+		value.TVDBID == meta.Identity.TVDBID && strings.TrimSpace(value.Poster) != "" {
 		return true
 	}
-	value := meta.ExternalMetadata.TVmaze
-	return value != nil && meta.ExternalIDs.TVmazeID > 0 && value.TVmazeID == meta.ExternalIDs.TVmazeID &&
+	value := meta.ProviderMetadata.TVmaze
+	return value != nil && meta.Identity.TVmazeID > 0 && value.TVmazeID == meta.Identity.TVmazeID &&
 		(strings.TrimSpace(value.Poster) != "" || strings.TrimSpace(value.PosterMedium) != "")
 }
 
-func providerMetadataCurrent(meta api.PreparedMetadata) bool {
-	return sourceMatches(meta.ExternalIDs.SourcePath, meta.SourcePath) &&
-		sourceMatches(meta.ExternalMetadata.SourcePath, meta.SourcePath)
+func providerMetadataCurrent(meta api.RuleSubject) bool {
+	return sourceMatches(meta.Identity.SourcePath, meta.SourcePath) &&
+		sourceMatches(meta.ProviderMetadata.SourcePath, meta.SourcePath)
 }
 
 // sourceMatches reports whether data is unscoped or belongs to the current

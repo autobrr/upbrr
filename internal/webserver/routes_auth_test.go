@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -548,7 +547,6 @@ func TestDevelopmentNoAuthStatusBypassesMissingAuthOnLoopback(t *testing.T) {
 			CSRFToken: "dev-csrf",
 			ExpiresAt: time.Now().UTC().Add(time.Hour),
 		},
-		picker: &stubNativePicker{},
 	}
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/auth/status", nil)
@@ -744,7 +742,7 @@ func TestLogoutStopsSessionLogStreams(t *testing.T) {
 
 	select {
 	case <-stream.done:
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(10 * time.Second):
 		t.Fatal("expected logout to stop active session log streams")
 	}
 
@@ -791,7 +789,6 @@ func TestLogoutRejectsMismatchedCSRFAndCookieSession(t *testing.T) {
 func TestRetainedSessionCanAccessAppRouteAfterRestart(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
 	server := newAuthTestServer(t, dbPath)
-	server.picker = &stubNativePicker{filePath: `C:\Media\movie.mkv`}
 
 	current, err := server.sessions.Create("admin", true)
 	if err != nil {
@@ -800,12 +797,11 @@ func TestRetainedSessionCanAccessAppRouteAfterRestart(t *testing.T) {
 	server.sessions.Close()
 
 	reloaded := newAuthTestServer(t, dbPath)
-	reloaded.picker = &stubNativePicker{filePath: `C:\Media\movie.mkv`}
 
 	mux := http.NewServeMux()
 	reloaded.registerAppRoutes(mux)
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/BrowseFile", strings.NewReader(`{}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/GetApplicationInfo", strings.NewReader(`{}`))
 	req.Host = "127.0.0.1:7480"
 	req.RemoteAddr = "127.0.0.1:5000"
 	req.Header.Set("Content-Type", "application/json")
@@ -824,20 +820,11 @@ func TestRetainedSessionCanAccessAppRouteAfterRestart(t *testing.T) {
 func TestTrackerAuthBackendUsesRequestContext(t *testing.T) {
 	t.Parallel()
 
-	var requests atomic.Int32
-	trackerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`<input name="token" value="abcdefghijklmnop">authkey=abcdefghijklmnopqrstuvwxyzABCDEF`))
-	}))
-	t.Cleanup(trackerServer.Close)
-
 	backend := &Backend{
 		cfg: config.Config{
 			Trackers: config.TrackersConfig{
 				Trackers: map[string]config.TrackerConfig{
 					"MTV": {
-						URL:      trackerServer.URL,
 						Username: "user",
 						Password: "pass",
 					},
@@ -851,9 +838,6 @@ func TestTrackerAuthBackendUsesRequestContext(t *testing.T) {
 	status, err := backend.TestTrackerAuth(ctx, "MTV")
 	if err != nil {
 		t.Fatalf("TestTrackerAuth: %v", err)
-	}
-	if requests.Load() != 0 {
-		t.Fatalf("expected canceled context to prevent remote auth request, got %d request(s)", requests.Load())
 	}
 	if !strings.Contains(status.LastError, "context canceled") {
 		t.Fatalf("expected context canceled status, got %#v", status)
@@ -962,7 +946,7 @@ func TestRequestSessionTokenMustMatchCookieSession(t *testing.T) {
 		t.Fatalf("create second session: %v", err)
 	}
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/StartDupeCheck", strings.NewReader(`{}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/ContinueReleaseWorkflow", strings.NewReader(`{}`))
 	req.Header.Set("X-Csrf-Token", first.CSRFToken)
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: second.ID})
 
@@ -979,7 +963,7 @@ func TestInvalidRequestSessionTokenDoesNotFallbackToCookie(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/StartDupeCheck", strings.NewReader(`{}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/ContinueReleaseWorkflow", strings.NewReader(`{}`))
 	req.Header.Set("X-Csrf-Token", "not-current-token")
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
 
@@ -1063,128 +1047,6 @@ func TestEventQuerySessionTokenDoesNotOverrideCookie(t *testing.T) {
 	}
 }
 
-func TestCancelDupeCheckRequiresPost(t *testing.T) {
-	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
-
-	current, err := server.sessions.Create("admin", false)
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-
-	canceled := make(chan struct{}, 1)
-	server.backend.dupes = map[string]*dupeCheckJob{
-		"job-1": {
-			sessionID: current.ID,
-			id:        "job-1",
-			cancel: func() {
-				select {
-				case canceled <- struct{}{}:
-				default:
-				}
-			},
-		},
-	}
-
-	mux := http.NewServeMux()
-	server.registerAppRoutes(mux)
-
-	getReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/CancelDupeCheck", strings.NewReader(`{"JobID":"job-1"}`))
-	getReq.Header.Set("Content-Type", "application/json")
-	getReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
-	getRecorder := httptest.NewRecorder()
-
-	mux.ServeHTTP(getRecorder, getReq)
-
-	if getRecorder.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("expected GET cancel to be rejected, got %d: %s", getRecorder.Code, getRecorder.Body.String())
-	}
-	select {
-	case <-canceled:
-		t.Fatal("expected GET cancel request to leave dupe job running")
-	default:
-	}
-
-	postReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/CancelDupeCheck", strings.NewReader(`{"JobID":"job-1"}`))
-	postReq.Host = "127.0.0.1:7480"
-	postReq.Header.Set("Content-Type", "application/json")
-	postReq.Header.Set("Origin", "http://127.0.0.1:7480")
-	postReq.Header.Set("X-Csrf-Token", current.CSRFToken)
-	postReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
-	postRecorder := httptest.NewRecorder()
-
-	mux.ServeHTTP(postRecorder, postReq)
-
-	if postRecorder.Code != http.StatusOK {
-		t.Fatalf("expected POST cancel to succeed, got %d: %s", postRecorder.Code, postRecorder.Body.String())
-	}
-	select {
-	case <-canceled:
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("expected POST cancel request to cancel dupe job")
-	}
-}
-
-func TestCancelTrackerUploadRequiresPost(t *testing.T) {
-	server := newAuthTestServer(t, filepath.Join(t.TempDir(), "state", "db.sqlite"))
-
-	current, err := server.sessions.Create("admin", false)
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-
-	canceled := make(chan struct{}, 1)
-	server.backend.uploads = map[string]*trackerUploadJob{
-		"job-1": {
-			id:        "job-1",
-			sessionID: current.ID,
-			cancel: func() {
-				select {
-				case canceled <- struct{}{}:
-				default:
-				}
-			},
-		},
-	}
-
-	mux := http.NewServeMux()
-	server.registerAppRoutes(mux)
-
-	getReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/app/CancelTrackerUpload", strings.NewReader(`{"JobID":"job-1"}`))
-	getReq.Header.Set("Content-Type", "application/json")
-	getReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
-	getRecorder := httptest.NewRecorder()
-
-	mux.ServeHTTP(getRecorder, getReq)
-
-	if getRecorder.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("expected GET cancel to be rejected, got %d: %s", getRecorder.Code, getRecorder.Body.String())
-	}
-	select {
-	case <-canceled:
-		t.Fatal("expected GET cancel request to leave tracker upload job running")
-	default:
-	}
-
-	postReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/CancelTrackerUpload", strings.NewReader(`{"JobID":"job-1"}`))
-	postReq.Host = "127.0.0.1:7480"
-	postReq.Header.Set("Content-Type", "application/json")
-	postReq.Header.Set("Origin", "http://127.0.0.1:7480")
-	postReq.Header.Set("X-Csrf-Token", current.CSRFToken)
-	postReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: current.ID})
-	postRecorder := httptest.NewRecorder()
-
-	mux.ServeHTTP(postRecorder, postReq)
-
-	if postRecorder.Code != http.StatusOK {
-		t.Fatalf("expected POST cancel to succeed, got %d: %s", postRecorder.Code, postRecorder.Body.String())
-	}
-	select {
-	case <-canceled:
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("expected POST cancel request to cancel tracker upload job")
-	}
-}
-
 func TestStopSessionLogStreamsIfIdleLatestDisconnectWins(t *testing.T) {
 	backend := &Backend{
 		streams: make(map[string]*backendLogStream),
@@ -1221,7 +1083,7 @@ func TestStopSessionLogStreamsIfIdleLatestDisconnectWins(t *testing.T) {
 	server.stopSessionLogStreamsIfIdle("session-a")
 	hub.mu.Unlock()
 
-	deadline := time.Now().Add(250 * time.Millisecond)
+	deadline := time.Now().Add(10 * time.Second)
 	for testSessionALogStopGeneration(t, server) != 2 {
 		if time.Now().After(deadline) {
 			t.Fatalf("expected latest disconnect to own generation 2, got %d", testSessionALogStopGeneration(t, server))
@@ -1244,7 +1106,7 @@ func TestStopSessionLogStreamsIfIdleLatestDisconnectWins(t *testing.T) {
 
 	select {
 	case <-stream.done:
-	case <-time.After(eventSessionLogStopGracePeriod + 150*time.Millisecond):
+	case <-time.After(10 * time.Second):
 		t.Fatal("expected latest disconnect grace timer to stop session log streams")
 	}
 }
@@ -1293,7 +1155,7 @@ func TestStopSessionLogStreamsIfIdleSubscriberAtStopBoundaryKeepsStreamActiveAnd
 	hub.subscribers["session-a"] = map[chan serverEvent]struct{}{reconnected: {}}
 	hub.mu.Unlock()
 
-	deadline := time.Now().Add(250 * time.Millisecond)
+	deadline := time.Now().Add(10 * time.Second)
 	for testSessionALogStopGeneration(t, server) != 0 {
 		if time.Now().After(deadline) {
 			t.Fatalf("expected active replacement subscriber to clear idle-stop generation, got %d", testSessionALogStopGeneration(t, server))

@@ -14,14 +14,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/anacrolix/torrent/bencode"
-	"github.com/anacrolix/torrent/merkle"
-	"github.com/anacrolix/torrent/metainfo"
+	"github.com/autobrr/go-torrent/metainfo"
 	mkbrr "github.com/autobrr/mkbrr/torrent"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	"github.com/autobrr/upbrr/internal/trackers"
+	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/ant"
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+const antMaxTorrentBytesForTest int64 = 250 << 10
 
 func TestCreateReusesTorrent(t *testing.T) {
 	t.Parallel()
@@ -32,7 +34,7 @@ func TestCreateReusesTorrent(t *testing.T) {
 	createTestTorrent(t, contentPath, torrentPath)
 
 	service := NewService(api.NopLogger{}, t.TempDir())
-	result, err := service.Create(context.Background(), api.PreparedMetadata{SourcePath: torrentPath})
+	result, err := service.Create(context.Background(), api.TorrentSubject{SourcePath: torrentPath})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -53,7 +55,7 @@ func TestCreateFallbacksToSibling(t *testing.T) {
 	createTestTorrent(t, source, sibling)
 
 	service := NewService(api.NopLogger{}, t.TempDir())
-	result, err := service.Create(context.Background(), api.PreparedMetadata{SourcePath: source})
+	result, err := service.Create(context.Background(), api.TorrentSubject{SourcePath: source})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -69,7 +71,7 @@ func TestCreateMissingTorrent(t *testing.T) {
 	t.Parallel()
 
 	service := NewService(api.NopLogger{}, t.TempDir())
-	_, err := service.Create(context.Background(), api.PreparedMetadata{SourcePath: "/missing/file.mkv"})
+	_, err := service.Create(context.Background(), api.TorrentSubject{SourcePath: "/missing/file.mkv"})
 	if !errors.Is(err, internalerrors.ErrNotFound) {
 		t.Fatalf("expected not found error, got %v", err)
 	}
@@ -84,7 +86,7 @@ func TestCreateEmptySourceDoesNotEmitProgress(t *testing.T) {
 	})
 
 	service := NewService(api.NopLogger{}, t.TempDir())
-	_, err := service.Create(ctx, api.PreparedMetadata{SourcePath: " \t "})
+	_, err := service.Create(ctx, api.TorrentSubject{SourcePath: " \t "})
 	if !errors.Is(err, internalerrors.ErrInvalidInput) {
 		t.Fatalf("expected invalid input, got %v", err)
 	}
@@ -104,7 +106,7 @@ func TestCreateNewTorrent(t *testing.T) {
 
 	tmpRoot := t.TempDir()
 	service := NewService(api.NopLogger{}, tmpRoot)
-	result, err := service.Create(context.Background(), api.PreparedMetadata{SourcePath: source})
+	result, err := service.Create(context.Background(), api.TorrentSubject{SourcePath: source})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -146,7 +148,7 @@ func TestCreateHonorsMaxPieceSizeOverride(t *testing.T) {
 	tmpRoot := t.TempDir()
 	service := NewService(api.NopLogger{}, tmpRoot)
 	maxPiece := 1
-	result, err := service.Create(context.Background(), api.PreparedMetadata{
+	result, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath: source,
 		TorrentOverrides: api.TorrentOverrides{
 			MaxPieceSizeMiB: &maxPiece,
@@ -179,9 +181,8 @@ func TestCreateFolderWithSingleWantedVideoHashesFile(t *testing.T) {
 	writeTestFile(t, filepath.Join(sourceDir, "proof.jpg"), "proof")
 
 	service := NewService(api.NopLogger{}, t.TempDir())
-	result, err := service.Create(context.Background(), api.PreparedMetadata{
+	result, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath: sourceDir,
-		VideoPath:  video,
 		FileList:   []string{video},
 	})
 	if err != nil {
@@ -209,9 +210,8 @@ func TestCreateFolderPackUsesWantedFileList(t *testing.T) {
 	writeTestFile(t, filepath.Join(sourceDir, "proof.jpg"), "proof")
 
 	service := NewService(api.NopLogger{}, t.TempDir())
-	result, err := service.Create(context.Background(), api.PreparedMetadata{
+	result, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath: sourceDir,
-		VideoPath:  episode1,
 		FileList:   []string{episode1, episode2},
 	})
 	if err != nil {
@@ -234,9 +234,8 @@ func TestCreateFolderPackRejectsMissingWantedFile(t *testing.T) {
 	writeTestFile(t, episode1, "episode 1")
 
 	service := NewService(api.NopLogger{}, t.TempDir())
-	_, err := service.Create(context.Background(), api.PreparedMetadata{
+	_, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath: sourceDir,
-		VideoPath:  episode1,
 		FileList:   []string{missing},
 	})
 	if !errors.Is(err, internalerrors.ErrNotFound) {
@@ -253,9 +252,8 @@ func TestCreateFolderPackRejectsPartialMissingWantedFile(t *testing.T) {
 	writeTestFile(t, episode1, "episode 1")
 
 	service := NewService(api.NopLogger{}, t.TempDir())
-	_, err := service.Create(context.Background(), api.PreparedMetadata{
+	_, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath: sourceDir,
-		VideoPath:  episode1,
 		FileList:   []string{episode1, missing},
 	})
 	if !errors.Is(err, internalerrors.ErrNotFound) {
@@ -275,9 +273,8 @@ func TestCreateFolderPackEscapesWantedFilePatterns(t *testing.T) {
 	writeTestFile(t, filepath.Join(sourceDir, "Show.S01E03.mkv"), "extra")
 
 	service := NewService(api.NopLogger{}, t.TempDir())
-	result, err := service.Create(context.Background(), api.PreparedMetadata{
+	result, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath: sourceDir,
-		VideoPath:  episode1,
 		FileList:   []string{episode1, episode2},
 	})
 	if err != nil {
@@ -298,10 +295,9 @@ func TestCreateDiscFolderIgnoresWantedFileList(t *testing.T) {
 	writeTestFile(t, filepath.Join(sourceDir, "CERTIFICATE", "id.bdmv"), "certificate")
 
 	service := NewService(api.NopLogger{}, t.TempDir())
-	result, err := service.Create(context.Background(), api.PreparedMetadata{
+	result, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath: sourceDir,
 		DiscType:   "BDMV",
-		VideoPath:  stream,
 		FileList:   []string{stream},
 	})
 	if err != nil {
@@ -366,10 +362,9 @@ func TestCreateDiscMarkerFolderUsesSelectedRoot(t *testing.T) {
 			writeTestFile(t, filepath.Join(parent, "outside.txt"), "outside")
 
 			service := NewService(api.NopLogger{}, t.TempDir())
-			result, err := service.Create(context.Background(), api.PreparedMetadata{
+			result, err := service.Create(context.Background(), api.TorrentSubject{
 				SourcePath: sourceDir,
 				DiscType:   tt.discType,
-				VideoPath:  filepath.Join(sourceDir, tt.files[0]),
 				FileList:   []string{filepath.Join(sourceDir, tt.files[0])},
 			})
 			if err != nil {
@@ -402,7 +397,7 @@ func TestCreateFolderSkipsMkbrrIgnoredFilesInValidation(t *testing.T) {
 	writeTestFile(t, filepath.Join(sourceDir, "@eaDir", "metadata.bin"), "ignored")
 
 	service := NewService(api.NopLogger{}, t.TempDir())
-	result, err := service.Create(context.Background(), api.PreparedMetadata{
+	result, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath: sourceDir,
 	})
 	if err != nil {
@@ -437,7 +432,7 @@ func TestCreateNoHashRequiresReusableTorrent(t *testing.T) {
 
 	service := NewService(api.NopLogger{}, t.TempDir())
 	reuseOnly := true
-	_, err := service.Create(context.Background(), api.PreparedMetadata{
+	_, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath: source,
 		TorrentOverrides: api.TorrentOverrides{
 			NoHash: &reuseOnly,
@@ -460,7 +455,7 @@ func TestCreateNoHashReusesExactCaseClientTorrent(t *testing.T) {
 
 	service := NewService(api.NopLogger{}, t.TempDir())
 	reuseOnly := true
-	result, err := service.Create(context.Background(), api.PreparedMetadata{
+	result, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath:        source,
 		ClientTorrentPath: clientTorrentPath,
 		TorrentOverrides: api.TorrentOverrides{
@@ -493,7 +488,7 @@ func TestCreateNoHashRejectsCaseOnlySingleFileClientTorrent(t *testing.T) {
 
 	service := NewService(api.NopLogger{}, t.TempDir())
 	reuseOnly := true
-	_, err := service.Create(context.Background(), api.PreparedMetadata{
+	_, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath:        source,
 		ClientTorrentPath: clientTorrentPath,
 		TorrentOverrides: api.TorrentOverrides{
@@ -527,9 +522,8 @@ func TestCreateNoHashRejectsCaseOnlyMultiFileClientTorrent(t *testing.T) {
 
 	service := NewService(api.NopLogger{}, t.TempDir())
 	reuseOnly := true
-	_, err := service.Create(context.Background(), api.PreparedMetadata{
+	_, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath:        sourceDir,
-		VideoPath:         episode1,
 		FileList:          []string{episode1, episode2},
 		ClientTorrentPath: clientTorrentPath,
 		TorrentOverrides: api.TorrentOverrides{
@@ -538,113 +532,6 @@ func TestCreateNoHashRejectsCaseOnlyMultiFileClientTorrent(t *testing.T) {
 	})
 	if !errors.Is(err, internalerrors.ErrNotFound) {
 		t.Fatalf("expected nohash to reject case-only multi-file mismatch, got %v", err)
-	}
-}
-
-func TestCreateNoHashReusesPureV2ClientTorrent(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	source := filepath.Join(dir, "video.mkv")
-	content := []byte("source-data")
-	if err := os.WriteFile(source, content, 0o600); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-	clientTorrentPath := filepath.Join(dir, "client.torrent")
-	createPureV2TestTorrent(t, source, content, clientTorrentPath)
-	if err := validateTorrentContent(clientTorrentPath, api.PreparedMetadata{SourcePath: source}); err != nil {
-		t.Fatalf("expected pure v2 torrent to validate, got %v", err)
-	}
-
-	service := NewService(api.NopLogger{}, t.TempDir())
-	reuseOnly := true
-	result, err := service.Create(context.Background(), api.PreparedMetadata{
-		SourcePath:        source,
-		ClientTorrentPath: clientTorrentPath,
-		TorrentOverrides: api.TorrentOverrides{
-			NoHash: &reuseOnly,
-		},
-	})
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if result.Path != clientTorrentPath {
-		t.Fatalf("expected pure v2 client torrent path %s, got %s", clientTorrentPath, result.Path)
-	}
-}
-
-func TestCreateNoHashReusesPureV2ZeroLengthClientTorrent(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	source := filepath.Join(dir, "empty.txt")
-	if err := os.WriteFile(source, nil, 0o600); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-	clientTorrentPath := filepath.Join(dir, "client.torrent")
-	createPureV2TestTorrent(t, source, nil, clientTorrentPath)
-
-	service := NewService(api.NopLogger{}, t.TempDir())
-	reuseOnly := true
-	result, err := service.Create(context.Background(), api.PreparedMetadata{
-		SourcePath:        source,
-		ClientTorrentPath: clientTorrentPath,
-		TorrentOverrides: api.TorrentOverrides{
-			NoHash: &reuseOnly,
-		},
-	})
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if result.Path != clientTorrentPath {
-		t.Fatalf("expected zero-length pure v2 client torrent path %s, got %s", clientTorrentPath, result.Path)
-	}
-}
-
-func TestCreateNoHashReusesPureV2SameNameSameSizeDifferentContent(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	source := filepath.Join(dir, "video.mkv")
-	sourceContent := []byte("source-data")
-	if err := os.WriteFile(source, sourceContent, 0o600); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-	clientTorrentPath := filepath.Join(dir, "client.torrent")
-	createPureV2TestTorrent(t, source, []byte("source-evil"), clientTorrentPath)
-
-	service := NewService(api.NopLogger{}, t.TempDir())
-	reuseOnly := true
-	result, err := service.Create(context.Background(), api.PreparedMetadata{
-		SourcePath:        source,
-		ClientTorrentPath: clientTorrentPath,
-		TorrentOverrides: api.TorrentOverrides{
-			NoHash: &reuseOnly,
-		},
-	})
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if result.Path != clientTorrentPath {
-		t.Fatalf("expected same-name same-size pure v2 client torrent path %s, got %s", clientTorrentPath, result.Path)
-	}
-}
-
-func TestValidateTorrentContentAllowsPureV2NonEmptyFileWithoutPiecesRoot(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	source := filepath.Join(dir, "video.mkv")
-	content := []byte("source-data")
-	if err := os.WriteFile(source, content, 0o600); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-	clientTorrentPath := filepath.Join(dir, "client.torrent")
-	createPureV2TestTorrentWithPiecesRoot(t, source, content, clientTorrentPath, false)
-
-	err := validateTorrentContent(clientTorrentPath, api.PreparedMetadata{SourcePath: source})
-	if err != nil {
-		t.Fatalf("expected metadata-only validation to pass, got %v", err)
 	}
 }
 
@@ -663,7 +550,7 @@ func TestCreateNoHashReusesSameNameSameSizeDifferentContentTorrent(t *testing.T)
 
 	service := NewService(api.NopLogger{}, t.TempDir())
 	reuseOnly := true
-	result, err := service.Create(context.Background(), api.PreparedMetadata{
+	result, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath:        source,
 		ClientTorrentPath: clientTorrentPath,
 		TorrentOverrides: api.TorrentOverrides{
@@ -689,9 +576,9 @@ func TestCreateRehashBypassesReusableTempTorrent(t *testing.T) {
 
 	tmpRoot := t.TempDir()
 	service := NewService(api.NopLogger{}, tmpRoot)
-	meta := api.PreparedMetadata{SourcePath: source}
+	meta := api.TorrentSubject{SourcePath: source}
 
-	tmpTorrentPath, err := TempTorrentPath(tmpRoot, meta, source)
+	tmpTorrentPath, err := TempTorrentPath(tmpRoot, source)
 	if err != nil {
 		t.Fatalf("temp torrent path: %v", err)
 	}
@@ -723,22 +610,22 @@ func TestCreateRehashBypassesReusableTempTorrent(t *testing.T) {
 func TestCreateRehashOverridesNoHashReusableTorrents(t *testing.T) {
 	t.Parallel()
 
-	cases := map[string]func(t *testing.T, source string, tmpTorrentPath string) (api.PreparedMetadata, string){
-		"client": func(t *testing.T, source string, _ string) (api.PreparedMetadata, string) {
+	cases := map[string]func(t *testing.T, source string, tmpTorrentPath string) (api.TorrentSubject, string){
+		"client": func(t *testing.T, source string, _ string) (api.TorrentSubject, string) {
 			t.Helper()
 
 			clientTorrentPath := filepath.Join(filepath.Dir(source), "client.torrent")
 			createTestTorrentFromExisting(t, source, clientTorrentPath)
-			return api.PreparedMetadata{SourcePath: source, ClientTorrentPath: clientTorrentPath}, clientTorrentPath
+			return api.TorrentSubject{SourcePath: source, ClientTorrentPath: clientTorrentPath}, clientTorrentPath
 		},
-		"adjacent": func(t *testing.T, source string, _ string) (api.PreparedMetadata, string) {
+		"adjacent": func(t *testing.T, source string, _ string) (api.TorrentSubject, string) {
 			t.Helper()
 
 			adjacentTorrentPath := source + ".torrent"
 			createTestTorrentFromExisting(t, source, adjacentTorrentPath)
-			return api.PreparedMetadata{SourcePath: source}, adjacentTorrentPath
+			return api.TorrentSubject{SourcePath: source}, adjacentTorrentPath
 		},
-		"temp": func(t *testing.T, source string, tmpTorrentPath string) (api.PreparedMetadata, string) {
+		"temp": func(t *testing.T, source string, tmpTorrentPath string) (api.TorrentSubject, string) {
 			t.Helper()
 
 			createTestTorrentFromExisting(t, source, tmpTorrentPath)
@@ -746,7 +633,7 @@ func TestCreateRehashOverridesNoHashReusableTorrents(t *testing.T) {
 			if err := os.Chtimes(tmpTorrentPath, past, past); err != nil {
 				t.Fatalf("chtimes: %v", err)
 			}
-			return api.PreparedMetadata{SourcePath: source}, tmpTorrentPath
+			return api.TorrentSubject{SourcePath: source}, tmpTorrentPath
 		},
 	}
 
@@ -762,7 +649,7 @@ func TestCreateRehashOverridesNoHashReusableTorrents(t *testing.T) {
 
 			tmpRoot := t.TempDir()
 			service := NewService(api.NopLogger{}, tmpRoot)
-			tmpTorrentPath, err := TempTorrentPath(tmpRoot, api.PreparedMetadata{SourcePath: source}, source)
+			tmpTorrentPath, err := TempTorrentPath(tmpRoot, source)
 			if err != nil {
 				t.Fatalf("temp torrent path: %v", err)
 			}
@@ -832,7 +719,7 @@ func TestApplyTorrentOverridePieceOptionsKeepsUserMax(t *testing.T) {
 	maxPiece := 16
 	requiredExp := uint(26)
 
-	options := applyTorrentOverridePieceOptions(api.PreparedMetadata{
+	options := applyTorrentOverridePieceOptions(api.TorrentSubject{
 		TorrentOverrides: api.TorrentOverrides{
 			MaxPieceSizeMiB: &maxPiece,
 		},
@@ -854,7 +741,7 @@ func TestApplyTorrentOverridePieceOptionsCapsToTrackerMax(t *testing.T) {
 
 	maxPiece := 128
 
-	options := applyTorrentOverridePieceOptions(api.PreparedMetadata{
+	options := applyTorrentOverridePieceOptions(api.TorrentSubject{
 		TorrentOverrides: api.TorrentOverrides{
 			MaxPieceSizeMiB: &maxPiece,
 		},
@@ -879,8 +766,8 @@ func TestCreateReusesAssociatedTempTorrent(t *testing.T) {
 	tmpRoot := t.TempDir()
 	service := NewService(api.NopLogger{}, tmpRoot)
 
-	meta := api.PreparedMetadata{SourcePath: source}
-	tmpTorrentPath, err := TempTorrentPath(tmpRoot, meta, source)
+	meta := api.TorrentSubject{SourcePath: source}
+	tmpTorrentPath, err := TempTorrentPath(tmpRoot, source)
 	if err != nil {
 		t.Fatalf("temp torrent path: %v", err)
 	}
@@ -909,9 +796,9 @@ func TestCreatePrefersClientTorrentOverAssociatedTempTorrent(t *testing.T) {
 
 	tmpRoot := t.TempDir()
 	service := NewService(api.NopLogger{}, tmpRoot)
-	meta := api.PreparedMetadata{SourcePath: source}
+	meta := api.TorrentSubject{SourcePath: source}
 
-	tmpTorrentPath, err := TempTorrentPath(tmpRoot, meta, source)
+	tmpTorrentPath, err := TempTorrentPath(tmpRoot, source)
 	if err != nil {
 		t.Fatalf("temp torrent path: %v", err)
 	}
@@ -942,9 +829,9 @@ func TestCreateRejectsMismatchedClientTorrent(t *testing.T) {
 
 	tmpRoot := t.TempDir()
 	service := NewService(api.NopLogger{}, tmpRoot)
-	meta := api.PreparedMetadata{SourcePath: source}
+	meta := api.TorrentSubject{SourcePath: source}
 
-	tmpTorrentPath, err := TempTorrentPath(tmpRoot, meta, source)
+	tmpTorrentPath, err := TempTorrentPath(tmpRoot, source)
 	if err != nil {
 		t.Fatalf("temp torrent path: %v", err)
 	}
@@ -978,7 +865,7 @@ func TestCreateRejectsSameNameDifferentSizeClientTorrent(t *testing.T) {
 	createTestTorrentFromExisting(t, clientSource, clientTorrentPath)
 
 	service := NewService(api.NopLogger{}, t.TempDir())
-	result, err := service.Create(context.Background(), api.PreparedMetadata{
+	result, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath:        source,
 		ClientTorrentPath: clientTorrentPath,
 	})
@@ -1004,7 +891,7 @@ func TestCreateReusesSameNameSameSizeDifferentContentClientTorrent(t *testing.T)
 	createTestTorrentFromExisting(t, clientSource, clientTorrentPath)
 
 	service := NewService(api.NopLogger{}, t.TempDir())
-	result, err := service.Create(context.Background(), api.PreparedMetadata{
+	result, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath:        source,
 		ClientTorrentPath: clientTorrentPath,
 	})
@@ -1033,9 +920,8 @@ func TestCreateRejectsDifferentRootClientTorrent(t *testing.T) {
 	createTestTorrentFromExisting(t, clientDir, clientTorrentPath)
 
 	service := NewService(api.NopLogger{}, t.TempDir())
-	result, err := service.Create(context.Background(), api.PreparedMetadata{
+	result, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath:        sourceDir,
-		VideoPath:         episode1,
 		FileList:          []string{episode1, episode2},
 		ClientTorrentPath: clientTorrentPath,
 	})
@@ -1057,9 +943,8 @@ func TestCreateRejectsWantedFileOutsideRoot(t *testing.T) {
 	writeTestFile(t, outside, "outside")
 
 	service := NewService(api.NopLogger{}, t.TempDir())
-	_, err := service.Create(context.Background(), api.PreparedMetadata{
+	_, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath: sourceDir,
-		VideoPath:  video,
 		FileList:   []string{outside},
 	})
 	if err == nil {
@@ -1090,7 +975,7 @@ func TestCreateRegeneratesNonCompliantPTPTorrent(t *testing.T) {
 	}
 
 	service := NewService(api.NopLogger{}, t.TempDir())
-	result, err := service.Create(context.Background(), api.PreparedMetadata{
+	result, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath:        source,
 		SourceSize:        int64(len(content)),
 		Trackers:          []string{"PTP"},
@@ -1142,8 +1027,8 @@ func TestPTPPiecePolicyBoundaries(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		meta := api.PreparedMetadata{Trackers: []string{"PTP"}, SourceSize: int64(tc.size)}
-		policy := resolveTrackerPolicy(meta)
+		meta := api.TorrentSubject{Trackers: []string{"PTP"}, SourceSize: int64(tc.size)}
+		policy := resolveTrackerPolicy(meta, nil)
 		got, ok := policy.requiredPieceExp(meta)
 		if !ok {
 			t.Fatalf("expected piece exponent for size %d", tc.size)
@@ -1188,12 +1073,16 @@ func TestCreateRegeneratesOversizedANTTorrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat client torrent: %v", err)
 	}
-	if info.Size() <= antMaxTorrentBytes {
+	if info.Size() <= antMaxTorrentBytesForTest {
 		t.Fatalf("expected oversized ANT torrent fixture, got %d bytes", info.Size())
 	}
 
-	service := NewService(api.NopLogger{}, t.TempDir())
-	result, err := service.Create(context.Background(), api.PreparedMetadata{
+	registry := trackers.NewRegistry()
+	if err := registry.Register(ant.New()); err != nil {
+		t.Fatalf("register ANT: %v", err)
+	}
+	service := NewServiceWithRegistry(api.NopLogger{}, t.TempDir(), registry)
+	result, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath:        source,
 		SourceSize:        sourceSize,
 		Trackers:          []string{"ANT"},
@@ -1209,8 +1098,8 @@ func TestCreateRegeneratesOversizedANTTorrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat regenerated torrent: %v", err)
 	}
-	if regenerated.Size() > antMaxTorrentBytes {
-		t.Fatalf("expected regenerated torrent <= %d bytes, got %d", antMaxTorrentBytes, regenerated.Size())
+	if regenerated.Size() > antMaxTorrentBytesForTest {
+		t.Fatalf("expected regenerated torrent <= %d bytes, got %d", antMaxTorrentBytesForTest, regenerated.Size())
 	}
 }
 
@@ -1241,53 +1130,6 @@ func createTestTorrentFromExisting(t *testing.T, sourcePath, torrentPath string)
 	})
 	if err != nil {
 		t.Fatalf("create torrent: %v", err)
-	}
-}
-
-func createPureV2TestTorrent(t *testing.T, sourcePath string, content []byte, torrentPath string) {
-	t.Helper()
-
-	createPureV2TestTorrentWithPiecesRoot(t, sourcePath, content, torrentPath, len(content) > 0)
-}
-
-func createPureV2TestTorrentWithPiecesRoot(t *testing.T, sourcePath string, content []byte, torrentPath string, includePiecesRoot bool) {
-	t.Helper()
-
-	piecesRoot := ""
-	if includePiecesRoot {
-		hash := merkle.NewHash()
-		if _, err := hash.Write(content); err != nil {
-			t.Fatalf("hash v2 content: %v", err)
-		}
-		piecesRoot = string(hash.Sum(nil))
-	}
-	info := metainfo.Info{
-		PieceLength: 1 << 14,
-		Name:        filepath.Base(sourcePath),
-		MetaVersion: 2,
-		FileTree: metainfo.FileTree{
-			File: metainfo.FileTreeFile{
-				Length:     int64(len(content)),
-				PiecesRoot: piecesRoot,
-			},
-		},
-	}
-	infoBytes, err := bencode.Marshal(&info)
-	if err != nil {
-		t.Fatalf("marshal v2 info: %v", err)
-	}
-	meta := metainfo.MetaInfo{InfoBytes: infoBytes}
-	meta.SetDefaults()
-	file, err := os.Create(torrentPath)
-	if err != nil {
-		t.Fatalf("create v2 torrent: %v", err)
-	}
-	if err := meta.Write(file); err != nil {
-		_ = file.Close()
-		t.Fatalf("write v2 torrent: %v", err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatalf("close v2 torrent: %v", err)
 	}
 }
 

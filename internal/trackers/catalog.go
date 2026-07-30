@@ -4,185 +4,192 @@
 package trackers
 
 import (
+	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
-type Kind string
-
-const (
-	KindUnknown   Kind = ""
-	KindUnit3D    Kind = "unit3d"
-	KindNonUnit3D Kind = "non-unit3d"
-)
-
-var knownNonUnit3DTrackers = map[string]struct{}{
-	"ACM":    {},
-	"ANT":    {},
-	"AR":     {},
-	"ASC":    {},
-	"AZ":     {},
-	"BHD":    {},
-	"BHDTV":  {},
-	"BJS":    {},
-	"BT":     {},
-	"BTN":    {},
-	"CZ":     {},
-	"CZT":    {},
-	"DC":     {},
-	"FF":     {},
-	"FL":     {},
-	"GPW":    {},
-	"HDB":    {},
-	"HDS":    {},
-	"HDT":    {},
-	"IS":     {},
-	"MTV":    {},
-	"NBL":    {},
-	"PHD":    {},
-	"PTP":    {},
-	"PTS":    {},
-	"RTF":    {},
-	"SPD":    {},
-	"THR":    {},
-	"TL":     {},
-	"TVC":    {},
-	"MANUAL": {},
-}
-
-var (
-	trackerKinds    = buildTrackerKinds()
-	trackerPriority = buildTrackerPriority()
-)
-
-// KnownTrackers returns the sorted list of tracker names in the registry.
-func KnownTrackers() []string {
-	trackers := make([]string, 0, len(trackerKinds))
-	for name := range trackerKinds {
-		trackers = append(trackers, name)
+// CatalogDescriptors returns deterministic safe descriptors for all registered trackers.
+func (r *Registry) CatalogDescriptors() ([]api.TrackerCatalogDescriptor, error) {
+	if r == nil {
+		return nil, nil
 	}
-	sort.Strings(trackers)
-	return trackers
-}
-
-// Unit3DTrackers returns the sorted list of Unit3D tracker names in the registry.
-func Unit3DTrackers() []string {
-	return trackersByKind(KindUnit3D)
-}
-
-// NonUnit3DTrackers returns the sorted list of non-Unit3D tracker names in the registry.
-func NonUnit3DTrackers() []string {
-	return trackersByKind(KindNonUnit3D)
-}
-
-// TrackerPriority returns the shared lowercase tracker ordering used when
-// ranking tracker IDs and metadata lookups. It prefers the curated list first,
-// then appends any remaining Unit3D trackers in sorted order.
-func TrackerPriority() []string {
-	return append([]string(nil), trackerPriority...)
-}
-
-func buildTrackerPriority() []string {
-	preferred := []string{
-		"aither", "ulcx", "lst", "blu", "oe", "btn", "bhd",
-		"hdb", "ant", "rf", "otw", "yus", "dp", "sp", "ptp",
-	}
-
-	seen := make(map[string]struct{}, len(preferred))
-	unit3dTrackers := Unit3DTrackers()
-	ordered := make([]string, 0, len(preferred)+len(unit3dTrackers))
-	for _, name := range preferred {
-		trimmed := strings.ToLower(strings.TrimSpace(name))
-		if trimmed == "" {
-			continue
+	descriptors := make([]api.TrackerCatalogDescriptor, 0, len(r.descriptors))
+	for _, name := range r.Names() {
+		descriptor := r.descriptors[name]
+		fingerprint, err := descriptorPolicyFingerprint(descriptor)
+		if err != nil {
+			return nil, fmt.Errorf("trackers: catalog descriptor %s: %w", name, err)
 		}
-		if _, ok := seen[trimmed]; ok {
-			continue
-		}
-		seen[trimmed] = struct{}{}
-		ordered = append(ordered, trimmed)
+		descriptors = append(descriptors, api.TrackerCatalogDescriptor{
+			TrackerID:         api.TrackerID(descriptor.Name),
+			DisplayName:       descriptor.DisplayName,
+			Aliases:           slices.Clone(descriptor.Aliases),
+			Family:            string(descriptor.Family),
+			BaseURL:           descriptor.BaseURL,
+			UploadContentMode: string(descriptor.UploadContentMode),
+			DescriptionGroup:  descriptor.DescriptionGroup,
+			MetadataLocale:    descriptor.MetadataLocale,
+			ProjectorVersion:  descriptor.ProjectorVersion,
+			PolicyFingerprint: fingerprint,
+			Capabilities:      catalogCapabilities(descriptor),
+		})
 	}
-
-	for _, tracker := range unit3dTrackers {
-		lower := strings.ToLower(strings.TrimSpace(tracker))
-		if _, ok := seen[lower]; ok {
-			continue
-		}
-		seen[lower] = struct{}{}
-		ordered = append(ordered, lower)
-	}
-
-	return ordered
+	return descriptors, nil
 }
 
-func IsKnownTracker(name string) bool {
-	return TrackerKind(name) != KindUnknown
-}
-
-func IsUnit3DTracker(name string) bool {
-	return TrackerKind(name) == KindUnit3D
-}
-
-func IsNonUnit3DTracker(name string) bool {
-	return TrackerKind(name) == KindNonUnit3D
-}
-
-// skipsModifiedReleaseCheck reports whether a tracker is exempt from the
-// modified/renamed-release rule (see isRenamedRelease). The rule is on for all
-// trackers by default; this is the single place to exempt special pseudo-trackers
-// or any tracker known to accept modified releases.
-func skipsModifiedReleaseCheck(name string) bool {
-	switch strings.ToUpper(strings.TrimSpace(name)) {
-	case "MANUAL":
-		return true
-	default:
-		return false
+func catalogCapabilities(descriptor Descriptor) api.TrackerCapabilityDescriptor {
+	return api.TrackerCapabilityDescriptor{
+		DuplicateSearch:        descriptor.Definition != nil,
+		Rules:                  descriptor.Rules != nil || descriptor.Validation.Check != nil,
+		Metadata:               descriptor.Metadata != nil,
+		LocalizedMetadata:      strings.TrimSpace(descriptor.MetadataLocale) != "",
+		TrackerData:            descriptor.DataFactory != nil,
+		Claims:                 descriptor.ClaimFactory != nil || descriptor.ClaimPolicy != nil,
+		Authentication:         descriptor.AuthResolver != nil || descriptor.AuthCapability != nil,
+		StaticBannedGroups:     len(descriptor.BannedGroups) > 0,
+		DynamicBannedGroups:    descriptor.BannedPolicy != nil,
+		ScreenshotRequirement:  descriptor.UploadContentMode.UsesImages(),
+		Description:            descriptor.UploadContentMode.UsesDescription(),
+		ImageHosting:           descriptor.ImageHost != nil,
+		TorrentPersonalization: descriptor.UploadArtifact != nil,
 	}
 }
 
-// NeedsPTBRLocalizedMetadata reports whether a trimmed tracker name is one of
-// the exact trackers that consumes pt-BR TMDB data.
-func NeedsPTBRLocalizedMetadata(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "bjs", "bt", "asc":
-		return true
-	default:
-		return false
+func descriptorPolicyFingerprint(descriptor Descriptor) (api.WorkflowFingerprint, error) {
+	rules := safeRuleFingerprint(descriptor.Rules)
+	authPolicy := safeAuthPolicyFingerprint(descriptor.AuthPolicy)
+	fingerprint, err := api.CanonicalWorkflowFingerprint(struct {
+		Name              string
+		Family            Family
+		ProjectorVersion  string
+		ReleaseNamePolicy string
+		UploadContentMode UploadContentMode
+		Rules             *ruleFingerprint
+		ValidationPolicy  string
+		Artifact          *ArtifactPolicy
+		DataPolicy        *DataLookupPolicy
+		BannedGroups      []string
+		BannedPolicy      *BannedGroupPolicy
+		Metadata          *TrackerMetadataPolicy
+		UploadArtifact    *UploadArtifactPolicy
+		DupePolicy        *DupePolicy
+		AudioPolicy       *AudioPolicy
+		ImageHost         *ImageHostPolicy
+		TorrentIdentity   *TorrentIdentityPolicy
+		ClaimPolicy       *ClaimPolicy
+		AuthCapability    *api.TrackerAuthCapability
+		AuthPolicy        *authPolicyFingerprint
+		HasAPIKeyResolver bool
+		MetadataLocale    string
+		DescriptionGroup  string
+	}{
+		Name:              descriptor.Name,
+		Family:            descriptor.Family,
+		ProjectorVersion:  descriptor.ProjectorVersion,
+		ReleaseNamePolicy: descriptor.ReleaseNamePolicy.ID,
+		UploadContentMode: descriptor.UploadContentMode,
+		Rules:             rules,
+		ValidationPolicy:  descriptor.Validation.ID,
+		Artifact:          descriptor.Artifact,
+		DataPolicy:        descriptor.DataPolicy,
+		BannedGroups:      slices.Clone(descriptor.BannedGroups),
+		BannedPolicy:      descriptor.BannedPolicy,
+		Metadata:          descriptor.Metadata,
+		UploadArtifact:    descriptor.UploadArtifact,
+		DupePolicy:        descriptor.DupePolicy,
+		AudioPolicy:       descriptor.AudioPolicy,
+		ImageHost:         descriptor.ImageHost,
+		TorrentIdentity:   descriptor.TorrentIdentity,
+		ClaimPolicy:       descriptor.ClaimPolicy,
+		AuthCapability:    descriptor.AuthCapability,
+		AuthPolicy:        authPolicy,
+		HasAPIKeyResolver: descriptor.AuthPolicy != nil && descriptor.AuthPolicy.ResolveAPIKey != nil,
+		MetadataLocale:    descriptor.MetadataLocale,
+		DescriptionGroup:  descriptor.DescriptionGroup,
+	})
+	if err != nil {
+		return "", fmt.Errorf("tracker policy fingerprint: %w", err)
+	}
+	return fingerprint, nil
+}
+
+type ruleFingerprint struct {
+	RequireUniqueID          bool
+	RequireValidMISetting    bool
+	RequireAudioLanguages    bool
+	RequireDiscOnly          bool
+	RequireMovieOnly         bool
+	RequireMovieUnlessTVPack bool
+	RequireTVOnly            bool
+	RequireHEVCForTypes      []string
+	MinResolution            string
+	BlockAdult               bool
+	AdultMessage             string
+	Language                 *LanguageRule
+	BlockDVDRip              bool
+	BlockExternalSubs        bool
+	BlockSingleFileFolder    bool
+	BlockHardcodedSubs       bool
+	BlockGroups              []string
+	BlockGroupUnlessType     map[string][]string
+	RequireSceneNFO          bool
+}
+
+func safeRuleFingerprint(rules *RuleSet) *ruleFingerprint {
+	if rules == nil {
+		return nil
+	}
+	return &ruleFingerprint{
+		RequireUniqueID:          rules.RequireUniqueID,
+		RequireValidMISetting:    rules.RequireValidMISetting,
+		RequireAudioLanguages:    rules.RequireAudioLanguages,
+		RequireDiscOnly:          rules.RequireDiscOnly,
+		RequireMovieOnly:         rules.RequireMovieOnly,
+		RequireMovieUnlessTVPack: rules.RequireMovieUnlessTVPack,
+		RequireTVOnly:            rules.RequireTVOnly,
+		RequireHEVCForTypes:      slices.Clone(rules.RequireHEVCForTypes),
+		MinResolution:            rules.MinResolution,
+		BlockAdult:               rules.BlockAdult,
+		AdultMessage:             rules.AdultMessage,
+		Language:                 rules.Language,
+		BlockDVDRip:              rules.BlockDVDRip,
+		BlockExternalSubs:        rules.BlockExternalSubs,
+		BlockSingleFileFolder:    rules.BlockSingleFileFolder,
+		BlockHardcodedSubs:       rules.BlockHardcodedSubs,
+		BlockGroups:              slices.Clone(rules.BlockGroups),
+		BlockGroupUnlessType:     rules.BlockGroupUnlessType,
+		RequireSceneNFO:          rules.RequireSceneNFO,
 	}
 }
 
-// AnyNeedsPTBRLocalizedMetadata reports whether any tracker name resolves to an
-// exact pt-BR localized metadata consumer.
-func AnyNeedsPTBRLocalizedMetadata(names []string) bool {
-	return slices.ContainsFunc(names, NeedsPTBRLocalizedMetadata)
+type authPolicyFingerprint struct {
+	HasRequirementsResolver     bool
+	APIKeyRequiresUploadSession bool
+	CookieCompletesAPIKeyAuth   bool
+	MissingAPIKeyMessage        string
+	UploadSessionMissingMessage string
+	LoginRequiresAnnounceURL    bool
+	PasskeyCoversAuth           bool
+	PasskeyRequiresUsername     bool
+	PasskeyRequiresCookie       bool
 }
 
-func TrackerKind(name string) Kind {
-	return trackerKinds[strings.ToUpper(strings.TrimSpace(name))]
-}
-
-func trackersByKind(kind Kind) []string {
-	trackers := make([]string, 0, len(trackerKinds))
-	for name, trackerKind := range trackerKinds {
-		if trackerKind != kind {
-			continue
-		}
-		trackers = append(trackers, name)
+func safeAuthPolicyFingerprint(policy *AuthPolicy) *authPolicyFingerprint {
+	if policy == nil {
+		return nil
 	}
-	sort.Strings(trackers)
-	return trackers
-}
-
-func buildTrackerKinds() map[string]Kind {
-	trackers := make(map[string]Kind, len(knownNonUnit3DTrackers)+len(unit3dmeta.Trackers()))
-	for name := range knownNonUnit3DTrackers {
-		trackers[name] = KindNonUnit3D
+	return &authPolicyFingerprint{
+		HasRequirementsResolver:     policy.ResolveRequirements != nil,
+		APIKeyRequiresUploadSession: policy.APIKeyRequiresUploadSession,
+		CookieCompletesAPIKeyAuth:   policy.CookieCompletesAPIKeyAuth,
+		MissingAPIKeyMessage:        policy.MissingAPIKeyMessage,
+		UploadSessionMissingMessage: policy.UploadSessionMissingMessage,
+		LoginRequiresAnnounceURL:    policy.LoginRequiresAnnounceURL,
+		PasskeyCoversAuth:           policy.PasskeyCoversAuth,
+		PasskeyRequiresUsername:     policy.PasskeyRequiresUsername,
+		PasskeyRequiresCookie:       policy.PasskeyRequiresCookie,
 	}
-	for _, tracker := range unit3dmeta.Trackers() {
-		trackers[tracker] = KindUnit3D
-	}
-	return trackers
 }

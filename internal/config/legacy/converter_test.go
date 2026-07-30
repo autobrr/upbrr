@@ -5,6 +5,7 @@ package legacy
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -444,6 +445,49 @@ config = {
 	// Warnings should not include errors.
 	for _, w := range warnings {
 		t.Logf("warning: %s", w)
+	}
+}
+
+func TestImportFromContentRemovesDeprecatedTrackerURLs(t *testing.T) {
+	t.Parallel()
+
+	input := []byte(`
+config = {
+    'TRACKERS': {
+        'BTN': {
+            'uRl': 'https://btn.invalid',
+            'api_key': 'token',
+        },
+        'RETIRED': {
+            'Url': 'https://retired.invalid',
+            'keep_me': 'retained',
+        },
+    },
+}
+`)
+
+	cfg, warnings, err := ImportFromContent(input)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if got := cfg.Trackers.Trackers["BTN"].APIKey; got != "token" {
+		t.Fatalf("BTN APIKey = %q", got)
+	}
+	unsupported := cfg.Trackers.Trackers["RETIRED"]
+	if got := unsupported.Unknown["keep_me"]; got != "retained" {
+		t.Fatalf("unsupported field = %#v", got)
+	}
+	for key := range unsupported.Unknown {
+		if strings.EqualFold(strings.TrimSpace(key), "url") {
+			t.Fatalf("deprecated URL survived in Unknown as %q", key)
+		}
+	}
+	for _, path := range []string{"trackers.BTN.uRl", "trackers.RETIRED.Url"} {
+		want := "ignored deprecated tracker URL: " + path
+		found := slices.Contains(warnings, want)
+		if !found {
+			t.Fatalf("missing warning %q in %#v", want, warnings)
+		}
 	}
 }
 

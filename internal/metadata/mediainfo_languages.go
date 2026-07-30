@@ -7,11 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	"github.com/autobrr/upbrr/internal/languageutil"
-	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func validateMediaInfoUniqueID(meta api.PreparedMetadata, doc mediaInfoDoc) (string, bool) {
+func validateMediaInfoUniqueID(meta preparationstate.State, doc mediaInfoDoc) (string, bool) {
 	if !requiresUniqueID(meta) {
 		return "", true
 	}
@@ -27,7 +28,7 @@ func validateMediaInfoUniqueID(meta api.PreparedMetadata, doc mediaInfoDoc) (str
 	return "", false
 }
 
-func requiresUniqueID(meta api.PreparedMetadata) bool {
+func requiresUniqueID(meta preparationstate.State) bool {
 	if strings.TrimSpace(meta.DiscType) != "" {
 		return false
 	}

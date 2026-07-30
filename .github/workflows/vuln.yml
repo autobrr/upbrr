@@ -3,7 +3,7 @@ name: vuln
 on:
   workflow_dispatch:
   schedule:
-    - cron: '17 8 * * 1'
+    - cron: "17 8 * * 1"
 
 permissions:
   contents: read
@@ -37,4 +37,4 @@ jobs:
 
       - name: Run OSV dependency scan
         if: ${{ !cancelled() }}
-        run: go run github.com/google/osv-scanner/v2/cmd/osv-scanner@${OSV_SCANNER_VERSION} scan source --lockfile go.mod --lockfile gui/frontend/pnpm-lock.yaml
+        run: go run github.com/google/osv-scanner/v2/cmd/osv-scanner@${OSV_SCANNER_VERSION} scan source --lockfile go.mod --lockfile webui/pnpm-lock.yaml

@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -18,10 +17,22 @@ import (
 type cliProgressLogState struct {
 	lastPercent int
 	lastLog     time.Time
-	lastLineLen int
 }
 
-var cliProgressOutput io.Writer = os.Stdout
+type cliWorkflowLogState struct {
+	command   string
+	phase     string
+	status    api.StageStatus
+	progress  int
+	completed int
+	total     int
+	message   string
+	logged    bool
+}
+
+type cliWorkflowEventLogState struct {
+	lastSequence uint64
+}
 
 func withCLIUploadProgressLogger(ctx context.Context, logger api.Logger) context.Context {
 	if logger == nil {
@@ -35,12 +46,12 @@ func withCLIUploadProgressLogger(ctx context.Context, logger api.Logger) context
 		if strings.TrimSpace(update.Task) != "torrent" {
 			return
 		}
-		renderCLIProgress(update, states, &mu)
+		logCLIProgress(logger, update, states, &mu)
 	})
 }
 
-func renderCLIProgress(update api.UploadProgressUpdate, states map[string]cliProgressLogState, mu *sync.Mutex) {
-	if cliProgressOutput == nil {
+func logCLIProgress(logger api.Logger, update api.UploadProgressUpdate, states map[string]cliProgressLogState, mu *sync.Mutex) {
+	if logger == nil {
 		return
 	}
 
@@ -55,21 +66,32 @@ func renderCLIProgress(update api.UploadProgressUpdate, states map[string]cliPro
 		return
 	}
 
-	line := cliProgressLine(update)
-	padding := ""
-	if len(line) < state.lastLineLen {
-		padding = strings.Repeat(" ", state.lastLineLen-len(line))
-	}
 	if progressStatusFinal(update.Status) {
-		fmt.Fprintf(cliProgressOutput, "\r%s%s\n", line, padding)
 		delete(states, key)
+	} else {
+		state.lastPercent = update.Percent
+		state.lastLog = now
+		states[key] = state
+	}
+
+	tracker := strings.ToUpper(strings.TrimSpace(update.Tracker))
+	if tracker == "" {
+		tracker = "none"
+	}
+	status := strings.ToLower(strings.TrimSpace(update.Status))
+	if status == "" {
+		status = "unknown"
+	}
+	message := strings.TrimSpace(update.Message)
+	if message == "" {
+		message = status
+	}
+	format := "torrent: tracker=%s state=%s progress=%d completed=%d total=%d rate_mib=%.1f message=%s"
+	if status == "failed" {
+		logger.Warnf(format, tracker, status, update.Percent, update.CompletedPieces, update.TotalPieces, update.HashRateMiB, message)
 		return
 	}
-	fmt.Fprintf(cliProgressOutput, "\r%s%s", line, padding)
-	state.lastLineLen = len(line)
-	state.lastPercent = update.Percent
-	state.lastLog = now
-	states[key] = state
+	logger.Infof(format, tracker, status, update.Percent, update.CompletedPieces, update.TotalPieces, update.HashRateMiB, message)
 }
 
 func shouldRenderCLIProgress(update api.UploadProgressUpdate, state cliProgressLogState, now time.Time) bool {
@@ -99,16 +121,89 @@ func progressStatusFinal(status string) bool {
 	}
 }
 
-func cliProgressLine(update api.UploadProgressUpdate) string {
-	message := strings.TrimSpace(update.Message)
+func logCLIWorkflowOperation(logger api.Logger, operation api.WorkflowOperationStatus, state *cliWorkflowLogState) {
+	if logger == nil || state == nil {
+		return
+	}
+	command := strings.TrimSpace(operation.Command)
+	if command == "" {
+		command = string(operation.Operation)
+	}
+	if command == "" {
+		command = "unknown"
+	}
+	phase := strings.TrimSpace(operation.Phase)
+	if phase == "" {
+		phase = "none"
+	}
+	message := strings.TrimSpace(operation.Message)
 	if message == "" {
-		message = strings.TrimSpace(update.Status)
+		message = string(operation.Status)
 	}
-	if update.TotalPieces <= 0 {
-		return "torrent: " + message
+	next := cliWorkflowLogState{
+		command:   command,
+		phase:     phase,
+		status:    operation.Status,
+		progress:  operation.Progress,
+		completed: operation.Completed,
+		total:     operation.Total,
+		message:   message,
+		logged:    true,
 	}
-	if update.HashRateMiB > 0 {
-		return "torrent: " + message
+	if *state == next {
+		return
 	}
-	return "torrent: " + message
+	*state = next
+	format := "workflow: command=%s phase=%s state=%s progress=%d completed=%d total=%d message=%s"
+	logger.Debugf(format, command, phase, operation.Status, operation.Progress, operation.Completed, operation.Total, message)
+}
+
+func logCLIWorkflowEvents(logger api.Logger, events []api.WorkflowEvent, state *cliWorkflowEventLogState) {
+	if state == nil {
+		return
+	}
+	for _, event := range events {
+		if event.Sequence <= state.lastSequence {
+			continue
+		}
+		message := strings.TrimSpace(event.Message)
+		if message == "" {
+			message = string(event.State)
+		}
+		format := "workflow: command=%s phase=%s scope=%s scope_id=%s lifecycle=%s state=%s disposition=%s completed=%d total=%d code=%s recovery=%s message=%s"
+		args := []any{
+			event.Command,
+			event.Phase,
+			event.Scope,
+			event.ScopeID,
+			event.Lifecycle,
+			event.State,
+			event.Disposition,
+			event.Completed,
+			event.Total,
+			event.FailureCode,
+			event.Recovery,
+			message,
+		}
+		if logger != nil {
+			logger.Debugf(format, args...)
+		}
+		state.lastSequence = event.Sequence
+	}
+}
+
+func printCLIWorkflowProgress(output io.Writer, operation api.OperationKind) {
+	if output == nil {
+		return
+	}
+	message := ""
+	if operation == api.OperationKindPreparation {
+		message = "Preparing release..."
+	}
+	if operation == api.OperationKindUploadDryRun || operation == api.OperationKindUploadExecute {
+		message = "Preparing tracker uploads..."
+	}
+	if message != "" {
+		_, _ = fmt.Fprintln(output, message)
+	}
 }

@@ -11,6 +11,8 @@ type IMDbInfo struct {
 	Year             int
 }
 
+// FindInput supplies external-ID and filename evidence for TMDB identity
+// resolution. CategoryPreference disambiguates IDs that map to movie and TV.
 type FindInput struct {
 	IMDbID             string
 	TVDBID             int
@@ -22,6 +24,9 @@ type FindInput struct {
 	Debug              bool
 }
 
+// FindResult retains filename-search candidates when identity cannot be selected
+// automatically. FilenameSearch distinguishes fallback results from external-ID
+// matches.
 type FindResult struct {
 	Category         string
 	TMDBID           int
@@ -31,6 +36,9 @@ type FindResult struct {
 	AutoSelected     bool
 }
 
+// SearchInput controls candidate fallback and selection. DontSwitch prevents
+// trying the opposite movie/TV category; Unattended resolves ambiguity to the
+// top-ranked candidate.
 type SearchInput struct {
 	Filename       string
 	SearchYear     int
@@ -41,6 +49,8 @@ type SearchInput struct {
 	Debug          bool
 }
 
+// SearchOutcome retains ranked candidates when interactive ambiguity leaves
+// TMDBID unset.
 type SearchOutcome struct {
 	TMDBID       int
 	Category     string
@@ -100,6 +110,8 @@ type TranslationData struct {
 	Name  string `json:"name"`
 }
 
+// MetadataInput controls primary TMDB enrichment and optional logo, anime,
+// language, identity, and season evidence.
 type MetadataInput struct {
 	TMDBID           int
 	Category         string
@@ -121,6 +133,9 @@ type MetadataInput struct {
 	Season           string
 }
 
+// MetadataResult contains normalized primary fields and any optional enrichment
+// that completed successfully. Runtime is minutes; LocalizedTitles keys are
+// generic language codes or regional language tags.
 type MetadataResult struct {
 	Title            string
 	Year             int
@@ -252,6 +267,8 @@ type LogoOptions struct {
 	Languages []string
 }
 
+// LocalizedDataInput identifies a main, season, or episode request. CachePath is
+// a host filesystem JSON cache shared by language and DataType.
 type LocalizedDataInput struct {
 	DataType         string
 	Category         string

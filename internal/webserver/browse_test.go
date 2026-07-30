@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -22,55 +21,12 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-type stubNativePicker struct {
-	filePath        string
-	imageFilePaths  []string
-	folderPath      string
-	fileErr         error
-	imageFilesErr   error
-	folderErr       error
-	fileCalls       int
-	imageFilesCalls int
-	folderCalls     int
-}
-
-func (s *stubNativePicker) BrowseFile() (string, error) {
-	s.fileCalls++
-	return s.filePath, s.fileErr
-}
-
-func (s *stubNativePicker) BrowseImageFiles() ([]string, error) {
-	s.imageFilesCalls++
-	return s.imageFilePaths, s.imageFilesErr
-}
-
-func (s *stubNativePicker) BrowseFolder() (string, error) {
-	s.folderCalls++
-	return s.folderPath, s.folderErr
-}
-
 func testSessionManager() *sessionManager {
 	return &sessionManager{
 		ttl:      time.Hour,
 		stopCh:   make(chan struct{}),
 		doneCh:   make(chan struct{}),
 		sessions: map[string]session{},
-	}
-}
-
-func testServerWithPicker(picker nativePicker) *Server {
-	manager := testSessionManager()
-	manager.sessions["test-session"] = session{
-		ID:        "test-session",
-		Username:  "tester",
-		CSRFToken: "test-csrf",
-		ExpiresAt: time.Now().UTC().Add(time.Hour),
-	}
-	return &Server{
-		picker:         picker,
-		sessions:       manager,
-		generalLimiter: newFixedWindowLimiter(100, time.Minute),
-		authLimiter:    newFixedWindowLimiter(100, time.Minute),
 	}
 }
 
@@ -140,12 +96,12 @@ func canonicalBrowseTestPath(t *testing.T, path string) string {
 	return resolved
 }
 
-func newBrowseRequest(path string, host string, remoteAddr string) *http.Request {
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, strings.NewReader(`{}`))
-	req.Host = host
-	req.RemoteAddr = remoteAddr
+func newBrowseRequest() *http.Request {
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/BrowseDirectory", strings.NewReader(`{}`))
+	req.Host = "example.com:8080"
+	req.RemoteAddr = "192.168.1.25:5050"
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", "http://"+host)
+	req.Header.Set("Origin", "http://example.com:8080")
 	req.Header.Set("X-Csrf-Token", "test-csrf")
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "test-session"})
 	return req
@@ -176,168 +132,6 @@ func TestIsLoopbackHostname(t *testing.T) {
 	}
 }
 
-func TestHandleAuthStatusIncludesNativeBrowseCapability(t *testing.T) {
-	store, err := newAuthStore(filepath.Join(t.TempDir(), "state", "db.sqlite"))
-	if err != nil {
-		t.Fatalf("newAuthStore: %v", err)
-	}
-	server := &Server{
-		auth:   store,
-		picker: &stubNativePicker{},
-	}
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/auth/status", nil)
-	req.Host = "127.0.0.1:8080"
-	req.RemoteAddr = "127.0.0.1:5050"
-
-	recorder := httptest.NewRecorder()
-	server.handleAuthStatus(recorder, req, session{})
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("handleAuthStatus returned %d", recorder.Code)
-	}
-
-	var payload struct {
-		NativeBrowseEnabled bool `json:"nativeBrowseEnabled"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("unmarshal auth status: %v", err)
-	}
-	if !payload.NativeBrowseEnabled {
-		t.Fatal("expected localhost auth status to advertise native browse support")
-	}
-}
-
-func TestBrowseFileRouteAllowsLocalhostSessions(t *testing.T) {
-	picker := &stubNativePicker{filePath: `C:\Media\movie.mkv`}
-	server := testServerWithPicker(picker)
-	mux := http.NewServeMux()
-	server.registerAppRoutes(mux)
-
-	recorder := httptest.NewRecorder()
-	req := newBrowseRequest("/api/app/BrowseFile", "127.0.0.1:8080", "127.0.0.1:5050")
-	mux.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("browse file route returned %d", recorder.Code)
-	}
-	if picker.fileCalls != 1 {
-		t.Fatalf("expected picker to be called once, got %d", picker.fileCalls)
-	}
-	if got := strings.TrimSpace(recorder.Body.String()); !strings.Contains(got, `C:\\Media\\movie.mkv`) {
-		t.Fatalf("expected response to include selected path, got %q", got)
-	}
-}
-
-func TestBrowseImageFilesRouteAllowsLocalhostSessions(t *testing.T) {
-	picker := &stubNativePicker{imageFilePaths: []string{`C:\Menus\menu1.png`, `C:\Menus\menu2.webp`}}
-	server := testServerWithPicker(picker)
-	mux := http.NewServeMux()
-	server.registerAppRoutes(mux)
-
-	recorder := httptest.NewRecorder()
-	req := newBrowseRequest("/api/app/BrowseImageFiles", "127.0.0.1:8080", "127.0.0.1:5050")
-	mux.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("browse image files route returned %d", recorder.Code)
-	}
-	if picker.imageFilesCalls != 1 {
-		t.Fatalf("expected image picker to be called once, got %d", picker.imageFilesCalls)
-	}
-	if got := strings.TrimSpace(recorder.Body.String()); !strings.Contains(got, `C:\\Menus\\menu1.png`) || !strings.Contains(got, `C:\\Menus\\menu2.webp`) {
-		t.Fatalf("expected response to include selected image paths, got %q", got)
-	}
-}
-
-func TestBrowseFileRouteRejectsRemoteSessions(t *testing.T) {
-	picker := &stubNativePicker{filePath: `C:\Media\movie.mkv`}
-	server := testServerWithPicker(picker)
-	mux := http.NewServeMux()
-	server.registerAppRoutes(mux)
-
-	req := newBrowseRequest("/api/app/BrowseFile", "example.com:8080", "192.168.1.25:5050")
-	recorder := httptest.NewRecorder()
-	mux.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusForbidden {
-		t.Fatalf("expected forbidden status, got %d", recorder.Code)
-	}
-	if picker.fileCalls != 0 {
-		t.Fatalf("expected picker not to be called, got %d calls", picker.fileCalls)
-	}
-	if !strings.Contains(recorder.Body.String(), "localhost web sessions") {
-		t.Fatalf("expected remote browse error message, got %q", recorder.Body.String())
-	}
-}
-
-func TestDevelopmentNoAuthAppRouteAllowsLoopbackWithCSRF(t *testing.T) {
-	picker := &stubNativePicker{filePath: `C:\Media\movie.mkv`}
-	server := &Server{
-		picker:            picker,
-		generalLimiter:    newFixedWindowLimiter(100, time.Minute),
-		developmentNoAuth: true,
-		developmentSession: session{
-			ID:        "dev-no-auth",
-			Username:  "dev",
-			CSRFToken: "dev-csrf",
-			ExpiresAt: time.Now().UTC().Add(time.Hour),
-		},
-	}
-	mux := http.NewServeMux()
-	server.registerAppRoutes(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/BrowseFile", strings.NewReader(`{}`))
-	req.Host = "127.0.0.1:7480"
-	req.RemoteAddr = "127.0.0.1:5050"
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", "http://localhost:5173")
-	req.Header.Set("X-Csrf-Token", "dev-csrf")
-
-	recorder := httptest.NewRecorder()
-	mux.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("browse file route returned %d: %s", recorder.Code, recorder.Body.String())
-	}
-	if picker.fileCalls != 1 {
-		t.Fatalf("expected picker to be called once, got %d", picker.fileCalls)
-	}
-}
-
-func TestDevelopmentNoAuthAppRouteRejectsMissingCSRF(t *testing.T) {
-	picker := &stubNativePicker{filePath: `C:\Media\movie.mkv`}
-	server := &Server{
-		picker:            picker,
-		generalLimiter:    newFixedWindowLimiter(100, time.Minute),
-		developmentNoAuth: true,
-		developmentSession: session{
-			ID:        "dev-no-auth",
-			Username:  "dev",
-			CSRFToken: "dev-csrf",
-			ExpiresAt: time.Now().UTC().Add(time.Hour),
-		},
-	}
-	mux := http.NewServeMux()
-	server.registerAppRoutes(mux)
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/BrowseFile", strings.NewReader(`{}`))
-	req.Host = "127.0.0.1:8080"
-	req.RemoteAddr = "127.0.0.1:5050"
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", "http://127.0.0.1:8080")
-
-	recorder := httptest.NewRecorder()
-	mux.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusForbidden {
-		t.Fatalf("expected forbidden status, got %d: %s", recorder.Code, recorder.Body.String())
-	}
-	if picker.fileCalls != 0 {
-		t.Fatalf("expected picker not to be called, got %d calls", picker.fileCalls)
-	}
-}
-
 func TestBrowseDirectoryRouteAllowsRemoteSessionsAndSortsEntries(t *testing.T) {
 	repo, dbPath := openBrowseTestRepo(t)
 	root := canonicalBrowseTestPath(t, t.TempDir())
@@ -357,7 +151,7 @@ func TestBrowseDirectoryRouteAllowsRemoteSessionsAndSortsEntries(t *testing.T) {
 	mux := http.NewServeMux()
 	server.registerAppRoutes(mux)
 
-	req := newBrowseRequest("/api/app/BrowseDirectory", "example.com:8080", "192.168.1.25:5050")
+	req := newBrowseRequest()
 	req.Body = io.NopCloser(strings.NewReader(`{"path":` + strconv.Quote(root) + `,"mode":"file"}`))
 	recorder := httptest.NewRecorder()
 	mux.ServeHTTP(recorder, req)
@@ -401,7 +195,7 @@ func TestBrowseDirectoryRouteRequiresWebBrowsePolicy(t *testing.T) {
 	mux := http.NewServeMux()
 	server.registerAppRoutes(mux)
 
-	req := newBrowseRequest("/api/app/BrowseDirectory", "example.com:8080", "192.168.1.25:5050")
+	req := newBrowseRequest()
 	req.Body = io.NopCloser(strings.NewReader(`{"path":` + strconv.Quote(root) + `,"mode":"folder"}`))
 	recorder := httptest.NewRecorder()
 	mux.ServeHTTP(recorder, req)
@@ -410,189 +204,6 @@ func TestBrowseDirectoryRouteRequiresWebBrowsePolicy(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "web browse root is not configured") {
 		t.Fatalf("expected browse policy error, got %s", recorder.Body.String())
-	}
-}
-
-func TestMenuImportPathsWithinBrowsePolicyRejectsOutsideRoot(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-	outside := filepath.Join(t.TempDir(), "menu.png")
-	if err := os.WriteFile(outside, []byte("png"), 0o600); err != nil {
-		t.Fatalf("write outside image: %v", err)
-	}
-
-	_, err := menuImportPathsWithinBrowsePolicy([]string{outside}, webBrowsePolicy{Roots: []string{root}})
-	if err == nil {
-		t.Fatal("expected outside browse root error")
-	}
-	if !strings.Contains(err.Error(), "outside configured web browse roots") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestMenuImportPathsWithinBrowsePolicyAllowsInsideRoot(t *testing.T) {
-	t.Parallel()
-
-	root := canonicalBrowseTestPath(t, t.TempDir())
-	inside := filepath.Join(root, "menu.png")
-	if err := os.WriteFile(inside, []byte("png"), 0o600); err != nil {
-		t.Fatalf("write inside image: %v", err)
-	}
-
-	paths, err := menuImportPathsWithinBrowsePolicy([]string{inside}, webBrowsePolicy{Roots: []string{root}})
-	if err != nil {
-		t.Fatalf("menuImportPathsWithinBrowsePolicy: %v", err)
-	}
-	if len(paths) != 1 || filepath.Clean(paths[0]) != filepath.Clean(inside) {
-		t.Fatalf("unexpected import paths: %#v", paths)
-	}
-}
-
-func TestMenuImportPathsWithinBrowsePolicyAdditionalScenarios(t *testing.T) {
-	t.Parallel()
-
-	type testCase struct {
-		name      string
-		setup     func(t *testing.T) ([]string, webBrowsePolicy, []string)
-		wantErr   string
-		exactPath bool
-	}
-
-	toWindowsPath := func(t *testing.T, path string) string {
-		t.Helper()
-		if runtime.GOOS != "windows" {
-			t.Skip("Windows-style local paths are only valid on Windows")
-		}
-		return strings.ReplaceAll(filepath.ToSlash(path), "/", `\`)
-	}
-
-	tests := []testCase{
-		{
-			name: "directory import posix path",
-			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
-				t.Helper()
-				root := canonicalBrowseTestPath(t, t.TempDir())
-				dir := filepath.Join(root, "menus")
-				if err := os.Mkdir(dir, 0o755); err != nil {
-					t.Fatalf("mkdir menu dir: %v", err)
-				}
-				first := filepath.Join(dir, "one.png")
-				second := filepath.Join(dir, "two.jpg")
-				subdir := filepath.Join(dir, "nested")
-				if err := os.WriteFile(first, []byte("png"), 0o600); err != nil {
-					t.Fatalf("write first image: %v", err)
-				}
-				if err := os.WriteFile(second, []byte("jpg"), 0o600); err != nil {
-					t.Fatalf("write second image: %v", err)
-				}
-				if err := os.Mkdir(subdir, 0o755); err != nil {
-					t.Fatalf("mkdir nested dir: %v", err)
-				}
-				return []string{filepath.ToSlash(dir)}, webBrowsePolicy{Roots: []string{root}}, []string{first, second}
-			},
-		},
-		{
-			name: "directory import windows path",
-			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
-				t.Helper()
-				root := canonicalBrowseTestPath(t, t.TempDir())
-				dir := filepath.Join(root, "menus")
-				if err := os.Mkdir(dir, 0o755); err != nil {
-					t.Fatalf("mkdir menu dir: %v", err)
-				}
-				image := filepath.Join(dir, "one.png")
-				if err := os.WriteFile(image, []byte("png"), 0o600); err != nil {
-					t.Fatalf("write image: %v", err)
-				}
-				return []string{toWindowsPath(t, dir)}, webBrowsePolicy{Roots: []string{root}}, []string{image}
-			},
-		},
-		{
-			name: "symlink inside root points outside",
-			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
-				t.Helper()
-				root := canonicalBrowseTestPath(t, t.TempDir())
-				outside := filepath.Join(t.TempDir(), "menu.png")
-				if err := os.WriteFile(outside, []byte("png"), 0o600); err != nil {
-					t.Fatalf("write outside image: %v", err)
-				}
-				link := filepath.Join(root, "linked.png")
-				if err := os.Symlink(outside, link); err != nil {
-					t.Skipf("symlink unavailable: %v", err)
-				}
-				return []string{link}, webBrowsePolicy{Roots: []string{root}}, nil
-			},
-			wantErr: "outside configured web browse roots",
-		},
-		{
-			name: "allow unrestricted returns original paths",
-			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
-				t.Helper()
-				path := filepath.Join(t.TempDir(), "missing.png")
-				return []string{path}, webBrowsePolicy{AllowUnrestricted: true}, []string{path}
-			},
-			exactPath: true,
-		},
-		{
-			name: "multiple roots accepts second root posix path",
-			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
-				t.Helper()
-				firstRoot := canonicalBrowseTestPath(t, t.TempDir())
-				secondRoot := canonicalBrowseTestPath(t, t.TempDir())
-				image := filepath.Join(secondRoot, "menu.png")
-				if err := os.WriteFile(image, []byte("png"), 0o600); err != nil {
-					t.Fatalf("write image: %v", err)
-				}
-				return []string{filepath.ToSlash(image)}, webBrowsePolicy{Roots: []string{firstRoot, secondRoot}}, []string{image}
-			},
-		},
-		{
-			name: "multiple roots accepts second root windows path",
-			setup: func(t *testing.T) ([]string, webBrowsePolicy, []string) {
-				t.Helper()
-				firstRoot := canonicalBrowseTestPath(t, t.TempDir())
-				secondRoot := canonicalBrowseTestPath(t, t.TempDir())
-				image := filepath.Join(secondRoot, "menu.png")
-				if err := os.WriteFile(image, []byte("png"), 0o600); err != nil {
-					t.Fatalf("write image: %v", err)
-				}
-				return []string{toWindowsPath(t, image)}, webBrowsePolicy{Roots: []string{firstRoot, secondRoot}}, []string{image}
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			paths, policy, want := tt.setup(t)
-			got, err := menuImportPathsWithinBrowsePolicy(paths, policy)
-			if tt.wantErr != "" {
-				if err == nil {
-					t.Fatalf("expected error containing %q", tt.wantErr)
-				}
-				if !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("menuImportPathsWithinBrowsePolicy: %v", err)
-			}
-			if len(got) != len(want) {
-				t.Fatalf("expected %d paths, got %#v", len(want), got)
-			}
-			for i := range want {
-				if tt.exactPath {
-					if got[i] != want[i] {
-						t.Fatalf("expected path %q at index %d, got %q", want[i], i, got[i])
-					}
-					continue
-				}
-				if filepath.Clean(got[i]) != filepath.Clean(want[i]) {
-					t.Fatalf("expected path %q at index %d, got %q", want[i], i, got[i])
-				}
-			}
-		})
 	}
 }
 
@@ -615,7 +226,7 @@ func TestBrowseDirectoryRouteHonorsWebAuthBrowseRoot(t *testing.T) {
 	mux := http.NewServeMux()
 	server.registerAppRoutes(mux)
 
-	req := newBrowseRequest("/api/app/BrowseDirectory", "example.com:8080", "192.168.1.25:5050")
+	req := newBrowseRequest()
 	req.Body = io.NopCloser(strings.NewReader(`{"path":"","mode":"folder"}`))
 	recorder := httptest.NewRecorder()
 	mux.ServeHTTP(recorder, req)
@@ -633,7 +244,7 @@ func TestBrowseDirectoryRouteHonorsWebAuthBrowseRoot(t *testing.T) {
 		t.Fatalf("expected no parent above constrained root, got %q", payload.ParentPath)
 	}
 
-	req = newBrowseRequest("/api/app/BrowseDirectory", "example.com:8080", "192.168.1.25:5050")
+	req = newBrowseRequest()
 	req.Body = io.NopCloser(strings.NewReader(`{"path":` + strconv.Quote(outside) + `,"mode":"folder"}`))
 	recorder = httptest.NewRecorder()
 	mux.ServeHTTP(recorder, req)
@@ -665,7 +276,7 @@ func TestBrowseDirectoryRouteHonorsMultipleWebAuthBrowseRoots(t *testing.T) {
 	mux := http.NewServeMux()
 	server.registerAppRoutes(mux)
 
-	req := newBrowseRequest("/api/app/BrowseDirectory", "example.com:8080", "192.168.1.25:5050")
+	req := newBrowseRequest()
 	req.Body = io.NopCloser(strings.NewReader(`{"path":"","mode":"folder"}`))
 	recorder := httptest.NewRecorder()
 	mux.ServeHTTP(recorder, req)
@@ -683,7 +294,7 @@ func TestBrowseDirectoryRouteHonorsMultipleWebAuthBrowseRoots(t *testing.T) {
 		t.Fatalf("expected both configured roots, got %#v", payload.Entries)
 	}
 
-	req = newBrowseRequest("/api/app/BrowseDirectory", "example.com:8080", "192.168.1.25:5050")
+	req = newBrowseRequest()
 	req.Body = io.NopCloser(strings.NewReader(`{"path":` + strconv.Quote(second) + `,"mode":"folder"}`))
 	recorder = httptest.NewRecorder()
 	mux.ServeHTTP(recorder, req)
@@ -697,7 +308,7 @@ func TestBrowseDirectoryRouteHonorsMultipleWebAuthBrowseRoots(t *testing.T) {
 		t.Fatalf("expected constrained second root, got %#v", payload)
 	}
 
-	req = newBrowseRequest("/api/app/BrowseDirectory", "example.com:8080", "192.168.1.25:5050")
+	req = newBrowseRequest()
 	req.Body = io.NopCloser(strings.NewReader(`{"path":` + strconv.Quote(outside) + `,"mode":"folder"}`))
 	recorder = httptest.NewRecorder()
 	mux.ServeHTTP(recorder, req)
@@ -739,7 +350,7 @@ func TestBrowseDirectoryRouteRejectsInvalidPath(t *testing.T) {
 	mux := http.NewServeMux()
 	server.registerAppRoutes(mux)
 
-	req := newBrowseRequest("/api/app/BrowseDirectory", "example.com:8080", "192.168.1.25:5050")
+	req := newBrowseRequest()
 	req.Body = io.NopCloser(strings.NewReader(`{"path":` + strconv.Quote(filepath.Join(t.TempDir(), "missing")) + `,"mode":"folder"}`))
 	recorder := httptest.NewRecorder()
 	mux.ServeHTTP(recorder, req)

@@ -23,7 +23,6 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
-	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -42,6 +41,8 @@ var trashGuideBannedGroupsURL = "https://raw.githubusercontent.com/TRaSH-Guides/
 // banned-group lists.
 type BannedGroupChecker struct {
 	basePath string
+	registry *Registry
+	client   *http.Client
 	mu       sync.Mutex
 	cache    map[string]map[string]struct{}
 }
@@ -79,12 +80,24 @@ type trashGuideSpecification struct {
 // NewBannedGroupChecker creates a checker rooted at the banned-group cache
 // directory derived from dbPath.
 func NewBannedGroupChecker(dbPath string) *BannedGroupChecker {
+	return NewBannedGroupCheckerWithRegistry(dbPath, nil)
+}
+
+// NewBannedGroupCheckerWithRegistry resolves the banned-group cache path,
+// creating its mode-0700 cache parent, and uses registry-owned static and
+// dynamic policies. It returns nil when the cache path cannot be resolved.
+func NewBannedGroupCheckerWithRegistry(dbPath string, registry *Registry) *BannedGroupChecker {
 	basePath, err := db.Subdir(dbPath, "cache")
 	if err != nil {
 		return nil
 	}
 	basePath = filepath.Join(basePath, "banned")
-	return &BannedGroupChecker{basePath: basePath, cache: make(map[string]map[string]struct{})}
+	return &BannedGroupChecker{
+		basePath: basePath,
+		registry: registry,
+		client:   &http.Client{Timeout: 20 * time.Second},
+		cache:    make(map[string]map[string]struct{}),
+	}
 }
 
 // IsBanned reports whether group is banned for tracker after normalizing both
@@ -117,7 +130,10 @@ func (c *BannedGroupChecker) IsBanned(tracker, group string) (bool, error) {
 // refreshed list from applying. Cancellation is checked before fetches and again
 // before durable writes so canceled refreshes do not replace cache files.
 func (c *BannedGroupChecker) RefreshDynamic(ctx context.Context, cfg config.Config, trackerNames []string, logger api.Logger) error {
-	return c.refreshDynamic(ctx, cfg, trackerNames, logger, fetchDynamicBannedGroups)
+	fetch := func(ctx context.Context, cfg config.Config, tracker string) ([]string, []json.RawMessage, error) {
+		return fetchDynamicBannedGroupsWithClient(ctx, cfg, tracker, c.registry, c.client)
+	}
+	return c.refreshDynamic(ctx, cfg, trackerNames, logger, fetch)
 }
 
 // dynamicBannedGroupsFetcher lets tests place cancellation exactly between a
@@ -135,7 +151,7 @@ func (c *BannedGroupChecker) refreshDynamic(
 		return nil
 	}
 	for _, tracker := range uniqueBannedGroupTrackers(trackerNames) {
-		if !usesDynamicBannedGroups(tracker) {
+		if !usesDynamicBannedGroups(c.registry, tracker) {
 			continue
 		}
 		if ctx.Err() != nil {
@@ -159,7 +175,11 @@ func (c *BannedGroupChecker) refreshDynamic(
 		}
 		if err != nil {
 			if logger != nil {
-				logger.Warnf("trackers: banned groups refresh failed tracker=%s decision=cache_fallback err=%s", tracker, redaction.RedactValue(err.Error(), nil))
+				logger.Warnf(
+					"trackers: banned groups refresh failed tracker=%s decision=cache_fallback err=%s",
+					tracker,
+					redaction.RedactValue(err.Error(), nil),
+				)
 			}
 			continue
 		}
@@ -186,8 +206,8 @@ func (c *BannedGroupChecker) load(tracker string) (map[string]struct{}, error) {
 	}
 
 	groups := map[string]struct{}{}
-	if builtin := builtinBannedGroups[tracker]; len(builtin) > 0 {
-		for _, value := range builtin {
+	if owned, ok := c.registry.LookupBannedGroups(tracker); ok {
+		for _, value := range owned {
 			cleaned := strings.ToLower(strings.TrimSpace(value))
 			if cleaned != "" {
 				groups[cleaned] = struct{}{}
@@ -255,13 +275,9 @@ func uniqueBannedGroupTrackers(values []string) []string {
 
 // usesDynamicBannedGroups reports whether upbrr knows how to fetch a tracker
 // banned-group API instead of relying only on built-ins or a manual cache file.
-func usesDynamicBannedGroups(tracker string) bool {
-	switch strings.ToUpper(strings.TrimSpace(tracker)) {
-	case "AITHER", "LST", "LUME", "SPD":
-		return true
-	default:
-		return false
-	}
+func usesDynamicBannedGroups(registry *Registry, tracker string) bool {
+	_, ok := registry.LookupBannedGroupPolicy(tracker)
+	return ok
 }
 
 // bannedGroupsCacheFresh reports whether a cache file can satisfy a refresh
@@ -411,33 +427,40 @@ func normalizedBannedGroupList(groups []string) []string {
 	return out
 }
 
-// fetchDynamicBannedGroups downloads every page for API-backed trackers, or the
-// TRaSH guide source for LUME. Missing endpoint config or API key returns
-// errBannedGroupsRefreshSkipped so callers do not overwrite an existing cache
-// with an empty file. Pagination is bounded and repeated cursors fail instead
-// of looping indefinitely.
-func fetchDynamicBannedGroups(ctx context.Context, cfg config.Config, tracker string) ([]string, []json.RawMessage, error) {
-	if strings.EqualFold(strings.TrimSpace(tracker), "LUME") {
-		return fetchTRaSHGuideBannedGroups(ctx, trashGuideBannedGroupsURL)
+func fetchDynamicBannedGroupsWithClient(
+	ctx context.Context,
+	cfg config.Config,
+	tracker string,
+	registry *Registry,
+	client *http.Client,
+) ([]string, []json.RawMessage, error) {
+	policy, ok := registry.LookupBannedGroupPolicy(tracker)
+	if !ok {
+		return nil, nil, errBannedGroupsRefreshSkipped
+	}
+	if endpoint := strings.TrimSpace(policy.TRaSHGuideURL); endpoint != "" {
+		return fetchTRaSHGuideBannedGroupsWithClient(ctx, endpoint, client)
 	}
 
-	endpoint, ok := bannedGroupsEndpoint(cfg, tracker)
+	endpoint, ok := bannedGroupsEndpoint(cfg, tracker, registry, policy)
 	if !ok {
 		return nil, nil, errBannedGroupsRefreshSkipped
 	}
 	apiKey := strings.TrimSpace(bannedGroupAPIKey(cfg, tracker))
-	if apiKey == "" {
+	if policy.RequireAPIKey && apiKey == "" {
 		return nil, nil, errBannedGroupsRefreshSkipped
 	}
 
-	client := &http.Client{Timeout: 20 * time.Second}
+	if client == nil {
+		client = &http.Client{Timeout: 20 * time.Second}
+	}
 	cursor := ""
 	groups := make([]string, 0)
 	rawItems := make([]json.RawMessage, 0)
 	seenCursors := make(map[string]struct{})
 
 	for page := 1; ; page++ {
-		pageGroups, pageRaw, nextCursor, err := fetchDynamicBannedGroupsPage(ctx, client, endpoint, tracker, apiKey, cursor)
+		pageGroups, pageRaw, nextCursor, err := fetchDynamicBannedGroupsPage(ctx, client, endpoint, tracker, apiKey, cursor, policy.RawAPIKeyFallback)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -462,7 +485,17 @@ func fetchDynamicBannedGroups(ctx context.Context, cfg config.Config, tracker st
 // extracts release-group specifications into the same cache shape as tracker
 // API-backed banned groups.
 func fetchTRaSHGuideBannedGroups(ctx context.Context, endpoint string) ([]string, []json.RawMessage, error) {
-	client := &http.Client{Timeout: 20 * time.Second}
+	return fetchTRaSHGuideBannedGroupsWithClient(ctx, endpoint, &http.Client{Timeout: 20 * time.Second})
+}
+
+func fetchTRaSHGuideBannedGroupsWithClient(
+	ctx context.Context,
+	endpoint string,
+	client *http.Client,
+) ([]string, []json.RawMessage, error) {
+	if client == nil {
+		client = &http.Client{Timeout: 20 * time.Second}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build TRaSH banned groups request: %w", err)
@@ -668,11 +701,19 @@ func stripTRaSHReleaseGroupPattern(value string) string {
 
 // fetchDynamicBannedGroupsPage fetches and parses one blacklist page, including
 // SPD's alternate Authorization header form when bearer auth is rejected.
-func fetchDynamicBannedGroupsPage(ctx context.Context, client *http.Client, endpoint string, tracker string, apiKey string, cursor string) ([]string, []json.RawMessage, string, error) {
+func fetchDynamicBannedGroupsPage(
+	ctx context.Context,
+	client *http.Client,
+	endpoint string,
+	tracker string,
+	apiKey string,
+	cursor string,
+	rawAPIKeyFallback bool,
+) ([]string, []json.RawMessage, string, error) {
 	var raw json.RawMessage
 	var statusCode int
 	var err error
-	authValues := bannedGroupsAuthValues(tracker, apiKey)
+	authValues := bannedGroupsAuthValues(apiKey, rawAPIKeyFallback)
 	for idx, authValue := range authValues {
 		raw, statusCode, err = doBannedGroupsRequest(ctx, client, endpoint, tracker, authValue, cursor)
 		if err != nil {
@@ -702,7 +743,14 @@ func fetchDynamicBannedGroupsPage(ctx context.Context, client *http.Client, endp
 
 // doBannedGroupsRequest performs one HTTP request and returns only decoded JSON
 // for successful responses so error paths never include remote response bodies.
-func doBannedGroupsRequest(ctx context.Context, client *http.Client, endpoint string, tracker string, authValue string, cursor string) (json.RawMessage, int, error) {
+func doBannedGroupsRequest(
+	ctx context.Context,
+	client *http.Client,
+	endpoint string,
+	tracker string,
+	authValue string,
+	cursor string,
+) (json.RawMessage, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, 0, fmt.Errorf("build banned groups request %s: %w", tracker, err)
@@ -759,9 +807,9 @@ func decodeBannedGroupsJSON(body io.Reader, dest any) error {
 
 // bannedGroupsAuthValues returns the Authorization header values to try for a
 // tracker; SPD's API uses raw API-key auth in existing upbrr code paths.
-func bannedGroupsAuthValues(tracker string, apiKey string) []string {
+func bannedGroupsAuthValues(apiKey string, rawAPIKeyFallback bool) []string {
 	values := []string{"Bearer " + apiKey}
-	if strings.EqualFold(strings.TrimSpace(tracker), "SPD") {
+	if rawAPIKeyFallback {
 		values = append(values, apiKey)
 	}
 	return values
@@ -827,1114 +875,17 @@ func bannedGroupName(raw json.RawMessage) string {
 
 // bannedGroupsEndpoint resolves the tracker-specific blacklist URL. AITHER and
 // LST use Unit3D-style base URLs; SPD uses its SpeedApp API endpoint.
-func bannedGroupsEndpoint(cfg config.Config, tracker string) (string, bool) {
-	name := strings.ToUpper(strings.TrimSpace(tracker))
-	switch name {
-	case "AITHER":
-		return bannedGroupsBaseEndpoint(cfg, name, "/api/blacklists/releasegroups")
-	case "LST":
-		return bannedGroupsBaseEndpoint(cfg, name, "/api/bannedReleaseGroups")
-	case "SPD":
-		if base, ok := configuredTrackerBaseURL(cfg, name); ok {
-			return strings.TrimRight(base, "/") + "/api/torrent/release-group/blacklist", true
-		}
-		return "https://speedapp.io/api/torrent/release-group/blacklist", true
-	default:
-		return "", false
+func bannedGroupsEndpoint(cfg config.Config, tracker string, registry *Registry, policy BannedGroupPolicy) (string, bool) {
+	_ = cfg
+	if base, ok := registry.LookupBaseURL(tracker); ok && strings.TrimSpace(policy.EndpointPath) != "" {
+		return strings.TrimRight(base, "/") + policy.EndpointPath, true
 	}
-}
-
-// bannedGroupsBaseEndpoint resolves a Unit3D tracker base URL from config first
-// and embedded defaults second, then appends the tracker-specific API path.
-func bannedGroupsBaseEndpoint(cfg config.Config, tracker string, endpointPath string) (string, bool) {
-	baseURL, ok := configuredTrackerBaseURL(cfg, tracker)
-	if !ok {
-		baseURL, ok = unit3dmeta.BaseURL(tracker)
-	}
-	if !ok {
-		return "", false
-	}
-	return strings.TrimRight(baseURL, "/") + endpointPath, true
-}
-
-// configuredTrackerBaseURL derives a web base URL from configured tracker URL
-// fields without retaining announce paths or query strings.
-func configuredTrackerBaseURL(cfg config.Config, tracker string) (string, bool) {
-	entry := trackerConfigFor(cfg, tracker)
-	for _, value := range []string{entry.URL, entry.AnnounceURL, entry.MyAnnounceURL} {
-		if base := webBaseURL(value); base != "" {
-			return base, true
-		}
-	}
-	return "", false
+	endpoint := strings.TrimSpace(policy.DefaultEndpoint)
+	return endpoint, endpoint != ""
 }
 
 // bannedGroupAPIKey returns the configured tracker API key used for dynamic
 // banned-group refreshes.
 func bannedGroupAPIKey(cfg config.Config, tracker string) string {
 	return strings.TrimSpace(trackerConfigFor(cfg, tracker).APIKey)
-}
-
-// webBaseURL strips a configured URL to scheme and host for API endpoint
-// construction.
-func webBaseURL(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	parsed, err := url.Parse(trimmed)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return ""
-	}
-	parsed.Path = ""
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return strings.TrimRight(parsed.String(), "/")
-}
-
-var builtinBannedGroups = map[string][]string{
-	"A4K": {
-		"BiTOR",
-		"DepraveD",
-		"Flights",
-		"SasukeducK",
-		"SPDVD",
-		"TEKNO3D",
-	},
-	"ANT": {
-		"3LTON",
-		"4yEo",
-		"ADE",
-		"AFG",
-		"AniHLS",
-		"AnimeRG",
-		"AniURL",
-		"AROMA",
-		"aXXo",
-		"Brrip",
-		"CHD",
-		"CM8",
-		"CrEwSaDe",
-		"d3g",
-		"DDR",
-		"DNL",
-		"DeadFish",
-		"ELiTE",
-		"eSc",
-		"EVO",
-		"FaNGDiNG0",
-		"FGT",
-		"FRDS",
-		"FUM",
-		"HAiKU",
-		"HD2DVD",
-		"HDS",
-		"HDTime",
-		"Hi10",
-		"ION10",
-		"iPlanet",
-		"JIVE",
-		"KiNGDOM",
-		"Leffe",
-		"LiGaS",
-		"LOAD",
-		"MeGusta",
-		"MkvCage",
-		"mHD",
-		"mSD",
-		"NhaNc3",
-		"nHD",
-		"NOIVTC",
-		"nSD",
-		"Oj",
-		"Ozlem",
-		"PiRaTeS",
-		"PRoDJi",
-		"RAPiDCOWS",
-		"RARBG",
-		"RetroPeeps",
-		"RDN",
-		"REsuRRecTioN",
-		"RMTeam",
-		"SANTi",
-		"SicFoI",
-		"SPASM",
-		"SM737",
-		"SPDVD",
-		"STUTTERSHIT",
-		"TBS",
-		"Telly",
-		"TM",
-		"UPiNSMOKE",
-		"URANiME",
-		"WAF",
-		"xRed",
-		"XS",
-		"YIFY",
-		"YTS",
-		"Zeus",
-		"ZKBL",
-		"ZmN",
-		"ZMNT",
-	},
-	"BHD": {
-		"Sicario",
-		"TOMMY",
-		"x0r",
-		"nikt0",
-		"FGT",
-		"d3g",
-		"MeGusta",
-		"YIFY",
-		"tigole",
-		"TEKNO3D",
-		"C4K",
-		"RARBG",
-		"4K4U",
-		"EASports",
-		"ReaLHD",
-		"Telly",
-		"AOC",
-		"WKS",
-		"SasukeducK",
-		"CRUCiBLE",
-		"iFT",
-		"ProRes",
-		"MezRips",
-		"Flights",
-		"BiTOR",
-		"iVy",
-		"QxR",
-		"SyncUP",
-		"OFT",
-		"TGS",
-	},
-	"BLU": {
-		"[Oj]",
-		"3LTON",
-		"4yEo",
-		"ADE",
-		"AFG",
-		"AniHLS",
-		"AnimeRG",
-		"AniURL",
-		"AROMA",
-		"aXXo",
-		"B3LLUM",
-		"BHDStudio",
-		"Brrip",
-		"CHD",
-		"CM8",
-		"CrEwSaDe",
-		"d3g",
-		"DeadFish",
-		"DNL",
-		"DTLegacy",
-		"ELiTE",
-		"eSc",
-		"EZTV",
-		"EZTV.RE",
-		"F13",
-		"FaNGDiNG0",
-		"FGT",
-		"Flights",
-		"flower",
-		"FRDS",
-		"FUM",
-		"HAiKU",
-		"hallowed",
-		"HD2DVD",
-		"HDS",
-		"HDTime",
-		"Hi10",
-		"ION10",
-		"iPlanet",
-		"JIVE",
-		"KiNGDOM",
-		"LAMA",
-		"Leffe",
-		"LEGi0N",
-		"LOAD",
-		"MeGusta",
-		"mHD",
-		"mSD",
-		"NhaNc3",
-		"nHD",
-		"nikt0",
-		"NOIVTC",
-		"nSD",
-		"OFT",
-		"PiRaTeS",
-		"playBD",
-		"PlaySD",
-		"playXD",
-		"PRODJi",
-		"RAPiDCOWS",
-		"RARBG",
-		"RetroPeeps",
-		"RDN",
-		"REsuRRecTioN",
-		"RMTeam",
-		"SANTi",
-		"SasukeducK",
-		"SicFoI",
-		"SPASM",
-		"SPDVD",
-		"STUTTERSHIT",
-		"Telly",
-		"TheFarm",
-		"TM",
-		"TRiToN",
-		"UPiNSMOKE",
-		"URANiME",
-		"VN_Foxcore",
-		"WAF",
-		"WKS",
-		"x0r",
-		"xRed",
-		"XS",
-		"YIFY",
-		"ZKBL",
-		"ZmN",
-		"ZMNT",
-	},
-	"CBR": {
-		"4K4U",
-		"afm72",
-		"Alcaide_Kira",
-		"AROMA",
-		"ASM",
-		"Bandi",
-		"BiTOR",
-		"BLUDV",
-		"Bluespots",
-		"BOLS",
-		"CaNNIBal",
-		"Comando", //nolint:misspell // Specific group spelling.
-		"d3g",
-		"DepraveD",
-		"EMBER",
-		"FGT",
-		"FreetheFish",
-		"Garshasp",
-		"Ghost",
-		"Grym",
-		"HDS",
-		"Hi10",
-		"HiQVE",
-		"Hiro360",
-		"ImE",
-		"ION10",
-		"iVy",
-		"Judas",
-		"LAMA",
-		"Langbard",
-		"Lapumia",
-		"LION",
-		"MeGusta",
-		"MONOLITH",
-		"MRCS",
-		"NaNi",
-		"Natty",
-		"nikt0",
-		"OEPlus",
-		"OFT",
-		"OsC",
-		"Panda",
-		"PANDEMONiUM",
-		"PHOCiS",
-		"PiRaTeS",
-		"PYC",
-		"QxR",
-		"r00t",
-		"Ralphy",
-		"RARBG",
-		"RetroPeeps",
-		"RZeroX",
-		"S74Ll10n",
-		"SAMPA",
-		"Sicario",
-		"SiCFoI",
-		"Silence",
-		"SkipTT",
-		"SM737",
-		"SPDVD",
-		"STUTTERSHIT",
-		"SWTYBLZ",
-		"t3nzin",
-		"TAoE",
-		"TEKNO3D",
-		"Telly",
-		"TGx",
-		"Tigole",
-		"TSP",
-		"TSPxL",
-		"TWA",
-		"UnKn0wn",
-		"VXT",
-		"Vyndros",
-		"W32",
-		"Will1869",
-		"x0r",
-		"YIFY",
-		"YTS.MX",
-		"YTS",
-	},
-	"DP": {
-		"ARCADE",
-		"aXXo",
-		"BANDOLEROS",
-		"BONE",
-		"BRrip",
-		"CM8",
-		"CrEwSaDe",
-		"CTFOH",
-		"dAV1nci",
-		"DNL",
-		"eranger2",
-		"FaNGDiNG0",
-		"FGT",
-		"FiSTER",
-		"flower",
-		"GalaxyTV",
-		"HD2DVD",
-		"HDTime",
-		"HorribleSubs",
-		"iHYTECH",
-		"ION10",
-		"iPlanet",
-		"KiNGDOM",
-		"LAMA",
-		"MeGusta",
-		"mHD",
-		"mSD",
-		"NaNi",
-		"NhaNc3",
-		"nHD",
-		"nikt0",
-		"nSD",
-		"OFT",
-		"PiTBULL",
-		"PRODJi",
-		"PSA",
-		"RARBG",
-		"Rifftrax",
-		"ROCKETRACCOON",
-		"SANTi",
-		"SasukeducK",
-		"SEEDSTER",
-		"ShAaNiG",
-		"Sicario",
-		"STUTTERSHIT",
-		"Subsplease",
-		"SyncUp",
-		"TAoE",
-		"TGALAXY",
-		"TGx",
-		"TORRENTGALAXY",
-		"ToVaR",
-		"Trix",
-		"TSP",
-		"TSPxL",
-		"ViSION",
-		"VXT",
-		"WAF",
-		"WKS",
-		"X0r",
-		"YIFY",
-		"YTS",
-	},
-	"GPW": {
-		"ALT",
-		"aXXo",
-		"BATWEB",
-		"BlackTV",
-		"BitsTV",
-		"BMDRu",
-		"BRrip",
-		"CM8",
-		"CrEwSaDe",
-		"CTFOH",
-		"CTRLHD",
-		"DDHDTV",
-		"DNL",
-		"DreamHD",
-		"ENTHD",
-		"FaNGDiNG0",
-		"FGT",
-		"HD2DVD",
-		"HDTime",
-		"HDT",
-		"Huawei",
-		"GPTHD",
-		"ION10",
-		"iPlanet",
-		"KiNGDOM",
-		"Leffe",
-		"Mp4Ba",
-		"mHD",
-		"MiniHD",
-		"mSD",
-		"MOMOWEB",
-		"nHD",
-		"nikt0",
-		"NSBC",
-		"nSD",
-		"NhaNc3",
-		"NukeHD",
-		"OFT",
-		"PRODJi",
-		"RARBG",
-		"RDN",
-		"SANTi",
-		"SeeHD",
-		"SeeWEB",
-		"SM737",
-		"SonyHD",
-		"STUTTERSHIT",
-		"TAGWEB",
-		"ViSION",
-		"VXT",
-		"WAF",
-		"x0r",
-		"Xiaomi",
-		"YIFY",
-	},
-	"HHD": {
-		"aXXo",
-		"BONE",
-		"BRrip",
-		"CM8",
-		"CrEwSaDe",
-		"CTFOH",
-		"dAV1nci",
-		"d3g",
-		"DNL",
-		"FaNGDiNG0",
-		"GalaxyTV",
-		"HD2DVD",
-		"HDTime",
-		"iHYTECH",
-		"ION10",
-		"iPlanet",
-		"KiNGDOM",
-		"LAMA",
-		"MeGusta",
-		"mHD",
-		"mSD",
-		"NaNi",
-		"NhaNc3",
-		"nHD",
-		"nikt0",
-		"nSD",
-		"OFT",
-		"PRODJi",
-		"RARBG",
-		"Rifftrax",
-		"SANTi",
-		"SasukeducK",
-		"ShAaNiG",
-		"Sicario",
-		"STUTTERSHIT",
-		"TGALAXY",
-		"TORRENTGALAXY",
-		"TSP",
-		"TSPxL",
-		"ViSION",
-		"VXT",
-		"WAF",
-		"WKS",
-		"x0r",
-		"YAWNiX",
-		"YIFY",
-		"YTS",
-		"PSA",
-		"EVO",
-	},
-	"LT": {
-		"EVO",
-	},
-	"MTV": {
-		"3LTON",
-		"[Oj]",
-		"aXXo",
-		"BDP",
-		"BRrip",
-		"CM8",
-		"CrEwSaDe",
-		"CMCT",
-		"DeadFish",
-		"DNL",
-		"ELiTE",
-		"AFG",
-		"ZMNT",
-		"FaNGDiNG0",
-		"FRDS",
-		"FUM",
-		"h65",
-		"HD2DVD",
-		"HDTime",
-		"ION10",
-		"iPlanet",
-		"JIVE",
-		"KiNGDOM",
-		"LAMA",
-		"Leffe",
-		"LOAD",
-		"mHD",
-		"mRS",
-		"mSD",
-		"NhaNc3",
-		"nHD",
-		"nikt0",
-		"nSD",
-		"PandaRG",
-		"PRODJi",
-		"QxR",
-		"RARBG",
-		"RDN",
-		"SANTi",
-		"STUTTERSHIT",
-		"TERMiNAL",
-		"TM",
-		"ViSiON",
-		"WAF",
-		"x0r",
-		"XS",
-		"YIFY",
-		"ZKBL",
-		"ZmN",
-	},
-	"NBL": {
-		"0neshot",
-		"3LTON",
-		"4yEo",
-		"[Oj]",
-		"AFG",
-		"AkihitoSubs",
-		"AniHLS",
-		"Anime Time",
-		"AnimeRG",
-		"AniURL",
-		"ASW",
-		"BakedFish",
-		"bonkai77",
-		"Cleo",
-		"DeadFish",
-		"DeeJayAhmed",
-		"ELiTE",
-		"EMBER",
-		"eSc",
-		"EVO",
-		"FGT",
-		"FUM",
-		"GERMini",
-		"HAiKU",
-		"Hi10",
-		"ION10",
-		"JacobSwaggedUp",
-		"JIVE",
-		"Judas",
-		"LOAD",
-		"MeGusta",
-		"Mr.Deadpool",
-		"mSD",
-		"NemDiggers",
-		"neoHEVC",
-		"NhaNc3",
-		"NOIVTC",
-		"PlaySD",
-		"playXD",
-		"project-gxs",
-		"PSA",
-		"QaS",
-		"Ranger",
-		"RAPiDCOWS",
-		"Raze",
-		"Reaktor",
-		"REsuRRecTioN",
-		"RMTeam",
-		"ROBOTS",
-		"SpaceFish",
-		"SPASM",
-		"SSA",
-		"Telly",
-		"Tenrai-Sensei",
-		"TM",
-		"Trix",
-		"URANiME",
-		"VipapkStudios",
-		"ViSiON",
-		"Wardevil",
-		"xRed",
-		"XS",
-		"YakuboEncodes",
-		"YuiSubs",
-		"ZKBL",
-		"ZmN",
-		"ZMNT",
-	},
-	"OE": {
-		"0neshot",
-		"3LT0N",
-		"4K4U",
-		"4yEo",
-		"$andra",
-		"[Oj]",
-		"AFG",
-		"AkihitoSubs",
-		"Alcaide_Kira",
-		"AniHLS",
-		"Anime Time",
-		"AnimeRG",
-		"AniURL",
-		"AOC",
-		"AR",
-		"AROMA",
-		"ASW",
-		"aXXo",
-		"BakedFish",
-		"BiTOR",
-		"BRrip",
-		"bonkai",
-		"Cleo",
-		"CM8",
-		"C4K",
-		"CrEwSaDe",
-		"core",
-		"d3g",
-		"DDR",
-		"DE3PM",
-		"DeadFish",
-		"DeeJayAhmed",
-		"DNL",
-		"ELiTE",
-		"EMBER",
-		"eSc",
-		"EVO",
-		"EZTV",
-		"FaNGDiNG0",
-		"FGT",
-		"fenix",
-		"FUM",
-		"FRDS",
-		"FROZEN",
-		"GalaxyTV",
-		"GalaxyRG",
-		"GalaxyRG265",
-		"GERMini",
-		"Grym",
-		"GrymLegacy",
-		"HAiKU",
-		"HD2DVD",
-		"HDTime",
-		"Hi10",
-		"HiQVE",
-		"ION10",
-		"iPlanet",
-		"iVy",
-		"JacobSwaggedUp",
-		"JIVE",
-		"Judas",
-		"KiNGDOM",
-		"LAMA",
-		"Leffe",
-		"LiGaS",
-		"LOAD",
-		"LycanHD",
-		"MeGusta",
-		"MezRips",
-		"mHD",
-		"Mr.Deadpool",
-		"mSD",
-		"NemDiggers",
-		"neoHEVC",
-		"NeXus",
-		"nHD",
-		"nikt0",
-		"nSD",
-		"NhaNc3",
-		"NOIVTC",
-		"pahe.in",
-		"PlaySD",
-		"playXD",
-		"PRODJi",
-		"ProRes",
-		"project-gxs",
-		"PSA",
-		"QaS",
-		"Ranger",
-		"RAPiDCOWS",
-		"RARBG",
-		"Raze",
-		"RCDiVX",
-		"RDN",
-		"Reaktor",
-		"REsuRRecTioN",
-		"RMTeam",
-		"ROBOTS",
-		"rubix",
-		"SANTi",
-		"SHUTTERSHIT",
-		"SM737",
-		"SpaceFish",
-		"SPASM",
-		"SSA",
-		"TBS",
-		"Telly",
-		"Tenrai-Sensei",
-		"TERMiNAL",
-		"TGx",
-		"TM",
-		"topaz",
-		"ToVaR",
-		"TSP",
-		"TSPxL",
-		"UnKn0wn",
-		"URANiME",
-		"UTR",
-		"VipapkSudios",
-		"ViSION",
-		"WAF",
-		"Wardevil",
-		"x0r",
-		"xRed",
-		"XS",
-		"YakuboEncodes",
-		"YAWNTiC",
-		"YAWNiX",
-		"YIFY",
-		"YTS",
-		"YuiSubs",
-		"ZKBL",
-		"ZmN",
-		"ZMNT",
-	},
-	"OTW": {
-		"[Oj]",
-		"3LTON",
-		"4yEo",
-		"ADE",
-		"AFG",
-		"AniHLS",
-		"AnimeRG",
-		"AniURL",
-		"AROMA",
-		"aXXo",
-		"CM8",
-		"CrEwSaDe",
-		"DeadFish",
-		"DNL",
-		"ELiTE",
-		"eSc",
-		"FaNGDiNG0",
-		"FGT",
-		"Flights",
-		"FRDS",
-		"FUM",
-		"GalaxyRG",
-		"HAiKU",
-		"HD2DVD",
-		"HDS",
-		"HDTime",
-		"Hi10",
-		"INFINITY",
-		"ION10",
-		"iPlanet",
-		"JIVE",
-		"KiNGDOM",
-		"LAMA",
-		"Leffe",
-		"LOAD",
-		"mHD",
-		"NhaNc3",
-		"nHD",
-		"NOIVTC",
-		"nSD",
-		"PiRaTeS",
-		"PRODJi",
-		"RAPiDCOWS",
-		"RARBG",
-		"RDN",
-		"REsuRRecTioN",
-		"RMTeam",
-		"SANTi",
-		"SicFoI",
-		"SPASM",
-		"STUTTERSHIT",
-		"Telly",
-		"TM",
-		"UPiNSMOKE",
-		"WAF",
-		"xRed",
-		"XS",
-		"YELLO",
-		"YIFY",
-		"YTS",
-		"ZKBL",
-		"ZmN",
-		"4f8c4100292",
-		"Azkars",
-		"Sync0rdi",
-	},
-	"PHD": {
-		"RARBG",
-		"STUTTERSHIT",
-		"LiGaS",
-		"DDR",
-		"Zeus",
-		"TBS",
-		"SWTYBLZ",
-		"EASports",
-		"C4K",
-		"d3g",
-		"MeGusta",
-		"YTS",
-		"YIFY",
-		"Tigole",
-		"x0r",
-		"nikt0",
-		"NhaNc3",
-		"PRoDJi",
-		"RDN",
-		"SANTi",
-		"FaNGDiNG0",
-		"FRDS",
-		"HD2DVD",
-		"HDTime",
-		"iPlanet",
-		"KiNGDOM",
-		"Leffe",
-		"4K4U",
-		"Xiaomi",
-		"VisionXpert",
-		"WKS",
-	},
-	"PTP": {
-		"aXXo",
-		"BMDru",
-		"BRrip",
-		"CM8",
-		"CrEwSaDe",
-		"CTFOH",
-		"d3g",
-		"DNL",
-		"FaNGDiNG0",
-		"HD2DVD",
-		"HDT",
-		"HDTime",
-		"ION10",
-		"iPlanet",
-		"KiNGDOM",
-		"mHD",
-		"mSD",
-		"nHD",
-		"nikt0",
-		"nSD",
-		"NhaNc3",
-		"OFT",
-		"PRODJi",
-		"SANTi",
-		"SPiRiT",
-		"STUTTERSHIT",
-		"ViSION",
-		"VXT",
-		"WAF",
-		"x0r",
-		"YIFY",
-		"LAMA",
-		"WORLD",
-	},
-	"PTT": {
-		"ViP",
-		"BiRD",
-		"M@RTiNU$",
-		"inTGrity",
-		"CiNEMAET",
-		"MusicET",
-		"TeamET",
-		"R2D2",
-	},
-	"RAS": {
-		"YTS",
-		"YiFY",
-		"LAMA",
-		"MeGUSTA",
-		"NAHOM",
-		"GalaxyRG",
-		"RARBG",
-		"INFINITY",
-	},
-	"RHD": {
-		"1XBET",
-		"MEGA",
-		"MTZ",
-		"Whistler",
-		"WOTT",
-		"Taylor.D",
-		"HELD",
-		"FSX",
-		"FuN",
-		"MagicX",
-		"w00t",
-		"PaTroL",
-		"BB",
-		"266ers",
-		"GTF",
-		"JellyfinPlex",
-		"2BA",
-		"FritzBox",
-		"FUNXDTV",
-	},
-	"TOS": {
-		"FL3ER",
-		"SUNS3T",
-		"WoLFHD",
-		"EXTREME",
-		"Slay3R",
-		"3T3AM",
-		"BARBiE",
-	},
-	"BTN": {
-		"3LTON",
-		"4yEo",
-		"7VFr33104D",
-		"AFG",
-		"AniHLS",
-		"AnimeRG",
-		"AniURL",
-		"DeadFish",
-		"ELiTE",
-		"eSc",
-		"EVO",
-		"FGT",
-		"FUM",
-		"GalaxyTV",
-		"GRANiTEN",
-		"HAiKU",
-		"Hi10",
-		"ION10",
-		"JFF",
-		"JIVE",
-		"LOAD",
-		"MeGusta",
-		"mSD",
-		"NhaNc3",
-		"NOIVTC",
-		"PHOENiX",
-		"PlaySD",
-		"playXD",
-		"Pr1M371M3",
-		"RAPiDCOWS",
-		"REsuRRecTioN",
-		"RMTeam",
-		"ROBOTS",
-		"RUBiK",
-		"SPASM",
-		"Telly",
-		"TM",
-		"URANiME",
-		"ViSiON",
-		"W45Ps",
-		"xRed",
-		"XS",
-		"ZKBL",
-		"ZmN",
-		"ZMNT",
-		"[Oj]",
-	},
-	"ULCX": {
-		"4K4U",
-		"AROMA",
-		"d3g",
-		"EDGE2020",
-		"EMBER",
-		"FGT",
-		"FnP",
-		"FRDS",
-		"Grym",
-		"Hi10",
-		"iAHD",
-		"INFINITY",
-		"ION10",
-		"iVy",
-		"Judas",
-		"LAMA",
-		"MeGusta",
-		"NAHOM",
-		"Niblets",
-		"nikt0",
-		"NuBz",
-		"OFT",
-		"QxR",
-		"Ralphy",
-		"RARBG",
-		"Sicario",
-		"SM737",
-		"SPDVD",
-		"SWTYBLZ",
-		"TAoE",
-		"TGx",
-		"Tigole",
-		"TSP",
-		"TSPxL",
-		"VXT",
-		"Vyndros",
-		"Will1869",
-		"x0r",
-		"YIFY",
-		"Alcaide_Kira",
-		"PHOCiS",
-		"HDT",
-		"SPx",
-		"seedpool",
-	},
-	"YUS": {
-		"ADDICTION",
-		"B3LLUM",
-		"BANDOLEROS",
-		"BigEasy",
-		"CINEMAXIS",
-		"D3US",
-		"d3g",
-		"DUMMESCHWEDEN",
-		"FGT",
-		"GRANiTEN",
-		"KiNGDOM",
-		"Lama",
-		"MeGusta",
-		"MezRips",
-		"mHD",
-		"mRS",
-		"msd",
-		"NeXus",
-		"NhaNc3",
-		"nHD",
-		"NorTekst",
-		"NORViNE",
-		"PANDEMONiUM",
-		"PiTBULL",
-		"RAPiDCOWS",
-		"RARBG",
-		"Radarr",
-		"RCDiVX",
-		"RDN",
-		"ROCKETRACCOON",
-		"SANTi",
-		"SHOWTiME",
-		"SOOSi",
-		"SUXWIC",
-		"TOXVIO",
-		"TWA",
-		"VXT",
-		"Will1869",
-		"x0r",
-		"XS",
-		"YIFY",
-		"YOLAND",
-		"YTS",
-		"ZKBL",
-		"ZmN",
-		"ZMNT",
-	},
 }

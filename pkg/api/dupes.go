@@ -3,7 +3,9 @@
 
 package api
 
-import "time"
+import (
+	"time"
+)
 
 // DupeEntry describes one tracker duplicate-search hit before or after local
 // filtering.
@@ -59,22 +61,24 @@ type DupeMatch struct {
 // DupeCheckResult is the duplicate-search outcome for one tracker. Raw contains
 // tracker results before filtering, Filtered contains blocking matches, and
 // skipped or failed checks carry Status plus SkipReason or Error. SkipCode is a
-// stable machine-readable reason, while SkipRules names upload rules that caused
-// rule-failure skips.
+// stable machine-readable reason.
 type DupeCheckResult struct {
-	Tracker     string
-	Raw         []DupeEntry
-	Filtered    []DupeEntry
-	HasDupes    bool
-	ContentFail bool
-	Match       DupeMatch
-	Notes       []string
-	Skipped     bool
-	SkipReason  string
+	Tracker               string
+	CanonicalReleaseName  string
+	UploadReleaseName     string
+	ProjectionFingerprint WorkflowFingerprint
+	CriteriaFingerprint   WorkflowFingerprint
+	ProjectionStatus      ReadinessStatus
+	Raw                   []DupeEntry
+	Filtered              []DupeEntry
+	HasDupes              bool
+	ContentFail           bool
+	Match                 DupeMatch
+	Notes                 []string
+	Skipped               bool
+	SkipReason            string
 	// SkipCode is a stable machine-readable skip reason.
-	SkipCode string
-	// SkipRules are upload rule keys that produced a rule-failure skip.
-	SkipRules []string
+	SkipCode  string
 	Status    string
 	Error     string
 	CheckedAt time.Time `ts_type:"string"`

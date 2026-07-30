@@ -16,7 +16,7 @@ import (
 )
 
 func TestBuildScreenshotSelections(t *testing.T) {
-	meta := api.PreparedMetadata{}
+	meta := api.ScreenshotSubject{}
 	selections := buildScreenshotSelections(4, 600, 24, meta)
 	if len(selections) != 4 {
 		t.Fatalf("expected 4 selections, got %d", len(selections))
@@ -78,7 +78,7 @@ func TestParseDurationValueParsesMediaInfoText(t *testing.T) {
 
 func TestBuildScreenshotSelectionsUsesLongMediaInfoDuration(t *testing.T) {
 	duration := parseDurationValue("10571.090286852")
-	selections := buildScreenshotSelections(5, duration, 23.976, api.PreparedMetadata{})
+	selections := buildScreenshotSelections(5, duration, 23.976, api.ScreenshotSubject{})
 	if len(selections) != 5 {
 		t.Fatalf("expected 5 selections, got %d", len(selections))
 	}
@@ -89,12 +89,28 @@ func TestBuildScreenshotSelectionsUsesLongMediaInfoDuration(t *testing.T) {
 
 func TestFilterScreenshotsMatchingSelectionsRejectsStaleTimestamps(t *testing.T) {
 	selections := []api.ScreenshotSelection{
-		{Index: 0, TimestampSeconds: 528.5, Frame: 12671},
-		{Index: 1, TimestampSeconds: 2322.0, Frame: 55671},
+		{
+			Index:            0,
+			TimestampSeconds: 528.5,
+			Frame:            12671,
+		},
+		{
+			Index:            1,
+			TimestampSeconds: 2322.0,
+			Frame:            55671,
+		},
 	}
 	images := []api.ScreenshotImage{
-		{Index: 0, TimestampSeconds: 0.5, Path: "stale.png"},
-		{Index: 1, TimestampSeconds: 2322.1, Path: "current.png"},
+		{
+			Index:            0,
+			TimestampSeconds: 0.5,
+			Path:             "stale.png",
+		},
+		{
+			Index:            1,
+			TimestampSeconds: 2322.1,
+			Path:             "current.png",
+		},
 	}
 
 	filtered := filterScreenshotsMatchingSelections(images, selections, 23.976)
@@ -120,7 +136,7 @@ func TestResolveVideoInfoPrefersLargestSelectedBDMVPlaylistFile(t *testing.T) {
 		}
 	}
 
-	meta := api.PreparedMetadata{
+	meta := api.ScreenshotSubject{
 		SourcePath: root,
 		DiscType:   "BDMV",
 		VideoPath:  small,
@@ -162,7 +178,7 @@ func TestResolveVideoSourcePrefersLargestSelectedBDMVPlaylistFile(t *testing.T) 
 		}
 	}
 
-	meta := api.PreparedMetadata{
+	meta := api.ScreenshotSubject{
 		SourcePath: root,
 		DiscType:   "BDMV",
 		VideoPath:  small,
@@ -199,10 +215,10 @@ func TestResolveVideoInfoLogsSeasonPackSourceKind(t *testing.T) {
 	}
 
 	logger := &screenshotRecordingLogger{}
-	meta := api.PreparedMetadata{
+	meta := api.ScreenshotSubject{
 		SourcePath:        filepath.Join(tmpDir, "Example.Release.2026.S01"),
 		MediaInfoJSONPath: mediaInfoPath,
-		MediaInfoCategory: "TV",
+		MediaCategory:     "TV",
 		TVPack:            true,
 	}
 
@@ -269,7 +285,7 @@ func TestResolveVideoInfoBuildsOrderedDVDSegments(t *testing.T) {
 		t.Fatalf("write mediainfo: %v", err)
 	}
 
-	info, err := resolveVideoInfo(context.Background(), api.PreparedMetadata{
+	info, err := resolveVideoInfo(context.Background(), api.ScreenshotSubject{
 		SourcePath:        root,
 		DiscType:          "DVD",
 		MediaInfoJSONPath: mediaInfoPath,
@@ -304,7 +320,7 @@ func TestResolveDVDVideoSegmentTimingsUsesMeasuredDurations(t *testing.T) {
 		{Stderr: []byte("Duration: 00:01:20.00, start: 0.000000, bitrate: 500 kb/s\n")},
 	}}
 
-	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, api.NopLogger{}); err != nil {
+	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, 0, api.NopLogger{}); err != nil {
 		t.Fatalf("resolve DVD segment timings: %v", err)
 	}
 	info := videoInfo{SourcePath: vobs[0].path, Segments: segments}
@@ -326,8 +342,41 @@ func TestResolveDVDVideoSegmentTimingsRejectsUnknownDuration(t *testing.T) {
 		Stderr: []byte("Duration: N/A, start: 0.000000, bitrate: N/A\n"),
 	}}}
 
-	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, api.NopLogger{}); err == nil {
+	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, 0, api.NopLogger{}); err == nil {
 		t.Fatal("expected unknown segment duration to fail instead of using file size")
+	}
+}
+
+func TestResolveDVDVideoSegmentTimingsReconcilesMPEGPSWrap(t *testing.T) {
+	segments := buildVideoSegments([]dvdTitleVOB{
+		{path: "VTS_01_1.VOB"},
+		{path: "VTS_01_2.VOB"},
+	})
+	titleDuration := 120.0
+	runner := &scriptedRunner{results: []CommandResult{
+		{Stderr: []byte("Duration: 00:00:20.00, start: 0.000000, bitrate: 4000 kb/s\n")},
+		{Stderr: []byte("Duration: 26:30:23.718, start: 0.000000, bitrate: 500 kb/s\n")},
+	}}
+
+	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, titleDuration, api.NopLogger{}); err != nil {
+		t.Fatalf("resolve DVD segment timings: %v", err)
+	}
+	if segments[1].StartSeconds != 20 || segments[1].DurationSeconds != 100 {
+		t.Fatalf("reconciled segments = %#v", segments)
+	}
+}
+
+func TestResolveDVDVideoSegmentTimingsRejectsNonFinalOverrun(t *testing.T) {
+	segments := buildVideoSegments([]dvdTitleVOB{
+		{path: "VTS_01_1.VOB"},
+		{path: "VTS_01_2.VOB"},
+	})
+	runner := &scriptedRunner{results: []CommandResult{{
+		Stderr: []byte("Duration: 00:02:00.00, start: 0.000000, bitrate: 4000 kb/s\n"),
+	}}}
+
+	if err := resolveDVDVideoSegmentTimings(context.Background(), runner, "ffmpeg", segments, 100, api.NopLogger{}); err == nil {
+		t.Fatal("expected non-final segment overrun to fail")
 	}
 }
 
@@ -335,8 +384,16 @@ func TestResolveSegmentCandidatesFallsForwardFromPrimarySegment(t *testing.T) {
 	info := videoInfo{
 		SourcePath: "VTS_01_1.VOB",
 		Segments: []videoSegment{
-			{SourcePath: "VTS_01_1.VOB", StartSeconds: 0, DurationSeconds: 2},
-			{SourcePath: "VTS_01_2.VOB", StartSeconds: 2, DurationSeconds: 98},
+			{
+				SourcePath:      "VTS_01_1.VOB",
+				StartSeconds:    0,
+				DurationSeconds: 2,
+			},
+			{
+				SourcePath:      "VTS_01_2.VOB",
+				StartSeconds:    2,
+				DurationSeconds: 98,
+			},
 		},
 	}
 

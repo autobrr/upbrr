@@ -6,7 +6,6 @@ package azfamily
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -16,54 +15,104 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/autobrr/upbrr/internal/paths"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func upload(ctx context.Context, site siteDefinition, req trackers.UploadRequest) (api.UploadSummary, error) {
-	state, err := newSession(ctx, site, req.AppConfig.MainSettings.DBPath, req.Logger)
+// prepareUpload performs authenticated lookup for every intent. Upload intent
+// also creates the remote task and uploads screenshots during preparation, then
+// captures the finalized form, client session, redirect, and local torrent
+// target for one later submission.
+func prepareUpload(ctx context.Context, site siteDefinition, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
+	if req.Intent != trackers.PreparationIntentUpload {
+		preview, err := buildUploadDryRun(ctx, site, req)
+		if err != nil {
+			return trackers.PreparedOperation{}, err
+		}
+		return trackers.NewPreparedOperation(preview, nil, nil), nil
+	}
+
+	state, err := newSession(ctx, site, req.Runtime.DBPath, req.Logger)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return trackers.PreparedOperation{}, err
 	}
 	media, err := lookupMediaCode(ctx, site, state, req.Meta)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return trackers.PreparedOperation{}, err
 	}
 	if media.Missing || strings.TrimSpace(media.MediaCode) == "" {
-		return api.UploadSummary{}, fmt.Errorf("trackers: %s media missing from tracker database; add it on-site at %s/add/%s then retry", site.Name, site.BaseURL, categorySlug(req.Meta))
+		return trackers.PreparedOperation{}, fmt.Errorf(
+			"trackers: %s media missing from tracker database; add it on-site at %s/add/%s then retry",
+			site.Name,
+			site.BaseURL,
+			categorySlug(req.Meta),
+		)
 	}
 	if requests, err := searchRequests(ctx, site, state, req.Meta); err == nil && len(requests) > 0 && req.Logger != nil {
 		req.Logger.Infof("trackers: %s matched %d open request(s)", site.Name, len(requests))
 	}
 
-	torrentPath, err := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	torrentPath, err := trackers.PreparedUploadTorrentPath(req.Meta)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s prepared upload torrent: %w", site.Name, err)
 	}
 	fileInfo, err := resolveMediaInfoText(req.Meta)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return trackers.PreparedOperation{}, err
 	}
 	task, err := createTask(ctx, site, state, req, media.MediaCode, fileInfo, torrentPath)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return trackers.PreparedOperation{}, err
 	}
 	screenshots, err := uploadScreenshots(ctx, site, state, req)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return trackers.PreparedOperation{}, err
 	}
 	if len(screenshots) < 3 {
-		return api.UploadSummary{}, fmt.Errorf("trackers: %s image host returned fewer than 3 screenshots", site.Name)
+		return trackers.PreparedOperation{}, fmt.Errorf("trackers: %s image host returned fewer than 3 screenshots", site.Name)
 	}
 	payload, err := buildFinalPayload(ctx, site, state, req, media.MediaCode, task, fileInfo, screenshots)
 	if err != nil {
-		return api.UploadSummary{}, err
+		return trackers.PreparedOperation{}, err
 	}
-	resp, err := postForm(ctx, noRedirectClient(state.client), task.RedirectURL, payload, map[string]string{
-		"Referer":    task.RedirectURL,
+	trackerTorrentPath, err := resolveTrackerTorrentPath(req.Meta, req.Runtime.DBPath, site.Name)
+	if err != nil {
+		return trackers.PreparedOperation{}, err
+	}
+	preview := api.TrackerDryRunEntry{
+		Tracker:          site.Name,
+		Status:           "ready",
+		Message:          "upload payload prepared",
+		ReleaseName:      payload.Get("file_name"),
+		DescriptionGroup: "azfamily",
+		Description:      payload.Get("description"),
+		Endpoint:         site.BaseURL + "/upload/" + categorySlug(req.Meta),
+		Payload:          valuesToMap(payload),
+		Files: []api.TrackerDryRunFile{{
+			Field:   "torrent_file",
+			Path:    torrentPath,
+			Present: true,
+		}},
+	}
+	return trackers.NewPreparedOperation(preview, func(submitCtx context.Context) (api.UploadSummary, error) {
+		return submitPreparedUpload(submitCtx, site, state.client, task.RedirectURL, payload, trackerTorrentPath, req.Logger)
+	}, nil), nil
+}
+
+func submitPreparedUpload(
+	ctx context.Context,
+	site siteDefinition,
+	client *http.Client,
+	redirectURL string,
+	payload url.Values,
+	trackerTorrentPath string,
+	logger api.Logger,
+) (api.UploadSummary, error) {
+	resp, err := postForm(ctx, noRedirectClient(client), redirectURL, payload, map[string]string{
+		"Referer":    redirectURL,
 		"User-Agent": azCookieUserAgent,
 	})
 	if err != nil {
@@ -82,12 +131,11 @@ func upload(ctx context.Context, site siteDefinition, req trackers.UploadRequest
 		return api.UploadSummary{}, fmt.Errorf("trackers: %s upload failed: missing torrent id", site.Name)
 	}
 	downloadURL := strings.Replace(torrentURL, "/torrent/", "/download/torrent/", 1)
-	trackerTorrentPath, err := resolveTrackerTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath, site.Name)
-	if err != nil {
-		return api.UploadSummary{}, err
-	}
-	if err := downloadTrackerTorrent(ctx, state.client, downloadURL, trackerTorrentPath); err != nil {
-		return api.UploadSummary{}, fmt.Errorf("trackers: %s personalized torrent download: %w", site.Name, err)
+	persistedPath := ""
+	if err := downloadTrackerTorrent(ctx, client, downloadURL, trackerTorrentPath); err != nil {
+		trackers.LogRegisteredTorrentUnavailable(logger, site.Name)
+	} else {
+		persistedPath = trackerTorrentPath
 	}
 	return api.UploadSummary{
 		Uploaded: 1,
@@ -96,13 +144,13 @@ func upload(ctx context.Context, site siteDefinition, req trackers.UploadRequest
 			TorrentID:   torrentID,
 			DownloadURL: downloadURL,
 			TorrentURL:  torrentURL,
-			TorrentPath: trackerTorrentPath,
+			TorrentPath: persistedPath,
 		}},
 	}, nil
 }
 
-func buildUploadDryRun(ctx context.Context, site siteDefinition, req trackers.UploadRequest) (api.TrackerDryRunEntry, error) {
-	state, err := newSession(ctx, site, req.AppConfig.MainSettings.DBPath, req.Logger)
+func buildUploadDryRun(ctx context.Context, site siteDefinition, req trackers.PreparationInput) (api.TrackerDryRunEntry, error) {
+	state, err := newSession(ctx, site, req.Runtime.DBPath, req.Logger)
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
@@ -110,7 +158,7 @@ func buildUploadDryRun(ctx context.Context, site siteDefinition, req trackers.Up
 	if err != nil {
 		return api.TrackerDryRunEntry{}, err
 	}
-	torrentPath, _ := resolveTorrentPath(req.Meta, req.AppConfig.MainSettings.DBPath)
+	torrentPath, _ := trackers.PreparedUploadTorrentPath(req.Meta)
 	if media.Missing || strings.TrimSpace(media.MediaCode) == "" {
 		return api.TrackerDryRunEntry{
 			Tracker: site.Name,
@@ -139,7 +187,7 @@ func buildUploadDryRun(ctx context.Context, site siteDefinition, req trackers.Up
 		Tracker:          site.Name,
 		Status:           "ready",
 		Message:          "dry-run payload generated",
-		ReleaseName:      editName(site, req.Meta),
+		ReleaseName:      payload.Get("file_name"),
 		DescriptionGroup: "azfamily",
 		Description:      payload.Get("description"),
 		Endpoint:         site.BaseURL + "/upload/" + categorySlug(req.Meta),
@@ -152,7 +200,13 @@ func buildUploadDryRun(ctx context.Context, site siteDefinition, req trackers.Up
 	}, nil
 }
 
-func createTask(ctx context.Context, site siteDefinition, state sessionState, req trackers.UploadRequest, mediaCode, fileInfo, torrentPath string) (taskInfo, error) {
+func createTask(
+	ctx context.Context,
+	site siteDefinition,
+	state sessionState,
+	req trackers.PreparationInput,
+	mediaCode, fileInfo, torrentPath string,
+) (taskInfo, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	for key, value := range map[string]string{
@@ -210,45 +264,12 @@ func createTask(ctx context.Context, site siteDefinition, state sessionState, re
 	}, nil
 }
 
-func resolveMediaInfoText(meta api.PreparedMetadata) (string, error) {
-	if path := strings.TrimSpace(meta.MediaInfoTextPath); path != "" {
-		if data, err := os.ReadFile(path); err == nil {
-			return string(data), nil
-		}
-	}
-	return "", errors.New("trackers: missing MediaInfo/BDInfo text")
-}
-
-func resolveTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error) {
-	for _, candidate := range []string{strings.TrimSpace(meta.TorrentPath), strings.TrimSpace(meta.ClientTorrentPath)} {
-		if candidate == "" {
-			continue
-		}
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil
-		}
-	}
-	if strings.TrimSpace(dbPath) != "" && strings.TrimSpace(meta.SourcePath) != "" {
-		tmpRoot, err := db.Subdir(dbPath, "tmp")
-		if err == nil {
-			tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
-			if err == nil {
-				guessed := filepath.Join(tmpDir, base+".torrent")
-				if info, err := os.Stat(guessed); err == nil && !info.IsDir() {
-					return guessed, nil
-				}
-			}
-		}
-	}
-	return "", errors.New("trackers: torrent file not found")
-}
-
-func resolveTrackerTorrentPath(meta api.PreparedMetadata, dbPath string, tracker string) (string, error) {
+func resolveTrackerTorrentPath(meta api.UploadSubject, dbPath string, tracker string) (string, error) {
 	tmpRoot, err := db.Subdir(dbPath, "tmp")
 	if err != nil {
 		return "", fmt.Errorf("trackers: %w", err)
 	}
-	tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	tmpDir, base, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return "", fmt.Errorf("trackers: %w", err)
 	}
@@ -291,23 +312,8 @@ func downloadTrackerTorrent(ctx context.Context, client *http.Client, downloadUR
 		return fmt.Errorf("trackers: personalized torrent request build: %w", err)
 	}
 	req.Header.Set("User-Agent", azCookieUserAgent)
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("trackers: personalized torrent request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("status %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("trackers: read personalized torrent response: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-		return fmt.Errorf("trackers: create personalized torrent dir: %w", err)
-	}
-	if err := os.WriteFile(targetPath, body, 0o600); err != nil {
-		return fmt.Errorf("trackers: write personalized torrent: %w", err)
+	if err := trackers.DownloadRegisteredTorrent(ctx, client, req, targetPath); err != nil {
+		return fmt.Errorf("trackers: personalized registered torrent: %w", err)
 	}
 	return nil
 }

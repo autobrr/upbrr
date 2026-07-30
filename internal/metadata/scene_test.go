@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -57,7 +59,7 @@ func TestSceneDetectorSRRDB(t *testing.T) {
 	nfoDir := t.TempDir()
 	detector := newSRRDBDetector(server.Client(), server.URL, cacheDir, nfoDir)
 
-	meta := api.PreparedMetadata{VideoPath: "/data/Example.Release.mkv"}
+	meta := preparationstate.State{VideoPath: "/data/Example.Release.mkv"}
 	result, err := detector.Detect(context.Background(), meta)
 	if err != nil {
 		t.Fatalf("Detect error: %v", err)
@@ -91,7 +93,7 @@ func TestSceneDetectorSRRDBFetchesIMDbWhenSearchOmitsIt(t *testing.T) {
 	nfoDir := t.TempDir()
 	detector := newSRRDBDetector(server.Client(), server.URL, cacheDir, nfoDir)
 
-	meta := api.PreparedMetadata{VideoPath: "/data/Example.Release.mkv"}
+	meta := preparationstate.State{VideoPath: "/data/Example.Release.mkv"}
 	result, err := detector.Detect(context.Background(), meta)
 	if err != nil {
 		t.Fatalf("Detect error: %v", err)
@@ -139,7 +141,7 @@ func TestSceneDetectorSRRDBLogsNFODownloadLifecycle(t *testing.T) {
 	detector := newSRRDBDetector(client, server.URL, t.TempDir(), t.TempDir())
 	detector.logger = logger
 
-	result, err := detector.Detect(context.Background(), api.PreparedMetadata{VideoPath: "/data/Example.Release.mkv"})
+	result, err := detector.Detect(context.Background(), preparationstate.State{VideoPath: "/data/Example.Release.mkv"})
 	if err != nil {
 		t.Fatalf("Detect error: %v", err)
 	}
@@ -180,7 +182,7 @@ func TestSceneDetectorSRRDBNFOFetchFailurePreservesMatch(t *testing.T) {
 
 	detector := newSRRDBDetector(client, server.URL, t.TempDir(), t.TempDir())
 
-	result, err := detector.Detect(context.Background(), api.PreparedMetadata{VideoPath: "/data/Example.Release.mkv"})
+	result, err := detector.Detect(context.Background(), preparationstate.State{VideoPath: "/data/Example.Release.mkv"})
 	if err == nil {
 		t.Fatalf("expected NFO fetch failure to be returned")
 	}
@@ -229,7 +231,7 @@ func TestSceneDetectorSRRDBDetailsFailureDirectNFOSuccessPreservesWarning(t *tes
 	nfoDir := t.TempDir()
 	detector := newSRRDBDetector(client, server.URL, t.TempDir(), nfoDir)
 
-	result, err := detector.Detect(context.Background(), api.PreparedMetadata{VideoPath: "/data/Example.Release.mkv"})
+	result, err := detector.Detect(context.Background(), preparationstate.State{VideoPath: "/data/Example.Release.mkv"})
 	if err == nil {
 		t.Fatalf("expected details failure to remain visible")
 	}
@@ -273,7 +275,7 @@ func TestSceneDetectorSRRDBDetailsAndNFOFailuresPreserveBothCauses(t *testing.T)
 
 	detector := newSRRDBDetector(client, server.URL, t.TempDir(), t.TempDir())
 
-	result, err := detector.Detect(context.Background(), api.PreparedMetadata{VideoPath: "/data/Example.Release.mkv"})
+	result, err := detector.Detect(context.Background(), preparationstate.State{VideoPath: "/data/Example.Release.mkv"})
 	if err == nil {
 		t.Fatalf("expected details and NFO failures to be returned")
 	}
@@ -308,7 +310,7 @@ func TestSceneDetectorSRRDBNFOFailurePreservesMatch(t *testing.T) {
 	}
 	detector := newSRRDBDetector(server.Client(), server.URL, cacheDir, nfoDir)
 
-	result, err := detector.Detect(context.Background(), api.PreparedMetadata{VideoPath: "/data/Example.Release.mkv"})
+	result, err := detector.Detect(context.Background(), preparationstate.State{VideoPath: "/data/Example.Release.mkv"})
 	if err == nil {
 		t.Fatalf("expected NFO save failure to be returned")
 	} else if !strings.Contains(err.Error(), "scene: nfo dir") {
@@ -344,7 +346,7 @@ func TestSceneDetectorSRRDBDetailsFailureCachedNFOPreservesWarning(t *testing.T)
 	}
 	detector := newSRRDBDetector(server.Client(), server.URL, cacheDir, nfoDir)
 
-	result, err := detector.Detect(context.Background(), api.PreparedMetadata{VideoPath: "/data/Example.Release.mkv"})
+	result, err := detector.Detect(context.Background(), preparationstate.State{VideoPath: "/data/Example.Release.mkv"})
 	if err == nil {
 		t.Fatalf("expected details failure to remain visible")
 	}
@@ -377,7 +379,7 @@ func TestSceneDetectorSRRDBCachedNFOPreservesAttachment(t *testing.T) {
 	}
 	detector := newSRRDBDetector(server.Client(), server.URL, cacheDir, nfoDir)
 
-	result, err := detector.Detect(context.Background(), api.PreparedMetadata{VideoPath: "/data/Example.Release.mkv"})
+	result, err := detector.Detect(context.Background(), preparationstate.State{VideoPath: "/data/Example.Release.mkv"})
 	if err != nil {
 		t.Fatalf("Detect error: %v", err)
 	}
@@ -414,7 +416,7 @@ func TestSceneDetectorSRRDBNFOContextCancellationIsFatal(t *testing.T) {
 
 	detector := newSRRDBDetector(client, server.URL, t.TempDir(), t.TempDir())
 
-	result, err := detector.Detect(ctx, api.PreparedMetadata{VideoPath: "/data/Example.Release.mkv"})
+	result, err := detector.Detect(ctx, preparationstate.State{VideoPath: "/data/Example.Release.mkv"})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got result=%#v err=%v", result, err)
 	}
@@ -495,10 +497,10 @@ func (h srrdbFallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-func renamedSceneMeta(videoPath string) api.PreparedMetadata {
-	return api.PreparedMetadata{
-		VideoPath:   videoPath,
-		ExternalIDs: api.ExternalIDs{IMDBID: 1234567},
+func renamedSceneMeta(videoPath string) preparationstate.State {
+	return preparationstate.State{
+		VideoPath: videoPath,
+		Identity:  api.ExternalIdentity{IMDBID: 1234567},
 		Release: api.ReleaseInfo{
 			Resolution: "1080p",
 			Year:       2026,
@@ -614,11 +616,18 @@ func TestSceneDetectorFolderMatchDetectsRenamedFile(t *testing.T) {
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	meta := api.PreparedMetadata{
-		SourcePath:  "/data/Example.Driver.2026.1080p.BluRay.x264-GRP",
-		VideoPath:   "/data/Example.Driver.2026.1080p.BluRay.x264-GRP/example-driver-renamed.mkv",
-		ExternalIDs: api.ExternalIDs{IMDBID: 12345},
-		Release:     api.ReleaseInfo{Resolution: "1080p", Year: 2026, Group: "GRP", Source: "BluRay", Codec: []string{"x264"}, Language: []string{"English"}},
+	meta := preparationstate.State{
+		SourcePath: "/data/Example.Driver.2026.1080p.BluRay.x264-GRP",
+		VideoPath:  "/data/Example.Driver.2026.1080p.BluRay.x264-GRP/example-driver-renamed.mkv",
+		Identity:   api.ExternalIdentity{IMDBID: 12345},
+		Release: api.ReleaseInfo{
+			Resolution: "1080p",
+			Year:       2026,
+			Group:      "GRP",
+			Source:     "BluRay",
+			Codec:      []string{"x264"},
+			Language:   []string{"English"},
+		},
 	}
 	detector := newSRRDBDetector(server.Client(), server.URL, t.TempDir(), t.TempDir())
 	result, err := detector.Detect(context.Background(), meta)
@@ -695,9 +704,9 @@ func TestSceneDetectorTVWordSearchRunsBeforeIMDBFallback(t *testing.T) {
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	meta := api.PreparedMetadata{
-		VideoPath:   "/data/" + release + ".mkv",
-		ExternalIDs: api.ExternalIDs{IMDBID: 1234567},
+	meta := preparationstate.State{
+		VideoPath: "/data/" + release + ".mkv",
+		Identity:  api.ExternalIdentity{IMDBID: 1234567},
 		Release: api.ReleaseInfo{
 			Category:   "TV",
 			Title:      "Example Show",
@@ -747,9 +756,9 @@ func TestSceneDetectorTVWordSearchAllowsSeasonOnly(t *testing.T) {
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	meta := api.PreparedMetadata{
-		VideoPath:   "/data/" + release + ".mkv",
-		ExternalIDs: api.ExternalIDs{IMDBID: 1234567},
+	meta := preparationstate.State{
+		VideoPath: "/data/" + release + ".mkv",
+		Identity:  api.ExternalIdentity{IMDBID: 1234567},
 		Release: api.ReleaseInfo{
 			Category:   "TV",
 			Title:      "Example Show",
@@ -799,9 +808,9 @@ func TestSceneDetectorTVWordMissSkipsIMDBFallback(t *testing.T) {
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	meta := api.PreparedMetadata{
-		VideoPath:   "/data/" + release + ".mkv",
-		ExternalIDs: api.ExternalIDs{IMDBID: 1234567},
+	meta := preparationstate.State{
+		VideoPath: "/data/" + release + ".mkv",
+		Identity:  api.ExternalIdentity{IMDBID: 1234567},
 		Release: api.ReleaseInfo{
 			Category:   "TV",
 			Title:      "Example Show",
@@ -946,7 +955,7 @@ func TestSceneDetectorRSearchSoftFailsOnNetworkError(t *testing.T) {
 	detector := newSRRDBDetector(client, "https://api.srrdb.com", t.TempDir(), t.TempDir())
 
 	meta := renamedSceneMeta("/data/Example Movie 2026 1080p BluRay x264 GRP.mkv")
-	meta.ExternalIDs = api.ExternalIDs{} // force the r: fallback path
+	meta.Identity = api.ExternalIdentity{} // force the r: fallback path
 	result, err := detector.Detect(context.Background(), meta)
 	if err != nil {
 		t.Fatalf("expected soft-fail (nil error) on r: network error, got %v", err)
@@ -971,7 +980,7 @@ func TestSceneDetectorRFallbackFolderFirstWhenNoIMDb(t *testing.T) {
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	meta := api.PreparedMetadata{
+	meta := preparationstate.State{
 		SourcePath: "/data/" + release,
 		VideoPath:  "/data/" + release + "/example.driver.2026.1080p.bluray.x264-grp.mkv",
 	}
@@ -998,7 +1007,7 @@ func TestSceneDetectorRSearchSoftFailsOnMalformedBody(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	detector := newSRRDBDetector(server.Client(), server.URL, t.TempDir(), t.TempDir())
-	result, err := detector.Detect(context.Background(), api.PreparedMetadata{VideoPath: "/data/Example.Release.mkv"})
+	result, err := detector.Detect(context.Background(), preparationstate.State{VideoPath: "/data/Example.Release.mkv"})
 	if err != nil {
 		t.Fatalf("expected soft-fail (nil error) on malformed r: body, got %v", err)
 	}
@@ -1015,7 +1024,7 @@ func TestSceneDetectorIMDBFallbackSkippedWithoutIMDbID(t *testing.T) {
 
 	detector := newSRRDBDetector(server.Client(), server.URL, t.TempDir(), t.TempDir())
 	meta := renamedSceneMeta("/data/Example Movie 2026 1080p BluRay x264 GRP.mkv")
-	meta.ExternalIDs = api.ExternalIDs{} // no known id at detect time
+	meta.Identity = api.ExternalIdentity{} // no known id at detect time
 	result, err := detector.Detect(context.Background(), meta)
 	if err != nil {
 		t.Fatalf("Detect error: %v", err)
@@ -1046,11 +1055,15 @@ func TestSceneDetectorFallsBackToRWhenIMDbFindsNoMatch(t *testing.T) {
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	meta := api.PreparedMetadata{
-		SourcePath:  "/data/" + release,
-		VideoPath:   "/data/" + release + "/example.driver.2026.1080p.bluray.x264-grp.mkv",
-		ExternalIDs: api.ExternalIDs{IMDBID: 12345},
-		Release:     api.ReleaseInfo{Resolution: "1080p", Year: 2026, Group: "GRP"},
+	meta := preparationstate.State{
+		SourcePath: "/data/" + release,
+		VideoPath:  "/data/" + release + "/example.driver.2026.1080p.bluray.x264-grp.mkv",
+		Identity:   api.ExternalIdentity{IMDBID: 12345},
+		Release: api.ReleaseInfo{
+			Resolution: "1080p",
+			Year:       2026,
+			Group:      "GRP",
+		},
 	}
 	detector := newSRRDBDetector(server.Client(), server.URL, t.TempDir(), t.TempDir())
 	result, err := detector.Detect(context.Background(), meta)

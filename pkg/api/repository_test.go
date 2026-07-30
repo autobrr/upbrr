@@ -12,12 +12,42 @@ func TestNormalizeCategory(t *testing.T) {
 		want  Category
 		valid bool
 	}{
-		{name: "movie", input: "movie", want: CategoryMovie, valid: true},
-		{name: "film alias", input: "Film", want: CategoryMovie, valid: true},
-		{name: "tv series alias", input: "tv-show", want: CategoryTV, valid: true},
-		{name: "episode alias", input: "episode", want: CategoryTV, valid: true},
-		{name: "empty", input: "", want: CategoryUnknown, valid: false},
-		{name: "unsupported", input: "Music", want: Category("Music"), valid: false},
+		{
+			name:  "movie",
+			input: "movie",
+			want:  CategoryMovie,
+			valid: true,
+		},
+		{
+			name:  "film alias",
+			input: "Film",
+			want:  CategoryMovie,
+			valid: true,
+		},
+		{
+			name:  "tv series alias",
+			input: "tv-show",
+			want:  CategoryTV,
+			valid: true,
+		},
+		{
+			name:  "episode alias",
+			input: "episode",
+			want:  CategoryTV,
+			valid: true,
+		},
+		{
+			name:  "empty",
+			input: "",
+			want:  CategoryUnknown,
+			valid: false,
+		},
+		{
+			name:  "unsupported",
+			input: "Music",
+			want:  Category("Music"),
+			valid: false,
+		},
 	}
 
 	for _, tc := range tests {

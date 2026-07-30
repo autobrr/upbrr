@@ -24,7 +24,6 @@ import (
 	"github.com/pkg/browser"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/guiapp"
 	"github.com/autobrr/upbrr/internal/redaction"
 )
 
@@ -38,6 +37,9 @@ type Options struct {
 	CLIConfig CLIConfig
 	// DevelopmentNoAuth enables the development-only auth bypass for loopback hosts.
 	DevelopmentNoAuth bool
+	// APITokens supplies optional runtime-only compatibility credentials for /api/v1.
+	// Persisted credentials are loaded from web-auth.json.
+	APITokens []APITokenCredential
 }
 
 // Server owns the embedded web UI HTTP server, backend services, auth stores, and event hub.
@@ -45,12 +47,12 @@ type Server struct {
 	cfg                config.Config
 	cliCfg             CLIConfig
 	backend            *Backend
-	picker             nativePicker
 	auth               *authStore
 	sessions           *sessionManager
 	hub                *eventHub
 	authLimiter        *fixedWindowLimiter
 	generalLimiter     *fixedWindowLimiter
+	apiTokens          *apiTokenStore
 	trustedProxies     []*net.IPNet
 	server             *http.Server
 	assets             fs.FS
@@ -107,16 +109,20 @@ func New(opts Options) (*Server, error) {
 			sessions.Close()
 		}
 	}()
+	apiTokens, err := newAPITokenStore(opts.APITokens, authStore)
+	if err != nil {
+		return nil, err
+	}
 	srv := &Server{
 		cfg:            cfg,
 		cliCfg:         cliCfg,
 		backend:        backend,
-		picker:         newNativePicker(),
 		auth:           authStore,
 		sessions:       sessions,
 		hub:            hub,
 		authLimiter:    newFixedWindowLimiter(10, 5*time.Minute),
 		generalLimiter: newFixedWindowLimiter(300, time.Minute),
+		apiTokens:      apiTokens,
 		trustedProxies: parseTrustedProxies(cliCfg.TrustedProxies),
 		assets:         assets,
 	}
@@ -387,14 +393,14 @@ func unwrapBrowserIPv6Host(host string) (string, bool) {
 }
 
 func resolveWebAssets() (fs.FS, error) {
-	assets, err := guiapp.ResolveAssets(nil)
+	assets, err := resolveAssets(nil)
 	if err == nil {
 		return assets, nil
 	}
 
-	// Keep the legacy repo-local fallback so local development can still serve
-	// generated assets even if embedding was skipped for some reason.
-	distPath := filepath.Join("gui", "frontend", "dist")
+	// Keep the repo-local fallback so local development can still serve
+	// generated assets when embedding was skipped.
+	distPath := filepath.Join("webui", "dist")
 	if stat, statErr := os.Stat(filepath.Join(distPath, "index.html")); statErr == nil && !stat.IsDir() {
 		return os.DirFS(distPath), nil
 	}

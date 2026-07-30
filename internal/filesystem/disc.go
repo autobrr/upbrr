@@ -17,8 +17,9 @@ import (
 
 var errDiscFound = errors.New("disc type found")
 
-// DetectDiscType scans the path for disc folder markers.
-// It returns "BDMV", "DVD", "HDDVD", or "" when no disc type is found.
+// DetectDiscType recursively scans root for disc folder markers and returns
+// "BDMV", "DVD", "HDDVD", or "" when none is found. BDMV matching is
+// case-insensitive; VIDEO_TS and HVDVD_TS matching is exact.
 func DetectDiscType(ctx context.Context, root string) (string, error) {
 	trimmed := strings.TrimSpace(root)
 	if trimmed == "" {

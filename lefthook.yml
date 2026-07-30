@@ -2,7 +2,7 @@ min_version: 2.1.0
 
 # Skip hooks with `git commit --no-verify` or `LEFTHOOK=0 git commit ...`.
 # Go-only contributors: `go install github.com/evilmartians/lefthook/v2@v2.1.0 && lefthook install`.
-# Frontend/full-stack contributors: `pnpm install` in gui/frontend/ plus `lefthook install`.
+# Frontend/full-stack contributors: `pnpm install` in webui/ plus `lefthook install`.
 
 # Execution model:
 # - Top-level jobs (frontend, go) run in parallel — they touch disjoint file sets.
@@ -16,12 +16,15 @@ pre-commit:
     - rebase
   jobs:
     - name: frontend
-      root: "gui/frontend/"
+      root: "webui/"
       group:
         piped: true
         jobs:
           - name: format
             glob: "**/*.{ts,tsx,css,scss,json,md,html,yml,yaml}"
+            exclude:
+              - "webui/CLAUDE.md"
+              - "webui/e2e/CLAUDE.md"
             run: pnpm exec prettier --write --cache --ignore-unknown {staged_files}
             stage_fixed: true
             fail_text: "Prettier failed. Fix the errors above or bypass with --no-verify."
@@ -29,7 +32,7 @@ pre-commit:
           - name: lint
             glob: "**/*.{ts,tsx}"
             run: pnpm exec eslint --cache --no-error-on-unmatched-pattern {staged_files}
-            fail_text: "ESLint failed. Fix errors above, or run `pnpm --dir gui/frontend run lint` locally."
+            fail_text: "ESLint failed. Fix errors above, or run `pnpm --dir webui run lint` locally."
 
     - name: go
       group:
@@ -40,6 +43,11 @@ pre-commit:
             run: golangci-lint fmt {staged_files}
             stage_fixed: true
             fail_text: "golangci-lint fmt failed. See output above."
+
+          - name: literalpolicy
+            glob: "**/*.go"
+            run: go run ./cmd/literalpolicy
+            fail_text: "Composite literal layout failed. Run `make fmt-go`."
 
           - name: logpolicy
             glob:
@@ -57,10 +65,10 @@ pre-push:
   parallel: true
   jobs:
     - name: frontend-typecheck
-      root: "gui/frontend/"
+      root: "webui/"
       glob: "**/*.{ts,tsx}"
       run: pnpm run typecheck
-      fail_text: "TypeScript typecheck failed. Run `pnpm --dir gui/frontend run typecheck`."
+      fail_text: "TypeScript typecheck failed. Run `pnpm --dir webui run typecheck`."
 
     - name: go-lint
       glob: "**/*.go"

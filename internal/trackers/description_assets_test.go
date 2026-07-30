@@ -15,33 +15,34 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
-	"github.com/autobrr/upbrr/internal/paths"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	dbsvc "github.com/autobrr/upbrr/internal/services/db"
-	descriptionunit3d "github.com/autobrr/upbrr/internal/services/description/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
 type stubRepo struct {
-	mu                  sync.Mutex
-	trackerRecords      []api.TrackerMetadata
-	trackerRecordsErr   error
-	trackerRecordsCalls int
-	selections          []api.ScreenshotFinalSelection
-	selectionsErr       error
-	selectionsCalls     int
-	screenshotSlots     []api.ScreenshotSlot
-	screenshotSlotsErr  error
-	screenshotSlotCalls int
-	uploads             []api.UploadedImageLink
-	uploadsErr          error
-	uploadsCalls        int
-	deletedUploads      []string
-	createdUploads      []api.UploadRecord
-	statusUpdates       []uploadStatusUpdate
-	descriptionOverride string
-	overrideGroupKey    string
-	overrideCalls       int
+	mu                     sync.Mutex
+	trackerRecords         []api.TrackerMetadata
+	trackerRecordsErr      error
+	trackerRecordsCalls    int
+	selections             []api.ScreenshotFinalSelection
+	selectionsErr          error
+	selectionsCalls        int
+	screenshotSlots        []api.ScreenshotSlot
+	screenshotSlotsErr     error
+	screenshotSlotCalls    int
+	uploads                []api.UploadedImageLink
+	uploadsErr             error
+	uploadsCalls           int
+	deletedUploads         []string
+	createdUploads         []api.UploadRecord
+	statusUpdates          []uploadStatusUpdate
+	descriptionOverride    string
+	descriptionOverrideErr error
+	overrideGroupKey       string
+	overrideCalls          int
 }
 
 type uploadStatusUpdate struct {
@@ -49,18 +50,76 @@ type uploadStatusUpdate struct {
 	status  string
 }
 
+type descriptionAssetsTestDefinition struct {
+	name   string
+	family Family
+}
+
+func (d descriptionAssetsTestDefinition) Name() string { return d.name }
+
+func (descriptionAssetsTestDefinition) UploadContentMode() UploadContentMode {
+	return UploadContentModeDescription
+}
+
+func (descriptionAssetsTestDefinition) DefaultBaseURL() string {
+	return "https://tracker.example.invalid"
+}
+
+func (d descriptionAssetsTestDefinition) TrackerFamily() Family { return d.family }
+
+func (descriptionAssetsTestDefinition) Prepare(context.Context, PreparationInput) (TrackerPlan, *PreparationFailure) {
+	return TrackerPlan{}, nil
+}
+
+func descriptionAssetsTestRegistry(t *testing.T) *Registry {
+	t.Helper()
+	registry := NewRegistry()
+	policies := map[string]*ImageHostPolicy{
+		"HDB": {
+			AllowedHosts:         []string{"hdb"},
+			OwnedHosts:           []string{"hdb"},
+			DisableWithoutRehost: true,
+		},
+		"MTV": {AllowedHosts: []string{"imgbox", "imgbb"}},
+		"OE":  {AllowedHosts: []string{"imgbox", "imgbb", "onlyimage", "ptscreens", "passtheimage"}},
+		"PTP": {AllowedHosts: []string{"pixhost", "imgbb", "onlyimage", "ptscreens", "passtheimage"}},
+	}
+	for _, item := range []descriptionAssetsTestDefinition{
+		{name: "AITHER", family: FamilyUnit3D},
+		{name: "HHD", family: FamilyUnit3D},
+		{name: "ANT", family: FamilyStandalone},
+		{name: "HDB", family: FamilyStandalone},
+		{name: "MTV", family: FamilyStandalone},
+		{name: "NBL", family: FamilyStandalone},
+		{name: "OE", family: FamilyUnit3D},
+		{name: "PTP", family: FamilyStandalone},
+		{name: "RHD", family: FamilyUnit3D},
+	} {
+		policy := policies[item.name]
+		if err := registry.RegisterDescriptor(Descriptor{
+			Name:       item.name,
+			Definition: item,
+			Family:     item.family,
+			ImageHost:  policy,
+		}); err != nil {
+			t.Fatalf("register %s description asset policy: %v", item.name, err)
+		}
+	}
+	return registry
+}
+
 func (s *stubRepo) GetByPath(context.Context, string) (api.FileMetadata, error) {
 	return api.FileMetadata{}, nil
 }
 func (s *stubRepo) Save(context.Context, api.FileMetadata) error { return nil }
-func (s *stubRepo) GetExternalIDs(context.Context, string) (api.ExternalIDs, error) {
-	return api.ExternalIDs{}, nil
+func (s *stubRepo) GetExternalIdentity(context.Context, string) (api.ExternalIdentity, error) {
+	return api.ExternalIdentity{}, nil
 }
-func (s *stubRepo) SaveExternalIDs(context.Context, api.ExternalIDs) error { return nil }
-func (s *stubRepo) GetExternalMetadata(context.Context, string) (api.ExternalMetadata, error) {
-	return api.ExternalMetadata{}, nil
+func (s *stubRepo) SaveExternalIdentity(context.Context, api.ExternalIdentity) error { return nil }
+func (s *stubRepo) GetExternalMetadata(context.Context, string) (api.SourceScopedMetadata, error) {
+	return api.SourceScopedMetadata{}, nil
 }
-func (s *stubRepo) SaveExternalMetadata(context.Context, api.ExternalMetadata) error { return nil }
+func (s *stubRepo) SaveExternalMetadata(context.Context, api.SourceScopedMetadata) error { return nil }
 func (s *stubRepo) GetDVDMediaInfo(context.Context, string) (api.DVDMediaInfo, error) {
 	return api.DVDMediaInfo{}, internalerrors.ErrNotFound
 }
@@ -86,16 +145,27 @@ func (s *stubRepo) GetDescriptionOverride(_ context.Context, _ string, groupKey 
 	if expectedGroupKey == "" && strings.TrimSpace(groupKey) != "" {
 		return api.DescriptionOverride{}, internalerrors.ErrNotFound
 	}
-	return api.DescriptionOverride{SourcePath: "/tmp/source", GroupKey: s.overrideGroupKey, Description: s.descriptionOverride}, nil
+	return api.DescriptionOverride{
+		SourcePath:  "/tmp/source",
+		GroupKey:    s.overrideGroupKey,
+		Description: s.descriptionOverride,
+	}, nil
 }
 func (s *stubRepo) ListDescriptionOverridesByPath(context.Context, string) ([]api.DescriptionOverride, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.overrideCalls++
+	if s.descriptionOverrideErr != nil {
+		return nil, s.descriptionOverrideErr
+	}
 	if s.descriptionOverride == "" {
 		return nil, internalerrors.ErrNotFound
 	}
-	return []api.DescriptionOverride{{SourcePath: "/tmp/source", GroupKey: s.overrideGroupKey, Description: s.descriptionOverride}}, nil
+	return []api.DescriptionOverride{{
+		SourcePath:  "/tmp/source",
+		GroupKey:    s.overrideGroupKey,
+		Description: s.descriptionOverride,
+	}}, nil
 }
 func (s *stubRepo) SaveDescriptionOverride(context.Context, api.DescriptionOverride) error {
 	return nil
@@ -225,11 +295,11 @@ type stubImageService struct {
 	repo    *stubRepo
 }
 
-func (s *stubImageService) ListCandidates(context.Context, api.PreparedMetadata) ([]api.ScreenshotImage, error) {
+func (s *stubImageService) ListCandidates(context.Context, api.ImageHostingSubject) ([]api.ScreenshotImage, error) {
 	return nil, nil
 }
 
-func (s *stubImageService) Upload(_ context.Context, meta api.PreparedMetadata, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
+func (s *stubImageService) Upload(_ context.Context, meta api.ImageHostingSubject, host string, usageScope string, images []api.ScreenshotImage) ([]api.UploadedImageLink, error) {
 	s.mu.Lock()
 	s.calls = append(s.calls, host)
 	err := s.errs[host]
@@ -276,9 +346,9 @@ func TestResolveDescriptionAssetsPrefersDBDescription(t *testing.T) {
 	repo := &stubRepo{
 		trackerRecords: []api.TrackerMetadata{{Tracker: "AITHER", Description: "db desc"}},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source", TrackerData: []api.TrackerMetadata{{Tracker: "AITHER", Description: "meta desc"}}}
+	meta := api.UploadSubject{SourcePath: "/tmp/source", TrackerData: []api.TrackerMetadata{{Tracker: "AITHER", Description: "meta desc"}}}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -287,26 +357,23 @@ func TestResolveDescriptionAssetsPrefersDBDescription(t *testing.T) {
 	}
 }
 
-func TestResolveDescriptionAssetsWithPreparedPreservesCallerAssets(t *testing.T) {
+func TestPreparedDescriptionAssetsReturnsDefensiveCopy(t *testing.T) {
 	t.Parallel()
 
 	prepared := DescriptionAssets{
 		Description: "prepared description",
 		MenuImages:  []api.ScreenshotImage{{Path: filepath.Join(t.TempDir(), "prepared-menu.png")}},
 	}
-	resolved, err := ResolveDescriptionAssetsWithPrepared(
-		context.Background(),
-		"AITHER",
-		api.PreparedMetadata{},
-		&stubRepo{trackerRecordsErr: errors.New("must not query repository")},
-		api.NopLogger{},
-		&prepared,
-	)
+	resolved, err := PreparedDescriptionAssets(&prepared)
 	if err != nil {
 		t.Fatalf("resolve prepared assets: %v", err)
 	}
 	if resolved.Description != prepared.Description || len(resolved.MenuImages) != 1 || resolved.MenuImages[0].Path != prepared.MenuImages[0].Path {
 		t.Fatalf("resolved assets = %#v, want %#v", resolved, prepared)
+	}
+	resolved.MenuImages[0].Path = "mutated"
+	if resolved.MenuImages[0].Path == prepared.MenuImages[0].Path {
+		t.Fatal("prepared assets share mutable menu image storage")
 	}
 }
 
@@ -317,9 +384,9 @@ func TestResolveDescriptionAssetsDedupesAfterSanitizingBotSignatures(t *testing.
 			{Tracker: "AITHER", Description: "Body"},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -331,12 +398,27 @@ func TestResolveDescriptionAssetsDedupesAfterSanitizingBotSignatures(t *testing.
 func TestApplyResolvedDescriptionScreenshotsKeepsMenuImagesSeparate(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/screen1.png", Order: 0, Source: string(api.ScreenshotPurposeFinal)},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/menu1.png", Order: 1, Source: api.ScreenshotSelectionSourceDVDMenu},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/screen2.png", Order: 2, Source: string(api.ScreenshotPurposeFinal)},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/screen1.png",
+				Order:      0,
+				Source:     string(api.ScreenshotPurposeFinal),
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/menu1.png",
+				Order:      1,
+				Source:     api.ScreenshotSelectionSourceDVDMenu,
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/screen2.png",
+				Order:      2,
+				Source:     string(api.ScreenshotPurposeFinal),
+			},
 		},
 	}
 	assets := DescriptionAssets{}
@@ -346,7 +428,7 @@ func TestApplyResolvedDescriptionScreenshotsKeepsMenuImagesSeparate(t *testing.T
 		{Path: "/tmp/screen2.png", ImgURL: "https://img.example/screen2.png"},
 	}
 
-	applyResolvedDescriptionScreenshots(context.Background(), meta, repo, nil, &assets, resolved)
+	applyResolvedDescriptionScreenshots(context.Background(), "", meta, repo, nil, &assets, resolved)
 
 	if len(assets.MenuImages) != 1 || !strings.Contains(assets.MenuImages[0].ImgURL, "menu1.png") {
 		t.Fatalf("expected menu image to stay separate, got %#v", assets.MenuImages)
@@ -372,14 +454,29 @@ func TestDescriptionAssetsPreserveMenuClassificationAcrossRehost(t *testing.T) {
 		filepath.Join(root, "normal-screen.png"),
 	}
 	repo := &stubRepo{selections: []api.ScreenshotFinalSelection{
-		{SourcePath: sourcePath, ImagePath: paths[0], Order: 0, Source: api.ScreenshotSelectionSourceDVDMenu},
-		{SourcePath: sourcePath, ImagePath: paths[1], Order: 1, Source: api.ScreenshotSelectionSourceMenu},
-		{SourcePath: sourcePath, ImagePath: paths[2], Order: 2, Source: string(api.ScreenshotPurposeFinal)},
+		{
+			SourcePath: sourcePath,
+			ImagePath:  paths[0],
+			Order:      0,
+			Source:     api.ScreenshotSelectionSourceDVDMenu,
+		},
+		{
+			SourcePath: sourcePath,
+			ImagePath:  paths[1],
+			Order:      1,
+			Source:     api.ScreenshotSelectionSourceMenu,
+		},
+		{
+			SourcePath: sourcePath,
+			ImagePath:  paths[2],
+			Order:      2,
+			Source:     string(api.ScreenshotPurposeFinal),
+		},
 	}}
 	images := &stubImageService{repo: repo}
-	meta := api.PreparedMetadata{SourcePath: sourcePath}
+	meta := api.UploadSubject{SourcePath: sourcePath}
 
-	resolution, err := ensureDescriptionImageHost(
+	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
 		"PTP",
 		meta,
@@ -387,7 +484,7 @@ func TestDescriptionAssetsPreserveMenuClassificationAcrossRehost(t *testing.T) {
 		config.TrackerConfig{},
 		repo,
 		images,
-		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
 	)
 	if err != nil {
 		t.Fatalf("rehost description assets: %v", err)
@@ -396,11 +493,11 @@ func TestDescriptionAssetsPreserveMenuClassificationAcrossRehost(t *testing.T) {
 		t.Fatalf("rehost feedback = %#v", resolution.feedback)
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "PTP", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "PTP", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("resolve rehosted assets: %v", err)
 	}
-	applyResolvedDescriptionScreenshots(context.Background(), meta, repo, nil, &assets, resolution.screenshots)
+	applyResolvedDescriptionScreenshots(context.Background(), "", meta, repo, nil, &assets, resolution.screenshots)
 	assertScreenshotPaths(t, assets.MenuImages, paths[:2])
 	assertScreenshotPaths(t, assets.Screenshots, paths[2:])
 	for _, image := range append(append([]api.ScreenshotImage(nil), assets.MenuImages...), assets.Screenshots...) {
@@ -428,9 +525,24 @@ func TestPartialMenuRemovalUpdatesResolvedAndRenderedDescription(t *testing.T) {
 	autoSecond := filepath.Join(root, "auto-menu-02.png")
 	normal := filepath.Join(root, "normal-screen-01.png")
 	selections := []api.ScreenshotFinalSelection{
-		{SourcePath: sourcePath, ImagePath: autoFirst, Order: 0, Source: api.ScreenshotSelectionSourceDVDMenu},
-		{SourcePath: sourcePath, ImagePath: autoSecond, Order: 1, Source: api.ScreenshotSelectionSourceDVDMenu},
-		{SourcePath: sourcePath, ImagePath: normal, Order: 2, Source: string(api.ScreenshotPurposeFinal)},
+		{
+			SourcePath: sourcePath,
+			ImagePath:  autoFirst,
+			Order:      0,
+			Source:     api.ScreenshotSelectionSourceDVDMenu,
+		},
+		{
+			SourcePath: sourcePath,
+			ImagePath:  autoSecond,
+			Order:      1,
+			Source:     api.ScreenshotSelectionSourceDVDMenu,
+		},
+		{
+			SourcePath: sourcePath,
+			ImagePath:  normal,
+			Order:      2,
+			Source:     string(api.ScreenshotPurposeFinal),
+		},
 	}
 	if err := repo.SaveFinalSelections(context.Background(), sourcePath, selections); err != nil {
 		t.Fatalf("save selections: %v", err)
@@ -475,7 +587,7 @@ func TestPartialMenuRemovalUpdatesResolvedAndRenderedDescription(t *testing.T) {
 		t.Fatalf("save slots: %v", err)
 	}
 
-	meta := api.PreparedMetadata{SourcePath: sourcePath}
+	meta := api.UploadSubject{SourcePath: sourcePath}
 	before := resolveAssetsForTest(t, meta, repo)
 	if len(before.MenuImages) != 2 || len(before.Screenshots) != 1 {
 		t.Fatalf("assets before removal = %#v", before)
@@ -490,7 +602,7 @@ func TestPartialMenuRemovalUpdatesResolvedAndRenderedDescription(t *testing.T) {
 
 	description, err := descriptionunit3d.BuildDescription(
 		context.Background(),
-		meta,
+		api.NewDescriptionSubject(meta),
 		config.Config{Description: config.DescriptionSettingsConfig{
 			DiscMenuHeader:   "Disc menu token",
 			ScreenshotHeader: "Screenshots token",
@@ -511,9 +623,9 @@ func TestPartialMenuRemovalUpdatesResolvedAndRenderedDescription(t *testing.T) {
 	}
 }
 
-func resolveAssetsForTest(t *testing.T, meta api.PreparedMetadata, repo api.MetadataRepository) DescriptionAssets {
+func resolveAssetsForTest(t *testing.T, meta api.UploadSubject, repo UploadPersistence) DescriptionAssets {
 	t.Helper()
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("resolve description assets: %v", err)
 	}
@@ -547,11 +659,21 @@ func assertDescriptionTokensInOrder(t *testing.T, description string, tokens ...
 func TestResolveDescriptionAssetsAppendsMenuSelectionToStoredSlots(t *testing.T) {
 	t.Parallel()
 
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/screen1.png", Order: 0, Source: string(api.ScreenshotPurposeFinal)},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/menu1.png", Order: 1, Source: screenshotPurposeMenu},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/screen1.png",
+				Order:      0,
+				Source:     string(api.ScreenshotPurposeFinal),
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/menu1.png",
+				Order:      1,
+				Source:     screenshotPurposeMenu,
+			},
 		},
 		screenshotSlots: []api.ScreenshotSlot{
 			{
@@ -564,12 +686,24 @@ func TestResolveDescriptionAssetsAppendsMenuSelectionToStoredSlots(t *testing.T)
 			},
 		},
 		uploads: []api.UploadedImageLink{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/screen1.png", Host: "imgbb", UsageScope: globalImageUsageScope, ImgURL: "https://img.example/screen1.png"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/menu1.png", Host: "imgbb", UsageScope: globalImageUsageScope, ImgURL: "https://img.example/menu1.png"},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/screen1.png",
+				Host:       "imgbb",
+				UsageScope: globalImageUsageScope,
+				ImgURL:     "https://img.example/screen1.png",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/menu1.png",
+				Host:       "imgbb",
+				UsageScope: globalImageUsageScope,
+				ImgURL:     "https://img.example/menu1.png",
+			},
 		},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("resolve description assets: %v", err)
 	}
@@ -587,9 +721,9 @@ func TestResolveDescriptionAssetsUsesOverride(t *testing.T) {
 		overrideGroupKey:    "unit3d",
 		trackerRecords:      []api.TrackerMetadata{{Tracker: "AITHER", Description: "db desc"}},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -607,9 +741,9 @@ func TestResolveDescriptionAssetsClearsOverrideWhenSanitizedDescriptionIsEmpty(t
 		overrideGroupKey:    "unit3d",
 		trackerRecords:      []api.TrackerMetadata{{Tracker: "AITHER", Description: "db desc"}},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -627,7 +761,7 @@ func TestResolveDescriptionAssetsUsesCompositeGroupOverride(t *testing.T) {
 		overrideGroupKey:    "unit3d|pixhost|global",
 		trackerRecords:      []api.TrackerMetadata{{Tracker: "AITHER", Description: "db desc"}},
 	}
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		SourcePath: "/tmp/source",
 		DescriptionGroups: []api.DescriptionBuilderGroup{{
 			GroupKey:       "unit3d|pixhost|global",
@@ -636,7 +770,7 @@ func TestResolveDescriptionAssetsUsesCompositeGroupOverride(t *testing.T) {
 		}},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -651,38 +785,39 @@ func TestResolveDescriptionAssetsUsesCompositeGroupOverride(t *testing.T) {
 	}
 }
 
-func TestResolveDescriptionAssetsClearsFinalWhenSanitizedDescriptionIsEmpty(t *testing.T) {
+func TestResolveDescriptionAssetsPreservesFinalDescriptionThatSanitizerWouldEmpty(t *testing.T) {
 	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
-	meta := api.PreparedMetadata{
+	finalDescription := "[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]"
+	meta := api.UploadSubject{
 		SourcePath: sourcePath,
 		DescriptionGroups: []api.DescriptionBuilderGroup{{
 			GroupKey:       "unit3d",
 			Trackers:       []string{"AITHER"},
-			RawDescription: "[center][url=https://github.com/z-ink/uploadrr][img=300]https://i.ibb.co/2NVWb0c/uploadrr.webp[/img][/url][/center]",
+			RawDescription: finalDescription,
 		}},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, nil, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, nil, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if assets.Description != "" {
-		t.Fatalf("expected empty sanitized description, got %q", assets.Description)
+	if assets.Description != finalDescription {
+		t.Fatalf("expected final description preserved, got %q", assets.Description)
 	}
-	if assets.Final {
-		t.Fatalf("expected empty sanitized final description to clear final flag")
+	if !assets.Final {
+		t.Fatal("expected final description flag preserved")
 	}
-	if assets.Override {
-		t.Fatalf("expected empty sanitized final description to clear override flag")
+	if !assets.Override {
+		t.Fatal("expected final override flag preserved")
 	}
 
-	applyResolvedDescriptionScreenshots(context.Background(), meta, nil, nil, &assets, []api.ScreenshotImage{{
+	applyResolvedDescriptionScreenshots(context.Background(), "", meta, nil, nil, &assets, []api.ScreenshotImage{{
 		ImgURL: "https://pixhost.example/1.png",
 		RawURL: "https://pixhost.example/raw-1.png",
 		Host:   "pixhost",
 	}})
-	if len(assets.Screenshots) != 1 {
-		t.Fatalf("expected screenshots preserved for empty final description, got %#v", assets.Screenshots)
+	if len(assets.Screenshots) != 0 {
+		t.Fatalf("expected screenshots not appended to final description, got %#v", assets.Screenshots)
 	}
 }
 
@@ -701,7 +836,7 @@ func TestApplyResolvedDescriptionScreenshotsDoesNotAppendFinalBuilderScreenshots
 		}},
 	}
 
-	applyResolvedDescriptionScreenshots(context.Background(), api.PreparedMetadata{SourcePath: sourcePath}, nil, nil, &assets, []api.ScreenshotImage{{
+	applyResolvedDescriptionScreenshots(context.Background(), "", api.UploadSubject{SourcePath: sourcePath}, nil, nil, &assets, []api.ScreenshotImage{{
 		ImgURL: "https://pixhost.example/1.png",
 		RawURL: "https://pixhost.example/raw-1.png",
 		Host:   "pixhost",
@@ -744,7 +879,7 @@ func TestApplyResolvedDescriptionScreenshotsPreservesFinalNonRenderableImages(t 
 		},
 	}
 
-	applyResolvedDescriptionScreenshots(context.Background(), api.PreparedMetadata{SourcePath: sourcePath}, nil, nil, &assets, []api.ScreenshotImage{{
+	applyResolvedDescriptionScreenshots(context.Background(), "", api.UploadSubject{SourcePath: sourcePath}, nil, nil, &assets, []api.ScreenshotImage{{
 		ImgURL: "https://pixhost.example/1.png",
 		RawURL: "https://pixhost.example/raw-1.png",
 		Host:   "pixhost",
@@ -767,7 +902,7 @@ func TestResolveDescriptionAssetsLoadsStoredCompositeGroupOverride(t *testing.T)
 		overrideGroupKey:    "unit3d|pixhost|global",
 		trackerRecords:      []api.TrackerMetadata{{Tracker: "AITHER", Description: "db desc"}},
 	}
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		SourcePath: "/tmp/source",
 		DescriptionGroups: []api.DescriptionBuilderGroup{{
 			GroupKey:       "unit3d|pixhost|global",
@@ -776,7 +911,7 @@ func TestResolveDescriptionAssetsLoadsStoredCompositeGroupOverride(t *testing.T)
 		}},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -789,7 +924,7 @@ func TestResolveDescriptionAssetsLoadsStoredCompositeGroupOverride(t *testing.T)
 }
 
 func TestResolveDescriptionAssetsUsesTrackerMatchedVariantGroup(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		DescriptionGroups: []api.DescriptionBuilderGroup{
 			{
 				GroupKey:       "unit3d",
@@ -804,7 +939,7 @@ func TestResolveDescriptionAssetsUsesTrackerMatchedVariantGroup(t *testing.T) {
 		},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "HHD", meta, nil, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "HHD", meta, nil, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -821,9 +956,9 @@ func TestResolveDescriptionAssetsDoesNotFallbackToLegacyDefaultGroupOverride(t *
 		descriptionOverride: "legacy default desc",
 		trackerRecords:      []api.TrackerMetadata{{Tracker: "HDB", Description: "db desc"}},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -841,7 +976,7 @@ func TestResolveDescriptionAssetsPrefersCanonicalGroupDescription(t *testing.T) 
 		overrideGroupKey:    "hdb",
 		trackerRecords:      []api.TrackerMetadata{{Tracker: "HDB", Description: "db desc"}},
 	}
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		SourcePath: "/tmp/source",
 		DescriptionGroups: []api.DescriptionBuilderGroup{{
 			GroupKey:       "hdb",
@@ -850,7 +985,7 @@ func TestResolveDescriptionAssetsPrefersCanonicalGroupDescription(t *testing.T) 
 		}},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -868,7 +1003,7 @@ func TestResolveDescriptionAssetsPrefersTrackerScopedCompositeGroupDescription(t
 		overrideGroupKey:    "hdb|hdb|tracker:HDB",
 		trackerRecords:      []api.TrackerMetadata{{Tracker: "HDB", Description: "db desc"}},
 	}
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		SourcePath: "/tmp/source",
 		DescriptionGroups: []api.DescriptionBuilderGroup{
 			{
@@ -884,7 +1019,7 @@ func TestResolveDescriptionAssetsPrefersTrackerScopedCompositeGroupDescription(t
 		},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -897,7 +1032,7 @@ func TestResolveDescriptionAssetsPrefersTrackerScopedCompositeGroupDescription(t
 }
 
 func TestResolveDescriptionAssetsUsesCanonicalGroupDescriptionWithoutRepo(t *testing.T) {
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		DescriptionOverride: "legacy override desc",
 		DescriptionGroups: []api.DescriptionBuilderGroup{{
 			GroupKey:       "hdb",
@@ -906,7 +1041,7 @@ func TestResolveDescriptionAssetsUsesCanonicalGroupDescriptionWithoutRepo(t *tes
 		}},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, nil, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, nil, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -920,7 +1055,7 @@ func TestResolveDescriptionAssetsUsesCanonicalGroupDescriptionWithoutRepo(t *tes
 
 func TestResolveDescriptionAssetsUsesCanonicalGroupDescriptionWithoutSourcePath(t *testing.T) {
 	repo := &stubRepo{descriptionOverride: "stored override desc", overrideGroupKey: "hdb"}
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		SourcePath:          "",
 		DescriptionOverride: "legacy override desc",
 		DescriptionGroups: []api.DescriptionBuilderGroup{{
@@ -930,7 +1065,7 @@ func TestResolveDescriptionAssetsUsesCanonicalGroupDescriptionWithoutSourcePath(
 		}},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -951,7 +1086,7 @@ func TestResolveDescriptionAssetsIgnoresAmbiguousTrackerGroupFallback(t *testing
 		overrideGroupKey:    "hdb",
 		trackerRecords:      []api.TrackerMetadata{{Tracker: "HDB", Description: "db desc"}},
 	}
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		SourcePath: "/tmp/source",
 		DescriptionGroups: []api.DescriptionBuilderGroup{
 			{
@@ -967,7 +1102,7 @@ func TestResolveDescriptionAssetsIgnoresAmbiguousTrackerGroupFallback(t *testing
 		},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -984,9 +1119,9 @@ func TestResolveDescriptionAssetsStripsEmbeddedNFOBlocksFromOverride(t *testing.
 		descriptionOverride: "[center][spoiler=Scene NFO:][code]scene nfo[/code][/spoiler][/center]\n\nCustom body",
 		overrideGroupKey:    "ant",
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "ANT", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "ANT", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1001,18 +1136,41 @@ func TestResolveDescriptionAssetsStripsEmbeddedNFOBlocksFromOverride(t *testing.
 func TestResolveDescriptionAssetsSelectsMostCommonHost(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Order:      1,
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Order:      0,
+			},
 		},
 		uploads: []api.UploadedImageLink{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "imgbb", ImgURL: "https://imgbb.com/a.png"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "imgbb", ImgURL: "https://imgbb.com/b.png"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "pixhost", ImgURL: "https://pixhost.to/a.png"},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Host:       "imgbb",
+				ImgURL:     "https://imgbb.com/a.png",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Host:       "imgbb",
+				ImgURL:     "https://imgbb.com/b.png",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Host:       "pixhost",
+				ImgURL:     "https://pixhost.to/a.png",
+			},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1034,9 +1192,9 @@ func TestResolveDescriptionAssetsFallbackTrackerImages(t *testing.T) {
 			ImageURLs: []string{"https://imgbb.com/a.png", "https://imgbb.com/b.png", "https://pixhost.to/c.png"},
 		}},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
+	meta := api.UploadSubject{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1055,9 +1213,9 @@ func TestResolveDescriptionAssetsSkipsTrackerImagesWhenNotKeepingImages(t *testi
 			ImageURLs: []string{"https://imgbb.com/a.png", "https://imgbb.com/b.png"},
 		}},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1081,9 +1239,9 @@ func TestResolveDescriptionAssetsSkipsStoredTrackerSlotsWhenNotKeepingImages(t *
 			RenderInScreenshots: true,
 		}},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1099,9 +1257,9 @@ func TestResolveDescriptionAssetsSkipsTMDBTrackerImages(t *testing.T) {
 			ImageURLs: []string{"https://image.tmdb.org/t/p/original/poster.jpg", "https://imgbb.com/a.png", "https://imgbb.com/b.png"},
 		}},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
+	meta := api.UploadSubject{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1119,9 +1277,9 @@ func TestResolveDescriptionAssetsFallbackOtherTrackerDescription(t *testing.T) {
 	repo := &stubRepo{
 		trackerRecords: []api.TrackerMetadata{{Tracker: "ULCX", Description: "ulcx desc"}},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1136,9 +1294,9 @@ func TestResolveDescriptionAssetsFallbackSanitizesByRecordTracker(t *testing.T) 
 			{Tracker: "ANT", Description: "[align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]\n\nBody"},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1154,9 +1312,9 @@ func TestResolveDescriptionAssetsPrefersMatchingTrackerDescription(t *testing.T)
 			{Tracker: "AITHER", Description: "[center]unit3d[/center]"},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1171,9 +1329,9 @@ func TestResolveDescriptionAssetsStripsEmbeddedNFOBlocksFromTrackerDescriptions(
 			{Tracker: "ANT", Description: "[hide=FraMeSToR NFO:][pre]frame nfo[/pre][/hide]\n\nTracker body"},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "ANT", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "ANT", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1185,23 +1343,10 @@ func TestResolveDescriptionAssetsStripsEmbeddedNFOBlocksFromTrackerDescriptions(
 	}
 }
 
-func TestResolveDescriptionAssetsStripsDefaultSignatureForANT(t *testing.T) {
-	repo := &stubRepo{
-		trackerRecords: []api.TrackerMetadata{
-			{Tracker: "ANT", Description: "[align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]\n\nBody"},
-		},
-	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
-
-	assets, err := ResolveDescriptionAssets(context.Background(), "ANT", meta, repo, api.NopLogger{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if strings.Contains(assets.Description, "upbrr") {
-		t.Fatalf("expected default signature removed for ANT, got %q", assets.Description)
-	}
-	if assets.Description != "Body" {
-		t.Fatalf("expected cleaned ANT description, got %q", assets.Description)
+func TestStripDefaultDescriptionSignature(t *testing.T) {
+	value := "[align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]\n\nBody"
+	if got := StripDefaultDescriptionSignature(value); got != "Body" {
+		t.Fatalf("cleaned description = %q", got)
 	}
 }
 
@@ -1211,9 +1356,9 @@ func TestResolveDescriptionAssetsStripsDefaultSignatureForNBL(t *testing.T) {
 			{Tracker: "NBL", Description: "[align=right][url=https://github.com/autobrr/upbrr][size=10]upbrr[/size][/url][/align]\n\nBody"},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "NBL", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "NBL", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1247,9 +1392,9 @@ func TestResolveDescriptionAssetsStripsKnownBotSignaturesFromTrackerDescriptions
 			}, "\n")},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1275,25 +1420,44 @@ func TestSanitizeTrackerDescriptionKeepsMalformedUNIT3DBoldTags(t *testing.T) {
 	}
 }
 
-func TestResolveDescriptionAssetsStripsKnownBotSignaturesFromDescriptionGroups(t *testing.T) {
-	meta := api.PreparedMetadata{
+func TestResolveDescriptionAssetsPreservesFinalDescriptionGroups(t *testing.T) {
+	finalDescription := strings.Join([]string{
+		"Body",
+		"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
+		"[right]Created by Upload Assistant[/right]",
+		"[right][url=https://github.com/autobrr/upbrr]Uploaded by upbrr[/url][/right]",
+	}, "\n\n")
+	meta := api.UploadSubject{
 		DescriptionGroups: []api.DescriptionBuilderGroup{{
-			GroupKey: "unit3d",
-			Trackers: []string{"AITHER"},
-			RawDescription: strings.Join([]string{
-				"Body",
-				"[center][b][size=20]brush[/size][/b] This is an internal release which was first released exclusively on Aither. Cheers to all the Aither users[/center]",
-				"[right]Created by Upload Assistant[/right]",
-			}, "\n\n"),
+			GroupKey:       "unit3d",
+			Trackers:       []string{"AITHER"},
+			RawDescription: finalDescription,
 		}},
 	}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, nil, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, nil, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if assets.Description != "Body" {
-		t.Fatalf("expected bot signatures removed from prepared group, got %q", assets.Description)
+	if assets.Description != finalDescription {
+		t.Fatalf("expected final prepared group preserved, got %q", assets.Description)
+	}
+	if !assets.Final || !assets.Override {
+		t.Fatalf("expected final override assets, got %#v", assets)
+	}
+
+	meta.DescriptionGroups[0].Description = meta.DescriptionGroups[0].RawDescription
+	meta.DescriptionGroups[0].RawDescription = ""
+	meta.SourcePath = filepath.Join(t.TempDir(), "Example.Release.2026.mkv")
+	assets, err = ResolveDescriptionAssets(context.Background(), "AITHER", meta, &stubRepo{}, api.NopLogger{}, descriptionAssetsTestRegistry(t))
+	if err != nil {
+		t.Fatalf("resolve persisted-source assets: %v", err)
+	}
+	if assets.Description != finalDescription {
+		t.Fatalf("expected persisted-source final group preserved, got %q", assets.Description)
+	}
+	if !assets.Final || !assets.Override {
+		t.Fatalf("expected persisted-source final override assets, got %#v", assets)
 	}
 }
 
@@ -1304,9 +1468,9 @@ func TestResolveDescriptionAssetsFallbackOtherTrackerImages(t *testing.T) {
 			ImageURLs: []string{"https://imgbb.com/a.png"},
 		}},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
+	meta := api.UploadSubject{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1321,19 +1485,59 @@ func TestResolveDescriptionAssetsFallbackOtherTrackerImages(t *testing.T) {
 func TestResolveDescriptionAssetsIgnoresTrackerScopedUploadsForOtherTrackers(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Order:      0,
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Order:      1,
+			},
 		},
 		uploads: []api.UploadedImageLink{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://hdb/a.png", RawURL: "https://hdb/a.png", WebURL: "https://hdb/a"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://hdb/b.png", RawURL: "https://hdb/b.png", WebURL: "https://hdb/b"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "imgbb", UsageScope: "global", ImgURL: "https://imgbb/a.png", RawURL: "https://imgbb/a.png", WebURL: "https://imgbb/a"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "imgbb", UsageScope: "global", ImgURL: "https://imgbb/b.png", RawURL: "https://imgbb/b.png", WebURL: "https://imgbb/b"},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Host:       "hdb",
+				UsageScope: "tracker:HDB",
+				ImgURL:     "https://hdb/a.png",
+				RawURL:     "https://hdb/a.png",
+				WebURL:     "https://hdb/a",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Host:       "hdb",
+				UsageScope: "tracker:HDB",
+				ImgURL:     "https://hdb/b.png",
+				RawURL:     "https://hdb/b.png",
+				WebURL:     "https://hdb/b",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Host:       "imgbb",
+				UsageScope: "global",
+				ImgURL:     "https://imgbb/a.png",
+				RawURL:     "https://imgbb/a.png",
+				WebURL:     "https://imgbb/a",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Host:       "imgbb",
+				UsageScope: "global",
+				ImgURL:     "https://imgbb/b.png",
+				RawURL:     "https://imgbb/b.png",
+				WebURL:     "https://imgbb/b",
+			},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1350,19 +1554,59 @@ func TestResolveDescriptionAssetsIgnoresTrackerScopedUploadsForOtherTrackers(t *
 func TestResolveDescriptionAssetsPrefersTrackerScopedUploadsForMatchingTracker(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Order:      0,
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Order:      1,
+			},
 		},
 		uploads: []api.UploadedImageLink{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://hdb/a.png", RawURL: "https://hdb/a.png", WebURL: "https://hdb/a"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://hdb/b.png", RawURL: "https://hdb/b.png", WebURL: "https://hdb/b"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "imgbb", UsageScope: "global", ImgURL: "https://imgbb/a.png", RawURL: "https://imgbb/a.png", WebURL: "https://imgbb/a"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "imgbb", UsageScope: "global", ImgURL: "https://imgbb/b.png", RawURL: "https://imgbb/b.png", WebURL: "https://imgbb/b"},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Host:       "hdb",
+				UsageScope: "tracker:HDB",
+				ImgURL:     "https://hdb/a.png",
+				RawURL:     "https://hdb/a.png",
+				WebURL:     "https://hdb/a",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Host:       "hdb",
+				UsageScope: "tracker:HDB",
+				ImgURL:     "https://hdb/b.png",
+				RawURL:     "https://hdb/b.png",
+				WebURL:     "https://hdb/b",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Host:       "imgbb",
+				UsageScope: "global",
+				ImgURL:     "https://imgbb/a.png",
+				RawURL:     "https://imgbb/a.png",
+				WebURL:     "https://imgbb/a",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Host:       "imgbb",
+				UsageScope: "global",
+				ImgURL:     "https://imgbb/b.png",
+				RawURL:     "https://imgbb/b.png",
+				WebURL:     "https://imgbb/b",
+			},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "HDB", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1376,7 +1620,7 @@ func TestResolveDescriptionAssetsPrefersTrackerScopedUploadsForMatchingTracker(t
 	}
 }
 
-func TestResolveDescriptionAssetsDegradesGracefullyOnScreenshotReadFailure(t *testing.T) {
+func TestResolveDescriptionAssetsFailsOnScreenshotReadFailure(t *testing.T) {
 	repo := &stubRepo{
 		selectionsErr: errors.New("database is locked"),
 		trackerRecords: []api.TrackerMetadata{{
@@ -1384,42 +1628,207 @@ func TestResolveDescriptionAssetsDegradesGracefullyOnScreenshotReadFailure(t *te
 			ImageURLs: []string{"https://imgbb.com/a.png", "https://imgbb.com/b.png"},
 		}},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
+	meta := api.UploadSubject{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
-	if err != nil {
-		t.Fatalf("expected graceful degradation, got %v", err)
-	}
-	if len(assets.Screenshots) != 2 {
-		t.Fatalf("expected tracker url fallback screenshots, got %d", len(assets.Screenshots))
+	_, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
+	if err == nil || !strings.Contains(err.Error(), "database is locked") {
+		t.Fatalf("expected screenshot read failure, got %v", err)
 	}
 }
 
-func TestResolveDescriptionAssetsDegradesGracefullyOnSelectedUploadMismatch(t *testing.T) {
+func TestResolveDescriptionAssetsFailsOnSelectedUploadMismatch(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Order:      0,
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Order:      1,
+			},
 		},
 		uploads: []api.UploadedImageLink{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "imgbb", ImgURL: "https://imgbb.com/a.png", RawURL: "https://imgbb.com/a.png", WebURL: "https://imgbb.com/a"},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Host:       "imgbb",
+				ImgURL:     "https://imgbb.com/a.png",
+				RawURL:     "https://imgbb.com/a.png",
+				WebURL:     "https://imgbb.com/a",
+			},
 		},
 		trackerRecords: []api.TrackerMetadata{{
 			Tracker:   "AITHER",
 			ImageURLs: []string{"https://pixhost.to/fallback-a.png", "https://pixhost.to/fallback-b.png"},
 		}},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
+	meta := api.UploadSubject{SourcePath: "/tmp/source", Options: api.UploadOptions{KeepImages: true}}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	_, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
+	if err == nil || !strings.Contains(err.Error(), "missing screenshot variant for slot 1") {
+		t.Fatalf("expected selected upload mismatch, got %v", err)
+	}
+}
+
+func TestResolveDescriptionAssetsAttachesExactUploadedVariants(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+	imagePath := filepath.Join(t.TempDir(), "screen.png")
+	meta := api.UploadSubject{
+		SourcePath: sourcePath,
+		ExactMedia: &api.ExactMediaAssets{
+			Screenshots: []api.ScreenshotImage{{
+				Path:    imagePath,
+				Purpose: api.ScreenshotPurposeFinal,
+			}},
+			ScreenshotUploads: []api.UploadedImageLink{{
+				SourcePath: sourcePath,
+				ImagePath:  imagePath,
+				Host:       "pixhost",
+				UsageScope: "global",
+				ImgURL:     "https://img.example.invalid/thumb.png",
+				RawURL:     "https://img.example.invalid/screen.png",
+				WebURL:     "https://img.example.invalid/view",
+			}},
+		},
+	}
+	repo := &stubRepo{}
+	registry := descriptionAssetsTestRegistry(t)
+	preloaded, err := preloadDescriptionAssetData(context.Background(), meta, repo, registry)
 	if err != nil {
-		t.Fatalf("expected graceful degradation, got %v", err)
+		t.Fatalf("preload exact assets: %v", err)
 	}
-	if len(assets.Screenshots) != 2 {
-		t.Fatalf("expected tracker url fallback screenshots, got %d", len(assets.Screenshots))
+	assets, err := resolveDescriptionAssets(context.Background(), "HHD", meta, repo, api.NopLogger{}, preloaded, registry)
+	if err != nil {
+		t.Fatalf("resolve exact assets: %v", err)
 	}
-	if assets.Screenshots[0].ImgURL != "https://pixhost.to/fallback-a.png" {
-		t.Fatalf("expected fallback screenshot urls, got %#v", assets.Screenshots)
+	if len(assets.Screenshots) != 1 || assets.Screenshots[0].RawURL != "https://img.example.invalid/screen.png" {
+		t.Fatalf("exact screenshots = %#v", assets.Screenshots)
+	}
+	if repo.uploadsCalls != 0 {
+		t.Fatalf("exact uploads unexpectedly queried broad repository state %d time(s)", repo.uploadsCalls)
+	}
+}
+
+func TestResolveDescriptionAssetsExactEmptyUploadsDoNotReadAmbientRepositoryState(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+	imagePath := filepath.Join(t.TempDir(), "screen.png")
+	meta := api.UploadSubject{
+		SourcePath: sourcePath,
+		ExactMedia: &api.ExactMediaAssets{Screenshots: []api.ScreenshotImage{{
+			Path:    imagePath,
+			Purpose: api.ScreenshotPurposeFinal,
+		}}},
+	}
+	repo := &stubRepo{uploads: []api.UploadedImageLink{{
+		SourcePath: sourcePath,
+		ImagePath:  imagePath,
+		Host:       "pixhost",
+		RawURL:     "https://img.example.invalid/ambient.png",
+	}}}
+	preloaded, err := preloadDescriptionAssetData(
+		context.Background(),
+		meta,
+		repo,
+		descriptionAssetsTestRegistry(t),
+	)
+	if err != nil {
+		t.Fatalf("preload exact empty uploads: %v", err)
+	}
+	if repo.uploadsCalls != 0 {
+		t.Fatalf("exact empty uploads queried broad repository state %d time(s)", repo.uploadsCalls)
+	}
+	if len(preloaded.uploads) != 0 {
+		t.Fatalf("exact empty uploads retained ambient variants: %#v", preloaded.uploads)
+	}
+}
+
+func TestResolveDescriptionAssetsKeepsExactScreenshotsAndMenusSeparate(t *testing.T) {
+	t.Parallel()
+
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.DVD-GRP")
+	exact := &api.ExactMediaAssets{}
+	for index := range 4 {
+		imagePath := filepath.Join(t.TempDir(), fmt.Sprintf("screen-%d.png", index))
+		exact.Screenshots = append(exact.Screenshots, api.ScreenshotImage{
+			Path:    imagePath,
+			Purpose: api.ScreenshotPurposeFinal,
+		})
+		exact.ScreenshotUploads = append(exact.ScreenshotUploads, api.UploadedImageLink{
+			ImagePath:  imagePath,
+			UsageScope: globalImageUsageScope,
+			RawURL:     fmt.Sprintf("https://img.example.invalid/screen-%d.png", index),
+		})
+	}
+	for index := range 2 {
+		imagePath := filepath.Join(t.TempDir(), fmt.Sprintf("menu-%d.png", index))
+		exact.DVDMenus = append(exact.DVDMenus, api.DVDMenuCaptureImage{ScreenshotImage: api.ScreenshotImage{
+			Path:    imagePath,
+			Purpose: api.ScreenshotPurposeMenu,
+		}})
+		exact.DVDMenuUploads = append(exact.DVDMenuUploads, api.UploadedImageLink{
+			ImagePath:  imagePath,
+			UsageScope: globalImageUsageScope,
+			RawURL:     fmt.Sprintf("https://img.example.invalid/menu-%d.png", index),
+		})
+	}
+	meta := api.UploadSubject{SourcePath: sourcePath, ExactMedia: exact}
+	registry := descriptionAssetsTestRegistry(t)
+	preloaded, err := preloadDescriptionAssetData(context.Background(), meta, nil, registry)
+	if err != nil {
+		t.Fatalf("preload exact media: %v", err)
+	}
+	assets, err := resolveDescriptionAssets(context.Background(), "HHD", meta, nil, api.NopLogger{}, preloaded, registry)
+	if err != nil {
+		t.Fatalf("resolve exact media: %v", err)
+	}
+	if len(assets.Screenshots) != 4 || len(assets.Slots) != 4 || len(assets.MenuImages) != 2 {
+		t.Fatalf("exact channels screenshots=%d slots=%d menus=%d", len(assets.Screenshots), len(assets.Slots), len(assets.MenuImages))
+	}
+	for _, slot := range assets.Slots {
+		if slot.SourceKind == api.ScreenshotSelectionSourceMenu || slot.SourceKind == api.ScreenshotSelectionSourceDVDMenu {
+			t.Fatalf("menu entered normal screenshot slot: %#v", slot)
+		}
+	}
+	for index, menu := range assets.MenuImages {
+		if menu.Purpose != api.ScreenshotPurposeMenu || menu.RawURL != exact.DVDMenuUploads[index].RawURL {
+			t.Fatalf("exact menu %d = %#v", index, menu)
+		}
+	}
+}
+
+func TestResolveDescriptionAssetsExactEmptyIsAuthoritative(t *testing.T) {
+	t.Parallel()
+
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{{
+			SourcePath: "/tmp/source",
+			ImagePath:  "/tmp/ambient.png",
+			Source:     string(api.ScreenshotPurposeFinal),
+		}},
+		uploads: []api.UploadedImageLink{{
+			ImagePath: "/tmp/ambient.png",
+			RawURL:    "https://img.example.invalid/ambient.png",
+		}},
+	}
+	meta := api.UploadSubject{SourcePath: "/tmp/source", ExactMedia: &api.ExactMediaAssets{}}
+	registry := descriptionAssetsTestRegistry(t)
+	preloaded, err := preloadDescriptionAssetData(context.Background(), meta, repo, registry)
+	if err != nil {
+		t.Fatalf("preload exact empty media: %v", err)
+	}
+	assets, err := resolveDescriptionAssets(context.Background(), "HHD", meta, repo, api.NopLogger{}, preloaded, registry)
+	if err != nil {
+		t.Fatalf("resolve exact empty media: %v", err)
+	}
+	if len(assets.Screenshots) != 0 || len(assets.Slots) != 0 || len(assets.MenuImages) != 0 {
+		t.Fatalf("exact empty media fell back to ambient state: %#v", assets)
 	}
 }
 
@@ -1432,9 +1841,9 @@ Some text
 `),
 		overrideGroupKey: "unit3d",
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1461,13 +1870,21 @@ func TestResolveDescriptionAssetsLimitsDescriptionSlotsToSelectedImages(t *testi
 `),
 		overrideGroupKey: "unit3d",
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/first-local.png", Order: 0},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/second-local.png", Order: 1},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/first-local.png",
+				Order:      0,
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/second-local.png",
+				Order:      1,
+			},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "AITHER", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1503,9 +1920,21 @@ https://lostimg.cc/extra.png
 		slots[idx].ImagePath = fmt.Sprintf("/tmp/comparison-%d.png", idx)
 	}
 	rewritten := rewriteDescriptionSlotURLs(description, slots, []api.ScreenshotImage{
-		{Path: "/tmp/comparison-0.png", Host: "pixhost", RawURL: "https://pixhost.to/show/source.png"},
-		{Path: "/tmp/comparison-1.png", Host: "pixhost", RawURL: "https://pixhost.to/show/encode.png"},
-		{Path: "/tmp/comparison-2.png", Host: "pixhost", RawURL: "https://pixhost.to/show/extra.png"},
+		{
+			Path:   "/tmp/comparison-0.png",
+			Host:   "pixhost",
+			RawURL: "https://pixhost.to/show/source.png",
+		},
+		{
+			Path:   "/tmp/comparison-1.png",
+			Host:   "pixhost",
+			RawURL: "https://pixhost.to/show/encode.png",
+		},
+		{
+			Path:   "/tmp/comparison-2.png",
+			Host:   "pixhost",
+			RawURL: "https://pixhost.to/show/extra.png",
+		},
 	}, false)
 
 	if strings.Contains(rewritten, "lostimg.cc") {
@@ -1536,7 +1965,7 @@ https://lostimg.cc/encode.png
 	slots := parseDescriptionImageSlots("/tmp/source", description)
 	appendSourceImageSlots(&slots, "/tmp/source", []api.ScreenshotImage{{Path: "/tmp/encode_01.png"}})
 	assets := DescriptionAssets{Description: description, Slots: slots}
-	applyResolvedDescriptionScreenshots(context.Background(), api.PreparedMetadata{SourcePath: "/tmp/source"}, nil, nil, &assets, []api.ScreenshotImage{
+	applyResolvedDescriptionScreenshots(context.Background(), "", api.UploadSubject{SourcePath: "/tmp/source"}, nil, nil, &assets, []api.ScreenshotImage{
 		{Path: "/tmp/source-copy.png", RawURL: "https://pixhost/source.png"},
 		{Path: "/tmp/encode_01.png", RawURL: "https://pixhost/encode-comparison.png"},
 		{Path: "/tmp/encode_01.png", RawURL: "https://pixhost/encode-normal.png"},
@@ -1621,8 +2050,24 @@ func TestApplyUploadedVariantsToSlotsUsesOrderedFallbackForURLOnlySlots(t *testi
 		},
 	}
 	uploads := []api.UploadedImageLink{
-		{SourcePath: "/tmp/source", ImagePath: "/tmp/first-local.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/first.jpg", RawURL: "https://img.hdbits.org/first.jpg", WebURL: "https://img.hdbits.org/first"},
-		{SourcePath: "/tmp/source", ImagePath: "/tmp/second-local.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/second.jpg", RawURL: "https://img.hdbits.org/second.jpg", WebURL: "https://img.hdbits.org/second"},
+		{
+			SourcePath: "/tmp/source",
+			ImagePath:  "/tmp/first-local.png",
+			Host:       "hdb",
+			UsageScope: "tracker:HDB",
+			ImgURL:     "https://t.hdbits.org/first.jpg",
+			RawURL:     "https://img.hdbits.org/first.jpg",
+			WebURL:     "https://img.hdbits.org/first",
+		},
+		{
+			SourcePath: "/tmp/source",
+			ImagePath:  "/tmp/second-local.png",
+			Host:       "hdb",
+			UsageScope: "tracker:HDB",
+			ImgURL:     "https://t.hdbits.org/second.jpg",
+			RawURL:     "https://img.hdbits.org/second.jpg",
+			WebURL:     "https://img.hdbits.org/second",
+		},
 	}
 
 	summary := ApplyUploadedVariantsToSlots(slots, uploads)
@@ -1661,8 +2106,24 @@ func TestApplyUploadedVariantsToSlotsPrefersDirectPathMatches(t *testing.T) {
 		},
 	}
 	uploads := []api.UploadedImageLink{
-		{SourcePath: "/tmp/source", ImagePath: "/tmp/first-local.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/first.jpg", RawURL: "https://img.hdbits.org/first.jpg", WebURL: "https://img.hdbits.org/first"},
-		{SourcePath: "/tmp/source", ImagePath: "/tmp/second-local.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/second.jpg", RawURL: "https://img.hdbits.org/second.jpg", WebURL: "https://img.hdbits.org/second"},
+		{
+			SourcePath: "/tmp/source",
+			ImagePath:  "/tmp/first-local.png",
+			Host:       "hdb",
+			UsageScope: "tracker:HDB",
+			ImgURL:     "https://t.hdbits.org/first.jpg",
+			RawURL:     "https://img.hdbits.org/first.jpg",
+			WebURL:     "https://img.hdbits.org/first",
+		},
+		{
+			SourcePath: "/tmp/source",
+			ImagePath:  "/tmp/second-local.png",
+			Host:       "hdb",
+			UsageScope: "tracker:HDB",
+			ImgURL:     "https://t.hdbits.org/second.jpg",
+			RawURL:     "https://img.hdbits.org/second.jpg",
+			WebURL:     "https://img.hdbits.org/second",
+		},
 	}
 
 	summary := ApplyUploadedVariantsToSlots(slots, uploads)
@@ -1695,7 +2156,15 @@ func TestApplyUploadedVariantsToSlotsAppliesDuplicatePathToAllSlots(t *testing.T
 		},
 	}
 	uploads := []api.UploadedImageLink{
-		{SourcePath: "/tmp/source", ImagePath: "/tmp/encode.png", Host: "pixhost", UsageScope: "global", RawURL: "https://pixhost/encode.png", ImgURL: "https://pixhost/encode.png", WebURL: "https://pixhost/view"},
+		{
+			SourcePath: "/tmp/source",
+			ImagePath:  "/tmp/encode.png",
+			Host:       "pixhost",
+			UsageScope: "global",
+			RawURL:     "https://pixhost/encode.png",
+			ImgURL:     "https://pixhost/encode.png",
+			WebURL:     "https://pixhost/view",
+		},
 	}
 
 	summary := ApplyUploadedVariantsToSlots(slots, uploads)
@@ -1738,8 +2207,24 @@ func TestApplyUploadedVariantsToSlotsSkipsNonRenderableSlotsDuringFallback(t *te
 		},
 	}
 	uploads := []api.UploadedImageLink{
-		{SourcePath: "/tmp/source", ImagePath: "/tmp/first-local.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/first.jpg", RawURL: "https://img.hdbits.org/first.jpg", WebURL: "https://img.hdbits.org/first"},
-		{SourcePath: "/tmp/source", ImagePath: "/tmp/second-local.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://t.hdbits.org/second.jpg", RawURL: "https://img.hdbits.org/second.jpg", WebURL: "https://img.hdbits.org/second"},
+		{
+			SourcePath: "/tmp/source",
+			ImagePath:  "/tmp/first-local.png",
+			Host:       "hdb",
+			UsageScope: "tracker:HDB",
+			ImgURL:     "https://t.hdbits.org/first.jpg",
+			RawURL:     "https://img.hdbits.org/first.jpg",
+			WebURL:     "https://img.hdbits.org/first",
+		},
+		{
+			SourcePath: "/tmp/source",
+			ImagePath:  "/tmp/second-local.png",
+			Host:       "hdb",
+			UsageScope: "tracker:HDB",
+			ImgURL:     "https://t.hdbits.org/second.jpg",
+			RawURL:     "https://img.hdbits.org/second.jpg",
+			WebURL:     "https://img.hdbits.org/second",
+		},
 	}
 
 	summary := ApplyUploadedVariantsToSlots(slots, uploads)
@@ -1769,19 +2254,55 @@ func TestResolveTrackerScreenshotsReturnsNilWhenHostsAreInvalid(t *testing.T) {
 func TestEnsureDescriptionImageHostReusesAllowedHost(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Order:      0,
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Order:      1,
+			},
 		},
 		uploads: []api.UploadedImageLink{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "imgbb", ImgURL: "https://imgbb/a.png", RawURL: "https://imgbb/a.png", WebURL: "https://imgbb/a"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "imgbb", ImgURL: "https://imgbb/b.png", RawURL: "https://imgbb/b.png", WebURL: "https://imgbb/b"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "pixhost", ImgURL: "https://pixhost/a.png", RawURL: "https://pixhost/a.png", WebURL: "https://pixhost/a"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "pixhost", ImgURL: "https://pixhost/b.png", RawURL: "https://pixhost/b.png", WebURL: "https://pixhost/b"},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Host:       "imgbb",
+				ImgURL:     "https://imgbb/a.png",
+				RawURL:     "https://imgbb/a.png",
+				WebURL:     "https://imgbb/a",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Host:       "imgbb",
+				ImgURL:     "https://imgbb/b.png",
+				RawURL:     "https://imgbb/b.png",
+				WebURL:     "https://imgbb/b",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Host:       "pixhost",
+				ImgURL:     "https://pixhost/a.png",
+				RawURL:     "https://pixhost/a.png",
+				WebURL:     "https://pixhost/a",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Host:       "pixhost",
+				ImgURL:     "https://pixhost/b.png",
+				RawURL:     "https://pixhost/b.png",
+				WebURL:     "https://pixhost/b",
+			},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, nil, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1796,7 +2317,7 @@ func TestEnsureDescriptionImageHostReusesAllowedHost(t *testing.T) {
 func TestEnsureDescriptionImageHostReusesUploadedRecordsBeforeUploading(t *testing.T) {
 	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
 	dbPath := filepath.Join(t.TempDir(), "db.sqlite")
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		SourcePath: sourcePath,
 		TrackerData: []api.TrackerMetadata{{
 			Tracker:   "HHD",
@@ -1807,7 +2328,7 @@ func TestEnsureDescriptionImageHostReusesUploadedRecordsBeforeUploading(t *testi
 	if err != nil {
 		t.Fatalf("tmp root: %v", err)
 	}
-	releaseDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, sourcePath)
+	releaseDir, _, err := paths.ReleaseTempDirFor(tmpRoot, sourcePath, meta.Release)
 	if err != nil {
 		t.Fatalf("release temp dir: %v", err)
 	}
@@ -1823,13 +2344,29 @@ func TestEnsureDescriptionImageHostReusesUploadedRecordsBeforeUploading(t *testi
 	}
 	repo := &stubRepo{
 		uploads: []api.UploadedImageLink{
-			{SourcePath: sourcePath, ImagePath: firstPath, Host: "pixhost", UsageScope: "global", ImgURL: "https://pixhost/1.png", RawURL: "https://pixhost/raw1.png", WebURL: "https://pixhost/view1"},
-			{SourcePath: sourcePath, ImagePath: secondPath, Host: "pixhost", UsageScope: "global", ImgURL: "https://pixhost/2.png", RawURL: "https://pixhost/raw2.png", WebURL: "https://pixhost/view2"},
+			{
+				SourcePath: sourcePath,
+				ImagePath:  firstPath,
+				Host:       "pixhost",
+				UsageScope: "global",
+				ImgURL:     "https://pixhost/1.png",
+				RawURL:     "https://pixhost/raw1.png",
+				WebURL:     "https://pixhost/view1",
+			},
+			{
+				SourcePath: sourcePath,
+				ImagePath:  secondPath,
+				Host:       "pixhost",
+				UsageScope: "global",
+				ImgURL:     "https://pixhost/2.png",
+				RawURL:     "https://pixhost/raw2.png",
+				WebURL:     "https://pixhost/view2",
+			},
 		},
 	}
 	images := &stubImageService{}
 
-	resolution, err := ensureDescriptionImageHost(
+	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
 		"HHD",
 		meta,
@@ -1837,7 +2374,7 @@ func TestEnsureDescriptionImageHostReusesUploadedRecordsBeforeUploading(t *testi
 		config.TrackerConfig{ImageHost: "pixhost"},
 		repo,
 		images,
-		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1856,17 +2393,39 @@ func TestEnsureDescriptionImageHostReusesUploadedRecordsBeforeUploading(t *testi
 func TestEnsureDescriptionImageHostReuploadsForRequiredTracker(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Order:      0,
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Order:      1,
+			},
 		},
 		uploads: []api.UploadedImageLink{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "imgbb", ImgURL: "https://imgbb/a.png", RawURL: "https://imgbb/a.png", WebURL: "https://imgbb/a"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "imgbb", ImgURL: "https://imgbb/b.png", RawURL: "https://imgbb/b.png", WebURL: "https://imgbb/b"},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Host:       "imgbb",
+				ImgURL:     "https://imgbb/a.png",
+				RawURL:     "https://imgbb/a.png",
+				WebURL:     "https://imgbb/a",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Host:       "imgbb",
+				ImgURL:     "https://imgbb/b.png",
+				RawURL:     "https://imgbb/b.png",
+				WebURL:     "https://imgbb/b",
+			},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, &stubImageService{}, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, &stubImageService{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1889,17 +2448,32 @@ func TestEnsureDescriptionImageHostReuploadsForRequiredTracker(t *testing.T) {
 func TestEnsureDescriptionImageHostReuploadsWhenAllowedHostCoverageIsPartial(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Order:      0,
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Order:      1,
+			},
 		},
 		uploads: []api.UploadedImageLink{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "pixhost", ImgURL: "https://pixhost/a.png", RawURL: "https://pixhost/a.png", WebURL: "https://pixhost/a"},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Host:       "pixhost",
+				ImgURL:     "https://pixhost/a.png",
+				RawURL:     "https://pixhost/a.png",
+				WebURL:     "https://pixhost/a",
+			},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 	images := &stubImageService{}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, images, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, images, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1920,7 +2494,7 @@ func TestEnsureDescriptionImageHostReuploadsWhenAllowedHostCoverageIsPartial(t *
 func TestEnsureDescriptionImageHostAlignsDescriptionSlotsToLocalTrackerImages(t *testing.T) {
 	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
 	dbPath := filepath.Join(t.TempDir(), "db.sqlite")
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		SourcePath: sourcePath,
 		TrackerData: []api.TrackerMetadata{{
 			Tracker: "AITHER",
@@ -1937,7 +2511,7 @@ func TestEnsureDescriptionImageHostAlignsDescriptionSlotsToLocalTrackerImages(t 
 	if err != nil {
 		t.Fatalf("tmp root: %v", err)
 	}
-	releaseDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, sourcePath)
+	releaseDir, _, err := paths.ReleaseTempDirFor(tmpRoot, sourcePath, meta.Release)
 	if err != nil {
 		t.Fatalf("release temp dir: %v", err)
 	}
@@ -1953,7 +2527,7 @@ func TestEnsureDescriptionImageHostAlignsDescriptionSlotsToLocalTrackerImages(t 
 	repo := &stubRepo{}
 	images := &stubImageService{}
 
-	resolution, err := ensureDescriptionImageHost(
+	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
 		"PTP",
 		meta,
@@ -1961,7 +2535,7 @@ func TestEnsureDescriptionImageHostAlignsDescriptionSlotsToLocalTrackerImages(t 
 		config.TrackerConfig{},
 		repo,
 		images,
-		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1989,7 +2563,7 @@ func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionIm
 		imageBaseURL + "/encode.png",
 		imageBaseURL + "/other.png",
 	}
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		SourcePath: sourcePath,
 		TrackerData: []api.TrackerMetadata{{
 			Tracker: "AITHER",
@@ -2008,7 +2582,7 @@ func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionIm
 	if err != nil {
 		t.Fatalf("tmp root: %v", err)
 	}
-	releaseDir, _, err := paths.ReleaseTempDir(tmpRoot, meta, sourcePath)
+	releaseDir, _, err := paths.ReleaseTempDirFor(tmpRoot, sourcePath, meta.Release)
 	if err != nil {
 		t.Fatalf("release temp dir: %v", err)
 	}
@@ -2032,7 +2606,7 @@ func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionIm
 
 	repo := &stubRepo{}
 	images := &stubImageService{}
-	resolution, err := ensureDescriptionImageHost(
+	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
 		"PTP",
 		meta,
@@ -2040,7 +2614,7 @@ func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionIm
 		config.TrackerConfig{},
 		repo,
 		images,
-		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2056,11 +2630,11 @@ func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionIm
 	if !strings.Contains(resolution.screenshots[3].Path, "aither") {
 		t.Fatalf("expected normal screenshot to use extracted tracker image, got %#v", resolution.screenshots[3])
 	}
-	assets, err := ResolveDescriptionAssets(context.Background(), "PTP", meta, repo, api.NopLogger{})
+	assets, err := ResolveDescriptionAssets(context.Background(), "PTP", meta, repo, api.NopLogger{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("resolve assets: %v", err)
 	}
-	applyResolvedDescriptionScreenshots(context.Background(), meta, repo, nil, &assets, resolution.screenshots)
+	applyResolvedDescriptionScreenshots(context.Background(), "", meta, repo, nil, &assets, resolution.screenshots)
 	if strings.Contains(assets.Description, imageBaseURL) {
 		t.Fatalf("expected comparison source URLs replaced, got %q", assets.Description)
 	}
@@ -2084,16 +2658,24 @@ func TestEnsureDescriptionImageHostRehostsComparisonAndKeepsMatchedDescriptionIm
 func TestEnsureDescriptionImageHostFallsBackAfterConfiguredHostFailure(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Order:      0,
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Order:      1,
+			},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 	images := &stubImageService{
 		errs: map[string]error{"onlyimage": errors.New("onlyimage unavailable")},
 	}
 
-	resolution, err := ensureDescriptionImageHost(
+	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
 		"OE",
 		meta,
@@ -2101,7 +2683,7 @@ func TestEnsureDescriptionImageHostFallsBackAfterConfiguredHostFailure(t *testin
 		config.TrackerConfig{ImageHost: "onlyimage"},
 		repo,
 		images,
-		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2123,16 +2705,24 @@ func TestEnsureDescriptionImageHostFallsBackAfterConfiguredHostFailure(t *testin
 func TestEnsureDescriptionImageHostFallsBackFromConfiguredHostForUnrestrictedTracker(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Order:      0,
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Order:      1,
+			},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 	images := &stubImageService{
 		errs: map[string]error{"pixhost": errors.New("pixhost unavailable")},
 	}
 
-	resolution, err := ensureDescriptionImageHost(
+	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
 		"HHD",
 		meta,
@@ -2140,7 +2730,7 @@ func TestEnsureDescriptionImageHostFallsBackFromConfiguredHostForUnrestrictedTra
 		config.TrackerConfig{ImageHost: "pixhost"},
 		repo,
 		images,
-		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2165,14 +2755,22 @@ func TestEnsureDescriptionImageHostFallsBackFromConfiguredHostForUnrestrictedTra
 func TestEnsureDescriptionImageHostUploadsPreferredHostForUnrestrictedTracker(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Order:      0,
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Order:      1,
+			},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 	images := &stubImageService{}
 
-	resolution, err := ensureDescriptionImageHostWithData(
+	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(
 		context.Background(),
 		"RHD",
 		meta,
@@ -2181,6 +2779,7 @@ func TestEnsureDescriptionImageHostUploadsPreferredHostForUnrestrictedTracker(t 
 		repo,
 		images,
 		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
 		nil,
 		"imgbb",
 	)
@@ -2206,21 +2805,80 @@ func TestEnsureDescriptionImageHostUploadsPreferredHostForUnrestrictedTracker(t 
 	}
 }
 
+func TestEnsureDescriptionImageHostSkipsHostThatFailedEarlierInRun(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "source.mkv")
+	repo := &stubRepo{
+		selections: []api.ScreenshotFinalSelection{
+			{
+				SourcePath: sourcePath,
+				ImagePath:  filepath.Join(t.TempDir(), "a.png"),
+				Order:      0,
+			},
+			{
+				SourcePath: sourcePath,
+				ImagePath:  filepath.Join(t.TempDir(), "b.png"),
+				Order:      1,
+			},
+		},
+	}
+	meta := api.UploadSubject{
+		SourcePath: sourcePath,
+		ImageHostOverrides: api.ImageHostOverrides{
+			FailedHosts: []string{" IMGBOX ", "imgbox"},
+		},
+	}
+	images := &stubImageService{}
+
+	resolution, err := ensureDescriptionImageHostWithDataAndRegistry(
+		context.Background(),
+		"OE",
+		meta,
+		config.Config{ImageHosting: config.ImageHostingConfig{Host1: "imgbox", Host2: "imgbb"}},
+		config.TrackerConfig{},
+		repo,
+		images,
+		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
+		nil,
+		"imgbox",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolution.blocking || resolution.feedback.SelectedHost != "imgbb" {
+		t.Fatalf("expected imgbb fallback after prior imgbox failure, got %#v", resolution)
+	}
+	if len(images.calls) != 1 || images.calls[0] != "imgbb" {
+		t.Fatalf("expected description upload to skip imgbox, got calls %#v", images.calls)
+	}
+	if len(resolution.screenshots) != 2 {
+		t.Fatalf("expected every screenshot from fallback host, got %#v", resolution.screenshots)
+	}
+}
+
 func TestEnsureDescriptionImageHostBlocksWhenAllUploadHostsFail(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Order:      0,
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Order:      1,
+			},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 	images := &stubImageService{
 		errs: map[string]error{
 			"pixhost": errors.New("pixhost unavailable"),
 		},
 	}
 
-	resolution, err := ensureDescriptionImageHost(
+	resolution, err := ensureDescriptionImageHostWithRegistry(
 		context.Background(),
 		"PTP",
 		meta,
@@ -2228,7 +2886,7 @@ func TestEnsureDescriptionImageHostBlocksWhenAllUploadHostsFail(t *testing.T) {
 		config.TrackerConfig{},
 		repo,
 		images,
-		api.NopLogger{},
+		descriptionAssetsTestRegistry(t),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2251,24 +2909,60 @@ func TestEnsureDescriptionImageHostUsesPreferredOverrideWhenAllowed(t *testing.T
 	preferredHost := "imgbb"
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Order:      0,
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Order:      1,
+			},
 		},
 		uploads: []api.UploadedImageLink{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "imgbb", ImgURL: "https://imgbb/a.png", RawURL: "https://imgbb/a.png", WebURL: "https://imgbb/a"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "imgbb", ImgURL: "https://imgbb/b.png", RawURL: "https://imgbb/b.png", WebURL: "https://imgbb/b"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "pixhost", ImgURL: "https://pixhost/a.png", RawURL: "https://pixhost/a.png", WebURL: "https://pixhost/a"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "pixhost", ImgURL: "https://pixhost/b.png", RawURL: "https://pixhost/b.png", WebURL: "https://pixhost/b"},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Host:       "imgbb",
+				ImgURL:     "https://imgbb/a.png",
+				RawURL:     "https://imgbb/a.png",
+				WebURL:     "https://imgbb/a",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Host:       "imgbb",
+				ImgURL:     "https://imgbb/b.png",
+				RawURL:     "https://imgbb/b.png",
+				WebURL:     "https://imgbb/b",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Host:       "pixhost",
+				ImgURL:     "https://pixhost/a.png",
+				RawURL:     "https://pixhost/a.png",
+				WebURL:     "https://pixhost/a",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Host:       "pixhost",
+				ImgURL:     "https://pixhost/b.png",
+				RawURL:     "https://pixhost/b.png",
+				WebURL:     "https://pixhost/b",
+			},
 		},
 	}
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		SourcePath: "/tmp/source",
 		ImageHostOverrides: api.ImageHostOverrides{
 			PreferredHost: &preferredHost,
 		},
 	}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "OE", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "OE", meta, config.Config{}, config.TrackerConfig{}, repo, nil, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2280,19 +2974,59 @@ func TestEnsureDescriptionImageHostUsesPreferredOverrideWhenAllowed(t *testing.T
 func TestEnsureDescriptionImageHostReusesGlobalUploadsInsteadOfOtherTrackerScope(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Order:      0,
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Order:      1,
+			},
 		},
 		uploads: []api.UploadedImageLink{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://hdb/a.png", RawURL: "https://hdb/a.png", WebURL: "https://hdb/a"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "hdb", UsageScope: "tracker:HDB", ImgURL: "https://hdb/b.png", RawURL: "https://hdb/b.png", WebURL: "https://hdb/b"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "imgbb", UsageScope: "global", ImgURL: "https://imgbb/a.png", RawURL: "https://imgbb/a.png", WebURL: "https://imgbb/a"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "imgbb", UsageScope: "global", ImgURL: "https://imgbb/b.png", RawURL: "https://imgbb/b.png", WebURL: "https://imgbb/b"},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Host:       "hdb",
+				UsageScope: "tracker:HDB",
+				ImgURL:     "https://hdb/a.png",
+				RawURL:     "https://hdb/a.png",
+				WebURL:     "https://hdb/a",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Host:       "hdb",
+				UsageScope: "tracker:HDB",
+				ImgURL:     "https://hdb/b.png",
+				RawURL:     "https://hdb/b.png",
+				WebURL:     "https://hdb/b",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Host:       "imgbb",
+				UsageScope: "global",
+				ImgURL:     "https://imgbb/a.png",
+				RawURL:     "https://imgbb/a.png",
+				WebURL:     "https://imgbb/a",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Host:       "imgbb",
+				UsageScope: "global",
+				ImgURL:     "https://imgbb/b.png",
+				RawURL:     "https://imgbb/b.png",
+				WebURL:     "https://imgbb/b",
+			},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "OE", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "OE", meta, config.Config{}, config.TrackerConfig{}, repo, nil, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2310,22 +3044,44 @@ func TestEnsureDescriptionImageHostSkipsAutomaticUploadWhenDisabled(t *testing.T
 	skipUpload := true
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Order:      0,
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Order:      1,
+			},
 		},
 		uploads: []api.UploadedImageLink{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "imgbb", ImgURL: "https://imgbb/a.png", RawURL: "https://imgbb/a.png", WebURL: "https://imgbb/a"},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Host: "imgbb", ImgURL: "https://imgbb/b.png", RawURL: "https://imgbb/b.png", WebURL: "https://imgbb/b"},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Host:       "imgbb",
+				ImgURL:     "https://imgbb/a.png",
+				RawURL:     "https://imgbb/a.png",
+				WebURL:     "https://imgbb/a",
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Host:       "imgbb",
+				ImgURL:     "https://imgbb/b.png",
+				RawURL:     "https://imgbb/b.png",
+				WebURL:     "https://imgbb/b",
+			},
 		},
 	}
-	meta := api.PreparedMetadata{
+	meta := api.UploadSubject{
 		SourcePath: "/tmp/source",
 		ImageHostOverrides: api.ImageHostOverrides{
 			SkipUpload: &skipUpload,
 		},
 	}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, &stubImageService{}, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, &stubImageService{}, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2346,16 +3102,31 @@ func TestEnsureDescriptionImageHostSkipsAutomaticUploadWhenDisabled(t *testing.T
 func TestEnsureDescriptionImageHostWarnsOnPartialAllowedHostCoverageWithoutUploader(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Order:      0,
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Order:      1,
+			},
 		},
 		uploads: []api.UploadedImageLink{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "pixhost", ImgURL: "https://pixhost/a.png", RawURL: "https://pixhost/a.png", WebURL: "https://pixhost/a"},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Host:       "pixhost",
+				ImgURL:     "https://pixhost/a.png",
+				RawURL:     "https://pixhost/a.png",
+				WebURL:     "https://pixhost/a",
+			},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, nil, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, nil, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2370,20 +3141,35 @@ func TestEnsureDescriptionImageHostWarnsOnPartialAllowedHostCoverageWithoutUploa
 func TestEnsureDescriptionImageHostRollsBackUploadedImagesOnSelectionError(t *testing.T) {
 	repo := &stubRepo{
 		selections: []api.ScreenshotFinalSelection{
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Order: 0},
-			{SourcePath: "/tmp/source", ImagePath: "/tmp/b.png", Order: 1},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/a.png",
+				Order:      0,
+			},
+			{
+				SourcePath: "/tmp/source",
+				ImagePath:  "/tmp/b.png",
+				Order:      1,
+			},
 		},
 	}
-	meta := api.PreparedMetadata{SourcePath: "/tmp/source"}
+	meta := api.UploadSubject{SourcePath: "/tmp/source"}
 	images := &stubImageService{
 		uploads: map[string][]api.UploadedImageLink{
 			"pixhost": {
-				{SourcePath: "/tmp/source", ImagePath: "/tmp/a.png", Host: "pixhost", ImgURL: "https://pixhost/a.png", RawURL: "https://pixhost/a.png", WebURL: "https://pixhost/a"},
+				{
+					SourcePath: "/tmp/source",
+					ImagePath:  "/tmp/a.png",
+					Host:       "pixhost",
+					ImgURL:     "https://pixhost/a.png",
+					RawURL:     "https://pixhost/a.png",
+					WebURL:     "https://pixhost/a",
+				},
 			},
 		},
 	}
 
-	resolution, err := ensureDescriptionImageHost(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, images, api.NopLogger{})
+	resolution, err := ensureDescriptionImageHostWithRegistry(context.Background(), "PTP", meta, config.Config{}, config.TrackerConfig{}, repo, images, descriptionAssetsTestRegistry(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -10,6 +10,8 @@ type SeriesSearchResult struct {
 	Aliases []Alias
 }
 
+// SeriesMetadata contains extended series fields plus naming-safe year
+// provenance and optional English translation data.
 type SeriesMetadata struct {
 	TVDBID      int
 	Name        string
@@ -39,6 +41,9 @@ type Alias struct {
 	Language string
 }
 
+// EpisodesData contains episode pages and series naming/schedule context. Air
+// dates use provider YYYY-MM-DD strings; AirsTimezoneSource identifies whether
+// the zone was explicit or inferred.
 type EpisodesData struct {
 	Episodes    []Episode
 	Aliases     []Alias
@@ -69,6 +74,9 @@ type Episode struct {
 	Image string
 }
 
+// EpisodeQuery supplies date, season/episode, and absolute-number evidence used
+// to validate cache completeness and select a match. CacheBasePath is a host
+// filesystem directory override.
 type EpisodeQuery struct {
 	Season        int
 	Episode       int

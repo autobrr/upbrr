@@ -38,12 +38,15 @@ var (
 	ipv6Pattern            = regexp.MustCompile(`(?i)\b(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?:%\w+)?\b`)
 )
 
+// Client maps TVDB episode numbering and season names through XEM's public API.
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
 	logger     api.Logger
 }
 
+// NewClient substitutes a 12-second HTTP client and no-op logger for nil
+// dependencies.
 func NewClient(httpClient *http.Client, logger api.Logger) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 12 * time.Second}
@@ -58,6 +61,9 @@ func NewClient(httpClient *http.Client, logger api.Logger) *Client {
 	}
 }
 
+// MapAbsoluteEpisode maps positive TVDB and absolute episode IDs to scene season
+// and episode numbers. Missing mappings return an error; Cloudflare refusal
+// wraps [ErrUnavailable].
 func (c *Client) MapAbsoluteEpisode(ctx context.Context, tvdbID, absoluteEp int) (int, int, error) {
 	if tvdbID <= 0 || absoluteEp <= 0 {
 		return 0, 0, errors.New("thexem: invalid ids")
@@ -105,6 +111,8 @@ func (c *Client) MapAbsoluteEpisode(ctx context.Context, tvdbID, absoluteEp int)
 	return season, episode, nil
 }
 
+// GetSeasonNames returns trimmed, case-insensitively deduplicated names keyed by
+// positive season number. Cloudflare refusal wraps [ErrUnavailable].
 func (c *Client) GetSeasonNames(ctx context.Context, tvdbID int) (map[int][]string, error) {
 	if tvdbID <= 0 {
 		return nil, errors.New("thexem: invalid tvdb id")
@@ -139,6 +147,8 @@ func (c *Client) GetSeasonNames(ctx context.Context, tvdbID int) (map[int][]stri
 	return parseSeasonNames(payload), nil
 }
 
+// MatchSeasonByName normalizes separators and selects the highest season-name
+// similarity at or above 0.45, breaking ties by lower season number.
 func (c *Client) MatchSeasonByName(ctx context.Context, tvdbID int, title string) (int, error) {
 	namesBySeason, err := c.GetSeasonNames(ctx, tvdbID)
 	if err != nil {

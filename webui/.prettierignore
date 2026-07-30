@@ -1,0 +1,30 @@
+# Build output
+dist/
+build/
+.vite/
+
+# Dependencies
+node_modules/
+
+# Lockfiles
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# Caches / coverage
+coverage/
+.cache/
+.eslintcache
+playwright-report/
+test-results/
+
+# Instruction-file aliases are link placeholders in Windows worktrees.
+CLAUDE.md
+e2e/CLAUDE.md
+
+# Binary / minified
+*.min.js
+*.min.css
+
+# Generated transport contracts
+src/api/generated/

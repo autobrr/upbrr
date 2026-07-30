@@ -38,7 +38,13 @@ var (
 	}
 )
 
-// GetTrackerIcon resolves the domain icon, caches it under the dbPath directory, and returns its Base64 Data URL.
+// GetTrackerIcon returns a validated image as a Base64 data URL and caches it
+// relative to the database directory. Callers must supply a valid tracker
+// hostname because the cache-name filter does not validate path-component
+// structure. Lookup tries the custom URL and its root favicon before domain
+// favicon candidates, limits responses to 1 MiB, rejects unsupported image
+// types and validation-time private addresses, and negative-caches complete
+// failures for 24 hours. Custom URLs are part of the cache key.
 func GetTrackerIcon(ctx context.Context, dbPath string, domain string, customURL string) (string, error) {
 	sanitized := SafeDomainFilename(domain)
 	if sanitized == "" {
@@ -306,7 +312,9 @@ func isAllowedIconContentType(mime string) bool {
 	}
 }
 
-// SafeDomainFilename purges disallowed characters from domain strings for file system safety.
+// SafeDomainFilename lowercases domain and removes every character except
+// ASCII letters, digits, dots, and hyphens. It does not validate DNS name
+// structure or guarantee that the result is a single path component.
 func SafeDomainFilename(domain string) string {
 	var sb strings.Builder
 	for _, r := range strings.ToLower(domain) {
@@ -317,7 +325,8 @@ func SafeDomainFilename(domain string) string {
 	return sb.String()
 }
 
-// DetectIconContentType detects the image format MIME type.
+// DetectIconContentType uses HTTP content sniffing and relabels otherwise
+// generic octet-stream data only when it has a structurally valid ICO header.
 func DetectIconContentType(data []byte) string {
 	ct := http.DetectContentType(data)
 	if ct == "application/octet-stream" && isICOFile(data) {

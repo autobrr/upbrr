@@ -24,8 +24,12 @@ const (
 	WebAuthFileName = "web-auth.json"
 )
 
+// ErrUnavailable classifies missing, unusable, or insecurely permissioned web
+// auth material. Callers should test it with [errors.Is].
 var ErrUnavailable = errors.New("web auth material unavailable")
 
+// Material contains the web-auth values used to derive stable or legacy
+// encryption helpers. It does not contain the plaintext password.
 type Material struct {
 	Username               string `json:"username"`
 	PasswordHash           string `json:"password_hash"`
@@ -33,6 +37,8 @@ type Material struct {
 	AllowUnencryptedExport bool   `json:"allow_unencrypted_export,omitempty"`
 }
 
+// LoadFromDBPath loads usable auth material from web-auth.json beside dbPath.
+// Missing or incomplete material returns [ErrUnavailable].
 func LoadFromDBPath(dbPath string) (Material, error) {
 	record, err := LoadRecordFromDBPath(dbPath)
 	if err != nil {
@@ -46,6 +52,9 @@ func LoadFromDBPath(dbPath string) (Material, error) {
 	return material, nil
 }
 
+// LoadRecordFromDBPath loads the complete auth record from web-auth.json beside
+// dbPath. On non-Windows systems, only modes 0400, 0440, 0600, and 0640 are
+// accepted; unavailable or unusable records return [ErrUnavailable].
 func LoadRecordFromDBPath(dbPath string) (Record, error) {
 	dbPath = strings.TrimSpace(dbPath)
 	if dbPath == "" {
@@ -100,15 +109,19 @@ func validateWebAuthPermissions(authPath string, info os.FileInfo) error {
 	return fmt.Errorf("web auth file %q has insecure permissions %#o: %w", authPath, perm, ErrUnavailable)
 }
 
+// IsUsable reports whether both the username and password hash are non-blank.
 func (m Material) IsUsable() bool {
 	return strings.TrimSpace(m.Username) != "" && strings.TrimSpace(m.PasswordHash) != ""
 }
 
+// WithSeed returns a copy with a trimmed encryption-key seed.
 func (m Material) WithSeed(seed string) Material {
 	m.EncryptionKeySeed = strings.TrimSpace(seed)
 	return m
 }
 
+// PrimaryHelper returns the stable username-and-seed helper when available,
+// otherwise the legacy username-and-password-hash helper.
 func (m Material) PrimaryHelper() (string, string, error) {
 	if helper, fingerprint, ok := m.StableHelper(); ok {
 		return helper, fingerprint, nil
@@ -116,6 +129,8 @@ func (m Material) PrimaryHelper() (string, string, error) {
 	return m.LegacyHelper()
 }
 
+// StableHelper derives the preferred helper and its SHA-256 fingerprint. The
+// boolean is false when username or encryption-key seed is blank.
 func (m Material) StableHelper() (string, string, bool) {
 	username := strings.TrimSpace(m.Username)
 	seed := strings.TrimSpace(m.EncryptionKeySeed)
@@ -126,6 +141,8 @@ func (m Material) StableHelper() (string, string, bool) {
 	return helper, fingerprint(helper), true
 }
 
+// LegacyHelper derives the compatibility helper and its SHA-256 fingerprint
+// from username and password hash. Missing inputs return [ErrUnavailable].
 func (m Material) LegacyHelper() (string, string, error) {
 	username := strings.TrimSpace(m.Username)
 	passwordHash := strings.TrimSpace(m.PasswordHash)
@@ -136,6 +153,8 @@ func (m Material) LegacyHelper() (string, string, error) {
 	return helper, fingerprint(helper), nil
 }
 
+// GenerateSeed returns 32 cryptographically random bytes encoded as unpadded
+// URL-safe base64.
 func GenerateSeed() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {

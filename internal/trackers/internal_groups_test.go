@@ -24,13 +24,13 @@ func TestIsInternalGroup(t *testing.T) {
 		},
 	}
 
-	if !IsInternalGroup(cfg, "MTV", api.PreparedMetadata{Tag: "-GroupA"}) {
+	if !IsInternalGroup(cfg, "MTV", api.UploadSubject{Tag: "-GroupA"}) {
 		t.Fatalf("expected group to be internal")
 	}
-	if IsInternalGroup(cfg, "MTV", api.PreparedMetadata{Tag: "-Other"}) {
+	if IsInternalGroup(cfg, "MTV", api.UploadSubject{Tag: "-Other"}) {
 		t.Fatalf("expected group to be non-internal")
 	}
-	if IsInternalGroup(cfg, "BHD", api.PreparedMetadata{Tag: "-GroupA"}) {
+	if IsInternalGroup(cfg, "BHD", api.UploadSubject{Tag: "-GroupA"}) {
 		t.Fatalf("expected missing tracker to be non-internal")
 	}
 }

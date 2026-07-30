@@ -13,7 +13,7 @@ import (
 )
 
 // ApplicationInfo describes the running build and optional runtime capability
-// probes returned by Wails and embedded web entrypoints.
+// probes returned by WebUI entrypoints.
 type ApplicationInfo struct {
 	Version         string `json:"version"`
 	BuildIdentifier string `json:"buildIdentifier"`

@@ -18,10 +18,10 @@ import (
 	"github.com/autobrr/upbrr/internal/webserver"
 )
 
-func TestLoadFromDBPathDisablesUnsupportedTrackerImageRehost(t *testing.T) {
+func TestLoadFromDBPathPreservesTrackerImageRehostForRuntimePolicyValidation(t *testing.T) {
 	t.Parallel()
 
-	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
+	dbPath := filepath.Join(t.TempDir(), "webui.db")
 	repo, err := db.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
@@ -51,15 +51,15 @@ func TestLoadFromDBPathDisablesUnsupportedTrackerImageRehost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config from database: %v", err)
 	}
-	if loaded.Trackers.Trackers["TL"].ImgRehost {
-		t.Fatal("expected unsupported TL img_rehost to be disabled on load")
+	if !loaded.Trackers.Trackers["TL"].ImgRehost {
+		t.Fatal("expected TL img_rehost to remain available for registry policy validation")
 	}
 }
 
 func TestLoadFromDBPathBackfillsMissingTrackerDefaults(t *testing.T) {
 	t.Parallel()
 
-	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
+	dbPath := filepath.Join(t.TempDir(), "webui.db")
 	repo, err := db.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
@@ -96,11 +96,11 @@ func TestLoadFromDBPathRepairPersistsSecretsWithRuntimeDBPath(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	runtimeDBPath := filepath.Join(t.TempDir(), "runtime", "guiapp.db")
+	runtimeDBPath := filepath.Join(t.TempDir(), "runtime", "webui.db")
 	if err := webserver.BootstrapAuthFile(runtimeDBPath, "tester", "very-secure-password"); err != nil {
 		t.Fatalf("BootstrapAuthFile runtime: %v", err)
 	}
-	staleDBPath := filepath.Join(t.TempDir(), "old", "guiapp.db")
+	staleDBPath := filepath.Join(t.TempDir(), "old", "webui.db")
 	if err := webserver.BootstrapAuthFile(staleDBPath, "tester", "different-secure-password"); err != nil {
 		t.Fatalf("BootstrapAuthFile stale: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestLoadFromDBPathPersistsMergedTrackerDefaults(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
+	dbPath := filepath.Join(t.TempDir(), "webui.db")
 	repo, err := db.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
@@ -258,7 +258,7 @@ func TestLoadFromDBPathRollsBackMultiSectionRepairOnLaterFailure(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
+	dbPath := filepath.Join(t.TempDir(), "webui.db")
 	repo, err := db.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
@@ -337,7 +337,7 @@ func TestLoadFromDBPathBackfillsMissingStoredOptions(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
+	dbPath := filepath.Join(t.TempDir(), "webui.db")
 	repo, err := db.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
@@ -399,7 +399,7 @@ func TestSaveToDBPathSyncsCookieEncryptionStateWhenWebAuthExists(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
+	dbPath := filepath.Join(t.TempDir(), "webui.db")
 	if err := webserver.BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {
 		t.Fatalf("BootstrapAuthFile: %v", err)
 	}
@@ -469,7 +469,7 @@ func TestSaveToDBPathMalformedWebAuthFailsBeforeConfigSave(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
+	dbPath := filepath.Join(t.TempDir(), "webui.db")
 	if err := os.WriteFile(webserver.AuthFilePath(dbPath), []byte(`{`), 0o600); err != nil {
 		t.Fatalf("write malformed auth file: %v", err)
 	}
@@ -513,7 +513,7 @@ func TestSaveToDBPathRollsBackCookieSyncWhenConfigSaveFails(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
+	dbPath := filepath.Join(t.TempDir(), "webui.db")
 	if err := webserver.BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {
 		t.Fatalf("BootstrapAuthFile: %v", err)
 	}
@@ -575,7 +575,7 @@ func TestSaveToDBPathCookieSyncRollsBackWhenConfigSaveFails(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
+	dbPath := filepath.Join(t.TempDir(), "webui.db")
 	if err := webserver.BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {
 		t.Fatalf("BootstrapAuthFile: %v", err)
 	}
@@ -606,7 +606,7 @@ func TestSaveToDBPathIncompleteWebAuthStillSavesConfig(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "guiapp.db")
+	dbPath := filepath.Join(t.TempDir(), "webui.db")
 	if err := os.WriteFile(webserver.AuthFilePath(dbPath), []byte(`{"username":"tester"}`), 0o600); err != nil {
 		t.Fatalf("write incomplete auth file: %v", err)
 	}

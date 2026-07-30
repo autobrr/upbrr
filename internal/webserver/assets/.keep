@@ -1,0 +1,2 @@
+This placeholder is committed so go:embed all:assets always has at least one match in clean checkouts.
+Generated WebUI build artifacts in this directory remain ignored.

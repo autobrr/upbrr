@@ -36,22 +36,16 @@ func TestHandleTrackerIconUsesBackendRuntimeConfig(t *testing.T) {
 	newDBPath := filepath.Join(t.TempDir(), "new.sqlite")
 	oldCfg := config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: oldDBPath},
-		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-			"TEST": {URL: "https://old.example"},
-		}},
 	}
 	newCfg := config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: newDBPath},
-		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
-			"TEST": {URL: "https://new.example"},
-		}},
 	}
 
 	iconDir, err := db.Subdir(newDBPath, "tracker-icons")
 	if err != nil {
 		t.Fatalf("create icon dir: %v", err)
 	}
-	iconPath := filepath.Join(iconDir, customTrackerIconCacheName("new.example", "https://new.example"))
+	iconPath := filepath.Join(iconDir, customTrackerIconCacheName("AITHER", "https://aither.cc"))
 	if err := os.WriteFile(iconPath, trackerIconTestPNG, 0o600); err != nil {
 		t.Fatalf("write cached icon: %v", err)
 	}
@@ -60,7 +54,7 @@ func TestHandleTrackerIconUsesBackendRuntimeConfig(t *testing.T) {
 		cfg:     oldCfg,
 		backend: &Backend{cfg: newCfg},
 	}
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/TrackerIcon", strings.NewReader(`{"Domain":"TEST"}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/app/TrackerIcon", strings.NewReader(`{"Domain":"AITHER"}`))
 	recorder := httptest.NewRecorder()
 
 	server.handleTrackerIcon(recorder, req, session{})

@@ -49,6 +49,9 @@ func (b *boolString) UnmarshalJSON(data []byte) error {
 	return errors.New("personalrelease: invalid value")
 }
 
+// ApplyTagOverrides resolves a release tag and its optional naming overrides
+// from tagsPath. An empty path or missing file is a no-op; read and JSON errors
+// preserve currentTag. In-name and explicit-tag matches are case-sensitive.
 func ApplyTagOverrides(path, currentTag, tagsPath string) (string, *api.TagOverride, error) {
 	if strings.TrimSpace(tagsPath) == "" {
 		return currentTag, nil, nil

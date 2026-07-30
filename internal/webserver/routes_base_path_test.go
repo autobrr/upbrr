@@ -53,6 +53,31 @@ func TestRegisterRoutesMountsConfiguredBasePath(t *testing.T) {
 		t.Fatalf("expected development auth status, got %s", status.Body.String())
 	}
 
+	docs := serveBasePathTestRequest(t, mux, "/upbrr/api/v1/docs")
+	if docs.Code != http.StatusOK {
+		t.Fatalf("prefixed API docs returned %d: %s", docs.Code, docs.Body.String())
+	}
+	if !strings.Contains(docs.Body.String(), `url: "openapi.json"`) ||
+		!strings.Contains(docs.Body.String(), `href="../../favicon.ico"`) {
+		t.Fatalf("prefixed API docs did not retain request-relative URLs: %s", docs.Body.String())
+	}
+
+	openAPI := serveBasePathTestRequest(t, mux, "/upbrr/api/v1/openapi.json")
+	if openAPI.Code != http.StatusOK {
+		t.Fatalf("prefixed OpenAPI returned %d: %s", openAPI.Code, openAPI.Body.String())
+	}
+	var openAPIDocument struct {
+		Servers []struct {
+			URL string `json:"url"`
+		} `json:"servers"`
+	}
+	if err := json.Unmarshal(openAPI.Body.Bytes(), &openAPIDocument); err != nil {
+		t.Fatalf("prefixed OpenAPI JSON: %v", err)
+	}
+	if len(openAPIDocument.Servers) != 1 || openAPIDocument.Servers[0].URL != "/upbrr/api/v1" {
+		t.Fatalf("prefixed OpenAPI servers = %#v", openAPIDocument.Servers)
+	}
+
 	rootIndex := serveBasePathTestRequest(t, mux, "/")
 	if rootIndex.Code != http.StatusFound {
 		t.Fatalf("root index returned %d, want 302", rootIndex.Code)
@@ -64,6 +89,10 @@ func TestRegisterRoutesMountsConfiguredBasePath(t *testing.T) {
 	rootStatus := serveBasePathTestRequest(t, mux, "/api/auth/status")
 	if rootStatus.Code != http.StatusNotFound {
 		t.Fatalf("root auth status returned %d, want 404", rootStatus.Code)
+	}
+	rootDocs := serveBasePathTestRequest(t, mux, "/api/v1/docs")
+	if rootDocs.Code != http.StatusNotFound {
+		t.Fatalf("root API docs returned %d, want 404", rootDocs.Code)
 	}
 
 	index := serveBasePathTestRequest(t, mux, "/upbrr/")
@@ -135,6 +164,25 @@ func TestRegisterRoutesPreservesRootMode(t *testing.T) {
 	status := serveBasePathTestRequest(t, mux, "/api/auth/status")
 	if status.Code != http.StatusOK {
 		t.Fatalf("root auth status returned %d: %s", status.Code, status.Body.String())
+	}
+	docs := serveBasePathTestRequest(t, mux, "/api/v1/docs")
+	if docs.Code != http.StatusOK {
+		t.Fatalf("root API docs returned %d: %s", docs.Code, docs.Body.String())
+	}
+	openAPI := serveBasePathTestRequest(t, mux, "/api/v1/openapi.json")
+	if openAPI.Code != http.StatusOK {
+		t.Fatalf("root OpenAPI returned %d: %s", openAPI.Code, openAPI.Body.String())
+	}
+	var document struct {
+		Servers []struct {
+			URL string `json:"url"`
+		} `json:"servers"`
+	}
+	if err := json.Unmarshal(openAPI.Body.Bytes(), &document); err != nil {
+		t.Fatalf("root OpenAPI JSON: %v", err)
+	}
+	if len(document.Servers) != 1 || document.Servers[0].URL != "/api/v1" {
+		t.Fatalf("root OpenAPI servers = %#v", document.Servers)
 	}
 }
 

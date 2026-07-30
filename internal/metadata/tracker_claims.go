@@ -12,15 +12,15 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/logging"
 	"github.com/autobrr/upbrr/internal/services/db"
-	"github.com/autobrr/upbrr/internal/trackerdata"
-	"github.com/autobrr/upbrr/internal/trackers/unit3dmeta"
+	"github.com/autobrr/upbrr/internal/trackers"
+	trackerdata "github.com/autobrr/upbrr/internal/trackers/data"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -28,12 +28,13 @@ const trackerClaimsCacheTTL = 24 * time.Hour
 const trackerClaimRuleActive = "claim_active"
 
 type trackerClaimProvider interface {
-	cachePath(dbPath string, tracker string) (string, error)
-	cacheTTL() time.Duration
-	hasClaim(ctx context.Context, s *Service, tracker string, meta api.PreparedMetadata) (bool, error)
+	hasClaim(ctx context.Context, s *Service, tracker string, meta api.UploadSubject) (bool, error)
+	failureReason(meta api.UploadSubject) string
 }
 
 type apiTrackerClaimProvider struct{}
+
+type registryTrackerClaimProvider struct{ checker trackers.ClaimChecker }
 
 type trackerClaimsCache struct {
 	LastUpdated string              `json:"last_updated"`
@@ -71,67 +72,91 @@ type trackerClaimsAttributes struct {
 	Types       trackerClaimTypes       `json:"types"`
 }
 
-func (s *Service) applyTrackerClaims(ctx context.Context, meta api.PreparedMetadata) (api.PreparedMetadata, error) {
-	resolved := uniqueUpperTrackers(trackersWithClaimChecks(meta))
+func (s *Service) evaluateTrackerClaims(ctx context.Context, meta api.UploadSubject) (api.UploadSubject, error) {
+	logger := logging.FromContext(ctx, s.logger)
+	resolved := uniqueUpperTrackers(s.trackersWithClaimChecks(meta))
 	if len(resolved) == 0 {
-		if s.logger != nil {
-			s.logger.Debugf("metadata: tracker claims skipped (no eligible trackers)")
-		}
+		logger.Debugf("metadata: tracker claims skipped (no eligible trackers)")
 		return meta, nil
 	}
-	if s.logger != nil {
-		s.logger.Debugf("metadata: tracker claims evaluating trackers=%v", resolved)
-	}
+	logger.Debugf("metadata: tracker claims evaluating trackers=%v", resolved)
 
 	for _, tracker := range resolved {
 		select {
 		case <-ctx.Done():
-			return api.PreparedMetadata{}, fmt.Errorf("context canceled: %w", ctx.Err())
+			return api.UploadSubject{}, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 		}
 
-		match, err := s.hasTrackerClaim(ctx, tracker, meta)
+		match, err := s.hasTrackerClaim(ctx, tracker, meta, logger)
 		if err != nil {
-			return api.PreparedMetadata{}, err
+			return api.UploadSubject{}, err
 		}
 		if !match {
 			continue
 		}
 
-		meta.BlockedTrackers = addMetadataTrackerBlockReason(meta.BlockedTrackers, tracker, api.TrackerBlockReasonClaim)
-		meta.TrackerRuleFailures = addMetadataTrackerRuleFailure(meta.TrackerRuleFailures, tracker, api.RuleFailure{
-			Rule:   trackerClaimRuleActive,
-			Reason: trackerClaimFailureReason(tracker, meta, s),
-		})
-		if s.logger != nil {
-			if strings.EqualFold(tracker, "BTN") {
-				s.logger.Debugf("metadata: tracker claim match found tracker=%s", tracker)
-			} else {
-				s.logger.Warnf("metadata: tracker claim match found tracker=%s decision=blocked reason=%s", tracker, trackerClaimRuleActive)
-			}
+		meta.TrackerRuleFailures = addMetadataTrackerRuleFailure(
+			meta.TrackerRuleFailures,
+			tracker,
+			trackerClaimRuleFailure(trackerClaimFailureReason(tracker, meta, s, logger)),
+		)
+		if _, ok := s.registry.LookupClaimCheckerFactory(tracker); ok {
+			logger.Debugf("metadata: tracker claim match found tracker=%s", tracker)
+		} else {
+			logger.Warnf("metadata: tracker claim match found tracker=%s decision=blocked reason=%s", tracker, trackerClaimRuleActive)
 		}
 	}
 
 	return meta, nil
 }
 
-func (s *Service) hasTrackerClaim(ctx context.Context, tracker string, meta api.PreparedMetadata) (bool, error) {
-	provider, ok := resolveTrackerClaimProvider(tracker)
+func trackerClaimRuleFailure(reason string) api.RuleFailure {
+	return api.RuleFailure{
+		Rule:        trackerClaimRuleActive,
+		Reason:      reason,
+		Disposition: api.RuleDispositionStrict,
+	}
+}
+
+// EvaluateTrackerClaims evaluates every eligible tracker from the subject and
+// appends strict claim_active failures for matches. Registry claim checkers run
+// directly; API-backed policies may refresh a private 24-hour filesystem cache.
+// The subject and its maps must be operation-owned because failures are appended
+// in place. Any cancellation, checker, fetch, or cache error discards the partial
+// result. Prepared-release state is neither read nor published.
+func (s *Service) EvaluateTrackerClaims(ctx context.Context, subject api.UploadSubject) (api.UploadSubject, error) {
+	return s.evaluateTrackerClaims(ctx, subject)
+}
+
+func (s *Service) hasTrackerClaim(ctx context.Context, tracker string, meta api.UploadSubject, logger api.Logger) (bool, error) {
+	provider, ok := s.resolveTrackerClaimProvider(tracker, logger)
 	if !ok {
 		return false, nil
 	}
 	return provider.hasClaim(ctx, s, tracker, meta)
 }
 
-func resolveTrackerClaimProvider(tracker string) (trackerClaimProvider, bool) {
-	switch strings.ToUpper(strings.TrimSpace(tracker)) {
-	case "BTN":
-		return btnTrackerClaimProvider{}, true
-	case "AITHER":
-		return apiTrackerClaimProvider{}, true
-	default:
-		return nil, false
+func (s *Service) resolveTrackerClaimProvider(tracker string, logger api.Logger) (trackerClaimProvider, bool) {
+	if factory, ok := s.registry.LookupClaimCheckerFactory(tracker); ok {
+		return registryTrackerClaimProvider{checker: factory.NewClaimChecker(s.cfg, logger)}, true
 	}
+	if policy, ok := s.registry.LookupClaimPolicy(tracker); ok && policy.APIBacked {
+		return apiTrackerClaimProvider{}, true
+	}
+	return nil, false
+}
+
+func (p registryTrackerClaimProvider) hasClaim(ctx context.Context, _ *Service, _ string, meta api.UploadSubject) (bool, error) {
+	match, err := p.checker.HasClaim(ctx, meta)
+	if err != nil {
+		return false, fmt.Errorf("metadata: evaluate tracker claim: %w", err)
+	}
+	return match, nil
+}
+
+func (p registryTrackerClaimProvider) failureReason(meta api.UploadSubject) string {
+	return p.checker.FailureReason(meta)
 }
 
 func (apiTrackerClaimProvider) cachePath(dbPath string, tracker string) (string, error) {
@@ -142,7 +167,7 @@ func (apiTrackerClaimProvider) cacheTTL() time.Duration {
 	return trackerClaimsCacheTTL
 }
 
-func (p apiTrackerClaimProvider) hasClaim(ctx context.Context, s *Service, tracker string, meta api.PreparedMetadata) (bool, error) {
+func (p apiTrackerClaimProvider) hasClaim(ctx context.Context, s *Service, tracker string, meta api.UploadSubject) (bool, error) {
 	cachePath, err := p.cachePath(s.cfg.MainSettings.DBPath, tracker)
 	if err != nil {
 		return false, fmt.Errorf("metadata: tracker claims path %s: %w", tracker, err)
@@ -179,6 +204,8 @@ func (p apiTrackerClaimProvider) hasClaim(ctx context.Context, s *Service, track
 
 	return false, nil
 }
+
+func (apiTrackerClaimProvider) failureReason(api.UploadSubject) string { return "" }
 
 func (s *Service) loadTrackerClaims(ctx context.Context, tracker string, cachePath string, cacheTTL time.Duration) ([]trackerClaimEntry, error) {
 	if payload, ok := loadFreshTrackerClaimsCache(cachePath, cacheTTL); ok {
@@ -233,7 +260,7 @@ func writeTrackerClaimsCache(path string, claims []trackerClaimEntry) error {
 }
 
 func (s *Service) fetchTrackerClaims(ctx context.Context, tracker string) ([]trackerClaimEntry, error) {
-	baseURL, ok := trackerClaimsBaseURL(s.cfg, tracker)
+	baseURL, ok := trackerClaimsBaseURL(s.cfg, s.registry, tracker)
 	if !ok {
 		return nil, nil
 	}
@@ -345,10 +372,10 @@ type trackerClaimMatchTarget struct {
 // trackerClaimTarget builds the canonical upload identity used to compare
 // tracker-side claim records. TV claim matching requires provider-resolved
 // season metadata and intentionally ignores parsed release fallbacks.
-func trackerClaimTarget(meta api.PreparedMetadata) (trackerClaimMatchTarget, bool) {
+func trackerClaimTarget(meta api.UploadSubject) (trackerClaimMatchTarget, bool) {
 	season, _ := meta.CanonicalSeasonEpisode()
 	target := trackerClaimMatchTarget{
-		tmdbID:     meta.ExternalIDs.TMDBID,
+		tmdbID:     meta.Identity.TMDBID,
 		season:     season,
 		category:   trackerdata.CanonicalUnit3DCategory(resolveTrackerClaimCategory(meta)),
 		typeName:   trackerdata.CanonicalUnit3DType(resolveTrackerClaimType(meta)),
@@ -364,19 +391,11 @@ func trackerClaimTarget(meta api.PreparedMetadata) (trackerClaimMatchTarget, boo
 	return target, true
 }
 
-func resolveTrackerClaimCategory(meta api.PreparedMetadata) string {
-	for _, candidate := range []string{meta.ExternalIDs.Category, meta.MediaInfoCategory, meta.Release.Category} {
-		if canonical := trackerdata.CanonicalUnit3DCategory(candidate); canonical != "" {
-			return canonical
-		}
-	}
-	if isTVCategory(meta) {
-		return "TV"
-	}
-	return "MOVIE"
+func resolveTrackerClaimCategory(meta api.UploadSubject) string {
+	return trackerdata.CanonicalUnit3DCategory(string(meta.Identity.Category))
 }
 
-func resolveTrackerClaimType(meta api.PreparedMetadata) string {
+func resolveTrackerClaimType(meta api.UploadSubject) string {
 	for _, candidate := range []string{meta.Type, meta.Release.Type, meta.Source, meta.Release.Source} {
 		if canonical := trackerdata.CanonicalUnit3DType(candidate); canonical != "" {
 			return canonical
@@ -385,7 +404,7 @@ func resolveTrackerClaimType(meta api.PreparedMetadata) string {
 	return ""
 }
 
-func resolveTrackerClaimResolution(meta api.PreparedMetadata) string {
+func resolveTrackerClaimResolution(meta api.UploadSubject) string {
 	for _, candidate := range []string{meta.Release.Resolution} {
 		if canonical := trackerdata.CanonicalUnit3DResolution(candidate); canonical != "" {
 			return canonical
@@ -402,13 +421,13 @@ func trackerClaimsPath(dbPath string, tracker string) (string, error) {
 	return path, nil
 }
 
-func trackerClaimsBaseURL(cfg config.Config, tracker string) (string, bool) {
+func trackerClaimsBaseURL(cfg config.Config, registry *trackers.Registry, tracker string) (string, bool) {
 	if entry, ok := trackerConfigFor(cfg, tracker); ok {
 		if announceBase := announceBaseURL(entry.AnnounceURL); announceBase != "" {
 			return announceBase, true
 		}
 	}
-	return unit3dmeta.BaseURL(tracker)
+	return registry.LookupBaseURL(tracker)
 }
 
 func announceBaseURL(value string) string {
@@ -426,7 +445,7 @@ func announceBaseURL(value string) string {
 	return strings.TrimRight(parsed.String(), "/")
 }
 
-func trackersWithClaimChecks(meta api.PreparedMetadata) []string {
+func (s *Service) trackersWithClaimChecks(meta api.UploadSubject) []string {
 	resolved := resolveClaimTrackerCandidates(meta)
 	if len(resolved) == 0 {
 		return nil
@@ -435,15 +454,16 @@ func trackersWithClaimChecks(meta api.PreparedMetadata) []string {
 	selected := make([]string, 0, len(resolved))
 	for _, tracker := range resolved {
 		normalized := strings.ToUpper(strings.TrimSpace(tracker))
-		switch normalized {
-		case "AITHER", "BTN":
+		_, hasFactory := s.registry.LookupClaimCheckerFactory(normalized)
+		policy, hasPolicy := s.registry.LookupClaimPolicy(normalized)
+		if hasFactory || hasPolicy && policy.APIBacked {
 			selected = append(selected, normalized)
 		}
 	}
 	return selected
 }
 
-func resolveClaimTrackerCandidates(meta api.PreparedMetadata) []string {
+func resolveClaimTrackerCandidates(meta api.UploadSubject) []string {
 	values := make([]string, 0, len(meta.Trackers)+len(meta.MatchedTrackers)+len(meta.TrackerIDs))
 	values = append(values, meta.Trackers...)
 	values = append(values, meta.MatchedTrackers...)
@@ -473,21 +493,6 @@ func uniqueUpperTrackers(values []string) []string {
 	return out
 }
 
-func addMetadataTrackerBlockReason(blocked map[string][]api.TrackerBlockReason, tracker string, reason api.TrackerBlockReason) map[string][]api.TrackerBlockReason {
-	name := strings.ToUpper(strings.TrimSpace(tracker))
-	if name == "" || strings.TrimSpace(string(reason)) == "" {
-		return blocked
-	}
-	if blocked == nil {
-		blocked = make(map[string][]api.TrackerBlockReason)
-	}
-	if slices.Contains(blocked[name], reason) {
-		return blocked
-	}
-	blocked[name] = append(blocked[name], reason)
-	return blocked
-}
-
 func addMetadataTrackerRuleFailure(failures map[string][]api.RuleFailure, tracker string, failure api.RuleFailure) map[string][]api.RuleFailure {
 	name := strings.ToUpper(strings.TrimSpace(tracker))
 	rule := strings.TrimSpace(failure.Rule)
@@ -503,18 +508,22 @@ func addMetadataTrackerRuleFailure(failures map[string][]api.RuleFailure, tracke
 			return failures
 		}
 	}
-	failures[name] = append(failures[name], api.RuleFailure{Rule: rule, Reason: reason})
+	failures[name] = append(failures[name], api.RuleFailure{
+		Rule:        rule,
+		Reason:      reason,
+		Disposition: api.NormalizeRuleDisposition(failure.Disposition),
+	})
 	return failures
 }
 
-func trackerClaimFailureReason(tracker string, meta api.PreparedMetadata, s *Service) string {
+func trackerClaimFailureReason(tracker string, meta api.UploadSubject, s *Service, logger api.Logger) string {
 	name := strings.ToUpper(strings.TrimSpace(tracker))
-	switch name {
-	case "BTN":
-		return btnClaimFailureReason(meta, s.btnClaimWindowGraceHours())
-	default:
-		return name + " has an active claim for this release"
+	if provider, ok := s.resolveTrackerClaimProvider(name, logger); ok {
+		if reason := strings.TrimSpace(provider.failureReason(meta)); reason != "" {
+			return reason
+		}
 	}
+	return name + " has an active claim for this release"
 }
 
 func containsTrackerClaimValue(values []string, target string) bool {
@@ -616,8 +625,8 @@ func decodeTrackerClaimValue(raw json.RawMessage, namesByID func(string) []strin
 	return nil, fmt.Errorf("metadata: invalid tracker claim value %s", string(raw))
 }
 
-func isTVCategory(meta api.PreparedMetadata) bool {
-	return meta.HasTVSeasonEpisodeSignal() ||
+func isTVCategory(meta api.UploadSubject) bool {
+	return meta.SeasonInt > 0 || meta.EpisodeInt > 0 || meta.Release.Season > 0 || meta.Release.Episode > 0 ||
 		meta.TVPack ||
 		strings.TrimSpace(meta.DailyEpisodeDate) != ""
 }

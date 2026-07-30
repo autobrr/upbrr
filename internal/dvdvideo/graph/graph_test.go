@@ -14,17 +14,43 @@ import (
 
 func TestDiscoverReachableAndStructuralMenus(t *testing.T) {
 	logger := &graphTestLogger{}
-	root := ifo.ProgramChain{Number: 1, EntryID: 0x83, MenuID: 3, Programs: 1, Cells: 1}
-	chapter := ifo.ProgramChain{Number: 2, EntryID: 0x07, MenuID: 7, Programs: 1, Cells: 1}
-	audio := ifo.ProgramChain{Number: 3, EntryID: 0x05, MenuID: 5, Programs: 1, Cells: 1}
+	root := ifo.ProgramChain{
+		Number:   1,
+		EntryID:  0x83,
+		MenuID:   3,
+		Programs: 1,
+		Cells:    1,
+	}
+	chapter := ifo.ProgramChain{
+		Number:   2,
+		EntryID:  0x07,
+		MenuID:   7,
+		Programs: 1,
+		Cells:    1,
+	}
+	audio := ifo.ProgramChain{
+		Number:   3,
+		EntryID:  0x05,
+		MenuID:   5,
+		Programs: 1,
+		Cells:    1,
+	}
 	disc := ifo.Disc{Manager: ifo.File{
 		Kind:      ifo.KindManager,
 		Languages: []ifo.LanguageUnit{{Code: "en", ProgramChains: []ifo.ProgramChain{root, chapter, audio}}},
 	}}
 	resolver := fakeResolver{live: map[int]LiveState{
-		1: {Visible: true, Fingerprint: []byte("root"), Buttons: []nav.Button{{Command: linkPGCN(2)}}},
+		1: {
+			Visible:     true,
+			Fingerprint: []byte("root"),
+			Buttons:     []nav.Button{{Command: linkPGCN(2)}},
+		},
 		2: {Visible: true, Fingerprint: []byte("chapter")},
-		3: {Visible: true, Fingerprint: []byte("audio"), Buttons: []nav.Button{{Number: 1}}},
+		3: {
+			Visible:     true,
+			Fingerprint: []byte("audio"),
+			Buttons:     []nav.Button{{Number: 1}},
+		},
 	}}
 	result, err := Discover(context.Background(), disc, resolver, Options{MaxItems: 6, Logger: logger})
 	if err != nil {
@@ -99,13 +125,29 @@ func (l *graphTestLogger) Count(expected string) int {
 func TestDiscoverTruncatesStoredScreens(t *testing.T) {
 	logger := &graphTestLogger{}
 	chains := []ifo.ProgramChain{
-		{Number: 1, EntryID: 0x83, MenuID: 3, Programs: 1, Cells: 1},
-		{Number: 2, EntryID: 0x85, MenuID: 5, Programs: 1, Cells: 1},
+		{
+			Number:   1,
+			EntryID:  0x83,
+			MenuID:   3,
+			Programs: 1,
+			Cells:    1,
+		},
+		{
+			Number:   2,
+			EntryID:  0x85,
+			MenuID:   5,
+			Programs: 1,
+			Cells:    1,
+		},
 	}
 	disc := ifo.Disc{Manager: ifo.File{Kind: ifo.KindManager, Languages: []ifo.LanguageUnit{{Code: "en", ProgramChains: chains}}}}
 	resolver := fakeResolver{live: map[int]LiveState{
 		1: {Visible: true, Fingerprint: []byte("one")},
-		2: {Visible: true, Fingerprint: []byte("two"), Buttons: []nav.Button{{Number: 1}}},
+		2: {
+			Visible:     true,
+			Fingerprint: []byte("two"),
+			Buttons:     []nav.Button{{Number: 1}},
+		},
 	}}
 	result, err := Discover(context.Background(), disc, resolver, Options{MaxItems: 1, Logger: logger})
 	if err != nil {
@@ -125,8 +167,18 @@ func TestDiscoverTruncatesStoredScreens(t *testing.T) {
 func TestDiscoverClassifiesInvisibleStructuralProgramsWithoutCapturingThem(t *testing.T) {
 	t.Parallel()
 
-	root := ifo.ProgramChain{Number: 1, EntryID: 0x83, MenuID: 3, Programs: 1, Cells: 1}
-	transition := ifo.ProgramChain{Number: 2, Programs: 1, Cells: 1}
+	root := ifo.ProgramChain{
+		Number:   1,
+		EntryID:  0x83,
+		MenuID:   3,
+		Programs: 1,
+		Cells:    1,
+	}
+	transition := ifo.ProgramChain{
+		Number:   2,
+		Programs: 1,
+		Cells:    1,
+	}
 	disc := ifo.Disc{Manager: ifo.File{
 		Kind:      ifo.KindManager,
 		Languages: []ifo.LanguageUnit{{Code: "en", ProgramChains: []ifo.ProgramChain{root, transition}}},
@@ -150,15 +202,31 @@ func TestDiscoverClassifiesInvisibleStructuralProgramsWithoutCapturingThem(t *te
 func TestDiscoverDoesNotCaptureUnreachedZeroButtonScreens(t *testing.T) {
 	t.Parallel()
 
-	root := ifo.ProgramChain{Number: 1, EntryID: 0x83, MenuID: 3, Programs: 1, Cells: 1}
-	nonInteractive := ifo.ProgramChain{Number: 2, Programs: 1, Cells: 1, StillTime: 0xff}
+	root := ifo.ProgramChain{
+		Number:   1,
+		EntryID:  0x83,
+		MenuID:   3,
+		Programs: 1,
+		Cells:    1,
+	}
+	nonInteractive := ifo.ProgramChain{
+		Number:    2,
+		Programs:  1,
+		Cells:     1,
+		StillTime: 0xff,
+	}
 	disc := ifo.Disc{Manager: ifo.File{
 		Kind:      ifo.KindManager,
 		Languages: []ifo.LanguageUnit{{Code: "en", ProgramChains: []ifo.ProgramChain{root, nonInteractive}}},
 	}}
 	resolver := fakeResolver{live: map[int]LiveState{
 		1: {Visible: true, Fingerprint: []byte("root")},
-		2: {Visible: true, Fingerprint: []byte("non-menu"), AuthoredStill: true, AuthoredEntry: true},
+		2: {
+			Visible:       true,
+			Fingerprint:   []byte("non-menu"),
+			AuthoredStill: true,
+			AuthoredEntry: true,
+		},
 	}}
 	result, err := Discover(context.Background(), disc, resolver, Options{MaxItems: 2})
 	if err != nil {
@@ -176,19 +244,46 @@ func TestDiscoverDeduplicatesEquivalentControlsAcrossBackgrounds(t *testing.T) {
 	t.Parallel()
 
 	logger := &graphTestLogger{}
-	root := ifo.ProgramChain{Number: 1, EntryID: 0x83, MenuID: 3, Programs: 1, Cells: 1}
-	alternate := ifo.ProgramChain{Number: 2, MenuID: 3, Programs: 1, Cells: 1}
+	root := ifo.ProgramChain{
+		Number:   1,
+		EntryID:  0x83,
+		MenuID:   3,
+		Programs: 1,
+		Cells:    1,
+	}
+	alternate := ifo.ProgramChain{
+		Number:   2,
+		MenuID:   3,
+		Programs: 1,
+		Cells:    1,
+	}
 	disc := ifo.Disc{Manager: ifo.File{
 		Kind:      ifo.KindManager,
 		Languages: []ifo.LanguageUnit{{Code: "en", ProgramChains: []ifo.ProgramChain{root, alternate}}},
 	}}
-	button := nav.Button{Number: 1, ColorGroup: 1, XStart: 10, YStart: 20, XEnd: 100, YEnd: 80}
+	button := nav.Button{
+		Number:     1,
+		ColorGroup: 1,
+		XStart:     10,
+		YStart:     20,
+		XEnd:       100,
+		YEnd:       80,
+	}
 	alternateButton := button
 	alternateButton.XStart += 7
 	alternateButton.YEnd += 8
 	resolver := fakeResolver{live: map[int]LiveState{
-		1: {Visible: true, Fingerprint: []byte("first-background"), Buttons: []nav.Button{button}, AuthoredEntry: true},
-		2: {Visible: true, Fingerprint: []byte("alternate-background"), Buttons: []nav.Button{alternateButton}},
+		1: {
+			Visible:       true,
+			Fingerprint:   []byte("first-background"),
+			Buttons:       []nav.Button{button},
+			AuthoredEntry: true,
+		},
+		2: {
+			Visible:     true,
+			Fingerprint: []byte("alternate-background"),
+			Buttons:     []nav.Button{alternateButton},
+		},
 	}}
 	result, err := Discover(context.Background(), disc, resolver, Options{MaxItems: 2, Logger: logger})
 	if err != nil {
@@ -208,18 +303,44 @@ func TestDiscoverDeduplicatesEquivalentControlsAcrossBackgrounds(t *testing.T) {
 func TestDiscoverPreservesSameLayoutWithDifferentCommands(t *testing.T) {
 	t.Parallel()
 
-	root := ifo.ProgramChain{Number: 1, EntryID: 0x83, MenuID: 3, Programs: 1, Cells: 1}
-	different := ifo.ProgramChain{Number: 2, MenuID: 3, Programs: 1, Cells: 1}
+	root := ifo.ProgramChain{
+		Number:   1,
+		EntryID:  0x83,
+		MenuID:   3,
+		Programs: 1,
+		Cells:    1,
+	}
+	different := ifo.ProgramChain{
+		Number:   2,
+		MenuID:   3,
+		Programs: 1,
+		Cells:    1,
+	}
 	disc := ifo.Disc{Manager: ifo.File{
 		Kind:      ifo.KindManager,
 		Languages: []ifo.LanguageUnit{{Code: "en", ProgramChains: []ifo.ProgramChain{root, different}}},
 	}}
-	baseButton := nav.Button{Number: 1, XStart: 10, YStart: 20, XEnd: 100, YEnd: 80}
+	baseButton := nav.Button{
+		Number: 1,
+		XStart: 10,
+		YStart: 20,
+		XEnd:   100,
+		YEnd:   80,
+	}
 	differentButton := baseButton
 	differentButton.Command = linkPGCN(1)
 	resolver := fakeResolver{live: map[int]LiveState{
-		1: {Visible: true, Fingerprint: []byte("first"), Buttons: []nav.Button{baseButton}, AuthoredEntry: true},
-		2: {Visible: true, Fingerprint: []byte("second"), Buttons: []nav.Button{differentButton}},
+		1: {
+			Visible:       true,
+			Fingerprint:   []byte("first"),
+			Buttons:       []nav.Button{baseButton},
+			AuthoredEntry: true,
+		},
+		2: {
+			Visible:     true,
+			Fingerprint: []byte("second"),
+			Buttons:     []nav.Button{differentButton},
+		},
 	}}
 	result, err := Discover(context.Background(), disc, resolver, Options{MaxItems: 2})
 	if err != nil {
@@ -234,15 +355,32 @@ func TestDiscoverTraversesButDoesNotCaptureManagerUtilityScreen(t *testing.T) {
 	t.Parallel()
 
 	logger := &graphTestLogger{}
-	utility := ifo.ProgramChain{Number: 1, Programs: 1, Cells: 1}
-	root := ifo.ProgramChain{Number: 2, MenuID: 3, Programs: 1, Cells: 1}
+	utility := ifo.ProgramChain{
+		Number:   1,
+		Programs: 1,
+		Cells:    1,
+	}
+	root := ifo.ProgramChain{
+		Number:   2,
+		MenuID:   3,
+		Programs: 1,
+		Cells:    1,
+	}
 	disc := ifo.Disc{Manager: ifo.File{
 		Kind:      ifo.KindManager,
 		Languages: []ifo.LanguageUnit{{Code: "en", ProgramChains: []ifo.ProgramChain{utility, root}}},
 	}}
 	resolver := fakeResolver{live: map[int]LiveState{
-		1: {Visible: true, Fingerprint: []byte("utility"), Buttons: []nav.Button{{Number: 1, Command: linkPGCN(2)}}},
-		2: {Visible: true, Fingerprint: []byte("root"), Buttons: []nav.Button{{Number: 1}}},
+		1: {
+			Visible:     true,
+			Fingerprint: []byte("utility"),
+			Buttons:     []nav.Button{{Number: 1, Command: linkPGCN(2)}},
+		},
+		2: {
+			Visible:     true,
+			Fingerprint: []byte("root"),
+			Buttons:     []nav.Button{{Number: 1}},
+		},
 	}}
 	result, err := Discover(context.Background(), disc, resolver, Options{MaxItems: 2, Logger: logger})
 	if err != nil {
@@ -269,7 +407,14 @@ func TestDiscoverRejectsItemLimitOverSafetyMaximum(t *testing.T) {
 }
 
 func TestDiscoverMapsProgramToAuthoredCell(t *testing.T) {
-	chain := ifo.ProgramChain{Number: 1, EntryID: 0x83, MenuID: 3, Programs: 2, Cells: 3, ProgramMap: []uint8{1, 3}}
+	chain := ifo.ProgramChain{
+		Number:     1,
+		EntryID:    0x83,
+		MenuID:     3,
+		Programs:   2,
+		Cells:      3,
+		ProgramMap: []uint8{1, 3},
+	}
 	chain.PreCommands = []vm.Command{linkPGN(2)}
 	disc := ifo.Disc{Manager: ifo.File{Kind: ifo.KindManager, Languages: []ifo.LanguageUnit{{Code: "en", ProgramChains: []ifo.ProgramChain{chain}}}}}
 	resolver := &coordinateResolver{}

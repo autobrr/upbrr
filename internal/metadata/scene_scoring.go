@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/autobrr/upbrr/pkg/api"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 )
 
 // sceneTokenSplit breaks a release name into its dotted/spaced/underscored
@@ -39,7 +39,7 @@ var sceneForeignKeywords = []string{
 // metadata, or (nil, 0) when no candidate clears the structural eligibility bar.
 // Eligibility, not just the highest score, is what guards against
 // false-flagging a non-scene release.
-func bestSceneCandidate(meta api.PreparedMetadata, localBase string, candidates []srrdbSearchResult) (*srrdbSearchResult, int) {
+func bestSceneCandidate(meta preparationstate.State, localBase string, candidates []srrdbSearchResult) (*srrdbSearchResult, int) {
 	wantRes := sceneResolution(meta, localBase)
 	localForeign := releaseLooksForeign(meta, localBase)
 
@@ -64,7 +64,7 @@ func bestSceneCandidate(meta api.PreparedMetadata, localBase string, candidates 
 // scoreSceneCandidate scores one candidate against the effective release tokens.
 // Eligibility is false for structural conflicts such as resolution mismatch,
 // known-group mismatch, foreign-language mismatch, or edition mismatch.
-func scoreSceneCandidate(meta api.PreparedMetadata, wantRes string, localForeign bool, cand srrdbSearchResult) (int, bool) {
+func scoreSceneCandidate(meta preparationstate.State, wantRes string, localForeign bool, cand srrdbSearchResult) (int, bool) {
 	tokens := sceneTokens(cand.Release)
 	score := 0
 
@@ -143,7 +143,7 @@ func scoreSceneCandidate(meta api.PreparedMetadata, wantRes string, localForeign
 
 // sceneResolution returns the normalized resolution available after media
 // details and release-name overrides, falling back to the local name when needed.
-func sceneResolution(meta api.PreparedMetadata, localBase string) string {
+func sceneResolution(meta preparationstate.State, localBase string) string {
 	if meta.ReleaseNameOverrides.Resolution != nil {
 		if resolution := strings.ToLower(strings.TrimSpace(*meta.ReleaseNameOverrides.Resolution)); resolution != "" {
 			return resolution
@@ -165,7 +165,7 @@ func sceneResolution(meta api.PreparedMetadata, localBase string) string {
 
 // sceneYear returns the best title year known after tracker, Arr, and external
 // metadata enrichment. Parsed filename year is only one possible source.
-func sceneYear(meta api.PreparedMetadata) int {
+func sceneYear(meta preparationstate.State) int {
 	if meta.ReleaseNameOverrides.ManualYear != nil && *meta.ReleaseNameOverrides.ManualYear > 0 {
 		return *meta.ReleaseNameOverrides.ManualYear
 	}
@@ -175,17 +175,17 @@ func sceneYear(meta api.PreparedMetadata) int {
 	if meta.ArrYear > 0 {
 		return meta.ArrYear
 	}
-	if meta.ExternalMetadata.TMDB != nil && meta.ExternalMetadata.TMDB.Year > 0 {
-		return meta.ExternalMetadata.TMDB.Year
+	if meta.ProviderMetadata.TMDB != nil && meta.ProviderMetadata.TMDB.Year > 0 {
+		return meta.ProviderMetadata.TMDB.Year
 	}
-	if meta.ExternalMetadata.IMDB != nil && meta.ExternalMetadata.IMDB.Year > 0 {
-		return meta.ExternalMetadata.IMDB.Year
+	if meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Year > 0 {
+		return meta.ProviderMetadata.IMDB.Year
 	}
-	if meta.ExternalMetadata.TVDB != nil && meta.ExternalMetadata.TVDB.Year > 0 {
-		return meta.ExternalMetadata.TVDB.Year
+	if meta.ProviderMetadata.TVDB != nil && meta.ProviderMetadata.TVDB.Year > 0 {
+		return meta.ProviderMetadata.TVDB.Year
 	}
-	if meta.ExternalMetadata.TVmaze != nil {
-		return parseSceneYearPrefix(meta.ExternalMetadata.TVmaze.Premiered)
+	if meta.ProviderMetadata.TVmaze != nil {
+		return parseSceneYearPrefix(meta.ProviderMetadata.TVmaze.Premiered)
 	}
 	return 0
 }
@@ -206,7 +206,7 @@ func parseSceneYearPrefix(value string) int {
 
 // sceneSource returns the source label used for scoring, preferring manual
 // release-name overrides before the normalized media source and parsed source.
-func sceneSource(meta api.PreparedMetadata) string {
+func sceneSource(meta preparationstate.State) string {
 	if meta.ReleaseNameOverrides.Source != nil {
 		if source := strings.TrimSpace(*meta.ReleaseNameOverrides.Source); source != "" {
 			return source
@@ -220,7 +220,7 @@ func sceneSource(meta api.PreparedMetadata) string {
 
 // sceneCodecs returns every codec-like token known after media analysis so
 // parsed filename codecs and MediaInfo-derived codecs can both influence ties.
-func sceneCodecs(meta api.PreparedMetadata) []string {
+func sceneCodecs(meta preparationstate.State) []string {
 	values := make([]string, 0, len(meta.Release.Codec)+2)
 	values = append(values, meta.Release.Codec...)
 	values = append(values, meta.VideoEncode, meta.VideoCodec)
@@ -229,7 +229,7 @@ func sceneCodecs(meta api.PreparedMetadata) []string {
 
 // sceneEditions returns the effective edition markers for mismatch checks,
 // preferring manual naming overrides before normalized and parsed editions.
-func sceneEditions(meta api.PreparedMetadata) []string {
+func sceneEditions(meta preparationstate.State) []string {
 	if meta.ReleaseNameOverrides.Edition != nil {
 		if edition := strings.TrimSpace(*meta.ReleaseNameOverrides.Edition); edition != "" {
 			return []string{edition}
@@ -288,7 +288,7 @@ func scoreEditions(localEditions []string, tokens map[string]struct{}) (score in
 // releaseLooksForeign reports whether the local release is itself a
 // foreign-language/dub variant, so that foreign candidates are preferred rather
 // than penalised for it.
-func releaseLooksForeign(meta api.PreparedMetadata, localBase string) bool {
+func releaseLooksForeign(meta preparationstate.State, localBase string) bool {
 	// Parsed language metadata is authoritative when present: a non-English entry
 	// means foreign, and an English-only set means not foreign — the name-token
 	// heuristic below must not override it (e.g. a "dual"/"multi" token on an
@@ -321,7 +321,7 @@ func releaseLooksForeign(meta api.PreparedMetadata, localBase string) bool {
 // sceneGroup resolves the effective release group used for scene matching.
 // Manual release-name tag overrides win over parsed groups, because they also
 // drive the rebuilt upload name.
-func sceneGroup(meta api.PreparedMetadata) string {
+func sceneGroup(meta preparationstate.State) string {
 	if meta.ReleaseNameOverrides.Tag != nil {
 		return strings.TrimPrefix(strings.TrimSpace(*meta.ReleaseNameOverrides.Tag), "-")
 	}

@@ -670,7 +670,12 @@ func (r boundedReader) cellPositions(base, count int) ([]CellPosition, error) {
 }
 
 func dvdTime(data []byte) DVDTime {
-	return DVDTime{Hour: data[0], Minute: data[1], Second: data[2], Frame: data[3]}
+	return DVDTime{
+		Hour:   data[0],
+		Minute: data[1],
+		Second: data[2],
+		Frame:  data[3],
+	}
 }
 
 func boundedUint32(value uint32, label string) (int, error) {

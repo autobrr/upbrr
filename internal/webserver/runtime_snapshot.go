@@ -9,17 +9,22 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/logging"
-	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// backendRuntimeSnapshot is a shallow, single-generation view of config and
+// its bound runtime resources. It preserves request consistency without
+// transferring ownership of the capability bundle, owner, or logger.
 type backendRuntimeSnapshot struct {
-	cfg         config.Config
-	core        api.Core
-	coreInitErr error
-	logger      *logging.Logger
+	generationID uint64
+	cfg          config.Config
+	capabilities CoreCapabilities
+	coreOwner    LifecycleOwner
+	coreInitErr  error
+	logger       *logging.Logger
 }
 
-// runtimeSnapshot returns a consistent copy of runtime fields guarded by runtimeMu.
+// runtimeSnapshot copies all runtime fields under one read lock so callers do
+// not combine config and capabilities from different settings generations.
 func (b *Backend) runtimeSnapshot() backendRuntimeSnapshot {
 	if b == nil {
 		return backendRuntimeSnapshot{}
@@ -27,10 +32,12 @@ func (b *Backend) runtimeSnapshot() backendRuntimeSnapshot {
 	b.runtimeMu.RLock()
 	defer b.runtimeMu.RUnlock()
 	return backendRuntimeSnapshot{
-		cfg:         b.cfg,
-		core:        b.core,
-		coreInitErr: b.coreInitErr,
-		logger:      b.logger,
+		generationID: b.runtimeGeneration,
+		cfg:          b.cfg,
+		capabilities: b.capabilities,
+		coreOwner:    b.coreOwner,
+		coreInitErr:  b.coreInitErr,
+		logger:       b.logger,
 	}
 }
 
@@ -39,7 +46,7 @@ func (b *Backend) requireRuntime() (backendRuntimeSnapshot, error) {
 		return backendRuntimeSnapshot{}, errors.New("backend not initialized")
 	}
 	rt := b.runtimeSnapshot()
-	if rt.core != nil {
+	if rt.capabilities.Available() {
 		return rt, nil
 	}
 	if rt.coreInitErr != nil {
@@ -58,14 +65,28 @@ func (b *Backend) currentConfig() config.Config {
 	return b.cfg
 }
 
-// currentCore returns the active core service under the runtime lock.
-func (b *Backend) currentCore() api.Core {
-	if b == nil {
-		return nil
+func requireBackendCapability[T any](capability T, name string) (T, error) {
+	if !CapabilityAvailable(capability) {
+		var zero T
+		return zero, fmt.Errorf("%s capability unavailable", name)
 	}
-	b.runtimeMu.RLock()
-	defer b.runtimeMu.RUnlock()
-	return b.core
+	return capability, nil
+}
+
+func (rt backendRuntimeSnapshot) releaseWorkflowCore() (ReleaseWorkflowCapability, error) {
+	return requireBackendCapability(rt.capabilities.ReleaseWorkflow, "release workflow")
+}
+
+func (rt backendRuntimeSnapshot) descriptionCore() (DescriptionCapability, error) {
+	return requireBackendCapability(rt.capabilities.Description, "description")
+}
+
+func (rt backendRuntimeSnapshot) playlistCore() (PlaylistCapability, error) {
+	return requireBackendCapability(rt.capabilities.Playlists, "playlist")
+}
+
+func (rt backendRuntimeSnapshot) historyCore() (HistoryCapability, error) {
+	return requireBackendCapability(rt.capabilities.History, "history")
 }
 
 // currentLogger returns the active logger under the runtime lock.
@@ -78,17 +99,17 @@ func (b *Backend) currentLogger() *logging.Logger {
 	return b.logger
 }
 
-// logDebugf writes through the active logger while holding the runtime read
+// logDebug writes through the active logger while holding the runtime read
 // lock so replacement cannot close the selected logger before the write
 // completes.
-func (b *Backend) logDebugf(format string, args ...any) {
+func (b *Backend) logDebug(message string) {
 	if b == nil {
 		return
 	}
 	b.runtimeMu.RLock()
 	defer b.runtimeMu.RUnlock()
 	if b.logger != nil {
-		b.logger.Debugf(format, args...)
+		b.logger.Debugf("webserver: %s", message)
 	}
 }
 
@@ -135,28 +156,61 @@ func (s *Server) logErrorf(format string, args ...any) {
 	s.backend.logErrorf(format, args...)
 }
 
-// baseUploadOptions returns upload options from the current runtime config.
-func (b *Backend) baseUploadOptions() api.UploadOptions {
-	return buildBaseMetadataOptions(b.currentConfig())
-}
-
-// baseUploadOptions returns upload options derived from the same runtime
-// snapshot as the core selected for a request.
-func (rt backendRuntimeSnapshot) baseUploadOptions() api.UploadOptions {
-	return buildBaseMetadataOptions(rt.cfg)
-}
-
-// replaceRuntime swaps all runtime-owned fields under one write lock and
-// returns the previous core and logger for shutdown after callers finish
-// follow-up work such as log stream rebinding.
-func (b *Backend) replaceRuntime(cfg config.Config, core api.Core, logger *logging.Logger) (api.Core, *logging.Logger) {
+func (b *Backend) replaceRuntimeGeneration(
+	generationID uint64,
+	cfg config.Config,
+	capabilities CoreCapabilities,
+	owner LifecycleOwner,
+	logger *logging.Logger,
+) (LifecycleOwner, *logging.Logger) {
 	b.runtimeMu.Lock()
 	defer b.runtimeMu.Unlock()
-	oldCore := b.core
+	oldOwner := b.coreOwner
 	oldLogger := b.logger
-	b.core = core
+	b.capabilities = capabilities
+	b.runtimeGeneration = generationID
+	b.coreOwner = owner
 	b.coreInitErr = nil
 	b.logger = logger
 	b.cfg = cfg
-	return oldCore, oldLogger
+	return oldOwner, oldLogger
+}
+
+type backendRuntimeInstaller struct {
+	backend *Backend
+}
+
+func (i backendRuntimeInstaller) Install(generation RuntimeGeneration) RetiredRuntime {
+	oldOwner, oldLogger := i.backend.replaceRuntimeGeneration(
+		generation.ID,
+		generation.Config,
+		generation.Capabilities,
+		generation.Owner,
+		generation.Logger,
+	)
+	if i.backend.hub != nil {
+		i.backend.hub.SetLogger(generation.Logger)
+	}
+	i.backend.rebindLogStreams(oldLogger, generation.Logger)
+	return RetiredRuntime{Owner: oldOwner, Logger: oldLogger}
+}
+
+func (b *Backend) runtimeActivator() (*RuntimeActivator, error) {
+	if b == nil {
+		return nil, errors.New("backend not initialized")
+	}
+	b.activationInitMu.Lock()
+	defer b.activationInitMu.Unlock()
+	if b.activator != nil {
+		return b.activator, nil
+	}
+	if b.repo == nil {
+		return nil, errors.New("config repository not initialized")
+	}
+	activator, err := NewRuntimeActivator(b.repo, b.repo.DBPath(), backendRuntimeInstaller{backend: b})
+	if err != nil {
+		return nil, fmt.Errorf("initialize runtime activator: %w", err)
+	}
+	b.activator = activator
+	return activator, nil
 }

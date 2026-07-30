@@ -56,16 +56,6 @@ func nextSessionLogStopGenerationLocked(s *Server, sessionID string) uint64 {
 	return sessionLogStopGenerations.byServ[s][sessionID]
 }
 
-// clearSessionLogStopGeneration drops idle-stop generation state after the
-// owning delayed cleanup exits, regardless of whether it stopped the session
-// log streams or yielded to a replacement subscriber.
-func clearSessionLogStopGeneration(s *Server, sessionID string) {
-	sessionLogStopGenerations.mu.Lock()
-	defer sessionLogStopGenerations.mu.Unlock()
-
-	clearSessionLogStopGenerationLocked(s, sessionID)
-}
-
 func clearSessionLogStopGenerationLocked(s *Server, sessionID string) {
 	sessionGenerations, ok := sessionLogStopGenerations.byServ[s]
 	if !ok {
@@ -115,6 +105,7 @@ func (s *Server) registerRootRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/app/TrackerIcon", s.requireSession(s.handleTrackerIcon))
 
 	s.registerAppRoutes(mux)
+	s.registerV1Routes(mux)
 
 	fileServer := http.FileServer(http.FS(s.assets))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -307,7 +298,6 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request, _ sess
 			"needsSetup":              false,
 			"username":                current.Username,
 			"csrfToken":               current.CSRFToken,
-			"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
 			"caseInsensitivePaths":    runtime.GOOS == "windows",
 			"browseRoot":              "",
 			"allowUnrestrictedBrowse": true,
@@ -322,13 +312,11 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request, _ sess
 		return
 	}
 	current, ok := s.currentSession(r)
-	browseAvailable := s.nativeBrowseAvailable(r)
 	payload := map[string]any{
 		"authenticated":           ok,
 		"needsSetup":              !exists,
 		"username":                "",
 		"csrfToken":               "",
-		"nativeBrowseEnabled":     browseAvailable,
 		"caseInsensitivePaths":    runtime.GOOS == "windows",
 		"browseRoot":              "",
 		"allowUnrestrictedBrowse": false,
@@ -391,7 +379,6 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request, _ sessi
 		"needsSetup":              false,
 		"username":                current.Username,
 		"csrfToken":               current.CSRFToken,
-		"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
 		"caseInsensitivePaths":    runtime.GOOS == "windows",
 		"browseRoot":              "",
 		"allowUnrestrictedBrowse": false,
@@ -502,7 +489,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request, _ session) 
 		"needsSetup":              false,
 		"username":                current.Username,
 		"csrfToken":               current.CSRFToken,
-		"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
 		"caseInsensitivePaths":    runtime.GOOS == "windows",
 		"browseRoot":              joinBrowsePolicyRoots(browseRoots),
 		"allowUnrestrictedBrowse": record.AllowUnrestrictedBrowse,
@@ -558,7 +544,11 @@ func (s *Server) handleBrowsePolicy(w http.ResponseWriter, r *http.Request, curr
 		return
 	}
 	if !req.AllowUnrestrictedBrowse && len(roots) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "at least one browse root is required unless unrestricted browsing is explicitly allowed"})
+		writeJSON(
+			w,
+			http.StatusBadRequest,
+			map[string]string{"error": "at least one browse root is required unless unrestricted browsing is explicitly allowed"},
+		)
 		return
 	}
 
@@ -583,7 +573,6 @@ func (s *Server) handleBrowsePolicy(w http.ResponseWriter, r *http.Request, curr
 		"needsSetup":              false,
 		"username":                current.Username,
 		"csrfToken":               current.CSRFToken,
-		"nativeBrowseEnabled":     s.nativeBrowseAvailable(r),
 		"caseInsensitivePaths":    runtime.GOOS == "windows",
 		"browseRoot":              joinBrowsePolicyRoots(roots),
 		"allowUnrestrictedBrowse": req.AllowUnrestrictedBrowse,
@@ -750,21 +739,6 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request, current se
 			flusher.Flush()
 		}
 	}
-}
-
-// stopSessionLogStreamsIfIdle schedules cleanup for the latest session
-// disconnect only, so stale SSE disconnect timers cannot stop shared session
-// logs during a newer reconnect grace window.
-func (s *Server) stopSessionLogStreamsIfIdle(sessionID string) {
-	if s == nil || s.backend == nil {
-		return
-	}
-	trimmedSessionID := strings.TrimSpace(sessionID)
-	if trimmedSessionID == "" {
-		return
-	}
-
-	s.scheduleStopSessionLogStreamsIfIdle(trimmedSessionID, nextSessionLogStopGeneration(s, trimmedSessionID))
 }
 
 func (s *Server) scheduleStopSessionLogStreamsIfIdle(sessionID string, generation uint64) {
@@ -934,6 +908,7 @@ func (s *Server) allowGeneralRequest(r *http.Request) bool {
 	return s.generalLimiter.Allow(s.clientIP(r))
 }
 
+// verifyCSRF requires the request header token to match the cookie-bound session.
 func (s *Server) verifyCSRF(r *http.Request, current session) bool {
 	token := strings.TrimSpace(r.Header.Get("X-Csrf-Token"))
 	if token == "" {
@@ -942,6 +917,8 @@ func (s *Server) verifyCSRF(r *http.Request, current session) bool {
 	return token == current.CSRFToken
 }
 
+// verifySameOrigin accepts an exact Origin or Referer host match. Development
+// no-auth sessions additionally permit requests between loopback hosts.
 func (s *Server) verifySameOrigin(r *http.Request, current session) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
@@ -971,6 +948,8 @@ func isLoopbackHostPort(host string) bool {
 	return isLoopbackHostname(strings.Trim(trimmed, "[]"))
 }
 
+// clientIP trusts the first X-Forwarded-For value only when RemoteAddr belongs
+// to a configured trusted proxy.
 func (s *Server) clientIP(r *http.Request) string {
 	ip := ipFromAddr(r.RemoteAddr)
 	if !s.isTrustedProxy(net.ParseIP(ip)) {
@@ -981,13 +960,6 @@ func (s *Server) clientIP(r *http.Request) string {
 		return ip
 	}
 	return forwarded
-}
-
-func (s *Server) nativeBrowseAvailable(r *http.Request) bool {
-	if s == nil || s.picker == nil || r == nil {
-		return false
-	}
-	return s.isLocalWebUIRequest(r)
 }
 
 func (s *Server) isLocalWebUIRequest(r *http.Request) bool {
@@ -1022,6 +994,8 @@ func isLoopbackHostname(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// requestScheme honors an explicit HTTPS request URL, trusts
+// X-Forwarded-Proto only from a configured proxy, then falls back to TLS state.
 func (s *Server) requestScheme(r *http.Request) string {
 	if strings.EqualFold(r.URL.Scheme, "https") {
 		return "https"

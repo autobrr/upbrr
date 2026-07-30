@@ -11,17 +11,22 @@ import (
 	"path/filepath"
 	"strings"
 
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
 	gomediainfo "github.com/autobrr/go-mediainfo"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
-	"github.com/autobrr/upbrr/internal/paths"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
+// Exporter materializes or reuses source-scoped MediaInfo artifacts.
 type Exporter interface {
 	Export(ctx context.Context, req Request) (Result, error)
 }
 
+// Request names host filesystem paths for one source and its release-scoped
+// temporary root. VideoPath overrides SourcePath for non-DVD analysis.
 type Request struct {
 	SourcePath string
 	DiscType   string
@@ -30,6 +35,9 @@ type Request struct {
 	Release    api.ReleaseInfo
 }
 
+// Result identifies persisted MediaInfo artifacts and optional DVD evidence.
+// Path fields are host filesystem paths; VOBText and VOBJSON are in-memory
+// reports for the selected DVD title set.
 type Result struct {
 	JSONPath string
 	TextPath string
@@ -47,15 +55,21 @@ type targetSelection struct {
 	VOBSet      string
 }
 
+// Analyzer renders text and JSON MediaInfo reports for one host filesystem
+// target. Service owns artifact persistence.
 type Analyzer interface {
 	Analyze(ctx context.Context, target string) (text string, json []byte, err error)
 }
 
+// Service selects the analysis target and owns release-scoped artifact reuse and
+// persistence.
 type Service struct {
 	logger   api.Logger
 	analyzer Analyzer
 }
 
+// NewService substitutes a no-op logger and the module-backed analyzer for nil
+// dependencies.
 func NewService(logger api.Logger, analyzer Analyzer) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -66,6 +80,10 @@ func NewService(logger api.Logger, analyzer Analyzer) *Service {
 	return &Service{logger: logger, analyzer: analyzer}
 }
 
+// Export writes mode-0600 text and JSON reports beneath the release temporary
+// directory. Existing artifacts are reused only when both files exist and the
+// JSON has no conformance error; DVD VOB evidence is analyzed on every call.
+// Errors return no Result, although a failed JSON write may leave the text file.
 func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 	select {
 	case <-ctx.Done():
@@ -81,7 +99,7 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 		return Result{}, errors.New("mediainfo: empty target")
 	}
 
-	tmpDir, _, err := paths.ReleaseTempDir(req.TempRoot, api.PreparedMetadata{Release: req.Release}, req.SourcePath)
+	tmpDir, _, err := paths.ReleaseTempDir(req.TempRoot, preparationstate.State{Release: req.Release}, req.SourcePath)
 	if err != nil {
 		return Result{}, fmt.Errorf("metadata: %w", err)
 	}
@@ -100,7 +118,15 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 			if s.logger != nil {
 				s.logger.Debugf("mediainfo: reusing existing artifacts from %s", tmpDir)
 			}
-			return Result{JSONPath: jsonPath, TextPath: textPath, IFOPath: target.IFOPath, VOBPath: target.VOBPath, VOBSet: target.VOBSet, VOBText: vobText, VOBJSON: vobJSON}, nil
+			return Result{
+				JSONPath: jsonPath,
+				TextPath: textPath,
+				IFOPath:  target.IFOPath,
+				VOBPath:  target.VOBPath,
+				VOBSet:   target.VOBSet,
+				VOBText:  vobText,
+				VOBJSON:  vobJSON,
+			}, nil
 		}
 		if s.logger != nil {
 			if err != nil {
@@ -138,7 +164,15 @@ func (s *Service) Export(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 
-	return Result{JSONPath: jsonPath, TextPath: textPath, IFOPath: target.IFOPath, VOBPath: target.VOBPath, VOBSet: target.VOBSet, VOBText: vobText, VOBJSON: vobJSON}, nil
+	return Result{
+		JSONPath: jsonPath,
+		TextPath: textPath,
+		IFOPath:  target.IFOPath,
+		VOBPath:  target.VOBPath,
+		VOBSet:   target.VOBSet,
+		VOBText:  vobText,
+		VOBJSON:  vobJSON,
+	}, nil
 }
 
 func analyzeVOB(ctx context.Context, analyzer Analyzer, vobPath string) (string, string, error) {

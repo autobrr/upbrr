@@ -5,22 +5,30 @@ package webserver
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-func TestWriteAppErrorBDMVRescanRequired(t *testing.T) {
+func TestWriteAppErrorBDMVRescanRequiredIsStructuredAndPathFree(t *testing.T) {
 	recorder := httptest.NewRecorder()
 
-	writeAppError(recorder, &api.BDMVRescanRequiredError{
+	cause := &api.BDMVRescanRequiredError{
 		SourcePath:        `/disc`,
 		SelectedPlaylists: []string{"00002.MPLS", "00001.MPLS"},
 		CachedPlaylists:   []string{"00001.MPLS"},
 		MissingPlaylists:  []string{"00002.MPLS"},
-	})
+	}
+	writeAppError(recorder, api.NewOperationError(api.OperationFailure{
+		Code:      api.OperationFailureConfirmationRequired,
+		Operation: api.OperationKindPreparation,
+		Message:   "Blu-ray playlist changes require confirmation before rescanning.",
+		Recovery:  api.OperationRecoveryConfirm,
+	}, cause))
 
 	if recorder.Code != http.StatusConflict {
 		t.Fatalf("expected status 409, got %d", recorder.Code)
@@ -30,10 +38,25 @@ func TestWriteAppErrorBDMVRescanRequired(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("unmarshal payload: %v", err)
 	}
-	if got := payload["code"]; got != api.ErrCodeBDMVRescanRequired {
-		t.Fatalf("expected code %q, got %#v", api.ErrCodeBDMVRescanRequired, got)
+	failure, ok := payload["failure"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing failure: %#v", payload)
 	}
-	if got := payload["source_path"]; got != "/disc" {
-		t.Fatalf("unexpected source path %#v", got)
+	if got := failure["Code"]; got != string(api.OperationFailureConfirmationRequired) {
+		t.Fatalf("failure code = %#v", got)
+	}
+	if _, exists := payload["source_path"]; exists {
+		t.Fatalf("response exposed source path: %#v", payload)
+	}
+}
+
+func TestWriteAppErrorUntypedFallbackIsStructuredAndSafe(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writeAppError(recorder, errors.New(`token=secret-value path=C:\private\release`))
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+	if strings.Contains(recorder.Body.String(), "secret-value") || strings.Contains(recorder.Body.String(), `C:\private`) {
+		t.Fatalf("unsafe response: %s", recorder.Body.String())
 	}
 }

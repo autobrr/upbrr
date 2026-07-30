@@ -10,144 +10,91 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/anacrolix/torrent/bencode"
-	"github.com/anacrolix/torrent/metainfo"
+	"github.com/autobrr/go-torrent/bencode"
+	"github.com/autobrr/go-torrent/metainfo"
 
 	"github.com/autobrr/upbrr/internal/config"
-	"github.com/autobrr/upbrr/internal/paths"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
 	"github.com/autobrr/upbrr/internal/services/db"
-	"github.com/autobrr/upbrr/internal/torrentmeta"
+	torrentmeta "github.com/autobrr/upbrr/internal/torrent/metainfo"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-// trackerUploadTorrentSpec describes how tracker upload torrents are
-// personalized before injection or upload review. requireAnnounce keeps
-// source-only specs inactive until the user configured a personal announce URL.
-type trackerUploadTorrentSpec struct {
-	source          string
-	defaultAnnounce string
-	useMyAnnounce   bool
-	requireAnnounce bool
-}
-
-var trackerUploadTorrentSpecs = map[string]trackerUploadTorrentSpec{
-	"ACM":   {source: "AsianCinema"},
-	"ANT":   {source: "ANT"},
-	"AR":    {source: "AlphaRatio"},
-	"ASC":   {source: "ASC"},
-	"AZ":    {source: "AvistaZ", defaultAnnounce: "https://tracker.avistaz.to/announce"},
-	"BHD":   {source: "BHD"},
-	"BHDTV": {source: "BIT-HDTV", useMyAnnounce: true},
-	"BJS":   {source: "BJ"},
-	"BT":    {source: "BT"},
-	"BTN":   {source: "BTN", requireAnnounce: true},
-	"CZ":    {source: "CinemaZ", defaultAnnounce: "https://tracker.cinemaz.to/announce"},
-	"CZT":   {source: "CzT"},
-	"DC":    {source: "DigitalCore.club"},
-	"FF":    {source: "FunFile"},
-	"FL":    {source: "FL"},
-	"GPW":   {source: "GreatPosterWall"},
-	"HDB":   {source: "HDBits"},
-	"HDS":   {source: "HD-Space"},
-	"HDT":   {source: "hd-torrents.org"},
-	"IS":    {source: "https://immortalseed.me"},
-	"MTV":   {source: "MTV"},
-	"NBL":   {source: "NBL"},
-	"PHD":   {source: "PrivateHD", defaultAnnounce: "https://tracker.privatehd.to/announce"},
-	"PTP":   {source: "PTP"},
-	"PTS":   {source: "[www.ptskit.org] PTSKIT"},
-	"RTF":   {source: "sunshine"},
-	"THR":   {source: "[https://www.torrenthr.org] TorrentHR.org"},
-	"TL":    {source: "TorrentLeech.org"},
-	"TOS":   {source: "TheOldSchool"},
-	"TVC":   {source: "TVCHAOS"},
-}
-
-func PrepareTrackerUploadTorrent(meta api.PreparedMetadata, dbPath string, tracker string, trackerConfig config.TrackerConfig) (api.PreparedMetadata, error) {
-	source, announce, ok := trackerUploadTorrentFields(tracker, trackerConfig)
-	if !ok {
-		return meta, nil
+// prepareTrackerUploadTorrentWithRegistry writes the exact release-scoped
+// torrent artifact assigned to one tracker and returns a copied subject pointing
+// at it. Every successful preparation receives its own artifact path, including
+// trackers whose torrent bytes are otherwise identical.
+func prepareTrackerUploadTorrentWithRegistry(
+	meta api.UploadSubject,
+	dbPath string,
+	tracker string,
+	trackerConfig config.TrackerConfig,
+	registry *Registry,
+) (api.UploadSubject, error) {
+	source, announce, hasPolicy, err := trackerUploadTorrentFieldsWithRegistry(tracker, trackerConfig, registry)
+	if err != nil {
+		return api.UploadSubject{}, err
 	}
 
-	basePath, err := ResolveUploadTorrentPath(meta, dbPath)
+	basePath, err := resolveUploadTorrentBasePath(meta, dbPath)
 	if err != nil {
-		if isUploadTorrentNotFound(err) {
+		// Policyless definitions are used by lightweight orchestration adapters and
+		// tests that do not consume torrent files. Real upload adapters still reject
+		// the missing exact path through PreparedUploadTorrentPath.
+		if !hasPolicy && isUploadTorrentNotFound(err) {
 			return meta, nil
 		}
-		return api.PreparedMetadata{}, err
+		return api.UploadSubject{}, fmt.Errorf("trackers: prepare %s upload torrent base: %w", normalizeTrackerName(tracker), err)
 	}
 	artifactPath, err := ResolveTrackerTorrentArtifactPath(meta, dbPath, tracker)
 	if err != nil {
-		if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
-			return meta, nil
-		}
-		return api.PreparedMetadata{}, err
+		return api.UploadSubject{}, fmt.Errorf("trackers: prepare %s upload torrent path: %w", normalizeTrackerName(tracker), err)
 	}
 	if err := WritePersonalizedTorrent(basePath, artifactPath, announce, "", source); err != nil {
-		return api.PreparedMetadata{}, err
+		return api.UploadSubject{}, fmt.Errorf("trackers: prepare %s upload torrent artifact: %w", normalizeTrackerName(tracker), err)
 	}
 	meta.TorrentPath = artifactPath
 	return meta, nil
 }
 
-func PrepareDryRunInjectionTorrent(meta api.PreparedMetadata, dbPath string, tracker string, trackerConfig config.TrackerConfig) (api.PreparedMetadata, error) {
-	source, announce, ok := trackerUploadTorrentFields(tracker, trackerConfig)
-	if !ok {
-		source = strings.ToUpper(strings.TrimSpace(tracker))
-		announce = strings.TrimSpace(trackerConfig.AnnounceURL)
-		if announce == "" {
-			announce = strings.TrimSpace(trackerConfig.MyAnnounceURL)
+func trackerUploadTorrentFieldsWithRegistry(tracker string, trackerConfig config.TrackerConfig, registry *Registry) (string, string, bool, error) {
+	if owned, ok := registry.LookupUploadArtifactPolicy(tracker); ok {
+		source, announce, err := uploadArtifactFields(owned, trackerConfig)
+		if err != nil {
+			return "", "", true, fmt.Errorf("trackers: %s upload torrent policy: %w", normalizeTrackerName(tracker), err)
 		}
-		if source == "" && announce == "" {
-			return meta, nil
-		}
+		return source, announce, true, nil
 	}
-
-	basePath, err := ResolveUploadTorrentPath(meta, dbPath)
-	if err != nil {
-		if isUploadTorrentNotFound(err) {
-			return meta, nil
-		}
-		return api.PreparedMetadata{}, err
-	}
-	artifactPath, err := ResolveTrackerTorrentArtifactPath(meta, dbPath, tracker)
-	if err != nil {
-		if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
-			return meta, nil
-		}
-		return api.PreparedMetadata{}, err
-	}
-	if err := WritePersonalizedTorrent(basePath, artifactPath, announce, "", source); err != nil {
-		return api.PreparedMetadata{}, err
-	}
-	meta.TorrentPath = artifactPath
-	return meta, nil
+	source, announce := trackerUploadTorrentFields(tracker, trackerConfig)
+	return source, announce, false, nil
 }
 
-func trackerUploadTorrentFields(tracker string, trackerConfig config.TrackerConfig) (string, string, bool) {
-	name := strings.ToUpper(strings.TrimSpace(tracker))
-	spec, ok := trackerUploadTorrentSpecs[name]
-	if !ok {
-		return "", "", false
-	}
+func uploadArtifactFields(policy UploadArtifactPolicy, trackerConfig config.TrackerConfig) (string, string, error) {
 	announce := strings.TrimSpace(trackerConfig.AnnounceURL)
-	if spec.useMyAnnounce {
+	if policy.UseMyAnnounce {
 		announce = strings.TrimSpace(trackerConfig.MyAnnounceURL)
 	}
 	if announce == "" {
-		announce = spec.defaultAnnounce
+		announce = policy.DefaultAnnounce
 	}
-	if spec.requireAnnounce && announce == "" {
-		return "", "", false
+	if policy.RequireAnnounce && announce == "" {
+		return "", "", errors.New("required announce URL is missing")
 	}
-	source := strings.TrimSpace(spec.source)
-	if source == "" && announce == "" {
-		return "", "", false
-	}
-	return source, announce, true
+	source := strings.TrimSpace(policy.Source)
+	return source, announce, nil
 }
 
-func ResolveTrackerTorrentArtifactPath(meta api.PreparedMetadata, dbPath string, tracker string) (string, error) {
+func trackerUploadTorrentFields(tracker string, trackerConfig config.TrackerConfig) (string, string) {
+	name := strings.ToUpper(strings.TrimSpace(tracker))
+	announce := strings.TrimSpace(trackerConfig.AnnounceURL)
+	if announce == "" {
+		announce = strings.TrimSpace(trackerConfig.MyAnnounceURL)
+	}
+	return name, announce
+}
+
+// ResolveTrackerTorrentArtifactPath returns the local torrent artifact path for tracker.
+func ResolveTrackerTorrentArtifactPath(meta api.UploadSubject, dbPath string, tracker string) (string, error) {
 	if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
 		return "", errors.New("trackers: tracker torrent path requires db path and source path")
 	}
@@ -156,7 +103,7 @@ func ResolveTrackerTorrentArtifactPath(meta api.PreparedMetadata, dbPath string,
 	if err != nil {
 		return "", fmt.Errorf("trackers: %w", err)
 	}
-	tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	tmpDir, base, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return "", fmt.Errorf("trackers: %w", err)
 	}
@@ -169,7 +116,11 @@ func ResolveTrackerTorrentArtifactPath(meta api.PreparedMetadata, dbPath string,
 	return filepath.Join(tmpDir, "["+name+"]."+base+".torrent"), nil
 }
 
-func ResolveUploadTorrentPath(meta api.PreparedMetadata, dbPath string) (string, error) {
+// resolveUploadTorrentBasePath selects TorrentPath, ClientTorrentPath, SourcePath,
+// then the release-scoped default. A non-default candidate is copied to the
+// release-scoped path with tracker fields removed when it can be decoded; an
+// existing candidate already at that path is returned as-is.
+func resolveUploadTorrentBasePath(meta api.UploadSubject, dbPath string) (string, error) {
 	cleanPath, cleanPathOK := uploadTorrentCleanPath(meta, dbPath)
 	candidates := []string{
 		strings.TrimSpace(meta.TorrentPath),
@@ -182,6 +133,9 @@ func ResolveUploadTorrentPath(meta api.PreparedMetadata, dbPath string) (string,
 		}
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			if cleanPathOK {
+				if strings.EqualFold(filepath.Clean(candidate), filepath.Clean(cleanPath)) {
+					return cleanPath, nil
+				}
 				err := WriteUploadTorrent(candidate, cleanPath)
 				if err == nil {
 					return cleanPath, nil
@@ -197,7 +151,7 @@ func ResolveUploadTorrentPath(meta api.PreparedMetadata, dbPath string) (string,
 	if strings.TrimSpace(dbPath) != "" && strings.TrimSpace(meta.SourcePath) != "" {
 		tmpRoot, err := db.Subdir(dbPath, "tmp")
 		if err == nil {
-			tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+			tmpDir, base, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 			if err == nil {
 				guessed := filepath.Join(tmpDir, base+".torrent")
 				if info, err := os.Stat(guessed); err == nil && !info.IsDir() {
@@ -213,7 +167,28 @@ func ResolveUploadTorrentPath(meta api.PreparedMetadata, dbPath string) (string,
 	return "", fmt.Errorf("trackers: %w", errUploadTorrentNotFound)
 }
 
-func uploadTorrentCleanPath(meta api.PreparedMetadata, dbPath string) (string, bool) {
+// PreparedUploadTorrentPath returns the exact tracker artifact assigned by the
+// preparation module. It never falls back to a client, source, or generic
+// torrent path.
+func PreparedUploadTorrentPath(meta api.UploadSubject) (string, error) {
+	torrentPath := strings.TrimSpace(meta.TorrentPath)
+	if torrentPath == "" {
+		return "", errors.New("trackers: prepared tracker torrent is missing")
+	}
+	if !strings.EqualFold(filepath.Ext(torrentPath), ".torrent") {
+		return "", errors.New("trackers: prepared tracker torrent has an invalid extension")
+	}
+	info, err := os.Stat(torrentPath)
+	if err != nil {
+		return "", fmt.Errorf("trackers: stat prepared tracker torrent: %w", err)
+	}
+	if info.IsDir() {
+		return "", errors.New("trackers: prepared tracker torrent is not a file")
+	}
+	return torrentPath, nil
+}
+
+func uploadTorrentCleanPath(meta api.UploadSubject, dbPath string) (string, bool) {
 	if strings.TrimSpace(dbPath) == "" || strings.TrimSpace(meta.SourcePath) == "" {
 		return "", false
 	}
@@ -221,7 +196,7 @@ func uploadTorrentCleanPath(meta api.PreparedMetadata, dbPath string) (string, b
 	if err != nil {
 		return "", false
 	}
-	tmpDir, base, err := paths.ReleaseTempDir(tmpRoot, meta, meta.SourcePath)
+	tmpDir, base, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
 		return "", false
 	}
@@ -239,6 +214,9 @@ func isUploadTorrentNotFound(err error) bool {
 	return errors.Is(err, errUploadTorrentNotFound)
 }
 
+// WriteUploadTorrent validates sourcePath, removes announce, node, URL-list, and
+// source fields, applies canonical creator/comment values, and atomically writes
+// outputPath with mode 0600.
 func WriteUploadTorrent(sourcePath string, outputPath string) error {
 	torrentMeta, err := metainfo.LoadFromFile(sourcePath)
 	if err != nil {
@@ -251,6 +229,9 @@ func WriteUploadTorrent(sourcePath string, outputPath string) error {
 	return writeTorrentMeta(*torrentMeta, outputPath, "upload torrent")
 }
 
+// WritePersonalizedTorrent strips inherited tracker fields, applies the supplied
+// announce, comment, and source values plus the canonical creator, and atomically
+// writes outputPath with mode 0600.
 func WritePersonalizedTorrent(sourcePath string, outputPath string, announceURL string, comment string, source string) error {
 	torrentMeta, err := metainfo.LoadFromFile(sourcePath)
 	if err != nil {

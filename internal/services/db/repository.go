@@ -7,14 +7,14 @@ import "github.com/autobrr/upbrr/pkg/api"
 
 type FileMetadata = api.FileMetadata
 type HistoryEntry = api.HistoryEntry
-type HistoryOverview = api.HistoryOverview
+type HistoryRecord = api.HistoryRecord
 type UploadRecord = api.UploadRecord
 type TrackerRuleFailure = api.TrackerRuleFailure
 type DescriptionOverride = api.DescriptionOverride
 type TrackerMetadata = api.TrackerMetadata
 type TrackerTimestamp = api.TrackerTimestamp
-type ExternalIDs = api.ExternalIDs
-type ExternalMetadata = api.ExternalMetadata
+type Identity = api.ExternalIdentity
+type ProviderMetadata = api.SourceScopedMetadata
 type DVDMediaInfo = api.DVDMediaInfo
 type TMDBMetadata = api.TMDBMetadata
 type IMDBMetadata = api.IMDBMetadata
@@ -30,4 +30,3 @@ type UploadedImageLink = api.UploadedImageLink
 type PlaylistSelection = api.PlaylistSelection
 type PlaylistInfo = api.PlaylistInfo
 type PlaylistItem = api.PlaylistItem
-type MetadataRepository = api.MetadataRepository

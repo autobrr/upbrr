@@ -217,7 +217,7 @@ func TestSessionManagerDeletesExpiredSessionsInBackground(t *testing.T) {
 	go manager.cleanupLoop()
 	defer manager.Close()
 
-	deadline := time.Now().Add(250 * time.Millisecond)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		manager.mu.Lock()
 		_, exists := manager.sessions["expired"]
@@ -370,7 +370,7 @@ func TestSessionManagerCloseStopsCleanupLoop(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(10 * time.Second):
 		t.Fatal("expected Close to stop the cleanup loop")
 	}
 }

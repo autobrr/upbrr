@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/autobrr/upbrr/pkg/api"
+	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 )
 
 func TestExtract(t *testing.T) {
@@ -46,7 +46,7 @@ func TestExtract(t *testing.T) {
 	tests := []struct {
 		name    string
 		path    string
-		meta    api.PreparedMetadata
+		meta    preparationstate.State
 		want    Result
 		wantMul []int
 	}{
@@ -66,7 +66,7 @@ func TestExtract(t *testing.T) {
 		{
 			name: "season pack",
 			path: tvPackDir,
-			meta: api.PreparedMetadata{
+			meta: preparationstate.State{
 				VideoPath: first,
 				FileList:  []string{first, second},
 			},
@@ -75,7 +75,7 @@ func TestExtract(t *testing.T) {
 		{
 			name: "season pack keeps pack semantics with multi-token video path",
 			path: multiTokenDir,
-			meta: api.PreparedMetadata{
+			meta: preparationstate.State{
 				VideoPath: multiFirst,
 				FileList:  []string{multiFirst, multiSecond},
 			},

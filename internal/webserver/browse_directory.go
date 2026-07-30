@@ -1,0 +1,338 @@
+// Copyright (c) 2025-2026, Audionut and the autobrr contributors.
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+package webserver
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/autobrr/upbrr/internal/filesystem"
+	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	"github.com/autobrr/upbrr/pkg/api"
+)
+
+// BrowseDirectory lists an unrestricted host filesystem location. Folder mode
+// returns directories only; file mode also returns recognized video files.
+func BrowseDirectory(req api.BrowseDirectoryRequest, fallbackPath string) (api.BrowseDirectoryResponse, error) {
+	return browseDirectory(req, fallbackPath, "")
+}
+
+// BrowseDirectoryWithinRoot lists a host filesystem location constrained to
+// rootPath after absolute-path and symlink resolution. An empty root disables
+// the constraint.
+func BrowseDirectoryWithinRoot(req api.BrowseDirectoryRequest, fallbackPath string, rootPath string) (api.BrowseDirectoryResponse, error) {
+	return browseDirectory(req, fallbackPath, rootPath)
+}
+
+// BrowseDirectoryWithinRoots lists a host filesystem location constrained to
+// one of rootPaths. An empty request under multiple roots returns a virtual
+// directory containing those roots; an empty root list disables constraints.
+func BrowseDirectoryWithinRoots(req api.BrowseDirectoryRequest, fallbackPath string, rootPaths []string) (api.BrowseDirectoryResponse, error) {
+	return browseDirectoryWithinRoots(req, fallbackPath, rootPaths)
+}
+
+func browseDirectory(req api.BrowseDirectoryRequest, fallbackPath string, rootPath string) (api.BrowseDirectoryResponse, error) {
+	roots := []string{}
+	if strings.TrimSpace(rootPath) != "" {
+		roots = []string{rootPath}
+	}
+	return browseDirectoryWithinRoots(req, fallbackPath, roots)
+}
+
+func browseDirectoryWithinRoots(req api.BrowseDirectoryRequest, fallbackPath string, rootPaths []string) (api.BrowseDirectoryResponse, error) {
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	if mode != "file" && mode != "folder" {
+		mode = "folder"
+	}
+
+	requested := strings.TrimSpace(req.Path)
+	roots, err := normalizedBrowseRoots(rootPaths)
+	if err != nil {
+		return api.BrowseDirectoryResponse{}, err
+	}
+	if len(roots) > 1 && requested == "" {
+		return browseConfiguredRoots(mode, roots), nil
+	}
+	root := ""
+	if len(roots) == 1 {
+		root = roots[0]
+		if requested == "" {
+			requested = root
+		}
+	}
+	if len(roots) == 0 && runtime.GOOS == "windows" && requested == "" {
+		return browseWindowsRoots(mode), nil
+	}
+	if requested == "" {
+		requested = strings.TrimSpace(fallbackPath)
+	}
+	if requested == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return api.BrowseDirectoryResponse{}, fmt.Errorf("browse directory: get working directory: %w", err)
+		}
+		requested = cwd
+	}
+
+	current, err := filepath.Abs(filepath.Clean(requested))
+	if err != nil {
+		return api.BrowseDirectoryResponse{}, fmt.Errorf("browse directory: resolve current path: %w", err)
+	}
+	info, err := os.Stat(current)
+	if err != nil {
+		return api.BrowseDirectoryResponse{}, fmt.Errorf("browse directory: stat current path: %w", err)
+	}
+	if !info.IsDir() {
+		current = filepath.Dir(current)
+	}
+	if len(roots) > 0 {
+		current, err = filepath.EvalSymlinks(current)
+		if err != nil {
+			return api.BrowseDirectoryResponse{}, fmt.Errorf("browse directory: resolve current symlinks: %w", err)
+		}
+		root = containingRoot(roots, current)
+		if root == "" {
+			return api.BrowseDirectoryResponse{}, errors.New("path is outside configured web browse roots")
+		}
+	}
+
+	entries, err := os.ReadDir(current)
+	if err != nil {
+		return api.BrowseDirectoryResponse{}, fmt.Errorf("browse directory: read current path: %w", err)
+	}
+
+	items := make([]api.BrowseDirectoryEntry, 0, len(entries))
+	for _, entry := range entries {
+		entryInfo, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if !showBrowseEntry(mode, entry.Name(), entryInfo.IsDir()) {
+			continue
+		}
+		itemPath := filepath.Join(current, entry.Name())
+		if root != "" {
+			itemRealPath, err := filepath.EvalSymlinks(itemPath)
+			if err != nil || !pathutil.IsWithinRoot(root, itemRealPath) {
+				continue
+			}
+		}
+		items = append(items, api.BrowseDirectoryEntry{
+			Name:       entry.Name(),
+			Path:       itemPath,
+			IsDir:      entryInfo.IsDir(),
+			Size:       entryInfo.Size(),
+			ModifiedAt: entryInfo.ModTime().UTC().Format(time.RFC3339),
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].IsDir != items[j].IsDir {
+			return items[i].IsDir
+		}
+		return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
+	})
+
+	return api.BrowseDirectoryResponse{
+		CurrentPath: current,
+		ParentPath:  parentPathWithinRoots(current, root, roots),
+		Mode:        mode,
+		Entries:     items,
+	}, nil
+}
+
+func showBrowseEntry(mode string, name string, isDir bool) bool {
+	if isDir {
+		return true
+	}
+	if mode == "folder" {
+		return false
+	}
+	return filesystem.IsVideoFile(name)
+}
+
+func normalizedBrowseRoots(rootPaths []string) ([]string, error) {
+	roots := make([]string, 0, len(rootPaths))
+	for _, value := range rootPaths {
+		root, err := normalizedBrowseRoot(value)
+		if err != nil {
+			return nil, err
+		}
+		if root == "" {
+			continue
+		}
+		duplicate := false
+		for _, existing := range roots {
+			if pathutil.SamePath(existing, root) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			roots = append(roots, root)
+		}
+	}
+	sort.SliceStable(roots, func(i, j int) bool {
+		return strings.ToLower(roots[i]) < strings.ToLower(roots[j])
+	})
+	return roots, nil
+}
+
+func normalizedBrowseRoot(rootPath string) (string, error) {
+	trimmed := strings.TrimSpace(rootPath)
+	if trimmed == "" {
+		return "", nil
+	}
+	root, err := filepath.Abs(filepath.Clean(trimmed))
+	if err != nil {
+		return "", fmt.Errorf("browse directory: resolve root path: %w", err)
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return "", fmt.Errorf("browse directory: stat root: %w", err)
+	}
+	if !info.IsDir() {
+		return "", errors.New("configured web browse root is not a directory")
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("browse directory: resolve root symlinks: %w", err)
+	}
+	return root, nil
+}
+
+func browseConfiguredRoots(mode string, roots []string) api.BrowseDirectoryResponse {
+	entries := make([]api.BrowseDirectoryEntry, 0, len(roots))
+	names := make(map[string]int, len(roots))
+	for _, root := range roots {
+		name := filepath.Base(root)
+		if name == "." || name == string(filepath.Separator) || strings.TrimSpace(name) == "" {
+			name = root
+		}
+		names[strings.ToLower(name)]++
+		entries = append(entries, api.BrowseDirectoryEntry{
+			Name:  name,
+			Path:  root,
+			IsDir: true,
+		})
+	}
+	for i := range entries {
+		if names[strings.ToLower(entries[i].Name)] > 1 {
+			entries[i].Name = entries[i].Path
+		}
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		return strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
+	})
+	return api.BrowseDirectoryResponse{
+		CurrentPath: "",
+		ParentPath:  "",
+		Mode:        mode,
+		Entries:     entries,
+	}
+}
+
+func parentPathWithinRoot(current string, root string) string {
+	if root != "" && pathutil.SamePath(current, root) {
+		return ""
+	}
+	parent := parentPath(current)
+	if root != "" && !pathutil.IsWithinRoot(root, parent) {
+		return ""
+	}
+	return parent
+}
+
+func parentPathWithinRoots(current string, root string, roots []string) string {
+	if len(roots) > 1 && root != "" && pathutil.SamePath(current, root) {
+		return ""
+	}
+	return parentPathWithinRoot(current, root)
+}
+
+func containingRoot(roots []string, target string) string {
+	for _, root := range roots {
+		if pathutil.IsWithinRoot(root, target) {
+			return root
+		}
+	}
+	return ""
+}
+
+func parentPath(current string) string {
+	parent := filepath.Dir(current)
+	if parent == current || strings.TrimSpace(parent) == "." {
+		if runtime.GOOS == "windows" {
+			return ""
+		}
+		return current
+	}
+	return parent
+}
+
+func browseWindowsRoots(mode string) api.BrowseDirectoryResponse {
+	entries := make([]api.BrowseDirectoryEntry, 0, 26)
+	for letter := 'A'; letter <= 'Z'; letter++ {
+		root := string(letter) + `:\`
+		if _, err := os.Stat(root); err == nil {
+			entries = append(entries, api.BrowseDirectoryEntry{
+				Name:  root,
+				Path:  root,
+				IsDir: true,
+			})
+		}
+	}
+	return api.BrowseDirectoryResponse{
+		CurrentPath: "",
+		ParentPath:  "",
+		Mode:        mode,
+		Entries:     entries,
+	}
+}
+
+// BrowseDirectoryFallback returns dbPath when it names an existing directory,
+// otherwise its existing parent directory, or an empty string when neither is
+// usable.
+func BrowseDirectoryFallback(dbPath string) string {
+	trimmed := strings.TrimSpace(dbPath)
+	if trimmed == "" {
+		return ""
+	}
+	if info, err := os.Stat(trimmed); err == nil && info.IsDir() {
+		return trimmed
+	}
+	dir := filepath.Dir(trimmed)
+	if strings.TrimSpace(dir) == "." {
+		return ""
+	}
+	if _, err := os.Stat(dir); err == nil {
+		return dir
+	}
+	return ""
+}
+
+// ValidateBrowseSelection requires an existing host path of the requested file
+// or directory kind.
+func ValidateBrowseSelection(path string, wantDir bool) error {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return errors.New("path is required")
+	}
+	info, err := os.Stat(trimmed)
+	if err != nil {
+		return fmt.Errorf("browse selection: stat path: %w", err)
+	}
+	if wantDir && !info.IsDir() {
+		return errors.New("selected path is not a folder")
+	}
+	if !wantDir && info.IsDir() {
+		return errors.New("selected path is not a file")
+	}
+	return nil
+}

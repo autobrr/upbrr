@@ -15,7 +15,7 @@ import (
 	"strings"
 
 	internalerrors "github.com/autobrr/upbrr/internal/errors"
-	"github.com/autobrr/upbrr/internal/services/imagehost"
+	imagehost "github.com/autobrr/upbrr/internal/imagehosting/host"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -38,7 +38,11 @@ var (
 	slotComparisonURL     = regexp.MustCompile(`(?i)https?://[^\s\]]+\.(?:png|jpe?g|gif|webp)`)
 	slotURLImgPattern     = regexp.MustCompile(`(?is)\[url=(https?://[^\]]+)\]\s*\[img[^\]]*\](.*?)\[/img\]\s*\[/url\]`)
 	slotImgPattern        = regexp.MustCompile(`(?is)\[img[^\]]*\](.*?)\[/img\]`)
-	posterLikeSlotHosts   = map[string]struct{}{"image.tmdb.org": {}, "themoviedb.org": {}, "www.themoviedb.org": {}}
+	posterLikeSlotHosts   = map[string]struct{}{
+		"image.tmdb.org":     {},
+		"themoviedb.org":     {},
+		"www.themoviedb.org": {},
+	}
 )
 
 type parsedDescriptionSlot struct {
@@ -49,19 +53,20 @@ type parsedDescriptionSlot struct {
 func screenshotSlotsFromSource(
 	ctx context.Context,
 	tracker string,
-	meta api.PreparedMetadata,
-	repo api.MetadataRepository,
+	meta api.UploadSubject,
+	repo UploadPersistence,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
+	registry *Registry,
 ) ([]api.ScreenshotSlot, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("trackers: load screenshot slots canceled: %w", err)
 	}
-	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
-		return nil, nil
-	}
 	if preloaded != nil && preloaded.screenshotSlotsLoaded {
 		return cloneScreenshotSlots(preloaded.screenshotSlots), nil
+	}
+	if repo == nil || strings.TrimSpace(meta.SourcePath) == "" {
+		return nil, nil
 	}
 
 	slots, err := repo.ListScreenshotSlotsByPath(ctx, meta.SourcePath)
@@ -86,7 +91,7 @@ func screenshotSlotsFromSource(
 		return cloneScreenshotSlots(slots), nil
 	}
 
-	slots, err = synthesizeScreenshotSlots(ctx, tracker, meta, repo, logger, preloaded)
+	slots, err = synthesizeScreenshotSlots(ctx, tracker, meta, repo, logger, preloaded, registry)
 	if err != nil {
 		return nil, err
 	}
@@ -101,8 +106,8 @@ func screenshotSlotsFromSource(
 
 func filterStoredSlotsForSelectedImages(
 	ctx context.Context,
-	meta api.PreparedMetadata,
-	repo api.MetadataRepository,
+	meta api.UploadSubject,
+	repo UploadPersistence,
 	slots []api.ScreenshotSlot,
 	preloaded *preloadedDescriptionAssetData,
 ) ([]api.ScreenshotSlot, error) {
@@ -137,8 +142,8 @@ func filterStoredSlotsForSelectedImages(
 
 func appendStoredSelectionSlots(
 	ctx context.Context,
-	meta api.PreparedMetadata,
-	repo api.MetadataRepository,
+	meta api.UploadSubject,
+	repo UploadPersistence,
 	slots []api.ScreenshotSlot,
 	preloaded *preloadedDescriptionAssetData,
 ) ([]api.ScreenshotSlot, error) {
@@ -166,12 +171,13 @@ func selectedPathExists(selectedPaths map[string]struct{}, imagePath string) boo
 func synthesizeScreenshotSlots(
 	ctx context.Context,
 	tracker string,
-	meta api.PreparedMetadata,
-	repo api.MetadataRepository,
+	meta api.UploadSubject,
+	repo UploadPersistence,
 	logger api.Logger,
 	preloaded *preloadedDescriptionAssetData,
+	registry *Registry,
 ) ([]api.ScreenshotSlot, error) {
-	description, _, _ := resolveTrackerDescription(ctx, tracker, meta, repo, logger, preloaded)
+	description, _, _ := resolveTrackerDescription(ctx, tracker, meta, repo, logger, preloaded, registry)
 	selections, err := finalSelectionsFromSource(ctx, meta, repo, preloaded)
 	if err != nil && !errorsIsNotFound(err) {
 		return nil, err
@@ -718,12 +724,17 @@ func normalizeSlotOrders(slots []api.ScreenshotSlot) []api.ScreenshotSlot {
 	return slots
 }
 
+// SlotUploadAttachmentResult contains updated screenshot slots and unmatched uploads.
 type SlotUploadAttachmentResult struct {
 	MatchedUploads   int
 	FallbackMatched  int
 	UnmatchedUploads int
 }
 
+// ApplyUploadedVariantsToSlots mutates slots by upserting host/scope variants.
+// Uploads match by local path, then known URL; unmatched uploads use ordered
+// fallback only when their count exactly matches remaining renderable pathless
+// slots. The result reports upload counts, not variant insertions.
 func ApplyUploadedVariantsToSlots(slots []api.ScreenshotSlot, uploads []api.UploadedImageLink) SlotUploadAttachmentResult {
 	if len(slots) == 0 || len(uploads) == 0 {
 		return SlotUploadAttachmentResult{}
@@ -745,7 +756,13 @@ func ApplyUploadedVariantsToSlots(slots []api.ScreenshotSlot, uploads []api.Uplo
 	result := SlotUploadAttachmentResult{}
 	seenUploads := make(map[string]struct{}, len(uploads))
 	for _, upload := range uploads {
-		uploadKey := strings.ToLower(strings.TrimSpace(upload.Host)) + "\x00" + normalizeUsageScope(upload.UsageScope) + "\x00" + strings.TrimSpace(upload.ImagePath)
+		uploadKey := strings.ToLower(
+			strings.TrimSpace(upload.Host),
+		) + "\x00" + normalizeUsageScope(
+			upload.UsageScope,
+		) + "\x00" + strings.TrimSpace(
+			upload.ImagePath,
+		)
 		if _, exists := seenUploads[uploadKey]; exists {
 			continue
 		}
@@ -912,7 +929,7 @@ func selectSlotImageForTracker(slot api.ScreenshotSlot, tracker string, policy i
 		return image, host, scope, true
 	}
 
-	if len(policy.allowed) == 0 || hostAllowed(slot.OriginalHost, policy.allowed) {
+	if !hostInList(slot.OriginalHost, policy.failed) && (len(policy.allowed) == 0 || hostAllowed(slot.OriginalHost, policy.allowed)) {
 		originalURL := strings.TrimSpace(slot.OriginalURL)
 		if originalURL != "" {
 			host := strings.TrimSpace(slot.OriginalHost)
@@ -942,6 +959,9 @@ func selectVariantForSlot(slot api.ScreenshotSlot, tracker string, policy imageH
 				continue
 			}
 			host := strings.ToLower(strings.TrimSpace(variant.Host))
+			if hostInList(host, policy.failed) {
+				continue
+			}
 			if len(policy.allowed) > 0 && !hostAllowed(host, policy.allowed) {
 				continue
 			}
@@ -985,6 +1005,9 @@ func allRenderableSlotsHaveEligibleVariant(slots []api.ScreenshotSlot, tracker s
 		found := false
 		for _, variant := range slot.Variants {
 			if !uploadEligibleForTracker(variant.UsageScope, tracker) {
+				continue
+			}
+			if hostInList(variant.Host, policy.failed) {
 				continue
 			}
 			if len(policy.allowed) > 0 && !hostAllowed(variant.Host, policy.allowed) {
@@ -1035,7 +1058,13 @@ func slotIdentity(slot api.ScreenshotSlot) string {
 	return "unknown"
 }
 
-func upsertScreenshotVariantsFromUploads(ctx context.Context, repo api.MetadataRepository, sourcePath string, slots []api.ScreenshotSlot, uploads []api.UploadedImageLink) error {
+func upsertScreenshotVariantsFromUploads(
+	ctx context.Context,
+	repo UploadPersistence,
+	sourcePath string,
+	slots []api.ScreenshotSlot,
+	uploads []api.UploadedImageLink,
+) error {
 	if repo == nil || len(slots) == 0 || len(uploads) == 0 {
 		return nil
 	}

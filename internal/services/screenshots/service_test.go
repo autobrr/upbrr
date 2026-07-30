@@ -94,12 +94,10 @@ func TestPlanUsesManualFrameOverridesWithoutDuration(t *testing.T) {
 	}
 
 	service := NewService(config.Config{}, api.NopLogger{}, tmpDir, nil)
-	meta := api.PreparedMetadata{
+	meta := api.ScreenshotSubject{
 		SourcePath:        filepath.Join(tmpDir, "movie.mkv"),
 		MediaInfoJSONPath: mediaInfoPath,
-		ScreenshotOverrides: api.ScreenshotOverrides{
-			ManualFrames: []int{120, 360, 600},
-		},
+		ManualFrames:      []int{120, 360, 600},
 	}
 
 	plan, err := service.Plan(context.Background(), meta, 4)
@@ -114,6 +112,108 @@ func TestPlanUsesManualFrameOverridesWithoutDuration(t *testing.T) {
 	}
 	if plan.SuggestedSelections[0].Frame != 120 || plan.SuggestedSelections[0].Source != "manual" {
 		t.Fatalf("expected first manual selection, got %#v", plan.SuggestedSelections[0])
+	}
+}
+
+func TestPlanProbesDurationWhenMediaInfoUnavailable(t *testing.T) {
+	sourceRoot := t.TempDir()
+	sourcePath := filepath.Join(sourceRoot, "Example.Release.2026.1080p-GRP.mkv")
+	if err := os.WriteFile(sourcePath, []byte("synthetic video"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	tmpRoot := t.TempDir()
+	ffmpegRoot := t.TempDir()
+	if err := writeTestBundledFFmpeg(ffmpegRoot); err != nil {
+		t.Fatalf("write bundled ffmpeg: %v", err)
+	}
+	t.Chdir(ffmpegRoot)
+
+	runner := &scriptedRunner{results: []CommandResult{{
+		Stderr:   []byte("Duration: 00:10:00.000, start: 0.000000, bitrate: 1000 kb/s"),
+		ExitCode: 0,
+	}}}
+	service := NewService(config.Config{}, api.NopLogger{}, tmpRoot, runner)
+	plan, err := service.Plan(context.Background(), api.ScreenshotSubject{SourcePath: sourcePath}, 4)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if plan.RequiresManualFrames || plan.DurationSeconds != 600 || len(plan.SuggestedSelections) != 4 {
+		t.Fatalf("expected probed automatic plan, got %#v", plan)
+	}
+	if len(runner.calls) != 1 || ffmpegInputArg(runner.calls[0].args) != sourcePath {
+		t.Fatalf("duration probe calls = %#v", runner.calls)
+	}
+}
+
+func TestPlanUsesRequestedNormalScreenshotCountForEverySourceKind(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name     string
+		discType string
+		build    func(*testing.T) (string, string)
+	}{
+		{
+			name: "file",
+			build: func(t *testing.T) (string, string) {
+				source := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+				if err := os.WriteFile(source, []byte("synthetic video"), 0o600); err != nil {
+					t.Fatalf("write file source: %v", err)
+				}
+				return source, ""
+			},
+		},
+		{
+			name:     "BDMV",
+			discType: "BDMV",
+			build: func(t *testing.T) (string, string) {
+				root := t.TempDir()
+				video := filepath.Join(root, "00001.m2ts")
+				if err := os.WriteFile(video, []byte("synthetic video"), 0o600); err != nil {
+					t.Fatalf("write BDMV source: %v", err)
+				}
+				return root, video
+			},
+		},
+		{
+			name:     "DVD",
+			discType: "DVD",
+			build: func(t *testing.T) (string, string) {
+				root := t.TempDir()
+				videoTS := filepath.Join(root, "VIDEO_TS")
+				if err := os.MkdirAll(videoTS, 0o700); err != nil {
+					t.Fatalf("create VIDEO_TS: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(videoTS, "VTS_01_1.VOB"), []byte("synthetic video"), 0o600); err != nil {
+					t.Fatalf("write DVD source: %v", err)
+				}
+				return root, ""
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			sourcePath, videoPath := testCase.build(t)
+			mediaInfoPath := filepath.Join(t.TempDir(), "mediainfo.json")
+			payload := []byte(`{"media":{"track":[{"@type":"General","Duration":"600"},{"@type":"Video","FrameRate":"24.000"}]}}`)
+			if err := os.WriteFile(mediaInfoPath, payload, 0o600); err != nil {
+				t.Fatalf("write mediainfo: %v", err)
+			}
+			service := NewService(config.Config{}, api.NopLogger{}, t.TempDir(), nil)
+			plan, err := service.Plan(context.Background(), api.ScreenshotSubject{
+				SourcePath:        sourcePath,
+				VideoPath:         videoPath,
+				DiscType:          testCase.discType,
+				MediaInfoJSONPath: mediaInfoPath,
+			}, 4)
+			if err != nil {
+				t.Fatalf("plan %s: %v", testCase.name, err)
+			}
+			if len(plan.SuggestedSelections) != 4 {
+				t.Fatalf("%s normal screenshot count = %d, want 4", testCase.name, len(plan.SuggestedSelections))
+			}
+		})
 	}
 }
 
@@ -142,11 +242,16 @@ func TestPreviewFrameExcludesDVDMenuVOB(t *testing.T) {
 	t.Chdir(ffmpegRoot)
 
 	runner := &scriptedRunner{results: []CommandResult{{
-		Stdout:   testPNGBytes(t, color.RGBA{R: 16, G: 16, B: 16, A: 255}),
+		Stdout: testPNGBytes(t, color.RGBA{
+			R: 16,
+			G: 16,
+			B: 16,
+			A: 255,
+		}),
 		ExitCode: 0,
 	}}}
 	service := NewService(config.Config{}, api.NopLogger{}, root, runner)
-	preview, err := service.PreviewFrame(context.Background(), api.PreparedMetadata{
+	preview, err := service.PreviewFrame(context.Background(), api.ScreenshotSubject{
 		SourcePath:        root,
 		DiscType:          "DVD",
 		MediaInfoJSONPath: mediaInfoPath,

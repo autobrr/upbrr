@@ -8,7 +8,7 @@ import "context"
 // DVDMenuDiscovery describes how the navigation engine found a menu screen.
 type DVDMenuDiscovery string
 
-// DVD menu discovery sources serialized across CLI, Wails, and embedded web.
+// DVD menu discovery sources serialized across CLI and WebUI.
 const (
 	// DVDMenuDiscoveryReachable marks a screen reached by deterministic VM navigation.
 	DVDMenuDiscoveryReachable DVDMenuDiscovery = "reachable"
