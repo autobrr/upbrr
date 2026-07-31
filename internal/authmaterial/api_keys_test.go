@@ -21,12 +21,16 @@ func TestAPIKeysPersistAsHashesSurviveAuthUpgradeAndRevoke(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
-	if err := BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {
-		t.Fatalf("bootstrap auth: %v", err)
-	}
 	store, err := NewStore(dbPath)
 	if err != nil {
 		t.Fatalf("new store: %v", err)
+	}
+	if err := store.saveLocked(Record{
+		Username:          "tester",
+		PasswordHash:      "initial-test-password-hash",
+		EncryptionKeySeed: "initial-test-encryption-seed",
+	}); err != nil {
+		t.Fatalf("write auth fixture: %v", err)
 	}
 	service, err := apitoken.NewService(store)
 	if err != nil {
@@ -69,14 +73,8 @@ func TestAPIKeysPersistAsHashesSurviveAuthUpgradeAndRevoke(t *testing.T) {
 		t.Fatalf("load current auth: %v", err)
 	}
 	target := current
-	target.PasswordHash, err = HashPassword("another-secure-password")
-	if err != nil {
-		t.Fatalf("hash upgraded password: %v", err)
-	}
-	target.EncryptionKeySeed, err = GenerateSeed()
-	if err != nil {
-		t.Fatalf("generate upgraded seed: %v", err)
-	}
+	target.PasswordHash = "upgraded-test-password-hash"
+	target.EncryptionKeySeed = "upgraded-test-encryption-seed"
 	if err := store.BeginPendingUpgrade(current, target); err != nil {
 		t.Fatalf("begin auth upgrade: %v", err)
 	}

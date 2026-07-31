@@ -1,4 +1,4 @@
-.PHONY: help build backend frontend frontend-bundle dev dev-frontend test test-go test-frontend e2e e2e-build e2e-web e2e-cli lint lint-json logpolicy pathpolicy literalpolicy architecturepolicy workflow-contracts workflow-contracts-check literalpolicy-fix precommit prepush fmt fmt-go fmt-frontend gofix gofix-check gofix-changed gofix-check-changed commitmsg-check clean
+.PHONY: help build backend frontend frontend-bundle dev dev-frontend test test-go test-go-fast test-frontend e2e e2e-build e2e-web e2e-cli lint lint-json logpolicy pathpolicy literalpolicy architecturepolicy workflow-contracts workflow-contracts-check literalpolicy-fix precommit prepush fmt fmt-go fmt-frontend gofix gofix-check gofix-changed gofix-check-changed commitmsg-check clean
 
 ifeq ($(OS),Windows_NT)
 EXE := .exe
@@ -17,6 +17,8 @@ endif
 CLI_OUT := dist/upbrr$(EXE)
 E2E_CLI_OUT := dist/upbrr-e2e$(EXE)
 GO_TEST_FLAGS := -race -v -timeout 20m
+GO_TEST_SCHEDULER_FLAGS := -cpu=4 -parallel=4
+GO_TEST_FAST_FLAGS := -timeout 20m
 GOLANGCI_FLAGS := --timeout=5m
 help:
 	@echo Build
@@ -32,6 +34,7 @@ help:
 	@echo Testing
 	@echo   make test               Run Go and frontend checks
 	@echo   make test-go            Run full Go test suite with race detector
+	@echo   make test-go-fast       Run full Go test suite without race detector
 	@echo   make test-frontend      Run frontend lint/type/format/dead-code/unit checks
 	@echo   make e2e                Run all Playwright E2E projects
 	@echo   make e2e-web            Run embedded web E2E projects
@@ -81,7 +84,10 @@ dev-frontend:
 test: test-go test-frontend
 
 test-go:
-	go test $(GO_TEST_FLAGS) ./...
+	go test $(GO_TEST_SCHEDULER_FLAGS) $(GO_TEST_FLAGS) ./...
+
+test-go-fast:
+	go test $(GO_TEST_FAST_FLAGS) ./...
 
 test-frontend:
 	pnpm --dir webui run lint

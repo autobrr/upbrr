@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/authmaterial"
+	"github.com/autobrr/upbrr/internal/authmaterial/authfixture"
 	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
@@ -390,9 +390,7 @@ func newPTPAuthDB(t *testing.T) string {
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	authfixture.Write(t, dbPath)
 	repo, err := servicedb.OpenWithLoggerContext(ctx, dbPath, api.NopLogger{})
 	if err != nil {
 		t.Fatalf("OpenWithLoggerContext: %v", err)

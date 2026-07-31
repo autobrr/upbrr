@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/authmaterial"
+	"github.com/autobrr/upbrr/internal/authmaterial/authfixture"
 	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
@@ -100,9 +100,7 @@ func TestPersistLoginCookiesRejectsEmptyJarWithoutReplacingCookies(t *testing.T)
 
 	ctx := context.Background()
 	dbPath := newARAuthTestDB(t)
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	authfixture.Write(t, dbPath)
 	if err := cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "AR", map[string]string{"session": "existing"}); err != nil {
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
@@ -133,9 +131,7 @@ func TestWriteAuthKeyUsesEncryptedStateAndDeletesLegacyFile(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	authfixture.Write(t, dbPath)
 	legacyPath := authPath(dbPath)
 	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
 		t.Fatalf("mkdir legacy dir: %v", err)
@@ -159,9 +155,7 @@ func TestWriteAuthKeyRollsBackEncryptedStateOnLegacyDeleteFailure(t *testing.T) 
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	authfixture.Write(t, dbPath)
 	legacyPath := authPath(dbPath)
 	if err := os.MkdirAll(filepath.Join(legacyPath, "blocked"), 0o755); err != nil {
 		t.Fatalf("seed legacy auth path as non-empty dir: %v", err)
@@ -204,9 +198,7 @@ func TestWriteAuthKeySucceedsWhenLegacyFileAbsent(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	authfixture.Write(t, dbPath)
 
 	if err := writeAuthKey(context.Background(), dbPath, "encrypted-key"); err != nil {
 		t.Fatalf("writeAuthKey: %v", err)
@@ -233,9 +225,7 @@ func TestPersistLoginAuthRestoresPreviousCookiesWhenAuthKeyWriteFails(t *testing
 
 	ctx := context.Background()
 	dbPath := newARAuthTestDB(t)
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	authfixture.Write(t, dbPath)
 	if err := cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "AR", map[string]string{"session": "existing"}); err != nil {
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
@@ -266,9 +256,7 @@ func TestPersistLoginAuthRestoresPreviousCookiesWhenCallerContextCanceledDuringW
 
 	ctx, cancel := context.WithCancel(context.Background())
 	dbPath := newARAuthTestDB(t)
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	authfixture.Write(t, dbPath)
 	if err := cookiepkg.SaveTrackerCookieMap(context.Background(), dbPath, "AR", map[string]string{"session": "existing"}); err != nil {
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
@@ -302,9 +290,7 @@ func TestPersistLoginAuthRemovesNewCookiesWhenAuthKeyWriteFails(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := newARAuthTestDB(t)
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	authfixture.Write(t, dbPath)
 	forcedErr := errors.New("forced auth key failure")
 
 	err := persistLoginAuthWithWriter(
@@ -328,9 +314,7 @@ func TestLoginFallbackDoesNotPersistAuthKeyBeforeCookies(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := newARAuthTestDB(t)
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	authfixture.Write(t, dbPath)
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatalf("cookiejar.New: %v", err)
@@ -374,9 +358,7 @@ func TestLoginFallbackPrefersCurrentResponseKeyAndPreservesPreviousAuthKeyOnCook
 
 	ctx := context.Background()
 	dbPath := newARAuthTestDB(t)
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	authfixture.Write(t, dbPath)
 	if err := trackerauth.SaveAuthState(ctx, dbPath, "AR", arAuthKeyKey, "previous-key"); err != nil {
 		t.Fatalf("SaveAuthState: %v", err)
 	}

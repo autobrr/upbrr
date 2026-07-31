@@ -1166,7 +1166,7 @@ func MergeMissingTrackerDefaultsWithReport(cfg *Config) (TrackerDefaultsMergeRep
 	if trackersChanged {
 		report.markChanged("Trackers")
 	}
-	defaults, err := loadEmbeddedDefaultConfigRaw()
+	defaults, err := loadEmbeddedDefaultTemplate()
 	if err != nil || defaults == nil || len(defaults.Trackers.Trackers) == 0 {
 		if err != nil {
 			return report, fmt.Errorf("load embedded tracker defaults: %w", err)
@@ -1176,7 +1176,7 @@ func MergeMissingTrackerDefaultsWithReport(cfg *Config) (TrackerDefaultsMergeRep
 	for trackerName, trackerCfg := range defaults.Trackers.Trackers {
 		existingName, existing, ok := trackerDefaultMergeEntry(cfg.Trackers.Trackers, trackerName)
 		if !ok {
-			cfg.Trackers.Trackers[trackerName] = trackerCfg
+			cfg.Trackers.Trackers[trackerName] = cloneEmbeddedTrackerConfig(trackerCfg)
 			report.markChanged("Trackers")
 			continue
 		}
