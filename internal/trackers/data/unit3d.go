@@ -27,6 +27,7 @@ import (
 	"github.com/autobrr/upbrr/internal/bbcode"
 	"github.com/autobrr/upbrr/internal/config"
 	descriptionunit3d "github.com/autobrr/upbrr/internal/description/unit3d"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -561,21 +562,21 @@ func SetUnit3DAPIHeaders(req *http.Request, apiKey string) {
 func buildUnit3DSearchEntries(items []unit3dSearchItem, isDisc bool) []api.DupeEntry {
 	entries := make([]api.DupeEntry, 0, len(items))
 	for _, item := range items {
+		rawType := strings.TrimSpace(item.Attributes.Type)
 		entry := api.DupeEntry{
-			Name:        strings.TrimSpace(item.Attributes.Name),
-			Trumpable:   item.Attributes.Trumpable,
-			Link:        strings.TrimSpace(item.Attributes.DetailsLink),
-			Download:    strings.TrimSpace(item.Attributes.DownloadLink),
-			ID:          strings.TrimSpace(item.ID.String()),
-			Type:        strings.TrimSpace(item.Attributes.Type),
-			Res:         strings.TrimSpace(item.Attributes.Resolution),
-			Internal:    item.Attributes.Internal,
-			BDInfo:      strings.TrimSpace(item.Attributes.BDInfo),
-			Description: strings.TrimSpace(item.Attributes.Description),
+			Name:          strings.TrimSpace(item.Attributes.Name),
+			Trumpable:     item.Attributes.Trumpable,
+			Link:          strings.TrimSpace(item.Attributes.DetailsLink),
+			Download:      strings.TrimSpace(item.Attributes.DownloadLink),
+			ID:            strings.TrimSpace(item.ID.String()),
+			Type:          rawType,
+			CanonicalType: CanonicalUnit3DType(rawType),
+			Res:           strings.TrimSpace(item.Attributes.Resolution),
+			Internal:      item.Attributes.Internal,
+			BDInfo:        strings.TrimSpace(item.Attributes.BDInfo),
+			Description:   strings.TrimSpace(item.Attributes.Description),
+			HDR:           mediafacts.HDRFromMediaInfoText(item.Attributes.MediaInfo),
 		}
-		entry.Flags = append([]string(nil), item.Attributes.Flags.Values...)
-		entry.FlagsPresent = item.Attributes.Flags.Present
-		entry.FlagsComplete = item.Attributes.Flags.Present && len(item.Attributes.Flags.Values) > 0
 
 		if sizeValue, err := parseNumberToInt64(item.Attributes.Size); err == nil {
 			entry.SizeBytes = sizeValue
@@ -610,21 +611,21 @@ func buildUnit3DPendingEntries(items []unit3dPendingSearchItem, endpoint unit3dS
 			continue
 		}
 
+		rawType := strings.TrimSpace(item.Type)
 		entry := api.DupeEntry{
-			Name:        strings.TrimSpace(item.Name),
-			Trumpable:   item.Trumpable,
-			Link:        endpoint.pendingWebURL,
-			Download:    strings.TrimSpace(item.DownloadLink),
-			ID:          strings.TrimSpace(item.ID.String()),
-			Type:        strings.TrimSpace(item.Type),
-			Res:         strings.TrimSpace(item.Resolution),
-			Internal:    item.Internal,
-			BDInfo:      strings.TrimSpace(item.BDInfo),
-			Description: strings.TrimSpace(item.Description),
-			Flags:       append([]string{}, item.Flags.Values...),
+			Name:          strings.TrimSpace(item.Name),
+			Trumpable:     item.Trumpable,
+			Link:          endpoint.pendingWebURL,
+			Download:      strings.TrimSpace(item.DownloadLink),
+			ID:            strings.TrimSpace(item.ID.String()),
+			Type:          rawType,
+			CanonicalType: CanonicalUnit3DType(rawType),
+			Res:           strings.TrimSpace(item.Resolution),
+			Internal:      item.Internal,
+			BDInfo:        strings.TrimSpace(item.BDInfo),
+			Description:   strings.TrimSpace(item.Description),
+			HDR:           mediafacts.HDRFromMediaInfoText(item.MediaInfo),
 		}
-		entry.FlagsPresent = item.Flags.Present
-		entry.FlagsComplete = item.Flags.Present && len(item.Flags.Values) > 0
 
 		if sizeValue, err := parseNumberToInt64(item.Size); err == nil {
 			entry.SizeBytes = sizeValue
@@ -1017,18 +1018,18 @@ type unit3dSearchItem struct {
 }
 
 type unit3dSearchAttrs struct {
-	Name         string             `json:"name"`
-	Size         json.Number        `json:"size"`
-	Files        []unit3dFile       `json:"files"`
-	Trumpable    bool               `json:"trumpable"`
-	DetailsLink  string             `json:"details_link"`
-	DownloadLink string             `json:"download_link"`
-	Type         string             `json:"type"`
-	Resolution   string             `json:"resolution"`
-	Internal     bool               `json:"internal"`
-	BDInfo       string             `json:"bd_info"`
-	Description  string             `json:"description"`
-	Flags        presentStringSlice `json:"flags"`
+	Name         string       `json:"name"`
+	Size         json.Number  `json:"size"`
+	Files        []unit3dFile `json:"files"`
+	Trumpable    bool         `json:"trumpable"`
+	DetailsLink  string       `json:"details_link"`
+	DownloadLink string       `json:"download_link"`
+	Type         string       `json:"type"`
+	Resolution   string       `json:"resolution"`
+	Internal     bool         `json:"internal"`
+	BDInfo       string       `json:"bd_info"`
+	MediaInfo    string       `json:"media_info"`
+	Description  string       `json:"description"`
 }
 
 type unit3dPendingSearchResponse struct {
@@ -1036,35 +1037,17 @@ type unit3dPendingSearchResponse struct {
 }
 
 type unit3dPendingSearchItem struct {
-	ID           json.Number        `json:"id"`
-	TMDBID       int                `json:"tmdb_id"`
-	Name         string             `json:"name"`
-	Size         json.Number        `json:"size"`
-	Files        []unit3dFile       `json:"files"`
-	Trumpable    bool               `json:"trumpable"`
-	DownloadLink string             `json:"download_link"`
-	Type         string             `json:"type"`
-	Resolution   string             `json:"resolution"`
-	Internal     bool               `json:"internal"`
-	BDInfo       string             `json:"bd_info"`
-	Description  string             `json:"description"`
-	Flags        presentStringSlice `json:"flags"`
-}
-
-// presentStringSlice distinguishes omitted flag fields from explicit null or empty values.
-type presentStringSlice struct {
-	Values  []string
-	Present bool
-}
-
-// UnmarshalJSON marks the field present; JSON null preserves a nil value.
-func (s *presentStringSlice) UnmarshalJSON(data []byte) error {
-	s.Present = true
-	if string(data) == "null" {
-		return nil
-	}
-	if err := json.Unmarshal(data, &s.Values); err != nil {
-		return fmt.Errorf("decode string slice: %w", err)
-	}
-	return nil
+	ID           json.Number  `json:"id"`
+	TMDBID       int          `json:"tmdb_id"`
+	Name         string       `json:"name"`
+	Size         json.Number  `json:"size"`
+	Files        []unit3dFile `json:"files"`
+	Trumpable    bool         `json:"trumpable"`
+	DownloadLink string       `json:"download_link"`
+	Type         string       `json:"type"`
+	Resolution   string       `json:"resolution"`
+	Internal     bool         `json:"internal"`
+	BDInfo       string       `json:"bd_info"`
+	MediaInfo    string       `json:"mediainfo"`
+	Description  string       `json:"description"`
 }

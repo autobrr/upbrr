@@ -19,6 +19,7 @@ import (
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	"github.com/autobrr/upbrr/internal/languageutil"
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/metadata/discparse"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
@@ -1288,62 +1289,10 @@ func hdrFactsFromMedia(doc mediaInfoDoc, bdinfo *discparse.BDInfo, meta preparat
 		return withHDRContradiction(facts, filenameHDRFacts(meta))
 	}
 
-	_, videoTracks, _ := splitMediaInfoTracks(doc)
-	if len(videoTracks) == 0 {
+	facts := mediafacts.HDRFromMediaInfoDocument(doc)
+	if facts.Status == api.HDREvidenceMissing {
 		return filenameHDRFacts(meta)
 	}
-	track := videoTracks[0]
-	primaries := trackString(track, "colour_primaries", "colour_primaries_Original")
-	primariesUpper := strings.ToUpper(primaries)
-	compatibility := trackString(track, "HDR_Format_Compatibility")
-	formatString := trackString(track, "HDR_Format_String")
-	formatValue := trackString(track, "HDR_Format")
-	formatProfile := trackString(track, "HDR_Format_Profile")
-	formatEvidence := strings.Join([]string{compatibility, formatString, formatValue, formatProfile}, " ")
-	upperFormat := strings.ToUpper(formatEvidence)
-	transfer := trackString(track, "transfer_characteristics", "transfer_characteristics_Original")
-	transferUpper := strings.ToUpper(transfer)
-	facts := api.HDRFacts{
-		Origin: api.HDREvidenceMediaInfo,
-		Status: api.HDREvidenceComplete,
-	}
-	addSourceField(&facts.SourceFields, "HDR_Format_Compatibility", compatibility)
-	addSourceField(&facts.SourceFields, "HDR_Format_String", formatString)
-	addSourceField(&facts.SourceFields, "HDR_Format", formatValue)
-	addSourceField(&facts.SourceFields, "HDR_Format_Profile", formatProfile)
-	addSourceField(&facts.SourceFields, "transfer_characteristics", transfer)
-	addSourceField(&facts.SourceFields, "colour_primaries", primaries)
-
-	if strings.Contains(upperFormat, "DOLBY VISION") {
-		addHDRFormat(&facts.Formats, api.HDRFormatDolbyVision)
-		facts.DolbyVisionProfile = dolbyVisionProfile(formatEvidence)
-	}
-	switch {
-	case strings.Contains(upperFormat, "HDR10+"):
-		addHDRFormat(&facts.Formats, api.HDRFormatHDR10Plus)
-	case strings.Contains(upperFormat, "HDR10") || strings.Contains(upperFormat, "SMPTE ST 2094"):
-		addHDRFormat(&facts.Formats, api.HDRFormatHDR10)
-	}
-	if strings.Contains(upperFormat, "HLG") || strings.Contains(transferUpper, "HLG") {
-		addHDRFormat(&facts.Formats, api.HDRFormatHLG)
-	}
-	if strings.Contains(upperFormat, "HDR VIVID") || strings.Contains(upperFormat, "CUVA") {
-		addHDRFormat(&facts.Formats, api.HDRFormatHDRVivid)
-	}
-	if (primariesUpper == "BT.2020" || primariesUpper == "REC.2020") && strings.TrimSpace(formatEvidence) == "" && strings.Contains(transferUpper, "PQ") {
-		addHDRFormat(&facts.Formats, api.HDRFormatPQ10)
-	}
-	if len(facts.Formats) == 0 && (strings.Contains(transferUpper, "BT.2020 (10-BIT)") ||
-		primariesUpper == "BT.2020" || primariesUpper == "REC.2020") {
-		addHDRFormat(&facts.Formats, api.HDRFormatWCG)
-	}
-	if len(facts.Formats) == 0 {
-		if !usableVideoTrackForHDR(track) {
-			return filenameHDRFacts(meta)
-		}
-		facts.Formats = []api.HDRFormat{api.HDRFormatSDR}
-	}
-	addHDRFallbacks(&facts)
 	return withHDRContradiction(facts, filenameHDRFacts(meta))
 }
 
@@ -1442,12 +1391,6 @@ func hasHDRFormat(formats []api.HDRFormat, want api.HDRFormat) bool {
 	return slices.Contains(formats, want)
 }
 
-func addSourceField(fields *[]string, name string, value string) {
-	if strings.TrimSpace(value) != "" {
-		*fields = append(*fields, name)
-	}
-}
-
 func dolbyVisionProfile(value string) string {
 	if match := dolbyVisionNamedProfilePattern.FindStringSubmatch(value); len(match) == 2 {
 		return strings.TrimLeft(match[1], "0")
@@ -1456,29 +1399,6 @@ func dolbyVisionProfile(value string) string {
 		return strings.TrimLeft(match[1], "0")
 	}
 	return ""
-}
-
-func usableVideoTrackForHDR(track map[string]any) bool {
-	for _, field := range []string{
-		"Format",
-		"CodecID",
-		"Width",
-		"Height",
-		"BitDepth",
-		"HDR_Format",
-		"HDR_Format_String",
-		"HDR_Format_Compatibility",
-		"HDR_Format_Profile",
-		"transfer_characteristics",
-		"transfer_characteristics_Original",
-		"colour_primaries",
-		"colour_primaries_Original",
-	} {
-		if strings.TrimSpace(trackString(track, field)) != "" {
-			return true
-		}
-	}
-	return false
 }
 
 func withHDRContradiction(authoritative api.HDRFacts, fallback api.HDRFacts) api.HDRFacts {

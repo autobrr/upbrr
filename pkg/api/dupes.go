@@ -24,6 +24,7 @@ type DupeEntry struct {
 	HDR           HDRFacts
 	ID            string
 	Type          string
+	CanonicalType string
 	Res           string
 	Category      string
 	Source        string

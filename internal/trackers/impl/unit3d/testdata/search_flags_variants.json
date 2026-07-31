@@ -1,8 +1,0 @@
-{
-  "data": [
-    {"id": 301, "attributes": {"name": "Example.Release.2026.DV-GRP", "size": 1001, "files": [{"name": "Example.Release.2026.DV-GRP.mkv"}], "type": "WEB-DL", "resolution": "2160p", "internal": true, "trumpable": false, "flags": ["DV"], "details_link": "https://example.invalid/torrents/301"}},
-    {"id": 302, "attributes": {"name": "Example.Release.2026.Empty-GRP", "size": 1002, "files": [{"name": "Example.Release.2026.Empty-GRP.mkv"}], "type": "WEB-DL", "resolution": "2160p", "internal": false, "trumpable": true, "flags": [], "details_link": "https://example.invalid/torrents/302"}},
-    {"id": 303, "attributes": {"name": "Example.Release.2026.Missing-GRP", "size": 1003, "files": [{"name": "Example.Release.2026.Missing-GRP.mkv"}], "type": "WEB-DL", "resolution": "2160p", "internal": false, "trumpable": false, "details_link": "https://example.invalid/torrents/303"}}
-  ],
-  "meta": {"current_page": 1, "last_page": 1, "total": 3}
-}

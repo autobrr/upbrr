@@ -44,6 +44,14 @@ type RuleFinding struct {
 	Specificity      int
 	Manual           bool
 	OverridesGeneral bool
+	comparisons      []factComparison
+}
+
+type factComparison struct {
+	Dimension trackerspkg.DupeDimension
+	Target    Fact
+	Candidate Fact
+	Result    DimensionComparison
 }
 
 const (
@@ -256,6 +264,12 @@ func evaluateTrackerRule(
 			condition.Dimension,
 		)
 		comparison := compareFacts(targetFact, candidateFact)
+		finding.comparisons = append(finding.comparisons, factComparison{
+			Dimension: condition.Dimension,
+			Target:    targetFact,
+			Candidate: candidateFact,
+			Result:    comparison,
+		})
 		if targetFact.Status == FactContradictory || candidateFact.Status == FactContradictory {
 			finding.Contradictions = append(finding.Contradictions, string(condition.Dimension))
 			continue
@@ -326,7 +340,14 @@ func collectTrackerSlotFinding(
 			candidateFacts,
 			dimension,
 		)
-		switch compareFacts(targetFact, candidateFact) {
+		comparison := compareFacts(targetFact, candidateFact)
+		finding.comparisons = append(finding.comparisons, factComparison{
+			Dimension: dimension,
+			Target:    targetFact,
+			Candidate: candidateFact,
+			Result:    comparison,
+		})
+		switch comparison {
 		case DimensionDifferent:
 			finding.Status = RuleFindingMatched
 			finding.Relation = api.DupeRelationCoexists
@@ -341,12 +362,20 @@ func collectTrackerSlotFinding(
 		}
 	}
 	if slices.Contains(policy.SlotDimensions, trackerspkg.DupeDimensionHDR) {
+		hdrComparison := factComparison{
+			Dimension: trackerspkg.DupeDimensionHDR,
+			Target:    hdrFact(targetFacts.HDR),
+			Candidate: hdrFact(candidateFacts.HDR),
+		}
+		hdrComparison.Result = compareFacts(hdrComparison.Target, hdrComparison.Candidate)
+		finding.comparisons = append(finding.comparisons, hdrComparison)
 		hdrFinding, ok := compareTrackerHDR(targetFacts.HDR, candidateFacts.HDR, policy)
 		if ok && hdrFinding.Status == RuleFindingMatched {
 			hdrFinding.RuleID = finding.RuleID + "/hdr"
 			hdrFinding.EvidenceID = policy.EvidenceID
 			hdrFinding.Source = "tracker"
 			hdrFinding.Specificity = finding.Specificity
+			hdrFinding.comparisons = append([]factComparison(nil), finding.comparisons...)
 			return hdrFinding, true
 		}
 		if ok && hdrFinding.Status == RuleFindingIndeterminate {

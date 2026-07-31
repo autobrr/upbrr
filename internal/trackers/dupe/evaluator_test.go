@@ -631,6 +631,54 @@ func TestNormalizeWebDLAndWEBRipKeepDistinctMediaClasses(t *testing.T) {
 	}
 }
 
+func TestEvaluateCanonicalCandidateTypeAndMediaInfoAvoidFalseDifferentType(t *testing.T) {
+	t.Parallel()
+
+	candidate := NormalizeCandidate(api.DupeEntry{
+		Name:          "Example.Show.S01E12.1080p.WEB-DL-GRP",
+		Type:          "WEB-DL",
+		CanonicalType: "WEBDL",
+		Res:           "1080p",
+		HDR: api.HDRFacts{
+			Formats: []api.HDRFormat{api.HDRFormatSDR},
+			Origin:  api.HDREvidenceMediaInfo,
+			Status:  api.HDREvidenceComplete,
+		},
+	}, "SP")
+	target := api.TrackerDuplicateTarget{
+		Type:       "WEBDL",
+		Resolution: "1080p",
+		HDR: api.HDRFacts{
+			Formats: []api.HDRFormat{api.HDRFormatSDR},
+			Origin:  api.HDREvidenceMediaInfo,
+			Status:  api.HDREvidenceComplete,
+		},
+		Season:  1,
+		Episode: 12,
+	}
+	policy := trackerspkg.DupePolicy{
+		ID: "example/duplicate/v2",
+		SlotDimensions: []trackerspkg.DupeDimension{
+			trackerspkg.DupeDimensionType,
+			trackerspkg.DupeDimensionResolution,
+			trackerspkg.DupeDimensionHDR,
+		},
+	}
+
+	result := Evaluate(target, []TrackerCandidate{candidate}, policy, SearchEvidence{Complete: true}).Candidates[0]
+	if result.Relation != api.DupeRelationSameSlot || result.Reasons[0].Code != "same_tracker_slot" {
+		t.Fatalf("canonical Unit3D type evaluation = %#v", result)
+	}
+	if result.Candidate.Type != "WEB-DL" || result.Facts.Type.Value != "WEBDL" {
+		t.Fatalf("raw/canonical candidate types = %#v", result)
+	}
+	if slices.ContainsFunc(result.Findings, func(finding RuleFinding) bool {
+		return finding.ReasonCode == "different_type"
+	}) {
+		t.Fatalf("canonical aliases produced different_type: %#v", result.Findings)
+	}
+}
+
 func TestNormalizeBareSceneWEBAsWebDL(t *testing.T) {
 	t.Parallel()
 
@@ -938,6 +986,19 @@ func TestNormalizeFactsPreservesTitleProvenanceAndContradictions(t *testing.T) {
 	if contradictory.Resolution.Status != FactContradictory ||
 		!slices.Contains(contradictory.Resolution.Contradictions, "2160p") {
 		t.Fatalf("contradictory resolution = %#v", contradictory.Resolution)
+	}
+	hdrContradictory := normalizeCandidateFacts(TrackerCandidate{
+		Name: "Example.Release.2026.HDR.2160p-GRP",
+		HDR: api.HDRFacts{
+			Formats: []api.HDRFormat{api.HDRFormatHDR10Plus},
+			Origin:  api.HDREvidenceMediaInfo,
+			Status:  api.HDREvidenceComplete,
+		},
+	})
+	if hdrContradictory.HDR.Status != api.HDREvidenceContradictory ||
+		hdrContradictory.HDR.Origin != api.HDREvidenceMediaInfo ||
+		!slices.Equal(hdrContradictory.HDR.Formats, []api.HDRFormat{api.HDRFormatHDR10Plus}) {
+		t.Fatalf("contradictory HDR = %#v", hdrContradictory.HDR)
 	}
 }
 

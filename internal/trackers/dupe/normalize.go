@@ -258,10 +258,16 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 
 func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 	title := parseReleaseTitle(candidate.Name, FactOriginTrackerTitle)
+	typeValue := candidate.Type
+	typeSourceField := "type"
+	if candidate.CanonicalType != "" {
+		typeValue = candidate.CanonicalType
+		typeSourceField = "canonicalType"
+	}
 	facts := normalizedFacts{
 		Type: mergeStructuredAndTitleFact(
-			candidate.Type,
-			"type",
+			typeValue,
+			typeSourceField,
 			"",
 			FactOriginTrackerAPI,
 			FactOriginTrackerTitle,

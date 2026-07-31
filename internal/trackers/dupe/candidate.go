@@ -28,6 +28,7 @@ type TrackerCandidate struct {
 	SizeKnown       bool
 	Category        string
 	Type            string
+	CanonicalType   string
 	Source          string
 	Resolution      string
 	Codec           string
@@ -62,6 +63,7 @@ func NormalizeCandidate(entry api.DupeEntry, _ string) TrackerCandidate {
 		SizeKnown:       entry.SizeKnown,
 		Category:        strings.TrimSpace(entry.Category),
 		Type:            strings.TrimSpace(entry.Type),
+		CanonicalType:   strings.TrimSpace(entry.CanonicalType),
 		Source:          strings.TrimSpace(entry.Source),
 		Resolution:      strings.TrimSpace(entry.Res),
 		Codec:           strings.TrimSpace(entry.Codec),

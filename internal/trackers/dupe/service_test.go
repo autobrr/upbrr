@@ -242,6 +242,74 @@ func TestCandidateLogIncludesOnlyDecisiveDeduplicatedEvidence(t *testing.T) {
 	}
 }
 
+func TestCandidateLogIncludesStructuredComparisonOperands(t *testing.T) {
+	t.Parallel()
+
+	logger := &recordingDupeLogger{}
+	service := testService(nil)
+	service.logger = logger
+	service.logCandidateEvaluation("SP", CandidateEvaluation{
+		Candidate: TrackerCandidate{
+			ID:            "candidate-1",
+			Name:          "Example.Show.S01E12.1080p.WEB-DL-GRP",
+			Type:          "WEB-DL",
+			CanonicalType: "WEBDL",
+			Resolution:    "1080p",
+		},
+		Facts: normalizedFacts{
+			Type: Fact{
+				Value:        "WEBDL",
+				Status:       FactComplete,
+				Origin:       FactOriginTrackerAPI,
+				SourceFields: []string{"canonicalType"},
+			},
+			Resolution: completeFact("1080p", FactOriginTrackerAPI, "resolution"),
+			MediaKind:  mediaKindWEBDL,
+			MediaClass: mediaClassWEB,
+			HDR: api.HDRFacts{
+				Origin: api.HDREvidenceUnknown,
+				Status: api.HDREvidenceMissing,
+			},
+		},
+		Relation:    api.DupeRelationInsufficientEvidence,
+		WinningRule: "sp/duplicate/v2/slot",
+		Findings: []RuleFinding{{
+			RuleID:     "sp/duplicate/v2/slot",
+			Status:     RuleFindingIndeterminate,
+			Missing:    []string{"candidate_hdr"},
+			Priority:   findingPrioritySlotMissing,
+			Specificity: 3,
+			comparisons: []factComparison{{
+				Dimension: trackerspkg.DupeDimensionType,
+				Target: Fact{
+					Value:  "WEBDL",
+					Status: FactComplete,
+					Origin: FactOriginTargetMedia,
+				},
+				Candidate: Fact{
+					Value:  "WEBDL",
+					Status: FactComplete,
+					Origin: FactOriginTrackerAPI,
+				},
+				Result: DimensionEqual,
+			}},
+		}},
+	})
+
+	if len(logger.debug) != 1 {
+		t.Fatalf("candidate logs = %#v", logger.debug)
+	}
+	logLine := logger.debug[0]
+	for _, value := range []string{
+		`raw_type="WEB-DL" comparison_type="WEBDL"`,
+		`compared="type[target={WEBDL},target_status=complete,target_origin=target_media,candidate={WEBDL},candidate_status=complete,candidate_origin=tracker_api,result=equal]"`,
+	} {
+		if !strings.Contains(logLine, value) {
+			t.Fatalf("candidate log missing %q: %q", value, logLine)
+		}
+	}
+}
+
 func TestCheckWithAssessmentReportsDebugBannedGroupAsBypassed(t *testing.T) {
 	registry := trackerspkg.NewRegistry()
 	if err := registry.Register(bannedGroupDefinition{}); err != nil {

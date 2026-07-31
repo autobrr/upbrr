@@ -13,15 +13,12 @@ import (
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-type mediaInfoDoc struct {
-	Media struct {
-		Track []map[string]any `json:"track"`
-	} `json:"media"`
-}
+type mediaInfoDoc = mediafacts.MediaInfoDocument
 
 var canonicalResolutionWidths = []int{3840, 2560, 1920, 1280, 1024, 854, 720, 15360, 7680, 0}
 var canonicalResolutionHeights = []int{2160, 1440, 1080, 720, 576, 540, 480, 8640, 4320, 0}

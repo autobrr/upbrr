@@ -627,18 +627,21 @@ func (s *Service) logCandidateEvaluation(tracker string, evaluation CandidateEva
 		evidence = api.HDREvidenceMissing
 	}
 	s.logger.Debugf(
-		"dupechecking: candidate tracker=%s candidate_id=%q relation=%s winning_rule=%s kind=%s class=%s source_family=%s resolution=%s "+
+		"dupechecking: candidate tracker=%s candidate_id=%q relation=%s winning_rule=%s raw_type=%q comparison_type=%q "+
+			"kind=%s class=%s source_family=%s resolution=%s "+
 			"hdr_status=%s compared=%q missing=%q matched=%q indeterminate=%q name=%q facts=%q hdr=%q hdr_origin=%s reasons=%q",
 		tracker,
 		dupeCandidateLogValue(candidate.ID),
 		evaluation.Relation,
 		dupeCandidateLogValue(evaluation.WinningRule),
+		dupeCandidateLogValue(candidate.Type),
+		dupeCandidateLogValue(evaluation.Facts.Type.Value),
 		evaluation.Facts.MediaKind,
 		evaluation.Facts.MediaClass,
 		evaluation.Facts.SourceFamily,
 		dupeCandidateLogValue(evaluation.Facts.Resolution.Value),
 		evidence,
-		dupeFindingValues(findings, func(finding RuleFinding) []string { return finding.Compared }),
+		dupeFindingComparisonValues(findings),
 		dupeFindingValues(findings, func(finding RuleFinding) []string {
 			return append(append([]string(nil), finding.Missing...), finding.Contradictions...)
 		}),
@@ -663,11 +666,14 @@ func (s *Service) logTargetEvaluation(
 		hdrStatus = api.HDREvidenceMissing
 	}
 	s.logger.Debugf(
-		//logpolicy:allow normalized target facts are required DEBUG decision diagnostics, not step-by-step flow
-		"dupechecking: target tracker=%s general_policy=%s tracker_policy=%s kind=%s class=%s source_family=%s source=%s resolution=%s hdr_status=%s scope=%s",
+		"dupechecking: target tracker=%s general_policy=%s tracker_policy=%s comparison_type=%q type_status=%s type_origin=%s "+
+			"kind=%s class=%s source_family=%s source=%s resolution=%s hdr_status=%s scope=%s",
 		tracker,
 		GeneralPolicyID,
 		dupeCandidateLogValue(policy.ID),
+		dupeCandidateLogValue(facts.Type.Value),
+		facts.Type.Status,
+		facts.Type.Origin,
 		facts.MediaKind,
 		facts.MediaClass,
 		facts.SourceFamily,
@@ -676,6 +682,43 @@ func (s *Service) logTargetEvaluation(
 		hdrStatus,
 		dupeCandidateLogValue(search.Scope),
 	)
+}
+
+func dupeFindingComparisonValues(findings []RuleFinding) string {
+	values := make([]string, 0, len(findings))
+	seen := make(map[string]struct{})
+	for _, finding := range findings {
+		if len(finding.comparisons) == 0 {
+			for _, value := range finding.Compared {
+				if value = dupeCandidateLogValue(value); value != "" {
+					if _, ok := seen[value]; !ok {
+						seen[value] = struct{}{}
+						values = append(values, value)
+					}
+				}
+			}
+			continue
+		}
+		for _, comparison := range finding.comparisons {
+			value := fmt.Sprintf(
+				"%s[target={%s},target_status=%s,target_origin=%s,candidate={%s},candidate_status=%s,candidate_origin=%s,result=%s]",
+				comparison.Dimension,
+				dupeCandidateLogValue(comparison.Target.Value),
+				comparison.Target.Status,
+				comparison.Target.Origin,
+				dupeCandidateLogValue(comparison.Candidate.Value),
+				comparison.Candidate.Status,
+				comparison.Candidate.Origin,
+				comparison.Result,
+			)
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			values = append(values, value)
+		}
+	}
+	return strings.Join(values, " | ")
 }
 
 func dupeFindingValues(findings []RuleFinding, values func(RuleFinding) []string) string {
