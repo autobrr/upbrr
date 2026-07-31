@@ -298,11 +298,19 @@ func NewService(repo repository, opts ...Option) *Service {
 }
 
 func resolveTagsPath(dbPath string) string {
-	root, err := db.RootDir(dbPath)
+	path, err := tagOverridesPath(dbPath)
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(root, "data", "tags.json")
+	return path
+}
+
+func tagOverridesPath(dbPath string) (string, error) {
+	root, err := db.RootDir(dbPath)
+	if err != nil {
+		return "", fmt.Errorf("metadata: resolve tag overrides root: %w", err)
+	}
+	return filepath.Join(root, "tags.json"), nil
 }
 
 func resolveSRRDBPaths(dbPath string) (string, string) {
