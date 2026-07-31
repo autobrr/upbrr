@@ -16,6 +16,7 @@ import (
 	"golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -391,7 +392,7 @@ func absolutizeASCLink(href string) string {
 
 func resolveASCIMDb(meta api.DuplicateSubject) string {
 	if meta.Identity.IMDBID > 0 {
-		return fmt.Sprintf("tt%07d", meta.Identity.IMDBID)
+		return providerid.IMDb(meta.Identity.IMDBID).Prefixed()
 	}
 	return ""
 }

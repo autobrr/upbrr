@@ -18,7 +18,7 @@ import (
 func TestDuplicateSearchUsesSPDQueryHeadersAndProjection(t *testing.T) {
 	requestErr := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("imdbId") != "1234567" || r.Header.Get("Authorization") != "secret" || r.Header.Get("Accept") != "application/json" {
+		if r.URL.Query().Get("imdbId") != "tt0000456" || r.Header.Get("Authorization") != "secret" || r.Header.Get("Accept") != "application/json" {
 			requestErr <- errors.New("unexpected SPD duplicate request shape")
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -34,7 +34,7 @@ func TestDuplicateSearchUsesSPDQueryHeadersAndProjection(t *testing.T) {
 		http:     server.Client(),
 		endpoint: server.URL,
 	}
-	result := searcher.Search(context.Background(), api.DuplicateSubject{Identity: api.ExternalIdentity{IMDBID: 1234567}})
+	result := searcher.Search(context.Background(), api.DuplicateSubject{Identity: api.ExternalIdentity{IMDBID: 456}})
 	select {
 	case err := <-requestErr:
 		t.Fatal(err)

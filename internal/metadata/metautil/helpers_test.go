@@ -5,6 +5,24 @@ package metautil
 
 import "testing"
 
+func TestNormalizeIMDbIDPadsValidNumericForms(t *testing.T) {
+	t.Parallel()
+
+	for input, want := range map[string]string{
+		"456":       "tt0000456",
+		"tt456":     "tt0000456",
+		"TT456":     "tt0000456",
+		"Tt456":     "tt0000456",
+		"12345678":  "tt12345678",
+		"malformed": "malformed",
+		"0":         "",
+	} {
+		if got := NormalizeIMDbID(input); got != want {
+			t.Fatalf("NormalizeIMDbID(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestReleaseCategoryFromRLS(t *testing.T) {
 	tests := []struct {
 		name  string

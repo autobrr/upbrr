@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -48,7 +49,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	case trackerID(meta) != "":
 		filter["id"] = trackerID(meta)
 	case meta.Identity.IMDBID != 0:
-		filter["imdb"] = fmt.Sprintf("tt%07d", meta.Identity.IMDBID)
+		filter["imdb"] = providerid.IMDb(meta.Identity.IMDBID).Prefixed()
 	case meta.Identity.TVDBID != 0:
 		filter["tvdb"] = meta.Identity.TVDBID
 	case searchTitle(meta) != "":

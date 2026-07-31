@@ -14,6 +14,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -223,7 +224,7 @@ func prepareUploadState(_ context.Context, req trackers.PreparationInput) (uploa
 
 func resolveIMDbID(meta api.UploadSubject) string {
 	if meta.Identity.IMDBID > 0 {
-		return "tt" + strconv.Itoa(meta.Identity.IMDBID)
+		return providerid.IMDb(meta.Identity.IMDBID).Prefixed()
 	}
 	return ""
 }

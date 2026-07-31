@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -321,7 +322,7 @@ func bhdIMDB(id int) string {
 	if id == 0 {
 		return ""
 	}
-	return fmt.Sprintf("tt%07d", id)
+	return providerid.IMDb(id).Prefixed()
 }
 
 func bhdString(value any) string {

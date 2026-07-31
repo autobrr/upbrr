@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -172,9 +173,15 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 	torrentPath := filepath.Join(tmp, "release.torrent")
 	createTestTorrent(t, filepath.Join(tmp, "source.bin"), torrentPath)
 
+	requestErr := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case ptpTorrentPath:
+			if r.URL.Query().Get("imdb") != "0000456" {
+				requestErr <- errors.New("unexpected PTP IMDb group query")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"Movies": []map[string]any{{"GroupId": "1234"}},
 			})
@@ -192,7 +199,7 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 			ReleaseName: "Movie.2026.1080p.BluRay.x264",
 			Source:      "BluRay",
 			VideoCodec:  "AVC",
-			Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 1234567},
+			Identity:    api.ExternalIdentity{Category: "MOVIE", IMDBID: 456},
 			ProviderMetadata: api.SourceScopedMetadata{
 				TMDB: &api.TMDBMetadata{
 					Title:  "Movie",
@@ -212,8 +219,16 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected dry-run error: %v", err)
 	}
+	select {
+	case err := <-requestErr:
+		t.Fatal(err)
+	default:
+	}
 	if got := entry.Payload["groupid"]; got != "1234" {
 		t.Fatalf("expected existing group id, got %q", got)
+	}
+	if got := entry.Payload["imdb"]; got != "0000456" {
+		t.Fatalf("expected padded imdb, got %q", got)
 	}
 	if _, exists := entry.Payload["title"]; exists {
 		t.Fatal("did not expect new-group title field when group already exists")

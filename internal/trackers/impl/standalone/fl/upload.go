@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/httpclient"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -165,7 +166,7 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput, dryR
 		"nfo":   resolveMedia(req.Meta),
 	}
 	if req.Meta.Identity.IMDBID > 0 {
-		fields["imdbid"] = strconv.Itoa(req.Meta.Identity.IMDBID)
+		fields["imdbid"] = providerid.IMDb(req.Meta.Identity.IMDBID).Digits()
 		fields["description"] = resolveGenres(req.Meta)
 	}
 	if strings.TrimSpace(req.TrackerConfig.UploaderName) != "" && !req.TrackerConfig.Anon {

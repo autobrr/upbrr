@@ -105,8 +105,8 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	if entry.Payload["source"] != "WEB" {
 		t.Fatalf("expected source WEB, got %q", entry.Payload["source"])
 	}
-	if entry.Payload["imdb_id"] != "456" {
-		t.Fatalf("expected numeric imdb_id, got %q", entry.Payload["imdb_id"])
+	if entry.Payload["imdb_id"] != "0000456" {
+		t.Fatalf("expected zero-padded imdb_id, got %q", entry.Payload["imdb_id"])
 	}
 	if entry.Payload["tmdb_id"] != "123" {
 		t.Fatalf("expected numeric tmdb_id, got %q", entry.Payload["tmdb_id"])
@@ -125,6 +125,14 @@ func TestDefinitionBuildUploadDryRunBuildsPayload(t *testing.T) {
 	}
 	if got := entry.Payload["tags"]; !strings.Contains(got, "WEBDL") || !strings.Contains(got, "HDR10+") || !strings.Contains(got, "DV") {
 		t.Fatalf("expected BHD tags in payload, got %q", got)
+	}
+}
+
+func TestResolveIMDbIDUsesEmptyStringWhenAbsent(t *testing.T) {
+	t.Parallel()
+
+	if got := resolveIMDbID(api.UploadSubject{}); got != "" {
+		t.Fatalf("expected absent imdb_id to resolve empty, got %q", got)
 	}
 }
 
@@ -244,15 +252,15 @@ func TestDefinitionBuildUploadDryRunRejectsInvalidContainer(t *testing.T) {
 			SourcePath:        filepath.Join(tmp, "Movie.avi"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
-			Identity:          api.ExternalIdentity{
-TMDBID: 987650001,
- IMDBID: 1234567,
- Category: "MOVIE",
-},
-			Type:              "REMUX",
-			Source:            "BLURAY",
-			Container:         "avi",
-			Release:           api.ReleaseInfo{Resolution: "1080p"},
+			Identity: api.ExternalIdentity{
+				TMDBID:   987650001,
+				IMDBID:   1234567,
+				Category: "MOVIE",
+			},
+			Type:      "REMUX",
+			Source:    "BLURAY",
+			Container: "avi",
+			Release:   api.ReleaseInfo{Resolution: "1080p"},
 		},
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
 		Logger:        api.NopLogger{},
@@ -303,15 +311,15 @@ func TestDefinitionBuildUploadDryRunRejectsInvalidSource(t *testing.T) {
 			SourcePath:        filepath.Join(tmp, "Example.mkv"),
 			TorrentPath:       torrentPath,
 			MediaInfoTextPath: mediaInfoPath,
-			Identity:          api.ExternalIdentity{
-TMDBID: 987650001,
- IMDBID: 1234567,
- Category: "MOVIE",
-},
-			Release:           api.ReleaseInfo{Resolution: "1080p"},
-			Type:              "WEBDL",
-			Source:            "CAM",
-			Container:         "mkv",
+			Identity: api.ExternalIdentity{
+				TMDBID:   987650001,
+				IMDBID:   1234567,
+				Category: "MOVIE",
+			},
+			Release:   api.ReleaseInfo{Resolution: "1080p"},
+			Type:      "WEBDL",
+			Source:    "CAM",
+			Container: "mkv",
 		},
 		TrackerConfig: config.TrackerConfig{APIKey: "token"},
 		Logger:        api.NopLogger{},
@@ -366,8 +374,8 @@ func TestUploadDoesNotRetryInvalidIMDb(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if imdbID != "456" {
-			t.Errorf("expected imdb_id 456, got %q", imdbID)
+		if imdbID != "0000456" {
+			t.Errorf("expected imdb_id 0000456, got %q", imdbID)
 			return
 		}
 		_, _ = fmt.Fprint(w, `{"status_code":0,"status_message":"Invalid imdb_id"}`)

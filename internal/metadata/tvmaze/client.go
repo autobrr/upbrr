@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -85,7 +86,7 @@ func (c *Client) Search(ctx context.Context, input SearchInput) (SearchResult, e
 		}
 	}
 	if len(results) == 0 && imdbID != 0 {
-		cand, err := c.lookupShow(ctx, "imdb", fmt.Sprintf("tt%07d", imdbID))
+		cand, err := c.lookupShow(ctx, "imdb", providerid.IMDb(imdbID).Prefixed())
 		if err == nil {
 			results = append(results, cand)
 		}

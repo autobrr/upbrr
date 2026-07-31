@@ -18,6 +18,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -215,7 +216,7 @@ func lookupGroupID(ctx context.Context, apiKey string, meta api.UploadSubject) (
 	if meta.Identity.IMDBID == 0 {
 		return "", nil
 	}
-	url := fmt.Sprintf("%s/api.php?api_key=%s&action=torrent&req=group&imdbID=tt%07d", baseURL, apiKey, meta.Identity.IMDBID)
+	url := fmt.Sprintf("%s/api.php?api_key=%s&action=torrent&req=group&imdbID=%s", baseURL, apiKey, providerid.IMDb(meta.Identity.IMDBID).Prefixed())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", fmt.Errorf("trackers: GPW torrent URL lookup request build: %s", commonhttp.RedactErrorDetail(err.Error()))
@@ -329,7 +330,7 @@ func extractTorrentID(value any) string {
 
 func resolveIdentifier(meta api.UploadSubject) string {
 	if meta.Identity.IMDBID > 0 {
-		return fmt.Sprintf("tt%07d", meta.Identity.IMDBID)
+		return providerid.IMDb(meta.Identity.IMDBID).Prefixed()
 	}
 	if meta.Identity.TMDBID > 0 {
 		return strconv.Itoa(meta.Identity.TMDBID)

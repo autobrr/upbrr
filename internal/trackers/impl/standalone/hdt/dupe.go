@@ -5,7 +5,6 @@ package hdt
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -51,7 +51,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	}
 	params := url.Values{"active": {"0"}, "category[]": {strconv.Itoa(hdtCategoryID(meta))}}
 	if meta.Identity.IMDBID != 0 {
-		params.Set("search", fmt.Sprintf("tt%07d", meta.Identity.IMDBID))
+		params.Set("search", providerid.IMDb(meta.Identity.IMDBID).Prefixed())
 		params.Set("options", "2")
 	} else {
 		query := dupe.ProjectedSearchName(meta)

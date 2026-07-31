@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -175,7 +176,7 @@ func prepareUploadState(ctx context.Context, req trackers.PreparationInput) (upl
 		case req.Meta.Anime && req.Meta.Identity.MALID > 0:
 			state.fields["animeid"] = tlAnimeIDURL(req.Meta.Identity.MALID)
 		case category == api.CanonicalCategoryMovie && req.Meta.Identity.IMDBID > 0:
-			state.fields["imdb"] = fmt.Sprintf("tt%07d", req.Meta.Identity.IMDBID)
+			state.fields["imdb"] = providerid.IMDb(req.Meta.Identity.IMDBID).Prefixed()
 		case category == api.CanonicalCategoryTV:
 			state.fields["tvmazeid"] = strconv.Itoa(req.Meta.Identity.TVmazeID)
 			if req.Meta.TVPack {

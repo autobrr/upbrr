@@ -7,10 +7,10 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone/internal/jsondupe"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -43,7 +43,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	params := url.Values{}
 	switch {
 	case meta.Identity.IMDBID != 0:
-		params.Set("imdbId", strconv.Itoa(meta.Identity.IMDBID))
+		params.Set("imdbId", providerid.IMDb(meta.Identity.IMDBID).Prefixed())
 	case meta.Projection != nil:
 		params.Set("search", dupe.ProjectedSearchName(meta))
 	case strings.TrimSpace(meta.Release.Title) != "":

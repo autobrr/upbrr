@@ -193,7 +193,9 @@ func TestNBLSearchUsesTagsAndTraversesAllPages(t *testing.T) {
 }
 
 func TestNBLSearchReportsPaginationBound(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+	requestedIMDb := ""
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		requestedIMDb = request.URL.Query().Get("imdb")
 		response.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(response, `{
 			"current_page":0,
@@ -216,10 +218,13 @@ func TestNBLSearchReportsPaginationBound(t *testing.T) {
 		maxPages: 1,
 	}
 	result := searcher.Search(context.Background(), api.DuplicateSubject{
-		Identity: api.ExternalIdentity{TVmazeID: 81},
+		Identity: api.ExternalIdentity{IMDBID: 456},
 	})
 	search := result.SearchEvidence()
 	if search.Complete || search.Pages != 1 || len(search.Warnings) != 1 {
 		t.Fatalf("bounded NBL search = %#v", search)
+	}
+	if requestedIMDb != "tt0000456" {
+		t.Fatalf("NBL IMDb query = %q, want tt0000456", requestedIMDb)
 	}
 }

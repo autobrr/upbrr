@@ -21,6 +21,7 @@ import (
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -131,10 +132,7 @@ func setSRRDBHeaders(req *http.Request) {
 // an unpadded numeric id ("Invalid value for imdb"), so the query must re-pad.
 // Returns "" for a non-positive id.
 func formatSRRDBIMDbID(id int) string {
-	if id <= 0 {
-		return ""
-	}
-	return fmt.Sprintf("tt%07d", id)
+	return providerid.IMDb(id).Prefixed()
 }
 
 // sceneCandidates holds the local on-disk name signals used to select and verify

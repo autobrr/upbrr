@@ -22,6 +22,7 @@ import (
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
 	"github.com/autobrr/upbrr/internal/metadata/tmdb"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -663,7 +664,7 @@ func buildRatingsBBCode(meta api.UploadSubject, ratingsList []map[string]any) st
 				imdbURL = meta.ProviderMetadata.IMDB.IMDbURL
 			}
 			if imdbURL == "" && meta.Identity.IMDBID > 0 {
-				imdbURL = fmt.Sprintf("https://www.imdb.com/title/tt%07d", meta.Identity.IMDBID)
+				imdbURL = providerid.IMDb(meta.Identity.IMDBID).URL()
 			}
 			parts = append(parts, fmt.Sprintf("\n[url=%s]%s[/url]\n[b]%s[/b]\n", imdbURL, imgTag, value))
 		case "TMDb":

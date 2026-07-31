@@ -5,7 +5,6 @@ package hds
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -17,6 +16,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -58,7 +58,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	for page := 0; page <= 10; page++ {
 		params := url.Values{
 			"page":    {"torrents"},
-			"search":  {fmt.Sprintf("tt%07d", meta.Identity.IMDBID)},
+			"search":  {providerid.IMDb(meta.Identity.IMDBID).Prefixed()},
 			"active":  {"0"},
 			"options": {"2"},
 			"pages":   {strconv.Itoa(page)},

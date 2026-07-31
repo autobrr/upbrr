@@ -16,6 +16,7 @@ import (
 	xhtml "golang.org/x/net/html"
 
 	"github.com/autobrr/upbrr/internal/config"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers/dupe"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -53,7 +54,7 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 	entries := make([]api.DupeEntry, 0)
 	for page := 0; page <= 10; page++ {
 		params := url.Values{
-			"search":   {fmt.Sprintf("tt%07d", meta.Identity.IMDBID)},
+			"search":   {providerid.IMDb(meta.Identity.IMDBID).Prefixed()},
 			"blah":     {"2"},
 			"incldead": {"1"},
 		}

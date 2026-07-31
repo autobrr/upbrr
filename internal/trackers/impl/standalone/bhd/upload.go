@@ -21,6 +21,7 @@ import (
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/httpclient"
 	paths "github.com/autobrr/upbrr/internal/pathing/layout"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/internal/trackers"
@@ -384,10 +385,7 @@ func resolveTMDBID(meta api.UploadSubject) string {
 }
 
 func resolveIMDbID(meta api.UploadSubject) string {
-	if meta.Identity.IMDBID == 0 {
-		return ""
-	}
-	return strconv.Itoa(meta.Identity.IMDBID)
+	return providerid.IMDb(meta.Identity.IMDBID).Digits()
 }
 
 func resolveAnon(cfg config.TrackerConfig) string {

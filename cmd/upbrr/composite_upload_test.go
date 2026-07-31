@@ -96,7 +96,7 @@ func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 		},
 		ExternalIDOverrides: api.ExternalIDOverrides{
 			TMDBID:   new(123),
-			IMDBID:   new(1234567),
+			IMDBID:   new(456),
 			MALID:    new(456),
 			TVDBID:   new(789),
 			TVmazeID: new(321),
@@ -167,7 +167,7 @@ func TestMapCLICompositeUploadRequestPreservesPerUploadOptions(t *testing.T) {
 	}
 	if mapped.Preparation.Facts.ExternalIDs.IMDB == nil ||
 		mapped.Preparation.Facts.ExternalIDs.IMDB.Value == nil ||
-		*mapped.Preparation.Facts.ExternalIDs.IMDB.Value != "tt1234567" ||
+		*mapped.Preparation.Facts.ExternalIDs.IMDB.Value != "tt0000456" ||
 		mapped.Preparation.Facts.ReleaseName.Tag == nil ||
 		*mapped.Preparation.Facts.ReleaseName.Tag != "GRP" ||
 		mapped.Preparation.Facts.Metadata.Anime == nil ||

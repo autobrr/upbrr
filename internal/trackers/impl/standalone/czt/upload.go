@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/redaction"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
@@ -578,5 +579,5 @@ func imdbID(meta api.UploadSubject) string {
 	if meta.Identity.IMDBID <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("tt%07d", meta.Identity.IMDBID)
+	return providerid.IMDb(meta.Identity.IMDBID).Prefixed()
 }

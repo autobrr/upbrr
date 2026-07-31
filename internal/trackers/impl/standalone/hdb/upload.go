@@ -21,6 +21,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/config"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -296,7 +297,7 @@ func resolveIMDbURL(meta api.UploadSubject) string {
 		}
 	}
 	if meta.Identity.IMDBID != 0 {
-		return fmt.Sprintf("https://www.imdb.com/title/tt%07d/", meta.Identity.IMDBID)
+		return providerid.IMDb(meta.Identity.IMDBID).URL() + "/"
 	}
 	return ""
 }

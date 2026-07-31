@@ -17,6 +17,7 @@ import (
 
 	"github.com/autobrr/upbrr/internal/httpclient"
 	"github.com/autobrr/upbrr/internal/metadata/metautil"
+	"github.com/autobrr/upbrr/internal/providerid"
 	"github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/internal/trackers/impl/commonhttp"
 	"github.com/autobrr/upbrr/internal/trackers/impl/standalone"
@@ -295,7 +296,7 @@ func buildFields(meta api.UploadSubject, description string, auth string, answer
 
 func resolveIDLink(meta api.UploadSubject) string {
 	if meta.Identity.IMDBID > 0 {
-		return fmt.Sprintf("tt%07d", meta.Identity.IMDBID)
+		return providerid.IMDb(meta.Identity.IMDBID).Prefixed()
 	}
 	if meta.Identity.TMDBID > 0 {
 		if strings.EqualFold(categoryOf(meta), "TV") {
