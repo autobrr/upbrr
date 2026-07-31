@@ -16,6 +16,99 @@ import (
 
 const expectedSchemaVersion = 8
 
+func TestBaselineSchemaIncludesCurrentMigrationColumns(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	ctx := context.Background()
+	if err := createBaselineSchema(ctx, rawDB); err != nil {
+		t.Fatalf("create baseline schema: %v", err)
+	}
+	for _, table := range []struct {
+		name    string
+		columns []string
+	}{
+		{
+			name: "external_ids",
+			columns: []string{
+				"generation",
+				"category_provenance",
+				"override_json",
+				"conflict_status",
+				"source_fingerprint",
+				"intent_fingerprint",
+				"contract_version",
+				"resolved_at",
+			},
+		},
+		{name: "external_metadata", columns: []string{"generation"}},
+		{name: "release_overrides", columns: []string{"use_season_episode"}},
+		{name: "description_overrides", columns: []string{"group_key"}},
+	} {
+		for _, column := range table.columns {
+			exists, err := tableColumnExists(ctx, rawDB, table.name, column)
+			if err != nil {
+				t.Fatalf("inspect %s.%s: %v", table.name, column, err)
+			}
+			if !exists {
+				t.Fatalf("baseline missing current column %s.%s", table.name, column)
+			}
+		}
+	}
+}
+
+func TestMigrateNormalizeDescriptionOverridesKeepsCurrentRows(t *testing.T) {
+	t.Parallel()
+
+	rawDB, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rawDB.Close()
+	})
+
+	ctx := context.Background()
+	if err := createBaselineSchema(ctx, rawDB); err != nil {
+		t.Fatalf("create baseline schema: %v", err)
+	}
+	for _, group := range []string{"GROUP-A", "GROUP-B"} {
+		if _, err := rawDB.ExecContext(
+			ctx,
+			`INSERT INTO description_overrides (source_path, group_key, description, updated_at) VALUES (?, ?, ?, ?)`,
+			"Example.Release.2026",
+			group,
+			"description",
+			"2026-07-31T00:00:00Z",
+		); err != nil {
+			t.Fatalf("seed current override %s: %v", group, err)
+		}
+	}
+
+	if err := migrateNormalizeDescriptionOverrides(ctx, rawDB); err != nil {
+		t.Fatalf("rerun description override migration: %v", err)
+	}
+
+	var count int
+	if err := rawDB.QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM description_overrides WHERE source_path = ?`,
+		"Example.Release.2026",
+	).Scan(&count); err != nil {
+		t.Fatalf("count current overrides: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("current overrides after migration = %d, want 2", count)
+	}
+}
+
 func TestMigrateAddTrackerRuleFailureSeverityHandlesAbsentAndLegacyTables(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

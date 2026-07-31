@@ -808,6 +808,46 @@ func TestLoadEmbeddedDefaultConfig(t *testing.T) {
 	if _, ok := cfg.Trackers.Trackers["BTN"]; !ok {
 		t.Fatalf("embedded default trackers should include BTN")
 	}
+
+	delete(cfg.Trackers.Trackers, "AITHER")
+	cfg.Trackers.DefaultTrackers = append(cfg.Trackers.DefaultTrackers, "MUTATED")
+	cfg.ClientSetup.InjectClients = append(cfg.ClientSetup.InjectClients, "MUTATED")
+	cfg.ClientSetup.SearchClients = append(cfg.ClientSetup.SearchClients, "MUTATED")
+	cfg.TorrentClients["MUTATED"] = TorrentClientConfig{Type: "watch"}
+	qbittorrent := cfg.TorrentClients["qbittorrent"]
+	if len(qbittorrent.LinkedFolder) == 0 || qbittorrent.VerifyWebUICertificate == nil {
+		t.Fatal("embedded qBittorrent defaults missing defensive-copy fixtures")
+	}
+	qbittorrent.LinkedFolder[0] = "MUTATED"
+	*qbittorrent.VerifyWebUICertificate = false
+	cfg.TorrentClients["qbittorrent"] = qbittorrent
+
+	fresh, err := LoadEmbeddedDefaultConfig()
+	if err != nil {
+		t.Fatalf("reload embedded default config: %v", err)
+	}
+	if _, ok := fresh.Trackers.Trackers["AITHER"]; !ok {
+		t.Fatal("embedded tracker template mutated through returned config")
+	}
+	if slices.Contains(fresh.Trackers.DefaultTrackers, "MUTATED") {
+		t.Fatal("embedded default tracker selection mutated through returned config")
+	}
+	if slices.Contains(fresh.ClientSetup.InjectClients, "MUTATED") {
+		t.Fatal("embedded injecting client selection mutated through returned config")
+	}
+	if slices.Contains(fresh.ClientSetup.SearchClients, "MUTATED") {
+		t.Fatal("embedded searching client selection mutated through returned config")
+	}
+	if _, ok := fresh.TorrentClients["MUTATED"]; ok {
+		t.Fatal("embedded torrent client template mutated through returned config")
+	}
+	freshQBit := fresh.TorrentClients["qbittorrent"]
+	if freshQBit.LinkedFolder[0] == "MUTATED" {
+		t.Fatal("embedded torrent client paths mutated through returned config")
+	}
+	if freshQBit.VerifyWebUICertificate == nil || !*freshQBit.VerifyWebUICertificate {
+		t.Fatal("embedded torrent client pointer mutated through returned config")
+	}
 }
 
 func TestMergeMissingTrackerDefaults(t *testing.T) {

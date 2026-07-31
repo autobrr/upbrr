@@ -65,6 +65,7 @@ func TestBackendGetLogExclusionsReturnsEmptySliceWhenMissing(t *testing.T) {
 	t.Parallel()
 
 	repoPath := filepath.Join(t.TempDir(), "backend-log-exclusions.db")
+	ensureMigratedTestDB(t, repoPath)
 	repo, err := db.OpenWithLogger(repoPath, nil)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
@@ -72,10 +73,6 @@ func TestBackendGetLogExclusionsReturnsEmptySliceWhenMissing(t *testing.T) {
 	t.Cleanup(func() {
 		_ = repo.Close()
 	})
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate repo: %v", err)
-	}
-
 	backend := &Backend{repo: repo}
 	patterns, err := backend.GetLogExclusions()
 	if err != nil {
@@ -93,6 +90,7 @@ func TestBackendGetConfigFallsBackToRuntimeConfigWhenDatabaseConfigMissing(t *te
 	t.Parallel()
 
 	repoPath := filepath.Join(t.TempDir(), "backend-empty-config.db")
+	ensureMigratedTestDB(t, repoPath)
 	repo, err := db.OpenWithLogger(repoPath, nil)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
@@ -100,10 +98,6 @@ func TestBackendGetConfigFallsBackToRuntimeConfigWhenDatabaseConfigMissing(t *te
 	t.Cleanup(func() {
 		_ = repo.Close()
 	})
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate repo: %v", err)
-	}
-
 	cfg, err := config.LoadEmbeddedDefaultConfig()
 	if err != nil {
 		t.Fatalf("load embedded config: %v", err)
@@ -204,6 +198,7 @@ func TestBackendGetConfigFallbackUsesSingleRuntimeSnapshot(t *testing.T) {
 
 	tempDir := t.TempDir()
 	repoPath := filepath.Join(tempDir, "backend-empty-snapshot.db")
+	ensureMigratedTestDB(t, repoPath)
 	repo, err := db.OpenWithLogger(repoPath, nil)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
@@ -211,10 +206,6 @@ func TestBackendGetConfigFallbackUsesSingleRuntimeSnapshot(t *testing.T) {
 	t.Cleanup(func() {
 		_ = repo.Close()
 	})
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate repo: %v", err)
-	}
-
 	pathA := filepath.Join(tempDir, "runtime-a.db")
 	pathB := filepath.Join(tempDir, "runtime-b.db")
 	cfgA := config.Config{
@@ -269,6 +260,7 @@ func TestBackendGetConfigDatabaseConfigUsesSingleRuntimeSnapshotForDBPath(t *tes
 
 	tempDir := t.TempDir()
 	repoPath := filepath.Join(tempDir, "backend-db-snapshot.db")
+	ensureMigratedTestDB(t, repoPath)
 	repo, err := db.OpenWithLogger(repoPath, nil)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
@@ -276,10 +268,6 @@ func TestBackendGetConfigDatabaseConfigUsesSingleRuntimeSnapshotForDBPath(t *tes
 	t.Cleanup(func() {
 		_ = repo.Close()
 	})
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate repo: %v", err)
-	}
-
 	stored := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "stored"},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 9},
@@ -543,6 +531,7 @@ func TestBackendSaveConfigAppliesRuntimeConfigImmediately(t *testing.T) {
 	t.Parallel()
 
 	repoPath := filepath.Join(t.TempDir(), "backend-save-config.db")
+	ensureMigratedTestDB(t, repoPath)
 	repo, err := db.OpenWithLogger(repoPath, nil)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
@@ -550,10 +539,6 @@ func TestBackendSaveConfigAppliesRuntimeConfigImmediately(t *testing.T) {
 	t.Cleanup(func() {
 		_ = repo.Close()
 	})
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate repo: %v", err)
-	}
-
 	initial := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
@@ -602,9 +587,7 @@ func TestBackendSaveConfigAfterInvalidStartupMigratesLegacyCookies(t *testing.T)
 	t.Parallel()
 
 	repoPath := filepath.Join(t.TempDir(), "backend-save-invalid-startup-cookies.db")
-	if err := BootstrapAuthFile(repoPath, "tester", "very-secure-password"); err != nil {
-		t.Fatalf("bootstrap auth file: %v", err)
-	}
+	writeTestAuthFile(t, repoPath, "tester", false)
 	legacyPath := writeBackendLegacyCookieFile(t, repoPath, "BLU", `{"session":"from-legacy"}`)
 
 	startupCfg := backendConfigTestConfig(repoPath)
@@ -669,9 +652,7 @@ func TestBackendSaveConfigRetriesLegacyCookieMigrationAfterAuthAppears(t *testin
 		t.Fatalf("expected legacy cookie file to remain without auth helper: %v", err)
 	}
 
-	if err := BootstrapAuthFile(repoPath, "tester", "very-secure-password"); err != nil {
-		t.Fatalf("bootstrap auth file: %v", err)
-	}
+	writeTestAuthFile(t, repoPath, "tester", false)
 	if err := backend.SaveConfig(payload); err != nil {
 		t.Fatalf("retry save repaired config: %v", err)
 	}
@@ -836,6 +817,7 @@ func TestBackendSaveConfigRejectsInvalidEnvRuntimeConfig(t *testing.T) {
 	t.Setenv("UA_DEFAULT_SCREENS", "0")
 
 	repoPath := filepath.Join(t.TempDir(), "backend-save-config-env.db")
+	ensureMigratedTestDB(t, repoPath)
 	repo, err := db.OpenWithLogger(repoPath, nil)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
@@ -843,10 +825,6 @@ func TestBackendSaveConfigRejectsInvalidEnvRuntimeConfig(t *testing.T) {
 	t.Cleanup(func() {
 		_ = repo.Close()
 	})
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate repo: %v", err)
-	}
-
 	initial := config.Config{
 		MainSettings:       config.MainSettingsConfig{TMDBAPI: "x", DBPath: repoPath},
 		ScreenshotHandling: config.ScreenshotHandlingConfig{Screens: 1},
@@ -1023,9 +1001,7 @@ func TestBackendSaveConfigSyncsUsableWebAuthBeforeSave(t *testing.T) {
 	t.Parallel()
 
 	repo, repoPath := openBackendConfigTestRepo(t, "backend-save-usable-auth.db")
-	if err := BootstrapAuthFile(repoPath, "tester", "very-secure-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	writeTestAuthFile(t, repoPath, "tester", false)
 	initial := backendConfigTestConfig(repoPath)
 	backend := &Backend{
 		cfg:  initial,
@@ -1051,9 +1027,7 @@ func TestBackendSaveConfigRollsBackCookieMaintenanceWhenRepositorySaveFails(t *t
 	t.Parallel()
 
 	repo, repoPath := openBackendConfigTestRepo(t, "backend-save-cookie-rollback.db")
-	if err := BootstrapAuthFile(repoPath, "tester", "very-secure-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	writeTestAuthFile(t, repoPath, "tester", false)
 	legacyPath := writeBackendLegacyCookieFile(t, repoPath, "EXAMPLE", `{"session":"cookie-value"}`)
 	installBackendFailMainSettingsTrigger(t, repo)
 	initial := backendConfigTestConfig(repoPath)
@@ -1095,6 +1069,7 @@ func openBackendConfigTestRepo(t *testing.T, name string) (*db.SQLiteRepository,
 	t.Helper()
 
 	repoPath := filepath.Join(t.TempDir(), name)
+	ensureMigratedTestDB(t, repoPath)
 	repo, err := db.OpenWithLogger(repoPath, nil)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
@@ -1102,9 +1077,6 @@ func openBackendConfigTestRepo(t *testing.T, name string) (*db.SQLiteRepository,
 	t.Cleanup(func() {
 		_ = repo.Close()
 	})
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate repo: %v", err)
-	}
 	return repo, repoPath
 }
 
@@ -1361,8 +1333,8 @@ func TestBackendExportConfigAuthorizesAgainstExportSnapshotDBPath(t *testing.T) 
 	tempDir := filepath.Dir(repoPath)
 	pathA := filepath.Join(tempDir, "runtime-a", "state.db")
 	pathB := filepath.Join(tempDir, "runtime-b", "state.db")
-	writeBackendAuthFile(t, pathA, false)
-	writeBackendAuthFile(t, pathB, true)
+	writeTestAuthFile(t, pathA, "tester", false)
+	writeTestAuthFile(t, pathB, "tester", true)
 
 	cfgA := backendConfigTestConfig(pathA)
 	cfgA.MainSettings.TMDBAPI = "snapshot-secret-a"
@@ -1431,20 +1403,5 @@ func TestBackendAllowUnencryptedExportMalformedAuthReturnsError(t *testing.T) {
 	}
 	if allowPlaintext {
 		t.Fatal("malformed web auth must not allow plaintext export")
-	}
-}
-
-func writeBackendAuthFile(t *testing.T, dbPath string, allowUnencryptedExport bool) {
-	t.Helper()
-
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
-		t.Fatalf("create auth dir: %v", err)
-	}
-	authJSON := `{"username":"tester","password_hash":"hash","encryption_key_seed":"seed","allow_unencrypted_export":false}`
-	if allowUnencryptedExport {
-		authJSON = `{"username":"tester","password_hash":"hash","encryption_key_seed":"seed","allow_unencrypted_export":true}`
-	}
-	if err := os.WriteFile(AuthFilePath(dbPath), []byte(authJSON), 0o600); err != nil {
-		t.Fatalf("write auth file: %v", err)
 	}
 }

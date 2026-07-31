@@ -89,7 +89,7 @@ func (f *fakeRepo) SaveExternalIdentity(_ context.Context, ids api.ExternalIdent
 
 func TestResolveExternalIDsCandidateDoesNotPersist(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(repo)
+	svc := NewService(repo, WithIMDBClient(&stubIMDB{}))
 	tmdbID := 1234567
 
 	result, err := svc.collectExternalIdentityEvidence(context.Background(), preparationstate.State{

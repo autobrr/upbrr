@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/autobrr/upbrr/internal/authmaterial"
+	"github.com/autobrr/upbrr/internal/authmaterial/authfixture"
 	"github.com/autobrr/upbrr/internal/config"
 	cookiepkg "github.com/autobrr/upbrr/internal/cookies"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
@@ -55,9 +55,7 @@ func TestPrepareUploadStatePadsIMDbID(t *testing.T) {
 func TestResolveCookiesReturnsLoginPageReadError(t *testing.T) {
 	ctx := context.Background()
 	dbPath := newFLAuthTestDB(t)
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	authfixture.Write(t, dbPath)
 
 	requests := 0
 	withFLHTTPClient(t, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -94,9 +92,7 @@ func TestResolveCookiesReturnsLoginPageReadError(t *testing.T) {
 func TestResolveCookiesMissingValidatorStillFailsBeforePost(t *testing.T) {
 	ctx := context.Background()
 	dbPath := newFLAuthTestDB(t)
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	authfixture.Write(t, dbPath)
 
 	requests := 0
 	withFLHTTPClient(t, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -119,9 +115,7 @@ func TestResolveCookiesMissingValidatorStillFailsBeforePost(t *testing.T) {
 func TestResolveCookiesPostsFirstValidatorMatch(t *testing.T) {
 	ctx := context.Background()
 	dbPath := newFLAuthTestDB(t)
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	authfixture.Write(t, dbPath)
 
 	var postedValidator string
 	requests := 0
@@ -195,9 +189,7 @@ func TestPersistLoginCookiesRejectsEmptyResponseWithoutReplacingCookies(t *testi
 
 	ctx := context.Background()
 	dbPath := newFLAuthTestDB(t)
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	authfixture.Write(t, dbPath)
 	if err := cookiepkg.SaveTrackerCookieMap(ctx, dbPath, "FL", map[string]string{"session": "existing"}); err != nil {
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}

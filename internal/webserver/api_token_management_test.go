@@ -22,9 +22,7 @@ func TestWebUIAPITokenManagementCreatesAuthenticatesListsAndRevokes(t *testing.T
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
-	if err := BootstrapAuthFile(dbPath, "operator", "very-secure-password"); err != nil {
-		t.Fatalf("bootstrap auth: %v", err)
-	}
+	writeTestAuthFile(t, dbPath, "operator", false)
 	repository, err := newAuthStore(dbPath)
 	if err != nil {
 		t.Fatalf("open auth store: %v", err)

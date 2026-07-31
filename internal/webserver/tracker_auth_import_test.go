@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/autobrr/upbrr/internal/authmaterial"
 	"github.com/autobrr/upbrr/internal/config"
 	trackerauth "github.com/autobrr/upbrr/internal/trackers/auth"
 )
@@ -37,9 +36,7 @@ func TestRouteImportTrackerAuthCookieContentAcceptsEscapedEnvelopeAtRawCap(t *te
 	t.Parallel()
 
 	repo, dbPath := openBrowseTestRepo(t)
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	writeTestAuthFile(t, dbPath, "tester", false)
 	server := testServerWithBackend(t, repo, config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}})
 	prefix := ".example.test\tTRUE\t/\tTRUE\t0\tsession\t"
 	content := prefix + strings.Repeat("<", trackerauth.MaxCookieImportContentBytes-len(prefix))

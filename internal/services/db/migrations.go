@@ -25,6 +25,7 @@ const (
 	externalMetadataTableDDL = `
 		CREATE TABLE IF NOT EXISTS external_metadata (
 			source_path TEXT PRIMARY KEY,
+			generation INTEGER NOT NULL DEFAULT 0,
 			tmdb_json TEXT NOT NULL DEFAULT "",
 			imdb_json TEXT NOT NULL DEFAULT "",
 			tvdb_json TEXT NOT NULL DEFAULT "",
@@ -456,6 +457,10 @@ func ensurePreparedExternalIDsSchema(ctx context.Context, exec migrationExecutor
 		return nil
 	}
 
+	existingColumns, err := tableColumns(ctx, exec, "external_ids")
+	if err != nil {
+		return fmt.Errorf("db: inspect external_ids columns for prepared release: %w", err)
+	}
 	columns := []struct {
 		name string
 		ddl  string
@@ -470,16 +475,13 @@ func ensurePreparedExternalIDsSchema(ctx context.Context, exec migrationExecutor
 		{name: "resolved_at", ddl: `ALTER TABLE external_ids ADD COLUMN resolved_at TEXT NOT NULL DEFAULT ""`},
 	}
 	for _, column := range columns {
-		columnExists, err := tableColumnExists(ctx, exec, "external_ids", column.name)
-		if err != nil {
-			return fmt.Errorf("db: inspect external_ids.%s: %w", column.name, err)
-		}
-		if columnExists {
+		if _, ok := existingColumns[strings.ToLower(column.name)]; ok {
 			continue
 		}
 		if _, err := exec.ExecContext(ctx, column.ddl); err != nil {
 			return fmt.Errorf("db: add external_ids.%s: %w", column.name, err)
 		}
+		existingColumns[strings.ToLower(column.name)] = struct{}{}
 	}
 	return nil
 }
@@ -621,16 +623,16 @@ func migrateAddDVDMediaInfo(ctx context.Context, exec migrationExecutor) error {
 }
 
 func migrateAddReleaseOverrideUseSeasonEpisode(ctx context.Context, exec migrationExecutor) error {
-	statements := []string{
-		`ALTER TABLE release_overrides ADD COLUMN use_season_episode INTEGER`,
+	exists, err := tableColumnExists(ctx, exec, "release_overrides", "use_season_episode")
+	if err != nil {
+		return err
 	}
-
-	for _, statement := range statements {
-		if _, err := exec.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("db: %w", err)
-		}
+	if exists {
+		return nil
 	}
-
+	if _, err := exec.ExecContext(ctx, `ALTER TABLE release_overrides ADD COLUMN use_season_episode INTEGER`); err != nil {
+		return fmt.Errorf("db: %w", err)
+	}
 	return nil
 }
 
@@ -744,6 +746,13 @@ func migrateNormalizeDescriptionOverrides(ctx context.Context, exec migrationExe
 		); err != nil {
 			return fmt.Errorf("db: %w", err)
 		}
+		return nil
+	}
+	normalized, err := tableColumnExists(ctx, exec, "description_overrides", "group_key")
+	if err != nil {
+		return err
+	}
+	if normalized {
 		return nil
 	}
 
@@ -957,6 +966,10 @@ func migrateAddExternalIDsMAL(ctx context.Context, exec migrationExecutor) error
 		return nil
 	}
 
+	existingColumns, err := tableColumns(ctx, exec, "external_ids")
+	if err != nil {
+		return fmt.Errorf("db: inspect external_ids columns for mal migration: %w", err)
+	}
 	columns := []struct {
 		name string
 		ddl  string
@@ -965,16 +978,13 @@ func migrateAddExternalIDsMAL(ctx context.Context, exec migrationExecutor) error
 		{name: "source_mal", ddl: `ALTER TABLE external_ids ADD COLUMN source_mal TEXT NOT NULL DEFAULT ""`},
 	}
 	for _, column := range columns {
-		exists, err := tableColumnExists(ctx, exec, "external_ids", column.name)
-		if err != nil {
-			return fmt.Errorf("db: inspect external_ids.%s: %w", column.name, err)
-		}
-		if exists {
+		if _, ok := existingColumns[strings.ToLower(column.name)]; ok {
 			continue
 		}
 		if _, err := exec.ExecContext(ctx, column.ddl); err != nil {
 			return fmt.Errorf("db: add external_ids.%s: %w", column.name, err)
 		}
+		existingColumns[strings.ToLower(column.name)] = struct{}{}
 	}
 	if err := backfillExternalIDsMALFromMetadata(ctx, exec); err != nil {
 		return err
@@ -1016,12 +1026,22 @@ func backfillExternalIDsMALFromMetadata(ctx context.Context, exec migrationExecu
 }
 
 func tableColumnExists(ctx context.Context, exec migrationExecutor, tableName string, columnName string) (bool, error) {
+	columns, err := tableColumns(ctx, exec, tableName)
+	if err != nil {
+		return false, err
+	}
+	_, ok := columns[strings.ToLower(columnName)]
+	return ok, nil
+}
+
+func tableColumns(ctx context.Context, exec migrationExecutor, tableName string) (map[string]struct{}, error) {
 	rows, err := exec.QueryContext(ctx, fmt.Sprintf(`PRAGMA table_info(%s)`, tableName))
 	if err != nil {
-		return false, fmt.Errorf("db: %w", err)
+		return nil, fmt.Errorf("db: %w", err)
 	}
 	defer rows.Close()
 
+	columns := make(map[string]struct{})
 	for rows.Next() {
 		var cid int
 		var name string
@@ -1030,16 +1050,14 @@ func tableColumnExists(ctx context.Context, exec migrationExecutor, tableName st
 		var defaultValue any
 		var primaryKey int
 		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
-			return false, fmt.Errorf("scan column metadata for table %q: %w", tableName, err)
+			return nil, fmt.Errorf("scan column metadata for table %q: %w", tableName, err)
 		}
-		if strings.EqualFold(name, columnName) {
-			return true, nil
-		}
+		columns[strings.ToLower(name)] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
-		return false, fmt.Errorf("iterate column metadata for table %q: %w", tableName, err)
+		return nil, fmt.Errorf("iterate column metadata for table %q: %w", tableName, err)
 	}
-	return false, nil
+	return columns, nil
 }
 
 func tableExists(ctx context.Context, exec migrationExecutor, tableName string) (bool, error) {
@@ -1429,6 +1447,7 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 		`
 		CREATE TABLE IF NOT EXISTS external_ids (
 			source_path TEXT PRIMARY KEY,
+			generation INTEGER NOT NULL DEFAULT 0,
 			tmdb_id INTEGER NOT NULL DEFAULT 0,
 			imdb_id INTEGER NOT NULL DEFAULT 0,
 			tvdb_id INTEGER NOT NULL DEFAULT 0,
@@ -1440,6 +1459,13 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 			source_tvdb TEXT NOT NULL DEFAULT "",
 			source_tvmaze TEXT NOT NULL DEFAULT "",
 			source_mal TEXT NOT NULL DEFAULT "",
+			category_provenance TEXT NOT NULL DEFAULT "",
+			override_json TEXT NOT NULL DEFAULT "{}",
+			conflict_status TEXT NOT NULL DEFAULT "none",
+			source_fingerprint TEXT NOT NULL DEFAULT "",
+			intent_fingerprint TEXT NOT NULL DEFAULT "",
+			contract_version TEXT NOT NULL DEFAULT "legacy",
+			resolved_at TEXT NOT NULL DEFAULT "",
 			updated_at TEXT NOT NULL
 		)
 		`,
@@ -1477,6 +1503,7 @@ func createBaselineSchema(ctx context.Context, exec migrationExecutor) error {
 			no_dual INTEGER,
 			dual_audio INTEGER,
 			region TEXT,
+			use_season_episode INTEGER,
 			updated_at TEXT NOT NULL
 		)
 		`,

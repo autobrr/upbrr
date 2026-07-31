@@ -50,6 +50,7 @@ func testServerWithBackend(t *testing.T, repo *db.SQLiteRepository, cfg config.C
 func openBrowseTestRepo(t *testing.T) (*db.SQLiteRepository, string) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "state", "db.sqlite")
+	ensureMigratedTestDB(t, dbPath)
 	repo, err := db.OpenWithLogger(dbPath, api.NopLogger{})
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
@@ -57,20 +58,15 @@ func openBrowseTestRepo(t *testing.T) (*db.SQLiteRepository, string) {
 	t.Cleanup(func() {
 		_ = repo.Close()
 	})
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate repo: %v", err)
-	}
 	return repo, dbPath
 }
 
 func setTestBrowsePolicy(t *testing.T, server *Server, dbPath string, root string, allowUnrestricted bool) {
 	t.Helper()
+	writeTestAuthFile(t, dbPath, "tester", false)
 	store, err := newAuthStore(dbPath)
 	if err != nil {
 		t.Fatalf("new auth store: %v", err)
-	}
-	if err := store.Bootstrap("tester", "very-secure-password"); err != nil {
-		t.Fatalf("bootstrap auth: %v", err)
 	}
 	record, err := store.Load()
 	if err != nil {
@@ -184,12 +180,10 @@ func TestBrowseDirectoryRouteRequiresWebBrowsePolicy(t *testing.T) {
 	server := testServerWithBackend(t, repo, config.Config{
 		MainSettings: config.MainSettingsConfig{DBPath: dbPath},
 	})
+	writeTestAuthFile(t, dbPath, "tester", false)
 	store, err := newAuthStore(dbPath)
 	if err != nil {
 		t.Fatalf("new auth store: %v", err)
-	}
-	if err := store.Bootstrap("tester", "very-secure-password"); err != nil {
-		t.Fatalf("bootstrap auth: %v", err)
 	}
 	server.auth = store
 	mux := http.NewServeMux()

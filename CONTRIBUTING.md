@@ -210,11 +210,28 @@ pnpm --dir webui run format:check
 pnpm --dir webui run lint:style
 
 # Broad Go regression, lint, and policy sweeps:
+make test-go-fast
 make test-go
 make architecturepolicy
 make lint
 make logpolicy
 make pathpolicy
+```
+
+Use `make test-go-fast` for rapid full-suite iteration. It omits the race
+detector; run focused race tests while developing and `make test-go` before
+handoff when broad Go regressions are plausible.
+
+`make test-go` bounds each race-enabled test binary to four logical CPUs and
+four concurrent `t.Parallel` tests. Package test binaries retain Go's default
+`-p` concurrency. These per-binary limits prevent each concurrently running
+package from independently using the host's full CPU count. Override
+`GO_TEST_SCHEDULER_FLAGS` when benchmarking another per-binary limit, or set it
+empty to use Go defaults:
+
+```sh
+make test-go GO_TEST_SCHEDULER_FLAGS="-cpu=2 -parallel=2"
+make test-go GO_TEST_SCHEDULER_FLAGS=
 ```
 
 Useful focused checks:

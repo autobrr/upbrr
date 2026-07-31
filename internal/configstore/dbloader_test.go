@@ -12,11 +12,20 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/autobrr/upbrr/internal/authmaterial"
+	"github.com/autobrr/upbrr/internal/authmaterial/authfixture"
 	"github.com/autobrr/upbrr/internal/config"
 	"github.com/autobrr/upbrr/internal/configstore"
 	"github.com/autobrr/upbrr/internal/services/db"
-	"github.com/autobrr/upbrr/internal/webserver"
 )
+
+func writeConfigStoreTestAuthFile(t *testing.T, dbPath string, seed string) {
+	t.Helper()
+
+	authfixture.Write(t, dbPath, authfixture.Options{
+		EncryptionKeySeed: seed,
+	})
+}
 
 func TestLoadFromDBPathPreservesTrackerImageRehostForRuntimePolicyValidation(t *testing.T) {
 	t.Parallel()
@@ -97,13 +106,9 @@ func TestLoadFromDBPathRepairPersistsSecretsWithRuntimeDBPath(t *testing.T) {
 
 	ctx := context.Background()
 	runtimeDBPath := filepath.Join(t.TempDir(), "runtime", "webui.db")
-	if err := webserver.BootstrapAuthFile(runtimeDBPath, "tester", "very-secure-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile runtime: %v", err)
-	}
+	writeConfigStoreTestAuthFile(t, runtimeDBPath, "runtime-seed-for-tests")
 	staleDBPath := filepath.Join(t.TempDir(), "old", "webui.db")
-	if err := webserver.BootstrapAuthFile(staleDBPath, "tester", "different-secure-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile stale: %v", err)
-	}
+	writeConfigStoreTestAuthFile(t, staleDBPath, "stale-seed-for-tests")
 
 	cfg, err := config.LoadEmbeddedDefaultConfig()
 	if err != nil {
@@ -159,7 +164,7 @@ func TestLoadFromDBPathRepairPersistsSecretsWithRuntimeDBPath(t *testing.T) {
 	if loaded.MainSettings.DBPath != staleDBPath {
 		t.Fatalf("stored DBPath got %q want %q", loaded.MainSettings.DBPath, staleDBPath)
 	}
-	if err := os.Remove(webserver.AuthFilePath(staleDBPath)); err != nil {
+	if err := os.Remove(authmaterial.AuthFilePath(staleDBPath)); err != nil {
 		t.Fatalf("remove stale auth helper: %v", err)
 	}
 	reloaded, err := configstore.LoadFromDBPath(ctx, runtimeDBPath)
@@ -400,9 +405,7 @@ func TestSaveToDBPathSyncsCookieEncryptionStateWhenWebAuthExists(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "webui.db")
-	if err := webserver.BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	writeConfigStoreTestAuthFile(t, dbPath, "stable-seed-for-tests")
 
 	cfg, err := config.LoadEmbeddedDefaultConfig()
 	if err != nil {
@@ -459,7 +462,7 @@ func TestSaveToDBPathSyncsCookieEncryptionStateWhenWebAuthExists(t *testing.T) {
 		t.Fatalf("expected persisted cookie encryption salt, got %s", saltJSON)
 	}
 
-	authPath := webserver.AuthFilePath(dbPath)
+	authPath := authmaterial.AuthFilePath(dbPath)
 	if _, err := os.Stat(authPath); err != nil {
 		t.Fatalf("expected auth file to remain present: %v", err)
 	}
@@ -470,7 +473,7 @@ func TestSaveToDBPathMalformedWebAuthFailsBeforeConfigSave(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "webui.db")
-	if err := os.WriteFile(webserver.AuthFilePath(dbPath), []byte(`{`), 0o600); err != nil {
+	if err := os.WriteFile(authmaterial.AuthFilePath(dbPath), []byte(`{`), 0o600); err != nil {
 		t.Fatalf("write malformed auth file: %v", err)
 	}
 
@@ -514,9 +517,7 @@ func TestSaveToDBPathRollsBackCookieSyncWhenConfigSaveFails(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "webui.db")
-	if err := webserver.BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	writeConfigStoreTestAuthFile(t, dbPath, "stable-seed-for-tests")
 
 	repo, err := db.Open(dbPath)
 	if err != nil {
@@ -576,9 +577,7 @@ func TestSaveToDBPathCookieSyncRollsBackWhenConfigSaveFails(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "webui.db")
-	if err := webserver.BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	writeConfigStoreTestAuthFile(t, dbPath, "stable-seed-for-tests")
 	installFailMainSettingsTrigger(ctx, t, dbPath)
 
 	cfg, err := config.LoadEmbeddedDefaultConfig()
@@ -607,7 +606,7 @@ func TestSaveToDBPathIncompleteWebAuthStillSavesConfig(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "webui.db")
-	if err := os.WriteFile(webserver.AuthFilePath(dbPath), []byte(`{"username":"tester"}`), 0o600); err != nil {
+	if err := os.WriteFile(authmaterial.AuthFilePath(dbPath), []byte(`{"username":"tester"}`), 0o600); err != nil {
 		t.Fatalf("write incomplete auth file: %v", err)
 	}
 

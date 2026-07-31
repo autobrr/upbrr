@@ -5,7 +5,6 @@ package webserver
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -20,13 +19,12 @@ import (
 	"github.com/autobrr/upbrr/internal/cookies"
 	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
-
-	"golang.org/x/crypto/argon2"
 )
 
 func newAuthTestServer(t *testing.T, dbPath string) *Server {
 	t.Helper()
 
+	ensureMigratedTestDB(t, dbPath)
 	repo, err := db.OpenWithLogger(dbPath, nil)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
@@ -34,10 +32,6 @@ func newAuthTestServer(t *testing.T, dbPath string) *Server {
 	t.Cleanup(func() {
 		_ = repo.Close()
 	})
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate repo: %v", err)
-	}
-
 	auth, err := newAuthStore(dbPath)
 	if err != nil {
 		t.Fatalf("newAuthStore: %v", err)
@@ -170,18 +164,9 @@ func TestLoginUpgradesLegacyPasswordHash(t *testing.T) {
 	server := newAuthTestServer(t, dbPath)
 
 	password := "very-secure-password"
-	salt := "legacy-salt-value"
-	sum := argon2.IDKey(
-		[]byte(password),
-		[]byte(salt),
-		legacyAuthArgon2Time,
-		legacyAuthArgon2MemoryKB,
-		legacyAuthArgon2Parallelism,
-		legacyAuthArgon2KeyLen,
-	)
 	record := authRecord{
 		Username:     "admin",
-		PasswordHash: "argon2id$" + salt + "$" + base64.RawStdEncoding.EncodeToString(sum),
+		PasswordHash: makeLegacyHash(),
 		CreatedAt:    time.Now().UTC(),
 	}
 	raw, err := json.MarshalIndent(record, "", "  ")
@@ -228,15 +213,6 @@ func TestLoginFinalizesPendingAuthUpgradeAfterInterruptedRewrap(t *testing.T) {
 	server := newAuthTestServer(t, dbPath)
 
 	password := "very-secure-password"
-	salt := "legacy-salt-value"
-	sum := argon2.IDKey(
-		[]byte(password),
-		[]byte(salt),
-		legacyAuthArgon2Time,
-		legacyAuthArgon2MemoryKB,
-		legacyAuthArgon2Parallelism,
-		legacyAuthArgon2KeyLen,
-	)
 	upgradedHash, err := hashPassword(password)
 	if err != nil {
 		t.Fatalf("hashPassword: %v", err)
@@ -244,7 +220,7 @@ func TestLoginFinalizesPendingAuthUpgradeAfterInterruptedRewrap(t *testing.T) {
 
 	record := authRecord{
 		Username:     "admin",
-		PasswordHash: "argon2id$" + salt + "$" + base64.RawStdEncoding.EncodeToString(sum),
+		PasswordHash: makeLegacyHash(),
 		CreatedAt:    time.Now().UTC(),
 		PendingUpgrade: &authmaterial.PendingUpgrade{
 			Stage: authmaterial.UpgradeStageDataRewrapped,
@@ -849,9 +825,7 @@ func TestTrackerAuthBackendLoginBTNCookiesWithoutAPIPreservesMissingAPIStatus(t 
 
 	ctx := context.Background()
 	dbPath := newTrackerAuthWebTestDB(t)
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	writeTestAuthFile(t, dbPath, "tester", false)
 	if err := cookies.SaveTrackerCookieMap(ctx, dbPath, "BTN", map[string]string{"session": "abc"}); err != nil {
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
@@ -873,9 +847,7 @@ func TestTrackerAuthImportCanceledContextDoesNotPersistCookies(t *testing.T) {
 	t.Parallel()
 
 	dbPath := newTrackerAuthWebTestDB(t)
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	writeTestAuthFile(t, dbPath, "tester", false)
 	backend := &Backend{cfg: config.Config{MainSettings: config.MainSettingsConfig{DBPath: dbPath}}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -893,9 +865,7 @@ func TestTrackerAuthDeleteCanceledContextDoesNotDeleteCookies(t *testing.T) {
 	t.Parallel()
 
 	dbPath := newTrackerAuthWebTestDB(t)
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "very-secure-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	writeTestAuthFile(t, dbPath, "tester", false)
 	if err := cookies.SaveTrackerCookieMap(context.Background(), dbPath, "AR", map[string]string{"session": "abc"}); err != nil {
 		t.Fatalf("SaveTrackerCookieMap: %v", err)
 	}
@@ -920,13 +890,10 @@ func newTrackerAuthWebTestDB(t *testing.T) string {
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
+	ensureMigratedTestDB(t, dbPath)
 	repo, err := db.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open repo: %v", err)
-	}
-	if err := repo.Migrate(); err != nil {
-		_ = repo.Close()
-		t.Fatalf("migrate repo: %v", err)
 	}
 	if err := repo.Close(); err != nil {
 		t.Fatalf("close repo: %v", err)

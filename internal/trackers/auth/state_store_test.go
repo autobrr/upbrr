@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/autobrr/upbrr/internal/authmaterial"
+	"github.com/autobrr/upbrr/internal/authmaterial/authfixture"
 	servicedb "github.com/autobrr/upbrr/internal/services/db"
 )
 
@@ -20,9 +21,7 @@ func TestAuthStateRoundTripEncrypted(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	authfixture.Write(t, dbPath)
 
 	if err := SaveAuthState(ctx, dbPath, "ar", "auth_key", "secret-auth-key"); err != nil {
 		t.Fatalf("SaveAuthState: %v", err)
@@ -48,9 +47,7 @@ func TestAuthStateRejectsMovedEncryptedPayload(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	authfixture.Write(t, dbPath)
 	if err := SaveAuthState(ctx, dbPath, "AR", "auth_key", "secret-auth-key"); err != nil {
 		t.Fatalf("SaveAuthState: %v", err)
 	}
@@ -100,9 +97,7 @@ func TestDeleteAuthStateRemovesRowsWhenWebAuthMaterialMissing(t *testing.T) {
 
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "upbrr.db")
-	if err := authmaterial.BootstrapAuthFile(dbPath, "tester", "long-enough-password"); err != nil {
-		t.Fatalf("BootstrapAuthFile: %v", err)
-	}
+	authfixture.Write(t, dbPath)
 	if err := SaveAuthState(ctx, dbPath, "AR", "auth_key", "secret-auth-key"); err != nil {
 		t.Fatalf("SaveAuthState: %v", err)
 	}
