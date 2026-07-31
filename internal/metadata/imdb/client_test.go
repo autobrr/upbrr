@@ -8,10 +8,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+
+	"github.com/autobrr/upbrr/pkg/api"
 )
 
 func TestPostGraphQLRegistersPersistedQueryOnCacheMiss(t *testing.T) {
@@ -81,7 +84,8 @@ func TestPostGraphQLRegistersPersistedQueryOnCacheMiss(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.Client(), nil)
+	logger := &imdbTestLogger{}
+	client := NewClient(server.Client(), logger)
 	client.baseURL = server.URL
 
 	var response map[string]any
@@ -93,6 +97,44 @@ func TestPostGraphQLRegistersPersistedQueryOnCacheMiss(t *testing.T) {
 	}
 	if got := requestCount.Load(); got != 2 {
 		t.Fatalf("expected two requests, got %d", got)
+	}
+	if len(logger.debugMessages) != 1 ||
+		logger.debugMessages[0] != "imdb: persisted query cache miss operation=TestOperation action=register" {
+		t.Fatalf("unexpected debug messages %#v", logger.debugMessages)
+	}
+}
+
+func TestPostGraphQLReturnsGraphQLErrors(t *testing.T) {
+	var requestCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(
+			`{"errors":[{"message":"request rejected","extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}`,
+		))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.Client(), nil)
+	client.baseURL = server.URL
+	response := map[string]any{"sentinel": "unchanged"}
+
+	err := client.postGraphQL(context.Background(), "TestOperation", "query TestOperation { title { id } }", &response)
+	if err == nil {
+		t.Fatal("expected GraphQL error")
+	}
+	const expected = "imdb: GraphQL error operation=TestOperation code=GRAPHQL_VALIDATION_FAILED message=request rejected"
+	if err.Error() != expected {
+		t.Fatalf("unexpected error %q", err)
+	}
+	if _, ok := response["errors"]; ok {
+		t.Fatal("GraphQL error response populated target")
+	}
+	if response["sentinel"] != "unchanged" {
+		t.Fatal("GraphQL error response changed target")
+	}
+	if got := requestCount.Load(); got != 1 {
+		t.Fatalf("expected one request, got %d", got)
 	}
 }
 
@@ -111,6 +153,15 @@ func assertIMDbGraphQLHeaders(t *testing.T, request *http.Request) {
 			t.Errorf("header %s = %q, want %q", name, got, want)
 		}
 	}
+}
+
+type imdbTestLogger struct {
+	api.NopLogger
+	debugMessages []string
+}
+
+func (l *imdbTestLogger) Debugf(format string, args ...any) {
+	l.debugMessages = append(l.debugMessages, fmt.Sprintf(format, args...))
 }
 
 func TestRankCandidates(t *testing.T) {

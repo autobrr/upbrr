@@ -618,6 +618,9 @@ func (c *Client) postGraphQL(ctx context.Context, operationName string, query st
 		return err
 	}
 	if persistedQueryNotFound(responseBody) {
+		if c.logger != nil {
+			c.logger.Debugf("imdb: persisted query cache miss operation=%s action=register", operationName)
+		}
 		payload.Query = query
 		responseBody, err = c.executeGraphQLRequest(ctx, http.MethodPost, payload)
 		if err != nil {
@@ -625,6 +628,9 @@ func (c *Client) postGraphQL(ctx context.Context, operationName string, query st
 		}
 	}
 
+	if err := graphQLResponseError(operationName, responseBody); err != nil {
+		return err
+	}
 	if err := json.Unmarshal(responseBody, target); err != nil {
 		return fmt.Errorf("imdb: decode GraphQL response: %w", err)
 	}
@@ -694,6 +700,27 @@ func (c *Client) executeGraphQLRequest(ctx context.Context, method string, paylo
 	}
 
 	return responseBody, nil
+}
+
+func graphQLResponseError(operationName string, responseBody []byte) error {
+	var envelope graphQLErrorEnvelope
+	if err := json.Unmarshal(responseBody, &envelope); err != nil || len(envelope.Errors) == 0 {
+		return nil
+	}
+
+	firstError := envelope.Errors[0]
+	code := strings.TrimSpace(redaction.RedactValue(firstError.Extensions.Code, nil))
+	message := strings.TrimSpace(redaction.RedactValue(firstError.Message, nil))
+	switch {
+	case code != "" && message != "":
+		return fmt.Errorf("imdb: GraphQL error operation=%s code=%s message=%s", operationName, code, message)
+	case code != "":
+		return fmt.Errorf("imdb: GraphQL error operation=%s code=%s", operationName, code)
+	case message != "":
+		return fmt.Errorf("imdb: GraphQL error operation=%s message=%s", operationName, message)
+	default:
+		return fmt.Errorf("imdb: GraphQL response contains errors operation=%s count=%d", operationName, len(envelope.Errors))
+	}
 }
 
 func persistedQueryNotFound(responseBody []byte) bool {
