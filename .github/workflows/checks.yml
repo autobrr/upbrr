@@ -35,6 +35,7 @@ jobs:
           cache: true
 
       - name: Run Go tests
+        # These flags limit each package's test binary; package concurrency keeps Go's default -p.
         run: go test -race -v -cpu=4 -parallel=4 -timeout 20m ./...
 
   test-frontend:
