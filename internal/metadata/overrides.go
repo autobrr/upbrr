@@ -5,14 +5,19 @@ package metadata
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 
 	"github.com/autobrr/upbrr/pkg/api"
 )
+
+//go:embed default_tags.json
+var defaultTagOverrides []byte
 
 type tagOverrideEntry struct {
 	Type            string     `json:"type"`
@@ -99,4 +104,39 @@ func ApplyTagOverrides(path, currentTag, tagsPath string) (string, *api.TagOverr
 	}
 
 	return effectiveTag, nil, nil
+}
+
+// EnsureDefaultTagOverrides creates the bundled tag overrides beside the
+// configured database when no user-managed file exists.
+func EnsureDefaultTagOverrides(dbPath string) (string, error) {
+	tagsPath, err := tagOverridesPath(dbPath)
+	if err != nil {
+		return "", fmt.Errorf("metadata: resolve default tag overrides path: %w", err)
+	}
+
+	file, err := os.OpenFile(tagsPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, fs.ErrExist) {
+		info, statErr := os.Stat(tagsPath)
+		if statErr != nil {
+			return "", fmt.Errorf("metadata: inspect existing tag overrides: %w", statErr)
+		}
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("metadata: existing tag overrides path is not a regular file: %s", tagsPath)
+		}
+		return tagsPath, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("metadata: create default tag overrides: %w", err)
+	}
+
+	if _, err := file.Write(defaultTagOverrides); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tagsPath)
+		return "", fmt.Errorf("metadata: write default tag overrides: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tagsPath)
+		return "", fmt.Errorf("metadata: close default tag overrides: %w", err)
+	}
+	return tagsPath, nil
 }

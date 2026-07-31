@@ -178,6 +178,9 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 	}
 	clientDiscovery := clientdiscovery.New(services.Clients, logger)
 	if services.Metadata == nil {
+		if _, err := metadata.EnsureDefaultTagOverrides(cfg.MainSettings.DBPath); err != nil {
+			return nil, fmt.Errorf("core: default tag overrides: %w", err)
+		}
 		bdinfoService := bdinfo.New(logger)
 
 		services.Metadata = metadata.NewService(
