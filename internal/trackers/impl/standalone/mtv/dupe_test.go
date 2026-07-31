@@ -239,16 +239,75 @@ func TestMTVHandlerPaginatesUsingAdvertisedOffsets(t *testing.T) {
 	}
 }
 
+func TestMTVHandlerTreatsMetadataFreeShortPageAsComplete(t *testing.T) {
+	t.Parallel()
+
+	for _, itemCount := range []int{0, 5} {
+		t.Run(fmt.Sprintf("items_%d", itemCount), func(t *testing.T) {
+			t.Parallel()
+
+			calls := 0
+			client := &http.Client{
+				Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					calls++
+					var body strings.Builder
+					body.WriteString("<rss><channel>")
+					for index := range itemCount {
+						fmt.Fprintf(&body, "<item><title>Example.Release.%03d.1080p-GRP</title></item>", index)
+					}
+					body.WriteString("</channel></rss>")
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(body.String())),
+						Header:     make(http.Header),
+					}, nil
+				}),
+			}
+			handler := dupe.NewAdapter(New(), "MTV", config.Config{
+				Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+					"MTV": {APIKey: "token"},
+				}},
+			}, client, api.NopLogger{})
+
+			result := handler.Search(context.Background(), api.DuplicateSubject{
+				Identity: api.ExternalIdentity{IMDBID: 123456},
+			})
+			if err := result.Cause(); err != nil {
+				t.Fatalf("search: %v", err)
+			}
+			evidence := result.SearchEvidence()
+			if calls != 1 || !evidence.Complete || evidence.Pages != 1 || len(evidence.Warnings) != 0 {
+				t.Fatalf("calls=%d search evidence=%#v", calls, evidence)
+			}
+			if len(result.Entries()) != itemCount {
+				t.Fatalf("entries=%d, want %d", len(result.Entries()), itemCount)
+			}
+		})
+	}
+}
+
 func TestMTVHandlerReportsIncompletePaginationMetadata(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name     string
 		response string
+		warning  string
 	}{
-		{name: "omitted response"},
-		{name: "omitted attributes", response: "<response />"},
-		{name: "inconsistent offset", response: `<response offset="1" total="100" />`},
+		{
+			name:    "omitted response",
+			warning: "MTV search reached the result limit without pagination support; results may be truncated",
+		},
+		{
+			name:     "omitted attributes",
+			response: "<response />",
+			warning:  "MTV search returned incomplete pagination metadata",
+		},
+		{
+			name:     "inconsistent offset",
+			response: `<response offset="1" total="100" />`,
+			warning:  "MTV search returned inconsistent pagination metadata",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -288,7 +347,42 @@ func TestMTVHandlerReportsIncompletePaginationMetadata(t *testing.T) {
 			if calls != 1 || evidence.Complete || evidence.Pages != 1 || len(evidence.Warnings) != 1 {
 				t.Fatalf("calls=%d search evidence=%#v", calls, evidence)
 			}
+			if evidence.Warnings[0] != test.warning {
+				t.Fatalf("warning=%q, want %q", evidence.Warnings[0], test.warning)
+			}
 		})
+	}
+}
+
+func TestMTVHandlerRejectsTorznabErrorResponse(t *testing.T) {
+	t.Parallel()
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`<error code="201" description="Incorrect parameter." />`)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
+	handler := dupe.NewAdapter(New(), "MTV", config.Config{
+		Trackers: config.TrackersConfig{Trackers: map[string]config.TrackerConfig{
+			"MTV": {APIKey: "token"},
+		}},
+	}, client, api.NopLogger{})
+
+	result := handler.Search(context.Background(), api.DuplicateSubject{
+		Identity: api.ExternalIdentity{IMDBID: 123456},
+	})
+	if result.Disposition() != dupe.DispositionFailed {
+		t.Fatalf("disposition=%v, want failed", result.Disposition())
+	}
+	if result.Code() != dupe.FailureResponseStatus {
+		t.Fatalf("code=%q, want %q", result.Code(), dupe.FailureResponseStatus)
+	}
+	if result.SafeMessage() != "MTV API rejected search" {
+		t.Fatalf("safe message=%q", result.SafeMessage())
 	}
 }
 

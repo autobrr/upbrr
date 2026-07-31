@@ -19,7 +19,10 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-const mtvTorznabEndpoint = "https://www.morethantv.me/api/torznab"
+const (
+	mtvTorznabEndpoint = "https://www.morethantv.me/api/torznab"
+	mtvSearchLimit     = 100
+)
 
 type dupeSearcher struct {
 	cfg      config.Config
@@ -55,7 +58,7 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 	params := url.Values{}
 	params.Set("t", "search")
 	params.Set("apikey", apiKey)
-	params.Set("limit", "100")
+	params.Set("limit", strconv.Itoa(mtvSearchLimit))
 
 	switch {
 	case meta.Identity.IMDBID != 0:
@@ -80,6 +83,7 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 	offset := 0
 	complete := false
 	pages := 0
+	incompleteWarning := ""
 	for pages < maxPages {
 		pageParams := cloneMTVValues(params)
 		if offset > 0 {
@@ -106,6 +110,12 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		if decodeErr != nil {
 			return dupe.Failed(dupe.FailureResponseParse, "MTV response parse failed", decodeErr)
 		}
+		if strings.EqualFold(payload.XMLName.Local, "error") {
+			return dupe.Failed(dupe.FailureResponseStatus, "MTV API rejected search", nil)
+		}
+		if !strings.EqualFold(payload.XMLName.Local, "rss") {
+			return dupe.Failed(dupe.FailureResponseParse, "MTV response parse failed", nil)
+		}
 		pages++
 		for _, item := range payload.Channel.Items {
 			if entry, ok := mtvDupeEntry(item); ok {
@@ -113,29 +123,44 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 			}
 		}
 		response := payload.Channel.Response
-		if response == nil || response.Offset == nil || response.Total == nil {
+		if response == nil {
+			if len(payload.Channel.Items) < mtvSearchLimit {
+				complete = true
+			} else {
+				incompleteWarning = "MTV search reached the result limit without pagination support; results may be truncated"
+			}
+			break
+		}
+		if response.Offset == nil || response.Total == nil {
+			incompleteWarning = "MTV search returned incomplete pagination metadata"
 			break
 		}
 		total := *response.Total
 		responseOffset := *response.Offset
 		if responseOffset < 0 || total < 0 || responseOffset != offset {
+			incompleteWarning = "MTV search returned inconsistent pagination metadata"
 			break
 		}
 		nextOffset := responseOffset + len(payload.Channel.Items)
 		switch {
-		case total == 0 && len(payload.Channel.Items) == 0:
-			complete = true
 		case nextOffset == total:
 			complete = true
 		case len(payload.Channel.Items) > 0 && nextOffset < total:
 			offset = nextOffset
 			continue
+		case nextOffset > total:
+			incompleteWarning = "MTV search returned inconsistent pagination metadata"
+		default:
+			incompleteWarning = "MTV search pagination stopped before the advertised result total"
 		}
 		break
 	}
 	warnings := []string(nil)
 	if !complete {
-		warnings = []string{"MTV search result is truncated or lacks complete pagination evidence"}
+		if incompleteWarning == "" {
+			incompleteWarning = "MTV search reached the pagination page limit before proving completeness"
+		}
+		warnings = []string{incompleteWarning}
 	}
 	return dupe.ResolvedWithSearch(entries, warnings, dupe.SearchEvidence{
 		Complete: complete,
@@ -289,6 +314,7 @@ func parsePositiveInt64(value string) int64 {
 }
 
 type mtvRSS struct {
+	XMLName xml.Name
 	Channel mtvChannel `xml:"channel"`
 }
 
