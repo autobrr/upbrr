@@ -6,10 +6,12 @@ package tvdb
 import "github.com/autobrr/upbrr/pkg/api"
 
 type SeriesSearchResult struct {
-	TVDBID  int
-	Name    string
-	Year    string
-	Aliases []Alias
+	TVDBID          int
+	Name            string
+	NameEnglish     string
+	PrimaryLanguage string
+	Year            string
+	Aliases         []Alias
 }
 
 // SeriesMetadata contains extended series fields plus naming-safe year
@@ -63,6 +65,16 @@ type NameDisambiguation struct {
 	Status api.MetadataEvidenceStatus
 	// Source identifies the versioned disambiguation algorithm.
 	Source string
+}
+
+// NameDisambiguationInput contains authoritative selected-series facts needed
+// to search for distinct TVDB series with the same English name.
+type NameDisambiguationInput struct {
+	TVDBID             int
+	NameEnglish        string
+	SeriesYear         int
+	OriginalCountry    string
+	ExplicitNamingYear bool
 }
 
 type Alias struct {

@@ -374,10 +374,10 @@ func readTVDBResponseBody(body io.Reader) ([]byte, error) {
 	return payload, nil
 }
 
-// GetSeriesMetadata is the English-language form of
-// [Client.GetSeriesMetadataWithLanguage].
+// GetSeriesMetadata loads the selected series without filtering its primary
+// extended record by language.
 func (c *Client) GetSeriesMetadata(ctx context.Context, seriesID int) (SeriesMetadata, error) {
-	return c.GetSeriesMetadataWithLanguage(ctx, seriesID, "eng")
+	return c.GetSeriesMetadataWithLanguage(ctx, seriesID, "")
 }
 
 // GetSeriesMetadataWithLanguage loads extended series data and best-effort
@@ -464,6 +464,17 @@ func (c *Client) GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int
 	return metadata, nil
 }
 
+// GetNameDisambiguation refreshes collision evidence from authoritative
+// selected-series facts without refetching the selected series by ID.
+func (c *Client) GetNameDisambiguation(ctx context.Context, input NameDisambiguationInput) NameDisambiguation {
+	return c.searchSeriesNameDisambiguation(ctx, SeriesMetadata{
+		TVDBID:          input.TVDBID,
+		NameEnglish:     input.NameEnglish,
+		Year:            input.SeriesYear,
+		OriginalCountry: input.OriginalCountry,
+	}, input.ExplicitNamingYear)
+}
+
 func (c *Client) GetIMDBFromEpisodeID(ctx context.Context, episodeID int) (string, error) {
 	if episodeID == 0 {
 		return "", errNotFound
@@ -539,7 +550,6 @@ func (c *Client) searchSeries(ctx context.Context, filename, year string) ([]Ser
 		"query": filename,
 		"type":  "series",
 	}
-	params = c.languageParams(params)
 	if strings.TrimSpace(year) != "" {
 		params["year"] = strings.TrimSpace(year)
 	}
@@ -555,18 +565,32 @@ func mapSeriesSearchResults(values []seriesResult) []SeriesSearchResult {
 	results := make([]SeriesSearchResult, 0, len(values))
 	for _, item := range values {
 		results = append(results, SeriesSearchResult{
-			TVDBID:  item.TVDBID,
-			Name:    item.Name,
-			Year:    item.Year,
-			Aliases: mapAliases(item.Aliases),
+			TVDBID:          int(item.TVDBID),
+			Name:            strings.TrimSpace(item.Name),
+			NameEnglish:     searchResultEnglishName(item.Translations),
+			PrimaryLanguage: strings.TrimSpace(item.PrimaryLanguage),
+			Year:            strings.TrimSpace(item.Year),
+			Aliases:         mapAliases(item.Aliases),
 		})
 	}
 	return results
 }
 
+func searchResultEnglishName(translations map[string]string) string {
+	return strings.TrimSpace(translations["eng"])
+}
+
 func (c *Client) seriesNameDisambiguation(ctx context.Context, metadata SeriesMetadata) NameDisambiguation {
-	canonicalName := canonicalTVDBSeriesName(metadata.NameEnglish)
 	fallbackYear := metadata.SeriesYear > 0 && explicitSeriesYearSource(metadata.SeriesYearSource)
+	return c.searchSeriesNameDisambiguation(ctx, metadata, fallbackYear)
+}
+
+func (c *Client) searchSeriesNameDisambiguation(
+	ctx context.Context,
+	metadata SeriesMetadata,
+	fallbackYear bool,
+) NameDisambiguation {
+	canonicalName := canonicalTVDBSeriesName(metadata.NameEnglish)
 	if canonicalName == "" {
 		return NameDisambiguation{
 			SeriesYear:  metadata.Year,
@@ -591,7 +615,12 @@ func (c *Client) seriesNameDisambiguation(ctx context.Context, metadata SeriesMe
 	evidence := buildNameDisambiguation(metadata.TVDBID, canonicalName, metadata.Year, metadata.OriginalCountry, fallbackYear, results, err)
 	if err != nil {
 		if c.logger != nil {
-			c.logger.Debugf("tvdb: name disambiguation search failed series_id=%d query=%q", metadata.TVDBID, cacheKey.canonicalKey)
+			c.logger.Debugf(
+				"tvdb: name disambiguation search failed series_id=%d query=%q error=%q",
+				metadata.TVDBID,
+				cacheKey.canonicalKey,
+				redaction.RedactValue(err.Error(), nil),
+			)
 		}
 	} else {
 		c.cacheNameDisambiguation(cacheKey, nameDisambiguationCacheEntry{evidence: evidence, resultCount: len(results)})
@@ -676,7 +705,12 @@ func buildNameDisambiguation(
 			candidate = &disambiguationCandidate{years: make(map[int]struct{})}
 			candidates[result.TVDBID] = candidate
 		}
-		candidate.names = append(candidate.names, result.Name)
+		if englishName := strings.TrimSpace(result.NameEnglish); englishName != "" {
+			candidate.names = append(candidate.names, englishName)
+		}
+		if isEnglishCode(result.PrimaryLanguage) {
+			candidate.names = append(candidate.names, result.Name)
+		}
 		for _, alias := range result.Aliases {
 			if isEnglishCode(alias.Language) {
 				candidate.names = append(candidate.names, alias.Name)
@@ -809,7 +843,7 @@ func selectBestSeries(results []SeriesSearchResult, year string) int {
 		}
 		for _, result := range results {
 			for _, alias := range result.Aliases {
-				if alias.Language == "eng" && aliasYearMatches(alias.Name, searchYear) {
+				if aliasYearMatches(alias.Name, searchYear) {
 					return result.TVDBID
 				}
 			}
@@ -905,10 +939,6 @@ func (c *Client) fetchSeriesDetails(ctx context.Context, seriesID int, language 
 		airsTimezone:         airsTimezone,
 		airsTimezoneSource:   airsTimezoneSource,
 	}, nil
-}
-
-func (c *Client) languageParams(params map[string]string) map[string]string {
-	return c.languageParamsFor(params, "eng")
 }
 
 func normalizeLanguageParam(language string) string {
@@ -2011,10 +2041,41 @@ type searchSeriesResponse struct {
 }
 
 type seriesResult struct {
-	TVDBID  int             `json:"tvdb_id"`
-	Name    string          `json:"name"`
-	Year    string          `json:"year"`
-	Aliases []aliasResponse `json:"aliases"`
+	TVDBID          searchResultID    `json:"tvdb_id"`
+	Name            string            `json:"name"`
+	PrimaryLanguage string            `json:"primary_language"`
+	Translations    map[string]string `json:"translations"`
+	Year            string            `json:"year"`
+	Aliases         []aliasResponse   `json:"aliases"`
+}
+
+type searchResultID int
+
+// UnmarshalJSON accepts the numeric strings documented by TVDB search and
+// historical numeric responses.
+func (id *searchResultID) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		*id = 0
+		return nil
+	}
+	if trimmed[0] == '"' {
+		var text string
+		if err := json.Unmarshal(trimmed, &text); err != nil {
+			return fmt.Errorf("tvdb: unmarshal search result id string: %w", err)
+		}
+		trimmed = []byte(strings.TrimSpace(text))
+	}
+	if len(trimmed) == 0 {
+		*id = 0
+		return nil
+	}
+	value, err := strconv.Atoi(string(trimmed))
+	if err != nil {
+		return fmt.Errorf("tvdb: parse search result id: %w", err)
+	}
+	*id = searchResultID(value)
+	return nil
 }
 
 type aliasResponse struct {
@@ -2034,7 +2095,7 @@ func (a *aliasResponse) UnmarshalJSON(data []byte) error {
 		if err := json.Unmarshal(trimmed, &name); err != nil {
 			return fmt.Errorf("tvdb: unmarshal alias string: %w", err)
 		}
-		*a = aliasResponse{Name: strings.TrimSpace(name), Language: "eng"}
+		*a = aliasResponse{Name: strings.TrimSpace(name)}
 		return nil
 	}
 	var payload struct {

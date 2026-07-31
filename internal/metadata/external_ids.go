@@ -87,6 +87,7 @@ type TVDBClient interface {
 	GetByExternalID(ctx context.Context, imdbID, tmdbID string, tvMovie bool) (int, string, error)
 	GetSeriesMetadata(ctx context.Context, seriesID int) (tvdb.SeriesMetadata, error)
 	GetSeriesMetadataWithLanguage(ctx context.Context, seriesID int, language string) (tvdb.SeriesMetadata, error)
+	GetNameDisambiguation(ctx context.Context, input tvdb.NameDisambiguationInput) tvdb.NameDisambiguation
 	GetEpisodes(ctx context.Context, seriesID int, query tvdb.EpisodeQuery) (tvdb.EpisodesData, string, error)
 	GetEpisodesWithLanguage(ctx context.Context, seriesID int, query tvdb.EpisodeQuery, language string) (tvdb.EpisodesData, string, error)
 	GetEpisodeTranslation(ctx context.Context, episodeID int, language string) (tvdb.EpisodeTranslation, error)
@@ -413,6 +414,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 	tmdbLogoFetchAttempted := false
 	anilistFetchAttempted := false
 	tvdbMetadataFetchAttempted := false
+	tvdbDisambiguationFetchAttempted := false
 	shouldFetchTMDBMetadata := func() bool {
 		if tmdbClient == nil || ids.TMDBID == 0 {
 			return false
@@ -429,6 +431,11 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		return tvdbClient != nil && shouldUseTVDBForCategory(meta, ids) && ids.TVDBID != 0 &&
 			!tvdbMetadataFetchAttempted && !usableTVDBMetadata(metadata.TVDB, ids.TVDBID)
 	}
+	shouldRefreshTVDBDisambiguation := func() bool {
+		return tvdbClient != nil && shouldUseTVDBForCategory(meta, ids) && ids.TVDBID != 0 &&
+			!tvdbDisambiguationFetchAttempted && usableTVDBMetadata(metadata.TVDB, ids.TVDBID) &&
+			!reusableTVDBNameDisambiguation(metadata.TVDB)
+	}
 	shouldFetchTVmazeMetadata := func() bool {
 		return tvmazeClient != nil && isTVForTVmaze() && ids.TVmazeID != 0 && !usableTVmazeMetadata(metadata.TVmaze, ids.TVmazeID)
 	}
@@ -440,7 +447,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		if anilistClient != nil && shouldFetchAniListMetadata(ids.MALID, metadata.AniList) && !anilistFetchAttempted {
 			return true
 		}
-		if shouldFetchIMDBMetadata() || shouldFetchTVDBMetadata() || shouldFetchTVmazeMetadata() {
+		if shouldFetchIMDBMetadata() || shouldFetchTVDBMetadata() || shouldRefreshTVDBDisambiguation() || shouldFetchTVmazeMetadata() {
 			return true
 		}
 		if shouldUseTVDBForCategory(meta, ids) && !overrideTVDB && ids.TVDBID == 0 && (ids.IMDBID != 0 || ids.TMDBID != 0) {
@@ -463,6 +470,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 		}
 		fetchIMDB := shouldFetchIMDBMetadata()
 		fetchTVDB := shouldFetchTVDBMetadata()
+		refreshTVDBDisambiguation := shouldRefreshTVDBDisambiguation()
 		if fetchTVDB {
 			tvdbMetadataFetchAttempted = true
 		}
@@ -471,10 +479,11 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 
 		if s.logger != nil {
 			s.logger.Debugf(
-				"metadata: external ids fetch tmdb=%t imdb=%t tvdb=%t tvmaze=%t anilist=%t tvmaze_name_fallback=%t",
+				"metadata: external ids fetch tmdb=%t imdb=%t tvdb=%t tvdb_disambiguation=%t tvmaze=%t anilist=%t tvmaze_name_fallback=%t",
 				fetchTMDB,
 				fetchIMDB,
 				lookupTVDB,
+				refreshTVDBDisambiguation,
 				lookupTVmaze,
 				fetchAniList,
 				allowTVmazeNameFallback,
@@ -668,6 +677,7 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 
 		if shouldUseTVDBForCategory(meta, ids) && ids.TVDBID != 0 && (fetchTVDB || fetchedTVDBID != 0) {
 			tvdbMetadataFetchAttempted = true
+			tvdbDisambiguationFetchAttempted = true
 			tvdbSeries, err := tvdbClient.GetSeriesMetadataWithLanguage(ctx, ids.TVDBID, "")
 			if err != nil {
 				tvdbSeries, err = tvdbClient.GetSeriesMetadata(ctx, ids.TVDBID)
@@ -705,6 +715,12 @@ func (s *Service) collectProviderIdentityCandidate(ctx context.Context, meta pre
 			} else if tvdbErr == nil {
 				tvdbErr = err
 			}
+		}
+
+		if refreshTVDBDisambiguation && metadata.TVDB != nil {
+			tvdbDisambiguationFetchAttempted = true
+			refreshed := tvdbClient.GetNameDisambiguation(ctx, tvdbNameDisambiguationInput(metadata.TVDB))
+			metadata.TVDB.NameDisambiguation = mapTVDBNameDisambiguation(refreshed)
 		}
 
 		if tvmazeResult != nil {
@@ -923,13 +939,16 @@ func usableIMDBMetadata(metadata *api.IMDBMetadata, imdbID int) bool {
 
 func usableTVDBMetadata(metadata *api.TVDBMetadata, tvdbID int) bool {
 	return metadata != nil && tvdbID > 0 && metadata.TVDBID == tvdbID &&
-		(strings.TrimSpace(metadata.NameEnglish) != "" || strings.TrimSpace(metadata.Name) != "") &&
-		reusableMetadataEvidenceStatus(metadata.NameDisambiguation.Status)
+		(strings.TrimSpace(metadata.NameEnglish) != "" || strings.TrimSpace(metadata.Name) != "")
 }
 
-// reusableMetadataEvidenceStatus admits evidence that can support positive
-// naming decisions. Unavailable or contradictory snapshots must be refetched.
-func reusableMetadataEvidenceStatus(status api.MetadataEvidenceStatus) bool {
+// reusableTVDBNameDisambiguation reports whether collision evidence can support
+// site-specific naming without another TVDB search.
+func reusableTVDBNameDisambiguation(metadata *api.TVDBMetadata) bool {
+	if metadata == nil {
+		return false
+	}
+	status := metadata.NameDisambiguation.Status
 	return status == api.MetadataEvidenceStatusComplete || status == api.MetadataEvidenceStatusPartial
 }
 
@@ -1804,36 +1823,50 @@ func mapTVDBMetadata(tvdbID int, fallbackName string, details tvdb.SeriesMetadat
 	}
 
 	return &api.TVDBMetadata{
-		TVDBID:          id,
-		Name:            name,
-		Overview:        strings.TrimSpace(details.Overview),
-		NameEnglish:     strings.TrimSpace(details.NameEnglish),
-		OverviewEnglish: strings.TrimSpace(details.OverviewEnglish),
-		FirstAired:      strings.TrimSpace(details.FirstAired),
-		Year:            year,
-		YearFromAlias:   yearFromAlias,
-		YearSource:      yearSource,
-		YearConfidence:  yearConfidence,
-		NameDisambiguation: api.TVDBNameDisambiguation{
-			CanonicalName:         strings.TrimSpace(details.NameDisambiguation.CanonicalName),
-			SeriesYear:            details.NameDisambiguation.SeriesYear,
-			Locale:                strings.TrimSpace(details.NameDisambiguation.Locale),
-			SameNameSeries:        details.NameDisambiguation.SameNameSeries,
-			SameNameAndYearSeries: details.NameDisambiguation.SameNameAndYearSeries,
-			IncludeYear:           details.NameDisambiguation.IncludeYear,
-			IncludeLocale:         details.NameDisambiguation.IncludeLocale,
-			Status:                details.NameDisambiguation.Status,
-			Source:                strings.TrimSpace(details.NameDisambiguation.Source),
-		},
-		Type:             strings.TrimSpace(details.Type),
-		Status:           strings.TrimSpace(details.Status),
-		Network:          strings.TrimSpace(details.Network),
-		OriginalCountry:  strings.TrimSpace(details.OriginalCountry),
-		OriginalLanguage: strings.TrimSpace(details.OriginalLanguage),
-		HasEnglish:       strings.TrimSpace(details.NameEnglish) != "" || strings.TrimSpace(details.OverviewEnglish) != "",
-		Genres:           strings.TrimSpace(strings.Join(details.Genres, ", ")),
-		Poster:           strings.TrimSpace(details.Poster),
-		Aliases:          aliases,
+		TVDBID:             id,
+		Name:               name,
+		Overview:           strings.TrimSpace(details.Overview),
+		NameEnglish:        strings.TrimSpace(details.NameEnglish),
+		OverviewEnglish:    strings.TrimSpace(details.OverviewEnglish),
+		FirstAired:         strings.TrimSpace(details.FirstAired),
+		Year:               year,
+		YearFromAlias:      yearFromAlias,
+		YearSource:         yearSource,
+		YearConfidence:     yearConfidence,
+		NameDisambiguation: mapTVDBNameDisambiguation(details.NameDisambiguation),
+		Type:               strings.TrimSpace(details.Type),
+		Status:             strings.TrimSpace(details.Status),
+		Network:            strings.TrimSpace(details.Network),
+		OriginalCountry:    strings.TrimSpace(details.OriginalCountry),
+		OriginalLanguage:   strings.TrimSpace(details.OriginalLanguage),
+		HasEnglish:         strings.TrimSpace(details.NameEnglish) != "" || strings.TrimSpace(details.OverviewEnglish) != "",
+		Genres:             strings.TrimSpace(strings.Join(details.Genres, ", ")),
+		Poster:             strings.TrimSpace(details.Poster),
+		Aliases:            aliases,
+	}
+}
+
+func tvdbNameDisambiguationInput(metadata *api.TVDBMetadata) tvdb.NameDisambiguationInput {
+	return tvdb.NameDisambiguationInput{
+		TVDBID:             metadata.TVDBID,
+		NameEnglish:        strings.TrimSpace(metadata.NameEnglish),
+		SeriesYear:         metadata.Year,
+		OriginalCountry:    strings.TrimSpace(metadata.OriginalCountry),
+		ExplicitNamingYear: metadata.YearFromAlias,
+	}
+}
+
+func mapTVDBNameDisambiguation(details tvdb.NameDisambiguation) api.TVDBNameDisambiguation {
+	return api.TVDBNameDisambiguation{
+		CanonicalName:         strings.TrimSpace(details.CanonicalName),
+		SeriesYear:            details.SeriesYear,
+		Locale:                strings.TrimSpace(details.Locale),
+		SameNameSeries:        details.SameNameSeries,
+		SameNameAndYearSeries: details.SameNameAndYearSeries,
+		IncludeYear:           details.IncludeYear,
+		IncludeLocale:         details.IncludeLocale,
+		Status:                details.Status,
+		Source:                strings.TrimSpace(details.Source),
 	}
 }
 

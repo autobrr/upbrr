@@ -3,12 +3,14 @@
     {
       "tvdb_id": 987650001,
       "name": "Example Series",
+      "primary_language": "eng",
       "year": "2026",
       "aliases": []
     },
     {
       "tvdb_id": 987650002,
       "name": "Different Example",
+      "primary_language": "eng",
       "year": "2026",
       "aliases": []
     }

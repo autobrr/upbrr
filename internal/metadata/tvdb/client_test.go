@@ -151,16 +151,50 @@ func TestBuildNameDisambiguationSearchFailureUsesExplicitYearFallback(t *testing
 	}
 }
 
+func TestBuildNameDisambiguationComparesOnlyEnglishCandidateNames(t *testing.T) {
+	results := []SeriesSearchResult{
+		{
+			TVDBID:         987650002,
+			Name:           "Example Series",
+			PrimaryLanguage: "jpn",
+			Year:           "2026",
+			Aliases:        []Alias{{Name: "Example Series"}},
+		},
+		{
+			TVDBID:      987650003,
+			Name:        "例示シリーズ",
+			NameEnglish: "Example Series",
+			Year:        "2025",
+		},
+		{
+			TVDBID:         987650004,
+			Name:           "Example Series",
+			PrimaryLanguage: "eng",
+			Year:           "2024",
+		},
+	}
+
+	got := buildNameDisambiguation(987650001, "Example Series", 2026, "jpn", false, results, nil)
+	if got.SameNameSeries != 2 {
+		t.Fatalf("same-name series = %d, want 2", got.SameNameSeries)
+	}
+	if !got.IncludeYear || got.IncludeLocale {
+		t.Fatalf("decision = year=%t locale=%t", got.IncludeYear, got.IncludeLocale)
+	}
+}
+
 func TestBuildNameDisambiguationRejectsContradictoryDuplicateYears(t *testing.T) {
 	results := []SeriesSearchResult{
 		{
 TVDBID: 987650008,
  Name: "Example Series",
+ PrimaryLanguage: "eng",
  Year: "2025",
 },
 		{
 TVDBID: 987650008,
  Name: "Example Series",
+ PrimaryLanguage: "eng",
  Year: "2026",
 },
 	}
@@ -199,13 +233,14 @@ func TestGetSeriesMetadataCachesUnpagedGeneralNameSearch(t *testing.T) {
 	searchYear := ""
 	searchPage := ""
 	searchType := ""
+	searchLang := ""
 	searchLanguage := ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/login":
 			_, _ = w.Write([]byte(`{"data":{"token":"token"}}`))
 		case "/series/987650001/extended":
-			_, _ = w.Write([]byte(`{"data":{"id":987650001,"name":"Example Series","year":"2026","firstAired":"2026-04-03","originalCountry":"usa","originalLanguage":"eng"}}`))
+			_, _ = w.Write([]byte(`{"data":{"id":987650001,"name":"例示シリーズ","year":"2026","firstAired":"2026-04-03","originalCountry":"usa","originalLanguage":"jpn"}}`))
 		case "/series/987650001/translations/eng":
 			_, _ = w.Write([]byte(`{"data":{"name":"Example Series","aliases":[]}}`))
 		case "/search":
@@ -214,8 +249,9 @@ func TestGetSeriesMetadataCachesUnpagedGeneralNameSearch(t *testing.T) {
 			searchYear = r.URL.Query().Get("year")
 			searchPage = r.URL.Query().Get("page")
 			searchType = r.URL.Query().Get("type")
-			searchLanguage = r.URL.Query().Get("lang")
-			_, _ = w.Write([]byte(`{"data":[{"tvdb_id":987650004,"name":"Example Series","year":"2026","aliases":[]}]}`))
+			searchLang = r.URL.Query().Get("lang")
+			searchLanguage = r.URL.Query().Get("language")
+			_, _ = w.Write([]byte(`{"data":[{"tvdb_id":"987650004","name":"別の例示シリーズ","primary_language":"jpn","translations":{"eng":"Example Series"},"year":"2026","aliases":[]}]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -241,13 +277,15 @@ func TestGetSeriesMetadataCachesUnpagedGeneralNameSearch(t *testing.T) {
 	if searchCalls != 1 {
 		t.Fatalf("search calls = %d, want 1", searchCalls)
 	}
-	if searchQuery != "Example Series" || searchYear != "" || searchPage != "" || searchType != "series" || searchLanguage != "eng" {
+	if searchQuery != "Example Series" || searchYear != "" || searchPage != "" || searchType != "series" ||
+		searchLang != "" || searchLanguage != "" {
 		t.Fatalf(
-			"search params = query=%q year=%q page=%q type=%q lang=%q",
+			"search params = query=%q year=%q page=%q type=%q lang=%q language=%q",
 			searchQuery,
 			searchYear,
 			searchPage,
 			searchType,
+			searchLang,
 			searchLanguage,
 		)
 	}
@@ -540,15 +578,17 @@ func TestEpisodesResponseUnmarshal(t *testing.T) {
 	}
 }
 
-func TestSearchSeriesAlwaysUsesEnglishLanguage(t *testing.T) {
+func TestSearchSeriesDoesNotRestrictPrimaryLanguage(t *testing.T) {
 	searchLang := ""
+	searchLanguage := ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/login":
 			_, _ = w.Write([]byte(`{"data":{"token":"token"}}`))
 		case "/search":
 			searchLang = r.URL.Query().Get("lang")
-			_, _ = w.Write([]byte(`{"data":[{"tvdb_id":1,"name":"Example","year":"2020","aliases":[]}]}`))
+			searchLanguage = r.URL.Query().Get("language")
+			_, _ = w.Write([]byte(`{"data":[{"tvdb_id":"1","name":"Example","year":"2020","aliases":[]}]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -558,12 +598,15 @@ func TestSearchSeriesAlwaysUsesEnglishLanguage(t *testing.T) {
 	client := NewClient(server.Client(), nil, "api-key", "")
 	client.baseURL = server.URL
 
-	_, _, err := client.SearchSeries(context.Background(), "Example", "2020")
+	results, selected, err := client.SearchSeries(context.Background(), "Example", "2020")
 	if err != nil {
 		t.Fatalf("search failed: %v", err)
 	}
-	if searchLang != "eng" {
-		t.Fatalf("expected search lang %q, got %q", "eng", searchLang)
+	if searchLang != "" || searchLanguage != "" {
+		t.Fatalf("unexpected search language filters: lang=%q language=%q", searchLang, searchLanguage)
+	}
+	if len(results) != 1 || results[0].TVDBID != 1 || selected != 1 {
+		t.Fatalf("string TVDB ID was not decoded: results=%+v selected=%d", results, selected)
 	}
 }
 
@@ -573,7 +616,7 @@ func TestSearchSeriesDecodesStringAliases(t *testing.T) {
 		case "/login":
 			_, _ = w.Write([]byte(`{"data":{"token":"token"}}`))
 		case "/search":
-			_, _ = w.Write([]byte(`{"data":[{"tvdb_id":252322,"name":"Hunter x Hunter","year":"2011","aliases":["Hunter x Hunter (2011)"]}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"tvdb_id":987650003,"name":"Example Quest","year":"","aliases":["Example Quest (2011)"]}]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -583,18 +626,18 @@ func TestSearchSeriesDecodesStringAliases(t *testing.T) {
 	client := NewClient(server.Client(), nil, "api-key", "")
 	client.baseURL = server.URL
 
-	results, selected, err := client.SearchSeries(context.Background(), "Hunter x Hunter", "2011")
+	results, selected, err := client.SearchSeries(context.Background(), "Example Quest", "2011")
 	if err != nil {
 		t.Fatalf("search failed: %v", err)
 	}
-	if selected != 252322 {
-		t.Fatalf("expected selected id 252322, got %d", selected)
+	if selected != 987650003 {
+		t.Fatalf("expected selected id 987650003, got %d", selected)
 	}
 	if len(results) != 1 || len(results[0].Aliases) != 1 {
 		t.Fatalf("expected decoded alias, got %#v", results)
 	}
-	if results[0].Aliases[0].Name != "Hunter x Hunter (2011)" || results[0].Aliases[0].Language != "eng" {
-		t.Fatalf("expected english string alias, got %#v", results[0].Aliases[0])
+	if results[0].Aliases[0].Name != "Example Quest (2011)" || results[0].Aliases[0].Language != "" {
+		t.Fatalf("expected unlabelled string alias, got %#v", results[0].Aliases[0])
 	}
 }
 
