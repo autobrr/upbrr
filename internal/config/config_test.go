@@ -811,6 +811,8 @@ func TestLoadEmbeddedDefaultConfig(t *testing.T) {
 
 	delete(cfg.Trackers.Trackers, "AITHER")
 	cfg.Trackers.DefaultTrackers = append(cfg.Trackers.DefaultTrackers, "MUTATED")
+	cfg.ClientSetup.InjectClients = append(cfg.ClientSetup.InjectClients, "MUTATED")
+	cfg.ClientSetup.SearchClients = append(cfg.ClientSetup.SearchClients, "MUTATED")
 	cfg.TorrentClients["MUTATED"] = TorrentClientConfig{Type: "watch"}
 	qbittorrent := cfg.TorrentClients["qbittorrent"]
 	if len(qbittorrent.LinkedFolder) == 0 || qbittorrent.VerifyWebUICertificate == nil {
@@ -829,6 +831,12 @@ func TestLoadEmbeddedDefaultConfig(t *testing.T) {
 	}
 	if slices.Contains(fresh.Trackers.DefaultTrackers, "MUTATED") {
 		t.Fatal("embedded default tracker selection mutated through returned config")
+	}
+	if slices.Contains(fresh.ClientSetup.InjectClients, "MUTATED") {
+		t.Fatal("embedded injecting client selection mutated through returned config")
+	}
+	if slices.Contains(fresh.ClientSetup.SearchClients, "MUTATED") {
+		t.Fatal("embedded searching client selection mutated through returned config")
 	}
 	if _, ok := fresh.TorrentClients["MUTATED"]; ok {
 		t.Fatal("embedded torrent client template mutated through returned config")

@@ -63,6 +63,8 @@ func cloneEmbeddedDefaultConfig(template *Config) *Config {
 	}
 
 	cloned := *template
+	cloned.ClientSetup.InjectClients = slices.Clone(template.ClientSetup.InjectClients)
+	cloned.ClientSetup.SearchClients = slices.Clone(template.ClientSetup.SearchClients)
 	cloned.Trackers.DefaultTrackers = slices.Clone(template.Trackers.DefaultTrackers)
 	cloned.Trackers.Trackers = make(map[string]TrackerConfig, len(template.Trackers.Trackers))
 	for name, tracker := range template.Trackers.Trackers {
