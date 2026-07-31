@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/autobrr/upbrr/pkg/api"
@@ -109,13 +110,33 @@ func ApplyTagOverrides(path, currentTag, tagsPath string) (string, *api.TagOverr
 // EnsureDefaultTagOverrides creates the bundled tag overrides beside the
 // configured database when no user-managed file exists.
 func EnsureDefaultTagOverrides(dbPath string) (string, error) {
+	return ensureDefaultTagOverrides(dbPath, defaultTagOverrides)
+}
+
+func ensureDefaultTagOverrides(dbPath string, defaults []byte) (string, error) {
 	tagsPath, err := tagOverridesPath(dbPath)
 	if err != nil {
 		return "", fmt.Errorf("metadata: resolve default tag overrides path: %w", err)
 	}
 
-	file, err := os.OpenFile(tagsPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, fs.ErrExist) {
+	file, err := os.CreateTemp(filepath.Dir(tagsPath), ".tags-*.tmp")
+	if err != nil {
+		return "", fmt.Errorf("metadata: create temporary default tag overrides: %w", err)
+	}
+	tempPath := file.Name()
+	defer func() {
+		_ = os.Remove(tempPath)
+	}()
+
+	if _, err := file.Write(defaults); err != nil {
+		_ = file.Close()
+		return "", fmt.Errorf("metadata: write temporary default tag overrides: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return "", fmt.Errorf("metadata: close temporary default tag overrides: %w", err)
+	}
+
+	if err := os.Link(tempPath, tagsPath); errors.Is(err, fs.ErrExist) {
 		info, statErr := os.Stat(tagsPath)
 		if statErr != nil {
 			return "", fmt.Errorf("metadata: inspect existing tag overrides: %w", statErr)
@@ -124,19 +145,8 @@ func EnsureDefaultTagOverrides(dbPath string) (string, error) {
 			return "", fmt.Errorf("metadata: existing tag overrides path is not a regular file: %s", tagsPath)
 		}
 		return tagsPath, nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("metadata: create default tag overrides: %w", err)
-	}
-
-	if _, err := file.Write(defaultTagOverrides); err != nil {
-		_ = file.Close()
-		_ = os.Remove(tagsPath)
-		return "", fmt.Errorf("metadata: write default tag overrides: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		_ = os.Remove(tagsPath)
-		return "", fmt.Errorf("metadata: close default tag overrides: %w", err)
+	} else if err != nil {
+		return "", fmt.Errorf("metadata: publish default tag overrides: %w", err)
 	}
 	return tagsPath, nil
 }

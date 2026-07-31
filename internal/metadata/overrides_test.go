@@ -4,6 +4,7 @@
 package metadata
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -124,5 +125,57 @@ func TestEnsureDefaultTagOverridesPreservesExistingFile(t *testing.T) {
 	}
 	if string(got) != string(existing) {
 		t.Fatalf("existing tag overrides were modified")
+	}
+}
+
+func TestEnsureDefaultTagOverridesConcurrentInitialization(t *testing.T) {
+	t.Parallel()
+
+	const initializerCount = 32
+
+	largeValue := bytes.Repeat([]byte("X"), 8<<20)
+	defaults := append([]byte(`{"Concurrent":{"type":"`), largeValue...)
+	defaults = append(defaults, []byte(`"}}`)...)
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "db.sqlite")
+	expectedPath := filepath.Join(dir, "tags.json")
+	start := make(chan struct{})
+	type result struct {
+		path     string
+		complete bool
+		err      error
+	}
+	results := make(chan result, initializerCount)
+
+	for range initializerCount {
+		go func() {
+			<-start
+			path, err := ensureDefaultTagOverrides(dbPath, defaults)
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			data, err := os.ReadFile(path)
+			results <- result{
+				path:     path,
+				complete: bytes.Equal(data, defaults),
+				err:      err,
+			}
+		}()
+	}
+
+	close(start)
+	for range initializerCount {
+		result := <-results
+		if result.err != nil {
+			t.Fatalf("concurrent ensure default tag overrides: %v", result.err)
+		}
+		if result.path != expectedPath {
+			t.Fatalf("tag overrides path got %q want %q", result.path, expectedPath)
+		}
+		if !result.complete {
+			t.Fatal("concurrent initializer observed incomplete default tag overrides")
+		}
 	}
 }
