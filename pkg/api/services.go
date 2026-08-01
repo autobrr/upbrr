@@ -712,8 +712,9 @@ type TorrentSubject struct {
 	TorrentOverrides  TorrentOverrides
 }
 
-// ClientSubject contains only source facts and caller instructions required
-// for torrent-client search, linking, and injection.
+// ClientSubject contains prepared content source facts and caller instructions
+// for torrent-client search, linking, and injection. [TorrentResult] paths and
+// URLs identify torrent artifacts and do not replace these source facts.
 type ClientSubject struct {
 	SourcePath      string
 	FileList        []string

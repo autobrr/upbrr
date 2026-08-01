@@ -347,9 +347,10 @@ func sourcePathForLinking(meta api.ClientSubject) (string, error) {
 	return absLocalPath("linking source", source)
 }
 
-// sourcePathForQbitSavePath returns the prepared source path used for qbit
-// savepath mapping. It is intentionally lexical and does not stat the source,
-// because qbit injection can still be valid when source metadata is unavailable.
+// sourcePathForQbitSavePath returns the prepared content path used for
+// qBittorrent savepath mapping. Resolution is lexical because client-visible content need
+// not be available to stat locally. A torrent artifact path or URL is separate
+// from the prepared content source and cannot replace it.
 func sourcePathForQbitSavePath(meta api.ClientSubject) (string, error) {
 	if len(meta.FileList) == 1 {
 		if candidate := strings.TrimSpace(meta.FileList[0]); candidate != "" {
@@ -358,7 +359,10 @@ func sourcePathForQbitSavePath(meta api.ClientSubject) (string, error) {
 	}
 	source := strings.TrimSpace(meta.SourcePath)
 	if source == "" {
-		return "", internalerrors.ErrInvalidInput
+		return "", fmt.Errorf(
+			"prepared source path is required for qBittorrent save path; torrent artifact path or URL does not replace it: %w",
+			internalerrors.ErrInvalidInput,
+		)
 	}
 	return absLocalPath("qbit mapping source", source)
 }

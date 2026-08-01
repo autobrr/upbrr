@@ -235,6 +235,30 @@ func TestInjectQbitClient(t *testing.T) {
 	}
 }
 
+func TestInjectQbitClientRejectsMissingPreparedSourceForURLArtifact(t *testing.T) {
+	t.Parallel()
+
+	server, _ := newQbitAddCaptureServer(t)
+	svc := NewService(config.Config{
+		TorrentClients: map[string]config.TorrentClientConfig{
+			"qbit": {
+				Type:     "qbit",
+				URL:      server.URL,
+				Username: "user",
+				Password: "pass",
+			},
+		},
+	}, nil)
+
+	err := svc.Inject(context.Background(), api.ClientSubject{}, api.TorrentResult{URL: "https://tracker.example/download/1"})
+	if !errors.Is(err, internalerrors.ErrInvalidInput) {
+		t.Fatalf("expected invalid input, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "torrent artifact path or URL does not replace it") {
+		t.Fatal("expected source-versus-artifact guidance")
+	}
+}
+
 func TestInjectQbitClientRejectsCookieBearingNonOKLogin(t *testing.T) {
 	t.Parallel()
 
