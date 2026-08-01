@@ -76,7 +76,7 @@ func collectCandidateFindings(
 ) []RuleFinding {
 	findings := make([]RuleFinding, 0, 12)
 	findings = append(findings, collectExactFindings(target, candidate)...)
-	findings = append(findings, collectGeneralFindings(targetFacts, candidateFacts)...)
+	findings = append(findings, collectGeneralFindings(targetFacts, candidateFacts, policy)...)
 	findings = append(findings, collectTrackerRules(target, targetFacts, candidate, candidateFacts, policy)...)
 	if finding, ok := collectTrackerSlotFinding(target, targetFacts, candidate, candidateFacts, policy); ok {
 		findings = append(findings, finding)
@@ -85,6 +85,10 @@ func collectCandidateFindings(
 		findings = append(findings, finding)
 	}
 	if candidate.Trumpable {
+		priority := findingPriorityTrumpable
+		if policy.TrumpableOverridesSlot {
+			priority = findingPriorityTrackerMatched + 10
+		}
 		findings = append(findings, RuleFinding{
 			RuleID:     "tracker/candidate_trumpable",
 			EvidenceID: policy.EvidenceID,
@@ -92,7 +96,7 @@ func collectCandidateFindings(
 			Status:     RuleFindingMatched,
 			Relation:   api.DupeRelationProposedTrumps,
 			ReasonCode: "candidate_trumpable",
-			Priority:   findingPriorityTrumpable,
+			Priority:   priority,
 		})
 	}
 	findings = append(findings, sameSlotFallbackFinding(policy))
@@ -113,7 +117,7 @@ func collectExactFindings(target api.TrackerDuplicateTarget, candidate TrackerCa
 	}}
 }
 
-func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts) []RuleFinding {
+func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts, policy trackerspkg.DupePolicy) []RuleFinding {
 	findings := make([]RuleFinding, 0, 8)
 	switch compareContentScopes(target.Content, candidate.Content) {
 	case contentDefinitelyDisjoint:
@@ -144,45 +148,55 @@ func collectGeneralFindings(target normalizedFacts, candidate normalizedFacts) [
 	}
 	if target.Resolution.Status == FactContradictory || candidate.Resolution.Status == FactContradictory {
 		findings = append(findings, contradictionFinding("resolution"))
-	} else if compareFacts(target.Resolution, candidate.Resolution) == DimensionDifferent {
+	} else if !generalDimensionSuppressed(policy, trackerspkg.DupeDimensionResolution) &&
+		compareFacts(target.Resolution, candidate.Resolution) == DimensionDifferent {
 		findings = append(findings, generalFinding("resolution", "resolution_differs", findingPriorityGeneral))
 	}
-	if target.MediaClass != mediaClassUnknown && candidate.MediaClass != mediaClassUnknown && target.MediaClass != candidate.MediaClass {
+	if !generalDimensionSuppressed(policy, trackerspkg.DupeDimensionMediaClass) && target.MediaClass != mediaClassUnknown &&
+		candidate.MediaClass != mediaClassUnknown && target.MediaClass != candidate.MediaClass {
 		findings = append(findings, generalFinding("media_class", "media_class_differs", findingPriorityGeneral))
 	}
 	for _, dimension := range []struct {
-		name   string
-		target Fact
-		other  Fact
-		reason string
+		name      string
+		policyKey trackerspkg.DupeDimension
+		target    Fact
+		other     Fact
+		reason    string
 	}{
 		{
-			name:   "edition",
-			target: target.Edition,
-			other:  candidate.Edition,
-			reason: "edition_differs",
+			name:      "edition",
+			policyKey: trackerspkg.DupeDimensionEdition,
+			target:    target.Edition,
+			other:     candidate.Edition,
+			reason:    "edition_differs",
 		},
 		{
-			name:   "region",
-			target: target.Region,
-			other:  candidate.Region,
-			reason: "region_differs",
+			name:      "region",
+			policyKey: trackerspkg.DupeDimensionRegion,
+			target:    target.Region,
+			other:     candidate.Region,
+			reason:    "region_differs",
 		},
 		{
-			name:   "3d",
-			target: target.ThreeD,
-			other:  candidate.ThreeD,
-			reason: "3d_differs",
+			name:      "3d",
+			policyKey: trackerspkg.DupeDimensionThreeD,
+			target:    target.ThreeD,
+			other:     candidate.ThreeD,
+			reason:    "3d_differs",
 		},
 	} {
 		switch {
 		case dimension.target.Status == FactContradictory || dimension.other.Status == FactContradictory:
 			findings = append(findings, contradictionFinding(dimension.name))
-		case compareFacts(dimension.target, dimension.other) == DimensionDifferent:
+		case !generalDimensionSuppressed(policy, dimension.policyKey) && compareFacts(dimension.target, dimension.other) == DimensionDifferent:
 			findings = append(findings, generalFinding(dimension.name, dimension.reason, findingPriorityGeneral))
 		}
 	}
 	return findings
+}
+
+func generalDimensionSuppressed(policy trackerspkg.DupePolicy, dimension trackerspkg.DupeDimension) bool {
+	return slices.Contains(policy.SuppressGeneralCoexistence, dimension)
 }
 
 func generalFinding(dimension string, reason string, priority int) RuleFinding {
@@ -248,7 +262,9 @@ func evaluateTrackerRule(
 		Manual:           rule.RequiresManualStep,
 		OverridesGeneral: rule.OverridesGeneral,
 	}
-	if finding.Priority == 0 {
+	if finding.Priority == 0 && finding.Relation == api.DupeRelationExactDuplicate {
+		finding.Priority = findingPriorityExact
+	} else if finding.Priority == 0 {
 		finding.Priority = findingPriorityTrackerMatched
 	}
 	if rule.RequiresManualStep {
@@ -272,6 +288,14 @@ func evaluateTrackerRule(
 		})
 		if targetFact.Status == FactContradictory || candidateFact.Status == FactContradictory {
 			finding.Contradictions = append(finding.Contradictions, string(condition.Dimension))
+			continue
+		}
+		if condition.MissingNotApplicable && (targetFact.Status == FactMissing || candidateFact.Status == FactMissing) {
+			disproved = true
+			continue
+		}
+		if condition.RequiresComplete && (targetFact.Status != FactComplete || candidateFact.Status != FactComplete) {
+			finding.Missing = append(finding.Missing, incompleteDimensionName(targetFact, candidateFact, condition.Dimension))
 			continue
 		}
 		if conditionNeedsEvidence(condition) &&
@@ -318,7 +342,7 @@ func collectTrackerSlotFinding(
 	candidateFacts normalizedFacts,
 	policy trackerspkg.DupePolicy,
 ) (RuleFinding, bool) {
-	if len(policy.SlotDimensions) == 0 {
+	if len(policy.SlotDimensions) == 0 && len(policy.OptionalSlotDimensions) == 0 && len(policy.RequiredDimensions) == 0 {
 		return RuleFinding{}, false
 	}
 	finding := RuleFinding{
@@ -327,9 +351,10 @@ func collectTrackerSlotFinding(
 		Source:      "tracker",
 		Status:      RuleFindingNotApplicable,
 		Priority:    findingPriorityTrackerMatched,
-		Specificity: len(policy.SlotDimensions),
+		Specificity: len(policy.SlotDimensions) + len(policy.OptionalSlotDimensions) + len(policy.RequiredDimensions),
 	}
-	for _, dimension := range policy.SlotDimensions {
+	for _, configured := range trackerComparisonDimensions(policy) {
+		dimension := configured.dimension
 		if dimension == trackerspkg.DupeDimensionHDR {
 			continue
 		}
@@ -341,19 +366,37 @@ func collectTrackerSlotFinding(
 			dimension,
 		)
 		comparison := compareFacts(targetFact, candidateFact)
+		if configured.optional && comparison == DimensionNotApplicable {
+			continue
+		}
 		finding.comparisons = append(finding.comparisons, factComparison{
 			Dimension: dimension,
 			Target:    targetFact,
 			Candidate: candidateFact,
 			Result:    comparison,
 		})
+		if targetFact.Status == FactContradictory || candidateFact.Status == FactContradictory {
+			finding.Contradictions = append(finding.Contradictions, string(dimension))
+			continue
+		}
+		if configured.requiresComplete && (targetFact.Status != FactComplete || candidateFact.Status != FactComplete) {
+			finding.Missing = append(finding.Missing, incompleteDimensionName(targetFact, candidateFact, dimension))
+			continue
+		}
 		switch comparison {
 		case DimensionDifferent:
+			if configured.required {
+				finding.Compared = append(finding.Compared, string(dimension)+"=different")
+				continue
+			}
 			finding.Status = RuleFindingMatched
 			finding.Relation = api.DupeRelationCoexists
 			finding.ReasonCode = "different_" + string(dimension)
 			finding.Compared = append(finding.Compared, string(dimension)+"=different")
 			finding.Priority = findingPriorityGeneral - 10
+			if policy.SlotDifferencesOverrideGeneral {
+				finding.Priority = findingPriorityTrackerMatched
+			}
 			return finding, true
 		case DimensionUnknown, DimensionNotApplicable:
 			finding.Missing = append(finding.Missing, missingDimensionName(targetFact, candidateFact, dimension))
@@ -387,13 +430,55 @@ func collectTrackerSlotFinding(
 	if len(finding.Missing) > 0 || len(finding.Contradictions) > 0 {
 		finding.Status = RuleFindingIndeterminate
 		finding.Relation = api.DupeRelationInsufficientEvidence
+		if len(finding.Contradictions) > 0 && policy.SlotContradictionsRequireManualReview {
+			finding.Relation = api.DupeRelationManualReview
+		}
 		finding.Priority = findingPrioritySlotMissing
 		if finding.ReasonCode == "" {
 			finding.ReasonCode = missingReasonCode(finding.Missing, finding.Contradictions)
 		}
 		return finding, true
 	}
-	return RuleFinding{}, false
+	finding.Status = RuleFindingMatched
+	finding.Relation = api.DupeRelationSameSlot
+	finding.ReasonCode = "same_tracker_slot"
+	finding.Priority = findingPriorityFallback
+	return finding, true
+}
+
+type trackerComparisonDimension struct {
+	dimension        trackerspkg.DupeDimension
+	optional         bool
+	required         bool
+	requiresComplete bool
+}
+
+func trackerComparisonDimensions(policy trackerspkg.DupePolicy) []trackerComparisonDimension {
+	result := make([]trackerComparisonDimension, 0, len(policy.SlotDimensions)+len(policy.OptionalSlotDimensions)+len(policy.RequiredDimensions))
+	seen := make(map[trackerspkg.DupeDimension]struct{})
+	for _, group := range []struct {
+		dimensions []trackerspkg.DupeDimension
+		optional   bool
+		required   bool
+	}{
+		{dimensions: policy.SlotDimensions},
+		{dimensions: policy.OptionalSlotDimensions, optional: true},
+		{dimensions: policy.RequiredDimensions, required: true},
+	} {
+		for _, dimension := range group.dimensions {
+			if _, ok := seen[dimension]; ok {
+				continue
+			}
+			seen[dimension] = struct{}{}
+			result = append(result, trackerComparisonDimension{
+				dimension:        dimension,
+				optional:         group.optional,
+				required:         group.required,
+				requiresComplete: slices.Contains(policy.CompleteSlotDimensions, dimension),
+			})
+		}
+	}
+	return result
 }
 
 func compareTrackerHDR(target api.HDRFacts, candidate api.HDRFacts, policy trackerspkg.DupePolicy) (RuleFinding, bool) {
@@ -469,9 +554,23 @@ func compareTrackerHDR(target api.HDRFacts, candidate api.HDRFacts, policy track
 				finding.ReasonCode = "target_dv_profile_missing"
 				finding.Missing = []string{"target_dv_profile"}
 				return finding, true
+			case policy.DolbyVisionProfile5Slot &&
+				(target.DolbyVisionProfile == "5" || candidate.DolbyVisionProfile == "5") &&
+				(target.Status != api.HDREvidenceComplete || candidate.Status != api.HDREvidenceComplete):
+				finding.Status = RuleFindingIndeterminate
+				finding.Relation = api.DupeRelationInsufficientEvidence
+				finding.ReasonCode = "dolby_vision_profile_not_authoritative"
+				finding.Missing = []string{"dv_profile_complete"}
+				return finding, true
 			case target.DolbyVisionProfile != candidate.DolbyVisionProfile:
-				finding.Relation = api.DupeRelationManualReview
-				finding.ReasonCode = "dolby_vision_profile_differs"
+				if policy.DolbyVisionProfile5Slot &&
+					(target.DolbyVisionProfile == "5" || candidate.DolbyVisionProfile == "5") {
+					finding.Relation = api.DupeRelationCoexists
+					finding.ReasonCode = "distinct_dolby_vision_profile_slot"
+				} else {
+					finding.Relation = api.DupeRelationManualReview
+					finding.ReasonCode = "dolby_vision_profile_differs"
+				}
 				return finding, true
 			}
 		}
@@ -629,7 +728,8 @@ func comparisonFactsForDimension(
 		trackerspkg.DupeDimensionThreeD,
 		trackerspkg.DupeDimensionProvider,
 		trackerspkg.DupeDimensionGroup,
-		trackerspkg.DupeDimensionRepack:
+		trackerspkg.DupeDimensionRepack,
+		trackerspkg.DupeDimensionSize:
 		return dimensionFact(targetFacts, dimension), dimensionFact(candidateFacts, dimension)
 	}
 	return missingFact(), missingFact()
@@ -696,6 +796,17 @@ func missingDimensionName(target Fact, candidate Fact, dimension trackerspkg.Dup
 		return "candidate_" + string(dimension) + "_contradictory"
 	default:
 		return string(dimension)
+	}
+}
+
+func incompleteDimensionName(target Fact, candidate Fact, dimension trackerspkg.DupeDimension) string {
+	switch {
+	case target.Status == FactPartial:
+		return "target_" + string(dimension) + "_partial"
+	case candidate.Status == FactPartial:
+		return "candidate_" + string(dimension) + "_partial"
+	default:
+		return missingDimensionName(target, candidate, dimension)
 	}
 }
 

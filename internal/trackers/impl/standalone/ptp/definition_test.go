@@ -177,7 +177,7 @@ func TestDefinitionBuildUploadDryRunForExistingGroup(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case ptpTorrentPath:
-			if r.URL.Query().Get("imdb") != "0000456" {
+			if r.URL.Query().Get("imdb") != "0000456" || r.URL.Query().Get("json") != "noredirect" {
 				requestErr <- errors.New("unexpected PTP IMDb group query")
 				w.WriteHeader(http.StatusBadRequest)
 				return

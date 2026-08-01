@@ -170,8 +170,13 @@ func hdrFactsFromCandidateTitle(name string) api.HDRFacts {
 		Status:       api.HDREvidencePartial,
 		SourceFields: []string{"title"},
 	}
-	if strings.Contains(upper, "DOLBY.VISION") || strings.Contains(upper, "DOVI") || tokenPresent(upper, "DV") {
+	if strings.Contains(upper, "DOLBY.VISION") || strings.Contains(upper, "DOLBY VISION") || strings.Contains(upper, "DOVI") ||
+		tokenPresent(upper, "DV") || tokenPresent(upper, "DV5") {
 		addCandidateHDRFormat(&facts.Formats, api.HDRFormatDolbyVision)
+		if strings.Contains(upper, "DOLBY.VISION.PROFILE.5") || strings.Contains(upper, "DOLBY VISION PROFILE 5") ||
+			strings.Contains(upper, "DOVI.P5") || tokenPresent(upper, "DV5") {
+			facts.DolbyVisionProfile = "5"
+		}
 	}
 	switch {
 	case strings.Contains(upper, "HDR10+"), strings.Contains(upper, "HDR10PLUS"):
@@ -185,6 +190,9 @@ func hdrFactsFromCandidateTitle(name string) api.HDRFacts {
 	if tokenPresent(upper, "PQ10") {
 		addCandidateHDRFormat(&facts.Formats, api.HDRFormatPQ10)
 	}
+	if len(facts.Formats) == 0 && tokenPresent(upper, "SDR") {
+		addCandidateHDRFormat(&facts.Formats, api.HDRFormatSDR)
+	}
 	if len(facts.Formats) == 0 {
 		facts.Origin = api.HDREvidenceUnknown
 		facts.Status = api.HDREvidenceMissing
@@ -192,6 +200,12 @@ func hdrFactsFromCandidateTitle(name string) api.HDRFacts {
 	}
 	addCandidateHDRFallbacks(&facts)
 	return facts
+}
+
+// NormalizeTrackerTitleHDR maps explicit tracker-title markers to partial HDR
+// evidence without inferring SDR from marker absence.
+func NormalizeTrackerTitleHDR(name string) api.HDRFacts {
+	return hdrFactsFromCandidateTitle(name)
 }
 
 func tokenPresent(value string, token string) bool {

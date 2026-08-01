@@ -24,6 +24,7 @@ func Profile() standalone.Profile {
 		PrepareUpload:        prepareUpload,
 		ReleaseNamePolicy:    trackers.SimpleSubjectReleaseNameSearchPolicy("standalone/rtf/v1", resolveUploadName, resolveSearchName),
 		NewDuplicateAdapter:  newDuplicateAdapter,
+		DupePolicy:           duplicatePolicy(),
 		ValidationPolicy:     validationPolicy(),
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: sourceFlag},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{

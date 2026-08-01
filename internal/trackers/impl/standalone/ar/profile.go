@@ -35,6 +35,23 @@ func Profile() standalone.Profile {
 		),
 		NewDuplicateAdapter: newDuplicateAdapter,
 		ValidationPolicy:    validationPolicy(),
+		DupePolicy: &trackers.DupePolicy{
+			ID:         "ar/duplicate/v2",
+			EvidenceID: "ar-uploading-guidelines",
+			SearchScope: trackers.DupeSearchScope{
+				IncludeEpisodes:    true,
+				IncludeSeasonPacks: true,
+				MaxPages:           100,
+			},
+			SlotDimensions: []trackers.DupeDimension{
+				trackers.DupeDimensionSource,
+				trackers.DupeDimensionResolution,
+				trackers.DupeDimensionCodec,
+				trackers.DupeDimensionGroup,
+			},
+			SlotContradictionsRequireManualReview: true,
+			SlotDifferencesOverrideGeneral:        true,
+		},
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{

@@ -25,9 +25,10 @@ const (
 )
 
 type dupeSearcher struct {
-	cfg    config.Config
-	http   *http.Client
-	logger api.Logger
+	cfg      config.Config
+	http     *http.Client
+	logger   api.Logger
+	maxPages int
 }
 
 // NewDuplicateAdapter returns a duplicate-search adapter bound to one immutable dependency set.
@@ -37,9 +38,10 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	logger := deps.Logger()
 	_ = logger
 	return &dupeSearcher{
-		cfg:    cfg,
-		http:   httpClient,
-		logger: logger,
+		cfg:      cfg,
+		http:     httpClient,
+		logger:   logger,
+		maxPages: arMaxPages(deps),
 	}
 }
 
@@ -64,18 +66,6 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		h.logger.Debugf("dupechecking: AR using stored cookies from %s", cookiePath)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, arBrowseEndpoint, nil)
-	if err != nil {
-		return dupe.Failed(dupe.FailureRequest, "AR request failed", fmt.Errorf("build AR request: %w", err))
-	}
-	params := req.URL.Query()
-	params.Set("action", "browse")
-	params.Set("searchstr", query)
-	req.URL.RawQuery = params.Encode()
-	req.Header.Set("User-Agent", "upbrr")
-	for _, cookie := range cookies {
-		req.AddCookie(cookie)
-	}
 	if h.logger != nil {
 		h.logger.Debugf(
 			"dupechecking: AR search request method=GET action=browse searchstr=%q",
@@ -83,118 +73,201 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		)
 	}
 
+	maxPages := h.maxPages
+	if maxPages <= 0 {
+		maxPages = 100
+	}
+	entries := make([]api.DupeEntry, 0)
+	seenIDs := make(map[int64]struct{})
+	seenPages := make(map[string]struct{})
+	expectedPages := -1
+	pages := 0
+	complete := false
+	warning := ""
+	for requestedPage := 1; pages < maxPages; requestedPage++ {
+		payload, failureCode, fetchErr := h.fetchARPage(ctx, query, cookies, requestedPage)
+		if failureCode != "" {
+			if pages == 0 {
+				return dupe.Failed(failureCode, "AR search failed", fetchErr)
+			}
+			warning = "AR search stopped after a partial request failure"
+			break
+		}
+		pages++
+		currentPage := payload.Response.CurrentPage
+		totalPages := payload.Response.Pages
+		results := payload.Response.Results
+		if currentPage == 0 && totalPages == 0 && len(results) == 0 && requestedPage == 1 {
+			complete = true
+			break
+		}
+		if currentPage != requestedPage || totalPages < currentPage || totalPages <= 0 ||
+			expectedPages >= 0 && totalPages != expectedPages {
+			warning = "AR search pagination evidence is inconsistent"
+			break
+		}
+		if expectedPages < 0 {
+			expectedPages = totalPages
+		}
+		signature := arPageSignature(results)
+		if signature != "" {
+			if _, ok := seenPages[signature]; ok {
+				warning = "AR search repeated a result page"
+				break
+			}
+			seenPages[signature] = struct{}{}
+		}
+		for _, result := range results {
+			if result.TorrentID <= 0 || strings.TrimSpace(result.GroupName) == "" {
+				warning = "AR search result evidence is malformed"
+				continue
+			}
+			if _, ok := seenIDs[result.TorrentID]; ok {
+				continue
+			}
+			seenIDs[result.TorrentID] = struct{}{}
+			if entry, ok := arDupeEntry(result); ok {
+				entries = append(entries, entry)
+			}
+		}
+		if warning != "" {
+			break
+		}
+		if requestedPage == expectedPages {
+			complete = true
+			break
+		}
+	}
+	if !complete && warning == "" {
+		warning = "AR search reached page bound before consuming advertised pages"
+	}
+	warnings := []string(nil)
+	if warning != "" {
+		warnings = []string{warning}
+	}
+	search := dupe.SearchEvidence{
+		Complete: complete,
+		Pages:    pages,
+		Scope:    "title_year",
+		Warnings: warnings,
+	}
+	if h.logger != nil {
+		h.logger.Debugf(
+			"dupechecking: AR search response pages=%d advertised_pages=%d accepted_results=%d complete=%t decision=completed",
+			pages,
+			expectedPages,
+			len(entries),
+			complete,
+		)
+	}
+	return dupe.ResolvedWithSearch(entries, warnings, search)
+}
+
+func (h dupeSearcher) fetchARPage(
+	ctx context.Context,
+	query string,
+	cookies []*http.Cookie,
+	page int,
+) (arResponse, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, arBrowseEndpoint, nil)
+	if err != nil {
+		return arResponse{}, dupe.FailureRequest, fmt.Errorf("build AR request: %w", err)
+	}
+	params := req.URL.Query()
+	params.Set("action", "browse")
+	params.Set("searchstr", query)
+	if page > 1 {
+		params.Set("page", strconv.Itoa(page))
+	}
+	req.URL.RawQuery = params.Encode()
+	req.Header.Set("User-Agent", "upbrr")
+	for _, cookie := range cookies {
+		req.AddCookie(cookie)
+	}
 	resp, err := h.http.Do(req)
 	if err != nil {
-		if h.logger != nil {
-			h.logger.Debugf("dupechecking: AR request failed: %v", err)
-		}
-		return dupe.Failed(dupe.FailureRequest, "AR request failed", err)
+		return arResponse{}, dupe.FailureRequest, fmt.Errorf("request AR search page %d: %w", page, err)
 	}
-	defer resp.Body.Close()
 	contentType := arResponseContentType(resp)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		if h.logger != nil {
 			h.logger.Debugf(
-				"dupechecking: AR search response status_code=%d content_type=%q decision=reject_non_success",
+				"dupechecking: AR search response page=%d status_code=%d content_type=%q decision=reject_non_success",
+				page,
 				resp.StatusCode,
 				contentType,
 			)
 		}
-		return dupe.Failed(dupe.FailureResponseStatus, "AR search returned non-success status", nil)
+		return arResponse{}, dupe.FailureResponseStatus, nil
 	}
-
 	var payload arResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		if h.logger != nil {
 			h.logger.Debugf(
-				"dupechecking: AR search response status_code=%d content_type=%q decision=decode_failed error=%v",
+				"dupechecking: AR search response page=%d status_code=%d content_type=%q decision=decode_failed error=%v",
+				page,
 				resp.StatusCode,
 				contentType,
 				redaction.RedactValue(err.Error(), nil),
 			)
 		}
-		return dupe.Failed(dupe.FailureResponseParse, "AR response decode failed", err)
+		return arResponse{}, dupe.FailureResponseParse, fmt.Errorf("decode AR search page %d: %w", page, err)
 	}
 	if !strings.EqualFold(strings.TrimSpace(payload.Status), "success") {
-		if h.logger != nil {
-			h.logger.Debugf(
-				"dupechecking: AR search response status_code=%d content_type=%q api_status=%q current_page=%d pages=%d "+
-					"raw_results=%d accepted_results=0 decision=reject_api_status",
-				resp.StatusCode,
-				contentType,
-				strings.TrimSpace(payload.Status),
-				payload.Response.CurrentPage,
-				payload.Response.Pages,
-				len(payload.Response.Results),
-			)
-		}
-		return dupe.Failed(dupe.FailureResponseStatus, "AR API returned non-success status", nil)
+		return arResponse{}, dupe.FailureResponseStatus, nil
 	}
-
-	entries := make([]api.DupeEntry, 0, len(payload.Response.Results))
-	for _, result := range payload.Response.Results {
-		name := strings.TrimSpace(result.GroupName)
-		if name == "" {
-			continue
-		}
-		entry := api.DupeEntry{
-			Name:      name,
-			Files:     []string{name},
-			FileCount: result.FileCount,
-			ID:        strconv.FormatInt(result.TorrentID, 10),
-			Link: "https://alpharatio.cc/torrents.php?id=" + strconv.FormatInt(
-				result.GroupID,
-				10,
-			) + "&torrentid=" + strconv.FormatInt(
-				result.TorrentID,
-				10,
-			),
-			Download: "https://alpharatio.cc/torrents.php?action=download&id=" + strconv.FormatInt(result.TorrentID, 10),
-		}
-		if result.Size > 0 {
-			entry.SizeKnown = true
-			entry.SizeBytes = result.Size
-		}
-		entries = append(entries, entry)
-	}
-	search := arSearchEvidence(
-		payload.Response.CurrentPage,
-		payload.Response.Pages,
-		len(payload.Response.Results),
-	)
-	if h.logger != nil {
-		h.logger.Debugf(
-			"dupechecking: AR search response status_code=%d content_type=%q api_status=success current_page=%d pages=%d "+
-				"raw_results=%d accepted_results=%d complete=%t decision=completed",
-			resp.StatusCode,
-			contentType,
-			payload.Response.CurrentPage,
-			payload.Response.Pages,
-			len(payload.Response.Results),
-			len(entries),
-			search.Complete,
-		)
-	}
-
-	return dupe.ResolvedWithSearch(entries, search.Warnings, search)
+	return payload, "", nil
 }
 
-func arSearchEvidence(currentPage int, totalPages int, resultCount int) dupe.SearchEvidence {
-	search := dupe.SearchEvidence{
-		Pages: 1,
-		Scope: "work_identity",
+type arResult struct {
+	GroupName string `json:"groupName"`
+	Size      int64  `json:"size"`
+	FileCount int    `json:"fileCount"`
+	GroupID   int64  `json:"groupId"`
+	TorrentID int64  `json:"torrentId"`
+}
+
+func arDupeEntry(result arResult) (api.DupeEntry, bool) {
+	name := strings.TrimSpace(result.GroupName)
+	if name == "" || result.TorrentID <= 0 {
+		return api.DupeEntry{}, false
 	}
-	switch {
-	case currentPage == 0 && totalPages == 0 && resultCount == 0:
-		search.Complete = true
-	case currentPage > 0 && currentPage == totalPages:
-		search.Complete = true
-	case currentPage > 0 && totalPages > currentPage:
-		search.Warnings = []string{"AR search has additional result pages"}
-	default:
-		search.Warnings = []string{"AR search pagination evidence is inconsistent"}
+	entry := api.DupeEntry{
+		Name: name,
+		ID:   strconv.FormatInt(result.TorrentID, 10),
+		Link: "https://alpharatio.cc/torrents.php?id=" + strconv.FormatInt(result.GroupID, 10) + "&torrentid=" +
+			strconv.FormatInt(result.TorrentID, 10),
+		Download: "https://alpharatio.cc/torrents.php?action=download&id=" + strconv.FormatInt(result.TorrentID, 10),
 	}
-	return search
+	if result.FileCount > 0 {
+		entry.FileCount = result.FileCount
+	}
+	if result.Size > 0 {
+		entry.SizeKnown = true
+		entry.SizeBytes = result.Size
+	}
+	return entry, true
+}
+
+func arPageSignature(results []arResult) string {
+	values := make([]string, 0, len(results))
+	for _, result := range results {
+		if result.TorrentID > 0 {
+			values = append(values, strconv.FormatInt(result.TorrentID, 10))
+		}
+	}
+	return strings.Join(values, ",")
+}
+
+func arMaxPages(deps dupe.Dependencies) int {
+	const defaultMaxPages = 100
+	if registry := deps.Registry(); registry != nil {
+		if policy, ok := registry.LookupDupePolicy(deps.Tracker()); ok && policy.SearchScope.MaxPages > 0 {
+			return policy.SearchScope.MaxPages
+		}
+	}
+	return defaultMaxPages
 }
 
 func arResponseContentType(resp *http.Response) string {
@@ -267,14 +340,8 @@ func arSearchQuery(meta api.DuplicateSubject) string {
 type arResponse struct {
 	Status   string `json:"status"`
 	Response struct {
-		CurrentPage int `json:"currentPage"`
-		Pages       int `json:"pages"`
-		Results     []struct {
-			GroupName string `json:"groupName"`
-			Size      int64  `json:"size"`
-			FileCount int    `json:"fileCount"`
-			GroupID   int64  `json:"groupId"`
-			TorrentID int64  `json:"torrentId"`
-		} `json:"results"`
+		CurrentPage int        `json:"currentPage"`
+		Pages       int        `json:"pages"`
+		Results     []arResult `json:"results"`
 	} `json:"response"`
 }

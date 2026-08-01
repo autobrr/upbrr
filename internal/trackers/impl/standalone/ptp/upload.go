@@ -274,6 +274,7 @@ func lookupGroupID(ctx context.Context, baseURL string, trackerConfig config.Tra
 	}
 	values := url.Values{}
 	values.Set("imdb", providerid.IMDb(meta.Identity.IMDBID).Digits())
+	values.Set("json", "noredirect")
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+ptpTorrentPath+"?"+values.Encode(), nil)
 	if err != nil {
 		return "", fmt.Errorf("trackers: PTP build group lookup request: %w", err)

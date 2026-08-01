@@ -28,6 +28,7 @@ func Profile() standalone.Profile {
 			return prepareUploadAt(ctx, req, ptpBaseURL)
 		},
 		NewDuplicateAdapter: func(deps dupe.Dependencies) dupe.Adapter { return newDuplicateAdapterAt(deps, ptpBaseURL) },
+		DupePolicy:          duplicatePolicy(),
 		Rules:               &trackers.RuleSet{RequireMovieOnly: true},
 		ValidationPolicy:    validationPolicy(),
 		BannedGroups:        bannedGroups(),
@@ -42,7 +43,7 @@ func Profile() standalone.Profile {
 			AllowedHosts: []string{"pixhost", "imgbb", "onlyimage", "ptscreens", "passtheimage"},
 		},
 		TorrentIdentityPolicy: &trackers.TorrentIdentityPolicy{
-			TrackerURLPatterns: []string{ptpBaseURL},
+			TrackerURLPatterns: []string{ptpBaseURL, "https://please.passthepopcorn.me"},
 			CommentURLPatterns: []string{ptpBaseURL},
 			DetailIDPattern:    "torrentid=(\\d+)",
 		},

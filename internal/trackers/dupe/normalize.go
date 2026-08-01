@@ -5,8 +5,12 @@ package dupe
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+
+	"github.com/moistari/rls"
 
 	trackerspkg "github.com/autobrr/upbrr/internal/trackers"
 	"github.com/autobrr/upbrr/pkg/api"
@@ -161,6 +165,12 @@ type normalizedFacts struct {
 type parsedTitleFacts struct {
 	Resolution string
 	MediaKind  mediaKind
+	Source     string
+	Codec      string
+	Container  string
+	Group      string
+	Edition    string
+	Region     string
 	Repack     string
 	ThreeD     string
 	Content    contentScope
@@ -183,25 +193,55 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 			FactOriginContentName,
 		),
 		Source: mergeStructuredAndTitleFact(
-			target.Source,
+			canonicalSource(target.Source),
 			"source",
-			"",
+			title.Source,
 			FactOriginTargetMedia,
 			FactOriginContentName,
 		),
 		Resolution: mergeStructuredAndTitleFact(
-			target.Resolution,
+			canonicalResolution(target.Resolution),
 			"resolution",
 			title.Resolution,
 			FactOriginTargetMedia,
 			FactOriginContentName,
 		),
-		Codec:     completeFact(target.VideoCodec, FactOriginTargetMedia, "videoCodec"),
-		Container: completeFact(target.Container, FactOriginTargetMedia, "container"),
-		Provider:  completeFact(target.Provider, FactOriginTargetMedia, "provider"),
-		Group:     completeFact(target.Group, FactOriginTargetMedia, "group"),
-		Edition:   completeFact(target.Edition, FactOriginTargetMedia, "edition"),
-		Region:    completeFact(target.Region, FactOriginTargetMedia, "region"),
+		Codec: mergeStructuredAndTitleFact(
+			canonicalCodec(firstNonEmpty(target.VideoEncode, target.VideoCodec)),
+			"videoCodec",
+			title.Codec,
+			FactOriginTargetMedia,
+			FactOriginContentName,
+		),
+		Container: mergeStructuredAndTitleFact(
+			canonicalContainer(target.Container),
+			"container",
+			title.Container,
+			FactOriginTargetMedia,
+			FactOriginContentName,
+		),
+		Provider: completeFact(target.Provider, FactOriginTargetMedia, "provider"),
+		Group: mergeStructuredAndTitleFact(
+			canonicalGroup(target.Group),
+			"group",
+			title.Group,
+			FactOriginTargetMedia,
+			FactOriginContentName,
+		),
+		Edition: mergeStructuredAndTitleFact(
+			canonicalEdition(target.Edition),
+			"edition",
+			title.Edition,
+			FactOriginTargetMedia,
+			FactOriginContentName,
+		),
+		Region: mergeStructuredAndTitleFact(
+			canonicalRegion(target.Region),
+			"region",
+			title.Region,
+			FactOriginTargetMedia,
+			FactOriginContentName,
+		),
 		ThreeD: mergeStructuredAndTitleFact(
 			target.ThreeD,
 			"threeD",
@@ -273,25 +313,55 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 			FactOriginTrackerTitle,
 		),
 		Source: mergeStructuredAndTitleFact(
-			candidate.Source,
+			canonicalSource(candidate.Source),
 			"source",
-			"",
+			title.Source,
 			FactOriginTrackerAPI,
 			FactOriginTrackerTitle,
 		),
 		Resolution: mergeStructuredAndTitleFact(
-			candidate.Resolution,
+			canonicalResolution(candidate.Resolution),
 			"resolution",
 			title.Resolution,
 			FactOriginTrackerAPI,
 			FactOriginTrackerTitle,
 		),
-		Codec:     completeFact(candidate.Codec, FactOriginTrackerAPI, "codec"),
-		Container: completeFact(candidate.Container, FactOriginTrackerAPI, "container"),
-		Provider:  completeFact(candidate.Provider, FactOriginTrackerAPI, "provider"),
-		Group:     completeFact(candidate.Group, FactOriginTrackerAPI, "group"),
-		Edition:   completeFact(candidate.Edition, FactOriginTrackerAPI, "edition"),
-		Region:    completeFact(candidate.Region, FactOriginTrackerAPI, "region"),
+		Codec: mergeStructuredAndTitleFact(
+			canonicalCodec(candidate.Codec),
+			"codec",
+			title.Codec,
+			FactOriginTrackerAPI,
+			FactOriginTrackerTitle,
+		),
+		Container: mergeStructuredAndTitleFact(
+			canonicalContainer(candidate.Container),
+			"container",
+			title.Container,
+			FactOriginTrackerAPI,
+			FactOriginTrackerTitle,
+		),
+		Provider: completeFact(candidate.Provider, FactOriginTrackerAPI, "provider"),
+		Group: mergeStructuredAndTitleFact(
+			canonicalGroup(candidate.Group),
+			"group",
+			title.Group,
+			FactOriginTrackerAPI,
+			FactOriginTrackerTitle,
+		),
+		Edition: mergeStructuredAndTitleFact(
+			canonicalEdition(candidate.Edition),
+			"edition",
+			title.Edition,
+			FactOriginTrackerAPI,
+			FactOriginTrackerTitle,
+		),
+		Region: mergeStructuredAndTitleFact(
+			canonicalRegion(candidate.Region),
+			"region",
+			title.Region,
+			FactOriginTrackerAPI,
+			FactOriginTrackerTitle,
+		),
 		ThreeD: mergeStructuredAndTitleFact(
 			candidate.ThreeD,
 			"threeD",
@@ -356,7 +426,7 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 
 func parseBestTitle(names []string) parsedTitleFacts {
 	for _, name := range names {
-		if parsed := parseReleaseTitle(name, FactOriginContentName); parsed.Resolution != "" || parsed.MediaKind != mediaKindUnknown ||
+		if parsed := parseReleaseTitle(name, FactOriginContentName); parsed.hasEvidence() ||
 			parsed.Content.Kind != contentScopeWork || parsed.Repack != "" || parsed.ThreeD != "" ||
 			parsed.HDR.Status != api.HDREvidenceMissing {
 			return parsed
@@ -368,15 +438,37 @@ func parseBestTitle(names []string) parsedTitleFacts {
 func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 	name = strings.TrimSpace(name)
 	upper := strings.ToUpper(name)
+	release := rls.ParseString(name)
 	mediaKind := mediaKindFromText(upper)
 	if mediaKind == mediaKindUnknown && hasBareWEBTitleMarker(upper) {
 		mediaKind = mediaKindWEBDL
 	}
 	parsed := parsedTitleFacts{
-		Resolution: candidateResolutionPattern.FindString(name),
+		Resolution: canonicalResolution(candidateResolutionPattern.FindString(name)),
 		MediaKind:  mediaKind,
+		Source:     canonicalSource(release.Source),
+		Codec:      canonicalCodec(firstNonEmpty(release.Codec...)),
+		Container:  canonicalContainer(firstNonEmpty(release.Container, release.Ext)),
+		Group:      canonicalGroup(release.Group),
+		Edition:    canonicalTitleEdition(release.Cut, release.Edition, name),
+		Region:     canonicalRegion(release.Region),
 		Content:    contentScope{Kind: contentScopeWork, Origin: origin},
 		HDR:        hdrFactsFromCandidateTitle(name),
+	}
+	if parsed.Source == "" {
+		parsed.Source = sourceFromTitle(upper)
+	}
+	if parsed.Codec == "" {
+		parsed.Codec = codecFromTitle(upper)
+	}
+	if parsed.Container == "" {
+		parsed.Container = containerFromTitle(upper)
+	}
+	if parsed.Group == "" {
+		parsed.Group = groupFromTitle(name)
+	}
+	if parsed.Region == "" {
+		parsed.Region = regionFromTitle(upper)
 	}
 	if tokenPresent(upper, "REPACK") || tokenPresent(upper, "PROPER") || tokenPresent(upper, "RERIP") ||
 		tokenPresent(upper, "REISSUE") {
@@ -431,6 +523,11 @@ func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 	return parsed
 }
 
+func (facts parsedTitleFacts) hasEvidence() bool {
+	return facts.Resolution != "" || facts.MediaKind != mediaKindUnknown || facts.Source != "" || facts.Codec != "" ||
+		facts.Container != "" || facts.Group != "" || facts.Edition != "" || facts.Region != ""
+}
+
 func hasBareWEBTitleMarker(value string) bool {
 	tokens := strings.FieldsFunc(value, func(r rune) bool {
 		return r == '.' || r == ' ' || r == '_' || r == '-' || r == '[' || r == ']'
@@ -480,14 +577,25 @@ func mediaKindFromText(value string) mediaKind {
 		strings.Contains(normalized, "BD100"), strings.Contains(normalized, "FULL DISC"), strings.Contains(normalized, "BLU RAY DISC"),
 		strings.Contains(normalized, "UHD DISC"), strings.Contains(normalized, "DVD5"), strings.Contains(normalized, "DVD9"):
 		return mediaKindFullDisc
+	case strings.Contains(normalized, "BD RIP"), strings.Contains(normalized, "BDRIP"), strings.Contains(normalized, "BLU RAY"),
+		strings.Contains(normalized, "BLURAY"):
+		return mediaKindDiscEncode
 	default:
 		return mediaKindUnknown
 	}
 }
 
 func deriveMediaFacts(typeValue string, sourceValue string, encodeValue string, titleKind mediaKind) (mediaKind, mediaClass, sourceFamily) {
-	combined := strings.Join([]string{typeValue, sourceValue, encodeValue}, " ")
-	kind := mediaKindFromText(combined)
+	kind := mediaKindFromText(strings.Join([]string{typeValue, encodeValue}, " "))
+	if strings.Contains(strings.ToUpper(typeValue), "DISC") {
+		kind = mediaKindFullDisc
+	}
+	if kind == mediaKindUnknown {
+		kind = titleKind
+	}
+	if kind == mediaKindUnknown {
+		kind = mediaKindFromText(sourceValue)
+	}
 	if kind == mediaKindUnknown {
 		switch {
 		case strings.Contains(strings.ToUpper(typeValue), "DISC"):
@@ -498,9 +606,6 @@ func deriveMediaFacts(typeValue string, sourceValue string, encodeValue string, 
 				kind = mediaKindDiscEncode
 			}
 		}
-	}
-	if kind == mediaKindUnknown {
-		kind = titleKind
 	}
 	if kind == mediaKindUnknown &&
 		(strings.Contains(strings.ToUpper(typeValue), "ENCODE") || strings.TrimSpace(encodeValue) != "") {
@@ -527,6 +632,212 @@ func deriveMediaFacts(typeValue string, sourceValue string, encodeValue string, 
 		return mediaKindUnknown, mediaClassUnknown, sourceFamilyUnknown
 	}
 	return mediaKindUnknown, mediaClassUnknown, sourceFamilyUnknown
+}
+
+func canonicalSource(value string) string {
+	normalized := compactAlphaNumeric(value)
+	switch {
+	case strings.Contains(normalized, "uhdbluray"), strings.Contains(normalized, "uhdbd"):
+		return "uhd_bluray"
+	case strings.Contains(normalized, "bluray"), strings.Contains(normalized, "bdrip"):
+		return "bluray"
+	case strings.Contains(normalized, "hddvd"):
+		return "hd_dvd"
+	case strings.Contains(normalized, "web"):
+		return "web"
+	case strings.Contains(normalized, "hdtv"):
+		return "hdtv"
+	case strings.Contains(normalized, "sdtv"):
+		return "sdtv"
+	case strings.Contains(normalized, "dvd"):
+		return "dvd"
+	case normalized == "":
+		return ""
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func canonicalResolution(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "uhd", "4k":
+		return "2160p"
+	case "fhd":
+		return "1080p"
+	case "hd":
+		return "720p"
+	case "sd":
+		return "sd"
+	default:
+		return normalized
+	}
+}
+
+func canonicalCodec(value string) string {
+	normalized := compactAlphaNumeric(value)
+	switch normalized {
+	case "x264", "h264", "avc", "avc1":
+		return "h264"
+	case "x265", "h265", "hevc", "hevc1":
+		return "h265"
+	case "xvid", "divx":
+		return "xvid"
+	case "av1", "vp9", "mpeg2", "mpeg4":
+		return normalized
+	case "":
+		return ""
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func canonicalContainer(value string) string {
+	normalized := compactAlphaNumeric(value)
+	switch normalized {
+	case "matroska", "mkv":
+		return "mkv"
+	case "mpeg4", "mp4":
+		return "mp4"
+	case "vobifo", "videots":
+		return "vob_ifo"
+	case "bluray", "bdmv", "m2ts":
+		return "m2ts"
+	case "transportstream", "ts":
+		return "ts"
+	case "iso", "avi":
+		return normalized
+	case "":
+		return ""
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func canonicalGroup(value string) string {
+	return strings.TrimLeft(strings.TrimSpace(value), "-")
+}
+
+func canonicalEdition(value string) string {
+	if canonical := canonicalTitleEdition(nil, []string{value}, value); canonical != "" {
+		return canonical
+	}
+	return strings.ToLower(strings.Join(strings.Fields(value), " "))
+}
+
+func canonicalTitleEdition(cuts []string, editions []string, title string) string {
+	joined := strings.Join(append(append([]string(nil), cuts...), editions...), " ") + " " + title
+	normalized := strings.NewReplacer(".", " ", "_", " ", "-", " ", "'", "").Replace(strings.ToLower(joined))
+	normalized = strings.Join(strings.Fields(normalized), " ")
+	values := make([]string, 0, 4)
+	for _, marker := range []struct {
+		phrase string
+		value  string
+	}{
+		{phrase: "directors cut", value: "directors_cut"},
+		{phrase: "director s cut", value: "directors_cut"},
+		{phrase: "extended cut", value: "extended"},
+		{phrase: "extended edition", value: "extended"},
+		{phrase: "theatrical cut", value: "theatrical"},
+		{phrase: "theatrical edition", value: "theatrical"},
+		{phrase: "final cut", value: "final_cut"},
+		{phrase: "international cut", value: "international_cut"},
+		{phrase: "alternate cut", value: "alternate_cut"},
+		{phrase: "uncut", value: "uncut"},
+		{phrase: "unrated", value: "unrated"},
+	} {
+		if strings.Contains(normalized, marker.phrase) && !slices.Contains(values, marker.value) {
+			values = append(values, marker.value)
+		}
+	}
+	slices.Sort(values)
+	return strings.Join(values, "+")
+}
+
+func canonicalRegion(value string) string {
+	normalized := compactAlphaNumeric(value)
+	switch {
+	case strings.Contains(normalized, "pal"):
+		return "pal"
+	case strings.Contains(normalized, "ntsc"):
+		return "ntsc"
+	case normalized == "":
+		return ""
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func sourceFromTitle(upper string) string {
+	for _, marker := range []struct {
+		tokens []string
+		value  string
+	}{
+		{tokens: []string{"UHD BLURAY", "UHD BLU-RAY", "UHD.BLU-RAY", "UHDBD"}, value: "uhd_bluray"},
+		{tokens: []string{"BLURAY", "BLU-RAY", "BLU.RAY", "BDRIP"}, value: "bluray"},
+		{tokens: []string{"HD-DVD", "HDDVD"}, value: "hd_dvd"},
+		{tokens: []string{"WEB-DL", "WEBDL", "WEBRIP", "WEB-RIP", "WEB.RIP"}, value: "web"},
+		{tokens: []string{"HDTV"}, value: "hdtv"},
+		{tokens: []string{"SDTV"}, value: "sdtv"},
+		{tokens: []string{"DVD", "DVDRIP"}, value: "dvd"},
+	} {
+		for _, token := range marker.tokens {
+			if tokenPresent(upper, token) || strings.Contains(upper, token) {
+				return marker.value
+			}
+		}
+	}
+	return ""
+}
+
+func codecFromTitle(upper string) string {
+	for _, token := range []string{"X265", "H265", "H.265", "HEVC", "X264", "H264", "H.264", "AVC", "XVID", "AV1", "VP9", "MPEG2"} {
+		if tokenPresent(upper, token) || strings.Contains(upper, token) {
+			return canonicalCodec(token)
+		}
+	}
+	return ""
+}
+
+func containerFromTitle(upper string) string {
+	for _, token := range []string{"MKV", "MP4", "M2TS", "VOB_IFO", "VIDEO_TS", "ISO", "AVI"} {
+		if tokenPresent(upper, token) || strings.HasSuffix(upper, "."+token) {
+			return canonicalContainer(token)
+		}
+	}
+	return ""
+}
+
+func groupFromTitle(name string) string {
+	name = strings.TrimSuffix(strings.TrimSpace(name), ".mkv")
+	name = strings.TrimSuffix(name, ".mp4")
+	separator := strings.LastIndex(name, "-")
+	if separator < 0 || separator == len(name)-1 {
+		return ""
+	}
+	group := name[separator+1:]
+	if strings.ContainsAny(group, ". _[]()") {
+		return ""
+	}
+	return canonicalGroup(group)
+}
+
+func regionFromTitle(upper string) string {
+	for _, value := range []string{"PAL", "NTSC"} {
+		if tokenPresent(upper, value) {
+			return strings.ToLower(value)
+		}
+	}
+	return ""
+}
+
+func compactAlphaNumeric(value string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, strings.TrimSpace(value))
 }
 
 func contentScopeFromValues(
@@ -747,6 +1058,8 @@ func dimensionFact(facts normalizedFacts, dimension trackerspkg.DupeDimension) F
 		return facts.Group
 	case trackerspkg.DupeDimensionRepack:
 		return facts.Repack
+	case trackerspkg.DupeDimensionSize:
+		return facts.Size
 	case trackerspkg.DupeDimensionHDR,
 		trackerspkg.DupeDimensionPack,
 		trackerspkg.DupeDimensionSeason,

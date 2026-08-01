@@ -41,12 +41,12 @@ func TestMinimumContentAgeBoundary(t *testing.T) {
 
 	now := time.Date(2026, time.July, 18, 0, 0, 0, 0, time.UTC)
 	if minimumContentAgeViolation(api.TrackerValidationSubject{
-		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{ReleaseDate: "2016-07-18"}},
+		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{ReleaseDate: "2016-06-18"}},
 	}, now) {
 		t.Fatal("content on the age boundary was rejected")
 	}
 	if !minimumContentAgeViolation(api.TrackerValidationSubject{
-		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{ReleaseDate: "2016-07-19"}},
+		ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{ReleaseDate: "2016-06-19"}},
 	}, now) {
 		t.Fatal("content newer than the age boundary was allowed")
 	}
@@ -69,7 +69,7 @@ func TestMinimumContentAgeYearFallback(t *testing.T) {
 	if !minimumContentAgeViolation(api.TrackerValidationSubject{
 		Release: api.ReleaseInfo{Year: 2017},
 	}, now) {
-		t.Fatal("content newer than the ten-year fallback year was allowed")
+		t.Fatal("content newer than the ten-year-and-one-month fallback year was allowed")
 	}
 }
 
@@ -83,50 +83,50 @@ func TestRTFContentAgeEligibilityExactBoundaries(t *testing.T) {
 		want     rtfAgeEligibilityVerdict
 	}{
 		{
-			name: "exact anniversary qualifies",
+			name: "exact ten-year-and-one-month boundary qualifies",
 			now:  time.Date(2026, time.July, 18, 0, 0, 0, 0, time.UTC),
 			metadata: api.SourceScopedMetadata{
-				TMDB: &api.TMDBMetadata{ReleaseDate: "2016-07-18"},
+				TMDB: &api.TMDBMetadata{ReleaseDate: "2016-06-18"},
 			},
 			want: rtfAgeEligible,
 		},
 		{
-			name: "day after exact anniversary is too new",
+			name: "day after exact boundary is too new",
 			now:  time.Date(2026, time.July, 18, 0, 0, 0, 0, time.UTC),
 			metadata: api.SourceScopedMetadata{
-				TMDB: &api.TMDBMetadata{ReleaseDate: "2016-07-19"},
+				TMDB: &api.TMDBMetadata{ReleaseDate: "2016-06-19"},
 			},
 			want: rtfAgeIneligibleTooNew,
 		},
 		{
-			name: "leap day is too new on february 28",
-			now:  time.Date(2026, time.February, 28, 0, 0, 0, 0, time.UTC),
+			name: "leap day is too new before the extra month",
+			now:  time.Date(2026, time.March, 28, 0, 0, 0, 0, time.UTC),
 			metadata: api.SourceScopedMetadata{
 				TMDB: &api.TMDBMetadata{ReleaseDate: "2016-02-29"},
 			},
 			want: rtfAgeIneligibleTooNew,
 		},
 		{
-			name: "leap day qualifies on march 1",
-			now:  time.Date(2026, time.March, 1, 0, 0, 0, 0, time.UTC),
+			name: "leap day qualifies after the extra month",
+			now:  time.Date(2026, time.March, 29, 0, 0, 0, 0, time.UTC),
 			metadata: api.SourceScopedMetadata{
 				TMDB: &api.TMDBMetadata{ReleaseDate: "2016-02-29"},
 			},
 			want: rtfAgeEligible,
 		},
 		{
-			name: "leap-day cutoff uses calendar normalization",
+			name: "month subtraction boundary qualifies",
 			now:  time.Date(2024, time.February, 29, 0, 0, 0, 0, time.UTC),
 			metadata: api.SourceScopedMetadata{
-				TMDB: &api.TMDBMetadata{ReleaseDate: "2014-03-01"},
+				TMDB: &api.TMDBMetadata{ReleaseDate: "2014-01-29"},
 			},
 			want: rtfAgeEligible,
 		},
 		{
-			name: "day after leap-day cutoff is too new",
+			name: "day after month subtraction boundary is too new",
 			now:  time.Date(2024, time.February, 29, 0, 0, 0, 0, time.UTC),
 			metadata: api.SourceScopedMetadata{
-				TMDB: &api.TMDBMetadata{ReleaseDate: "2014-03-02"},
+				TMDB: &api.TMDBMetadata{ReleaseDate: "2014-01-30"},
 			},
 			want: rtfAgeIneligibleTooNew,
 		},

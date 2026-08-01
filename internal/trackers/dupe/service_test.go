@@ -242,6 +242,44 @@ func TestCandidateLogIncludesOnlyDecisiveDeduplicatedEvidence(t *testing.T) {
 	}
 }
 
+func TestSetFindingLogIncludesBoundedOccupancyEvidence(t *testing.T) {
+	t.Parallel()
+
+	logger := &recordingDupeLogger{}
+	service := testService(nil)
+	service.logger = logger
+	service.logSetFinding("PTP", SetFinding{
+		RuleID:                           "ptp/duplicate/v2/1080p_x264_capacity",
+		Status:                           RuleFindingMatched,
+		Relation:                         api.DupeRelationCoexists,
+		ReasonCode:                       "set_capacity_available",
+		ExistingOccupancy:                1,
+		Capacity:                         2,
+		MinimumSizeSeparationPercent:     20,
+		ObservedMinimumSeparationPercent: 20,
+		SeparationKnown:                  true,
+		RolePreference:                   trackerspkg.DupeSetRoleManual,
+		CandidateIDs:                     []string{"candidate-1"},
+		FactSummaries: []string{
+			"candidate[id=candidate-1,size=80,kind=disc_encode,resolution=1080p,codec=h264,hdr=sdr,edition=]",
+		},
+	})
+	if len(logger.debug) != 1 {
+		t.Fatalf("set logs = %#v", logger.debug)
+	}
+	for _, value := range []string{
+		"relation=coexists",
+		"occupancy=1 capacity=2",
+		"minimum_size_separation=20.00 observed_size_separation=20.00 role=manual",
+		`candidates="candidate-1"`,
+		"kind=disc_encode",
+	} {
+		if !strings.Contains(logger.debug[0], value) {
+			t.Fatalf("set log missing %q: %q", value, logger.debug[0])
+		}
+	}
+}
+
 func TestCandidateLogIncludesStructuredComparisonOperands(t *testing.T) {
 	t.Parallel()
 
@@ -274,10 +312,10 @@ func TestCandidateLogIncludesStructuredComparisonOperands(t *testing.T) {
 		Relation:    api.DupeRelationInsufficientEvidence,
 		WinningRule: "sp/duplicate/v2/slot",
 		Findings: []RuleFinding{{
-			RuleID:     "sp/duplicate/v2/slot",
-			Status:     RuleFindingIndeterminate,
-			Missing:    []string{"candidate_hdr"},
-			Priority:   findingPrioritySlotMissing,
+			RuleID:      "sp/duplicate/v2/slot",
+			Status:      RuleFindingIndeterminate,
+			Missing:     []string{"candidate_hdr"},
+			Priority:    findingPrioritySlotMissing,
 			Specificity: 3,
 			comparisons: []factComparison{{
 				Dimension: trackerspkg.DupeDimensionType,
@@ -307,6 +345,45 @@ func TestCandidateLogIncludesStructuredComparisonOperands(t *testing.T) {
 		if !strings.Contains(logLine, value) {
 			t.Fatalf("candidate log missing %q: %q", value, logLine)
 		}
+	}
+}
+
+func TestCandidateLogShowsDifferentTargetAndCandidateOperands(t *testing.T) {
+	t.Parallel()
+
+	result := Evaluate(
+		api.TrackerDuplicateTarget{
+			Source:      "BluRay",
+			Resolution:  "1080p",
+			VideoEncode: "x264",
+			Group:       "GRP",
+		},
+		[]TrackerCandidate{NormalizeCandidate(api.DupeEntry{
+			Name: "Example.Release.2026.1080p.WEB-DL.H.264-GRP",
+		}, "AR")},
+		trackerspkg.DupePolicy{
+			ID:                             "ar/duplicate/v2",
+			EvidenceID:                     "ar-uploading-guidelines",
+			SlotDifferencesOverrideGeneral: true,
+			SlotDimensions: []trackerspkg.DupeDimension{
+				trackerspkg.DupeDimensionSource,
+				trackerspkg.DupeDimensionResolution,
+				trackerspkg.DupeDimensionCodec,
+				trackerspkg.DupeDimensionGroup,
+			},
+		},
+		SearchEvidence{Complete: true},
+	).Candidates[0]
+	logger := &recordingDupeLogger{}
+	service := testService(nil)
+	service.logger = logger
+	service.logCandidateEvaluation("AR", result)
+	if len(logger.debug) != 1 || !strings.Contains(
+		logger.debug[0],
+		"source[target={bluray},target_status=complete,target_origin=target_media,candidate={web},candidate_status=partial,"+
+			"candidate_origin=tracker_title,result=different]",
+	) {
+		t.Fatalf("different comparison operands missing: %#v", logger.debug)
 	}
 }
 

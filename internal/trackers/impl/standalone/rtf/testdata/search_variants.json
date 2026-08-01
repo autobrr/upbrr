@@ -1,0 +1,44 @@
+[
+  {
+    "id": "42",
+    "name": "Example.Release.1990.1080p.BluRay.x264.SDR-GRP",
+    "size": 123456789,
+    "fileCount": 2,
+    "files": [
+      {"name": "Example.Release.1990.1080p.BluRay.x264.SDR-GRP.mkv"}
+    ],
+    "type": "ENCODE",
+    "resolution": "1080p",
+    "source": "BluRay",
+    "codec": "x264",
+    "container": "MKV"
+  },
+  {
+    "id": "43",
+    "name": "Example.Release.1990.720p.BluRay.x264.SDR-GRP",
+    "size": 93456789,
+    "files": [
+      {"name": "Example.Release.1990.720p.BluRay.x264.SDR-GRP.mkv"}
+    ]
+  },
+  {
+    "id": "44",
+    "name": "Example.Release.1990.2160p.UHD.BluRay.Remux.HDR10-GRP",
+    "size": 323456789,
+    "files": []
+  },
+  {
+    "id": "45",
+    "name": "Example.Release.1990.PAL.DVD9.SDR-GRP",
+    "size": 423456789,
+    "files": [
+      {"name": "VIDEO_TS/VIDEO_TS.IFO"},
+      {"name": "VIDEO_TS/VTS_01_1.VOB"}
+    ]
+  },
+  {
+    "id": "46",
+    "name": "Example.Release.1990.1080p.Upscale.MP4-GRP",
+    "files": null
+  }
+]

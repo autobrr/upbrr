@@ -1,0 +1,12 @@
+{
+  "TotalResults": "1",
+  "Movies": [
+    {
+      "GroupId": "700",
+      "Title": "Example Release",
+      "Year": "2026",
+      "ImdbId": "1234567"
+    }
+  ],
+  "Page": "1"
+}

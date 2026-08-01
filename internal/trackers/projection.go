@@ -45,7 +45,7 @@ func pureReleaseProjection(input PreparationInput) api.TrackerReleaseProjection 
 		Date:        strings.TrimSpace(input.Meta.DailyEpisodeDate),
 	}
 	target := duplicateTarget(input.Meta)
-	target.Names = []string{canonicalName}
+	target.Names = append([]string{canonicalName}, target.Names...)
 	projection := api.TrackerReleaseProjection{
 		TrackerID:            api.TrackerID(strings.ToUpper(strings.TrimSpace(input.Tracker))),
 		DisplayName:          strings.ToUpper(strings.TrimSpace(input.Tracker)),
@@ -108,7 +108,7 @@ func projectDryRunEntry(input PreparationInput, preview api.TrackerDryRunEntry) 
 		Date:        strings.TrimSpace(input.Meta.DailyEpisodeDate),
 	}
 	target := duplicateTarget(input.Meta)
-	target.Names = []string{canonicalName, uploadName}
+	target.Names = append([]string{canonicalName, uploadName}, target.Names...)
 	criteriaFingerprint, err := api.CanonicalWorkflowFingerprint(criteria)
 	if err != nil {
 		return api.TrackerReleaseProjection{}, fmt.Errorf("tracker projection criteria fingerprint: %w", err)
@@ -510,7 +510,7 @@ func (r *Registry) ProjectRelease(
 }
 
 func projectionDuplicateNames(projection api.TrackerReleaseProjection) []string {
-	values := make([]string, 0, 2+len(projection.AdditionalNames))
+	values := make([]string, 0, 2+len(projection.AdditionalNames)+len(projection.DuplicateTarget.Names))
 	values = append(values,
 		projection.CanonicalReleaseName,
 		projection.DuplicateCriteria.Name,
@@ -518,6 +518,7 @@ func projectionDuplicateNames(projection api.TrackerReleaseProjection) []string 
 	for _, additional := range projection.AdditionalNames {
 		values = append(values, additional.Value)
 	}
+	values = append(values, projection.DuplicateTarget.Names...)
 	result := make([]string, 0, len(values))
 	for _, value := range values {
 		value = strings.TrimSpace(value)
@@ -533,6 +534,7 @@ func projectionDuplicateNames(projection api.TrackerReleaseProjection) []string 
 
 func duplicateTarget(subject api.UploadSubject) api.TrackerDuplicateTarget {
 	return api.TrackerDuplicateTarget{
+		Names:       []string{SourceReleaseName(subject)},
 		Category:    string(subject.Identity.Category),
 		Type:        strings.TrimSpace(subject.Type),
 		Source:      strings.TrimSpace(subject.Source),

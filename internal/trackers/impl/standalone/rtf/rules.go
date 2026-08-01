@@ -15,9 +15,9 @@ import (
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
-const minimumContentAgeReason = "content must be at least 10 years old"
+const minimumContentAgeReason = "content must be at least 10 years and 1 month old"
 
-// validationPolicy strictly blocks content newer than RTF's ten-year
+// validationPolicy strictly blocks content newer than RTF's ten-year-and-one-month
 // eligibility cutoff and adult-classified releases.
 func validationPolicy() trackers.ValidationPolicyBinding {
 	return trackers.ValidationPolicyBinding{ID: "standalone-rtf-constructibility-v2", Check: checkRules}
@@ -68,7 +68,7 @@ func rtfContentAgeEligibility(
 	metadata api.SourceScopedMetadata,
 	now time.Time,
 ) rtfAgeEligibilityVerdict {
-	cutoff := now.UTC().AddDate(-10, 0, 0)
+	cutoff := now.UTC().AddDate(-10, -1, 0)
 	evidence := youngestRTFReleaseEvidence(release, metadata)
 	if releaseDate, ok := evidence.exactDate(); ok {
 		if releaseDate.After(cutoff) {

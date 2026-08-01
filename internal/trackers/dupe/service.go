@@ -562,6 +562,9 @@ func (s *Service) projectAdapterResult(
 			hasDupes || evaluation.RequiresAction,
 		)
 		s.logTargetEvaluation(tracker, policy, evaluation.TargetFacts, search)
+		for _, finding := range evaluation.SetFindings {
+			s.logSetFinding(tracker, finding)
+		}
 		s.logger.Debugf(
 			"dupechecking: search tracker=%s pages=%d complete=%t scope=%s warnings=%q",
 			tracker,
@@ -613,6 +616,29 @@ func (s *Service) projectAdapterResult(
 		result := failedPublicResult(tracker, FailureInternal, "duplicate adapter returned invalid result", checkedAt)
 		return result, newAssessmentEntry(meta, s.cfg, tracker, DispositionFailed, FailureInternal, false, api.DupeMatch{}, nil)
 	}
+}
+
+func (s *Service) logSetFinding(tracker string, finding SetFinding) {
+	observed := "unknown"
+	if finding.SeparationKnown {
+		observed = fmt.Sprintf("%.2f", finding.ObservedMinimumSeparationPercent)
+	}
+	s.logger.Debugf(
+		"dupechecking: set tracker=%s rule=%s relation=%s reason=%s occupancy=%d capacity=%d "+
+			"minimum_size_separation=%.2f observed_size_separation=%s role=%s candidates=%q facts=%q missing=%q",
+		tracker,
+		dupeCandidateLogValue(finding.RuleID),
+		finding.Relation,
+		dupeCandidateLogValue(finding.ReasonCode),
+		finding.ExistingOccupancy,
+		finding.Capacity,
+		finding.MinimumSizeSeparationPercent,
+		observed,
+		finding.RolePreference,
+		dupeCandidateLogValues(finding.CandidateIDs),
+		dupeCandidateLogValues(finding.FactSummaries),
+		dupeCandidateLogValues(finding.Missing),
+	)
 }
 
 func (s *Service) logCandidateEvaluation(tracker string, evaluation CandidateEvaluation) {

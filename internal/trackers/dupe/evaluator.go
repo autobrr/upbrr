@@ -5,6 +5,7 @@ package dupe
 
 import (
 	"path" //nolint:depguard // Candidate file names are torrent-internal slash data, not local filesystem paths.
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 // Evaluation is one deterministic general-plus-tracker policy result.
 type Evaluation struct {
 	Candidates     []CandidateEvaluation
+	SetFindings    []SetFinding
 	RequiresAction bool
 	Blocks         bool
 	Complete       bool
@@ -44,13 +46,27 @@ func Evaluate(
 ) Evaluation {
 	targetFacts := normalizeTargetFacts(target)
 	evaluation := Evaluation{Complete: search.Complete, TargetFacts: targetFacts}
+	candidateFacts := make([]normalizedFacts, 0, len(candidates))
 	for _, candidate := range candidates {
-		candidateFacts := normalizeCandidateFacts(candidate)
-		findings := collectCandidateFindings(target, targetFacts, candidate, candidateFacts, policy)
-		evaluation.Candidates = append(evaluation.Candidates, resolveCandidateFindings(candidate, candidateFacts, findings))
+		facts := normalizeCandidateFacts(candidate)
+		candidateFacts = append(candidateFacts, facts)
+		findings := collectCandidateFindings(target, targetFacts, candidate, facts, policy)
+		evaluation.Candidates = append(evaluation.Candidates, resolveCandidateFindings(candidate, facts, findings))
 	}
+	evaluation.SetFindings = evaluateSetRules(targetFacts, candidates, candidateFacts, policy, search)
+	applySetFindings(&evaluation)
 	for _, candidate := range evaluation.Candidates {
 		switch candidate.Relation {
+		case api.DupeRelationExactDuplicate, api.DupeRelationExistingPreferred:
+			evaluation.Blocks = true
+		case api.DupeRelationSameSlot, api.DupeRelationProposedTrumps, api.DupeRelationManualReview,
+			api.DupeRelationInsufficientEvidence:
+			evaluation.RequiresAction = true
+		case api.DupeRelationCoexists:
+		}
+	}
+	for _, finding := range evaluation.SetFindings {
+		switch finding.Relation {
 		case api.DupeRelationExactDuplicate, api.DupeRelationExistingPreferred:
 			evaluation.Blocks = true
 		case api.DupeRelationSameSlot, api.DupeRelationProposedTrumps, api.DupeRelationManualReview,
@@ -81,9 +97,12 @@ func exactCandidate(target api.TrackerDuplicateTarget, candidate TrackerCandidat
 		}
 		return !candidate.SizeKnown || target.SizeBytes == 0 || candidate.SizeBytes == target.SizeBytes
 	}
-	return slices.ContainsFunc(target.Names, func(name string) bool {
+	if slices.ContainsFunc(target.Names, func(name string) bool {
 		return sameCandidateName(name, candidate.Name)
-	})
+	}) {
+		return true
+	}
+	return len(target.FileNames) == 1 && releaseNameMatchesFile(target.FileNames[0], candidate.Name)
 }
 
 func sameCandidateName(left string, right string) bool {
@@ -97,7 +116,14 @@ func sameCandidateName(left string, right string) bool {
 	}
 	left = strings.ReplaceAll(left, `\`, "/")
 	right = strings.ReplaceAll(right, `\`, "/")
-	return strings.EqualFold(strings.TrimSuffix(path.Base(left), path.Ext(left)), strings.TrimSuffix(path.Base(right), path.Ext(right)))
+	return strings.EqualFold(path.Base(left), path.Base(right))
+}
+
+func releaseNameMatchesFile(fileName string, releaseName string) bool {
+	fileBase := filepath.Base(strings.TrimSpace(fileName))
+	releaseBase := path.Base(strings.ReplaceAll(strings.TrimSpace(releaseName), `\`, "/"))
+	extension := filepath.Ext(fileBase)
+	return extension != "" && releaseBase != "" && strings.EqualFold(strings.TrimSuffix(fileBase, extension), releaseBase)
 }
 
 func normalizedFileSet(files []string) []string {
@@ -298,6 +324,14 @@ func dupeReasonMessage(reason string) string {
 		return "Absolute size variance satisfies tracker coexistence policy."
 	case "candidate_trumpable":
 		return "Tracker marks the candidate as potentially trumpable."
+	case "set_capacity_available":
+		return "Capacity and minimum size separation permit another slot."
+	case "set_capacity_full":
+		return "The collection-level slot capacity is full and requires review."
+	case "set_size_separation_not_met":
+		return "The collection does not meet the minimum size separation for another slot."
+	case "set_evidence_incomplete":
+		return "Collection-level slot evidence is incomplete."
 	case "same_tracker_slot":
 		return "Candidate occupies the same tracker slot and requires review."
 	case "tracker_policy_not_evidence_backed":

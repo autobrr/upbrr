@@ -55,10 +55,10 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		return dupe.Failed(dupe.FailureInternal, "RTF handler misconfigured: no HTTP client", nil)
 	}
 	if !isRTFContentOldEnough(meta, time.Now().UTC()) {
-		return dupe.NotRun(dupe.NotRunUnsupportedContent, "RTF requires content at least 10 years old", nil)
+		return dupe.NotRun(dupe.NotRunUnsupportedContent, "RTF requires content at least 10 years and 1 month old", nil)
 	}
 
-	params, ok := buildRTFSearchParams(meta)
+	params, searchScope, searchComplete, ok := buildRTFSearchParams(meta)
 	if !ok {
 		return dupe.NotRun(dupe.NotRunMissingMetadata, "missing imdb/title for RTF dupe search", nil)
 	}
@@ -97,22 +97,37 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 	for _, raw := range list {
 		item, ok := raw.(map[string]any)
 		if !ok {
-			continue
+			return dupe.Failed(dupe.FailureResponseParse, "RTF response contained a malformed torrent", nil)
 		}
 		id := stringFromAny(item["id"])
+		if id == "" || strings.TrimSpace(stringFromAny(item["name"])) == "" {
+			return dupe.Failed(dupe.FailureResponseParse, "RTF response contained a malformed torrent", nil)
+		}
 		entry := api.DupeEntry{
-			Name:     stringFromAny(item["name"]),
-			ID:       id,
-			Link:     buildRTFLink(item, id),
-			Download: buildRTFDownloadLink(id),
+			Name:      stringFromAny(item["name"]),
+			ID:        id,
+			Link:      buildRTFLink(item, id),
+			Download:  buildRTFDownloadLink(id),
+			Type:      stringFromAny(item["type"]),
+			Res:       stringFromAny(item["resolution"]),
+			Source:    stringFromAny(item["source"]),
+			Codec:     stringFromAny(item["codec"]),
+			Container: stringFromAny(item["container"]),
+			Edition:   stringFromAny(item["edition"]),
+			Region:    stringFromAny(item["region"]),
 		}
 		size := intFromAny(item["size"])
 		if size > 0 {
 			entry.SizeKnown = true
 			entry.SizeBytes = size
 		}
+		if fileCount := positiveIntFromAny(item["fileCount"]); fileCount > 0 {
+			entry.FileCount = fileCount
+		}
 		if files, ok := item["files"].([]any); ok {
-			entry.FileCount = len(files)
+			if entry.FileCount == 0 {
+				entry.FileCount = len(files)
+			}
 			for _, f := range files {
 				if fileMap, ok := f.(map[string]any); ok {
 					name := stringFromAny(fileMap["name"])
@@ -124,22 +139,39 @@ func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dup
 		}
 		entries = append(entries, entry)
 	}
-	return dupe.Resolved(entries, nil)
+	warnings := []string(nil)
+	if !searchComplete {
+		warnings = []string{"RTF title search completeness is not evidenced"}
+	}
+	return dupe.ResolvedWithSearch(entries, warnings, dupe.SearchEvidence{
+		Complete: searchComplete,
+		Pages:    1,
+		Scope:    searchScope,
+		Warnings: warnings,
+	})
 }
 
-func buildRTFSearchParams(meta api.DuplicateSubject) (url.Values, bool) {
+func positiveIntFromAny(value any) int {
+	parsed, err := strconv.Atoi(strings.TrimSpace(stringFromAny(value)))
+	if err != nil || parsed <= 0 {
+		return 0
+	}
+	return parsed
+}
+
+func buildRTFSearchParams(meta api.DuplicateSubject) (url.Values, string, bool, bool) {
 	params := url.Values{}
 	params.Set("includingDead", "1")
 	if meta.Identity.IMDBID != 0 {
 		params.Set("imdbId", providerid.IMDb(meta.Identity.IMDBID).Prefixed())
-		return params, true
+		return params, "work_identity", true, true
 	}
 	query := cleanRTFSearchTitle(meta)
 	if query == "" {
-		return nil, false
+		return nil, "", false, false
 	}
 	params.Set("search", query)
-	return params, true
+	return params, "title_year", false, true
 }
 
 func cleanRTFSearchTitle(meta api.DuplicateSubject) string {
@@ -346,7 +378,8 @@ func intFromAny(value any) int64 {
 		parsed, _ := typed.Int64()
 		return parsed
 	case float64:
-		return int64(typed)
+		parsed, _ := strconv.ParseInt(strconv.FormatFloat(typed, 'f', -1, 64), 10, 64)
+		return parsed
 	case string:
 		parsed, _ := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
 		return parsed

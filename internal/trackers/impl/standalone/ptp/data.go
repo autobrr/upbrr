@@ -141,6 +141,7 @@ func (l *dataLookup) description(ctx context.Context, headers map[string]string,
 }
 
 func (l *dataLookup) getJSON(ctx context.Context, params url.Values, headers map[string]string) (map[string]any, error) {
+	params.Set("json", "noredirect")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("trackerdata: request: %w", err)

@@ -54,6 +54,44 @@ func TestEvaluateRetainsDistinctCandidateRelations(t *testing.T) {
 	}
 }
 
+func TestEvaluateReleaseNameIdentity(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name      string
+		target    api.TrackerDuplicateTarget
+		candidate string
+		wantExact bool
+	}{
+		{
+			name: "single file stem",
+			target: api.TrackerDuplicateTarget{
+				Names:     []string{"Example Release 2026 Generated-GRP"},
+				FileNames: []string{"Example.Release.2026.1080p-GRP.mkv"},
+			},
+			candidate: "Example.Release.2026.1080p-GRP",
+			wantExact: true,
+		},
+		{
+			name:      "different dotted release names",
+			target:    api.TrackerDuplicateTarget{Names: []string{"Example.Release.2026.Generated-GRP"}},
+			candidate: "Example.Release.2026.Original-GRP",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := Evaluate(
+				test.target,
+				[]TrackerCandidate{{Name: test.candidate}},
+				trackerspkg.DupePolicy{},
+				SearchEvidence{Complete: true},
+			).Candidates[0].Relation
+			if (got == api.DupeRelationExactDuplicate) != test.wantExact {
+				t.Fatalf("release-name relation = %q", got)
+			}
+		})
+	}
+}
+
 func TestEvaluateANTGenericHDRIsInsufficientForHDR10Plus(t *testing.T) {
 	t.Parallel()
 

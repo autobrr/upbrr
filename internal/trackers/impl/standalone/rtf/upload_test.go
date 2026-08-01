@@ -160,7 +160,7 @@ func TestUploadBlockedExpiredAPIKeyDoesNotRefreshOrPersist(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected blocked upload error")
 	}
-	if !strings.Contains(err.Error(), "content must be at least 10 years old") {
+	if !strings.Contains(err.Error(), "content must be at least 10 years and 1 month old") {
 		t.Fatalf("expected eligibility error, got %v", err)
 	}
 	if requests != 0 {

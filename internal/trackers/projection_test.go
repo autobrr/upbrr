@@ -85,6 +85,7 @@ func TestRegistryCatalogAndProjectionUseStableIdentityAndFinalPreviewSemantics(t
 	projection, failure := registry.ProjectRelease(context.Background(), PreparationInput{
 		Tracker: "EXAMPLE-LEGACY",
 		Meta: api.UploadSubject{
+			Filename:    "Example.Source.2026.1080p-GRP.mkv",
 			ReleaseName: "Example.Show.S01E01.1080p.WEB-DL.x265-GRP",
 			SeasonInt:   1,
 			EpisodeInt:  1,
@@ -117,6 +118,9 @@ func TestRegistryCatalogAndProjectionUseStableIdentityAndFinalPreviewSemantics(t
 	}
 	if projection.DuplicateCriteria.Name != "Example.Show.S01E01.1080p.WEB-DL.x265-GRP" {
 		t.Fatalf("duplicate query name = %q", projection.DuplicateCriteria.Name)
+	}
+	if !slices.Contains(projection.DuplicateTarget.Names, "Example.Source.2026.1080p-GRP") {
+		t.Fatalf("duplicate target names = %#v", projection.DuplicateTarget.Names)
 	}
 	if projection.Taxonomy.Category.Label != "TV" || projection.Taxonomy.Codec.Label != "H.265" {
 		t.Fatalf("projection taxonomy = %#v", projection.Taxonomy)

@@ -448,6 +448,18 @@ type DupePolicy struct {
 	SearchScope DupeSearchScope
 	// SlotDimensions are compared to establish tracker slot membership.
 	SlotDimensions []DupeDimension
+	// OptionalSlotDimensions establish distinct slots when either side carries
+	// evidence. Two missing values describe the same default slot.
+	OptionalSlotDimensions []DupeDimension
+	// CompleteSlotDimensions require authoritative evidence before a configured
+	// slot dimension can establish equality or coexistence.
+	CompleteSlotDimensions []DupeDimension
+	// RequiredDimensions must be known before fallback review can resolve, but
+	// a difference does not itself prove coexistence.
+	RequiredDimensions []DupeDimension
+	// SuppressGeneralCoexistence delegates named general coexistence axes to
+	// tracker rules without disabling exact or disjoint-content findings.
+	SuppressGeneralCoexistence []DupeDimension
 	// HDRSlotMode declares how normalized HDR facts map to tracker slots.
 	HDRSlotMode DupeHDRSlotMode
 	// HDRPartialMode declares how partial tracker HDR evidence is interpreted.
@@ -458,12 +470,24 @@ type DupePolicy struct {
 	// RequireDolbyVisionProfile keeps same-format Dolby Vision decisions
 	// indeterminate until both profiles are known.
 	RequireDolbyVisionProfile bool
+	// DolbyVisionProfile5Slot treats Profile 5 as an objective independent slot
+	// when both Dolby Vision profiles are authoritative.
+	DolbyVisionProfile5Slot bool
+	// SlotContradictionsRequireManualReview prevents contradictory structured
+	// and title evidence from collapsing into a generic missing-fact result.
+	SlotContradictionsRequireManualReview bool
+	// SlotDifferencesOverrideGeneral keeps a tracker tuple's decisive dimension
+	// and operand provenance ahead of broader general coexistence findings.
+	SlotDifferencesOverrideGeneral bool
 	// CoexistenceRules are evaluated before directional precedence.
 	CoexistenceRules []DupeRule
 	// PrecedenceRules express directional existing/proposed preferences.
 	PrecedenceRules []DupeRule
 	// ManualReviewRules identify subjective or staff-owned decisions.
 	ManualReviewRules []DupeRule
+	// SetRules evaluate capacity-limited slot families across the complete
+	// candidate collection.
+	SetRules []DupeSetRule
 	// SizeVariancePercent permits coexistence when absolute size difference is
 	// at least this percentage of the larger release.
 	SizeVariancePercent float64
@@ -474,6 +498,9 @@ type DupePolicy struct {
 	// SameSlotFallback is applied only after exact, content, general,
 	// tracker-overlay, and size findings are resolved.
 	SameSlotFallback *DupeRule
+	// TrumpableOverridesSlot permits an authoritative tracker-supplied
+	// trumpable flag to outrank ordinary slot/capacity review.
+	TrumpableOverridesSlot bool
 }
 
 // DupeSearchScope defines policy-safe remote narrowing and completion bounds.
@@ -508,6 +535,7 @@ const (
 	DupeDimensionSeason       DupeDimension = "season"
 	DupeDimensionEpisode      DupeDimension = "episode"
 	DupeDimensionDate         DupeDimension = "date"
+	DupeDimensionSize         DupeDimension = "size"
 )
 
 // DupeHDRSlotMode identifies one tracker HDR slot taxonomy.
@@ -553,6 +581,9 @@ type DupeCondition struct {
 	ValuesEqual      bool
 	ValuesDifferent  bool
 	RequiresComplete bool
+	// MissingNotApplicable makes a conditional exception inapplicable when one
+	// operand is absent instead of turning the whole comparison indeterminate.
+	MissingNotApplicable bool
 }
 
 // DupeRule is one declarative directional comparison rule.
@@ -568,6 +599,55 @@ type DupeRule struct {
 	// OverridesGeneral allows an indeterminate rule whose known prerequisites
 	// match to shadow a lower-priority general coexistence finding.
 	OverridesGeneral bool
+}
+
+// DupeSetRole identifies the authoritative role preference available to a
+// capacity-limited slot rule.
+type DupeSetRole string
+
+const (
+	DupeSetRoleCompact DupeSetRole = "compact"
+	DupeSetRoleQuality DupeSetRole = "quality"
+	DupeSetRoleManual  DupeSetRole = "manual"
+)
+
+// DupeSetMissingDisposition identifies the conservative result used when a
+// set rule lacks complete collection evidence.
+type DupeSetMissingDisposition string
+
+const (
+	DupeSetMissingInsufficient DupeSetMissingDisposition = "insufficient_evidence"
+	DupeSetMissingManual       DupeSetMissingDisposition = "manual_review"
+)
+
+// DupeSetPredicate is one declarative target or candidate fact predicate.
+type DupeSetPredicate struct {
+	Dimension        DupeDimension
+	Values           []string
+	ExcludedValues   []string
+	RequiresComplete bool
+	MatchTarget      bool
+	Optional         bool
+}
+
+// DupeSetCapacityOverride lowers a rule's capacity when any candidate matches
+// its predicates.
+type DupeSetCapacityOverride struct {
+	CandidatePredicates []DupeSetPredicate
+	Capacity            int
+}
+
+// DupeSetRule declares one collection-level capacity policy.
+type DupeSetRule struct {
+	ID                           string
+	EvidenceID                   string
+	TargetPredicates             []DupeSetPredicate
+	CandidatePredicates          []DupeSetPredicate
+	Capacity                     int
+	CapacityOverrides            []DupeSetCapacityOverride
+	MinimumSizeSeparationPercent float64
+	RolePreference               DupeSetRole
+	MissingEvidenceDisposition   DupeSetMissingDisposition
 }
 
 // SeasonPackPrecedenceRules returns opt-in directional season-pack rules.

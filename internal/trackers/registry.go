@@ -372,9 +372,14 @@ func (r *Registry) LookupDupePolicy(tracker string) (DupePolicy, bool) {
 
 func cloneDupePolicy(policy DupePolicy) DupePolicy {
 	policy.SlotDimensions = append([]DupeDimension(nil), policy.SlotDimensions...)
+	policy.OptionalSlotDimensions = append([]DupeDimension(nil), policy.OptionalSlotDimensions...)
+	policy.CompleteSlotDimensions = append([]DupeDimension(nil), policy.CompleteSlotDimensions...)
+	policy.RequiredDimensions = append([]DupeDimension(nil), policy.RequiredDimensions...)
+	policy.SuppressGeneralCoexistence = append([]DupeDimension(nil), policy.SuppressGeneralCoexistence...)
 	policy.CoexistenceRules = cloneDupeRules(policy.CoexistenceRules)
 	policy.PrecedenceRules = cloneDupeRules(policy.PrecedenceRules)
 	policy.ManualReviewRules = cloneDupeRules(policy.ManualReviewRules)
+	policy.SetRules = cloneDupeSetRules(policy.SetRules)
 	policy.SizeVarianceResolutions = append([]string(nil), policy.SizeVarianceResolutions...)
 	policy.SizeVarianceTypes = append([]string(nil), policy.SizeVarianceTypes...)
 	if policy.SameSlotFallback != nil {
@@ -382,6 +387,32 @@ func cloneDupePolicy(policy DupePolicy) DupePolicy {
 		policy.SameSlotFallback = &fallback[0]
 	}
 	return policy
+}
+
+func cloneDupeSetRules(rules []DupeSetRule) []DupeSetRule {
+	result := make([]DupeSetRule, len(rules))
+	for index, rule := range rules {
+		rule.TargetPredicates = cloneDupeSetPredicates(rule.TargetPredicates)
+		rule.CandidatePredicates = cloneDupeSetPredicates(rule.CandidatePredicates)
+		rule.CapacityOverrides = append([]DupeSetCapacityOverride(nil), rule.CapacityOverrides...)
+		for overrideIndex := range rule.CapacityOverrides {
+			rule.CapacityOverrides[overrideIndex].CandidatePredicates = cloneDupeSetPredicates(
+				rule.CapacityOverrides[overrideIndex].CandidatePredicates,
+			)
+		}
+		result[index] = rule
+	}
+	return result
+}
+
+func cloneDupeSetPredicates(predicates []DupeSetPredicate) []DupeSetPredicate {
+	result := make([]DupeSetPredicate, len(predicates))
+	for index, predicate := range predicates {
+		predicate.Values = append([]string(nil), predicate.Values...)
+		predicate.ExcludedValues = append([]string(nil), predicate.ExcludedValues...)
+		result[index] = predicate
+	}
+	return result
 }
 
 func cloneDupeRules(rules []DupeRule) []DupeRule {
@@ -633,8 +664,9 @@ func validateDupePolicy(policy DupePolicy) error {
 		return errors.New("policy ID is empty")
 	}
 	isCompatibility := strings.Contains(strings.ToLower(policy.ID), "/duplicate-compat/")
-	if !isCompatibility && (len(policy.SlotDimensions) > 0 || len(policy.CoexistenceRules) > 0 ||
-		len(policy.PrecedenceRules) > 0 || policy.SizeVariancePercent > 0) {
+	if !isCompatibility && (len(policy.SlotDimensions) > 0 || len(policy.OptionalSlotDimensions) > 0 || len(policy.CompleteSlotDimensions) > 0 ||
+		len(policy.RequiredDimensions) > 0 || len(policy.SuppressGeneralCoexistence) > 0 || len(policy.CoexistenceRules) > 0 ||
+		len(policy.PrecedenceRules) > 0 || len(policy.SetRules) > 0 || policy.SizeVariancePercent > 0) {
 		if strings.TrimSpace(policy.EvidenceID) == "" {
 			return errors.New("automatic policy has no evidence ID")
 		}
@@ -660,6 +692,39 @@ func validateDupePolicy(policy DupePolicy) error {
 			if !rule.RequiresManualStep && !isCompatibility &&
 				strings.TrimSpace(firstPolicyEvidenceID(rule.EvidenceID, policy.EvidenceID)) == "" {
 				return fmt.Errorf("automatic rule %q has no evidence ID", ruleID)
+			}
+		}
+	}
+	for _, rule := range policy.SetRules {
+		ruleID := strings.TrimSpace(rule.ID)
+		if ruleID == "" {
+			return errors.New("set rule ID is empty")
+		}
+		if _, exists := seenRuleIDs[ruleID]; exists {
+			return fmt.Errorf("duplicate rule ID %q", ruleID)
+		}
+		seenRuleIDs[ruleID] = struct{}{}
+		if strings.TrimSpace(firstPolicyEvidenceID(rule.EvidenceID, policy.EvidenceID)) == "" {
+			return fmt.Errorf("set rule %q has no evidence ID", ruleID)
+		}
+		if len(rule.TargetPredicates) == 0 || len(rule.CandidatePredicates) == 0 {
+			return fmt.Errorf("set rule %q has no target or candidate predicates", ruleID)
+		}
+		if rule.Capacity <= 0 {
+			return fmt.Errorf("set rule %q has invalid capacity", ruleID)
+		}
+		if rule.MinimumSizeSeparationPercent < 0 || rule.MinimumSizeSeparationPercent >= 100 {
+			return fmt.Errorf("set rule %q has invalid size separation", ruleID)
+		}
+		if rule.RolePreference != DupeSetRoleCompact && rule.RolePreference != DupeSetRoleQuality && rule.RolePreference != DupeSetRoleManual {
+			return fmt.Errorf("set rule %q has invalid role preference", ruleID)
+		}
+		if rule.MissingEvidenceDisposition != DupeSetMissingInsufficient && rule.MissingEvidenceDisposition != DupeSetMissingManual {
+			return fmt.Errorf("set rule %q has invalid missing-evidence disposition", ruleID)
+		}
+		for _, override := range rule.CapacityOverrides {
+			if override.Capacity <= 0 || override.Capacity > rule.Capacity || len(override.CandidatePredicates) == 0 {
+				return fmt.Errorf("set rule %q has invalid capacity override", ruleID)
 			}
 		}
 	}
