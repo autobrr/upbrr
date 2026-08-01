@@ -6,7 +6,20 @@ package core
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/autobrr/upbrr/pkg/api"
 )
+
+func TestApplySkipAutoTorrentDefault(t *testing.T) {
+	t.Parallel()
+
+	if !applySkipAutoTorrentDefault(api.PrepareInput{}, true).Search.Skip {
+		t.Fatal("configured skip_auto_torrent was not applied")
+	}
+	if !applySkipAutoTorrentDefault(api.PrepareInput{Search: api.ClientSearchPolicy{Skip: true}}, false).Search.Skip {
+		t.Fatal("request skip_auto_torrent was not preserved")
+	}
+}
 
 func TestWorkflowPrivateVaultRootIsDatabaseScoped(t *testing.T) {
 	t.Parallel()
