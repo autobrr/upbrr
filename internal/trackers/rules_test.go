@@ -825,32 +825,19 @@ func TestEvaluateRulesNBLAllowsTVWithOriginalAudioAndEnglishSubs(t *testing.T) {
 	}
 }
 
-func TestEvaluateRulesNBLDiscsRequireEnglishButNotLanguageCombinationRules(t *testing.T) {
+func TestEvaluateRulesNBLSkipsLanguageRuleForBDMVOnly(t *testing.T) {
 	t.Parallel()
 
-	for _, discType := range []string{"BDMV", "DVD"} {
-		t.Run(discType, func(t *testing.T) {
-			t.Parallel()
-			meta := api.RuleSubject{
-				Identity: api.ExternalIdentity{Category: "tv"},
-				DiscType: discType,
-			}
-			failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta)
-			blocking := nonAdvisoryFailures(failures)
-			if len(blocking) != 1 || blocking[0].Rule != "language_rule" {
-				t.Fatalf("%s missing-language failures = %#v", discType, failures)
-			}
+	bdmv := api.RuleSubject{Identity: api.ExternalIdentity{Category: "tv"}, DiscType: "BDMV"}
+	if failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", bdmv); hasRuleFailure(failures, "language_rule") {
+		t.Fatalf("BDMV applied NBL language rule: %#v", failures)
+	}
 
-			meta.AudioLanguages = []string{"Japanese"}
-			meta.SubtitleLanguages = []string{"English"}
-			failures = evaluateNonMetadataRulesForTest(context.Background(), "NBL", meta)
-			if blocking = nonAdvisoryFailures(failures); len(blocking) != 0 {
-				t.Fatalf("%s required-language disc failures = %#v", discType, failures)
-			}
-			if hasRuleFailure(failures, "nbl_language") {
-				t.Fatalf("%s applied non-disc language combination policy: %#v", discType, failures)
-			}
-		})
+	dvd := api.RuleSubject{Identity: api.ExternalIdentity{Category: "tv"}, DiscType: "DVD"}
+	failures := evaluateNonMetadataRulesForTest(context.Background(), "NBL", dvd)
+	blocking := nonAdvisoryFailures(failures)
+	if len(blocking) != 1 || blocking[0].Rule != "language_rule" {
+		t.Fatalf("DVD missing-language failures = %#v", failures)
 	}
 }
 
@@ -1009,16 +996,25 @@ func TestEvaluateRulesAitherRequiresLanguageForNonDisc(t *testing.T) {
 	}
 }
 
-func TestEvaluateRulesA4KDiscContainsRequiredLanguage(t *testing.T) {
-	meta := api.RuleSubject{
-		DiscType:          "BDMV",
-		AudioLanguages:    []string{"English"},
-		SubtitleLanguages: []string{"French"},
-		Assessments:       encodeAssessments(api.EncodeSettingsStatusPresent),
+func TestEvaluateRulesNonDiscLanguagePoliciesSkipDiscs(t *testing.T) {
+	t.Parallel()
+
+	subjects := []api.RuleSubject{
+		{DiscType: "BDMV", Assessments: encodeAssessments(api.EncodeSettingsStatusPresent)},
+		{
+			DiscType:          "DVD",
+			AudioLanguages:    []string{"Japanese"},
+			SubtitleLanguages: []string{"French"},
+			Assessments:       encodeAssessments(api.EncodeSettingsStatusPresent),
+		},
 	}
-	failures := evaluateNonMetadataRulesForTest(context.Background(), "A4K", meta)
-	if len(failures) != 0 {
-		t.Fatalf("expected no failures for disc containing a required language, got %#v", failures)
+	for _, tracker := range []string{"A4K", "AITHER", "LST", "LUME", "OE", "ULCX"} {
+		for _, subject := range subjects {
+			failures := evaluateNonMetadataRulesForTest(context.Background(), tracker, subject)
+			if hasRuleFailure(failures, "language_rule") {
+				t.Fatalf("%s disc applied non-disc language rule: %#v", tracker, failures)
+			}
+		}
 	}
 }
 

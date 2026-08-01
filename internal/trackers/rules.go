@@ -501,6 +501,12 @@ func evaluateLanguageRule(meta api.RuleSubject, rule *LanguageRule) (bool, strin
 	if rule == nil {
 		return true, ""
 	}
+	if rule.ApplyIfNonBDMV && strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
+		return true, ""
+	}
+	if rule.ApplyIfNonDisc && isDiscType(meta.DiscType) {
+		return true, ""
+	}
 	audioLanguages := normalizeStrings(meta.AudioLanguages)
 	subLanguages := normalizeStrings(meta.SubtitleLanguages)
 	required := normalizeStrings(rule.Languages)
@@ -516,13 +522,6 @@ func evaluateLanguageRule(meta api.RuleSubject, rule *LanguageRule) (bool, strin
 		}
 		return false, "disc requires audio or subtitles in " + strings.Join(required, ", ")
 	}
-	if rule.ApplyIfNonBDMV && strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV") {
-		return true, ""
-	}
-	if rule.ApplyIfNonDisc && isDiscType(meta.DiscType) {
-		return true, ""
-	}
-
 	checkAudio := rule.RequireAudio || rule.RequireBoth
 	checkSubs := rule.RequireSubs || rule.RequireBoth
 	if (checkAudio || checkSubs) && len(audioLanguages) == 0 && len(subLanguages) == 0 {
