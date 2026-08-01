@@ -104,6 +104,36 @@ func TestNewRegistryIncludesHDB(t *testing.T) {
 	}
 }
 
+func TestMovieYearProvidersFollowTrackerMetadataAuthority(t *testing.T) {
+	t.Parallel()
+
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+	for _, family := range []trackers.Family{trackers.FamilyUnit3D, trackers.FamilyAZFamily} {
+		for _, name := range registry.NamesByFamily(family) {
+			descriptor, ok := registry.LookupDescriptor(name)
+			if !ok || descriptor.ReleaseNamePolicy.MovieYearProvider != api.IdentityProviderTMDB {
+				t.Fatalf("%s movie-year provider = %q", name, descriptor.ReleaseNamePolicy.MovieYearProvider)
+			}
+		}
+	}
+	for name, provider := range map[string]api.IdentityProvider{
+		"ANT": api.IdentityProviderTMDB,
+		"BJS": api.IdentityProviderTMDB,
+		"BHD": api.IdentityProviderIMDB,
+		"CZT": api.IdentityProviderIMDB,
+		"HDB": api.IdentityProviderIMDB,
+		"PTP": api.IdentityProviderIMDB,
+	} {
+		descriptor, ok := registry.LookupDescriptor(name)
+		if !ok || descriptor.ReleaseNamePolicy.MovieYearProvider != provider {
+			t.Fatalf("%s movie-year provider = %q, want %q", name, descriptor.ReleaseNamePolicy.MovieYearProvider, provider)
+		}
+	}
+}
+
 func TestDescriptionDefinitionsPreserveFinalReviewedDescription(t *testing.T) {
 	t.Parallel()
 

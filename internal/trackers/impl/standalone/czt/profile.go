@@ -13,15 +13,18 @@ import (
 // Profile returns CZT identity, preparation, dupe, and policy behavior.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		Name:                trackerName,
-		BaseURL:             defaultBaseURL,
-		DescriptionGroup:    descGroup,
-		UploadContentMode:   trackers.UploadContentModeDescription,
-		AuthCapability:      authcontract.PasskeyCapability(trackerName),
-		PrepareDescription:  prepareDescription,
-		PrepareUpload:       prepareUpload,
-		ValidationPolicy:    validationPolicy(),
-		ReleaseNamePolicy:   trackers.SceneFirstReleaseNamePolicy(),
+		Name:               trackerName,
+		BaseURL:            defaultBaseURL,
+		DescriptionGroup:   descGroup,
+		UploadContentMode:  trackers.UploadContentModeDescription,
+		AuthCapability:     authcontract.PasskeyCapability(trackerName),
+		PrepareDescription: prepareDescription,
+		PrepareUpload:      prepareUpload,
+		ValidationPolicy:   validationPolicy(),
+		ReleaseNamePolicy: trackers.WithMovieYearProvider(
+			trackers.SceneFirstReleaseNamePolicy(),
+			api.IdentityProviderIMDB,
+		),
 		NewDuplicateAdapter: newDuplicateAdapter,
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			Requirements: []trackers.MetadataRequirement{{

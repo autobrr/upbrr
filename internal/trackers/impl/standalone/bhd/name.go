@@ -81,15 +81,19 @@ func applyBHDMovieTitlePolicy(name string, meta api.UploadSubject) string {
 	if title == "" || year <= 0 {
 		return name
 	}
-	yearText := strconv.Itoa(year)
-	_, end, ok := findBHDLastNameElement(name, yearText)
+	nameYear := meta.Release.Year
+	if nameYear <= 0 {
+		nameYear = year
+	}
+	_, end, ok := findBHDLastNameElement(name, strconv.Itoa(nameYear))
 	if !ok {
 		return name
 	}
 	prefix := bhdTitlePrefix(title, original)
-	return joinBHDName(prefix+" "+yearText, name[end:])
+	return joinBHDName(prefix+" "+strconv.Itoa(year), name[end:])
 }
 
+// bhdMovieTitles prefers TMDB titles and the IMDb year, with release metadata and TMDB-year fallbacks.
 func bhdMovieTitles(meta api.UploadSubject) (string, string, int) {
 	title := strings.TrimSpace(meta.Release.Title)
 	original := trimBHDAKAPrefix(meta.Release.Alt)
@@ -100,17 +104,16 @@ func bhdMovieTitles(meta api.UploadSubject) (string, string, int) {
 		if providerOriginal := trimBHDAKAPrefix(meta.ProviderMetadata.TMDB.OriginalTitle); providerOriginal != "" {
 			original = providerOriginal
 		}
-		if meta.ProviderMetadata.TMDB.Year > 0 {
-			year = meta.ProviderMetadata.TMDB.Year
-		}
 	case meta.ProviderMetadata.IMDB != nil && strings.TrimSpace(meta.ProviderMetadata.IMDB.Title) != "":
 		title = strings.TrimSpace(meta.ProviderMetadata.IMDB.Title)
 		if providerOriginal := trimBHDAKAPrefix(meta.ProviderMetadata.IMDB.AKA); providerOriginal != "" {
 			original = providerOriginal
 		}
-		if meta.ProviderMetadata.IMDB.Year > 0 {
-			year = meta.ProviderMetadata.IMDB.Year
-		}
+	}
+	if meta.ProviderMetadata.IMDB != nil && meta.ProviderMetadata.IMDB.Year > 0 {
+		year = meta.ProviderMetadata.IMDB.Year
+	} else if meta.ProviderMetadata.TMDB != nil && meta.ProviderMetadata.TMDB.Year > 0 {
+		year = meta.ProviderMetadata.TMDB.Year
 	}
 	return title, original, year
 }

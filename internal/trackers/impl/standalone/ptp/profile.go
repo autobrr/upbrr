@@ -24,6 +24,10 @@ func Profile() standalone.Profile {
 		DescriptionGroup:   "ptp",
 		UploadContentMode:  trackers.UploadContentModeDescription,
 		PrepareDescription: prepareDescription,
+		ReleaseNamePolicy: trackers.WithMovieYearProvider(
+			trackers.CanonicalReleaseNamePolicy(),
+			api.IdentityProviderIMDB,
+		),
 		PrepareUpload: func(ctx context.Context, req trackers.PreparationInput) (trackers.PreparedOperation, error) {
 			return prepareUploadAt(ctx, req, ptpBaseURL)
 		},

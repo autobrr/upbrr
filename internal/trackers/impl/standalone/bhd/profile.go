@@ -13,14 +13,17 @@ import (
 // Profile returns BHD identity, preparation, dupe, rules, bans, and policies.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		Name:                 "BHD",
-		BaseURL:              bhdBaseURL,
-		DescriptionGroup:     "bhd",
-		UploadContentMode:    trackers.UploadContentModeDescription,
-		AuthCapability:       authcontract.APIKeyCapability("BHD"),
-		PrepareDescription:   prepareDescription,
-		PrepareUpload:        prepareUpload,
-		ReleaseNamePolicy:    trackers.SimpleSubjectReleaseNamePolicy("standalone/bhd/v2", resolveUploadName),
+		Name:               "BHD",
+		BaseURL:            bhdBaseURL,
+		DescriptionGroup:   "bhd",
+		UploadContentMode:  trackers.UploadContentModeDescription,
+		AuthCapability:     authcontract.APIKeyCapability("BHD"),
+		PrepareDescription: prepareDescription,
+		PrepareUpload:      prepareUpload,
+		ReleaseNamePolicy: trackers.WithMovieYearProvider(
+			trackers.SimpleSubjectReleaseNamePolicy("standalone/bhd/v2", resolveUploadName),
+			api.IdentityProviderIMDB,
+		),
 		NewDuplicateAdapter:  newDuplicateAdapter,
 		Rules:                rules(),
 		ValidationPolicy:     validationPolicy(),

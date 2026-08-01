@@ -14,10 +14,10 @@ import (
 )
 
 func releaseNamePolicy() trackers.ReleaseNamePolicyBinding {
-	return trackers.WithEpisodeTitleMode(
+	return trackers.WithMovieYearProvider(trackers.WithEpisodeTitleMode(
 		trackers.NewReleaseNamePolicy("standalone/hdb/v2", resolveReleaseNames),
 		api.EpisodeTitleModeOmit,
-	)
+	), api.IdentityProviderIMDB)
 }
 
 // resolveReleaseNames returns HDB's upload/search projections and rejects stale

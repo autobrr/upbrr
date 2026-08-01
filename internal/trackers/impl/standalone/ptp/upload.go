@@ -49,7 +49,7 @@ type uploadState struct {
 func uploadAt(ctx context.Context, req trackers.PreparationInput, baseURL string) (api.UploadSummary, error) {
 	req.Intent = trackers.PreparationIntentUpload
 	var nameFailure *trackers.PreparationFailure
-	req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, trackers.CanonicalReleaseNamePolicy())
+	req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, Profile().ReleaseNamePolicy)
 	if nameFailure != nil {
 		return api.UploadSummary{}, nameFailure
 	}
@@ -199,7 +199,7 @@ func buildUploadPreview(state uploadState, meta api.UploadSubject) api.TrackerDr
 
 func prepareUploadStateAt(ctx context.Context, req trackers.PreparationInput, dryRun bool, baseURL string) (uploadState, error) {
 	var nameFailure *trackers.PreparationFailure
-	req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, trackers.CanonicalReleaseNamePolicy())
+	req, nameFailure = trackers.PrepareInputWithReleaseNamePolicy(req, Profile().ReleaseNamePolicy)
 	if nameFailure != nil {
 		return uploadState{}, nameFailure
 	}

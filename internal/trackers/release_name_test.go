@@ -28,6 +28,70 @@ func TestResolveReleaseNamesDefaultsDuplicateToUpload(t *testing.T) {
 	}
 }
 
+func TestResolveReleaseNamesUsesConfiguredMovieYearProvider(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		provider api.IdentityProvider
+		wantYear string
+	}{
+		{
+name: "TMDB",
+ provider: api.IdentityProviderTMDB,
+ wantYear: "2026",
+},
+		{
+name: "IMDb",
+ provider: api.IdentityProviderIMDB,
+ wantYear: "2024",
+},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			resolved, err := resolveReleaseNames(PreparationInput{Meta: api.UploadSubject{
+				ReleaseName: "Example Release 2025 1080p-GRP2025",
+				Identity:    api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+				Release:     api.ReleaseInfo{Category: "MOVIE", Year: 2025},
+				ProviderMetadata: api.SourceScopedMetadata{
+					TMDB: &api.TMDBMetadata{Year: 2026},
+					IMDB: &api.IMDBMetadata{Year: 2024},
+				},
+			}}, WithMovieYearProvider(CanonicalReleaseNamePolicy(), test.provider))
+			if err != nil {
+				t.Fatalf("resolve names: %v", err)
+			}
+			want := "Example Release " + test.wantYear + " 1080p-GRP2025"
+			if resolved.Upload != want || resolved.Duplicate != want {
+				t.Fatalf("resolved names = %#v, want %q", resolved, want)
+			}
+		})
+	}
+}
+
+func TestResolveReleaseNamesPreservesRequestedMovieYear(t *testing.T) {
+	t.Parallel()
+
+	requested := "Example Release 2025 1080p-GRP"
+	resolved, err := resolveProjectedReleaseNames(PreparationInput{
+		Meta: api.UploadSubject{
+			ReleaseName:     requested,
+			Identity:        api.ExternalIdentity{Category: api.CanonicalCategoryMovie},
+			Release:         api.ReleaseInfo{Category: "MOVIE", Year: 2025},
+			ProviderMetadata: api.SourceScopedMetadata{TMDB: &api.TMDBMetadata{Year: 2026}},
+		},
+		RequestedUploadName: &requested,
+	}, WithMovieYearProvider(CanonicalReleaseNamePolicy(), api.IdentityProviderTMDB))
+	if err != nil {
+		t.Fatalf("resolve names: %v", err)
+	}
+	if resolved.Upload != requested || resolved.Duplicate != "Example Release 2026 1080p-GRP" {
+		t.Fatalf("resolved names = %#v", resolved)
+	}
+}
+
 func TestResolveReleaseNamesNormalizesUnspecifiedEpisodeTitleModeToInclude(t *testing.T) {
 	t.Parallel()
 

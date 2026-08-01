@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/autobrr/upbrr/internal/config"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
@@ -58,6 +60,13 @@ func WithEpisodeTitleMode(binding ReleaseNamePolicyBinding, mode api.EpisodeTitl
 // non-scene names while allowing evidenced scene names unchanged.
 func WithNonSceneReleaseNameConfirmation(binding ReleaseNamePolicyBinding) ReleaseNamePolicyBinding {
 	binding.Confirmation = ReleaseNameConfirmationNonScene
+	return binding
+}
+
+// WithMovieYearProvider selects the current provider year used by automatic movie names.
+// Missing or mismatched metadata leaves the parsed release year unchanged.
+func WithMovieYearProvider(binding ReleaseNamePolicyBinding, provider api.IdentityProvider) ReleaseNamePolicyBinding {
+	binding.MovieYearProvider = provider
 	return binding
 }
 
@@ -220,6 +229,11 @@ func validateReleaseNamePolicy(binding ReleaseNamePolicyBinding) error {
 	default:
 		return fmt.Errorf("release-name policy %q has unsupported confirmation mode %q", binding.ID, binding.Confirmation)
 	}
+	switch binding.MovieYearProvider {
+	case "", api.IdentityProviderTMDB, api.IdentityProviderIMDB:
+	case api.IdentityProviderTVDB, api.IdentityProviderTVmaze, api.IdentityProviderMAL:
+		return fmt.Errorf("release-name policy %q has unsupported movie-year provider %q", binding.ID, binding.MovieYearProvider)
+	}
 	return nil
 }
 
@@ -266,6 +280,9 @@ func resolveReleaseNames(input PreparationInput, binding ReleaseNamePolicyBindin
 	if err != nil {
 		return ResolvedReleaseNames{}, fmt.Errorf("resolve release names with %s: %w", binding.ID, err)
 	}
+	if input.RequestedUploadName == nil {
+		resolved = applyProviderMovieYear(resolved, input.Meta, binding.MovieYearProvider)
+	}
 	resolved.Upload = strings.TrimSpace(resolved.Upload)
 	resolved.Duplicate = strings.TrimSpace(resolved.Duplicate)
 	if err := validateResolvedReleaseName("upload", resolved.Upload); err != nil {
@@ -285,6 +302,78 @@ func resolveReleaseNames(input PreparationInput, binding ReleaseNamePolicyBindin
 		})
 	}
 	return resolved, nil
+}
+
+// applyProviderMovieYear replaces parsed movie-year tokens when current matching metadata supplies a different provider year.
+func applyProviderMovieYear(
+	resolved ResolvedReleaseNames,
+	meta api.UploadSubject,
+	provider api.IdentityProvider,
+) ResolvedReleaseNames {
+	category, err := api.NormalizeCanonicalCategory(firstProjectionValue(string(meta.Identity.Category), meta.Release.Category))
+	if err != nil || category != api.CanonicalCategoryMovie || meta.Release.Year <= 0 ||
+		!meta.ProviderMetadata.IsCurrentFor(meta.SourcePath, meta.Identity) {
+		return resolved
+	}
+	providerYear := 0
+	switch provider {
+	case api.IdentityProviderTMDB:
+		if value := meta.ProviderMetadata.TMDB; value != nil &&
+			(meta.Identity.TMDBID <= 0 || value.TMDBID <= 0 || value.TMDBID == meta.Identity.TMDBID) {
+			providerYear = value.Year
+		}
+	case api.IdentityProviderIMDB:
+		if value := meta.ProviderMetadata.IMDB; value != nil &&
+			(meta.Identity.IMDBID <= 0 || value.IMDBID <= 0 || value.IMDBID == meta.Identity.IMDBID) {
+			providerYear = value.Year
+		}
+	case "":
+		return resolved
+	case api.IdentityProviderTVDB, api.IdentityProviderTVmaze, api.IdentityProviderMAL:
+		return resolved
+	}
+	if providerYear <= 0 || providerYear == meta.Release.Year {
+		return resolved
+	}
+	resolved.Upload = replaceLastYearToken(resolved.Upload, meta.Release.Year, providerYear)
+	resolved.Duplicate = replaceLastYearToken(resolved.Duplicate, meta.Release.Year, providerYear)
+	for index := range resolved.Additional {
+		resolved.Additional[index].Value = replaceLastYearToken(resolved.Additional[index].Value, meta.Release.Year, providerYear)
+	}
+	return resolved
+}
+
+// replaceLastYearToken replaces the last Unicode-bounded year token without altering digits embedded in other name elements.
+func replaceLastYearToken(value string, oldYear int, newYear int) string {
+	oldText := strconv.Itoa(oldYear)
+	replacement := strconv.Itoa(newYear)
+	replaceAt := -1
+	for offset := 0; offset < len(value); {
+		relative := strings.Index(value[offset:], oldText)
+		if relative < 0 {
+			break
+		}
+		start := offset + relative
+		end := start + len(oldText)
+		beforeOK := start == 0
+		if !beforeOK {
+			r, _ := utf8.DecodeLastRuneInString(value[:start])
+			beforeOK = !unicode.IsLetter(r) && !unicode.IsDigit(r)
+		}
+		afterOK := end == len(value)
+		if !afterOK {
+			r, _ := utf8.DecodeRuneInString(value[end:])
+			afterOK = !unicode.IsLetter(r) && !unicode.IsDigit(r)
+		}
+		if beforeOK && afterOK {
+			replaceAt = start
+		}
+		offset = end
+	}
+	if replaceAt < 0 {
+		return value
+	}
+	return value[:replaceAt] + replacement + value[replaceAt+len(oldText):]
 }
 
 func normalizedReleaseNameElementPolicy(policy api.ReleaseNameElementPolicy) (api.ReleaseNameElementPolicy, error) {

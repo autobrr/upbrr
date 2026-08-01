@@ -12,13 +12,13 @@ import (
 func TestResolveUploadNameAppliesBHDMovieNamingMatrix(t *testing.T) {
 	t.Parallel()
 
-	const sourceName = "Parsed Release AKA Parsed Original 2026 Director's Cut 2160p UHD BluRay REMUX HEVC TrueHD 7.1 Atmos-GRP"
+	const sourceName = "Parsed Release AKA Parsed Original 2025 Director's Cut 2160p UHD BluRay REMUX HEVC TrueHD 7.1 Atmos-GRP"
 	meta := generatedBHDNameSubject(sourceName)
 	meta.Identity.Category = api.CanonicalCategoryMovie
 	meta.Release = api.ReleaseInfo{
 Title: "Parsed Release",
  Alt: "Parsed Original",
- Year: 2026,
+ Year: 2025,
  Group: "GRP",
 }
 	meta.ProviderMetadata.TMDB = &api.TMDBMetadata{
@@ -26,6 +26,7 @@ Title: "Parsed Release",
 		OriginalTitle: "Example Original",
 		Year:          2026,
 	}
+	meta.ProviderMetadata.IMDB = &api.IMDBMetadata{Year: 2024}
 	meta.Type = "REMUX"
 	meta.Source = "BluRay"
 	meta.VideoCodec = "HEVC"
@@ -35,7 +36,7 @@ Title: "Parsed Release",
 		Status:  api.HDREvidenceComplete,
 	}
 
-	const want = "Example Release AKA Example Original 2026 Director's Cut 2160p UHD BluRay REMUX SDR HEVC TrueHD Atmos 7.1-GRP"
+	const want = "Example Release AKA Example Original 2024 Director's Cut 2160p UHD BluRay REMUX SDR HEVC TrueHD Atmos 7.1-GRP"
 	if got := resolveUploadName(meta); got != want {
 		t.Fatalf("BHD movie name = %q, want %q", got, want)
 	}

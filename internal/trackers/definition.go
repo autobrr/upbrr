@@ -156,7 +156,10 @@ type ReleaseNamePolicyBinding struct {
 	ID           string
 	Elements     api.ReleaseNameElementPolicy
 	Confirmation ReleaseNameConfirmationMode
-	Resolver     ReleaseNamePolicy
+	// MovieYearProvider selects authoritative current metadata for automatic movie-name years.
+	// Empty preserves the parsed release year; requested upload names are never rewritten.
+	MovieYearProvider api.IdentityProvider
+	Resolver          ReleaseNamePolicy
 }
 
 // ReleaseNamePolicyProvider declares tracker-owned release-name behavior.

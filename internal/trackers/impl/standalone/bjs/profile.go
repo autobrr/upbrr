@@ -20,8 +20,12 @@ func Profile() standalone.Profile {
 		LocalizedMetadataLocale: "pt-BR",
 		PrepareDescription:      prepareDescription,
 		PrepareUpload:           prepareUpload,
-		ValidationPolicy:        validationPolicy(),
-		NewDuplicateAdapter:     newDuplicateAdapter,
+		ReleaseNamePolicy: trackers.WithMovieYearProvider(
+			trackers.CanonicalReleaseNamePolicy(),
+			api.IdentityProviderTMDB,
+		),
+		ValidationPolicy:    validationPolicy(),
+		NewDuplicateAdapter: newDuplicateAdapter,
 		MetadataPolicy: &trackers.TrackerMetadataPolicy{
 			RequireKnownCategory: true,
 			Requirements: []trackers.MetadataRequirement{{

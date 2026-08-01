@@ -13,14 +13,17 @@ import (
 // Profile returns ANT identity, preparation, dupe, rules, bans, and policies.
 func Profile() standalone.Profile {
 	return standalone.Profile{
-		Name:                 "ANT",
-		BaseURL:              "https://anthelion.me",
-		DescriptionGroup:     "ant",
-		UploadContentMode:    trackers.UploadContentModeScreenshots,
-		AuthCapability:       authcontract.APIKeyCapability("ANT"),
-		PrepareDescription:   prepareDescription,
-		PrepareUpload:        prepareUpload,
-		ReleaseNamePolicy:    trackers.SimpleSubjectReleaseNamePolicy("standalone/ant/v1", resolveUploadName),
+		Name:               "ANT",
+		BaseURL:            "https://anthelion.me",
+		DescriptionGroup:   "ant",
+		UploadContentMode:  trackers.UploadContentModeScreenshots,
+		AuthCapability:     authcontract.APIKeyCapability("ANT"),
+		PrepareDescription: prepareDescription,
+		PrepareUpload:      prepareUpload,
+		ReleaseNamePolicy: trackers.WithMovieYearProvider(
+			trackers.SimpleSubjectReleaseNamePolicy("standalone/ant/v1", resolveUploadName),
+			api.IdentityProviderTMDB,
+		),
 		NewDuplicateAdapter:  newDuplicateAdapter,
 		Rules:                &trackers.RuleSet{RequireMovieOnly: true},
 		ValidationPolicy:     validationPolicy(),
