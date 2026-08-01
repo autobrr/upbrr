@@ -209,11 +209,11 @@ func TestBannedGroupCheckerMergesBuiltinsWithCacheFile(t *testing.T) {
 		t.Fatalf("create banned cache dir: %v", err)
 	}
 	filePath := filepath.Join(checker.basePath, "RHD_banned_groups.json")
-	if err := os.WriteFile(filePath, []byte(`{"banned_groups":"CustomRHD, Another.Custom"}`), 0o600); err != nil {
+	if err := os.WriteFile(filePath, []byte(`{"banned_groups":"CustomRHD, Another.Custom, -ZR-"}`), 0o600); err != nil {
 		t.Fatalf("write banned groups: %v", err)
 	}
 
-	for _, group := range []string{"MagicX", "CustomRHD", "another.custom"} {
+	for _, group := range []string{"MagicX", "CustomRHD", "another.custom", "ZR"} {
 		banned, err := checker.IsBanned("RHD", group)
 		if err != nil {
 			t.Fatalf("check %s: %v", group, err)
