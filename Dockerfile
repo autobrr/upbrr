@@ -6,7 +6,7 @@
 # consumed (see below), so they do not need global declarations.
 ARG GO_VERSION=1.26.5
 
-FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend
+FROM --platform=$BUILDPLATFORM node:24-alpine AS frontend
 
 WORKDIR /src/webui
 
