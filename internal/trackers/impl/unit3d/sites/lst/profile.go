@@ -18,16 +18,7 @@ func Profile() unit3d.Profile {
 		Site: unit3d.SiteProfile{
 			ApplyAdditionalPayload: additionalPayload,
 		},
-		DupePolicy: &trackers.DupePolicy{
-			ID:         "lst/duplicate/v2",
-			EvidenceID: "lst-upload-rules",
-			SearchScope: trackers.DupeSearchScope{
-				IncludeEpisodes:    true,
-				IncludeSeasonPacks: true,
-				MaxPages:           100,
-			},
-			SlotDimensions: []trackers.DupeDimension{trackers.DupeDimensionType, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
-		},
+		DupePolicy: duplicatePolicy(),
 		BannedPolicy: &trackers.BannedGroupPolicy{
 			EndpointPath:  "/api/bannedReleaseGroups",
 			RequireAPIKey: true,

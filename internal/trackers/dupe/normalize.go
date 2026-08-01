@@ -168,6 +168,7 @@ type parsedTitleFacts struct {
 	Source     string
 	Codec      string
 	Container  string
+	Provider   string
 	Group      string
 	Edition    string
 	Region     string
@@ -220,7 +221,13 @@ func normalizeTargetFacts(target api.TrackerDuplicateTarget) normalizedFacts {
 			FactOriginTargetMedia,
 			FactOriginContentName,
 		),
-		Provider: completeFact(target.Provider, FactOriginTargetMedia, "provider"),
+		Provider: mergeStructuredAndTitleFact(
+			canonicalProvider(target.Provider),
+			"provider",
+			title.Provider,
+			FactOriginTargetMedia,
+			FactOriginContentName,
+		),
 		Group: mergeStructuredAndTitleFact(
 			canonicalGroup(target.Group),
 			"group",
@@ -340,7 +347,13 @@ func normalizeCandidateFacts(candidate TrackerCandidate) normalizedFacts {
 			FactOriginTrackerAPI,
 			FactOriginTrackerTitle,
 		),
-		Provider: completeFact(candidate.Provider, FactOriginTrackerAPI, "provider"),
+		Provider: mergeStructuredAndTitleFact(
+			canonicalProvider(candidate.Provider),
+			"provider",
+			title.Provider,
+			FactOriginTrackerAPI,
+			FactOriginTrackerTitle,
+		),
 		Group: mergeStructuredAndTitleFact(
 			canonicalGroup(candidate.Group),
 			"group",
@@ -449,6 +462,7 @@ func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 		Source:     canonicalSource(release.Source),
 		Codec:      canonicalCodec(firstNonEmpty(release.Codec...)),
 		Container:  canonicalContainer(firstNonEmpty(release.Container, release.Ext)),
+		Provider:   canonicalProvider(release.Collection),
 		Group:      canonicalGroup(release.Group),
 		Edition:    canonicalTitleEdition(release.Cut, release.Edition, name),
 		Region:     canonicalRegion(release.Region),
@@ -525,7 +539,7 @@ func parseReleaseTitle(name string, origin FactOrigin) parsedTitleFacts {
 
 func (facts parsedTitleFacts) hasEvidence() bool {
 	return facts.Resolution != "" || facts.MediaKind != mediaKindUnknown || facts.Source != "" || facts.Codec != "" ||
-		facts.Container != "" || facts.Group != "" || facts.Edition != "" || facts.Region != ""
+		facts.Container != "" || facts.Provider != "" || facts.Group != "" || facts.Edition != "" || facts.Region != ""
 }
 
 func hasBareWEBTitleMarker(value string) bool {
@@ -714,6 +728,10 @@ func canonicalContainer(value string) string {
 	}
 }
 
+func canonicalProvider(value string) string {
+	return compactAlphaNumeric(value)
+}
+
 func canonicalGroup(value string) string {
 	return strings.TrimLeft(strings.TrimSpace(value), "-")
 }
@@ -729,6 +747,7 @@ func canonicalTitleEdition(cuts []string, editions []string, title string) strin
 	joined := strings.Join(append(append([]string(nil), cuts...), editions...), " ") + " " + title
 	normalized := strings.NewReplacer(".", " ", "_", " ", "-", " ", "'", "").Replace(strings.ToLower(joined))
 	normalized = strings.Join(strings.Fields(normalized), " ")
+	searchable := " " + normalized + " "
 	values := make([]string, 0, 4)
 	for _, marker := range []struct {
 		phrase string
@@ -743,10 +762,12 @@ func canonicalTitleEdition(cuts []string, editions []string, title string) strin
 		{phrase: "final cut", value: "final_cut"},
 		{phrase: "international cut", value: "international_cut"},
 		{phrase: "alternate cut", value: "alternate_cut"},
+		{phrase: "open matte", value: "open_matte"},
+		{phrase: "oar", value: "oar"},
 		{phrase: "uncut", value: "uncut"},
 		{phrase: "unrated", value: "unrated"},
 	} {
-		if strings.Contains(normalized, marker.phrase) && !slices.Contains(values, marker.value) {
+		if strings.Contains(searchable, " "+marker.phrase+" ") && !slices.Contains(values, marker.value) {
 			values = append(values, marker.value)
 		}
 	}

@@ -44,6 +44,29 @@ func TestNormalizeTitleRemuxOutranksStructuredDiscSource(t *testing.T) {
 	}
 }
 
+func TestNormalizeProviderFromAutobrrRLSCollection(t *testing.T) {
+	t.Parallel()
+
+	facts := normalizeCandidateFacts(NormalizeCandidate(api.DupeEntry{
+		Name: "Example.Release.2026.1080p.AMZN.WEB-DL.H.264-GRP",
+		Type: "WEBDL",
+	}, "LST"))
+	if facts.Provider.Value != "amzn" || facts.Provider.Status != FactPartial || facts.Provider.Origin != FactOriginTrackerTitle {
+		t.Fatalf("provider fact = %#v", facts.Provider)
+	}
+}
+
+func TestCanonicalTitleEditionRecognizesLSTAspectRatioSlots(t *testing.T) {
+	t.Parallel()
+
+	if got := canonicalTitleEdition(nil, nil, "Example.Release.2026.Open.Matte.1080p-GRP"); got != "open_matte" {
+		t.Fatalf("Open Matte edition = %q", got)
+	}
+	if got := canonicalTitleEdition(nil, nil, "Example.Release.2026.OAR.1080p-GRP"); got != "oar" {
+		t.Fatalf("OAR edition = %q", got)
+	}
+}
+
 func TestNormalizeStructuredTitleConflictIsContradictory(t *testing.T) {
 	t.Parallel()
 

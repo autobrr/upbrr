@@ -538,7 +538,7 @@ func duplicateTarget(subject api.UploadSubject) api.TrackerDuplicateTarget {
 		Category:    string(subject.Identity.Category),
 		Type:        strings.TrimSpace(subject.Type),
 		Source:      strings.TrimSpace(subject.Source),
-		Provider:    firstProjectionValue(subject.ServiceLongName, subject.Service, subject.Distributor),
+		Provider:    firstProjectionValue(subject.Service, subject.ServiceLongName),
 		Resolution:  strings.TrimSpace(subject.Release.Resolution),
 		Container:   strings.TrimSpace(subject.Container),
 		VideoCodec:  strings.TrimSpace(subject.VideoCodec),

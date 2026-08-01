@@ -322,6 +322,19 @@ func TestDuplicateTargetFingerprintIncludesHDRProvenance(t *testing.T) {
 	}
 }
 
+func TestDuplicateTargetPrefersProviderCode(t *testing.T) {
+	t.Parallel()
+
+	target := duplicateTarget(api.UploadSubject{
+		Service:         "AMZN",
+		ServiceLongName: "Amazon Prime Video",
+		Distributor:     "Example Distributor",
+	})
+	if target.Provider != "AMZN" {
+		t.Fatalf("duplicate provider = %q, want AMZN", target.Provider)
+	}
+}
+
 func TestApplyProjectionRuleFailuresHonorsExplicitDebugWaivers(t *testing.T) {
 	t.Parallel()
 
