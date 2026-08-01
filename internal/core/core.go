@@ -62,6 +62,11 @@ func workflowPrivateVaultRoot(dbPath string) string {
 	return filepath.Join(filepath.Dir(dbPath), "workflow-private", hex.EncodeToString(sum[:16]))
 }
 
+func applySkipAutoTorrentDefault(input api.PrepareInput, configured bool) api.PrepareInput {
+	input.Search.Skip = input.Search.Skip || configured
+	return input
+}
+
 // NewWithContext constructs a Core and applies ctx to initialization work such
 // as opening and migrating an internally created repository. The context is not
 // retained after construction.
@@ -277,7 +282,9 @@ func newCoreWithHooks(ctx context.Context, deps api.CoreDependencies, hooks core
 		return nil, fmt.Errorf("core: release workflow repository: %w", err)
 	}
 	workflowPreparer := releaseworkflow.ReleasePreparerFunc{
-		PrepareFunc: preparedFacts.Prepare,
+		PrepareFunc: func(ctx context.Context, input api.PrepareInput) (api.PrepareResult, error) {
+			return preparedFacts.Prepare(ctx, applySkipAutoTorrentDefault(input, cfg.Metadata.SkipAutoTorrent))
+		},
 		DisplayFunc: func(ctx context.Context, ref api.ReleaseRef) (api.PreparedReleaseDisplay, error) {
 			display, displayErr := preparedFacts.ResolveDisplay(ctx, ref)
 			if displayErr != nil {
