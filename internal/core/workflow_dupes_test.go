@@ -345,17 +345,31 @@ func TestDuplicateEvidenceFingerprintChangesWithCandidateEvaluation(t *testing.T
 func TestWorkflowDupeOutcomeIncompleteSearchWithoutCandidatesRequiresReview(t *testing.T) {
 	t.Parallel()
 
-	target := api.TrackerDupeAssessment{TrackerID: "EXAMPLE"}
-	setWorkflowDupeOutcome(&target, api.DupeCheckResult{
-		Status: "completed",
+	result := api.DupeCheckResult{
+		UploadReleaseName: "Example.Release.2026.1080p-GRP",
+		Status:            "completed",
 		Search: api.DupeSearchEvidence{
 			Complete: false,
 			Pages:    2,
 		},
-	})
+	}
+	target := api.TrackerDupeAssessment{
+		TrackerID: "EXAMPLE",
+		Matches:   publicDupeMatches(result),
+	}
+	setWorkflowDupeOutcome(&target, result)
 	if target.Decision != api.DupeDecisionPending || target.Status != api.StageStatusBlocked ||
 		len(target.RequiredActions) != 1 {
 		t.Fatalf("incomplete empty search outcome = %#v", target)
+	}
+	if len(target.Matches) != 1 || target.Matches[0].Name != result.UploadReleaseName ||
+		target.Matches[0].Reason != "incomplete_search" || target.Matches[0].Relation != api.DupeRelationInsufficientEvidence ||
+		len(target.Matches[0].Reasons) != 1 || target.Matches[0].Reasons[0].Code != "incomplete_search" {
+		t.Fatalf("incomplete empty search matches = %#v", target.Matches)
+	}
+	result.Search.Complete = true
+	if matches := publicDupeMatches(result); len(matches) != 0 {
+		t.Fatalf("complete empty search matches = %#v", matches)
 	}
 	action := target.RequiredActions[0]
 	if action.Kind != api.RequiredActionReviewDuplicates ||

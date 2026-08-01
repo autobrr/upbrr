@@ -289,6 +289,26 @@ func publicDupeMatches(result api.DupeCheckResult) []api.DupeMatchProjection {
 			EvidenceStatus: evaluation.EvidenceStatus,
 		})
 	}
+	if len(matches) == 0 && !result.Search.Complete && !result.Skipped &&
+		!strings.EqualFold(strings.TrimSpace(result.Status), "failed") &&
+		!strings.EqualFold(strings.TrimSpace(result.Status), "bypassed") && strings.TrimSpace(result.Error) == "" {
+		name := strings.TrimSpace(result.UploadReleaseName)
+		if name == "" {
+			name = strings.TrimSpace(result.CanonicalReleaseName)
+		}
+		if name == "" {
+			name = "Possible duplicate"
+		}
+		matches = append(matches, api.DupeMatchProjection{
+			Name:     name,
+			Reason:   "incomplete_search",
+			Relation: api.DupeRelationInsufficientEvidence,
+			Reasons: []api.DupeReason{{
+				Code:    "incomplete_search",
+				Message: "Duplicate search was incomplete; confirm tracker policy risk before continuing.",
+			}},
+		})
+	}
 	return matches
 }
 
