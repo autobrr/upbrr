@@ -51,20 +51,20 @@ func TestRequestAntiCsrfTokenRejectsBlankMarker(t *testing.T) {
 		wantErr bool
 	}{
 		{
-name: "valid",
- marker: "token",
- want: "token",
-},
+			name:   "valid",
+			marker: "token",
+			want:   "token",
+		},
 		{
-name: "empty",
- marker: "",
- wantErr: true,
-},
+			name:    "empty",
+			marker:  "",
+			wantErr: true,
+		},
 		{
-name: "whitespace",
- marker: " \t ",
- wantErr: true,
-},
+			name:    "whitespace",
+			marker:  " \t ",
+			wantErr: true,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

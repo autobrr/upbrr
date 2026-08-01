@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -735,6 +736,19 @@ func TestWorkflowPreflightRejectsMissingPreparedResourceBeforeAuth(t *testing.T)
 		return decision.Code == "required_media_resource" && decision.Blocking
 	}) {
 		t.Fatalf("missing local-resource decision: %#v", finalized[0].PolicyDecisions)
+	}
+}
+
+func TestSubjectWithAvailablePreparedResourcesPreservesStatError(t *testing.T) {
+	t.Parallel()
+
+	subject := api.UploadSubject{MediaInfoTextPath: "invalid\x00path"}
+	checked, changed, err := subjectWithAvailablePreparedResources(subject)
+	if !errors.Is(err, syscall.EINVAL) {
+		t.Fatalf("prepared resource stat error = %v, want EINVAL", err)
+	}
+	if changed || checked.MediaInfoTextPath != subject.MediaInfoTextPath {
+		t.Fatalf("prepared resource changed after stat error: changed=%t checked=%#v", changed, checked)
 	}
 }
 

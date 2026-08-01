@@ -172,14 +172,14 @@ func TestPTPSetCapacityFamilies(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		resolution string
-		targetCodec string
+		name           string
+		resolution     string
+		targetCodec    string
 		candidateCodec string
-		hdr        api.HDRFacts
-		targetSize int64
-		candidateSize int64
-		want       api.DupeRelation
+		hdr            api.HDRFacts
+		targetSize     int64
+		candidateSize  int64
+		want           api.DupeRelation
 	}{
 		{
 			name:           "SD x264 40 percent",

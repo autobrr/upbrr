@@ -1998,7 +1998,20 @@ describe("useReleaseSession", () => {
         };
       },
     );
-    const decideDuplicates = vi.fn(async (current: ReleaseWorkflowCurrent) => current);
+    const decideDuplicates = vi.fn(
+      async (current: ReleaseWorkflowCurrent): Promise<ReleaseWorkflowCurrent> => ({
+        ...current,
+        dupes: {
+          ...current.dupes!,
+          status: "completed",
+          results: current.dupes!.results.map((result) => ({
+            ...result,
+            decision: "ignored",
+            status: "completed",
+          })),
+        },
+      }),
+    );
     const workflow = workflowPorts({ checkDuplicates, decideDuplicates });
     const { result } = renderHook(useReleaseSession, {
       wrapper: wrapperFor(portsFor({ workflow })),
@@ -2018,6 +2031,12 @@ describe("useReleaseSession", () => {
         expect.any(AbortSignal),
       ),
     );
+    await waitFor(() => {
+      expect(result.current.workflow.view.current?.dupes?.status).toBe("completed");
+      expect(result.current.workflow.view.current?.dupes?.results[0]).toEqual(
+        expect.objectContaining({ decision: "ignored", status: "completed" }),
+      );
+    });
   });
 
   it("checks dupes before name review and acknowledges the tracker name without rechecking", async () => {

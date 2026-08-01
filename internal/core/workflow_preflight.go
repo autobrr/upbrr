@@ -74,7 +74,10 @@ func (b workflowPreflightBuilder) Build(
 			return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("tracker preflight: tracker %s is absent from catalog", projection.TrackerID)
 		}
 	}
-	checkedSubject, localResourcesChanged := subjectWithAvailablePreparedResources(subject)
+	checkedSubject, localResourcesChanged, err := subjectWithAvailablePreparedResources(subject)
+	if err != nil {
+		return api.TrackerPreflightAssessment{}, nil, fmt.Errorf("tracker preflight: inspect prepared resources: %w", err)
+	}
 	if localResourcesChanged {
 		initial.Projections = append([]api.TrackerReleaseProjection(nil), initial.Projections...)
 		for index := range initial.Projections {
@@ -443,24 +446,29 @@ func trackerPreflightFailureProgressMessage(projection api.TrackerReleaseProject
 	return "Tracker preflight did not pass."
 }
 
-func subjectWithAvailablePreparedResources(subject api.UploadSubject) (api.UploadSubject, bool) {
+func subjectWithAvailablePreparedResources(subject api.UploadSubject) (api.UploadSubject, bool, error) {
 	checked := subject
 	changed := false
-	clearUnavailable := func(path string, clearPath func()) {
-		if strings.TrimSpace(path) == "" {
-			return
+	for _, resourcePath := range []*string{
+		&checked.MediaInfoJSONPath,
+		&checked.MediaInfoTextPath,
+		&checked.SceneNFOPath,
+	} {
+		path := strings.TrimSpace(*resourcePath)
+		if path == "" {
+			continue
 		}
 		info, err := os.Stat(path)
-		if err == nil && !info.IsDir() {
-			return
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return subject, false, fmt.Errorf("stat prepared resource: %w", err)
 		}
-		clearPath()
+		if err == nil && !info.IsDir() {
+			continue
+		}
+		*resourcePath = ""
 		changed = true
 	}
-	clearUnavailable(checked.MediaInfoJSONPath, func() { checked.MediaInfoJSONPath = "" })
-	clearUnavailable(checked.MediaInfoTextPath, func() { checked.MediaInfoTextPath = "" })
-	clearUnavailable(checked.SceneNFOPath, func() { checked.SceneNFOPath = "" })
-	return checked, changed
+	return checked, changed, nil
 }
 
 func newProjectionRuleFailures(projection api.TrackerReleaseProjection, failures []api.RuleFailure) []api.RuleFailure {
