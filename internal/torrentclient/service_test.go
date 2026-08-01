@@ -131,6 +131,7 @@ func TestInjectQbitClient(t *testing.T) {
 	var addTags string
 	var addSkipChecking string
 	var addAutoTMM string
+	var addSavePath string
 	var fileCount int
 	errCh := make(chan error, 1)
 
@@ -155,6 +156,7 @@ func TestInjectQbitClient(t *testing.T) {
 			addTags = r.FormValue("tags")
 			addSkipChecking = r.FormValue("skip_checking")
 			addAutoTMM = r.FormValue("autoTMM")
+			addSavePath = r.FormValue("savepath")
 			if files, ok := r.MultipartForm.File["torrents"]; ok {
 				fileCount = len(files)
 			}
@@ -171,6 +173,8 @@ func TestInjectQbitClient(t *testing.T) {
 	defer server.Close()
 
 	root := t.TempDir()
+	mediaRoot := filepath.Join(root, "media")
+	sourcePath := filepath.Join(mediaRoot, "video.mkv")
 	torrentPath := filepath.Join(root, "sample.torrent")
 	if err := os.WriteFile(torrentPath, []byte("data"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
@@ -185,11 +189,13 @@ func TestInjectQbitClient(t *testing.T) {
 				Password: "pass",
 				Category: "ua",
 				Tags:     []string{"tag1", "tag2"},
+				LocalPath:  config.StringList{""},
+				RemotePath: config.StringList{""},
 			},
 		},
 	}, nil)
 
-	if err := svc.Inject(context.Background(), api.ClientSubject{SourcePath: "video.mkv"}, api.TorrentResult{Path: torrentPath}); err != nil {
+	if err := svc.Inject(context.Background(), api.ClientSubject{SourcePath: sourcePath}, api.TorrentResult{Path: torrentPath}); err != nil {
 		t.Fatalf("inject: %v", err)
 	}
 
@@ -218,6 +224,11 @@ func TestInjectQbitClient(t *testing.T) {
 	}
 	if addAutoTMM != "false" {
 		t.Fatalf("expected autoTMM false, got %q", addAutoTMM)
+	}
+	//pathpolicy:allow qBittorrent savepath is slash-delimited API data.
+	wantSavePath := filepath.ToSlash(mediaRoot) + "/"
+	if addSavePath != wantSavePath {
+		t.Fatalf("expected source-parent savepath %q, got %q", wantSavePath, addSavePath)
 	}
 	if fileCount != 1 {
 		t.Fatalf("expected 1 torrent file, got %d", fileCount)
@@ -940,8 +951,10 @@ func TestInjectQbitClientInvalidLinkPlanFallbackSkipsHashCheck(t *testing.T) {
 
 	capture.mu.Lock()
 	defer capture.mu.Unlock()
-	if capture.savePath != "" {
-		t.Fatalf("expected original-path fallback, got savepath %q", capture.savePath)
+	//pathpolicy:allow qBittorrent savepath is slash-delimited API data.
+	wantSavePath := filepath.ToSlash(root) + "/"
+	if capture.savePath != wantSavePath {
+		t.Fatalf("expected original-path fallback savepath %q, got %q", wantSavePath, capture.savePath)
 	}
 	if capture.skipChecking != "true" {
 		t.Fatalf("expected fallback to skip hash checking, got skip_checking=%q", capture.skipChecking)
@@ -1259,8 +1272,10 @@ func TestInjectQbitClientFailedLinkPlanFallbackSkipsHashCheck(t *testing.T) {
 	if capture.addCalls != 1 {
 		t.Fatalf("expected one qbit add attempt, got %d", capture.addCalls)
 	}
-	if capture.savePath != "" {
-		t.Fatalf("expected original-path fallback, got savepath %q", capture.savePath)
+	//pathpolicy:allow qBittorrent savepath is slash-delimited API data.
+	wantSavePath := filepath.ToSlash(root) + "/"
+	if capture.savePath != wantSavePath {
+		t.Fatalf("expected original-path fallback savepath %q, got %q", wantSavePath, capture.savePath)
 	}
 	if capture.skipChecking != "true" {
 		t.Fatalf("expected failed-link fallback to skip hash checking, got skip_checking=%q", capture.skipChecking)

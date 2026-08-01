@@ -778,21 +778,16 @@ func mappedRemotePath[S ~[]string](value string, localPaths S, remotePaths S) (s
 	return bestMapped, bestSpecificity >= 0
 }
 
-// mappedQbitSavePathForSource maps the prepared source path to the qBittorrent
-// save path parent that can contain the torrent's top-level content. It returns
-// mapped=false without touching source metadata when no usable path pairs exist
-// or no configured pair matches the lexical source path.
-func mappedQbitSavePathForSource[S ~[]string](meta api.ClientSubject, localPaths S, remotePaths S) (string, bool, error) {
-	if len(pathMappingPairs(localPaths, remotePaths)) == 0 {
-		return "", false, nil
-	}
+// qbitSavePathForSource returns the prepared source parent, mapped to the
+// qBittorrent host when a configured local/remote path pair matches.
+func qbitSavePathForSource[S ~[]string](meta api.ClientSubject, localPaths S, remotePaths S) (string, bool, error) {
 	source, err := sourcePathForQbitSavePath(meta)
 	if err != nil {
 		return "", false, err
 	}
 	mappedSource, ok := mappedRemotePath(source, localPaths, remotePaths)
 	if !ok {
-		return "", false, nil
+		return qbitSavePath(filepath.Dir(source)), false, nil
 	}
 	return qbitSavePath(filepath.Dir(mappedSource)), true, nil
 }
