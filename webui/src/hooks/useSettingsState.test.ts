@@ -167,6 +167,7 @@ function TrackerSettingsHarness() {
     "div",
     null,
     state.renderTrackerSection(false),
+    createElement("button", { type: "button", onClick: state.handleSaveSettings }, "Save settings"),
     createElement(PayloadCapture, { value: state.buildSavePayload() }),
   );
 }
@@ -796,8 +797,9 @@ describe("Tracker client selectors", () => {
     expect(screen.getByText("1/1")).toBeInTheDocument();
   });
 
-  it("masks encrypted tracker credentials and preserves them for saves", async () => {
+  it("masks tracker credentials after saving while preserving them in the payload", async () => {
     const encryptedAPIKey = "upbrr-enc:v1:encrypted-btn-api-key";
+    let savedReplacement = false;
     installAppOperationMocks({
       GetConfig: async () =>
         JSON.stringify({
@@ -828,6 +830,12 @@ describe("Tracker client selectors", () => {
           ),
         ),
       GetImageHostPolicyMetadata: async () => ({}),
+      SaveConfig: async (payload: string) => {
+        const saved = JSON.parse(payload) as {
+          Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
+        };
+        savedReplacement = saved.Trackers?.Trackers?.BTN?.APIKey === "replacement-api-key";
+      },
     });
 
     render(createElement(TrackerSettingsHarness));
@@ -857,7 +865,17 @@ describe("Tracker client selectors", () => {
     payload = readPayload<{
       Trackers?: { Trackers?: Record<string, Record<string, unknown>> };
     }>();
-    expect(payload.Trackers?.Trackers?.BTN?.APIKey).toBe("replacement-api-key");
+    expect(payload.Trackers?.Trackers?.BTN?.APIKey === "replacement-api-key").toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => expect(screen.getByLabelText("API key")).toHaveValue("[REDACTED]"));
+    expect(savedReplacement).toBe(true);
+
+    savedReplacement = false;
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => expect(savedReplacement).toBe(true));
   });
 
   it("renders BTN announce URL from tracker schema when stored config lacks the key", async () => {

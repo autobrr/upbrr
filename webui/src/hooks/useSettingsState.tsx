@@ -920,6 +920,9 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
     try {
       await saveConfig(payload);
       if (settingsMutationVersion.current === mutationVersion) {
+        const masked = maskSensitiveConfig(JSON.parse(payload) as ConfigMap);
+        setConfigData(masked.masked);
+        setSensitiveValues(masked.originals);
         markSettingsSaved("Settings saved and applied.");
       } else {
         setSettingsSaved("Earlier changes saved. Newer edits remain unsaved.");
