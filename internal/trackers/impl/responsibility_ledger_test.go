@@ -78,7 +78,7 @@ func azFamilyResponsibilityVersion(name string, version string) trackerResponsib
 var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibility("A4K", "canonical", ""),
 	unit3DResponsibility("ACM", "acm", "acm"),
-	unit3DResponsibility("AITHER", "aither", ""),
+	unit3DResponsibilityVersion("AITHER", "aither", "", "v2"),
 	unit3DResponsibility("BLU", "canonical", ""),
 	unit3DResponsibility("CBR", "cbr", ""),
 	unit3DResponsibilityVersion("DP", "dp", "", "v2"),

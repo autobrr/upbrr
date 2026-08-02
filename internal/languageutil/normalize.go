@@ -17,8 +17,9 @@ var (
 )
 
 // NormalizeLanguageDisplay returns the English base-language label resolved from
-// the first code or name token. Region and trailing tokens are discarded; blank
-// or unresolved input returns an empty string.
+// the first code or name token. It preserves stable labels for the ISO special
+// codes mul and zxx; region and trailing tokens are discarded, and blank or
+// unresolved input returns an empty string.
 func NormalizeLanguageDisplay(value string) string {
 	token := normalizeLanguageToken(value)
 	if token == "" {
@@ -27,6 +28,13 @@ func NormalizeLanguageDisplay(value string) string {
 	langTag, ok := resolveLanguageTag(token)
 	if !ok {
 		return ""
+	}
+	base, _ := langTag.Base()
+	switch base.String() {
+	case "mul":
+		return "Multiple Languages"
+	case "zxx":
+		return "ZXX"
 	}
 	name := strings.TrimSpace(display.Languages(language.English).Name(langTag))
 	if name == "" {

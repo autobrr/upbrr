@@ -18,7 +18,7 @@ func Profile() unit3d.Profile {
 		AudioPolicy:      AudioPolicy(),
 		Site: unit3d.SiteProfile{
 			BuildName:              buildName,
-			BuildNameVersion:       "v1",
+			BuildNameVersion:       "v2",
 			ApplyAdditionalPayload: additionalPayload,
 		},
 		DupePolicy: &trackers.DupePolicy{
