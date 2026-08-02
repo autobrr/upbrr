@@ -646,7 +646,9 @@ func (s *Service) PreviewFrame(ctx context.Context, meta api.ScreenshotSubject, 
 // Delete removes an allowed image beneath the release's managed temp directory.
 // Repository screenshot, upload, final-selection, and tracker-image references
 // are then cleaned up best-effort; those cleanup failures are logged and do not
-// restore the local file or fail the call.
+// restore the local file or fail the call. Cleanup covers every stored spelling
+// that names the removed file, so an accepted filesystem alias cannot delete the
+// file while leaving its records behind.
 func (s *Service) Delete(ctx context.Context, meta api.ScreenshotSubject, imagePath string) error {
 	select {
 	case <-ctx.Done():
@@ -686,6 +688,8 @@ func (s *Service) Delete(ctx context.Context, meta api.ScreenshotSubject, imageP
 		return internalerrors.ErrInvalidInput
 	}
 
+	deleteTargets := s.storedDeleteTargets(ctx, meta.SourcePath, absTarget)
+
 	if err := os.Remove(absTarget); err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("screenshots: remove captured image: %w", err)
@@ -698,27 +702,66 @@ func (s *Service) Delete(ctx context.Context, meta api.ScreenshotSubject, imageP
 	}
 
 	if s.repo != nil {
-		if s.logger != nil {
-			s.logger.Tracef("screenshots: deleting db records for %s", absTarget)
-		}
-		if err := retrySQLiteBusy(ctx, 3, func() error {
-			return s.repo.DeleteScreenshot(ctx, absTarget)
-		}); err != nil {
-			s.logger.Debugf("screenshots: failed to delete screenshot record: %v", err)
-		} else if s.logger != nil {
-			s.logger.Tracef("screenshots: deleted screenshot record for %s", absTarget)
-		}
-		if err := retrySQLiteBusy(ctx, 3, func() error {
-			return s.repo.DeleteFinalSelection(ctx, absTarget)
-		}); err != nil {
-			s.logger.Debugf("screenshots: failed to delete final selection: %v", err)
-		} else if s.logger != nil {
-			s.logger.Tracef("screenshots: deleted final selection for %s", absTarget)
+		for _, target := range deleteTargets {
+			if s.logger != nil {
+				s.logger.Tracef("screenshots: deleting db records for %s", target)
+			}
+			if err := retrySQLiteBusy(ctx, 3, func() error {
+				return s.repo.DeleteScreenshot(ctx, target)
+			}); err != nil {
+				s.logger.Debugf("screenshots: failed to delete screenshot record: %v", err)
+			} else if s.logger != nil {
+				s.logger.Tracef("screenshots: deleted screenshot record for %s", target)
+			}
+			if err := retrySQLiteBusy(ctx, 3, func() error {
+				return s.repo.DeleteFinalSelection(ctx, target)
+			}); err != nil {
+				s.logger.Debugf("screenshots: failed to delete final selection: %v", err)
+			} else if s.logger != nil {
+				s.logger.Tracef("screenshots: deleted final selection for %s", target)
+			}
 		}
 		s.removeTrackerImageReference(ctx, meta, tmpDir, absTarget)
 	}
 
 	return nil
+}
+
+// storedDeleteTargets returns every repository spelling that names absTarget on
+// this filesystem, starting with absTarget itself. Path validation accepts
+// filesystem aliases such as Windows case variants, but image-path columns
+// compare byte-for-byte, so cleanup keyed only on the caller's spelling can
+// remove the file and leave its screenshot, upload, and selection rows behind.
+func (s *Service) storedDeleteTargets(ctx context.Context, sourcePath string, absTarget string) []string {
+	targets := []string{absTarget}
+	if s.repo == nil || strings.TrimSpace(sourcePath) == "" {
+		return targets
+	}
+	addStored := func(stored string) {
+		stored = strings.TrimSpace(stored)
+		if stored == "" || slices.Contains(targets, stored) || !pathutil.SamePath(stored, absTarget) {
+			return
+		}
+		targets = append(targets, stored)
+		if s.logger != nil {
+			s.logger.Tracef("screenshots: delete alias resolved stored=%s requested=%s", stored, absTarget)
+		}
+	}
+	if stored, err := s.repo.ListScreenshotsByPath(ctx, sourcePath); err != nil {
+		s.logger.Debugf("screenshots: failed to load screenshot records for delete: %v", err)
+	} else {
+		for _, record := range stored {
+			addStored(record.ImagePath)
+		}
+	}
+	if stored, err := s.repo.ListFinalSelections(ctx, sourcePath); err != nil {
+		s.logger.Debugf("screenshots: failed to load final selections for delete: %v", err)
+	} else {
+		for _, selection := range stored {
+			addStored(selection.ImagePath)
+		}
+	}
+	return targets
 }
 
 func (s *Service) removeTrackerImageReference(ctx context.Context, meta api.ScreenshotSubject, tmpDir string, absTarget string) {

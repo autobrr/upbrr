@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
-	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	"github.com/autobrr/upbrr/internal/releaseworkflow"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -265,9 +264,6 @@ func (a workflowMediaPrivateArtifacts) Commit(ctx context.Context) error {
 				return errors.New("workflow DVD menu deletion service is unavailable")
 			}
 			err = a.dvdMenuService.Delete(ctx, a.dvdMenuSubject, deletion.path)
-			if errors.Is(err, internalerrors.ErrNotFound) {
-				err = nil
-			}
 		case api.MediaArtifactHostedImage:
 			if a.hostedRepository == nil {
 				return errors.New("workflow hosted-image repository is unavailable")

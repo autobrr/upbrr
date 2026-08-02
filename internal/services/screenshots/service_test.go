@@ -340,14 +340,7 @@ func TestPlanResuggestsDeletedAndStaleScreenshotSlots(t *testing.T) {
 	if err := os.WriteFile(mediaInfoPath, payload, 0o600); err != nil {
 		t.Fatalf("write mediainfo: %v", err)
 	}
-	repo, err := db.Open(filepath.Join(t.TempDir(), "upbrr.db"))
-	if err != nil {
-		t.Fatalf("open repository: %v", err)
-	}
-	defer func() { _ = repo.Close() }()
-	if err := repo.Migrate(); err != nil {
-		t.Fatalf("migrate repository: %v", err)
-	}
+	repo := openScreenshotTestRepository(t)
 	tmpRoot := t.TempDir()
 	service := NewServiceWithRepo(config.Config{}, api.NopLogger{}, tmpRoot, nil, repo)
 	meta := api.ScreenshotSubject{SourcePath: sourcePath, MediaInfoJSONPath: mediaInfoPath}
@@ -471,7 +464,8 @@ func TestDeleteAcceptsWindowsCaseAndSeparatorVariants(t *testing.T) {
 	}
 	tmpRoot := t.TempDir()
 	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
-	service := NewService(config.Config{}, api.NopLogger{}, tmpRoot, nil)
+	repo := openScreenshotTestRepository(t)
+	service := NewServiceWithRepo(config.Config{}, api.NopLogger{}, tmpRoot, nil, repo)
 	meta := api.ScreenshotSubject{SourcePath: sourcePath}
 	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
 	if err != nil {
@@ -488,11 +482,90 @@ func TestDeleteAcceptsWindowsCaseAndSeparatorVariants(t *testing.T) {
 		if err := os.WriteFile(target, []byte("synthetic image"), 0o600); err != nil {
 			t.Fatalf("write managed image: %v", err)
 		}
+		seedStoredCapture(t, repo, meta.SourcePath, target)
 		if err := service.Delete(context.Background(), meta, testCase.variant(target)); err != nil {
 			t.Fatalf("%s delete error = %v", testCase.name, err)
 		}
 		if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("%s variant did not remove managed image: %v", testCase.name, err)
 		}
+		requireStoredCaptureCleared(t, repo, meta.SourcePath, testCase.name)
 	}
+}
+
+// seedStoredCapture stores the screenshot, hosted-upload, and final-selection
+// rows one captured image owns, each keyed on its canonical path spelling.
+func seedStoredCapture(t *testing.T, repo *db.SQLiteRepository, sourcePath string, imagePath string) {
+	t.Helper()
+
+	now := time.Now().UTC()
+	if err := repo.SaveScreenshot(context.Background(), api.Screenshot{
+		SourcePath: sourcePath,
+		ImagePath:  imagePath,
+		Timestamp:  30,
+		Purpose:    api.ScreenshotPurposeFinal,
+		CapturedAt: now,
+	}); err != nil {
+		t.Fatalf("seed screenshot record: %v", err)
+	}
+	if err := repo.SaveUploadedImages(context.Background(), sourcePath, "example-host", []api.UploadedImageLink{{
+		SourcePath: sourcePath,
+		ImagePath:  imagePath,
+		Host:       "example-host",
+		UsageScope: "global",
+		RawURL:     "https://example.invalid/capture.png",
+		UploadedAt: now,
+	}}); err != nil {
+		t.Fatalf("seed uploaded image record: %v", err)
+	}
+	if err := repo.SaveFinalSelections(context.Background(), sourcePath, []api.ScreenshotFinalSelection{{
+		SourcePath: sourcePath,
+		ImagePath:  imagePath,
+		Source:     "generated",
+		SelectedAt: now,
+	}}); err != nil {
+		t.Fatalf("seed final selection: %v", err)
+	}
+}
+
+// requireStoredCaptureCleared fails when a delete left a stale row that a later
+// regeneration at the same canonical path could reuse.
+func requireStoredCaptureCleared(t *testing.T, repo *db.SQLiteRepository, sourcePath string, label string) {
+	t.Helper()
+
+	screenshots, err := repo.ListScreenshotsByPath(context.Background(), sourcePath)
+	if err != nil {
+		t.Fatalf("%s list screenshot records: %v", label, err)
+	}
+	uploads, err := repo.ListUploadedImagesByPath(context.Background(), sourcePath)
+	if err != nil {
+		t.Fatalf("%s list uploaded image records: %v", label, err)
+	}
+	selections, err := repo.ListFinalSelections(context.Background(), sourcePath)
+	if err != nil {
+		t.Fatalf("%s list final selections: %v", label, err)
+	}
+	if len(screenshots) != 0 || len(uploads) != 0 || len(selections) != 0 {
+		t.Fatalf(
+			"%s left stale records screenshots=%d uploads=%d selections=%d",
+			label,
+			len(screenshots),
+			len(uploads),
+			len(selections),
+		)
+	}
+}
+
+func openScreenshotTestRepository(t *testing.T) *db.SQLiteRepository {
+	t.Helper()
+
+	repo, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repository: %v", err)
+	}
+	return repo
 }
