@@ -675,7 +675,7 @@ func (s *Service) Delete(ctx context.Context, meta api.ScreenshotSubject, imageP
 	if err != nil {
 		return fmt.Errorf("screenshots: resolve temp path: %w", err)
 	}
-	if absTarget != absTmp && !strings.HasPrefix(absTarget, absTmp+string(os.PathSeparator)) {
+	if !isPathWithinDir(tmpDir, absTarget) {
 		return internalerrors.ErrInvalidInput
 	}
 	if s.logger != nil {

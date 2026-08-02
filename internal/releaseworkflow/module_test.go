@@ -223,6 +223,7 @@ type retainedMediaResourceFake struct {
 type retainedMediaResourceStats struct {
 	staged    int
 	deletions int
+	commitErr error
 }
 
 func (*retainedMediaResourceFake) OpenArtifact(
@@ -246,6 +247,9 @@ func (f *retainedMediaResourceFake) DeleteArtifacts(
 }
 
 func (f *retainedMediaResourceFake) Commit(context.Context) error {
+	if f.stats.commitErr != nil {
+		return f.stats.commitErr
+	}
 	if f.pending {
 		f.stats.deletions++
 		f.pending = false
@@ -2811,24 +2815,224 @@ func TestModuleMediaMutationUsesOpaqueIDsAndInvalidatesDownstream(t *testing.T) 
 		ArtifactIDs:      []api.PublicResourceID{"artifact-1"},
 		IdempotencyKey:   "delete-artifact",
 	}
+	requireArtifactRetained := func(t *testing.T) {
+		t.Helper()
+		state, err := module.repository.Load(context.Background(), testOwnerID, mutated.Workflow.ID)
+		if err != nil {
+			t.Fatalf("load durable workflow state: %v", err)
+		}
+		if state.Workflow.Revision != mutated.Workflow.Revision || state.Workflow.Media == nil {
+			t.Fatalf("durable workflow advanced past failed delete: %#v", state.Workflow)
+		}
+		media, ok := state.Media[state.Workflow.Media.ID]
+		if !ok || len(media.Artifacts) != 1 || media.Artifacts[0].ID != "artifact-1" {
+			t.Fatalf("durable media lost the artifact after failed delete: %#v", media.Artifacts)
+		}
+	}
+	privateMedia.stats.commitErr = errors.New("synthetic media commit failure")
+	if _, err := module.Execute(context.Background(), testOwnerID, deletion); err == nil ||
+		!strings.Contains(err.Error(), "synthetic media commit failure") {
+		t.Fatalf("failed media finalization error = %v", err)
+	}
+	requireArtifactRetained(t)
+	privateMedia.stats.commitErr = nil
 	module.repository = &failOnceSaveRepository{Repository: module.repository}
 	if _, err := module.Execute(context.Background(), testOwnerID, deletion); err == nil ||
 		!strings.Contains(err.Error(), "synthetic repository save failure") {
-		t.Fatalf("failed media commit error = %v", err)
+		t.Fatalf("failed media save error = %v", err)
 	}
-	if privateMedia.stats.deletions != 0 {
-		t.Fatalf("filesystem deletion ran before repository commit: %d", privateMedia.stats.deletions)
+	if privateMedia.stats.deletions != 1 {
+		t.Fatalf("staged deletion did not commit before the snapshot save: %d", privateMedia.stats.deletions)
 	}
-	deleted := executeCommand(t, module, deletion)
-	if deleted.Media == nil || len(deleted.Media.Artifacts) != 0 || privateMedia.stats.deletions != 1 {
+	requireArtifactRetained(t)
+	retry := deletion
+	retry.IdempotencyKey = "delete-artifact-retry"
+	deleted := executeCommand(t, module, retry)
+	if deleted.Media == nil || len(deleted.Media.Artifacts) != 0 || privateMedia.stats.deletions != 2 {
 		t.Fatalf("deleted media = %#v deletions=%d", deleted.Media, privateMedia.stats.deletions)
 	}
-	if privateMedia.stats.staged != 2 {
-		t.Fatalf("staged deletion attempts = %d, want 2", privateMedia.stats.staged)
+	if privateMedia.stats.staged != 3 {
+		t.Fatalf("staged deletion attempts = %d, want 3", privateMedia.stats.staged)
 	}
-	replayed := executeCommand(t, module, deletion)
-	if replayed.Media == nil || replayed.Media.ID != deleted.Media.ID || privateMedia.stats.deletions != 1 {
+	replayed := executeCommand(t, module, retry)
+	if replayed.Media == nil || replayed.Media.ID != deleted.Media.ID || privateMedia.stats.deletions != 2 {
 		t.Fatalf("idempotent delete = %#v deletions=%d", replayed.Media, privateMedia.stats.deletions)
+	}
+}
+
+// readyDupeBuilder returns a dupe assessment builder that clears every selected
+// tracker, so tests can advance past duplicate checking to media commands.
+func readyDupeBuilder(t *testing.T) dupeAssessmentBuilderFunc {
+	t.Helper()
+	return func(
+		_ context.Context,
+		_ api.DuplicateSubject,
+		projections api.TrackerReleaseProjectionSet,
+		_ api.TrackerPreflightAssessment,
+		now time.Time,
+		_ bool,
+	) (api.DupeAssessment, any, error) {
+		results := make([]api.TrackerDupeAssessment, 0, len(projections.Projections))
+		for _, projection := range projections.Projections {
+			fingerprint, err := api.CanonicalWorkflowFingerprint(projection)
+			if err != nil {
+				return api.DupeAssessment{}, nil, fmt.Errorf("fingerprint synthetic dupe projection: %w", err)
+			}
+			results = append(results, api.TrackerDupeAssessment{
+				TrackerID:             projection.TrackerID,
+				UploadReleaseName:     projection.UploadReleaseName,
+				ProjectionFingerprint: fingerprint,
+				CriteriaFingerprint:   projection.CriteriaFingerprint,
+				Criteria:              projection.DuplicateCriteria,
+				Decision:              api.DupeDecisionNoMatch,
+				Status:                api.StageStatusCompleted,
+				CheckedAt:             now,
+				FreshUntil:            now.Add(time.Hour),
+			})
+		}
+		return api.DupeAssessment{
+			InputFingerprint: testFingerprint(t, "ready-dupes"),
+			Results:          results,
+			ExpiresAt:        now.Add(time.Hour),
+		}, struct{ Evidence string }{Evidence: "synthetic"}, nil
+	}
+}
+
+// TestReorderMediaArtifactsChangesOrderNotCaptureIndex pins the split that lets
+// callers reorder final media without disturbing capture slots: Order owns
+// display position, Index owns the capture slot, and Kind separates screenshots
+// from menu images.
+func TestReorderMediaArtifactsChangesOrderNotCaptureIndex(t *testing.T) {
+	t.Parallel()
+
+	privateMedia := &retainedMediaResourceFake{stats: &retainedMediaResourceStats{}}
+	mediaBuilder := mediaArtifactBuilderFunc(func(
+		_ context.Context,
+		_ api.ReleaseRef,
+		projections api.TrackerReleaseProjectionSet,
+		_ api.MediaCaptureInstructions,
+		_ time.Time,
+	) (api.MediaArtifactSet, any, error) {
+		requirements, err := mediaRequirementsFingerprint(projections.Projections)
+		if err != nil {
+			return api.MediaArtifactSet{}, nil, err
+		}
+		return api.MediaArtifactSet{
+			CaptureFingerprint:      testFingerprint(t, "reordered-media"),
+			RequirementsFingerprint: requirements,
+			Artifacts: []api.MediaArtifact{
+				{
+					ID:       "screen-a",
+					Kind:     api.MediaArtifactScreenshot,
+					Purpose:  api.ScreenshotPurposeFinal,
+					Index:    0,
+					Order:    0,
+					Selected: true,
+				},
+				{
+					ID:       "screen-b",
+					Kind:     api.MediaArtifactScreenshot,
+					Purpose:  api.ScreenshotPurposeFinal,
+					Index:    1,
+					Order:    1,
+					Selected: true,
+				},
+				{
+					ID:       "menu-a",
+					Kind:     api.MediaArtifactDVDMenu,
+					Purpose:  api.ScreenshotPurposeMenu,
+					Index:    0,
+					Order:    2,
+					Selected: true,
+				},
+			},
+			Status: api.StageStatusCompleted,
+		}, privateMedia, nil
+	})
+	module, _ := newTestModule(
+		t,
+		testPreparer(),
+		WithTrackerPreflightBuilder(readyPreflightBuilder(t)),
+		WithDupeAssessmentBuilder(readyDupeBuilder(t)),
+		WithMediaArtifactBuilder(mediaBuilder),
+		WithDescriptionBuilder(&descriptionBuilderFake{testing: t}),
+		WithUploadPlanBuilder(&uploadPlanBuilderFake{testing: t}),
+	)
+	result := executeCommand(t, module, CreateWorkflowCommand{WorkflowID: "workflow-media-reorder"})
+	result = executeCommand(t, module, PrepareReleaseCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Input:            api.PrepareInput{SourcePath: "C:\\releases\\Example.Release.2026.1080p-GRP"},
+	})
+	result = executeTestPublication(t, module, trackerContextPublication{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Catalog:          testCatalog(t),
+		Runtime:          testRuntime(t),
+		Selection:        api.TrackerSelection{TrackerIDs: []api.TrackerID{"ALPHA", "BETA"}},
+	})
+	projectionSet := testProjectionSet(t)
+	for index := range projectionSet.Projections {
+		projectionSet.Projections[index].Artifacts.ScreenshotCount = 2
+		projectionSet.Projections[index].Artifacts.DVDMenuCount = 1
+	}
+	result = executeTestPublication(t, module, projectionSetPublication{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Snapshot:         projectionSet,
+	})
+	result = executeCommand(t, module, PreflightTrackersCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+	})
+	result = executeCommand(t, module, CheckDuplicatesCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+	})
+	result = executeCommand(t, module, CaptureMediaCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Instructions:     api.MediaCaptureInstructions{ScreenshotCount: 2, Purpose: api.ScreenshotPurposeFinal},
+	})
+
+	reordered := executeCommand(t, module, ReorderMediaArtifactsCommand{
+		WorkflowID:       result.Workflow.ID,
+		ExpectedRevision: result.Workflow.Revision,
+		Media:            *result.Workflow.Media,
+		ArtifactIDs:      []api.PublicResourceID{"menu-a", "screen-b", "screen-a"},
+		IdempotencyKey:   "reorder-media",
+	})
+	if reordered.Media == nil || len(reordered.Media.Artifacts) != 3 {
+		t.Fatalf("reordered media = %#v", reordered.Media)
+	}
+	wantOrder := map[api.PublicResourceID]int{
+		"menu-a":   0,
+		"screen-b": 1,
+		"screen-a": 2,
+	}
+	wantIndex := map[api.PublicResourceID]int{
+		"screen-a": 0,
+		"screen-b": 1,
+		"menu-a":   0,
+	}
+	wantKind := map[api.PublicResourceID]api.MediaArtifactKind{
+		"screen-a": api.MediaArtifactScreenshot,
+		"screen-b": api.MediaArtifactScreenshot,
+		"menu-a":   api.MediaArtifactDVDMenu,
+	}
+	for _, artifact := range reordered.Media.Artifacts {
+		if artifact.Order != wantOrder[artifact.ID] {
+			t.Fatalf("artifact %q order = %d, want %d", artifact.ID, artifact.Order, wantOrder[artifact.ID])
+		}
+		if artifact.Index != wantIndex[artifact.ID] {
+			t.Fatalf("reorder moved the capture slot: artifact %q index = %d, want %d", artifact.ID, artifact.Index, wantIndex[artifact.ID])
+		}
+		if artifact.Kind != wantKind[artifact.ID] {
+			t.Fatalf("artifact %q kind = %q, want %q", artifact.ID, artifact.Kind, wantKind[artifact.ID])
+		}
+	}
+	if privateMedia.stats.staged != 0 || privateMedia.stats.deletions != 0 {
+		t.Fatalf("reorder touched private media: %#v", privateMedia.stats)
 	}
 }
 

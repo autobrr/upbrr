@@ -11,10 +11,16 @@ import (
 	"image/color"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/autobrr/upbrr/internal/config"
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
+	paths "github.com/autobrr/upbrr/internal/pathing/layout"
+	"github.com/autobrr/upbrr/internal/services/db"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -322,4 +328,171 @@ func ffmpegValueAfter(args []string, key string) string {
 		}
 	}
 	return ""
+}
+
+func TestPlanResuggestsDeletedAndStaleScreenshotSlots(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+	if err := os.WriteFile(sourcePath, []byte("synthetic video"), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	mediaInfoPath := filepath.Join(t.TempDir(), "mediainfo.json")
+	payload := []byte(`{"media":{"track":[{"@type":"General","Duration":"600"},{"@type":"Video","FrameRate":"24.000"}]}}`)
+	if err := os.WriteFile(mediaInfoPath, payload, 0o600); err != nil {
+		t.Fatalf("write mediainfo: %v", err)
+	}
+	repo, err := db.Open(filepath.Join(t.TempDir(), "upbrr.db"))
+	if err != nil {
+		t.Fatalf("open repository: %v", err)
+	}
+	defer func() { _ = repo.Close() }()
+	if err := repo.Migrate(); err != nil {
+		t.Fatalf("migrate repository: %v", err)
+	}
+	tmpRoot := t.TempDir()
+	service := NewServiceWithRepo(config.Config{}, api.NopLogger{}, tmpRoot, nil, repo)
+	meta := api.ScreenshotSubject{SourcePath: sourcePath, MediaInfoJSONPath: mediaInfoPath}
+
+	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	base := screenshotBaseName(meta)
+	suggestedIndices := func(plan api.ScreenshotPlan) []int {
+		indices := make([]int, 0, len(plan.SuggestedSelections))
+		for _, selection := range plan.SuggestedSelections {
+			indices = append(indices, selection.Index)
+		}
+		return indices
+	}
+
+	capturePath := filepath.Join(tmpDir, buildScreenshotFilename(base, 0, 30, api.ScreenshotPurposeFinal))
+	if err := os.WriteFile(capturePath, []byte("synthetic image"), 0o600); err != nil {
+		t.Fatalf("write capture: %v", err)
+	}
+	if err := repo.SaveScreenshot(context.Background(), api.Screenshot{
+		SourcePath: meta.SourcePath,
+		ImagePath:  capturePath,
+		Timestamp:  30,
+		Purpose:    api.ScreenshotPurposeFinal,
+		CapturedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("save screenshot: %v", err)
+	}
+	occupied, err := service.Plan(context.Background(), meta, 4)
+	if err != nil {
+		t.Fatalf("plan with capture: %v", err)
+	}
+	if got := suggestedIndices(occupied); len(got) != 3 || slices.Contains(got, 0) {
+		t.Fatalf("occupied slot was resuggested: %v", got)
+	}
+
+	if err := service.Delete(context.Background(), meta, capturePath); err != nil {
+		t.Fatalf("delete capture: %v", err)
+	}
+	if _, err := os.Stat(capturePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("capture file survived delete: %v", err)
+	}
+	freed, err := service.Plan(context.Background(), meta, 4)
+	if err != nil {
+		t.Fatalf("plan after delete: %v", err)
+	}
+	if got := suggestedIndices(freed); len(got) != 4 || !slices.Contains(got, 0) {
+		t.Fatalf("deleted slot was not resuggested: %v", got)
+	}
+
+	stalePath := filepath.Join(tmpDir, buildScreenshotFilename(base, 1, 157.5, api.ScreenshotPurposeFinal))
+	if err := repo.SaveScreenshot(context.Background(), api.Screenshot{
+		SourcePath: meta.SourcePath,
+		ImagePath:  stalePath,
+		Timestamp:  157.5,
+		Purpose:    api.ScreenshotPurposeFinal,
+		CapturedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("save stale screenshot: %v", err)
+	}
+	stale, err := service.Plan(context.Background(), meta, 4)
+	if err != nil {
+		t.Fatalf("plan with stale row: %v", err)
+	}
+	if got := suggestedIndices(stale); len(got) != 4 || !slices.Contains(got, 1) {
+		t.Fatalf("stale row blocked its slot: %v", got)
+	}
+}
+
+func TestDeleteRejectsPathsOutsideManagedTempDir(t *testing.T) {
+	tmpRoot := t.TempDir()
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+	service := NewService(config.Config{}, api.NopLogger{}, tmpRoot, nil)
+	meta := api.ScreenshotSubject{SourcePath: sourcePath}
+	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	siblingDir := tmpDir + "-evil"
+	if err := os.MkdirAll(siblingDir, 0o700); err != nil {
+		t.Fatalf("create sibling dir: %v", err)
+	}
+	siblingTarget := filepath.Join(siblingDir, "escape.png")
+	if err := os.WriteFile(siblingTarget, []byte("synthetic image"), 0o600); err != nil {
+		t.Fatalf("write sibling image: %v", err)
+	}
+	traversalTarget := tmpDir + string(os.PathSeparator) + ".." + string(os.PathSeparator) + "escape.png"
+	for _, testCase := range []struct {
+		name   string
+		target string
+	}{
+		{name: "traversal", target: traversalTarget},
+		{name: "sibling prefix", target: siblingTarget},
+		{name: "disallowed extension", target: filepath.Join(tmpDir, "notes.txt")},
+	} {
+		if err := service.Delete(context.Background(), meta, testCase.target); !errors.Is(err, internalerrors.ErrInvalidInput) {
+			t.Fatalf("%s delete error = %v, want invalid input", testCase.name, err)
+		}
+	}
+	if _, err := os.Stat(siblingTarget); err != nil {
+		t.Fatalf("sibling image was removed: %v", err)
+	}
+
+	validTarget := filepath.Join(tmpDir, "capture.png")
+	if err := os.WriteFile(validTarget, []byte("synthetic image"), 0o600); err != nil {
+		t.Fatalf("write managed image: %v", err)
+	}
+	if err := service.Delete(context.Background(), meta, validTarget); err != nil {
+		t.Fatalf("delete managed image: %v", err)
+	}
+	if _, err := os.Stat(validTarget); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("managed image survived delete: %v", err)
+	}
+}
+
+func TestDeleteAcceptsWindowsCaseAndSeparatorVariants(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows path semantics")
+	}
+	tmpRoot := t.TempDir()
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+	service := NewService(config.Config{}, api.NopLogger{}, tmpRoot, nil)
+	meta := api.ScreenshotSubject{SourcePath: sourcePath}
+	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	for _, testCase := range []struct {
+		name    string
+		variant func(string) string
+	}{
+		{name: "upper case", variant: strings.ToUpper},
+		{name: "forward slashes", variant: filepath.ToSlash},
+	} {
+		target := filepath.Join(tmpDir, "capture.png")
+		if err := os.WriteFile(target, []byte("synthetic image"), 0o600); err != nil {
+			t.Fatalf("write managed image: %v", err)
+		}
+		if err := service.Delete(context.Background(), meta, testCase.variant(target)); err != nil {
+			t.Fatalf("%s delete error = %v", testCase.name, err)
+		}
+		if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s variant did not remove managed image: %v", testCase.name, err)
+		}
+	}
 }

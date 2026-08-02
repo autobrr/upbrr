@@ -338,6 +338,12 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 		m.cleanupUncommittedResult(ownerID, state.Workflow.ID, result)
 		return CommandResult{}, fmt.Errorf("release workflow command canceled before commit: %w", err)
 	}
+	if commandCommitsMediaBeforeSave(command) {
+		if err := m.finalizeRetainedMedia(ctx, ownerID, state.Workflow.ID, result.Media, true); err != nil {
+			m.cleanupUncommittedResult(ownerID, state.Workflow.ID, result)
+			return CommandResult{}, err
+		}
+	}
 	if err := m.repository.Save(ctx, ownerID, expectedRevision, state); err != nil {
 		m.cleanupUncommittedResult(ownerID, state.Workflow.ID, result)
 		return CommandResult{}, fmt.Errorf("release workflow save: %w", err)
@@ -345,7 +351,7 @@ func (m *Module) execute(ctx context.Context, ownerID string, command mutation) 
 	if result.Media != nil {
 		m.cleanupSupersededMediaResources(ownerID, state.Workflow.ID, priorWorkflow, state.Workflow)
 	}
-	if commandFinalizesMedia(command) {
+	if commandFinalizesMedia(command) && !commandCommitsMediaBeforeSave(command) {
 		if err := m.finalizeRetainedMedia(ctx, ownerID, state.Workflow.ID, result.Media, true); err != nil {
 			return CommandResult{}, err
 		}
@@ -368,6 +374,20 @@ func (m *Module) cleanupUncommittedResult(ownerID string, workflowID api.Workflo
 func commandFinalizesMedia(command mutation) bool {
 	switch command.(type) {
 	case DeleteMediaArtifactsCommand, RemoveHostedImagesCommand:
+		return true
+	default:
+		return false
+	}
+}
+
+// commandCommitsMediaBeforeSave selects commands whose staged local deletions
+// commit before the snapshot save: a failed commit then fails the command while
+// durable state still owns the artifact, so any retry is a fresh, valid delete.
+// Hosted-image removal stays post-save because its repository delete rejects
+// already-removed rows and cannot re-run after a failed save.
+func commandCommitsMediaBeforeSave(command mutation) bool {
+	switch command.(type) {
+	case DeleteMediaArtifactsCommand:
 		return true
 	default:
 		return false
