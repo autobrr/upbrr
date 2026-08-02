@@ -120,6 +120,18 @@ func TestResolutionFromMediaInfo(t *testing.T) {
 			message:  "expected 720p, got %q",
 		},
 		{
+			name:     "720x540p",
+			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"720","Height":"540","ScanType":"Progressive"}]}}`,
+			expected: "540p",
+			message:  "expected 540p for 720x540, got %q",
+		},
+		{
+			name:     "960x540p",
+			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"960","Height":"540","ScanType":"Progressive"}]}}`,
+			expected: "540p",
+			message:  "expected 540p for 960x540, got %q",
+		},
+		{
 			name:     "1080i",
 			payload:  `{"media":{"track":[{"@type":"General"},{"@type":"Video","Width":"1920","Height":"1080","ScanType":"Interlaced"}]}}`,
 			expected: "1080i",
