@@ -471,6 +471,7 @@ func TestDeleteAcceptsWindowsCaseAndSeparatorVariants(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve temp dir: %v", err)
 	}
+	retained := filepath.Join(tmpDir, "keep.png")
 	for _, testCase := range []struct {
 		name    string
 		variant func(string) string
@@ -482,55 +483,66 @@ func TestDeleteAcceptsWindowsCaseAndSeparatorVariants(t *testing.T) {
 		if err := os.WriteFile(target, []byte("synthetic image"), 0o600); err != nil {
 			t.Fatalf("write managed image: %v", err)
 		}
-		seedStoredCapture(t, repo, meta.SourcePath, target)
+		seedStoredCaptures(t, repo, meta.SourcePath, target, retained)
 		if err := service.Delete(context.Background(), meta, testCase.variant(target)); err != nil {
 			t.Fatalf("%s delete error = %v", testCase.name, err)
 		}
 		if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("%s variant did not remove managed image: %v", testCase.name, err)
 		}
-		requireStoredCaptureCleared(t, repo, meta.SourcePath, testCase.name)
+		requireStoredCaptureRows(t, repo, meta.SourcePath, retained, testCase.name)
 	}
 }
 
-// seedStoredCapture stores the screenshot, hosted-upload, and final-selection
-// rows one captured image owns, each keyed on its canonical path spelling.
-func seedStoredCapture(t *testing.T, repo *db.SQLiteRepository, sourcePath string, imagePath string) {
+// seedStoredCaptures stores the screenshot, hosted-upload, and final-selection
+// rows the given captures own, each keyed on its canonical path spelling.
+// Selections are written in one call because saving them replaces the release's
+// whole set.
+func seedStoredCaptures(t *testing.T, repo *db.SQLiteRepository, sourcePath string, imagePaths ...string) {
 	t.Helper()
 
 	now := time.Now().UTC()
-	if err := repo.SaveScreenshot(context.Background(), api.Screenshot{
-		SourcePath: sourcePath,
-		ImagePath:  imagePath,
-		Timestamp:  30,
-		Purpose:    api.ScreenshotPurposeFinal,
-		CapturedAt: now,
-	}); err != nil {
-		t.Fatalf("seed screenshot record: %v", err)
+	selections := make([]api.ScreenshotFinalSelection, 0, len(imagePaths))
+	uploads := make([]api.UploadedImageLink, 0, len(imagePaths))
+	for order, imagePath := range imagePaths {
+		if err := repo.SaveScreenshot(context.Background(), api.Screenshot{
+			SourcePath: sourcePath,
+			ImagePath:  imagePath,
+			Timestamp:  float64(30 * (order + 1)),
+			Purpose:    api.ScreenshotPurposeFinal,
+			CapturedAt: now,
+		}); err != nil {
+			t.Fatalf("seed screenshot record: %v", err)
+		}
+		uploads = append(uploads, api.UploadedImageLink{
+			SourcePath: sourcePath,
+			ImagePath:  imagePath,
+			Host:       "example-host",
+			UsageScope: "global",
+			RawURL:     "https://example.invalid/capture.png",
+			UploadedAt: now,
+		})
+		selections = append(selections, api.ScreenshotFinalSelection{
+			SourcePath: sourcePath,
+			ImagePath:  imagePath,
+			Order:      order,
+			Source:     "generated",
+			SelectedAt: now,
+		})
 	}
-	if err := repo.SaveUploadedImages(context.Background(), sourcePath, "example-host", []api.UploadedImageLink{{
-		SourcePath: sourcePath,
-		ImagePath:  imagePath,
-		Host:       "example-host",
-		UsageScope: "global",
-		RawURL:     "https://example.invalid/capture.png",
-		UploadedAt: now,
-	}}); err != nil {
-		t.Fatalf("seed uploaded image record: %v", err)
+	if err := repo.SaveUploadedImages(context.Background(), sourcePath, "example-host", uploads); err != nil {
+		t.Fatalf("seed uploaded image records: %v", err)
 	}
-	if err := repo.SaveFinalSelections(context.Background(), sourcePath, []api.ScreenshotFinalSelection{{
-		SourcePath: sourcePath,
-		ImagePath:  imagePath,
-		Source:     "generated",
-		SelectedAt: now,
-	}}); err != nil {
-		t.Fatalf("seed final selection: %v", err)
+	if err := repo.SaveFinalSelections(context.Background(), sourcePath, selections); err != nil {
+		t.Fatalf("seed final selections: %v", err)
 	}
 }
 
-// requireStoredCaptureCleared fails when a delete left a stale row that a later
-// regeneration at the same canonical path could reuse.
-func requireStoredCaptureCleared(t *testing.T, repo *db.SQLiteRepository, sourcePath string, label string) {
+// requireStoredCaptureRows fails when a delete left a stale row that a later
+// regeneration at the same canonical path could reuse, or when resolving the
+// caller's path to a stored spelling reached another capture's rows. Exactly one
+// screenshot, upload, and selection row must survive, all naming retained.
+func requireStoredCaptureRows(t *testing.T, repo *db.SQLiteRepository, sourcePath string, retained string, label string) {
 	t.Helper()
 
 	screenshots, err := repo.ListScreenshotsByPath(context.Background(), sourcePath)
@@ -545,14 +557,23 @@ func requireStoredCaptureCleared(t *testing.T, repo *db.SQLiteRepository, source
 	if err != nil {
 		t.Fatalf("%s list final selections: %v", label, err)
 	}
-	if len(screenshots) != 0 || len(uploads) != 0 || len(selections) != 0 {
-		t.Fatalf(
-			"%s left stale records screenshots=%d uploads=%d selections=%d",
-			label,
-			len(screenshots),
-			len(uploads),
-			len(selections),
-		)
+	stored := make([]string, 0, len(screenshots)+len(uploads)+len(selections))
+	for _, record := range screenshots {
+		stored = append(stored, record.ImagePath)
+	}
+	for _, upload := range uploads {
+		stored = append(stored, upload.ImagePath)
+	}
+	for _, selection := range selections {
+		stored = append(stored, selection.ImagePath)
+	}
+	if len(stored) != 3 {
+		t.Fatalf("%s surviving records = %#v, want one per table for %s", label, stored, retained)
+	}
+	for _, imagePath := range stored {
+		if imagePath != retained {
+			t.Fatalf("%s surviving record = %s, want %s", label, imagePath, retained)
+		}
 	}
 }
 
