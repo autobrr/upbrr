@@ -144,7 +144,7 @@ pnpm --dir webui run build
 For embedded web visual checks, test the embedded build rather than the Vite-only server. Rebuild the frontend, sync it into embedded assets, rebuild the CLI, then run the auth-disabled embedded server on the main port:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1
+pwsh -NoProfile -File ./scripts/build.ps1
 .\dist\upbrr.exe serve --dev-no-auth
 ```
 
@@ -282,6 +282,7 @@ Prefer generic group tags such as `GRP` when the group is incidental; real group
 ### Logging levels
 
 Keep log levels purposeful.
+
 - `INFO` should provide concise, relevant progress or outcome details for end users during uploads and other top-level workflows.
 - `DEBUG` should include richer decision-making context useful for developer troubleshooting.
 - `TRACE` should capture near-complete operational flow for high-fidelity execution reporting.

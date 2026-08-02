@@ -2,7 +2,7 @@
 
 ifeq ($(OS),Windows_NT)
 EXE := .exe
-FULL_BUILD := powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build.ps1
+FULL_BUILD := pwsh -NoProfile -File ./scripts/build.ps1
 MKDIR_DIST := powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path dist | Out-Null"
 RM_DIST := powershell -NoProfile -Command "Remove-Item -Recurse -Force dist, webui/dist -ErrorAction SilentlyContinue"
 BLANK := echo.
