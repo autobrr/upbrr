@@ -5,6 +5,7 @@ package unit3d
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -41,6 +42,52 @@ func baseReleaseName(meta api.UploadSubject) string {
 		name = strings.TrimSpace(meta.ReleaseNameNoTag)
 	}
 	return strings.TrimSpace(strings.Join(strings.Fields(name), " "))
+}
+
+// SplitTVDBName separates a generated TV name into canonical title, alternate title, and release tail.
+func SplitTVDBName(name string, meta api.UploadSubject, evidence api.TVDBNameDisambiguation) (string, string, string, bool) {
+	title := strings.Join(strings.Fields(evidence.CanonicalName), " ")
+	name = strings.Join(strings.Fields(name), " ")
+	if title == "" || len(name) < len(title) || !strings.EqualFold(name[:len(title)], title) ||
+		len(name) > len(title) && name[len(title)] != ' ' {
+		return "", "", "", false
+	}
+	remainder := trimTVDBLeadingYear(strings.TrimSpace(name[len(title):]), evidence.SeriesYear)
+	tailStart := findTVDBTailStart(remainder, meta)
+	if tailStart < 0 {
+		return "", "", "", false
+	}
+	return title, strings.TrimSpace(remainder[:tailStart]), strings.TrimSpace(remainder[tailStart:]), true
+}
+
+func trimTVDBLeadingYear(value string, year int) string {
+	if year <= 0 {
+		return value
+	}
+	token := strconv.Itoa(year)
+	if value == token {
+		return ""
+	}
+	if strings.HasPrefix(value, token+" ") {
+		return strings.TrimSpace(value[len(token):])
+	}
+	return value
+}
+
+func findTVDBTailStart(value string, meta api.UploadSubject) int {
+	best := -1
+	for _, candidate := range []string{
+		strings.TrimSpace(meta.SeasonStr + meta.EpisodeStr),
+		meta.SeasonStr,
+		meta.DailyEpisodeDate,
+		Resolution(meta),
+	} {
+		element := strings.Join(strings.Fields(candidate), " ")
+		if index := strings.Index(" "+value+" ", " "+element+" "); element != "" && index >= 0 && (best < 0 || index < best) {
+			best = index
+		}
+	}
+	return best
 }
 
 func addNoGroupSuffix(name string, meta api.UploadSubject, suffix string) string {

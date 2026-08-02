@@ -35,9 +35,7 @@ func Profile() standalone.Profile {
 			ID:         "bhd/duplicate/v2",
 			EvidenceID: "bhd-upload-rules",
 			SearchScope: trackers.DupeSearchScope{
-				IncludeEpisodes:    true,
-				IncludeSeasonPacks: true,
-				MaxPages:           100,
+				MaxPages: 100,
 			},
 			SlotDimensions: []trackers.DupeDimension{
 				trackers.DupeDimensionType,

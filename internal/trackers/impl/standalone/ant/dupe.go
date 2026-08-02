@@ -35,7 +35,7 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 		cfg:      cfg,
 		http:     httpClient,
 		endpoint: "https://anthelion.me/api.php",
-		maxPages: antMaxPages(deps),
+		maxPages: deps.MaxPages(100),
 	}
 }
 
@@ -186,16 +186,6 @@ type antPagination struct {
 	Total         int
 	OffsetPresent bool
 	TotalPresent  bool
-}
-
-func antMaxPages(deps dupe.Dependencies) int {
-	const defaultMaxPages = 100
-	if registry := deps.Registry(); registry != nil {
-		if policy, ok := registry.LookupDupePolicy(deps.Tracker()); ok && policy.SearchScope.MaxPages > 0 {
-			return policy.SearchScope.MaxPages
-		}
-	}
-	return defaultMaxPages
 }
 
 func antItemCount(payload map[string]any) int {

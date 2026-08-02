@@ -97,9 +97,7 @@ func (d *Definition) DupePolicy() *trackers.DupePolicy {
 		return nil
 	}
 	policy.SearchScope = trackers.DupeSearchScope{
-		IncludeEpisodes:    true,
-		IncludeSeasonPacks: true,
-		MaxPages:           100,
+		MaxPages: 100,
 	}
 	return policy
 }

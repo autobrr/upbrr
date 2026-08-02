@@ -36,10 +36,6 @@ var editionBadTokenPattern = regexp.MustCompile(`(?i)\b(?:internal|limited|retai
 var editionWhitespacePattern = regexp.MustCompile(`\s+`)
 var durationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|hours?|hrs?|h|minutes?|mins?|min|seconds?|secs?|sec|s)\b`)
 var numericPattern = regexp.MustCompile(`\d+`)
-var (
-	dolbyVisionNamedProfilePattern = regexp.MustCompile(`(?i)\bprofile(?:\s+id)?[\s:]+(\d+(?:\.\d+)?)`)
-	dolbyVisionCodecProfilePattern = regexp.MustCompile(`(?i)\bdvhe\.(\d{2})`)
-)
 var releaseTokenSeparatorPattern = regexp.MustCompile(`[^A-Z0-9]+`)
 
 // deriveMediaFacts enriches prepared evidence from MediaInfo, BDInfo, and filename
@@ -1262,27 +1258,27 @@ func hdrFactsFromMedia(doc mediaInfoDoc, bdinfo *discparse.BDInfo, meta preparat
 		for _, video := range bdinfo.Video {
 			upper := strings.ToUpper(strings.TrimSpace(video.HDRDV))
 			if strings.Contains(upper, "DOLBY VISION") {
-				addHDRFormat(&facts.Formats, api.HDRFormatDolbyVision)
-				if profile := dolbyVisionProfile(video.Profile + " " + video.HDRDV); profile != "" {
+				mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatDolbyVision)
+				if profile := mediafacts.DolbyVisionProfile(video.Profile + " " + video.HDRDV); profile != "" {
 					facts.DolbyVisionProfile = profile
 				}
 			}
 			if strings.Contains(upper, "HDR10+") {
-				addHDRFormat(&facts.Formats, api.HDRFormatHDR10Plus)
+				mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDR10Plus)
 			} else if strings.Contains(upper, "HDR10") {
-				addHDRFormat(&facts.Formats, api.HDRFormatHDR10)
+				mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDR10)
 			}
 			if strings.Contains(upper, "HLG") {
-				addHDRFormat(&facts.Formats, api.HDRFormatHLG)
+				mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHLG)
 			}
 			if strings.Contains(upper, "HDR VIVID") || strings.Contains(upper, "CUVA") {
-				addHDRFormat(&facts.Formats, api.HDRFormatHDRVivid)
+				mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDRVivid)
 			}
 			if strings.Contains(upper, "PQ") {
-				addHDRFormat(&facts.Formats, api.HDRFormatPQ10)
+				mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatPQ10)
 			}
 		}
-		addHDRFallbacks(&facts)
+		mediafacts.AddHDRFallbacks(&facts)
 		if len(facts.Formats) == 0 {
 			facts.Formats = []api.HDRFormat{api.HDRFormatSDR}
 		}
@@ -1318,19 +1314,19 @@ func filenameHDRFacts(meta preparationstate.State) api.HDRFacts {
 	for _, token := range tokens {
 		switch strings.ToUpper(strings.TrimSpace(token)) {
 		case "DV", "DOVI", "DOLBY VISION":
-			addHDRFormat(&facts.Formats, api.HDRFormatDolbyVision)
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatDolbyVision)
 		case "HDR10+", "HDR+", "HDR10PLUS":
-			addHDRFormat(&facts.Formats, api.HDRFormatHDR10Plus)
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDR10Plus)
 		case "HDR", "HDR10":
-			addHDRFormat(&facts.Formats, api.HDRFormatHDR10)
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDR10)
 		case "HLG":
-			addHDRFormat(&facts.Formats, api.HDRFormatHLG)
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHLG)
 		case "PQ10":
-			addHDRFormat(&facts.Formats, api.HDRFormatPQ10)
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatPQ10)
 		case "HDR VIVID", "HDRVIVID":
-			addHDRFormat(&facts.Formats, api.HDRFormatHDRVivid)
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDRVivid)
 		case "SDR":
-			addHDRFormat(&facts.Formats, api.HDRFormatSDR)
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatSDR)
 		}
 	}
 	if len(facts.Formats) == 0 {
@@ -1339,7 +1335,7 @@ func filenameHDRFacts(meta preparationstate.State) api.HDRFacts {
 		return facts
 	}
 	facts.SourceFields = []string{sourceField}
-	addHDRFallbacks(&facts)
+	mediafacts.AddHDRFallbacks(&facts)
 	return facts
 }
 
@@ -1368,37 +1364,8 @@ func hdrFactsDisplay(facts api.HDRFacts) string {
 	return strings.Join(parts, " ")
 }
 
-func addHDRFallbacks(facts *api.HDRFacts) {
-	if facts == nil || !hasHDRFormat(facts.Formats, api.HDRFormatDolbyVision) {
-		return
-	}
-	if hasHDRFormat(facts.Formats, api.HDRFormatHDR10Plus) {
-		addHDRFormat(&facts.FallbackFormats, api.HDRFormatHDR10Plus)
-		addHDRFormat(&facts.FallbackFormats, api.HDRFormatHDR10)
-	} else if hasHDRFormat(facts.Formats, api.HDRFormatHDR10) {
-		addHDRFormat(&facts.FallbackFormats, api.HDRFormatHDR10)
-	}
-}
-
-func addHDRFormat(formats *[]api.HDRFormat, format api.HDRFormat) {
-	if formats == nil || hasHDRFormat(*formats, format) {
-		return
-	}
-	*formats = append(*formats, format)
-}
-
 func hasHDRFormat(formats []api.HDRFormat, want api.HDRFormat) bool {
 	return slices.Contains(formats, want)
-}
-
-func dolbyVisionProfile(value string) string {
-	if match := dolbyVisionNamedProfilePattern.FindStringSubmatch(value); len(match) == 2 {
-		return strings.TrimLeft(match[1], "0")
-	}
-	if match := dolbyVisionCodecProfilePattern.FindStringSubmatch(value); len(match) == 2 {
-		return strings.TrimLeft(match[1], "0")
-	}
-	return ""
 }
 
 func withHDRContradiction(authoritative api.HDRFacts, fallback api.HDRFacts) api.HDRFacts {

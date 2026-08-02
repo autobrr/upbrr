@@ -36,7 +36,7 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 		cfg:      cfg,
 		http:     httpClient,
 		endpoint: "https://nebulance.io/api.php",
-		maxPages: nblMaxPages(deps),
+		maxPages: deps.MaxPages(100),
 	}
 }
 
@@ -260,16 +260,6 @@ func cloneNBLValues(values url.Values) url.Values {
 		cloned[key] = append([]string(nil), items...)
 	}
 	return cloned
-}
-
-func nblMaxPages(deps dupe.Dependencies) int {
-	const defaultMaxPages = 100
-	if registry := deps.Registry(); registry != nil {
-		if policy, ok := registry.LookupDupePolicy(deps.Tracker()); ok && policy.SearchScope.MaxPages > 0 {
-			return policy.SearchScope.MaxPages
-		}
-	}
-	return defaultMaxPages
 }
 
 func nblAPIKey(cfg config.Config) string {

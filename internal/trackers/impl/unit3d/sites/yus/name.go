@@ -37,7 +37,7 @@ func applyYUSTVDBDisambiguation(name string, meta api.UploadSubject) string {
 		return name
 	}
 	evidence := meta.ProviderMetadata.TVDB.NameDisambiguation
-	title, alternate, tail, ok := splitYUSTVName(name, meta, evidence)
+	title, alternate, tail, ok := unit3d.SplitTVDBName(name, meta, evidence)
 	if !ok {
 		return name
 	}
@@ -50,51 +50,6 @@ func applyYUSTVDBDisambiguation(name string, meta api.UploadSubject) string {
 	}
 	parts = append(parts, tail)
 	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
-}
-
-func splitYUSTVName(name string, meta api.UploadSubject, evidence api.TVDBNameDisambiguation) (string, string, string, bool) {
-	title := strings.Join(strings.Fields(evidence.CanonicalName), " ")
-	if title == "" || len(name) < len(title) || !strings.EqualFold(name[:len(title)], title) ||
-		len(name) > len(title) && name[len(title)] != ' ' {
-		return "", "", "", false
-	}
-	remainder := strings.TrimSpace(name[len(title):])
-	remainder = trimYUSLeadingYear(remainder, evidence.SeriesYear)
-	tailStart := findYUSTVTailStart(remainder, meta)
-	if tailStart < 0 {
-		return "", "", "", false
-	}
-	return title, strings.TrimSpace(remainder[:tailStart]), strings.TrimSpace(remainder[tailStart:]), true
-}
-
-func trimYUSLeadingYear(value string, year int) string {
-	if year <= 0 {
-		return value
-	}
-	token := strconv.Itoa(year)
-	if value == token {
-		return ""
-	}
-	if strings.HasPrefix(value, token+" ") {
-		return strings.TrimSpace(value[len(token):])
-	}
-	return value
-}
-
-func findYUSTVTailStart(value string, meta api.UploadSubject) int {
-	candidates := []string{
-		strings.TrimSpace(meta.SeasonStr + meta.EpisodeStr),
-		meta.SeasonStr,
-		meta.DailyEpisodeDate,
-		unit3d.Resolution(meta),
-	}
-	best := -1
-	for _, candidate := range candidates {
-		if index := findYUSNameElement(value, candidate); index >= 0 && (best < 0 || index < best) {
-			best = index
-		}
-	}
-	return best
 }
 
 func applyYUSTMDBMovieYear(name string, meta api.UploadSubject) string {

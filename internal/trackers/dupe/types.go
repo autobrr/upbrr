@@ -162,6 +162,16 @@ func (d Dependencies) Logger() api.Logger { return d.logger }
 // Registry returns the composed tracker registry when construction occurs through the duplicate service.
 func (d Dependencies) Registry() *trackerspkg.Registry { return d.registry }
 
+// MaxPages returns the tracker policy's search bound or fallback when none is configured.
+func (d Dependencies) MaxPages(fallback int) int {
+	if d.registry != nil {
+		if policy, ok := d.registry.LookupDupePolicy(d.tracker); ok && policy.SearchScope.MaxPages > 0 {
+			return policy.SearchScope.MaxPages
+		}
+	}
+	return fallback
+}
+
 // BoundConfig returns a minimal config snapshot containing only this adapter's bound inputs.
 // It exists for tracker protocol helpers shared with upload/auth code; it never contains unrelated app config.
 func (d Dependencies) BoundConfig() config.Config {

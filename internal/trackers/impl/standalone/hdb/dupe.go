@@ -56,7 +56,7 @@ func newDuplicateAdapterAt(deps dupe.Dependencies, baseURL string) dupe.Adapter 
 		http:     httpClient,
 		logger:   logger,
 		endpoint: strings.TrimRight(baseURL, "/") + "/api/torrents",
-		maxPages: hdbMaxPages(deps),
+		maxPages: deps.MaxPages(100),
 	}
 }
 
@@ -272,14 +272,4 @@ func hdbDupeCategoryID(meta api.DuplicateSubject) int {
 		}
 	}
 	return 0
-}
-
-func hdbMaxPages(deps dupe.Dependencies) int {
-	const defaultMaxPages = 100
-	if registry := deps.Registry(); registry != nil {
-		if policy, ok := registry.LookupDupePolicy(deps.Tracker()); ok && policy.SearchScope.MaxPages > 0 {
-			return policy.SearchScope.MaxPages
-		}
-	}
-	return defaultMaxPages
 }

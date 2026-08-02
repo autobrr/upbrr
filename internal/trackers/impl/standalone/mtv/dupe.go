@@ -36,17 +36,11 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 	httpClient := deps.HTTPClient()
 	logger := deps.Logger()
 	_ = logger
-	searcher := &dupeSearcher{
+	return &dupeSearcher{
 		cfg:      cfg,
 		http:     httpClient,
-		maxPages: 100,
+		maxPages: deps.MaxPages(100),
 	}
-	if registry := deps.Registry(); registry != nil {
-		if policy, ok := registry.LookupDupePolicy(deps.Tracker()); ok && policy.SearchScope.MaxPages > 0 {
-			searcher.maxPages = policy.SearchScope.MaxPages
-		}
-	}
-	return searcher
 }
 
 func (h dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) dupe.AdapterResult {

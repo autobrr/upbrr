@@ -37,23 +37,14 @@ func NewReleaseNamePolicy(id string, resolver ReleaseNamePolicy) ReleaseNamePoli
 	}
 }
 
-// WithReleaseNameElementPolicy binds a versioned shared element policy before
-// tracker-specific release-name formatting.
-func WithReleaseNameElementPolicy(
-	binding ReleaseNamePolicyBinding,
-	policy api.ReleaseNameElementPolicy,
-) ReleaseNamePolicyBinding {
-	binding.Elements = policy
-	return binding
-}
-
 // WithEpisodeTitleMode is the v1 binding seam for an evidenced tracker-local
 // episode-title exception.
 func WithEpisodeTitleMode(binding ReleaseNamePolicyBinding, mode api.EpisodeTitleMode) ReleaseNamePolicyBinding {
-	return WithReleaseNameElementPolicy(binding, api.ReleaseNameElementPolicy{
+	binding.Elements = api.ReleaseNameElementPolicy{
 		Version:          api.ReleaseNameElementPolicyVersionV1,
 		EpisodeTitleMode: mode,
-	})
+	}
+	return binding
 }
 
 // WithNonSceneReleaseNameConfirmation requires explicit review of automatic

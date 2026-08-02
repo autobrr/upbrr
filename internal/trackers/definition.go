@@ -446,8 +446,7 @@ type DupePolicy struct {
 	// EvidenceID identifies the policy evidence backing automatic
 	// tracker-specific behavior.
 	EvidenceID string
-	// SearchScope declares which remote dimensions are safe to narrow and how
-	// many pages may be consumed before search becomes incomplete.
+	// SearchScope declares how many pages may be consumed before search becomes incomplete.
 	SearchScope DupeSearchScope
 	// SlotDimensions are compared to establish tracker slot membership.
 	SlotDimensions []DupeDimension
@@ -506,13 +505,9 @@ type DupePolicy struct {
 	TrumpableOverridesSlot bool
 }
 
-// DupeSearchScope defines policy-safe remote narrowing and completion bounds.
+// DupeSearchScope defines the remote-search completion bound.
 type DupeSearchScope struct {
-	AllowTypeNarrowing       bool
-	AllowResolutionNarrowing bool
-	IncludeEpisodes          bool
-	IncludeSeasonPacks       bool
-	MaxPages                 int
+	MaxPages int
 }
 
 // DupeDimension identifies one structural comparison axis.
@@ -604,25 +599,6 @@ type DupeRule struct {
 	OverridesGeneral bool
 }
 
-// DupeSetRole identifies the authoritative role preference available to a
-// capacity-limited slot rule.
-type DupeSetRole string
-
-const (
-	DupeSetRoleCompact DupeSetRole = "compact"
-	DupeSetRoleQuality DupeSetRole = "quality"
-	DupeSetRoleManual  DupeSetRole = "manual"
-)
-
-// DupeSetMissingDisposition identifies the conservative result used when a
-// set rule lacks complete collection evidence.
-type DupeSetMissingDisposition string
-
-const (
-	DupeSetMissingInsufficient DupeSetMissingDisposition = "insufficient_evidence"
-	DupeSetMissingManual       DupeSetMissingDisposition = "manual_review"
-)
-
 // DupeSetPredicate is one declarative target or candidate fact predicate.
 type DupeSetPredicate struct {
 	Dimension        DupeDimension
@@ -649,18 +625,13 @@ type DupeSetRule struct {
 	Capacity                     int
 	CapacityOverrides            []DupeSetCapacityOverride
 	MinimumSizeSeparationPercent float64
-	RolePreference               DupeSetRole
-	MissingEvidenceDisposition   DupeSetMissingDisposition
 }
 
 // SeasonPackPrecedenceRules returns opt-in directional season-pack rules.
 // Tracker profiles must select these explicitly; no global pack assumption is
 // applied by the evaluator.
-func SeasonPackPrecedenceRules(evidenceIDs ...string) []DupeRule {
-	evidenceID := ""
-	if len(evidenceIDs) > 0 {
-		evidenceID = strings.TrimSpace(evidenceIDs[0])
-	}
+func SeasonPackPrecedenceRules(evidenceID string) []DupeRule {
+	evidenceID = strings.TrimSpace(evidenceID)
 	return []DupeRule{
 		{
 			ID:               "existing_season_pack",

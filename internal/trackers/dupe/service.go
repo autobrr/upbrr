@@ -625,7 +625,7 @@ func (s *Service) logSetFinding(tracker string, finding SetFinding) {
 	}
 	s.logger.Debugf(
 		"dupechecking: set tracker=%s rule=%s relation=%s reason=%s occupancy=%d capacity=%d "+
-			"minimum_size_separation=%.2f observed_size_separation=%s role=%s candidates=%q facts=%q missing=%q",
+			"minimum_size_separation=%.2f observed_size_separation=%s candidates=%q facts=%q missing=%q",
 		tracker,
 		dupeCandidateLogValue(finding.RuleID),
 		finding.Relation,
@@ -634,7 +634,6 @@ func (s *Service) logSetFinding(tracker string, finding SetFinding) {
 		finding.Capacity,
 		finding.MinimumSizeSeparationPercent,
 		observed,
-		finding.RolePreference,
 		dupeCandidateLogValues(finding.CandidateIDs),
 		dupeCandidateLogValues(finding.FactSummaries),
 		dupeCandidateLogValues(finding.Missing),

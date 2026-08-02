@@ -258,7 +258,6 @@ func TestSetFindingLogIncludesBoundedOccupancyEvidence(t *testing.T) {
 		MinimumSizeSeparationPercent:     20,
 		ObservedMinimumSeparationPercent: 20,
 		SeparationKnown:                  true,
-		RolePreference:                   trackerspkg.DupeSetRoleManual,
 		CandidateIDs:                     []string{"candidate-1"},
 		FactSummaries: []string{
 			"candidate[id=candidate-1,size=80,kind=disc_encode,resolution=1080p,codec=h264,hdr=sdr,edition=]",
@@ -270,7 +269,7 @@ func TestSetFindingLogIncludesBoundedOccupancyEvidence(t *testing.T) {
 	for _, value := range []string{
 		"relation=coexists",
 		"occupancy=1 capacity=2",
-		"minimum_size_separation=20.00 observed_size_separation=20.00 role=manual",
+		"minimum_size_separation=20.00 observed_size_separation=20.00",
 		`candidates="candidate-1"`,
 		"kind=disc_encode",
 	} {

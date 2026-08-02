@@ -30,12 +30,7 @@ func (d *Definition) NewDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 		trackerID: deps.Tracker(),
 		cfg:       cfg,
 		client:    trackerdata.NewClientWithRegistry(cfg, logger, httpClient, deps.Registry()),
-		maxPages:  100,
-	}
-	if registry := deps.Registry(); registry != nil {
-		if policy, ok := registry.LookupDupePolicy(deps.Tracker()); ok && policy.SearchScope.MaxPages > 0 {
-			searcher.maxPages = policy.SearchScope.MaxPages
-		}
+		maxPages:  deps.MaxPages(100),
 	}
 	return searcher
 }

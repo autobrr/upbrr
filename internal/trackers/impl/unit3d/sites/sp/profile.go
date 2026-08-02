@@ -42,9 +42,7 @@ func Profile() unit3d.Profile {
 			ID:         "sp/duplicate/v2",
 			EvidenceID: "sp-upload-organization-guides",
 			SearchScope: trackers.DupeSearchScope{
-				IncludeEpisodes:    true,
-				IncludeSeasonPacks: true,
-				MaxPages:           100,
+				MaxPages: 100,
 			},
 			SlotDimensions:  []trackers.DupeDimension{trackers.DupeDimensionType, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
 			PrecedenceRules: trackers.SeasonPackPrecedenceRules("sp-upload-organization-guides"),

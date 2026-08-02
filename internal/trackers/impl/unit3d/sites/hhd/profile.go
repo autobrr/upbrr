@@ -24,9 +24,7 @@ func Profile() unit3d.Profile {
 			ID:         "hhd/duplicate/v2",
 			EvidenceID: "hhd-rules-naming",
 			SearchScope: trackers.DupeSearchScope{
-				IncludeEpisodes:    true,
-				IncludeSeasonPacks: true,
-				MaxPages:           100,
+				MaxPages: 100,
 			},
 			SlotDimensions: []trackers.DupeDimension{
 				trackers.DupeDimensionProvider,

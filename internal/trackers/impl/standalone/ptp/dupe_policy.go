@@ -273,8 +273,6 @@ func ptpEncodeSetRule(
 		CandidatePredicates:          candidatePredicates,
 		Capacity:                     capacity,
 		MinimumSizeSeparationPercent: minimumSizeSeparation,
-		RolePreference:               trackers.DupeSetRoleManual,
-		MissingEvidenceDisposition:   trackers.DupeSetMissingInsufficient,
 	}
 }
 

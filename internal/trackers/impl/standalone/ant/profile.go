@@ -34,9 +34,7 @@ func Profile() standalone.Profile {
 			ID:         "ant/duplicate/v2",
 			EvidenceID: "ant-dupes-trumping",
 			SearchScope: trackers.DupeSearchScope{
-				IncludeEpisodes:    true,
-				IncludeSeasonPacks: true,
-				MaxPages:           100,
+				MaxPages: 100,
 			},
 			SlotDimensions: []trackers.DupeDimension{
 				trackers.DupeDimensionType,

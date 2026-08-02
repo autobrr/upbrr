@@ -23,9 +23,7 @@ func Profile() unit3d.Profile {
 			ID:         "lume/duplicate/v2",
 			EvidenceID: "lume-rules-naming",
 			SearchScope: trackers.DupeSearchScope{
-				IncludeEpisodes:    true,
-				IncludeSeasonPacks: true,
-				MaxPages:           100,
+				MaxPages: 100,
 			},
 			SlotDimensions: []trackers.DupeDimension{
 				trackers.DupeDimensionType,

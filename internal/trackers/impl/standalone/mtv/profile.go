@@ -60,9 +60,7 @@ func Profile() standalone.Profile {
 			ID:         "mtv/duplicate/v2",
 			EvidenceID: "mtv-upload-rules",
 			SearchScope: trackers.DupeSearchScope{
-				IncludeEpisodes:    true,
-				IncludeSeasonPacks: true,
-				MaxPages:           100,
+				MaxPages: 100,
 			},
 			SlotDimensions: []trackers.DupeDimension{
 				trackers.DupeDimensionResolution,

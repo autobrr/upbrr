@@ -25,9 +25,7 @@ func Profile() unit3d.Profile {
 			ID:         "aither/duplicate/v2",
 			EvidenceID: "aither-slots-trumping",
 			SearchScope: trackers.DupeSearchScope{
-				IncludeEpisodes:    true,
-				IncludeSeasonPacks: true,
-				MaxPages:           100,
+				MaxPages: 100,
 			},
 			SlotDimensions: []trackers.DupeDimension{
 				trackers.DupeDimensionType,

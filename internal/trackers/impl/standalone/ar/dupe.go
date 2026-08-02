@@ -41,7 +41,7 @@ func newDuplicateAdapter(deps dupe.Dependencies) dupe.Adapter {
 		cfg:      cfg,
 		http:     httpClient,
 		logger:   logger,
-		maxPages: arMaxPages(deps),
+		maxPages: deps.MaxPages(100),
 	}
 }
 
@@ -258,16 +258,6 @@ func arPageSignature(results []arResult) string {
 		}
 	}
 	return strings.Join(values, ",")
-}
-
-func arMaxPages(deps dupe.Dependencies) int {
-	const defaultMaxPages = 100
-	if registry := deps.Registry(); registry != nil {
-		if policy, ok := registry.LookupDupePolicy(deps.Tracker()); ok && policy.SearchScope.MaxPages > 0 {
-			return policy.SearchScope.MaxPages
-		}
-	}
-	return defaultMaxPages
 }
 
 func arResponseContentType(resp *http.Response) string {

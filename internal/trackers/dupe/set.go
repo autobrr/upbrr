@@ -28,7 +28,6 @@ type SetFinding struct {
 	MinimumSizeSeparationPercent     float64
 	ObservedMinimumSeparationPercent float64
 	SeparationKnown                  bool
-	RolePreference                   trackerspkg.DupeSetRole
 	CandidateIDs                     []string
 	FactSummaries                    []string
 	Missing                          []string
@@ -61,7 +60,6 @@ func evaluateSetRules(
 			EvidenceID:                   firstNonEmpty(rule.EvidenceID, policy.EvidenceID),
 			Capacity:                     rule.Capacity,
 			MinimumSizeSeparationPercent: rule.MinimumSizeSeparationPercent,
-			RolePreference:               rule.RolePreference,
 			FactSummaries:                []string{setFactSummary("target", "", targetFacts)},
 		}
 		if targetResult == setPredicateIndeterminate {
@@ -81,7 +79,7 @@ func evaluateSetRules(
 				continue
 			}
 			finding.addCandidateEvidence(candidates, candidateFacts, used)
-			finding.setMissing(rule, append(finding.Missing, targetMissing...))
+			finding.setMissing(append(finding.Missing, targetMissing...))
 			findings = append(findings, finding)
 			continue
 		}
@@ -125,7 +123,7 @@ func evaluateSetRules(
 		finding.Missing = uniqueSorted(finding.Missing)
 		finding.addCandidateEvidence(candidates, candidateFacts, used)
 		if len(finding.Missing) > 0 {
-			finding.setMissing(rule, finding.Missing)
+			finding.setMissing(finding.Missing)
 			findings = append(findings, finding)
 			continue
 		}
@@ -139,7 +137,7 @@ func evaluateSetRules(
 		if finding.MinimumSizeSeparationPercent > 0 && len(members) > 0 {
 			separation, ok := minimumSetSizeSeparation(targetFacts, candidateFacts, members)
 			if !ok {
-				finding.setMissing(rule, []string{"size"})
+				finding.setMissing([]string{"size"})
 				findings = append(findings, finding)
 				continue
 			}
@@ -161,12 +159,9 @@ func evaluateSetRules(
 	return findings
 }
 
-func (finding *SetFinding) setMissing(rule trackerspkg.DupeSetRule, missing []string) {
+func (finding *SetFinding) setMissing(missing []string) {
 	finding.Status = RuleFindingIndeterminate
 	finding.Relation = api.DupeRelationInsufficientEvidence
-	if rule.MissingEvidenceDisposition == trackerspkg.DupeSetMissingManual {
-		finding.Relation = api.DupeRelationManualReview
-	}
 	finding.ReasonCode = "set_evidence_incomplete"
 	finding.Missing = uniqueSorted(append(finding.Missing, missing...))
 }

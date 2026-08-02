@@ -29,9 +29,7 @@ func Profile() standalone.Profile {
 			ID:         "nbl/duplicate/v2",
 			EvidenceID: "nbl-uploading-overview",
 			SearchScope: trackers.DupeSearchScope{
-				IncludeEpisodes:    true,
-				IncludeSeasonPacks: true,
-				MaxPages:           100,
+				MaxPages: 100,
 			},
 			SlotDimensions: []trackers.DupeDimension{trackers.DupeDimensionHDR},
 			HDRSlotMode:    trackers.DupeHDRSlotModeGeneric,

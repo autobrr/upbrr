@@ -433,7 +433,7 @@ func TestEvaluateSeasonPackContainingTargetFileIsNotExactDuplicate(t *testing.T)
 			Season: 1,
 			Pack:   true,
 		}},
-		trackerspkg.DupePolicy{PrecedenceRules: trackerspkg.SeasonPackPrecedenceRules()},
+		trackerspkg.DupePolicy{PrecedenceRules: trackerspkg.SeasonPackPrecedenceRules("")},
 		SearchEvidence{Complete: true},
 	)
 	if got := evaluation.Candidates[0].Relation; got != api.DupeRelationExistingPreferred {

@@ -15,9 +15,7 @@ func duplicatePolicy() *trackers.DupePolicy {
 		ID:         "lst/duplicate/v3",
 		EvidenceID: lstDupeEvidenceID,
 		SearchScope: trackers.DupeSearchScope{
-			IncludeEpisodes:    true,
-			IncludeSeasonPacks: true,
-			MaxPages:           100,
+			MaxPages: 100,
 		},
 		SlotDimensions: []trackers.DupeDimension{
 			trackers.DupeDimensionMediaKind,

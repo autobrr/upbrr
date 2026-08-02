@@ -35,9 +35,7 @@ func Profile() unit3d.Profile {
 			ID:         "otw/duplicate/v2",
 			EvidenceID: "otw-rules-naming",
 			SearchScope: trackers.DupeSearchScope{
-				IncludeEpisodes:    true,
-				IncludeSeasonPacks: true,
-				MaxPages:           100,
+				MaxPages: 100,
 			},
 			SlotDimensions: []trackers.DupeDimension{trackers.DupeDimensionType, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
 			PrecedenceRules: append(

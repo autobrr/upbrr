@@ -182,9 +182,7 @@ func compatibilityDupePolicy(tracker string) *DupePolicy {
 	return &DupePolicy{
 		ID: strings.ToLower(strings.TrimSpace(tracker)) + "/duplicate-compat/v1",
 		SearchScope: DupeSearchScope{
-			IncludeEpisodes:    true,
-			IncludeSeasonPacks: true,
-			MaxPages:           100,
+			MaxPages: 100,
 		},
 		SameSlotFallback: &DupeRule{
 			ID:                 "policy_evidence_unavailable",
@@ -715,12 +713,6 @@ func validateDupePolicy(policy DupePolicy) error {
 		}
 		if rule.MinimumSizeSeparationPercent < 0 || rule.MinimumSizeSeparationPercent >= 100 {
 			return fmt.Errorf("set rule %q has invalid size separation", ruleID)
-		}
-		if rule.RolePreference != DupeSetRoleCompact && rule.RolePreference != DupeSetRoleQuality && rule.RolePreference != DupeSetRoleManual {
-			return fmt.Errorf("set rule %q has invalid role preference", ruleID)
-		}
-		if rule.MissingEvidenceDisposition != DupeSetMissingInsufficient && rule.MissingEvidenceDisposition != DupeSetMissingManual {
-			return fmt.Errorf("set rule %q has invalid missing-evidence disposition", ruleID)
 		}
 		for _, override := range rule.CapacityOverrides {
 			if override.Capacity <= 0 || override.Capacity > rule.Capacity || len(override.CandidatePredicates) == 0 {

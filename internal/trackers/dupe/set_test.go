@@ -147,7 +147,7 @@ func TestEvaluateSetCapacityNeverInfersQualityFromSize(t *testing.T) {
 	)
 	finding := got.SetFindings[0]
 	combined := finding.ReasonCode + " " + dupeReasonMessage(finding.ReasonCode)
-	if finding.RolePreference != trackerspkg.DupeSetRoleManual || strings.Contains(strings.ToLower(combined), "quality") ||
+	if strings.Contains(strings.ToLower(combined), "quality") ||
 		strings.Contains(strings.ToLower(combined), "larger") || strings.Contains(strings.ToLower(combined), "higher") {
 		t.Fatalf("size inferred a quality role: %#v", finding)
 	}
@@ -219,8 +219,6 @@ Dimension: trackerspkg.DupeDimensionHDR,
 			},
 			Capacity:                     2,
 			MinimumSizeSeparationPercent: 20,
-			RolePreference:               trackerspkg.DupeSetRoleManual,
-			MissingEvidenceDisposition:   trackerspkg.DupeSetMissingInsufficient,
 		}},
 	}
 }

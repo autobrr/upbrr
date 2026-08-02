@@ -25,9 +25,7 @@ func Profile() unit3d.Profile {
 			ID:         "ulcx/duplicate/v2",
 			EvidenceID: "ulcx-upload-rules",
 			SearchScope: trackers.DupeSearchScope{
-				IncludeEpisodes:    true,
-				IncludeSeasonPacks: true,
-				MaxPages:           100,
+				MaxPages: 100,
 			},
 			SlotDimensions: []trackers.DupeDimension{trackers.DupeDimensionType, trackers.DupeDimensionResolution, trackers.DupeDimensionHDR},
 			PrecedenceRules: append(

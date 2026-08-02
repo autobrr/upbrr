@@ -39,9 +39,7 @@ func Profile() standalone.Profile {
 			ID:         "ar/duplicate/v2",
 			EvidenceID: "ar-uploading-guidelines",
 			SearchScope: trackers.DupeSearchScope{
-				IncludeEpisodes:    true,
-				IncludeSeasonPacks: true,
-				MaxPages:           100,
+				MaxPages: 100,
 			},
 			SlotDimensions: []trackers.DupeDimension{
 				trackers.DupeDimensionSource,

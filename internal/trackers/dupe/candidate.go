@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/autobrr/upbrr/internal/mediafacts"
 	"github.com/autobrr/upbrr/pkg/api"
 )
 
@@ -113,17 +114,17 @@ func NormalizeTrackerHDRFlags(flags []string, present bool, complete bool) api.H
 		normalized := strings.ToUpper(strings.TrimSpace(flag))
 		switch normalized {
 		case "DV", "DOVI", "DOLBY VISION":
-			addCandidateHDRFormat(&facts.Formats, api.HDRFormatDolbyVision)
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatDolbyVision)
 		case "HDR10+":
-			addCandidateHDRFormat(&facts.Formats, api.HDRFormatHDR10Plus)
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDR10Plus)
 		case "HDR", "HDR10":
-			addCandidateHDRFormat(&facts.Formats, api.HDRFormatHDR10)
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDR10)
 		case "HLG":
-			addCandidateHDRFormat(&facts.Formats, api.HDRFormatHLG)
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHLG)
 		case "PQ10":
-			addCandidateHDRFormat(&facts.Formats, api.HDRFormatPQ10)
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatPQ10)
 		case "HDR VIVID", "HDRVIVID":
-			addCandidateHDRFormat(&facts.Formats, api.HDRFormatHDRVivid)
+			mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDRVivid)
 		}
 	}
 	switch {
@@ -136,7 +137,7 @@ func NormalizeTrackerHDRFlags(flags []string, present bool, complete bool) api.H
 		facts.Origin = api.HDREvidenceUnknown
 		facts.Status = api.HDREvidenceMissing
 	}
-	addCandidateHDRFallbacks(&facts)
+	mediafacts.AddHDRFallbacks(&facts)
 	return facts
 }
 
@@ -172,7 +173,7 @@ func hdrFactsFromCandidateTitle(name string) api.HDRFacts {
 	}
 	if strings.Contains(upper, "DOLBY.VISION") || strings.Contains(upper, "DOLBY VISION") || strings.Contains(upper, "DOVI") ||
 		tokenPresent(upper, "DV") || tokenPresent(upper, "DV5") {
-		addCandidateHDRFormat(&facts.Formats, api.HDRFormatDolbyVision)
+		mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatDolbyVision)
 		if strings.Contains(upper, "DOLBY.VISION.PROFILE.5") || strings.Contains(upper, "DOLBY VISION PROFILE 5") ||
 			strings.Contains(upper, "DOVI.P5") || tokenPresent(upper, "DV5") {
 			facts.DolbyVisionProfile = "5"
@@ -180,25 +181,25 @@ func hdrFactsFromCandidateTitle(name string) api.HDRFacts {
 	}
 	switch {
 	case strings.Contains(upper, "HDR10+"), strings.Contains(upper, "HDR10PLUS"):
-		addCandidateHDRFormat(&facts.Formats, api.HDRFormatHDR10Plus)
+		mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDR10Plus)
 	case tokenPresent(upper, "HDR10"), tokenPresent(upper, "HDR"):
-		addCandidateHDRFormat(&facts.Formats, api.HDRFormatHDR10)
+		mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHDR10)
 	}
 	if tokenPresent(upper, "HLG") {
-		addCandidateHDRFormat(&facts.Formats, api.HDRFormatHLG)
+		mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatHLG)
 	}
 	if tokenPresent(upper, "PQ10") {
-		addCandidateHDRFormat(&facts.Formats, api.HDRFormatPQ10)
+		mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatPQ10)
 	}
 	if len(facts.Formats) == 0 && tokenPresent(upper, "SDR") {
-		addCandidateHDRFormat(&facts.Formats, api.HDRFormatSDR)
+		mediafacts.AddHDRFormat(&facts.Formats, api.HDRFormatSDR)
 	}
 	if len(facts.Formats) == 0 {
 		facts.Origin = api.HDREvidenceUnknown
 		facts.Status = api.HDREvidenceMissing
 		return facts
 	}
-	addCandidateHDRFallbacks(&facts)
+	mediafacts.AddHDRFallbacks(&facts)
 	return facts
 }
 
@@ -220,26 +221,4 @@ func cloneHDRFacts(facts api.HDRFacts) api.HDRFacts {
 	facts.SourceFields = append([]string(nil), facts.SourceFields...)
 	facts.Contradictions = append([]string(nil), facts.Contradictions...)
 	return facts
-}
-
-func addCandidateHDRFallbacks(facts *api.HDRFacts) {
-	if facts == nil || !candidateHasHDR(facts.Formats, api.HDRFormatDolbyVision) {
-		return
-	}
-	if candidateHasHDR(facts.Formats, api.HDRFormatHDR10Plus) {
-		addCandidateHDRFormat(&facts.FallbackFormats, api.HDRFormatHDR10Plus)
-		addCandidateHDRFormat(&facts.FallbackFormats, api.HDRFormatHDR10)
-	} else if candidateHasHDR(facts.Formats, api.HDRFormatHDR10) {
-		addCandidateHDRFormat(&facts.FallbackFormats, api.HDRFormatHDR10)
-	}
-}
-
-func addCandidateHDRFormat(formats *[]api.HDRFormat, format api.HDRFormat) {
-	if !candidateHasHDR(*formats, format) {
-		*formats = append(*formats, format)
-	}
-}
-
-func candidateHasHDR(formats []api.HDRFormat, want api.HDRFormat) bool {
-	return slices.Contains(formats, want)
 }
