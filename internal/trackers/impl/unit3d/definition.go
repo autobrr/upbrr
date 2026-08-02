@@ -33,6 +33,8 @@ type Profile struct {
 	Site SiteProfile
 	// ReleaseNamePolicy overrides the generic site BuildName policy.
 	ReleaseNamePolicy trackers.ReleaseNamePolicyBinding
+	// OmitEpisodeTitle removes generated single-episode titles before site naming.
+	OmitEpisodeTitle bool
 	// Rules contains site-specific release validation requirements.
 	Rules *trackers.RuleSet
 	// ValidationPolicy contains optional site-specific validation composed with
@@ -230,6 +232,9 @@ func (d *Definition) ReleaseNamePolicy() trackers.ReleaseNamePolicyBinding {
 		binding = trackers.NewReleaseNamePolicy("unit3d/canonical/v1", func(input trackers.ReleaseNameInput) (trackers.ResolvedReleaseNames, error) {
 			return trackers.ResolvedReleaseNames{Upload: buildUnit3DName(d.profile.Name, input.Subject, input.TrackerConfig, d.profile.Site)}, nil
 		})
+	}
+	if d.profile.OmitEpisodeTitle {
+		binding = trackers.WithEpisodeTitleMode(binding, api.EpisodeTitleModeOmit)
 	}
 	return trackers.WithMovieYearProvider(binding, api.IdentityProviderTMDB)
 }

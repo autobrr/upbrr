@@ -293,7 +293,7 @@ func TestRegistryProjectsVersionedReleaseNamesForEveryBuiltIn(t *testing.T) {
 				t.Fatalf("projected names = upload %q, search %q", projection.UploadReleaseName, projection.DuplicateCriteria.Name)
 			}
 			wantEpisodeTitleMode := api.EpisodeTitleModeInclude
-			if name == "HDB" {
+			if name == "BLU" || name == "HDB" {
 				wantEpisodeTitleMode = api.EpisodeTitleModeOmit
 			}
 			if projection.NamingElementPolicyVersion != api.ReleaseNameElementPolicyVersionV1 ||
@@ -318,6 +318,41 @@ func TestRegistryProjectsVersionedReleaseNamesForEveryBuiltIn(t *testing.T) {
 				t.Fatalf("distinct duplicate-search name is undeclared: %#v", projection)
 			}
 		})
+	}
+}
+
+func TestRegistryOmitsGeneratedEpisodeTitleForBLU(t *testing.T) {
+	t.Parallel()
+
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+	descriptor, ok := registry.LookupDescriptor("BLU")
+	if !ok {
+		t.Fatal("BLU descriptor missing")
+	}
+	const included = "Example.Show.S01E02.Example.Episode.1080p.WEB-DL-GRP"
+	const omitted = "Example.Show.S01E02.1080p.WEB-DL-GRP"
+	input, failure := trackers.PrepareInputWithReleaseNamePolicy(trackers.PreparationInput{
+		Tracker: "BLU",
+		Meta: api.UploadSubject{
+			ReleaseName: included,
+			GeneratedReleaseNames: api.GeneratedReleaseNameVariants{
+				IncludeEpisodeTitle: api.ReleaseNameVariant{Name: included},
+				OmitEpisodeTitle:    api.ReleaseNameVariant{Name: omitted},
+			},
+		},
+	}, descriptor.ReleaseNamePolicy)
+	if failure != nil {
+		t.Fatalf("prepare BLU name: %v", failure)
+	}
+	name, err := input.ReviewedUploadName()
+	if err != nil {
+		t.Fatalf("reviewed BLU name: %v", err)
+	}
+	if name != omitted {
+		t.Fatalf("BLU release name = %q, want %q", name, omitted)
 	}
 }
 
