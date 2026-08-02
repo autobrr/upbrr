@@ -221,6 +221,16 @@ function WorkflowDupeAssessmentView({
         const readiness = preflightByTracker.get(trackerID);
         const nameConfirmation = releaseNameConfirmationState(projection);
         const releaseName = releaseNameOverrides[trackerID] ?? projection?.uploadReleaseName ?? "";
+        const canonicalName = projection?.canonicalReleaseName?.trim() || "";
+        const uploadName =
+          result?.uploadReleaseName?.trim() || projection?.uploadReleaseName?.trim() || "";
+        const searchName =
+          result?.criteria?.name?.trim() || projection?.duplicateCriteria?.name?.trim() || "";
+        const namesModified = Boolean(
+          canonicalName &&
+          ((uploadName && uploadName !== canonicalName) ||
+            (searchName && searchName !== canonicalName)),
+        );
         const blockReasons = trackerBlockReasons(projection, readiness, result);
         const inClient = hasInClientMatch(result);
         const riskAcknowledgement = requiresRiskAcknowledgement(result);
@@ -263,6 +273,26 @@ function WorkflowDupeAssessmentView({
                     {message}
                   </p>
                 ))}
+              </div>
+            ) : null}
+
+            {namesModified ? (
+              <div
+                aria-label={`Modified tracker names for ${trackerID}`}
+                className="grid gap-1 text-sm"
+              >
+                <p className="muted">
+                  <span className="font-semibold text-[var(--text)]">Canonical:</span>{" "}
+                  {canonicalName}
+                </p>
+                <p>
+                  <span className="font-semibold">Tracker upload:</span> {uploadName}
+                </p>
+                {searchName && searchName !== uploadName ? (
+                  <p>
+                    <span className="font-semibold">Duplicate search:</span> {searchName}
+                  </p>
+                ) : null}
               </div>
             ) : null}
 

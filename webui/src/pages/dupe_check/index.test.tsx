@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkflowOperationProgress } from "../../components/WorkflowOperationProgress";
 import type { DuplicatesFacet } from "../../releaseSession/types";
@@ -152,6 +152,40 @@ describe("DupeCheckPage", () => {
     expect(acknowledgeReleaseName).toHaveBeenCalledWith("AR", false);
   });
 
+  it("shows only tracker names changed from canonical naming", () => {
+    renderPage(
+      facetFor({
+        selectedTrackers: ["RENAMED", "UNCHANGED"],
+        projections: {
+          projections: [
+            {
+              trackerId: "RENAMED",
+              displayName: "Renamed",
+              canonicalReleaseName: "Example.Release.2026-GRP",
+              uploadReleaseName: "Example.Release.2026.RENAMED-GRP",
+              duplicateCriteria: { name: "Example Release 2026 SEARCH" },
+            },
+            {
+              trackerId: "UNCHANGED",
+              displayName: "Unchanged",
+              canonicalReleaseName: "Example.Release.2026-GRP",
+              uploadReleaseName: "Example.Release.2026-GRP",
+              duplicateCriteria: { name: "Example.Release.2026-GRP" },
+            },
+          ],
+        } as unknown as NonNullable<DuplicatesFacet["view"]["projections"]>,
+      }),
+      ["RENAMED", "UNCHANGED"],
+    );
+
+    const names = screen.getByLabelText("Modified tracker names for RENAMED");
+    expect(within(names).getByText("Example.Release.2026-GRP")).toBeInTheDocument();
+    expect(within(names).getByText("Example.Release.2026.RENAMED-GRP")).toBeInTheDocument();
+    expect(within(names).getByText("Example Release 2026 SEARCH")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Modified tracker names for UNCHANGED")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
   it("owns tracker selection and blocks execution while selection is empty", () => {
     const chooseTrackers = vi.fn();
     renderPage(facetFor({ selectedTrackers: [] }, { chooseTrackers }));
@@ -257,7 +291,7 @@ describe("DupeCheckPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows one concise tracker blocker without projection detail", () => {
+  it("shows one concise tracker blocker with modified names", () => {
     renderPage(
       facetFor({
         status: "ready",
@@ -318,8 +352,10 @@ describe("DupeCheckPage", () => {
     expect(screen.getAllByText("Category TV is not movie.")).toHaveLength(1);
     expect(screen.queryByText("Projection ineligible")).not.toBeInTheDocument();
     expect(screen.queryByText("Preflight action_required")).not.toBeInTheDocument();
-    expect(screen.queryByText("Example Release 2026 1080p-GRP")).not.toBeInTheDocument();
-    expect(screen.queryByText("Example.Release.2026.1080p-GRP")).not.toBeInTheDocument();
+    const names = screen.getByLabelText("Modified tracker names for EXAMPLE");
+    expect(within(names).getByText("Example Release 2026 1080p-GRP")).toBeInTheDocument();
+    expect(within(names).getByText("Example.Release.2026.1080p-GRP")).toBeInTheDocument();
+    expect(within(names).getByText("Example Release 2026")).toBeInTheDocument();
   });
 
   it("keeps only blocking policy reasons in compact tracker details", () => {
