@@ -1548,4 +1548,75 @@ describe("Image hosting settings", () => {
     expect(payload.ImageHosting?.ReelflixAPI === "secret").toBe(true);
     expect(screen.queryByLabelText("Image API")).not.toBeInTheDocument();
   });
+
+  it("renders UTPPM config and keeps it out of global host priority", async () => {
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          ImageHosting: {
+            Host1: "",
+            Host2: "",
+            Host3: "",
+            Host4: "",
+            Host5: "",
+            Host6: "",
+            UTPPMEnabled: false,
+            UTPPMAPI: "",
+          },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () => trackerCatalog(),
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(ImageHostingHarness));
+
+    await waitFor(() => expect(screen.getByLabelText("Host 1")).toBeInTheDocument());
+
+    // UTPPM is UTP-owned, so it must not be selectable in a generic slot.
+    const hostOne = screen.getByLabelText("Host 1") as HTMLSelectElement;
+    expect(Array.from(hostOne.options).map((option) => option.value)).not.toContain("utppm");
+
+    fireEvent.click(screen.getByLabelText("UTPPM enabled"));
+    fireEvent.change(screen.getByLabelText("UTPPM API key"), {
+      target: { value: "secret" },
+    });
+
+    await waitFor(() => expect(screen.getByLabelText("UTPPM enabled")).toBeChecked());
+
+    const payload = readPayload<{
+      ImageHosting?: {
+        UTPPMEnabled?: boolean;
+        UTPPMAPI?: string;
+      };
+    }>();
+    expect(payload.ImageHosting?.UTPPMEnabled).toBe(true);
+    expect(payload.ImageHosting?.UTPPMAPI === "secret").toBe(true);
+  });
+
+  it("drops a stored generic utppm slot selection", async () => {
+    installAppOperationMocks({
+      GetConfig: async () =>
+        JSON.stringify({
+          ImageHosting: {
+            Host1: "utppm",
+            Host2: "imgbb",
+          },
+        }),
+      GetDefaultConfig: async () => JSON.stringify({}),
+      ListTrackerCatalog: async () => trackerCatalog(),
+      GetImageHostPolicyMetadata: async () => ({}),
+    });
+
+    render(createElement(ImageHostingHarness));
+
+    await waitFor(() => expect(screen.getByLabelText("Host 1")).toBeInTheDocument());
+
+    // Existing configs that placed utppm in a generic slot lose that selection
+    // rather than keeping an unselectable value, matching the reelflix precedent.
+    const hostOne = screen.getByLabelText("Host 1") as HTMLSelectElement;
+    expect(Array.from(hostOne.options).map((option) => option.value)).not.toContain("utppm");
+    expect(hostOne.value).not.toBe("utppm");
+    expect((screen.getByLabelText("Host 2") as HTMLSelectElement).value).toBe("imgbb");
+  });
 });

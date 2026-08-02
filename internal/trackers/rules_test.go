@@ -1057,6 +1057,64 @@ func TestEvaluateRulesModifiedReleaseDebugLog(t *testing.T) {
 	})
 }
 
+// TestEvaluateRulesModifiedReleaseSkipExemptsUTP proves the declarative
+// SkipModifiedReleaseCheck rule opt-out: UTP prescribes space-delimited release
+// naming, so a spaced source folder is expected there rather than a rename
+// violation, and neither the heuristic nor the scene rename signal may block.
+func TestEvaluateRulesModifiedReleaseSkipExemptsUTP(t *testing.T) {
+	t.Parallel()
+
+	heuristicRename := api.RuleSubject{
+		SourcePath: "/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5 1 HDR H 265-GRP",
+		Release:    api.ReleaseInfo{Group: "GRP"},
+	}
+	sceneRename := api.RuleSubject{
+		SourcePath:         "/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP",
+		Release:            api.ReleaseInfo{Group: "GRP", Resolution: "2160p"},
+		SceneRenamed:       true,
+		SceneRenamedReason: "source does not match its original scene release name (renamed or modified)",
+	}
+
+	for name, subject := range map[string]api.RuleSubject{"heuristic": heuristicRename, "scene": sceneRename} {
+		if got := evaluateNonMetadataRulesForTest(context.Background(), "UTP", subject); hasRuleFailure(got, "modified_release") {
+			t.Fatalf("did not expect %s modified_release failure for UTP, got %#v", name, got)
+		}
+	}
+	// A tracker without the opt-out keeps failing for the same subject.
+	if got := evaluateNonMetadataRulesForTest(context.Background(), "AITHER", heuristicRename); !hasRuleFailure(got, "modified_release") {
+		t.Fatalf("expected modified_release failure for AITHER, got %#v", got)
+	}
+
+	// The skip gate wraps the rule-match debug log too, so an exempt tracker
+	// emits no diagnostic for a rule that never evaluated, while a tracker
+	// without the opt-out still does.
+	registry, err := impl.NewRegistry()
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+	for tracker, wantLog := range map[string]bool{"UTP": false, "AITHER": true} {
+		logger := &ruleDebugLogger{}
+		if _, err := trackers.EvaluateRulesWithRegistry(
+			context.Background(),
+			registry,
+			tracker,
+			withConstructibleTrackerFactsForTest(heuristicRename),
+			logger,
+		); err != nil {
+			t.Fatalf("EvaluateRulesWithRegistry %s: %v", tracker, err)
+		}
+		var logged bool
+		for _, entry := range logger.debugs {
+			if strings.Contains(entry, "rule=modified_release") {
+				logged = true
+			}
+		}
+		if logged != wantLog {
+			t.Fatalf("%s modified_release rule-match logged = %t, want %t (%q)", tracker, logged, wantLog, logger.debugs)
+		}
+	}
+}
+
 // TestEvaluateRulesMetadataPolicyReturnsEvaluatedEmpty guards the contract that
 // a configured metadata policy returns a non-nil empty slice after passing, so
 // the consumer clears stale stored metadata failures.

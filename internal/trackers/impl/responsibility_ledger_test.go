@@ -101,7 +101,7 @@ var trackerResponsibilityLedger = []trackerResponsibilityRow{
 	unit3DResponsibility("TOS", "canonical", ""),
 	unit3DResponsibility("TTR", "canonical", ""),
 	unit3DResponsibility("ULCX", "ulcx", ""),
-	unit3DResponsibility("UTP", "canonical", ""),
+	unit3DResponsibility("UTP", "utp", ""),
 	unit3DResponsibility("YUS", "canonical", ""),
 	unit3DResponsibility("ZNTH", "znth", ""),
 	azFamilyResponsibility("AZ"),

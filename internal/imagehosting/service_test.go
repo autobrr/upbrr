@@ -705,6 +705,7 @@ func TestImageHostLogTrackerNamesEveryOwnedHost(t *testing.T) {
 		"lostimg":  "LST",
 		"reelflix": "RF",
 		"thr":      "THR",
+		"utppm":    "UTP",
 	} {
 		if got := service.imageHostLogTracker(host); got != expected {
 			t.Errorf("host %q tracker = %q, want %q", host, got, expected)

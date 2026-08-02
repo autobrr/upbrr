@@ -122,4 +122,8 @@ type RuleSet struct {
 	BlockGroupUnlessType map[string][]string
 	// RequireSceneNFO requires an NFO for scene releases.
 	RequireSceneNFO bool
+	// SkipModifiedReleaseCheck exempts the tracker from the generic
+	// renamed/modified-release rule for trackers whose own naming rules make a
+	// renamed source expected rather than a violation.
+	SkipModifiedReleaseCheck bool
 }

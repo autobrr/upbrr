@@ -1221,3 +1221,36 @@ func TestResolveAudioBloatPolicyWarnsButDoesNotBlockNonEnglishOriginal(t *testin
 		t.Fatalf("expected SPD warning for French bloat, got %#v", warned)
 	}
 }
+
+// TestResolveAudioBloatPolicyAllowsUkrainianForUTP proves UTP's allowlist: UTP
+// releases always carry Ukrainian plus the original audio and optionally
+// English, so those tracks must not count as bloat while other languages still
+// do.
+func TestResolveAudioBloatPolicyAllowsUkrainianForUTP(t *testing.T) {
+	blocked, warned := resolveAudioBloatPolicyWithRegistry(preparationstate.State{
+		AudioLanguages: []string{"Ukrainian", "English", "Japanese"},
+		ProviderMetadata: api.SourceScopedMetadata{
+			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+		},
+	}, []string{"UTP", "BHD"}, antRuleRegistry(t))
+
+	if blocked != nil {
+		t.Fatalf("expected no blocked trackers, got %#v", blocked)
+	}
+	if _, ok := warned["UTP"]; ok {
+		t.Fatalf("did not expect UTP warning for Ukrainian audio, got %#v", warned)
+	}
+	if got := warned["BHD"]; len(got) != 1 || got[0] != "Ukrainian" {
+		t.Fatalf("expected BHD warning for Ukrainian bloat, got %#v", warned)
+	}
+
+	_, warned = resolveAudioBloatPolicyWithRegistry(preparationstate.State{
+		AudioLanguages: []string{"French", "Japanese"},
+		ProviderMetadata: api.SourceScopedMetadata{
+			TMDB: &api.TMDBMetadata{OriginalLanguage: "ja"},
+		},
+	}, []string{"UTP"}, antRuleRegistry(t))
+	if got := warned["UTP"]; len(got) != 1 || got[0] != "French" {
+		t.Fatalf("expected UTP warning for French bloat, got %#v", warned)
+	}
+}

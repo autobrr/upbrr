@@ -568,6 +568,21 @@ func TestNewRegistryIncludesBHDPolicies(t *testing.T) {
 	}
 }
 
+func TestNewRegistryIncludesUTPPolicies(t *testing.T) {
+	registry, err := NewRegistry()
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+	if rules, ok := registry.LookupRules("UTP"); !ok || !rules.SkipModifiedReleaseCheck {
+		t.Fatalf("UTP rules = %#v, %t", rules, ok)
+	}
+	if policy, ok := registry.LookupAudioPolicy("UTP"); !ok ||
+		!slices.Contains(policy.AllowedLanguages, "ukrainian") ||
+		!slices.Contains(policy.AllowedLanguages, "english") {
+		t.Fatalf("UTP audio policy = %#v, %t", policy, ok)
+	}
+}
+
 func TestNewRegistryIncludesBTNPolicies(t *testing.T) {
 	registry, err := NewRegistry()
 	if err != nil {
@@ -660,6 +675,7 @@ func TestNewRegistryIncludesImageHostPolicies(t *testing.T) {
 		},
 		{tracker: "LST", conditionalHost: "lostimg"},
 		{tracker: "RF", conditionalHost: "reelflix"},
+		{tracker: "UTP", conditionalHost: "utppm"},
 	}
 	for _, test := range tests {
 		policy, ok := registry.LookupImageHostPolicy(test.tracker)

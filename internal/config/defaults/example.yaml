@@ -25,6 +25,7 @@ image_hosting:
   seedpool_cdn_api: ""
   sharex_url: ""
   sharex_api_key: ""
+  utppm_enabled: false
   utppm_api: ""
   lostimg_enabled: false
   lostimg_api: ""

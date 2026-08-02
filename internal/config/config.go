@@ -110,6 +110,7 @@ type ImageHostingConfig struct {
 	SeedpoolCDNAPI  string `yaml:"seedpool_cdn_api"`
 	ShareXURL       string `yaml:"sharex_url"`
 	ShareXAPIKey    string `yaml:"sharex_api_key"`
+	UTPPMEnabled    bool   `yaml:"utppm_enabled"`
 	UTPPMAPI        string `yaml:"utppm_api"`
 	LostimgEnabled  bool   `yaml:"lostimg_enabled"`
 	LostimgAPI      string `yaml:"lostimg_api"`
@@ -124,6 +125,8 @@ func (c ImageHostingConfig) HostEnabled(host string) bool {
 		return c.LostimgEnabled
 	case "reelflix":
 		return c.ReelflixEnabled
+	case "utppm":
+		return c.UTPPMEnabled
 	default:
 		return false
 	}

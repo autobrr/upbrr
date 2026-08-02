@@ -829,6 +829,31 @@ func TestReelflixUploaderPostsSourceWithAPIKey(t *testing.T) {
 	}
 }
 
+func TestUTPPMUploaderRejectsEmptyImageURL(t *testing.T) {
+	imagePath := filepath.Join(t.TempDir(), "shot.png")
+	if err := os.WriteFile(imagePath, []byte("synthetic image"), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body: io.NopCloser(strings.NewReader(`{
+					"status_code": 200,
+					"error": {"message": "invalid content"}
+				}`)),
+			}, nil
+		}),
+	}
+
+	_, err := (&utppmUploader{apiKey: "secret", client: client}).Upload(context.Background(), imagePath)
+	if err == nil || !strings.Contains(err.Error(), "utppm upload failed") || !strings.Contains(err.Error(), "invalid content") {
+		t.Fatalf("expected utppm rejection with safe message, got %v", err)
+	}
+}
+
 func TestReadAndCloseResponseBodyClosesBody(t *testing.T) {
 	body := &trackingReadCloser{reader: strings.NewReader("partial response")}
 	resp := &http.Response{
