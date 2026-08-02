@@ -871,6 +871,11 @@ describe("Tracker client selectors", () => {
 
     await waitFor(() => expect(screen.getByLabelText("API key")).toHaveValue("[REDACTED]"));
     expect(savedReplacement).toBe(true);
+
+    savedReplacement = false;
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => expect(savedReplacement).toBe(true));
   });
 
   it("renders BTN announce URL from tracker schema when stored config lacks the key", async () => {
