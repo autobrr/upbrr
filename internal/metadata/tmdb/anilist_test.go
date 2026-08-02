@@ -18,6 +18,7 @@ const testAnilistURL = "https://anilist.invalid/graphql"
 
 func TestAniListSearchRetriesTimeouts(t *testing.T) {
 	attempts := 0
+	logger := &captureTMDBLogger{}
 	client := &Client{
 		anilistURL: testAnilistURL,
 		http: &http.Client{
@@ -34,10 +35,10 @@ func TestAniListSearchRetriesTimeouts(t *testing.T) {
 				}, nil
 			}),
 		},
-		logger: api.NopLogger{},
+		logger: logger,
 	}
 
-	items, err := client.anilistSearch(context.Background(), "Test", 0)
+	items, err := client.anilistSearch(context.Background(), "Example.Anime.2026.1080p.WEB-DL-GRP", 0)
 	if err != nil {
 		t.Fatalf("expected success after retry, got error: %v", err)
 	}
@@ -46,6 +47,18 @@ func TestAniListSearchRetriesTimeouts(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].IDMal != 20 {
 		t.Fatalf("expected one AniList result with MAL id 20, got %+v", items)
+	}
+	warnings := logger.warnings()
+	if len(warnings) != 2 {
+		t.Fatalf("expected two timeout warnings, got %#v", warnings)
+	}
+	for _, warning := range warnings {
+		if !strings.HasPrefix(warning, "tmdb: anilist request timed out mal=0 retry=") {
+			t.Fatalf("expected stable timeout warning fields, got %q", warning)
+		}
+		if strings.Contains(warning, "Example") || strings.Contains(warning, "GRP") {
+			t.Fatalf("expected timeout warning to omit the search term, got %q", warning)
+		}
 	}
 }
 

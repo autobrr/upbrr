@@ -184,7 +184,7 @@ func (c *Client) anilistSearch(ctx context.Context, term string, malID int) ([]a
 		}
 		lastErr = err
 		if c.logger != nil {
-			c.logger.Warnf("tmdb: anilist request timed out for %q, retrying (%d/%d)", strings.TrimSpace(term), attempt+2, anilistRetryCount)
+			c.logger.Warnf("tmdb: anilist request timed out mal=%d retry=%d/%d", malID, attempt+2, anilistRetryCount)
 		}
 	}
 	if lastErr != nil {
