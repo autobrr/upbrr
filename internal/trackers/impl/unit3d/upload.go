@@ -61,7 +61,6 @@ func submitUnit3DUpload(
 	}
 	trackerdata.SetUnit3DAPIHeaders(httpReq, apiKey)
 	httpReq.Header.Set("Content-Type", contentType)
-	httpReq.Header.Set("User-Agent", "upbrr")
 
 	logger.Debugf("trackers: %s sending upload request...", trackerName)
 	client := &http.Client{Timeout: 40 * time.Second}

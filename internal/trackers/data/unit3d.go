@@ -35,6 +35,7 @@ const (
 	imageTimeout     = 15 * time.Second
 	maxImageBytes    = 20 * 1024 * 1024
 	imageConcurrency = 5
+	unit3DUserAgent  = "upbrr"
 )
 
 var unit3DImageBlockedIPRanges = []netip.Prefix{
@@ -457,12 +458,13 @@ func (c *Client) searchUnit3DEndpoint(
 	return buildUnit3DSearchEntries(payload.Data, isDisc), "", nil
 }
 
-// SetUnit3DAPIHeaders applies the authentication and response format expected
-// by every Unit3D API request.
+// SetUnit3DAPIHeaders applies the client identification, JSON response format,
+// and optional bearer authentication expected by every Unit3D API request.
 func SetUnit3DAPIHeaders(req *http.Request, apiKey string) {
 	if req == nil {
 		return
 	}
+	req.Header.Set("User-Agent", unit3DUserAgent)
 	req.Header.Set("Accept", "application/json")
 	if apiKey = strings.TrimSpace(apiKey); apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
