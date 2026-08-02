@@ -545,17 +545,33 @@ func seedStoredCaptures(t *testing.T, repo *db.SQLiteRepository, sourcePath stri
 func requireStoredCaptureRows(t *testing.T, repo *db.SQLiteRepository, sourcePath string, retained string, label string) {
 	t.Helper()
 
+	stored := storedCaptureRows(t, repo, sourcePath)
+	if len(stored) != 3 {
+		t.Fatalf("%s surviving records = %#v, want one per table for %s", label, stored, retained)
+	}
+	for _, imagePath := range stored {
+		if imagePath != retained {
+			t.Fatalf("%s surviving record = %s, want %s", label, imagePath, retained)
+		}
+	}
+}
+
+// storedCaptureRows returns the image path of every screenshot, uploaded-image,
+// and final-selection row stored for the release.
+func storedCaptureRows(t *testing.T, repo *db.SQLiteRepository, sourcePath string) []string {
+	t.Helper()
+
 	screenshots, err := repo.ListScreenshotsByPath(context.Background(), sourcePath)
 	if err != nil {
-		t.Fatalf("%s list screenshot records: %v", label, err)
+		t.Fatalf("list screenshot records: %v", err)
 	}
 	uploads, err := repo.ListUploadedImagesByPath(context.Background(), sourcePath)
 	if err != nil {
-		t.Fatalf("%s list uploaded image records: %v", label, err)
+		t.Fatalf("list uploaded image records: %v", err)
 	}
 	selections, err := repo.ListFinalSelections(context.Background(), sourcePath)
 	if err != nil {
-		t.Fatalf("%s list final selections: %v", label, err)
+		t.Fatalf("list final selections: %v", err)
 	}
 	stored := make([]string, 0, len(screenshots)+len(uploads)+len(selections))
 	for _, record := range screenshots {
@@ -567,13 +583,64 @@ func requireStoredCaptureRows(t *testing.T, repo *db.SQLiteRepository, sourcePat
 	for _, selection := range selections {
 		stored = append(stored, selection.ImagePath)
 	}
-	if len(stored) != 3 {
-		t.Fatalf("%s surviving records = %#v, want one per table for %s", label, stored, retained)
+	return stored
+}
+
+// flakyDeleteRepository fails screenshot-record deletion until healthy is set, so
+// a test can drive a persistent cleanup failure and then let a retry converge.
+type flakyDeleteRepository struct {
+	*db.SQLiteRepository
+	healthy bool
+}
+
+func (r *flakyDeleteRepository) DeleteScreenshot(ctx context.Context, imagePath string) error {
+	if !r.healthy {
+		return errors.New("synthetic screenshot record delete failure")
 	}
-	for _, imagePath := range stored {
-		if imagePath != retained {
-			t.Fatalf("%s surviving record = %s, want %s", label, imagePath, retained)
-		}
+	if err := r.SQLiteRepository.DeleteScreenshot(ctx, imagePath); err != nil {
+		return fmt.Errorf("delete screenshot: %w", err)
+	}
+	return nil
+}
+
+// TestDeleteReportsIncompleteCleanupAndConvergesOnRetry pins the delete contract
+// once the file is gone. A caller must be able to tell a complete delete from one
+// that left records behind — a silent success there is what lets a later capture
+// at the same path reuse stale metadata — and calling Delete again has to
+// converge, which it can only do because an already-missing file is not an error.
+func TestDeleteReportsIncompleteCleanupAndConvergesOnRetry(t *testing.T) {
+	tmpRoot := t.TempDir()
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+	repo := &flakyDeleteRepository{SQLiteRepository: openScreenshotTestRepository(t)}
+	service := NewServiceWithRepo(config.Config{}, api.NopLogger{}, tmpRoot, nil, repo)
+	meta := api.ScreenshotSubject{SourcePath: sourcePath}
+	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	target := filepath.Join(tmpDir, "capture.png")
+	if err := os.WriteFile(target, []byte("synthetic image"), 0o600); err != nil {
+		t.Fatalf("write managed image: %v", err)
+	}
+	seedStoredCaptures(t, repo.SQLiteRepository, meta.SourcePath, target)
+
+	err = service.Delete(context.Background(), meta, target)
+	if err == nil || !strings.Contains(err.Error(), "delete cleanup incomplete") {
+		t.Fatalf("delete error = %v, want a reported cleanup failure", err)
+	}
+	if _, statErr := os.Stat(target); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("reported cleanup failure did not remove the image: %v", statErr)
+	}
+	if stored := storedCaptureRows(t, repo.SQLiteRepository, meta.SourcePath); len(stored) == 0 {
+		t.Fatal("cleanup reported a failure but left no stale record to retry")
+	}
+
+	repo.healthy = true
+	if err := service.Delete(context.Background(), meta, target); err != nil {
+		t.Fatalf("retried delete of an already-removed image: %v", err)
+	}
+	if stored := storedCaptureRows(t, repo.SQLiteRepository, meta.SourcePath); len(stored) != 0 {
+		t.Fatalf("retry did not converge, surviving records = %#v", stored)
 	}
 }
 
