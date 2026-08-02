@@ -269,7 +269,7 @@ test("embedded web reports an optional tracker dry run after a duplicate overrid
     const dryRunButton = page.getByRole("button", { name: "Run dry run" });
     expect(workspace.fake.counters.clientInjections).toBe(0);
     await dryRunButton.click();
-    await expect(page.getByRole("heading", { name: "Dry-run results" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Tracker uploads" })).toBeVisible();
     await expect(page.getByText("HDS").first()).toBeVisible();
     await page.getByRole("button", { name: "Expand HDS" }).click();
     await expect(page.getByText(/Client injection: completed/)).toBeVisible();

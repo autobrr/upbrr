@@ -75,6 +75,140 @@ describe("TrackerUploadPage", () => {
     expect(answerQuestionnaire).toHaveBeenCalledWith("EXAMPLE", "note", "Synthetic note");
   });
 
+  it("shows projection-backed tracker upload names before any dry run", () => {
+    const projections = {
+      projections: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          canonicalReleaseName: "Example.Release.2026.1080p-GRP",
+          uploadReleaseName: "Example.Release.2026.1080p-GRP",
+        },
+      ],
+    } as unknown as NonNullable<UploadFacet["view"]["projections"]>;
+    renderPage(uploadFacet({ projections }));
+
+    expect(screen.getByText("Example.Release.2026.1080p-GRP")).toBeInTheDocument();
+    expect(screen.queryByText("Canonical:")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Expand Example Tracker" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the canonical name as secondary context when it differs from the tracker name", () => {
+    const projections = {
+      projections: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          canonicalReleaseName: "Example Release 2026 1080p-GRP",
+          uploadReleaseName: "Example.Release.2026.1080p-GRP",
+        },
+      ],
+    } as unknown as NonNullable<UploadFacet["view"]["projections"]>;
+    renderPage(uploadFacet({ projections }));
+
+    expect(screen.getByText("Example.Release.2026.1080p-GRP")).toBeInTheDocument();
+    expect(screen.getByText("Example Release 2026 1080p-GRP")).toBeInTheDocument();
+  });
+
+  it("keeps tracker names visible for collapsed, partial, and failed dry-run results", () => {
+    const projections = {
+      projections: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          canonicalReleaseName: "Example.Release.2026.1080p-GRP",
+          uploadReleaseName: "Example.Release.2026.1080p-GRP",
+        },
+        {
+          trackerId: "OTHER",
+          displayName: "Other Tracker",
+          canonicalReleaseName: "Example.Release.2026.REPACK.1080p-GRP",
+          uploadReleaseName: "Example.Release.2026.REPACK.1080p-GRP",
+        },
+      ],
+    } as unknown as NonNullable<UploadFacet["view"]["projections"]>;
+    const dryRunResult = {
+      status: "partial",
+      reports: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          uploadReleaseName: "Example.Release.2026.1080p-GRP",
+          status: "failed",
+          failures: [{ failure: { Code: "upload_failed", Message: "Synthetic failure." } }],
+        },
+      ],
+    } as unknown as NonNullable<UploadFacet["view"]["dryRunResult"]>;
+    renderPage(
+      uploadFacet({
+        selectedTrackers: ["EXAMPLE", "OTHER"],
+        dryRunStatus: "ready",
+        projections,
+        dryRunResult,
+      }),
+    );
+
+    expect(screen.getByText("partial")).toBeInTheDocument();
+    expect(screen.getByText("failed")).toBeInTheDocument();
+    expect(screen.getByText("Example.Release.2026.1080p-GRP")).toBeInTheDocument();
+    expect(screen.getByText("Example.Release.2026.REPACK.1080p-GRP")).toBeInTheDocument();
+    expect(screen.queryByText("Synthetic failure.")).not.toBeInTheDocument();
+  });
+
+  it("merges dry-run report details by tracker without replacing unrelated projections", () => {
+    const projections = {
+      projections: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          canonicalReleaseName: "Example.Release.2026.1080p-GRP",
+          uploadReleaseName: "Example.Release.2026.1080p-GRP",
+        },
+        {
+          trackerId: "OTHER",
+          displayName: "Other Tracker",
+          canonicalReleaseName: "Example.Release.2026.REPACK.1080p-GRP",
+          uploadReleaseName: "Example.Release.2026.REPACK.1080p-GRP",
+        },
+      ],
+    } as unknown as NonNullable<UploadFacet["view"]["projections"]>;
+    const dryRunResult = {
+      status: "completed",
+      reports: [
+        {
+          trackerId: "EXAMPLE",
+          displayName: "Example Tracker",
+          uploadReleaseName: "Example.Release.2026.PROPER.1080p-GRP",
+          status: "ready",
+          endpoint: "https://tracker.invalid/upload",
+          fields: [{ key: "category", value: "1" }],
+          files: [{ field: "torrent", present: true }],
+          clientInjection: { status: "completed", message: "Injected." },
+        },
+      ],
+    } as unknown as NonNullable<UploadFacet["view"]["dryRunResult"]>;
+    renderPage(
+      uploadFacet({
+        selectedTrackers: ["EXAMPLE", "OTHER"],
+        dryRunStatus: "ready",
+        projections,
+        dryRunResult,
+      }),
+    );
+
+    // The reviewed projection name stays authoritative; the report's differing
+    // name must not be rendered as the reviewed name.
+    expect(screen.getByText("Example.Release.2026.1080p-GRP")).toBeInTheDocument();
+    expect(screen.queryByText("Example.Release.2026.PROPER.1080p-GRP")).not.toBeInTheDocument();
+    expect(screen.getByText("Example.Release.2026.REPACK.1080p-GRP")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Expand Other Tracker" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Expand Example Tracker" }));
+    expect(screen.getByText("https://tracker.invalid/upload")).toBeInTheDocument();
+    expect(screen.getByText("category: 1")).toBeInTheDocument();
+  });
+
   it("renders generated dry-run and upload outcomes", () => {
     const retry = vi.fn(async () => true);
     const dryRunResult = {
