@@ -53,13 +53,13 @@ func TestCollectSourceEvidenceKeepsCanonicalSource(t *testing.T) {
 	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
 
 	meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
-		SourcePath:     path,
-		Trackers:       []string{"blu", "bhd"},
-		Options:        api.UploadOptions{
-OnlyID: true,
- KeepImages: true,
- InteractionMode: api.InteractionModeUnattended,
-},
+		SourcePath: path,
+		Trackers:   []string{"blu", "bhd"},
+		Options: api.UploadOptions{
+			OnlyID:          true,
+			KeepImages:      true,
+			InteractionMode: api.InteractionModeUnattended,
+		},
 		TrackersRemove: []string{"bhd"},
 	}))
 	if err != nil {
@@ -87,6 +87,39 @@ OnlyID: true,
 	_, err = service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{}))
 	if !errors.Is(err, internalerrors.ErrInvalidInput) {
 		t.Fatalf("expected invalid input error, got: %v", err)
+	}
+}
+
+func TestCollectSourceEvidenceRejectsMalformedSeasonEpisodeInstructions(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	videoPath := filepath.Join(base, "Example.Release.2026.1080p-GRP.mkv")
+	if err := os.WriteFile(videoPath, []byte("video"), 0o600); err != nil {
+		t.Fatalf("write video failed: %v", err)
+	}
+	repo := &stubRepo{}
+	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
+	service := NewService(repo, WithMediaInfoExporter(&stubMediaInfo{}), WithSceneDetector(stubSceneDetector{}), WithConfig(cfg))
+
+	tests := []struct {
+		name      string
+		overrides api.ReleaseNameOverrides
+	}{
+		{name: "combined season token", overrides: api.ReleaseNameOverrides{Season: new("S01E05")}},
+		{name: "ranged episode token", overrides: api.ReleaseNameOverrides{Episode: new("E01-E03")}},
+		{name: "malformed daily date", overrides: api.ReleaseNameOverrides{ManualDate: new("not-a-date")}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
+				SourcePath:           videoPath,
+				ReleaseNameOverrides: tc.overrides,
+			}))
+			if !errors.Is(err, internalerrors.ErrInvalidInput) {
+				t.Fatalf("expected typed invalid input error, got: %v", err)
+			}
+		})
 	}
 }
 
@@ -181,7 +214,7 @@ func TestPrepareCLIKeepFolderPreservesSingleFileDirectory(t *testing.T) {
 
 	meta, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
 		SourcePath: path,
-		Options: api.UploadOptions{KeepFolder: true},
+		Options:    api.UploadOptions{KeepFolder: true},
 	}))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -930,7 +963,7 @@ func TestPrepareBDMVPartialCacheRequiresConfirmation(t *testing.T) {
 
 	_, err = service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
 		SourcePath: sourcePath,
-		Options: api.UploadOptions{InteractionMode: api.InteractionModeInteractive},
+		Options:    api.UploadOptions{InteractionMode: api.InteractionModeInteractive},
 	}))
 	var rescanErr *api.BDMVRescanRequiredError
 	if !errors.As(err, &rescanErr) {

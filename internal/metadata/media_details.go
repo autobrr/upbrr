@@ -205,8 +205,14 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	if err != nil {
 		return preparationstate.State{}, err
 	}
+	// Fold fact-producing name instructions into canonical prepared state
+	// exactly once, after all evidence resolution, so explicit values and
+	// clears win over derived evidence and the final name cannot diverge from
+	// the facts every downstream projection consumes.
+	applyReleaseNameValueOverrides(&meta)
 	// Scene detection can supply the service (from the NFO), which WEB release
-	// names embed, so rebuild once more to fold in scene-derived metadata.
+	// names embed, so rebuild once more to fold in scene-derived metadata and
+	// the effective instruction values.
 	RebuildReleaseName(&meta, s.logger)
 
 	return meta, nil
@@ -576,8 +582,10 @@ func isCommentaryOrCompatibilityAudioValue(value string) bool {
 }
 
 // RebuildReleaseName regenerates the prepared release-name fields from the
-// current metadata and release-name overrides. It is a no-op for nil input and
-// replaces all name variants and missing-field hints in place.
+// current metadata and the naming-only override controls. Fact-producing
+// instruction values are already part of the metadata by the final rebuild. It
+// is a no-op for nil input and replaces all name variants and missing-field
+// hints in place.
 func RebuildReleaseName(meta *preparationstate.State, logger api.Logger) {
 	if meta == nil {
 		return

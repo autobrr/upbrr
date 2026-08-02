@@ -648,6 +648,63 @@ func TestSourceAndTypeBareWebMissingTypeDefaultsToWebDL(t *testing.T) {
 	}
 }
 
+func TestDeriveMediaFactsFoldsValueInstructionsIntoFactsAndName(t *testing.T) {
+	svc := NewService(&fakeRepo{}, WithConfig(config.Config{}))
+	meta, err := svc.deriveMediaFacts(context.Background(), preparationstate.State{
+		SourcePath: "Example.Movie.2026.1080p.WEB.H.264-GRP.mkv",
+		Release: api.ReleaseInfo{
+			Category:   "movie",
+			Title:      "Example Movie",
+			Year:       2026,
+			Resolution: "1080p",
+			Source:     "Web",
+			Type:       "ENCODE",
+			Group:      "GRP",
+		},
+		Tag: "-GRP",
+		ReleaseNameOverrides: api.ReleaseNameOverrides{
+			Type:       new("REMUX"),
+			Source:     new("BluRay"),
+			Resolution: new("2160p"),
+			Edition:    new("Extended"),
+			ManualYear: new(2027),
+			Tag:        new("OTHER"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("derive media facts: %v", err)
+	}
+	if meta.Type != "REMUX" || meta.Release.Type != "REMUX" {
+		t.Fatalf("type facts = %q/%q", meta.Type, meta.Release.Type)
+	}
+	if meta.Source != "BluRay" || meta.Release.Source != "BluRay" {
+		t.Fatalf("source facts = %q/%q", meta.Source, meta.Release.Source)
+	}
+	if meta.Release.Resolution != "2160p" {
+		t.Fatalf("resolution fact = %q", meta.Release.Resolution)
+	}
+	if meta.Edition != "Extended" {
+		t.Fatalf("edition fact = %q", meta.Edition)
+	}
+	if meta.Release.Year != 2027 {
+		t.Fatalf("year fact = %d", meta.Release.Year)
+	}
+	if meta.Tag != "-OTHER" || meta.Release.Group != "OTHER" {
+		t.Fatalf("tag facts = %q/%q", meta.Tag, meta.Release.Group)
+	}
+	for _, token := range []string{"2027", "2160p", "Extended", "BluRay REMUX"} {
+		if !strings.Contains(meta.ReleaseName, token) {
+			t.Fatalf("expected rebuilt name to include %q, got %q", token, meta.ReleaseName)
+		}
+	}
+	if !strings.HasSuffix(meta.ReleaseName, "-OTHER") {
+		t.Fatalf("expected rebuilt name to end with corrected tag, got %q", meta.ReleaseName)
+	}
+	if strings.HasSuffix(meta.ReleaseNameNoTag, "-OTHER") {
+		t.Fatalf("expected no tag in tagless name, got %q", meta.ReleaseNameNoTag)
+	}
+}
+
 func TestApplyMediaDetailsFallsBackToFilenameHDRWhenMediaInfoHasNoHDR(t *testing.T) {
 	miPath := filepath.Join(t.TempDir(), "mediainfo.json")
 	if err := os.WriteFile(miPath, []byte(`{"media":{"track":[{"@type":"General"},{"@type":"Video","Format":"HEVC","Width":"3840","Height":"2160"}]}}`), 0o600); err != nil {

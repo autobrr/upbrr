@@ -2060,6 +2060,57 @@ func TestApplyTVEpisodeMetadataUseSeasonEpisodePrefersTMDBDateMapping(t *testing
 	}
 }
 
+func TestApplyTVEpisodeMetadataManualSeasonEpisodeInstructionsBecomeCanonical(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	tmdbClient := &stubTMDB{dailySeason: 9, dailyEpisode: 9}
+
+	meta := preparationstate.State{
+		SourcePath:       "/media/Show.2024-01-15.mkv",
+		DailyEpisodeDate: "2024-01-15",
+		ReleaseNameOverrides: api.ReleaseNameOverrides{
+			Season:  new("S02"),
+			Episode: new("5"),
+		},
+	}
+	ids := &api.ExternalIdentity{
+		TMDBID:   100,
+		Category: "TV",
+	}
+
+	updated := svc.applyTVEpisodeMetadata(context.Background(), meta, ids, nil, tmdbClient, &stubTVDB{}, &stubTVmaze{})
+	if updated.SeasonInt != 2 || updated.EpisodeInt != 5 {
+		t.Fatalf("expected manual season/episode 2/5 to stay canonical over date mapping, got %d/%d", updated.SeasonInt, updated.EpisodeInt)
+	}
+	if updated.SeasonStr != "S02" || updated.EpisodeStr != "E05" {
+		t.Fatalf("expected formatted manual season/episode S02/E05, got %q/%q", updated.SeasonStr, updated.EpisodeStr)
+	}
+}
+
+func TestApplyTVEpisodeMetadataManualDateInstructionWinsOverParsedDate(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	tmdbClient := &stubTMDB{dailySeason: 2, dailyEpisode: 7}
+
+	meta := preparationstate.State{
+		SourcePath:       "/media/Show.2024-01-15.mkv",
+		DailyEpisodeDate: "2024-01-15",
+		ReleaseNameOverrides: api.ReleaseNameOverrides{
+			ManualDate: new("2024-02-20"),
+		},
+	}
+	ids := &api.ExternalIdentity{
+		TMDBID:   100,
+		Category: "TV",
+	}
+
+	updated := svc.applyTVEpisodeMetadata(context.Background(), meta, ids, nil, tmdbClient, &stubTVDB{}, &stubTVmaze{})
+	if updated.DailyEpisodeDate != "2024-02-20" {
+		t.Fatalf("expected manual daily date to become canonical, got %q", updated.DailyEpisodeDate)
+	}
+	if updated.SeasonInt != 2 || updated.EpisodeInt != 7 {
+		t.Fatalf("expected date-mapped season/episode 2/7, got %d/%d", updated.SeasonInt, updated.EpisodeInt)
+	}
+}
+
 func TestMapTVmazeMetadataIncludesRichFields(t *testing.T) {
 	result := tvmaze.SearchResult{
 		SelectedID: 88,

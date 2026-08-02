@@ -461,6 +461,71 @@ func TestOperationSubjectsUseExactGenerationAndDetachedFacts(t *testing.T) {
 	}
 }
 
+func TestOperationSubjectsCarryCorrectedFactsConsistently(t *testing.T) {
+	t.Parallel()
+
+	path := writePreparedTestFile(t, "source.mkv", "source")
+	module := newTestModule(t, newMemoryStore(), correctedFactsCollector{})
+	prepared, err := module.Prepare(context.Background(), api.PrepareInput{SourcePath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := prepared.Release
+	if release.Media.Type != "REMUX" || release.Naming.Type != "REMUX" || release.Episode.Season != 3 || release.Naming.Group != "OTHER" {
+		t.Fatalf("prepared facts = %#v", release)
+	}
+
+	ref := api.ReleaseRef{SourcePath: path, Generation: release.Generation}
+	upload, err := module.ResolveUploadSubject(context.Background(), api.UploadSubjectInput{Release: ref})
+	if err != nil {
+		t.Fatalf("ResolveUploadSubject() error = %v", err)
+	}
+	if upload.Type != "REMUX" || upload.Source != "BluRay" || upload.Release.Type != "REMUX" || upload.Release.Resolution != "2160p" {
+		t.Fatalf("upload subject type facts = %q/%q/%q/%q", upload.Type, upload.Source, upload.Release.Type, upload.Release.Resolution)
+	}
+	if upload.SeasonInt != 3 || upload.EpisodeInt != 7 || upload.SeasonStr != "S03" || upload.EpisodeStr != "E07" {
+		t.Fatalf("upload subject episode facts = %d/%d %q/%q", upload.SeasonInt, upload.EpisodeInt, upload.SeasonStr, upload.EpisodeStr)
+	}
+	if upload.Tag != "-OTHER" || upload.Release.Group != "OTHER" || upload.Edition != "Extended" || upload.Service != "AMZN" {
+		t.Fatalf("upload subject fact projections = %q/%q/%q/%q", upload.Tag, upload.Release.Group, upload.Edition, upload.Service)
+	}
+
+	duplicate, err := module.ResolveDuplicateSubject(context.Background(), api.DuplicateCheckInput{Release: ref})
+	if err != nil {
+		t.Fatalf("ResolveDuplicateSubject() error = %v", err)
+	}
+	if duplicate.Type != upload.Type || duplicate.Source != upload.Source || duplicate.Tag != upload.Tag {
+		t.Fatalf("duplicate subject diverges from upload subject: %q/%q/%q", duplicate.Type, duplicate.Source, duplicate.Tag)
+	}
+	if duplicate.SeasonInt != upload.SeasonInt || duplicate.EpisodeInt != upload.EpisodeInt || duplicate.Release.Group != upload.Release.Group {
+		t.Fatalf("duplicate subject episode/group diverges: %d/%d %q", duplicate.SeasonInt, duplicate.EpisodeInt, duplicate.Release.Group)
+	}
+}
+
+func TestPreparationCompatibilityDistinguishesExplicitClearInstructions(t *testing.T) {
+	t.Parallel()
+
+	fingerprints := make(map[string]string, 3)
+	for name, season := range map[string]*string{
+		"unset":          nil,
+		"explicit clear": new(""),
+		"explicit value": new("5"),
+	} {
+		input := api.PrepareInput{SourcePath: "Example.Release.2026.mkv"}
+		input.Instructions.ReleaseName.Season = season
+		compatibility, err := preparationCompatibility(input, "source")
+		if err != nil {
+			t.Fatalf("compatibility for %s: %v", name, err)
+		}
+		fingerprints[name] = compatibility.FactInstructionFingerprint
+	}
+	if fingerprints["unset"] == fingerprints["explicit clear"] ||
+		fingerprints["unset"] == fingerprints["explicit value"] ||
+		fingerprints["explicit clear"] == fingerprints["explicit value"] {
+		t.Fatalf("expected distinct fact-instruction fingerprints, got %#v", fingerprints)
+	}
+}
+
 func TestPrepareCommitFailureLeavesPriorGenerationPublished(t *testing.T) {
 	t.Parallel()
 	path := writePreparedTestFile(t, "source.mkv", "source")
@@ -670,6 +735,37 @@ func (staticIdentityResolver) Resolve(_ context.Context, request externalidentit
 			SourcePath: request.SourcePath,
 			Generation: request.Generation,
 			UpdatedAt:  now,
+		},
+	}, nil
+}
+
+// correctedFactsCollector returns fact groups as the metadata pipeline shapes
+// them after fact-producing release-name instructions were applied.
+type correctedFactsCollector struct{}
+
+func (correctedFactsCollector) Collect(_ context.Context, request preparationstate.Request) (CollectedFacts, error) {
+	return CollectedFacts{
+		Naming: api.NamingFacts{
+			Filename:    filepath.Base(request.Manifest.SourcePath),
+			ReleaseName: "Example Show 2027 S03E07 Extended 2160p BluRay REMUX-OTHER",
+			Tag:         "-OTHER",
+			Type:        "REMUX",
+			Source:      "BluRay",
+			Resolution:  "2160p",
+			Year:        2027,
+			Group:       "OTHER",
+		},
+		Episode: api.EpisodeFacts{
+			Season:       3,
+			Episode:      7,
+			SeasonLabel:  "S03",
+			EpisodeLabel: "E07",
+		},
+		Media: api.MediaFacts{
+			Type:    "REMUX",
+			Source:  "BluRay",
+			Edition: "Extended",
+			Service: "AMZN",
 		},
 	}, nil
 }

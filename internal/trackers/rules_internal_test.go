@@ -173,6 +173,80 @@ func TestConfiguredStrictRuleDispositions(t *testing.T) {
 	}
 }
 
+func TestGroupRulesFollowCorrectedFacts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		rules   RuleSet
+		subject api.RuleSubject
+		rule    string
+	}{
+		{
+			name:  "corrected group reaches the blocked-group check",
+			rules: RuleSet{BlockGroups: []string{"OTHER"}},
+			subject: api.RuleSubject{
+				Tag:     "-OTHER",
+				Release: api.ReleaseInfo{Group: "OTHER"},
+			},
+			rule: "block_group",
+		},
+		{
+			name:  "corrected group and type reach the group-unless-type check",
+			rules: RuleSet{BlockGroupUnlessType: map[string][]string{"OTHER": {"ENCODE"}}},
+			subject: api.RuleSubject{
+				Tag:     "-OTHER",
+				Type:    "REMUX",
+				Release: api.ReleaseInfo{Group: "OTHER", Type: "REMUX"},
+			},
+			rule: "block_group_unless_type",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			registry := NewRegistry()
+			if err := registry.RegisterDescriptor(Descriptor{
+				Name:       "GROUPS",
+				Definition: stubDefinition{name: "GROUPS"},
+				Rules:      &test.rules,
+			}); err != nil {
+				t.Fatalf("register rule: %v", err)
+			}
+			failures, err := evaluateRules(context.Background(), registry, "GROUPS", test.subject, nil)
+			if err != nil {
+				t.Fatalf("evaluate rule: %v", err)
+			}
+			var found bool
+			for _, failure := range failures {
+				if failure.Rule == test.rule {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("missing %s failure: %#v", test.rule, failures)
+			}
+		})
+	}
+}
+
+func TestResolveGroupPrefersReleaseGroupOverTag(t *testing.T) {
+	t.Parallel()
+
+	// resolveGroup reads Release.Group ahead of Tag, so a corrected tag that
+	// left the parsed group behind would keep the stale group in group rules.
+	if got := resolveGroup(api.RuleSubject{Tag: "-OTHER", Release: api.ReleaseInfo{Group: "GRP"}}); got != "GRP" {
+		t.Fatalf("resolveGroup = %q, want the release group", got)
+	}
+	if got := resolveGroup(api.RuleSubject{Tag: "-OTHER", Release: api.ReleaseInfo{Group: "OTHER"}}); got != "OTHER" {
+		t.Fatalf("resolveGroup = %q, want the corrected group", got)
+	}
+	if got := resolveGroup(api.RuleSubject{Tag: "-OTHER"}); got != "OTHER" {
+		t.Fatalf("resolveGroup = %q, want the tag fallback", got)
+	}
+}
+
 func TestMetadataCategoryDispositionUsesStrictestRequirement(t *testing.T) {
 	t.Parallel()
 

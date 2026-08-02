@@ -520,6 +520,9 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 		return preparationstate.State{}, fmt.Errorf("metadata: release overrides lookup: %w", err)
 	}
 	mergedOverrides := mergeReleaseNameOverrides(storedOverrides, input.Instructions.ReleaseName)
+	if err := validateReleaseNameFactInstructions(mergedOverrides); err != nil {
+		return preparationstate.State{}, err
+	}
 	meta.ReleaseNameOverrides = mergedOverrides
 	if hasReleaseNameOverrides(input.Instructions.ReleaseName) {
 		if err := s.repo.SaveReleaseNameOverrides(ctx, primary, mergedOverrides); err != nil {

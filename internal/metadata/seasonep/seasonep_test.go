@@ -4,12 +4,15 @@
 package seasonep
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
+
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 )
 
 func TestExtract(t *testing.T) {
@@ -141,5 +144,203 @@ func TestFormatSeasonEpisode(t *testing.T) {
 	}
 	if got := FormatSeason(0); got != "" {
 		t.Fatalf("expected empty season, got %q", got)
+	}
+}
+
+func TestParseSeasonEpisodeInstruction(t *testing.T) {
+	t.Parallel()
+
+	accepted := []struct {
+		name  string
+		parse func(string) (int, error)
+		value string
+		want  int
+	}{
+		{
+			name:  "empty season clears",
+			parse: ParseSeasonInstruction,
+			value: "",
+			want:  0,
+		},
+		{
+			name:  "blank season clears",
+			parse: ParseSeasonInstruction,
+			value: "  ",
+			want:  0,
+		},
+		{
+			name:  "bare season",
+			parse: ParseSeasonInstruction,
+			value: "5",
+			want:  5,
+		},
+		{
+			name:  "padded season",
+			parse: ParseSeasonInstruction,
+			value: "05",
+			want:  5,
+		},
+		{
+			name:  "prefixed season",
+			parse: ParseSeasonInstruction,
+			value: "S05",
+			want:  5,
+		},
+		{
+			name:  "lowercase prefixed season",
+			parse: ParseSeasonInstruction,
+			value: "s5",
+			want:  5,
+		},
+		{
+			name:  "max season",
+			parse: ParseSeasonInstruction,
+			value: "99",
+			want:  99,
+		},
+		{
+			name:  "empty episode clears",
+			parse: ParseEpisodeInstruction,
+			value: "",
+			want:  0,
+		},
+		{
+			name:  "bare episode",
+			parse: ParseEpisodeInstruction,
+			value: "7",
+			want:  7,
+		},
+		{
+			name:  "padded episode",
+			parse: ParseEpisodeInstruction,
+			value: "07",
+			want:  7,
+		},
+		{
+			name:  "prefixed episode",
+			parse: ParseEpisodeInstruction,
+			value: "E07",
+			want:  7,
+		},
+		{
+			name:  "lowercase prefixed episode",
+			parse: ParseEpisodeInstruction,
+			value: "e7",
+			want:  7,
+		},
+		{
+			name:  "three digit episode",
+			parse: ParseEpisodeInstruction,
+			value: "999",
+			want:  999,
+		},
+	}
+	for _, tt := range accepted {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := tt.parse(tt.value)
+			if err != nil || got != tt.want {
+				t.Fatalf("parse(%q) = %d, %v, want %d", tt.value, got, err, tt.want)
+			}
+		})
+	}
+
+	rejected := []struct {
+		name  string
+		parse func(string) (int, error)
+		value string
+	}{
+		{
+			name:  "combined token",
+			parse: ParseSeasonInstruction,
+			value: "S01E05",
+		},
+		{
+			name:  "season range",
+			parse: ParseSeasonInstruction,
+			value: "S01-S02",
+		},
+		{
+			name:  "alt notation",
+			parse: ParseSeasonInstruction,
+			value: "1x05",
+		},
+		{
+			name:  "zero season",
+			parse: ParseSeasonInstruction,
+			value: "0",
+		},
+		{
+			name:  "zero prefixed season",
+			parse: ParseSeasonInstruction,
+			value: "S00",
+		},
+		{
+			name:  "season overflow",
+			parse: ParseSeasonInstruction,
+			value: "100",
+		},
+		{
+			name:  "garbage season",
+			parse: ParseSeasonInstruction,
+			value: "abc",
+		},
+		{
+			name:  "prefix only",
+			parse: ParseSeasonInstruction,
+			value: "S",
+		},
+		{
+			name:  "negative season",
+			parse: ParseSeasonInstruction,
+			value: "-1",
+		},
+		{
+			name:  "episode prefix on season",
+			parse: ParseSeasonInstruction,
+			value: "E05",
+		},
+		{
+			name:  "inner space",
+			parse: ParseSeasonInstruction,
+			value: "S 05",
+		},
+		{
+			name:  "episode range",
+			parse: ParseEpisodeInstruction,
+			value: "E01-E03",
+		},
+		{
+			name:  "combined episodes",
+			parse: ParseEpisodeInstruction,
+			value: "E01E02",
+		},
+		{
+			name:  "zero episode",
+			parse: ParseEpisodeInstruction,
+			value: "E00",
+		},
+		{
+			name:  "episode overflow",
+			parse: ParseEpisodeInstruction,
+			value: "1000",
+		},
+		{
+			name:  "season prefix on episode",
+			parse: ParseEpisodeInstruction,
+			value: "S05",
+		},
+	}
+	for _, tt := range rejected {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := tt.parse(tt.value)
+			if err == nil {
+				t.Fatalf("parse(%q) = %d, want rejection", tt.value, got)
+			}
+			if !errors.Is(err, internalerrors.ErrInvalidInput) {
+				t.Fatalf("parse(%q) error = %v, want typed invalid input", tt.value, err)
+			}
+		})
 	}
 }

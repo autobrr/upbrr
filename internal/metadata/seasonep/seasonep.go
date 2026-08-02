@@ -14,6 +14,7 @@ import (
 
 	preparationstate "github.com/autobrr/upbrr/internal/preparedrelease/state"
 
+	internalerrors "github.com/autobrr/upbrr/internal/errors"
 	pathutil "github.com/autobrr/upbrr/internal/pathing"
 )
 
@@ -132,6 +133,59 @@ func Extract(path string, meta preparationstate.State) Result {
 	}
 
 	return result
+}
+
+// ParseSeasonInstruction parses one explicit caller-supplied season token: a
+// bare number or an S-prefixed number of at most two digits ("5", "05",
+// "S05"). An empty value means an explicit clear and returns zero. Combined,
+// ranged, zero, overflowing, or otherwise malformed values are rejected with a
+// typed invalid-input error.
+func ParseSeasonInstruction(value string) (int, error) {
+	return parseInstructionToken(value, "S", 2, "season")
+}
+
+// ParseEpisodeInstruction parses one explicit caller-supplied episode token: a
+// bare number or an E-prefixed number of at most three digits ("7", "07",
+// "E07"). An empty value means an explicit clear and returns zero. Combined,
+// ranged, zero, overflowing, or otherwise malformed values are rejected with a
+// typed invalid-input error.
+func ParseEpisodeInstruction(value string) (int, error) {
+	return parseInstructionToken(value, "E", 3, "episode")
+}
+
+func parseInstructionToken(value string, prefix string, maxDigits int, label string) (int, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0, nil
+	}
+	digits := trimmed
+	if len(digits) > 1 && strings.EqualFold(digits[:1], prefix) {
+		digits = digits[1:]
+	}
+	if len(digits) > maxDigits {
+		return 0, instructionTokenError(label, value, prefix)
+	}
+	for _, char := range digits {
+		if char < '0' || char > '9' {
+			return 0, instructionTokenError(label, value, prefix)
+		}
+	}
+	number, err := strconv.Atoi(digits)
+	if err != nil || number <= 0 {
+		return 0, instructionTokenError(label, value, prefix)
+	}
+	return number, nil
+}
+
+func instructionTokenError(label string, value string, prefix string) error {
+	return fmt.Errorf(
+		"%s instruction %q: expected a single positive token such as %q or %q: %w",
+		label,
+		value,
+		"5",
+		prefix+"05",
+		internalerrors.ErrInvalidInput,
+	)
 }
 
 func FormatSeason(value int) string {
