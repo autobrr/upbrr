@@ -1810,6 +1810,19 @@ describe("useReleaseSession", () => {
     await selectAndPrepare(result, "C:\\media\\Example");
     await waitFor(() => expect(result.current.duplicates.view.status).toBe("ready"));
     expect(dryRunUploads).not.toHaveBeenCalled();
+    expect(
+      result.current.upload.view.projections?.projections.map((projection) => ({
+        trackerId: projection.trackerId,
+        canonicalReleaseName: projection.canonicalReleaseName,
+        uploadReleaseName: projection.uploadReleaseName,
+      })),
+    ).toEqual([
+      {
+        trackerId: "AITHER",
+        canonicalReleaseName: "Example Release 2026 1080p-GRP",
+        uploadReleaseName: "Example.Release.2026.1080p-GRP",
+      },
+    ]);
 
     await act(() => result.current.upload.runDryRun());
     expect(result.current.upload.view.dryRunStatus).toBe("ready");

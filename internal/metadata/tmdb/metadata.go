@@ -25,8 +25,10 @@ const imageBaseURL = "https://image.tmdb.org/t/p/original"
 var yearPattern = regexp.MustCompile(`(18|19|20)\d{2}`)
 
 // FetchMetadata loads the primary TMDB record plus best-effort external IDs,
-// translations, media assets, credits, and keywords. A primary-record failure
-// returns no result; optional TMDB lookup failures are logged and omitted.
+// translations, media assets, credits, and keywords, then applies best-effort
+// AniList identity/title enrichment when the record resolves as anime. A
+// primary-record failure returns no result; optional TMDB and AniList lookup
+// failures are logged and omitted.
 func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (MetadataResult, error) {
 	if input.TMDBID == 0 {
 		return MetadataResult{}, errNotFound
@@ -242,7 +244,9 @@ func (c *Client) FetchMetadata(ctx context.Context, input MetadataInput) (Metada
 		result.Anime = isAnime(media.OriginalLanguage, media.Genres)
 	}
 	if result.Anime {
-		animeResult, err := c.ResolveAnime(ctx, title, input)
+		// requestCtx, not ctx: the errgroup context above is canceled once Wait
+		// returns, which would fail every AniList request.
+		animeResult, err := c.ResolveAnime(requestCtx, title, input)
 		if err == nil {
 			result.MALID = animeResult.MALID
 			result.RetrievedAKA = animeResult.Romaji
