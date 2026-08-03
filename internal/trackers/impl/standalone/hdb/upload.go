@@ -320,7 +320,7 @@ func buildMultipartPayload(fields map[string]string, torrentPath string) ([]byte
 	}
 	defer file.Close()
 
-	part, err := writer.CreateFormFile("file", filepath.Base(torrentPath))
+	part, err := writer.CreateFormFile("file", strings.ReplaceAll(fields["name"], " ", ".")+".torrent")
 	if err != nil {
 		_ = writer.Close()
 		return nil, "", fmt.Errorf("trackers: HDB create torrent form file: %w", err)

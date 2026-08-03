@@ -181,6 +181,7 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	uploadSeen := false
 	downloadSeen := false
 	uploadedName := ""
+	uploadedTorrentName := ""
 	registeredTorrent := hdbRegisteredTorrentFixture(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -208,6 +209,7 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 				t.Error("expected torrent file in multipart form")
 				return
 			}
+			uploadedTorrentName = files[0].Filename
 			f, err := files[0].Open()
 			if err != nil {
 				t.Errorf("open uploaded file: %v", err)
@@ -306,6 +308,9 @@ func TestDefinitionUploadSuccess(t *testing.T) {
 	}
 	if uploadedName != "Example Show S01E02 2160p WEB-DL HEVC" {
 		t.Fatalf("uploaded name = %q, want structured generated name", uploadedName)
+	}
+	if uploadedTorrentName != "Example.Show.S01E02.2160p.WEB-DL.HEVC.torrent" {
+		t.Fatalf("uploaded torrent name = %q, want dotted release name", uploadedTorrentName)
 	}
 	if !downloadSeen {
 		t.Fatal("expected download endpoint to be called")
