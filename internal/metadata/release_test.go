@@ -70,7 +70,7 @@ func TestParseReleaseInfo(t *testing.T) {
 		},
 		{
 			name:     "glued bdrip resolves encode",
-			input:    "Show S01 2022 BDRip 1080p x265-GRP",
+			input:    "Show S01 2022 BDRip 1080p-GRP",
 			category: "TV",
 			typ:      "ENCODE",
 			source:   "BDRiP",
