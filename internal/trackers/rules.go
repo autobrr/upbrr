@@ -100,34 +100,37 @@ func evaluateRules(ctx context.Context, registry *Registry, tracker string, meta
 	addStrict := func(rule, reason string) { addFailure(rule, reason, api.RuleDispositionStrict) }
 	addWaivable := func(rule, reason string) { addFailure(rule, reason, api.RuleDispositionWaivable) }
 
-	// Renamed/modified releases are rejected by every supported tracker. The
-	// disposition derives from the detection signal so there is one authority:
-	// the authoritative srrdb comparison remains strict; heuristic rename
-	// detections may be explicitly authorized as a non-resolution policy
-	// exception. The signal is diagnostic-only and never enters the disclosed
-	// failure reason.
-	if detection := releasepolicy.DetectModifiedRelease(releasepolicy.ModifiedReleaseSubject{
-		SourcePath:         meta.SourcePath,
-		VideoPath:          meta.VideoPath,
-		DiscType:           meta.DiscType,
-		PersonalRelease:    meta.PersonalRelease,
-		SceneRenamed:       meta.SceneRenamed,
-		SceneRenamedReason: meta.SceneRenamedReason,
-		Release:            meta.Release,
-	}); detection.Modified {
-		disposition := api.RuleDispositionWaivable
-		if detection.Signal == releasepolicy.ModifiedReleaseSignalSRRDB {
-			disposition = api.RuleDispositionStrict
-		}
-		addFailure("modified_release", detection.Reason, disposition)
-		if logger != nil {
-			logger.Debugf("trackers: rule matched tracker=%s rule=modified_release signal=%s disposition=%s", name, detection.Signal, disposition)
+	rules, ok := registry.LookupRules(name)
+
+	// Renamed/modified releases are rejected by every supported tracker unless
+	// its own rules declare a rename expected. The disposition derives from the
+	// detection signal so there is one authority: the authoritative srrdb
+	// comparison remains strict; heuristic rename detections may be explicitly
+	// authorized as a non-resolution policy exception. The signal is
+	// diagnostic-only and never enters the disclosed failure reason.
+	if !rules.SkipModifiedReleaseCheck {
+		if detection := releasepolicy.DetectModifiedRelease(releasepolicy.ModifiedReleaseSubject{
+			SourcePath:         meta.SourcePath,
+			VideoPath:          meta.VideoPath,
+			DiscType:           meta.DiscType,
+			PersonalRelease:    meta.PersonalRelease,
+			SceneRenamed:       meta.SceneRenamed,
+			SceneRenamedReason: meta.SceneRenamedReason,
+			Release:            meta.Release,
+		}); detection.Modified {
+			disposition := api.RuleDispositionWaivable
+			if detection.Signal == releasepolicy.ModifiedReleaseSignalSRRDB {
+				disposition = api.RuleDispositionStrict
+			}
+			addFailure("modified_release", detection.Reason, disposition)
+			if logger != nil {
+				logger.Debugf("trackers: rule matched tracker=%s rule=modified_release signal=%s disposition=%s", name, detection.Signal, disposition)
+			}
 		}
 	}
 	metadataFailures, metadataEvaluated := evaluateMetadataRequirementsWithRegistry(registry, name, meta)
 	failures = append(failures, metadataFailures...)
 
-	rules, ok := registry.LookupRules(name)
 	if !ok && !metadataEvaluated {
 		// Preserve the nil contract for trackers without their own rule set: the
 		// consumer (applyTrackerRules) treats a nil result as "not evaluated, keep

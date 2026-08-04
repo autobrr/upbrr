@@ -1,6 +1,8 @@
 package utp
 
 import (
+	"strings"
+
 	"github.com/autobrr/upbrr/internal/trackers/impl/unit3d"
 	"github.com/autobrr/upbrr/pkg/api"
 )
@@ -25,7 +27,7 @@ func resolutionID(meta api.UploadSubject) string {
 		"2160p": "2",
 		"1080p": "3",
 		"1080i": "4",
-	}[unit3d.Resolution(meta)]; ok {
+	}[strings.ToLower(unit3d.Resolution(meta))]; ok {
 		return value
 	}
 	return "11"

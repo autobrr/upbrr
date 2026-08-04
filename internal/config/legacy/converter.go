@@ -41,6 +41,7 @@ var legacyDefaultSectionByKey = map[string]string{
 	"seedpool_cdn_api":               "image_hosting",
 	"sharex_url":                     "image_hosting",
 	"sharex_api_key":                 "image_hosting",
+	"utppm_enabled":                  "image_hosting",
 	"utppm_api":                      "image_hosting",
 	"lostimg_enabled":                "image_hosting",
 	"lostimg_api":                    "image_hosting",

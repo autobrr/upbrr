@@ -101,7 +101,6 @@ const imageHostOptions = [
   { value: "passtheimage", label: "PassTheImage" },
   { value: "seedpool_cdn", label: "Seedpool CDN" },
   { value: "sharex", label: "ShareX" },
-  { value: "utppm", label: "UTPPM" },
 ];
 
 const torrentClientTypeOptions = [
@@ -133,12 +132,12 @@ const imageHostKeyMap: Record<string, string[]> = {
   passtheimage: ["PassTheImageAPI"],
   seedpool_cdn: ["SeedpoolCDNAPI"],
   sharex: ["ShareXURL", "ShareXAPIKey"],
-  utppm: ["UTPPMAPI"],
 };
 
 const conditionalImageHostEnabledKeys: Record<string, string> = {
   lostimg: "LostimgEnabled",
   reelflix: "ReelflixEnabled",
+  utppm: "UTPPMEnabled",
 };
 
 const stringField = (key: string, meta: Omit<FieldMeta, "key" | "type"> = {}): FieldMeta => ({
@@ -231,6 +230,10 @@ const sectionFieldMeta: Record<string, Record<string, FieldMeta>> = {
     LostimgAPI: stringField("LostimgAPI", { label: "API key", sensitive: true }),
     ReelflixAPI: stringField("ReelflixAPI", {
       label: "ReelFliX API key",
+      sensitive: true,
+    }),
+    UTPPMAPI: stringField("UTPPMAPI", {
+      label: "UTPPM API key",
       sensitive: true,
     }),
   },
@@ -1933,6 +1936,22 @@ export const useSettingsState = (options: UseSettingsStateOptions): UseSettingsS
               (imageCfg.ReelflixAPI as ConfigValue) ?? "",
               ["ImageHosting", "ReelflixAPI"],
               sectionFieldMeta.ImageHosting.ReelflixAPI,
+            )}
+            <div className="settings-switch-row">
+              <span>UTPPM enabled</span>
+              <Switch
+                aria-label="UTPPM enabled"
+                checked={Boolean(imageCfg.UTPPMEnabled)}
+                onChange={(event) =>
+                  updateConfigValue(["ImageHosting", "UTPPMEnabled"], event.target.checked)
+                }
+              />
+            </div>
+            {renderField(
+              "UTPPMAPI",
+              (imageCfg.UTPPMAPI as ConfigValue) ?? "",
+              ["ImageHosting", "UTPPMAPI"],
+              sectionFieldMeta.ImageHosting.UTPPMAPI,
             )}
           </div>
         </div>
