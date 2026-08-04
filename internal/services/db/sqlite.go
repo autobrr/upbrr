@@ -3288,7 +3288,8 @@ func (r *SQLiteRepository) ListUploadedImagesByPath(ctx context.Context, path st
 }
 
 // DeleteUploadedImage deletes every usage-scope record matching path,
-// imagePath, and host. It returns an error when no record matched.
+// imagePath, and host. Repeated deletion succeeds once no matching record
+// remains so retained workflow cleanup can safely replay after restart.
 func (r *SQLiteRepository) DeleteUploadedImage(ctx context.Context, path string, imagePath string, host string) error {
 	if r == nil || r.db == nil {
 		return errors.New("db: repository not initialized")
@@ -3305,19 +3306,12 @@ func (r *SQLiteRepository) DeleteUploadedImage(ctx context.Context, path string,
 	if trimmedHost == "" {
 		return internalerrors.ErrInvalidInput
 	}
-	result, err := r.execWrite(ctx, "delete uploaded image", `
+	_, err := r.execWrite(ctx, "delete uploaded image", `
 		DELETE FROM uploaded_images
 		WHERE source_path = ? AND host = ? AND image_path = ?
 	`, trimmedPath, trimmedHost, trimmedImagePath)
 	if err != nil {
 		return fmt.Errorf("db delete uploaded image: %w", err)
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("db delete uploaded image: rows affected: %w", err)
-	}
-	if rows == 0 {
-		return fmt.Errorf("db delete uploaded image: no image found at path %q for host %q", trimmedImagePath, trimmedHost)
 	}
 	return nil
 }

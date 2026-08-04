@@ -70,6 +70,9 @@ func TestSetUnit3DAPIHeadersUsesBearerAuthorization(t *testing.T) {
 	if req.Header.Get("Authorization") != "Bearer secret" {
 		t.Fatal("expected Unit3D Bearer authorization")
 	}
+	if req.Header.Get("User-Agent") != "upbrr" {
+		t.Fatal("expected Unit3D upbrr user agent")
+	}
 	if req.Header.Get("Accept") != "application/json" {
 		t.Fatal("expected Unit3D JSON accept header")
 	}
@@ -188,6 +191,10 @@ func TestSearchTorrentsCBRIncludesPendingAndFiltersTMDB(t *testing.T) {
 		paths = append(paths, r.URL.Path)
 		if r.Header.Get("Authorization") != "Bearer secret" {
 			t.Error("bearer authorization mismatch")
+			return
+		}
+		if r.Header.Get("User-Agent") != "upbrr" {
+			t.Error("user agent mismatch")
 			return
 		}
 		if r.URL.Query().Has("api_token") {
@@ -373,6 +380,10 @@ func TestTorrentInfoUsesBearerAuthorization(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer secret" {
 			t.Error("bearer authorization mismatch")
+			return
+		}
+		if r.Header.Get("User-Agent") != "upbrr" {
+			t.Error("user agent mismatch")
 			return
 		}
 		if r.URL.Query().Has("api_token") {
