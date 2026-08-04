@@ -137,7 +137,6 @@ func submitUnit3DUpload(
 		return summary, nil
 	}
 	trackerdata.SetUnit3DAPIHeaders(downloadRequest, apiKey)
-	downloadRequest.Header.Set("User-Agent", "upbrr")
 	downloadClient := unit3DRegisteredTorrentClient(client, baseURL)
 	if err := trackers.DownloadRegisteredTorrent(reqCtx, downloadClient, downloadRequest, artifactPath); err != nil {
 		trackers.LogRegisteredTorrentUnavailable(logger, trackerName)
