@@ -69,8 +69,9 @@ func (s *dupeSearcher) Search(ctx context.Context, meta api.DuplicateSubject) du
 		})
 	}
 	payload, err := s.get(ctx, url.Values{
-		"id":   {groupID},
-		"json": {"1"},
+		"id":            {groupID},
+		"json":          {"1"},
+		"jsontrumpable": {"1"},
 	}, headers)
 	if err != nil || len(payload) == 0 {
 		return dupe.Failed(dupe.FailureRequest, "PTP torrent search failed", err)
@@ -178,6 +179,7 @@ func ptpDupeEntries(payload map[string]any, groupID string, baseURL string) ([]a
 			Group:     ptpString(item["ReleaseGroup"]),
 			Edition:   ptpMovieCut(remasterTitle),
 			HDR:       ptpCandidateHDR(remasterTitle),
+			Trumpable: ptpTrumpable(item["Trumpable"]),
 		}
 		if size := ptpInt64(item["Size"]); size > 0 {
 			entry.SizeKnown = true
@@ -186,6 +188,27 @@ func ptpDupeEntries(payload map[string]any, groupID string, baseURL string) ([]a
 		entries = append(entries, entry)
 	}
 	return entries, true
+}
+
+func ptpTrumpable(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return false
+	case bool:
+		return typed
+	case json.Number:
+		parsed, err := typed.Int64()
+		return err == nil && parsed != 0
+	case string:
+		normalized := strings.ToLower(strings.TrimSpace(typed))
+		return normalized != "" && normalized != "0" && normalized != "false" && normalized != "null" && normalized != "[]"
+	case []any:
+		return len(typed) > 0
+	case map[string]any:
+		return len(typed) > 0
+	default:
+		return false
+	}
 }
 
 func ptpCandidateHDR(remasterTitle string) api.HDRFacts {

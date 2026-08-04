@@ -38,7 +38,7 @@ func TestPTPHandlerReturnsCompleteExactGroup(t *testing.T) {
 			}
 			fixture = "imdb_group.json"
 		case 2:
-			if req.URL.Query().Get("id") != "700" || req.URL.Query().Get("json") != "1" {
+			if req.URL.Query().Get("id") != "700" || req.URL.Query().Get("json") != "1" || req.URL.Query().Get("jsontrumpable") != "1" {
 				t.Fatalf("group query = %q", req.URL.RawQuery)
 			}
 			fixture = "torrent_group_variants.json"
@@ -81,6 +81,9 @@ func TestPTPHandlerReturnsCompleteExactGroup(t *testing.T) {
 	}
 	if entries[1].Edition != "" {
 		t.Fatalf("generic remaster became cut identity: %#v", entries[1])
+	}
+	if !entries[1].Trumpable {
+		t.Fatalf("PTP trumpable mapping = %#v", entries[1])
 	}
 	if entries[0].HDR.Status != api.HDREvidenceComplete || len(entries[0].HDR.Formats) != 1 || entries[0].HDR.Formats[0] != api.HDRFormatSDR {
 		t.Fatalf("PTP omitted RemasterTitle HDR evidence = %#v", entries[0].HDR)

@@ -21,7 +21,7 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 				return nil, fmt.Errorf("context canceled: %w", err)
 			}
 			meta := standalone.UploadSubjectForValidation(subject)
-			failures := make([]api.RuleFailure, 0, 2)
+			failures := make([]api.RuleFailure, 0, 3)
 			category, categoryErr := meta.Identity.RequireCategory()
 			if categoryErr != nil || category != api.CanonicalCategoryMovie {
 				failures = append(failures, trackers.NewRuleFailure(
@@ -30,7 +30,7 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 					api.RuleDispositionStrict,
 				))
 			}
-			resolution, _ := resolveResolution(meta)
+			resolution, _, _ := resolveResolution(meta)
 			for _, value := range []string{
 				resolveType(meta),
 				resolveCodec(meta),
@@ -46,6 +46,13 @@ func validationPolicy() trackers.ValidationPolicyBinding {
 					))
 					break
 				}
+			}
+			if resolveContainer(meta) == "MP4" {
+				failures = append(failures, trackers.NewRuleFailure(
+					"unsupported_container",
+					"PTP requires MP4 releases to be remuxed to MKV",
+					api.RuleDispositionStrict,
+				))
 			}
 			return failures, nil
 		},

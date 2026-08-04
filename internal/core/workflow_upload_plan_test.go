@@ -27,6 +27,23 @@ type dryRunClientService struct {
 	injectErr  error
 }
 
+type workflowUploadResolverFixed struct {
+	subject api.UploadSubject
+}
+
+func (f workflowUploadResolverFixed) ResolveUploadSubject(context.Context, api.UploadSubjectInput) (api.UploadSubject, error) {
+	return f.subject, nil
+}
+
+type workflowTorrentServiceCapture struct {
+	subject api.TorrentSubject
+}
+
+func (f *workflowTorrentServiceCapture) Create(_ context.Context, subject api.TorrentSubject) (api.TorrentResult, error) {
+	f.subject = subject
+	return api.TorrentResult{Path: "prepared.torrent"}, nil
+}
+
 func (s *dryRunClientService) Inject(_ context.Context, _ api.ClientSubject, torrent api.TorrentResult) error {
 	s.injections = append(s.injections, torrent)
 	return s.injectErr
@@ -274,6 +291,48 @@ func TestWorkflowDryRunClientFailureRetainsReconciliationIdentity(t *testing.T) 
 		failure.Failure.Recovery != api.OperationRecoveryConfirm ||
 		failure.Resource != "dry-run:ALPHA" {
 		t.Fatalf("unknown client effect failure = %#v", failure)
+	}
+}
+
+func TestWorkflowUploadPlanPassesSavedClientTorrentForValidation(t *testing.T) {
+	t.Parallel()
+
+	clientTorrent := "C:\\client\\BT_backup\\example.torrent"
+	torrents := &workflowTorrentServiceCapture{}
+	builder := workflowUploadPlanBuilder{
+		resolver: workflowUploadResolverFixed{subject: api.UploadSubject{
+			SourcePath:        "C:\\media\\Example.Release.2026.mkv",
+			ClientTorrentPath: clientTorrent,
+		}},
+		trackers: &workflowRetainedUploadServiceFake{},
+		torrents: torrents,
+	}
+	_, execution, err := builder.Build(
+		context.Background(),
+		api.TrackerReleaseProjectionSet{Projections: []api.TrackerReleaseProjection{{
+			TrackerID:   "PTP",
+			Readiness:   api.ReadinessStatusReady,
+			UploadReady: true,
+		}}},
+		api.DupeAssessment{Results: []api.TrackerDupeAssessment{{
+			TrackerID: "PTP",
+			Decision:  api.DupeDecisionNoMatch,
+			Status:    api.StageStatusCompleted,
+		}}},
+		workflowDupePrivateEvidence{},
+		api.MediaArtifactSet{},
+		workflowMediaPrivateArtifacts{},
+		api.DescriptionSet{},
+		api.DescriptionInstructions{},
+		releaseworkflow.UploadPlanBuildOptions{},
+		time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("build upload plan: %v", err)
+	}
+	defer func() { _ = execution.Release() }()
+	if torrents.subject.ClientTorrentPath != clientTorrent {
+		t.Fatalf("client torrent path=%q, want %q", torrents.subject.ClientTorrentPath, clientTorrent)
 	}
 }
 

@@ -76,7 +76,7 @@ func ptpStructuredExactRule() trackers.DupeRule {
 }
 
 func ptpWEBResolutionRule(proposedHD bool) trackers.DupeRule {
-	hd := []string{"720p", "1080p", "1080i", "2160p"}
+	hd := []string{"720p", "1080p", "1080i", "1440p", "2160p"}
 	sd := []string{"sd", "480p", "480i", "576p", "576i"}
 	targetResolutions, candidateResolutions := hd, sd
 	relation := api.DupeRelationProposedTrumps

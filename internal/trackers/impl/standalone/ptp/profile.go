@@ -43,6 +43,10 @@ func Profile() standalone.Profile {
 			Disposition: api.RuleDispositionAdvisory,
 		}}},
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "PTP"},
+		ArtifactPolicy: &trackers.ArtifactPolicy{
+			MaxPieceSizeMiB:     16,
+			PieceSizeProfileURL: ptpBaseURL,
+		},
 		ImageHostPolicy: &trackers.ImageHostPolicy{
 			AllowedHosts: []string{"pixhost", "imgbb", "onlyimage", "ptscreens", "passtheimage"},
 		},

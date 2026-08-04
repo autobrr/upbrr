@@ -25,7 +25,8 @@
       "Size": "8700000000",
       "ReleaseName": "Example.Release.2026.1080p.BluRay.x264.SDR-GRP",
       "ReleaseGroup": "GRP",
-      "RemasterTitle": "4K Remaster"
+      "RemasterTitle": "4K Remaster",
+      "Trumpable": [4]
     },
     {
       "Id": "703",

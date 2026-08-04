@@ -254,13 +254,6 @@ func prepareUploadStateAt(ctx context.Context, req trackers.PreparationInput, dr
 	}, nil
 }
 
-func requiresMinimumTwoScreens(meta api.UploadSubject) bool {
-	if len(meta.FileList) > 1 {
-		return true
-	}
-	return strings.EqualFold(strings.TrimSpace(meta.DiscType), "DVD") || strings.EqualFold(strings.TrimSpace(meta.DiscType), "BDMV")
-}
-
 func lookupGroupID(ctx context.Context, baseURL string, trackerConfig config.TrackerConfig, meta api.UploadSubject) (string, error) {
 	apiUser := strings.TrimSpace(trackerConfig.PTPAPIUser)
 	apiKey := strings.TrimSpace(trackerConfig.PTPAPIKey)
@@ -315,26 +308,43 @@ func ipInPrefixes(ip netip.Addr, prefixes []netip.Prefix) bool {
 }
 
 func buildUploadFields(meta api.UploadSubject, description string, groupID string, answers map[string]string, poster string) (map[string]string, error) {
-	resolution, otherResolution := resolveResolution(meta)
+	var err error
+	meta, err = withHardcodedSubtitleLanguages(meta, answers["hardcoded_subtitle_languages"])
+	if err != nil {
+		return nil, err
+	}
+	resolution, resolutionWidth, resolutionHeight := resolveResolution(meta)
+	if resolution == "Other" && (resolutionWidth == "" || resolutionHeight == "") {
+		return nil, errors.New("trackers: PTP custom resolution requires width and height")
+	}
+	codec, otherCodec := ptpUploadTaxonomy(
+		resolveCodec(meta), "XviD", "DivX", "H.264", "x264", "H.265", "x265", "DVD5", "DVD9", "BD25", "BD50", "BD66", "BD100",
+	)
+	container, otherContainer := ptpUploadTaxonomy(resolveContainer(meta), "AVI", "MPG", "MKV", "MP4", "VOB IFO", "ISO", "m2ts")
+	source, otherSource := ptpUploadTaxonomy(resolveSource(meta.Source), "Blu-ray", "DVD", "WEB", "HD-DVD", "HDTV", "TV", "VHS")
+	if otherSource != "" {
+		otherSource = metautil.FirstNonEmptyTrimmed(meta.Source, "Unknown")
+	}
 	fields := map[string]string{
 		"submit":          "true",
 		"remaster_year":   "",
 		"remaster_title":  resolveRemasterTitle(meta),
 		"type":            resolveType(meta),
-		"codec":           "Other",
-		"other_codec":     resolveCodec(meta),
-		"container":       "Other",
-		"other_container": resolveContainer(meta),
+		"codec":           codec,
+		"other_codec":     otherCodec,
+		"container":       container,
+		"other_container": otherContainer,
 		"resolution":      resolution,
-		"source":          "Other",
-		"other_source":    resolveSource(meta.Source),
+		"source":          source,
+		"other_source":    otherSource,
 		"release_desc":    description,
 		"nfo_text":        "",
 		"subtitles[]":     joinInts(resolveSubtitles(meta)),
-		"trumpable[]":     "",
+		"trumpable[]":     joinInts(resolveTrumpable(meta)),
 	}
-	if resolution == "Other" && otherResolution != "" {
-		fields["other_resolution"] = otherResolution
+	if resolution == "Other" {
+		fields["other_resolution_width"] = resolutionWidth
+		fields["other_resolution_height"] = resolutionHeight
 	}
 	if fields["remaster_title"] != "" {
 		fields["remaster"] = "on"
@@ -376,6 +386,15 @@ func buildUploadFields(meta api.UploadSubject, description string, groupID strin
 		return nil, errors.New("trackers: PTP missing poster for new group upload")
 	}
 	return fields, nil
+}
+
+func ptpUploadTaxonomy(value string, allowed ...string) (string, string) {
+	for _, item := range allowed {
+		if strings.EqualFold(strings.TrimSpace(value), item) {
+			return item, ""
+		}
+	}
+	return "Other", strings.TrimSpace(value)
 }
 
 func buildMultipartPayload(fields map[string]string, torrentPath string, fileField string) ([]byte, string, error) {

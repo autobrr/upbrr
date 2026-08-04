@@ -335,6 +335,8 @@ type ArtifactPolicy struct {
 	MaxPieceSizeMiB int
 	// MaxTorrentBytes is the largest permitted encoded torrent size; zero imposes no limit.
 	MaxTorrentBytes int64
+	// PieceSizeProfileURL selects mkbrr's tracker-specific piece-size profile.
+	PieceSizeProfileURL string
 }
 
 // ArtifactPolicyProvider declares tracker-owned torrent artifact policy.

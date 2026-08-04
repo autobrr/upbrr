@@ -54,8 +54,12 @@ func Profile() standalone.Profile {
 			},
 		},
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "MTV"},
-		AudioPolicy:          &trackers.AudioPolicy{BlockEnglishOriginalWithForeign: true},
-		ImageHostPolicy:      &trackers.ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb"}},
+		ArtifactPolicy: &trackers.ArtifactPolicy{
+			MaxPieceSizeMiB:     8,
+			PieceSizeProfileURL: mtvBaseURL,
+		},
+		AudioPolicy:     &trackers.AudioPolicy{BlockEnglishOriginalWithForeign: true},
+		ImageHostPolicy: &trackers.ImageHostPolicy{AllowedHosts: []string{"imgbox", "imgbb"}},
 		DupePolicy: &trackers.DupePolicy{
 			ID:         "mtv/duplicate/v2",
 			EvidenceID: "mtv-upload-rules",

@@ -44,10 +44,10 @@ func NewService(logger api.Logger, tmpRoot string) *Service {
 	return NewServiceWithRegistry(logger, tmpRoot, nil)
 }
 
-// NewServiceWithRegistry returns a service that prefers the first registered
-// tracker artifact policy in request order. A nil registry leaves only legacy
-// policy fallback available; tmpRoot is trimmed and may be empty until an
-// operation needs a release-specific temporary path.
+// NewServiceWithRegistry returns a service that combines registered tracker
+// artifact policies. A nil registry leaves only legacy policy fallback
+// available; tmpRoot is trimmed and may be empty until an operation needs a
+// release-specific temporary path.
 func NewServiceWithRegistry(logger api.Logger, tmpRoot string, registry *trackers.Registry) *Service {
 	if logger == nil {
 		logger = api.NopLogger{}
@@ -61,9 +61,9 @@ func NewServiceWithRegistry(logger api.Logger, tmpRoot string, registry *tracker
 
 // Create returns the first reusable torrent in client, source, temporary, then
 // adjacent-path order, unless Rehash requests a new artifact. Reused candidates
-// are checked against tracker policy and source names, paths, and lengths; their
-// pieces are not rehashed against source bytes. NoHash fails when none qualify,
-// while Rehash takes precedence when both overrides are enabled.
+// are checked against tracker policy, source layout, and source bytes. NoHash
+// fails when none qualify, while Rehash takes precedence when both overrides
+// are enabled.
 //
 // New artifacts are private, written below the configured temporary root, and
 // may use a temporary hardlink-or-copy staging tree for selected files. Staging
@@ -212,15 +212,23 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	pieceOptions := mkbrrPieceOptions{maxPieceExp: 27}
 	if policy != nil {
 		pieceOptions = policy.createOptions(meta)
+		if err := policy.validateCreateOptions(meta, pieceOptions); err != nil {
+			return api.TorrentResult{}, fmt.Errorf("torrent: resolve tracker piece size: %w", err)
+		}
 	}
 	s.logger.Infof("torrent: creating torrent output=%s max_piece_exp=%d piece_exp_set=%t", outputPath, pieceOptions.maxPieceExp, pieceOptions.pieceExp != nil)
 	emitTorrentProgress(ctx, meta, "running", "Creating torrent with mkbrr")
 
+	trackerURLs := []string(nil)
+	if pieceOptions.profileURL != "" {
+		trackerURLs = []string{pieceOptions.profileURL}
+	}
 	info, err := mkbrr.Create(mkbrr.CreateOptions{
 		Path:             createSpec.path,
 		Name:             createSpec.name,
 		OutputPath:       outputPath,
 		IsPrivate:        true,
+		TrackerURLs:      trackerURLs,
 		MaxPieceLength:   &pieceOptions.maxPieceExp,
 		PieceLengthExp:   pieceOptions.pieceExp,
 		IncludePatterns:  createSpec.includePatterns,
@@ -233,6 +241,12 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 	if err := validateTorrentContent(info.Path, meta); err != nil {
 		emitTorrentProgress(ctx, meta, "failed", "Torrent validation failed")
 		return api.TorrentResult{}, fmt.Errorf("torrent: validate created torrent %q: %w", info.Path, err)
+	}
+	if policy != nil {
+		if err := policy.validateTorrent(info.Path, meta); err != nil {
+			emitTorrentProgress(ctx, meta, "failed", "Torrent policy validation failed")
+			return api.TorrentResult{}, fmt.Errorf("torrent: validate created torrent policy %q: %w", info.Path, err)
+		}
 	}
 	if err := setCreatedBy(info.Path, torrentmeta.MkbrrUploadCreatedBy); err != nil {
 		emitTorrentProgress(ctx, meta, "failed", "Torrent metadata update failed")
@@ -250,6 +264,8 @@ func setCreatedBy(path string, createdBy string) error {
 		return fmt.Errorf("torrent: load created torrent metadata: %w", err)
 	}
 	torrentMeta.CreatedBy = createdBy
+	torrentMeta.Announce = ""
+	torrentMeta.AnnounceList = nil
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("torrent: open created torrent metadata: %w", err)
@@ -351,8 +367,42 @@ func validateCandidateTorrent(path string, policy *trackerTorrentPolicy, meta ap
 		}
 		return err
 	}
+	if err := verifyCandidateTorrentData(path, meta); err != nil {
+		if logger != nil {
+			logger.Debugf("torrent: reusable candidate rejected path=%s stage=piece_hash reason=%s", path, redaction.RedactValue(err.Error(), nil))
+		}
+		return err
+	}
 	if logger != nil {
 		logger.Debugf("torrent: reusable candidate validated path=%s tracker_policy=%t", path, policy != nil)
+	}
+	return nil
+}
+
+func verifyCandidateTorrentData(path string, meta api.TorrentSubject) error {
+	contentPath := strings.TrimSpace(meta.SourcePath)
+	if contentPath == "" || strings.EqualFold(filepath.Ext(contentPath), ".torrent") {
+		return nil
+	}
+	if strings.TrimSpace(meta.DiscType) != "" {
+		contentPath = normalizeDiscSource(contentPath)
+	}
+	result, err := mkbrr.VerifyData(mkbrr.VerifyOptions{
+		TorrentPath: path,
+		ContentPath: contentPath,
+		Quiet:       true,
+	})
+	if err != nil {
+		return fmt.Errorf("torrent: verify candidate data: %w", err)
+	}
+	if result.BadPieces > 0 || result.MissingPieces > 0 || len(result.MissingFiles) > 0 || result.GoodPieces != result.TotalPieces {
+		return fmt.Errorf(
+			"torrent: candidate piece mismatch good=%d total=%d bad=%d missing=%d",
+			result.GoodPieces,
+			result.TotalPieces,
+			result.BadPieces,
+			result.MissingPieces,
+		)
 	}
 	return nil
 }

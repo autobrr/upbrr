@@ -47,7 +47,10 @@ func Profile() standalone.Profile {
 			RequireKnownCategory: true,
 		},
 		UploadArtifactPolicy: &trackers.UploadArtifactPolicy{Source: "HDBits"},
-		ArtifactPolicy:       &trackers.ArtifactPolicy{MaxPieceSizeMiB: 16},
+		ArtifactPolicy: &trackers.ArtifactPolicy{
+			MaxPieceSizeMiB:     16,
+			PieceSizeProfileURL: hdbBaseURL,
+		},
 		ImageHostPolicy: &trackers.ImageHostPolicy{
 			AllowedHosts:         []string{"hdb"},
 			OwnedHosts:           []string{"hdb"},
