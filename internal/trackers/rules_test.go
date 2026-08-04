@@ -5,6 +5,7 @@ package trackers_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -214,20 +215,20 @@ func TestUnit3DPayloadCallbacksRejectKnownInvalidFacts(t *testing.T) {
 		rule    string
 	}{
 		{
-tracker: "ACM",
- subject: api.TrackerValidationSubject{Region: "North America"},
- rule: "unsupported_region",
-},
+			tracker: "ACM",
+			subject: api.TrackerValidationSubject{Region: "North America"},
+			rule:    "unsupported_region",
+		},
 		{
-tracker: "LST",
- subject: api.TrackerValidationSubject{Edition: "Unknown Edition"},
- rule: "unsupported_edition",
-},
+			tracker: "LST",
+			subject: api.TrackerValidationSubject{Edition: "Unknown Edition"},
+			rule:    "unsupported_edition",
+		},
 		{
-tracker: "SHRI",
- subject: api.TrackerValidationSubject{DiscType: "DVD"},
- rule: "region_required",
-},
+			tracker: "SHRI",
+			subject: api.TrackerValidationSubject{DiscType: "DVD"},
+			rule:    "region_required",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.tracker, func(t *testing.T) {
@@ -914,6 +915,9 @@ func TestEvaluateRulesModifiedReleaseAcrossFamilies(t *testing.T) {
 		SourcePath: "/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5 1 HDR H 265-GRP",
 		Release:    api.ReleaseInfo{Group: "GRP"},
 	}
+	arrRename := api.RuleSubject{
+		SourcePath: "/data/movies/Example Movie (2026) {imdb-tt1234567}",
+	}
 	clean := api.RuleSubject{
 		SourcePath: "/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP",
 		Release:    api.ReleaseInfo{Group: "GRP", Resolution: "2160p"},
@@ -928,16 +932,19 @@ func TestEvaluateRulesModifiedReleaseAcrossFamilies(t *testing.T) {
 	for _, tracker := range []string{"LST", "PTP", "PHD", "HDB"} {
 		t.Run(tracker, func(t *testing.T) {
 			t.Parallel()
-			got := evaluateNonMetadataRulesForTest(context.Background(), tracker, heuristicRename)
-			failure, ok := findRuleFailure(got, "modified_release")
-			if !ok {
-				t.Fatalf("expected modified_release failure for %s, got %#v", tracker, got)
-			}
-			if failure.Disposition != api.RuleDispositionWaivable {
-				t.Fatalf("heuristic modified_release disposition for %s = %q, want waivable", tracker, failure.Disposition)
-			}
-			if !strings.Contains(failure.Reason, "renamed") {
-				t.Fatalf("expected a meaningful reason mentioning 'renamed' for %s, got %q", tracker, failure.Reason)
+			// Both heuristic signals (space rename and *arr token) stay waivable.
+			for _, meta := range []api.RuleSubject{heuristicRename, arrRename} {
+				got := evaluateNonMetadataRulesForTest(context.Background(), tracker, meta)
+				failure, ok := findRuleFailure(got, "modified_release")
+				if !ok {
+					t.Fatalf("expected modified_release failure for %s, got %#v", tracker, got)
+				}
+				if failure.Disposition != api.RuleDispositionWaivable {
+					t.Fatalf("heuristic modified_release disposition for %s = %q, want waivable", tracker, failure.Disposition)
+				}
+				if !strings.Contains(failure.Reason, "renamed") {
+					t.Fatalf("expected a meaningful reason mentioning 'renamed' for %s, got %q", tracker, failure.Reason)
+				}
 			}
 
 			sceneFailures := evaluateNonMetadataRulesForTest(context.Background(), tracker, sceneRename)
@@ -953,6 +960,101 @@ func TestEvaluateRulesModifiedReleaseAcrossFamilies(t *testing.T) {
 			}
 		})
 	}
+}
+
+type ruleDebugLogger struct {
+	api.NopLogger
+	debugs []string
+}
+
+func (l *ruleDebugLogger) Debugf(format string, args ...any) {
+	l.debugs = append(l.debugs, fmt.Sprintf(format, args...))
+}
+
+// TestEvaluateRulesModifiedReleaseDebugLog verifies the diagnostic rule-match
+// log carries only stable tracker/rule/signal/disposition fields, never a
+// local source/video path, and that the disclosed reason stays generic.
+func TestEvaluateRulesModifiedReleaseDebugLog(t *testing.T) {
+	t.Parallel()
+
+	const genericReason = "source appears renamed or modified from its original release name; verify the file hash and source provenance"
+
+	cases := []struct {
+		name string
+		meta api.RuleSubject
+		want string
+	}{
+		{
+			name: "srrdb detection logs strict",
+			meta: api.RuleSubject{
+				SourcePath:   "/data/movies/Example.Movie.2026.1080p.BluRay.x264-GRP",
+				VideoPath:    "/data/movies/Example.Movie.2026.1080p.BluRay.x264-GRP/Example.Movie.2026.1080p.BluRay.x264-GRP.mkv",
+				SceneRenamed: true,
+			},
+			want: "trackers: rule matched tracker=LST rule=modified_release signal=srrdb disposition=strict",
+		},
+		{
+			name: "arr token detection logs waivable",
+			meta: api.RuleSubject{
+				SourcePath: "/data/movies/Example Movie (2026) {imdb-tt1234567}",
+				VideoPath:  "/data/movies/Example Movie (2026) {imdb-tt1234567}/Example Movie (2026) {imdb-tt1234567}.mkv",
+			},
+			want: "trackers: rule matched tracker=LST rule=modified_release signal=arr-token disposition=waivable",
+		},
+		{
+			name: "space rename detection logs waivable",
+			meta: api.RuleSubject{
+				SourcePath: "/data/movies/Example Movie 2026 2160p MA WEB-DL DDP5 1 HDR H 265-GRP",
+				Release:    api.ReleaseInfo{Group: "GRP"},
+			},
+			want: "trackers: rule matched tracker=LST rule=modified_release signal=space-rename disposition=waivable",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			logger := &ruleDebugLogger{}
+			failures, err := trackers.EvaluateRules(context.Background(), "lst", tc.meta, logger)
+			if err != nil {
+				t.Fatalf("EvaluateRules: %v", err)
+			}
+			failure, ok := findRuleFailure(failures, "modified_release")
+			if !ok {
+				t.Fatalf("expected modified_release failure, got %#v", failures)
+			}
+			if failure.Reason != genericReason {
+				t.Fatalf("disclosed reason = %q, want the generic modified-release reason", failure.Reason)
+			}
+			if len(logger.debugs) != 1 || logger.debugs[0] != tc.want {
+				t.Fatalf("debug logs = %q, want exactly [%q]", logger.debugs, tc.want)
+			}
+			for _, entry := range logger.debugs {
+				for _, path := range []string{tc.meta.SourcePath, tc.meta.VideoPath, "/data/"} {
+					if path != "" && strings.Contains(entry, path) {
+						t.Fatalf("log entry %q discloses local path %q", entry, path)
+					}
+				}
+			}
+		})
+	}
+
+	t.Run("clean release logs nothing", func(t *testing.T) {
+		t.Parallel()
+		logger := &ruleDebugLogger{}
+		failures, err := trackers.EvaluateRules(context.Background(), "LST", api.RuleSubject{
+			SourcePath: "/data/movies/Example.Movie.2026.2160p.MA.WEB-DL.DDP5.1.HDR.H.265-GRP",
+			Release:    api.ReleaseInfo{Group: "GRP"},
+		}, logger)
+		if err != nil {
+			t.Fatalf("EvaluateRules: %v", err)
+		}
+		if hasRuleFailure(failures, "modified_release") {
+			t.Fatalf("did not expect modified_release failure, got %#v", failures)
+		}
+		if len(logger.debugs) != 0 {
+			t.Fatalf("expected no rule-match log for clean release, got %q", logger.debugs)
+		}
+	})
 }
 
 // TestEvaluateRulesMetadataPolicyReturnsEvaluatedEmpty guards the contract that
