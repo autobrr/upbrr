@@ -35,6 +35,9 @@ jobs:
       - name: Run composite literal layout policy
         run: go run ./cmd/literalpolicy
 
+      - name: Validate release workflow contracts
+        run: go run ./cmd/workflowcontractgen -check
+
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
