@@ -952,7 +952,7 @@ func TestCreateRejectsWantedFileOutsideRoot(t *testing.T) {
 	}
 }
 
-func TestCreateRegeneratesNonCompliantPTPTorrent(t *testing.T) {
+func TestCreateRegeneratesOneSharedBaseForPTPAndHDB(t *testing.T) {
 	t.Parallel()
 
 	sourceDir := t.TempDir()
@@ -974,11 +974,17 @@ func TestCreateRegeneratesNonCompliantPTPTorrent(t *testing.T) {
 		t.Fatalf("create client torrent: %v", err)
 	}
 
-	service := NewService(api.NopLogger{}, t.TempDir())
+	registry := trackers.NewRegistry()
+	for _, definition := range []trackers.Definition{hdb.New(), ptp.New()} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register tracker: %v", err)
+		}
+	}
+	service := NewServiceWithRegistry(api.NopLogger{}, t.TempDir(), registry)
 	result, err := service.Create(context.Background(), api.TorrentSubject{
 		SourcePath:        source,
 		SourceSize:        int64(len(content)),
-		Trackers:          []string{"PTP"},
+		Trackers:          []string{"PTP", "HDB"},
 		ClientTorrentPath: clientTorrentPath,
 	})
 	if err != nil {
@@ -986,6 +992,9 @@ func TestCreateRegeneratesNonCompliantPTPTorrent(t *testing.T) {
 	}
 	if result.Path == clientTorrentPath {
 		t.Fatalf("expected non-compliant client torrent to be regenerated")
+	}
+	if !slices.Equal(result.RehashedTrackers, []string{"PTP"}) {
+		t.Fatalf("rehash trackers = %v, want PTP", result.RehashedTrackers)
 	}
 
 	torrentMeta, err := metainfo.LoadFromFile(result.Path)
@@ -996,11 +1005,51 @@ func TestCreateRegeneratesNonCompliantPTPTorrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unmarshal info: %v", err)
 	}
-	if info.PieceLength != 1<<17 {
-		t.Fatalf("expected 128 KiB piece size, got %d", info.PieceLength)
+	minExp, maxExp := ptpPieceExpRange(int64(len(content)))
+	if info.PieceLength < int64(1)<<minExp || info.PieceLength > int64(1)<<maxExp {
+		t.Fatalf("expected PTP-compatible shared piece size, got %d", info.PieceLength)
 	}
 	if torrentMeta.Announce != "" || len(torrentMeta.AnnounceList) != 0 {
 		t.Fatal("expected trackerless base torrent")
+	}
+}
+
+func TestCreateSkipsMTVInsteadOfRehashingSharedHDBBase(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	source := filepath.Join(dir, "video.mkv")
+	writeTestFile(t, source, "source-data")
+	clientTorrentPath := filepath.Join(dir, "client.torrent")
+	pieceExp := uint(24)
+	if _, err := mkbrr.Create(mkbrr.CreateOptions{
+		Path:           source,
+		OutputPath:     clientTorrentPath,
+		IsPrivate:      true,
+		PieceLengthExp: &pieceExp,
+	}); err != nil {
+		t.Fatalf("create client torrent: %v", err)
+	}
+
+	registry := trackers.NewRegistry()
+	for _, definition := range []trackers.Definition{hdb.New(), mtv.New()} {
+		if err := registry.Register(definition); err != nil {
+			t.Fatalf("register tracker: %v", err)
+		}
+	}
+	service := NewServiceWithRegistry(api.NopLogger{}, t.TempDir(), registry)
+	result, err := service.Create(context.Background(), api.TorrentSubject{
+		SourcePath:           source,
+		SourceSize:           int64(len("source-data")),
+		Trackers:             []string{"HDB", "MTV"},
+		SkipIfRehashTrackers: []string{"MTV"},
+		ClientTorrentPath:    clientTorrentPath,
+	})
+	if err != nil {
+		t.Fatalf("create shared base: %v", err)
+	}
+	if result.Path != clientTorrentPath || !slices.Equal(result.SkippedTrackers, []string{"MTV"}) || len(result.RehashedTrackers) != 0 {
+		t.Fatal("shared base result did not reuse HDB torrent and skip MTV")
 	}
 }
 

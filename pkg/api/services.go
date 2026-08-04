@@ -326,6 +326,9 @@ type UploadSubject struct {
 	GeneratedReleaseNames GeneratedReleaseNameVariants
 	BlockedTrackers       map[string][]TrackerBlockReason
 	TrackerRuleFailures   map[string][]RuleFailure
+	// RehashedTrackers identifies uploads whose selected base torrent required
+	// regeneration so tracker execution can queue them after reusable artifacts.
+	RehashedTrackers []string
 	// ExactMedia, when non-nil, constrains description/image preparation to the
 	// retained workflow-owned revision instead of repository discovery.
 	ExactMedia *ExactMediaAssets
@@ -1400,7 +1403,10 @@ type TorrentSubject struct {
 	DiscType          string
 	ClientTorrentPath string
 	Trackers          []string
-	TorrentOverrides  TorrentOverrides
+	// SkipIfRehashTrackers lists selected tracker names to omit when their
+	// torrent policy would otherwise require regeneration. Names are case-insensitive.
+	SkipIfRehashTrackers []string
+	TorrentOverrides     TorrentOverrides
 }
 
 // ClientSubject contains prepared content source facts and caller instructions
@@ -2115,10 +2121,18 @@ type TrackerQuestionnaireField struct {
 	Required    bool
 }
 
+// TorrentResult carries a torrent artifact reference and tracker context
+// between creation, upload, and client-injection services.
 type TorrentResult struct {
 	Path      string
 	InfoHash  string
 	URL       string
 	Tracker   string
 	CrossSeed bool
+	// RehashedTrackers lists selected trackers whose preparation required the
+	// created base torrent and should be scheduled after reusable uploads.
+	RehashedTrackers []string
+	// SkippedTrackers lists selected trackers omitted by SkipIfRehashTrackers.
+	// Path can be empty when every selected tracker was skipped.
+	SkippedTrackers []string
 }
