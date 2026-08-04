@@ -494,6 +494,41 @@ func TestDeleteAcceptsWindowsCaseAndSeparatorVariants(t *testing.T) {
 	}
 }
 
+func TestDeleteAcceptsDarwinCaseVariant(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin path semantics")
+	}
+	tmpRoot := t.TempDir()
+	sourcePath := filepath.Join(t.TempDir(), "Example.Release.2026.1080p-GRP.mkv")
+	repo := openScreenshotTestRepository(t)
+	service := NewServiceWithRepo(config.Config{}, api.NopLogger{}, tmpRoot, nil, repo)
+	meta := api.ScreenshotSubject{SourcePath: sourcePath}
+	tmpDir, _, err := paths.ReleaseTempDirFor(tmpRoot, meta.SourcePath, meta.Release)
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	target := filepath.Join(tmpDir, "capture.png")
+	if err := os.WriteFile(target, []byte("synthetic image"), 0o600); err != nil {
+		t.Fatalf("write managed image: %v", err)
+	}
+	caseVariant := filepath.Join(tmpDir, "CAPTURE.PNG")
+	if _, err := os.Stat(caseVariant); errors.Is(err, os.ErrNotExist) {
+		t.Skip("case-sensitive filesystem")
+	} else if err != nil {
+		t.Fatalf("inspect case variant: %v", err)
+	}
+	retained := filepath.Join(tmpDir, "keep.png")
+	seedStoredCaptures(t, repo, meta.SourcePath, target, retained)
+
+	if err := service.Delete(context.Background(), meta, caseVariant); err != nil {
+		t.Fatalf("delete case variant: %v", err)
+	}
+	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("case variant did not remove managed image: %v", err)
+	}
+	requireStoredCaptureRows(t, repo, meta.SourcePath, retained, "darwin case variant")
+}
+
 // seedStoredCaptures stores the screenshot, hosted-upload, and final-selection
 // rows the given captures own, each keyed on its canonical path spelling.
 // Selections are written in one call because saving them replaces the release's

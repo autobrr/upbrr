@@ -711,6 +711,19 @@ func (s *Service) Delete(ctx context.Context, meta api.ScreenshotSubject, imageP
 	} else if s.logger != nil {
 		s.logger.Tracef("screenshots: image deleted from disk: %s", absTarget)
 	}
+	confirmedTargets := deleteTargets[:1]
+	for _, target := range deleteTargets[1:] {
+		_, statErr := os.Stat(target)
+		switch {
+		case statErr == nil:
+			continue
+		case errors.Is(statErr, os.ErrNotExist):
+			confirmedTargets = append(confirmedTargets, target)
+		default:
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("inspect stored delete target: %w", statErr))
+		}
+	}
+	deleteTargets = confirmedTargets
 
 	if s.repo != nil {
 		for _, target := range deleteTargets {
@@ -765,9 +778,18 @@ func (s *Service) storedDeleteTargets(ctx context.Context, sourcePath string, ab
 	if s.repo == nil || strings.TrimSpace(sourcePath) == "" {
 		return targets, nil
 	}
+	targetInfo, targetStatErr := os.Stat(absTarget)
 	addStored := func(stored string) {
 		stored = strings.TrimSpace(stored)
-		if stored == "" || slices.Contains(targets, stored) || !pathutil.SamePath(stored, absTarget) {
+		if stored == "" || slices.Contains(targets, stored) {
+			return
+		}
+		sameTarget := pathutil.SamePath(stored, absTarget)
+		if !sameTarget && targetStatErr == nil {
+			storedInfo, statErr := os.Stat(stored)
+			sameTarget = statErr == nil && os.SameFile(storedInfo, targetInfo)
+		}
+		if !sameTarget {
 			return
 		}
 		targets = append(targets, stored)
