@@ -383,8 +383,8 @@ func commandFinalizesMedia(command mutation) bool {
 // commandCommitsMediaBeforeSave selects commands whose staged local deletions
 // commit before the snapshot save: a failed commit then fails the command while
 // durable state still owns the artifact, so any retry is a fresh, valid delete.
-// Hosted-image removal stays post-save because its repository delete rejects
-// already-removed rows and cannot re-run after a failed save.
+// Hosted-image removal stays post-save because its cleanup belongs to the
+// already-committed hosted-image revision.
 func commandCommitsMediaBeforeSave(command mutation) bool {
 	switch command.(type) {
 	case DeleteMediaArtifactsCommand:
