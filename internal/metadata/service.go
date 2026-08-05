@@ -407,6 +407,17 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	}
 	applySourceLookupOverrideWithRegistry(&meta, s.registry)
 	meta.Release = ParseReleaseInfo(primary)
+	storedOverrides := api.ReleaseNameOverrides{}
+	if stored, err := s.repo.GetReleaseNameOverrides(ctx, primary); err == nil {
+		storedOverrides = stored
+	} else if !errors.Is(err, internalerrors.ErrNotFound) {
+		return preparationstate.State{}, fmt.Errorf("metadata: release overrides lookup: %w", err)
+	}
+	mergedOverrides := mergeReleaseNameOverrides(storedOverrides, input.Instructions.ReleaseName)
+	if err := validateReleaseNameFactInstructions(mergedOverrides); err != nil {
+		return preparationstate.State{}, err
+	}
+	meta.ReleaseNameOverrides = mergedOverrides
 
 	discType := request.Layout.DiscType
 	meta.DiscType = discType
@@ -513,17 +524,6 @@ func (s *Service) collectSourceEvidence(ctx context.Context, request preparation
 	release := ParseReleaseInfo(primary)
 	meta.Release = release
 
-	storedOverrides := api.ReleaseNameOverrides{}
-	if stored, err := s.repo.GetReleaseNameOverrides(ctx, primary); err == nil {
-		storedOverrides = stored
-	} else if !errors.Is(err, internalerrors.ErrNotFound) {
-		return preparationstate.State{}, fmt.Errorf("metadata: release overrides lookup: %w", err)
-	}
-	mergedOverrides := mergeReleaseNameOverrides(storedOverrides, input.Instructions.ReleaseName)
-	if err := validateReleaseNameFactInstructions(mergedOverrides); err != nil {
-		return preparationstate.State{}, err
-	}
-	meta.ReleaseNameOverrides = mergedOverrides
 	if hasReleaseNameOverrides(input.Instructions.ReleaseName) {
 		if err := s.repo.SaveReleaseNameOverrides(ctx, primary, mergedOverrides); err != nil {
 			return preparationstate.State{}, fmt.Errorf("metadata: release overrides persist: %w", err)

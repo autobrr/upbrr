@@ -90,13 +90,13 @@ func TestCollectSourceEvidenceKeepsCanonicalSource(t *testing.T) {
 	}
 }
 
-func TestCollectSourceEvidenceRejectsMalformedSeasonEpisodeInstructions(t *testing.T) {
+func TestCollectSourceEvidenceRejectsMalformedSeasonEpisodeInstructionsBeforeSourceScan(t *testing.T) {
 	t.Parallel()
 
 	base := t.TempDir()
-	videoPath := filepath.Join(base, "Example.Release.2026.1080p-GRP.mkv")
-	if err := os.WriteFile(videoPath, []byte("video"), 0o600); err != nil {
-		t.Fatalf("write video failed: %v", err)
+	sourcePath := filepath.Join(base, "Example.Release.2026.1080p-GRP")
+	if err := os.MkdirAll(sourcePath, 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
 	}
 	repo := &stubRepo{}
 	cfg := config.Config{MainSettings: config.MainSettingsConfig{DBPath: filepath.Join(base, "db.sqlite")}}
@@ -113,7 +113,7 @@ func TestCollectSourceEvidenceRejectsMalformedSeasonEpisodeInstructions(t *testi
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := service.collectSourceEvidence(context.Background(), testCollectionRequest(t, api.Request{
-				SourcePath:           videoPath,
+				SourcePath:           sourcePath,
 				ReleaseNameOverrides: tc.overrides,
 			}))
 			if !errors.Is(err, internalerrors.ErrInvalidInput) {
