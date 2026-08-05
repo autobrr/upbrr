@@ -2171,6 +2171,7 @@ func TestApplyTVEpisodeMetadataUseSeasonEpisodePrefersTMDBDateMapping(t *testing
 func TestApplyTVEpisodeMetadataManualSeasonEpisodeInstructionsBecomeCanonical(t *testing.T) {
 	svc := NewService(&fakeRepo{})
 	tmdbClient := &stubTMDB{dailySeason: 9, dailyEpisode: 9}
+	tvmazeClient := &stubTVmaze{episodeData: &tvmaze.EpisodeData{SeasonNumber: 7, EpisodeNumber: 8}}
 
 	meta := preparationstate.State{
 		SourcePath:       "/media/Show.2024-01-15.mkv",
@@ -2182,10 +2183,11 @@ func TestApplyTVEpisodeMetadataManualSeasonEpisodeInstructionsBecomeCanonical(t 
 	}
 	ids := &api.ExternalIdentity{
 		TMDBID:   100,
+		TVmazeID: 200,
 		Category: "TV",
 	}
 
-	updated := svc.applyTVEpisodeMetadata(context.Background(), meta, ids, nil, tmdbClient, &stubTVDB{}, &stubTVmaze{})
+	updated := svc.applyTVEpisodeMetadata(context.Background(), meta, ids, nil, tmdbClient, &stubTVDB{}, tvmazeClient)
 	if updated.SeasonInt != 2 || updated.EpisodeInt != 5 {
 		t.Fatalf("expected manual season/episode 2/5 to stay canonical over date mapping, got %d/%d", updated.SeasonInt, updated.EpisodeInt)
 	}

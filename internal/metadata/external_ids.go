@@ -2397,6 +2397,12 @@ func (s *Service) applyTVEpisodeMetadata(
 			}
 		}
 	}
+	if manualSeason > 0 {
+		season = manualSeason
+	}
+	if manualEpisode > 0 {
+		episode = manualEpisode
+	}
 
 	meta.SeasonInt = season
 	meta.EpisodeInt = episode
