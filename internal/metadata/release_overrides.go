@@ -206,9 +206,14 @@ func applyReleaseNameValueOverrides(meta *preparationstate.State) {
 
 	if overrides.Edition != nil {
 		meta.Edition = strings.TrimSpace(*overrides.Edition)
+		meta.Release.Edition = nil
+		if meta.Edition != "" {
+			meta.Release.Edition = []string{meta.Edition}
+		}
 	}
 	if overrides.NoEdition != nil && *overrides.NoEdition {
 		meta.Edition = ""
+		meta.Release.Edition = nil
 	}
 
 	// Malformed values cannot reach this point: the merged instructions were

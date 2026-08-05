@@ -180,6 +180,7 @@ func TestApplyReleaseNameValueOverridesUpdatesCanonicalFacts(t *testing.T) {
 				Region:     "A",
 				Year:       2024,
 				Group:      "GRP",
+				Edition:    []string{"Extended"},
 			},
 		}
 	}
@@ -252,11 +253,11 @@ func TestApplyReleaseNameValueOverridesUpdatesCanonicalFacts(t *testing.T) {
 			},
 		},
 		{
-			name:      "edition updates media fact",
+			name:      "edition updates media and naming facts",
 			overrides: api.ReleaseNameOverrides{Edition: new("Director's Cut")},
 			assert: func(t *testing.T, meta preparationstate.State) {
-				if meta.Edition != "Director's Cut" {
-					t.Fatalf("edition fact = %q", meta.Edition)
+				if meta.Edition != "Director's Cut" || len(meta.Release.Edition) != 1 || meta.Release.Edition[0] != "Director's Cut" {
+					t.Fatalf("edition facts = %q/%v", meta.Edition, meta.Release.Edition)
 				}
 			},
 		},
@@ -264,8 +265,8 @@ func TestApplyReleaseNameValueOverridesUpdatesCanonicalFacts(t *testing.T) {
 			name:      "no edition clears the edition fact",
 			overrides: api.ReleaseNameOverrides{Edition: new("Director's Cut"), NoEdition: new(true)},
 			assert: func(t *testing.T, meta preparationstate.State) {
-				if meta.Edition != "" {
-					t.Fatalf("edition fact = %q", meta.Edition)
+				if meta.Edition != "" || len(meta.Release.Edition) != 0 {
+					t.Fatalf("edition facts = %q/%v", meta.Edition, meta.Release.Edition)
 				}
 			},
 		},
