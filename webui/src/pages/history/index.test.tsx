@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026, Audionut and the autobrr contributors.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import type { HistoryEntry, HistoryOverview } from "../../types";
@@ -53,6 +53,40 @@ const overview = (sourcePath: string, title: string): HistoryOverview => ({
 });
 
 describe("HistoryPage", () => {
+  it("ignores superseded overview responses", async () => {
+    const firstPath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
+    const secondPath = "C:\\media\\Second.Example.2026.1080p-GRP.mkv";
+    let resolveFirst: (value: HistoryOverview) => void = () => undefined;
+    const firstResponse = new Promise<HistoryOverview>((resolve) => {
+      resolveFirst = resolve;
+    });
+    installAppOperationMocks({
+      ListHistory: async () => [
+        entry(firstPath, "Example Release 2026"),
+        entry(secondPath, "Second Example 2026"),
+      ],
+      GetHistoryOverview: async (sourcePath: string) => {
+        if (sourcePath === firstPath) {
+          return firstResponse;
+        }
+        return overview(secondPath, "Second Example 2026");
+      },
+    });
+
+    render(<HistoryPage />);
+    expect(await screen.findByText("Loading overview...")).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Second Example 2026/ }));
+    expect(await screen.findByText(secondPath)).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFirst(overview(firstPath, "Example Release 2026"));
+    });
+    expect(screen.getByText(secondPath)).toBeInTheDocument();
+    expect(screen.queryByText(firstPath)).not.toBeInTheDocument();
+  });
+
   it("does not retain another release's details after a failed selection", async () => {
     const unavailablePath = "C:\\media\\Example.Release.2026.1080p-GRP.mkv";
     const storedPath = "C:\\media\\Second.Example.2026.1080p-GRP.mkv";
