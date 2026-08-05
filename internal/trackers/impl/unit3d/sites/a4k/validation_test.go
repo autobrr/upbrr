@@ -26,8 +26,78 @@ func TestCheckRequirementsUsesPreparedVideoBitrate(t *testing.T) {
 
 	base.Assessments.VideoBitrate.Status = api.VideoBitrateStatusUnavailable
 	failures, err := checkRequirements(context.Background(), base, nil)
-	if err != nil || len(failures) != 1 || failures[0].Rule != "a4k_bitrate" {
+	if err != nil || len(failures) != 1 || failures[0].Rule != "a4k_video_bitrate" {
 		t.Fatalf("unavailable bitrate validation failures=%v err=%v", failures, err)
+	}
+}
+
+func TestCheckRequirementsEnforcesMovieAndTVBitrateFloors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		category api.CanonicalCategory
+		bitrate  int64
+		wantPass bool
+	}{
+		{
+			name:     "movie below floor",
+			category: api.CanonicalCategoryMovie,
+			bitrate:  9_999_999,
+		},
+		{
+			name:     "movie at floor",
+			category: api.CanonicalCategoryMovie,
+			bitrate:  10_000_000,
+			wantPass: true,
+		},
+		{
+			name:     "tv below floor",
+			category: api.CanonicalCategoryTV,
+			bitrate:  5_999_999,
+		},
+		{
+			name:     "tv at floor",
+			category: api.CanonicalCategoryTV,
+			bitrate:  6_000_000,
+			wantPass: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			subject := api.TrackerValidationSubject{
+				Identity: api.ExternalIdentity{Category: test.category},
+				Type:     "ENCODE",
+				Release:  api.ReleaseInfo{Resolution: "2160p"},
+				Assessments: api.ReleaseAssessments{VideoBitrate: api.VideoBitrateAssessment{
+					Status:        api.VideoBitrateStatusPresent,
+					BitsPerSecond: test.bitrate,
+				}},
+			}
+			failures, err := checkRequirements(context.Background(), subject, api.NopLogger{})
+			if err != nil {
+				t.Fatalf("check A4K requirements: %v", err)
+			}
+			if test.wantPass && len(failures) != 0 {
+				t.Fatalf("unexpected failures: %#v", failures)
+			}
+			if !test.wantPass && (len(failures) != 1 || failures[0].Rule != "a4k_video_bitrate") {
+				t.Fatalf("expected bitrate failure, got %#v", failures)
+			}
+		})
+	}
+}
+
+func TestCheckRequirementsExemptsDiscFromBitrateFloor(t *testing.T) {
+	subject := api.TrackerValidationSubject{
+		DiscType: "BDMV",
+		Type:     "DISC",
+		Release:  api.ReleaseInfo{Resolution: "2160p"},
+	}
+	failures, err := checkRequirements(context.Background(), subject, api.NopLogger{})
+	if err != nil || len(failures) != 0 {
+		t.Fatalf("disc bitrate validation failures=%v err=%v", failures, err)
 	}
 }
 
@@ -41,8 +111,15 @@ func TestValidationRequirementsBoundaries(t *testing.T) {
 		wantPasses bool
 	}{
 		{
-			name:       "2160p passes",
-			subject:    api.TrackerValidationSubject{Type: "WEBDL", Release: api.ReleaseInfo{Resolution: "2160p"}, Assessments: api.ReleaseAssessments{VideoBitrate: api.VideoBitrateAssessment{Status: api.VideoBitrateStatusPresent, BitsPerSecond: 10_000_000}}},
+			name: "2160p passes",
+			subject: api.TrackerValidationSubject{
+				Type:    "WEBDL",
+				Release: api.ReleaseInfo{Resolution: "2160p"},
+				Assessments: api.ReleaseAssessments{VideoBitrate: api.VideoBitrateAssessment{
+					Status:        api.VideoBitrateStatusPresent,
+					BitsPerSecond: 10_000_000,
+				}},
+			},
 			wantPasses: true,
 		},
 		{
@@ -66,8 +143,15 @@ func TestValidationRequirementsBoundaries(t *testing.T) {
 			wantRule: "a4k_webrip",
 		},
 		{
-			name:       "WEBRipper is not a WEBRip token",
-			subject:    api.TrackerValidationSubject{Source: "WEBRipper", Release: api.ReleaseInfo{Resolution: "2160p"}, Assessments: api.ReleaseAssessments{VideoBitrate: api.VideoBitrateAssessment{Status: api.VideoBitrateStatusPresent, BitsPerSecond: 10_000_000}}},
+			name: "WEBRipper is not a WEBRip token",
+			subject: api.TrackerValidationSubject{
+				Source:  "WEBRipper",
+				Release: api.ReleaseInfo{Resolution: "2160p"},
+				Assessments: api.ReleaseAssessments{VideoBitrate: api.VideoBitrateAssessment{
+					Status:        api.VideoBitrateStatusPresent,
+					BitsPerSecond: 10_000_000,
+				}},
+			},
 			wantPasses: true,
 		},
 	}

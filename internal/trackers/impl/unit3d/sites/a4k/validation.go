@@ -38,14 +38,14 @@ func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject
 	if strings.TrimSpace(subject.DiscType) == "" {
 		bitrate := subject.Assessments.VideoBitrate
 		if bitrate.Status != api.VideoBitrateStatusPresent {
-			return []api.RuleFailure{trackers.NewRuleFailure("a4k_bitrate", "A4K requires a valid prepared MediaInfo video bitrate.", api.RuleDispositionStrict)}, nil
+			return []api.RuleFailure{trackers.NewRuleFailure("a4k_video_bitrate", "A4K requires a valid prepared MediaInfo video bitrate.", api.RuleDispositionStrict)}, nil
 		}
 		minimum := int64(10_000_000)
 		if strings.EqualFold(strings.TrimSpace(string(subject.Identity.Category)), "tv") {
 			minimum = 6_000_000
 		}
 		if bitrate.BitsPerSecond < minimum {
-			return []api.RuleFailure{trackers.NewRuleFailure("a4k_bitrate", "Video bitrate is below A4K's minimum.", api.RuleDispositionStrict)}, nil
+			return []api.RuleFailure{trackers.NewRuleFailure("a4k_video_bitrate", "Video bitrate is below A4K's minimum.", api.RuleDispositionStrict)}, nil
 		}
 	}
 	return nil, nil

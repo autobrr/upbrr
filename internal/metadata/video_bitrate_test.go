@@ -23,6 +23,11 @@ func TestVideoBitrateAssessment(t *testing.T) {
 			want: api.VideoBitrateAssessment{Status: api.VideoBitrateStatusUnavailable},
 		},
 		{
+			name: "overall minus parseable audio tracks",
+			json: `{"media":{"track":[{"@type":"General","OverallBitRate":"20 Mb/s"},{"@type":"Video"},{"@type":"Audio","BitRate":"2 Mb/s"},{"@type":"Audio","BitRate":"1 Mb/s"}]}}`,
+			want: api.VideoBitrateAssessment{Status: api.VideoBitrateStatusPresent, BitsPerSecond: 17_000_000},
+		},
+		{
 			name: "unavailable",
 			json: `{"media":{"track":[{"@type":"General"},{"@type":"Video"}]}}`,
 			want: api.VideoBitrateAssessment{Status: api.VideoBitrateStatusUnavailable},
