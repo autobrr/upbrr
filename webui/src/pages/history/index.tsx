@@ -131,6 +131,7 @@ export default function HistoryPage({ onReleaseDeleted }: Props) {
     const getHistoryOverview = historyClient.getOverview;
     const loadDetail = async () => {
       setDetailLoading(true);
+      setOverview(null);
       setError("");
       try {
         const next = await getHistoryOverview(selectedPath);

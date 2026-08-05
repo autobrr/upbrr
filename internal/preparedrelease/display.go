@@ -20,10 +20,11 @@ func (m *Module) ResolveDisplay(ctx context.Context, ref api.ReleaseRef) (api.Pr
 	if err != nil {
 		return api.PreparedReleaseDisplay{}, err
 	}
-	return projectPreparedReleaseDisplay(owned.result.Release)
+	return ProjectDisplay(owned.result.Release)
 }
 
-func projectPreparedReleaseDisplay(release api.PreparedRelease) (api.PreparedReleaseDisplay, error) {
+// ProjectDisplay builds the canonical provider presentation from stored prepared facts.
+func ProjectDisplay(release api.PreparedRelease) (api.PreparedReleaseDisplay, error) {
 	if reason := providerIdentityMismatch(release); reason != "" {
 		return api.PreparedReleaseDisplay{}, &IncompatiblePreparationError{SourcePath: release.Source.SourcePath, Reason: reason}
 	}
