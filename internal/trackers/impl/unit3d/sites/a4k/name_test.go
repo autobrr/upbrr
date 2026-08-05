@@ -66,3 +66,35 @@ func TestBuildNameVersionOnlyIsNotFanRes(t *testing.T) {
 		t.Fatalf("ordinary versioned encode was classified as FanRes: %q", got)
 	}
 }
+
+func TestBuildNameUsesReleaseNameNoTagMarkers(t *testing.T) {
+	meta := api.UploadSubject{
+		ReleaseName:      "",
+		ReleaseNameNoTag: "Example.Release.2026.AI.Upscale.2160p.BluRay.TrueHD.5.1.AV1",
+		Type:             "REMUX",
+		Source:           "BluRay",
+		Audio:            "TrueHD",
+		Channels:         "5.1",
+		VideoEncode:      "AV1",
+		Tag:              "-GRP",
+		Release:          api.ReleaseInfo{Title: "Example Release", Year: 2026},
+	}
+	if got, want := typeID(meta), "8"; got != want {
+		t.Fatalf("A4K typeID with AI markers only in ReleaseNameNoTag = %q, want %q", got, want)
+	}
+	if got, want := buildName(meta, config.TrackerConfig{}), "Example Release 2026 2160p AI Upscale BluRay TrueHD 5.1 AV1-GRP"; got != want {
+		t.Fatalf("A4K AI name from ReleaseNameNoTag = %q, want %q", got, want)
+	}
+
+	meta.ReleaseNameNoTag = "Example.Release.2026.FANRES.NoDNR.2160p.UHD.35mm.FLAC.2.0.x265.V2"
+	meta.Type = "ENCODE"
+	meta.Audio = "FLAC"
+	meta.Channels = "2.0"
+	meta.VideoEncode = "x265"
+	if got, want := typeID(meta), "7"; got != want {
+		t.Fatalf("A4K typeID with FanRes markers only in ReleaseNameNoTag = %q, want %q", got, want)
+	}
+	if got, want := buildName(meta, config.TrackerConfig{}), "Example Release 2026 FANRES NoDNR 2160p UHD 35mm FLAC 2.0 x265 V2"; got != want {
+		t.Fatalf("A4K FanRes name from ReleaseNameNoTag = %q, want %q", got, want)
+	}
+}

@@ -14,11 +14,19 @@ var (
 	fanresRegex  = regexp.MustCompile(`(?i)(^|[^[:alnum:]])(?:fanres|35mm|no[ ._-]?dnr)([^[:alnum:]]|$)`)
 )
 
+func markerName(meta api.UploadSubject) string {
+	if name := strings.TrimSpace(meta.ReleaseName); name != "" {
+		return name
+	}
+	return strings.TrimSpace(meta.ReleaseNameNoTag)
+}
+
 func typeID(meta api.UploadSubject) string {
-	if upscaleRegex.MatchString(meta.ReleaseName) || aiRegex.MatchString(meta.ReleaseName) {
+	name := markerName(meta)
+	if upscaleRegex.MatchString(name) || aiRegex.MatchString(name) {
 		return "8"
 	}
-	if fanresRegex.MatchString(meta.ReleaseName) {
+	if fanresRegex.MatchString(name) {
 		return "7"
 	}
 	return map[string]string{

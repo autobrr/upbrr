@@ -14,19 +14,14 @@ import (
 )
 
 var (
-	aiTokenRegex      = regexp.MustCompile(`(?i)(^|[^[:alnum:]])ai([^[:alnum:]]|$)`)
 	upscaleTokenRegex = regexp.MustCompile(`(?i)(^|[^[:alnum:]])upscaled?([^[:alnum:]]|$)`)
-	thirtyFiveMMRegex = regexp.MustCompile(`(?i)(^|[^[:alnum:]])35mm([^[:alnum:]]|$)`)
 	openMatteRegex    = regexp.MustCompile(`(?i)(^|[^[:alnum:]])open[ ._-]matte([^[:alnum:]]|$)`)
 	noDNRRegex        = regexp.MustCompile(`(?i)(^|[^[:alnum:]])no[ ._-]?dnr([^[:alnum:]]|$)`)
 	versionRegex      = regexp.MustCompile(`(?i)(^|[^[:alnum:]])(v\d+(?:\.\d+)?)([^[:alnum:]]|$)`)
 )
 
 func buildName(meta api.UploadSubject, _ config.TrackerConfig) string {
-	name := strings.TrimSpace(meta.ReleaseName)
-	if name == "" {
-		name = strings.TrimSpace(meta.ReleaseNameNoTag)
-	}
+	name := markerName(meta)
 	if name == "" {
 		return ""
 	}
@@ -51,10 +46,11 @@ func buildFanResName(meta api.UploadSubject) string {
 		parts = append(parts, year)
 	}
 	parts = append(parts, "FANRES")
-	if openMatteRegex.MatchString(meta.ReleaseName) {
+	name := markerName(meta)
+	if openMatteRegex.MatchString(name) {
 		parts = append(parts, "Open Matte")
 	}
-	if noDNRRegex.MatchString(meta.ReleaseName) {
+	if noDNRRegex.MatchString(name) {
 		parts = append(parts, "NoDNR")
 	}
 	parts = append(parts, "2160p", "UHD", "35mm")
@@ -68,7 +64,7 @@ func buildFanResName(meta api.UploadSubject) string {
 	if codec := videoCodec(meta); codec != "" {
 		parts = append(parts, codec)
 	}
-	if match := versionRegex.FindStringSubmatch(meta.ReleaseName); match != nil {
+	if match := versionRegex.FindStringSubmatch(name); match != nil {
 		parts = append(parts, match[2])
 	}
 	return cleanName(strings.Join(parts, " "))
@@ -77,7 +73,7 @@ func buildFanResName(meta api.UploadSubject) string {
 func buildAIName(meta api.UploadSubject) string {
 	title, year := titleAndYear(meta)
 	label := "AI Remaster"
-	if upscaleTokenRegex.MatchString(meta.ReleaseName) {
+	if upscaleTokenRegex.MatchString(markerName(meta)) {
 		label = "AI Upscale"
 	}
 	parts := make([]string, 0, 12)
