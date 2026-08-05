@@ -35,6 +35,19 @@ func checkRequirements(ctx context.Context, subject api.TrackerValidationSubject
 	if resolution := unit3d.RuleResolution(unit3d.ValidationRuleSubject(subject)); resolution != "2160p" {
 		return []api.RuleFailure{trackers.NewRuleFailure("a4k_resolution", "A4K only accepts 2160p releases.", api.RuleDispositionStrict)}, nil
 	}
+	if strings.TrimSpace(subject.DiscType) == "" {
+		bitrate := subject.Assessments.VideoBitrate
+		if bitrate.Status != api.VideoBitrateStatusPresent {
+			return []api.RuleFailure{trackers.NewRuleFailure("a4k_bitrate", "A4K requires a valid prepared MediaInfo video bitrate.", api.RuleDispositionStrict)}, nil
+		}
+		minimum := int64(10_000_000)
+		if strings.EqualFold(strings.TrimSpace(string(subject.Identity.Category)), "tv") {
+			minimum = 6_000_000
+		}
+		if bitrate.BitsPerSecond < minimum {
+			return []api.RuleFailure{trackers.NewRuleFailure("a4k_bitrate", "Video bitrate is below A4K's minimum.", api.RuleDispositionStrict)}, nil
+		}
+	}
 	return nil, nil
 }
 

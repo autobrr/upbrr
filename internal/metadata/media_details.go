@@ -38,6 +38,49 @@ var durationTokenPattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(millisecon
 var numericPattern = regexp.MustCompile(`\d+`)
 var releaseTokenSeparatorPattern = regexp.MustCompile(`[^A-Z0-9]+`)
 
+func videoBitrateAssessment(doc mediaInfoDoc) api.VideoBitrateAssessment {
+	generalTracks, videoTracks, audioTracks := splitMediaInfoTracks(doc)
+	for _, track := range videoTracks {
+		raw, ok := track["BitRate"]
+		if !ok {
+			continue
+		}
+		bitrate, parsed := parseMediaInfoBitrate(raw)
+		if parsed && bitrate > 0 {
+			return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusPresent, BitsPerSecond: bitrate}
+		}
+		return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusInvalid}
+	}
+	var overall int64
+	found := false
+	for _, track := range generalTracks {
+		if raw, ok := track["OverallBitRate"]; ok {
+			found = true
+			overall, _ = parseMediaInfoBitrate(raw)
+			break
+		}
+	}
+	if !found {
+		return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusUnavailable}
+	}
+	if overall <= 0 {
+		return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusInvalid}
+	}
+	var audio int64
+	for _, track := range audioTracks {
+		if raw, ok := track["BitRate"]; ok {
+			if bitrate, parsed := parseMediaInfoBitrate(raw); parsed && bitrate > 0 {
+				audio += bitrate
+			}
+		}
+	}
+	video := overall - audio
+	if video <= 0 {
+		return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusInvalid}
+	}
+	return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusPresent, BitsPerSecond: video}
+}
+
 // deriveMediaFacts enriches prepared evidence from MediaInfo, BDInfo, and filename
 // tokens, overrides, and tracker rules, then rebuilds the release name.
 func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.State) (preparationstate.State, error) {
@@ -53,6 +96,7 @@ func (s *Service) deriveMediaFacts(ctx context.Context, meta preparationstate.St
 	}
 
 	meta.MediaInfoUniqueID, meta.MediaInfoUniqueIDPresent = validateMediaInfoUniqueID(meta, miDoc)
+	meta.VideoBitrate = videoBitrateAssessment(miDoc)
 	if !meta.MediaInfoUniqueIDPresent && s.logger != nil {
 		s.logger.Warnf("metadata: mediainfo validation failed (missing unique id)")
 	}
