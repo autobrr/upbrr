@@ -18,9 +18,9 @@ func TestVideoBitrateAssessment(t *testing.T) {
 			want: api.VideoBitrateAssessment{Status: api.VideoBitrateStatusPresent, BitsPerSecond: 12_000_000},
 		},
 		{
-			name: "overall minus every parseable audio track",
+			name: "unparseable audio disables fallback",
 			json: `{"media":{"track":[{"@type":"General","OverallBitRate":"20 Mb/s"},{"@type":"Video"},{"@type":"Audio","BitRate":"2 Mb/s"},{"@type":"Audio","BitRate":"bad"},{"@type":"Audio","BitRate":"1 Mb/s"}]}}`,
-			want: api.VideoBitrateAssessment{Status: api.VideoBitrateStatusPresent, BitsPerSecond: 17_000_000},
+			want: api.VideoBitrateAssessment{Status: api.VideoBitrateStatusUnavailable},
 		},
 		{
 			name: "unavailable",

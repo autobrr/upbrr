@@ -1044,6 +1044,25 @@ func TestEvaluateRulesNonDiscLanguagePoliciesSkipDiscs(t *testing.T) {
 	}
 }
 
+func TestEvaluateRulesA4KDiscExemptsLanguageRequirement(t *testing.T) {
+	t.Parallel()
+
+	for _, discType := range []string{"BDMV", "DVD"} {
+		t.Run(discType, func(t *testing.T) {
+			t.Parallel()
+			failures := evaluateNonMetadataRulesForTest(context.Background(), "A4K", api.RuleSubject{
+				DiscType:          discType,
+				AudioLanguages:    []string{"Japanese"},
+				SubtitleLanguages: []string{"French"},
+				Assessments:       encodeAssessments(api.EncodeSettingsStatusPresent),
+			})
+			if hasRuleFailure(failures, "language_rule") {
+				t.Fatalf("A4K applied non-disc language rule to %s: %#v", discType, failures)
+			}
+		})
+	}
+}
+
 func TestEvaluateRulesTTRLanguageFailuresAreStrict(t *testing.T) {
 	t.Parallel()
 

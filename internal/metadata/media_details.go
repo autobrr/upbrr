@@ -67,12 +67,21 @@ func videoBitrateAssessment(doc mediaInfoDoc) api.VideoBitrateAssessment {
 		return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusInvalid}
 	}
 	var audio int64
+	audioBitrateFullyKnown := true
 	for _, track := range audioTracks {
-		if raw, ok := track["BitRate"]; ok {
-			if bitrate, parsed := parseMediaInfoBitrate(raw); parsed && bitrate > 0 {
-				audio += bitrate
-			}
+		raw, ok := track["BitRate"]
+		if !ok {
+			audioBitrateFullyKnown = false
+			continue
 		}
+		if bitrate, parsed := parseMediaInfoBitrate(raw); parsed && bitrate > 0 {
+			audio += bitrate
+		} else {
+			audioBitrateFullyKnown = false
+		}
+	}
+	if !audioBitrateFullyKnown {
+		return api.VideoBitrateAssessment{Status: api.VideoBitrateStatusUnavailable}
 	}
 	video := overall - audio
 	if video <= 0 {
