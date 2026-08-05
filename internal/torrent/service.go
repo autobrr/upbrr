@@ -239,7 +239,7 @@ func (s *Service) Create(ctx context.Context, meta api.TorrentSubject) (api.Torr
 		return api.TorrentResult{}, fmt.Errorf("torrent: validate created torrent %q: %w", info.Path, err)
 	}
 	if policy != nil {
-		if err := policy.validateTorrent(info.Path, meta); err != nil {
+		if err := validateTorrentFileSize(info.Path, policy); err != nil {
 			emitTorrentProgress(ctx, meta, "failed", "Torrent policy validation failed")
 			return api.TorrentResult{}, fmt.Errorf("torrent: validate created torrent policy %q: %w", info.Path, err)
 		}
