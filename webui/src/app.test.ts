@@ -76,12 +76,23 @@ describe("App shell", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Dupe Check" })).toBeDisabled());
   });
 
-  it("opens the global host-browser dialog from input presentation", async () => {
-    const browse = vi.fn(async (_path: string) => ({
-      currentPath: "C:\\media",
-      parentPath: "C:\\",
-      mode: "folder",
-      entries: [],
+  it("opens folders separately from selecting them", async () => {
+    const browse = vi.fn(async (path: string) => ({
+      currentPath: path || "C:\\media",
+      parentPath: path ? "C:\\media" : "C:\\",
+      mode: "folder" as const,
+      entries:
+        path === "C:\\media\\Example"
+          ? []
+          : [
+              {
+                name: "Example",
+                path: "C:\\media\\Example",
+                isDir: true,
+                size: 0,
+                modifiedAt: "2026-01-01T00:00:00Z",
+              },
+            ],
     }));
     setAppRequestHandlerForTests(async (method, body) => {
       if (method === "GetConfig" || method === "GetDefaultConfig") return "{}";
@@ -92,8 +103,22 @@ describe("App shell", () => {
     render(createElement(App));
     screen.getByRole("button", { name: "Browse folder" }).click();
 
-    expect(await screen.findByRole("dialog", { name: "Select folder" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Host browser" })).toBeInTheDocument();
+    await waitFor(() => expect(browse).toHaveBeenCalledWith(""));
+    expect(await screen.findByText("C:\\media")).toBeInTheDocument();
+    expect(await screen.findByText("[DIR] Example")).toBeInTheDocument();
+    expect(screen.queryByText("C:\\media\\Example")).not.toBeInTheDocument();
     expect(browse).toHaveBeenCalledOnce();
+
+    screen.getByRole("button", { name: "Open Example" }).click();
+    await waitFor(() => expect(browse).toHaveBeenLastCalledWith("C:\\media\\Example"));
+    expect(screen.getByLabelText("Source path")).toHaveValue("");
+    expect(await screen.findByText("C:\\media\\Example")).toBeInTheDocument();
+
+    screen.getByRole("button", { name: "Select folder" }).click();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Source path")).toHaveValue("C:\\media\\Example"),
+    );
   });
 
   it("starts with a blank source draft while retaining source history", async () => {

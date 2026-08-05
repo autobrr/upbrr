@@ -276,7 +276,6 @@ function AppShell() {
   const selectHostPath = (path: string, isDir: boolean) => {
     if (!hostBrowserMode) return;
     if ((hostBrowserMode === "folder" && !isDir) || (hostBrowserMode === "file" && isDir)) {
-      if (isDir) void loadHostDirectory(path, hostBrowserMode);
       return;
     }
     releaseSession.input.updateSourceDraft(path);
@@ -623,13 +622,26 @@ function AppShell() {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="dialog-overlay" />
+            <Dialog.Overlay className="host-browser-overlay" />
             <Dialog.Content className="host-browser-dialog">
-              <Dialog.Title>Select {hostBrowserMode === "file" ? "file" : "folder"}</Dialog.Title>
-              <Dialog.Description className="sr-only">
-                Browse host paths allowed by WebUI policy.
-              </Dialog.Description>
-              <div className="flex flex-wrap gap-2">
+              <div className="host-browser-header">
+                <div>
+                  <Dialog.Title asChild>
+                    <h2 className="label">Host browser</h2>
+                  </Dialog.Title>
+                  <Dialog.Description asChild>
+                    <p className="mono host-browser-path">
+                      {hostBrowser?.currentPath || "Computer"}
+                    </p>
+                  </Dialog.Description>
+                </div>
+                <Dialog.Close asChild>
+                  <button className="ghost" type="button">
+                    Close
+                  </button>
+                </Dialog.Close>
+              </div>
+              <div className="host-browser-toolbar">
                 <button
                   className="ghost"
                   type="button"
@@ -641,45 +653,91 @@ function AppShell() {
                 >
                   Up
                 </button>
-                <input
-                  aria-label="Filter host paths"
-                  value={hostBrowserSearch}
-                  onChange={(event) => setHostBrowserSearch(event.target.value)}
-                  placeholder="Filter paths"
-                />
+                <button
+                  className="ghost"
+                  type="button"
+                  disabled={hostBrowserLoading}
+                  onClick={() => {
+                    if (hostBrowserMode) void loadHostDirectory("", hostBrowserMode);
+                  }}
+                >
+                  Roots
+                </button>
                 {hostBrowserMode === "folder" && hostBrowser?.currentPath ? (
                   <button
                     className="primary"
                     type="button"
+                    disabled={hostBrowserLoading}
                     onClick={() => selectHostPath(hostBrowser.currentPath, true)}
                   >
-                    Select current folder
+                    Select folder
                   </button>
                 ) : null}
+                <label className="host-browser-search" htmlFor="host-browser-search">
+                  <span>Search</span>
+                  <input
+                    id="host-browser-search"
+                    className="host-browser-search__input"
+                    value={hostBrowserSearch}
+                    onChange={(event) => setHostBrowserSearch(event.target.value)}
+                    placeholder="Filter current path"
+                    disabled={hostBrowserLoading || !hostBrowser}
+                  />
+                </label>
               </div>
               {hostBrowserError ? (
                 <p className="error" role="alert">
                   {hostBrowserError}
                 </p>
               ) : null}
-              <div className="host-browser-list">
-                {hostBrowserLoading ? (
-                  <p className="muted">Loading...</p>
-                ) : (
-                  visibleHostEntries.map((entry) => (
-                    <button
-                      className="host-browser-entry"
-                      type="button"
-                      key={entry.path}
-                      onClick={() => selectHostPath(entry.path, entry.isDir)}
-                    >
-                      <span>{entry.isDir ? "Folder" : "File"}</span>
-                      <span className="mono">{entry.path}</span>
-                    </button>
-                  ))
-                )}
-              </div>
-              <Dialog.Close className="ghost">Cancel</Dialog.Close>
+              {hostBrowserLoading ? <p className="muted">Loading host paths...</p> : null}
+              {!hostBrowserLoading && hostBrowser ? (
+                <div className="host-browser-list">
+                  {visibleHostEntries.length === 0 ? (
+                    <p className="muted host-browser-empty">No matching paths.</p>
+                  ) : (
+                    visibleHostEntries.map((entry) => (
+                      <div className="host-browser-entry" key={entry.path}>
+                        <span className="host-browser-entry__name">
+                          {entry.isDir ? "[DIR] " : ""}
+                          {entry.name}
+                        </span>
+                        <span className="host-browser-entry__meta">
+                          {entry.isDir
+                            ? "Folder"
+                            : `${Math.round(entry.size / 1024).toLocaleString()} KiB`}
+                        </span>
+                        <span className="host-browser-entry__actions">
+                          {entry.isDir ? (
+                            <button
+                              className="ghost"
+                              type="button"
+                              aria-label={`Open ${entry.name}`}
+                              onClick={() => {
+                                if (hostBrowserMode)
+                                  void loadHostDirectory(entry.path, hostBrowserMode);
+                              }}
+                            >
+                              Open
+                            </button>
+                          ) : null}
+                          {(hostBrowserMode === "folder" && entry.isDir) ||
+                          (hostBrowserMode === "file" && !entry.isDir) ? (
+                            <button
+                              className="primary"
+                              type="button"
+                              aria-label={`Select ${entry.name}`}
+                              onClick={() => selectHostPath(entry.path, entry.isDir)}
+                            >
+                              Select
+                            </button>
+                          ) : null}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              ) : null}
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>
