@@ -21,8 +21,7 @@ type HistoryEntry struct {
 	RuleAdvisoryCount int
 }
 
-// HistoryRecord is the persistence-facing history aggregate. Prepared facts
-// remain behind PreparedReleaseRepository and are referenced only by exact ID.
+// HistoryRecord is the persistence-facing history aggregate.
 type HistoryRecord struct {
 	SourcePath           string
 	ReleaseTitle         string
@@ -32,7 +31,7 @@ type HistoryRecord struct {
 	LatestUploadStatus   string
 	LatestUploadAt       time.Time `ts_type:"string"`
 	Metadata             FileMetadata
-	PreparedReleaseRef   *ReleaseRef
+	PreparedRelease      *PreparedRelease
 	ReleaseNameOverrides ReleaseNameOverrides
 	DescriptionOverride  DescriptionOverride
 	DescriptionOverrides []DescriptionOverride

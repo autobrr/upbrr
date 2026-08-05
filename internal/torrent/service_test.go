@@ -174,6 +174,22 @@ func TestCreateHonorsMaxPieceSizeOverride(t *testing.T) {
 	}
 }
 
+func TestCreateTrustsPTPPieceProfile(t *testing.T) {
+	t.Parallel()
+
+	source := filepath.Join(t.TempDir(), "video.mkv")
+	writeTestFile(t, source, "data")
+	service := NewService(api.NopLogger{}, t.TempDir())
+	_, err := service.Create(context.Background(), api.TorrentSubject{
+		SourcePath: source,
+		SourceSize: 494 << 20,
+		Trackers:   []string{"PTP"},
+	})
+	if err != nil {
+		t.Fatalf("create PTP torrent: %v", err)
+	}
+}
+
 func TestCreateFolderWithSingleWantedVideoHashesFile(t *testing.T) {
 	t.Parallel()
 
@@ -952,7 +968,7 @@ func TestCreateRejectsWantedFileOutsideRoot(t *testing.T) {
 	}
 }
 
-func TestCreateRegeneratesOneSharedBaseForPTPAndHDB(t *testing.T) {
+func TestCreateReusesPTPYellowPieceSizeForPTPAndHDB(t *testing.T) {
 	t.Parallel()
 
 	sourceDir := t.TempDir()
@@ -963,12 +979,12 @@ func TestCreateRegeneratesOneSharedBaseForPTPAndHDB(t *testing.T) {
 	}
 
 	clientTorrentPath := filepath.Join(sourceDir, "client.torrent")
-	wrongPiece := uint(18)
+	pieceExp := uint(18)
 	_, err := mkbrr.Create(mkbrr.CreateOptions{
 		Path:           source,
 		OutputPath:     clientTorrentPath,
 		IsPrivate:      true,
-		PieceLengthExp: &wrongPiece,
+		PieceLengthExp: &pieceExp,
 	})
 	if err != nil {
 		t.Fatalf("create client torrent: %v", err)
@@ -990,27 +1006,11 @@ func TestCreateRegeneratesOneSharedBaseForPTPAndHDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if result.Path == clientTorrentPath {
-		t.Fatalf("expected non-compliant client torrent to be regenerated")
+	if result.Path != clientTorrentPath {
+		t.Fatalf("expected accepted PTP client torrent to be reused")
 	}
-	if !slices.Equal(result.RehashedTrackers, []string{"PTP"}) {
-		t.Fatalf("rehash trackers = %v, want PTP", result.RehashedTrackers)
-	}
-
-	torrentMeta, err := metainfo.LoadFromFile(result.Path)
-	if err != nil {
-		t.Fatalf("load torrent: %v", err)
-	}
-	info, err := torrentMeta.UnmarshalInfo()
-	if err != nil {
-		t.Fatalf("unmarshal info: %v", err)
-	}
-	minExp, maxExp := ptpPieceExpRange(int64(len(content)))
-	if info.PieceLength < int64(1)<<minExp || info.PieceLength > int64(1)<<maxExp {
-		t.Fatalf("expected PTP-compatible shared piece size, got %d", info.PieceLength)
-	}
-	if torrentMeta.Announce != "" || len(torrentMeta.AnnounceList) != 0 {
-		t.Fatal("expected trackerless base torrent")
+	if len(result.RehashedTrackers) != 0 || len(result.SkippedTrackers) != 0 {
+		t.Fatalf("unexpected tracker exclusions: rehashed=%v skipped=%v", result.RehashedTrackers, result.SkippedTrackers)
 	}
 }
 
@@ -1152,7 +1152,7 @@ func TestPTPPiecePolicyBoundaries(t *testing.T) {
 	}
 }
 
-func TestPTPGreenPieceSizeRanges(t *testing.T) {
+func TestPTPAcceptedPieceSizeRanges(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -1163,25 +1163,30 @@ func TestPTPGreenPieceSizeRanges(t *testing.T) {
 		{
 			size:   10 << 20,
 			minExp: 15,
-			maxExp: 16,
+			maxExp: 18,
 		},
 		{
-			size:   70 << 20,
+			size:   248 << 20,
 			minExp: 16,
-			maxExp: 17,
+			maxExp: 19,
 		},
 		{
-			size:   533 << 20,
-			minExp: 19,
+			size:   494 << 20,
+			minExp: 17,
 			maxExp: 20,
 		},
 		{
-			size:   2294 << 20,
-			minExp: 21,
-			maxExp: 22,
+			size:   17080 << 20,
+			minExp: 22,
+			maxExp: 24,
 		},
 		{
-			size:   17080 << 20,
+			size:   129 << 30,
+			minExp: 23,
+			maxExp: 24,
+		},
+		{
+			size:   257 << 30,
 			minExp: 24,
 			maxExp: 24,
 		},

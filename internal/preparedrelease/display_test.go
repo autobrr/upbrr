@@ -26,7 +26,7 @@ func TestProjectPreparedReleaseDisplayCanonicalFixture(t *testing.T) {
 	}
 
 	release := canonicalDisplayFixtureRelease()
-	actual, err := projectPreparedReleaseDisplay(release)
+	actual, err := ProjectDisplay(release)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestProjectPreparedReleaseDisplayCanonicalFixture(t *testing.T) {
 	if release.ProviderMetadata.TMDB.OriginCountry[0] != "AU" {
 		t.Fatal("display mutation changed prepared release")
 	}
-	repeated, err := projectPreparedReleaseDisplay(release)
+	repeated, err := ProjectDisplay(release)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestProjectPreparedReleaseDisplaySparseAndLocalFallbacks(t *testing.T) {
 		Naming:   api.NamingFacts{ReleaseName: "Example.Release.2026-GRP"},
 		Identity: api.ExternalIdentity{TMDBID: 101, Category: api.CanonicalCategoryMovie},
 	}
-	display, err := projectPreparedReleaseDisplay(identityOnly)
+	display, err := ProjectDisplay(identityOnly)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestProjectPreparedReleaseDisplaySparseAndLocalFallbacks(t *testing.T) {
 			IMDB: &api.IMDBMetadata{IMDBID: 123456},
 		},
 	}
-	display, err = projectPreparedReleaseDisplay(noSummary)
+	display, err = ProjectDisplay(noSummary)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestProjectPreparedReleaseDisplaySparseAndLocalFallbacks(t *testing.T) {
 			},
 		},
 	}
-	display, err = projectPreparedReleaseDisplay(fallback)
+	display, err = ProjectDisplay(fallback)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestProjectPreparedReleaseDisplayRejectsProviderIdentityMismatch(t *testing
 		t.Run(test.name, func(t *testing.T) {
 			release := canonicalDisplayFixtureRelease()
 			test.mutate(&release)
-			if _, err := projectPreparedReleaseDisplay(release); err == nil {
+			if _, err := ProjectDisplay(release); err == nil {
 				t.Fatal("expected provider identity mismatch")
 			}
 		})
@@ -144,7 +144,7 @@ func TestProjectPreparedReleaseDisplayRejectsProviderIdentityMismatch(t *testing
 	linkedOnly := canonicalDisplayFixtureRelease()
 	linkedOnly.ProviderMetadata.TMDB.TMDBID = 0
 	linkedOnly.ProviderMetadata.TMDB.IMDBID = linkedOnly.Identity.TMDBID
-	if _, err := projectPreparedReleaseDisplay(linkedOnly); err == nil {
+	if _, err := ProjectDisplay(linkedOnly); err == nil {
 		t.Fatal("linked provider ID satisfied missing TMDB own ID")
 	}
 }
@@ -160,11 +160,11 @@ func canonicalDisplayFixtureRelease() api.PreparedRelease {
 			MALID:    505,
 			Category: api.CanonicalCategoryMovie,
 			Provenance: api.IdentityProvenanceSet{
-				TMDB:    api.IdentityProvenanceExplicit,
-				IMDB:    api.IdentityProvenanceTracker,
-				TVDB:    api.IdentityProvenanceScene,
-				TVmaze:  api.IdentityProvenanceArr,
-				MAL:     api.IdentityProvenanceProvider,
+				TMDB:   api.IdentityProvenanceExplicit,
+				IMDB:   api.IdentityProvenanceTracker,
+				TVDB:   api.IdentityProvenanceScene,
+				TVmaze: api.IdentityProvenanceArr,
+				MAL:    api.IdentityProvenanceProvider,
 			},
 		},
 		ProviderMetadata: api.SourceScopedMetadata{
@@ -202,16 +202,16 @@ func canonicalDisplayFixtureRelease() api.PreparedRelease {
 				OriginalLanguage: "en",
 			},
 			TVDB: &api.TVDBMetadata{
-				TVDBID:            303,
-				Name:              "Example TVDB",
-				Overview:          "TVDB overview",
-				FirstAired:        "2024-03-04",
-				Year:              2024,
-				Type:              "series",
-				OriginalCountry:   "FR",
-				OriginalLanguage:  "fr",
-				Genres:            "Comedy",
-				Poster:            "https://img.example/tvdb-poster.jpg",
+				TVDBID:           303,
+				Name:             "Example TVDB",
+				Overview:         "TVDB overview",
+				FirstAired:       "2024-03-04",
+				Year:             2024,
+				Type:             "series",
+				OriginalCountry:  "FR",
+				OriginalLanguage: "fr",
+				Genres:           "Comedy",
+				Poster:           "https://img.example/tvdb-poster.jpg",
 			},
 			TVmaze: &api.TVmazeMetadata{
 				TVmazeID:       404,

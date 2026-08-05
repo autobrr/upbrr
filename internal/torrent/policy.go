@@ -155,10 +155,17 @@ func (p *trackerTorrentPolicy) validateTorrent(path string, meta api.TorrentSubj
 }
 
 func ptpPieceExpRange(size int64) (uint, uint) {
-	// PTP's green chart cells cover 500-2000 pieces, with a 32/64 KiB floor and 16 MiB cap.
+	// PTP accepts the chart's green and orange cells, including its tiny-torrent and legacy-client exceptions.
 	bytes := float64(max(size, 1))
-	minExp := min(max(int(math.Ceil(math.Log2(bytes/2000))), 15), 24)
-	maxExp := min(max(int(math.Floor(math.Log2(bytes/500))), 16), 24)
+	minExp := min(max(int(math.Floor(math.Log2(bytes/2000))), 15), 24)
+	maxExp := min(max(int(math.Ceil(math.Log2(bytes/500))), 18), 24)
+	if minExp > 22 {
+		if size <= 128<<30 {
+			minExp = 22
+		} else if size <= 256<<30 {
+			minExp = 23
+		}
+	}
 	return uint(minExp), uint(maxExp)
 }
 

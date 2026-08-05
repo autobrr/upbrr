@@ -106,20 +106,16 @@ func (h *historyModule) Overview(ctx context.Context, sourcePath string) (api.Hi
 		return api.HistoryOverview{}, fmt.Errorf("core: %w", err)
 	}
 	overview := historyOverviewFromRecord(record)
-	if record.PreparedReleaseRef != nil {
-		if h.preparedFacts == nil {
-			return api.HistoryOverview{}, errors.New("core: canonical preparation is not configured")
-		}
-		prepared, resolveErr := h.preparedFacts.ResolveResult(ctx, *record.PreparedReleaseRef)
-		if resolveErr != nil {
-			return api.HistoryOverview{}, fmt.Errorf("core: resolve history prepared generation: %w", resolveErr)
-		}
-		display, displayErr := h.preparedFacts.ResolveDisplay(ctx, *record.PreparedReleaseRef)
+	if record.PreparedRelease != nil {
+		display, displayErr := preparedrelease.ProjectDisplay(*record.PreparedRelease)
 		if displayErr != nil {
 			return api.HistoryOverview{}, fmt.Errorf("core: project history prepared generation: %w", displayErr)
 		}
-		overview.Release = *record.PreparedReleaseRef
-		overview.Identity = prepared.Release.Identity
+		overview.Release = api.ReleaseRef{
+			SourcePath: record.PreparedRelease.Source.SourcePath,
+			Generation: record.PreparedRelease.Generation,
+		}
+		overview.Identity = record.PreparedRelease.Identity
 		overview.Display = display
 	}
 	overview.StatusLabel = api.HistoryStatusLabel(overview.LatestUploadStatus, api.CountBlockingRuleFailures(overview.TrackerRuleFailures))
